@@ -40,7 +40,7 @@ The parent directory is the Tauri app data directory. Production uses bundle id 
 | Windows | `%APPDATA%\com.mausinc.desktop\transcription-models\` (resolve with `echo %APPDATA%`) |
 | Linux   | `~/.local/share/com.mausinc.desktop/transcription-models/`                            |
 
-Whisper files go straight into that directory. The filename must match the model ID exactly because the runtime opens it by name; a renamed file is treated as missing.
+Whisper files go straight into that directory. They are opened by their `ggml` filename rather than by the model ID, so the file must be named exactly as the table below shows; any other name is treated as missing.
 
 | UI label               | ID       | Expected filename         |
 | ---------------------- | -------- | ------------------------- |

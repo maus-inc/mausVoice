@@ -40,4 +40,4 @@ There are two channels. **Stable** is the default and serves signed prereleases 
 - **The install fails on macOS.** See the read-only case above; move the app to `/Applications`.
 - **You would rather not auto-update.** Turn off **Automatically show updates** to stop the dialog appearing on its own. The app still checks in the background so the menu entry stays accurate, and nothing installs without you choosing **Update**.
 
-Downloading the newer installer from the [releases page](https://github.com/maus-inc/mausVoice/releases) and installing over the top always works as a fallback. Close any active dictation first, then launch the updated app and make a short test dictation to confirm your setup survived.
+Downloading the newer installer from the [releases page](https://github.com/maus-inc/mausVoice/releases) and installing over the top works as a fallback for any failure of the automatic path — but not when GitHub itself is unreachable, since the releases page is served from there too. Close any active dictation first, then launch the updated app and make a short test dictation to confirm your setup survived.

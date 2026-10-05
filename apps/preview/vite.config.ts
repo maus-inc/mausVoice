@@ -37,9 +37,41 @@ export default defineConfig({
   server: {
     host: "0.0.0.0",
     port: 5193,
-    allowedHosts: true,
+    // `host: "0.0.0.0"` already exposes this dev server to the network, and
+    // `allowedHosts: true` additionally switches OFF Vite's Host-header check. The pair is a
+    // DNS-rebinding hole: any web page the developer visits could resolve its own hostname to
+    // this server and read the app, which serves the real desktop source through `fs.allow`.
+    //
+    // So the hosts are named instead. Loopback keeps working with no setup; serving anyone
+    // else on the LAN is now an explicit opt-in.
+    //
+    //   PREVIEW_ALLOWED_HOSTS=preview-host.local,192.168.1.20 pnpm --filter @maus-inc/preview dev
+    //
+    // A leading dot allows a whole domain (`example.local` matches `a.example.local`); a
+    // literal IP must be listed exactly, because Vite compares the Host header verbatim.
+    //
+    // The variable ADDS to the loopback set rather than replacing it. Replacing it meant that
+    // naming one LAN host silently stopped the dev server answering on `localhost`, which is
+    // the opposite of what "serving anyone else on the LAN is an explicit opt-in" implies.
+    //
+    // The two IP literals are belt-and-braces: Vite short-circuits IP hosts before consulting
+    // this list, so `[::1]` in particular never has to match. They are kept because that
+    // short-circuit is Vite's internal behaviour rather than a documented contract.
+    allowedHosts: [
+      ".localhost",
+      "127.0.0.1",
+      "[::1]",
+      ...(process.env.PREVIEW_ALLOWED_HOSTS ?? "")
+        .split(",")
+        .map((host) => host.trim())
+        .filter(Boolean),
+    ],
     fs: {
-      allow: [rootDir, path.resolve(rootDir, ".."), desktopSrc],
+      // `rootDir` and `desktopSrc` are the only two roots the preview reads: specs and
+      // components live under the first, and `@desktop/*` aliases into the second. Listing
+      // their shared parent admitted every other workspace package under `apps/` --
+      // `apps/firebase/**`, `apps/docs/**` -- which a demo dev server has no reason to serve.
+      allow: [rootDir, desktopSrc],
     },
   },
   preview: {

@@ -18,7 +18,7 @@ holds without re-reading the code.
 | E2    | The whole path was traced, from the event that starts it to the effect it has.    |
 | E3    | The path was traced and a test that actually ran confirmed or contradicted it.    |
 | E4    | A test reproduced it. The test fails before the fix and passes after it.          |
-| E5    | Checked on a running desktop build. Nothing here reaches E5. Section 8 says why.  |
+| E5    | Checked on a running desktop build. Nothing here reaches E5. Section 9 says why.  |
 
 Read in full: all 175 commits, 65 issue comments, more than 60 reviews, 263
 inline comments across 184 review threads, the whole cumulative diff,

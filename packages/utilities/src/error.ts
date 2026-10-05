@@ -26,13 +26,14 @@ const PROVIDER_KEY_PREFIX =
 //   test masked `keyboard`, `hotkey` and `whiskey` used as object keys.
 //
 // So both paths now run the same rule. The names below are the only place a
-// credential label is written down, and `OPTIONAL_SEPARATOR` is the only place a
-// separator between two words of a name is written: `isCredentialLabel` applies
+// credential label is written down, and the two separator classes further down are
+// the only places a separator between two words of a name is written:
+// `isCredentialLabel` applies
 // this pattern anchored to a whole label to judge an object key, and the three
 // labelled-value patterns further down embed the same pattern unanchored to find
 // the same labels in free text. Given the same word sequence, the two paths
 // cannot disagree about whether it is a label, because there is one vocabulary
-// and one separator class behind both of them.
+// and one set of separator classes behind both of them.
 //
 // That sentence needed BOTH halves, and each was false on its own for a while.
 // The separator half was the quieter one: `client secret` redacted in a message
@@ -42,7 +43,13 @@ const PROVIDER_KEY_PREFIX =
 // which is why the output reads `client secret:[redacted]` and looks right --
 // while an object key has no such tail to fall back on, being the whole label or
 // nothing, and `client[_-]?secret` had no way to spell a space. So "one list" was
-// never the whole invariant; one list AND one separator class is.
+// never the whole invariant; one list AND one set of separator classes is. And
+// that set was still not the whole of it: tier 1's qualifier and tier 2's own
+// separators were both written inline as `[_-]` while the names used
+// `OPTIONAL_SEPARATOR`, so a space was reachable between the words of a name and
+// nowhere else. `signing_key` redacted and `signing key` printed in the clear, in
+// a message and as an object key. Which is why there are two classes below rather
+// than one, and why the invariant is about the set rather than a single class.
 //
 // The anchor half is the remaining, deliberate difference, and it is not the
 // separator. A tier-2 label is anchored at `\b` against the fixed holder list
@@ -274,6 +281,12 @@ const KEY_HOLDERS: readonly string[] = [
 // untouched: `monkey`, `keyboard` and `hotkey` are not two words of this
 // vocabulary joined by a space, and nothing else can make them so.
 const OPTIONAL_SEPARATOR = "[ _-]?";
+// The same class without the `?`, for the one rule where a separator must actually be
+// present: the tier-2 credential pattern below. Written out here rather than derived by
+// stripping the `?`, so the difference between the two is a deliberate choice at the use
+// site and not an accident of string surgery. See the comment on tier 2 for why tier 2
+// needs the mandatory form and tier 1 does not.
+const SEPARATOR_CLASS = "[ _-]";
 // The shape, written out, because the grouping here is load-bearing and a
 // misplaced bracket silently NARROWS the rule instead of failing to compile:
 //
@@ -286,9 +299,41 @@ const OPTIONAL_SEPARATOR = "[ _-]?";
 const CREDENTIAL_LABEL_CORE =
   "(?:" +
   // Tier 1: an unambiguous name, behind any separator-delimited qualifier.
+  //
+  // The separator here stays `[_-]`, and it must. Putting a space in it -- so that
+  // `openai api key` matched as one label -- makes this loop consume runs of ordinary
+  // words, and because the alternation that follows it is not possessive, every start
+  // position in the text then backtracks over every way of splitting that run. On
+  // space-separated input that is quadratic in the length of the message. Measured on
+  // 16KB of two-letter words, against the same regex with `[_-]`: 0.22ms before,
+  // 389ms after, a 1740x cliff, and 16KB is a small provider error body. The text
+  // pass is unanchored, so it pays that at every offset; the anchored object-key pass
+  // does not, which is why this only shows up on free text.
+  //
+  // The hazard is the one documented at `foldCamelLabel` below, and the way out of it
+  // is the mechanism already there: fold the spelling instead of widening the pattern.
+  // `foldSeparators` turns `openai api key` into `openai_api_key` before the anchored
+  // test, exactly as `foldCamelLabel` turns `azureApiKey` into `azure_Api_Key`. Nothing
+  // here gets wider, and the free-text pass needed no help anyway -- it already finds
+  // the bare `api key` name inside the label and rewrites from there.
   `(?:[a-z0-9]+[_-])*(?:${CREDENTIAL_NAMES.map((name) => name.join(OPTIONAL_SEPARATOR)).join("|")})` +
   // Tier 2: the ambiguous words, behind a qualifier from the holder list.
-  `|(?:${KEY_HOLDERS.join("|")})[_-](?:[a-z0-9]+[_-])*(?:token|key)` +
+  //
+  // The separator class gained a space. It used to be `[_-]` written out in both
+  // places here, which made a space unreachable for the whole of tier 2 while tier 1
+  // admitted one through `OPTIONAL_SEPARATOR`. So `client secret: abc` redacted and
+  // `signing key: abc` printed in the clear -- in a message AND as an object key. That
+  // is the leak the comment at the top of this file records as already closed
+  // ("`client[_-]?secret` had no way to spell a space ... `client secret` redacted in a
+  // message and printed in the clear as an object key"), so tier 2 had reopened it.
+  //
+  // It stays MANDATORY, unlike tier 1's optional separator, and that is deliberate:
+  // making it optional lets the holder word run straight into the next segment, and
+  // `idempotency_key` and `azureApiKey` start being redacted -- both of which this
+  // file's tests deliberately spare. Tier 2 is also the only part that stays anchored
+  // at a holder word, which is what keeps `hotkey`, `monkey`, `max_tokens` and
+  // `sort_key` out; that anchoring does the work here, not the separator's width.
+  `|(?:${KEY_HOLDERS.join("|")})${SEPARATOR_CLASS}(?:[a-z0-9]+${SEPARATOR_CLASS})*(?:token|key)` +
   ")" +
   // A plural or a numbered variant is the same label.
   String.raw`(?:s|[_-]?\d+)?`;
@@ -385,12 +430,22 @@ const trimLabelEdges = (label: string): string => {
 const CAMEL_BOUNDARY = /([a-z0-9])([A-Z])/g;
 const foldCamelLabel = (label: string): string =>
   label.replace(CAMEL_BOUNDARY, "$1_$2");
+// Runs of spaces become one underscore, so `openai api key` reads as `openai_api_key`
+// to a pattern that already accepts `_`. This is the camel fold's twin, and it is
+// here for the same reason: to cover a SPELLING without widening the pattern, which is
+// what the tier-1 qualifier loop must not do -- see the comment on `CREDENTIAL_LABEL_CORE`
+// for the measured cost of widening it. A space is folded but a hyphen is not: the
+// pattern already matches `-`, and folding it too would erase the distinction the
+// qualifier loop relies on to bound each of its iterations.
+const SPACE_RUN = /[ \t]+/g;
+const foldSeparators = (label: string): string => label.replace(SPACE_RUN, "_");
 
 const isCredentialLabel = (label: string): boolean => {
   const trimmed = trimLabelEdges(label);
   return (
     ANCHORED_CREDENTIAL_LABEL.test(trimmed) ||
-    ANCHORED_CREDENTIAL_LABEL.test(foldCamelLabel(trimmed))
+    ANCHORED_CREDENTIAL_LABEL.test(foldCamelLabel(trimmed)) ||
+    ANCHORED_CREDENTIAL_LABEL.test(foldSeparators(foldCamelLabel(trimmed)))
   );
 };
 // The one tier-1 name that denotes a header rather than a stored credential, so
@@ -910,10 +965,22 @@ export const redactSensitiveTokens = (message: string): string =>
 const capLength = (message: string): string => {
   if (message.length <= MAX_ERROR_MESSAGE_LENGTH) return message;
   let end = MAX_ERROR_MESSAGE_LENGTH;
-  const lastUnit = message.charCodeAt(end - 1);
   // A lead surrogate at the final kept position has its trail at `end`, which the
   // slice drops. Give up the lead unit rather than emit half a character.
-  if (lastUnit >= 0xd800 && lastUnit <= 0xdbff) end -= 1;
+  //
+  // The question is asked from both sides because `codePointAt` combines a lead
+  // with the trail that follows it, so reading `end - 1` alone can no longer see the
+  // split -- it returns the finished character and the cut looks clean. A trail at
+  // `end` is that pair's second half, and an *unpaired* lead at `end - 1` is exactly
+  // what `codePointAt` there still reports unchanged. Between them they cover every
+  // cut `charCodeAt(end - 1)` caught, and over-trigger only on a trail with no lead
+  // before it, which costs one unit -- and the cap is a ceiling, not a quota.
+  const atEnd = message.codePointAt(end) as number;
+  const beforeEnd = message.codePointAt(end - 1) as number;
+  const splitsPair =
+    (atEnd >= 0xdc00 && atEnd <= 0xdfff) ||
+    (beforeEnd >= 0xd800 && beforeEnd <= 0xdbff);
+  if (splitsPair) end -= 1;
   return `${message.slice(0, end)}…`;
 };
 

@@ -1944,6 +1944,20 @@ fn draw_review_actions(
     // first is what makes that possible; previously the hint was drawn first
     // and the French and German translations -- both far longer than the English
     // default -- ran under the leftmost button by 35.7px and 32.6px.
+    // Measure at the size the labels are actually drawn at, which is 11px Normal
+    // (see the set_font_size further down, just before `show_text`). Nothing in
+    // this function set a font before this point, so `text_extents` was measuring
+    // against whatever the previous call left behind -- 14px from
+    // `draw_review_text`, against 11px at the draw site, so about a quarter wider
+    // per label. Because `row_width` is the sum of those widths, the hint
+    // was budgeted less room than it actually had and elided further than the
+    // overlap this measuring exists to prevent.
+    cr.select_font_face(
+        "Satoshi",
+        cairo::FontSlant::Normal,
+        cairo::FontWeight::Normal,
+    );
+    cr.set_font_size(11.0);
     let btn_widths: Vec<f64> = buttons
         .iter()
         .map(|(label, _, _)| {

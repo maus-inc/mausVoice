@@ -14,8 +14,23 @@ import type {
 import { parseJsonObject, unknownToMessage } from "@maus-inc/utilities";
 
 /** Render a tool's successful result to a string. */
-const stringifyToolResult = (result: unknown): string =>
-  typeof result === "string" ? result : JSON.stringify(result ?? {});
+const stringifyToolResult = (result: unknown): string => {
+  if (typeof result === "string") return result;
+  // `JSON.stringify` throws on a BigInt and returns `undefined` for a function
+  // or a symbol, and `AgentToolOutput.result` is typed `unknown`, so nothing in
+  // the type system rules those out. A tool must never abort the whole loop over
+  // its own return value, so the known throwers are each handled. That is not a
+  // guarantee that nothing can throw -- `String` still throws for an object whose
+  // `toString` does -- so `run()` is what has to tolerate a throw, not this.
+  if (typeof result === "bigint") return result.toString();
+  if (typeof result === "function" || typeof result === "symbol") {
+    return String(result);
+  }
+  const serialized = JSON.stringify(result ?? {});
+  // Also reachable for values JSON cannot represent at all, e.g. an object
+  // whose `toJSON` throws or returns undefined.
+  return serialized ?? String(result);
+};
 
 /**
  * The result a tool call reports when the caller aborts before it answers.

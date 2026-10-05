@@ -722,6 +722,8 @@ type PairDialogState = {
 
 const usePairDialogState = (
   pairedDevices: PairedRemoteDevice[],
+  remoteTargetDeviceId: string | null,
+  remoteOutputEnabled: boolean,
 ): PairDialogState => {
   const intl = useIntl();
   const [pairDialogOpen, setPairDialogOpen] = useState(false);
@@ -792,7 +794,43 @@ const usePairDialogState = (
         trusted: existing?.trusted ?? true,
       });
       if (editingDeviceId && editingDeviceId !== deviceId) {
+        // Renaming a receiver is an upsert plus a delete of the old id, and the delete
+        // is not neutral: `deletePairedRemoteDevice` clears `remoteTargetDeviceId` when
+        // it matches, and setting the target to null also flips `remoteOutputEnabled`
+        // false (user.actions.ts). So correcting the id of the receiver you are actually
+        // sending to silently turned remote output off -- and the row was still listed,
+        // so nothing looked broken.
+        //
+        // The re-point has to come AFTER the delete, and the reason is narrower than
+        // "the delete would clear it again": `deletePairedRemoteDevice` reads the stored
+        // target synchronously on its first line, while `setRemoteTargetDeviceId` writes
+        // the store only after its own preference round trip. Set first, the delete would
+        // still read the old id and clear it -- because our write had not landed yet. The
+        // upsert above has already created the new row, so there is nothing to wait for.
+        //
+        // Reading the target from the caller rather than off the store keeps this handler
+        // consistent with the rest of the file, which selects it once via `useAppStore`
+        // and passes it down.
+        const wasTheTarget = remoteTargetDeviceId === editingDeviceId;
+        const wasOutputEnabled = remoteOutputEnabled;
         await deletePairedRemoteDevice(editingDeviceId);
+        if (wasTheTarget) {
+          await setRemoteTargetDeviceId(deviceId);
+          // `setRemoteTargetDeviceId` is not a pure setter -- it also writes
+          // `remoteOutputEnabled = Boolean(deviceId)`, which turns the output back on
+          // (user.actions.ts:842-843). So without this the rename would trade one silent
+          // surprise for the other: the user turns the switch off, corrects a typo in the
+          // receiver's id, and dictation starts broadcasting to that device again with no
+          // switch visibly moved. "Target selected, output off" is a normal state to be in
+          // -- turning the output off calls `setRemoteOutputEnabled(false)`, which leaves
+          // the target set (`:632`).
+          //
+          // The two are independent user decisions, so the rename moves the pointer and
+          // restores the switch rather than letting the pointer write imply it.
+          if (!wasOutputEnabled) {
+            await setRemoteOutputEnabled(false);
+          }
+        }
       }
       closePairDialog();
     } catch (error) {
@@ -1177,7 +1215,11 @@ export const MultiDeviceDialog = () => {
     remoteTargetDeviceId,
     pairedDevices,
   });
-  const pair = usePairDialogState(pairedDevices);
+  const pair = usePairDialogState(
+    pairedDevices,
+    remoteTargetDeviceId,
+    remoteOutputEnabled,
+  );
   const invite = useImportInviteState();
 
   const handleClose = () => {

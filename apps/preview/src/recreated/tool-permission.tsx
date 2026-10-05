@@ -43,7 +43,7 @@ const OverlayButton = ({
   return (
     <Box
       component="button"
-      onMouseDown={(e: React.MouseEvent) => {
+      onClick={(e: React.MouseEvent) => {
         e.stopPropagation();
         onMouseDown();
       }}

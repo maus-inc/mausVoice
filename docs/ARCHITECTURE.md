@@ -58,7 +58,7 @@ Supported providers (from `packages/types/src/apiKey.types.ts`): groq, openai, a
 
 ### Build system
 
-Turborepo + pnpm workspaces. From the repo root: `pnpm run build | lint | check-types | test` (each fans out across workspaces via turbo).
+Turborepo + pnpm workspaces. From the repo root: `pnpm run build && pnpm run lint && pnpm run check-types && pnpm run test` (each fans out across workspaces via turbo).
 
 ---
 

@@ -59,21 +59,36 @@ const assertWithinChunkSize = (text: string): string => {
  * would miss real sentence boundaries there and always fall through to the
  * word-boundary fallback.
  */
-const SENTENCE_TERMINATORS: ReadonlySet<string> = new Set([
-  ".",
-  "!",
-  "?",
-  "…",
-  "。",
-  "！",
-  "？",
-]);
+/**
+ * Every character that ends a sentence. The CJK forms belong here because a
+ * dictation can be mixed Latin and CJK.
+ *
+ * Three places used to spell this set out separately and two of them listed
+ * only `.!?`. A sentence ending in `。` was therefore not recognised as a
+ * sentence: it stayed one blob, and then `ensureSentencePunctuation` appended a
+ * second, ASCII, full stop to text that already had one. The regexes below are
+ * built from this list so that cannot happen again.
+ */
+const TERMINATOR_CHARS = [".", "!", "?", "…", "。", "！", "？"];
+
+const SENTENCE_TERMINATORS: ReadonlySet<string> = new Set(TERMINATOR_CHARS);
+
+const TERMINATOR_CLASS_SOURCE = `[${TERMINATOR_CHARS.map((char) =>
+  char.replace(/[\\^\]-]/g, "\\$&"),
+).join("")}]`;
+
+/** A sentence boundary is whitespace after a terminator and before a capital. */
+const SENTENCE_SPLIT_RE = new RegExp(
+  `(?<=${TERMINATOR_CLASS_SOURCE})\\s+(?=[A-Z0-9])`,
+  "g",
+);
+
+/** Not global, so `.test` carries no `lastIndex` between calls. */
+const CONTAINS_TERMINATOR_RE = new RegExp(TERMINATOR_CLASS_SOURCE);
+const ENDS_SENTENCE_RE = new RegExp(`${TERMINATOR_CLASS_SOURCE}$`);
 
 /** Matches every Unicode space separator, not just ASCII space. */
 const isSpace = (ch: string): boolean => ch.length > 0 && /\s/u.test(ch);
-
-const isHighSurrogate = (code: number): boolean =>
-  code >= 0xd800 && code <= 0xdbff;
 
 /**
  * Where `text` may be cut inside `[start, end)` without losing or corrupting
@@ -92,19 +107,62 @@ const isHighSurrogate = (code: number): boolean =>
  * pair — `slice` counts UTF-16 code units, so cutting at 15000 could otherwise
  * end a chunk on a lone high surrogate.
  */
-const findChunkCut = (text: string, start: number, end: number): number => {
+const findSentenceBoundary = (
+  text: string,
+  start: number,
+  end: number,
+): number | null => {
   for (let i = end - 1; i > start; i -= 1) {
     if (!SENTENCE_TERMINATORS.has(text[i])) continue;
     let afterSpace = i + 1;
     while (afterSpace < end && isSpace(text[afterSpace])) afterSpace += 1;
-    // A terminator only ends a sentence if something separates it from the
-    // next word. "3.5" and "www.example.com" are not sentence boundaries.
-    if (afterSpace >= end || afterSpace > i + 1) return afterSpace;
+    // A separator inside the window settles it. "3.5" and "www.example.com" are
+    // not sentence boundaries because nothing separates them.
+    if (afterSpace > i + 1) return afterSpace;
+    // The window edge is not a separator. When the terminator is the last
+    // character of the chunk, the character after it belongs to the NEXT chunk,
+    // so cutting here would hand that chunk a false sentence start -- which
+    // strips a connective or capitalises a word that was mid-sentence. The edge
+    // still qualifies when what follows is a space, or when there is nothing after
+    // it at all; only a non-space character disqualifies it, because then the two
+    // halves are the same word.
+    if (
+      afterSpace >= end &&
+      (afterSpace >= text.length || isSpace(text[afterSpace]))
+    ) {
+      return afterSpace;
+    }
   }
+  return null;
+};
+
+export const findChunkCut = (
+  text: string,
+  start: number,
+  end: number,
+): number => {
+  const sentence = findSentenceBoundary(text, start, end);
+  if (sentence !== null) return sentence;
   for (let i = end - 1; i > start; i -= 1) {
     if (isSpace(text[i])) return i;
   }
-  if (isHighSurrogate(text.charCodeAt(end - 1))) return end - 1;
+  // Only a single token longer than the whole window reaches this tier. Step back
+  // when the boundary falls between the two units of an astral character, so the
+  // chunk never ends on half of one.
+  //
+  // Asked from both sides, for the same reason as `capLength` in
+  // `packages/utilities/src/error.ts`: `codePointAt` combines a lead with the trail
+  // after it, so reading `end - 1` alone returns the finished character and the
+  // split becomes invisible. A trail at `end` is that pair's second half, and an
+  // unpaired lead at `end - 1` is what `codePointAt` there still reports unchanged.
+  const atEnd = end < text.length ? (text.codePointAt(end) as number) : -1;
+  const beforeEnd = text.codePointAt(end - 1) as number;
+  if (
+    (atEnd >= 0xdc00 && atEnd <= 0xdfff) ||
+    (beforeEnd >= 0xd800 && beforeEnd <= 0xdbff)
+  ) {
+    return end - 1;
+  }
   return end;
 };
 
@@ -187,7 +245,17 @@ const FILLER_RE = /\b(?:u[hm]+|er+|ah+|h?mm+)\b[,\s]*/gi;
 // as "..., you know" does. Only punctuation that closes the phrase counts: the
 // word after the marker still has to be nothing, a comma, or end of text, so
 // "He said, you know it works." keeps its "you know" as the subject.
-const EXTRA_FILLER_RE = /(?:^|,\s*)you know\b\s*(?:,\s*|[.!?]+|$)/gi;
+//
+// The two anchors cannot share a tail. Mid-text one requires a preceding comma,
+// so a full stop after the marker proves the marker was mid-clause. At `^` there
+// is no preceding comma to require, and accepting `[.!?]+` there deleted a whole
+// opening sentence: "You know. It works." styled to "It works.", which is the
+// silent data loss this module ranks above a mispunctuated sentence. A full stop
+// immediately after a LEADING marker means the marker was its own sentence and
+// the words after it began a new one, so `^` accepts only a comma or the end of
+// the text -- the two shapes that really do make it a discourse marker.
+const EXTRA_FILLER_RE =
+  /(^you know\b\s*(?:,\s*|$))|,\s*you know\b\s*(?:,\s*|[.!?]+|$)/gi;
 const EXTRA_FILLER_COMMA_RE = /(?:^|\s)(?:I mean|so|well)\s*,\s*/gi;
 const SO_WELL_LEADING_RE = /^(?:so|well|yeah|okay|ok)\b[,\s]*/i;
 
@@ -220,8 +288,6 @@ const CONTRACTION_MAP: Record<string, string> = {
   "you're": "you are",
   "we're": "we are",
   "they're": "they are",
-  "it's": "it is",
-  "there's": "there is",
   "I've": "I have",
   "you've": "you have",
   "we've": "we have",
@@ -230,19 +296,50 @@ const CONTRACTION_MAP: Record<string, string> = {
   "you'll": "you will",
   "we'll": "we will",
   "they'll": "they will",
-  "I'd": "I would",
-  "you'd": "you would",
-  "we'd": "we would",
-  "they'd": "they would",
   "let's": "let us",
-  "what's": "what is",
-  "who's": "who is",
 };
+
+// `contraction.replace("'", "'?")` makes the APOSTROPHE optional, so the pattern
+// for `we're` also matched `were`, `it's` matched `its`, and so on. Formal mode
+// rewrote ordinary sentences accordingly: "we were ready" came back as "we we are
+// ready", "the dog wagged its tail" as "the dog wagged it is tail".
+//
+// Making the apostrophe optional is right for most entries, because their bare forms
+// are not words and tolerating them is what catches speech-to-text output like
+// "dont stop". It is wrong for the four below, whose bare form IS a word, so for those
+// the apostrophe is required. Both directions are deliberate: failing to expand a typo
+// costs something that still reads correctly, whereas matching a bare word rewrites a
+// sentence the speaker did not say.
+//
+// This set arbitrates one thing only: whether the apostrophe must be there. It cannot
+// pick between two readings of an apostrophised form, so the entries whose two
+// readings differ are not in the map at all rather than being resolved here. Those are
+// the four `'d` entries and the four ambiguous `'s` ones -- `it's`, `there's`, `what's`,
+// `who's` -- because `'d` is *would* or *had* and those `'s` are *is* or *has*.
+//
+// Naming them as "the `'d` family and the `'s` family" was wrong and read as though no
+// `'s` form survived, which a grep contradicts: `let's` is still in the map at :289,
+// because it has exactly one reading. It is the bare `lets` that collides, and that is
+// what its entry in this set below is for.
+//
+// The `?` sits between the stem and the final letter, not after the whole word, so
+// `can't` compiles to `\bcan'?t\b` and never matched a bare `can`. That is why `can't`
+// is absent from this list despite `can` being a word.
+// Only membership is ever tested, and the bare form is already written in each
+// entry's comment, so this is a set rather than a map whose values nothing reads.
+const BARE_STEMS_THAT_ARE_WORDS = new Set([
+  "I'll", // "he is ill" became "he is I will"
+  "let's", // "he lets go" became "he let us go"
+  "we'll", // "as well as that" became "as we will as that"
+  "we're", // "we were ready" became "we we are ready"
+]);
 
 const CONTRACTION_RES: Array<[RegExp, string]> = Object.entries(
   CONTRACTION_MAP,
 ).map(([contraction, expansion]) => {
-  const pattern = contraction.replace("'", "'?");
+  const pattern = BARE_STEMS_THAT_ARE_WORDS.has(contraction)
+    ? contraction
+    : contraction.replace("'", "'?");
   return [new RegExp(String.raw`\b${pattern}\b`, "gi"), expansion];
 });
 
@@ -265,8 +362,6 @@ const SYMBOL_MAP: Array<[RegExp, string]> = [
   [/\bnew line\b/gi, "\n"],
   [/\bnew paragraph\b/gi, "\n\n"],
 ];
-
-const SENTENCE_SPLIT_RE = /(?<=[.!?])\s+(?=[A-Z0-9])/g;
 
 const capitalizeFirst = (s: string): string =>
   s.length === 0 ? s : s[0].toUpperCase() + s.slice(1);
@@ -291,17 +386,28 @@ const deleteLeadingPhrase = (text: string, phrase: RegExp): string =>
     },
   );
 
-const ensureSentencePunctuation = (sentence: string): string => {
+/**
+ * `isFinal` is false for a chunk that continues into the next one, and the
+ * distinction matters because the caller rejoins chunks without consulting a
+ * terminator between them. Appending a stop to a chunk that ends mid-sentence invents
+ * a sentence break the speaker did not make: a 26,399-character dictation with no
+ * terminator came back with a full stop at the seam, and the following chunk was
+ * capitalized as though a new sentence began there.
+ */
+const ensureSentencePunctuation = (
+  sentence: string,
+  isFinal = true,
+): string => {
   const trimmed = sentence.trim();
   if (!trimmed) return "";
-  if (/[.!?]$/.test(trimmed)) return trimmed;
-  return `${trimmed}.`;
+  if (ENDS_SENTENCE_RE.test(trimmed)) return trimmed;
+  return isFinal ? `${trimmed}.` : trimmed;
 };
 
 const splitIntoSentences = (text: string): string[] => {
   const normalized = text.replace(/\s+/g, " ").trim();
   if (!normalized) return [];
-  if (/[.!?]/.test(normalized)) {
+  if (CONTAINS_TERMINATOR_RE.test(normalized)) {
     return normalized
       .split(SENTENCE_SPLIT_RE)
       .map((s) => s.trim())
@@ -341,13 +447,16 @@ const applySymbolReplacements = (text: string): string => {
   return out;
 };
 
-const fixCapitalizationAndPunctuation = (text: string): string => {
+const fixCapitalizationAndPunctuation = (
+  text: string,
+  isFinal = true,
+): string => {
   const sentences = splitIntoSentences(text);
   if (sentences.length === 0) return text.trim();
   const isEnglishLike = /[a-zA-Z]/.test(text);
   if (!isEnglishLike) return text.trim();
   return sentences
-    .map((s) => capitalizeFirst(ensureSentencePunctuation(s)))
+    .map((s) => capitalizeFirst(ensureSentencePunctuation(s, isFinal)))
     .join(" ");
 };
 
@@ -361,14 +470,14 @@ const breakIntoParagraphs = (text: string, sentencesPerPara = 3): string => {
   return paras.join("\n\n");
 };
 
-const toPolished = (raw: string): string => {
+const toPolished = (raw: string, isFinal = true): string => {
   const guarded = assertWithinChunkSize(raw);
   let text = guarded.trim();
   if (!text) return text;
   text = applySymbolReplacements(text);
   text = fixSelfCorrections(text);
   text = removeFillerWords(text, true);
-  text = fixCapitalizationAndPunctuation(text);
+  text = fixCapitalizationAndPunctuation(text, isFinal);
   text = breakIntoParagraphs(text, 3);
   text = text.replaceAll("—", "-");
   return text;
@@ -456,9 +565,10 @@ const toEmail = (
   {
     liftGreeting,
     liftClosing,
-  }: { liftGreeting: boolean; liftClosing: boolean },
+    isFinal,
+  }: { liftGreeting: boolean; liftClosing: boolean; isFinal: boolean },
 ): string => {
-  const polished = toPolished(assertWithinChunkSize(raw));
+  const polished = toPolished(assertWithinChunkSize(raw), isFinal);
   const sentences = splitIntoSentences(polished);
   if (sentences.length === 0) return polished;
 
@@ -476,7 +586,7 @@ const toEmail = (
 const CHAT_CONNECTIVE_RE =
   /\b(?:furthermore|moreover|additionally|consequently)\b[,\s]+(\S)/gi;
 
-const toChat = (raw: string): string => {
+const toChat = (raw: string, isFinal = true): string => {
   const guarded = assertWithinChunkSize(raw);
   let text = guarded.trim();
   text = applySymbolReplacements(text);
@@ -491,12 +601,44 @@ const toChat = (raw: string): string => {
     .join(" ")
     .replace(/\s{2,}/g, " ")
     .trim();
-  if (joined && !/[.!?]$/.test(joined)) joined += ".";
+  // Same seam problem as `ensureSentencePunctuation`, and this one appends the stop
+  // directly rather than going through the shared helper. The terminator test is
+  // `ENDS_SENTENCE_RE` rather than a bare `[.!?]`, so a dictation already ending in
+  // `…`, `。`, `！` or `？` does not pick up a second, ASCII, stop on a CJK sentence.
+  if (isFinal && joined && !ENDS_SENTENCE_RE.test(joined)) joined += ".";
   return joined;
 };
 
-/** Casual register that has no formal equivalent and is simply dropped. */
-const INFORMAL_RE = /\b(?:gonna|wanna|gotta|kinda|sorta|yeah|yep|nope)\b/gi;
+/**
+ * Casual register, rewritten rather than dropped. Deleting was the first version
+ * and it was wrong three ways over. `nope` has a formal equivalent -- `no` -- so
+ * deleting it inverts a negation rather than changing register. And the elided-`to`
+ * forms (`gonna`, `wanna`, `gotta`) left a verb with nothing to attach to, because
+ * `expandContractions` has already rewritten "I'm" as "I am" by the time this
+ * runs: "I'm gonna go now" became "I am go now." A deletion also leaves punctuation
+ * behind, and `fixCapitalizationAndPunctuation` capitalizes the first character of
+ * each sentence, which `capitalizeFirst` leaves alone when it is a comma -- so a
+ * comma that moved to the front survives as its own defect, at any sentence start
+ * rather than only at index 0.
+ */
+const INFORMAL_REWRITES: ReadonlyArray<readonly [RegExp, string]> = [
+  [/\bgonna\b/gi, "going to"],
+  [/\bwanna\b/gi, "want to"],
+  [/\bgotta\b/gi, "got to"],
+  [/\bkinda\b/gi, "somewhat"],
+  [/\bsorta\b/gi, "somewhat"],
+  [/\byeah\b/gi, "yes"],
+  [/\byep\b/gi, "yes"],
+  [/\bnope\b/gi, "no"],
+];
+
+const rewriteInformalRegister = (text: string): string => {
+  let out = text;
+  for (const [pattern, replacement] of INFORMAL_REWRITES) {
+    out = out.replace(pattern, replacement);
+  }
+  return out;
+};
 
 const expandContractions = (text: string): string => {
   let out = text;
@@ -509,12 +651,13 @@ const expandContractions = (text: string): string => {
   return out;
 };
 
-const toFormal = (raw: string): string => {
-  const text = expandContractions(toPolished(assertWithinChunkSize(raw)))
-    .replace(INFORMAL_RE, "")
+const toFormal = (raw: string, isFinal = true): string => {
+  const text = rewriteInformalRegister(
+    expandContractions(toPolished(assertWithinChunkSize(raw), isFinal)),
+  )
     .replace(/\s{2,}/g, " ")
     .trim();
-  return fixCapitalizationAndPunctuation(text);
+  return fixCapitalizationAndPunctuation(text, isFinal);
 };
 
 /** Politeness openers that add nothing once the ask has been extracted. */
@@ -522,7 +665,7 @@ const PROMPT_OPENER_RE = /^(?:hey|hi|hello|so|well|um|uh)\b[,\s]*/i;
 const PROMPT_REQUEST_RE =
   /^(?:can you|could you|would you|please|I need you to|I want you to|I need|I want)\b\s*/i;
 
-const toPrompt = (raw: string): string => {
+const toPrompt = (raw: string, isFinal = true): string => {
   const guarded = assertWithinChunkSize(raw);
   let text = guarded.trim();
   text = applySymbolReplacements(text);
@@ -536,7 +679,10 @@ const toPrompt = (raw: string): string => {
   const out = text.trim() || guarded.trim();
   if (!out) return out;
   const cased = capitalizeFirst(out);
-  return /[.!?]$/.test(cased) ? cased : `${cased}.`;
+  // This appends directly rather than going through `ensureSentencePunctuation`, so
+  // it needs `isFinal` as well, and it needs the same CJK-aware terminator test: a
+  // bare `[.!?]` left "第一句。" coming back as "第一句。.".
+  return isFinal && !ENDS_SENTENCE_RE.test(cased) ? `${cased}.` : cased;
 };
 
 const EDGE_PUNCTUATION_RE = /[,.;\s]/;
@@ -576,7 +722,14 @@ const toBullets = (raw: string): string => {
     const parts = s.includes(";") ? s.split(";") : [s];
     for (const p of parts) {
       const trimmed = stripEdgePunctuation(p);
-      if (trimmed.length > 2) ideas.push(trimmed);
+      // An idea is anything with a letter or a digit in it. A length threshold
+      // cannot decide this: at 2 characters it drops "no", and because the
+      // fallback below only applies when EVERY fragment was short, one longer
+      // sibling was enough to delete the short ones -- so "Go; no; stop." became a
+      // single bullet reading "Stop". The threshold that was here did drop a lone em
+      // dash and a bare hyphen, but only as a side effect of counting characters; the
+      // test names the property instead.
+      if (/[\p{L}\p{N}]/u.test(trimmed)) ideas.push(trimmed);
     }
   }
 
@@ -591,7 +744,7 @@ const toBullets = (raw: string): string => {
   return bullets.join("\n");
 };
 
-const toConcise = (raw: string): string => {
+const toConcise = (raw: string, isFinal = true): string => {
   const guarded = assertWithinChunkSize(raw);
   let text = guarded.trim();
   text = applySymbolReplacements(text);
@@ -602,7 +755,7 @@ const toConcise = (raw: string): string => {
     text = text.replace(re, repl);
   }
   text = text.replace(/\s{2,}/g, " ").trim();
-  return fixCapitalizationAndPunctuation(text);
+  return fixCapitalizationAndPunctuation(text, isFinal);
 };
 
 const toNotes = (raw: string): string => {
@@ -660,24 +813,28 @@ const applyStyleToChunk = (
   position: { isFirst: boolean; isLast: boolean },
 ): string => {
   switch (toneId) {
+    // `POLISHED_TONE_ID` IS the string "default" (`tone.utils.ts:8`), so the
+    // `case "default":` that used to sit beside this one was a second label for the
+    // same value and could never be reached. Naming the constant only is what keeps
+    // the value in one place.
     case POLISHED_TONE_ID:
-    case "default":
-      return toPolished(chunk);
+      return toPolished(chunk, position.isLast);
     case EMAIL_TONE_ID:
       return toEmail(chunk, {
         liftGreeting: position.isFirst,
         liftClosing: position.isLast,
+        isFinal: position.isLast,
       });
     case CHAT_TONE_ID:
-      return toChat(chunk);
+      return toChat(chunk, position.isLast);
     case FORMAL_TONE_ID:
-      return toFormal(chunk);
+      return toFormal(chunk, position.isLast);
     case PROMPT_TONE_ID:
-      return toPrompt(chunk);
+      return toPrompt(chunk, position.isLast);
     case BULLETS_TONE_ID:
       return toBullets(chunk);
     case CONCISE_TONE_ID:
-      return toConcise(chunk);
+      return toConcise(chunk, position.isLast);
     case NOTES_TONE_ID:
       return toNotes(chunk);
     default:
@@ -699,8 +856,19 @@ const applyStyleToChunk = (
  * The cap is now a chunk size rather than a truncation point.
  *
  * `toEmail` is the only transform that carries state across its input — it lifts
- * a greeting off the front and a sign-off off the back — so it is the only one
- * told where its chunk sits in the dictation.
+ * a greeting off the front and a sign-off off the back — so it needed to be told
+ * where its chunk sits for that reason.
+ *
+ * The terminator a chunk appends also has to be suppressed on a chunk that continues
+ * into the next one, whichever tone produced it. That is the second reason a transform
+ * takes `isLast`, and it is the reason `toPolished`, `toChat`, `toFormal`, `toConcise`,
+ * `toPrompt` and `toEmail` all take it now.
+ *
+ * Not every transform is told, and saying so was the overstatement: `toBullets` and
+ * `toNotes` are called with the chunk alone. Neither appends a sentence terminator —
+ * one joins with newlines and the other restructures into notes — so there is nothing
+ * for `isLast` to suppress. The rule is "every transform that appends a terminator",
+ * not "every transform".
  */
 export const applyFastStyle = (
   rawTranscript: string,

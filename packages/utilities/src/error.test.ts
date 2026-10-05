@@ -1371,6 +1371,50 @@ describe("one credential-label rule on both paths", () => {
     ).toBe("azure_api_key:[redacted] retry in 5s");
   });
 
+  it("redacts a qualified label spelled with SPACES on every path", () => {
+    // `QUALIFIED` above joins every tier-2 label with `_`, so the whole tier-2
+    // space-spelling went unpinned -- and leaked. Tier 1 built its names with
+    // `OPTIONAL_SEPARATOR` (`[ _-]?`, so a space is admitted), while tier 2 hardcoded
+    // `[_-]` in both places it wrote a separator. So `client secret: abc` redacted
+    // and `signing key: abc` printed in the clear, in a message AND as an object
+    // key. The file states the opposite as an invariant at error.ts:29-30 --
+    // "`OPTIONAL_SEPARATOR` is the only place a separator between two words of a name
+    // is written" -- and it is the comment describing exactly this class of leak:
+    // "`client[_-]?secret` had no way to spell a space ... `client secret` redacted in
+    // a message and printed in the clear as an object key".
+    //
+    // Same labels, same three paths, joined with a space instead.
+    const SPACE_QUALIFIED = [
+      ["openai", "api", "key"],
+      ["azure", "api", "key"],
+      ["signing", "key"],
+      ["vault", "key"],
+      ["encryption", "key"],
+      ["master", "key"],
+      ["oauth", "token"],
+      ["service", "account", "key"],
+      ["aws", "secret", "access", "key"],
+      ["azure", "subscription", "key"],
+      ["access", "key"],
+      ["auth", "token"],
+      ["user", "key"],
+      ["account", "key"],
+      ["license", "key"],
+    ].map((words) => words.join(" "));
+
+    for (const label of SPACE_QUALIFIED) {
+      expect(redactSensitiveTokens(labelled(label, VALUE))).toBe(
+        `${label}:[redacted]`,
+      );
+      expect(unknownToMessage(jsonBody(label, VALUE))).toBe(
+        `{"${label}":"[redacted]"}`,
+      );
+      expect(unknownToMessage({ [label]: VALUE })).toBe(
+        `{"${label}":"[redacted]"}`,
+      );
+    }
+  });
+
   it("redacts a qualified label on every path, not only the text path", () => {
     // The JSON path was strictly WORSE than the text path on this shape. Every
     // one of these redacted in a message and reached `unknownToMessage` in the

@@ -5,7 +5,7 @@ import {
   debug as tauriDebug,
   attachConsole,
 } from "@tauri-apps/plugin-log";
-import { redactObjectSync } from "./redaction.utils";
+import { redactObjectSync, redactStringValue } from "./redaction.utils";
 type Logger = {
   info(...args: unknown[]): void;
   warning(...args: unknown[]): void;
@@ -83,7 +83,12 @@ const stringify = (args: unknown[]): string =>
   args
     .map((arg) => {
       if (typeof arg === "string") return arg;
-      if (arg instanceof Error) return arg.stack ?? arg.message;
+      // An Error reaches the sink as its own stack, so it skips `serializeForLog`
+      // and therefore skipped the masker entirely: the same secret that is
+      // `[redacted-secret]` inside an object was logged verbatim whenever a caller
+      // passed the failure itself. Scrub the text in place so the stack survives.
+      if (arg instanceof Error)
+        return redactStringValue(arg.stack ?? arg.message);
       try {
         return serializeForLog(arg);
       } catch {
@@ -141,12 +146,31 @@ export const initLogging = async (): Promise<void> => {
   await attachConsole();
 
   window.onerror = (_event, source, lineno, colno, error) => {
+    // The message can carry a provider key in a fetch failure, and this handler is
+    // the one place an uncaught error is rendered without going through `stringify`,
+    // so it is scrubbed here too. Scope worth stating: `redactStringValue` matches
+    // prefixed key shapes (`sk-`, `gsk-`, `ghp_`, ...), so a credential carried in a
+    // query parameter or a header is still not matched. Widening that pattern is a
+    // change to the shared scrubber, not to this call site.
     logger.error(
-      `Uncaught error: ${error?.message ?? "unknown"} at ${source}:${lineno}:${colno}`,
+      `Uncaught error: ${redactStringValue(error?.message ?? "unknown")} at ${source}:${lineno}:${colno}`,
     );
   };
 
   window.onunhandledrejection = (event) => {
-    logger.error(`Unhandled rejection: ${event.reason}`);
+    // `String(reason)` is evaluated while the argument is being built, and it
+    // throws for an object whose `toString` throws. That escape would leave this
+    // handler and surface as an unhandled error in the error handler, so the
+    // rendering is done first and on its own terms.
+    let rendered: string;
+    try {
+      rendered =
+        event.reason instanceof Error
+          ? (event.reason.stack ?? event.reason.message)
+          : String(event.reason);
+    } catch {
+      rendered = "[reason could not be rendered]";
+    }
+    logger.error(`Unhandled rejection: ${redactStringValue(rendered)}`);
   };
 };

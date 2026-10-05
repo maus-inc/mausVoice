@@ -22,6 +22,13 @@ export const EditWatchSideEffects = () => {
   const enabled = useAppStore(
     (state) => getMyUserPreferences(state)?.autoLearnFromEditsEnabled ?? false,
   );
+  const proposal = useAppStore((state) => state.autoLearn.proposal);
+  // Read through a ref so the effect below keeps depending on `enabled` alone. Adding
+  // `proposal` to its deps would re-run `endEditWatch` every time a proposal is cleared.
+  const proposalRef = useRef(proposal);
+  useEffect(() => {
+    proposalRef.current = proposal;
+  }, [proposal]);
 
   useEffect(() => {
     if (enabled) {
@@ -33,11 +40,32 @@ export const EditWatchSideEffects = () => {
     // inside the click grace window it could add a term from an earlier prompt.
     // Dismissing it with the watch leaves nothing actionable to click.
     //
-    // The dismiss is unconditional rather than gated on a proposal being live:
-    // the toast is only ever shown for a proposal, and a proposal that is not in
-    // the store any more is exactly the case where a leftover toast would be
-    // stranded with no way to tell it apart.
-    runToast(dismissToast());
+    // Gated on a proposal actually being live, because this toast channel is not
+    // private to auto-learn. `dismissToast()` takes no argument and enqueues a bare
+    // `dismiss_toast`, and `runToast`/`showToast` are shared by `pill-review.actions`,
+    // `transcriptions.actions`, `DictationSideEffects` and `composer.utils` -- so an
+    // unconditional dismiss clears whichever single toast happens to be on screen.
+    //
+    // The clearest consequence was at startup: this effect runs on mount when the setting is
+    // off, which meant launching the app with auto-learn disabled destroyed whatever toast was
+    // already up, including an update-available notice. Turning the setting off mid-session had
+    // the same effect on an unrelated progress or pill-review toast.
+    //
+    // It is still read before `endEditWatch()` on the next line, so the proposal this is here to
+    // dismiss is the one that was live a moment ago -- which is the case the original comment
+    // wanted, and the case the existing "disabled with a visible proposal" test covers.
+    //
+    // One case this misses, on purpose: the proposal can expire on its TTL while its toast is
+    // still on screen, because the toast queue is serialised behind every other toast
+    // (`edit-watch.actions.ts:136`). Turning the setting off in that window leaves that toast up
+    // until its own duration runs out. Dropping the gate would fix it and reintroduce the bug
+    // above, and the toast channel is shared, so there is no way to ask "is the visible toast
+    // ours?" -- `runToast`/`showToast` carry no owner. `recentlyLapsedProposal` knows a proposal
+    // lapsed, but it is module-private and is scoped to honouring a click, not to identifying a
+    // toast. Worth the trade: a prompt lingering a few seconds beats clearing an update notice.
+    if (proposalRef.current) {
+      runToast(dismissToast());
+    }
     endEditWatch();
   }, [enabled]);
 

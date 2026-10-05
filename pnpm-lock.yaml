@@ -470,7 +470,7 @@ importers:
         specifier: ~2.10.1
         version: 2.10.1
       '@types/react':
-        specifier: 19.2.18
+        specifier: '19.2.18'
         version: 19.2.18
       react:
         specifier: ^19.2.8

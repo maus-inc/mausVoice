@@ -3,6 +3,7 @@ import {
   FAST_STYLE_MAX_INPUT_CHARS,
   applyFastStyle,
   canApplyFastStyle,
+  findChunkCut,
   measureFastStyleTruncation,
   stripEdgePunctuation,
 } from "./fast-style.utils";
@@ -264,7 +265,15 @@ describe("applyFastStyle fast local transforms", () => {
     // "You know" starting a sentence lost its subject and the tail of that
     // sentence was welded onto the end of the previous one. A full stop is not
     // a safe anchor because the words after it are ordinary English.
+    // The first case is the shape that was still broken: `You know.` at the START of
+    // the text, closed by a full stop. Mid-text the guard needs a preceding comma
+    // (`EXTRA_FILLER_RE`'s `,\s*` alternative), so a full stop there cannot delete a
+    // subject. At `^` there is no preceding comma to require, so the phrase closed
+    // itself and the whole opening sentence went with it -- "You know. It works."
+    // styled to "It works.", which is silent data loss, the harm this module ranks
+    // above a mispunctuated sentence.
     for (const raw of [
+      "You know. It works.",
       "It works. You know it works.",
       "Shipped. You know the deadline.",
       "Green. You know the drill.",
@@ -481,14 +490,40 @@ describe("measureFastStyleTruncation", () => {
   });
 
   it("agrees with applyFastStyle, which styles the whole over-length input", () => {
-    const raw = "word ".repeat(6000);
+    // The input used to be `"word ".repeat(6000)`, which made this assertion pass
+    // by ONE character and for the wrong reason. The styled output was 15001 chars
+    // against a cap of 15000, so `toBeGreaterThan(cap)` held -- while
+    // `REPEATED_WORD_RE` had collapsed "word word" pairs and HALF the words were
+    // gone, 3000 of 6000. It only held because commit 98ea031d appended a period at
+    // each chunk seam; that commit removed one and the output became exactly 15000,
+    // which is where this case started failing. The assertion was too weak to notice
+    // the loss either way.
+    //
+    // Two things are wrong with that. The input is pathological for this
+    // measurement, because the repeat rule is doing the halving, not the chunk
+    // size. And `length > cap` says nothing about coverage: 15001 characters of
+    // repeated filler is not a styled dictation.
+    //
+    // So the input is a realistic sentence and the assertion counts coverage. A
+    // distinct marker per sentence makes a dropped tail detectable, which a length
+    // comparison cannot do.
+    const count = 700;
+    const raw = Array.from(
+      { length: count },
+      (_, i) => `The meeting on day ${i} ran long and covered the roadmap. `,
+    ).join("");
+    expect(raw.length).toBeGreaterThan(FAST_STYLE_MAX_INPUT_CHARS);
+
     // The reported loss and the applied loss must not disagree.
     expect(measureFastStyleTruncation(raw)).toBeNull();
-    // And nothing may be missing from what comes back, which is the half of the
-    // agreement that a null report alone would not prove.
-    expect(applyFastStyle(raw, "default").length).toBeGreaterThan(
-      FAST_STYLE_MAX_INPUT_CHARS,
-    );
+
+    // Every sentence has to be present in the output, tail included. This is the
+    // half of the agreement that a null report alone would not prove.
+    const out = applyFastStyle(raw, "default");
+    for (let i = 0; i < count; i += 1) {
+      expect(out).toContain(`day ${i} ran long`);
+    }
+    expect(out).toContain(`day ${count - 1} ran long`);
   });
 });
 
@@ -549,6 +584,89 @@ describe("sentence-initial phrase removal keeps the next capital", () => {
  * chunk size used to be `slice`d to the cap, so the styled output was a prefix
  * of the input and everything after 15,000 characters was delivered nowhere.
  */
+describe("CJK sentence terminators are recognised everywhere ASCII ones are", () => {
+  // `。`, `！`, `？` and `…` ended a sentence for `findSentenceBoundary` but not
+  // for `ensureSentencePunctuation` or `splitIntoSentences`, which each spelled out
+  // `.!?` by hand. A dictation ending in `。` therefore came back as `。.` -- two
+  // full stops, one of them ASCII. Every terminator list now derives from one
+  // `TERMINATOR_CHARS`.
+  const cases: [string, string][] = [
+    ["。", "第一句。"],
+    ["！", "第一句！"],
+    ["？", "第一句？"],
+    ["…", "等等…"],
+  ];
+
+  it.each(cases)(
+    "does not append an ASCII stop after %s",
+    (_mark, sentence) => {
+      // The defect shows through the public entry point: the styled text must not end
+      // in one terminator followed by a second, different one.
+      expect(applyFastStyle(sentence, "default")).not.toMatch(
+        /[.!?…。！？][.!?]$/,
+      );
+    },
+  );
+
+  it("still appends a stop when there is no terminator at all", () => {
+    // The control. Without it the cases above would also pass if the function had
+    // simply stopped appending anything.
+    expect(applyFastStyle("no terminator here", "default")).toMatch(/[.!?]$/);
+  });
+
+  it("splits a mixed Latin and CJK sentence on the CJK full stop", () => {
+    // `SENTENCE_SPLIT_RE` needs whitespace plus a capital or digit after it, so the
+    // next sentence here starts with an ASCII capital. Before the fix the `。` was
+    // invisible to it and the whole input stayed one blob.
+    const out = applyFastStyle("Mixed Latin 和中文。 Next one", "default");
+    expect(out).toContain("Mixed");
+    expect(out).toContain("Next");
+  });
+});
+
+describe("chunk boundaries never land where the next chunk opens mid-word", () => {
+  it("keeps scanning past a terminator that ends the window", () => {
+    // Every other chunking test here puts a SPACE after the terminator, so none
+    // of them reaches the case where a terminator is the LAST character of the
+    // window and the character after it belongs to the next chunk. Returning
+    // there hands that chunk a false sentence start, which strips a connective
+    // or capitalises a word that was mid-sentence.
+    //
+    // "First sentence here. " earlier in the window is what makes this
+    // observable: there is a real boundary to fall back to, so the correct cut is
+    // that one rather than the window edge. Measured on this input, the version
+    // that returned the window edge unconditionally cut at 15000 and this cut is
+    // 21.
+    const early = "First sentence here. ";
+    const text = `${early}${"a".repeat(
+      FAST_STYLE_MAX_INPUT_CHARS - early.length - 1,
+    )}.com`;
+    // The window's last character is the terminator and the next is not a space,
+    // so the pair really does sit on the boundary.
+    expect(text[FAST_STYLE_MAX_INPUT_CHARS - 1]).toBe(".");
+    expect(text[FAST_STYLE_MAX_INPUT_CHARS]).toBe("c");
+    expect(findChunkCut(text, 0, FAST_STYLE_MAX_INPUT_CHARS)).toBe(
+      early.length,
+    );
+  });
+
+  it("still takes a real boundary that falls on the window edge", () => {
+    // The control for the case above: with a space after the terminator there is
+    // nothing to keep scanning for, so the edge IS a sentence end and must be
+    // taken. Without this the previous test would also pass if the scan simply
+    // refused to cut on a window edge.
+    const early = "First sentence here. ";
+    const text = `${early}${"a".repeat(
+      FAST_STYLE_MAX_INPUT_CHARS - early.length - 1,
+    )}. `;
+    expect(text[FAST_STYLE_MAX_INPUT_CHARS - 1]).toBe(".");
+    expect(text[FAST_STYLE_MAX_INPUT_CHARS]).toBe(" ");
+    expect(findChunkCut(text, 0, FAST_STYLE_MAX_INPUT_CHARS)).toBe(
+      FAST_STYLE_MAX_INPUT_CHARS,
+    );
+  });
+});
+
 describe("over-length dictation keeps every character", () => {
   /** Long enough to need several chunks at the current chunk size. */
   const overCap = (repeats: number) => "dictation word ".repeat(repeats);
@@ -786,6 +904,106 @@ describe("bullet edge stripping", () => {
   });
 });
 
+describe("an ambiguous contraction is left alone rather than guessed at", () => {
+  it("leaves both ambiguous families alone", () => {
+    // Two families in CONTRACTION_MAP have two readings and nothing in the sentence
+    // to tell them apart. `'d` is *would* in "I'd like" and *had* in "I'd already
+    // left"; `'s` is *is* in "it's been" and *has* in "it's been a long day" -- both
+    // readings of that one phrase, which is the point.
+    //
+    //   "i'd already left the office" -> "I would already left the office."
+    //   "it's been a long day"        -> "It is been a long day."
+    //
+    // The module's own rule for a match that might be wrong is the one already written
+    // above the map: "failing to expand a typo costs something that still reads
+    // correctly, whereas matching a bare word rewrites a sentence the speaker did not
+    // say." A contraction that guesses the wrong sense is on the second side of that
+    // line. Leaving it unexpanded still reads correctly and cannot mis-state it.
+    //
+    // Guessing is not available either: it needs a participle lexicon this module
+    // deliberately does not carry, and "I'd rather", "I'd better", "I'd love" and "I'd
+    // prefer" all take *would*, so a lookahead would have to know that list too.
+    for (const input of [
+      "i'd already left the office",
+      "we'd already shipped it",
+      "you'd told me twice",
+      "they'd finished by then",
+      "i'd seen it before",
+      "it's been a long day",
+      "there's been a problem",
+      "what's been happening",
+      "who's been helping",
+    ]) {
+      expect(applyFastStyle(input, "formal")).toBe(
+        `${input[0].toUpperCase()}${input.slice(1)}.`,
+      );
+    }
+
+    // The unambiguous contractions are untouched by that: one reading each, and the
+    // bare-form collisions are handled by requiring the apostrophe.
+    for (const [input, expected] of [
+      ["we're right", "We are right."],
+      ["we'll see", "We will see."],
+      ["they're here", "They are here."],
+      ["let's go", "Let us go."],
+      ["I'll be there", "I will be there."],
+    ] as const) {
+      expect(applyFastStyle(input, "formal")).toBe(expected);
+    }
+  });
+});
+
+describe("a casual word is rewritten, not deleted", () => {
+  it("covers every case in this note", () => {
+    // `INFORMAL_RE` matched `gonna|wanna|gotta|kinda|sorta|yeah|yep|nope` and every
+    // match was deleted. Deleting is only harmless for a word with nothing to say:
+    // `nope` inverts a negation, and the `-in'g` forms left a verb with nothing to
+    // attach to once `expandContractions` had already turned "I'm" into "I am".
+    //
+    //   "nope, the report is correct" -> ", the report is correct."
+    //   "im gonna go now"             -> "I am go now."
+    //   "i wanna go now"              -> "I go now."
+    //   "you gotta be there"          -> "You be there."
+    //
+    // The first is the worst: `no` IS the formal equivalent of `nope`, so this is not
+    // a register change, it is the opposite claim. It also left a leading comma that
+    // `fixCapitalizationAndPunctuation` cannot repair: it capitalizes the first
+    // character of each sentence, and `capitalizeFirst` leaves a comma alone. That
+    // holds at any sentence start, not only at index 0 -- "we shipped it. nope,
+    // that is wrong" came back as "We shipped it. , that is wrong."
+    for (const [input, expected] of [
+      ["nope, the report is correct", "No, the report is correct."],
+      ["nope that's right", "No that's right."],
+      // Mid-sentence `yeah`, not leading. `SO_WELL_LEADING_RE` strips one at index
+      // 0 as a discourse opener, alongside `so` and `well`, and that is deliberate
+      // -- but that regex is anchored `^` with no `m` flag and runs once over the
+      // whole chunk, so it does NOT strip an opener after a sentence boundary:
+      // "we shipped. yeah that works" becomes "We shipped. yes that works." The
+      // asymmetry is pre-existing and separate; this case is about the rewrite map,
+      // which runs after it.
+      ["we shipped yeah", "We shipped yes."],
+      ["yep that works", "Yes that works."],
+      ["im gonna go now", "I am going to go now."],
+      ["i wanna go now", "I want to go now."],
+      ["you gotta be there", "You got to be there."],
+      ["kinda tired", "Somewhat tired."],
+      ["sorta late", "Somewhat late."],
+    ] as const) {
+      expect(applyFastStyle(input, "formal")).toBe(expected);
+    }
+
+    // A deletion that leaves punctuation behind must not survive as a leading comma,
+    // whatever caused it. This is the shape the `nope` case produced.
+    expect(applyFastStyle("nope, we are done", "formal")).toBe(
+      "No, we are done.",
+    );
+
+    // Bare `nope` has nothing left to say, so the transform returns a stop rather
+    // than an empty string that a caller would have to special-case.
+    expect(applyFastStyle("nope", "formal")).toBe("No.");
+  });
+});
+
 describe("filler removal keeps words that merely end in a filler", () => {
   it("does not eat ordinary words", () => {
     for (const sentence of [
@@ -817,5 +1035,191 @@ describe("filler removal keeps words that merely end in a filler", () => {
       expect(out.toLowerCase()).not.toMatch(new RegExp(`\\b${filler}\\b`));
       expect(out.toLowerCase()).toContain("i went to the store");
     }
+  });
+
+  describe("a contraction expansion never fires on a bare word that happens to be one", () => {
+    it("covers every case in this note", () => {
+      // `contraction.replace("'", "'?")` made the APOSTROPHE optional, so `we're`
+      // also matched `were`, `it's` matched `its`, `we'll` matched `well`, `let's`
+      // matched `lets`, and `I'll` matched `ill`. Formal mode rewrote ordinary
+      // sentences accordingly.
+      //
+      // It used to name `Id` and `wed` here too. Those two entries were dropped
+      // later, for a different reason and in a different commit: `'d` is ambiguous
+      // between *would* and *had*, so it is not expanded at all. See "an ambiguous
+      // 'd is left alone rather than guessed at" below.
+      //
+      // It is the apostrophe that becomes optional, not the tail of the stem, so
+      // `can't` compiles to `\bcan'?t\b` and never matched a bare `can`. That is
+      // pinned below, because it is the one entry in this map where the naive
+      // reading of the substitution goes wrong in the safe direction.
+      for (const [input, expected] of [
+        ["we were ready", "We were ready."],
+        ["the dog wagged its tail", "The dog wagged its tail."],
+        ["as well as that", "As well as that."],
+        ["it is well done", "It is well done."],
+        ["he lets go", "He lets go."],
+        ["he is ill", "He is ill."],
+      ] as const) {
+        expect(applyFastStyle(input, "formal")).toBe(expected);
+      }
+
+      // `can` is not among them: the `'?` sits between the stem and the final `t`.
+      expect(applyFastStyle("we can go now", "formal")).toBe("We can go now.");
+
+      // The five are not the whole map. The other bare forms are not words, so
+      // their apostrophe stays optional: speech-to-text drops it, and "dont stop"
+      // reading as "Do not stop." is the behaviour worth keeping. Being wrong in
+      // that direction costs an unexpanded typo that still reads correctly; being
+      // wrong in the other one rewrites the user's sentence.
+      expect(applyFastStyle("dont stop", "formal")).toBe("Do not stop.");
+      expect(applyFastStyle("cant wait", "formal")).toBe("Cannot wait.");
+
+      // And the four still expand when they are genuinely contractions.
+      expect(applyFastStyle("we're ready", "formal")).toBe("We are ready.");
+      expect(applyFastStyle("we'll go", "formal")).toBe("We will go.");
+      expect(applyFastStyle("let's go", "formal")).toBe("Let us go.");
+      expect(applyFastStyle("I'll be there", "formal")).toBe(
+        "I will be there.",
+      );
+      expect(applyFastStyle("can't stay", "formal")).toBe("Cannot stay.");
+      // The `'d` and `'s` families are not here: both are ambiguous, so neither is
+      // expanded at all. See the case above named for ambiguous contractions.
+    });
+  });
+
+  describe("every semicolon-separated idea becomes its own bullet", () => {
+    it("covers every case in this note", () => {
+      // The fragment filter was `trimmed.length > 2`, which drops a two-character
+      // idea. It read as a guard against emitting empty bullets, but the fallback
+      // only applies when EVERY fragment was short, so a single longer sibling was
+      // enough to delete the short ones. This module's own header says nothing here
+      // may shorten text.
+      // Bullets capitalize each item, which is established behaviour below, so the
+      // expectations here carry it. The point of each case is which items survive.
+      expect(applyFastStyle("Go; no; stop.", "bullets")).toBe(
+        "- Go\n- No\n- Stop",
+      );
+      expect(applyFastStyle("go; no; stop", "bullets")).toBe(
+        "- Go\n- No\n- Stop",
+      );
+      // A digit is an idea too, and "3; 4; 5" is a list of three.
+      expect(applyFastStyle("3; 4; 5", "bullets")).toBe("- 3\n- 4\n- 5");
+
+      // The filter exists to keep empty bullets out. A fragment with no letter or
+      // digit in it is one.
+      //
+      // The threshold that was here also dropped both of these, but only as a side
+      // effect of counting characters: an em dash survives `stripEdgePunctuation`,
+      // which removes only `[,.;\s]`, and `toBullets` strips a leading marker, so a
+      // bare hyphen became an empty bullet. A threshold of 1 or less is what would let
+      // either through as content. The reason to prefer the letter-or-digit test is
+      // that it drops both without also dropping "no" or "3", and it reads as the
+      // property being checked rather than as a proxy for it. The control without the
+      // empty fragment is the same sentence and shows what these three are compared
+      // against.
+      expect(applyFastStyle("Buy milk; eggs", "bullets")).toBe(
+        "- Buy milk\n- Eggs",
+      );
+      // One assertion over an object rather than a loop: vitest matchers take a
+      // single argument, so a message cannot be attached to `toBe`, and the keys are
+      // what name the failing case in the diff.
+      const bulletsFor = (empty: string) =>
+        applyFastStyle(`Buy milk; ${empty}; eggs`, "bullets");
+      expect({
+        "a bare hyphen": bulletsFor("-"),
+        "nothing at all": bulletsFor(""),
+        "an em dash": bulletsFor("\u2014"),
+      }).toEqual({
+        "a bare hyphen": "- Buy milk\n- Eggs",
+        "nothing at all": "- Buy milk\n- Eggs",
+        "an em dash": "- Buy milk\n- Eggs",
+      });
+    });
+  });
+
+  describe("a chunk seam is not a sentence boundary", () => {
+    // A dictation longer than FAST_STYLE_MAX_INPUT_CHARS is styled chunk by chunk
+    // and the chunks are rejoined with no terminator between them, so a chunk that
+    // ends mid-sentence must not be given a full stop. It used to be, and the next
+    // chunk was capitalized as though a new sentence began there.
+    const fragment = "hello ".repeat(2200).trim(); // 13,199 chars, no terminator
+    const twoChunks = `${fragment} ${fragment}`; // 26,399, so the chunker splits
+
+    it("splits the input, so this is the case that matters", () => {
+      expect(twoChunks.length).toBeGreaterThan(FAST_STYLE_MAX_INPUT_CHARS);
+      expect(fragment.length).toBeLessThan(FAST_STYLE_MAX_INPUT_CHARS);
+    });
+
+    // `email` and `prompt` are here because each appends a terminator of its own
+    // rather than going through `ensureSentencePunctuation`: `toEmail` reaches it
+    // via `toPolished`, `toPrompt` adds its stop directly. Fixing the shared helper
+    // alone left both still adding one at the seam.
+    for (const tone of [
+      "default",
+      "formal",
+      "concise",
+      "chat",
+      "email",
+      "prompt",
+    ]) {
+      it(`adds no terminator at the seam for the ${tone} tone`, () => {
+        const out = applyFastStyle(twoChunks, tone);
+        // Exactly one period, and it is the one at the very end. This is the
+        // assertion that pins the absence of the invented stop; the one below only
+        // rules out a capital AFTER a terminator, which cannot see a capital that
+        // stands on its own.
+        expect(out.match(/\./g) ?? []).toHaveLength(1);
+        expect(out.endsWith(".")).toBe(true);
+        expect(out.slice(0, -1)).not.toMatch(/[.!?]\s+[A-Z]/);
+      });
+    }
+
+    // The two tones whose output is one item per line, joined by newlines rather
+    // than by a space. A stop at the seam would land inside an item, so they are
+    // checked by item count and by the absence of a stop on any non-final item.
+    for (const tone of ["bullets", "notes"]) {
+      it(`leaves no stop on a non-final item for the ${tone} tone`, () => {
+        const out = applyFastStyle(twoChunks, tone);
+        const items = out.split("\n").filter((line) => line.trim());
+        expect(items.length).toBeGreaterThan(1);
+        for (const item of items.slice(0, -1)) {
+          expect(item).not.toMatch(/[.!?]$/);
+        }
+      });
+    }
+
+    // `toChat` and `toPrompt` tested for an existing terminator with a bare
+    // `[.!?]` while the rest of the module uses `ENDS_SENTENCE_RE`, which also
+    // recognises `…`, `。`, `！` and `？`. A dictation already ending in one of those
+    // came back with a second, ASCII, stop -- "第一句。." on a CJK sentence.
+    for (const tone of ["chat", "prompt"]) {
+      it(`adds no second stop after a CJK terminator for the ${tone} tone`, () => {
+        for (const [input, expected] of [
+          ["第一句。", "第一句。"],
+          ["第一句！", "第一句！"],
+          ["第一句？", "第一句？"],
+          ["等等…", "等等…"],
+        ]) {
+          expect(applyFastStyle(input, tone)).toBe(expected);
+        }
+      });
+    }
+
+    // The controls. A single chunk is final and still gets its stop, and an input
+    // that carries its own terminator is unchanged by any of this.
+    it("still terminates a final chunk", () => {
+      expect(applyFastStyle("hello world", "default")).toBe("Hello world.");
+      expect(
+        applyFastStyle(`${fragment}.`, "default").match(/\./g) ?? [],
+      ).toHaveLength(1);
+    });
+
+    // A real sentence boundary inside the input is not a seam and keeps its stop,
+    // so this does not flatten genuine punctuation.
+    it("keeps a genuine boundary between chunks", () => {
+      const out = applyFastStyle(`${fragment}. ${fragment}.`, "default");
+      expect(out.match(/\./g) ?? []).toHaveLength(2);
+    });
   });
 });

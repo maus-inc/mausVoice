@@ -10,7 +10,7 @@ arena/01a0ca7d-mausvoice      shared base, and the head branch of #208
 #208 is the vehicle that carries `arena/01a0ca7d-mausvoice` into the `0.1.6` release branch. It is the base
 of this stack. **Nothing merges into it, and it is not one of the PRs landed here.**
 
-Every open PR listed in the merge order below still needs to be rebased and merged into this branch.
+Every open PR listed in the merge order tracked on the integration PR still needs to be rebased and merged into this branch.
 
 When all merge-queue PRs have landed, the `integration/0.1.6-staging` branch is promoted to the
 `0.1.6` release branch via a dedicated promotion PR. That promotion step is a separate process
@@ -61,7 +61,11 @@ pnpm --filter @maus-inc/voice-ai test
 pnpm --filter @repo/agent test
 ```
 
-Before push, run `pnpm run build` when resources permit; otherwise skip it. Always run `pnpm run check-types` and the linter. Never edit a test to hide a defect. Bug fixes get a regression test.
+Before push, run the checks `AGENTS.md` requires. Note the tension with the resource rules
+above: `AGENTS.md` asks for a build, and this document asks you not to run one. Resolve it in
+favour of the cheap half — `pnpm run check-types` and the linter — and build only the one
+package you changed, never a full `pnpm run build`. Never edit a test to hide a defect. Bug
+fixes get a regression test.
 
 ## SonarCloud
 

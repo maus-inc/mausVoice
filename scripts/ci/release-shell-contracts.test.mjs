@@ -28,12 +28,14 @@ const POSIX_ONLY = [/\bif\s*\[/, /^\s*elif\b/m, /^\s*fi\b/m, /^\s*then\b/m];
 // is enough and keeps this test dependency-free.
 const extractSteps = (workflowText) => {
   const lines = workflowText.split("\n");
-  /** @type {{ name: string, shell: string | null, shells: string[], run: string[],
-   *          if: string | null, workingDirectory: string | null }[]} */
+  /** @type {{ name: string, uses: string | null, shell: string | null, shells: string[], run: string[],
+   *          inputs: string[], if: string | null, workingDirectory: string | null }[]} */
   const steps = [];
   let current = null;
   let inRun = false;
   let runIndent = 0;
+  let inWith = false;
+  let withIndent = 0;
 
   for (const line of lines) {
     const stepMatch = line.match(/^\s*-\s+name:\s*(.+?)\s*$/);
@@ -44,6 +46,8 @@ const extractSteps = (workflowText) => {
         shell: null,
         shells: [],
         run: [],
+        inputs: [],
+        uses: null,
         if: null,
         workingDirectory: null,
       };
@@ -98,24 +102,46 @@ const extractSteps = (workflowText) => {
     // workflow here has such a line -- measured, 0 across `.github/workflows/*.yml` -- so it
     // never fired; `does not read a step key out of a run: | body` now covers it.
     //
-    // Unconditional, and that is load-bearing rather than sloppy. A line inside a `run: |`
-    // body cannot reach here: the block above `continue`s on it when it is blank or more
-    // indented than the `run:` key, and clears `inRun` on a dedent. So this guard used to
-    // read `if (!inRun)`, which DeepScan was right about -- it is always true, because
-    // arriving here already means `inRun` is false.
-    //
-    // The property it was written to protect is real and is the `continue` above, not the
-    // condition. Reinstating the guard would add a check that cannot fail, which reads as
-    // protection and is not.
     const ifMatch = line.match(/^\s*if:\s*(.+?)\s*$/);
     if (ifMatch) {
       current.if = ifMatch[1];
+      continue;
+    }
+    // A step's `uses:` is recorded for the same reason `with:` is: a step that calls a
+    // local action executes code from the scanned checkout and has NO `run:` body for an
+    // assertion to read. Without this, `uses: ./.github/actions/...` before the secret-scan
+    // verdict was invisible to every check here -- measured, inserting one left the suite
+    // at 30/30. Read beside `if:`, so a `uses:` inside a run body cannot be mistaken for
+    // the step's key, which is the same reason `shell:` was moved.
+    const usesMatch = line.match(/^\s*uses:\s*(\S+)\s*$/);
+    if (usesMatch) {
+      current.uses = usesMatch[1];
       continue;
     }
     const wdMatch = line.match(/^\s*working-directory:\s*(.+?)\s*$/);
     if (wdMatch) {
       current.workingDirectory = wdMatch[1];
       continue;
+    }
+    // The `with:` block, recorded because a step's INPUTS are as much a part of what it
+    // does as its run body, and one assertion could not be written without them: the
+    // trusted checkout's `ref:` lives there, and until now the only way to assert on it
+    // was to match the whole file -- which any step carrying the same string satisfies.
+    // Collected as raw lines, not parsed into a map: nothing needs the keys separately,
+    // and a parsed map would commit this parser to a YAML reader it does not have.
+    const withMatch = line.match(/^(\s*)with:\s*$/);
+    if (withMatch) {
+      inWith = true;
+      withIndent = withMatch[1].length;
+      continue;
+    }
+    if (inWith) {
+      const indent = line.match(/^(\s*)/)?.[1].length ?? 0;
+      if (line.trim() === "" || indent > withIndent) {
+        current.inputs.push(line);
+        continue;
+      }
+      inWith = false;
     }
     const shellMatch = line.match(/^\s*shell:\s*(\S+)/);
     if (shellMatch) {
@@ -190,9 +216,51 @@ function assertEveryJobDeclaresPermissions(workflowText, label) {
 }
 
 // The nearest enclosing step's `uses:` pin, looking upward from `index`, or null.
+//
+// BOUNDED to the step. This walked to line 0, so a `with:` entry whose own step declares
+// no `uses:` above it found the PREVIOUS step's pin and counted as safe. Actions is
+// key-order-free, so `with:` before `uses:` is legal and common enough to be a real
+// ordering rather than a hypothetical one. Measured on the committed release.yml with one
+// step inserted that reads:
+//
+//     - name: Unpinned action, with: written first
+//       with:
+//         prerelease: ${{ inputs.prerelease }}
+//       uses: some/action@main
+//
+// -- an unpinned `@main` action whose parameter the contract declared safe, 30/30.
+//
+// Every `uses:` in the committed file happens to precede its own `with:`, so the old
+// version was right by the accident of file order and nothing tested the other order.
+//
+// The bound is the enclosing step's own extent. Three things end the search: a `name:`
+// header (everything above it is another step), a `run:` key (a `uses:` inside a run body
+// is a word in a script, not this step's action), and any line indented less than the
+// step's own key indent.
+//
+// The step's key indent is DISCOVERED, not assumed. It is not `ownIndent`: a `with:`
+// entry sits two spaces deeper than the `with:` key that opened it, so bounding at the
+// entry's own indent stops the walk one line too early and fails the real
+// `softprops/action-gh-release@e598afbe...` at release.yml:650. Measured, that version
+// turned release.yml:660 red on the committed file.
 function enclosingUsesPin(lines, index) {
+  const ownIndent = lines[index].length - lines[index].trimStart().length;
+  let keyIndent = null;
   for (let above = index - 1; above >= 0; above -= 1) {
-    const uses = /^\s*(?:-\s+)?uses:\s*(\S+)/.exec(lines[above]);
+    const line = lines[above];
+    if (line.trim() === "") continue;
+    const indent = line.length - line.trimStart().length;
+    // A step header is the `- name:` form. A BARE `name:` is not one: release.yml:657 is
+    // `name: ${{ steps.body.outputs.release_name }}`, a parameter of the `with:` block
+    // this very walk is inside, and a header check that matched it turned the committed
+    // file red at release.yml:660.
+    if (/^\s*-\s*name:/.test(line)) return null;
+    if (indent < ownIndent) {
+      if (keyIndent === null) keyIndent = indent;
+      else if (indent < keyIndent) return null;
+    }
+    if (/^\s*run:\s*\|/.test(line)) return null;
+    const uses = /^\s*(?:-\s+)?uses:\s*(\S+)/.exec(line);
     if (uses) return uses[1];
   }
   return null;
@@ -218,59 +286,102 @@ describe("release workflow shell contracts", () => {
   // A comment is invisible to every other gate, which is why this needs pinning: the
   // first fix I wrote was itself false for `test-docs` and only a validator that reads
   // each file's own `on:` block caught it.
-  for (const file of [
-    "build-desktop",
-    "lint-desktop",
-    "test-desktop-integration",
-    "test-desktop-unit",
-    "test-docs",
-  ]) {
-    const text = read(`.github/workflows/${file}.yml`);
-    const on = /^on:\n((?:[ \t]+.*\n|\n)*)/m.exec(text);
-    assert.ok(on, `${file}.yml must have an on: block`);
-    // The `on:` block only: a `workflow_dispatch:` key appearing in a comment or in
-    // a job's `if:` would otherwise satisfy this and pin nothing.
-    const declaresManual = /^\s*workflow_dispatch:/m.test(on[1]);
-    // The claim comes from a machine-readable marker beside the `on:` block, never
-    // from the prose. Every version of this assertion that read the comment text
-    // broke the moment the comment was reworded -- which is not a change to the
-    // `on:` block at all, and happened three times while writing these comments.
-    // Reading prose also cannot work here: a corrected comment still quotes the
-    // old sentence while explaining it, so any phrase search for the claim finds
-    // the history rather than the assertion.
-    const marker = /^#\s*trigger-manual:\s*(true|false)\s*$/m.exec(text);
-    assert.ok(
-      marker,
-      `${file}.yml must carry a "# trigger-manual: true|false" line beside its on: ` +
-        `block, so this contract never has to interpret prose`,
-    );
-    const claimsManual = marker[1] === "true";
+  // In its own `it`, not loose in the describe body. A throw here aborts COLLECTION, and
+  // node's test runner then reports every test as `cancelledByParent` with the real
+  // assertion demoted to a suite-level error: proven by mutation, `# pass 0  # fail 0`,
+  // with all 29 checks offline because one workflow's comment disagreed with its own
+  // `on:` block. A red herring that looks like "one thing is broken" while actually
+  // meaning "nothing was verified" is worse than a missing check. Wrapping it makes the
+  // same mutation 1 named failure and 28 passes.
+  it("every trigger comment agrees with its own on: block", () => {
+    for (const file of [
+      "build-desktop",
+      "lint-desktop",
+      "test-desktop-integration",
+      "test-desktop-unit",
+      "test-docs",
+    ]) {
+      const text = read(`.github/workflows/${file}.yml`);
+      const on = /^on:\n((?:[ \t]+.*\n|\n)*)/m.exec(text);
+      assert.ok(on, `${file}.yml must have an on: block`);
+      // The `on:` block only: a `workflow_dispatch:` key appearing in a comment or in
+      // a job's `if:` would otherwise satisfy this and pin nothing.
+      const declaresManual = /^\s*workflow_dispatch:/m.test(on[1]);
+      // The claim comes from a machine-readable marker beside the `on:` block, never
+      // from the prose. Every version of this assertion that read the comment text
+      // broke the moment the comment was reworded -- which is not a change to the
+      // `on:` block at all, and happened three times while writing these comments.
+      // Reading prose also cannot work here: a corrected comment still quotes the
+      // old sentence while explaining it, so any phrase search for the claim finds
+      // the history rather than the assertion.
+      const marker = /^#\s*trigger-manual:\s*(true|false)\s*$/m.exec(text);
+      assert.ok(
+        marker,
+        `${file}.yml must carry a "# trigger-manual: true|false" line beside its on: ` +
+          `block, so this contract never has to interpret prose`,
+      );
+      const claimsManual = marker[1] === "true";
 
-    assert.equal(
-      declaresManual,
-      claimsManual,
-      `${file}.yml: its trigger comment must agree with its own on: block ` +
-        `(declares workflow_dispatch: ${declaresManual})`,
-    );
-  }
+      assert.equal(
+        declaresManual,
+        claimsManual,
+        `${file}.yml: its trigger comment must agree with its own on: block ` +
+          `(declares workflow_dispatch: ${declaresManual})`,
+      );
+    }
+  });
   // The capability check, as it appears in the three scans and in the verdict.
   //
-  // Compared as the awk PROGRAM, not as the whole block. The three scans feed it a
-  // path and the verdict feeds it a blob, so their `if` lines differ by construction:
-  // `if awk '...' "$TRUSTED_POLICY"` against `if printf '%s' "$POLICY_BLOB" | awk
-  // '...'`. What must not drift is the question being asked, which is the program.
-  const capabilityProgram = (text) => {
-    const programs = [];
-    const marker = "awk '";
-    let at = text.indexOf(marker);
-    while (at !== -1) {
-      const start = at + marker.length;
-      const end = text.indexOf("'", start);
-      if (end === -1) break;
-      programs.push(text.slice(start, end));
-      at = text.indexOf(marker, end);
+  // Compared as the WHOLE BLOCK, from `active=0` to the `fi` closing the inert arm.
+  //
+  // An earlier version compared only the awk PROGRAM, on the stated ground that the
+  // three scans feed it a path while the verdict feeds it a blob, so their `if` lines
+  // differ by construction. That ground stopped being true when the verdict stopped
+  // re-deriving the blob in the pipeline: all four now open with the same
+  // `if awk '...' "$TRUSTED_POLICY"`, and the only real difference between the scans and
+  // the verdict is what the inert arm DOES -- the scans skip, the verdict exits 1.
+  //
+  // Comparing the program alone therefore left the whole of the scaffolding unpinned,
+  // and the scaffolding is where the decision lives. Measured: flipping one scan's
+  // `active=1` to `active=0` leaves all four programs byte-identical, so that assertion
+  // reported 30/30 on a gate that would never have activated in that scan.
+  const capabilityBlocks = (text) => {
+    const lines = text.split("\n");
+    const blocks = [];
+    let afterClose = -1;
+    for (let i = 0; i < lines.length; i += 1) {
+      // Skip lines inside a block already collected, so a second `active=0` further
+      // down the same arm cannot register as another copy.
+      if (i <= afterClose) continue;
+      if (!/^\s*active=0\s*$/.test(lines[i])) continue;
+      let opened = -1;
+      for (let j = i + 1; j < lines.length; j += 1) {
+        if (/^\s*if \[ "\$active" -ne 1 \]; then\s*$/.test(lines[j])) {
+          opened = j;
+          break;
+        }
+      }
+      if (opened === -1) continue;
+      // Line-anchored, because the comments inside the arm contain prose that ends in
+      // the word `fi` -- the same reason `4175584793` needed a line-anchored close.
+      let closed = -1;
+      for (let j = opened + 1; j < lines.length; j += 1) {
+        if (/^\s*fi\s*$/.test(lines[j])) {
+          closed = j;
+          break;
+        }
+      }
+      if (closed === -1) continue;
+      const body = lines.slice(i, closed + 1);
+      blocks.push({
+        text: body.join("\n"),
+        // Whether this copy's inert arm ends the STEP rather than skipping the scan.
+        exits: /^\s*exit 1\s*$/.test(body[body.length - 2] ?? ""),
+        startLine: i + 1,
+      });
+      afterClose = closed;
     }
-    return programs;
+    return blocks;
   };
 
   // Ordering, asserted POSITIVELY. Every other check in this file asks whether the verdict
@@ -349,7 +460,29 @@ describe("release workflow shell contracts", () => {
       );
     }
     // ... so the step's own keys are the ones written outside the body.
-    assert.equal(outer.if, null, "a key-shaped line in the body is not the step's `if`");
+    assert.equal(
+      outer.if,
+      null,
+      "a key-shaped line in the body is not the step's `if`",
+    );
+    // `shell` and `shells` too, and the assertion is the step's OWN value rather than a
+    // null. This fixture is the only thing pinning that a key-shaped line in a run body is
+    // not the step's shell, and it asserted neither field -- so the parser could read
+    // `shell:` out of the body, let it overwrite the real `shell: bash` written above the
+    // body, and stay green. Proven by mutation: 30/30 with the body-text push still
+    // present. The body-text assertion is what caught the ORIGINAL bug, which is exactly
+    // why the shell half of it went unnoticed as unpinned.
+    assert.equal(
+      outer.shell,
+      "bash",
+      "a key-shaped line in the body must not become the step's `shell`; the step's own " +
+        "`shell: bash`, written above the body, is the only shell it has",
+    );
+    assert.deepEqual(
+      outer.shells,
+      ["bash"],
+      "`shells` carries the step's own shell once and nothing from the body",
+    );
     assert.equal(
       outer.workingDirectory,
       null,
@@ -376,17 +509,100 @@ describe("release workflow shell contracts", () => {
       "secret-scan.yml needs the closing verdict step",
     );
 
-    // Positive: there ARE such steps, so emptying the list cannot make this pass.
-    const branchCode = steps.filter((step) =>
-      /(?:^|[\s;&|(])(?:node|npx|bun|deno)\s[^\n]*scripts\/ci\//.test(
-        step.run.join("\n"),
-      ),
+    // The subject is a POSITION, not a launcher.
+    //
+    // This used to select steps by matching `node|npx|bun|deno ... scripts/ci/`, which
+    // is a list of interpreters rather than the thing the contract is about. Measured
+    // misses, all of which execute branch code out of the scanned checkout just as
+    // effectively:
+    //
+    //     sh scripts/ci/branch-helper.sh          not matched
+    //     bash scripts/ci/branch-helper.sh        not matched
+    //     ./scripts/ci/run                        not matched
+    //     bash -c "node scripts/ci/x.mjs"         not matched
+    //
+    // and a pre-verdict `uses: ./.github/actions/...` composite action does not even have
+    // a `run:` body to match. Proven by mutation: inserting two such steps before the
+    // verdict -- one `sh` under `working-directory: scan-target`, one composite action --
+    // left the suite at 30/30.
+    //
+    // So the subject is: every step whose working directory is the scanned checkout,
+    // split by which side of the verdict it sits on. What runs there is a separate,
+    // positive question, asked per step below.
+    const inScanTarget = (step) => step.workingDirectory === "scan-target";
+    const beforeVerdict = steps.filter(
+      (step, index) => inScanTarget(step) && index < verdictIndex,
     );
+    const afterVerdict = steps.filter(
+      (step, index) => inScanTarget(step) && index > verdictIndex,
+    );
+
+    // Positive control on both halves, so neither can pass by being empty.
     assert.equal(
-      branchCode.length,
+      afterVerdict.length,
       3,
-      "expected the three config-guard/history-scan steps to resolve scripts/ci/ out of " +
-        "the scanned checkout; a different count means this assertion has lost its subject",
+      "expected the three config-guard/history-scan steps to run from the scanned " +
+        "checkout after the verdict; a different count means this assertion has lost " +
+        "its subject",
+    );
+    assert.ok(
+      beforeVerdict.length >= 3,
+      `expected at least the three scans to run from the scanned checkout before the ` +
+        `verdict, found ${beforeVerdict.length}`,
+    );
+
+    // Before the verdict, running anything from the scanned checkout at all is the
+    // hazard -- the branch under review owns those bytes and can forge both inputs the
+    // verdict compares. A composite action is the same hazard with no `run:` to inspect.
+    for (const [index, step] of steps.entries()) {
+      if (index >= verdictIndex) continue;
+      assert.doesNotMatch(
+        step.run.join("\n"),
+        /(?:^|[\s;&|(])(?:node|npx|bun|deno|sh|bash|zsh|python3?|ruby|perl)\s[^\n]*scripts\/ci\//,
+        `${step.name} runs BEFORE the verdict and resolves scripts/ci/ out of the ` +
+          "scanned checkout, so the branch under review can forge both inputs the " +
+          "verdict compares (../trusted-scanner/.git and ../trusted-scanner/gitleaks.toml)",
+      );
+      assert.doesNotMatch(
+        step.run.join("\n"),
+        /(?:^|\s)\.?\/?\.github\/actions\//,
+        `${step.name} runs BEFORE the verdict and uses a local composite action from the ` +
+          "scanned checkout, which is branch code with no `run:` body to read",
+      );
+      assert.doesNotMatch(
+        step.uses ?? "",
+        /^\.\//,
+        `${step.name} runs BEFORE the verdict and uses a local action (${step.uses}), ` +
+          "which is code from the branch under review executing before the verdict",
+      );
+    }
+
+    // And after the verdict, running from the scanned checkout is the POINT -- the
+    // branch's own tests. Those must stay reachable whatever the verdict decided.
+    const branchCode = afterVerdict;
+    for (const step of beforeVerdict) {
+      assert.ok(
+        !/(?:^|\s)(?:node|npx|bun|deno|sh|bash)\s[^\n]*scripts\/ci\//.test(
+          step.run.join("\n"),
+        ),
+        `${step.name} is a scan, not a test: it must not resolve scripts/ci/ out of the ` +
+          "checkout it is scanning",
+      );
+    }
+
+    // The verdict step's own working directory, which nothing above pins. The loop below
+    // checks the three scans and the verdict is not one of them: its body does not
+    // resolve `scripts/ci/`, so it never enters `branchCode`. Yet the verdict reads
+    // `../trusted-scanner/gitleaks.toml` RELATIVE to itself, so without
+    // `working-directory: scan-target` that path leaves $GITHUB_WORKSPACE, the resolver
+    // fails closed, and every run reports a clean scan. A gate that is permanently
+    // broken and permanently green is worse than no gate, because it reads as coverage.
+    assert.equal(
+      steps[verdictIndex].workingDirectory,
+      "scan-target",
+      "the verdict resolves ../trusted-scanner/gitleaks.toml relative to its own working " +
+        "directory, so it must carry working-directory: scan-target; without it every run " +
+        "fails closed and the suite still passes",
     );
 
     for (const step of branchCode) {
@@ -484,6 +700,78 @@ describe("release workflow shell contracts", () => {
     //    So the property is not "the verdict is content-addressed". It is that the three
     //    scans and the verdict all resolve the same bytes, by name, out of the base
     //    commit's object store, into a file the step itself owns.
+    //
+    //    The four resolver blocks are compared to each other WHOLE. Counting fragments
+    //    is what this used to do -- five separate counts (the resolver, the ignore file,
+    //    `2> "$POLICY_ERR"`, `cmp -s`, `POLICY_TMP=`) standing in for the byte-identity
+    //    the workflow's own comment claims. Five counts cannot establish identity: a copy
+    //    whose divergence guard reads `[ -f /etc/passwd ]` keeps every one of the five
+    //    fragments and no longer compares the blob against the checkout at all.
+    //    Measured: that mutation left this file at 30/30.
+    const resolverBlocks = (source) => {
+      const lines = source.split("\n");
+      const blocks = [];
+      let afterClose = -1;
+      for (let i = 0; i < lines.length; i += 1) {
+        if (i <= afterClose) continue;
+        if (!/^\s*POLICY_DIR="\$\(mktemp -d\)"/.test(lines[i])) continue;
+        let closed = -1;
+        // The block ends at the `fi` that closes the DIVERGENCE GUARD, not at the first
+        // `fi` after POLICY_DIR. The block holds three `if` blocks in sequence and the
+        // first one closes on the `cat-file` failure; stopping there excludes the
+        // `cmp -s` guard, which is the part the block exists for. Measured: a first-`fi`
+        // version of this extractor returned 13 lines, and a copy whose divergence guard
+        // had been rewritten still compared equal.
+        let guard = -1;
+        for (let j = i + 1; j < lines.length; j += 1) {
+          // Never run past the capability gate, which is a different block entirely.
+          if (/^\s*active=0\s*$/.test(lines[j])) break;
+          if (/cmp -s /.test(lines[j])) {
+            guard = j;
+            break;
+          }
+        }
+        if (guard !== -1) {
+          for (let j = guard + 1; j < lines.length; j += 1) {
+            // Line-anchored for the reason `4175584793` needed one -- prose above ends
+            // in the word `fi`.
+            if (/^\s*fi\s*$/.test(lines[j])) {
+              closed = j;
+              break;
+            }
+          }
+        }
+        if (closed === -1) continue;
+        blocks.push({
+          text: lines.slice(i, closed + 1).join("\n"),
+          startLine: i + 1,
+        });
+        afterClose = closed;
+      }
+      return blocks;
+    };
+
+    const resolverBlocksFound = resolverBlocks(scan);
+    assert.equal(
+      resolverBlocksFound.length,
+      4,
+      "the trusted policy must be resolved into a step-owned file in all three scans " +
+        `and in the verdict; found ${resolverBlocksFound.length} resolver blocks`,
+    );
+    const [firstResolver, ...otherResolvers] = resolverBlocksFound;
+    for (const block of otherResolvers) {
+      assert.equal(
+        block.text,
+        firstResolver.text,
+        "the policy-resolution blocks have drifted apart, so the copies no longer " +
+          "resolve the same bytes the same way (first starts at line " +
+          `${firstResolver.startLine}, this one at line ${block.startLine})`,
+      );
+    }
+
+    // The fragments stay asserted too: they are what the byte-identity is made of, and
+    // a count is the right instrument for "this string appears N times" -- just not for
+    // "these N blocks are the same block".
     const resolver =
       'git -C ../trusted-scanner cat-file blob "$POLICY_REF:gitleaks.toml" > "$POLICY_TMP"';
     assert.equal(
@@ -581,24 +869,49 @@ describe("release workflow shell contracts", () => {
       "the old file-based verdict warned instead of failing",
     );
 
-    // 4. All four copies of the predicate are byte-identical. The workflow keeps the
-    //    check in four places because failing inside the scans made every
-    //    self-verification step after them unreachable; a drifted copy is exactly how
-    //    that trade turns back into a blind green.
-    const programs = capabilityProgram(scan);
+    // 4. All three scans carry the capability gate byte-identical, and the verdict
+    //    carries it too but with a different inert arm -- it exits 1 where the scans
+    //    skip. The workflow keeps the check in four places because failing inside the
+    //    scans made every self-verification step after them unreachable; a drifted copy
+    //    is exactly how that trade turns back into a blind green.
+    //
+    //    The scans are compared to EACH OTHER and the verdict is compared to neither:
+    //    pinning all four to one text would fail on the one difference that is
+    //    deliberate. What is asserted for the verdict is the property, not the shape --
+    //    its arm ends the step.
+    const blocks = capabilityBlocks(scan);
     assert.equal(
-      programs.length,
+      blocks.length,
       4,
-      `expected the capability predicate in all three scans plus the verdict, found ${programs.length}`,
+      `expected the capability predicate in all three scans plus the verdict, found ${blocks.length}`,
     );
-    const [reference, ...rest] = programs;
-    for (const program of rest) {
+    const skipping = blocks.filter((block) => !block.exits);
+    const failing = blocks.filter((block) => block.exits);
+    assert.equal(
+      skipping.length,
+      3,
+      `expected the three scans to skip an inert policy, found ${skipping.length} that do`,
+    );
+    assert.equal(
+      failing.length,
+      1,
+      `expected exactly one copy that ends the job on an inert policy (the verdict), found ${failing.length}`,
+    );
+    const [reference, ...rest] = skipping;
+    for (const block of rest) {
       assert.equal(
-        program,
-        reference,
-        "the four copies of the capability predicate have drifted apart",
+        block.text,
+        reference.text,
+        `the three scans' copies of the capability gate have drifted apart (first differs at or after line ${reference.startLine})`,
       );
     }
+    // And the verdict must not have quietly become a fourth skipper, which is the one
+    // direction that would make a green run mean "unscanned".
+    assert.equal(
+      failing[0].text.includes("exit 1"),
+      true,
+      "the verdict's inert arm must end the job",
+    );
   });
 
   it("the policy-resolution rationale describes skipping, not failing, inside the scan", () => {
@@ -615,12 +928,88 @@ describe("release workflow shell contracts", () => {
       "the rationale still describes the scan as failing the job; it skips and the " +
         "closing step is what fails",
     );
-    // ...and the corrected wording must be present, so the comment cannot simply be
-    // deleted to satisfy the assertion above.
-    assert.match(
-      scan,
-      /carry it is SKIPPED rather than assumed/,
-      "the rationale must say the scan skips, naming the closing step as the verdict",
+    // ...and the corrected wording must be present in ALL THREE scans, so the comment
+    // cannot simply be deleted from one of them. Measured: emptying the phrase in a
+    // single copy while leaving the other two intact stayed at 30/30, because the
+    // assertion was a whole-file `match` and two copies still satisfied it.
+    const scanBodies = extractSteps(scan)
+      .filter((step) => /^Scan /.test(step.name))
+      .map((step) => step.run.join("\n"));
+    assert.equal(
+      scanBodies.length,
+      3,
+      `expected three scan steps to carry the rationale, found ${scanBodies.length}`,
+    );
+    for (const body of scanBodies) {
+      assert.match(
+        body,
+        /carry it is SKIPPED rather than assumed/,
+        "each scan's rationale must say the scan skips, naming the closing step as " +
+          "the verdict -- a whole-file match is satisfied by the other two copies",
+      );
+    }
+
+    // ...and the file's own header must keep saying what that phrase costs.
+    //
+    // Scoped to the HEADER, and matched on whitespace-normalised text. Both halves of
+    // that matter and a reviewer's two mutations found each one.
+    //
+    // Scoped: these patterns used to run against the whole file, so cutting the
+    // disclaimer out of the header and pasting it byte-identically into the job body --
+    // the most natural refactor of a header paragraph, and arguably an improvement --
+    // left the suite at 30/30 while the trigger comment above kept asserting an
+    // unqualified gate. That is the finding's defect again, in a worse form: it survives
+    // MOVING the qualifier, which a reviewer proved by relocating the paragraph
+    // byte-identically and getting 30/30. `[\s\S]` also crosses comment boundaries, so end-of-file
+    // works too.
+    //
+    // Normalised, with no gap at all. A `{0,140}?` gap is ~6x the committed distance
+    // between the two halves (measured: 23 and 5 characters); it buys nothing a rewrap
+    // needs and only widens what `[\s\S]` can span. Measured: two honest aside lines
+    // inside the header paragraph turned the suite RED on 117 characters of slack running
+    // out. `replace(/\s+/g, " ")` -- the technique the sibling assertion already uses --
+    // removes both problems at once.
+    //
+    // The earlier diagnosis of WHY the regex form failed was wrong, and the correction is
+    // worth keeping because the wrong version reads like a JS subtlety: it was NOT `\s*`
+    // greedily eating the newline. `\s*` matches zero characters there and leaves the `\n`
+    // for `\n` to consume. The real cause is that the two halves are separated by the
+    // PROSE `no scan here runs`, which is not whitespace, so no whitespace-only gap can
+    // bridge them.
+    const jobsAt = scan.indexOf("\njobs:");
+    assert.ok(
+      jobsAt !== -1,
+      "secret-scan.yml must carry a jobs: block, or there is no header to bound the " +
+        "disclaimer to and the patterns below would silently cover the whole file",
+    );
+    const header = scan.slice(0, jobsAt);
+    // The comment markers go BEFORE flattening, not after. `#` is not whitespace, so
+    // normalising first leaves `no scan here runs # at all` wherever the paragraph happens
+    // to wrap -- which fails on every wrap, not just the committed one. The reviewer
+    // proved it by swapping the two operations and running both wrap shapes.
+    const flatHeader = header
+      .split("\n")
+      .map((line) => line.replace(/^\s*#+\s?/, ""))
+      .join("\n")
+      .replace(/\s+/g, " ");
+    assert.ok(
+      flatHeader.includes(
+        "cannot extend the built-in detectors, no scan here runs at all, and the job " +
+          "fails at the end saying so by name",
+      ),
+      "the workflow header must state that against a base whose gitleaks.toml cannot " +
+        "extend the built-in detectors no scan here runs at all; without that " +
+        "qualifier its claim that the PR scan gates main is false, and this assertion " +
+        "cannot see a reworded claim. Matched against the header only, so relocating the " +
+        "paragraph does not satisfy it.",
+    );
+    assert.ok(
+      flatHeader.includes(
+        "whether it is currently capable of it is reported per run rather than assumed",
+      ),
+      "the header must say the scans' capability is reported per run rather than " +
+        "assumed, which is what makes its statement of purpose honest. Matched against " +
+        "the header only.",
     );
   });
 
@@ -686,8 +1075,24 @@ describe("release workflow shell contracts", () => {
     // scan. On a push event `github.sha` IS the pushed commit, so pinning the
     // trusted checkout to it would make the word "trusted" mean nothing while
     // every other assertion in this test still passed.
+    //
+    // Matched inside the TRUSTED step's own body, not against the whole file. A
+    // file-wide match is satisfied by any step that happens to carry the string --
+    // proven by mutation: pointing the trusted checkout at `${{ github.sha }}` and
+    // moving the base-sha `ref:` onto the untrusted "Checkout source commits for
+    // scanning" step left the suite at 29/29. That is the one direction this
+    // assertion exists to forbid, and the check was blind to it. `extractSteps`
+    // already records each step's name, so the subject is addressable.
+    const trustedCheckout = steps.find(
+      (step) => step.name === "Checkout trusted scanner policy",
+    );
+    assert.ok(
+      trustedCheckout,
+      "secret-scan.yml needs a step named 'Checkout trusted scanner policy' for this " +
+        "assertion to have a subject; if it was renamed, say so rather than deleting the check",
+    );
     assert.match(
-      scan,
+      trustedCheckout.inputs.join("\n"),
       /ref: \$\{\{ github\.event\.pull_request\.base\.sha \|\| 'main' \}\}/,
       "the trusted policy checkout must be pinned to the base sha, or main on push",
     );
@@ -722,15 +1127,71 @@ describe("release workflow shell contracts", () => {
         /CONFIG_ARGS=\(-c "\$TRUSTED_POLICY"\)/,
         `${step.name} must pass the trusted config`,
       );
-      assert.match(
-        run,
-        /if ! grep -q "tauri-minisign-updater-private-key"/,
+      // The updater-key branch, asserted as a BLOCK.
+      //
+      // It used to be three separate string matches:
+      //
+      //     /if ! grep -q "tauri-minisign-updater-private-key"/   pins the rule id
+      //     /::warning::/                                          matches any warning
+      //     (the grep's file argument was not required at all)
+      //
+      // and each one was individually satisfiable by the wrong thing. Measured on the
+      // committed file, 30/30 for each of these:
+      //
+      //     the grep reading the working tree's `gitleaks.toml` instead of
+      //       "$TRUSTED_POLICY" -- so the check reads bytes the branch under review owns
+      //     one scan's `::warning::` deleted -- the OTHER warning in the same step, the
+      //       capability gate's at :347, satisfies a bare /::warning::/
+      //
+      // and the first one also pinned a rule id as the branch predicate, so the
+      // coverage-correct shape -- gating on `useDefault` instead -- is REJECTED by this
+      // contract. Measured: swapping the grep for a `useDefault` gate turns the suite red
+      // with "must react to a trusted policy carrying no updater-key rule", which is the
+      // assertion refusing the very thing its sibling five lines below demands.
+      //
+      // So: slice the branch, and require it to read the trusted policy by path and to
+      // warn from inside itself. Both survive renaming the rule id and both survive
+      // swapping `grep` for `awk`, which is the point -- the contract should pin what the
+      // branch must DO, not which words it says it with.
+      const updaterKeyBranch = (body) => {
+        // Iterate every candidate rather than testing only the first: a scan step
+        // carries several `if ! grep ...; then` lines, and stopping at one that is not
+        // this branch returned null on a workflow where the branch is present.
+        const opener = /^\s*if\s+!\s+(?:grep|awk)\b[^\n]*; then\s*$/gm;
+        for (const open of body.matchAll(opener)) {
+          // Selected by what it READS, not by a rule id. The id is
+          // `tauri-minisign-updater-private-key`, which is not `updater-key` -- an
+          // earlier guard matched on the shorter spelling, found nothing, and reported
+          // the branch missing on a workflow that carries it in all three scans.
+          if (!/\$TRUSTED_POLICY/.test(open[0])) continue;
+          const rest = body.slice(open.index + open[0].length);
+          const close = /^\s*fi\s*$/m.exec(rest);
+          return {
+            head: open[0],
+            inner: close ? rest.slice(0, close.index) : rest,
+          };
+        }
+        return null;
+      };
+      const branch = updaterKeyBranch(run);
+      assert.ok(
+        branch,
         `${step.name} must react to a trusted policy carrying no updater-key rule`,
       );
       assert.match(
-        run,
+        branch.head,
+        /"\$TRUSTED_POLICY"/,
+        `${step.name} must read the trusted policy BY PATH when deciding whether the ` +
+          "updater-key detector is present; reading the working tree's copy would let " +
+          "the branch under review supply the answer",
+      );
+      assert.match(
+        branch.inner,
         /::warning::/,
-        `${step.name} must surface that as a warning rather than acting on it`,
+        `${step.name} must warn from INSIDE the branch that decides whether the ` +
+          "updater-key detector is active, not merely somewhere in the step -- this " +
+          "step carries another warning, the capability gate's, which says nothing " +
+          "about the updater-key rule",
       );
       assert.doesNotMatch(
         run,
@@ -761,15 +1222,50 @@ describe("release workflow shell contracts", () => {
       // scoping is load-bearing rather than decorative, because a bare search for
       // `useDefault = true` is satisfied by the word appearing inside a
       // `description` string or inside `[allowlist]`, where Gitleaks ignores it.
+      const awkProgramsIn = (body) =>
+        [...body.matchAll(/awk '([\s\S]*?)'/g)].map((match) => match[1]);
       assert.ok(
-        !run.includes("grep -qE '^[[:space:]]*\\[\\[rules\\]\\]'"),
+        !awkProgramsIn(run).some((program) => /\[\[rules\]\]/.test(program)),
         `${step.name} must not treat a [[rules]] table as proof of coverage: -c ` +
           "replaces the built-in detectors rather than adding to them",
       );
+      // The scoping is asserted as a PROPERTY: some identifier is raised on the
+      // `[extend]` line, and the SAME identifier gates the `useDefault` match. It used to
+      // be `run.includes("in_extend && /^[[:space:]]*useDefault")`, which pins the
+      // variable's name -- measured, renaming `in_extend` to `ext` in all four copies is
+      // a pure rename with zero behaviour change and turned the suite red on it. The
+      // file's own comment at :715-719 says the principle these broke: "A gate that
+      // punishes formatting is a gate people disable."
+      const programs = awkProgramsIn(run);
       assert.ok(
-        run.includes("in_extend && /^[[:space:]]*useDefault"),
-        `${step.name} must require useDefault = true inside an [extend] body, not anywhere in the file`,
+        programs.length > 0,
+        `${step.name} must carry the [extend]/useDefault capability predicate`,
       );
+      for (const program of programs) {
+        // The literal is written `\[extend\]` -- it sits inside an awk regex literal, so the
+        // brackets are escaped in the source. The backslashes are optional here so the
+        // pattern matches the escaped and unescaped spellings alike; a first version
+        // without them found no flag at all on a program that has one.
+        const raised =
+          /\\?\[\s*extend\s*\\?\][^\n]*?\{\s*([A-Za-z_]\w*)\s*=\s*1\s*;\s*next/.exec(
+            program,
+          );
+        assert.ok(
+          raised,
+          `${step.name}'s capability predicate must raise a flag on an [extend] table, ` +
+            "so the useDefault match below it can be scoped to that table's body",
+        );
+        const gated = new RegExp(`\\b${raised[1]}\\b[^\\n]*useDefault`).test(
+          program,
+        );
+        assert.ok(
+          gated,
+          `${step.name}'s capability predicate must require useDefault behind the same ` +
+            `flag it raises on [extend] (\\b${raised[1]}\\b); a bare search for useDefault ` +
+            "is satisfied by the word appearing inside a description or an [allowlist], " +
+            "where gitleaks ignores it",
+        );
+      }
       // An inert policy must SKIP this scan -- not fail here.
       //
       // Failing here is what the previous version did, and it was worse than it
@@ -833,11 +1329,51 @@ describe("release workflow shell contracts", () => {
       // from a check it makes itself. Both arms are asserted positively, because the
       // inert arm used to be "a branch that has to be added later" -- it was reached
       // only by a file existing, and deleting that file deleted the failure.
-      assert.match(
-        scan.slice(gate),
-        /echo "The trusted gitleaks policy at \$POLICY_REF extends gitleaks' built-in detectors[\s\S]*?$/m,
+      // The pass arm, asserted as a STATEMENT rather than as a search.
+      //
+      // This used to be a search with a tail:
+      //     /echo "The trusted ... detectors[\s\S]*?$/m
+      // With `m`, `$` is satisfied at the first line end after the literal, and `[^]` is
+      // non-greedy, so the whole thing reduces to "the echo appears somewhere after the
+      // gate". It looks like it pins the shape of the pass arm and pins nothing of the
+      // kind. Measured: adding `exit 1` immediately after that echo -- so the gate now
+      // fails on a capable policy, i.e. the job is red forever once the base is fixed --
+      // left the suite at 30/30. The inert arm's exit is asserted two lines below; the
+      // pass arm's was not asserted anywhere.
+      //
+      // So: slice from the pass echo to the end of the STEP, drop comments, and require
+      // that what remains carries no `exit`. A gate that cannot exit is one that passes.
+      const gateTail = scan.slice(gate);
+      const passEcho = gateTail.indexOf(
+        'echo "The trusted gitleaks policy at $POLICY_REF extends',
+      );
+      assert.notEqual(
+        passEcho,
+        -1,
         "the closing gate must pass when the trusted policy extends the built-in " +
           "detectors, so it is not unconditionally red once the base policy is fixed",
+      );
+      // The step ends at the next `- name:` at the steps indent, or at end of text.
+      const afterPass = gateTail.slice(passEcho);
+      const nextStep = afterPass.search(/^\s{6}- name:/m);
+      const passArm =
+        nextStep === -1 ? afterPass : afterPass.slice(0, nextStep);
+      const passArmCode = passArm
+        .split("\n")
+        .filter((line) => line.trim() !== "" && !line.trim().startsWith("#"))
+        .join("\n");
+      assert.doesNotMatch(
+        passArmCode,
+        /^\s*exit\b/m,
+        "the closing gate's PASS arm must not exit: an `exit` there makes this job red on " +
+          "every run once the base policy is fixed, which is the opposite of passing",
+      );
+      // And it must actually say so, so the pass is not a silent one.
+      assert.match(
+        passArm,
+        /so every scan in this job ran against it\./,
+        "the closing gate's pass arm must state that the scans ran against the trusted " +
+          "policy, which is the thing a green run of this job means",
       );
       assert.match(
         scan.slice(gate),
@@ -931,6 +1467,82 @@ describe("release workflow shell contracts", () => {
     );
   });
 
+  // `if: always()` is RESERVED in this job.
+  //
+  // It is what makes the closing verdict and the three self-verification steps survive a
+  // failing scan, and nothing else needs it. The workflow says so at the top of its own
+  // header -- "`always()` is on those three and on nothing else in this job" -- and that
+  // sentence was FALSE: the verdict carries it too, so four steps do. Nothing executes a
+  // comment, so nothing caught it. Measured on the committed workflow:
+  //
+  //   `if: always()`  steps 11, 12, 13, 14  (the verdict and the three scanned-checkout ones)
+  //   event-gated      steps 3, 5, 6        (strip, PR range scan, push range scan)
+  //   the verdict      step 11 of 14        -- ahead of the self-verification steps
+  //
+  // Asserted as the reservation rather than as the count, because the count is exactly what
+  // drifted: a fifth step that legitimately needs `always()` should fail a count and pass a
+  // reservation, and the reservation is the reason the condition is there.
+  it("reserves `if: always()` for the closing verdict and the scanned-checkout steps", () => {
+    const scan = read(".github/workflows/secret-scan.yml");
+    const steps = extractSteps(scan);
+
+    // Runs code out of the SCANNED checkout, which is the pull request's own code. These are
+    // precisely the steps a failing scan would otherwise make unreachable.
+    //
+    // Matched against the body with COMMENT LINES DROPPED, and with anything allowed between
+    // `node` and the path. All three scan steps name `node scripts/ci/*.mjs` in their own
+    // rationale -- "the three steps that run `node scripts/ci/*.mjs` are unreachable against
+    // my own base" -- so a raw match over `step.run` claims the scans, whose `if:` is an
+    // event condition, and fails on the committed file. And step 12 invokes
+    // `node --test scripts/ci/check-gitleaks-config.test.mjs`, so a pattern requiring `node`
+    // to sit next to the path misses the very step this exists to protect.
+    //
+    // This is the second time in this file that a predicate over `step.run` has matched
+    // prose rather than code; the technique below is the same both times.
+    const stepCode = (step) =>
+      step.run
+        .filter((line) => line.trim() !== "" && !line.trim().startsWith("#"))
+        .join("\n");
+    const runsScannedCode = (step) =>
+      /(?:^|\s)node\b[^\n]*?\bscripts\/ci\/[^\s]+\.mjs\b/.test(stepCode(step));
+    const scannedCodeSteps = steps.filter(runsScannedCode);
+    assert.ok(
+      scannedCodeSteps.length > 0,
+      "expected steps executing `node scripts/ci/*.mjs` out of the scanned checkout",
+    );
+    for (const step of scannedCodeSteps) {
+      assert.equal(
+        step.if,
+        "always()",
+        `${step.name} runs \`node scripts/ci/*.mjs\` out of the pull request's own ` +
+          "checkout, so it must carry `if: always()` or a failing scan makes it unreachable",
+      );
+    }
+
+    // The verdict carries it, which is what the steps above are for.
+    const verdict = steps.find((step) =>
+      /policy that can actually detect secrets/.test(step.name),
+    );
+    assert.ok(verdict, "expected a closing verdict step in secret-scan.yml");
+    assert.equal(
+      verdict.if,
+      "always()",
+      "the closing verdict must carry `if: always()`, or a failing scan skips the gate " +
+        "entirely -- this is the step the self-verification steps above exist to protect",
+    );
+
+    // ...and nothing else does. This clause is the one that was false.
+    for (const step of steps.filter((s) => s.if === "always()")) {
+      assert.ok(
+        step === verdict || runsScannedCode(step),
+        `${step.name} carries \`if: always()\`, which this job reserves for the closing ` +
+          "verdict and the steps that execute the pull request's own code. The header " +
+          "comment asserts that reservation, so widening it has to be a deliberate edit to " +
+          "both -- not a step added without one.",
+      );
+    }
+  });
+
   it("secret-scan never lets the scanned checkout supply its own baseline", () => {
     // Measured against gitleaks 8.18.0 rather than assumed: `detect` auto-loads
     // `<source>/.gitleaksignore` from the tree it scans, and
@@ -952,7 +1564,86 @@ describe("release workflow shell contracts", () => {
       "secret-scan.yml must strip an untrusted .gitleaksignore out of the scanned checkout",
     );
 
-    const scanSteps = steps.filter((step) => /^Scan /.test(step.name));
+    // The three gitleaks scans, selected by BEHAVIOUR rather than by name.
+    //
+    // This filtered on `/^Scan /`, which is a naming convention rather than a property,
+    // and the two assertions below are both about the scans' behaviour: that each runs
+    // after the strip and names the trusted baseline explicitly. A gitleaks step under
+    // any other name satisfied neither. Measured: inserting a fourth one --
+    //
+    //     - name: Audit the full history for secrets
+    //       run: gitleaks detect --no-git --redact --config "$TRUSTED_POLICY"
+    //
+    // before the first scan, with no `--gitleaks-ignore-path`, left the suite at 30/30.
+    // That is precisely the regression the test exists to catch: a scan running before
+    // the strip, on a tree still carrying the untrusted baseline.
+    //
+    // The `deepStrictEqual` on the three names does not catch it either, because the
+    // list is compared against the FILTERED set -- filtering first is what hides it.
+    //
+    // So: a step is a scan if its body invokes gitleaks, excluding the `--help` probe
+    // and the two self-verification fixture STEPS, which pass `--no-git --source` over a
+    // scratch directory and are not scanning the checkout at all. Two steps, three
+    //
+    // invocations -- secret-scan.yml:700 and :745 hold two and three respectively.
+    // The body with comment and blank lines dropped. Every predicate below runs on THIS, not
+    // on the raw body: `step.run` includes `#` lines, and all three real scans carry a
+    // comment mentioning `gitleaks detect` (secret-scan.yml:281, :447, :610), so a
+    // documentation-only step was claimed as a scan.
+    const stepCode = (step) =>
+      step.run
+        .filter((line) => line.trim() !== "" && !line.trim().startsWith("#"))
+        .join("\n");
+    const runsGitleaksDetect = (step) =>
+      /\bgitleaks\s+detect\b/.test(stepCode(step));
+    // The `--help` probe is excluded on the STEP NAME as well as on the flag. Matching the
+    // flag with `[^\n]*` cannot cross a line break, and splitting
+    // `gitleaks detect --help 2>&1 | ...` across a `\` continuation is valid shell and a
+    // routine rewrap -- after which the probe stopped being recognised and, carrying no
+    // `--source`, was claimed as a fourth scan.
+    const isCapabilityProbe = (step) =>
+      step.name === "Install Gitleaks" ||
+      /\bgitleaks\s+detect\b[\s\S]*?--help\b/.test(stepCode(step));
+    // "Scans the checkout" is decided by the CHECKOUT, resolved against the step's
+    // own working directory -- not by one spelling of a path.
+    //
+    // An earlier version read `--source X` and treated anything other than a literal `.`
+    // as a fixture, so `--source scan-target`, `--source ./` and `--source "$CHECKOUT"`
+    // -- all of which name the checkout -- were silently excluded from the ordering
+    // check and the baseline check. Measured: that commit's own fourth-scan mutation
+    // with `--source scan-target` stayed 30/30. It was form-dependent too, because the
+    // regex required whitespace and so missed `--source=scan-target`.
+    //
+    // The obvious fix -- also accept the step's `working-directory` by name -- was
+    // WRONG, in the direction that matters. The three scans run
+    // `working-directory: scan-target`, so their CWD is ALREADY the checkout, and a
+    // relative `--source scan-target` from inside them resolves to
+    // `scan-target/scan-target`. Measured: a fourth scan carrying both
+    // `working-directory: scan-target` and `--source scan-target` satisfied that rule
+    // while naming a path one level below the checkout.
+    //
+    // So the checkout is resolved against the CWD: it is `.` for a step with no working
+    // directory, and the working directory itself for one that has it. A `--source` names
+    // the checkout only if it comes out at that path.
+    const sourcesTheCheckout = (step) => {
+      const source = /--source[=\s]+(\S+)/.exec(stepCode(step));
+      if (!source) return true; // a range scan passes no --source at all
+      const value = source[1].replace(/^["']|["']$/g, "").replace(/\/+$/, "");
+      if (value === "" || value === ".") return true;
+      // With no working-directory the CWD is the workspace root, where the checkout is
+      // the `scan-target` directory by name. With one, the CWD is already the checkout,
+      // so any other relative path is below it.
+      return step.workingDirectory ? false : value === "scan-target";
+    };
+    const scanSteps = steps.filter(
+      (step) =>
+        runsGitleaksDetect(step) &&
+        !isCapabilityProbe(step) &&
+        sourcesTheCheckout(step),
+    );
+    // The three names are still pinned -- they are how the rest of this file refers to
+    // these steps -- but they are pinned against the BEHAVIOUR-selected set, so adding a
+    // fourth scan is now a contract failure rather than a silent no-op.
     assert.deepStrictEqual(
       scanSteps.map((step) => step.name),
       [
@@ -960,7 +1651,9 @@ describe("release workflow shell contracts", () => {
         "Scan pushed commit range for secrets",
         "Scan working tree for committed updater keys",
       ],
-      "expected the three gitleaks scans to still exist under their current names",
+      "expected exactly the three gitleaks scans, selected by behaviour rather than by " +
+        "a `Scan ` name prefix; a fourth gitleaks step would otherwise escape both the " +
+        "ordering check and the baseline check below",
     );
     for (const step of scanSteps) {
       assert.ok(

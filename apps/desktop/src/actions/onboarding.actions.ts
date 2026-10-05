@@ -389,6 +389,25 @@ const createOnboardingPreferences = (
   expansionFlags: "{}",
 });
 
+/**
+ * A stale-session bail that also clears the submitting flag.
+ *
+ * `submitting` is raised once on entry and cleared on the success and error paths, so any early
+ * return that skips both leaves the onboarding UI stuck in its submitting state with no way out
+ * but a reload. Only the first guard did this; the three that follow it returned bare `null`, so
+ * an account handoff during either `await` stranded the flag.
+ *
+ * The flag is global rather than per-session, so clearing it on a stale bail could in principle
+ * clear a newer session's own in-flight submission. That trade is already made by the guard this
+ * replaces, and leaving the flag stuck is the certain failure while the race is a narrow one.
+ */
+const bailOnStaleSession = (): null => {
+  produceAppState((draft) => {
+    draft.onboarding.submitting = false;
+  });
+  return null;
+};
+
 export const submitOnboarding = async () => {
   const state = getAppState();
   if (state.auth && !state.initialized) return null;
@@ -435,10 +454,7 @@ export const submitOnboarding = async () => {
     // handoff — even one that cycles A→B→A. userId and the User/Preferences
     // payloads are derived from live state, not the entry snapshot.
     if (getAppState().authSessionNonce !== initiatingAuthSessionNonce) {
-      produceAppState((draft) => {
-        draft.onboarding.submitting = false;
-      });
-      return null;
+      return bailOnStaleSession();
     }
     const currentState = getAppState();
     const userId = getMyEffectiveUserId(currentState);
@@ -477,12 +493,28 @@ export const submitOnboarding = async () => {
       getAgentModePrefs(currentState),
     );
 
+    // Re-read state BEFORE writing, for the reason `finishOnboarding` gives below: an auth
+    // handoff mid-await must not clobber the wrong account's record.
+    //
+    // It matters more here than it does there, because both of these writes resolve their
+    // target from the CURRENT session when the command is invoked -- `user_set_one` takes
+    // `State<OptionKeyDatabase>`, so the pool is chosen at call time. An account switch
+    // between this guard and the write therefore lands the previous account's onboarding data
+    // in the NEW account's database, not merely in the wrong row of the same one.
+    //
+    // The check that follows the await cannot undo that. It stops the stale result reaching
+    // the store; it does not un-write the row. What this guard does is close the window
+    // between building the payload and issuing the write. It cannot close the remainder --
+    // a handoff during the write itself is not observable from here.
+    if (getAppState().authSessionNonce !== initiatingAuthSessionNonce) {
+      return bailOnStaleSession();
+    }
     const [savedUser, savedPreferences] = await Promise.all([
       repo.setMyUser(user),
       preferencesRepo.setUserPreferences(preferences),
     ]);
     if (getAppState().authSessionNonce !== initiatingAuthSessionNonce) {
-      return null;
+      return bailOnStaleSession();
     }
     produceAppState((draft) => {
       setCurrentUser(draft, savedUser);
@@ -498,12 +530,14 @@ export const submitOnboarding = async () => {
 
     await refreshMember();
     if (getAppState().authSessionNonce !== initiatingAuthSessionNonce) {
+      // No `bailOnStaleSession()` here, unlike the four guards above: the success
+      // path at 522 has already cleared `submitting`, so there is no flag to strand.
       return null;
     }
     return savedUser;
   } catch (err) {
     if (getAppState().authSessionNonce !== initiatingAuthSessionNonce) {
-      return null;
+      return bailOnStaleSession();
     }
     produceAppState((draft) => {
       draft.onboarding.submitting = false;

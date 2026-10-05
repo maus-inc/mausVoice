@@ -4,7 +4,14 @@ import { useEffect, useState } from "react";
 import { FormattedMessage } from "react-intl";
 import { OllamaRepo } from "../../repos/ollama.repo";
 import { OLLAMA_DEFAULT_URL } from "../../utils/ollama.utils";
+import { withTimeout } from "../../utils/timeout.utils";
 import { FreeSoloModelAutocomplete } from "./FreeSoloModelAutocomplete";
+
+/**
+ * A stalled Ollama endpoint must not wedge the probe; see the effect below. `OllamaRepo`
+ * issues no request with a timeout or an AbortSignal of its own.
+ */
+const PROBE_TIMEOUT_MS = 10_000;
 
 // This picker is Ollama-only: OpenAI-compatible providers route to
 // OpenAICompatibleModelPicker instead (which carries the authorized
@@ -40,19 +47,58 @@ export const OllamaModelPicker = ({
     let cancelled = false;
     let inFlight = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    // The in-flight run's controller, so the unmount/endpoint-change path can abort
+    // exactly that request. It is deliberately NOT one controller for the whole
+    // effect: an aborted signal rejects immediately and stays rejected, so a shared
+    // one would make every retry after the first timeout fail without ever reaching
+    // the server, and the picker could not recover even once the host came back.
+    // `withTimeout` stops WAITING on a host that accepts the connection then stalls;
+    // it does not stop the request, so without an abort each 3s retry armed another
+    // live probe and they accumulated.
+    let activeController: AbortController | undefined;
+
+    // A new endpoint or key means the previous answer describes a DIFFERENT server, so it is
+    // cleared here rather than left for the first `await` to overwrite.
+    //
+    // Without this the picker kept rendering the old answer for the whole probe round: the
+    // "Checking…" branch is `isLoading && isAvailable === null`, and `isAvailable` was still the
+    // old `true`, so the branch was skipped, the stale model list stayed on screen, and
+    // `disabled={disabled || !isAvailable}` left the select ENABLED -- you could pick a model
+    // that does not exist on the endpoint just typed.
+    setIsAvailable(null);
+    setModels([]);
 
     const run = async () => {
       if (cancelled || inFlight) return;
       inFlight = true;
       setIsLoading(true);
+      // Fresh per run: see `activeController` above for why this cannot be hoisted.
+      const controller = new AbortController();
+      activeController = controller;
       try {
         const repo = new OllamaRepo(effectiveUrl, apiKey || undefined);
-        const available = await repo.checkAvailability();
+        // Bounded, because `OllamaRepo` has no timeout and no AbortSignal. A host that accepts
+        // the connection and then stalls -- a wrong address behind a firewall that DROPs, a
+        // tunnel that never answers -- left the `await` pending forever: `inFlight` stayed true
+        // so no retry was armed, `finally` never ran, and the probe could not be recovered
+        // without editing the URL to rebuild the effect. Rejecting instead lands in the catch
+        // below and re-arms the 3s retry like any other failure.
+        const available = await withTimeout(
+          repo.checkAvailability(controller.signal),
+          PROBE_TIMEOUT_MS,
+          "Ollama availability probe",
+          () => controller.abort(),
+        );
         if (cancelled) return;
         setIsAvailable(available);
 
         if (available) {
-          const fetchedModels = await repo.getAvailableModels();
+          const fetchedModels = await withTimeout(
+            repo.getAvailableModels(controller.signal),
+            PROBE_TIMEOUT_MS,
+            "Ollama model list",
+            () => controller.abort(),
+          );
           if (cancelled) return;
           setModels(fetchedModels);
           return;
@@ -67,6 +113,9 @@ export const OllamaModelPicker = ({
           timer = setTimeout(() => void run(), 3000);
         }
       } finally {
+        // Only clear it if it is still this run's, so a retired run cannot disown a
+        // newer run's controller.
+        if (activeController === controller) activeController = undefined;
         inFlight = false;
         if (!cancelled) setIsLoading(false);
       }
@@ -77,6 +126,7 @@ export const OllamaModelPicker = ({
     return () => {
       cancelled = true;
       if (timer) clearTimeout(timer);
+      activeController?.abort();
     };
   }, [effectiveUrl, apiKey]);
 

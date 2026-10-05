@@ -15,7 +15,7 @@ Incognito only controls mausVoice's local persistence. It does not stop API proc
 
 ## Audio retention on failed transcriptions
 
-Incognito never writes the audio snapshot. The transcription result is also not added to your history. If the transcription later fails, the audio is gone too, so there is no on-disk recovery path for an Incognito recording. This is the privacy trade-off: Incognito guarantees that nothing about the recording is persisted locally, at the cost of being unable to recover a failed Incognito dictation.
+Incognito never writes the audio snapshot. The transcription result is also not added to your history. If the transcription later fails, the audio is gone too, so there is no on-disk recovery path for an Incognito recording. This is the privacy trade-off: with **Include incognito in stats** off, nothing about the recording is persisted locally; with it on, the word count still counts toward your personal totals. Either way the audio itself is unrecoverable, so a failed Incognito dictation cannot be recovered from disk.
 
 The behavior at a glance:
 

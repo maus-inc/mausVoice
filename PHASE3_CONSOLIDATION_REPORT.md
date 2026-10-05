@@ -3,7 +3,7 @@
 **Branch:** `arena/01a0c779-mausvoice` → base `0.1.6`
 **Tip:** `53202172` — 306 commits on top of `4b9c1b0` (fix/superfix-review-findings)
 **Scope vs origin/0.1.6:** 1,013 files changed, +107,994 / −19,577
-**Gate status:** `check-types` 9/9 (desktop, preview, all packages) · vitest `src` 144/144 files · `scripts` 5 files/66 tests + node --test 4/4 · Rust validated in CI only (no local cargo)
+**Gate status:** `check-types` 9/9 (desktop, preview, all packages) · vitest `src` 144/144 files · `scripts` 5 files/66 tests + node --test 4/4 · Rust not validated locally (no cargo); CI validation pending
 
 > **Push & PR creation blocked:** the sandbox's GitHub token expired mid-session
 > (`gh auth status`: "token in GH_TOKEN is no longer valid"). Reconnect GitHub in

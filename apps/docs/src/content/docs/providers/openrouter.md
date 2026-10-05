@@ -11,7 +11,7 @@ Expand **Model** on the selected key to fetch OpenRouter's live model catalog. S
 
 ## Speech-to-text
 
-When the OpenRouter key is the selected transcription record, mausVoice POSTs multipart audio to `${OPENROUTER_BASE_URL}/audio/transcriptions` through the OpenAI-compatible SDK and reads the returned `text` field. The active dictation language is forwarded as a `language` form field; selecting **Auto** lets the upstream model detect it. The selected model is required; selecting OpenRouter transcription without a model emits a warning and falls back to `openai/whisper-1`.
+When the OpenRouter key is the selected transcription record, mausVoice POSTs multipart audio to `${OPENROUTER_BASE_URL}/audio/transcriptions` through the OpenAI-compatible SDK and reads the returned `text` field. The active dictation language is forwarded as a `language` form field; selecting **Auto** lets the upstream model detect it. The selected model is required; selecting OpenRouter transcription without a model emits a warning and falls back to `openai/whisper-large-v3`.
 
 ## Route to upstream providers
 

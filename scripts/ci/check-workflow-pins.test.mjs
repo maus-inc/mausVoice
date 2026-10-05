@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { readFileSync, readdirSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 
@@ -62,24 +63,38 @@ const VERIFIED_PINS = new Map(
 const PIN_RE =
   /uses:\s*([a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+@[0-9a-f]{40})\s*(?:#\s*([^\s]+))?/;
 
+// The key as it appears at the start of a line, with or without the `- ` step marker.
+//
+// PIN_RE is deliberately unanchored, so it finds a PINNED `uses:` wherever it sits -- including
+// after `- `. This one finds the line that IS a `uses:` key, and it is what turns an UNPINNED
+// one into a `pin: null` entry the assertions can fail on.
+//
+// It used to be /^\s*uses:\s*/, which allowed whitespace before `uses:` and nothing else. Every
+// step in every workflow here is written either `- uses: owner/repo@sha` or with `uses:` on its
+// own line, so an unpinned STEP action matched nothing and was dropped by the `continue` below --
+// silently. The guard's own message claims "every uses: line must be a 40-hex SHA"; nothing in
+// it could ever have checked the step form. Verified against the real tree: all 198 `uses:`
+// lines pass, because all 198 are pinned, not because the step form is inspected.
+const USES_KEY_RE = /^\s*(?:-\s*)?uses:\s*/;
+
 function leadingSpaces(line) {
   return /^ */.exec(line)[0].length;
 }
 
-function collectWorkflowFacts() {
+function collectWorkflowFacts(dir = WORKFLOW_DIR) {
   const pins = [];
   const setupNodeSteps = [];
 
   // Both suffixes: GitHub accepts either, so a workflow saved as `.yaml` would
   // otherwise carry an unpinned action past this guard entirely.
-  for (const file of readdirSync(WORKFLOW_DIR).filter((f) =>
+  for (const file of readdirSync(dir).filter((f) =>
     /\.ya?ml$/.test(f),
   )) {
-    const lines = readFileSync(join(WORKFLOW_DIR, file), "utf8").split("\n");
+      const lines = readFileSync(join(dir, file), "utf8").split("\n");
     for (let i = 0; i < lines.length; i++) {
       const match = PIN_RE.exec(lines[i]);
       if (!match) {
-        if (/^\s*uses:\s*/.test(lines[i])) {
+        if (USES_KEY_RE.test(lines[i])) {
           pins.push({
             file,
             line: i + 1,
@@ -106,7 +121,7 @@ function collectWorkflowFacts() {
         // line is the next step or job. Another `uses:` at this indent is the
         // next step and must not leak into this step's cache flags.
         if (indent < usesIndent) break;
-        if (indent === usesIndent && /^\s*uses:\s*/.test(lines[j])) break;
+        if (indent === usesIndent && USES_KEY_RE.test(lines[j])) break;
         stepLines.push(lines[j]);
       }
 
@@ -134,6 +149,53 @@ describe("GitHub Actions pin guard", () => {
       [],
       "every uses: line must be a 40-hex SHA (floating @vX tags drift)",
     );
+  });
+
+  // The subject the pin guard never had.
+  //
+  // The assertions above read the real `.github/workflows`, and every one of the 198 `uses:`
+  // lines in it is pinned, so `pins.filter((p) => !p.pin)` is empty -- correctly, but for a
+  // reason that cannot tell "checked and all pinned" from "never matched the step form". The
+  // fallback that records an unpinned line was `/^\s*uses:\s*/`, which rejects a leading `- `,
+  // so no step-level action could ever land in that array. This drives the same collector over
+  // a fixture containing an unpinned step and asserts it is reported.
+  it("reports an unpinned step action, not just one at column 0", () => {
+    const dir = mkdtempSync(join(tmpdir(), "pin-guard-"));
+    try {
+      writeFileSync(
+        join(dir, "floating.yml"),
+        [
+          "name: floating",
+          "on: [push]",
+          "jobs:",
+          "  probe:",
+          "    runs-on: ubuntu-latest",
+          "    steps:",
+          // The form every real step uses, and the one the old regex could not see.
+          "      - uses: actions/checkout@v5.1.0 # v5.1.0",
+          "      - uses: actions/setup-node@main",
+          // ...and the column-0 form, which the old regex DID see, kept as the control.
+          "uses: actions/cache@v4",
+          "",
+        ].join("\n"),
+      );
+
+      const { pins: fixturePins } = collectWorkflowFacts(dir);
+      const floating = fixturePins.filter((x) => !x.pin);
+
+      assert.deepEqual(
+        floating.map((x) => `${x.line}: ${x.unparsed}`),
+        [
+          "7: - uses: actions/checkout@v5.1.0 # v5.1.0",
+          "8: - uses: actions/setup-node@main",
+          "9: uses: actions/cache@v4",
+        ],
+        "every uses: key must be reported when unpinned, in both the `- uses:` step form and " +
+          "the column-0 form",
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("only allows verified node24 or composite pins", () => {

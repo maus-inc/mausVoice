@@ -201,17 +201,42 @@ describe("EditWatchSideEffects disabled with a visible proposal", () => {
     // The watch starts enabled, so nothing is dismissed on the first render.
     expect(dismissToastMock).not.toHaveBeenCalled();
 
-    // Remounted rather than re-rendered: the store mock is a plain object, not
-    // a reactive store, so a same-element re-render would not re-run the effect
-    // that the flag drives. The scope is sync: the unmount and the remount run
-    // their effects synchronously, so nothing here needs an async act scope.
+    // Re-rendered on the SAME root, which is what turning the setting off actually does.
+    //
+    // This used to unmount and remount, because the store mock is a plain object rather than a
+    // reactive store and nothing else re-rendered it. That simulation was unfaithful in a way
+    // that mattered: the unmount runs this component's own cleanup, which calls
+    // `endEditWatch()`, and `endEditWatch` clears BOTH `clearAutoLearnProposal()` and
+    // `clearVisibleProposalId()`. So the proposal was gone before the disable effect ran, and
+    // the only reason the dismiss still fired was that it was unconditional.
+    //
+    // In production the order is the other way round: the effect dismisses first and calls
+    // `endEditWatch()` on the next line. Re-rendering one root keeps the component mounted, so
+    // nothing clears the proposal and the effect sees the live proposal it is meant to dismiss.
     await act(() => {
       storeState.userPrefs.autoLearnFromEditsEnabled = false;
-      act(() => root.unmount());
-      mount();
+      root.render(createElement(EditWatchSideEffects));
     });
 
     expect(dismissToastMock).toHaveBeenCalled();
+  });
+
+  it("leaves an unrelated toast alone when no proposal is live", async () => {
+    // `dismissToast()` takes no argument and the channel is a single slot shared with
+    // pill-review, transcription progress, the composer and the startup update notice. With no
+    // proposal on screen there is nothing of ours to clear, and dismissing unconditionally took
+    // whatever else was up -- including at startup, since this effect also runs on mount when
+    // the setting is off.
+    storeState.userPrefs.autoLearnFromEditsEnabled = true;
+    storeState.autoLearn.proposal = null;
+    mount();
+
+    await act(() => {
+      storeState.userPrefs.autoLearnFromEditsEnabled = false;
+      root.render(createElement(EditWatchSideEffects));
+    });
+
+    expect(dismissToastMock).not.toHaveBeenCalled();
   });
 
   it("ignores an auto-learn click that arrives after the setting is turned off", async () => {

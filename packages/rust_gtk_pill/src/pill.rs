@@ -1613,14 +1613,22 @@ fn tick_audio_levels(state: &PillState, phase: Phase) {
                 .target_level
                 .set((target * 0.25 + boosted * 0.75).min(1.0));
         }
-    } else if is_loading {
-        let target = state.target_level.get();
-        state.target_level.set(target.max(PROCESSING_BASE_LEVEL));
     } else {
-        state.target_level.set(0.0);
-        state.current_level.set(state.current_level.get() * 0.4);
-        if state.current_level.get() < 0.0002 {
-            state.current_level.set(0.0);
+        // Levels queued while not recording are stale. Without this they stay in
+        // the mailbox until the next recording starts and are then folded into
+        // that recording's first frame, so a burst of audio captured while the
+        // pill sat idle or loading moves the meter before any of it was spoken.
+        // Same guard as `rust_windows_pill::pill`.
+        state.pending_levels.borrow_mut().clear();
+        if is_loading {
+            let target = state.target_level.get();
+            state.target_level.set(target.max(PROCESSING_BASE_LEVEL));
+        } else {
+            state.target_level.set(0.0);
+            state.current_level.set(state.current_level.get() * 0.4);
+            if state.current_level.get() < 0.0002 {
+                state.current_level.set(0.0);
+            }
         }
     }
 

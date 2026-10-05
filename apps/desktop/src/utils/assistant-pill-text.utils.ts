@@ -167,6 +167,38 @@ const decodeNumericEntity = (entity: string, codePoint: number): string =>
     ? String.fromCodePoint(codePoint)
     : entity;
 
+/**
+ * HTML allows an astral character to be spelled as a surrogate PAIR of numeric
+ * references, so `&#xD83D;&#xDE00;` is a legitimate way to write U+1F600. Combine
+ * those back into the single code point, and drop any surrogate left unpaired.
+ *
+ * The lone case matters because a lone surrogate survives `JSON.stringify` as a
+ * `\udXXX` escape, and the pill's `serde_json` rejects that escape outright — so one
+ * stray `&#xD800;` in a model reply costs the whole pill sync, not one character.
+ * Rejecting the surrogate range inside `decodeNumericEntity` instead would also
+ * break the legitimate pair above, so the pair is rebuilt here.
+ */
+const normalizeSurrogates = (input: string): string => {
+  let out = "";
+  // Walk by CODE POINT rather than by code unit. `codePointAt` returns the
+  // combined value when the unit at `i` opens a surrogate pair, and returns the
+  // raw surrogate when it does not — so one call answers both questions, and the
+  // pair is emitted by `fromCodePoint` instead of being stitched from two reads.
+  // The cursor advances by the width the code point actually occupies, which is
+  // what keeps the pair from being split on the next iteration.
+  for (let i = 0; i < input.length;) {
+    const point = input.codePointAt(i) as number;
+    if (point >= 0xd800 && point <= 0xdfff) {
+      // Not combined, so this surrogate stands alone and names no character.
+      i += 1;
+      continue;
+    }
+    out += String.fromCodePoint(point);
+    i += point > 0xffff ? 2 : 1;
+  }
+  return out;
+};
+
 const unescapeEntities = (input: string): string =>
   input
     .replaceAll("&amp;", "&")
@@ -185,7 +217,9 @@ const stripHtml = (input: string): string => {
   // Strip real tags, decode entities, then strip again so a source-encoded
   // tag like `&lt;script&gt;` cannot re-materialise after decoding. Each
   // pass is a single linear scan (no regex backtracking).
-  return stripTagsOnce(unescapeEntities(stripTagsOnce(input)));
+  return normalizeSurrogates(
+    stripTagsOnce(unescapeEntities(stripTagsOnce(input))),
+  );
 };
 
 /**
@@ -200,19 +234,21 @@ const stripHtml = (input: string): string => {
  * state, the permissions and the pending review card together, so the parse error
  * discarded all of it, including the review the user was being asked to answer.
  *
- * `charCodeAt` rather than `codePointAt`, because the guard is about the *unit* at
- * the end rather than the character. I first wrote that `codePointAt` would decode
- * the pair and never fire, then checked it: over 265,678 prefix slices the two
- * guards never disagree, because a prefix can only end in a lone lead surrogate and
- * never in a lone trailing one, so the complete-pair case is a no-op either way.
- * `charCodeAt` is kept because it says what is being tested. (The two are NOT
- * interchangeable in `fast-style.utils.ts`, where the check asks whether a cut would
- * *split* a pair -- there `codePointAt` does answer a different question, and using
- * it is a regression.)
+ * `codePointAt` rather than `charCodeAt`: equivalent here, and checked rather than
+ * assumed. Over 265,678 prefix slices the two guards never disagree, because a
+ * prefix can only end in a lone lead surrogate and never in a lone trailing one,
+ * so the complete-pair case is a no-op either way.
+ *
+ * (The two are NOT interchangeable in `fast-style.utils.ts` or
+ * `packages/utilities/src/error.ts`, where the check asks whether a cut would
+ * *split* a pair. `codePointAt` answers the inverse question there -- it combines
+ * the lead with the trail, which is the pair the split test needs to see -- so
+ * both of those sites re-express the check from the other side of the boundary
+ * rather than reading the unit directly.)
  */
 const dropLoneTrailingSurrogate = (s: string): string => {
   if (s.length === 0) return s;
-  const last = s.charCodeAt(s.length - 1);
+  const last = s.codePointAt(s.length - 1) as number;
   return last >= 0xd800 && last <= 0xdbff ? s.slice(0, -1) : s;
 };
 
@@ -470,9 +506,17 @@ export const markdownToPillText = (
   text = stripHtml(text);
 
   // Restore protected inline code as quoted plain text.
+  //
+  // The span content is masked out while `stripHtml` runs, so it never reaches
+  // `normalizeSurrogates`. A model can still emit a raw lone surrogate inside
+  // backticks, and that one then reaches the pill, where `JSON.stringify`
+  // escapes it as `\udXXX` and serde_json rejects the whole sync -- the same
+  // failure the pass exists to prevent, reached by a different route. Measured:
+  // `"before `\uD800` after"` came out with the lone lead intact, while the
+  // same character outside a code span was dropped.
   text = text.replace(/__MAUS_INLINE_CODE_(\d+)__/g, (_, idxStr: string) => {
     const code = codeSpans[Number(idxStr)] ?? "";
-    return `"${code}"`;
+    return `"${normalizeSurrogates(code)}"`;
   });
 
   // 11. Collapse excessive whitespace (preserving one newline between lines).

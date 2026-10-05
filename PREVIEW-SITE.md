@@ -19,8 +19,16 @@ pnpm --filter @maus-inc/preview dev
 pnpm --filter @maus-inc/preview build
 ```
 
-The dev server binds `0.0.0.0:5193` with `allowedHosts: true` so proxied
-previews work.
+The dev server binds `0.0.0.0:5193`, and allows only loopback host headers by
+default. To reach it from another machine, name the hosts explicitly:
+
+```bash
+PREVIEW_ALLOWED_HOSTS=preview-host.local pnpm --filter @maus-inc/preview dev
+```
+
+Allowing every host is what `allowedHosts: true` did, and on a server that
+also serves `apps/desktop` source through `fs.allow` that is a DNS-rebinding
+hole rather than a convenience.
 
 ## What it covers
 

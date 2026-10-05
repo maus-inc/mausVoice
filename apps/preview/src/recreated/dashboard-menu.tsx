@@ -11,7 +11,7 @@
 import { Box, List, Stack, useColorScheme } from "@mui/material";
 import { motion, useReducedMotion } from "framer-motion";
 import { House, MessagesSquare, Mic, Settings, Shapes } from "lucide";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { ListTile } from "@desktop/components/common/ListTile";
 import { MorphNavIcon } from "@desktop/components/common/MorphNavIcon";
 import { springSnappy } from "@desktop/styles/motion";
@@ -38,6 +38,33 @@ export const DashboardMenuPreview = ({
   const dark = resolved === "dark";
   const reduceMotion = useReducedMotion();
   const [path, setPath] = useState(initial);
+
+  // A framer-motion `layoutId` must be unique among MOUNTED components, and
+  // `demos/navigation.tsx` mounts this component twice on a single page (plain, then
+  // `showUpdate initial="/settings"`). Sharing one literal made the active indicator animate
+  // across from one instance to the other on selection, instead of within each menu.
+  //
+  // The desktop original this shell is copied from uses the literal `layoutId="sidebar-active"`
+  // (`components/dashboard/DashboardMenu.tsx:129`), so scoping here is a fix rather than a
+  // restoration.
+  //
+  // The scoping itself is justified by the double mount above and needs no precedent.
+  //
+  // `useId()` is stripped of everything outside `[A-Za-z0-9_-]` because that is what the
+  // sibling control already does for the same prop:
+  // `components/common/SegmentedControl.tsx:77` builds a framer-motion `layoutId` from a
+  // `useId()` with the identical character class, and matching it is worth more than
+  // re-deriving the decision.
+  //
+  // Two earlier versions of this comment were wrong, in sequence. The first cited
+  // `SegmentedControl.tsx:55` as that precedent; line 55 is a style object. The second
+  // corrected it by asserting no sanitiser existed at all, which is also false. The third
+  // said the reason was that `useId()` returns a colon-delimited `:r0:` -- that is the React
+  // 18 format. React 19 builds `"_" + prefix + "r_" + id.toString(32) + "_"`, so there
+  // are no colons and the replace currently strips nothing. It is kept for consistency with
+  // the precedent and because an `identifierPrefix` could reintroduce a character worth
+  // dropping, not because today's output needs it.
+  const activeLayoutId = `${useId().replace(/[^a-zA-Z0-9_-]/g, "")}-sidebar-active`;
   const indicatorRadius = useSpecValue(
     "dashboard-menu",
     "indicator-radius",
@@ -63,7 +90,7 @@ export const DashboardMenuPreview = ({
     return (
       <Box
         component={motion.div}
-        layoutId="sidebar-active"
+        layoutId={activeLayoutId}
         transition={springSnappy}
         sx={sx}
       />

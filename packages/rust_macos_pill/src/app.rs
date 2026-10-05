@@ -77,12 +77,37 @@ fn to_top_down(rect: NSRect, primary_top: f64) -> Rect {
 unsafe fn pill_geometry(window: id) -> (Rect, Rect) {
     let frame = window_frame(window);
     let screen: id = msg_send![window, screen];
+
+    // `NSScreen.screens` can be EMPTY -- briefly when every display disconnects, the lid
+    // closes, or the display sleeps. `objectAtIndex:0` on an empty array raises
+    // `NSRangeException`, which is an Objective-C exception: it cannot be caught from Rust and
+    // takes the pill process down with it. This runs from `tick_spatial_feedback` every frame,
+    // and from `ResetPosition`, `RequestPosition` and `persist_drag_position`, so the window is
+    // wide.
+    //
+    // `pill_center_monitor` already guards exactly this and returns `unknown`; the shape is
+    // copied here. There is no meaningful monitor to report with no displays, so the window's
+    // own frame stands in for both, which keeps the returned pair self-consistent instead of
+    // measuring against a zeroed rect.
     let primary_screens = screens();
-    let primary: id = msg_send![primary_screens, objectAtIndex: 0usize];
-    let pf: NSRect = msg_send![primary, frame];
-    let primary_top = pf.origin.y + pf.size.height;
+    let count: usize = msg_send![primary_screens, count];
+    let primary_top = if count > 0 {
+        let primary: id = msg_send![primary_screens, objectAtIndex: 0usize];
+        let pf: NSRect = msg_send![primary, frame];
+        pf.origin.y + pf.size.height
+    } else {
+        frame.origin.y + frame.size.height
+    };
+
     let rect = to_top_down(frame, primary_top);
-    let monitor = to_top_down(screen_visible_frame(screen), primary_top);
+    // `msg_send![window, screen]` is nil when the window is on no display. Sending
+    // `visibleFrame` to nil yields a zeroed NSRect, and the y-offset arithmetic above would
+    // then be computed against nothing, so the frame stands in for it as well.
+    let monitor = if (screen as *mut std::ffi::c_void).is_null() {
+        to_top_down(frame, primary_top)
+    } else {
+        to_top_down(screen_visible_frame(screen), primary_top)
+    };
     (rect, monitor)
 }
 
@@ -1051,16 +1076,24 @@ fn tick(state: &PillState, window: id, dt: f64) {
                 .target_level
                 .set((target * (1.0 - mix) + boosted * mix).min(1.0));
         }
-    } else if is_loading {
-        let target = state.target_level.get();
-        state.target_level.set(target.max(PROCESSING_BASE_LEVEL));
     } else {
-        state.target_level.set(0.0);
-        state
-            .current_level
-            .set(state.current_level.get() * 0.4_f64.powf(frame_scale));
-        if state.current_level.get() < 0.0002 {
-            state.current_level.set(0.0);
+        // Levels queued while not recording are stale. Without this they stay in
+        // the mailbox until the next recording starts and are then folded into
+        // that recording's first frame, so a burst of audio captured while the
+        // pill sat idle or loading moves the meter before any of it was spoken.
+        // Same guard as `rust_windows_pill::pill`.
+        state.pending_levels.borrow_mut().clear();
+        if is_loading {
+            let target = state.target_level.get();
+            state.target_level.set(target.max(PROCESSING_BASE_LEVEL));
+        } else {
+            state.target_level.set(0.0);
+            state
+                .current_level
+                .set(state.current_level.get() * 0.4_f64.powf(frame_scale));
+            if state.current_level.get() < 0.0002 {
+                state.current_level.set(0.0);
+            }
         }
     }
 

@@ -270,13 +270,32 @@ describe("findBuildScriptInvocation", () => {
   });
 
   it("skips a line it cannot tokenize instead of failing the whole scan", () => {
-    const mixed = ["garbage", "   Running `a 'b", SHERPA_PLAIN].join("\n");
+    // The bad line below is the one the LOOSE tokenizer throws on. Strict does not: its
+    // guard regex is anchored at both ends and the ` c` after the closing backtick defeats
+    // it, so strict returns `null` and `??` falls through to loose, which throws
+    // `unterminated " quote`. THAT is what puts this line inside the catch.
+    //
+    // The obvious choice, `   Running `a 'b`, reaches nothing: strict returns
+    // `null` for it AND loose returns `null` too, so `if (!words) continue` skips it and
+    // the catch is never entered. Measured with the catch's `continue` mutated to `break`:
+    // that line still yields 1 match, so an assertion built on it cannot fail whatever the
+    // scan does.
+    const UNPARSEABLE = '   Running `a "b` c';
+    const mixed = ["garbage", UNPARSEABLE, SHERPA_PLAIN].join("\n");
     // The unterminated line throws inside, is caught per line, and the good one
     // is still found -- provided it is this package's.
     assert.equal(findBuildScriptInvocation(mixed).length, 0);
+    // ...so prefix ONLY the good line, which is the only shape in which the recovery is
+    // observable. `withEnv(line, name)` takes a SINGLE line and slices it from its first
+    // backtick to its last, so handing it the three-line `mixed` spans lines 2 and 3 and
+    // yields ONE unterminated command -- nothing is findable, which is what the assertion
+    // above already established. The `.replace(SHERPA_PLAIN, SHERPA_PLAIN)` that used to sit
+    // here replaced a string with itself, which is the tell that the input was never what
+    // it looked like.
     assert.equal(
-      findBuildScriptInvocation(withEnv(mixed, SHERPA_PKG).replace(SHERPA_PLAIN, SHERPA_PLAIN)).length,
-      0,
+      findBuildScriptInvocation(["garbage", UNPARSEABLE, withEnv(SHERPA_PLAIN, SHERPA_PKG)].join("\n")).length,
+      1,
+      "a well-formed line after an unparseable one must still be found",
     );
   });
 });
@@ -469,15 +488,30 @@ describe("the harness says what cargo printed when it cannot use the output", ()
   //
   // Read it as: the call exists, and it is on the path that reports no invocation.
   it("is echoed from the path that reports no invocation", () => {
-    const source = readFileSync(
-      fileURLToPath(new URL("./sherpa-build-script-tests.mjs", import.meta.url)),
-      "utf8",
-    );
-    const noInvocation = source.indexOf("if (matches.length === 0) {");
-    assert.notEqual(noInvocation, -1, "the no-invocation branch must exist");
-    // Wide enough for the comment above the call, bounded so it cannot reach the next
-    // branch. 400 was not: it cut the window short and failed at baseline.
-    const arm = source.slice(noInvocation, noInvocation + 1500);
+    const source = readFileSync(fileURLToPath(new URL("./sherpa-build-script-tests.mjs", import.meta.url)), "utf8");
+    const NO_INVOCATION = "if (matches.length === 0) {";
+    const REFUSAL = "if (matches.length > 1) {";
+    // Both anchors must be UNIQUE. `indexOf` takes the first match, so a decoy
+    // occurrence above the real branch reopens exactly the false green this window was
+    // narrowed to close: measured, a decoy arm carrying the echo plus a real arm without
+    // it is 47 pass 0 fail.
+    assert.equal(source.split(NO_INVOCATION).length - 1, 1, `expected exactly one \`${NO_INVOCATION}\` in the harness`);
+    assert.equal(source.split(REFUSAL).length - 1, 1, `expected exactly one \`${REFUSAL}\` in the harness`);
+    const noInvocation = source.indexOf(NO_INVOCATION);
+    // The window is the ARM, derived from where the arm ends rather than hardcoded.
+    //
+    // It used to be a fixed 1500 with the comment "bounded so it cannot reach the next
+    // branch", and it did reach it: the arm is 1226 characters, so the slice read 274
+    // past the refusal. Measured, that was a false green rather than a tidiness point --
+    // with the `console.error(cargoOutputExcerpt(output))` deleted from this arm and added
+    // to the next one, the arm under test echoes nothing and the suite stays green.
+    const arm = source.slice(noInvocation, source.indexOf(REFUSAL));
+    // No upper bound on the arm's size, deliberately. An `arm.length < 1500` guard was
+    // tried and measured firing on an ordinary 274-char comment growth, while its message
+    // described a mechanism this slice removed -- `slice(noInvocation, refusal)` cannot
+    // read past the arm however long it gets. What does need saying is the one shape the
+    // `assert.match` below cannot explain.
+    assert.notEqual(arm, "", "the two anchors were found out of order, so the window is empty");
     assert.match(
       arm,
       /console\.error\(cargoOutputExcerpt\(output\)\)/,

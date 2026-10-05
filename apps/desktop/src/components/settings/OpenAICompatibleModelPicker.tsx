@@ -87,6 +87,30 @@ export const OpenAICompatibleModelPicker = ({
     // the newer run's deadline and overwrite its verdict.
     let currentRun = 0;
 
+    // A new endpoint, key or authorized-fetch identity means the previous answer describes a
+    // DIFFERENT server, so it is cleared here rather than left for the first `await` to
+    // overwrite.
+    //
+    // This effect's cleanup only sets `cancelled` and clears the timers, and every verdict is
+    // written after an await, so without this the picker kept rendering the old answer for the
+    // whole probe: the "Checking..." branch is `isLoading && isAvailable === null`, and
+    // `isAvailable` still held the old `true`, so the branch was skipped, the previous model
+    // list stayed on screen, and the select stayed enabled — you could pick a model that does
+    // not exist on the endpoint just typed.
+    //
+    // `useManualInput` is deliberately NOT reset. The deadline and the catch below set it, and
+    // forcing it here would flip the control to manual entry for the duration of every probe.
+    setIsAvailable(null);
+    setModels([]);
+
+    // The in-flight run's controller. Fresh per run, never hoisted: an aborted
+    // signal rejects immediately and stays rejected, so a controller shared across
+    // retries would make every probe after the first timeout fail without reaching
+    // the server. `PROBE_TIMEOUT_MS` below stops WAITING on a host that accepts the
+    // connection and then stalls; it does not stop the request, so without an abort
+    // every 3s retry left another live fetch behind.
+    let activeController: AbortController | undefined;
+
     /** Ends this run's deadline, which a settled run no longer needs. */
     const clearDeadline = () => {
       if (deadline) clearTimeout(deadline);
@@ -100,9 +124,14 @@ export const OpenAICompatibleModelPicker = ({
       /** False once this run has been retired by its deadline or a config change. */
       const isCurrent = () => !cancelled && runId === currentRun;
       setIsLoading(true);
+      // Fresh per run; see `activeController` above for why this cannot be hoisted.
+      const controller = new AbortController();
+      activeController = controller;
       // Armed before the first await, so a request that never settles is
       // abandoned on time rather than blocking the retry indefinitely.
       deadline = setTimeout(() => {
+        // Retire the request itself, not just the wait for it.
+        controller.abort();
         currentRun += 1;
         inFlight = false;
         setIsAvailable(false);
@@ -118,13 +147,15 @@ export const OpenAICompatibleModelPicker = ({
           apiKey || undefined,
           fetchForEndpoint,
         );
-        const available = await repo.checkAvailability();
+        const available = await repo.checkAvailability(controller.signal);
         if (!isCurrent()) return;
         clearDeadline();
 
         setIsAvailable(available);
         if (available) {
-          const fetchedModels = await repo.getAvailableModels();
+          const fetchedModels = await repo.getAvailableModels(
+            controller.signal,
+          );
           if (!isCurrent()) return;
           setModels(fetchedModels);
           setUseManualInput(false);
@@ -146,9 +177,10 @@ export const OpenAICompatibleModelPicker = ({
         setUseManualInput(true);
         timer = setTimeout(() => void run(), PROBE_RETRY_MS);
       } finally {
-        // Only the live run owns `inFlight` and the loading indicator; a retired
-        // run must not release the newer run's hold on either, which would let a
-        // third probe start alongside it.
+        // Only the live run owns `inFlight`, the controller and the loading
+        // indicator; a retired run must not release the newer run's hold on any of
+        // them, which would let a third probe start alongside it.
+        if (activeController === controller) activeController = undefined;
         if (isCurrent()) {
           inFlight = false;
           setIsLoading(false);
@@ -162,6 +194,7 @@ export const OpenAICompatibleModelPicker = ({
       cancelled = true;
       if (timer) clearTimeout(timer);
       clearDeadline();
+      activeController?.abort();
     };
   }, [effectiveUrl, apiKey, apiKeyId, fetchForEndpoint]);
 

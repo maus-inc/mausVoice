@@ -79,8 +79,17 @@ export type TranscribeAudioInput = {
   hallucinationFilterEnabled?: boolean;
   /**
    * Cancels in-flight and not-yet-started provider requests. Honored by every
-   * provider that runs batch dictation (where pretranscription happens); the
-   * Gladia and Azure SDK uploads, used only for retranscription, ignore it.
+   * provider that runs batch dictation (where pretranscription happens).
+   *
+   * Gladia is the exception, and it is an exception for the DICTATION path too, not only for
+   * retranscription: `gladia` resolves to `GladiaTranscribeAudioRepo` in
+   * `getTranscribeAudioRepo`, which is the provider every dictation uses. An earlier version of
+   * this comment called the upload "used only for retranscription", which made the gap read as
+   * narrow; it is not. `GladiaTranscribeAudioArgs` (`packages/voice-ai/src/gladia.utils.ts:26`)
+   * carries no signal and the SDK owns its transport, so an upload already in flight cannot be
+   * called off — cancellation takes effect only before the request is issued. The batch job the
+   * upload creates is still deleted in a `finally` (`:950`), so cancelling leaves no remote job
+   * behind, only the bytes already sent.
    */
   signal?: AbortSignal;
 };
@@ -769,6 +778,14 @@ export class GeminiTranscribeAudioRepo extends BaseTranscribeAudioRepo {
         customVocabulary: this.customVocabulary,
         transcriptionMode: "verbatim",
         customFetch: withAbortSignal(secureFetch, input.signal),
+        // Every sibling provider that takes a signal passes it -- Aldea (:485),
+        // Azure (:728), Speaches (:870), OpenRouter (:963). It is separate from
+        // `customFetch` and not redundant with it: the wrapper binds the abort to the
+        // HTTP requests, while this reaches the poll loop's `delay(...)` between
+        // attempts. Without it a cancel left the loop running to its own
+        // FILE_POLL_DEADLINE_MS -- measured at 31,150ms and 19 polls after an abort at
+        // 300ms, against 302ms and 2 polls with it.
+        signal: input.signal,
       });
       return text;
     };

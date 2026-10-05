@@ -537,6 +537,47 @@ describe("storeTranscription persistence suppression", () => {
     expect(addWordsMock).toHaveBeenCalledWith(3);
   });
 
+  it("does not hold the stop path on the usage write in incognito", async () => {
+    // The non-incognito sibling calls `void recordUsageWords(...)` and the comment
+    // above it says why: the session stays locked until the stop path returns, so
+    // awaiting a queued profile write lets a pill click land in the gap, be accepted
+    // by the pill, and then be dropped by the app. Commit 9a638fa40 applied that
+    // reasoning to the sibling and left the incognito branch awaiting.
+    //
+    // This asserts the thing that actually went wrong -- ordering -- rather than the
+    // call, which a test can see either way. `addWordsToCurrentUser` is held
+    // unresolved; if `storeTranscription` still settles, the write is not on the path
+    // the user is waiting on.
+    applyState({
+      incognitoModeEnabled: true,
+      incognitoModeIncludeInStats: true,
+    });
+
+    let releaseUsageWrite: (() => void) | undefined;
+    addWordsMock.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseUsageWrite = resolve;
+        }),
+    );
+
+    let settled = false;
+    const pending = storeTranscription(storeInput()).then((result) => {
+      settled = true;
+      return result;
+    });
+
+    // Let the microtask queue drain: anything the implementation awaits has had every
+    // chance to block by now.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(settled).toBe(true);
+    expect(addWordsMock).toHaveBeenCalledWith(3);
+
+    // The write is still owed; the test releases it so the pending promise settles.
+    releaseUsageWrite?.();
+    await expect(pending).resolves.toMatchObject({ wordCount: 3 });
+  });
+
   it("skips storage without counting words when incognito excludes stats", async () => {
     applyState({
       incognitoModeEnabled: true,

@@ -287,4 +287,111 @@ describe("applySpokenCommands", () => {
       }),
     ).toBe("hello new line scratch that");
   });
+
+  describe("a command word inside a noun phrase is not a command", () => {
+    it("covers every case in this note", () => {
+      // "comma" was in the command list with `blockedPredecessors` but no
+      // `blockedFollowers`, and the modifier in this phrase FOLLOWS the head. So the
+      // command fired and removed the word from the middle of a noun phrase:
+      //
+      //   "comma separated values"               ->  ", separated values"
+      //   "the file holds comma separated values" ->  "the file holds, separated values"
+      //
+      // That is silent data loss, which this module rates above a miss that only
+      // mispunctuates. "a comma separated list" was already spared, by the determiners
+      // rule, which is why only part of this shape was corrupting.
+      for (const input of [
+        "comma separated values",
+        "the file holds comma separated values",
+        "comma delimited",
+        "the comma separated rule applies",
+        "names comma separated, ages comma separated",
+      ]) {
+        expect(applySpokenCommands(input)).toBe(input);
+      }
+
+      // The command itself is unaffected.
+      for (const [input, expected] of [
+        ["hello comma world", "hello, world"],
+        ["one two comma three comma four", "one two, three, four"],
+        ["comma", ","],
+        // `blockedPredecessors` still holds for the modifiers in front.
+        ["the Oxford comma matters", "the Oxford comma matters"],
+        ["Put a comma after the name.", "Put a comma after the name."],
+      ] as const) {
+        expect(applySpokenCommands(input)).toBe(expected);
+      }
+
+      // A blocked follower also withdraws `comma` from `commandFollowsAt`, so a
+      // `period` before the same noun phrase stops firing. That is a change to
+      // `period` behaviour caused from the `comma` entry, so it is pinned here too.
+      expect(applySpokenCommands("values period comma delimited list")).toBe(
+        "values period comma delimited list",
+      );
+
+      // One input changes reading rather than corrupting: "values comma separated by
+      // tab" used to become "values, separated by tab" and now stays literal. The
+      // speaker is describing comma separation rather than asking for a mark, so the
+      // literal reading is the better of the two.
+      expect(applySpokenCommands("values comma separated by tab")).toBe(
+        "values comma separated by tab",
+      );
+    });
+  });
+
+  describe("a quotative 'scratch that' is not the command", () => {
+    it("covers every case in this note", () => {
+      // "scratch that" is ordinary English as the object of a reporting verb. The
+      // clause-subject deny-list is what keeps the command from firing there, and it
+      // held only pronouns, modals, auxiliaries and negations. "The manager said
+      // scratch that." passed the gate, reached `applyScratch`, found no sentence
+      // boundary before the command and cleared the whole buffer -- so a quotative
+      // use deleted the dictation. This file rates a miss that only mispunctuates a
+      // cosmetic error and puts data loss above it.
+      for (const input of [
+        "The manager said scratch that.",
+        "She asked scratch that.",
+        "I wrote scratch that in the notes.",
+        "He repeated scratch that.",
+        "He told scratch that.",
+        // And the damaging shape: an earlier sentence that must survive intact.
+        "I sent the invoice. The manager said scratch that.",
+      ]) {
+        expect(applySpokenCommands(input)).toBe(input);
+      }
+
+      // The real command still fires, including where the boundary is what makes the
+      // scratch well-defined. These are the cases the existing suite already pins,
+      // restated here because the deny-list that protects them was widened.
+      expect(applySpokenCommands("Hello world scratch that")).toBe("");
+      expect(applySpokenCommands("First sentence. Second scratch that")).toBe(
+        "First sentence.",
+      );
+      expect(applySpokenCommands("Keep this. Drop that. scratch that")).toBe(
+        "Keep this.",
+      );
+      expect(applySpokenCommands("one two scratch that scratch that")).toBe("");
+      expect(applySpokenCommands("See Dr. Smith scratch that")).toBe("");
+      expect(applySpokenCommands("First. Second. new line scratch that")).toBe(
+        "First.",
+      );
+
+      // The deny-list entries this module added for `scratch that` itself. Each of
+      // these has the command word inside a clause that cannot be one.
+      for (const input of [
+        "I finished the report. I'll scratch that off my to-do list.",
+        "Let's scratch that idea and start over.",
+        "We should scratch that from the agenda.",
+      ]) {
+        expect(applySpokenCommands(input)).toBe(input);
+      }
+
+      // What the deny-list cannot do, stated so it is not mistaken for coverage: it
+      // looks only at the token immediately before the command. "told me scratch
+      // that" puts "me" there, and "me" is not a reporting verb, so that shape still
+      // clears the buffer. Catching it needs the whole clause, which is a different
+      // gate from the one widened above.
+      expect(applySpokenCommands("He told me scratch that.")).toBe("");
+    });
+  });
 });

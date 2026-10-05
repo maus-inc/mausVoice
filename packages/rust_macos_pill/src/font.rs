@@ -20,7 +20,10 @@ pub fn install_embedded_satoshi() {
         let dir = std::env::temp_dir().join("mausvoice-fonts");
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join("Satoshi-Medium.ttf");
-        let tmp = path.with_extension("tmp");
+        // Per-process temp name: every process materialises the same bytes into
+        // the same directory, so a shared name lets one launch rename the file
+        // out from under another, whose rename then fails and panics startup.
+        let tmp = dir.join(format!("Satoshi-Medium.{}.tmp", std::process::id()));
         std::fs::write(&tmp, SATOSHI_MEDIUM_TTF)
             .unwrap_or_else(|e| panic!("failed to materialize embedded Satoshi: {e}"));
         std::fs::rename(&tmp, &path)

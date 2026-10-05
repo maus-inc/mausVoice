@@ -101,10 +101,25 @@ type EditableTarget = {
   range: Range | null;
 };
 
+/**
+ * Whether `el` is a text field whose selection can be read and set.
+ *
+ * The tag name alone is not enough. `<input>` covers checkbox, radio, button, range, colour
+ * and file too, and `setSelectionRange` throws `InvalidStateError` on every one of those --
+ * verified in jsdom: a checkbox reports `selectionStart === null` and throws, while a text
+ * input and a textarea report `0` and do not.
+ *
+ * That mattered because `resolveEditableTarget` tests this FIRST, so a right-click on a
+ * checkbox produced an editable target with `selectionStart ?? 0` papering over the null, and
+ * "Select All" -- the one item with no `disabled` flag -- then called `setSelectionRange` on it
+ * and threw uncaught. Gating on `selectionStart` fixes both halves: a checkbox is no longer
+ * treated as editable at all, which is also right, since there is no text in it to edit.
+ */
 const isTextInput = (
   el: HTMLElement,
 ): el is HTMLInputElement | HTMLTextAreaElement =>
-  el.tagName === "INPUT" || el.tagName === "TEXTAREA";
+  el.tagName === "TEXTAREA" ||
+  (el.tagName === "INPUT" && (el as HTMLInputElement).selectionStart !== null);
 
 /** Snapshot the current selection for a contenteditable element. */
 const contentEditableSelection = (): { text: string; range: Range | null } => {

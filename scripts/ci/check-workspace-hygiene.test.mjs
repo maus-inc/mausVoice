@@ -1,20 +1,64 @@
 import assert from "node:assert/strict";
 import { execSync } from "node:child_process";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
+/**
+ * `git diff --check <ref>` finds whitespace errors and exits non-zero, printing
+ * each one to STDOUT. A bare `execSync` discards stdout on a non-zero exit, so
+ * the report has to be read out of the thrown error -- and only for git's own
+ * whitespace code. Every other non-zero exit is a failure to run the check, and
+ * returning an empty report for one of those makes `doesNotMatch("")` pass, which
+ * reads as evidence that the tree is clean. Measured in a scratch repo:
+ * whitespace 2, clean 0, unresolvable ref 128, missing git 127, all with 0 bytes
+ * on stdout except the first.
+ */
+const gitDiffCheckReport = (cwd, ref = "HEAD") => {
+  try {
+    return execSync(`git diff --check ${ref}`, {
+      cwd,
+      encoding: "utf8",
+      stdio: "pipe",
+    });
+  } catch (err) {
+    if (err.status !== 2) throw err;
+    return String(err.stdout ?? "");
+  }
+};
+
 // The subset of glob syntax these patterns use: `**` for any path depth and `*`
 // for anything but a separator. A full matcher is not worth a dependency for two
 // patterns, and a test that silently mis-matches would be worse than no test.
+//
+// `**/` is not the same as `**`. GitHub's filter-pattern cheat sheet documents
+// `'**/README.md'` as "A README.md file anywhere in the repository", and its
+// worked example matches a top-level `README.md` as well as `js/README.md`, so the
+// separator after `**/` is optional. It has to be translated as one optional depth
+// prefix, `(?:.*/)?`. Compiling it to `.*` and leaving the slash mandatory -- the
+// first version here -- demanded at least one directory, and reported every
+// top-level suite as uncovered by a `**/`-prefixed filter.
+//
+// A bare `**` with nothing after it is still "any depth, at or below here", so it
+// keeps the plain `.*`.
 const globToRegExp = (pattern) => {
   const source = pattern
     .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+    .replace(/\*\*\//g, "\u0001")
     .replace(/\*\*/g, "\u0000")
     .replace(/\*/g, "[^/]*")
+    .replace(/\u0001/g, "(?:.*/)?")
     .replace(/\u0000/g, ".*");
   return new RegExp(`^${source}$`);
 };
@@ -119,11 +163,42 @@ function executedSuites(workflowsText, repoRoot) {
 // is not what GitHub does: for any given event only that event's filter applies,
 // so the question "does this workflow run on this path" is answered by asking
 // each filter and OR-ing the answers.
+// A `paths:` key, and the value on the same line if there is one. A flow sequence --
+// `paths: ["a", "!b"]` -- is the same list as the block spelling, and the YAML parser
+// agrees: `yaml.safe_load('paths: ["a", "!b"]')` returns `["a", "!b"]`. Only the
+// INLINE form is handled here; `paths:` followed by `- item` lines is the block
+// spelling, handled by the scan below.
+const PATHS_KEY = /^\s*paths:(.*)$/;
+// A flow sequence, tolerating the quoting and spacing YAML allows around it and a
+// trailing comma, which YAML permits and which prettier will not remove from a
+// hand-written workflow.
+const FLOW_SEQUENCE = /^\s*\[(.*?)\]\s*(?:#.*)?$/;
+function flowEntries(tail) {
+  const seq = FLOW_SEQUENCE.exec(tail);
+  if (!seq) return null;
+  const inner = seq[1].trim();
+  if (inner === "") return [];
+  return inner.split(",").map((part) =>
+    part
+      .trim()
+      .replace(/^["']|["']$/g, "")
+      .trim(),
+  );
+}
+
 function pathsEntries(text) {
   const lines = text.split("\n");
   const blocks = [];
   for (let index = 0; index < lines.length; index += 1) {
-    if (!/^\s*paths:\s*$/.test(lines[index])) continue;
+    const keyed = PATHS_KEY.exec(lines[index]);
+    if (!keyed) continue;
+    const inline = flowEntries(keyed[1]);
+    if (inline) {
+      blocks.push(inline);
+      continue;
+    }
+    // The block spelling: the key alone on its line, items on the ones below.
+    if (keyed[1].trim() !== "") continue;
     const entries = [];
     for (let scan = index + 1; scan < lines.length; scan += 1) {
       const line = lines[scan];
@@ -161,7 +236,17 @@ function pathsEntries(text) {
 function missingFromTriggerFilter(text, repoRoot) {
   // Only a workflow with a `paths:` filter can be missing an entry. One that
   // triggers on every push has nothing to keep in sync.
-  if (!/^\s*paths:\s*$/m.test(text)) return [];
+  //
+  // Derived from the PARSED blocks rather than a second regex over the text, which is
+  // the whole point. This line used to test `/^\s*paths:\s*$/m` -- a separate opinion
+  // about what a `paths:` key looks like -- so it returned [] before `pathsEntries` was
+  // ever consulted, and both places had to be widened together or the fix silently did
+  // nothing. One place decides what the key looks like now. That is also the rule the
+  // file already commits to further down, for the same reason: "There is no separate
+  // list of 'exempt' patterns to keep consistent with the matcher, which is the class of
+  // bug this file exists to catch."
+  const blocks = pathsEntries(text);
+  if (blocks.length === 0) return [];
   const executed = executedSuites(text, repoRoot);
   if (executed.size === 0) return [];
   // GitHub resolves a `paths:` filter in DECLARATION ORDER and the last
@@ -175,7 +260,6 @@ function missingFromTriggerFilter(text, repoRoot) {
   // compiled a `!` entry as though it were a path pattern, so it could not match
   // anything and the exclusion was dropped silently -- the guard reporting the
   // opposite of what the workflow does, for the suite shape it exists to catch.
-  const blocks = pathsEntries(text);
   // Within ONE filter, GitHub resolves the entries in DECLARATION ORDER and the
   // last pattern that matches decides. So a filter listing `!apps/**` and then
   // `apps/desktop/**` DOES run a suite under `apps/desktop`, because the later
@@ -238,23 +322,70 @@ describe("workspace hygiene contracts", () => {
   });
 
   it("ensures git diff --check reports no whitespace or CRLF errors", () => {
-    try {
-      execSync("git diff --check HEAD", {
-        cwd: repoRoot,
-        stdio: "pipe",
-      });
-    } catch (err) {
-      // If there are working directory diffs, test against tracked files only
-      const trackedStatus = execSync("git diff --check", {
-        cwd: repoRoot,
-        encoding: "utf8",
-      });
-      assert.doesNotMatch(
-        trackedStatus,
-        /trailing whitespace|CRLF/,
-        "working tree diff must not introduce CRLF or trailing whitespace errors",
-      );
-    }
+    // Comparing against HEAD covers staged and unstaged edits together. The
+    // previous version re-ran the check against the working tree alone on
+    // failure, and `git diff --check` with no ref inspects unstaged files only,
+    // so a whitespace error in a file that was staged and not then edited passed
+    // unexamined.
+    assert.doesNotMatch(
+      gitDiffCheckReport(repoRoot),
+      /trailing whitespace|CRLF/,
+      "working tree diff must not introduce CRLF or trailing whitespace errors",
+    );
+  });
+
+  it("reads only git's whitespace exit code as a report", () => {
+    // `git diff --check` exits non-zero when it finds a problem and prints each
+    // one to STDOUT, so the report has to be read out of the thrown error rather
+    // than from a successful call -- a bare execSync discards it.
+    //
+    // `execSync` throws on ANY non-zero exit, though, and the other two cases
+    // below put nothing at all on stdout. Reading those as an empty report let
+    // the check above pass without ever having run, which is the direction that
+    // reassures. Measured in a scratch repo:
+    //
+    //   whitespace present  -> exit 2,   report on stdout
+    //   clean tree          -> exit 0,   empty report
+    //   bad ref             -> exit 128, stdout 0 bytes
+    //
+    // A missing git exits 127 rather than 128, and is thrown for the same reason.
+    const repo = mkdtempSync(join(tmpdir(), "git-diff-check-"));
+    const write = (contents) => {
+      writeFileSync(join(repo, "f.txt"), contents);
+      execSync("git add f.txt", { cwd: repo, stdio: "pipe" });
+      execSync("git checkout -- f.txt", { cwd: repo, stdio: "pipe" });
+    };
+    execSync("git init -q .", { cwd: repo, stdio: "pipe" });
+    execSync("git config user.email t@example.invalid", {
+      cwd: repo,
+      stdio: "pipe",
+    });
+    execSync("git config user.name t", { cwd: repo, stdio: "pipe" });
+    write("a\nb\n");
+    execSync("git commit -qm base", { cwd: repo, stdio: "pipe" });
+
+    assert.strictEqual(
+      gitDiffCheckReport(repo),
+      "",
+      "a clean tree is a clean report, not an error",
+    );
+
+    write("a\nb   \n");
+    assert.match(
+      gitDiffCheckReport(repo),
+      /trailing whitespace/,
+      "a whitespace finding is a report, so the caller sees it",
+    );
+
+    // The case that mattered. This threw with 0 bytes on stdout, so the old
+    // catch produced an empty report and `doesNotMatch("")` passed.
+    assert.throws(
+      () => gitDiffCheckReport(repo, "NOSUCHREF"),
+      /unknown revision|ambiguous argument/,
+      "a ref that does not resolve is a failure of the check, not a clean report",
+    );
+
+    rmSync(repo, { recursive: true, force: true });
   });
 
   it("every DeepSource exclusion still excludes something", () => {
@@ -723,6 +854,104 @@ describe("the trigger filter check compares executed paths to filter entries", (
       ["scripts/ci/windows-tauri-imports.test.mjs"],
       "a paths-ignore entry is not coverage: with no paths entry, the suite is " +
         "still an omission",
+    );
+  });
+
+  it("reads `**/` in a filter as matching zero directories, as GitHub does", () => {
+    // GitHub's filter-pattern cheat sheet documents `'**/README.md'` as "A
+    // README.md file anywhere in the repository", and its worked example matches
+    // `README.md` at the top level as well as `js/README.md`. So `**/` legally
+    // matches zero directories. Compiling `**` to `.*` while leaving the slash
+    // behind it mandatory asked for at least one, which made a root-level suite
+    // read as uncovered under `**/*.test.mjs` and failed the guard on a workflow
+    // that really does cover it.
+    //
+    // That is the noisy direction. The reassuring direction is the opposite bug: a
+    // matcher that covers more than the workflow does, which reports a suite as
+    // wired when it is not. `scripts/**` must keep meaning "inside scripts, any
+    // depth" either way.
+    const covering = (entry) =>
+      [
+        "on:",
+        "  push:",
+        "    paths:",
+        `      - "${entry}"`,
+        "jobs:",
+        "  unit:",
+        "    runs-on: ubuntu-latest",
+        "    steps:",
+        "      - run: node --test root.test.mjs",
+        "",
+      ].join("\n");
+    for (const entry of ["**/*.test.mjs", "**.test.mjs", "*"]) {
+      assert.deepStrictEqual(
+        missingFromTriggerFilter(covering(entry), repoRoot),
+        [],
+        `a filter naming ${JSON.stringify(entry)} covers a top-level suite`,
+      );
+    }
+    assert.deepStrictEqual(
+      missingFromTriggerFilter(covering("scripts/**"), repoRoot),
+      ["root.test.mjs"],
+      "`scripts/**` is still scoped to scripts/ and does not cover the top level",
+    );
+  });
+
+  it("reads a `paths:` filter written as a flow sequence", () => {
+    // `paths: ["scripts/**", "!scripts/ci/**"]` is the same list as the block
+    // spelling -- `yaml.safe_load` gives a list either way -- and both places that
+    // decide whether a workflow HAS a `paths:` filter matched `/^\s*paths:\s*$/`,
+    // which cannot match a value on the same line. So `pathsEntries` returned no
+    // blocks and `missingFromTriggerFilter` returned [] before ever looking.
+    //
+    // The direction that matters is the reassuring one. A filter that EXCLUDES the
+    // suite is read as covering it, so the guard passes a workflow that does not run
+    // the suite -- the exact failure it exists to catch. The block-style equivalent
+    // is pinned two tests up and reports it correctly.
+    const base = (pathsLine) =>
+      [
+        "on:",
+        "  pull_request:",
+        `    ${pathsLine}`,
+        "jobs:",
+        "  unit:",
+        "    runs-on: ubuntu-latest",
+        "    steps:",
+        "      - run: node --test scripts/ci/windows-tauri-imports.test.mjs",
+        "",
+      ].join("\n");
+
+    // The control, in block style: the exclusion is detected.
+    assert.deepStrictEqual(
+      missingFromTriggerFilter(
+        base('paths:\n      - "scripts/**"\n      - "!scripts/ci/**"'),
+        scanRoot,
+      ),
+      ["scripts/ci/windows-tauri-imports.test.mjs"],
+      "block style: a filter that excludes the suite must be reported",
+    );
+
+    // The same filter as a flow sequence. Unquoted, quoted, and with a trailing
+    // comma -- all three are spellings the YAML parser accepts.
+    for (const spelling of [
+      'paths: ["scripts/**", "!scripts/ci/**"]',
+      "paths: ['scripts/**', '!scripts/ci/**']",
+      'paths: ["scripts/**", "!scripts/ci/**",]',
+      'paths: [ "scripts/**" , "!scripts/ci/**" ]',
+    ]) {
+      assert.deepStrictEqual(
+        missingFromTriggerFilter(base(spelling), scanRoot),
+        ["scripts/ci/windows-tauri-imports.test.mjs"],
+        `flow style ${spelling}: must agree with the block spelling`,
+      );
+    }
+
+    // And a flow filter that DOES cover the suite stays covered, so this is not
+    // "report everything that mentions paths".
+    assert.deepStrictEqual(
+      missingFromTriggerFilter(base('paths: ["scripts/**"]'), scanRoot),
+      [],
+      "a flow filter that includes the suite must not be reported",
     );
   });
 

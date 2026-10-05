@@ -30,7 +30,7 @@ paste / simulate_type / remote receiver
 ```
 
 1. Rust emits a hotkey or pill event.
-2. `DictationSideEffects` / dictation strategy starts capture and a `TranscriptionSession` (Deepgram stream, Gladia stream, other API batch, or local sidecar).
+2. `DictationSideEffects` / dictation strategy starts capture and a `TranscriptionSession`: a dedicated live session (Azure Speech, Deepgram `nova-3`, Gladia `solaria-1`, AssemblyAI, ElevenLabs), a buffered HTTP batch route (Groq, OpenAI, Aldea, and the rest), or the local sidecar. AssemblyAI, ElevenLabs and Azure are reachable both ways, so "other API batch" alone undercounts them.
 3. Dictionary replacements run in TypeScript.
 4. If post-processing is **API**, a generate-text repo calls the configured LLM. **Off** skips the network rewrite.
 5. If `reviewBeforeInsert` is on, the native pill's assistant panel opens for editing before insertion. An agent Paste action that opens Chats becomes a saved manual-paste card because Chats takes focus. Builds without a native pill use the composer fallback.

@@ -135,7 +135,7 @@ const isSensitiveKey = (key: string, sensitiveKeys: string[]): boolean => {
   );
 };
 
-const redactStringValue = (value: string): string => {
+export const redactStringValue = (value: string): string => {
   return value.replace(SECRET_VALUE_PATTERN, "[redacted-secret]");
 };
 

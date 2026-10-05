@@ -79,6 +79,27 @@ const COMMANDS: SpokenCommand[] = [
   insert(["comma"], ",", {
     attachLeft: true,
     blockedPredecessors: [["oxford"], ["inverted"], ["serial"]],
+    // `blockedPredecessors` cannot see this case, because the modifier FOLLOWS the
+    // head: "comma separated values" is one noun phrase. The command fired and the
+    // word `comma` was removed from the middle of it, which is silent data loss --
+    // the class this module's header ranks above a miss that only mispunctuates.
+    // "a comma separated list" was already spared, by the determiners rule above,
+    // which is why only some of these were corrupting.
+    //
+    // Two consequences worth stating, because neither is visible from this command
+    // alone. First, a blocked follower withdraws the command from
+    // `commandFollowsAt`, so a `period` immediately before this noun phrase stops
+    // firing too: "values period comma delimited list" used to become
+    // "values., delimited list" and is now left alone. That direction is
+    // conservative -- fewer invented stops, never more -- but it is a change to
+    // `period` behaviour caused from here.
+    //
+    // Second, the list is closed, on the same policy as the `period` list below:
+    // `separated`, `delimited` and `spliced` are the standard compounds, and a
+    // modifier nobody thought of still costs a word ("comma quoting rules" becomes
+    // ", quoting rules"). Add one when a compound noun built on "comma" is missing
+    // from this list, not when a sentence is mispunctuated.
+    blockedFollowers: [["separated"], ["delimited"], ["spliced"]],
   }),
   insert(["period"], ".", {
     attachLeft: true,
@@ -204,6 +225,52 @@ const SCRATCH_CLAUSE_SUBJECTS = new Set([
   "won't",
   "not",
   "never",
+  // Reporting and mental-state verbs. "scratch that" is also ordinary English
+  // after one of these, where it is the object of what was said rather than a
+  // command, and the gate in `commandApplies` is only supposed to fire where the words
+  // cannot be part of the surrounding sentence. Without these, "The manager said
+  // scratch that." reached `applyScratch`, which found no sentence boundary
+  // before the command and cleared the whole buffer -- so a quotative use
+  // deleted the user's dictation instead of doing nothing.
+  //
+  // This is an open class and will never be complete. Adding the common ones is
+  // the difference between the command firing and not firing, so it is worth
+  // more here than completeness would be.
+  "said",
+  "says",
+  "say",
+  "telling",
+  "tells",
+  "told",
+  "asked",
+  "asks",
+  "ask",
+  "asking",
+  "yelled",
+  "whispered",
+  "shouted",
+  "mumbled",
+  "wrote",
+  "writes",
+  "writing",
+  "read",
+  "reads",
+  "reading",
+  "thought",
+  "thinks",
+  "think",
+  "meant",
+  "means",
+  "repeat",
+  "repeated",
+  "reply",
+  "replied",
+  "heard",
+  "hears",
+  "hear",
+  "see",
+  "saw",
+  "seen",
 ]);
 
 // Closed-class words that commonly open a sentence. Transcription only

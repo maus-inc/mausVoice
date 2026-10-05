@@ -496,6 +496,90 @@ describe("DictationStrategy backlog lifecycle", () => {
     });
   });
 
+  it("does not claim the local style ran when the provider reply was unusable", async () => {
+    // `postProcessFallback` is set on TWO different runs, and
+    // `transcriptions.actions.ts` says so in its own words: "covers two different runs
+    // and cannot be read on its own". This reads it bare, so it fires for both.
+    //
+    //   the request FAILED, the local style succeeded -> postProcessError set.
+    //     The text really is styled, and the toast is true.
+    //   the request SUCCEEDED but the reply was unusable (truncated JSON, prose, `{}`)
+    //     -> postProcessFailed stays false and no error is recorded
+    //     (transcribe.actions.ts:402-408, "The request succeeded, so postProcessFailed
+    //     stays false"). The text stored is the raw ASR, and no local style ran.
+    //
+    // The second case used to tell the user "Online styling was unavailable, so the
+    // local style was used instead" -- which is the opposite of what happened. The row
+    // is still marked unstyled by `isUnstyledPostProcess`, so History shows the real
+    // state; this only stops the toast asserting something false.
+    const { postProcessTranscript } =
+      await import("../actions/transcribe.actions");
+    vi.mocked(postProcessTranscript).mockResolvedValueOnce({
+      transcript: "so um I went to the store",
+      warnings: ["Post-processing returned an unusable response."],
+      metadata: {
+        postProcessFailed: false,
+        postProcessFallback: true,
+      },
+    });
+    const { showToast } = await import("../actions/toast.actions");
+    vi.mocked(showToast).mockClear();
+
+    await new DictationStrategy().handleTranscript({
+      rawTranscript: "so um I went to the store",
+      toneId: "custom-tone",
+      a11yInfo: null,
+      currentApp: null,
+      loadingToken: null,
+      audio: { samples: [], sampleRate: 16000 },
+      transcriptionMetadata: {},
+      transcriptionWarnings: [],
+    } satisfies HandleTranscriptParams);
+
+    const messages = vi
+      .mocked(showToast)
+      .mock.calls.map((call) => call[0]?.message);
+    expect(messages).not.toContain(
+      "Online styling was unavailable, so the local style was used instead.",
+    );
+  });
+
+  it("still says the local style ran when the provider request actually failed", async () => {
+    // The control for the case above: this is the run the message is written for, and
+    // gating on the separator must not silence it.
+    const { postProcessTranscript } =
+      await import("../actions/transcribe.actions");
+    vi.mocked(postProcessTranscript).mockResolvedValueOnce({
+      transcript: "I went to the store",
+      warnings: ["Fast local style applied instead of the LLM post-processor."],
+      metadata: {
+        postProcessFailed: false,
+        postProcessFallback: true,
+        postProcessError: POST_PROCESS_ERROR_CATEGORY.quotaOrPayment,
+      },
+    });
+    const { showToast } = await import("../actions/toast.actions");
+    vi.mocked(showToast).mockClear();
+
+    await new DictationStrategy().handleTranscript({
+      rawTranscript: "I went to the store",
+      toneId: "custom-tone",
+      a11yInfo: null,
+      currentApp: null,
+      loadingToken: null,
+      audio: { samples: [], sampleRate: 16000 },
+      transcriptionMetadata: {},
+      transcriptionWarnings: [],
+    } satisfies HandleTranscriptParams);
+
+    expect(showToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message:
+          "Online styling was unavailable, so the local style was used instead.",
+      }),
+    );
+  });
+
   it("routes final output without an arbitrary delay", async () => {
     const routed = deferred<void>();
     routeTranscriptOutputMock.mockImplementationOnce(async () => {
