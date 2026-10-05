@@ -241,41 +241,50 @@ describe("release workflow shell contracts", () => {
   // A comment is invisible to every other gate, which is why this needs pinning: the
   // first fix I wrote was itself false for `test-docs` and only a validator that reads
   // each file's own `on:` block caught it.
-  for (const file of [
-    "build-desktop",
-    "lint-desktop",
-    "test-desktop-integration",
-    "test-desktop-unit",
-    "test-docs",
-  ]) {
-    const text = read(`.github/workflows/${file}.yml`);
-    const on = /^on:\n((?:[ \t]+.*\n|\n)*)/m.exec(text);
-    assert.ok(on, `${file}.yml must have an on: block`);
-    // The `on:` block only: a `workflow_dispatch:` key appearing in a comment or in
-    // a job's `if:` would otherwise satisfy this and pin nothing.
-    const declaresManual = /^\s*workflow_dispatch:/m.test(on[1]);
-    // The claim comes from a machine-readable marker beside the `on:` block, never
-    // from the prose. Every version of this assertion that read the comment text
-    // broke the moment the comment was reworded -- which is not a change to the
-    // `on:` block at all, and happened three times while writing these comments.
-    // Reading prose also cannot work here: a corrected comment still quotes the
-    // old sentence while explaining it, so any phrase search for the claim finds
-    // the history rather than the assertion.
-    const marker = /^#\s*trigger-manual:\s*(true|false)\s*$/m.exec(text);
-    assert.ok(
-      marker,
-      `${file}.yml must carry a "# trigger-manual: true|false" line beside its on: ` +
-        `block, so this contract never has to interpret prose`,
-    );
-    const claimsManual = marker[1] === "true";
+  // In its own `it`, not loose in the describe body. A throw here aborts COLLECTION, and
+  // node's test runner then reports every test as `cancelledByParent` with the real
+  // assertion demoted to a suite-level error: proven by mutation, `# pass 0  # fail 0`,
+  // with all 29 checks offline because one workflow's comment disagreed with its own
+  // `on:` block. A red herring that looks like "one thing is broken" while actually
+  // meaning "nothing was verified" is worse than a missing check. Wrapping it makes the
+  // same mutation 1 named failure and 28 passes.
+  it("every trigger comment agrees with its own on: block", () => {
+    for (const file of [
+      "build-desktop",
+      "lint-desktop",
+      "test-desktop-integration",
+      "test-desktop-unit",
+      "test-docs",
+    ]) {
+      const text = read(`.github/workflows/${file}.yml`);
+      const on = /^on:\n((?:[ \t]+.*\n|\n)*)/m.exec(text);
+      assert.ok(on, `${file}.yml must have an on: block`);
+      // The `on:` block only: a `workflow_dispatch:` key appearing in a comment or in
+      // a job's `if:` would otherwise satisfy this and pin nothing.
+      const declaresManual = /^\s*workflow_dispatch:/m.test(on[1]);
+      // The claim comes from a machine-readable marker beside the `on:` block, never
+      // from the prose. Every version of this assertion that read the comment text
+      // broke the moment the comment was reworded -- which is not a change to the
+      // `on:` block at all, and happened three times while writing these comments.
+      // Reading prose also cannot work here: a corrected comment still quotes the
+      // old sentence while explaining it, so any phrase search for the claim finds
+      // the history rather than the assertion.
+      const marker = /^#\s*trigger-manual:\s*(true|false)\s*$/m.exec(text);
+      assert.ok(
+        marker,
+        `${file}.yml must carry a "# trigger-manual: true|false" line beside its on: ` +
+          `block, so this contract never has to interpret prose`,
+      );
+      const claimsManual = marker[1] === "true";
 
-    assert.equal(
-      declaresManual,
-      claimsManual,
-      `${file}.yml: its trigger comment must agree with its own on: block ` +
-        `(declares workflow_dispatch: ${declaresManual})`,
-    );
-  }
+      assert.equal(
+        declaresManual,
+        claimsManual,
+        `${file}.yml: its trigger comment must agree with its own on: block ` +
+          `(declares workflow_dispatch: ${declaresManual})`,
+      );
+    }
+  });
   // The capability check, as it appears in the three scans and in the verdict.
   //
   // Compared as the awk PROGRAM, not as the whole block. The three scans feed it a
