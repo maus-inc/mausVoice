@@ -1029,13 +1029,22 @@ export const storeTranscription = async (
     );
     // Counting words is an incognito-only option. An ephemeral session never
     // opted into usage statistics.
+    //
+    // `void`, not `await`, and for the same reason its non-incognito sibling is
+    // `void`: the session stays locked until this function returns, so awaiting a
+    // queued profile write holds the lock across an IPC and a pill click that lands
+    // in the gap is accepted by the pill and then dropped by the app. Commit
+    // 9a638fa40 applied that to the sibling and left this branch awaiting.
+    // `recordUsageWords` owns its own error handling, so discarding the promise
+    // cannot produce an unhandled rejection, and the cost of being late is one
+    // dictation's word count.
     if (
       wordsAdded > 0 &&
       includeInStats &&
       incognitoEnabled &&
       !isEphemeralSessionActive()
     ) {
-      await recordUsageWords(wordsAdded);
+      void recordUsageWords(wordsAdded);
     }
 
     return { transcription: null, wordCount: wordsAdded };
