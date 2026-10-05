@@ -28,7 +28,7 @@ const POSIX_ONLY = [/\bif\s*\[/, /^\s*elif\b/m, /^\s*fi\b/m, /^\s*then\b/m];
 // is enough and keeps this test dependency-free.
 const extractSteps = (workflowText) => {
   const lines = workflowText.split("\n");
-  /** @type {{ name: string, shell: string | null, shells: string[], run: string[],
+  /** @type {{ name: string, uses: string | null, shell: string | null, shells: string[], run: string[],
    *          inputs: string[], if: string | null, workingDirectory: string | null }[]} */
   const steps = [];
   let current = null;
@@ -47,6 +47,7 @@ const extractSteps = (workflowText) => {
         shells: [],
         run: [],
         inputs: [],
+        uses: null,
         if: null,
         workingDirectory: null,
       };
@@ -104,6 +105,17 @@ const extractSteps = (workflowText) => {
     const ifMatch = line.match(/^\s*if:\s*(.+?)\s*$/);
     if (ifMatch) {
       current.if = ifMatch[1];
+      continue;
+    }
+    // A step's `uses:` is recorded for the same reason `with:` is: a step that calls a
+    // local action executes code from the scanned checkout and has NO `run:` body for an
+    // assertion to read. Without this, `uses: ./.github/actions/...` before the secret-scan
+    // verdict was invisible to every check here -- measured, inserting one left the suite
+    // at 30/30. Read beside `if:`, so a `uses:` inside a run body cannot be mistaken for
+    // the step's key, which is the same reason `shell:` was moved.
+    const usesMatch = line.match(/^\s*uses:\s*(\S+)\s*$/);
+    if (usesMatch) {
+      current.uses = usesMatch[1];
       continue;
     }
     const wdMatch = line.match(/^\s*working-directory:\s*(.+?)\s*$/);
@@ -455,18 +467,86 @@ describe("release workflow shell contracts", () => {
       "secret-scan.yml needs the closing verdict step",
     );
 
-    // Positive: there ARE such steps, so emptying the list cannot make this pass.
-    const branchCode = steps.filter((step) =>
-      /(?:^|[\s;&|(])(?:node|npx|bun|deno)\s[^\n]*scripts\/ci\//.test(
-        step.run.join("\n"),
-      ),
+    // The subject is a POSITION, not a launcher.
+    //
+    // This used to select steps by matching `node|npx|bun|deno ... scripts/ci/`, which
+    // is a list of interpreters rather than the thing the contract is about. Measured
+    // misses, all of which execute branch code out of the scanned checkout just as
+    // effectively:
+    //
+    //     sh scripts/ci/branch-helper.sh          not matched
+    //     bash scripts/ci/branch-helper.sh        not matched
+    //     ./scripts/ci/run                        not matched
+    //     bash -c "node scripts/ci/x.mjs"         not matched
+    //
+    // and a pre-verdict `uses: ./.github/actions/...` composite action does not even have
+    // a `run:` body to match. Proven by mutation: inserting two such steps before the
+    // verdict -- one `sh` under `working-directory: scan-target`, one composite action --
+    // left the suite at 30/30.
+    //
+    // So the subject is: every step whose working directory is the scanned checkout,
+    // split by which side of the verdict it sits on. What runs there is a separate,
+    // positive question, asked per step below.
+    const inScanTarget = (step) => step.workingDirectory === "scan-target";
+    const beforeVerdict = steps.filter(
+      (step, index) => inScanTarget(step) && index < verdictIndex,
     );
+    const afterVerdict = steps.filter(
+      (step, index) => inScanTarget(step) && index > verdictIndex,
+    );
+
+    // Positive control on both halves, so neither can pass by being empty.
     assert.equal(
-      branchCode.length,
+      afterVerdict.length,
       3,
-      "expected the three config-guard/history-scan steps to resolve scripts/ci/ out of " +
-        "the scanned checkout; a different count means this assertion has lost its subject",
+      "expected the three config-guard/history-scan steps to run from the scanned " +
+        "checkout after the verdict; a different count means this assertion has lost " +
+        "its subject",
     );
+    assert.ok(
+      beforeVerdict.length >= 3,
+      `expected at least the three scans to run from the scanned checkout before the ` +
+        `verdict, found ${beforeVerdict.length}`,
+    );
+
+    // Before the verdict, running anything from the scanned checkout at all is the
+    // hazard -- the branch under review owns those bytes and can forge both inputs the
+    // verdict compares. A composite action is the same hazard with no `run:` to inspect.
+    for (const [index, step] of steps.entries()) {
+      if (index >= verdictIndex) continue;
+      assert.doesNotMatch(
+        step.run.join("\n"),
+        /(?:^|[\s;&|(])(?:node|npx|bun|deno|sh|bash|zsh|python3?|ruby|perl)\s[^\n]*scripts\/ci\//,
+        `${step.name} runs BEFORE the verdict and resolves scripts/ci/ out of the ` +
+          "scanned checkout, so the branch under review can forge both inputs the " +
+          "verdict compares (../trusted-scanner/.git and ../trusted-scanner/gitleaks.toml)",
+      );
+      assert.doesNotMatch(
+        step.run.join("\n"),
+        /(?:^|\s)\.?\/?\.github\/actions\//,
+        `${step.name} runs BEFORE the verdict and uses a local composite action from the ` +
+          "scanned checkout, which is branch code with no `run:` body to read",
+      );
+      assert.doesNotMatch(
+        step.uses ?? "",
+        /^\.\//,
+        `${step.name} runs BEFORE the verdict and uses a local action (${step.uses}), ` +
+          "which is code from the branch under review executing before the verdict",
+      );
+    }
+
+    // And after the verdict, running from the scanned checkout is the POINT -- the
+    // branch's own tests. Those must stay reachable whatever the verdict decided.
+    const branchCode = afterVerdict;
+    for (const step of beforeVerdict) {
+      assert.ok(
+        !/(?:^|\s)(?:node|npx|bun|deno|sh|bash)\s[^\n]*scripts\/ci\//.test(
+          step.run.join("\n"),
+        ),
+        `${step.name} is a scan, not a test: it must not resolve scripts/ci/ out of the ` +
+          "checkout it is scanning",
+      );
+    }
 
     // The verdict step's own working directory, which nothing above pins. The loop below
     // checks the three scans and the verdict is not one of them: its body does not
