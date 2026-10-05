@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 // `Object.keys(...)` over the module, which is what pins the export surface.
 // Named imports would make that assertion impossible to write.
 import * as providerErrorUtils from "./provider-error.utils";
+import { redactSensitiveTokens } from "@maus-inc/utilities";
 
 describe("provider-error.utils", () => {
   it("exports only the readers and the scrubber, and no retry policy", () => {
@@ -511,13 +512,9 @@ describe("an authorization label with a scheme-prefixed value", () => {
     // recognised and the whole Digest challenge survives.
     //
     // The guard is right about the words it was written for (`unauthorization`,
-    // `my_authorization_header`). It is the HYPHEN that does double duty here: the same
-    // character separates the words inside those words and prefixes a header name.
-    //
-    // Only the hyphen, and that is a limit rather than a decision. `_` prefixes a header
-    // name exactly as `-` does, and the shared scrubber already treats both as label
-    // separators, so the three underscore spellings below are handled by the follow-up
-    // commit rather than by this one -- the loop carries only the hyphenated forms.
+    // `my_authorization_header`). What it got wrong was the vocabulary: `-` and `_` each
+    // do double duty, separating the words inside a longer identifier AND prefixing a
+    // header name, so both are listed below.
     //
     // Scoped to the labels this scanner actually knows. A first draft of this test also
     // asserted `x-auth`, which is not a spelling of a label in `AUTHORIZATION_LABELS`
@@ -528,6 +525,13 @@ describe("an authorization label with a scheme-prefixed value", () => {
       "x-authorization",
       "X-Authorization",
       "x-proxy-authorization",
+      // `_` prefixes a header name exactly as `-` does, and the shared scrubber in
+      // `utilities/src/error.ts` already redacted all three of these. This scanner did
+      // not, so the two disagreed on the same string and the weaker one had no
+      // backstop: `redactProviderMessage` never calls the shared scrubber.
+      "x_authorization",
+      "my_authorization",
+      "no_authorization",
     ]) {
       const output = providerErrorUtils.redactProviderMessage(
         `${label}: Digest nonce=${CHALLENGE}, realm="eastus"`,
@@ -538,10 +542,40 @@ describe("an authorization label with a scheme-prefixed value", () => {
     }
   });
 
+  it("agrees with the shared scrubber about every one of those labels", () => {
+    // The disagreement is the defect, not either verdict. This test file imports
+    // `redactSensitiveTokens` from `@maus-inc/utilities` -- the same module
+    // `provider-error.utils.ts` imports `AUTHORIZATION_SCHEMES` and `schemeValueEnd` from,
+    // and the same module whose `src/error.ts` holds that scrubber -- so the two can be
+    // called on the same string here rather than compared from memory.
+    //
+    // Scoped to four shapes on purpose. `unauthorization` and `my_authorization_header`
+    // are in the list because agreeing to LEAK is as much a part of the contract as
+    // agreeing to redact: the next guard to be widened would have to break both redactors
+    // together to go unnoticed.
+    const CHALLENGE = "nc" + "7f3a91";
+    for (const label of [
+      "x-authorization",
+      "x_authorization",
+      "unauthorization",
+      "my_authorization_header",
+    ]) {
+      const message = `${label}: Digest nonce=${CHALLENGE}`;
+      const here = providerErrorUtils.redactProviderMessage(message);
+      const shared = redactSensitiveTokens(message);
+      expect(here.includes(CHALLENGE)).toBe(shared.includes(CHALLENGE));
+    }
+  });
+
   it("still refuses a label that is genuinely inside a longer word", () => {
-    // The control for the case above. If the prefix guard were simply removed, these
-    // would start being redacted, which is the false positive the guard exists to
-    // prevent: a word that merely CONTAINS `authorization` is not a header name.
+    // The control for the case above. If the refusal were simply removed, these would
+    // start being redacted, which is the false positive it exists to prevent: a word that
+    // merely CONTAINS `authorization` is not a header name.
+    //
+    // These two are kept alive by different mechanisms, and the source comment says which.
+    // Neutralising only the guard leaves `my_authorization_header` untouched anyway -- it
+    // survives because no `:` or `=` follows the label -- so it is the weaker of the two
+    // controls here. `unauthorization` is the one that fails if the guard goes.
     for (const message of [
       "unauthorization: Digest abc",
       "my_authorization_header: Digest abc",
