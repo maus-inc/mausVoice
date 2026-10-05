@@ -689,9 +689,9 @@ const toBullets = (raw: string): string => {
       // cannot decide this: at 2 characters it drops "no", and because the
       // fallback below only applies when EVERY fragment was short, one longer
       // sibling was enough to delete the short ones -- so "Go; no; stop." became a
-      // single bullet reading "Stop". `stripEdgePunctuation` only removes
-      // `[,.;\s]`, so a length test cannot see the difference between an em dash
-      // and a real idea either.
+      // single bullet reading "Stop". The threshold that was here did drop a lone em
+      // dash and a bare hyphen, but only as a side effect of counting characters; the
+      // test names the property instead.
       if (/[\p{L}\p{N}]/u.test(trimmed)) ideas.push(trimmed);
     }
   }

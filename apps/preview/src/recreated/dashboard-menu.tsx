@@ -60,10 +60,10 @@ export const DashboardMenuPreview = ({
   // `SegmentedControl.tsx:55` as that precedent; line 55 is a style object. The second
   // corrected it by asserting no sanitiser existed at all, which is also false. The third
   // said the reason was that `useId()` returns a colon-delimited `:r0:` -- that is the React
-  // 18 format. React 19 builds `"_" + prefix + "r_" + id + "_"`, so there are no colons and
-  // the replace currently strips nothing. It is kept for consistency with the precedent and
-  // because an `identifierPrefix` could reintroduce a character worth dropping, not because
-  // today's output needs it.
+  // 18 format. React 19 builds `"_" + prefix + "r_" + id.toString(32) + "_"`, so there
+  // are no colons and the replace currently strips nothing. It is kept for consistency with
+  // the precedent and because an `identifierPrefix` could reintroduce a character worth
+  // dropping, not because today's output needs it.
   const activeLayoutId = `${useId().replace(/[^a-zA-Z0-9_-]/g, "")}-sidebar-active`;
   const indicatorRadius = useSpecValue(
     "dashboard-menu",

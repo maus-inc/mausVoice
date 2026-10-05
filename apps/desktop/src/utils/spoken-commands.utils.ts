@@ -206,8 +206,8 @@ const SCRATCH_CLAUSE_SUBJECTS = new Set([
   "never",
   // Reporting and mental-state verbs. "scratch that" is also ordinary English
   // after one of these, where it is the object of what was said rather than a
-  // command, and the gate above is only supposed to fire where the words cannot
-  // be part of the surrounding sentence. Without these, "The manager said
+  // command, and the gate in `commandApplies` is only supposed to fire where the words
+  // cannot be part of the surrounding sentence. Without these, "The manager said
   // scratch that." reached `applyScratch`, which found no sentence boundary
   // before the command and cleared the whole buffer -- so a quotative use
   // deleted the user's dictation instead of doing nothing.

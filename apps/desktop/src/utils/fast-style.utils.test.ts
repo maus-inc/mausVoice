@@ -968,10 +968,17 @@ describe("filler removal keeps words that merely end in a filler", () => {
     expect(applyFastStyle("3; 4; 5", "bullets")).toBe("- 3\n- 4\n- 5");
 
     // The filter exists to keep empty bullets out. A fragment with no letter or
-    // digit in it is one, and `stripEdgePunctuation` removes only `[,.;\s]`, so a
-    // length test would have let an em dash through as a bullet. The control
-    // without the empty fragment is the same sentence and shows what these three
-    // are compared against.
+    // digit in it is one.
+    //
+    // The threshold that was here also dropped both of these, but only as a side
+    // effect of counting characters: an em dash survives `stripEdgePunctuation`,
+    // which removes only `[,.;\s]`, and `toBullets` strips a leading marker, so a
+    // bare hyphen became an empty bullet. A threshold of 1 or less is what would let
+    // either through as content. The reason to prefer the letter-or-digit test is
+    // that it drops both without also dropping "no" or "3", and it reads as the
+    // property being checked rather than as a proxy for it. The control without the
+    // empty fragment is the same sentence and shows what these three are compared
+    // against.
     expect(applyFastStyle("Buy milk; eggs", "bullets")).toBe(
       "- Buy milk\n- Eggs",
     );

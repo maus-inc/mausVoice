@@ -823,9 +823,13 @@ describe("the trigger filter check compares executed paths to filter entries", (
     // `README.md` at the top level as well as `js/README.md`. So `**/` legally
     // matches zero directories. Compiling `**` to `.*` while leaving the slash
     // behind it mandatory asked for at least one, which made a root-level suite
-    // read as uncovered under `**/*.test.mjs` -- an omission reported in the
-    // direction that reassures, which is the direction this guard exists to
-    // catch. `scripts/**` must keep meaning "inside scripts, any depth".
+    // read as uncovered under `**/*.test.mjs` and failed the guard on a workflow
+    // that really does cover it.
+    //
+    // That is the noisy direction. The reassuring direction is the opposite bug: a
+    // matcher that covers more than the workflow does, which reports a suite as
+    // wired when it is not. `scripts/**` must keep meaning "inside scripts, any
+    // depth" either way.
     const covering = (entry) =>
       [
         "on:",
