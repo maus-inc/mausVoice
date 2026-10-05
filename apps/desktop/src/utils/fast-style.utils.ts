@@ -297,10 +297,39 @@ const CONTRACTION_MAP: Record<string, string> = {
   "who's": "who is",
 };
 
+// `contraction.replace("'", "'?")` makes the APOSTROPHE optional, so the pattern
+// for `we're` also matched `were`, `it's` matched `its`, and so on. Formal mode
+// rewrote ordinary sentences accordingly: "we were ready" came back as "we we are
+// ready", "the dog wagged its tail" as "the dog wagged it is tail".
+//
+// Making the apostrophe optional is right for the other 29 entries, because their bare
+// forms are not words and tolerating them is what catches speech-to-text output like
+// "dont stop". It is wrong for the seven below, whose bare form IS a word, so for those
+// the apostrophe is required. Both directions are deliberate: failing to expand a typo
+// costs something that still reads correctly, whereas matching a bare word rewrites a
+// sentence the speaker did not say.
+//
+// The `?` sits between the stem and the final letter, not after the whole word, so
+// `can't` compiles to `\bcan'?t\b` and never matched a bare `can`. That is why `can't`
+// is absent from this list despite `can` being a word.
+// Only membership is ever tested, and the bare form is already written in each
+// entry's comment, so this is a set rather than a map whose values nothing reads.
+const BARE_STEMS_THAT_ARE_WORDS = new Set([
+  "I'll", // "he is ill" became "he is I will"
+  "I'd", // "the id number" became "the I would number"
+  "it's", // "wagged its tail" became "wagged it is tail"
+  "let's", // "he lets go" became "he let us go"
+  "we'd", // "they wed in june" became "they we would in june"
+  "we'll", // "as well as that" became "as we will as that"
+  "we're", // "we were ready" became "we we are ready"
+]);
+
 const CONTRACTION_RES: Array<[RegExp, string]> = Object.entries(
   CONTRACTION_MAP,
 ).map(([contraction, expansion]) => {
-  const pattern = contraction.replace("'", "'?");
+  const pattern = BARE_STEMS_THAT_ARE_WORDS.has(contraction)
+    ? contraction
+    : contraction.replace("'", "'?");
   return [new RegExp(String.raw`\b${pattern}\b`, "gi"), expansion];
 });
 

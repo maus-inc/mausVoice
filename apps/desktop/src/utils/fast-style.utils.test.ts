@@ -902,4 +902,51 @@ describe("filler removal keeps words that merely end in a filler", () => {
       expect(out.toLowerCase()).toContain("i went to the store");
     }
   });
+
+  describe("a contraction expansion never fires on a bare word that happens to be one", () => {
+    // `contraction.replace("'", "'?")` made the APOSTROPHE optional, so `we're`
+    // also matched `were`, `it's` matched `its`, `we'll` matched `well`, `I'd`
+    // matched `id`, `let's` matched `lets`, `we'd` matched `wed`, and `I'll`
+    // matched `ill`. Formal mode rewrote ordinary sentences accordingly.
+    //
+    // It is the apostrophe that becomes optional, not the tail of the stem, so
+    // `can't` compiles to `\bcan'?t\b` and never matched a bare `can`. That is
+    // pinned below, because it is the one entry in this map where the naive
+    // reading of the substitution goes wrong in the safe direction.
+    for (const [input, expected] of [
+      ["we were ready", "We were ready."],
+      ["the dog wagged its tail", "The dog wagged its tail."],
+      ["as well as that", "As well as that."],
+      ["the id number is 7", "The id number is 7."],
+      ["it is well done", "It is well done."],
+      ["they wed in june", "They wed in june."],
+      ["he lets go", "He lets go."],
+      ["he is ill", "He is ill."],
+    ] as const) {
+      expect(applyFastStyle(input, "formal")).toBe(expected);
+    }
+
+    // `can` is not among them: the `'?` sits between the stem and the final `t`.
+    expect(applyFastStyle("we can go now", "formal")).toBe("We can go now.");
+
+    // The seven are not the whole map. The other bare forms are not words, so
+    // their apostrophe stays optional: speech-to-text drops it, and "dont stop"
+    // reading as "Do not stop." is the behaviour worth keeping. Being wrong in
+    // that direction costs an unexpanded typo that still reads correctly; being
+    // wrong in the other one rewrites the user's sentence.
+    expect(applyFastStyle("dont stop", "formal")).toBe("Do not stop.");
+    expect(applyFastStyle("cant wait", "formal")).toBe("Cannot wait.");
+
+    // And the seven still expand when they are genuinely contractions.
+    expect(applyFastStyle("we're ready", "formal")).toBe("We are ready.");
+    expect(applyFastStyle("it's fine", "formal")).toBe("It is fine.");
+    expect(applyFastStyle("we'll go", "formal")).toBe("We will go.");
+    expect(applyFastStyle("let's go", "formal")).toBe("Let us go.");
+    expect(applyFastStyle("we'd better go", "formal")).toBe(
+      "We would better go.",
+    );
+    expect(applyFastStyle("I'd go now", "formal")).toBe("I would go now.");
+    expect(applyFastStyle("I'll be there", "formal")).toBe("I will be there.");
+    expect(applyFastStyle("can't stay", "formal")).toBe("Cannot stay.");
+  });
 });
