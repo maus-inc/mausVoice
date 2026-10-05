@@ -488,15 +488,30 @@ describe("the harness says what cargo printed when it cannot use the output", ()
   //
   // Read it as: the call exists, and it is on the path that reports no invocation.
   it("is echoed from the path that reports no invocation", () => {
-    const source = readFileSync(
-      fileURLToPath(new URL("./sherpa-build-script-tests.mjs", import.meta.url)),
-      "utf8",
-    );
-    const noInvocation = source.indexOf("if (matches.length === 0) {");
-    assert.notEqual(noInvocation, -1, "the no-invocation branch must exist");
-    // Wide enough for the comment above the call, bounded so it cannot reach the next
-    // branch. 400 was not: it cut the window short and failed at baseline.
-    const arm = source.slice(noInvocation, noInvocation + 1500);
+    const source = readFileSync(fileURLToPath(new URL("./sherpa-build-script-tests.mjs", import.meta.url)), "utf8");
+    const NO_INVOCATION = "if (matches.length === 0) {";
+    const REFUSAL = "if (matches.length > 1) {";
+    // Both anchors must be UNIQUE. `indexOf` takes the first match, so a decoy
+    // occurrence above the real branch reopens exactly the false green this window was
+    // narrowed to close: measured, a decoy arm carrying the echo plus a real arm without
+    // it is 47 pass 0 fail.
+    assert.equal(source.split(NO_INVOCATION).length - 1, 1, `expected exactly one \`${NO_INVOCATION}\` in the harness`);
+    assert.equal(source.split(REFUSAL).length - 1, 1, `expected exactly one \`${REFUSAL}\` in the harness`);
+    const noInvocation = source.indexOf(NO_INVOCATION);
+    // The window is the ARM, derived from where the arm ends rather than hardcoded.
+    //
+    // It used to be a fixed 1500 with the comment "bounded so it cannot reach the next
+    // branch", and it did reach it: the arm is 1226 characters, so the slice read 274
+    // past the refusal. Measured, that was a false green rather than a tidiness point --
+    // with the `console.error(cargoOutputExcerpt(output))` deleted from this arm and added
+    // to the next one, the arm under test echoes nothing and the suite stays green.
+    const arm = source.slice(noInvocation, source.indexOf(REFUSAL));
+    // No upper bound on the arm's size, deliberately. An `arm.length < 1500` guard was
+    // tried and measured firing on an ordinary 274-char comment growth, while its message
+    // described a mechanism this slice removed -- `slice(noInvocation, refusal)` cannot
+    // read past the arm however long it gets. What does need saying is the one shape the
+    // `assert.match` below cannot explain.
+    assert.notEqual(arm, "", "the two anchors were found out of order, so the window is empty");
     assert.match(
       arm,
       /console\.error\(cargoOutputExcerpt\(output\)\)/,
