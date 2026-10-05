@@ -48,7 +48,18 @@ const MAX_HTTPS_REDIRECTS = 20;
 // name" list, plus the cookie header). `Authorization` is the one callers rely
 // on: `secureFetch` is typed as `typeof globalThis.fetch`, so a caller that
 // passes a bearer token is entitled to the standard's cross-origin strip.
-const CROSS_ORIGIN_STRIPPED_HEADERS = ["authorization", "cookie"];
+//
+// `proxy-authorization` belongs here too and did not, which made the sentence above
+// untrue: it is on that same non-wildcard list, and it is the same kind of thing -- a
+// value that authenticates the caller to an intermediary rather than to the origin. A
+// caller who set one replayed it to whatever origin a redirect named. `www-authenticate`
+// is on the spec's list as well but is a RESPONSE header name, so it is not reachable
+// from a request header list and is correctly absent.
+const CROSS_ORIGIN_STRIPPED_HEADERS = [
+  "authorization",
+  "proxy-authorization",
+  "cookie",
+];
 // Headers that describe a body. A 301/302/303 rewrite discards the body, and a
 // Content-Type or Content-Length that outlives it describes a request that is
 // no longer being sent.

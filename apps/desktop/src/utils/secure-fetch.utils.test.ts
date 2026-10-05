@@ -463,6 +463,12 @@ describe("secureFetch", () => {
       headers: {
         Authorization: "Bearer secret",
         Cookie: "session=secret",
+        // `Proxy-Authorization` is on the same CORS non-wildcard request-header list as
+        // `Authorization` and is the same kind of credential -- a value that authenticates
+        // the caller to a proxy. It used to be absent from the strip while the comment
+        // above the list claimed to implement that list, so a caller who set one replayed
+        // it to whatever origin a redirect pointed at.
+        "Proxy-Authorization": "Basic cHJveHk6c2VjcmV0",
         "x-request-id": "req-1",
       },
     });
@@ -472,6 +478,7 @@ describe("secureFetch", () => {
     expect(second.url).toBe("https://attacker.example/collect");
     expect(second.headers).not.toHaveProperty("authorization");
     expect(second.headers).not.toHaveProperty("cookie");
+    expect(second.headers).not.toHaveProperty("proxy-authorization");
     // Only the credentials that identify the caller to that origin go.
     expect(second.headers["x-request-id"]).toBe("req-1");
   });
