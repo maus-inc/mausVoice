@@ -803,8 +803,11 @@ const applyStyleToChunk = (
   position: { isFirst: boolean; isLast: boolean },
 ): string => {
   switch (toneId) {
+    // `POLISHED_TONE_ID` IS the string "default" (`tone.utils.ts:8`), so the
+    // `case "default":` that used to sit beside this one was a second label for the
+    // same value and could never be reached. Naming the constant only is what keeps
+    // the value in one place.
     case POLISHED_TONE_ID:
-    case "default":
       return toPolished(chunk, position.isLast);
     case EMAIL_TONE_ID:
       return toEmail(chunk, {
