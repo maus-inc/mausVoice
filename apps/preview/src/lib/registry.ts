@@ -175,6 +175,10 @@ const durationField = (
   patch: `// ${D}theme.ts → transitions.duration\n${token}: ${def},`,
 });
 
+// The widest radius a spec entry may declare unless its own default is wider still.
+// Nine of the ten radius fields cap here; the Fab is the exception and gets 99 from
+// `theme.ts`, which is the value the app really uses.
+const DEFAULT_RADIUS_MAX = 28;
 const radiusField = (
   key: string,
   label: string,
@@ -188,7 +192,13 @@ const radiusField = (
   type: "radius",
   default: def,
   min: 0,
-  max: 28,
+  // A slider that cannot reach its own default is a control lying about the value it
+  // edits: MUI clamps the thumb to `max`, so the Fab entry below declared `default: 99`
+  // against `max: 28` and rendered pinned at 28 while the readout printed 99px. Any
+  // drag then wrote a value the app never has. `Math.max` rather than a `max` parameter
+  // because a parameter is another thing a call site can forget -- and this is the one
+  // bug this line caused.
+  max: Math.max(DEFAULT_RADIUS_MAX, def),
   step: 1,
   unit: "px",
   target: {
@@ -284,11 +294,20 @@ export const REGISTRY: RegistryEntry[] = [
         // they no longer claim to mirror a desktop token that does not exist -- an earlier
         // version cited `palette.ts -> accent.light.main (#1b8af8ff)` and `theme.ts ->
         // *.palette.blueHover`, neither of which is that token or that value.
+        //
+        // `token` is the top-level key on the MUI palette, not the palette-source name it
+        // is assigned from, so it reads `chrome` and not `accent`. `accent` is IMPORTED
+        // into theme.ts from ./styles/palette (theme.ts:3, declared at palette.ts:103),
+        // and its value is registered under `chrome` (theme.ts:66 / :90) --
+        // `chrome: accent.light.main`. Naming `accent` here bound
+        // the override to nothing: `spec-store.tsx` would write `--app-palette-accent`,
+        // which no rule reads, while the real consumer is `var(--app-palette-chrome)`.
+        // The `mapsTo` line keeps pointing at the source const, which is what it is for.
         key: "blue-light",
         label: "Accent blue · light",
         type: "color",
         default: "#1b8af8",
-        target: { kind: "palette", scheme: "light", token: "accent" },
+        target: { kind: "palette", scheme: "light", token: "chrome" },
         mapsTo: `${D}styles/palette.ts → accent.light.main (#6B6760, silver — NOT this swatch)`,
       },
       {
@@ -296,7 +315,7 @@ export const REGISTRY: RegistryEntry[] = [
         label: "Accent blue · dark",
         type: "color",
         default: "#3198ff",
-        target: { kind: "palette", scheme: "dark", token: "accent" },
+        target: { kind: "palette", scheme: "dark", token: "chrome" },
         mapsTo: `${D}styles/palette.ts → accent.dark.main (#C4C0B8, ink — NOT this swatch)`,
       },
       {
@@ -304,7 +323,7 @@ export const REGISTRY: RegistryEntry[] = [
         label: "Blue hover · light",
         type: "color",
         default: "#1a7cd4",
-        target: { kind: "palette", scheme: "light", token: "accent" },
+        target: { kind: "palette", scheme: "light", token: "chrome" },
         mapsTo: `${D}styles/palette.ts → accent.light.main (#6B6760, silver — NOT this swatch)`,
       },
       {
@@ -312,7 +331,7 @@ export const REGISTRY: RegistryEntry[] = [
         label: "Blue hover · dark",
         type: "color",
         default: "#2787e6",
-        target: { kind: "palette", scheme: "dark", token: "accent" },
+        target: { kind: "palette", scheme: "dark", token: "chrome" },
         mapsTo: `${D}styles/palette.ts → accent.dark.main (#C4C0B8, ink — NOT this swatch)`,
       },
       {
@@ -320,7 +339,7 @@ export const REGISTRY: RegistryEntry[] = [
         label: "Blue active · light",
         type: "color",
         default: "#166bbf",
-        target: { kind: "palette", scheme: "light", token: "accent" },
+        target: { kind: "palette", scheme: "light", token: "chrome" },
         mapsTo: `${D}styles/palette.ts → accent.light.main (#6B6760, silver — NOT this swatch)`,
       },
       {
@@ -328,7 +347,7 @@ export const REGISTRY: RegistryEntry[] = [
         label: "Blue active · dark",
         type: "color",
         default: "#1f76cc",
-        target: { kind: "palette", scheme: "dark", token: "accent" },
+        target: { kind: "palette", scheme: "dark", token: "chrome" },
         mapsTo: `${D}styles/palette.ts → accent.dark.main (#C4C0B8, ink — NOT this swatch)`,
       },
     ],

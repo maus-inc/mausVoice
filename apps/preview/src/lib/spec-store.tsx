@@ -176,7 +176,10 @@ export const useSpecValue = <T extends number | string>(
 
 // ─── CSS variable overrides (palette targets) ──────────────────────
 // MUI cssVariables mode exposes palette tokens as --app-palette-*
-// (see HotKey.tsx pulseBorder using var(--app-palette-blue)).
+// (see hotkey-recorder.styles.ts, which reads var(--app-palette-chrome)).
+// The example used to be `HotKey.tsx pulseBorder using var(--app-palette-blue)` --
+// there is no `blue` palette key, so nothing ever read that variable and the
+// citation pointed at a reader that does not exist.
 
 const tokenToVar = (token: string): string => {
   const parts = token.split(".");
