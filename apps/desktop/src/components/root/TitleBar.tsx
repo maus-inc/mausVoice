@@ -8,6 +8,7 @@ import { showErrorSnackbar } from "../../actions/app.actions";
 import { useIsDarkMode } from "../../hooks/color-scheme.hooks";
 import {
   captionButtonActive,
+  captionButtonGlyph,
   captionButtonHover,
   captionButtonRestOpacity,
   chromeWash,
@@ -20,8 +21,9 @@ import { MorphNavIcon } from "../common/MorphNavIcon";
 import { ThemeModeToggle } from "./ThemeModeToggle";
 import {
   CAPTION_BUTTON_RADIUS,
-  CAPTION_BUTTON_SIZE,
-  COMPACT_CAPTION_BUTTON_SIZE,
+  CAPTION_CLUSTER_GAP,
+  CAPTION_CLUSTER_PAD_RIGHT,
+  captionButtonSize,
   hasRightCaptionButtons,
   isCompactWidth,
   TITLE_BAR_HEIGHT,
@@ -224,28 +226,37 @@ const useWindowControls = (setMaximized: (value: boolean) => void) => {
  * bar's own material is visible between them and against the window edge. That
  * is what separates a control cluster from a row of divider lines.
  */
-const captionButtonSx = (dark: boolean, compact: boolean) =>
-  ({
-    width: compact ? COMPACT_CAPTION_BUTTON_SIZE : CAPTION_BUTTON_SIZE,
-    height: compact ? COMPACT_CAPTION_BUTTON_SIZE : CAPTION_BUTTON_SIZE,
+const captionButtonFill = (dark: boolean, pressed: boolean): string => {
+  const fills = pressed ? captionButtonActive : captionButtonHover;
+
+  return dark ? fills.dark : fills.light;
+};
+
+const captionButtonSx = (dark: boolean, compact: boolean) => {
+  const size = captionButtonSize(compact);
+
+  return {
+    width: size,
+    height: size,
     // A string, not a number: MUI multiplies a numeric `borderRadius` by
     // `theme.shape.borderRadius`, which is 14 here, so `12` would paint 168px.
     borderRadius: `${CAPTION_BUTTON_RADIUS}px`,
-    color: dark ? "rgba(255, 255, 255, 0.8)" : "rgba(0, 0, 0, 0.7)",
-    // Windows corner smoothing: squaring off the rounding a compositor would
-    // otherwise shave from the corners of a translucent target.
-    WebkitCornerSmoothing: "60%",
+    color: dark ? captionButtonGlyph.dark : captionButtonGlyph.light,
+    opacity: captionButtonRestOpacity,
+    // Windows corner smoothing cannot be set here: MUI's style system drops
+    // properties it does not recognise, so it lives on `.caption-button` in
+    // `styles/tokens.css` instead. The transition reads the shared duration
+    // token rather than a literal because the token collapses to 1ms under
+    // prefers-reduced-motion, and a hand-written value would ignore that.
     transition:
-      "background-color 125ms ease-out, color 125ms ease-out, opacity 125ms ease-out, transform 125ms ease-out",
+      "background-color var(--duration-fast) ease, color var(--duration-fast) ease, opacity var(--duration-fast) ease, transform var(--duration-fast) ease",
     "&:hover": {
-      backgroundColor: dark
-        ? captionButtonHover.dark
-        : captionButtonHover.light,
+      backgroundColor: captionButtonFill(dark, false),
+      opacity: 1,
     },
     "&:active": {
-      backgroundColor: dark
-        ? captionButtonActive.dark
-        : captionButtonActive.light,
+      backgroundColor: captionButtonFill(dark, true),
+      opacity: 1,
       transform: "scale(0.95)",
     },
     "&:focus-visible": {
@@ -253,7 +264,8 @@ const captionButtonSx = (dark: boolean, compact: boolean) =>
       outlineColor: "primary.main",
       outlineOffset: -2,
     },
-  }) as const;
+  } as const;
+};
 
 /**
  * A macOS-style traffic light.
@@ -427,22 +439,24 @@ const CaptionButtons = ({
   return (
     <Stack
       direction="row"
-      spacing={0.25}
       sx={{
         alignItems: "center",
         alignSelf: "stretch",
-        pr: "2px",
+        gap: `${CAPTION_CLUSTER_GAP}px`,
+        pr: `${CAPTION_CLUSTER_PAD_RIGHT}px`,
         position: "relative",
         zIndex: 1,
-        opacity: focused
-          ? captionButtonRestOpacity
-          : captionButtonRestOpacity * 0.6,
+        // Focus dimming rides the wrapper so the three dim as one group. The
+        // per-button rest opacity lives in `captionButtonSx`, which also owns the
+        // step back to full on hover and press.
+        opacity: focused ? 1 : 0.6,
       }}
     >
       <IconButton
         size="small"
         onClick={onMinimize}
         aria-label={minimizeLabel}
+        className="caption-button"
         sx={sx}
       >
         <MorphNavIcon icon={Minus} size={CONTROL_ICON_SIZE} strokeWidth={2} />
@@ -451,6 +465,7 @@ const CaptionButtons = ({
         size="small"
         onClick={onToggleMax}
         aria-label={maximizeLabel}
+        className="caption-button"
         sx={sx}
       >
         <MorphNavIcon
@@ -463,6 +478,7 @@ const CaptionButtons = ({
         size="small"
         onClick={onClose}
         aria-label={closeLabel}
+        className="caption-button"
         sx={sx}
       >
         <MorphNavIcon icon={X} size={CONTROL_ICON_SIZE} strokeWidth={2} />
@@ -484,9 +500,9 @@ const titleBarSx = (dark: boolean, trafficLights: boolean) =>
     pr: trafficLights ? 1.5 : 0,
     position: "relative",
     zIndex: 20,
-    // Same wash as the navigation rail and the content panel, so the whole window
-    // reads as one material. The bar and the rail share that paint but are not
-    // contiguous: the page header sits between them.
+    // Same wash as the navigation rail, so the bar and the rail read as one
+    // material. They share that paint but are not contiguous: the page header
+    // sits between them, and the content area carries none of it.
     background: dark ? chromeWash.dark : chromeWash.light,
     backdropFilter: "blur(18px) saturate(1.2)",
     WebkitBackdropFilter: "blur(18px) saturate(1.2)",

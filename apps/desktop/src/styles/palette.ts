@@ -106,7 +106,19 @@ export const accent = {
 } as const;
 
 /**
- * Caption-button hover fill, and the resting opacity of the whole cluster.
+ * Resting glyph colour for the caption cluster.
+ *
+ * The glyph is dimmer at rest than body text, and the button it sits in is dimmer
+ * too. Hover and press both bring the button back to full, so the cluster reads
+ * as three peers at every step of the pointer's journey.
+ */
+export const captionButtonGlyph = {
+  light: "rgba(0, 0, 0, 0.7)",
+  dark: "rgba(255, 255, 255, 0.8)",
+} as const;
+
+/**
+ * Caption-button hover fill, and the pressed fill behind it.
  *
  * Close is tinted exactly like minimize and maximize. That is deliberate and
  * not an oversight. In Windows and Linux a custom close button that paints
@@ -120,30 +132,29 @@ export const captionButtonHover = {
   dark: "rgba(255, 255, 255, 0.1)",
 } as const;
 
-/**
- * Caption-button pressed fill: the same neutral, ramped up.
- */
 export const captionButtonActive = {
   light: "rgba(0, 0, 0, 0.12)",
   dark: "rgba(255, 255, 255, 0.22)",
 } as const;
 
 /**
- * Resting opacity of the caption cluster. Hover and press both go to full.
+ * Resting opacity of each caption button. Hover and press both go to full.
  *
  * Windows dims unfocused chrome rather than removing it, and a cluster that
- * vanished would take the only visible cue that the window has controls.
+ * vanished would take the only visible cue that the window has controls. This is
+ * the per-button rest value; the cluster's extra dimming while the window is
+ * unfocused is applied once on the wrapper, so the three dim as a group.
  */
 export const captionButtonRestOpacity = 0.8;
 
 /**
- * The window wash, shared by the title bar, the navigation rail and the routed
- * content panel.
+ * The window wash, shared by the title bar and the navigation rail.
  *
- * Those three are the same material, so they have to be the same colour. This
+ * Those two are the same material, so they have to be the same colour. This
  * token makes that structural instead of a coincidence: the rail used to carry
  * its own gradient while the bar carried a separate fill, so the two could be
- * retuned independently and leave a visible step where they met.
+ * retuned independently and leave a visible step where they met. The routed
+ * content area deliberately does not use it; see `DESIGN.md`.
  *
  * One tier of lift at the top settling back into the canvas, so light reads as
  * falling from the top of the window. Built from the surface ladder rather than
