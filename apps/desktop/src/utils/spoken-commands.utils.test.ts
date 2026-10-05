@@ -322,6 +322,13 @@ describe("applySpokenCommands", () => {
         expect(applySpokenCommands(input)).toBe(expected);
       }
 
+      // A blocked follower also withdraws `comma` from `commandFollowsAt`, so a
+      // `period` before the same noun phrase stops firing. That is a change to
+      // `period` behaviour caused from the `comma` entry, so it is pinned here too.
+      expect(applySpokenCommands("values period comma delimited list")).toBe(
+        "values period comma delimited list",
+      );
+
       // One input changes reading rather than corrupting: "values comma separated by
       // tab" used to become "values, separated by tab" and now stays literal. The
       // speaker is describing comma separation rather than asking for a mark, so the

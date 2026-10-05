@@ -483,11 +483,13 @@ describe("measureFastStyleTruncation", () => {
 
   it("agrees with applyFastStyle, which styles the whole over-length input", () => {
     // The input used to be `"word ".repeat(6000)`, which made this assertion pass
-    // by one character: the styled output came back 15001 chars against a cap of
-    // 15000, so `toBeGreaterThan(cap)` held while `REPEATED_WORD_RE` had collapsed
-    // "word word" pairs and HALF the words were gone -- 3000 of 6000. The assertion
-    // was too weak to notice, and it only started failing when an unrelated change
-    // removed a single period at a chunk seam.
+    // by ONE character and for the wrong reason. The styled output was 15001 chars
+    // against a cap of 15000, so `toBeGreaterThan(cap)` held -- while
+    // `REPEATED_WORD_RE` had collapsed "word word" pairs and HALF the words were
+    // gone, 3000 of 6000. It only held because commit 98ea031d appended a period at
+    // each chunk seam; that commit removed one and the output became exactly 15000,
+    // which is where this case started failing. The assertion was too weak to notice
+    // the loss either way.
     //
     // Two things are wrong with that. The input is pathological for this
     // measurement, because the repeat rule is doing the halving, not the chunk
@@ -894,44 +896,49 @@ describe("bullet edge stripping", () => {
   });
 });
 
-describe("an ambiguous 'd is left alone rather than guessed at", () => {
-  it("covers every case in this note", () => {
-    // All four `'d` entries in CONTRACTION_MAP map to *would*, and `I'd already
-    // left` came back as `I would already left`. This is the one entry class in the
-    // map that is genuinely ambiguous: `'d` is *would* in "I'd like" and *had* in
-    // "I'd already left", and nothing in the sentence distinguishes them.
+describe("an ambiguous contraction is left alone rather than guessed at", () => {
+  it("leaves both ambiguous families alone", () => {
+    // Two families in CONTRACTION_MAP have two readings and nothing in the sentence
+    // to tell them apart. `'d` is *would* in "I'd like" and *had* in "I'd already
+    // left"; `'s` is *is* in "it's been" and *has* in "it's been a long day" -- both
+    // readings of that one phrase, which is the point.
     //
-    // The module's own rule for a match that might be wrong is at the contraction
-    // list: "failing to expand a typo costs something that still reads correctly,
-    // whereas matching a bare word rewrites a sentence the speaker did not say." An
-    // `'d` that picks the wrong sense is on the second side of that line -- it
-    // rewrites the tense. Leaving `I'd already left` unexpanded still reads
-    // correctly and cannot mis-state it.
+    //   "i'd already left the office" -> "I would already left the office."
+    //   "it's been a long day"        -> "It is been a long day."
     //
-    // So the four entries are dropped rather than disambiguated. Guessing at the
-    // participle would need a lexicon this module deliberately does not carry, and
-    // `"I'd rather"`, `"I'd better"`, `"I'd love"` and `"I'd prefer"` all take
-    // *would*, so a lookahead would have to know that list too.
+    // The module's own rule for a match that might be wrong is the one already written
+    // above the map: "failing to expand a typo costs something that still reads
+    // correctly, whereas matching a bare word rewrites a sentence the speaker did not
+    // say." A contraction that guesses the wrong sense is on the second side of that
+    // line. Leaving it unexpanded still reads correctly and cannot mis-state it.
+    //
+    // Guessing is not available either: it needs a participle lexicon this module
+    // deliberately does not carry, and "I'd rather", "I'd better", "I'd love" and "I'd
+    // prefer" all take *would*, so a lookahead would have to know that list too.
     for (const input of [
       "i'd already left the office",
       "we'd already shipped it",
       "you'd told me twice",
       "they'd finished by then",
       "i'd seen it before",
+      "it's been a long day",
+      "there's been a problem",
+      "what's been happening",
+      "who's been helping",
     ]) {
       expect(applyFastStyle(input, "formal")).toBe(
         `${input[0].toUpperCase()}${input.slice(1)}.`,
       );
     }
 
-    // The unambiguous contractions are untouched by that, and the ones that are
-    // ambiguous in English but not here now require their apostrophe.
+    // The unambiguous contractions are untouched by that: one reading each, and the
+    // bare-form collisions are handled by requiring the apostrophe.
     for (const [input, expected] of [
-      ["it's fine", "It is fine."],
-      ["you're right", "You are right."],
-      ["let's go", "Let us go."],
+      ["we're right", "We are right."],
       ["we'll see", "We will see."],
       ["they're here", "They are here."],
+      ["let's go", "Let us go."],
+      ["I'll be there", "I will be there."],
     ] as const) {
       expect(applyFastStyle(input, "formal")).toBe(expected);
     }
@@ -952,14 +959,20 @@ describe("a casual word is rewritten, not deleted", () => {
     //
     // The first is the worst: `no` IS the formal equivalent of `nope`, so this is not
     // a register change, it is the opposite claim. It also left a leading comma that
-    // `fixCapitalizationAndPunctuation` cannot repair, because it capitalizes
-    // `text[0]` and that character is now the comma.
+    // `fixCapitalizationAndPunctuation` cannot repair: it capitalizes the first
+    // character of each sentence, and `capitalizeFirst` leaves a comma alone. That
+    // holds at any sentence start, not only at index 0 -- "we shipped it. nope,
+    // that is wrong" came back as "We shipped it. , that is wrong."
     for (const [input, expected] of [
       ["nope, the report is correct", "No, the report is correct."],
       ["nope that's right", "No that's right."],
-      // Mid-sentence `yeah`, not leading: `SO_WELL_LEADING_RE` already strips a
-      // sentence-initial `yeah` as a discourse opener, alongside `so` and `well`,
-      // and that is deliberate. This case is about the rewrite map, which runs after.
+      // Mid-sentence `yeah`, not leading. `SO_WELL_LEADING_RE` strips one at index
+      // 0 as a discourse opener, alongside `so` and `well`, and that is deliberate
+      // -- but that regex is anchored `^` with no `m` flag and runs once over the
+      // whole chunk, so it does NOT strip an opener after a sentence boundary:
+      // "we shipped. yeah that works" becomes "We shipped. yes that works." The
+      // asymmetry is pre-existing and separate; this case is about the rewrite map,
+      // which runs after it.
       ["we shipped yeah", "We shipped yes."],
       ["yep that works", "Yes that works."],
       ["im gonna go now", "I am going to go now."],
@@ -1054,17 +1067,16 @@ describe("filler removal keeps words that merely end in a filler", () => {
       expect(applyFastStyle("dont stop", "formal")).toBe("Do not stop.");
       expect(applyFastStyle("cant wait", "formal")).toBe("Cannot wait.");
 
-      // And the five still expand when they are genuinely contractions.
+      // And the four still expand when they are genuinely contractions.
       expect(applyFastStyle("we're ready", "formal")).toBe("We are ready.");
-      expect(applyFastStyle("it's fine", "formal")).toBe("It is fine.");
       expect(applyFastStyle("we'll go", "formal")).toBe("We will go.");
       expect(applyFastStyle("let's go", "formal")).toBe("Let us go.");
       expect(applyFastStyle("I'll be there", "formal")).toBe(
         "I will be there.",
       );
       expect(applyFastStyle("can't stay", "formal")).toBe("Cannot stay.");
-      // The `'d` family is not here: it is ambiguous, so it is not expanded at all.
-      // See "an ambiguous 'd is left alone rather than guessed at" below.
+      // The `'d` and `'s` families are not here: both are ambiguous, so neither is
+      // expanded at all. See the case above named for ambiguous contractions.
     });
   });
 

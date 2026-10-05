@@ -278,8 +278,6 @@ const CONTRACTION_MAP: Record<string, string> = {
   "you're": "you are",
   "we're": "we are",
   "they're": "they are",
-  "it's": "it is",
-  "there's": "there is",
   "I've": "I have",
   "you've": "you have",
   "we've": "we have",
@@ -289,8 +287,6 @@ const CONTRACTION_MAP: Record<string, string> = {
   "we'll": "we will",
   "they'll": "they will",
   "let's": "let us",
-  "what's": "what is",
-  "who's": "who is",
 };
 
 // `contraction.replace("'", "'?")` makes the APOSTROPHE optional, so the pattern
@@ -300,10 +296,15 @@ const CONTRACTION_MAP: Record<string, string> = {
 //
 // Making the apostrophe optional is right for most entries, because their bare forms
 // are not words and tolerating them is what catches speech-to-text output like
-// "dont stop". It is wrong for the five below, whose bare form IS a word, so for those
+// "dont stop". It is wrong for the four below, whose bare form IS a word, so for those
 // the apostrophe is required. Both directions are deliberate: failing to expand a typo
 // costs something that still reads correctly, whereas matching a bare word rewrites a
 // sentence the speaker did not say.
+//
+// This set arbitrates one thing only: whether the apostrophe must be there. It cannot
+// pick between two readings of an apostrophised form, so the entries whose two
+// readings differ -- the `'d` family and the `'s` family -- are not in the map at all
+// rather than being resolved here.
 //
 // The `?` sits between the stem and the final letter, not after the whole word, so
 // `can't` compiles to `\bcan'?t\b` and never matched a bare `can`. That is why `can't`
@@ -312,7 +313,6 @@ const CONTRACTION_MAP: Record<string, string> = {
 // entry's comment, so this is a set rather than a map whose values nothing reads.
 const BARE_STEMS_THAT_ARE_WORDS = new Set([
   "I'll", // "he is ill" became "he is I will"
-  "it's", // "wagged its tail" became "wagged it is tail"
   "let's", // "he lets go" became "he let us go"
   "we'll", // "as well as that" became "as we will as that"
   "we're", // "we were ready" became "we we are ready"
@@ -595,13 +595,15 @@ const toChat = (raw: string, isFinal = true): string => {
 
 /**
  * Casual register, rewritten rather than dropped. Deleting was the first version
- * and it was wrong twice over. `nope` has a formal equivalent -- `no` -- so
- * deleting it inverts a negation rather than changing register. And the
- * `-in'g` forms left a verb with nothing to attach to, because
+ * and it was wrong three ways over. `nope` has a formal equivalent -- `no` -- so
+ * deleting it inverts a negation rather than changing register. And the elided-`to`
+ * forms (`gonna`, `wanna`, `gotta`) left a verb with nothing to attach to, because
  * `expandContractions` has already rewritten "I'm" as "I am" by the time this
- * runs: "I'm gonna go now" became "I am go now." A deletion also leaves
- * punctuation behind, and `fixCapitalizationAndPunctuation` capitalizes
- * `text[0]`, so a comma that moved to the front survives as its own defect.
+ * runs: "I'm gonna go now" became "I am go now." A deletion also leaves punctuation
+ * behind, and `fixCapitalizationAndPunctuation` capitalizes the first character of
+ * each sentence, which `capitalizeFirst` leaves alone when it is a comma -- so a
+ * comma that moved to the front survives as its own defect, at any sentence start
+ * rather than only at index 0.
  */
 const INFORMAL_REWRITES: ReadonlyArray<readonly [RegExp, string]> = [
   [/\bgonna\b/gi, "going to"],

@@ -82,9 +82,23 @@ const COMMANDS: SpokenCommand[] = [
     // `blockedPredecessors` cannot see this case, because the modifier FOLLOWS the
     // head: "comma separated values" is one noun phrase. The command fired and the
     // word `comma` was removed from the middle of it, which is silent data loss --
-    // the same cost this module already accepts for the `period` command at its
-    // `blockedPredecessors`. "a comma separated list" was already spared, by the
-    // determiners rule above, which is why only some of these were corrupting.
+    // the class this module's header ranks above a miss that only mispunctuates.
+    // "a comma separated list" was already spared, by the determiners rule above,
+    // which is why only some of these were corrupting.
+    //
+    // Two consequences worth stating, because neither is visible from this command
+    // alone. First, a blocked follower withdraws the command from
+    // `commandFollowsAt`, so a `period` immediately before this noun phrase stops
+    // firing too: "values period comma delimited list" used to become
+    // "values., delimited list" and is now left alone. That direction is
+    // conservative -- fewer invented stops, never more -- but it is a change to
+    // `period` behaviour caused from here.
+    //
+    // Second, the list is closed, on the same policy as the `period` list below:
+    // `separated`, `delimited` and `spliced` are the standard compounds, and a
+    // modifier nobody thought of still costs a word ("comma quoting rules" becomes
+    // ", quoting rules"). Add one when a compound noun built on "comma" is missing
+    // from this list, not when a sentence is mispunctuated.
     blockedFollowers: [["separated"], ["delimited"], ["spliced"]],
   }),
   insert(["period"], ".", {
