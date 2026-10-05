@@ -928,12 +928,62 @@ describe("release workflow shell contracts", () => {
       "the rationale still describes the scan as failing the job; it skips and the " +
         "closing step is what fails",
     );
-    // ...and the corrected wording must be present, so the comment cannot simply be
-    // deleted to satisfy the assertion above.
+    // ...and the corrected wording must be present in ALL THREE scans, so the comment
+    // cannot simply be deleted from one of them. Measured: emptying the phrase in a
+    // single copy while leaving the other two intact stayed at 30/30, because the
+    // assertion was a whole-file `match` and two copies still satisfied it.
+    const scanBodies = extractSteps(scan)
+      .filter((step) => /^Scan /.test(step.name))
+      .map((step) => step.run.join("\n"));
+    assert.equal(
+      scanBodies.length,
+      3,
+      `expected three scan steps to carry the rationale, found ${scanBodies.length}`,
+    );
+    for (const body of scanBodies) {
+      assert.match(
+        body,
+        /carry it is SKIPPED rather than assumed/,
+        "each scan's rationale must say the scan skips, naming the closing step as " +
+          "the verdict -- a whole-file match is satisfied by the other two copies",
+      );
+    }
+
+    // ...and the file's own header must keep saying what that phrase costs.
+    //
+    // This assertion pins TWO stale spellings and one required spelling, so a comment
+    // making the forbidden claim in any other wording passed. Measured on the committed
+    // file with the header reworded to "The PR scan is the only gate before main and it
+    // always runs" and the capability disclaimer deleted: 30/30.
+    //
+    // The obvious repair -- broadening the ban to cover the current claim -- is WRONG,
+    // and the mutation above is why. The committed header DOES say "the PR scan is the
+    // gate that can catch it before it reaches main" (secret-scan.yml:8-9). It is honest
+    // because of the paragraph four lines below it (:15-17): "The sentence above is what
+    // this job is FOR; whether it is currently capable of it is reported per run rather
+    // than assumed." The mutation is dishonest precisely because it kept the claim and
+    // removed the qualifier. So banning the claim's wording would push the author toward
+    // deleting an accurate paragraph, which is the failure mode this whole file exists to
+    // prevent.
+    //
+    // So the property asserted is the DISCLAIMER, not the phrasing of either half: the
+    // header must state that against a base whose policy cannot extend the built-in
+    // detectors, no scan here runs at all. That is checkable, it survives rewording of
+    // both the claim and the qualifier, and it is the thing whose absence makes the claim
+    // false.
     assert.match(
       scan,
-      /carry it is SKIPPED rather than assumed/,
-      "the rationale must say the scan skips, naming the closing step as the verdict",
+      /cannot extend the built-in detectors,[\s\S]{0,140}?at all, and the job fails at the end saying so by name/,
+      "the workflow header must state that against a base whose gitleaks.toml cannot " +
+        "extend the built-in detectors no scan here runs at all; without that " +
+        "qualifier its claim that the PR scan gates main is false, and this assertion " +
+        "cannot see a reworded claim",
+    );
+    assert.match(
+      scan,
+      /whether it is currently capable of it is reported per[\s\S]{0,80}?run rather than assumed/,
+      "the header must say the scans' capability is reported per run rather than " +
+        "assumed, which is what makes its statement of purpose honest",
     );
   });
 
