@@ -1009,15 +1009,71 @@ describe("release workflow shell contracts", () => {
         /CONFIG_ARGS=\(-c "\$TRUSTED_POLICY"\)/,
         `${step.name} must pass the trusted config`,
       );
-      assert.match(
-        run,
-        /if ! grep -q "tauri-minisign-updater-private-key"/,
+      // The updater-key branch, asserted as a BLOCK.
+      //
+      // It used to be three separate string matches:
+      //
+      //     /if ! grep -q "tauri-minisign-updater-private-key"/   pins the rule id
+      //     /::warning::/                                          matches any warning
+      //     (the grep's file argument was not required at all)
+      //
+      // and each one was individually satisfiable by the wrong thing. Measured on the
+      // committed file, 30/30 for each of these:
+      //
+      //     the grep reading the working tree's `gitleaks.toml` instead of
+      //       "$TRUSTED_POLICY" -- so the check reads bytes the branch under review owns
+      //     one scan's `::warning::` deleted -- the OTHER warning in the same step, the
+      //       capability gate's at :347, satisfies a bare /::warning::/
+      //
+      // and the first one also pinned a rule id as the branch predicate, so the
+      // coverage-correct shape -- gating on `useDefault` instead -- is REJECTED by this
+      // contract. Measured: swapping the grep for a `useDefault` gate turns the suite red
+      // with "must react to a trusted policy carrying no updater-key rule", which is the
+      // assertion refusing the very thing its sibling five lines below demands.
+      //
+      // So: slice the branch, and require it to read the trusted policy by path and to
+      // warn from inside itself. Both survive renaming the rule id and both survive
+      // swapping `grep` for `awk`, which is the point -- the contract should pin what the
+      // branch must DO, not which words it says it with.
+      const updaterKeyBranch = (body) => {
+        // Iterate every candidate rather than testing only the first: a scan step
+        // carries several `if ! grep ...; then` lines, and stopping at one that is not
+        // this branch returned null on a workflow where the branch is present.
+        const opener = /^\s*if\s+!\s+(?:grep|awk)\b[^\n]*; then\s*$/gm;
+        for (const open of body.matchAll(opener)) {
+          // Selected by what it READS, not by a rule id. The id is
+          // `tauri-minisign-updater-private-key`, which is not `updater-key` -- an
+          // earlier guard matched on the shorter spelling, found nothing, and reported
+          // the branch missing on a workflow that carries it in all three scans.
+          if (!/\$TRUSTED_POLICY/.test(open[0])) continue;
+          const rest = body.slice(open.index + open[0].length);
+          const close = /^\s*fi\s*$/m.exec(rest);
+          return {
+            head: open[0],
+            inner: close ? rest.slice(0, close.index) : rest,
+          };
+        }
+        return null;
+      };
+      const branch = updaterKeyBranch(run);
+      assert.ok(
+        branch,
         `${step.name} must react to a trusted policy carrying no updater-key rule`,
       );
       assert.match(
-        run,
+        branch.head,
+        /"\$TRUSTED_POLICY"/,
+        `${step.name} must read the trusted policy BY PATH when deciding whether the ` +
+          "updater-key detector is present; reading the working tree's copy would let " +
+          "the branch under review supply the answer",
+      );
+      assert.match(
+        branch.inner,
         /::warning::/,
-        `${step.name} must surface that as a warning rather than acting on it`,
+        `${step.name} must warn from INSIDE the branch that decides whether the ` +
+          "updater-key detector is active, not merely somewhere in the step -- this " +
+          "step carries another warning, the capability gate's, which says nothing " +
+          "about the updater-key rule",
       );
       assert.doesNotMatch(
         run,
@@ -1048,15 +1104,50 @@ describe("release workflow shell contracts", () => {
       // scoping is load-bearing rather than decorative, because a bare search for
       // `useDefault = true` is satisfied by the word appearing inside a
       // `description` string or inside `[allowlist]`, where Gitleaks ignores it.
+      const awkProgramsIn = (body) =>
+        [...body.matchAll(/awk '([\s\S]*?)'/g)].map((match) => match[1]);
       assert.ok(
-        !run.includes("grep -qE '^[[:space:]]*\\[\\[rules\\]\\]'"),
+        !awkProgramsIn(run).some((program) => /\[\[rules\]\]/.test(program)),
         `${step.name} must not treat a [[rules]] table as proof of coverage: -c ` +
           "replaces the built-in detectors rather than adding to them",
       );
+      // The scoping is asserted as a PROPERTY: some identifier is raised on the
+      // `[extend]` line, and the SAME identifier gates the `useDefault` match. It used to
+      // be `run.includes("in_extend && /^[[:space:]]*useDefault")`, which pins the
+      // variable's name -- measured, renaming `in_extend` to `ext` in all four copies is
+      // a pure rename with zero behaviour change and turned the suite red on it. The
+      // file's own comment at :715-719 says the principle these broke: "A gate that
+      // punishes formatting is a gate people disable."
+      const programs = awkProgramsIn(run);
       assert.ok(
-        run.includes("in_extend && /^[[:space:]]*useDefault"),
-        `${step.name} must require useDefault = true inside an [extend] body, not anywhere in the file`,
+        programs.length > 0,
+        `${step.name} must carry the [extend]/useDefault capability predicate`,
       );
+      for (const program of programs) {
+        // The literal is written `\[extend\]` -- it sits inside an awk regex literal, so the
+        // brackets are escaped in the source. The backslashes are optional here so the
+        // pattern matches the escaped and unescaped spellings alike; a first version
+        // without them found no flag at all on a program that has one.
+        const raised =
+          /\\?\[\s*extend\s*\\?\][^\n]*?\{\s*([A-Za-z_]\w*)\s*=\s*1\s*;\s*next/.exec(
+            program,
+          );
+        assert.ok(
+          raised,
+          `${step.name}'s capability predicate must raise a flag on an [extend] table, ` +
+            "so the useDefault match below it can be scoped to that table's body",
+        );
+        const gated = new RegExp(`\\b${raised[1]}\\b[^\\n]*useDefault`).test(
+          program,
+        );
+        assert.ok(
+          gated,
+          `${step.name}'s capability predicate must require useDefault behind the same ` +
+            `flag it raises on [extend] (\\b${raised[1]}\\b); a bare search for useDefault ` +
+            "is satisfied by the word appearing inside a description or an [allowlist], " +
+            "where gitleaks ignores it",
+        );
+      }
       // An inert policy must SKIP this scan -- not fail here.
       //
       // Failing here is what the previous version did, and it was worse than it
