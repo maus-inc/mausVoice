@@ -1329,3 +1329,163 @@ test("action loop completes task", async () => {
 | UI/UX design guide | Research output | Agent status, permission dialogs, computer-use UI patterns |
 | Testing patterns | Research output | Unit/integration/E2E testing patterns for agent mode |
 | mausVoice integration | Research output | Exact hook points in mausVoice codebase |
+| Computer-use action mapping | Research output | Gemini/Anthropic action mapping, verification, stuck-loop detection |
+
+---
+
+## Appendix I: Computer-Use Action Mapping Reference
+
+### Portable Action Schema
+
+```typescript
+export type ActionType =
+  | "click" | "double_click" | "triple_click" | "right_click" | "middle_click"
+  | "hover" | "mouse_down" | "mouse_up" | "drag"
+  | "type" | "press_key" | "key_down" | "key_up" | "hotkey"
+  | "scroll" | "scroll_document"
+  | "navigate" | "go_back" | "go_forward" | "open_browser"
+  | "wait" | "take_screenshot" | "search" | "list_apps" | "focus_app";
+
+export interface PortableAction {
+  type: ActionType;
+  x?: number; y?: number; endX?: number; endY?: number;
+  text?: string; keys?: string[];
+  direction?: "up" | "down" | "left" | "right";
+  magnitude?: number; url?: string; appName?: string; seconds?: number;
+  safetyDecision?: "regular" | "require_confirmation" | "blocked";
+  safetyExplanation?: string;
+  raw?: unknown;
+}
+```
+
+### Provider Mapping Tables
+
+| Portable Action | Gemini fn | Anthropic member |
+|---|---|---|
+| `click` | `click_at` | `left_click` |
+| `double_click` | `double_click` | `double_click` |
+| `triple_click` | `triple_click` | `triple_click` |
+| `right_click` | `right_click` | `right_click` |
+| `middle_click` | `middle_click` | `middle_click` |
+| `hover` | `hover_at` / `move` | — |
+| `type` | `type_text_at` / `type` | `type` |
+| `scroll` | `scroll_at` / `scroll` | `scroll` |
+| `scroll_document` | `scroll_document` | — |
+| `drag` | `drag_and_drop` | `left_click_drag` |
+| `hotkey` | `key_combination` / `hotkey` | — |
+| `press_key` | `press_key` | `key` |
+| `wait` | `wait` / `wait_5_seconds` | `wait` |
+| `take_screenshot` | `take_screenshot` | `screenshot` / `zoom` |
+| `list_apps` | — | `list_apps` |
+| `focus_app` | — | `focus_app` |
+
+### Coordinate Normalization
+
+```typescript
+// Gemini: 1000x1000 grid → physical pixels
+function geminiToPhysical(x: number, y: number, displayWidth: number, displayHeight: number) {
+  return {
+    x: Math.round((x / 1000) * displayWidth),
+    y: Math.round((y / 1000) * displayHeight),
+  };
+}
+
+// Anthropic: screenshot pixel space → physical pixels
+function anthropicToPhysical(x: number, y: number, screenshotWidth: number, screenshotHeight: number, displayWidth: number, displayHeight: number) {
+  return {
+    x: Math.round((x / screenshotWidth) * displayWidth),
+    y: Math.round((y / screenshotHeight) * displayHeight),
+  };
+}
+```
+
+### Stuck-Loop Detection
+
+```typescript
+const EXACT_REPEAT_THRESHOLD = 3;
+const CATEGORY_DOMINANCE_RATIO = 0.8;
+const CATEGORY_WINDOW_SIZE = 10;
+const TIME_STALL_SECONDS = 60;
+
+function detectStuckLoop(history: PortableAction[][], currentBatch: PortableAction[], loopStartTime: number): StuckDecision {
+  const now = Date.now();
+  const stallSeconds = (now - loopStartTime) / 1000;
+
+  const sequenceCount = history.filter((h) => arraysEqual(h, currentBatch)).length;
+  if (sequenceCount >= EXACT_REPEAT_THRESHOLD) {
+    return { stuck: true, reason: "exact_repeat", suggestion: `...` };
+  }
+
+  const recent = history.flat().slice(-CATEGORY_WINDOW_SIZE);
+  const categoryCounts = new Map<ActionType, number>();
+  for (const a of recent) categoryCounts.set(a.type, (categoryCounts.get(a.type) ?? 0) + 1);
+  const [dominant, maxCount] = [...categoryCounts.entries()].sort((a, b) => b[1] - a[1])[0] ?? [null, 0];
+  if (dominant && maxCount / recent.length >= CATEGORY_DOMINANCE_RATIO && recent.length >= CATEGORY_WINDOW_SIZE) {
+    return { stuck: true, reason: "category_dominance", suggestion: `...` };
+  }
+
+  if (stallSeconds > TIME_STALL_SECONDS && recent.length > 5) {
+    return { stuck: true, reason: "time_stall", suggestion: `...` };
+  }
+
+  return { stuck: false, reason: null, suggestion: "" };
+}
+```
+
+### Key Implementation Rules
+
+1. **Safety decisions only come from Gemini.** Anthropic's `computer_toolset_20260801` has no `safety_decision` field.
+2. **Every Anthropic `tool_result` must echo `"toolset_name": "computer"`.** Missing it causes `invalid_request_error`.
+3. **Always run Anthropic batch actions sequentially.** Stop at first failure; still return `tool_result` for all remaining blocks.
+4. **Always attach a screenshot at the end of each Anthropic batch.** Saves a round trip.
+5. **Gemini coordinates are 1000x1000 grid.** Always denormalize with `physical_x = round(x / 1000 * displayWidth)`.
+6. **Anthropic coordinates are screenshot pixel space.** If downscaled, scale back by `physicalWidth / screenshotWidth`.
+7. **Pixel comparison must never block an action.** Always return `{ valid: true, skipped: true }` on any internal error.
+8. **`NoObjectGeneratedError`** is thrown by Vercel AI SDK when `Output.object()` schema validation fails. Catch it and invoke fallback parser.
+9. **Partial outputs from `streamText` cannot be validated.** Use `Output.object()` only with `generateText` for fully validated schemas.
+10. **Stuck-loop detection should run before each action batch**, not after. If `stuck: true`, interrupt the loop and surface to the user.
+
+---
+
+## Appendix J: Code Review Checklist
+
+Before any PR in this feature area:
+
+- [ ] New tools have `risk` metadata set correctly
+- [ ] All new Rust commands return `Result<T, String>` with descriptive errors
+- [ ] Tauri capabilities JSON is valid and scoped to `main` window
+- [ ] No `unsafe-inline` or `unsafe-eval` added to CSP
+- [ ] Screenshots are compressed to JPEG (1280px, quality 80) before LLM context
+- [ ] PNG mode only used for computer-use API compliance
+- [ ] Coordinate mapping uses physical pixels, not logical
+- [ ] Permission flow respects risk tiers (low=auto, medium=prompt, high=confirm, critical=warning)
+- [ ] Abort signals propagate to all in-flight operations
+- [ ] Errors are logged via `getLogger()` with context
+- [ ] No secrets or API keys in logs
+- [ ] All new types exported from `packages/types/src/index.ts`
+- [ ] Tests cover: happy path, error path, abort, permission denied
+- [ ] Rust code compiles on Windows, macOS, Linux
+- [ ] TypeScript types pass `check-types`
+- [ ] Lint passes with no new warnings
+
+---
+
+## Appendix K: Research Sources
+
+All research was verified against primary sources:
+
+| Source | URL | Verified |
+|---|---|---|
+| Google Gemini Computer Use API | `https://ai.google.dev/gemini-api/docs/interactions/computer-use.md` | Function names, argument structures, safety_decision format |
+| Anthropic Computer Use Toolset | `https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/computer-use-tool` | 17 member tools, toolset_name requirement, coordinate semantics |
+| Vercel AI SDK Output.object | `https://ai-sdk.dev/docs/reference/ai-sdk-core/output` | Structured output with Zod schemas |
+| xcap crate | `https://crates.io/crates/xcap` | Cross-platform screen capture, Windows/macOS/Linux support |
+| enigo crate | `https://crates.io/crates/enigo` | Input simulation, keyboard/mouse |
+| pixelcoords-core crate | `https://crates.io/crates/pixelcoords-core` | Multi-monitor coordinate mapping |
+| tauri-plugin-screenshots | Tauri v2 plugin registry | Screenshot API for TypeScript |
+| Tauri v2 capabilities | `https://v2.tauri.app/security/capabilities/` | Permission system, shell allowlist |
+| Atlas codebase | `https://github.com/dortanes/atlas` (archived v0.2.3) | Source of agentic features being ported |
+| suitedaces/computer-agent | `https://github.com/suitedaces/computer-agent` | Tauri + React + Rust reference |
+| shlawgathon/Computer-Use | `https://github.com/shlawgathon/Computer-Use` | Tauri 2 + xcap + enigo |
+| pipi-shrimp-agent | `https://github.com/mammut001/pipi-shrimp-agent` | Multi-provider agent runtime |
+| tiylabs/tiycore | Rust agent runtime | Protocol-based LLM abstraction |
