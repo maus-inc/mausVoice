@@ -578,6 +578,78 @@ describe("release workflow shell contracts", () => {
     //    So the property is not "the verdict is content-addressed". It is that the three
     //    scans and the verdict all resolve the same bytes, by name, out of the base
     //    commit's object store, into a file the step itself owns.
+    //
+    //    The four resolver blocks are compared to each other WHOLE. Counting fragments
+    //    is what this used to do -- five separate counts (the resolver, the ignore file,
+    //    `2> "$POLICY_ERR"`, `cmp -s`, `POLICY_TMP=`) standing in for the byte-identity
+    //    the workflow's own comment claims. Five counts cannot establish identity: a copy
+    //    whose divergence guard reads `[ -f /etc/passwd ]` keeps every one of the five
+    //    fragments and no longer compares the blob against the checkout at all.
+    //    Measured: that mutation left this file at 30/30.
+    const resolverBlocks = (source) => {
+      const lines = source.split("\n");
+      const blocks = [];
+      let afterClose = -1;
+      for (let i = 0; i < lines.length; i += 1) {
+        if (i <= afterClose) continue;
+        if (!/^\s*POLICY_DIR="\$\(mktemp -d\)"/.test(lines[i])) continue;
+        let closed = -1;
+        // The block ends at the `fi` that closes the DIVERGENCE GUARD, not at the first
+        // `fi` after POLICY_DIR. The block holds three `if` blocks in sequence and the
+        // first one closes on the `cat-file` failure; stopping there excludes the
+        // `cmp -s` guard, which is the part the block exists for. Measured: a first-`fi`
+        // version of this extractor returned 13 lines, and a copy whose divergence guard
+        // had been rewritten still compared equal.
+        let guard = -1;
+        for (let j = i + 1; j < lines.length; j += 1) {
+          // Never run past the capability gate, which is a different block entirely.
+          if (/^\s*active=0\s*$/.test(lines[j])) break;
+          if (/cmp -s /.test(lines[j])) {
+            guard = j;
+            break;
+          }
+        }
+        if (guard !== -1) {
+          for (let j = guard + 1; j < lines.length; j += 1) {
+            // Line-anchored for the reason `4175584793` needed one -- prose above ends
+            // in the word `fi`.
+            if (/^\s*fi\s*$/.test(lines[j])) {
+              closed = j;
+              break;
+            }
+          }
+        }
+        if (closed === -1) continue;
+        blocks.push({
+          text: lines.slice(i, closed + 1).join("\n"),
+          startLine: i + 1,
+        });
+        afterClose = closed;
+      }
+      return blocks;
+    };
+
+    const resolverBlocksFound = resolverBlocks(scan);
+    assert.equal(
+      resolverBlocksFound.length,
+      4,
+      "the trusted policy must be resolved into a step-owned file in all three scans " +
+        `and in the verdict; found ${resolverBlocksFound.length} resolver blocks`,
+    );
+    const [firstResolver, ...otherResolvers] = resolverBlocksFound;
+    for (const block of otherResolvers) {
+      assert.equal(
+        block.text,
+        firstResolver.text,
+        "the policy-resolution blocks have drifted apart, so the copies no longer " +
+          "resolve the same bytes the same way (first starts at line " +
+          `${firstResolver.startLine}, this one at line ${block.startLine})`,
+      );
+    }
+
+    // The fragments stay asserted too: they are what the byte-identity is made of, and
+    // a count is the right instrument for "this string appears N times" -- just not for
+    // "these N blocks are the same block".
     const resolver =
       'git -C ../trusted-scanner cat-file blob "$POLICY_REF:gitleaks.toml" > "$POLICY_TMP"';
     assert.equal(
