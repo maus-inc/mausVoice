@@ -1467,6 +1467,82 @@ describe("release workflow shell contracts", () => {
     );
   });
 
+  // `if: always()` is RESERVED in this job.
+  //
+  // It is what makes the closing verdict and the three self-verification steps survive a
+  // failing scan, and nothing else needs it. The workflow says so at the top of its own
+  // header -- "`always()` is on those three and on nothing else in this job" -- and that
+  // sentence was FALSE: the verdict carries it too, so four steps do. Nothing executes a
+  // comment, so nothing caught it. Measured on the committed workflow:
+  //
+  //   `if: always()`  steps 11, 12, 13, 14  (the verdict and the three scanned-checkout ones)
+  //   event-gated      steps 3, 5, 6        (strip, PR range scan, push range scan)
+  //   the verdict      step 11 of 14        -- ahead of the self-verification steps
+  //
+  // Asserted as the reservation rather than as the count, because the count is exactly what
+  // drifted: a fifth step that legitimately needs `always()` should fail a count and pass a
+  // reservation, and the reservation is the reason the condition is there.
+  it("reserves `if: always()` for the closing verdict and the scanned-checkout steps", () => {
+    const scan = read(".github/workflows/secret-scan.yml");
+    const steps = extractSteps(scan);
+
+    // Runs code out of the SCANNED checkout, which is the pull request's own code. These are
+    // precisely the steps a failing scan would otherwise make unreachable.
+    //
+    // Matched against the body with COMMENT LINES DROPPED, and with anything allowed between
+    // `node` and the path. All three scan steps name `node scripts/ci/*.mjs` in their own
+    // rationale -- "the three steps that run `node scripts/ci/*.mjs` are unreachable against
+    // my own base" -- so a raw match over `step.run` claims the scans, whose `if:` is an
+    // event condition, and fails on the committed file. And step 12 invokes
+    // `node --test scripts/ci/check-gitleaks-config.test.mjs`, so a pattern requiring `node`
+    // to sit next to the path misses the very step this exists to protect.
+    //
+    // This is the second time in this file that a predicate over `step.run` has matched
+    // prose rather than code; the technique below is the same both times.
+    const stepCode = (step) =>
+      step.run
+        .filter((line) => line.trim() !== "" && !line.trim().startsWith("#"))
+        .join("\n");
+    const runsScannedCode = (step) =>
+      /(?:^|\s)node\b[^\n]*?\bscripts\/ci\/[^\s]+\.mjs\b/.test(stepCode(step));
+    const scannedCodeSteps = steps.filter(runsScannedCode);
+    assert.ok(
+      scannedCodeSteps.length > 0,
+      "expected steps executing `node scripts/ci/*.mjs` out of the scanned checkout",
+    );
+    for (const step of scannedCodeSteps) {
+      assert.equal(
+        step.if,
+        "always()",
+        `${step.name} runs \`node scripts/ci/*.mjs\` out of the pull request's own ` +
+          "checkout, so it must carry `if: always()` or a failing scan makes it unreachable",
+      );
+    }
+
+    // The verdict carries it, which is what the steps above are for.
+    const verdict = steps.find((step) =>
+      /policy that can actually detect secrets/.test(step.name),
+    );
+    assert.ok(verdict, "expected a closing verdict step in secret-scan.yml");
+    assert.equal(
+      verdict.if,
+      "always()",
+      "the closing verdict must carry `if: always()`, or a failing scan skips the gate " +
+        "entirely -- this is the step the self-verification steps above exist to protect",
+    );
+
+    // ...and nothing else does. This clause is the one that was false.
+    for (const step of steps.filter((s) => s.if === "always()")) {
+      assert.ok(
+        step === verdict || runsScannedCode(step),
+        `${step.name} carries \`if: always()\`, which this job reserves for the closing ` +
+          "verdict and the steps that execute the pull request's own code. The header " +
+          "comment asserts that reservation, so widening it has to be a deliberate edit to " +
+          "both -- not a step added without one.",
+      );
+    }
+  });
+
   it("secret-scan never lets the scanned checkout supply its own baseline", () => {
     // Measured against gitleaks 8.18.0 rather than assumed: `detect` auto-loads
     // `<source>/.gitleaksignore` from the tree it scans, and
