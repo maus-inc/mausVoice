@@ -26,13 +26,14 @@ const PROVIDER_KEY_PREFIX =
 //   test masked `keyboard`, `hotkey` and `whiskey` used as object keys.
 //
 // So both paths now run the same rule. The names below are the only place a
-// credential label is written down, and `OPTIONAL_SEPARATOR` is the only place a
-// separator between two words of a name is written: `isCredentialLabel` applies
+// credential label is written down, and the two separator classes further down are
+// the only places a separator between two words of a name is written:
+// `isCredentialLabel` applies
 // this pattern anchored to a whole label to judge an object key, and the three
 // labelled-value patterns further down embed the same pattern unanchored to find
 // the same labels in free text. Given the same word sequence, the two paths
 // cannot disagree about whether it is a label, because there is one vocabulary
-// and one separator class behind both of them.
+// and one set of separator classes behind both of them.
 //
 // That sentence needed BOTH halves, and each was false on its own for a while.
 // The separator half was the quieter one: `client secret` redacted in a message
@@ -42,7 +43,13 @@ const PROVIDER_KEY_PREFIX =
 // which is why the output reads `client secret:[redacted]` and looks right --
 // while an object key has no such tail to fall back on, being the whole label or
 // nothing, and `client[_-]?secret` had no way to spell a space. So "one list" was
-// never the whole invariant; one list AND one separator class is.
+// never the whole invariant; one list AND one set of separator classes is. And
+// that set was still not the whole of it: tier 1's qualifier and tier 2's own
+// separators were both written inline as `[_-]` while the names used
+// `OPTIONAL_SEPARATOR`, so a space was reachable between the words of a name and
+// nowhere else. `signing_key` redacted and `signing key` printed in the clear, in
+// a message and as an object key. Which is why there are two classes below rather
+// than one, and why the invariant is about the set rather than a single class.
 //
 // The anchor half is the remaining, deliberate difference, and it is not the
 // separator. A tier-2 label is anchored at `\b` against the fixed holder list
@@ -274,6 +281,12 @@ const KEY_HOLDERS: readonly string[] = [
 // untouched: `monkey`, `keyboard` and `hotkey` are not two words of this
 // vocabulary joined by a space, and nothing else can make them so.
 const OPTIONAL_SEPARATOR = "[ _-]?";
+// The same class without the `?`, for the one rule where a separator must actually be
+// present: the tier-2 credential pattern below. Written out here rather than derived by
+// stripping the `?`, so the difference between the two is a deliberate choice at the use
+// site and not an accident of string surgery. See the comment on tier 2 for why tier 2
+// needs the mandatory form and tier 1 does not.
+const SEPARATOR_CLASS = "[ _-]";
 // The shape, written out, because the grouping here is load-bearing and a
 // misplaced bracket silently NARROWS the rule instead of failing to compile:
 //
@@ -286,9 +299,29 @@ const OPTIONAL_SEPARATOR = "[ _-]?";
 const CREDENTIAL_LABEL_CORE =
   "(?:" +
   // Tier 1: an unambiguous name, behind any separator-delimited qualifier.
-  `(?:[a-z0-9]+[_-])*(?:${CREDENTIAL_NAMES.map((name) => name.join(OPTIONAL_SEPARATOR)).join("|")})` +
+  //
+  // The qualifier loop carried a hardcoded `[_-]` too, which is the same defect one
+  // clause over from tier 2 and the reason `openai api key` leaked as an object key
+  // even after tier 2 was widened: the name itself (`api key`) was reachable, but the
+  // `openai ` in front of it was not. Mandatory separator, as tier 2.
+  `(?:[a-z0-9]+${SEPARATOR_CLASS})*(?:${CREDENTIAL_NAMES.map((name) => name.join(OPTIONAL_SEPARATOR)).join("|")})` +
   // Tier 2: the ambiguous words, behind a qualifier from the holder list.
-  `|(?:${KEY_HOLDERS.join("|")})[_-](?:[a-z0-9]+[_-])*(?:token|key)` +
+  //
+  // The separator class gained a space. It used to be `[_-]` written out in both
+  // places here, which made a space unreachable for the whole of tier 2 while tier 1
+  // admitted one through `OPTIONAL_SEPARATOR`. So `client secret: abc` redacted and
+  // `signing key: abc` printed in the clear -- in a message AND as an object key. That
+  // is the leak the comment at the top of this file records as already closed
+  // ("`client[_-]?secret` had no way to spell a space ... `client secret` redacted in a
+  // message and printed in the clear as an object key"), so tier 2 had reopened it.
+  //
+  // It stays MANDATORY, unlike tier 1's optional separator, and that is deliberate:
+  // making it optional lets the holder word run straight into the next segment, and
+  // `idempotency_key` and `azureApiKey` start being redacted -- both of which this
+  // file's tests deliberately spare. Tier 2 is also the only part that stays anchored
+  // at a holder word, which is what keeps `hotkey`, `monkey`, `max_tokens` and
+  // `sort_key` out; that anchoring does the work here, not the separator's width.
+  `|(?:${KEY_HOLDERS.join("|")})${SEPARATOR_CLASS}(?:[a-z0-9]+${SEPARATOR_CLASS})*(?:token|key)` +
   ")" +
   // A plural or a numbered variant is the same label.
   String.raw`(?:s|[_-]?\d+)?`;
