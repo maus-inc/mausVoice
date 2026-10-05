@@ -265,7 +265,15 @@ describe("applyFastStyle fast local transforms", () => {
     // "You know" starting a sentence lost its subject and the tail of that
     // sentence was welded onto the end of the previous one. A full stop is not
     // a safe anchor because the words after it are ordinary English.
+    // The first case is the shape that was still broken: `You know.` at the START of
+    // the text, closed by a full stop. Mid-text the guard needs a preceding comma
+    // (`EXTRA_FILLER_RE`'s `,\s*` alternative), so a full stop there cannot delete a
+    // subject. At `^` there is no preceding comma to require, so the phrase closed
+    // itself and the whole opening sentence went with it -- "You know. It works."
+    // styled to "It works.", which is silent data loss, the harm this module ranks
+    // above a mispunctuated sentence.
     for (const raw of [
+      "You know. It works.",
       "It works. You know it works.",
       "Shipped. You know the deadline.",
       "Green. You know the drill.",

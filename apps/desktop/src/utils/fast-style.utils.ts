@@ -245,7 +245,17 @@ const FILLER_RE = /\b(?:u[hm]+|er+|ah+|h?mm+)\b[,\s]*/gi;
 // as "..., you know" does. Only punctuation that closes the phrase counts: the
 // word after the marker still has to be nothing, a comma, or end of text, so
 // "He said, you know it works." keeps its "you know" as the subject.
-const EXTRA_FILLER_RE = /(?:^|,\s*)you know\b\s*(?:,\s*|[.!?]+|$)/gi;
+//
+// The two anchors cannot share a tail. Mid-text one requires a preceding comma,
+// so a full stop after the marker proves the marker was mid-clause. At `^` there
+// is no preceding comma to require, and accepting `[.!?]+` there deleted a whole
+// opening sentence: "You know. It works." styled to "It works.", which is the
+// silent data loss this module ranks above a mispunctuated sentence. A full stop
+// immediately after a LEADING marker means the marker was its own sentence and
+// the words after it began a new one, so `^` accepts only a comma or the end of
+// the text -- the two shapes that really do make it a discourse marker.
+const EXTRA_FILLER_RE =
+  /(^you know\b\s*(?:,\s*|$))|,\s*you know\b\s*(?:,\s*|[.!?]+|$)/gi;
 const EXTRA_FILLER_COMMA_RE = /(?:^|\s)(?:I mean|so|well)\s*,\s*/gi;
 const SO_WELL_LEADING_RE = /^(?:so|well|yeah|okay|ok)\b[,\s]*/i;
 
