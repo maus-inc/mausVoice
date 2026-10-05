@@ -101,15 +101,6 @@ const extractSteps = (workflowText) => {
     // workflow here has such a line -- measured, 0 across `.github/workflows/*.yml` -- so it
     // never fired; `does not read a step key out of a run: | body` now covers it.
     //
-    // Unconditional, and that is load-bearing rather than sloppy. A line inside a `run: |`
-    // body cannot reach here: the block above `continue`s on it when it is blank or more
-    // indented than the `run:` key, and clears `inRun` on a dedent. So this guard used to
-    // read `if (!inRun)`, which DeepScan was right about -- it is always true, because
-    // arriving here already means `inRun` is false.
-    //
-    // The property it was written to protect is real and is the `continue` above, not the
-    // condition. Reinstating the guard would add a check that cannot fail, which reads as
-    // protection and is not.
     const ifMatch = line.match(/^\s*if:\s*(.+?)\s*$/);
     if (ifMatch) {
       current.if = ifMatch[1];
@@ -385,6 +376,24 @@ describe("release workflow shell contracts", () => {
       outer.if,
       null,
       "a key-shaped line in the body is not the step's `if`",
+    );
+    // `shell` and `shells` too, and the assertion is the step's OWN value rather than a
+    // null. This fixture is the only thing pinning that a key-shaped line in a run body is
+    // not the step's shell, and it asserted neither field -- so the parser could read
+    // `shell:` out of the body, let it overwrite the real `shell: bash` written above the
+    // body, and stay green. Proven by mutation: 30/30 with the body-text push still
+    // present. The body-text assertion is what caught the ORIGINAL bug, which is exactly
+    // why the shell half of it went unnoticed as unpinned.
+    assert.equal(
+      outer.shell,
+      "bash",
+      "a key-shaped line in the body must not become the step's `shell`; the step's own " +
+        "`shell: bash`, written above the body, is the only shell it has",
+    );
+    assert.deepEqual(
+      outer.shells,
+      ["bash"],
+      "`shells` carries the step's own shell once and nothing from the body",
     );
     assert.equal(
       outer.workingDirectory,
