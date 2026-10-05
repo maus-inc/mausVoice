@@ -722,6 +722,7 @@ type PairDialogState = {
 
 const usePairDialogState = (
   pairedDevices: PairedRemoteDevice[],
+  remoteTargetDeviceId: string | null,
 ): PairDialogState => {
   const intl = useIntl();
   const [pairDialogOpen, setPairDialogOpen] = useState(false);
@@ -792,7 +793,28 @@ const usePairDialogState = (
         trusted: existing?.trusted ?? true,
       });
       if (editingDeviceId && editingDeviceId !== deviceId) {
+        // Renaming a receiver is an upsert plus a delete of the old id, and the delete
+        // is not neutral: `deletePairedRemoteDevice` clears `remoteTargetDeviceId` when
+        // it matches, and setting the target to null also flips `remoteOutputEnabled`
+        // false (user.actions.ts). So correcting the id of the receiver you are actually
+        // sending to silently turned remote output off -- and the row was still listed,
+        // so nothing looked broken.
+        //
+        // The re-point has to come AFTER the delete, and the reason is narrower than
+        // "the delete would clear it again": `deletePairedRemoteDevice` reads the stored
+        // target synchronously on its first line, while `setRemoteTargetDeviceId` writes
+        // the store only after its own preference round trip. Set first, the delete would
+        // still read the old id and clear it -- because our write had not landed yet. The
+        // upsert above has already created the new row, so there is nothing to wait for.
+        //
+        // Reading the target from the caller rather than off the store keeps this handler
+        // consistent with the rest of the file, which selects it once via `useAppStore`
+        // and passes it down.
+        const wasTheTarget = remoteTargetDeviceId === editingDeviceId;
         await deletePairedRemoteDevice(editingDeviceId);
+        if (wasTheTarget) {
+          await setRemoteTargetDeviceId(deviceId);
+        }
       }
       closePairDialog();
     } catch (error) {
@@ -1177,7 +1199,7 @@ export const MultiDeviceDialog = () => {
     remoteTargetDeviceId,
     pairedDevices,
   });
-  const pair = usePairDialogState(pairedDevices);
+  const pair = usePairDialogState(pairedDevices, remoteTargetDeviceId);
   const invite = useImportInviteState();
 
   const handleClose = () => {
