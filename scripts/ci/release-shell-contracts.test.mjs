@@ -1040,11 +1040,51 @@ describe("release workflow shell contracts", () => {
       // from a check it makes itself. Both arms are asserted positively, because the
       // inert arm used to be "a branch that has to be added later" -- it was reached
       // only by a file existing, and deleting that file deleted the failure.
-      assert.match(
-        scan.slice(gate),
-        /echo "The trusted gitleaks policy at \$POLICY_REF extends gitleaks' built-in detectors[\s\S]*?$/m,
+      // The pass arm, asserted as a STATEMENT rather than as a search.
+      //
+      // This used to be a search with a tail:
+      //     /echo "The trusted ... detectors[\s\S]*?$/m
+      // With `m`, `$` is satisfied at the first line end after the literal, and `[^]` is
+      // non-greedy, so the whole thing reduces to "the echo appears somewhere after the
+      // gate". It looks like it pins the shape of the pass arm and pins nothing of the
+      // kind. Measured: adding `exit 1` immediately after that echo -- so the gate now
+      // fails on a capable policy, i.e. the job is red forever once the base is fixed --
+      // left the suite at 30/30. The inert arm's exit is asserted two lines below; the
+      // pass arm's was not asserted anywhere.
+      //
+      // So: slice from the pass echo to the end of the STEP, drop comments, and require
+      // that what remains carries no `exit`. A gate that cannot exit is one that passes.
+      const gateTail = scan.slice(gate);
+      const passEcho = gateTail.indexOf(
+        'echo "The trusted gitleaks policy at $POLICY_REF extends',
+      );
+      assert.notEqual(
+        passEcho,
+        -1,
         "the closing gate must pass when the trusted policy extends the built-in " +
           "detectors, so it is not unconditionally red once the base policy is fixed",
+      );
+      // The step ends at the next `- name:` at the steps indent, or at end of text.
+      const afterPass = gateTail.slice(passEcho);
+      const nextStep = afterPass.search(/^\s{6}- name:/m);
+      const passArm =
+        nextStep === -1 ? afterPass : afterPass.slice(0, nextStep);
+      const passArmCode = passArm
+        .split("\n")
+        .filter((line) => line.trim() !== "" && !line.trim().startsWith("#"))
+        .join("\n");
+      assert.doesNotMatch(
+        passArmCode,
+        /^\s*exit\b/m,
+        "the closing gate's PASS arm must not exit: an `exit` there makes this job red on " +
+          "every run once the base policy is fixed, which is the opposite of passing",
+      );
+      // And it must actually say so, so the pass is not a silent one.
+      assert.match(
+        passArm,
+        /so every scan in this job ran against it\./,
+        "the closing gate's pass arm must state that the scans ran against the trusted " +
+          "policy, which is the thing a green run of this job means",
       );
       assert.match(
         scan.slice(gate),
