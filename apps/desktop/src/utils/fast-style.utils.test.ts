@@ -982,4 +982,89 @@ describe("filler removal keeps words that merely end in a filler", () => {
       );
     }
   });
+
+  describe("a chunk seam is not a sentence boundary", () => {
+    // A dictation longer than FAST_STYLE_MAX_INPUT_CHARS is styled chunk by chunk
+    // and the chunks are rejoined with no terminator between them, so a chunk that
+    // ends mid-sentence must not be given a full stop. It used to be, and the next
+    // chunk was capitalized as though a new sentence began there.
+    const fragment = "hello ".repeat(2200).trim(); // 13,199 chars, no terminator
+    const twoChunks = `${fragment} ${fragment}`; // 26,399, so the chunker splits
+
+    it("splits the input, so this is the case that matters", () => {
+      expect(twoChunks.length).toBeGreaterThan(FAST_STYLE_MAX_INPUT_CHARS);
+      expect(fragment.length).toBeLessThan(FAST_STYLE_MAX_INPUT_CHARS);
+    });
+
+    // `email` and `prompt` are here because each appends a terminator of its own
+    // rather than going through `ensureSentencePunctuation`: `toEmail` reaches it
+    // via `toPolished`, `toPrompt` adds its stop directly. Fixing the shared helper
+    // alone left both still adding one at the seam.
+    for (const tone of [
+      "default",
+      "formal",
+      "concise",
+      "chat",
+      "email",
+      "prompt",
+    ]) {
+      it(`adds no terminator at the seam for the ${tone} tone`, () => {
+        const out = applyFastStyle(twoChunks, tone);
+        // Exactly one period, and it is the one at the very end. This is the
+        // assertion that pins the absence of the invented stop; the one below only
+        // rules out a capital AFTER a terminator, which cannot see a capital that
+        // stands on its own.
+        expect(out.match(/\./g) ?? []).toHaveLength(1);
+        expect(out.endsWith(".")).toBe(true);
+        expect(out.slice(0, -1)).not.toMatch(/[.!?]\s+[A-Z]/);
+      });
+    }
+
+    // The two tones whose output is one item per line, joined by newlines rather
+    // than by a space. A stop at the seam would land inside an item, so they are
+    // checked by item count and by the absence of a stop on any non-final item.
+    for (const tone of ["bullets", "notes"]) {
+      it(`leaves no stop on a non-final item for the ${tone} tone`, () => {
+        const out = applyFastStyle(twoChunks, tone);
+        const items = out.split("\n").filter((line) => line.trim());
+        expect(items.length).toBeGreaterThan(1);
+        for (const item of items.slice(0, -1)) {
+          expect(item).not.toMatch(/[.!?]$/);
+        }
+      });
+    }
+
+    // `toChat` and `toPrompt` tested for an existing terminator with a bare
+    // `[.!?]` while the rest of the module uses `ENDS_SENTENCE_RE`, which also
+    // recognises `…`, `。`, `！` and `？`. A dictation already ending in one of those
+    // came back with a second, ASCII, stop -- "第一句。." on a CJK sentence.
+    for (const tone of ["chat", "prompt"]) {
+      it(`adds no second stop after a CJK terminator for the ${tone} tone`, () => {
+        for (const [input, expected] of [
+          ["第一句。", "第一句。"],
+          ["第一句！", "第一句！"],
+          ["第一句？", "第一句？"],
+          ["等等…", "等等…"],
+        ]) {
+          expect(applyFastStyle(input, tone)).toBe(expected);
+        }
+      });
+    }
+
+    // The controls. A single chunk is final and still gets its stop, and an input
+    // that carries its own terminator is unchanged by any of this.
+    it("still terminates a final chunk", () => {
+      expect(applyFastStyle("hello world", "default")).toBe("Hello world.");
+      expect(
+        applyFastStyle(`${fragment}.`, "default").match(/\./g) ?? [],
+      ).toHaveLength(1);
+    });
+
+    // A real sentence boundary inside the input is not a seam and keeps its stop,
+    // so this does not flatten genuine punctuation.
+    it("keeps a genuine boundary between chunks", () => {
+      const out = applyFastStyle(`${fragment}. ${fragment}.`, "default");
+      expect(out.match(/\./g) ?? []).toHaveLength(2);
+    });
+  });
 });

@@ -376,11 +376,22 @@ const deleteLeadingPhrase = (text: string, phrase: RegExp): string =>
     },
   );
 
-const ensureSentencePunctuation = (sentence: string): string => {
+/**
+ * `isFinal` is false for a chunk that continues into the next one, and the
+ * distinction matters because the caller rejoins chunks without consulting a
+ * terminator between them. Appending a stop to a chunk that ends mid-sentence invents
+ * a sentence break the speaker did not make: a 26,399-character dictation with no
+ * terminator came back with a full stop at the seam, and the following chunk was
+ * capitalized as though a new sentence began there.
+ */
+const ensureSentencePunctuation = (
+  sentence: string,
+  isFinal = true,
+): string => {
   const trimmed = sentence.trim();
   if (!trimmed) return "";
   if (ENDS_SENTENCE_RE.test(trimmed)) return trimmed;
-  return `${trimmed}.`;
+  return isFinal ? `${trimmed}.` : trimmed;
 };
 
 const splitIntoSentences = (text: string): string[] => {
@@ -426,13 +437,16 @@ const applySymbolReplacements = (text: string): string => {
   return out;
 };
 
-const fixCapitalizationAndPunctuation = (text: string): string => {
+const fixCapitalizationAndPunctuation = (
+  text: string,
+  isFinal = true,
+): string => {
   const sentences = splitIntoSentences(text);
   if (sentences.length === 0) return text.trim();
   const isEnglishLike = /[a-zA-Z]/.test(text);
   if (!isEnglishLike) return text.trim();
   return sentences
-    .map((s) => capitalizeFirst(ensureSentencePunctuation(s)))
+    .map((s) => capitalizeFirst(ensureSentencePunctuation(s, isFinal)))
     .join(" ");
 };
 
@@ -446,14 +460,14 @@ const breakIntoParagraphs = (text: string, sentencesPerPara = 3): string => {
   return paras.join("\n\n");
 };
 
-const toPolished = (raw: string): string => {
+const toPolished = (raw: string, isFinal = true): string => {
   const guarded = assertWithinChunkSize(raw);
   let text = guarded.trim();
   if (!text) return text;
   text = applySymbolReplacements(text);
   text = fixSelfCorrections(text);
   text = removeFillerWords(text, true);
-  text = fixCapitalizationAndPunctuation(text);
+  text = fixCapitalizationAndPunctuation(text, isFinal);
   text = breakIntoParagraphs(text, 3);
   text = text.replaceAll("—", "-");
   return text;
@@ -541,9 +555,10 @@ const toEmail = (
   {
     liftGreeting,
     liftClosing,
-  }: { liftGreeting: boolean; liftClosing: boolean },
+    isFinal,
+  }: { liftGreeting: boolean; liftClosing: boolean; isFinal: boolean },
 ): string => {
-  const polished = toPolished(assertWithinChunkSize(raw));
+  const polished = toPolished(assertWithinChunkSize(raw), isFinal);
   const sentences = splitIntoSentences(polished);
   if (sentences.length === 0) return polished;
 
@@ -561,7 +576,7 @@ const toEmail = (
 const CHAT_CONNECTIVE_RE =
   /\b(?:furthermore|moreover|additionally|consequently)\b[,\s]+(\S)/gi;
 
-const toChat = (raw: string): string => {
+const toChat = (raw: string, isFinal = true): string => {
   const guarded = assertWithinChunkSize(raw);
   let text = guarded.trim();
   text = applySymbolReplacements(text);
@@ -576,7 +591,11 @@ const toChat = (raw: string): string => {
     .join(" ")
     .replace(/\s{2,}/g, " ")
     .trim();
-  if (joined && !/[.!?]$/.test(joined)) joined += ".";
+  // Same seam problem as `ensureSentencePunctuation`, and this one appends the stop
+  // directly rather than going through the shared helper. The terminator test is
+  // `ENDS_SENTENCE_RE` rather than a bare `[.!?]`, so a dictation already ending in
+  // `…`, `。`, `！` or `？` does not pick up a second, ASCII, stop on a CJK sentence.
+  if (isFinal && joined && !ENDS_SENTENCE_RE.test(joined)) joined += ".";
   return joined;
 };
 
@@ -594,12 +613,14 @@ const expandContractions = (text: string): string => {
   return out;
 };
 
-const toFormal = (raw: string): string => {
-  const text = expandContractions(toPolished(assertWithinChunkSize(raw)))
+const toFormal = (raw: string, isFinal = true): string => {
+  const text = expandContractions(
+    toPolished(assertWithinChunkSize(raw), isFinal),
+  )
     .replace(INFORMAL_RE, "")
     .replace(/\s{2,}/g, " ")
     .trim();
-  return fixCapitalizationAndPunctuation(text);
+  return fixCapitalizationAndPunctuation(text, isFinal);
 };
 
 /** Politeness openers that add nothing once the ask has been extracted. */
@@ -607,7 +628,7 @@ const PROMPT_OPENER_RE = /^(?:hey|hi|hello|so|well|um|uh)\b[,\s]*/i;
 const PROMPT_REQUEST_RE =
   /^(?:can you|could you|would you|please|I need you to|I want you to|I need|I want)\b\s*/i;
 
-const toPrompt = (raw: string): string => {
+const toPrompt = (raw: string, isFinal = true): string => {
   const guarded = assertWithinChunkSize(raw);
   let text = guarded.trim();
   text = applySymbolReplacements(text);
@@ -621,7 +642,10 @@ const toPrompt = (raw: string): string => {
   const out = text.trim() || guarded.trim();
   if (!out) return out;
   const cased = capitalizeFirst(out);
-  return /[.!?]$/.test(cased) ? cased : `${cased}.`;
+  // This appends directly rather than going through `ensureSentencePunctuation`, so
+  // it needs `isFinal` as well, and it needs the same CJK-aware terminator test: a
+  // bare `[.!?]` left "第一句。" coming back as "第一句。.".
+  return isFinal && !ENDS_SENTENCE_RE.test(cased) ? `${cased}.` : cased;
 };
 
 const EDGE_PUNCTUATION_RE = /[,.;\s]/;
@@ -683,7 +707,7 @@ const toBullets = (raw: string): string => {
   return bullets.join("\n");
 };
 
-const toConcise = (raw: string): string => {
+const toConcise = (raw: string, isFinal = true): string => {
   const guarded = assertWithinChunkSize(raw);
   let text = guarded.trim();
   text = applySymbolReplacements(text);
@@ -694,7 +718,7 @@ const toConcise = (raw: string): string => {
     text = text.replace(re, repl);
   }
   text = text.replace(/\s{2,}/g, " ").trim();
-  return fixCapitalizationAndPunctuation(text);
+  return fixCapitalizationAndPunctuation(text, isFinal);
 };
 
 const toNotes = (raw: string): string => {
@@ -754,22 +778,23 @@ const applyStyleToChunk = (
   switch (toneId) {
     case POLISHED_TONE_ID:
     case "default":
-      return toPolished(chunk);
+      return toPolished(chunk, position.isLast);
     case EMAIL_TONE_ID:
       return toEmail(chunk, {
         liftGreeting: position.isFirst,
         liftClosing: position.isLast,
+        isFinal: position.isLast,
       });
     case CHAT_TONE_ID:
-      return toChat(chunk);
+      return toChat(chunk, position.isLast);
     case FORMAL_TONE_ID:
-      return toFormal(chunk);
+      return toFormal(chunk, position.isLast);
     case PROMPT_TONE_ID:
-      return toPrompt(chunk);
+      return toPrompt(chunk, position.isLast);
     case BULLETS_TONE_ID:
       return toBullets(chunk);
     case CONCISE_TONE_ID:
-      return toConcise(chunk);
+      return toConcise(chunk, position.isLast);
     case NOTES_TONE_ID:
       return toNotes(chunk);
     default:
@@ -791,8 +816,10 @@ const applyStyleToChunk = (
  * The cap is now a chunk size rather than a truncation point.
  *
  * `toEmail` is the only transform that carries state across its input — it lifts
- * a greeting off the front and a sign-off off the back — so it is the only one
- * told where its chunk sits in the dictation.
+ * a greeting off the front and a sign-off off the back — so it needs to know where
+ * its chunk sits for that reason. Every transform is told now: the terminator a
+ * chunk appends has to be suppressed on a chunk that continues into the next one,
+ * whichever tone produced it.
  */
 export const applyFastStyle = (
   rawTranscript: string,
