@@ -163,11 +163,42 @@ function executedSuites(workflowsText, repoRoot) {
 // is not what GitHub does: for any given event only that event's filter applies,
 // so the question "does this workflow run on this path" is answered by asking
 // each filter and OR-ing the answers.
+// A `paths:` key, and the value on the same line if there is one. A flow sequence --
+// `paths: ["a", "!b"]` -- is the same list as the block spelling, and the YAML parser
+// agrees: `yaml.safe_load('paths: ["a", "!b"]')` returns `["a", "!b"]`. Only the
+// INLINE form is handled here; `paths:` followed by `- item` lines is the block
+// spelling, handled by the scan below.
+const PATHS_KEY = /^\s*paths:(.*)$/;
+// A flow sequence, tolerating the quoting and spacing YAML allows around it and a
+// trailing comma, which YAML permits and which prettier will not remove from a
+// hand-written workflow.
+const FLOW_SEQUENCE = /^\s*\[(.*?)\]\s*(?:#.*)?$/;
+function flowEntries(tail) {
+  const seq = FLOW_SEQUENCE.exec(tail);
+  if (!seq) return null;
+  const inner = seq[1].trim();
+  if (inner === "") return [];
+  return inner.split(",").map((part) =>
+    part
+      .trim()
+      .replace(/^["']|["']$/g, "")
+      .trim(),
+  );
+}
+
 function pathsEntries(text) {
   const lines = text.split("\n");
   const blocks = [];
   for (let index = 0; index < lines.length; index += 1) {
-    if (!/^\s*paths:\s*$/.test(lines[index])) continue;
+    const keyed = PATHS_KEY.exec(lines[index]);
+    if (!keyed) continue;
+    const inline = flowEntries(keyed[1]);
+    if (inline) {
+      blocks.push(inline);
+      continue;
+    }
+    // The block spelling: the key alone on its line, items on the ones below.
+    if (keyed[1].trim() !== "") continue;
     const entries = [];
     for (let scan = index + 1; scan < lines.length; scan += 1) {
       const line = lines[scan];
@@ -205,7 +236,17 @@ function pathsEntries(text) {
 function missingFromTriggerFilter(text, repoRoot) {
   // Only a workflow with a `paths:` filter can be missing an entry. One that
   // triggers on every push has nothing to keep in sync.
-  if (!/^\s*paths:\s*$/m.test(text)) return [];
+  //
+  // Derived from the PARSED blocks rather than a second regex over the text, which is
+  // the whole point. This line used to test `/^\s*paths:\s*$/m` -- a separate opinion
+  // about what a `paths:` key looks like -- so it returned [] before `pathsEntries` was
+  // ever consulted, and both places had to be widened together or the fix silently did
+  // nothing. One place decides what the key looks like now. That is also the rule the
+  // file already commits to further down, for the same reason: "There is no separate
+  // list of 'exempt' patterns to keep consistent with the matcher, which is the class of
+  // bug this file exists to catch."
+  const blocks = pathsEntries(text);
+  if (blocks.length === 0) return [];
   const executed = executedSuites(text, repoRoot);
   if (executed.size === 0) return [];
   // GitHub resolves a `paths:` filter in DECLARATION ORDER and the last
@@ -219,7 +260,6 @@ function missingFromTriggerFilter(text, repoRoot) {
   // compiled a `!` entry as though it were a path pattern, so it could not match
   // anything and the exclusion was dropped silently -- the guard reporting the
   // opposite of what the workflow does, for the suite shape it exists to catch.
-  const blocks = pathsEntries(text);
   // Within ONE filter, GitHub resolves the entries in DECLARATION ORDER and the
   // last pattern that matches decides. So a filter listing `!apps/**` and then
   // `apps/desktop/**` DOES run a suite under `apps/desktop`, because the later
@@ -854,6 +894,64 @@ describe("the trigger filter check compares executed paths to filter entries", (
       missingFromTriggerFilter(covering("scripts/**"), repoRoot),
       ["root.test.mjs"],
       "`scripts/**` is still scoped to scripts/ and does not cover the top level",
+    );
+  });
+
+  it("reads a `paths:` filter written as a flow sequence", () => {
+    // `paths: ["scripts/**", "!scripts/ci/**"]` is the same list as the block
+    // spelling -- `yaml.safe_load` gives a list either way -- and both places that
+    // decide whether a workflow HAS a `paths:` filter matched `/^\s*paths:\s*$/`,
+    // which cannot match a value on the same line. So `pathsEntries` returned no
+    // blocks and `missingFromTriggerFilter` returned [] before ever looking.
+    //
+    // The direction that matters is the reassuring one. A filter that EXCLUDES the
+    // suite is read as covering it, so the guard passes a workflow that does not run
+    // the suite -- the exact failure it exists to catch. The block-style equivalent
+    // is pinned two tests up and reports it correctly.
+    const base = (pathsLine) =>
+      [
+        "on:",
+        "  pull_request:",
+        `    ${pathsLine}`,
+        "jobs:",
+        "  unit:",
+        "    runs-on: ubuntu-latest",
+        "    steps:",
+        "      - run: node --test scripts/ci/windows-tauri-imports.test.mjs",
+        "",
+      ].join("\n");
+
+    // The control, in block style: the exclusion is detected.
+    assert.deepStrictEqual(
+      missingFromTriggerFilter(
+        base('paths:\n      - "scripts/**"\n      - "!scripts/ci/**"'),
+        scanRoot,
+      ),
+      ["scripts/ci/windows-tauri-imports.test.mjs"],
+      "block style: a filter that excludes the suite must be reported",
+    );
+
+    // The same filter as a flow sequence. Unquoted, quoted, and with a trailing
+    // comma -- all three are spellings the YAML parser accepts.
+    for (const spelling of [
+      'paths: ["scripts/**", "!scripts/ci/**"]',
+      "paths: ['scripts/**', '!scripts/ci/**']",
+      'paths: ["scripts/**", "!scripts/ci/**",]',
+      'paths: [ "scripts/**" , "!scripts/ci/**" ]',
+    ]) {
+      assert.deepStrictEqual(
+        missingFromTriggerFilter(base(spelling), scanRoot),
+        ["scripts/ci/windows-tauri-imports.test.mjs"],
+        `flow style ${spelling}: must agree with the block spelling`,
+      );
+    }
+
+    // And a flow filter that DOES cover the suite stays covered, so this is not
+    // "report everything that mentions paths".
+    assert.deepStrictEqual(
+      missingFromTriggerFilter(base('paths: ["scripts/**"]'), scanRoot),
+      [],
+      "a flow filter that includes the suite must not be reported",
     );
   });
 
