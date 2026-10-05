@@ -9,6 +9,141 @@ This is the master implementation guide for porting Atlas's full agentic feature
 3. `docs/research/agent-mode-porting-plan.md` — Phased implementation plan with file inventory and timeline
 4. `docs/research/agent-mode-implementation-guide.md` — This document. Master guide with exact implementation steps.
 
+## Ground Rules (Non-Negotiable)
+
+These rules are enforceable and must be followed without exception. Violations block merge.
+
+### 1. Model Agnosticism Is the Primary Constraint
+
+Every new piece of code must work with at least two different LLM providers without modification. Hardcoding provider-specific behavior in the agent loop, tool definitions, or system prompts is a defect.
+
+- All new types go in `packages/types/src/` and must be exported from `packages/types/src/index.ts`.
+- The agent loop must never reference a specific provider name (no `if (provider === "gemini")` in `packages/agent`).
+- Provider-specific translation lives in adapter implementations (`GeminiComputerUseAdapter`, `AnthropicComputerUseAdapter`, etc.), never in the core loop.
+- If a new provider capability is needed, add it to `ProviderCapabilities`, do not sprinkle `model.includes("gpt-4o")` checks throughout the loop.
+
+### 2. Existing Agent Mode Must Not Break
+
+PR #236's agent mode is already in production. Every change must preserve:
+- Chat mode streaming and tool execution
+- Permission gating flow (always-allow → request → poll → execute)
+- Abort semantics (`loop.abort()` stops the run, does not leave dangling state)
+- Message persistence (`safeSideEffect` wrapper must stay in place)
+- Streaming message state machine (`iteration-start` → `text-delta` → `tool-call-start` → `tool-call-result` → `finish`)
+
+No removing fields from `AgentRunState`, `StreamingMessageState`, or `ChatMessage` without a migration path.
+
+### 3. Tauri Security Is Not Optional
+
+- All shell commands must be allowlisted in `src-tauri/capabilities/*.json`. Never use `shell:allow-execute` without a `cmd` restriction.
+- Screenshot and input commands must be scoped to the `main` window only. No global hotkeys or background capture without explicit user consent.
+- No new `dangerousDisableAssetCspModification` entries beyond the existing `["style-src"]`.
+- No secrets, API keys, or tokens in Rust logs or TypeScript console output. Use `getLogger().verbose()` with sanitized context only.
+- All Rust commands must return `Result<T, String>` and never panic on user input.
+
+### 4. Rust Is the API, TypeScript Is the Brain
+
+- Rust commands do exactly one thing: native OS interaction (capture, input, shell).
+- All agent logic, provider routing, tool orchestration, and state management stays in TypeScript.
+- Do not move agent loop logic to Rust "for performance." The loop is I/O-bound, not CPU-bound.
+- Rust types exposed to TypeScript must be serializable JSON only. No `Uint8Array` in objects—use base64 strings.
+
+### 5. Permission Gating Is Mandatory for All Desktop Actions
+
+Every tool that affects the user's system must have:
+- A `risk` metadata field (`low`, `medium`, `high`, `critical`).
+- A permission flow that respects the risk tier (low=auto, medium=prompt, high=confirm, critical=warning).
+- A user-facing description in plain language, not a raw tool name.
+- An "Always allow" option scoped to the action type, not just the session.
+
+Tools without `risk` metadata are blocked from registration. This is enforced at build time via a lint rule or at runtime via a guard in `createTool()`.
+
+### 6. No Electron Patterns
+
+- No `robotjs`, `screenshot-desktop`, `electron-window-state`, or any Electron-specific dependency.
+- No Node.js `child_process` in the renderer. Shell execution goes through Tauri commands only.
+- No `BrowserWindow` manipulation from TypeScript. Window management stays in Rust.
+- No IPC patterns that expose raw Electron APIs. All privileged calls go through `#[tauri::command]`.
+
+### 7. Tests Are Part of "Done"
+
+A feature is not complete until its tests pass. Specifically:
+- Every new tool must have a unit test covering: happy path, error path, permission denied.
+- Every new agent loop must have integration tests with a scripted provider and fake screenshots.
+- Every new Rust command must have a Rust unit test (`#[cfg(test)]`) or integration test.
+- Computer-use adapters must be tested against both Gemini and Anthropic response formats.
+- Permission flow tests must cover all four risk tiers.
+
+No `// TODO: add tests` comments are allowed in merged code.
+
+### 8. Coordinate Mapping Must Use Physical Pixels
+
+- All screenshot dimensions and coordinates are in physical pixels.
+- All Rust input commands (`mouse_move`, `mouse_click`) receive physical pixel coordinates.
+- The TypeScript tool layer is responsible for any user-facing logical-to-physical conversion.
+- DPI scaling bugs are silent (click the wrong place, no error). Always log the coordinate transformation.
+
+### 9. Abort Signals Propagate End-to-End
+
+- Every `AgentLoop.run()` accepts an `AbortSignal`.
+- Every tool `execute()` must check for abort before starting and during long operations.
+- Every Rust command that takes >100ms must accept a cancellation token or be cancellable via `AbortController`.
+- The Stop button in the UI must abort the loop, cancel in-flight LLM requests, and cancel in-flight tool execution within 500ms.
+
+### 10. No New LLM Provider Dependencies
+
+- Do not add a new provider SDK to `package.json` without first checking if `@maus-inc/voice-ai` already supports it.
+- If a new provider is needed, it must be added to `packages/voice-ai` first, then consumed by the agent layer.
+- Do not add `langchain`, `llamaindex`, or any other LLM framework. The existing `BaseGenerateTextRepo` abstraction is sufficient.
+- Do not add the Vercel AI SDK unless the team explicitly approves the dependency. The existing abstraction works.
+
+### 11. Screenshot Size and Compression Are Fixed
+
+- Screenshots sent to the LLM must be JPEG, 1280px width, quality 80.
+- PNG mode is only used for computer-use API compliance (Gemini `function_response` requires PNG).
+- Uncompressed screenshots are never sent to the LLM. This is enforced in the tool implementation, not left to the caller.
+
+### 12. Error Handling Is Non-Negotiable
+
+- Every Rust command must return `Result<T, String>` with a descriptive error message.
+- Every TypeScript tool `execute()` must catch errors and return `{ success: false, failureReason }`. Never throw.
+- Every LLM stream error must yield a `finish` event with `reason: "error"` and a human-readable message.
+- Every side effect in `run-agent.ts` must use `safeSideEffect()`. No exceptions.
+
+### 13. No UI Changes Without Accessibility
+
+- Every new dialog must have `role="dialog"`, `aria-labelledby`, and `aria-describedby`.
+- Every new status indicator must have an `aria-live` region.
+- Permission dialogs must trap focus and restore focus on close.
+- `Esc` must dismiss every modal or stop the agent.
+- All colors must pass WCAG AA contrast against their background.
+
+### 14. Documentation Must Be Updated Before Merge
+
+- Every new tool must be documented in `apps/desktop/src/tools/README.md` (create if missing).
+- Every new Rust command must be documented in `src-tauri/src/commands/README.md` (create if missing).
+- Every new agent mode must be documented in `apps/docs/src/content/docs/agent-mode.md`.
+- The implementation guide (`docs/research/agent-mode-implementation-guide.md`) must be updated with actual file paths and any deviations from the plan.
+
+### 15. No Scope Creep
+
+- Personas, memory, and fact extraction are deferred to Phase 4. Do not implement them during Phase 1-3.
+- OpenAI Computer Use is deferred. Do not implement it unless the team explicitly requests it after Phase 3 is complete.
+- Vercel AI SDK adoption is deferred. Do not add it unless the existing `@maus-inc/voice-ai` layer proves insufficient.
+- Linux Wayland computer-use mode is disabled if `xdg-desktop-portal` is unavailable. Do not attempt to implement Wayland screen capture in Phase 1-3.
+
+### 16. Code Review Checklist Is Mandatory
+
+Before requesting review, the implementer must verify:
+- [ ] All new Rust code compiles on Windows, macOS, and Linux (use `cargo check --target x86_64-pc-windows-msvc` etc.)
+- [ ] All new TypeScript passes `check-types`, `lint`, and `test` for the desktop package
+- [ ] No new `any` types in TypeScript
+- [ ] No `unsafe` blocks in Rust without a comment explaining why
+- [ ] No hardcoded API keys, tokens, or URLs
+- [ ] No `console.log` in production code (use `getLogger()`)
+- [ ] All error messages are user-facing-safe (no stack traces, no internal paths)
+- [ ] All new permissions are documented in `src-tauri/capabilities/README.md`
+
 ## Implementation Roadmap
 
 ### Week 1: Foundation (Phases 1 + 2)
