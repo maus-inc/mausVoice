@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  CAPTION_BUTTON_WIDTH,
+  CAPTION_BUTTON_SIZE,
   CORNER,
   EDGE,
   hasRightCaptionButtons,
@@ -55,7 +55,7 @@ describe("getGrips with right-side caption buttons (Windows/Linux)", () => {
     // Geometry comes from titleBarGeometry, the same source TitleBar uses, so
     // resizing the caption buttons moves this guard with them.
     const clickable: Rect = {
-      left: WINDOW.width - CAPTION_BUTTON_WIDTH,
+      left: WINDOW.width - CAPTION_BUTTON_SIZE,
       top: FRAME,
       right: WINDOW.width,
       bottom: TITLE_BAR_HEIGHT,
@@ -69,7 +69,7 @@ describe("getGrips with right-side caption buttons (Windows/Linux)", () => {
 
   it("keeps every grip over the caption row inside the top frame band", () => {
     const captionRow: Rect = {
-      left: WINDOW.width - 3 * CAPTION_BUTTON_WIDTH,
+      left: WINDOW.width - 3 * CAPTION_BUTTON_SIZE,
       top: 0,
       right: WINDOW.width,
       bottom: TITLE_BAR_HEIGHT,

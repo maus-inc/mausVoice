@@ -15,11 +15,26 @@ export const EDGE = 4;
 /** Corner grip size in px, larger so diagonal resize stays reachable. */
 export const CORNER = 12;
 
-/** Height of the custom title bar (and of each caption button). */
+/** Height of the custom title bar. */
 export const TITLE_BAR_HEIGHT = 40;
 
-/** Width of each Windows/Linux caption button (minimize, maximize, close). */
-export const CAPTION_BUTTON_WIDTH = 46;
+/**
+ * Side of each Windows/Linux caption button (minimize, maximize, close).
+ *
+ * Square rather than full-height: the cluster is three rounded targets centred
+ * in the bar, not three flush strips. That leaves the bar's own material
+ * visible between the buttons and against the window edge, which is what
+ * separates a native-style cluster from a stack of divider lines.
+ */
+export const CAPTION_BUTTON_SIZE = 34;
+
+/**
+ * Corner radius of a caption button.
+ *
+ * Matches the radius the sidebar and toolbar buttons use, so the cluster reads
+ * as one control family instead of three bespoke chrome shapes.
+ */
+export const CAPTION_BUTTON_RADIUS = 12;
 
 /**
  * Windows and Linux render caption buttons flush against the right window
@@ -60,8 +75,8 @@ export const TRAFFIC_HIT_SIZE = Math.max(MIN_TARGET_SIZE, TRAFFIC_DOT_SIZE);
  */
 export const COMPACT_WIDTH = 900;
 
-/** Caption button width in the compact form. Still above `MIN_TARGET_SIZE`. */
-export const COMPACT_CAPTION_BUTTON_WIDTH = 34;
+/** Caption button side in the compact form. Still above `MIN_TARGET_SIZE`. */
+export const COMPACT_CAPTION_BUTTON_SIZE = 30;
 
 /**
  * Whether the bar should render compact for a given window width.

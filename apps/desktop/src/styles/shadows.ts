@@ -133,21 +133,6 @@ export const raisedEdge = {
 } as const;
 
 /**
- * Depth for a surface that is recessed into the plane beside it, which is what
- * the routed content card is now that the rail stands proud of the same canvas.
- *
- * The cast runs up and to the left rather than down and right. The rail already
- * throws its shadow into this edge, so pushing the card further away from the
- * window on the opposite side gives the two planes a direction to separate in.
- * A shadow that fell straight down here would fight the rail's and read as one
- * card sitting lower than its neighbour.
- */
-export const recessedEdge = {
-  light: `-1px -1px 2px ${ink(0.08)}, -2px -6px 12px ${ink(0.07)}`,
-  dark: `-1px -1px 2px ${darkInk(0.45)}, -2px -6px 12px ${darkInk(0.4)}`,
-} as const;
-
-/**
  * Frameless title bar chrome.
  *
  * The bar no longer casts onto the content below it. It used to, and that was

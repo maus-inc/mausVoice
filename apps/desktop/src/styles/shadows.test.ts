@@ -7,7 +7,6 @@ import {
   parseShadowLayers,
   premiumSurface,
   raisedEdge,
-  recessedEdge,
   switchThumb,
   switchTrack,
   titleBarShadow,
@@ -215,11 +214,10 @@ describe("insetRim", () => {
   });
 });
 
-describe("raisedEdge and recessedEdge", () => {
-  it("cast sideways in opposite directions so two planes can separate", () => {
+describe("raisedEdge", () => {
+  it("casts sideways toward the content it stands beside", () => {
     for (const mode of modes) {
       const raised = parseShadowLayers(raisedEdge[mode]);
-      const recessed = parseShadowLayers(recessedEdge[mode]);
       // The rail's first stop is a plain vertical contact shadow; only its
       // widening ambients lean out toward the page.
       expect(raised[0].offsetX).toBe(0);
@@ -227,16 +225,9 @@ describe("raisedEdge and recessedEdge", () => {
         expect(layer.offsetX).toBeGreaterThan(0);
         expect(layer.offsetY).toBeGreaterThan(0);
       }
-      // The content recedes away from the rail on every stop, including its
-      // contact, because it has no window edge behind it to hide the lean.
-      for (const layer of recessed) {
-        expect(layer.offsetX).toBeLessThan(0);
-        expect(layer.offsetY).toBeLessThan(0);
-      }
-      // Neither is an inset. These are separations between surfaces, not
-      // treatments inside one.
+      // Not an inset. This is a separation between two surfaces, not a
+      // treatment inside one.
       expect(raised.some((layer) => layer.inset)).toBe(false);
-      expect(recessed.some((layer) => layer.inset)).toBe(false);
     }
   });
 
@@ -244,27 +235,25 @@ describe("raisedEdge and recessedEdge", () => {
     const ink = { light: "26, 23, 18", dark: "0, 0, 0" };
 
     for (const mode of modes) {
-      for (const token of [raisedEdge, recessedEdge]) {
-        const layers = parseShadowLayers(token[mode]);
-        expect(alphas(layers)).toHaveLength(
-          alphas(parseShadowLayers(token[otherMode(mode)])).length,
-        );
-        expect(layers.length).toBeGreaterThan(1);
-        for (const layer of layers) {
-          expect(rgb(layer)).toBe(ink[mode]);
-        }
+      const layers = parseShadowLayers(raisedEdge[mode]);
+      expect(alphas(layers)).toHaveLength(
+        alphas(parseShadowLayers(raisedEdge[otherMode(mode)])).length,
+      );
+      expect(layers.length).toBeGreaterThan(1);
+      for (const layer of layers) {
+        expect(rgb(layer)).toBe(ink[mode]);
       }
     }
   });
 
   it("widens and softens outward in both modes, so the near edge is the contact", () => {
     for (const mode of modes) {
-      for (const token of [raisedEdge, recessedEdge]) {
-        const blur = parseShadowLayers(token[mode]).map((layer) => layer.blur);
-        expect(blur.length).toBeGreaterThanOrEqual(2);
-        for (let i = 1; i < blur.length; i++) {
-          expect(blur[i]).toBeGreaterThan(blur[i - 1]);
-        }
+      const blur = parseShadowLayers(raisedEdge[mode]).map(
+        (layer) => layer.blur,
+      );
+      expect(blur.length).toBeGreaterThanOrEqual(2);
+      for (let i = 1; i < blur.length; i++) {
+        expect(blur[i]).toBeGreaterThan(blur[i - 1]);
       }
     }
   });
@@ -337,7 +326,6 @@ describe("theme.ts consumers", () => {
       ...Object.values(switchThumb),
       ...Object.values(switchTrack),
       ...Object.values(raisedEdge),
-      ...Object.values(recessedEdge),
       ...Object.values(insetRim),
       "none",
     ]);

@@ -61,16 +61,26 @@ The two schemes have their own temperature rather than being inversions of each 
 
 ## Window surfaces
 
-The window carries one material across three surfaces: the title bar, the navigation rail and the routed content panel. `chromeWash` in `palette.ts` paints all three, one tier above the canvas with a top-lit wash so light reads as falling from the top of the window. One token for all three means they cannot be retuned into a visible step where they meet.
+The window is a flat canvas with two chrome surfaces on it. The routed content area carries no fill, border, radius or cast of its own, so a page change is a page change and never a frame change. Only the title bar and the navigation rail paint a material, and both use `chromeWash` from `palette.ts` so they cannot be retuned into a visible step where they meet.
 
+- The content area stays flat. A panel behind the routed page splits the window into compartments, and the rounded corner and cast that separate the compartments then read as the point of the layout. If a page needs a card inside itself, that card belongs to the page, not to the shell.
 - The title bar and the rail are **not contiguous**. The page header sits between them, and `PageLayout` plus the rail's own padding put roughly 50px of canvas between the bar's bottom edge and the rail's top. Do not describe them as one L-shaped surface; they read as two pieces of the same material with a gap, and closing that gap is a layout change, not a token change.
 - The title bar does **not** cast downward. `titleBarShadow` is a single inset bottom rim and nothing else. A shadow thrown straight down out of the bar reads as the bar hovering over the page, which is the opposite of how the window sits.
 - The bar is also far more transparent than it used to be. `chromeWash` runs from 0.7 alpha down to 0.35 in light, and from 0.55 to 0.2 in dark, against the 0.88 and 0.92 fills the bar carried before. That is deliberate, and it is why the only thing separating the bar from the page is its bottom hairline. Read a see-through bar as the design, not as a bug.
-- `raisedEdge` casts the rail onto the panel beside it. `recessedEdge` pushes the panel away from the rail in the opposite direction, so the two have a direction to separate in. Both are skewed sideways on purpose: a symmetrical shadow makes a rail look like it is hovering in the middle of the window.
-- In dark, these two shadows do almost nothing. A near-black canvas swallows a black cast, so the separation rests entirely on the hairline borders and on the wash being one tier lighter than `level0`. If dark separation ever reads as too weak, raise the wash alpha before reaching for a stronger shadow.
-- Radii follow the seam. The rail is flush against the window's left edge, so it is square there and rounded on its right; the content panel mirrors that and is rounded on its left only, which leaves one seam of canvas between the two. The panel stays square on the right and bottom so it runs into the layout padding rather than floating inside it as a card.
-- Both surfaces carry a hairline only on the edge where two materials meet. The rail is full-bleed, so it draws only on its right. The panel's radius, left hairline and `recessedEdge` are responsive: below `sm` the rail is hidden, so there is no neighbour to mirror and the seam treatment steps away with it.
-- Corner radius 16 for those surfaces, against 14 for cards inside the content panel. They are the largest surfaces in the window, so they carry a slightly larger radius.
+- `raisedEdge` casts the rail onto the canvas beside it. It is skewed sideways on purpose: a symmetrical shadow makes a rail look like it is hovering in the middle of the window.
+- In dark, that cast does almost nothing. A near-black canvas swallows a black shadow, so the rail separates on its hairline and on the wash being one tier lighter than `level0`. If dark separation ever reads as too weak, raise the wash alpha before reaching for a stronger shadow.
+- The rail is flush against the window's left edge, square there and rounded on its right. It draws a hairline only on that right edge: the other three run into the window frame or into bare canvas, where a 1px line has nothing to separate.
+- Corner radius 16 for the rail, against 14 for cards inside it, and 12 for the caption buttons.
+
+## Window controls
+
+The Windows and Linux caption buttons are three square targets inset from the bar edges, not three flush strips, so the bar's own material is visible between them and against the window edge. That is what separates a control cluster from a row of divider lines. Geometry lives in `titleBarGeometry.ts`, which the resize grips also read, so the cluster and the grips cannot disagree.
+
+- Hover and press are neutral for all three, close included. `captionButtonHover` and `captionButtonActive` in `palette.ts` hold the values. A red close button advertises a destructive action, and this window intercepts `CloseRequested` to hide to tray, so nothing is discarded. Do not reintroduce a danger fill here; `error.main` stays for actions that actually destroy data.
+- Resting opacity is `captionButtonRestOpacity`, and hover and press both go to full. A cluster that vanished on an unfocused window would take the only visible cue that the window has controls.
+- Press scales the target to 0.95 and ramps the fill, rather than swapping in a gradient.
+- The maximize glyph is a single wide rounded rectangle in both window states. Swapping to an overlapping restore pair mid-gesture reads as a different control, and the pair needs more width than the box it stands for, so it sits off-centre in a square target. The accessible name still changes between Maximize and Restore.
+- `-webkit-corner-smoothing: 60%` keeps the rounded corners from being shaved flat by the compositor on a translucent target. It is a no-op on non-Chromium engines.
 
 ## Custom chrome
 

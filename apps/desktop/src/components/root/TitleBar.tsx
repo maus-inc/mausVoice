@@ -1,11 +1,17 @@
 import { Box, IconButton, Stack } from "@mui/material";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Copy, Minus, Plus, Square, X } from "lucide";
+import type { IconNode } from "lucide";
+import { Minus, Plus, X } from "lucide";
 import { useCallback, useEffect, useState } from "react";
 import { useIntl } from "react-intl";
 import { showErrorSnackbar } from "../../actions/app.actions";
 import { useIsDarkMode } from "../../hooks/color-scheme.hooks";
-import { chromeWash, dangerHoverSoft } from "../../styles/palette";
+import {
+  captionButtonActive,
+  captionButtonHover,
+  captionButtonRestOpacity,
+  chromeWash,
+} from "../../styles/palette";
 import { hairline, titleBarShadow } from "../../styles/shadows";
 import { isTauriRuntime } from "../../utils/env.utils";
 import { getPlatform } from "../../utils/platform.utils";
@@ -13,8 +19,9 @@ import { LogoWithText } from "../common/LogoWithText";
 import { MorphNavIcon } from "../common/MorphNavIcon";
 import { ThemeModeToggle } from "./ThemeModeToggle";
 import {
-  CAPTION_BUTTON_WIDTH,
-  COMPACT_CAPTION_BUTTON_WIDTH,
+  CAPTION_BUTTON_RADIUS,
+  CAPTION_BUTTON_SIZE,
+  COMPACT_CAPTION_BUTTON_SIZE,
   hasRightCaptionButtons,
   isCompactWidth,
   TITLE_BAR_HEIGHT,
@@ -26,6 +33,19 @@ import { WindowResizeHandles } from "./WindowResizeHandles";
 /** Window-control glyphs are 16px so they stay optically level with the 18px
  * theme toggle without crowding the button. */
 const CONTROL_ICON_SIZE = 16;
+
+/**
+ * The maximize glyph: a wide rounded rectangle rather than a square, and the
+ * same glyph in both window states.
+ *
+ * The Windows maximize button is a single outline. Swapping to an overlapping
+ * "restore" pair once the window is maximized reads as a different control
+ * mid-gesture, and the pair needs more width than the box it stands for, so it
+ * sits visibly off-centre in a square button.
+ */
+const MAXIMIZE_GLYPH: IconNode = [
+  ["rect", { x: "3", y: "5", width: "18", height: "14", rx: "2" }],
+];
 
 /**
  * One `onResized` subscription carrying both the maximized flag and the bar
@@ -197,19 +217,36 @@ const useWindowControls = (setMaximized: (value: boolean) => void) => {
   return { minimize, toggleMax, close };
 };
 
-const captionButtonSx = (compact: boolean, hoverFill = "action.hover") =>
+/**
+ * The window-control buttons, sized and coloured off one factory.
+ *
+ * Square targets inset from the bar edges rather than flush strips, so the
+ * bar's own material is visible between them and against the window edge. That
+ * is what separates a control cluster from a row of divider lines.
+ */
+const captionButtonSx = (dark: boolean, compact: boolean) =>
   ({
-    width: compact ? COMPACT_CAPTION_BUTTON_WIDTH : CAPTION_BUTTON_WIDTH,
-    height: TITLE_BAR_HEIGHT,
-    borderRadius: 0,
-    color: "text.secondary",
+    width: compact ? COMPACT_CAPTION_BUTTON_SIZE : CAPTION_BUTTON_SIZE,
+    height: compact ? COMPACT_CAPTION_BUTTON_SIZE : CAPTION_BUTTON_SIZE,
+    // A string, not a number: MUI multiplies a numeric `borderRadius` by
+    // `theme.shape.borderRadius`, which is 14 here, so `12` would paint 168px.
+    borderRadius: `${CAPTION_BUTTON_RADIUS}px`,
+    color: dark ? "rgba(255, 255, 255, 0.8)" : "rgba(0, 0, 0, 0.7)",
+    // Windows corner smoothing: squaring off the rounding a compositor would
+    // otherwise shave from the corners of a translucent target.
+    WebkitCornerSmoothing: "60%",
     transition:
-      "background-color var(--duration-fast) ease, color var(--duration-fast) ease",
-    // Hover changes the fill and steps the glyph up in both cases, so the
-    // close button keeps the same secondary-to-primary step as the others.
+      "background-color 125ms ease-out, color 125ms ease-out, opacity 125ms ease-out, transform 125ms ease-out",
     "&:hover": {
-      backgroundColor: hoverFill,
-      color: "text.primary",
+      backgroundColor: dark
+        ? captionButtonHover.dark
+        : captionButtonHover.light,
+    },
+    "&:active": {
+      backgroundColor: dark
+        ? captionButtonActive.dark
+        : captionButtonActive.light,
+      transform: "scale(0.95)",
     },
     "&:focus-visible": {
       outline: "2px solid",
@@ -364,43 +401,42 @@ const MacTrafficLights = ({
 );
 
 type CaptionButtonProps = {
+  dark: boolean;
   focused: boolean;
   compact: boolean;
   minimizeLabel: string;
   maximizeLabel: string;
   closeLabel: string;
-  maximized: boolean;
   onMinimize: WindowControlHandler;
   onToggleMax: WindowControlHandler;
   onClose: WindowControlHandler;
 };
 
 const CaptionButtons = ({
+  dark,
   focused,
   compact,
   minimizeLabel,
   maximizeLabel,
   closeLabel,
-  maximized,
   onMinimize,
   onToggleMax,
   onClose,
 }: CaptionButtonProps) => {
-  const sx = captionButtonSx(compact);
-  // Only the close fill is tinted. At `dangerHoverSoft`'s alpha the wash is a
-  // nudge rather than a state change, and the glyph still steps up on hover.
-  // Both come from one factory so the rest of the caption styling cannot drift.
-  const closeSx = captionButtonSx(compact, dangerHoverSoft);
+  const sx = captionButtonSx(dark, compact);
   return (
     <Stack
       direction="row"
-      spacing={0}
+      spacing={0.25}
       sx={{
-        alignItems: "stretch",
+        alignItems: "center",
         alignSelf: "stretch",
+        pr: "2px",
         position: "relative",
         zIndex: 1,
-        opacity: focused ? 1 : 0.6,
+        opacity: focused
+          ? captionButtonRestOpacity
+          : captionButtonRestOpacity * 0.6,
       }}
     >
       <IconButton
@@ -409,7 +445,7 @@ const CaptionButtons = ({
         aria-label={minimizeLabel}
         sx={sx}
       >
-        <MorphNavIcon icon={Minus} size={CONTROL_ICON_SIZE} />
+        <MorphNavIcon icon={Minus} size={CONTROL_ICON_SIZE} strokeWidth={2} />
       </IconButton>
       <IconButton
         size="small"
@@ -417,19 +453,19 @@ const CaptionButtons = ({
         aria-label={maximizeLabel}
         sx={sx}
       >
-        {maximized ? (
-          <MorphNavIcon icon={Copy} size={CONTROL_ICON_SIZE} />
-        ) : (
-          <MorphNavIcon icon={Square} size={CONTROL_ICON_SIZE} />
-        )}
+        <MorphNavIcon
+          icon={MAXIMIZE_GLYPH}
+          size={CONTROL_ICON_SIZE}
+          strokeWidth={2}
+        />
       </IconButton>
       <IconButton
         size="small"
         onClick={onClose}
         aria-label={closeLabel}
-        sx={closeSx}
+        sx={sx}
       >
-        <MorphNavIcon icon={X} size={CONTROL_ICON_SIZE} />
+        <MorphNavIcon icon={X} size={CONTROL_ICON_SIZE} strokeWidth={2} />
       </IconButton>
     </Stack>
   );
@@ -534,12 +570,12 @@ export const TitleBar = () => {
 
         {trafficLights ? null : (
           <CaptionButtons
+            dark={dark}
             focused={focused}
             compact={compact}
             minimizeLabel={minimizeLabel}
             maximizeLabel={maximizeLabel}
             closeLabel={closeLabel}
-            maximized={maximized}
             onMinimize={minimize}
             onToggleMax={toggleMax}
             onClose={close}

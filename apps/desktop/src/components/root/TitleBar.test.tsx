@@ -66,12 +66,14 @@ vi.mock("./WindowResizeHandles", () => ({
 
 import { TitleBar } from "./TitleBar";
 import {
-  CAPTION_BUTTON_WIDTH,
-  COMPACT_CAPTION_BUTTON_WIDTH,
+  CAPTION_BUTTON_RADIUS,
+  CAPTION_BUTTON_SIZE,
+  COMPACT_CAPTION_BUTTON_SIZE,
   MIN_TARGET_SIZE,
   TRAFFIC_DOT_SIZE,
   TRAFFIC_HIT_SIZE,
 } from "./titleBarGeometry";
+import { captionButtonRestOpacity } from "../../styles/palette";
 
 import {
   ensureUiHarness,
@@ -206,9 +208,46 @@ describe("TitleBar on Windows and Linux", () => {
         .transition.split(",")
         .map((value) => value.trim()),
     ).toEqual([
-      "background-color var(--duration-fast) ease",
-      "color var(--duration-fast) ease",
+      "background-color 125ms ease-out",
+      "color 125ms ease-out",
+      "opacity 125ms ease-out",
+      "transform 125ms ease-out",
     ]);
+  });
+
+  it("tints close on hover exactly like minimize and maximize", async () => {
+    await renderBar();
+    // A red close button claims the window is about to discard something. This
+    // one hides to tray, so the three must stay peers or the cluster lies.
+    const hoverFill = (label: string) =>
+      getComputedStyle(requireByLabel(label)).getPropertyValue(
+        "background-color",
+      );
+    expect(hoverFill("Close")).toBe(hoverFill("Minimize"));
+    expect(hoverFill("Close")).toBe(hoverFill("Maximize"));
+    expect(hoverFill("Close")).not.toMatch(/rgba?\(\s*2\d\d,\s*\d+,\s*\d+/);
+  });
+
+  it("draws the caption buttons as rounded square targets, not flush strips", async () => {
+    await renderBar();
+    for (const label of ["Minimize", "Maximize", "Close"]) {
+      const style = getComputedStyle(requireByLabel(label));
+      expect(pxOf(requireByLabel(label), "height"), label).toBe(
+        CAPTION_BUTTON_SIZE,
+      );
+      expect(style.borderRadius, label).toBe(`${CAPTION_BUTTON_RADIUS}px`);
+    }
+  });
+
+  it("dims the cluster rather than hiding it when the window is unfocused", async () => {
+    await renderBar();
+    // The opacity rides the cluster wrapper, not each button, so the whole
+    // group dims as one thing instead of the three drifting apart.
+    const cluster = requireByLabel("Close").parentElement as HTMLElement;
+    expect(Number(getComputedStyle(cluster).opacity)).toBeCloseTo(
+      captionButtonRestOpacity,
+      2,
+    );
   });
 
   it("puts caption buttons right of the logo with stable glyphs", async () => {
@@ -355,7 +394,7 @@ it("narrows the caption buttons and hides the wordmark on a narrow window", asyn
     (node) => node.textContent === "mausVoice",
   );
   expect(pxOf(requireByLabel("Close"), "width")).toBe(
-    COMPACT_CAPTION_BUTTON_WIDTH,
+    COMPACT_CAPTION_BUTTON_SIZE,
   );
   // The wordmark is the first thing to go on a narrow bar.
   expect(getComputedStyle(wordmark!).display).toBe("none");
@@ -368,7 +407,7 @@ it("keeps the roomy bar on a wide window", async () => {
   const wordmark = [...document.querySelectorAll("span")].find(
     (node) => node.textContent === "mausVoice",
   );
-  expect(pxOf(requireByLabel("Close"), "width")).toBe(CAPTION_BUTTON_WIDTH);
+  expect(pxOf(requireByLabel("Close"), "width")).toBe(CAPTION_BUTTON_SIZE);
   expect(getComputedStyle(wordmark!).display).not.toBe("none");
 });
 
@@ -386,14 +425,14 @@ it("re-evaluates density when the window is resized", async () => {
   }) as never);
   windowMocks.outerSize.mockResolvedValue({ width: 1280, height: 800 });
   await renderBar();
-  expect(pxOf(requireByLabel("Close"), "width")).toBe(CAPTION_BUTTON_WIDTH);
+  expect(pxOf(requireByLabel("Close"), "width")).toBe(CAPTION_BUTTON_SIZE);
 
   windowMocks.outerSize.mockResolvedValue({ width: 820, height: 700 });
   await act(async () => {
     fireResize?.();
   });
   expect(pxOf(requireByLabel("Close"), "width")).toBe(
-    COMPACT_CAPTION_BUTTON_WIDTH,
+    COMPACT_CAPTION_BUTTON_SIZE,
   );
 });
 
@@ -438,7 +477,7 @@ it("keeps the newest density when resize ticks resolve out of order", async () =
     resolveNarrow({ width: 820, height: 700 });
   });
   expect(pxOf(requireByLabel("Close"), "width")).toBe(
-    COMPACT_CAPTION_BUTTON_WIDTH,
+    COMPACT_CAPTION_BUTTON_SIZE,
   );
 
   // The older, wider tick now lands late. It must be discarded rather than
@@ -447,7 +486,7 @@ it("keeps the newest density when resize ticks resolve out of order", async () =
     resolveWide({ width: 1280, height: 800 });
   });
   expect(pxOf(requireByLabel("Close"), "width")).toBe(
-    COMPACT_CAPTION_BUTTON_WIDTH,
+    COMPACT_CAPTION_BUTTON_SIZE,
   );
 });
 
@@ -469,7 +508,7 @@ it("compares against logical pixels, so a scaled display still compacts", async 
   await renderBar();
 
   expect(pxOf(requireByLabel("Close"), "width")).toBe(
-    COMPACT_CAPTION_BUTTON_WIDTH,
+    COMPACT_CAPTION_BUTTON_SIZE,
   );
 });
 
@@ -478,7 +517,7 @@ it("keeps the roomy bar when the window size is not known yet", async () => {
   platformState.native = false;
   await renderBar();
 
-  expect(pxOf(requireByLabel("Close"), "width")).toBe(CAPTION_BUTTON_WIDTH);
+  expect(pxOf(requireByLabel("Close"), "width")).toBe(CAPTION_BUTTON_SIZE);
 });
 
 it.each([

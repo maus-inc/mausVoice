@@ -3,10 +3,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { motion, useReducedMotion } from "framer-motion";
 import { Outlet, useLocation } from "react-router-dom";
 import { useAsyncData } from "../../hooks/async.hooks";
-import { useIsDarkMode } from "../../hooks/color-scheme.hooks";
 import { easeOutQuint } from "../../styles/motion";
-import { chromeWash } from "../../styles/palette";
-import { hairline, insetRim, recessedEdge } from "../../styles/shadows";
 import { TranscriptionDetailsDialog } from "../transcriptions/TranscriptionDetailsDialog";
 import { DashboardMenu } from "./DashboardMenu";
 import { FeatureReleaseDialog } from "./FeatureReleaseDialog";
@@ -16,12 +13,17 @@ import { PermissionsDialog } from "./PermissionsDialog";
  * Authenticated app shell: sidebar navigation, routed content area, and the
  * global dialogs (feature release, permissions, trial ended, transcription
  * details). Also reports the app version into the layout.
+ *
+ * The content area is deliberately flat. It carries no fill, border, radius or
+ * cast of its own, so the routed page reads as the window's canvas rather than
+ * as a card sitting on it. A panel treatment here cuts the window into
+ * compartments and turns a navigation change into a frame change. Chrome that
+ * does need its own material, such as the rail, paints it on the rail.
  */
 export default function DashboardPage() {
   const data = useAsyncData(getVersion, []);
   const { pathname } = useLocation();
   const reduceMotion = useReducedMotion();
-  const dark = useIsDarkMode();
 
   return (
     <>
@@ -72,28 +74,6 @@ export default function DashboardPage() {
               flexGrow: 1,
               minHeight: 0,
               overflow: "auto",
-              // The routed content carries the same wash as the chrome, so the panel
-              // and the rail read as one material. Above `sm` the panel's left
-              // edge is rounded, mirroring the rail's right edge so the canvas
-              // shows through one seam between them; rounding the right and
-              // bottom would set the panel off as a card floating inside the
-              // layout padding. Below `sm` the rail is hidden, so there is no
-              // neighbour to mirror: the radius, the left hairline and the
-              // up-left cast all step away rather than sitting there as an
-              // artifact.
-              borderRadius: { xs: 0, sm: "16px 0 0 16px" },
-              borderTop: dark ? hairline.dark(0.05) : hairline.light(0.05),
-              borderLeft: {
-                xs: "none",
-                sm: dark ? hairline.dark(0.05) : hairline.light(0.05),
-              },
-              boxShadow: {
-                xs: dark ? insetRim.dark : insetRim.light,
-                sm: dark
-                  ? `${insetRim.dark}, ${recessedEdge.dark}`
-                  : `${insetRim.light}, ${recessedEdge.light}`,
-              },
-              background: dark ? chromeWash.dark : chromeWash.light,
             }}
           >
             <Outlet />

@@ -106,14 +106,35 @@ export const accent = {
 } as const;
 
 /**
- * Close-button hover.
+ * Caption-button hover fill, and the resting opacity of the whole cluster.
  *
- * Deliberately faint. The main window intercepts `CloseRequested` and hides to
- * tray, so closing the window discards nothing, and a full destructive fill
- * would be claiming an outcome that does not happen. `error.main` stays
- * reserved for actions that actually destroy data.
+ * Close is tinted exactly like minimize and maximize. That is deliberate and
+ * not an oversight. In Windows and Linux a custom close button that paints
+ * itself red advertises a destructive action, and this window intercepts
+ * `CloseRequested` to hide to tray, so nothing is discarded. A neutral wash
+ * keeps the cluster reading as three peers. `error.main` stays reserved for
+ * actions that actually destroy data.
  */
-export const dangerHoverSoft = "rgba(232, 77, 77, 0.14)";
+export const captionButtonHover = {
+  light: "rgba(0, 0, 0, 0.05)",
+  dark: "rgba(255, 255, 255, 0.1)",
+} as const;
+
+/**
+ * Caption-button pressed fill: the same neutral, ramped up.
+ */
+export const captionButtonActive = {
+  light: "rgba(0, 0, 0, 0.12)",
+  dark: "rgba(255, 255, 255, 0.22)",
+} as const;
+
+/**
+ * Resting opacity of the caption cluster. Hover and press both go to full.
+ *
+ * Windows dims unfocused chrome rather than removing it, and a cluster that
+ * vanished would take the only visible cue that the window has controls.
+ */
+export const captionButtonRestOpacity = 0.8;
 
 /**
  * The window wash, shared by the title bar, the navigation rail and the routed
