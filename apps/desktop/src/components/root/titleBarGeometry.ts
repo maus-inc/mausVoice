@@ -36,10 +36,6 @@ export const CAPTION_BUTTON_SIZE = 34;
  */
 export const CAPTION_BUTTON_RADIUS = 12;
 
-/** Side of one caption button in a given bar density. */
-export const captionButtonSize = (compact: boolean): number =>
-  compact ? COMPACT_CAPTION_BUTTON_SIZE : CAPTION_BUTTON_SIZE;
-
 /**
  * Gap between caption buttons, and the padding from the cluster's right edge to
  * the window edge. Both live here so the resize grips' guard and the rendered
@@ -47,25 +43,6 @@ export const captionButtonSize = (compact: boolean): number =>
  */
 export const CAPTION_CLUSTER_GAP = 2;
 export const CAPTION_CLUSTER_PAD_RIGHT = 2;
-
-/**
- * Width the whole cluster occupies, right edge of the window included.
- *
- * The cluster is three inset squares with gaps, not three flush strips, so its
- * width is not three button sizes. Anything reasoning about where the cluster
- * ends has to use this.
- */
-export const captionClusterWidth = (compact: boolean): number =>
-  3 * captionButtonSize(compact) +
-  2 * CAPTION_CLUSTER_GAP +
-  CAPTION_CLUSTER_PAD_RIGHT;
-
-/**
- * Top edge of a caption button inside the bar. The buttons are centred in the
- * bar rather than filling it, so they start below the top frame band.
- */
-export const captionButtonTop = (): number =>
-  Math.round((TITLE_BAR_HEIGHT - captionButtonSize(false)) / 2);
 
 /**
  * Windows and Linux render caption buttons flush against the right window
@@ -118,3 +95,32 @@ export const COMPACT_CAPTION_BUTTON_SIZE = 30;
  */
 export const isCompactWidth = (width: number | null): boolean =>
   width !== null && width > 0 && width <= COMPACT_WIDTH;
+
+/*
+ * The derived helpers below read the constants above, so they sit after every
+ * one of them is declared. A helper that named a later constant would work at
+ * runtime and still be a trap for the next reader.
+ */
+
+/** Side of one caption button in a given bar density. */
+export const captionButtonSize = (compact: boolean): number =>
+  compact ? COMPACT_CAPTION_BUTTON_SIZE : CAPTION_BUTTON_SIZE;
+
+/**
+ * Width the whole cluster occupies, right edge of the window included.
+ *
+ * The cluster is three inset squares with gaps, not three flush strips, so its
+ * width is not three button sizes. Anything reasoning about where the cluster
+ * ends has to use this.
+ */
+export const captionClusterWidth = (compact: boolean): number =>
+  3 * captionButtonSize(compact) +
+  2 * CAPTION_CLUSTER_GAP +
+  CAPTION_CLUSTER_PAD_RIGHT;
+
+/**
+ * Top edge of a caption button inside the bar. The buttons are centred in the
+ * bar rather than filling it, so they start below the top frame band.
+ */
+export const captionButtonTop = (): number =>
+  Math.round((TITLE_BAR_HEIGHT - captionButtonSize(false)) / 2);
