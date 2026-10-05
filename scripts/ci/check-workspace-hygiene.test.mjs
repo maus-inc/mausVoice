@@ -1,11 +1,42 @@
 import assert from "node:assert/strict";
 import { execSync } from "node:child_process";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+
+/**
+ * `git diff --check <ref>` finds whitespace errors and exits non-zero, printing
+ * each one to STDOUT. A bare `execSync` discards stdout on a non-zero exit, so
+ * the report has to be read out of the thrown error -- and only for git's own
+ * whitespace code. Every other non-zero exit is a failure to run the check, and
+ * returning an empty report for one of those makes `doesNotMatch("")` pass, which
+ * reads as evidence that the tree is clean. Measured in a scratch repo:
+ * whitespace 2, clean 0, unresolvable ref 128, missing git 127, all with 0 bytes
+ * on stdout except the first.
+ */
+const gitDiffCheckReport = (cwd, ref = "HEAD") => {
+  try {
+    return execSync(`git diff --check ${ref}`, {
+      cwd,
+      encoding: "utf8",
+      stdio: "pipe",
+    });
+  } catch (err) {
+    if (err.status !== 2) throw err;
+    return String(err.stdout ?? "");
+  }
+};
 
 // The subset of glob syntax these patterns use: `**` for any path depth and `*`
 // for anything but a separator. A full matcher is not worth a dependency for two
@@ -238,30 +269,70 @@ describe("workspace hygiene contracts", () => {
   });
 
   it("ensures git diff --check reports no whitespace or CRLF errors", () => {
-    // `git diff --check` exits non-zero when it finds a problem and prints each
-    // one to STDOUT, so the report has to be read out of the thrown error rather
-    // than from a successful call -- a bare execSync discards it.
-    //
     // Comparing against HEAD covers staged and unstaged edits together. The
     // previous version re-ran the check against the working tree alone on
     // failure, and `git diff --check` with no ref inspects unstaged files only,
     // so a whitespace error in a file that was staged and not then edited passed
     // unexamined.
-    let report = "";
-    try {
-      report = execSync("git diff --check HEAD", {
-        cwd: repoRoot,
-        encoding: "utf8",
-        stdio: "pipe",
-      });
-    } catch (err) {
-      report = String(err.stdout ?? "");
-    }
     assert.doesNotMatch(
-      report,
+      gitDiffCheckReport(repoRoot),
       /trailing whitespace|CRLF/,
       "working tree diff must not introduce CRLF or trailing whitespace errors",
     );
+  });
+
+  it("reads only git's whitespace exit code as a report", () => {
+    // `git diff --check` exits non-zero when it finds a problem and prints each
+    // one to STDOUT, so the report has to be read out of the thrown error rather
+    // than from a successful call -- a bare execSync discards it.
+    //
+    // `execSync` throws on ANY non-zero exit, though, and the other two cases
+    // below put nothing at all on stdout. Reading those as an empty report let
+    // the check above pass without ever having run, which is the direction that
+    // reassures. Measured in a scratch repo:
+    //
+    //   whitespace present  -> exit 2,   report on stdout
+    //   clean tree          -> exit 0,   empty report
+    //   bad ref             -> exit 128, stdout 0 bytes
+    //
+    // A missing git exits 127 rather than 128, and is thrown for the same reason.
+    const repo = mkdtempSync(join(tmpdir(), "git-diff-check-"));
+    const write = (contents) => {
+      writeFileSync(join(repo, "f.txt"), contents);
+      execSync("git add f.txt", { cwd: repo, stdio: "pipe" });
+      execSync("git checkout -- f.txt", { cwd: repo, stdio: "pipe" });
+    };
+    execSync("git init -q .", { cwd: repo, stdio: "pipe" });
+    execSync("git config user.email t@example.invalid", {
+      cwd: repo,
+      stdio: "pipe",
+    });
+    execSync("git config user.name t", { cwd: repo, stdio: "pipe" });
+    write("a\nb\n");
+    execSync("git commit -qm base", { cwd: repo, stdio: "pipe" });
+
+    assert.strictEqual(
+      gitDiffCheckReport(repo),
+      "",
+      "a clean tree is a clean report, not an error",
+    );
+
+    write("a\nb   \n");
+    assert.match(
+      gitDiffCheckReport(repo),
+      /trailing whitespace/,
+      "a whitespace finding is a report, so the caller sees it",
+    );
+
+    // The case that mattered. This threw with 0 bytes on stdout, so the old
+    // catch produced an empty report and `doesNotMatch("")` passed.
+    assert.throws(
+      () => gitDiffCheckReport(repo, "NOSUCHREF"),
+      /unknown revision|ambiguous argument/,
+      "a ref that does not resolve is a failure of the check, not a clean report",
+    );
+
+    rmSync(repo, { recursive: true, force: true });
   });
 
   it("every DeepSource exclusion still excludes something", () => {
