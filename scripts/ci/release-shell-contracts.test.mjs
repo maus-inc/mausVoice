@@ -971,19 +971,57 @@ describe("release workflow shell contracts", () => {
     // detectors, no scan here runs at all. That is checkable, it survives rewording of
     // both the claim and the qualifier, and it is the thing whose absence makes the claim
     // false.
-    assert.match(
-      scan,
-      /cannot extend the built-in detectors,[\s\S]{0,140}?at all, and the job fails at the end saying so by name/,
+    // ...and the file's own header must keep saying what that phrase costs.
+    //
+    // Scoped to the HEADER, and matched on whitespace-normalised text. Both halves of
+    // that matter and a reviewer's two mutations found each one.
+    //
+    // Scoped: these patterns used to run against the whole file, so cutting the
+    // disclaimer out of the header and pasting it byte-identically into the job body --
+    // the most natural refactor of a header paragraph, and arguably an improvement --
+    // left the suite at 30/30 while the trigger comment above kept asserting an
+    // unqualified gate. That is the finding's defect again, in a worse form: it survives
+    // MOVING the qualifier. `[\s\S]` also crosses comment boundaries, so end-of-file
+    // works too.
+    //
+    // Normalised, with no gap budget: a `{0,140}?` gap is ~6x the committed distance
+    // between the two halves (measured: 23 and 5 characters), which buys nothing a rewrap
+    // needs and only widens what `[\s\S]` can span. Measured: adding two honest aside
+    // lines to the header paragraph turned the suite RED, because 117 characters of slack
+    // ran out. That is a false red introduced by the gap, and `scan.replace(/\s+/g, " ")`
+    // -- the technique the sibling assertion at :1019 already uses -- removes both
+    // problems at once.
+    const header = scan.slice(0, scan.indexOf("\njobs:"));
+    assert.ok(
+      header !== scan,
+      "secret-scan.yml must have a jobs: block to bound the header",
+    );
+    // The comment markers go BEFORE flattening, not after. `#` is not whitespace, so
+    // normalising first leaves `no scan here runs # at all` wherever the paragraph happens
+    // to wrap -- which fails on the committed file and only on the committed file.
+    const flatHeader = header
+      .split("\n")
+      .map((line) => line.replace(/^\s*#+\s?/, ""))
+      .join("\n")
+      .replace(/\s+/g, " ");
+    assert.ok(
+      flatHeader.includes(
+        "cannot extend the built-in detectors, no scan here runs at all, and the job " +
+          "fails at the end saying so by name",
+      ),
       "the workflow header must state that against a base whose gitleaks.toml cannot " +
         "extend the built-in detectors no scan here runs at all; without that " +
         "qualifier its claim that the PR scan gates main is false, and this assertion " +
-        "cannot see a reworded claim",
+        "cannot see a reworded claim. Matched against the header only, so relocating the " +
+        "paragraph does not satisfy it.",
     );
-    assert.match(
-      scan,
-      /whether it is currently capable of it is reported per[\s\S]{0,80}?run rather than assumed/,
+    assert.ok(
+      flatHeader.includes(
+        "whether it is currently capable of it is reported per run rather than assumed",
+      ),
       "the header must say the scans' capability is reported per run rather than " +
-        "assumed, which is what makes its statement of purpose honest",
+        "assumed, which is what makes its statement of purpose honest. Matched against " +
+        "the header only.",
     );
   });
 
@@ -1482,21 +1520,47 @@ describe("release workflow shell contracts", () => {
     // So: a step is a scan if its body invokes gitleaks, excluding the `--help` probe
     // and the two self-verification fixtures, which pass `--no-git --source` over a
     // scratch directory and are not scanning the checkout at all.
+    // The body with comment and blank lines dropped. Every predicate below runs on THIS, not
+    // on the raw body: `step.run` includes `#` lines, and all three real scans carry a
+    // comment mentioning `gitleaks detect` (secret-scan.yml:281, :447, :610), so a
+    // documentation-only step was claimed as a scan.
+    const stepCode = (step) =>
+      step.run
+        .filter((line) => line.trim() !== "" && !line.trim().startsWith("#"))
+        .join("\n");
     const runsGitleaksDetect = (step) =>
-      /\bgitleaks\s+detect\b/.test(step.run.join("\n"));
-    // `--help` is the capability probe, not a scan. A `--source` naming anything other
-    // than the checkout is a fixture file. A range scan passes no `--source` at all, and
-    // the working-tree scan passes exactly `.` -- those two are the real scans, and
-    // `gitleaks version` is neither.
-    //
-    // My first discriminator excluded any `--no-git --source`, which also excluded the
-    // working-tree scan at secret-scan.yml:692 (`gitleaks detect --no-git --source .`).
-    // The suite caught it: the name list came back with two entries.
+      /\bgitleaks\s+detect\b/.test(stepCode(step));
+    // The `--help` probe is excluded on the STEP NAME as well as on the flag. Matching the
+    // flag with `[^\n]*` cannot cross a line break, and splitting
+    // `gitleaks detect --help 2>&1 | ...` across a `\` continuation is valid shell and a
+    // routine rewrap -- after which the probe stopped being recognised and, carrying no
+    // `--source`, was claimed as a fourth scan.
     const isCapabilityProbe = (step) =>
-      /\bgitleaks\s+detect\b[^\n]*--help\b/.test(step.run.join("\n"));
+      step.name === "Install Gitleaks" ||
+      /\bgitleaks\s+detect\b[\s\S]*?--help\b/.test(stepCode(step));
+    // "Scans the checkout" is decided by the checkout, not by one spelling of a path.
+    //
+    // An earlier version read `--source X` and treated anything other than a literal `.`
+    // as a fixture, so `--source scan-target`, `--source ./` and `--source "$CHECKOUT"`
+    // -- all of which name the checkout, and all of which run in this very workflow --
+    // were silently excluded from the ordering check and the baseline check. Measured:
+    // the commit's own fourth-scan mutation with `--source scan-target` stayed 30/30.
+    // It was also form-dependent, because the regex required whitespace and so missed
+    // `--source=scan-target`.
+    //
+    // So: accept `.`, `./`, and the step's own `working-directory` (that directory IS
+    // the checkout -- the scans run `working-directory: scan-target`), with any trailing
+    // slash and either the `--source X` or `--source=X` form.
     const sourcesTheCheckout = (step) => {
-      const source = /--source\s+(\S+)/.exec(step.run.join("\n"));
-      return !source || /^\.$/.test(source[1]);
+      const source = /--source[=\s]+(\S+)/.exec(stepCode(step));
+      if (!source) return true; // a range scan passes no --source at all
+      const value =
+        source[1].replace(/^["']|["']$/g, "").replace(/\/+$/, "") || ".";
+      const checkout = (step.workingDirectory ?? "scan-target").replace(
+        /\/+$/,
+        "",
+      );
+      return value === "." || value === checkout || value === `./${checkout}`;
     };
     const scanSteps = steps.filter(
       (step) =>
