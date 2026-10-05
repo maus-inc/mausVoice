@@ -29,11 +29,13 @@ const POSIX_ONLY = [/\bif\s*\[/, /^\s*elif\b/m, /^\s*fi\b/m, /^\s*then\b/m];
 const extractSteps = (workflowText) => {
   const lines = workflowText.split("\n");
   /** @type {{ name: string, shell: string | null, shells: string[], run: string[],
-   *          if: string | null, workingDirectory: string | null }[]} */
+   *          inputs: string[], if: string | null, workingDirectory: string | null }[]} */
   const steps = [];
   let current = null;
   let inRun = false;
   let runIndent = 0;
+  let inWith = false;
+  let withIndent = 0;
 
   for (const line of lines) {
     const stepMatch = line.match(/^\s*-\s+name:\s*(.+?)\s*$/);
@@ -44,6 +46,7 @@ const extractSteps = (workflowText) => {
         shell: null,
         shells: [],
         run: [],
+        inputs: [],
         if: null,
         workingDirectory: null,
       };
@@ -116,6 +119,26 @@ const extractSteps = (workflowText) => {
     if (wdMatch) {
       current.workingDirectory = wdMatch[1];
       continue;
+    }
+    // The `with:` block, recorded because a step's INPUTS are as much a part of what it
+    // does as its run body, and one assertion could not be written without them: the
+    // trusted checkout's `ref:` lives there, and until now the only way to assert on it
+    // was to match the whole file -- which any step carrying the same string satisfies.
+    // Collected as raw lines, not parsed into a map: nothing needs the keys separately,
+    // and a parsed map would commit this parser to a YAML reader it does not have.
+    const withMatch = line.match(/^(\s*)with:\s*$/);
+    if (withMatch) {
+      inWith = true;
+      withIndent = withMatch[1].length;
+      continue;
+    }
+    if (inWith) {
+      const indent = line.match(/^(\s*)/)?.[1].length ?? 0;
+      if (line.trim() === "" || indent > withIndent) {
+        current.inputs.push(line);
+        continue;
+      }
+      inWith = false;
     }
     const shellMatch = line.match(/^\s*shell:\s*(\S+)/);
     if (shellMatch) {
@@ -349,7 +372,11 @@ describe("release workflow shell contracts", () => {
       );
     }
     // ... so the step's own keys are the ones written outside the body.
-    assert.equal(outer.if, null, "a key-shaped line in the body is not the step's `if`");
+    assert.equal(
+      outer.if,
+      null,
+      "a key-shaped line in the body is not the step's `if`",
+    );
     assert.equal(
       outer.workingDirectory,
       null,
@@ -387,6 +414,21 @@ describe("release workflow shell contracts", () => {
       3,
       "expected the three config-guard/history-scan steps to resolve scripts/ci/ out of " +
         "the scanned checkout; a different count means this assertion has lost its subject",
+    );
+
+    // The verdict step's own working directory, which nothing above pins. The loop below
+    // checks the three scans and the verdict is not one of them: its body does not
+    // resolve `scripts/ci/`, so it never enters `branchCode`. Yet the verdict reads
+    // `../trusted-scanner/gitleaks.toml` RELATIVE to itself, so without
+    // `working-directory: scan-target` that path leaves $GITHUB_WORKSPACE, the resolver
+    // fails closed, and every run reports a clean scan. A gate that is permanently
+    // broken and permanently green is worse than no gate, because it reads as coverage.
+    assert.equal(
+      steps[verdictIndex].workingDirectory,
+      "scan-target",
+      "the verdict resolves ../trusted-scanner/gitleaks.toml relative to its own working " +
+        "directory, so it must carry working-directory: scan-target; without it every run " +
+        "fails closed and the suite still passes",
     );
 
     for (const step of branchCode) {
@@ -686,8 +728,24 @@ describe("release workflow shell contracts", () => {
     // scan. On a push event `github.sha` IS the pushed commit, so pinning the
     // trusted checkout to it would make the word "trusted" mean nothing while
     // every other assertion in this test still passed.
+    //
+    // Matched inside the TRUSTED step's own body, not against the whole file. A
+    // file-wide match is satisfied by any step that happens to carry the string --
+    // proven by mutation: pointing the trusted checkout at `${{ github.sha }}` and
+    // moving the base-sha `ref:` onto the untrusted "Checkout source commits for
+    // scanning" step left the suite at 29/29. That is the one direction this
+    // assertion exists to forbid, and the check was blind to it. `extractSteps`
+    // already records each step's name, so the subject is addressable.
+    const trustedCheckout = steps.find(
+      (step) => step.name === "Checkout trusted scanner policy",
+    );
+    assert.ok(
+      trustedCheckout,
+      "secret-scan.yml needs a step named 'Checkout trusted scanner policy' for this " +
+        "assertion to have a subject; if it was renamed, say so rather than deleting the check",
+    );
     assert.match(
-      scan,
+      trustedCheckout.inputs.join("\n"),
       /ref: \$\{\{ github\.event\.pull_request\.base\.sha \|\| 'main' \}\}/,
       "the trusted policy checkout must be pinned to the base sha, or main on push",
     );
