@@ -949,4 +949,37 @@ describe("filler removal keeps words that merely end in a filler", () => {
     expect(applyFastStyle("I'll be there", "formal")).toBe("I will be there.");
     expect(applyFastStyle("can't stay", "formal")).toBe("Cannot stay.");
   });
+
+  describe("every semicolon-separated idea becomes its own bullet", () => {
+    // The fragment filter was `trimmed.length > 2`, which drops a two-character
+    // idea. It read as a guard against emitting empty bullets, but the fallback
+    // only applies when EVERY fragment was short, so a single longer sibling was
+    // enough to delete the short ones. This module's own header says nothing here
+    // may shorten text.
+    // Bullets capitalize each item, which is established behaviour below, so the
+    // expectations here carry it. The point of each case is which items survive.
+    expect(applyFastStyle("Go; no; stop.", "bullets")).toBe(
+      "- Go\n- No\n- Stop",
+    );
+    expect(applyFastStyle("go; no; stop", "bullets")).toBe(
+      "- Go\n- No\n- Stop",
+    );
+    // A digit is an idea too, and "3; 4; 5" is a list of three.
+    expect(applyFastStyle("3; 4; 5", "bullets")).toBe("- 3\n- 4\n- 5");
+
+    // The filter exists to keep empty bullets out. A fragment with no letter or
+    // digit in it is one, and `stripEdgePunctuation` removes only `[,.;\s]`, so a
+    // length test would have let an em dash through as a bullet. The control
+    // without the empty fragment is the same sentence and shows what these three
+    // are compared against.
+    expect(applyFastStyle("Buy milk; eggs", "bullets")).toBe(
+      "- Buy milk\n- Eggs",
+    );
+    for (const empty of ["-", "", "\u2014"]) {
+      expect(applyFastStyle(`Buy milk; ${empty}; eggs`, "bullets")).toBe(
+        "- Buy milk\n- Eggs",
+        `${JSON.stringify(empty)} is not an idea, so it does not become a bullet`,
+      );
+    }
+  });
 });

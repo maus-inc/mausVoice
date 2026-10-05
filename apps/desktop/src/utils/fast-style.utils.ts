@@ -661,7 +661,14 @@ const toBullets = (raw: string): string => {
     const parts = s.includes(";") ? s.split(";") : [s];
     for (const p of parts) {
       const trimmed = stripEdgePunctuation(p);
-      if (trimmed.length > 2) ideas.push(trimmed);
+      // An idea is anything with a letter or a digit in it. A length threshold
+      // cannot decide this: at 2 characters it drops "no", and because the
+      // fallback below only applies when EVERY fragment was short, one longer
+      // sibling was enough to delete the short ones -- so "Go; no; stop." became a
+      // single bullet reading "Stop". `stripEdgePunctuation` only removes
+      // `[,.;\s]`, so a length test cannot see the difference between an em dash
+      // and a real idea either.
+      if (/[\p{L}\p{N}]/u.test(trimmed)) ideas.push(trimmed);
     }
   }
 
