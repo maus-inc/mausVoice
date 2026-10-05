@@ -303,8 +303,14 @@ const CONTRACTION_MAP: Record<string, string> = {
 //
 // This set arbitrates one thing only: whether the apostrophe must be there. It cannot
 // pick between two readings of an apostrophised form, so the entries whose two
-// readings differ -- the `'d` family and the `'s` family -- are not in the map at all
-// rather than being resolved here.
+// readings differ are not in the map at all rather than being resolved here. Those are
+// the four `'d` entries and the four ambiguous `'s` ones -- `it's`, `there's`, `what's`,
+// `who's` -- because `'d` is *would* or *had* and those `'s` are *is* or *has*.
+//
+// Naming them as "the `'d` family and the `'s` family" was wrong and read as though no
+// `'s` form survived, which a grep contradicts: `let's` is still in the map at :289,
+// because it has exactly one reading. It is the bare `lets` that collides, and that is
+// what its entry in this set below is for.
 //
 // The `?` sits between the stem and the final letter, not after the whole word, so
 // `can't` compiles to `\bcan'?t\b` and never matched a bare `can`. That is why `can't`
@@ -837,10 +843,19 @@ const applyStyleToChunk = (
  * The cap is now a chunk size rather than a truncation point.
  *
  * `toEmail` is the only transform that carries state across its input — it lifts
- * a greeting off the front and a sign-off off the back — so it needs to know where
- * its chunk sits for that reason. Every transform is told now: the terminator a
- * chunk appends has to be suppressed on a chunk that continues into the next one,
- * whichever tone produced it.
+ * a greeting off the front and a sign-off off the back — so it needed to be told
+ * where its chunk sits for that reason.
+ *
+ * The terminator a chunk appends also has to be suppressed on a chunk that continues
+ * into the next one, whichever tone produced it. That is the second reason a transform
+ * takes `isLast`, and it is the reason `toPolished`, `toChat`, `toFormal`, `toConcise`,
+ * `toPrompt` and `toEmail` all take it now.
+ *
+ * Not every transform is told, and saying so was the overstatement: `toBullets` and
+ * `toNotes` are called with the chunk alone. Neither appends a sentence terminator —
+ * one joins with newlines and the other restructures into notes — so there is nothing
+ * for `isLast` to suppress. The rule is "every transform that appends a terminator",
+ * not "every transform".
  */
 export const applyFastStyle = (
   rawTranscript: string,
