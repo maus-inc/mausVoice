@@ -91,7 +91,14 @@ export type TranscribeAudioMetadata = {
 };
 
 export type TranscribeAudioResult = {
-  /** Exact provider output before replacements or hallucination filtering. */
+  /**
+   * Provider output before replacements or hallucination filtering.
+   *
+   * Exact only when `hallucinationFilterEnabled` is false. With the filter on -- the
+   * default -- this is `transcribeOutput.text.trim()`, so leading and trailing whitespace
+   * is already gone before the segments are gated. An earlier version of this comment said
+   * "exact" unconditionally, which read as a guarantee the default path does not keep.
+   */
   rawTranscript: string;
   /** Text used by post-processing and output routing. */
   sanitizedTranscript: string;

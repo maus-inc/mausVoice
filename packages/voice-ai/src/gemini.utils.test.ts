@@ -995,7 +995,7 @@ describe("Gemini Files API edge cases", () => {
     });
   };
 
-  it("throws when upload URL header is missing", async () => {
+  it("falls back to inlineData when the upload URL header is missing", async () => {
     const customFetch = vi.fn().mockImplementation((url: string) => {
       if (url.includes("/upload/v1beta/files")) {
         return Promise.resolve(
@@ -1058,7 +1058,7 @@ describe("Gemini Files API edge cases", () => {
     }
   });
 
-  it("throws on FAILED file state", async () => {
+  it("falls back when the uploaded file reports FAILED", async () => {
     const customFetch = filesApiFetch({
       pollState: () => ({ state: "FAILED" }),
     });
@@ -1072,7 +1072,7 @@ describe("Gemini Files API edge cases", () => {
     ).resolves.toBeDefined();
   });
 
-  it("throws when file never becomes ACTIVE after polling", async () => {
+  it("falls back when the file never becomes ACTIVE after polling", async () => {
     // Fake clock, because giving up now means spending the whole 30s budget
     // rather than ten fixed 100ms attempts.
     vi.useFakeTimers();

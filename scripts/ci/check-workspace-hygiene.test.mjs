@@ -238,23 +238,30 @@ describe("workspace hygiene contracts", () => {
   });
 
   it("ensures git diff --check reports no whitespace or CRLF errors", () => {
+    // `git diff --check` exits non-zero when it finds a problem and prints each
+    // one to STDOUT, so the report has to be read out of the thrown error rather
+    // than from a successful call -- a bare execSync discards it.
+    //
+    // Comparing against HEAD covers staged and unstaged edits together. The
+    // previous version re-ran the check against the working tree alone on
+    // failure, and `git diff --check` with no ref inspects unstaged files only,
+    // so a whitespace error in a file that was staged and not then edited passed
+    // unexamined.
+    let report = "";
     try {
-      execSync("git diff --check HEAD", {
+      report = execSync("git diff --check HEAD", {
         cwd: repoRoot,
+        encoding: "utf8",
         stdio: "pipe",
       });
     } catch (err) {
-      // If there are working directory diffs, test against tracked files only
-      const trackedStatus = execSync("git diff --check", {
-        cwd: repoRoot,
-        encoding: "utf8",
-      });
-      assert.doesNotMatch(
-        trackedStatus,
-        /trailing whitespace|CRLF/,
-        "working tree diff must not introduce CRLF or trailing whitespace errors",
-      );
+      report = String(err.stdout ?? "");
     }
+    assert.doesNotMatch(
+      report,
+      /trailing whitespace|CRLF/,
+      "working tree diff must not introduce CRLF or trailing whitespace errors",
+    );
   });
 
   it("every DeepSource exclusion still excludes something", () => {
