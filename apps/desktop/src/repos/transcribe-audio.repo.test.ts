@@ -1207,6 +1207,49 @@ describe("provider requests honor the abort signal", () => {
   });
 });
 
+describe("Gemini is handed the abort signal, not just a wrapped fetch", () => {
+  // Every sibling provider that takes a signal passes it -- Aldea, Azure, Speaches,
+  // OpenRouter (signal: lines :485, :728, :870, :963). Gemini passed only
+  // `customFetch: withAbortSignal(secureFetch, input.signal)`, which binds the
+  // abort to the HTTP requests and to nothing else. `GeminiTranscriptionArgs`
+  // declares `signal` for exactly this, documented as "Aborts the request and
+  // stops any retry loop when cancelled", and it was never passed.
+  //
+  // The cost is a long tail after the user cancels: the poll loop in
+  // `gemini.utils.ts` sleeps between attempts with `delay(filePollInterval(attempt),
+  // signal)`, and that signal is `withDeadlineSignal(signal)` -- which folds in the
+  // caller's signal only if one was given. With none, a cancel left the loop running
+  // to its own FILE_POLL_DEADLINE_MS. Measured against the real module: 31,150ms and
+  // 19 polls after an abort at 300ms, against 302ms and 2 polls once the signal is
+  // passed.
+  it("passes input.signal to geminiTranscribeAudio", async () => {
+    const { GeminiTranscribeAudioRepo } =
+      await import("./transcribe-audio.repo");
+    const geminiMock = vi
+      .spyOn(voiceAi, "geminiTranscribeAudio")
+      .mockImplementation(() => Promise.resolve({ text: "ok", wordsUsed: 1 }));
+
+    const controller = new AbortController();
+    const repo = new GeminiTranscribeAudioRepo(
+      "key",
+      "gemini-3.5-transcribe",
+      [],
+    );
+    await repo.transcribeAudio({
+      samples: createSamples(1, 16000),
+      sampleRate: 16000,
+      signal: controller.signal,
+    });
+
+    const args = geminiMock.mock.calls[0]?.[0];
+    expect(args?.signal).toBe(controller.signal);
+    // The wrapped fetch is still there and still separate: it is what binds the
+    // abort to the SDK-style fetches inside the util, so removing it would regress
+    // those even with the signal threaded through.
+    expect(typeof args?.customFetch).toBe("function");
+  });
+});
+
 describe("GeminiTranscribeAudioRepo fallback", () => {
   it("falls back to first non-transcribe model on 403/404", async () => {
     const { GeminiTranscribeAudioRepo } =

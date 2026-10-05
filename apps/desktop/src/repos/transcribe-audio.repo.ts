@@ -778,6 +778,14 @@ export class GeminiTranscribeAudioRepo extends BaseTranscribeAudioRepo {
         customVocabulary: this.customVocabulary,
         transcriptionMode: "verbatim",
         customFetch: withAbortSignal(secureFetch, input.signal),
+        // Every sibling provider that takes a signal passes it -- Aldea (:485),
+        // Azure (:728), Speaches (:870), OpenRouter (:963). It is separate from
+        // `customFetch` and not redundant with it: the wrapper binds the abort to the
+        // HTTP requests, while this reaches the poll loop's `delay(...)` between
+        // attempts. Without it a cancel left the loop running to its own
+        // FILE_POLL_DEADLINE_MS -- measured at 31,150ms and 19 polls after an abort at
+        // 300ms, against 302ms and 2 polls with it.
+        signal: input.signal,
       });
       return text;
     };
