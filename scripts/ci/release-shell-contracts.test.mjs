@@ -216,9 +216,51 @@ function assertEveryJobDeclaresPermissions(workflowText, label) {
 }
 
 // The nearest enclosing step's `uses:` pin, looking upward from `index`, or null.
+//
+// BOUNDED to the step. This walked to line 0, so a `with:` entry whose own step declares
+// no `uses:` above it found the PREVIOUS step's pin and counted as safe. Actions is
+// key-order-free, so `with:` before `uses:` is legal and common enough to be a real
+// ordering rather than a hypothetical one. Measured on the committed release.yml with one
+// step inserted that reads:
+//
+//     - name: Unpinned action, with: written first
+//       with:
+//         prerelease: ${{ inputs.prerelease }}
+//       uses: some/action@main
+//
+// -- an unpinned `@main` action whose parameter the contract declared safe, 30/30.
+//
+// Every `uses:` in the committed file happens to precede its own `with:`, so the old
+// version was right by the accident of file order and nothing tested the other order.
+//
+// The bound is the enclosing step's own extent. Three things end the search: a `name:`
+// header (everything above it is another step), a `run:` key (a `uses:` inside a run body
+// is a word in a script, not this step's action), and any line indented less than the
+// step's own key indent.
+//
+// The step's key indent is DISCOVERED, not assumed. It is not `ownIndent`: a `with:`
+// entry sits two spaces deeper than the `with:` key that opened it, so bounding at the
+// entry's own indent stops the walk one line too early and fails the real
+// `softprops/action-gh-release@e598afbe...` at release.yml:650. Measured, that version
+// turned release.yml:660 red on the committed file.
 function enclosingUsesPin(lines, index) {
+  const ownIndent = lines[index].length - lines[index].trimStart().length;
+  let keyIndent = null;
   for (let above = index - 1; above >= 0; above -= 1) {
-    const uses = /^\s*(?:-\s+)?uses:\s*(\S+)/.exec(lines[above]);
+    const line = lines[above];
+    if (line.trim() === "") continue;
+    const indent = line.length - line.trimStart().length;
+    // A step header is the `- name:` form. A BARE `name:` is not one: release.yml:657 is
+    // `name: ${{ steps.body.outputs.release_name }}`, a parameter of the `with:` block
+    // this very walk is inside, and a header check that matched it turned the committed
+    // file red at release.yml:660.
+    if (/^\s*-\s*name:/.test(line)) return null;
+    if (indent < ownIndent) {
+      if (keyIndent === null) keyIndent = indent;
+      else if (indent < keyIndent) return null;
+    }
+    if (/^\s*run:\s*\|/.test(line)) return null;
+    const uses = /^\s*(?:-\s+)?uses:\s*(\S+)/.exec(line);
     if (uses) return uses[1];
   }
   return null;
