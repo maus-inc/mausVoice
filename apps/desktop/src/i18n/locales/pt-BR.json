@@ -819,7 +819,7 @@
   "text_insertion_options": "Opções de inserção de texto",
   "text_is_already_in_your_dictionary": "\"{text}\" já está no seu dicionário",
   "text_prepared_for_manual_paste": "Texto preparado para colagem manual",
-  "that_dictation_outran_fast_styling_so_its_last_droppedchars": "Essa ditação excedeu a formatação rápida, então seus últimos {droppedChars} caracteres ficaram sem formatar, e o modo sigiloso está ativado, portanto esse final não foi salvo.",
+  "that_dictation_outran_fast_styling_so_its_last_droppedchars": "Esse ditado ultrapassou o estilo rápido, então os últimos {droppedChars} caracteres ficaram sem estilo, e esse final não foi salvo.",
   "the_application_encountered_an_unexpected_error": "O aplicativo encontrou um erro inesperado.",
   "the_gpu_app_is_being_deprecated": "O aplicativo GPU está sendo descontinuado",
   "the_gpu_version_of_mausvoice_will_no_longer_receive_updates": "A versão GPU do mausVoice não receberá mais atualizações.",
