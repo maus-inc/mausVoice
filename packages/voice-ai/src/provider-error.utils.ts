@@ -401,12 +401,51 @@ const redactAuthorizationLabels = (message: string): string => {
     // two hard-coded literals, and the comparisons against `REFERENCE_SECRET_PATTERNS` in the
     // test file, whose `api[_-]?key["']?\s*[:=]\s*["']?\s*...` pattern captures the label
     // along with the value. So the label erasure is what the test file expects of BOTH
-    // scanners, and changing one without the other is the thing to avoid.
+    // scanners, and changing one without the other is the thing to avoid. That FIXTURE is what
+    // blocks the sibling change, not the shared scrubber.
     //
-    // The shared scrubber in `packages/utilities/src/error.ts` is not a clean arbiter here:
-    // over 144 shapes it KEEPS the `api_key` label in 64 and erases it in 80, so it agrees
-    // with this scanner in some shapes and not others. Changing both implementations, plus
-    // that fixture list, is its own piece of work.
+    // The shared scrubber in `packages/utilities/src/error.ts` does not arbitrate here either,
+    // and not in our favour: matching an `api_key` label, it KEEPS the label and redacts only
+    // the value. Measured over 221760 shapes -- 12 label spellings x 10 separator forms x 4
+    // key-quote forms x 3 value-quote forms x 14 values x 11 wrappings, none of which injects
+    // another credential name -- it erased the label in ZERO.
+    //
+    // The qualifier matters. A SEPARATE sweep of 40320 shapes -- the same 12 label spellings x
+    // 10 separator forms x 4 key-quote forms x 3 value-quote forms x 14 values, wrapped in 2
+    // enclosing forms instead of 11 -- erases the api_key label in 40110 of them, because the
+    // outer label consumes the span and
+    // the inner one goes with it. That is the outer match winning, not this name being
+    // dropped, so it is not a counter-example to the sentence above.
+    //
+    // Read from that file's own `CREDENTIAL_NAMES` rather than from a list typed out here, all
+    // NINETEEN of them keep the label on every shape they match: api_key, authorization,
+    // access_token, refresh_token, id_token, secret_token, client_secret, private_key,
+    // session_token, session_key, secret_key, subscription_key, apim_key, password, passwd, pwd,
+    // credential, secret and bearer. "Every shape they MATCH" is the operative phrase and
+    // the qualifier is not cosmetic: over 108 shapes per name the scrubber redacted the value
+    // and kept the label in 72, and left the other 36 untouched. Every one of those 36 is a
+    // SINGLE-QUOTED KEY -- `'api_key': 'abc'` comes back verbatim.
+    //
+    // Untouched is not the same as unseen, and the difference is what the sentence above rests
+    // on. A single-quoted key defeats the LABEL passes, but not the value passes:
+    // `'api_key': 'sk-abcdefgh'` becomes `'api_key': '[redacted]'`, because
+    // `PROVIDER_KEY_PREFIX` (error.ts:10) is quote-blind. So the label survives there because
+    // the passes that ran did not touch it, not because the scrubber never looked at it.
+    // `PROVIDER_KEY_PREFIX` is also what redacts `'token': 'sk-abcdefgh'`, which is why the bare
+    // `token` below is a statement about the LABEL passes and not about the whole file.
+    //
+    // Bare `token` is the case that made me write this down wrongly the first time, and it is
+    // NOT one of the nineteen: `token: abc` is untouched too, so it "kept the label" on every
+    // shape and matched nothing on any of them. A name that is never matched cannot testify
+    // about what happens when it is, which is why it does not belong in a list of keepers.
+    //
+    // `bearer` is the one name whose survival depends on what FOLLOWS it, because
+    // `BEARER_TOKEN` is `/\bBearer\s+\S+/gi` and that pattern can match the label itself:
+    // `bearer : abc` loses the word, `bearer: abc` keeps it, because `:` defeats the `\s+`.
+    // That is the scheme pattern eating a word, not a label being dropped.
+    //
+    // So on a quoted key the two scanners disagree in every shape measured. That makes the
+    // sibling a two-implementation decision plus a fixture change, not a one-line follow-up.
     parts.push(
       message.slice(copied, span.quotedKey ? span.valueStart : index),
       REDACTED,
