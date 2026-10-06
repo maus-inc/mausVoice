@@ -91,11 +91,8 @@ const isActiveTicket = (
   latest: number,
 ): boolean => !canceled && current === latest;
 
-const shouldApplyMeasurement = (
-  active: boolean,
-  minimized: boolean,
-  size: WindowSize,
-): boolean => active && !minimized && hasPositiveDimensions(size);
+const shouldApplySize = (minimized: boolean, size: WindowSize): boolean =>
+  !minimized && hasPositiveDimensions(size);
 
 const toLogicalWidth = (physicalWidth: number, scale: number): number =>
   physicalWidth / (scale || 1);
@@ -111,22 +108,22 @@ const toLogicalWidth = (physicalWidth: number, scale: number): number =>
  * the responses to a burst of resize events are unordered, so "last write wins"
  * is not the same as "newest measurement wins".
  *
- * Returns the maximized flag, an optimistic setter, a ref indicating whether
- * `maximized` holds an unconfirmed optimistic toggle, and whether the bar
- * should render compact.
+ * Returns the maximized flag, an optimistic setter, the synchronous maximized
+ * ref, and whether the bar should render compact.
  */
 const useWindowMetrics = () => {
   const [maximized, setMaximized] = useState(false);
   const [compact, setCompact] = useState(false);
-  // Monotonic ticket per measurement or optimistic maximize update. A resize
-  // response is applied only if no newer measurement or user toggle has
-  // happened since, so a late reply for an older size cannot revert the bar.
-  const ticketRef = useRef(0);
-  const optimisticMaximizedRef = useRef(false);
+  // Separate monotonic tickets for width vs. maximized state so an optimistic
+  // maximize toggle guards `setMaximized` against stale pre-click measurements
+  // without discarding the latest width measurement for `setCompact`.
+  const sizeTicketRef = useRef(0);
+  const maxTicketRef = useRef(0);
+  const maximizedRef = useRef(false);
 
   const applyMaximized = useCallback((value: boolean) => {
-    ticketRef.current += 1;
-    optimisticMaximizedRef.current = true;
+    maxTicketRef.current += 1;
+    maximizedRef.current = value;
     setMaximized(value);
   }, []);
 
@@ -136,6 +133,28 @@ const useWindowMetrics = () => {
     let canceled = false;
     const win = getCurrentWindow();
 
+    const applyMeasuredSize = (
+      ticket: number,
+      minimizedNow: boolean,
+      size: WindowSize,
+      scale: number,
+    ) => {
+      const active = isActiveTicket(canceled, ticket, sizeTicketRef.current);
+      if (!active || !shouldApplySize(minimizedNow, size)) return;
+      setCompact(isCompactWidth(toLogicalWidth(size.width, scale)));
+    };
+
+    const applyMeasuredMaximized = (
+      ticket: number,
+      minimizedNow: boolean,
+      maximizedNow: boolean,
+    ) => {
+      const active = isActiveTicket(canceled, ticket, maxTicketRef.current);
+      if (!active || minimizedNow) return;
+      maximizedRef.current = maximizedNow;
+      setMaximized(maximizedNow);
+    };
+
     const read = async (event?: { payload?: WindowSize }) => {
       // On Windows (`WM_SIZE` `SIZE_MINIMIZED`), `tao` emits `Resized(0, 0)`
       // and clears `WindowFlags::MAXIMIZED`, while `outerSize()` (`GetWindowRect`)
@@ -143,7 +162,8 @@ const useWindowMetrics = () => {
       // payloads and minimized windows keeps the bar from flipping to compact
       // or losing its maximized state while minimized.
       if (!hasPositiveDimensions(event?.payload)) return;
-      const current = ++ticketRef.current;
+      const sizeTicket = ++sizeTicketRef.current;
+      const maxTicket = ++maxTicketRef.current;
       try {
         // Prefer `innerSize()` over `outerSize()`: on an undecorated window the
         // webview fills the client area, whereas `outerSize()` on Linux (`tao`
@@ -156,20 +176,13 @@ const useWindowMetrics = () => {
           readWindowMinimized(win),
           win.scaleFactor(),
         ]);
-        const active = isActiveTicket(canceled, current, ticketRef.current);
-        if (!shouldApplyMeasurement(active, minimizedNow, size)) return;
-        optimisticMaximizedRef.current = false;
-        // `innerSize()` reports physical device pixels, but every length in the
-        // bar is a logical CSS pixel. Comparing the two directly would make the
-        // threshold fire late on a scaled display: at 200% scaling a 1000px
-        // window measures 2000, so a 900px threshold would never trigger.
-        setCompact(isCompactWidth(toLogicalWidth(size.width, scale)));
-        setMaximized(maximizedNow);
+        applyMeasuredSize(sizeTicket, minimizedNow, size, scale);
+        applyMeasuredMaximized(maxTicket, minimizedNow, maximizedNow);
       } catch {
         /* the window went away mid-measurement; the next tick re-reads */
       }
     };
-    void read();
+    read().catch(() => undefined);
 
     win
       .onResized(read)
@@ -200,7 +213,7 @@ const useWindowMetrics = () => {
   // The setter is handed back so a caption-button click can update the flag
   // optimistically, without the bar waiting for the next resize event to
   // confirm what the window just did.
-  return [maximized, applyMaximized, optimisticMaximizedRef, compact] as const;
+  return [maximized, applyMaximized, maximizedRef, compact] as const;
 };
 
 const useWindowFocused = () => {
@@ -254,16 +267,13 @@ const runWindowControl = async (
 };
 
 const startWindowDrag = () => {
-  void runWindowControl(async () => {
-    const win = getCurrentWindow();
-    if (typeof win.startDragging === "function") {
-      await win.startDragging();
-    }
-  });
+  const win = getCurrentWindow();
+  if (typeof win.startDragging === "function") {
+    win.startDragging().catch(showErrorSnackbar);
+  }
 };
 
-const isPrimaryButtonHeld = (buttons: number): boolean =>
-  buttons === 0 || (buttons & 1) !== 0;
+const isPrimaryButtonHeld = (buttons: number): boolean => (buttons & 1) !== 0;
 
 const isWithinDragThreshold = (
   origin: DragPoint | null,
@@ -288,10 +298,9 @@ const bindDeferredDrag = (
   startY: number,
   cleanupRef: React.MutableRefObject<(() => void) | null>,
 ) => {
+  const controller = new AbortController();
   const cleanup = () => {
-    window.removeEventListener("mousemove", handleMove);
-    window.removeEventListener("mouseup", cleanup);
-    window.removeEventListener("blur", cleanup);
+    controller.abort();
     if (cleanupRef.current === cleanup) {
       cleanupRef.current = null;
     }
@@ -316,9 +325,16 @@ const bindDeferredDrag = (
   };
 
   cleanupRef.current = cleanup;
-  window.addEventListener("mousemove", handleMove);
-  window.addEventListener("mouseup", cleanup);
-  window.addEventListener("blur", cleanup);
+  window.addEventListener("mousemove", handleMove, {
+    signal: controller.signal,
+  });
+  window.addEventListener("mouseup", cleanup, {
+    capture: true,
+    signal: controller.signal,
+  });
+  window.addEventListener("blur", cleanup, {
+    signal: controller.signal,
+  });
 };
 
 const beginPlatformDrag = (
@@ -340,20 +356,12 @@ const beginPlatformDrag = (
   bindDeferredDrag(startX, startY, cleanupRef);
 };
 
-const resolveCurrentMaximized = async (
-  win: ReturnType<typeof getCurrentWindow>,
-  maximized: boolean,
-  optimisticMaximizedRef: React.MutableRefObject<boolean>,
-): Promise<boolean> => {
-  const reported = await win.isMaximized();
-  return optimisticMaximizedRef.current ? maximized : reported;
-};
-
 const useWindowControls = (
-  maximized: boolean,
-  setMaximized: (value: boolean) => void,
-  optimisticMaximizedRef: React.MutableRefObject<boolean>,
+  applyMaximized: (value: boolean) => void,
+  maximizedRef: React.MutableRefObject<boolean>,
 ) => {
+  const togglePendingRef = useRef(false);
+
   const minimize = useCallback(
     () =>
       runWindowControl(async () => {
@@ -363,26 +371,25 @@ const useWindowControls = (
     [],
   );
 
-  const toggleMax = useCallback(
-    () =>
-      runWindowControl(async () => {
-        if (!isTauriRuntime()) return;
-        const win = getCurrentWindow();
-        const isMax = await resolveCurrentMaximized(
-          win,
-          maximized,
-          optimisticMaximizedRef,
-        );
-        if (isMax) {
-          await win.unmaximize();
-          setMaximized(false);
-        } else {
-          await win.maximize();
-          setMaximized(true);
-        }
-      }),
-    [maximized, optimisticMaximizedRef, setMaximized],
-  );
+  const toggleMax = useCallback(() => {
+    if (!isTauriRuntime() || togglePendingRef.current) return;
+    const win = getCurrentWindow();
+    const previous = maximizedRef.current;
+    const next = !previous;
+    togglePendingRef.current = true;
+    maximizedRef.current = next;
+    (next ? win.maximize() : win.unmaximize())
+      .then(() => {
+        applyMaximized(next);
+      })
+      .catch((error: unknown) => {
+        maximizedRef.current = previous;
+        showErrorSnackbar(error);
+      })
+      .finally(() => {
+        togglePendingRef.current = false;
+      });
+  }, [applyMaximized, maximizedRef]);
 
   const close = useCallback(
     () =>
@@ -434,6 +441,7 @@ const useWindowControls = (
       // document-level `mouseup` listener when `detail === 2`. Stopping
       // propagation here prevents `drag.js` from double-toggling.
       event.stopPropagation();
+      dragCleanupRef.current?.();
       const origin = doubleClickOriginRef.current;
       doubleClickOriginRef.current = null;
       // On macOS, `performWindowDragWithEvent:` on the first press consumes the
@@ -448,10 +456,7 @@ const useWindowControls = (
         )
       ) {
         skipNextDblClickRef.current = true;
-        queueMicrotask(() => {
-          skipNextDblClickRef.current = false;
-        });
-        void toggleMax();
+        toggleMax();
       }
     },
     [toggleMax],
@@ -462,7 +467,7 @@ const useWindowControls = (
       skipNextDblClickRef.current = false;
       return;
     }
-    void toggleMax();
+    toggleMax();
   }, [toggleMax]);
 
   return {
@@ -795,8 +800,7 @@ export const TitleBar = () => {
   // Maximized flag and bar density come from one subscription: they change in
   // the same event, so reading them separately issued duplicated IPC on every
   // tick of a resize drag.
-  const [maximized, setMaximized, optimisticMaximizedRef, compact] =
-    useWindowMetrics();
+  const [maximized, setMaximized, maximizedRef, compact] = useWindowMetrics();
   const focused = useWindowFocused();
   const {
     minimize,
@@ -805,7 +809,7 @@ export const TitleBar = () => {
     onDragRegionMouseDown,
     onDragRegionMouseUp,
     onDragRegionDoubleClick,
-  } = useWindowControls(maximized, setMaximized, optimisticMaximizedRef);
+  } = useWindowControls(setMaximized, maximizedRef);
 
   const minimizeLabel = intl.formatMessage({ defaultMessage: "Minimize" });
   const maximizeLabel = maximized

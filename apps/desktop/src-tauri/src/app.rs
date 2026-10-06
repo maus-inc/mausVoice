@@ -175,9 +175,28 @@ fn window_state_file_path(app_handle: &tauri::AppHandle) -> Option<std::path::Pa
     Some(app_dir.join(app_handle.filename()))
 }
 
+fn read_saved_main_window_entry(app_handle: &tauri::AppHandle) -> (PhysicalSize<u32>, bool) {
+    let Some(root) = window_state_file_path(app_handle)
+        .and_then(|path| std::fs::read(path).ok())
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+    else {
+        return (PhysicalSize::new(0, 0), false);
+    };
+    let Some(entry) = root.get("main") else {
+        return (PhysicalSize::new(0, 0), false);
+    };
+    let width = entry.get("width").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+    let height = entry.get("height").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+    let maximized = entry
+        .get("maximized")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    (PhysicalSize::new(width, height), maximized)
+}
+
 /// Ensures that the persisted `.window-state.json` entry for `"main"` retains
-/// a normal unmaximized `width` and `height` even when the window was closed
-/// while maximized on macOS or Linux.
+/// a normal unmaximized `width` and `height` and accurate `maximized` flag even
+/// when the window was closed while maximized on macOS or Linux.
 fn save_main_window_state(app_handle: &tauri::AppHandle) {
     let _ = app_handle.save_window_state(WINDOW_STATE_FLAGS);
     let Some(main_window) = app_handle.get_webview_window("main") else {
@@ -189,6 +208,7 @@ fn save_main_window_state(app_handle: &tauri::AppHandle) {
         .flatten()
         .map(|monitor| monitor.work_area().size);
     let scale = main_window.scale_factor().unwrap_or(1.0);
+    let is_maximized = main_window.is_maximized().unwrap_or(false);
     let fallback_size = LAST_NORMAL_MAIN_SIZE
         .lock()
         .ok()
@@ -214,12 +234,24 @@ fn save_main_window_state(app_handle: &tauri::AppHandle) {
         .get("height")
         .and_then(|v| v.as_u64())
         .unwrap_or(0) as u32;
+    let saved_maximized = main_entry
+        .get("maximized")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     let saved_size = PhysicalSize::new(saved_width, saved_height);
-    if !is_normal_window_size(saved_size, work_area) {
-        let width = serde_json::Value::from(fallback_size.width);
-        let height = serde_json::Value::from(fallback_size.height);
-        main_entry.insert("width".to_string(), width);
-        main_entry.insert("height".to_string(), height);
+    let needs_size_fix = !is_normal_window_size(saved_size, work_area);
+    let needs_max_fix = is_maximized && !saved_maximized;
+    if needs_size_fix || needs_max_fix {
+        if needs_size_fix {
+            let width = serde_json::Value::from(fallback_size.width);
+            let height = serde_json::Value::from(fallback_size.height);
+            main_entry.insert("width".to_string(), width);
+            main_entry.insert("height".to_string(), height);
+        }
+        if needs_max_fix {
+            let max_val = serde_json::Value::from(true);
+            main_entry.insert("maximized".to_string(), max_val);
+        }
         if let Ok(updated) = serde_json::to_vec_pretty(&root) {
             let _ = std::fs::write(&state_path, updated);
         }
@@ -245,26 +277,25 @@ fn sanitize_restored_main_window(main_window: &WebviewWindow) {
         return;
     }
 
+    let (saved_size, saved_maximized) = read_saved_main_window_entry(main_window.app_handle());
+    let was_maximized = saved_maximized || main_window.is_maximized().unwrap_or(false);
+    if was_maximized && is_normal_window_size(saved_size, work_area) {
+        if let Ok(mut slot) = LAST_NORMAL_MAIN_SIZE.lock() {
+            *slot = Some(saved_size);
+        }
+        return;
+    }
+
     let default_physical = default_main_physical_size(scale);
     if let Ok(mut slot) = LAST_NORMAL_MAIN_SIZE.lock() {
         *slot = Some(default_physical);
     }
 
-    let saved_maximized = window_state_file_path(main_window.app_handle())
-        .and_then(|path| std::fs::read(path).ok())
-        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
-        .and_then(|root| {
-            root.get("main")
-                .and_then(|entry| entry.get("maximized"))
-                .and_then(|v| v.as_bool())
-        })
-        .unwrap_or(false);
-
     let default_logical = LogicalSize::new(DEFAULT_MAIN_WIDTH, DEFAULT_MAIN_HEIGHT);
     let _ = main_window.unmaximize();
     let _ = main_window.set_size(default_logical);
     let _ = main_window.center();
-    if saved_maximized {
+    if was_maximized {
         let _ = main_window.maximize();
     }
 }

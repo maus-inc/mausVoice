@@ -19,7 +19,7 @@ const { platformState, windowMocks, focusHandlers, showError } = vi.hoisted(
       maximize: vi.fn(() => Promise.resolve(undefined)),
       unmaximize: vi.fn(() => Promise.resolve(undefined)),
       close: vi.fn(() => Promise.resolve(undefined)),
-      startDragging: vi.fn(() => Promise.resolve(undefined)),
+      startDragging: vi.fn(() => Promise.resolve()),
       isMaximized: vi.fn(() => Promise.resolve(false)),
       isMinimized: vi.fn(() => Promise.resolve(false)),
       onResized: vi.fn((): Promise<() => void> => Promise.resolve(vi.fn())),
@@ -375,13 +375,13 @@ describe("TitleBar on Windows and Linux", () => {
     await renderBar();
 
     const dragRegion = requireDragRegion();
-    await act(() => {
+    await act(async () => {
       dragRegion.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
     });
     expect(windowMocks.maximize).toHaveBeenCalledTimes(1);
     expect(buttonByLabel("Restore")).toBeTruthy();
 
-    await act(() => {
+    await act(async () => {
       dragRegion.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
     });
     expect(windowMocks.unmaximize).toHaveBeenCalledTimes(1);
@@ -399,7 +399,8 @@ describe("TitleBar on Windows and Linux", () => {
 
     try {
       // Stationary click + double-click: must not bubble to Tauri's
-      // document-level `drag.js` listener or invoke `startDragging`.
+      // document-level `drag.js` listener or invoke `startDragging`, even if
+      // the pointer later moves >= 4px with no button held (`buttons: 0`).
       await act(() => {
         dragRegion.dispatchEvent(
           new MouseEvent("mousedown", {
@@ -410,12 +411,20 @@ describe("TitleBar on Windows and Linux", () => {
             clientY: 20,
           }),
         );
-        window.dispatchEvent(
+        dragRegion.dispatchEvent(
           new MouseEvent("mouseup", {
             bubbles: true,
             button: 0,
             detail: 1,
             clientX: 100,
+            clientY: 20,
+          }),
+        );
+        window.dispatchEvent(
+          new MouseEvent("mousemove", {
+            bubbles: true,
+            buttons: 0,
+            clientX: 110,
             clientY: 20,
           }),
         );
@@ -559,8 +568,9 @@ describe("TitleBar on macOS", () => {
     expect(windowMocks.startDragging).toHaveBeenCalledTimes(1);
 
     // Second click of a double-click on macOS: must not start another drag,
-    // and must toggle maximize exactly once even if `dblclick` also fires.
-    await act(() => {
+    // and must toggle maximize exactly once even if `dblclick` also fires
+    // after microtasks drain between `mouseup` and `dblclick`.
+    await act(async () => {
       dragRegion.dispatchEvent(
         new MouseEvent("mousedown", {
           bubbles: true,
@@ -579,6 +589,7 @@ describe("TitleBar on macOS", () => {
           clientY: 20,
         }),
       );
+      await Promise.resolve();
       dragRegion.dispatchEvent(
         new MouseEvent("dblclick", {
           bubbles: true,

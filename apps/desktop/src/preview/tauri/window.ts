@@ -6,6 +6,9 @@ export type LogicalSize = { width: number; height: number };
 class PreviewWindow {
   readonly label = "preview";
   private maximized = false;
+  private readonly minimized = false;
+  private readonly focused = true;
+  private readonly scale = 1;
 
   async show(): Promise<void> {
     /* preview stub: no native window to drive */
@@ -22,14 +25,17 @@ class PreviewWindow {
   async focus(): Promise<void> {
     /* preview stub: no native window to drive */
   }
-  async maximize(): Promise<void> {
+  maximize(): Promise<void> {
     this.maximized = true;
+    return Promise.resolve();
   }
-  async unmaximize(): Promise<void> {
+  unmaximize(): Promise<void> {
     this.maximized = false;
+    return Promise.resolve();
   }
-  async toggleMaximize(): Promise<void> {
+  toggleMaximize(): Promise<void> {
     this.maximized = !this.maximized;
+    return Promise.resolve();
   }
   async minimize(): Promise<void> {
     /* preview stub: no native window to drive */
@@ -81,20 +87,20 @@ class PreviewWindow {
   }
   isFocused(): Promise<boolean> {
     return Promise.resolve(
-      typeof document !== "undefined" ? document.hasFocus() : true,
+      typeof document !== "undefined" ? document.hasFocus() : this.focused,
     );
   }
   isMaximized(): Promise<boolean> {
     return Promise.resolve(this.maximized);
   }
   isMinimized(): Promise<boolean> {
-    return Promise.resolve(false);
+    return Promise.resolve(this.minimized);
   }
   scaleFactor(): Promise<number> {
     // `innerSize()` and `outerSize()` in the browser preview return CSS
     // logical pixels (`window.innerWidth`/`innerHeight`), so a scale factor of
     // 1 keeps `size.width / scaleFactor` in CSS pixels on HiDPI screens.
-    return Promise.resolve(1);
+    return Promise.resolve(this.scale);
   }
   innerSize(): Promise<LogicalSize> {
     return Promise.resolve().then(() => ({
@@ -113,11 +119,15 @@ class PreviewWindow {
     }));
   }
   onResized(handler: EventCallback<LogicalSize>): Promise<UnlistenFn> {
+    const scale = this.scale;
     const onResize = () => {
       handler({
         event: "tauri://resize",
         id: 0,
-        payload: { width: window.innerWidth, height: window.innerHeight },
+        payload: {
+          width: window.innerWidth * scale,
+          height: window.innerHeight * scale,
+        },
       });
     };
     window.addEventListener("resize", onResize);
@@ -126,8 +136,9 @@ class PreviewWindow {
     );
   }
   onFocusChanged(handler: EventCallback<boolean>): Promise<UnlistenFn> {
+    const payloadOnFocus = this.focused;
     const onFocus = () =>
-      handler({ event: "tauri://focus", id: 0, payload: true });
+      handler({ event: "tauri://focus", id: 0, payload: payloadOnFocus });
     const onBlur = () =>
       handler({ event: "tauri://blur", id: 0, payload: false });
     window.addEventListener("focus", onFocus);
@@ -138,7 +149,7 @@ class PreviewWindow {
     });
   }
   onCloseRequested(handler: EventCallback<unknown>): Promise<UnlistenFn> {
-    return listen("tauri://close-requested", handler);
+    return this.listen("tauri://close-requested", handler);
   }
   emit<T>(event: string, payload?: T): Promise<void> {
     return emit(event, payload);
