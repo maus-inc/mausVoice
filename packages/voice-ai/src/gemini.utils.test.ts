@@ -201,7 +201,7 @@ describe("Gemini native transport", () => {
     });
   });
 
-  it("uses Files API and audioTranscriptionConfig for dedicated transcribe model", async () => {
+  it("uses Files API and extracts audioTranscription text for the dedicated model", async () => {
     const customFetch = vi
       .fn()
       .mockImplementation((url: string, init?: RequestInit) => {
@@ -238,7 +238,18 @@ describe("Gemini native transport", () => {
         return Promise.resolve(
           jsonResponse({
             candidates: [
-              { content: { parts: [{ text: "transcript via transcribe" }] } },
+              {
+                content: {
+                  parts: [
+                    { text: "" },
+                    {
+                      audioTranscription: {
+                        text: "transcript via transcribe",
+                      },
+                    },
+                  ],
+                },
+              },
             ],
           }),
         );
@@ -287,6 +298,49 @@ describe("Gemini native transport", () => {
         (i as RequestInit)?.method === "DELETE",
     );
     expect(deleteCalls.length).toBe(1);
+  });
+
+  it("preserves word boundaries between diarized transcription parts", async () => {
+    const customFetch = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("/upload/v1beta/files")) {
+        return Promise.resolve(new Response("upload failed", { status: 500 }));
+      }
+      return Promise.resolve(
+        jsonResponse({
+          candidates: [
+            {
+              content: {
+                parts: [
+                  {
+                    audioTranscription: {
+                      text: "hello",
+                      speakerLabel: "spk_1",
+                    },
+                  },
+                  {
+                    audioTranscription: {
+                      text: "world.",
+                      speakerLabel: "spk_2",
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+      );
+    });
+
+    await expect(
+      geminiTranscribeAudio({
+        apiKey: "gemini-key",
+        model: "gemini-3.5-transcribe",
+        blob: new Uint8Array([1, 2, 3]).buffer,
+        mimeType: "audio/wav",
+        enableDiarization: true,
+        customFetch,
+      }),
+    ).resolves.toEqual({ text: "hello world.", wordsUsed: 2 });
   });
 
   it("falls back to inlineData when Files API upload fails for transcribe model", async () => {

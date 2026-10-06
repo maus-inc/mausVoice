@@ -78,7 +78,7 @@ describe("provider model discovery", () => {
     });
   });
 
-  it("accepts current Gemini text models while excluding specialized catalogs", async () => {
+  it("uses successful Gemini discovery without inventing omitted transcription models", async () => {
     pluginFetchMock.mockImplementation(() =>
       Promise.resolve(
         new Response(

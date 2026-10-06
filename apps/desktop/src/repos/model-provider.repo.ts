@@ -377,6 +377,8 @@ export class GeminiModelProviderRepo extends BaseModelProviderRepo {
     const fetched = (await this.fetchModels(options)).filter(
       isGeminiTranscriptionModel,
     );
+    // Trust a non-empty discovered transcription catalog; use the static list
+    // only when discovery provides no transcription options.
     return fetched.length > 0 ? fetched : [...GEMINI_TRANSCRIPTION_MODELS];
   }
 

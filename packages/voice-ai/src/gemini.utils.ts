@@ -52,6 +52,7 @@ type GeminiFunctionDeclaration = {
 
 type GeminiPart = {
   text?: string;
+  audioTranscription?: { text?: string };
   inlineData?: { mimeType: string; data: string };
   fileData?: { mimeType: string; fileUri: string };
   functionCall?: { name?: string; args?: Record<string, unknown> };
@@ -232,10 +233,27 @@ const requestGemini = async (
 
 const getGeminiResponseText = (
   response: GeminiGenerateContentResponse,
-): string =>
-  (response.candidates?.[0]?.content?.parts ?? [])
-    .map((part) => part.text ?? "")
-    .join("");
+): string => {
+  const parts = response.candidates?.[0]?.content?.parts ?? [];
+  const hasAudioTranscription = parts.some((part) => part.audioTranscription);
+
+  if (!hasAudioTranscription) {
+    return parts.map((part) => part.text ?? "").join("");
+  }
+
+  // Gemini places diarized speaker segments in separate parts. Keep a word
+  // boundary when flattening those segments, and prefer non-empty part text.
+  return parts
+    .map((part) => {
+      const text = typeof part.text === "string" ? part.text : "";
+      if (text.trim()) return text;
+      const transcriptionText = part.audioTranscription?.text;
+      return typeof transcriptionText === "string" ? transcriptionText : "";
+    })
+    .map((text) => text.trim())
+    .filter(Boolean)
+    .join(" ");
+};
 
 const convertJsonSchemaToGeminiSchema = (
   schema: Record<string, unknown>,
