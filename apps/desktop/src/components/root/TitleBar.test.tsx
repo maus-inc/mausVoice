@@ -377,12 +377,14 @@ describe("TitleBar on Windows and Linux", () => {
     const dragRegion = requireDragRegion();
     await act(async () => {
       dragRegion.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+      await Promise.resolve();
     });
     expect(windowMocks.maximize).toHaveBeenCalledTimes(1);
     expect(buttonByLabel("Restore")).toBeTruthy();
 
     await act(async () => {
       dragRegion.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+      await Promise.resolve();
     });
     expect(windowMocks.unmaximize).toHaveBeenCalledTimes(1);
     expect(buttonByLabel("Maximize")).toBeTruthy();
@@ -792,7 +794,6 @@ it("discards an in-flight resize measurement that started before an optimistic m
 
   // User clicks Maximize while the earlier resize tick is still awaiting
   // `isMaximized()`.
-  windowMocks.isMaximized.mockResolvedValueOnce(false);
   await act(async () => {
     requireByLabel("Maximize").click();
     await Promise.resolve();
@@ -806,6 +807,31 @@ it("discards an in-flight resize measurement that started before an optimistic m
     await Promise.resolve();
   });
   expect(buttonByLabel("Restore")).toBeTruthy();
+
+  // A subsequent resize tick before GTK/macOS updates `isMaximized()` (still
+  // reporting `false`) also must not revert `Restore` before confirmation.
+  windowMocks.isMaximized.mockResolvedValueOnce(false);
+  await act(async () => {
+    fireResize?.();
+    await Promise.resolve();
+  });
+  expect(buttonByLabel("Restore")).toBeTruthy();
+
+  // Once a native measurement confirms `true`, a later OS-initiated unmaximize
+  // resize (`false`) updates the button back to `Maximize`.
+  windowMocks.isMaximized.mockResolvedValueOnce(true);
+  await act(async () => {
+    fireResize?.();
+    await Promise.resolve();
+  });
+  expect(buttonByLabel("Restore")).toBeTruthy();
+
+  windowMocks.isMaximized.mockResolvedValueOnce(false);
+  await act(async () => {
+    fireResize?.();
+    await Promise.resolve();
+  });
+  expect(buttonByLabel("Maximize")).toBeTruthy();
 });
 
 it.each([

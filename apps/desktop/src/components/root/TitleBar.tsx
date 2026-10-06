@@ -94,6 +94,11 @@ const isActiveTicket = (
 const shouldApplySize = (minimized: boolean, size: WindowSize): boolean =>
   !minimized && hasPositiveDimensions(size);
 
+const isContradictoryPendingMaximized = (
+  pending: boolean | null,
+  measured: boolean,
+): boolean => pending !== null && pending !== measured;
+
 const toLogicalWidth = (physicalWidth: number, scale: number): number =>
   physicalWidth / (scale || 1);
 
@@ -109,7 +114,8 @@ const toLogicalWidth = (physicalWidth: number, scale: number): number =>
  * is not the same as "newest measurement wins".
  *
  * Returns the maximized flag, an optimistic setter, the synchronous maximized
- * ref, and whether the bar should render compact.
+ * ref, the pending unconfirmed maximize ref, and whether the bar should render
+ * compact.
  */
 const useWindowMetrics = () => {
   const [maximized, setMaximized] = useState(false);
@@ -120,9 +126,11 @@ const useWindowMetrics = () => {
   const sizeTicketRef = useRef(0);
   const maxTicketRef = useRef(0);
   const maximizedRef = useRef(false);
+  const pendingMaximizedRef = useRef<boolean | null>(null);
 
   const applyMaximized = useCallback((value: boolean) => {
     maxTicketRef.current += 1;
+    pendingMaximizedRef.current = value;
     maximizedRef.current = value;
     setMaximized(value);
   }, []);
@@ -150,7 +158,17 @@ const useWindowMetrics = () => {
       maximizedNow: boolean,
     ) => {
       const active = isActiveTicket(canceled, ticket, maxTicketRef.current);
-      if (!active || minimizedNow) return;
+      if (
+        !active ||
+        minimizedNow ||
+        isContradictoryPendingMaximized(
+          pendingMaximizedRef.current,
+          maximizedNow,
+        )
+      ) {
+        return;
+      }
+      pendingMaximizedRef.current = null;
       maximizedRef.current = maximizedNow;
       setMaximized(maximizedNow);
     };
@@ -213,7 +231,13 @@ const useWindowMetrics = () => {
   // The setter is handed back so a caption-button click can update the flag
   // optimistically, without the bar waiting for the next resize event to
   // confirm what the window just did.
-  return [maximized, applyMaximized, maximizedRef, compact] as const;
+  return [
+    maximized,
+    applyMaximized,
+    maximizedRef,
+    pendingMaximizedRef,
+    compact,
+  ] as const;
 };
 
 const useWindowFocused = () => {
@@ -359,6 +383,7 @@ const beginPlatformDrag = (
 const useWindowControls = (
   applyMaximized: (value: boolean) => void,
   maximizedRef: React.MutableRefObject<boolean>,
+  pendingMaximizedRef: React.MutableRefObject<boolean | null>,
 ) => {
   const togglePendingRef = useRef(false);
 
@@ -378,18 +403,20 @@ const useWindowControls = (
     const next = !previous;
     togglePendingRef.current = true;
     maximizedRef.current = next;
+    pendingMaximizedRef.current = next;
     (next ? win.maximize() : win.unmaximize())
       .then(() => {
         applyMaximized(next);
       })
       .catch((error: unknown) => {
+        pendingMaximizedRef.current = null;
         maximizedRef.current = previous;
         showErrorSnackbar(error);
       })
       .finally(() => {
         togglePendingRef.current = false;
       });
-  }, [applyMaximized, maximizedRef]);
+  }, [applyMaximized, maximizedRef, pendingMaximizedRef]);
 
   const close = useCallback(
     () =>
@@ -800,7 +827,8 @@ export const TitleBar = () => {
   // Maximized flag and bar density come from one subscription: they change in
   // the same event, so reading them separately issued duplicated IPC on every
   // tick of a resize drag.
-  const [maximized, setMaximized, maximizedRef, compact] = useWindowMetrics();
+  const [maximized, setMaximized, maximizedRef, pendingMaximizedRef, compact] =
+    useWindowMetrics();
   const focused = useWindowFocused();
   const {
     minimize,
@@ -809,7 +837,7 @@ export const TitleBar = () => {
     onDragRegionMouseDown,
     onDragRegionMouseUp,
     onDragRegionDoubleClick,
-  } = useWindowControls(setMaximized, maximizedRef);
+  } = useWindowControls(setMaximized, maximizedRef, pendingMaximizedRef);
 
   const minimizeLabel = intl.formatMessage({ defaultMessage: "Minimize" });
   const maximizeLabel = maximized
