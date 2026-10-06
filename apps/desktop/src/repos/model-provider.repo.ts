@@ -36,6 +36,7 @@ type GeminiListResponse = {
     name?: string;
     supportedGenerationMethods?: string[];
   }>;
+  nextPageToken?: string;
 };
 
 export type FetchModelsOptions = {
@@ -387,24 +388,48 @@ export class GeminiModelProviderRepo extends BaseModelProviderRepo {
     // getGenerativeTextModels / getTranscriptionModels callers (finding 15).
     if (!options.apiKey) return [];
     try {
-      const response = await fetch(
-        "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000",
-        { headers: { "x-goog-api-key": options.apiKey } },
-      );
-      if (!response.ok) {
-        logModelDiscoveryResponseFailure("Gemini", response);
-        return [];
-      }
-      const payload = (await response.json()) as GeminiListResponse;
-      if (!payload.models || payload.models.length === 0) {
+      const models: NonNullable<GeminiListResponse["models"]> = [];
+      const seenPageTokens = new Set<string>();
+      let pageToken: string | undefined;
+
+      do {
+        const url = new URL(
+          "https://generativelanguage.googleapis.com/v1beta/models",
+        );
+        url.searchParams.set("pageSize", "1000");
+        if (pageToken) url.searchParams.set("pageToken", pageToken);
+
+        const response = await fetch(url.toString(), {
+          headers: { "x-goog-api-key": options.apiKey },
+        });
+        if (!response.ok) {
+          logModelDiscoveryResponseFailure("Gemini", response);
+          return [];
+        }
+
+        const payload = (await response.json()) as GeminiListResponse;
+        models.push(...(payload.models ?? []));
+
+        const nextPageToken = payload.nextPageToken;
+        if (nextPageToken && seenPageTokens.has(nextPageToken)) {
+          logModelDiscoveryFailure(
+            "Gemini",
+            "model discovery returned a repeated page token",
+          );
+          return [];
+        }
+        if (nextPageToken) seenPageTokens.add(nextPageToken);
+        pageToken = nextPageToken;
+      } while (pageToken);
+
+      if (models.length === 0) {
         getLogger().verbose(
           "Gemini model discovery returned empty models array",
         );
         return [];
       }
-      // `payload.models` is proven non-empty by the guard above, so the `?? []`
-      // fallback here is dead.
-      const filtered = payload.models
+
+      const filtered = models
         .filter((m) =>
           (m.supportedGenerationMethods ?? []).includes("generateContent"),
         )

@@ -52,7 +52,7 @@ type GeminiFunctionDeclaration = {
 
 type GeminiPart = {
   text?: string;
-  audioTranscription?: { text?: string };
+  audioTranscription?: { text: string };
   inlineData?: { mimeType: string; data: string };
   fileData?: { mimeType: string; fileUri: string };
   functionCall?: { name?: string; args?: Record<string, unknown> };
@@ -233,67 +233,74 @@ const requestGemini = async (
 
 const getGeminiResponseText = (
   response: GeminiGenerateContentResponse,
+): string =>
+  (response.candidates?.[0]?.content?.parts ?? [])
+    .map((part) => part.text ?? "")
+    .join("");
+
+const getGeminiTranscriptionText = (
+  response: GeminiGenerateContentResponse,
 ): string => {
   const parts = response.candidates?.[0]?.content?.parts ?? [];
   const hasAudioTranscription = parts.some((part) => part.audioTranscription);
 
-  if (!hasAudioTranscription) {
-    return parts.map((part) => part.text ?? "").join("");
-  }
-
   // Gemini places diarized speaker segments in separate parts. Keep a word
   // boundary when flattening those segments, and prefer non-empty part text.
-  return parts
-    .map((part) => {
-      const text = typeof part.text === "string" ? part.text : "";
-      if (text.trim()) return text;
-      const transcriptionText = part.audioTranscription?.text;
-      return typeof transcriptionText === "string" ? transcriptionText : "";
-    })
-    .map((text) => text.trim())
-    .filter(Boolean)
-    .join(" ");
+  const text = hasAudioTranscription
+    ? parts
+        .map((part) => {
+          const partText = typeof part.text === "string" ? part.text : "";
+          if (partText.trim()) return partText;
+          const transcriptionText = part.audioTranscription?.text;
+          return typeof transcriptionText === "string" ? transcriptionText : "";
+        })
+        .map((partText) => partText.trim())
+        .filter(Boolean)
+        .join(" ")
+    : getGeminiResponseText(response);
+
+  if (!text.trim()) throw new Error("Transcription failed - empty response");
+  return text;
+};
+
+const GEMINI_SCHEMA_TYPE_MAP: Record<string, string> = {
+  string: "STRING",
+  number: "NUMBER",
+  integer: "INTEGER",
+  boolean: "BOOLEAN",
+  array: "ARRAY",
+  object: "OBJECT",
+};
+
+const convertJsonSchemaArrayItem = (item: unknown): unknown =>
+  typeof item === "object" && item !== null
+    ? convertJsonSchemaToGeminiSchema(item as Record<string, unknown>)
+    : item;
+
+const convertJsonSchemaValue = (value: unknown): unknown => {
+  if (Array.isArray(value)) return value.map(convertJsonSchemaArrayItem);
+  if (typeof value === "object" && value !== null) {
+    return convertJsonSchemaToGeminiSchema(value as Record<string, unknown>);
+  }
+  return value;
+};
+
+const convertJsonSchemaEntry = (key: string, value: unknown): unknown => {
+  if (key === "type" && typeof value === "string") {
+    return GEMINI_SCHEMA_TYPE_MAP[value] ?? value;
+  }
+  return convertJsonSchemaValue(value);
 };
 
 const convertJsonSchemaToGeminiSchema = (
   schema: Record<string, unknown>,
 ): Record<string, unknown> => {
-  if (!schema || typeof schema !== "object") {
-    return schema;
-  }
+  if (!schema || typeof schema !== "object") return schema;
 
   const converted: Record<string, unknown> = {};
-
   for (const [key, value] of Object.entries(schema)) {
-    if (key === "type" && typeof value === "string") {
-      const typeMap: Record<string, unknown> = {
-        string: "STRING",
-        number: "NUMBER",
-        integer: "INTEGER",
-        boolean: "BOOLEAN",
-        array: "ARRAY",
-        object: "OBJECT",
-      };
-      converted[key] = typeMap[value] ?? value;
-    } else if (
-      typeof value === "object" &&
-      value !== null &&
-      !Array.isArray(value)
-    ) {
-      converted[key] = convertJsonSchemaToGeminiSchema(
-        value as Record<string, unknown>,
-      );
-    } else if (Array.isArray(value)) {
-      converted[key] = value.map((item) =>
-        typeof item === "object" && item !== null
-          ? convertJsonSchemaToGeminiSchema(item as Record<string, unknown>)
-          : item,
-      );
-    } else {
-      converted[key] = value;
-    }
+    converted[key] = convertJsonSchemaEntry(key, value);
   }
-
   return converted;
 };
 
@@ -916,8 +923,7 @@ const transcribeWithDedicatedModel = async (args: {
     );
     const response =
       (await httpResponse.json()) as GeminiGenerateContentResponse;
-    const text = getGeminiResponseText(response);
-    if (!text) throw new Error("Transcription failed - empty response");
+    const text = getGeminiTranscriptionText(response);
     return { text, wordsUsed: countWords(text) };
   } finally {
     if (uploaded.uri) {
@@ -969,8 +975,7 @@ const transcribeWithGeneralModel = async (args: {
     args.signal,
   );
   const response = (await httpResponse.json()) as GeminiGenerateContentResponse;
-  const text = getGeminiResponseText(response);
-  if (!text) throw new Error("Transcription failed - empty response");
+  const text = getGeminiTranscriptionText(response);
   return { text, wordsUsed: countWords(text) };
 };
 

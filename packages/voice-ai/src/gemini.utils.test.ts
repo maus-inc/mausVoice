@@ -405,6 +405,32 @@ describe("Gemini native transport", () => {
     ).rejects.toThrow("Transcription failed - empty response");
   });
 
+  it("rejects whitespace-only text parts from a transcription response", async () => {
+    const customFetch = vi.fn().mockImplementation(() =>
+      Promise.resolve(
+        jsonResponse({
+          candidates: [
+            {
+              content: {
+                parts: [{ text: "  " }, { text: " \n\t " }],
+              },
+            },
+          ],
+        }),
+      ),
+    );
+
+    await expect(
+      geminiTranscribeAudio({
+        apiKey: "gemini-key",
+        model: "gemini-3.8-flash",
+        blob: new Uint8Array([1, 2, 3]).buffer,
+        mimeType: "audio/wav",
+        customFetch,
+      }),
+    ).rejects.toThrow("Transcription failed - empty response");
+  });
+
   it("falls back to inlineData when Files API upload fails for transcribe model", async () => {
     const customFetch = vi.fn().mockImplementation((url: string) => {
       if (url.includes("/upload/v1beta/files")) {
@@ -549,7 +575,16 @@ describe("Gemini native transport", () => {
             name: "lookup",
             parameters: {
               type: "object",
-              properties: { id: { type: "integer" } },
+              properties: {
+                id: { type: "integer" },
+                nested: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: { enabled: { type: "boolean" } },
+                  },
+                },
+              },
             },
           },
         ],
@@ -585,7 +620,16 @@ describe("Gemini native transport", () => {
     const body = JSON.parse(init?.body as string);
     expect(body.tools[0].functionDeclarations[0].parameters).toEqual({
       type: "OBJECT",
-      properties: { id: { type: "INTEGER" } },
+      properties: {
+        id: { type: "INTEGER" },
+        nested: {
+          type: "ARRAY",
+          items: {
+            type: "OBJECT",
+            properties: { enabled: { type: "BOOLEAN" } },
+          },
+        },
+      },
     });
     expect(body).not.toHaveProperty("generationConfig");
   });
