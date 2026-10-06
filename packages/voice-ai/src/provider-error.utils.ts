@@ -248,23 +248,39 @@ const apiKeyAssignmentEnd = (message: string, index: number): number | null => {
 const AUTHORIZATION_LABELS = ["proxy-authorization", "authorization"];
 
 /**
+ * Where an authorization value starts and ends, and whether the label was a quoted key.
+ *
+ * `quotedKey` is what separates the two cases. A label written `"authorization":` is a JSON
+ * key, so the text before the value is document STRUCTURE and has to survive; a label written
+ * `authorization:` in free text is part of the thing being removed.
+ */
+type LabelValueSpan = {
+  valueStart: number;
+  valueEnd: number;
+  quotedKey: boolean;
+};
+
+/**
  * The end of the value a label starting at `index` names, or null when there is
- * no assignment here at all.
+ * no assignment here at all. `valueStart` is where the value begins, so a caller can choose
+ * to keep the label; see `LabelValueSpan`.
  *
  * Split out of the scan below because every step of it is a question about the
  * text and none of them changes what the scan should do next: a reader of the
  * loop wants to see the label, the redaction and the step forward, and the walk
  * from a label to a value is the same walk whichever label it was.
  */
+
 const labelValueEnd = (
   message: string,
   index: number,
   label: string,
-): number | null => {
+): LabelValueSpan | null => {
   let cursor = whitespaceEnd(message, index + label.length);
   // The JSON key form, where the label's own closing quote precedes the
   // separator.
-  if (isQuote(message[cursor])) cursor += 1;
+  const quotedKey = isQuote(message[cursor]);
+  if (quotedKey) cursor += 1;
   cursor = whitespaceEnd(message, cursor);
   // `=` as well as `:`, matching `apiKeyAssignmentEnd` above and the shared
   // scrubber, so an `authorization=<credential>` echo is redacted too.
@@ -273,11 +289,16 @@ const labelValueEnd = (
   const quote = message[cursor];
   if (isQuote(quote)) cursor += 1;
   cursor = whitespaceEnd(message, cursor);
+  const valueStart = cursor;
   const firstTokenEnd = valueEnd(message, cursor);
   // The value class needs at least one character, so a label with nothing after
   // its separator is not an assignment.
-  if (firstTokenEnd === cursor) return null;
-  return credentialEnd(message, cursor, firstTokenEnd, quote);
+  if (firstTokenEnd === valueStart) return null;
+  return {
+    valueStart,
+    valueEnd: credentialEnd(message, cursor, firstTokenEnd, quote),
+    quotedKey,
+  };
 };
 
 /**
@@ -344,19 +365,54 @@ const redactAuthorizationLabels = (message: string): string => {
     const previous = message[index - 1] ?? "";
     const inside =
       /[A-Za-z0-9_-]/.test(previous) && previous !== "-" && previous !== "_";
-    const end =
+    const span =
       label === undefined || inside
         ? null
         : labelValueEnd(message, index, label);
-    if (end === null) {
+    if (span === null) {
       index += 1;
       continue;
     }
-    // The label goes with the value, as it does for `api_key`: what identifies
-    // the credential is the label that named it.
-    parts.push(message.slice(copied, index), REDACTED);
-    copied = end;
-    index = end;
+    // Two cases, and the difference is whether the label was a quoted JSON key.
+    //
+    // Free text, `authorization: Bearer <credential>`: the label goes WITH the value, because
+    // what names the credential is the label that named it. That is deliberate and pinned --
+    // the fixtures above split at the label boundary so the secret scanner never sees a
+    // contiguous credential-shaped token, and keeping the label would put one back.
+    //
+    // A quoted key, `{"authorization":"Bearer <credential>"}`: the label is document
+    // STRUCTURE, so erasing it leaves the key's own opening quote with nothing to close,
+    // and the body stops parsing:
+    //
+    //   {"authorization":"Bearer <credential>"}  ->  {"[redacted]"}       did not parse
+    //   {"api_key":"Digest nonce=..."}          ->  {"[redacted]"}       did not parse either
+    //
+    // `span.valueEnd` stops at the value's own closing quote, so consuming the label as well
+    // is what orphaned the quote. Starting the replacement at the value instead keeps the
+    // document intact.
+    //
+    // `api_key` has the same defect and this change does NOT fix it. `{"api_key":"sk-..."}`
+    // looks like a counter-example -- the key survives there -- and it is not:
+    // `PROVIDER_SECRET_PATTERNS` matches the `sk-` prefix first and replaces the value,
+    // after which the api_key scanner finds nothing left to act on. On a value matching no
+    // secret prefix the same shape gives `{"[redacted]"}`, unparseable.
+    //
+    // Applying the same fix to the sibling turns several of this file's OWN expectations red:
+    // two hard-coded literals, and the comparisons against `REFERENCE_SECRET_PATTERNS` in the
+    // test file, whose `api[_-]?key["']?\s*[:=]\s*["']?\s*...` pattern captures the label
+    // along with the value. So the label erasure is what the test file expects of BOTH
+    // scanners, and changing one without the other is the thing to avoid.
+    //
+    // The shared scrubber in `packages/utilities/src/error.ts` is not a clean arbiter here:
+    // over 144 shapes it KEEPS the `api_key` label in 64 and erases it in 80, so it agrees
+    // with this scanner in some shapes and not others. Changing both implementations, plus
+    // that fixture list, is its own piece of work.
+    parts.push(
+      message.slice(copied, span.quotedKey ? span.valueStart : index),
+      REDACTED,
+    );
+    copied = span.valueEnd;
+    index = span.valueEnd;
   }
   if (parts.length === 0) return message;
   parts.push(message.slice(copied));
