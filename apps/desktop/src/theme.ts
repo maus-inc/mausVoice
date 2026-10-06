@@ -67,7 +67,6 @@ export const theme = createTheme({
         chromeHover: inkSolid.raised,
         chromeActive: inkSolid.pressed,
         onChrome: surfaces.light.level1,
-        dangerHover: "rgba(232, 77, 77, 0.92)",
 
         ...surfaces.light,
       },
@@ -91,7 +90,6 @@ export const theme = createTheme({
         chromeHover: chalkSolid.raised,
         chromeActive: chalkSolid.pressed,
         onChrome: surfaces.dark.level0,
-        dangerHover: "rgba(232, 77, 77, 0.92)",
 
         ...surfaces.dark,
       },

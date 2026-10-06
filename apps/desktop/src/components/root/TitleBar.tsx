@@ -1,10 +1,18 @@
-import { Box, IconButton, Stack, useColorScheme } from "@mui/material";
+import { Box, IconButton, Stack } from "@mui/material";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Copy, Minus, Plus, Square, X } from "lucide";
+import type { IconNode } from "lucide";
+import { Minus, Plus, X } from "lucide";
 import { useCallback, useEffect, useState } from "react";
 import { useIntl } from "react-intl";
 import { showErrorSnackbar } from "../../actions/app.actions";
-import { chalkSolid, surfaceAlpha, surfaces } from "../../styles/palette";
+import { useIsDarkMode } from "../../hooks/color-scheme.hooks";
+import {
+  captionButtonActive,
+  captionButtonGlyph,
+  captionButtonHover,
+  captionButtonRestOpacity,
+  chromeWash,
+} from "../../styles/palette";
 import { hairline, titleBarShadow } from "../../styles/shadows";
 import { isTauriRuntime } from "../../utils/env.utils";
 import { getPlatform } from "../../utils/platform.utils";
@@ -12,8 +20,10 @@ import { LogoWithText } from "../common/LogoWithText";
 import { MorphNavIcon } from "../common/MorphNavIcon";
 import { ThemeModeToggle } from "./ThemeModeToggle";
 import {
-  CAPTION_BUTTON_WIDTH,
-  COMPACT_CAPTION_BUTTON_WIDTH,
+  CAPTION_BUTTON_RADIUS,
+  CAPTION_CLUSTER_GAP,
+  CAPTION_CLUSTER_PAD_RIGHT,
+  captionButtonSize,
   hasRightCaptionButtons,
   isCompactWidth,
   TITLE_BAR_HEIGHT,
@@ -25,6 +35,19 @@ import { WindowResizeHandles } from "./WindowResizeHandles";
 /** Window-control glyphs are 16px so they stay optically level with the 18px
  * theme toggle without crowding the button. */
 const CONTROL_ICON_SIZE = 16;
+
+/**
+ * The maximize glyph: a wide rounded rectangle rather than a square, and the
+ * same glyph in both window states.
+ *
+ * The Windows maximize button is a single outline. Swapping to an overlapping
+ * "restore" pair once the window is maximized reads as a different control
+ * mid-gesture, and the pair needs more width than the box it stands for, so it
+ * sits visibly off-centre in a square button.
+ */
+const MAXIMIZE_GLYPH: IconNode = [
+  ["rect", { x: "3", y: "5", width: "18", height: "14", rx: "2" }],
+];
 
 /**
  * One `onResized` subscription carrying both the maximized flag and the bar
@@ -196,24 +219,59 @@ const useWindowControls = (setMaximized: (value: boolean) => void) => {
   return { minimize, toggleMax, close };
 };
 
-const captionButtonSx = (compact: boolean) =>
-  ({
-    width: compact ? COMPACT_CAPTION_BUTTON_WIDTH : CAPTION_BUTTON_WIDTH,
-    height: TITLE_BAR_HEIGHT,
-    borderRadius: 0,
-    color: "text.secondary",
+/**
+ * Hover and press share one pair of tokens, press being the stronger of the two.
+ *
+ * All three buttons resolve their fill through here, which is what keeps close
+ * from being special-cased. See `captionButtonHover` for why it must not be.
+ */
+const captionButtonFill = (dark: boolean, pressed: boolean): string => {
+  const fills = pressed ? captionButtonActive : captionButtonHover;
+
+  return dark ? fills.dark : fills.light;
+};
+
+/**
+ * The window-control buttons, sized and coloured off one factory.
+ *
+ * Square targets inset from the bar edges rather than flush strips, so the
+ * bar's own material is visible between them and against the window edge. That
+ * is what separates a control cluster from a row of divider lines.
+ */
+const captionButtonSx = (dark: boolean, compact: boolean) => {
+  const size = captionButtonSize(compact);
+
+  return {
+    width: size,
+    height: size,
+    // A string, not a number: MUI multiplies a numeric `borderRadius` by
+    // `theme.shape.borderRadius`, which is 14 here, so `12` would paint 168px.
+    borderRadius: `${CAPTION_BUTTON_RADIUS}px`,
+    color: dark ? captionButtonGlyph.dark : captionButtonGlyph.light,
+    opacity: captionButtonRestOpacity,
+    // Windows corner smoothing cannot be set here: MUI's style system drops
+    // properties it does not recognise, so it lives on `.caption-button` in
+    // `styles/caption.css` instead. The transition reads the shared duration
+    // token rather than a literal because the token collapses to 1ms under
+    // prefers-reduced-motion, and a hand-written value would ignore that.
     transition:
-      "background-color var(--duration-fast) ease, color var(--duration-fast) ease",
+      "background-color var(--duration-fast) ease, color var(--duration-fast) ease, opacity var(--duration-fast) ease, transform var(--duration-fast) ease",
     "&:hover": {
-      backgroundColor: "action.hover",
-      color: "text.primary",
+      backgroundColor: captionButtonFill(dark, false),
+      opacity: 1,
+    },
+    "&:active": {
+      backgroundColor: captionButtonFill(dark, true),
+      opacity: 1,
+      transform: "scale(0.95)",
     },
     "&:focus-visible": {
       outline: "2px solid",
       outlineColor: "primary.main",
       outlineOffset: -2,
     },
-  }) as const;
+  } as const;
+};
 
 /**
  * A macOS-style traffic light.
@@ -361,38 +419,42 @@ const MacTrafficLights = ({
 );
 
 type CaptionButtonProps = {
+  dark: boolean;
   focused: boolean;
   compact: boolean;
   minimizeLabel: string;
   maximizeLabel: string;
   closeLabel: string;
-  maximized: boolean;
   onMinimize: WindowControlHandler;
   onToggleMax: WindowControlHandler;
   onClose: WindowControlHandler;
 };
 
 const CaptionButtons = ({
+  dark,
   focused,
   compact,
   minimizeLabel,
   maximizeLabel,
   closeLabel,
-  maximized,
   onMinimize,
   onToggleMax,
   onClose,
 }: CaptionButtonProps) => {
-  const sx = captionButtonSx(compact);
+  const sx = captionButtonSx(dark, compact);
   return (
     <Stack
       direction="row"
-      spacing={0}
       sx={{
-        alignItems: "stretch",
+        alignItems: "center",
         alignSelf: "stretch",
+        gap: `${CAPTION_CLUSTER_GAP}px`,
+        pr: `${CAPTION_CLUSTER_PAD_RIGHT}px`,
         position: "relative",
         zIndex: 1,
+        // Focus dimming rides the wrapper so the three dim as one group. The
+        // per-button rest opacity lives in `captionButtonSx`, which also owns the
+        // step back to full on hover and press.
         opacity: focused ? 1 : 0.6,
       }}
     >
@@ -400,35 +462,32 @@ const CaptionButtons = ({
         size="small"
         onClick={onMinimize}
         aria-label={minimizeLabel}
+        className="caption-button"
         sx={sx}
       >
-        <MorphNavIcon icon={Minus} size={CONTROL_ICON_SIZE} />
+        <MorphNavIcon icon={Minus} size={CONTROL_ICON_SIZE} strokeWidth={2} />
       </IconButton>
       <IconButton
         size="small"
         onClick={onToggleMax}
         aria-label={maximizeLabel}
+        className="caption-button"
         sx={sx}
       >
-        {maximized ? (
-          <MorphNavIcon icon={Copy} size={CONTROL_ICON_SIZE} />
-        ) : (
-          <MorphNavIcon icon={Square} size={CONTROL_ICON_SIZE} />
-        )}
+        <MorphNavIcon
+          icon={MAXIMIZE_GLYPH}
+          size={CONTROL_ICON_SIZE}
+          strokeWidth={2}
+        />
       </IconButton>
       <IconButton
         size="small"
         onClick={onClose}
         aria-label={closeLabel}
-        sx={{
-          ...sx,
-          "&:hover": {
-            backgroundColor: "rgba(232, 77, 77, 0.92)",
-            color: chalkSolid.base,
-          },
-        }}
+        className="caption-button"
+        sx={sx}
       >
-        <MorphNavIcon icon={X} size={CONTROL_ICON_SIZE} />
+        <MorphNavIcon icon={X} size={CONTROL_ICON_SIZE} strokeWidth={2} />
       </IconButton>
     </Stack>
   );
@@ -447,9 +506,10 @@ const titleBarSx = (dark: boolean, trafficLights: boolean) =>
     pr: trafficLights ? 1.5 : 0,
     position: "relative",
     zIndex: 20,
-    backgroundColor: dark
-      ? surfaceAlpha(surfaces.dark.level1, 0.92)
-      : surfaceAlpha(surfaces.light.level1, 0.88),
+    // Same wash as the navigation rail, so the bar and the rail read as one
+    // material. They share that paint but are not contiguous: the page header
+    // sits between them, and the content area carries none of it.
+    background: dark ? chromeWash.dark : chromeWash.light,
     backdropFilter: "blur(18px) saturate(1.2)",
     WebkitBackdropFilter: "blur(18px) saturate(1.2)",
     borderBottom: dark ? hairline.dark(0.05) : hairline.light(0.06),
@@ -457,9 +517,7 @@ const titleBarSx = (dark: boolean, trafficLights: boolean) =>
   }) as const;
 
 export const TitleBar = () => {
-  const { mode, systemMode } = useColorScheme();
-  const resolved = mode === "system" ? systemMode : mode;
-  const dark = resolved === "dark";
+  const dark = useIsDarkMode();
   const intl = useIntl();
   const platform = isTauriRuntime() ? getPlatform() : "unknown";
   // Same predicate the resize grips use, so the chrome and the grips can never
@@ -534,12 +592,12 @@ export const TitleBar = () => {
 
         {trafficLights ? null : (
           <CaptionButtons
+            dark={dark}
             focused={focused}
             compact={compact}
             minimizeLabel={minimizeLabel}
             maximizeLabel={maximizeLabel}
             closeLabel={closeLabel}
-            maximized={maximized}
             onMinimize={minimize}
             onToggleMax={toggleMax}
             onClose={close}

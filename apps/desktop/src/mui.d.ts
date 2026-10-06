@@ -17,7 +17,6 @@ declare module "@mui/material/styles" {
     chromeHover: string;
     chromeActive: string;
     onChrome: string;
-    dangerHover: string;
 
     level0: string;
     level1: string;
@@ -32,7 +31,6 @@ declare module "@mui/material/styles" {
     chromeHover?: string;
     chromeActive?: string;
     onChrome?: string;
-    dangerHover?: string;
 
     level0?: string;
     level1?: string;

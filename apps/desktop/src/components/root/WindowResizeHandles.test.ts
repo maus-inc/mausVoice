@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
-  CAPTION_BUTTON_WIDTH,
+  CAPTION_CLUSTER_PAD_RIGHT,
+  captionButtonSize,
+  captionClusterWidth,
   CORNER,
   EDGE,
   hasRightCaptionButtons,
@@ -51,11 +53,13 @@ describe("hasRightCaptionButtons", () => {
 describe("getGrips with right-side caption buttons (Windows/Linux)", () => {
   const grips = getGrips(true);
 
-  it("leave the flush close button clickable below the top frame row", () => {
+  it("leave the close button clickable below the top frame row", () => {
     // Geometry comes from titleBarGeometry, the same source TitleBar uses, so
-    // resizing the caption buttons moves this guard with them.
+    // resizing the caption buttons moves this guard with them. The cluster is
+    // three inset squares plus gaps and trailing padding, so the close button
+    // stops short of the window edge by that trailing padding.
     const clickable: Rect = {
-      left: WINDOW.width - CAPTION_BUTTON_WIDTH,
+      left: WINDOW.width - CAPTION_CLUSTER_PAD_RIGHT - captionButtonSize(false),
       top: FRAME,
       right: WINDOW.width,
       bottom: TITLE_BAR_HEIGHT,
@@ -68,8 +72,11 @@ describe("getGrips with right-side caption buttons (Windows/Linux)", () => {
   });
 
   it("keeps every grip over the caption row inside the top frame band", () => {
+    // The row spans the whole bar. Its buttons are centred inside it by CSS, so
+    // pinning a vertical position here would only add a second copy of that
+    // rule for the assertion to drift from.
     const captionRow: Rect = {
-      left: WINDOW.width - 3 * CAPTION_BUTTON_WIDTH,
+      left: WINDOW.width - captionClusterWidth(false),
       top: 0,
       right: WINDOW.width,
       bottom: TITLE_BAR_HEIGHT,

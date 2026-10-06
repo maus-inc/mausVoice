@@ -17,7 +17,7 @@ The two schemes have their own temperature rather than being inversions of each 
 
 - **Never pure `#000` / `#fff`** for surfaces or text. Light tints from the warm ink `ink(α)` = `rgba(26,23,18,α)`; dark tints from `highlight(α)` / `onDark(α)`. The one sanctioned `#FFFFFF` is the inverted CTA fill in dark (`chalkSolid`).
 - **Borders over shadows.** Cards/surfaces separated by 1px translucent hairlines. Use `hairline.light(α)` / `hairline.dark(α)` from `styles/shadows.ts` (0.04-0.08). Elevation shadows (`premiumSurface`) only on layered/floating surfaces (cards, hover), not every face.
-- `premiumSurface` = 2px inner top highlight (emboss) + multi‑stop soft drop shadow; distinct rest/hover/active/selected. This is the "machined keycap" treatment (Raycast class).
+- `premiumSurface` = `insetRim` (2px inner top highlight, emboss) + multi‑stop soft drop shadow; distinct rest/hover/active/selected. This is the "machined keycap" treatment (Raycast class). `insetRim` is exported separately so a surface that has to read as a different _plane_ can borrow the rim without also borrowing the lift.
 - Backdrop-filtered chrome uses `surfaceAlpha(tier, α)` so the translucent face can never drift from its opaque tier.
 
 ## Color (restrained, one accent)
@@ -25,7 +25,7 @@ The two schemes have their own temperature rather than being inversions of each 
 - `primary` = warm near-black charcoal in light (`inkSolid.base` `#1A1712`), `#FFFFFF` in dark (white CTA is the primary).
 - Chrome accent is **silver/ink** (`accent` in `palette.ts`: `#6B6760` / `#C4C0B8`) for focus rings, selection wash, sliders. Never hue-blue.
 - Switches/toggles: grey track + black (light) / chalk (dark) thumb — not the silver accent and not blue.
-- `gold` is a reward/secondary class only (inactive feature); `red` (`dangerHover`) for destructive only.
+- `gold` is a reward/secondary class only (inactive feature); `error.main` for destructive only.
 - Status vocabulary must be semantic; never color-only.
 
 ## Typography
@@ -59,12 +59,39 @@ The two schemes have their own temperature rather than being inversions of each 
 - Side-stripe borders >1px; gradient text; decorative glass; `transition-all`; pure black/white; lucide-only generic icon (once stroke); ceil matching radius. See `craft-floor`.
 - Emoji‑as‑icons. No.
 
+## Window surfaces
+
+The window is a flat canvas with two chrome surfaces on it. The routed content area carries no fill, border, radius or cast of its own, so a page change is a page change and never a frame change. Only the title bar and the navigation rail paint a material, and both use `chromeWash` from `palette.ts` so they cannot be retuned into a visible step where they meet.
+
+- The content area stays flat. A panel behind the routed page splits the window into compartments, and the rounded corner and cast that separate the compartments then read as the point of the layout. If a page needs a card inside itself, that card belongs to the page, not to the shell.
+- The title bar and the rail are **not contiguous**. The page header sits between them, and `PageLayout` plus the rail's own padding put roughly 50px of canvas between the bar's bottom edge and the rail's top. Do not describe them as one L-shaped surface; they read as two pieces of the same material with a gap, and closing that gap is a layout change, not a token change.
+- The title bar does **not** cast downward. `titleBarShadow` is a single inset bottom rim and nothing else. A shadow thrown straight down out of the bar reads as the bar hovering over the page, which is the opposite of how the window sits.
+- The bar is also far more transparent than it used to be. `chromeWash` runs from 0.7 alpha down to 0.35 in light, and from 0.55 to 0.2 in dark, against the 0.88 and 0.92 fills the bar carried before. That is deliberate, and it is why the only thing separating the bar from the page is its bottom hairline. Read a see-through bar as the design, not as a bug.
+- `raisedEdge` casts the rail onto the canvas beside it. It is skewed sideways on purpose: a symmetrical shadow makes a rail look like it is hovering in the middle of the window.
+- In dark, that cast does almost nothing. A near-black canvas swallows a black shadow, so the rail separates on its hairline and on the wash being one tier lighter than `level0`. If dark separation ever reads as too weak, raise the wash alpha before reaching for a stronger shadow.
+- The rail is flush against the window's left edge, square there and rounded on its right. It draws a hairline only on that right edge: the other three run into the window frame or into bare canvas, where a 1px line has nothing to separate.
+- Corner radius 16 for the rail, against 14 for cards inside it, and 12 for the caption buttons.
+
+## Window controls
+
+The Windows and Linux caption buttons are three square targets inset from the bar edges, not three flush strips, so the bar's own material is visible between them and against the window edge. That is what separates a control cluster from a row of divider lines. Geometry lives in `titleBarGeometry.ts`, which the resize grips also read, so the cluster and the grips cannot disagree.
+
+- Hover and press are neutral for all three, close included. `captionButtonHover` and `captionButtonActive` in `palette.ts` hold the values. A red close button advertises a destructive action, and this window intercepts `CloseRequested` to hide to tray, so nothing is discarded. Do not reintroduce a danger fill here; `error.main` stays for actions that actually destroy data.
+- Each button rests at `captionButtonRestOpacity` with its glyph at `captionButtonGlyph`, and hover and press both clear that per-button dim. The cluster's separate focus dim rides the wrapper, so the two multiply: a hovered button on an unfocused window renders at the focus dim, not at full. That is intended, since a hovered button in a window the user has stepped away from should not out-shine the ones beside it. A cluster that vanished entirely would take the only visible cue that the window has controls.
+- Transitions read `var(--duration-fast)` rather than a literal, so the cluster follows the same clock as the rest of the chrome and drops to 1ms under `prefers-reduced-motion`.
+- Press scales the target to 0.95 and ramps the fill, rather than swapping in a gradient.
+- The maximize glyph is a single wide rounded rectangle in both window states. Swapping to an overlapping restore pair mid-gesture reads as a different control, and the pair needs more width than the box it stands for, so it sits off-centre in a square target. The accessible name still changes between Maximize and Restore.
+- `-webkit-corner-smoothing: 60%` keeps the rounded corners from being shaved flat by the compositor on a translucent target. It lives on `.caption-button` in `styles/caption.css`, not in the component's `sx`, because MUI's style system drops properties it does not recognise. It is a no-op on non-Chromium engines.
+
 ## Custom chrome
 
-- Frameless custom `TitleBar` (drag region + native window controls). Height ~46px, uses title BarShadow. macOS notes traffic-light inset; Windows keeps native buttons via WCO.
-- `decorations: false` also removes the OS resize border, so `WindowResizeHandles` supplies eight invisible edge/corner grips that hand the gesture back to the window manager.
+- Frameless custom `TitleBar` (drag region + window controls), height 40px, all geometry in `titleBarGeometry.ts`. macOS gets traffic lights on the left; Windows and Linux get caption buttons on the right.
+- Traffic lights keep a 12px painted dot inside a 24px hit box. WCAG 2.2 SC 2.5.8 measures the clickable box, not the glyph. Do not flatten them into uniform dots.
+- The close button tints like its neighbours. `captionButtonHover` and `captionButtonActive` in `palette.ts` hold the values, and the glyph keeps its resting colour. The main window intercepts `CloseRequested` and hides to tray, so closing discards nothing and a destructive fill is a false signal.
+- `decorations: false` also removes the OS resize border, so `WindowResizeHandles` supplies eight invisible edge/corner grips that hand the gesture back to the window manager. With right-side caption buttons the East grip starts below the caption row and NorthEast is a `CORNER`-wide strip inside the top `EDGE` band, so diagonal resize stays reachable without reaching into the button body.
 - Every window command used by the chrome (`start-dragging`, `start-resize-dragging`, `minimize`, `maximize`, `unmaximize`, `close`) must be listed in `src-tauri/capabilities/default.json`; `core:window:default` grants none of them and the controls fail silently without them.
 - Chrome glyphs are lucide nodes rendered through `MorphNavIcon` (`snappy` spring) so state swaps morph instead of cutting.
+- Known Tauri limitation: with `decorations: false` the window cannot be dragged while unfocused (`tauri-apps/tauri#4316`).
 
 ## Toasts
 

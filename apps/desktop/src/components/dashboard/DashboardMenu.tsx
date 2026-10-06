@@ -1,4 +1,4 @@
-import { Box, List, Stack, useColorScheme } from "@mui/material";
+import { Box, List, Stack } from "@mui/material";
 import { motion, useReducedMotion } from "framer-motion";
 import {
   BookMarked,
@@ -13,10 +13,16 @@ import {
 import { useMemo } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { useLocation, useNavigate } from "react-router-dom";
+import { useIsDarkMode } from "../../hooks/color-scheme.hooks";
 import { useAppStore } from "../../store";
 import { springSnappy } from "../../styles/motion";
-import { inkSolid, surfaceAlpha, surfaces } from "../../styles/palette";
-import { hairline, premiumSurface } from "../../styles/shadows";
+import { chromeWash, inkSolid, surfaces } from "../../styles/palette";
+import {
+  hairline,
+  insetRim,
+  premiumSurface,
+  raisedEdge,
+} from "../../styles/shadows";
 import { getIsAssistantModeEnabled } from "../../utils/assistant-mode.utils";
 import { ListTile } from "../common/ListTile";
 import { MorphNavIcon } from "../common/MorphNavIcon";
@@ -39,9 +45,7 @@ export const DashboardMenu = ({ onChoose }: DashboardMenuProps) => {
   const intl = useIntl();
   const nav = useNavigate();
   const reduceMotion = useReducedMotion();
-  const { mode, systemMode } = useColorScheme();
-  const resolved = mode === "system" ? systemMode : mode;
-  const dark = resolved === "dark";
+  const dark = useIsDarkMode();
 
   const isUpdateAvailable = useAppStore(
     (state) => state.updater.status === "ready",
@@ -188,15 +192,24 @@ export const DashboardMenu = ({ onChoose }: DashboardMenuProps) => {
       sx={{
         alignItems: "stretch",
         height: "100%",
-        borderRadius: 1,
-        margin: "0.35rem",
-        border: dark ? hairline.dark(0.05) : hairline.light(0.05),
-
-        // Rail wash: one tier of lift at the top settling back into the canvas,
-        // derived from the surface ladder rather than one-off hexes.
-        background: dark
-          ? `linear-gradient(180deg, ${surfaceAlpha(surfaces.dark.level2, 0.55)} 0%, ${surfaceAlpha(surfaces.dark.level0, 0.2)} 100%)`
-          : `linear-gradient(180deg, ${surfaceAlpha(surfaces.light.level1, 0.7)} 0%, ${surfaceAlpha(surfaces.light.level0, 0.35)} 100%)`,
+        // Flush against the window's left edge and full height, rounded only where the
+        // rail faces the page. Rounding all four corners left a notch against
+        // the window frame and made the rail read as a floating card that
+        // happened to be clipped, rather than the edge of a plane.
+        borderRadius: "0 16px 16px 0",
+        // Only the edge that faces content carries a hairline. The other three
+        // run into the window frame or into bare canvas, where a 1px line has
+        // nothing to separate and reads as an artifact.
+        borderRight: dark ? hairline.dark(0.05) : hairline.light(0.05),
+        // Same wash as the title bar and the content panel, so all three read as
+        // one material standing off the canvas. The rail is not contiguous with
+        // the bar: the page header sits between them, so this is shared paint,
+        // not one continuous L-shaped surface. The rim catches light along the
+        // top edge and `raisedEdge` casts along the one edge that faces content.
+        boxShadow: dark
+          ? `${insetRim.dark}, ${raisedEdge.dark}`
+          : `${insetRim.light}, ${raisedEdge.light}`,
+        background: dark ? chromeWash.dark : chromeWash.light,
       }}
     >
       <Box sx={{ flexGrow: 1, overflowY: "auto", pt: 0.5 }}>{list}</Box>

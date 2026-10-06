@@ -1,4 +1,4 @@
-import { PreviewOperationError } from "../runtime";
+import { PreviewOperationError } from "../PreviewOperationError";
 
 /**
  * Provider traffic is intentionally not proxied from the mock-data preview.

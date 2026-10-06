@@ -1,7 +1,7 @@
-import { useColorScheme, useTheme } from "@mui/material";
 import { useReducedMotion } from "framer-motion";
 import { MetalFx, type MetalFxProps } from "metal-fx";
 import { useEffect, useId, useState } from "react";
+import { useIsDarkMode } from "../../hooks/color-scheme.hooks";
 import { getLogger } from "../../utils/log.utils";
 import "./MetalChrome.css";
 
@@ -139,10 +139,7 @@ export const MetalChrome = ({
   className,
   ...rest
 }: MetalFxProps) => {
-  const { mode, systemMode } = useColorScheme();
-  const theme = useTheme();
-  const resolved =
-    (mode === "system" ? systemMode : mode) ?? theme.palette.mode;
+  const dark = useIsDarkMode();
   const reduceMotion = useReducedMotion();
   const id = useId();
   const rescued = useFirstFrameRescue(id);
@@ -154,7 +151,7 @@ export const MetalChrome = ({
   return (
     <MetalFx
       preset="silver"
-      theme={resolved === "light" ? "light" : "dark"}
+      theme={dark ? "dark" : "light"}
       strength={0.22}
       glowGain={0}
       disableGlow

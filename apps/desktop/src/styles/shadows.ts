@@ -1,6 +1,19 @@
 import { accent, darkInk, highlight, ink } from "./palette";
 
 /**
+ * The top-lit emboss on its own, without the drop.
+ *
+ * Split out so a surface that has to read as a separate plane can borrow the rim
+ * without also borrowing the lift. A seam between two planes wants the light
+ * catching its top edge and nothing else; a card wants both. `premiumSurface`
+ * composes this so the two can never drift apart.
+ */
+export const insetRim = {
+  light: `inset 0 1px 0 ${highlight(0.42)}, inset 0 2px 0 ${highlight(0.14)}`,
+  dark: `inset 0 1px 0 ${highlight(0.08)}, inset 0 2px 0 ${highlight(0.03)}`,
+} as const;
+
+/**
  * Sigma-style layered surfaces:
  * - 2px inner highlight from the top (emboss)
  * - soft multi-stop drop shadow below (premium lift)
@@ -33,8 +46,7 @@ import { accent, darkInk, highlight, ink } from "./palette";
 export const premiumSurface = {
   light: {
     rest: `
-      inset 0 1px 0 ${highlight(0.42)},
-      inset 0 2px 0 ${highlight(0.14)},
+      ${insetRim.light},
       0 1px 2px ${ink(0.1)},
       0 8px 20px ${ink(0.12)},
       0 18px 40px ${ink(0.1)}
@@ -60,8 +72,7 @@ export const premiumSurface = {
   },
   dark: {
     rest: `
-      inset 0 1px 0 ${highlight(0.08)},
-      inset 0 2px 0 ${highlight(0.03)},
+      ${insetRim.dark},
       0 1px 2px ${darkInk(0.35)},
       0 8px 20px ${darkInk(0.35)},
       0 18px 40px ${darkInk(0.28)}
@@ -106,15 +117,39 @@ export const accentSurface = {
 } as const;
 
 /**
- * Frameless title bar chrome. Same structure in both schemes: a machined rim
- * on the bottom edge (inset, catching light) + one soft drop so the bar
- * floats above the canvas. Light uses a stronger rim alpha because
- * white-on-cream needs more to register against content scrolling under the
- * translucent bar.
+ * Depth for a surface that stands proud of the canvas and casts sideways onto
+ * its neighbour, which is what the navigation rail does.
+ *
+ * `premiumSurface` is tuned for a card floating in the middle of a page, so its
+ * ambient stop reaches 40px straight down and dies out. A rail has to read as
+ * detached along one edge only, so the geometry is skewed into that edge: a 1px
+ * contact stop for where it touches, then two widening ambients that fall off
+ * fast. Skewing it is the whole point, a symmetrical shadow would make the rail
+ * look like it is hovering in the middle of the window.
+ */
+export const raisedEdge = {
+  light: `0 1px 2px ${ink(0.12)}, 1px 4px 10px ${ink(0.1)}, 4px 14px 28px ${ink(0.07)}`,
+  dark: `0 1px 2px ${darkInk(0.5)}, 1px 4px 10px ${darkInk(0.45)}, 4px 14px 28px ${darkInk(0.32)}`,
+} as const;
+
+/**
+ * Frameless title bar chrome.
+ *
+ * The bar no longer casts onto the content below it. It used to, and that was
+ * the wrong depth: a shadow thrown straight down out of the bar reads as the bar
+ * hovering over the page, which is the opposite of how the window actually sits.
+ * The bar is the plane the content is recessed into, so it only needs a rim where
+ * the two meet. The content card now carries the separation on its own top edge,
+ * and with two shadows on that seam the step read as a gap.
+ *
+ * One inset bottom row in both schemes, and no drop at all. The 1px border on
+ * the bar carries the ink line; this only catches light on the edge just above
+ * it. Light needs more alpha because off-white content has to register against
+ * the translucent bar it scrolls under.
  */
 export const titleBarShadow = {
-  light: `inset 0 -1px 0 ${highlight(0.3)}, 0 10px 28px ${ink(0.14)}`,
-  dark: `inset 0 -1px 0 ${highlight(0.04)}, 0 10px 28px ${darkInk(0.35)}`,
+  light: `inset 0 -1px 0 ${highlight(0.5)}`,
+  dark: `inset 0 -1px 0 ${highlight(0.07)}`,
 } as const;
 
 /**

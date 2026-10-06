@@ -1,6 +1,7 @@
 import "./styles/fonts.css";
 import "./styles/tokens.css";
 import "./styles/dotmatrix.css";
+import "./styles/caption.css";
 import { CssBaseline } from "@mui/material";
 import { ThemeProvider } from "@mui/material/styles";
 import { FirebaseOptions, initializeApp } from "firebase/app";

@@ -66,12 +66,14 @@ vi.mock("./WindowResizeHandles", () => ({
 
 import { TitleBar } from "./TitleBar";
 import {
-  CAPTION_BUTTON_WIDTH,
-  COMPACT_CAPTION_BUTTON_WIDTH,
+  CAPTION_BUTTON_RADIUS,
+  captionButtonSize,
+  COMPACT_CAPTION_BUTTON_SIZE,
   MIN_TARGET_SIZE,
   TRAFFIC_DOT_SIZE,
   TRAFFIC_HIT_SIZE,
 } from "./titleBarGeometry";
+import { captionButtonRestOpacity } from "../../styles/palette";
 
 import {
   ensureUiHarness,
@@ -199,8 +201,11 @@ describe("TitleBar on Windows and Linux", () => {
     );
     expect(document.querySelector(".traffic-btn")).toBeNull();
   });
-  it("uses the shared reduced-motion-aware timing for both caption colors", async () => {
+  it("uses the shared reduced-motion-aware timing for every caption property", async () => {
     await renderBar();
+    // The literal the reference uses is dropped on purpose: `--duration-fast`
+    // collapses to 1ms under prefers-reduced-motion, and a hand-written
+    // duration would ignore that.
     expect(
       getComputedStyle(requireByLabel("Minimize"))
         .transition.split(",")
@@ -208,7 +213,97 @@ describe("TitleBar on Windows and Linux", () => {
     ).toEqual([
       "background-color var(--duration-fast) ease",
       "color var(--duration-fast) ease",
+      "opacity var(--duration-fast) ease",
+      "transform var(--duration-fast) ease",
     ]);
+  });
+
+  it("gives close the same hover and press treatment as the other two", async () => {
+    await renderBar();
+    // One factory call, so the three carry one identical emotion class, which
+    // means one identical set of rules. Give close a fill of its own and the
+    // class diverges.
+    const classes = ["Minimize", "Maximize", "Close"].map(
+      (label) => requireByLabel(label).className,
+    );
+    expect(new Set(classes).size).toBe(1);
+
+    // Class equality would still hold with the interaction rules deleted, so read
+    // them out of the stylesheet Emotion injects. jsdom never applies a
+    // pseudo-class, which is exactly why the computed style cannot be the thing
+    // asserted here.
+    const pseudoRules = new Map<string, string>();
+    for (const sheet of Array.from(document.styleSheets)) {
+      for (const rule of Array.from(sheet.cssRules)) {
+        const text = rule.cssText;
+        for (const [, className, pseudo] of text.matchAll(
+          /\.([\w-]+):(hover|active)\b/g,
+        )) {
+          pseudoRules.set(`${className}:${pseudo}`, text);
+        }
+      }
+    }
+
+    // Skip MUI's global utility classes: a future `:hover` rule on one of
+    // them would be matched first and measured instead of the caption fill.
+    // The caption's own class is the one Emotion generates for the `sx`
+    // prop, which never carries the `Mui` prefix.
+    const captionClass = classes[0]
+      .split(" ")
+      .find(
+        (name) => !name.startsWith("Mui") && pseudoRules.has(`${name}:hover`),
+      );
+    if (!captionClass) {
+      throw new Error("no :hover rule found for the caption cluster");
+    }
+
+    const strength = (pseudo: "hover" | "active") => {
+      const text = pseudoRules.get(`${captionClass}:${pseudo}`) ?? "";
+      const fill =
+        text.match(/background-color:\s*([^;}]+)/)?.[1]?.trim() ?? "";
+      // The resting value is transparent, so any paint means the rule is real,
+      // and a neutral fill has three equal channels.
+      expect(fill, `${pseudo} must paint a background`).toBeTruthy();
+      const channels = (fill.match(/\d+/g) ?? []).slice(0, 3).map(Number);
+      expect(Math.max(...channels), fill).toBe(Math.min(...channels));
+      return Number(fill.match(/([\d.]+)\s*\)/)?.[1] ?? 0);
+    };
+
+    // Press is stronger than hover, so the two read as a ramp rather than one
+    // hover state that never changes.
+    expect(strength("active")).toBeGreaterThan(strength("hover"));
+  });
+
+  it("draws the caption buttons as rounded square targets, not flush strips", async () => {
+    await renderBar();
+    for (const label of ["Minimize", "Maximize", "Close"]) {
+      const style = getComputedStyle(requireByLabel(label));
+      expect(pxOf(requireByLabel(label), "height"), label).toBe(
+        captionButtonSize(false),
+      );
+      expect(pxOf(requireByLabel(label), "width"), label).toBe(
+        captionButtonSize(false),
+      );
+      expect(style.borderRadius, label).toBe(`${CAPTION_BUTTON_RADIUS}px`);
+      expect(Number(style.opacity), label).toBeCloseTo(
+        captionButtonRestOpacity,
+        2,
+      );
+    }
+  });
+
+  it("dims the cluster when the window is unfocused, on top of each button's rest opacity", async () => {
+    await renderBar();
+    await act(() => {
+      for (const handler of focusHandlers) handler({ payload: false });
+    });
+    // The focus dim rides the cluster wrapper so the three dim as one group. The
+    // per-button rest opacity is a separate step, which is why both are asserted.
+    const cluster = requireByLabel("Close").parentElement as HTMLElement;
+    expect(Number(getComputedStyle(cluster).opacity)).toBeCloseTo(0.6, 2);
+    expect(
+      Number(getComputedStyle(requireByLabel("Close")).opacity),
+    ).toBeCloseTo(captionButtonRestOpacity, 2);
   });
 
   it("puts caption buttons right of the logo with stable glyphs", async () => {
@@ -355,7 +450,7 @@ it("narrows the caption buttons and hides the wordmark on a narrow window", asyn
     (node) => node.textContent === "mausVoice",
   );
   expect(pxOf(requireByLabel("Close"), "width")).toBe(
-    COMPACT_CAPTION_BUTTON_WIDTH,
+    COMPACT_CAPTION_BUTTON_SIZE,
   );
   // The wordmark is the first thing to go on a narrow bar.
   expect(getComputedStyle(wordmark!).display).toBe("none");
@@ -368,7 +463,7 @@ it("keeps the roomy bar on a wide window", async () => {
   const wordmark = [...document.querySelectorAll("span")].find(
     (node) => node.textContent === "mausVoice",
   );
-  expect(pxOf(requireByLabel("Close"), "width")).toBe(CAPTION_BUTTON_WIDTH);
+  expect(pxOf(requireByLabel("Close"), "width")).toBe(captionButtonSize(false));
   expect(getComputedStyle(wordmark!).display).not.toBe("none");
 });
 
@@ -386,14 +481,14 @@ it("re-evaluates density when the window is resized", async () => {
   }) as never);
   windowMocks.outerSize.mockResolvedValue({ width: 1280, height: 800 });
   await renderBar();
-  expect(pxOf(requireByLabel("Close"), "width")).toBe(CAPTION_BUTTON_WIDTH);
+  expect(pxOf(requireByLabel("Close"), "width")).toBe(captionButtonSize(false));
 
   windowMocks.outerSize.mockResolvedValue({ width: 820, height: 700 });
   await act(async () => {
     fireResize?.();
   });
   expect(pxOf(requireByLabel("Close"), "width")).toBe(
-    COMPACT_CAPTION_BUTTON_WIDTH,
+    COMPACT_CAPTION_BUTTON_SIZE,
   );
 });
 
@@ -438,7 +533,7 @@ it("keeps the newest density when resize ticks resolve out of order", async () =
     resolveNarrow({ width: 820, height: 700 });
   });
   expect(pxOf(requireByLabel("Close"), "width")).toBe(
-    COMPACT_CAPTION_BUTTON_WIDTH,
+    COMPACT_CAPTION_BUTTON_SIZE,
   );
 
   // The older, wider tick now lands late. It must be discarded rather than
@@ -447,7 +542,7 @@ it("keeps the newest density when resize ticks resolve out of order", async () =
     resolveWide({ width: 1280, height: 800 });
   });
   expect(pxOf(requireByLabel("Close"), "width")).toBe(
-    COMPACT_CAPTION_BUTTON_WIDTH,
+    COMPACT_CAPTION_BUTTON_SIZE,
   );
 });
 
@@ -469,7 +564,7 @@ it("compares against logical pixels, so a scaled display still compacts", async 
   await renderBar();
 
   expect(pxOf(requireByLabel("Close"), "width")).toBe(
-    COMPACT_CAPTION_BUTTON_WIDTH,
+    COMPACT_CAPTION_BUTTON_SIZE,
   );
 });
 
@@ -478,7 +573,7 @@ it("keeps the roomy bar when the window size is not known yet", async () => {
   platformState.native = false;
   await renderBar();
 
-  expect(pxOf(requireByLabel("Close"), "width")).toBe(CAPTION_BUTTON_WIDTH);
+  expect(pxOf(requireByLabel("Close"), "width")).toBe(captionButtonSize(false));
 });
 
 it.each([

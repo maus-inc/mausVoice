@@ -13,6 +13,12 @@ import { PermissionsDialog } from "./PermissionsDialog";
  * Authenticated app shell: sidebar navigation, routed content area, and the
  * global dialogs (feature release, permissions, trial ended, transcription
  * details). Also reports the app version into the layout.
+ *
+ * The content area is deliberately flat. It carries no fill, border, radius or
+ * cast of its own, so the routed page reads as the window's canvas rather than
+ * as a card sitting on it. A panel treatment here cuts the window into
+ * compartments and turns a navigation change into a frame change. Chrome that
+ * does need its own material, such as the rail, paints it on the rail.
  */
 export default function DashboardPage() {
   const data = useAsyncData(getVersion, []);
@@ -36,7 +42,6 @@ export default function DashboardPage() {
             minWidth: 232,
             maxWidth: 232,
             overflowY: "auto",
-            py: 0.5,
           }}
         >
           <DashboardMenu />
@@ -65,7 +70,11 @@ export default function DashboardPage() {
               duration: reduceMotion ? 0 : 0.24,
               ease: easeOutQuint,
             }}
-            sx={{ flexGrow: 1, minHeight: 0, overflow: "auto" }}
+            sx={{
+              flexGrow: 1,
+              minHeight: 0,
+              overflow: "auto",
+            }}
           >
             <Outlet />
           </Box>
