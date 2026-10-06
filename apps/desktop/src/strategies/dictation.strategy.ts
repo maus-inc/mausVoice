@@ -403,7 +403,7 @@ export class DictationStrategy extends BaseStrategy {
             : undefined;
           const result = await postProcessTranscript({
             rawTranscript: sanitizedTranscript,
-            toneId: args.toneId,
+            toneId: effectiveToneId,
             trace: args.trace,
             onPolishStart: tone?.shouldDisablePostProcessing
               ? undefined

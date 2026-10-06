@@ -198,6 +198,25 @@ const deliverWithInsertionStage = async (
   return result;
 };
 
+const resolveLocalInsertResult = (
+  args: RouteTranscriptOutputArgs,
+  outputText: string,
+  outcome: Awaited<ReturnType<typeof insertLocalOutput>>,
+): RouteTranscriptOutputResult => {
+  if (args.isInterim && outcome === "copied_to_clipboard") {
+    return { delivered: false, remote: false, deliveredText: null };
+  }
+
+  // After a final dictation lands in the target app, watch for corrections
+  // the user makes there and offer to learn them. Interim streamed segments
+  // are excluded: there is no single "final" paste to diff against.
+  if (!args.isInterim && args.mode === "dictation") {
+    beginEditWatch(outputText);
+  }
+
+  return { delivered: true, remote: false, deliveredText: outputText };
+};
+
 export const routeTranscriptOutput = async (
   args: RouteTranscriptOutputArgs,
   trace: PipelineTrace | null = null,
@@ -243,18 +262,7 @@ export const routeTranscriptOutput = async (
       args.isInterim,
     );
 
-    if (args.isInterim && outcome === "copied_to_clipboard") {
-      return { delivered: false, remote: false, deliveredText: null };
-    }
-
-    // After a final dictation lands in the target app, watch for corrections
-    // the user makes there and offer to learn them. Interim streamed segments
-    // are excluded: there is no single "final" paste to diff against.
-    if (!args.isInterim && args.mode === "dictation") {
-      beginEditWatch(outputText);
-    }
-
-    return { delivered: true, remote: false, deliveredText: outputText };
+    return resolveLocalInsertResult(args, outputText, outcome);
   });
 };
 

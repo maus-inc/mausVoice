@@ -80,13 +80,11 @@ const roundedRect = (
   ctx.closePath();
 };
 
-const elideTextToWidth = (
+const truncateToBudget = (
   ctx: CanvasRenderingContext2D,
   text: string,
   maxW: number,
 ): string => {
-  if (maxW <= 0) return "";
-  if (ctx.measureText(text).width <= maxW) return text;
   const chars = Array.from(text);
   for (let i = chars.length - 1; i >= 1; i--) {
     const candidate = `${chars.slice(0, i).join("").trimEnd()}…`;
@@ -95,6 +93,16 @@ const elideTextToWidth = (
     }
   }
   return ctx.measureText("…").width <= maxW ? "…" : "";
+};
+
+const elideTextToWidth = (
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  maxW: number,
+): string => {
+  if (maxW <= 0) return "";
+  if (ctx.measureText(text).width <= maxW) return text;
+  return truncateToBudget(ctx, text, maxW);
 };
 
 const paintLoadingBar = (
@@ -128,6 +136,27 @@ const paintLoadingBar = (
     ctx.fillStyle = `rgba(255,255,255,${opts.indicatorAlpha.toFixed(3)})`;
     ctx.fillRect(dl, barY, dr - dl, barH);
   }
+};
+
+const paintStageLabel = (
+  ctx: CanvasRenderingContext2D,
+  stage: string,
+  opts: {
+    rx: number;
+    ry: number;
+    pillW: number;
+    pillH: number;
+    expand: number;
+  },
+) => {
+  ctx.font = "12px Satoshi, system-ui, sans-serif";
+  const maxW = Math.max(opts.pillW - 16, 0);
+  const label = elideTextToWidth(ctx, stage, maxW);
+  if (!label) return;
+  ctx.fillStyle = `rgba(255,255,255,${(STAGE_TEXT_ALPHA * opts.expand).toFixed(3)})`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(label, opts.rx + opts.pillW / 2, opts.ry + opts.pillH / 2 + 0.5);
 };
 
 const nextTargetLevel = (
@@ -286,11 +315,10 @@ export const NativePillCanvas = ({
 
       if (expand > 0.1 && s.phase === "loading") {
         drawClipped(() => {
-          const stage = s.stageText?.trim() || null;
-          const trackAlpha =
-            (stage ? LOAD_DIM_TRACK_ALPHA : LOAD_TRACK_ALPHA) * expand;
-          const indicatorAlpha =
-            (stage ? LOAD_DIM_IND_ALPHA : LOAD_IND_ALPHA) * expand;
+          const stage = (s.stageText ?? "").trim();
+          const [baseTrack, baseInd] = stage
+            ? [LOAD_DIM_TRACK_ALPHA, LOAD_DIM_IND_ALPHA]
+            : [LOAD_TRACK_ALPHA, LOAD_IND_ALPHA];
           paintLoadingBar(ctx, {
             rx,
             ry,
@@ -298,18 +326,12 @@ export const NativePillCanvas = ({
             pillH,
             loadOffset,
             reduceMotion: Boolean(s.reduceMotion),
-            trackAlpha,
-            indicatorAlpha,
+            trackAlpha: baseTrack * expand,
+            indicatorAlpha: baseInd * expand,
           });
-          if (!stage) return;
-          ctx.font = "12px Satoshi, system-ui, sans-serif";
-          const maxW = Math.max(Math.max(pillW, s.expandedW) - 16, 0);
-          const label = elideTextToWidth(ctx, stage, maxW);
-          if (!label) return;
-          ctx.fillStyle = `rgba(255,255,255,${(STAGE_TEXT_ALPHA * expand).toFixed(3)})`;
-          ctx.textAlign = "center";
-          ctx.textBaseline = "middle";
-          ctx.fillText(label, rx + pillW / 2, ry + pillH / 2 + 0.5);
+          if (stage) {
+            paintStageLabel(ctx, stage, { rx, ry, pillW, pillH, expand });
+          }
         });
       }
 

@@ -797,13 +797,13 @@ describe("DictationStrategy backlog lifecycle", () => {
     const { sendPillStageText } = await import("../utils/overlay.utils");
 
     vi.mocked(sendPillStageText).mockClear();
-    vi.mocked(postProcessTranscript).mockImplementationOnce(async (input) => {
+    vi.mocked(postProcessTranscript).mockImplementationOnce((input) => {
       input.onPolishStart?.();
-      return {
+      return Promise.resolve({
         transcript: "polished output",
         warnings: [],
         metadata: { postProcessMode: "api" },
-      };
+      });
     });
 
     const baseArgs: HandleTranscriptParams = {
@@ -828,13 +828,13 @@ describe("DictationStrategy backlog lifecycle", () => {
       };
     });
     vi.mocked(sendPillStageText).mockClear();
-    vi.mocked(postProcessTranscript).mockImplementationOnce(async (input) => {
+    vi.mocked(postProcessTranscript).mockImplementationOnce((input) => {
       input.onPolishStart?.();
-      return {
+      return Promise.resolve({
         transcript: "raw input",
         warnings: [],
         metadata: { postProcessMode: "none" },
-      };
+      });
     });
 
     await strategy.handleTranscript({
