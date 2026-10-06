@@ -74,12 +74,12 @@ const TERMINATOR_CHARS = [".", "!", "?", "…", "。", "！", "？"];
 const SENTENCE_TERMINATORS: ReadonlySet<string> = new Set(TERMINATOR_CHARS);
 
 const TERMINATOR_CLASS_SOURCE = `[${TERMINATOR_CHARS.map((char) =>
-  char.replace(/[\\^\]-]/g, "\\$&"),
+  char.replace(/[\\^\]-]/g, String.raw`\$&`),
 ).join("")}]`;
 
 /** A sentence boundary is whitespace after a terminator and before a capital. */
 const SENTENCE_SPLIT_RE = new RegExp(
-  `(?<=${TERMINATOR_CLASS_SOURCE})\\s+(?=[A-Z0-9])`,
+  String.raw`(?<=${TERMINATOR_CLASS_SOURCE})\s+(?=[A-Z0-9])`,
   "g",
 );
 
@@ -298,8 +298,17 @@ const FILLER_RE = /\b(?:u[hm]+|er+|ah+|h?mm+)\b[,\s]*/gi;
 // immediately after a LEADING marker means the marker was its own sentence and
 // the words after it began a new one, so `^` accepts only a comma or the end of
 // the text -- the two shapes that really do make it a discourse marker.
-const EXTRA_FILLER_RE =
-  /(^you know\b\s*(?:,\s*|$))|,\s*you know\b\s*(?:,\s*|[.!?]+|$)/gi;
+// The two anchors are two patterns, which is what the argument above asks for. One
+// alternation carrying both had a single tail that could not be right for either anchor, and
+// splitting them is also what brought the pair under the complexity budget the analyzer
+// reports against a single regex here.
+//
+// Equivalent output, but only in one order -- see the call site. The equivalence was first
+// measured over 180 probes that placed ONE marker at a time, which passed in either order
+// and was not enough: two markers in one string is the axis that decides it, and it is
+// pinned by a test.
+const EXTRA_FILLER_LEADING_RE = /^you know\b\s*(?:,\s*|$)/gi;
+const EXTRA_FILLER_MID_RE = /,\s*you know\b\s*(?:,\s*|[.!?]+|$)/gi;
 // One list, two patterns. `EXTRA_FILLER_COMMA_LEADING_RE` matches a comma-filled
 // connective that OPENED the text, and `EXTRA_FILLER_COMMA_MID_RE` one that sat inside a
 // clause; together they are the whole of what the single pattern used to do, and they are
@@ -481,7 +490,25 @@ const removeFillerWords = (
 ): string => {
   let out = text.replace(FILLER_RE, "");
   if (aggressive) {
-    out = out.replace(EXTRA_FILLER_RE, " ");
+    // LEADING first, then MID, and the order is load-bearing. The mid pattern is not
+    // anchored, so running it first can consume a `, you know<tail>` that sits inside the
+    // span the leading anchor owns, and the leading pass then fires again on the text the
+    // mid pass rewrote -- removing two markers where the single alternation removed one,
+    // and swallowing the sentence's closing punctuation on the way. `you know, you know?`
+    // came back as one space instead of ` you know?`, and `you know, you know? Did you?`
+    // came back as `you know  Did you?` -- the punctuation and the second marker's tail
+    // gone. Through the module both of those style to an EMPTY string, which is the
+    // outcome this module's own comments rank above a mispunctuated sentence.
+    //
+    // Leading first cannot do that. It matches at index 0 at most once -- `^` without the
+    // `m` flag cannot re-match past `lastIndex` -- so it consumes some span [0, k) and
+    // leaves the rest of the string alone. The mid pass then scans from new-index 1, which
+    // is original-index k: exactly where the single alternation resumes, because it too
+    // resumes past its first match. And the leading pass cannot create a mid match of its
+    // own, because it replaced its span with a single space where mid requires a comma.
+    out = out
+      .replace(EXTRA_FILLER_LEADING_RE, " ")
+      .replace(EXTRA_FILLER_MID_RE, " ");
     // `EXTRA_FILLER_COMMA_RE` is `(?:^|\s)(?:I mean|so|well)\s*,\s*`, so it has an
     // anchored alternative as well as a mid-clause one, and both DELETE. Only the anchored
     // alternative is what a false sentence start feeds, so only that one is gated: the

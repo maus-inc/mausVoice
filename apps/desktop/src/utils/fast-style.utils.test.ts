@@ -267,7 +267,7 @@ describe("applyFastStyle fast local transforms", () => {
     // a safe anchor because the words after it are ordinary English.
     // The first case is the shape that was still broken: `You know.` at the START of
     // the text, closed by a full stop. Mid-text the guard needs a preceding comma
-    // (`EXTRA_FILLER_RE`'s `,\s*` alternative), so a full stop there cannot delete a
+    // (`EXTRA_FILLER_MID_RE`'s `,\s*` alternative), so a full stop there cannot delete a
     // subject. At `^` there is no preceding comma to require, so the phrase closed
     // itself and the whole opening sentence went with it -- "You know. It works."
     // styled to "It works.", which is silent data loss, the harm this module ranks
@@ -326,6 +326,49 @@ describe("applyFastStyle fast local transforms", () => {
       expect(applyFastStyle(filler, "default").toLowerCase()).not.toContain(
         "you know",
       );
+    }
+  });
+
+  // Every PRE-EXISTING case in this file carries ONE marker -- all seven of them, counted
+  // from vitest's own expanded test names. This test and the control below it carry two,
+  // which is the axis that decides whether the two anchored passes can stand in for the
+  // single alternation they replaced, and it is the axis 180 single-marker probes missed.
+  //
+  // The mid pattern is unanchored, so running it first can consume a `, you know<tail>`
+  // inside the span the leading anchor owns, and the leading pass then fires again on the
+  // text the mid pass rewrote. That removed two markers where the single pattern removed
+  // one and swallowed the closing punctuation: `you know, you know? Did you?` styled to
+  // `you know Did you?` rather than `You know? Did you?`.
+  //
+  // Expected values are what the pre-split MODULE produced for these inputs, measured at
+  // this commit's parent rather than taken from the old pattern -- an inline copy of that
+  // pattern would be a second subject, and this file's job is to pin the module.
+  it("handles two 'you know' markers the way the single pattern did", () => {
+    // Every expectation here is the output the single alternation produced, measured at
+    // this commit's parent by styling the same input through the pre-split module. Asserted
+    // as literals rather than by re-running the old pattern inline: an inline copy is a
+    // second subject, and this file's job is to pin the module.
+    for (const [raw, expected] of [
+      ["you know, you know", "You know."],
+      ["you know, you know.", "You know."],
+      ["you know, you know?", "You know?"],
+      ["you know, you know, you know", "You know."],
+      ["you know, you know? Really?", "You know? Really?"],
+      ["you know, you know? Did you?", "You know? Did you?"],
+      ["you know, you know! Really!", "You know! Really!"],
+    ] as const) {
+      expect(applyFastStyle(raw, "default"), `styled output for ${raw}`).toBe(
+        expected,
+      );
+    }
+  });
+
+  it("still keeps a sentence when the only thing in it was two markers", () => {
+    // The control for the case above: `you know, you know.` styled to an EMPTY string
+    // under the wrong pass order, which is the outcome this module's own comments rank
+    // above a mispunctuated sentence.
+    for (const raw of ["you know, you know.", "you know, you know?"]) {
+      expect(applyFastStyle(raw, "default"), raw).not.toBe("");
     }
   });
 
