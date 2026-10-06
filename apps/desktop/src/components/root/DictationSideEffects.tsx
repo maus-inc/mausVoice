@@ -703,7 +703,7 @@ export const DictationSideEffects = () => {
       if (phaseBookkeeperRef.current.getLastSent() === "idle") {
         return;
       }
-      void sendPhaseToPill("idle");
+      sendPhaseToPill("idle");
     }, PHASE_HEARTBEAT_INTERVAL_MS);
     return () => clearInterval(interval);
   }, [sendPhaseToPill]);

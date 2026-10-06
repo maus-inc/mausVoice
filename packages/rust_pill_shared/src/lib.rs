@@ -2974,8 +2974,14 @@ mod tests {
         assert_eq!(active_stage_text(None), None);
         assert_eq!(active_stage_text(Some("")), None);
         assert_eq!(active_stage_text(Some("   \t\n ")), None);
-        assert_eq!(active_stage_text(Some("  Transcribing  ")), Some("Transcribing"));
-        assert_eq!(active_stage_text(Some("Finalizing audio")), Some("Finalizing audio"));
+        assert_eq!(
+            active_stage_text(Some("  Transcribing  ")),
+            Some("Transcribing")
+        );
+        assert_eq!(
+            active_stage_text(Some("Finalizing audio")),
+            Some("Finalizing audio")
+        );
     }
 
     #[test]

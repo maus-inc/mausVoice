@@ -653,6 +653,7 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
                 state.loading_offset.set(offset);
             }
             if phase == Phase::Idle && prev != Phase::Idle {
+                state.pending_levels.borrow_mut().clear();
                 state.target_level.set(0.0);
                 state.current_level.set(0.0);
                 state.wave_phase.set(0.0);

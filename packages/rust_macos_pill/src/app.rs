@@ -596,6 +596,7 @@ fn perform_tick() {
                         ctx.state.loading_offset.set(offset);
                     }
                     if phase == Phase::Idle && prev != Phase::Idle {
+                        ctx.state.pending_levels.borrow_mut().clear();
                         ctx.state.target_level.set(0.0);
                         ctx.state.current_level.set(0.0);
                         ctx.state.wave_phase.set(0.0);

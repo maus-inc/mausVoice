@@ -170,6 +170,21 @@ const insertLocalOutput = async (
   return insertLocalTranscriptOutputViaPaste(text, pasteKeybind, isInterim);
 };
 
+const waitForHandsFreeDelay = async (
+  prefs: ReturnType<typeof getMyUserPreferences>,
+  sessionId: number,
+  isInterim: boolean | undefined,
+): Promise<boolean> => {
+  const handsFreeDelayMs = getEffectiveHandsFreeDelayMs(prefs);
+  if (handsFreeDelayMs <= 0 || isInterim) {
+    return true;
+  }
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, handsFreeDelayMs);
+  });
+  return sessionId === handsFreeSessionId;
+};
+
 const deliverWithInsertionStage = async (
   isInterim: boolean | undefined,
   trace: PipelineTrace | null,
@@ -213,15 +228,13 @@ export const routeTranscriptOutput = async (
   }
 
   return deliverWithInsertionStage(args.isInterim, trace, async () => {
-    const handsFreeDelayMs = getEffectiveHandsFreeDelayMs(prefs);
-
-    if (handsFreeDelayMs > 0 && !args.isInterim) {
-      await new Promise<void>((resolve) => {
-        setTimeout(resolve, handsFreeDelayMs);
-      });
-      if (sessionId !== handsFreeSessionId) {
-        return { delivered: false, remote: false, deliveredText: null };
-      }
+    const canProceed = await waitForHandsFreeDelay(
+      prefs,
+      sessionId,
+      args.isInterim,
+    );
+    if (!canProceed) {
+      return { delivered: false, remote: false, deliveredText: null };
     }
 
     const outcome = await insertLocalOutput(

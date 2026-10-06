@@ -574,6 +574,7 @@ pub fn run(receiver: Receiver<InMessage>) {
                         state_tick.loading_offset.set(offset);
                     }
                     if phase == Phase::Idle && prev != Phase::Idle {
+                        state_tick.pending_levels.borrow_mut().clear();
                         state_tick.target_level.set(0.0);
                         state_tick.current_level.set(0.0);
                         state_tick.wave_phase.set(0.0);

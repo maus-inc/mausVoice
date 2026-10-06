@@ -401,15 +401,17 @@ export class DictationStrategy extends BaseStrategy {
           const tone = effectiveToneId
             ? state.toneById[effectiveToneId]
             : undefined;
-          if (!tone?.shouldDisablePostProcessing) {
-            sendPillStageText(
-              getIntl().formatMessage({ defaultMessage: "Polishing" }),
-            );
-          }
           const result = await postProcessTranscript({
             rawTranscript: sanitizedTranscript,
             toneId: args.toneId,
             trace: args.trace,
+            onPolishStart: tone?.shouldDisablePostProcessing
+              ? undefined
+              : () => {
+                  sendPillStageText(
+                    getIntl().formatMessage({ defaultMessage: "Polishing" }),
+                  );
+                },
           });
 
           transcript = result.transcript;

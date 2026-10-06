@@ -80,6 +80,56 @@ const roundedRect = (
   ctx.closePath();
 };
 
+const elideTextToWidth = (
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  maxW: number,
+): string => {
+  if (maxW <= 0) return "";
+  if (ctx.measureText(text).width <= maxW) return text;
+  const chars = Array.from(text);
+  for (let i = chars.length - 1; i >= 1; i--) {
+    const candidate = `${chars.slice(0, i).join("").trimEnd()}…`;
+    if (ctx.measureText(candidate).width <= maxW) {
+      return candidate;
+    }
+  }
+  return ctx.measureText("…").width <= maxW ? "…" : "";
+};
+
+const paintLoadingBar = (
+  ctx: CanvasRenderingContext2D,
+  opts: {
+    rx: number;
+    ry: number;
+    pillW: number;
+    pillH: number;
+    loadOffset: number;
+    reduceMotion: boolean;
+    trackAlpha: number;
+    indicatorAlpha: number;
+  },
+) => {
+  const barH = 2;
+  const barY = opts.ry + (opts.pillH - barH) / 2;
+  const pad = opts.pillH * 0.1;
+  const tx = opts.rx + pad;
+  const tw = Math.max(opts.pillW - pad * 2, 0);
+  if (tw <= 0) return;
+
+  ctx.fillStyle = `rgba(255,255,255,${opts.trackAlpha.toFixed(3)})`;
+  ctx.fillRect(tx, barY, tw, barH);
+  const iw = tw * LOAD_FRAC;
+  const effectiveOffset = opts.reduceMotion ? 0.5 : opts.loadOffset;
+  const ix = tx + (tw + iw) * effectiveOffset - iw;
+  const dl = Math.max(ix, tx);
+  const dr = Math.min(ix + iw, tx + tw);
+  if (dr > dl) {
+    ctx.fillStyle = `rgba(255,255,255,${opts.indicatorAlpha.toFixed(3)})`;
+    ctx.fillRect(dl, barY, dr - dl, barH);
+  }
+};
+
 const nextTargetLevel = (
   phase: PillPhase,
   reduceMotion: boolean | null,
@@ -236,52 +286,30 @@ export const NativePillCanvas = ({
 
       if (expand > 0.1 && s.phase === "loading") {
         drawClipped(() => {
-          const stage = s.stageText?.trim() ? s.stageText.trim() : null;
+          const stage = s.stageText?.trim() || null;
           const trackAlpha =
             (stage ? LOAD_DIM_TRACK_ALPHA : LOAD_TRACK_ALPHA) * expand;
           const indicatorAlpha =
             (stage ? LOAD_DIM_IND_ALPHA : LOAD_IND_ALPHA) * expand;
-          const barH = 2;
-          const barY = ry + (pillH - barH) / 2;
-          const pad = pillH * 0.1;
-          const tx = rx + pad;
-          const tw = Math.max(pillW - pad * 2, 0);
-          if (tw > 0) {
-            ctx.fillStyle = `rgba(255,255,255,${trackAlpha.toFixed(3)})`;
-            ctx.fillRect(tx, barY, tw, barH);
-            const iw = tw * LOAD_FRAC;
-            const effectiveOffset = s.reduceMotion ? 0.5 : loadOffset;
-            const ix = tx + (tw + iw) * effectiveOffset - iw;
-            const dl = Math.max(ix, tx);
-            const dr = Math.min(ix + iw, tx + tw);
-            if (dr > dl) {
-              ctx.fillStyle = `rgba(255,255,255,${indicatorAlpha.toFixed(3)})`;
-              ctx.fillRect(dl, barY, dr - dl, barH);
-            }
-          }
-          if (stage) {
-            ctx.font = "12px Satoshi, system-ui, sans-serif";
-            const maxW = Math.max(Math.max(pillW, EXPANDED_W) - 16, 0);
-            let label = stage;
-            if (maxW > 0 && ctx.measureText(label).width > maxW) {
-              const chars = Array.from(label);
-              let fitted = "";
-              for (let i = chars.length - 1; i >= 1; i--) {
-                const candidate = `${chars.slice(0, i).join("").trimEnd()}…`;
-                if (ctx.measureText(candidate).width <= maxW) {
-                  fitted = candidate;
-                  break;
-                }
-              }
-              label = fitted || (ctx.measureText("…").width <= maxW ? "…" : "");
-            }
-            if (label) {
-              ctx.fillStyle = `rgba(255,255,255,${(STAGE_TEXT_ALPHA * expand).toFixed(3)})`;
-              ctx.textAlign = "center";
-              ctx.textBaseline = "middle";
-              ctx.fillText(label, rx + pillW / 2, ry + pillH / 2 + 0.5);
-            }
-          }
+          paintLoadingBar(ctx, {
+            rx,
+            ry,
+            pillW,
+            pillH,
+            loadOffset,
+            reduceMotion: Boolean(s.reduceMotion),
+            trackAlpha,
+            indicatorAlpha,
+          });
+          if (!stage) return;
+          ctx.font = "12px Satoshi, system-ui, sans-serif";
+          const maxW = Math.max(Math.max(pillW, s.expandedW) - 16, 0);
+          const label = elideTextToWidth(ctx, stage, maxW);
+          if (!label) return;
+          ctx.fillStyle = `rgba(255,255,255,${(STAGE_TEXT_ALPHA * expand).toFixed(3)})`;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText(label, rx + pillW / 2, ry + pillH / 2 + 0.5);
         });
       }
 
