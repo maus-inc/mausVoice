@@ -137,6 +137,99 @@ describe("applyFastStyle fast local transforms", () => {
     const out = applyFastStyle(raw, "notes");
     expect(out).toContain("- ");
   });
+  // Finding 4188220733. `toNotes` sorts a chunk's own sentences into notes and actions and
+  // emits notes-then-actions FOR THAT CHUNK; `applyFastStyle` then joins the chunks. So a
+  // long dictation came out as
+  //
+  //     [chunk1 notes][chunk1 actions][chunk2 notes][chunk2 actions]
+  //
+  // and an action in an early chunk sat above ordinary notes in a later one. The same
+  // content reordered purely by crossing the cap, which is the harm: the notes tone's whole
+  // job is that the action list ends up at the end.
+  describe("notes keeps one action list across every chunk", () => {
+    const SENTENCE = "The quick brown fox jumps over the lazy dog.";
+    const ACTION = "We need to ship the release today.";
+    const NOTE = "The weather in Lagos has been unusually wet this week.";
+
+    /** Over the cap, with the action in chunk 1 and the note in chunk 2. */
+    const spanningTheCap = (): string => {
+      const pad = `${SENTENCE} `;
+      let head = pad
+        .repeat(Math.ceil(FAST_STYLE_MAX_INPUT_CHARS / pad.length) + 4)
+        .slice(0, FAST_STYLE_MAX_INPUT_CHARS - ACTION.length - 1);
+      while (head.length && head[head.length - 1] !== " ")
+        head = head.slice(0, -1);
+      return `${head}${ACTION} ${NOTE} The invoice for March is still unpaid.`;
+    };
+
+    const order = (out: string) => {
+      const items = out.split("\n").filter((l) => l.startsWith("- "));
+      return {
+        firstAction: items.findIndex((l) => l.startsWith("- [ ]")),
+        lastNote: items
+          .map((l, i) => (l.startsWith("- [ ]") ? -1 : i))
+          .filter((i) => i >= 0)
+          .pop(),
+      };
+    };
+
+    it("puts the action in chunk 1 and the note in chunk 2", () => {
+      // The guard for the test below: if the seam moved, both sentences would land in one
+      // chunk and the assertion would pass for the wrong reason.
+      const text = spanningTheCap();
+      expect(text.length).toBeGreaterThan(FAST_STYLE_MAX_INPUT_CHARS);
+      const cut = findChunkCut(text, 0, FAST_STYLE_MAX_INPUT_CHARS);
+      // `>=` on the note, not `>`: the sentence boundary the chunker finds here is the full
+      // stop that ENDS the action sentence, so the note begins exactly AT the cut.
+      expect(text.indexOf(ACTION)).toBeLessThan(cut);
+      expect(text.indexOf(NOTE)).toBeGreaterThanOrEqual(cut);
+      expect(cut).toBeLessThan(text.length);
+    });
+
+    it("emits every note before the first action, as it does under the cap", () => {
+      const over = applyFastStyle(spanningTheCap(), "notes");
+      const under = applyFastStyle(
+        `${ACTION} ${NOTE} The invoice for March is still unpaid.`,
+        "notes",
+      );
+      // Only the ORDER is compared, not the counts: the over-cap input carries the padding
+      // sentences and the control does not, so the two legitimately hold different numbers
+      // of notes. What has to match is that both put every note ahead of the first action.
+      const a = order(over);
+      const b = order(under);
+      expect(
+        a.firstAction,
+        `over the cap: no action found`,
+      ).toBeGreaterThanOrEqual(0);
+      expect(
+        b.firstAction,
+        `under the cap: no action found`,
+      ).toBeGreaterThanOrEqual(0);
+      expect(
+        a.lastNote,
+        `over the cap, tail: ${JSON.stringify(over.slice(-160))}`,
+      ).toBeLessThan(a.firstAction);
+      expect(b.lastNote).toBeLessThan(b.firstAction);
+    });
+
+    it("keeps the three real sentences, none of them twice", () => {
+      // The control on the merge: accumulating across chunks must not drop or duplicate. The
+      // padding repeats by construction, so this counts the three sentences the input is
+      // actually about rather than every line.
+      const out = applyFastStyle(spanningTheCap(), "notes");
+      const items = out.split("\n").filter((l) => l.startsWith("- "));
+      for (const sentence of [
+        ACTION,
+        NOTE,
+        "The invoice for March is still unpaid.",
+      ]) {
+        const hits = items.filter((l) =>
+          l.includes(sentence.replace(/\.$/, "")),
+        ).length;
+        expect(hits, `${sentence} appears ${hits} times`).toBe(1);
+      }
+    });
+  });
 
   it("chat keeps casual and removes filler", () => {
     const raw = "um so I was like thinking we should grab coffee tomorrow";

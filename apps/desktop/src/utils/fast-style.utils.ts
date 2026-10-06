@@ -895,25 +895,52 @@ const toConcise = (
   return fixCapitalizationAndPunctuation(text, isFinal);
 };
 
-const toNotes = (raw: string, startsSentence = true): string => {
+const ACTION_SENTENCE_RE =
+  /\b(?:need to|should|must|will|todo|action|next step|follow up|decide|decision)\b/i;
+
+/** What one chunk's sentences are: the ordinary ones, and the ones that name an action. */
+type NoteBuckets = { notes: string[]; actions: string[] };
+
+/**
+ * Split ONE chunk's sentences into the two buckets, without emitting either.
+ *
+ * Split out of the emit step because the two have to happen at different scopes. This
+ * function does no emitting at all: classification is per chunk because the chunk cap is per
+ * chunk, and the RESULT is accumulated across all of them before anything is written -- see
+ * `applyFastStyle`.
+ */
+const classifyForNotes = (raw: string, startsSentence = true): NoteBuckets => {
   const guarded = assertWithinChunkSize(raw);
   let text = guarded.trim();
   text = applySymbolReplacements(text);
   text = fixSelfCorrections(text);
   text = removeFillerWords(text, true, startsSentence);
-  const sentences = splitIntoSentences(text);
-  if (sentences.length === 0) return text;
-
-  const actionRe =
-    /\b(?:need to|should|must|will|todo|action|next step|follow up|decide|decision)\b/i;
   const notes: string[] = [];
   const actions: string[] = [];
-
-  for (const s of sentences) {
-    if (actionRe.test(s)) actions.push(s);
-    else notes.push(s);
+  for (const sentence of splitIntoSentences(text)) {
+    if (ACTION_SENTENCE_RE.test(sentence)) actions.push(sentence);
+    else notes.push(sentence);
   }
+  return { notes, actions };
+};
 
+/** Fold one chunk's buckets into the running totals, preserving order. */
+const mergeNoteBuckets = (
+  into: NoteBuckets,
+  from: NoteBuckets,
+): NoteBuckets => ({
+  notes: [...into.notes, ...from.notes],
+  actions: [...into.actions, ...from.actions],
+});
+
+/**
+ * Emit the accumulated buckets: every ordinary note, then every action.
+ *
+ * One call for the WHOLE dictation rather than one per chunk, which is the whole point --
+ * see `applyFastStyle`.
+ */
+const renderNotes = (buckets: NoteBuckets, fallback: string): string => {
+  const { notes, actions } = buckets;
   const parts: string[] = [];
   if (notes.length > 0) {
     parts.push(
@@ -929,7 +956,7 @@ const toNotes = (raw: string, startsSentence = true): string => {
     );
   }
 
-  return parts.join("\n").trim() || toBullets(guarded);
+  return parts.join("\n").trim() || toBullets(fallback);
 };
 
 /**
@@ -938,10 +965,13 @@ const toNotes = (raw: string, startsSentence = true): string => {
  * is invisible; the sentence-shaped tones rejoin on a space, which is what they
  * use between sentences already.
  */
+// How a chunk's styled text meets the next chunk's. The NOTES tone is ABSENT because it
+// does not go through `applyStyleToChunk` at all: `applyFastStyle` classifies every chunk and
+// emits once, so there is no per-chunk output of the notes tone to join. Adding an entry here
+// for it would be a lie about a path nothing takes.
 const CHUNK_JOIN_BY_TONE: Readonly<Record<string, string | undefined>> = {
   [EMAIL_TONE_ID]: "\n\n",
   [BULLETS_TONE_ID]: "\n",
-  [NOTES_TONE_ID]: "\n",
 };
 
 const applyStyleToChunk = (
@@ -973,8 +1003,6 @@ const applyStyleToChunk = (
       return toBullets(chunk, position.startsSentence);
     case CONCISE_TONE_ID:
       return toConcise(chunk, position.isLast, position.startsSentence);
-    case NOTES_TONE_ID:
-      return toNotes(chunk, position.startsSentence);
     default:
       // Custom and deprecated tones reach here only when a caller skipped
       // canApplyFastStyle. A free-form prompt cannot be honoured locally, and a
@@ -1002,11 +1030,14 @@ const applyStyleToChunk = (
  * takes `isLast`, and it is the reason `toPolished`, `toChat`, `toFormal`, `toConcise`,
  * `toPrompt` and `toEmail` all take it now.
  *
- * Not every transform is told, and saying so was the overstatement: `toBullets` and
- * `toNotes` are called with the chunk alone. Neither appends a sentence terminator —
- * one joins with newlines and the other restructures into notes — so there is nothing
- * for `isLast` to suppress. The rule is "every transform that appends a terminator",
- * not "every transform".
+ * Not every transform is told, and saying so was the overstatement: `toBullets` is called
+ * with the chunk alone. It appends no sentence terminator -- it emits one line per sentence
+ * and joins them with newlines -- so there is nothing for `isLast` to suppress. The rule is
+ * "every transform that appends a terminator", not "every transform".
+ *
+ * `toNotes` used to be the second name on that list. It is not called at all now: the notes
+ * tone restructures the WHOLE dictation rather than each chunk, so `applyFastStyle` handles
+ * it before `applyStyleToChunk` is reached and there is no `toNotes` to name here.
  */
 export const applyFastStyle = (
   rawTranscript: string,
@@ -1021,6 +1052,36 @@ export const applyFastStyle = (
 
   try {
     const chunks = splitIntoChunks(trimmed);
+
+    // The notes tone is the one transform whose OUTPUT is a reordering, so it cannot be
+    // applied per chunk and concatenated. `toNotes` used to split a chunk into ordinary
+    // notes and actions and emit notes-then-actions for THAT chunk; applied per chunk, a
+    // long dictation came out as
+    //
+    //     [chunk1 notes][chunk1 actions][chunk2 notes][chunk2 actions]
+    //
+    // so an action from an early chunk sat ABOVE ordinary notes from a later one, and the
+    // same content reordered purely by crossing the cap. Measured before this change: an
+    // action at 14961 characters and a note after it styled to
+    // "- [ ] We need to ship the release today" followed by
+    // "- The weather in Lagos has been unusually wet this week", where under the cap the
+    // same two sentences give the notes first and the action last.
+    //
+    // So classify every chunk and emit once. The chunk cap still applies -- each chunk goes
+    // through `classifyForNotes`, which asserts it -- and the `try` still catches a throw
+    // from any chunk, so the raw transcript remains the answer when one fails.
+    if (toneId === NOTES_TONE_ID) {
+      const buckets = chunks.reduce<NoteBuckets>(
+        (into, chunk) =>
+          mergeNoteBuckets(
+            into,
+            classifyForNotes(chunk.text, chunk.startsSentence),
+          ),
+        { notes: [], actions: [] },
+      );
+      return renderNotes(buckets, trimmed);
+    }
+
     const lastIndex = chunks.length - 1;
     return chunks
       .map((chunk, index) =>
