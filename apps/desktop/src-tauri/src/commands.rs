@@ -250,18 +250,17 @@ pub fn encode_recorded_audio(samples: &[f32], sample_rate: u32) -> Vec<u8> {
 /// a recording back (`store_transcription_audio`). One wire format describes a
 /// recording in both directions.
 pub fn decode_recorded_audio(bytes: &[u8]) -> Result<(u32, Vec<f32>), String> {
-    let Some((header, payload)) = bytes.split_first_chunk::<4>() else {
+    if bytes.len() < 4 {
         return Err("Recorded audio payload is missing its sample-rate header".to_string());
-    };
-    let sample_rate = u32::from_le_bytes(*header);
+    }
+    let sample_rate = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+    let payload = &bytes[4..];
     if payload.len() % 4 != 0 {
         return Err("Recorded audio payload ends in a truncated sample".to_string());
     }
     let mut samples = Vec::with_capacity(payload.len() / 4);
     for chunk in payload.chunks_exact(4) {
-        // `chunks_exact(4)` only yields 4-byte slices, so this cannot fail.
-        let sample_bytes: [u8; 4] = chunk.try_into().expect("chunk is exactly 4 bytes");
-        samples.push(f32::from_le_bytes(sample_bytes));
+        samples.push(f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
     }
     Ok((sample_rate, samples))
 }
@@ -3206,16 +3205,23 @@ pub async fn store_transcription_audio(
     app: AppHandle,
     request: tauri::ipc::Request,
 ) -> Result<TranscriptionAudioSnapshot, String> {
-    let transcription_id = request
+    let header_value = request
         .headers()
         .get("x-transcription-id")
-        .and_then(|value| value.to_str().ok())
-        .map(|value| value.to_owned())
-        .filter(|value| !value.is_empty())
         .ok_or_else(|| "Missing the x-transcription-id header".to_string())?;
+    let transcription_id = header_value
+        .to_str()
+        .map_err(|_| "The x-transcription-id header is not valid UTF-8".to_string())?
+        .to_string();
+    if transcription_id.is_empty() {
+        return Err("Missing the x-transcription-id header".to_string());
+    }
 
-    let tauri::ipc::InvokeBody::Raw(body) = request.body() else {
-        return Err("store_transcription_audio expects a raw audio body".to_string());
+    let body = match request.body() {
+        tauri::ipc::InvokeBody::Raw(raw) => raw.as_slice(),
+        tauri::ipc::InvokeBody::Json(_) => {
+            return Err("store_transcription_audio expects a raw audio body".to_string());
+        }
     };
 
     let (sample_rate, samples) = decode_recorded_audio(body)?;
@@ -3223,7 +3229,12 @@ pub async fn store_transcription_audio(
         return Err("Audio sample rate must be greater than zero".to_string());
     }
 
-    let filtered: Vec<f32> = samples.into_iter().filter(f32::is_finite).collect();
+    let mut filtered: Vec<f32> = Vec::with_capacity(samples.len());
+    for sample in samples {
+        if sample.is_finite() {
+            filtered.push(sample);
+        }
+    }
     if filtered.is_empty() {
         return Err("No usable audio samples provided".to_string());
     }
