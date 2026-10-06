@@ -585,7 +585,21 @@ describe("postProcessFinalizedTranscript", () => {
 
   it("promises History when the review session already stored the row", async () => {
     const { input, showToast } = buildInput({ droppedChars: 42 });
-    input.result = { ...input.result, historyOwner: "review" };
+    input.strategy = {
+      ...input.strategy,
+      handleTranscript: vi.fn(() =>
+        Promise.resolve({
+          shouldContinue: false,
+          transcript: "hello world",
+          sanitizedTranscript: "hello world",
+          postProcessMetadata: { fastStyleTruncatedChars: 42 },
+          postProcessWarnings: [],
+          remoteStatus: null,
+          remoteDeviceId: null,
+          historyOwner: "review" as const,
+        }),
+      ),
+    };
 
     await postProcessFinalizedTranscript(input);
     await flushHistoryPersist();
