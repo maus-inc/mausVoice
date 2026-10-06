@@ -1,4 +1,3 @@
-import { ArrowRight } from "lucide-react";
 import { Box, Button, Stack, Typography } from "@mui/material";
 import { FormattedMessage } from "react-intl";
 import { useNavigate } from "react-router-dom";
@@ -44,9 +43,6 @@ export default function HelpPage() {
                       <Button
                         size="small"
                         variant="outlined"
-                        endIcon={
-                          <ArrowRight size={14} strokeWidth={2} aria-hidden />
-                        }
                         onClick={() => navigate(tip.href as string)}
                         sx={{ textTransform: "none", borderRadius: 999 }}
                       >
