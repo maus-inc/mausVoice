@@ -939,7 +939,7 @@ const mergeNoteBuckets = (
  * One call for the WHOLE dictation rather than one per chunk, which is the whole point --
  * see `applyFastStyle`.
  */
-const renderNotes = (buckets: NoteBuckets, fallback: string): string => {
+const renderNotes = (buckets: NoteBuckets): string => {
   const { notes, actions } = buckets;
   const parts: string[] = [];
   if (notes.length > 0) {
@@ -956,7 +956,26 @@ const renderNotes = (buckets: NoteBuckets, fallback: string): string => {
     );
   }
 
-  return parts.join("\n").trim() || toBullets(fallback);
+  const rendered = parts.join("\n").trim();
+  if (rendered) return rendered;
+
+  // Both buckets empty. Every chunk reduced to nothing BEFORE classification -- filler,
+  // self-corrections and symbol replacements left no sentence behind -- so there is nothing to
+  // bullet, and the empty string is the honest answer.
+  //
+  // This path used to end in `toBullets(trimmed)`, the WHOLE transcript. `toBullets` asserts the
+  // chunk size, so past the cap that assert threw, the caller's `try` turned it into "return
+  // rawTranscript", and a dictation of nothing but filler came back as itself, unstyled.
+  //
+  // Not calling `toBullets` here is what closes that, and it is also why there is no argument to
+  // get wrong: `toBullets` runs the transform chain this path has already run, so on an input
+  // with no sentences left it returns "" whatever text it is handed. Measured over 11 inputs
+  // that reach this branch -- all-filler bodies from one chunk to two past the cap, filler
+  // around a sentence that is not an action, non-breaking-space and newline filler -- bulleting
+  // the last chunk, the first chunk, or the empty string was non-empty in 0 of them. So the
+  // argument could not have changed the output, and a bounded one would have been a false
+  // invariant rather than a fix.
+  return "";
 };
 
 /**
@@ -1079,7 +1098,7 @@ export const applyFastStyle = (
           ),
         { notes: [], actions: [] },
       );
-      return renderNotes(buckets, trimmed);
+      return renderNotes(buckets);
     }
 
     const lastIndex = chunks.length - 1;

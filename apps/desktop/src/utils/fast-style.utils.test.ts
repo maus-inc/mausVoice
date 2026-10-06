@@ -229,6 +229,42 @@ describe("applyFastStyle fast local transforms", () => {
         expect(hits, `${sentence} appears ${hits} times`).toBe(1);
       }
     });
+
+    // Finding 4190838907. `renderNotes(buckets, fallback)` returns `toBullets(fallback)` when
+    // both buckets come back empty, and on this path `fallback` is the WHOLE trimmed
+    // transcript. `toBullets` asserts within the chunk size, so an over-cap dictation whose
+    // sentences all reduce away threw, the surrounding `try` caught it, and the caller received
+    // its own input back verbatim -- the one output the module's contract calls the worst.
+    //
+    // The old `toNotes` could not do this: its `if (sentences.length === 0) return text;` ran
+    // first, so `toBullets(guarded)` was unreachable dead code. Restoring that guard is the fix,
+    // and these two tests exist so the fallback cannot come back.
+    it("never hands back the input when every sentence reduces away", () => {
+      const text = "um "
+        .repeat(Math.ceil(FAST_STYLE_MAX_INPUT_CHARS / 3) + 10)
+        .slice(0, FAST_STYLE_MAX_INPUT_CHARS + 500);
+      expect(text.length).toBeGreaterThan(FAST_STYLE_MAX_INPUT_CHARS);
+      const out = applyFastStyle(text, "notes");
+      // The defect's exact signature: output === input.
+      expect(out).not.toBe(text);
+      // And the module must not have fallen back to the raw transcript at all.
+      expect(out.trim()).toBe("");
+    });
+
+    it("leaves the under-cap all-filler shapes exactly as they were", () => {
+      // The control: under the cap nothing reaches the fallback, so these outputs must not
+      // move. Measured against the pre-refactor module, which is where the numbers come from --
+      // not from what looks tidy. `"uh huh er ah"` keeps a `- Huh` note, because `huh` is not
+      // in the filler vocabulary, so it is a note like any other.
+      for (const [raw, expected] of [
+        ["um um um", ""],
+        ["um um um um um", ""],
+        ["uh huh er ah", "- Huh"],
+        ["um, uh, er.", "-"],
+      ] as const) {
+        expect(applyFastStyle(raw, "notes"), raw).toBe(expected);
+      }
+    });
   });
 
   it("chat keeps casual and removes filler", () => {
