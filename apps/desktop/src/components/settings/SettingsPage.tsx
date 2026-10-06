@@ -1222,11 +1222,13 @@ export default function SettingsPage() {
       }
     >
       {/* The action focuses the Groq key row in place instead of navigating
-          (the Help list's "Open settings" href is a no-op on this page). */}
+          (the Help list's "Open settings" wording is a no-op on this page). */}
       <TipCard
         id="generative-provider"
-        actionLabel={<FormattedMessage defaultMessage="Add API key" />}
-        onAction={() => focusSetting("groq_api_key")}
+        action={{
+          label: <FormattedMessage defaultMessage="Add API key" />,
+          onAction: () => focusSetting("groq_api_key"),
+        }}
       />
       <SettingAnchor settingKey="deepgram_api_key" highlight={highlight}>
         <ListTile

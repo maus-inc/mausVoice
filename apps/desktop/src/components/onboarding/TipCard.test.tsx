@@ -145,7 +145,7 @@ describe("TipCard", () => {
   it("renders no action for a tip anchored on its own feature page", async () => {
     await renderCard();
 
-    // `review-before-insert` has no `href` or `onAction`, so only the dismiss
+    // `review-before-insert` is passed no `action`, so only the dismiss
     // control is present — the page below the tip is the feature.
     expect(container.querySelectorAll("button")).toHaveLength(1);
     expect(dismissButton()).toBeTruthy();
@@ -174,6 +174,25 @@ describe("TipCard", () => {
     });
   });
 
+  it("persists the dismissal if the tip unmounts mid-exit", async () => {
+    // Navigating away during the exit animation interrupts it, so the
+    // exit-completion path never runs. The dismissal is a deliberate choice
+    // and must still persist, or the tip reappears on the next visit.
+    await renderCard();
+
+    act(() => {
+      dismissButton().click();
+    });
+    expect(mocks.dismissTip).not.toHaveBeenCalled();
+
+    act(() => {
+      root.unmount();
+    });
+
+    expect(mocks.dismissTip).toHaveBeenCalledTimes(1);
+    expect(mocks.dismissTip).toHaveBeenCalledWith("review-before-insert");
+  });
+
   it("does not persist the dismissal twice on repeated clicks", async () => {
     await renderCard();
 
@@ -187,12 +206,11 @@ describe("TipCard", () => {
     });
   });
 
-  it("runs the in-page action instead of navigating", async () => {
+  it("runs the in-page action", async () => {
     const onAction = vi.fn();
     await renderCard({
       id: "generative-provider",
-      onAction,
-      actionLabel: "Add API key",
+      action: { label: "Add API key", onAction },
     });
 
     expect(container.textContent).toContain("Add an AI provider for polishing");
