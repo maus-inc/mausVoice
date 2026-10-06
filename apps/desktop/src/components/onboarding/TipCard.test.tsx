@@ -1,12 +1,14 @@
 // @vitest-environment jsdom
 import { act, createElement, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { ThemeProvider } from "@mui/material/styles";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ensureUiHarness,
   setMatchMedia,
 } from "../../../test/helpers/jsdom-ui-harness";
+import { THEME_PROVIDER_CONFIG, theme } from "../../theme";
 
 vi.mock("react-intl", async (importOriginal) => {
   const { reactIntlMockModule } =
@@ -81,7 +83,7 @@ vi.mock("framer-motion", async () => {
   };
 });
 
-import { TipCard } from "./TipCard";
+import { TipCard, TipCardFrame } from "./TipCard";
 
 ensureUiHarness();
 setMatchMedia(false);
@@ -219,5 +221,77 @@ describe("TipCard", () => {
     });
 
     expect(onAction).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("TipCardFrame", () => {
+  const frameCard = (): HTMLElement => {
+    const target = container.querySelector('[role="note"]');
+    if (!(target instanceof HTMLElement)) {
+      throw new Error("Card not found in frame");
+    }
+    return target;
+  };
+
+  const renderFrame = (
+    props: Parameters<typeof TipCardFrame>[0] &
+      Partial<Parameters<typeof TipCardFrame>[0]>,
+  ) =>
+    act(async () => {
+      root.render(
+        createElement(
+          ThemeProvider,
+          { theme, ...THEME_PROVIDER_CONFIG },
+          createElement(MemoryRouter, null, createElement(TipCardFrame, props)),
+        ),
+      );
+    });
+
+  it("applies plain-object sx overrides on top of the base card", async () => {
+    await renderFrame({
+      title: "Title",
+      body: "Body",
+      sx: { opacity: 0.42 },
+    });
+
+    expect(getComputedStyle(frameCard()).opacity).toBe("0.42");
+  });
+
+  it("applies array-form sx (HelpPage passes [dismissed && {...}])", async () => {
+    await renderFrame({
+      title: "Title",
+      body: "Body",
+      sx: [{ opacity: 0.5 }],
+    });
+
+    expect(getComputedStyle(frameCard()).opacity).toBe("0.5");
+  });
+
+  it("applies function-form sx resolved against the theme", async () => {
+    await renderFrame({
+      title: "Title",
+      body: "Body",
+      sx: (t) => ({ opacity: 0.42, color: (t as typeof theme).palette.level1 }),
+    });
+
+    const card = frameCard();
+    expect(getComputedStyle(card).opacity).toBe("0.42");
+    // Resolve the expected color from the theme itself so the assertion
+    // tracks the token instead of a copy of it.
+    const hex = (theme.palette.level1 as string).slice(1);
+    const [r, g, b] = [0, 2, 4].map((i) =>
+      Number.parseInt(hex.slice(i, i + 2), 16),
+    );
+    expect(getComputedStyle(card).color).toBe(`rgb(${r}, ${g}, ${b})`);
+  });
+
+  it("lets sx overrides beat the base card styles", async () => {
+    await renderFrame({
+      title: "Title",
+      body: "Body",
+      sx: { borderTopWidth: 3 },
+    });
+
+    expect(getComputedStyle(frameCard()).borderTopWidth).toBe("3px");
   });
 });

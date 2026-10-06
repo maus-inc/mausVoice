@@ -180,7 +180,9 @@ export const TipCardFrame = ({
             flexShrink: 0,
             width: 34,
             height: 34,
-            borderRadius: 9,
+            // 8px is the codebase's small-chip tier (the sonner action chip),
+            // keeping the tile on a sanctioned radius instead of inventing one.
+            borderRadius: 8,
             bgcolor: "level2",
             color: "text.primary",
           }}
