@@ -154,6 +154,7 @@ export const createDefaultPreferences = (): UserPreferences => ({
   handsFreeDelayMs: DEFAULT_HANDS_FREE_DELAY_MS,
   inDictationStyleSwitchingEnabled: false,
   hallucinationFilterEnabled: true,
+  fastStyleShortDictationsEnabled: true,
   reviewBeforeInsert: null,
   agentEnabledTools: null,
   agentMaxIterations: 20,
@@ -886,6 +887,14 @@ export const setHallucinationFilterEnabled = async (
   await updateUserPreferences((preferences) => {
     preferences.hallucinationFilterEnabled = enabled;
   }, "Failed to save silence filtering preference. Please try again.");
+};
+
+export const setFastStyleShortDictationsEnabled = async (
+  enabled: boolean,
+): Promise<void> => {
+  await updateUserPreferences((preferences) => {
+    preferences.fastStyleShortDictationsEnabled = enabled;
+  }, "Failed to save short dictation preference. Please try again.");
 };
 
 export const setReviewBeforeInsert = async (

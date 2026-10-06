@@ -72,6 +72,7 @@ type LocalUserPreferences = {
   elevenLabsKeytermsEnabled?: boolean;
   inDictationStyleSwitchingEnabled?: boolean;
   hallucinationFilterEnabled?: boolean;
+  fastStyleShortDictationsEnabled?: boolean;
   reviewBeforeInsert?: Nullable<boolean>;
   // Contract: `null` (the persisted default) means "follow the tool registry's
   // per-tool enablement"; an empty list `[]` is an *explicit* deny-all the user
@@ -232,6 +233,8 @@ const fromLocalFeaturePreferences = (preferences: LocalUserPreferences) => ({
     preferences.inDictationStyleSwitchingEnabled,
   ),
   hallucinationFilterEnabled: orTrue(preferences.hallucinationFilterEnabled),
+  fastStyleShortDictationsEnabled:
+    preferences.fastStyleShortDictationsEnabled ?? true,
   reviewBeforeInsert: orNull(preferences.reviewBeforeInsert),
   agentEnabledTools: parseAgentEnabledTools(preferences.agentEnabledTools),
   agentMaxIterations: normalizeAgentMaxIterations(
@@ -317,6 +320,7 @@ const toLocalFeaturePreferences = (preferences: UserPreferences) => ({
   inDictationStyleSwitchingEnabled:
     preferences.inDictationStyleSwitchingEnabled,
   hallucinationFilterEnabled: preferences.hallucinationFilterEnabled,
+  fastStyleShortDictationsEnabled: preferences.fastStyleShortDictationsEnabled,
   reviewBeforeInsert: orNull(preferences.reviewBeforeInsert),
   agentEnabledTools: jsonValue(preferences.agentEnabledTools),
   agentMaxIterations: normalizeAgentMaxIterations(

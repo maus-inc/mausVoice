@@ -67,6 +67,11 @@ export const SETTING_ENTRIES: SettingEntry[] = [
     groq_api_key: ["groq", "llm", "api key"],
     ai_transcription: ["stt", "speech to text", "model"],
     ai_post_processing: ["polish", "cleanup", "llm"],
+    fast_styling_for_short_dictations: [
+      "short dictation",
+      "fast style",
+      "local",
+    ],
     assistant_mode: ["agent", "chat", "assistant"],
     automatic_style_loading: ["auto load style"],
     styling_mode: ["app styles", "manual styles"],

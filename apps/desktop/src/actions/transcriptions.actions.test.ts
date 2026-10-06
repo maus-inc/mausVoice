@@ -1005,6 +1005,11 @@ describe("retranscribeTranscription unstyled post-processing", () => {
       }
     }
     generateText.mockRejectedValueOnce(new Cerebras402());
+    // This case is about a provider failure, so it must reach the provider:
+    // short dictations in a prose style are styled locally by default.
+    produceAppState((draft) => {
+      draft.settings.fastStyleShortDictationsEnabled = false;
+    });
     const { postProcessTranscript: runPostProcessing } = await vi.importActual<
       typeof import("./transcribe.actions")
     >("./transcribe.actions");

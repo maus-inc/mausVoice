@@ -378,6 +378,7 @@ const createOnboardingPreferences = (
   handsFreeDelayMs: DEFAULT_HANDS_FREE_DELAY_MS,
   inDictationStyleSwitchingEnabled: false,
   hallucinationFilterEnabled: true,
+  fastStyleShortDictationsEnabled: true,
   reviewBeforeInsert: null,
   agentEnabledTools: null,
   agentMaxIterations: 20,

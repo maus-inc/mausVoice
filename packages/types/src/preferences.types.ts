@@ -55,6 +55,13 @@ export type UserPreferences = {
   inDictationStyleSwitchingEnabled: boolean;
   /** Suppress common silence hallucinations before post-processing. */
   hallucinationFilterEnabled: boolean;
+  /**
+   * Style short dictations with the deterministic local transforms instead of
+   * sending them to the configured provider. Long dictations always use the
+   * provider. Defaults to on; only meaningful while post-processing mode is
+   * "api", because "none" already styles every dictation locally.
+   */
+  fastStyleShortDictationsEnabled: boolean;
   /** Review transcript text in the composer before inserting it. */
   reviewBeforeInsert: Nullable<boolean>;
   /** Tools enabled for agent mode; null means use the built-in registry defaults. */

@@ -92,6 +92,7 @@ export type SettingsState = {
   agentMode: SettingsAgentModeState;
   inDictationStyleSwitchingEnabled: boolean;
   hallucinationFilterEnabled: boolean;
+  fastStyleShortDictationsEnabled: boolean;
   reviewBeforeInsert: boolean;
   agentEnabledTools: string[] | null;
   agentMaxIterations: number;
@@ -181,6 +182,7 @@ export const INITIAL_SETTINGS_STATE: SettingsState = {
   },
   inDictationStyleSwitchingEnabled: false,
   hallucinationFilterEnabled: true,
+  fastStyleShortDictationsEnabled: true,
   reviewBeforeInsert: false,
   agentEnabledTools: null,
   agentMaxIterations: 20,
