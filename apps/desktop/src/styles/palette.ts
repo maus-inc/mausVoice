@@ -20,6 +20,28 @@ const DARK_INK = "0, 0, 0";
 /** Soft off-white used for dark-scheme text and inner highlights. */
 const LIGHT_TEXT = "242, 241, 238";
 
+/**
+ * Ordered, theme-specific activity ramps. Level 0 is the quiet empty-day
+ * surface; levels 1–4 are relative positive-word quartiles. These are data
+ * colors, kept separate from atmospheric gradients and brand chrome.
+ */
+export const activityHeatmap = {
+  light: ["#D8D1C5", "#F1D1BE", "#EBAE8F", "#DE8059", "#B64726"],
+  dark: ["#2D2D2F", "#4B2618", "#7A3A1F", "#BA5228", "#F0793B"],
+} as const;
+
+/** Optional static warm wash behind the dashboard's analytics region. */
+export const activityStreakAccent = {
+  light: "#B64726",
+  dark: "#F0793B",
+} as const;
+
+export const activityAtmosphere = {
+  light:
+    "radial-gradient(ellipse at 52% 26%, rgba(182, 71, 38, 0.035) 0%, transparent 66%)",
+  dark: "radial-gradient(ellipse at 52% 26%, rgba(240, 121, 59, 0.045) 0%, transparent 66%)",
+} as const;
+
 export const surfaces = {
   light: {
     /** App canvas. */

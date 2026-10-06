@@ -3,6 +3,7 @@ pub mod app_target_queries;
 pub mod chat_message_queries;
 mod consolidation;
 pub mod conversation_queries;
+pub mod daily_activity_queries;
 pub mod hotkey_queries;
 pub mod open;
 pub mod paired_remote_device_queries;
@@ -175,6 +176,10 @@ pub const USER_PROFILE_TIMESTAMPS_MIGRATION_SQL: &str =
 /// against databases that already applied some of those steps individually.
 pub const PENDING_AUDIO_DELETIONS_MIGRATION_SQL: &str =
     include_str!("migrations/090_pending_audio_deletions.sql");
+/// Daily local-date word totals, stable usage-event IDs, and the one-time
+/// backfill boundary for the home activity heatmap.
+pub const DAILY_WORD_ACTIVITY_MIGRATION_SQL: &str =
+    include_str!("migrations/091_daily_word_activity.sql");
 /// Schema pieces folded into [`CONSOLIDATED_V0_1_6_MIGRATION_SQL`] /
 /// [`migrations`]: `preserve_audio_on_failure`, `transcription_path`,
 /// `pill_placement`, `hands_free_delay_ms`, `auto_learn_dictionary_enabled`,
@@ -611,6 +616,12 @@ pub fn migrations() -> Vec<tauri_plugin_sql::Migration> {
             version: 90,
             description: "create_pending_audio_deletions_table",
             sql: PENDING_AUDIO_DELETIONS_MIGRATION_SQL,
+            kind: tauri_plugin_sql::MigrationKind::Up,
+        },
+        tauri_plugin_sql::Migration {
+            version: 91,
+            description: "create_daily_word_activity",
+            sql: DAILY_WORD_ACTIVITY_MIGRATION_SQL,
             kind: tauri_plugin_sql::MigrationKind::Up,
         },
     ]

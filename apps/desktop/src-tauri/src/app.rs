@@ -331,6 +331,8 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
         .invoke_handler(tauri::generate_handler![
             crate::commands::user_get_one,
             crate::commands::user_set_one,
+            crate::commands::user_record_usage,
+            crate::commands::daily_activity_list,
             crate::commands::user_preferences_get,
             crate::commands::user_preferences_set,
             crate::commands::user_preferences_set_expansion_flags,

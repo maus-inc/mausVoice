@@ -74,6 +74,37 @@ describe("user repo IPC boundary for interactionFeedbackVolume", () => {
     expect(userArg.interactionFeedbackVolume).toBeNull();
   });
 
+  it("uses the atomic idempotent native usage operation and adapts its returned user", async () => {
+    capturedInvoke.mockResolvedValue({
+      id: LOCAL_USER_ID,
+      name: "Test",
+      bio: "",
+      onboarded: false,
+      wordsThisMonth: 15,
+      wordsThisMonthMonth: "2026-10",
+      wordsTotal: 215,
+    });
+    const repo = new LocalUserRepo();
+
+    const updated = await repo.recordUsageWords(
+      "recording-42",
+      "2026-10-06",
+      7,
+    );
+
+    expect(capturedInvoke).toHaveBeenCalledWith("user_record_usage", {
+      eventId: "recording-42",
+      localDate: "2026-10-06",
+      wordCount: 7,
+    });
+    expect(updated).toMatchObject({
+      id: LOCAL_USER_ID,
+      wordsThisMonth: 15,
+      wordsThisMonthMonth: "2026-10",
+      wordsTotal: 215,
+    });
+  });
+
   it("emits the persisted volume when the TS user carries a value", async () => {
     capturedInvoke.mockResolvedValue({
       id: LOCAL_USER_ID,

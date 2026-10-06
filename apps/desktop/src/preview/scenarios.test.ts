@@ -4,12 +4,15 @@ import {
   scenarioForPath,
   type PreviewScenarioId,
 } from "./scenarios";
-import { LOCAL_USER_ID } from "../utils/user.utils";
+import { getDictationSpeed, LOCAL_USER_ID } from "../utils/user.utils";
+import { localDateKey } from "../utils/date.utils";
 
 const workspaceScenarios: PreviewScenarioId[] = [
   "populated",
   "empty",
   "permission-denied",
+  "activity-loading",
+  "activity-error",
 ];
 
 describe("browser preview scenarios", () => {
@@ -47,6 +50,35 @@ describe("browser preview scenarios", () => {
     ]);
     expect(snapshot.state.settings.apiKeysStatus).toBe("success");
     expect(snapshot.state.settings.apiKeys).toHaveLength(1);
+  });
+
+  it("uses stable synthetic Home reference metrics only in the populated preview", () => {
+    const populated = createPreviewScenario("populated");
+    const empty = createPreviewScenario("empty");
+    const today = localDateKey();
+    const currentMonth = today.slice(0, 7);
+    const currentMonthWords = populated.data.dailyActivity
+      .filter((record) => record.localDate.startsWith(currentMonth))
+      .reduce((total, record) => total + record.wordCount, 0);
+
+    expect(populated.data.user).toMatchObject({
+      streak: 1,
+      wordsThisMonth: 127,
+      wordsThisMonthMonth: currentMonth,
+      streakRecordedAt: today,
+      wordsTotal: 14_323,
+    });
+    expect(currentMonthWords).toBe(127);
+    expect(getDictationSpeed(populated.state)).toEqual({
+      wpm: 73,
+      sampleCount: 3,
+    });
+    expect(empty.data.user).toMatchObject({
+      streak: 0,
+      wordsThisMonth: 0,
+      wordsTotal: 0,
+    });
+    expect(empty.data.dailyActivity).toEqual([]);
   });
 
   it("exposes an explicit denied-permission workspace", () => {

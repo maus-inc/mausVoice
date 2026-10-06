@@ -358,7 +358,12 @@ export const config = {
     : undefined,
   onPrepare: async () => {
     if (isMac) {
-      runNpm(["run", "build"]);
+      const previewBuild = runNpm(["run", "build:preview"]);
+      if (previewBuild.status !== 0) {
+        throw new Error(
+          "The browser preview build failed before WebDriver startup.",
+        );
+      }
 
       await startChromeDriver();
       await startPreviewServer();

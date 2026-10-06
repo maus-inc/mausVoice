@@ -534,7 +534,11 @@ describe("storeTranscription persistence suppression", () => {
 
     expect(result.transcription).toBeNull();
     expect(result.wordCount).toBe(3);
-    expect(addWordsMock).toHaveBeenCalledWith(3);
+    expect(addWordsMock).toHaveBeenCalledWith(
+      3,
+      expect.any(String),
+      expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+    );
   });
 
   it("does not hold the stop path on the usage write in incognito", async () => {
@@ -571,7 +575,11 @@ describe("storeTranscription persistence suppression", () => {
     // chance to block by now.
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(settled).toBe(true);
-    expect(addWordsMock).toHaveBeenCalledWith(3);
+    expect(addWordsMock).toHaveBeenCalledWith(
+      3,
+      expect.any(String),
+      expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+    );
 
     // The write is still owed; the test releases it so the pending promise settles.
     releaseUsageWrite?.();

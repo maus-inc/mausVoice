@@ -3,6 +3,7 @@ import { INITIAL_APP_STATE } from "../state/app.state";
 import { getAppState, setAppState } from "../store";
 import { LOCAL_USER_ID } from "../utils/user.utils";
 import {
+  addWordsToCurrentUser,
   createDefaultPreferences,
   refreshCurrentUser,
   setAgentToolEnabled,
@@ -34,6 +35,9 @@ const { loggerMock, prefsRepoMock, userRepoMock } = vi.hoisted(() => {
       Promise.resolve(user),
     ),
     getMyUser: vi.fn<() => Promise<User | null>>(() => Promise.resolve(null)),
+    recordUsageWords: vi.fn<
+      (eventId: string, localDate: string, wordCount: number) => Promise<User>
+    >(() => Promise.reject(new Error("unexpected recordUsageWords call"))),
   };
   return { loggerMock, prefsRepoMock, userRepoMock };
 });
@@ -210,6 +214,167 @@ describe("real-time output vs review-before-insert mutual exclusion", () => {
     await setRealtimeOutputEnabled(false);
 
     expect(getAppState().userPrefs?.reviewBeforeInsert).toBe(true);
+  });
+});
+
+describe("atomic usage metering", () => {
+  const baseUser: User = {
+    id: LOCAL_USER_ID,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    name: "Before",
+    bio: null,
+    onboarded: true,
+    playInteractionChime: true,
+    hasFinishedTutorial: false,
+    wordsThisMonth: 4,
+    wordsThisMonthMonth: "2026-10",
+    wordsTotal: 40,
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    userRepoMock.recordUsageWords.mockReset();
+    userRepoMock.recordUsageWords.mockRejectedValue(
+      new Error("unexpected recordUsageWords call"),
+    );
+    setAppState(
+      {
+        ...structuredClone(INITIAL_APP_STATE),
+        userById: { [LOCAL_USER_ID]: baseUser },
+      },
+      true,
+    );
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    setAppState(structuredClone(INITIAL_APP_STATE), true);
+  });
+
+  it("stores returned atomic counters in the app state", async () => {
+    const saved: User = {
+      ...baseUser,
+      wordsThisMonth: 9,
+      wordsTotal: 45,
+    };
+    userRepoMock.recordUsageWords.mockResolvedValueOnce(saved);
+
+    await addWordsToCurrentUser(5, "recording-42", "2026-10-06");
+
+    expect(userRepoMock.recordUsageWords).toHaveBeenCalledWith(
+      "recording-42",
+      "2026-10-06",
+      5,
+    );
+    expect(getAppState().userById[LOCAL_USER_ID]).toMatchObject({
+      wordsThisMonth: 9,
+      wordsThisMonthMonth: "2026-10",
+      wordsTotal: 45,
+    });
+  });
+
+  it("updates profile totals optimistically while the atomic write is in flight", async () => {
+    const saved: User = {
+      ...baseUser,
+      wordsThisMonth: 9,
+      wordsTotal: 45,
+    };
+    let finishWrite: ((user: User) => void) | undefined;
+    let reportStarted: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => {
+      reportStarted = resolve;
+    });
+    userRepoMock.recordUsageWords.mockImplementation(
+      () =>
+        new Promise<User>((resolve) => {
+          finishWrite = resolve;
+          reportStarted?.();
+        }),
+    );
+
+    const pending = addWordsToCurrentUser(5, "recording-42", "2026-10-06");
+    await started;
+    expect(getAppState().userById[LOCAL_USER_ID]).toMatchObject({
+      wordsThisMonth: 9,
+      wordsThisMonthMonth: "2026-10",
+      wordsTotal: 45,
+    });
+
+    finishWrite?.(saved);
+    await pending;
+  });
+
+  it("retries the same event ID after an ambiguous IPC failure", async () => {
+    const saved: User = {
+      ...baseUser,
+      wordsThisMonth: 9,
+      wordsTotal: 45,
+    };
+    userRepoMock.recordUsageWords
+      .mockRejectedValueOnce(new Error("response lost after commit"))
+      .mockResolvedValueOnce(saved);
+    vi.useFakeTimers();
+
+    const pending = addWordsToCurrentUser(5, "recording-42", "2026-10-06");
+    await vi.runAllTimersAsync();
+    await pending;
+
+    expect(userRepoMock.recordUsageWords).toHaveBeenCalledTimes(2);
+    expect(userRepoMock.recordUsageWords).toHaveBeenNthCalledWith(
+      1,
+      "recording-42",
+      "2026-10-06",
+      5,
+    );
+    expect(userRepoMock.recordUsageWords).toHaveBeenNthCalledWith(
+      2,
+      "recording-42",
+      "2026-10-06",
+      5,
+    );
+    expect(getAppState().userById[LOCAL_USER_ID]?.wordsTotal).toBe(45);
+  });
+
+  it("serializes usage commits with whole-profile upserts", async () => {
+    let releaseFirstWrite: (() => void) | undefined;
+    let firstWriteStarted: (() => void) | undefined;
+    const writeStarted = new Promise<void>((resolve) => {
+      firstWriteStarted = resolve;
+    });
+    const firstWriteGate = new Promise<void>((resolve) => {
+      releaseFirstWrite = resolve;
+    });
+    userRepoMock.setMyUser.mockImplementationOnce(async (user) => {
+      firstWriteStarted?.();
+      await firstWriteGate;
+      return user;
+    });
+    userRepoMock.recordUsageWords.mockResolvedValueOnce({
+      ...baseUser,
+      name: "Renamed",
+      wordsThisMonth: 8,
+      wordsTotal: 44,
+    });
+
+    const profileUpdate = setUserName("Renamed");
+    await writeStarted;
+    const usageUpdate = addWordsToCurrentUser(
+      4,
+      "recording-serialized",
+      "2026-10-06",
+    );
+    expect(userRepoMock.recordUsageWords).not.toHaveBeenCalled();
+
+    releaseFirstWrite?.();
+    await Promise.all([profileUpdate, usageUpdate]);
+
+    expect(userRepoMock.recordUsageWords).toHaveBeenCalledTimes(1);
+    expect(getAppState().userById[LOCAL_USER_ID]).toMatchObject({
+      name: "Renamed",
+      wordsThisMonth: 8,
+      wordsTotal: 44,
+    });
   });
 });
 

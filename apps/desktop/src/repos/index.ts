@@ -35,6 +35,10 @@ import { BaseAppTargetRepo, LocalAppTargetRepo } from "./app-target.repo";
 import { BaseAuthRepo, PersonalAuthRepo } from "./auth.repo";
 import { BaseChatMessageRepo, LocalChatMessageRepo } from "./chat-message.repo";
 import {
+  BaseDailyActivityRepo,
+  LocalDailyActivityRepo,
+} from "./daily-activity.repo";
+import {
   BaseConversationRepo,
   LocalConversationRepo,
 } from "./conversation.repo";
@@ -128,6 +132,10 @@ export const getAuthRepo = (): BaseAuthRepo => {
 
 export const getUserRepo = (): BaseUserRepo => {
   return new LocalUserRepo();
+};
+
+export const getDailyActivityRepo = (): BaseDailyActivityRepo => {
+  return new LocalDailyActivityRepo();
 };
 
 export const getUserPreferencesRepo = (): BaseUserPreferencesRepo => {

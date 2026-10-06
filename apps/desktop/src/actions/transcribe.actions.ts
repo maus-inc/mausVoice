@@ -30,6 +30,7 @@ import {
   mapDictationLanguageToWhisperLanguage,
 } from "../utils/language.utils";
 import { orFalse, orNull } from "../utils/nullable.utils";
+import { localDateKey } from "../utils/date.utils";
 import { withTimeout } from "../utils/timeout.utils";
 import { getLogger } from "../utils/log.utils";
 import {
@@ -844,12 +845,16 @@ const getSampleCount = (samples: StopRecordingResponse["samples"]): number =>
 const getWordsAdded = (transcript: string | null): number =>
   transcript ? countWords(transcript) : 0;
 
-const recordUsageWords = async (wordsAdded: number): Promise<void> => {
+const recordUsageWords = async (
+  wordsAdded: number,
+  eventId: string,
+  localDate: string,
+): Promise<void> => {
   if (wordsAdded <= 0) {
     return;
   }
   try {
-    await addWordsToCurrentUser(wordsAdded);
+    await addWordsToCurrentUser(wordsAdded, eventId, localDate);
   } catch (error) {
     console.error("Failed to update usage metrics", error);
   }
@@ -1022,6 +1027,8 @@ export const storeTranscription = async (
     state.userPrefs?.preserveAudioOnFailure ?? true;
   const wordsAdded = getWordsAdded(input.transcript);
   const transcriptionId = createId();
+  const createdAt = dayjs().toISOString();
+  const usageDate = localDateKey(new Date(createdAt));
 
   if (!isPersistenceAllowed()) {
     getLogger().verbose(
@@ -1044,7 +1051,7 @@ export const storeTranscription = async (
       incognitoEnabled &&
       !isEphemeralSessionActive()
     ) {
-      void recordUsageWords(wordsAdded);
+      void recordUsageWords(wordsAdded, transcriptionId, usageDate);
     }
 
     return { transcription: null, wordCount: wordsAdded };
@@ -1069,7 +1076,7 @@ export const storeTranscription = async (
     transcriptionId,
     audioSnapshot,
     transcriptionFailed,
-    createdAt: dayjs().toISOString(),
+    createdAt,
     createdByUserId: getMyEffectiveUserId(state),
   });
 
@@ -1094,7 +1101,7 @@ export const storeTranscription = async (
   // accepted by the pill and then dropped by the app. Both calls own their error
   // handling, and both are safe to land late: a missed word count is one
   // dictation of statistics, and a missed sweep runs again on the next one.
-  void recordUsageWords(wordsAdded);
+  void recordUsageWords(wordsAdded, transcriptionId, usageDate);
   void purgeStaleAudioSnapshots();
 
   markPipeline(input.trace, "persisted");

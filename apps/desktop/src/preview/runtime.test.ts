@@ -1,11 +1,20 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getAppState } from "../store";
+import { localDateKey } from "../utils/date.utils";
+import { createPreviewScenario } from "./scenarios";
 import {
   applyPreviewScenario,
   getActivePreviewScenario,
   invokePreviewCommand,
   PreviewOperationError,
 } from "./runtime";
+
+const previewToday = localDateKey();
+const previewTodayWords = createPreviewScenario(
+  "populated",
+).data.dailyActivity.find(
+  (record) => record.localDate === previewToday,
+)?.wordCount;
 
 describe("browser preview transport", () => {
   beforeEach(() => {
@@ -66,6 +75,111 @@ describe("browser preview transport", () => {
     expect(second).toHaveLength(3);
     expect(second[0].transcript).not.toBe("Changed outside the mock database");
     expect(getAppState().transcriptions.transcriptionIds).toHaveLength(3);
+  });
+
+  it("serves local daily activity and meters usage idempotently", async () => {
+    const before =
+      await invokePreviewCommand<Record<string, unknown>>("user_get_one");
+    expect(before.wordsThisMonth).toBe(127);
+    expect(before.wordsTotal).toBe(14_323);
+
+    const initialDay = await invokePreviewCommand<Record<string, unknown>[]>(
+      "daily_activity_list",
+      { startDate: previewToday, endDate: previewToday },
+    );
+    expect(initialDay).toEqual([
+      { localDate: previewToday, wordCount: previewTodayWords },
+    ]);
+
+    const args = {
+      eventId: "preview-usage-event",
+      localDate: previewToday,
+      wordCount: 5,
+    };
+    const first = await invokePreviewCommand<Record<string, unknown>>(
+      "user_record_usage",
+      args,
+    );
+    const duplicate = await invokePreviewCommand<Record<string, unknown>>(
+      "user_record_usage",
+      args,
+    );
+    expect(first.wordsThisMonth).toBe(132);
+    expect(first.wordsTotal).toBe(14_328);
+    expect(duplicate.wordsThisMonth).toBe(132);
+    expect(duplicate.wordsTotal).toBe(14_328);
+
+    await expect(
+      invokePreviewCommand("user_record_usage", {
+        ...args,
+        wordCount: 6,
+      }),
+    ).rejects.toThrow("reused with different data");
+    await expect(
+      invokePreviewCommand<Record<string, unknown>[]>("daily_activity_list", {
+        startDate: previewToday,
+        endDate: previewToday,
+      }),
+    ).resolves.toEqual([
+      { localDate: previewToday, wordCount: (previewTodayWords ?? 0) + 5 },
+    ]);
+  });
+
+  it("keeps the empty workspace empty in profile and daily activity", async () => {
+    applyPreviewScenario("empty");
+
+    await expect(
+      invokePreviewCommand<Record<string, unknown>>("user_get_one"),
+    ).resolves.toMatchObject({
+      wordsThisMonth: 0,
+      wordsTotal: 0,
+      streak: 0,
+    });
+    await expect(
+      invokePreviewCommand<Record<string, unknown>[]>("daily_activity_list", {
+        startDate: "2026-04-01",
+        endDate: previewToday,
+      }),
+    ).resolves.toEqual([]);
+  });
+
+  it("exposes an activity-only preview failure without affecting other commands", async () => {
+    applyPreviewScenario("activity-error");
+
+    await expect(
+      invokePreviewCommand("daily_activity_list", {
+        startDate: "2026-04-01",
+        endDate: previewToday,
+      }),
+    ).rejects.toThrow("intentionally unavailable");
+    await expect(invokePreviewCommand("user_get_one")).resolves.toMatchObject({
+      wordsTotal: 14_323,
+    });
+  });
+
+  it("delays the activity fixture in the loading preview scenario", async () => {
+    applyPreviewScenario("activity-loading");
+    vi.useFakeTimers();
+    try {
+      let settled = false;
+      const pending = invokePreviewCommand("daily_activity_list", {
+        startDate: previewToday,
+        endDate: previewToday,
+      }).then((value) => {
+        settled = true;
+        return value;
+      });
+
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(699);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(pending).resolves.toEqual([
+        { localDate: previewToday, wordCount: previewTodayWords },
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("persists supported dictionary mutations until the scenario is reset", async () => {

@@ -81,6 +81,8 @@ type PreviewDatabase = {
   transcriptions: Map<string, WireRecord>;
   conversations: Map<string, WireRecord>;
   chatMessages: Map<string, WireRecord>;
+  dailyActivity: Map<string, number>;
+  usageEvents: Map<string, { localDate: string; wordCount: number }>;
   receiverEnabled: boolean;
 };
 
@@ -204,6 +206,13 @@ const toDatabase = (data: PreviewData): PreviewDatabase => ({
       toLocalChatMessage(message),
     ]),
   ),
+  dailyActivity: new Map(
+    data.dailyActivity.map(({ localDate, wordCount }) => [
+      localDate,
+      wordCount,
+    ]),
+  ),
+  usageEvents: new Map(),
   receiverEnabled: false,
 });
 
@@ -310,6 +319,65 @@ class PreviewRuntime {
       case "user_set_one":
         this.database.user = clone(asRecord(args.user));
         return clone(this.database.user);
+      case "user_record_usage": {
+        const eventId = String(args.eventId ?? "");
+        const localDate = String(args.localDate ?? "");
+        const wordCount = Number(args.wordCount);
+        const user = this.database.user;
+        if (!eventId.trim() || !/^\d{4}-\d{2}-\d{2}$/.test(localDate)) {
+          throw new Error("Invalid usage event ID or local date.");
+        }
+        if (!Number.isSafeInteger(wordCount) || wordCount <= 0) {
+          throw new Error("Usage word count must be a positive integer.");
+        }
+        if (!user) throw new Error("User not found.");
+
+        const previous = this.database.usageEvents.get(eventId);
+        if (previous) {
+          if (
+            previous.localDate !== localDate ||
+            previous.wordCount !== wordCount
+          ) {
+            throw new Error("Usage event ID was reused with different data.");
+          }
+          return clone(user);
+        }
+
+        const month = localDate.slice(0, 7);
+        user.wordsThisMonth =
+          Number(user.wordsThisMonthMonth === month ? user.wordsThisMonth : 0) +
+          wordCount;
+        user.wordsThisMonthMonth = month;
+        user.wordsTotal = Number(user.wordsTotal ?? 0) + wordCount;
+        this.database.dailyActivity.set(
+          localDate,
+          (this.database.dailyActivity.get(localDate) ?? 0) + wordCount,
+        );
+        this.database.usageEvents.set(eventId, { localDate, wordCount });
+        return clone(user);
+      }
+      case "daily_activity_list": {
+        if (this.scenario === "activity-error") {
+          throw new Error(
+            "Preview activity query is intentionally unavailable.",
+          );
+        }
+        const startDate = String(args.startDate ?? "");
+        const endDate = String(args.endDate ?? "");
+        const readActivity = () =>
+          [...this.database.dailyActivity.entries()]
+            .filter(
+              ([localDate]) => localDate >= startDate && localDate <= endDate,
+            )
+            .sort(([left], [right]) => left.localeCompare(right))
+            .map(([localDate, wordCount]) => ({ localDate, wordCount }));
+        if (this.scenario === "activity-loading") {
+          return new Promise((resolve) => {
+            setTimeout(() => resolve(readActivity()), 700);
+          });
+        }
+        return readActivity();
+      }
       case "user_preferences_get":
         return clone(this.database.preferences);
       case "user_preferences_set": {

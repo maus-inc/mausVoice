@@ -196,7 +196,7 @@ impl Drop for TypingSession {
 
 /// User-data tables wiped by `clear_local_data`. Extend this list when
 /// adding a table that stores user content — a missed table is a privacy leak.
-const USER_DATA_TABLES_TO_CLEAR: [&str; 12] = [
+const USER_DATA_TABLES_TO_CLEAR: [&str; 14] = [
     "chat_messages",
     "conversations",
     "user_profiles",
@@ -212,6 +212,8 @@ const USER_DATA_TABLES_TO_CLEAR: [&str; 12] = [
     // those ids behind: `sweep_orphaned_wavs` below already removes every `.wav`
     // in the managed directory, so the retry has nothing left to act on.
     "pending_audio_deletions",
+    "daily_word_activity",
+    "daily_word_activity_events",
 ];
 use tauri::{AppHandle, Emitter, EventTarget, Manager, State};
 use tauri_plugin_updater::UpdaterExt;
@@ -2027,6 +2029,40 @@ pub async fn user_get_one(
     crate::db::user_queries::fetch_user(database.pool())
         .await
         .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn user_record_usage(
+    event_id: String,
+    local_date: String,
+    word_count: i64,
+    database: State<'_, crate::state::OptionKeyDatabase>,
+) -> Result<crate::domain::User, String> {
+    crate::db::daily_activity_queries::record_usage_words(
+        database.pool(),
+        &event_id,
+        &local_date,
+        word_count,
+    )
+    .await
+    .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn daily_activity_list(
+    start_date: String,
+    end_date: String,
+    database: State<'_, crate::state::OptionKeyDatabase>,
+) -> Result<Vec<crate::domain::DailyWordActivity>, String> {
+    crate::db::daily_activity_queries::list_daily_word_activity(
+        database.pool(),
+        &start_date,
+        &end_date,
+    )
+    .await
+    .map_err(|err| err.to_string())
 }
 
 #[tauri::command]
@@ -6963,7 +6999,9 @@ mod tests {
     /// Tables that live in the schema but hold no user content, so
     /// `clear_local_data` may skip them. Adding a name here is an explicit
     /// privacy decision, which is the point: it cannot happen by omission.
-    const NON_USER_DATA_TABLES: &[&str] = &[];
+    /// The backfill state contains only a feature-release timestamp and a
+    /// completion bit; daily words and event IDs are wiped above.
+    const NON_USER_DATA_TABLES: &[&str] = &["daily_word_activity_backfill_state"];
 
     /// Rebuild the set of tables the schema actually ends up with by
     /// replaying the migration SQL. Derived independently of

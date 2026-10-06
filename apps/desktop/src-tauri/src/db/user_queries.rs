@@ -136,7 +136,7 @@ pub async fn upsert_user(pool: SqlitePool, user: &User) -> Result<User, sqlx::Er
 /// The one place a `user_profiles` row becomes a [`User`], so the writer's
 /// `RETURNING` row and the reader's `SELECT` cannot decode the same row two
 /// different ways.
-fn user_from_row(row: &sqlx::sqlite::SqliteRow) -> User {
+pub(super) fn user_from_row(row: &sqlx::sqlite::SqliteRow) -> User {
     let onboarded_raw = row.get::<i64, _>("onboarded");
     let play_interaction_raw = row.try_get::<i64, _>("play_interaction_chime").unwrap_or(1);
     let tutorial_finished_raw = row.try_get::<i64, _>("has_finished_tutorial").unwrap_or(0);

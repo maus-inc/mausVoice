@@ -48,6 +48,7 @@ import {
 import { showErrorSnackbar } from "./app.actions";
 import { refreshUpdatesForChannelChange } from "./updater.actions";
 import { setLocalStorageValue } from "./local-storage.actions";
+import { requestDailyActivityRefresh } from "../utils/daily-activity.events";
 
 // Serializes profile mutations. `setMyUser` upserts the whole row, so two
 // overlapping writes can clobber each other: whichever lands last wins, and a
@@ -212,13 +213,6 @@ export const updateUserPreferences = (
     }
   });
 
-const getCurrentUsageMonth = (): string => {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = `${now.getMonth() + 1}`.padStart(2, "0");
-  return `${year}-${month}`;
-};
-
 const getCurrentDateString = (): string => dayjs().format("YYYY-MM-DD");
 
 const getYesterdayDateString = (): string =>
@@ -354,25 +348,88 @@ export const recordStreak = async (): Promise<void> => {
 
 export const addWordsToCurrentUser = async (
   wordCount: number,
+  eventId: string,
+  localDate: string,
 ): Promise<void> => {
   if (wordCount <= 0) {
     return;
   }
 
-  await updateUser(
-    (user) => {
-      const currentMonth = getCurrentUsageMonth();
-      if (user.wordsThisMonthMonth !== currentMonth) {
-        user.wordsThisMonth = 0;
-        user.wordsThisMonthMonth = currentMonth;
-      }
+  await enqueueUserMutation(async () => {
+    const existing = getMyUser(getAppState());
+    if (!existing) {
+      getLogger().warning("addWordsToCurrentUser: user not found");
+      showErrorSnackbar("Unable to update usage. User not found.");
+      return;
+    }
 
-      user.wordsThisMonth += wordCount;
-      user.wordsTotal += wordCount;
-    },
-    "Unable to update usage. User not found.",
-    "Failed to update usage metrics. Please try again.",
-  );
+    const usageMonth = localDate.slice(0, 7);
+    const optimistic: User = {
+      ...existing,
+      updatedAt: new Date().toISOString(),
+      wordsThisMonth:
+        (existing.wordsThisMonthMonth === usageMonth
+          ? (existing.wordsThisMonth ?? 0)
+          : 0) + wordCount,
+      wordsThisMonthMonth: usageMonth,
+      wordsTotal: (existing.wordsTotal ?? 0) + wordCount,
+    };
+    produceAppState((draft) => {
+      setCurrentUser(draft, optimistic);
+    });
+
+    try {
+      // The native transaction deduplicates this stable event ID, writes the
+      // local-date aggregate, and updates lifetime/monthly profile counters in
+      // one commit. Serializing it with profile upserts prevents a stale
+      // `setMyUser` from overwriting those atomic totals.
+      let updated: User | null = null;
+      let lastError: unknown;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          updated = await getUserRepo().recordUsageWords(
+            eventId,
+            localDate,
+            wordCount,
+          );
+          break;
+        } catch (error) {
+          lastError = error;
+          if (attempt === 0) {
+            // A same-ID retry is safe even if the first IPC committed but its
+            // response was lost. The native ledger returns the already-updated
+            // profile rather than counting the words a second time.
+            await new Promise((resolve) => setTimeout(resolve, 200));
+          }
+        }
+      }
+      if (!updated) throw lastError;
+
+      produceAppState((draft) => {
+        setCurrentUser(draft, updated);
+      });
+      requestDailyActivityRefresh();
+    } catch (error) {
+      getLogger().error(`Failed to update usage metrics: ${error}`);
+      const reloaded = await getUserRepo()
+        .getMyUser()
+        .catch((reloadError: unknown) => {
+          getLogger().error(
+            `Failed to re-read user after an unsuccessful usage write: ${reloadError}`,
+          );
+          return null;
+        });
+      produceAppState((draft) => {
+        // The first IPC may have committed before its response was lost, so a
+        // re-read is safer than rolling back to the pre-event snapshot. If the
+        // read itself fails, restore the known prior value rather than leaving
+        // an unconfirmed optimistic total on screen.
+        setCurrentUser(draft, reloaded ?? existing);
+      });
+      showErrorSnackbar("Failed to update usage metrics. Please try again.");
+      throw error;
+    }
+  });
 };
 
 // Runs on the same chain as `updateUser` so a refresh never reads a row that a

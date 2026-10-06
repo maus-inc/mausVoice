@@ -14,6 +14,7 @@ import { INITIAL_APP_STATE, type AppState } from "../state/app.state";
 import { createDefaultPreferences } from "../actions/user.actions";
 import { getDefaultSystemTones } from "../utils/tone.utils";
 import { LOCAL_USER_ID } from "../utils/user.utils";
+import { localDateKey } from "../utils/date.utils";
 
 export const PREVIEW_SCENARIOS = [
   "populated",
@@ -21,6 +22,8 @@ export const PREVIEW_SCENARIOS = [
   "welcome",
   "onboarding",
   "permission-denied",
+  "activity-loading",
+  "activity-error",
 ] as const;
 
 export type PreviewScenarioId = (typeof PREVIEW_SCENARIOS)[number];
@@ -58,7 +61,22 @@ export const PREVIEW_SCENARIO_DEFINITIONS: PreviewScenarioDefinition[] = [
     label: "Permission needed",
     description: "A dashboard workspace with the permissions dialog visible.",
   },
+  {
+    id: "activity-loading",
+    label: "Activity loading",
+    description: "A populated dashboard with delayed activity data.",
+  },
+  {
+    id: "activity-error",
+    label: "Activity unavailable",
+    description: "A populated dashboard with a local activity-query error.",
+  },
 ];
+
+export type PreviewDailyActivity = {
+  localDate: string;
+  wordCount: number;
+};
 
 export type PreviewData = {
   user: User | null;
@@ -71,6 +89,7 @@ export type PreviewData = {
   transcriptions: Transcription[];
   conversations: Conversation[];
   chatMessages: ChatMessage[];
+  dailyActivity: PreviewDailyActivity[];
 };
 
 export type PreviewScenarioSnapshot = {
@@ -85,9 +104,21 @@ const PREVIEW_AUTH = {
   providers: ["preview"],
 };
 
-const now = "2026-09-09T09:30:00.000Z";
+const previewNow = new Date();
+const now = previewNow.toISOString();
+const previewToday = localDateKey(previewNow);
+const previewMonth = previewToday.slice(0, 7);
 
-const createPreviewUser = (onboarded: boolean): User => ({
+const previewDateOffset = (daysAgo: number): string => {
+  const date = new Date(
+    previewNow.getFullYear(),
+    previewNow.getMonth(),
+    previewNow.getDate() - daysAgo,
+  );
+  return localDateKey(date);
+};
+
+const createPreviewUser = (onboarded: boolean, hasHistory = true): User => ({
   id: LOCAL_USER_ID,
   createdAt: "2026-07-02T08:00:00.000Z",
   updatedAt: now,
@@ -100,9 +131,9 @@ const createPreviewUser = (onboarded: boolean): User => ({
   timezone: "Africa/Lagos",
   preferredMicrophone: "Preview microphone",
   preferredLanguage: "en",
-  wordsThisMonth: 12_840,
-  wordsThisMonthMonth: "2026-09",
-  wordsTotal: 84_120,
+  wordsThisMonth: hasHistory ? 127 : 0,
+  wordsThisMonthMonth: hasHistory ? previewMonth : null,
+  wordsTotal: hasHistory ? 14_323 : 0,
   playInteractionChime: true,
   interactionFeedbackVolume: 0.35,
   hasFinishedTutorial: onboarded,
@@ -111,8 +142,8 @@ const createPreviewUser = (onboarded: boolean): User => ({
   stylingMode: "manual",
   selectedToneId: "email",
   activeToneIds: ["default", "email", "notes"],
-  streak: 12,
-  streakRecordedAt: "2026-09-09",
+  streak: hasHistory ? 1 : 0,
+  streakRecordedAt: hasHistory ? previewToday : null,
   referralSource: "Preview scenario",
 });
 
@@ -224,7 +255,7 @@ const previewTranscriptions: Transcription[] = [
     transcript:
       "The new onboarding flow should make the microphone check feel optional until people are ready to try dictation. Walk them through picking a hotkey first, then show the floating pill and explain what each state means — idle, recording, thinking, and pasting. End with a short practice prompt they can repeat out loud, and only then mention the history page where every transcription lands with its audio attached.",
     isDeleted: false,
-    audio: { filePath: "preview://audio/brief", durationMs: 12_500 },
+    audio: { filePath: "preview://audio/brief", durationMs: 57_390 },
     modelSize: "small",
     inferenceDevice: "CPU",
     rawTranscript:
@@ -241,7 +272,7 @@ const previewTranscriptions: Transcription[] = [
     transcript:
       "Design review: simplify the empty state, tighten the heading, and make the primary action more explicit.",
     isDeleted: false,
-    audio: { filePath: "preview://audio/status", durationMs: 9_800 },
+    audio: { filePath: "preview://audio/status", durationMs: 14_651 },
     modelSize: "small",
     inferenceDevice: "CPU",
     transcriptionMode: "local",
@@ -254,13 +285,57 @@ const previewTranscriptions: Transcription[] = [
     transcript:
       "Hi team, the prototype is ready for feedback. Please add comments before Thursday afternoon. Thanks, Morgan.",
     isDeleted: false,
-    audio: { filePath: "preview://audio/email", durationMs: 14_100 },
+    audio: { filePath: "preview://audio/email", durationMs: 14_651 },
     modelSize: "small",
     inferenceDevice: "CPU",
     transcriptionMode: "local",
     transcriptionDurationMs: 1_140,
   },
 ];
+
+const previewDailyActivity: PreviewDailyActivity[] = (() => {
+  const historicalValues = [
+    [171, 12],
+    [156, 28],
+    [141, 17],
+    [126, 43],
+    [111, 31],
+    [96, 64],
+    [81, 22],
+    [66, 58],
+    [51, 39],
+    [36, 82],
+  ] as const;
+  const recentValues = [17, 23, 11, 31, 45] as const;
+  const daysThisMonth = previewNow.getDate();
+  const visibleRecentValues =
+    daysThisMonth >= recentValues.length
+      ? recentValues
+      : Array.from(
+          { length: daysThisMonth },
+          (_, index) =>
+            Math.floor(127 / daysThisMonth) +
+            (index === daysThisMonth - 1 ? 127 % daysThisMonth : 0),
+        );
+  const firstRecentDay = daysThisMonth - visibleRecentValues.length + 1;
+
+  return [
+    ...historicalValues.map(([daysAgo, wordCount]) => ({
+      localDate: previewDateOffset(daysAgo),
+      wordCount,
+    })),
+    ...visibleRecentValues.map((wordCount, index) => ({
+      localDate: localDateKey(
+        new Date(
+          previewNow.getFullYear(),
+          previewNow.getMonth(),
+          firstRecentDay + index,
+        ),
+      ),
+      wordCount,
+    })),
+  ];
+})();
 
 const previewConversations: Conversation[] = [
   {
@@ -279,21 +354,20 @@ const previewConversations: Conversation[] = [
 
 const previewChatMessages: ChatMessage[] = [
   {
-    id: "message-design-user",
+    id: "message-review-user",
     conversationId: "conversation-design-review",
     role: "user",
-    content:
-      "Create a short agenda for a design review of the new onboarding flow.",
-    createdAt: "2026-09-09T08:10:00.000Z",
+    content: "Help me plan a design review for the new empty state.",
+    createdAt: "2026-09-08T13:01:00.000Z",
     metadata: null,
   },
   {
-    id: "message-design-assistant",
+    id: "message-review-assistant",
     conversationId: "conversation-design-review",
     role: "assistant",
     content:
       "## Onboarding design review\n\n1. Revisit the first-run promise and primary action.\n2. Walk through microphone and accessibility permission states.\n3. Review empty, loading, and recovery states.\n4. Agree owners and the next prototype checkpoint.",
-    createdAt: "2026-09-09T08:12:00.000Z",
+    createdAt: "2026-09-08T13:02:00.000Z",
     metadata: null,
   },
   {
@@ -348,9 +422,9 @@ const setCollectionsOnState = (state: AppState, data: PreviewData): void => {
 
 const workspaceSnapshot = (
   data: Omit<PreviewData, "user" | "preferences">,
-  options: { permissionsDenied?: boolean } = {},
+  options: { permissionsDenied?: boolean; empty?: boolean } = {},
 ): PreviewScenarioSnapshot => {
-  const user = createPreviewUser(true);
+  const user = createPreviewUser(true, !options.empty);
   const preferences = createPreviewPreferences();
   const state = clone(INITIAL_APP_STATE);
   state.initialized = true;
@@ -412,19 +486,24 @@ const populatedSnapshot = (): PreviewScenarioSnapshot =>
     transcriptions: clone(previewTranscriptions),
     conversations: clone(previewConversations),
     chatMessages: clone(previewChatMessages),
+    dailyActivity: clone(previewDailyActivity),
   });
 
 const emptySnapshot = (): PreviewScenarioSnapshot =>
-  workspaceSnapshot({
-    terms: [],
-    apiKeys: [],
-    customTones: [],
-    hotkeys: clone(previewHotkeys),
-    appTargets: [],
-    transcriptions: [],
-    conversations: [],
-    chatMessages: [],
-  });
+  workspaceSnapshot(
+    {
+      terms: [],
+      apiKeys: [],
+      customTones: [],
+      hotkeys: clone(previewHotkeys),
+      appTargets: [],
+      transcriptions: [],
+      conversations: [],
+      chatMessages: [],
+      dailyActivity: [],
+    },
+    { empty: true },
+  );
 
 const welcomeSnapshot = (): PreviewScenarioSnapshot => ({
   state: clone(INITIAL_APP_STATE),
@@ -439,12 +518,13 @@ const welcomeSnapshot = (): PreviewScenarioSnapshot => ({
     transcriptions: [],
     conversations: [],
     chatMessages: [],
+    dailyActivity: [],
   },
 });
 
 const onboardingSnapshot = (): PreviewScenarioSnapshot => {
   const state = clone(INITIAL_APP_STATE);
-  const user = createPreviewUser(false);
+  const user = createPreviewUser(false, false);
   const preferences = createPreviewPreferences();
   state.initialized = true;
   state.auth = clone(PREVIEW_AUTH);
@@ -477,6 +557,7 @@ const onboardingSnapshot = (): PreviewScenarioSnapshot => {
       transcriptions: [],
       conversations: [],
       chatMessages: [],
+      dailyActivity: [],
     },
   };
 };
@@ -502,9 +583,12 @@ export const createPreviewScenario = (
           transcriptions: clone(previewTranscriptions),
           conversations: clone(previewConversations),
           chatMessages: clone(previewChatMessages),
+          dailyActivity: clone(previewDailyActivity),
         },
         { permissionsDenied: true },
       );
+    case "activity-loading":
+    case "activity-error":
     case "populated":
     default:
       return populatedSnapshot();

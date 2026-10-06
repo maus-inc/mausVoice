@@ -4,6 +4,20 @@ export const nowIso = (): string => {
   return new Date().toISOString();
 };
 
+/** Local calendar-day key for SQLite activity/streak buckets (never UTC). */
+export const localDateKey = (date: Date = new Date()): string => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
+/** Parse a YYYY-MM-DD key as a local date, avoiding Date's UTC string parsing. */
+export const dateFromLocalKey = (value: string): Date => {
+  const [year, month, day] = value.split("-").map(Number);
+  return new Date(year, month - 1, day);
+};
+
 /**
  * Compact short date for chat surfaces, e.g. "Aug 25". The year is only
  * appended when the timestamp is not from the current year, so recent

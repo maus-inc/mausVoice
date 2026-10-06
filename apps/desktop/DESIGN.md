@@ -28,6 +28,24 @@ The two schemes have their own temperature rather than being inversions of each 
 - `gold` is a reward/secondary class only (inactive feature); `error.main` for destructive only.
 - Status vocabulary must be semantic; never color-only.
 
+### Home activity visualization
+
+The Home saved-word heatmap is a scoped data-color exception, not a second
+chrome accent. Its discrete sequential ramps live in `src/styles/palette.ts` as
+`activityHeatmap.light` and `activityHeatmap.dark`: a distinct zero level plus
+four ordered positive levels relative to the visible 26-week distribution.
+Keep the ramp separate from `activityAtmosphere`; never use the atmospheric
+wash to encode values. `activityStreakAccent` is the matching warm cue for the
+streak metric. Do not introduce orange icons elsewhere in dashboard chrome,
+and do not hard-code either mode's chart colors in a component.
+
+- Exact date/count text and the accessible activity table remain available
+  independently of shade. A zero square means no words are represented in
+  saved/eligible data for that date; it is not proof that the person did not
+  dictate.
+- Ties keep the same shade, and sparse data may use fewer than four positive
+  shades. Do not invent absolute word-count cutoffs to fill the ramp.
+
 ## Typography
 
 - **One family** for product UI: `uiFont = "Satoshi", system-ui`. Display face `TAN-PARADISO` only for the logo wordmark and welcome/name, never in body/settings.

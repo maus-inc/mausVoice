@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { createIntl } from "react-intl";
 import {
+  dateFromLocalKey,
   formatShortDate,
   formatShortTime,
+  localDateKey,
   nowIso,
   threadDayGroup,
 } from "./date.utils";
@@ -59,6 +61,24 @@ describe("threadDayGroup", () => {
       "earlier",
     );
   });
+});
+
+describe("local activity date keys", () => {
+  it("uses local calendar components for a date near midnight", () => {
+    const localDate = new Date(2026, 9, 6, 0, 5);
+
+    expect(localDateKey(localDate)).toBe("2026-10-06");
+    expect(localDateKey(dateFromLocalKey("2026-10-06"))).toBe("2026-10-06");
+  });
+
+  it.each(["2024-02-29", "2026-03-08", "2026-11-01", "2026-12-31"])(
+    "round-trips local calendar day %s without Date's UTC string parsing",
+    (key) => {
+      const date = dateFromLocalKey(key);
+      expect(localDateKey(date)).toBe(key);
+      expect(date.getFullYear()).toBe(Number(key.slice(0, 4)));
+    },
+  );
 });
 
 describe("nowIso", () => {

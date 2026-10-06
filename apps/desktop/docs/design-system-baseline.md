@@ -23,6 +23,22 @@ two never drift apart.
   imitates a third-party UI (for example the Notes/Gmail mock-ups in
   `TutorialForm`). Comment why.
 
+## Home activity data colours
+
+Home's saved-word heatmap is a scoped data-visualization exception to the
+silver/ink chrome accent. Use only the sequential light/dark ramps in
+`src/styles/palette.ts` (`activityHeatmap`) for its five discrete levels: a
+zero level and four relative positive quartiles. Keep these data colors separate
+from the static `activityAtmosphere` wash. `activityStreakAccent` is the
+matching warm cue for the streak metric; do not spread orange into other
+chrome or hard-code scheme-specific values in components.
+
+- Exact local date/count text and the accessible activity table carry meaning
+  independently of color. A zero square means no words are represented in
+  saved/eligible data for the day—not proof of no dictation.
+- Equal values share a shade; sparse data may use fewer than four positive
+  levels. Do not add absolute word-count cutoffs.
+
 ## Interactive states
 
 Everything interactive ships all of: default, hover, **focus-visible**, active,

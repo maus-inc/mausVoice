@@ -228,6 +228,11 @@ export const toLocalUser = (user: User): LocalUser => {
 export abstract class BaseUserRepo extends BaseRepo {
   abstract setMyUser(user: User): Promise<User>;
   abstract getMyUser(): Promise<Nullable<User>>;
+  abstract recordUsageWords(
+    eventId: string,
+    localDate: string,
+    wordCount: number,
+  ): Promise<User>;
 }
 
 export class LocalUserRepo extends BaseUserRepo {
@@ -243,5 +248,19 @@ export class LocalUserRepo extends BaseUserRepo {
     const user = await invoke<Nullable<LocalUser>>("user_get_one");
 
     return user ? fromLocalUser(user) : null;
+  }
+
+  async recordUsageWords(
+    eventId: string,
+    localDate: string,
+    wordCount: number,
+  ): Promise<User> {
+    const user = await invoke<LocalUser>("user_record_usage", {
+      eventId,
+      localDate,
+      wordCount,
+    });
+
+    return fromLocalUser(user);
   }
 }

@@ -1,17 +1,11 @@
+import { Box, Chip, Stack, Typography } from "@mui/material";
 import { Flame } from "lucide-react";
-import {
-  Box,
-  Card,
-  CardContent,
-  Chip,
-  Stack,
-  Tooltip,
-  Typography,
-} from "@mui/material";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { useNavigate } from "react-router-dom";
 import { useAppStore } from "../../store";
+import { activityAtmosphere, activityStreakAccent } from "../../styles/palette";
+import { getActivityDateRange } from "../../utils/activity-grid.utils";
 import {
   getDictationSpeed,
   getEffectiveStreak,
@@ -21,85 +15,48 @@ import {
 import { DictationInstruction } from "../common/DictationInstruction";
 import { DashboardEntryLayout } from "../dashboard/DashboardEntryLayout";
 import { TranscriptionRow } from "../transcriptions/TranscriptRow";
+import { ActivityHeatmap } from "./ActivityHeatmap";
 import { GettingStartedList } from "./GettingStartedList";
+import { HomeMetricCard } from "./HomeMetricCard";
 import { HomeSideEffects } from "./HomeSideEffects";
+import type { HomeActivityState } from "./home.types";
 
-function StatCard({
-  value,
-  label,
-  icon,
-}: {
-  value: string;
-  label: string;
-  icon?: React.ReactNode;
-}) {
-  return (
-    <Card sx={{ flex: 1 }}>
-      <CardContent sx={{ py: 2, px: 2.5, "&:last-child": { pb: 2 } }}>
-        <Stack
-          direction="row"
-          spacing={1}
-          sx={{
-            alignItems: "center",
-            mb: 0.5,
-          }}
-        >
-          {icon}
-          <Typography
-            variant="h5"
-            sx={{
-              fontWeight: 700,
-            }}
-          >
-            {value}
-          </Typography>
-        </Stack>
-        <Typography
-          variant="body2"
-          sx={{
-            color: "text.secondary",
-          }}
-        >
-          {label}
-        </Typography>
-      </CardContent>
-    </Card>
-  );
-}
-
-/**
- * Home dashboard: user stats, upgrade/trial prompts, getting-started guide,
- * and recent transcriptions, with the side effects that keep them fresh.
- *
- * The header left slot intentionally stays empty here — publishing a "Home"
- * label into the title bar was a regression, not a design requirement.
- */
 export default function HomePage() {
   const user = useAppStore(getMyUser);
   const userFirstName = useAppStore(getMyUserFirstName);
   const streak = useAppStore(getEffectiveStreak);
-  const intl = useIntl();
-
   const dictationSpeed = useAppStore(getDictationSpeed);
-  const wordsThisMonth = user?.wordsThisMonth ?? 0;
-  const wordsTotal = user?.wordsTotal ?? 0;
+  const intl = useIntl();
   const navigate = useNavigate();
-
   const recentIds = useAppStore(
     (state) => state.transcriptions.transcriptionIds,
   );
   const topIds = useMemo(() => recentIds.slice(0, 2), [recentIds]);
+  const [activity, setActivity] = useState<HomeActivityState>(() => ({
+    status: "loading",
+    records: [],
+    ...getActivityDateRange(),
+    hasLoaded: false,
+  }));
+
+  const multiplier = dictationSpeed
+    ? intl.formatNumber(dictationSpeed.wpm / 40, {
+        minimumFractionDigits: 1,
+        maximumFractionDigits: 1,
+      })
+    : null;
 
   return (
-    <DashboardEntryLayout>
-      <HomeSideEffects />
-      <Stack direction="column" spacing={4}>
+    <DashboardEntryLayout maxWidth="xl">
+      <HomeSideEffects onActivityChange={setActivity} />
+      <Stack direction="column" spacing={3} sx={{ minWidth: 0 }}>
         <Box>
           <Typography
             variant="h4"
             sx={{
               fontWeight: 500,
               mb: 0.5,
+              overflowWrap: "anywhere",
             }}
           >
             <FormattedMessage
@@ -121,74 +78,99 @@ export default function HomePage() {
           <DictationInstruction />
         </Box>
 
-        <Stack spacing={1.5}>
-          <Stack direction="row" spacing={1.5}>
-            <StatCard
-              value={streak.toString()}
-              label={intl.formatMessage({ defaultMessage: "Day streak" })}
-              icon={<Flame size={22} strokeWidth={2} color="#FF6B35" />}
-            />
-            <StatCard
-              value={wordsThisMonth.toLocaleString()}
-              label={intl.formatMessage({ defaultMessage: "Words this month" })}
-            />
-            <StatCard
-              value={wordsTotal.toLocaleString()}
-              label={intl.formatMessage({ defaultMessage: "Words total" })}
-            />
-          </Stack>
-
-          {dictationSpeed != null && (
-            <Tooltip
-              title={intl.formatMessage(
-                {
-                  defaultMessage:
-                    "Average words per minute across your last {count, plural, one {# dictation} other {# dictations}}. Compared against a median typing speed of 40 WPM.",
-                },
-                { count: dictationSpeed.sampleCount },
-              )}
-              arrow
-              placement="bottom"
-            >
-              <Card sx={{ cursor: "default" }}>
-                <CardContent sx={{ py: 2, px: 2.5, "&:last-child": { pb: 2 } }}>
-                  <Stack
-                    direction="row"
-                    spacing={1.5}
-                    sx={{
-                      alignItems: "baseline",
-                    }}
+        <Box
+          component="section"
+          aria-label={intl.formatMessage({ defaultMessage: "Home analytics" })}
+          sx={(theme) => ({
+            minWidth: 0,
+            mx: -1,
+            p: 1,
+            borderRadius: 2,
+            backgroundImage: activityAtmosphere[theme.palette.mode],
+          })}
+        >
+          <Box
+            data-testid="home-analytics-grid"
+            sx={{
+              display: "grid",
+              gridTemplateColumns: {
+                xs: "repeat(2, minmax(0, 1fr))",
+                md: "minmax(132px, 0.68fr) minmax(0, 2.6fr) minmax(132px, 0.68fr)",
+              },
+              gridTemplateAreas: {
+                xs: '"streak month" "total speed" "activity activity"',
+                md: '"streak activity total" "month activity speed"',
+              },
+              gap: { xs: 1, md: 1.5 },
+              alignItems: "stretch",
+              minWidth: 0,
+            }}
+          >
+            <Box sx={{ gridArea: "streak", minWidth: 0 }}>
+              <HomeMetricCard
+                label={<FormattedMessage defaultMessage="Day streak" />}
+                value={intl.formatNumber(streak)}
+                icon={
+                  <Box
+                    sx={(theme) => ({
+                      display: "flex",
+                      color: activityStreakAccent[theme.palette.mode],
+                    })}
                   >
-                    <Typography
-                      variant="h5"
-                      sx={{
-                        fontWeight: 700,
+                    <Flame size={21} strokeWidth={2} aria-hidden="true" />
+                  </Box>
+                }
+              />
+            </Box>
+
+            <Box sx={{ gridArea: "month", minWidth: 0 }}>
+              <HomeMetricCard
+                label={<FormattedMessage defaultMessage="Words this month" />}
+                value={intl.formatNumber(user?.wordsThisMonth ?? 0)}
+              />
+            </Box>
+
+            <Box sx={{ gridArea: "total", minWidth: 0 }}>
+              <HomeMetricCard
+                label={<FormattedMessage defaultMessage="Lifetime words" />}
+                value={intl.formatNumber(user?.wordsTotal ?? 0)}
+              />
+            </Box>
+
+            <Box sx={{ gridArea: "speed", minWidth: 0 }}>
+              <HomeMetricCard
+                label={<FormattedMessage defaultMessage="Speaking speed" />}
+                value={
+                  dictationSpeed ? (
+                    <FormattedMessage
+                      defaultMessage="{wpm, number} WPM"
+                      values={{ wpm: dictationSpeed.wpm }}
+                    />
+                  ) : (
+                    "—"
+                  )
+                }
+                detail={
+                  dictationSpeed && multiplier ? (
+                    <FormattedMessage
+                      defaultMessage="Average across {count, plural, one {# recent dictation} other {# recent dictations}} · {multiplier}× the 40 WPM typing baseline"
+                      values={{
+                        count: dictationSpeed.sampleCount,
+                        multiplier,
                       }}
-                    >
-                      <FormattedMessage
-                        defaultMessage="{wpm} WPM"
-                        values={{ wpm: dictationSpeed.wpm }}
-                      />
-                    </Typography>
-                    <Typography
-                      variant="body2"
-                      sx={{
-                        color: "text.secondary",
-                      }}
-                    >
-                      <FormattedMessage
-                        defaultMessage="{multiplier}x faster than typing"
-                        values={{
-                          multiplier: (dictationSpeed.wpm / 40).toFixed(1),
-                        }}
-                      />
-                    </Typography>
-                  </Stack>
-                </CardContent>
-              </Card>
-            </Tooltip>
-          )}
-        </Stack>
+                    />
+                  ) : (
+                    <FormattedMessage defaultMessage="No recent dictations have usable audio duration yet." />
+                  )
+                }
+              />
+            </Box>
+
+            <Box sx={{ gridArea: "activity", minWidth: 0 }}>
+              <ActivityHeatmap {...activity} />
+            </Box>
+          </Box>
+        </Box>
 
         <GettingStartedList />
 
