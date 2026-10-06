@@ -481,15 +481,20 @@ export class DictationStrategy extends BaseStrategy {
         });
       } else if (transcript) {
         // The History row's content is final here, but the row used to wait
-        // for delivery (hands-free delay, paste, or simulated typing — the last
-        // one is O(text length)) before its write even started. Write it now,
+        // for delivery (hands-free delay, paste, or simulated typing, the last
+        // one O(text length)) before its write even started. Write it now,
         // while delivery runs, when delivery cannot change what gets stored:
         // review-before-insert can still edit the text, and a remote target
         // records its delivery outcome on the row, so both keep the serial path.
+        //
+        // Both preference reads are fresh rather than the values captured
+        // before the post-processing await: a receiver paired or a review
+        // toggled during that wait must still select the serial path, because
+        // routing reads the live preferences in the same tick right after.
         const concurrentPersistence =
           args.persistTranscriptNow !== undefined &&
           getMyUserPreferences(getAppState())?.reviewBeforeInsert !== true &&
-          remoteDeviceId === null;
+          this.getActiveRemoteTargetDeviceId() === null;
         if (concurrentPersistence && args.persistTranscriptNow) {
           pendingPersistence = args
             .persistTranscriptNow({

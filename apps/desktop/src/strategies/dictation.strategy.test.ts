@@ -558,6 +558,40 @@ describe("DictationStrategy backlog lifecycle", () => {
       expect(result.pendingPersistence).toBeUndefined();
     });
 
+    it("keeps the serial path when a receiver is paired during post-processing", async () => {
+      // The gate re-reads preferences after the post-processing await rather
+      // than trusting the values captured before it: a receiver paired while
+      // the transcript was being polished must still take the serial path, so
+      // the row records the remote delivery instead of racing it.
+      const { postProcessTranscript } =
+        await import("../actions/transcribe.actions");
+      vi.mocked(postProcessTranscript).mockImplementationOnce(async () => {
+        const state = getAppState();
+        setAppState(
+          {
+            userPrefs: {
+              ...(state.userPrefs ?? createDefaultPreferences()),
+              remoteOutputEnabled: true,
+              remoteTargetDeviceId: "device-late",
+            },
+          },
+          false,
+        );
+        return { transcript: "clean transcript", warnings: [], metadata: {} };
+      });
+      const persistTranscriptNow = vi.fn();
+
+      const result = await new DictationStrategy().handleTranscript(
+        createHandleTranscriptParams({
+          rawTranscript: "raw transcript",
+          persistTranscriptNow,
+        }),
+      );
+
+      expect(persistTranscriptNow).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ historyOwner: "stop-path" });
+    });
+
     it("never rejects the pending write when persistence itself fails", async () => {
       const persistTranscriptNow = vi
         .fn()
