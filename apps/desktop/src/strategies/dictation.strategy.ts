@@ -6,6 +6,7 @@ import { getIntl } from "../i18n/intl";
 import { postProcessErrorReason } from "../actions/post-process-error-category";
 import { showToast } from "../actions/toast.actions";
 import {
+  appendTranscriptionWarnings,
   postProcessTranscript,
   type PostProcessMetadata,
 } from "../actions/transcribe.actions";
@@ -384,6 +385,7 @@ export class DictationStrategy extends BaseStrategy {
     let postProcessWarnings: string[] = [];
     let remoteStatus: "sent" | null = null;
     let historyOwner: HistoryOwner = "stop-path";
+    let pendingPersistence: HandleTranscriptResult["pendingPersistence"];
     const remoteDeviceId = this.getActiveRemoteTargetDeviceId();
 
     try {
@@ -478,6 +480,33 @@ export class DictationStrategy extends BaseStrategy {
           action: "open_transcriptions",
         });
       } else if (transcript) {
+        // The History row's content is final here, but the row used to wait
+        // for delivery (hands-free delay, paste, or simulated typing — the last
+        // one is O(text length)) before its write even started. Write it now,
+        // while delivery runs, when delivery cannot change what gets stored:
+        // review-before-insert can still edit the text, and a remote target
+        // records its delivery outcome on the row, so both keep the serial path.
+        const concurrentPersistence =
+          args.persistTranscriptNow !== undefined &&
+          getMyUserPreferences(getAppState())?.reviewBeforeInsert !== true &&
+          remoteDeviceId === null;
+        if (concurrentPersistence && args.persistTranscriptNow) {
+          pendingPersistence = args
+            .persistTranscriptNow({
+              transcript,
+              sanitizedTranscript,
+              postProcessMetadata,
+              postProcessWarnings,
+            })
+            .catch((error) => {
+              getLogger().error(
+                `Concurrent history persistence failed: ${error}`,
+              );
+              return { transcription: null, wordCount: 0 };
+            });
+          historyOwner = "concurrent";
+        }
+
         try {
           getLogger().verbose(
             `Routing transcript output (${transcript.length} chars, app=${args.currentApp?.id ?? "none"})`,
@@ -489,13 +518,21 @@ export class DictationStrategy extends BaseStrategy {
               text: textToPaste,
               mode: "dictation",
               currentAppId: args.currentApp?.id ?? null,
+              // The concurrent row already stores this exact text. Pinning the
+              // review off keeps a preference flipped mid-delivery from opening
+              // a review whose Save would write a second, edited row.
+              skipReview: concurrentPersistence ? true : undefined,
             },
             args.trace ?? null,
           );
           if (
             result.delivered &&
             result.deliveredText !== null &&
-            result.deliveredText !== textToPaste
+            result.deliveredText !== textToPaste &&
+            // A concurrent row already stores this utterance; adopting a review
+            // edit here would persist a second row. skipReview makes this
+            // unreachable today, and the guard keeps it impossible tomorrow.
+            !concurrentPersistence
           ) {
             // The review settled on an edited text. Adopt it for History and
             // persist now so the exact edit becomes durable as soon as it lands.
@@ -538,6 +575,18 @@ export class DictationStrategy extends BaseStrategy {
         error instanceof Error ? error.message : "An error occurred.";
       postProcessWarnings.push(errorMessage);
 
+      if (pendingPersistence) {
+        // The row was already written concurrently with delivery, so this
+        // warning cannot ride on the original store call the way it does on
+        // the serial path. Attach it once the write settles so the stored row
+        // carries the same warnings either way.
+        void pendingPersistence.then(({ transcription }) => {
+          if (transcription) {
+            void appendTranscriptionWarnings(transcription.id, [errorMessage]);
+          }
+        });
+      }
+
       await showToast({
         message: "Transcription failed",
         toastType: "error",
@@ -553,6 +602,7 @@ export class DictationStrategy extends BaseStrategy {
       remoteStatus,
       remoteDeviceId: remoteStatus ? remoteDeviceId : null,
       historyOwner,
+      pendingPersistence,
     };
   }
 

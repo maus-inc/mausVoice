@@ -9,6 +9,36 @@ const EMPTY_RESULT = (): StopRecordingResponse => ({
   sampleRate: 0,
 });
 
+/**
+ * Encode audio for a raw-body IPC command as `[sampleRate u32 LE][f32 LE...]`.
+ *
+ * Mirrors the Rust `encode_recorded_audio` framing that `stop_recording`
+ * returns, so one wire format describes a recording in both directions. The
+ * alternative — a JSON number array — costs roughly four times the bytes and
+ * the full `JSON.stringify`/parse of every sample, which for long dictations
+ * is hundreds of milliseconds on the save path.
+ */
+export const encodeRecordedAudio = (
+  samples: number[] | Float32Array,
+  sampleRate: number,
+): Uint8Array => {
+  const sampleCount = samples.length;
+  const bytes = new Uint8Array(HEADER_BYTES + sampleCount * 4);
+  const view = new DataView(bytes.buffer);
+  view.setUint32(0, sampleRate, true);
+  if (IS_LITTLE_ENDIAN) {
+    // Aligned: the f32 view writes the platform's little-endian layout
+    // directly, which is the wire layout. `set` copies rather than aliases,
+    // so the caller's samples stay untouched.
+    new Float32Array(bytes.buffer, HEADER_BYTES, sampleCount).set(samples);
+    return bytes;
+  }
+  for (let index = 0; index < sampleCount; index += 1) {
+    view.setFloat32(HEADER_BYTES + index * 4, samples[index] ?? 0, true);
+  }
+  return bytes;
+};
+
 const decodeBinary = (bytes: Uint8Array): StopRecordingResponse => {
   if (bytes.byteLength < HEADER_BYTES) {
     return EMPTY_RESULT();
