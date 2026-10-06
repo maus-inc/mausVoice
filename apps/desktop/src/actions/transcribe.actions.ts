@@ -831,6 +831,8 @@ export type StoreTranscriptionInput = {
   remoteStatus?: "sent" | "received" | null;
   remoteDeviceId?: string | null;
   trace?: PipelineTrace | null;
+  /** Captured when the utterance ended, not when the background write runs. */
+  createdAt?: string;
 };
 
 export type StoreTranscriptionOutput = {
@@ -1058,7 +1060,7 @@ export const storeTranscription = async (
     sampleCount > 0 &&
     !(transcriptionFailed && !preserveAudioOnFailure);
   const payloadSamples = Array.isArray(input.audio.samples)
-    ? input.audio.samples
+    ? input.audio.samples.slice()
     : Array.from(input.audio.samples ?? []);
   const audioSnapshot = shouldPersistAudio
     ? await persistAudioSnapshot(transcriptionId, payloadSamples, rate)
@@ -1069,7 +1071,7 @@ export const storeTranscription = async (
     transcriptionId,
     audioSnapshot,
     transcriptionFailed,
-    createdAt: dayjs().toISOString(),
+    createdAt: input.createdAt ?? dayjs().toISOString(),
     createdByUserId: getMyEffectiveUserId(state),
   });
 

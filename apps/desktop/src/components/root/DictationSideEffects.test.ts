@@ -1,9 +1,15 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { navigateMock, surfaceMainWindowMock, warningMock } = vi.hoisted(() => ({
+const {
+  navigateMock,
+  surfaceMainWindowMock,
+  warningMock,
+  isPersistenceAllowedMock,
+} = vi.hoisted(() => ({
   navigateMock: vi.fn(),
   surfaceMainWindowMock: vi.fn(),
   warningMock: vi.fn(),
+  isPersistenceAllowedMock: vi.fn(() => true),
 }));
 
 vi.mock("../../router", () => ({
@@ -32,6 +38,11 @@ vi.mock("../../utils/log.utils", () => ({
     stopwatch: vi.fn(),
   }),
 }));
+vi.mock("../../utils/incognito.utils", () => ({
+  isPersistenceAllowed: () => isPersistenceAllowedMock(),
+  isIncognitoModeEnabled: () => !isPersistenceAllowedMock(),
+  isEphemeralSessionActive: () => false,
+}));
 
 import {
   createPhaseBookkeeper,
@@ -45,6 +56,10 @@ import type {
   PostTranscriptInput,
 } from "./DictationSideEffects";
 import type { BaseStrategy } from "../../strategies/base.strategy";
+import {
+  flushHistoryPersist,
+  resetHistoryPersistQueue,
+} from "../../utils/history-persist.utils";
 
 type ToastCall = {
   message: string;
@@ -133,6 +148,11 @@ describe("surfacePersistedReviewInHistory", () => {
   });
 });
 
+afterEach(() => {
+  resetHistoryPersistQueue();
+  isPersistenceAllowedMock.mockReturnValue(true);
+});
+
 describe("handleEmptyTranscriptionResult (#418)", () => {
   it("shows a recovery toast and stores a failure marker without emitting recording_failed", async () => {
     const showToast = vi.fn<HandleEmptyResultInput["showToast"]>(() =>
@@ -162,6 +182,7 @@ describe("handleEmptyTranscriptionResult (#418)", () => {
     const toastCall = asToastCall(showToast);
     expect(toastCall.toastType).toBe("error");
     expect(toastCall.message).toMatch(/transcription failed/i);
+    await flushHistoryPersist();
     expect(storeTranscriptionFn).toHaveBeenCalledTimes(1);
     expect(asStoreCall(storeTranscriptionFn)).toMatchObject({
       rawTranscript: null,
@@ -173,6 +194,116 @@ describe("handleEmptyTranscriptionResult (#418)", () => {
     // forwarding to the global listener stacked a second generic error
     // toast over it.
     expect(refreshMember).toHaveBeenCalledTimes(1);
+  });
+
+  it("idles the pill before scheduling the failed-transcription save", async () => {
+    const order: string[] = [];
+    const sendIdle = vi.fn(async () => {
+      order.push("idle");
+    });
+    const storeTranscriptionFn = vi.fn<
+      HandleEmptyResultInput["storeTranscriptionFn"]
+    >(() => {
+      order.push("store");
+      return Promise.resolve({ transcription: null, wordCount: 0 });
+    });
+
+    await handleEmptyTranscriptionResult({
+      audio: { samples: new Float32Array([0.1, 0.2]), sampleRate: 16000 },
+      transcribeResult: {
+        rawTranscript: null,
+        metadata: {},
+        warnings: ["provider timed out"],
+      },
+      strategy: baseStrategyStub(),
+      formatMessage: (descriptor) => descriptor.defaultMessage,
+      showToast: () => Promise.resolve(undefined),
+      storeTranscriptionFn,
+      refreshMember: vi.fn(),
+      sendIdle,
+    });
+    await flushHistoryPersist();
+
+    expect(sendIdle).toHaveBeenCalledTimes(1);
+    expect(order).toEqual(["idle", "store"]);
+  });
+
+  it("does not wait for the recovery toast before returning", async () => {
+    const showToast = vi.fn<HandleEmptyResultInput["showToast"]>(
+      () => new Promise(() => undefined),
+    );
+    const storeTranscriptionFn = vi.fn<
+      HandleEmptyResultInput["storeTranscriptionFn"]
+    >(() => Promise.resolve({ transcription: null, wordCount: 0 }));
+
+    const result = await handleEmptyTranscriptionResult({
+      audio: { samples: new Float32Array([0.1, 0.2]), sampleRate: 16000 },
+      transcribeResult: {
+        rawTranscript: null,
+        metadata: {},
+        warnings: ["provider timed out"],
+      },
+      strategy: baseStrategyStub(),
+      formatMessage: (descriptor) => descriptor.defaultMessage,
+      showToast,
+      storeTranscriptionFn,
+      refreshMember: vi.fn(),
+    });
+
+    expect(result).toEqual({ handled: true });
+    expect(showToast).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not wait for history persistence before returning", async () => {
+    const storeTranscriptionFn = vi.fn<
+      HandleEmptyResultInput["storeTranscriptionFn"]
+    >(() => new Promise(() => undefined));
+
+    const result = await handleEmptyTranscriptionResult({
+      audio: { samples: new Float32Array([0.1, 0.2]), sampleRate: 16000 },
+      transcribeResult: {
+        rawTranscript: null,
+        metadata: {},
+        warnings: ["provider timed out"],
+      },
+      strategy: baseStrategyStub(),
+      formatMessage: (descriptor) => descriptor.defaultMessage,
+      showToast: () => Promise.resolve(undefined),
+      storeTranscriptionFn,
+      refreshMember: vi.fn(),
+    });
+
+    expect(result).toEqual({ handled: true });
+    await Promise.resolve();
+    expect(storeTranscriptionFn).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not enqueue a failed-transcription row when persistence is off", async () => {
+    isPersistenceAllowedMock.mockReturnValue(false);
+    const showToast = vi.fn<HandleEmptyResultInput["showToast"]>(() =>
+      Promise.resolve(undefined),
+    );
+    const storeTranscriptionFn = vi.fn<
+      HandleEmptyResultInput["storeTranscriptionFn"]
+    >(() => Promise.resolve({ transcription: null, wordCount: 0 }));
+
+    await handleEmptyTranscriptionResult({
+      audio: { samples: new Float32Array([0.1, 0.2]), sampleRate: 16000 },
+      transcribeResult: {
+        rawTranscript: null,
+        metadata: {},
+        warnings: ["provider timed out"],
+      },
+      strategy: baseStrategyStub(),
+      formatMessage: (descriptor) => descriptor.defaultMessage,
+      showToast,
+      storeTranscriptionFn,
+      refreshMember: vi.fn(),
+    });
+    await flushHistoryPersist();
+
+    expect(storeTranscriptionFn).not.toHaveBeenCalled();
+    expect(asToastCall(showToast).message).toBe("Transcription failed.");
   });
 
   it("skips the audio store when strategy.shouldStoreTranscript() is false", async () => {
@@ -199,6 +330,7 @@ describe("handleEmptyTranscriptionResult (#418)", () => {
 
     expect(storeTranscriptionFn).not.toHaveBeenCalled();
     expect(showToast).toHaveBeenCalledTimes(1);
+    expect(asToastCall(showToast).message).toBe("Transcription failed.");
   });
 
   it("returns handled: false when rawTranscript is non-empty (caller continues)", async () => {
@@ -302,7 +434,10 @@ describe("postProcessFinalizedTranscript", () => {
       PostTranscriptInput["storeTranscriptionFn"]
     >(() => {
       order.push("store");
-      return Promise.resolve({ transcription: null, wordCount: 0 });
+      return Promise.resolve({
+        transcription: { id: "t1" } as never,
+        wordCount: 0,
+      });
     });
     const strategy: PostTranscriptInput["strategy"] = {
       handleTranscript,
@@ -363,11 +498,13 @@ describe("postProcessFinalizedTranscript", () => {
     const { input, showToast } = buildInput({ droppedChars: 42 });
 
     await postProcessFinalizedTranscript(input);
+    expect(showToast).not.toHaveBeenCalled();
+    await flushHistoryPersist();
 
     expect(showToast).toHaveBeenCalledTimes(1);
     const call = showToast.mock.calls[0]?.[0];
     expect(call?.toastType).toBe("info");
-    // The row is stored here, so promising History is accurate.
+    // Promising History only after the row is durable.
     expect(call?.message).toContain("History");
   });
 
@@ -375,6 +512,7 @@ describe("postProcessFinalizedTranscript", () => {
     // Incognito mode skips storage, so the untruncated ending exists nowhere.
     // The same message would send the user looking for text that was never
     // written.
+    isPersistenceAllowedMock.mockReturnValue(false);
     const { input, showToast } = buildInput({ store: false, droppedChars: 42 });
 
     await postProcessFinalizedTranscript(input);
@@ -383,6 +521,32 @@ describe("postProcessFinalizedTranscript", () => {
     const call = showToast.mock.calls[0]?.[0];
     expect(call?.message).not.toContain("History");
     expect(call?.message).toContain("42");
+  });
+
+  it("does not follow an incognito truncation notice with a History promise", async () => {
+    isPersistenceAllowedMock.mockReturnValue(false);
+    const { input, showToast } = buildInput({ droppedChars: 42 });
+
+    await postProcessFinalizedTranscript(input);
+    await flushHistoryPersist();
+
+    expect(showToast).toHaveBeenCalledTimes(1);
+    expect(showToast.mock.calls[0]?.[0]?.message).not.toContain("History");
+  });
+
+  it("does not call a failed History write an incognito skip", async () => {
+    const { input, showToast, storeTranscriptionFn } = buildInput({
+      droppedChars: 42,
+    });
+    storeTranscriptionFn.mockResolvedValue({
+      transcription: null,
+      wordCount: 0,
+    });
+
+    await postProcessFinalizedTranscript(input);
+    await flushHistoryPersist();
+
+    expect(showToast).not.toHaveBeenCalled();
   });
 
   it("stays quiet when nothing was truncated", async () => {
@@ -397,8 +561,48 @@ describe("postProcessFinalizedTranscript", () => {
     const result = await postProcessFinalizedTranscript(input);
     expect(result).toEqual({ shouldContinue: false });
     expect(handleTranscript).toHaveBeenCalledTimes(1);
+    await flushHistoryPersist();
     expect(storeTranscriptionFn).toHaveBeenCalledTimes(1);
-    expect(order).toEqual(["handleTranscript", "idle", "store", "refresh"]);
+    expect(order).toEqual(["handleTranscript", "idle", "refresh", "store"]);
+    expect(order.indexOf("idle")).toBeLessThan(order.indexOf("store"));
+    expect(storeTranscriptionFn.mock.calls[0]?.[0]).toMatchObject({
+      createdAt: expect.any(String),
+    });
+  });
+
+  it("copies PCM before the persist job runs so a later mutation cannot alias it", async () => {
+    const samples = new Float32Array([0.25, 0.5]);
+    const { input, storeTranscriptionFn } = buildInput();
+    input.audio = { samples, sampleRate: 16_000 };
+
+    await postProcessFinalizedTranscript(input);
+    samples[0] = 99;
+    await flushHistoryPersist();
+
+    const storedAudio = storeTranscriptionFn.mock.calls[0]?.[0]?.audio;
+    expect(storedAudio?.samples[0]).toBeCloseTo(0.25);
+  });
+
+  it("returns to idle without waiting for history persistence", async () => {
+    // A pending WAV/DB write used to keep this function (and therefore the
+    // stop path's `isStopping` lock and transcribing pill) alive until History
+    // finished. The next take has to be startable while that save completes.
+    const { input, storeTranscriptionFn } = buildInput();
+    let resolveStore: (() => void) | undefined;
+    storeTranscriptionFn.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveStore = () => resolve({ transcription: null, wordCount: 0 });
+        }),
+    );
+
+    const result = await postProcessFinalizedTranscript(input);
+
+    expect(result).toEqual({ shouldContinue: false });
+    await Promise.resolve();
+    expect(storeTranscriptionFn).toHaveBeenCalledTimes(1);
+    resolveStore?.();
+    await flushHistoryPersist();
   });
 
   it("does not store a transcript the review already persisted", async () => {
@@ -422,6 +626,7 @@ describe("postProcessFinalizedTranscript", () => {
     };
 
     await postProcessFinalizedTranscript(input);
+    await flushHistoryPersist();
 
     expect(storeTranscriptionFn).not.toHaveBeenCalled();
   });
@@ -448,6 +653,7 @@ describe("postProcessFinalizedTranscript", () => {
     };
 
     await postProcessFinalizedTranscript(input);
+    await flushHistoryPersist();
 
     expect(storeTranscriptionFn).not.toHaveBeenCalled();
   });
@@ -472,6 +678,7 @@ describe("postProcessFinalizedTranscript", () => {
     };
 
     await postProcessFinalizedTranscript(input);
+    await flushHistoryPersist();
 
     expect(storeTranscriptionFn).toHaveBeenCalledTimes(1);
   });
@@ -507,12 +714,14 @@ describe("postProcessFinalizedTranscript", () => {
   it("sends idle up front in agent mode without skipping the post-routing idle", async () => {
     const { input, order } = buildInput({ agent: true });
     await postProcessFinalizedTranscript(input);
+    await flushHistoryPersist();
     expect(order).toEqual([
       "idle",
       "handleTranscript",
       "idle",
-      "store",
       "refresh",
+      "store",
     ]);
+    expect(order.lastIndexOf("idle")).toBeLessThan(order.indexOf("store"));
   });
 });

@@ -3,6 +3,7 @@ import { type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { AppTarget } from "@maus-inc/types";
 import { delayed } from "@maus-inc/utilities";
+import dayjs from "dayjs";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useIntl } from "react-intl";
 import {
@@ -23,7 +24,11 @@ import {
   resolveToolPermission,
   setToolAlwaysAllow,
 } from "../../actions/tool.actions";
-import { storeTranscription } from "../../actions/transcribe.actions";
+import {
+  storeTranscription,
+  type StoreTranscriptionInput,
+  type StoreTranscriptionOutput,
+} from "../../actions/transcribe.actions";
 import { recordStreak } from "../../actions/user.actions";
 import {
   useHotkeyFire,
@@ -87,6 +92,14 @@ import {
   resolveNewlyPressedDictationArrow,
 } from "../../utils/dictation-style.utils";
 import { getEffectiveStylingMode } from "../../utils/feature.utils";
+import {
+  enqueueHistoryPersist,
+  snapshotStopRecordingAudio,
+} from "../../utils/history-persist.utils";
+import {
+  isIncognitoModeEnabled,
+  isPersistenceAllowed,
+} from "../../utils/incognito.utils";
 import { createId } from "../../utils/id.utils";
 import {
   AGENT_DICTATE_HOTKEY,
@@ -100,6 +113,7 @@ import {
   SWITCH_WRITING_STYLE_FORWARD_HOTKEY,
 } from "../../utils/keyboard.utils";
 import { getLogger } from "../../utils/log.utils";
+import { logOnRejection } from "../../utils/promise.utils";
 import {
   getCancelTranscriptPromptMessage,
   getTranscriptionAudioDisclosure,
@@ -155,24 +169,73 @@ type RawStopResp = {
   abortMessage?: string;
 };
 
+type DictationToastOptions = {
+  message: string;
+  toastType: "info" | "error";
+  duration?: number;
+};
+
+type ShowDictationToast = (
+  options: DictationToastOptions,
+) => Promise<void> | void;
+
 export type HandleEmptyResultInput = {
   audio: StopRecordingResponse;
   transcribeResult: TranscriptionSessionResult | undefined;
   strategy: Pick<BaseStrategy, "shouldStoreTranscript">;
   formatMessage: (descriptor: { defaultMessage: string }) => string;
-  showToast: (options: {
-    message: string;
-    toastType: "info" | "error";
-    duration?: number;
-  }) => Promise<void> | void;
+  showToast: ShowDictationToast;
   storeTranscriptionFn: typeof storeTranscription;
   refreshMember: () => void;
+  /** Clears Transcribing before the background History write is scheduled. */
+  sendIdle?: () => Promise<void>;
+};
+
+const enqueueTranscriptionHistory = (
+  store: typeof storeTranscription,
+  input: StoreTranscriptionInput,
+  context: string,
+  options?: {
+    onStored?: (stored: StoreTranscriptionOutput) => void;
+  },
+): Promise<StoreTranscriptionOutput> => {
+  // Copy PCM and stamp createdAt now, not when the serial job starts. A later
+  // take can reuse or mutate the stop-recording buffer while this job waits.
+  const audio = snapshotStopRecordingAudio(input.audio);
+  const createdAt = input.createdAt ?? dayjs().toISOString();
+  return enqueueHistoryPersist(async () => {
+    const stored = await store({
+      ...input,
+      audio,
+      createdAt,
+    });
+    try {
+      options?.onStored?.(stored);
+    } catch (error) {
+      getLogger().warning(
+        `History persist callback failed after a durable write: ${error}`,
+      );
+    }
+    return stored;
+  }, context);
+};
+
+const fireAndForgetToast = (
+  show: ShowDictationToast,
+  options: DictationToastOptions,
+  context: string,
+): void => {
+  try {
+    logOnRejection(Promise.resolve(show(options)), context);
+  } catch (error) {
+    getLogger().warning(`${context} threw: ${error}`);
+  }
 };
 
 export const handleEmptyTranscriptionResult = async (
   input: HandleEmptyResultInput,
 ): Promise<{ handled: boolean }> => {
-  const { audio, transcribeResult, strategy, formatMessage, showToast } = input;
+  const { audio, transcribeResult, strategy, formatMessage } = input;
   const rawTranscript = transcribeResult?.rawTranscript;
   const transcriptionWarnings = transcribeResult?.warnings ?? [];
   if (rawTranscript) {
@@ -185,27 +248,49 @@ export const handleEmptyTranscriptionResult = async (
   getLogger().warning(
     `stopRecordingRaw: empty rawTranscript with ${transcriptionWarnings.length} warning(s); preserving recording`,
   );
-  await showToast({
-    message: formatMessage({
-      defaultMessage:
-        "Transcription failed. Your recording is saved so you can retry.",
-    }),
-    toastType: "error",
-    duration: 8_000,
-  });
+  if (input.sendIdle) {
+    await input.sendIdle();
+  }
+  const willPersist =
+    strategy.shouldStoreTranscript() && isPersistenceAllowed();
+  // Two literal descriptors: the extractor cannot follow a ternary inside one
+  // formatMessage call, and promising a background save when persistence is
+  // off (incognito / ephemeral) is a lie.
+  const recoveryMessage = willPersist
+    ? formatMessage({
+        defaultMessage:
+          "Transcription failed. Saving the recording in the background so you can retry.",
+      })
+    : formatMessage({
+        defaultMessage: "Transcription failed.",
+      });
+  fireAndForgetToast(
+    input.showToast,
+    {
+      message: recoveryMessage,
+      toastType: "error",
+      duration: 8_000,
+    },
+    "empty-transcription recovery toast",
+  );
 
-  if (strategy.shouldStoreTranscript()) {
-    await input.storeTranscriptionFn({
-      audio,
-      rawTranscript: null,
-      sanitizedTranscript: null,
-      transcript: null,
-      transcriptionMetadata: transcribeResult?.metadata ?? {},
-      postProcessMetadata: {},
-      warnings: transcriptionWarnings,
-      remoteStatus: null,
-      remoteDeviceId: null,
-    });
+  if (willPersist) {
+    void enqueueTranscriptionHistory(
+      input.storeTranscriptionFn,
+      {
+        audio,
+        rawTranscript: null,
+        sanitizedTranscript: null,
+        transcript: null,
+        transcriptionMetadata: transcribeResult?.metadata ?? {},
+        postProcessMetadata: {},
+        warnings: transcriptionWarnings,
+        remoteStatus: null,
+        remoteDeviceId: null,
+        createdAt: dayjs().toISOString(),
+      },
+      "storing failed-transcription history",
+    );
   }
 
   input.refreshMember();
@@ -255,6 +340,28 @@ export const formatReviewPersistenceFailure = (
   });
 };
 
+const formatDroppedEndingMessage = (
+  kind: "history" | "incognito",
+  droppedChars: number,
+): string => {
+  if (kind === "history") {
+    return getIntl().formatMessage(
+      {
+        defaultMessage:
+          "Fast styling left the last {droppedChars} characters of that dictation unstyled. The unstyled ending is in History.",
+      },
+      { droppedChars },
+    );
+  }
+  return getIntl().formatMessage(
+    {
+      defaultMessage:
+        "That dictation outran fast styling, so its last {droppedChars} characters were left unstyled, and incognito mode is on, so that ending was not saved.",
+    },
+    { droppedChars },
+  );
+};
+
 export type PhaseBookkeeper = {
   issue: () => number;
   markSent: (seq: number, phase: OverlayPhase) => void;
@@ -292,17 +399,15 @@ export type PostTranscriptInput = {
   storeTranscriptionFn: typeof storeTranscription;
   refreshMember: () => void;
   /** Informational surface for warnings the user has to know about mid-flow. */
-  showToast: (options: {
-    message: string;
-    toastType: "info" | "error";
-    duration?: number;
-  }) => Promise<void> | void;
+  showToast: ShowDictationToast;
   /** Review-before-insert persistence hook; forwarded to the strategy. */
   persistReviewedTranscript?: (
     input: ReviewedTranscriptPersistenceInput,
   ) => Promise<boolean>;
   /** Pipeline timing marks threaded through to History storage. */
   trace?: PipelineTrace | null;
+  /** Utterance end time. History rows must not stamp the delayed write. */
+  createdAt?: string;
 };
 
 export const postProcessFinalizedTranscript = async (
@@ -347,63 +452,54 @@ export const postProcessFinalizedTranscript = async (
   const willStore =
     strategy.shouldStoreTranscript() &&
     (result.historyOwner ?? "stop-path") === "stop-path";
+  const droppedChars = postProcessMetadata?.fastStyleTruncatedChars;
+  const persistAllowedAtStop = isPersistenceAllowed();
+  const notifyDroppedEnding = (kind: "history" | "incognito"): void => {
+    if (typeof droppedChars !== "number" || droppedChars <= 0) {
+      return;
+    }
+    fireAndForgetToast(
+      input.showToast,
+      {
+        message: formatDroppedEndingMessage(kind, droppedChars),
+        toastType: "info",
+        duration: 8_000,
+      },
+      "fast-style truncation toast",
+    );
+  };
+
+  if (isIncognitoModeEnabled()) {
+    notifyDroppedEnding("incognito");
+  }
   if (willStore) {
     getLogger().verbose("Storing transcription");
-    await input.storeTranscriptionFn({
-      audio: input.audio,
-      rawTranscript: input.rawTranscript ?? null,
-      sanitizedTranscript,
-      transcript,
-      transcriptionMetadata: input.transcribeResult.metadata,
-      postProcessMetadata,
-      warnings: [...input.transcribeResult.warnings, ...postProcessWarnings],
-      remoteStatus: result.remoteStatus,
-      remoteDeviceId: result.remoteDeviceId,
-      trace: input.trace ?? null,
-    });
+    void enqueueTranscriptionHistory(
+      input.storeTranscriptionFn,
+      {
+        audio: input.audio,
+        rawTranscript: input.rawTranscript ?? null,
+        sanitizedTranscript,
+        transcript,
+        transcriptionMetadata: input.transcribeResult.metadata,
+        postProcessMetadata,
+        warnings: [...input.transcribeResult.warnings, ...postProcessWarnings],
+        remoteStatus: result.remoteStatus,
+        remoteDeviceId: result.remoteDeviceId,
+        trace: input.trace ?? null,
+        createdAt: input.createdAt,
+      },
+      "storing transcription history",
+      {
+        onStored: (stored) => {
+          if (persistAllowedAtStop && stored.transcription) {
+            notifyDroppedEnding("history");
+          }
+        },
+      },
+    );
   }
   input.refreshMember();
-
-  // Fast styling caps its input, so a long dictation reaches the destination
-  // with its ending unstyled. The warning was recorded on the row and nothing
-  // else, so the user got incomplete text with no notice during dictation. It
-  // is raised here rather than in the action because surfacing it is a UI
-  // concern, and this is where both facts it depends on are known.
-  const droppedChars = postProcessMetadata?.fastStyleTruncatedChars;
-  if (typeof droppedChars === "number" && droppedChars > 0) {
-    // The wording differs because the promise does. With the row stored, the
-    // untruncated raw text is in History and the user can recover the ending;
-    // in incognito nothing is stored at all, so promising History would be a lie.
-    // Deliberately different wording from the warning recorded on the History row.
-    // This project derives message ids from a content hash, so reusing that
-    // sentence here is an id collision and the extractor refuses it. The two are
-    // also different surfaces: that one is a stored record, this one is a live
-    // notification, and a transient toast does not need to read like a log line.
-    //
-    // Two calls rather than one call with a conditional descriptor, because the
-    // extractor needs `id` and `defaultMessage` as string literals in the
-    // argument and cannot follow a ternary.
-    const message = willStore
-      ? getIntl().formatMessage(
-          {
-            defaultMessage:
-              "Fast styling left the last {droppedChars} characters of that dictation unstyled. The unstyled ending is in History.",
-          },
-          { droppedChars },
-        )
-      : getIntl().formatMessage(
-          {
-            defaultMessage:
-              "That dictation outran fast styling, so its last {droppedChars} characters were left unstyled, and incognito mode is on, so that ending was not saved.",
-          },
-          { droppedChars },
-        );
-    await input.showToast({
-      message,
-      toastType: "info",
-      duration: 8_000,
-    });
-  }
   return {
     shouldContinue: result.shouldContinue,
   };
@@ -880,6 +976,7 @@ export const DictationSideEffects = () => {
         return Promise.resolve({ shouldContinue: false });
       }
 
+      const createdAt = dayjs().toISOString();
       const persistReviewedTranscript = async ({
         transcript: reviewedTranscript,
         sanitizedTranscript: reviewedSanitizedTranscript,
@@ -887,8 +984,12 @@ export const DictationSideEffects = () => {
         postProcessWarnings: reviewedPostProcessWarnings,
       }: ReviewedTranscriptPersistenceInput): Promise<boolean> => {
         try {
+          // Review Save must not sit behind a leftover background WAV: the
+          // card is open and pending review already blocks a new take, so
+          // start_recording cannot race this IPC. Snapshot now so the buffer
+          // cannot alias if a background job is still draining.
           const stored = await storeTranscription({
-            audio,
+            audio: snapshotStopRecordingAudio(audio),
             rawTranscript: rawTranscript ?? null,
             sanitizedTranscript: reviewedSanitizedTranscript,
             transcript: reviewedTranscript,
@@ -900,6 +1001,7 @@ export const DictationSideEffects = () => {
             ],
             remoteStatus: null,
             remoteDeviceId: null,
+            createdAt,
           });
           if (stored.transcription) {
             await surfacePersistedReviewInHistory();
@@ -941,6 +1043,7 @@ export const DictationSideEffects = () => {
         showToast,
         persistReviewedTranscript,
         trace: pipelineTraceRef.current,
+        createdAt,
       });
     },
     [sendPhaseToPill],
@@ -1012,6 +1115,7 @@ export const DictationSideEffects = () => {
             showToast,
             storeTranscriptionFn: storeTranscription,
             refreshMember,
+            sendIdle: () => sendPhaseToPill("idle"),
           });
         }
         getLogger().warning("stopRecordingRaw: no rawTranscript from finalize");
@@ -1027,7 +1131,7 @@ export const DictationSideEffects = () => {
         transcribeResult,
       });
     },
-    [processFinalizedRecording],
+    [processFinalizedRecording, sendPhaseToPill],
   );
 
   const stopRecordingRaw = useCallback(async (): Promise<RawStopResp> => {
