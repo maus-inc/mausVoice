@@ -113,13 +113,24 @@ const scope = (name, marker) => scopeOf(pathOf.get(name), marker);
 // prove a secret is inside a guarded job cannot scan the file as one string:
 // the guard and the secret are the same text wherever they both appear.
 const workflowJobs = (workflowText) => {
-  const lines = workflowText.split("\n");
+  // Line endings are normalised here, at the one place the text is split, because every pattern
+  // below is anchored per line and `.` does not match `\r`. Left alone, a CRLF checkout fails
+  // every key pattern at once, no `if:` is found anywhere, and every job reads as unguarded --
+  // a total gate failure on a file GitHub Actions itself accepts. No workflow in the repo is
+  // CRLF today, and `.gitattributes` normalises only `*.sql`, so this is latent rather than
+  // firing; it is fixed because the failure is silent and total.
+  const lines = workflowText.replace(/\r\n?/g, "\n").split("\n");
   const jobsAt = lines.findIndex((line) => /^jobs:\s*$/.test(line));
   const jobs = [];
   let name = null;
   let body = [];
   for (const line of lines.slice(jobsAt + 1)) {
-    const job = /^ {2}([A-Za-z0-9_-]+):\s*$/.exec(line);
+    // A trailing comment is allowed on the job key. Without this, `  provider:  # gated` is not
+    // recognised as a job at all, so `workflowJobs` returns nothing and the gate fails with
+    // "the workflow must declare at least one job" -- which points an author who DID declare a
+    // job at the wrong thing. Only the comment is tolerated here; a value after the colon is not
+    // a job key and still fails to match.
+    const job = /^ {2}([A-Za-z0-9_-]+):\s*(?:#.*)?$/.exec(line);
     if (job) {
       if (name) jobs.push({ name, body: body.join("\n") });
       name = job[1];
@@ -132,19 +143,238 @@ const workflowJobs = (workflowText) => {
   return jobs;
 };
 
-// Every job that reads a provider secret is behind the origin guard. Asserting
-// the guard and the secret separately proves only that both exist somewhere in
-// the file, which is what a secret moved into an unguarded job, or an unguarded
-// job added next to a guarded one, would pass.
+// What this gate proves, and what it does not. It is worth being exact, because a security gate
+// that is read as stronger than it is has failed in the way that matters.
+//
+// PROVES: the guard text is the VALUE of an `if:` key, on either the job or the reading step, and
+// that the key is not inside a comment. That closes "the guard is mentioned somewhere in this job".
+//
+// DOES NOT PROVE: that the condition GATES. `if: <guard> || always()` names every path and admits
+// every fork, and passes. Settling that means evaluating a GitHub expression, which a text check
+// cannot do; this gate deliberately checks for the token and says so rather than approximating.
+//
+// Also not followed: a guard reached through an `env:` indirection in its own `if:` (`if: env.SAME
+// == 'true'`), and one literal spelling of the comparison (`== ` with single spaces, operands in
+// this order). Both are legal and both fail closed, which means a correctly gated workflow written
+// that way is rejected rather than admitted.
+const FORK_GUARD_SOURCE =
+  "github.event.pull_request.head.repo.full_name == github.repository";
+const FORK_GUARD_RE = new RegExp(
+  FORK_GUARD_SOURCE.replace(/\./g, "\\."),
+);
+
+/**
+ * Where the YAML comment starts on `line`, or -1 when the line has none.
+ *
+ * Three rules. A `#` only opens a comment after whitespace or at the start of the line, so
+ * `run: echo a#b` has no comment. A `#` inside a quoted scalar is data, and a backslash escapes
+ * the next character inside a double-quoted one, so `run: echo "a \" # b"` has no comment
+ * either. And cutting at the FIRST comment opener is sufficient: text after a comment cannot
+ * make a match appear, it can only remove text, so no later `#` needs finding.
+ *
+ * Every rule here can only REMOVE text, never add it, so a mistake in any of them rejects a
+ * correctly guarded job rather than admitting an unguarded one.
+ */
+const commentStart = (line) => {
+  let quote = null;
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    if (quote !== null) {
+      if (char === "\\" && quote === '"') index += 1;
+      else if (char === quote) quote = null;
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      continue;
+    }
+    if (char === "#" && (index === 0 || /\s/.test(line[index - 1]))) return index;
+  }
+  return -1;
+};
+
+/**
+ * `text` with every line's trailing comment removed, so prose cannot satisfy a condition match.
+ *
+ * Whole-line comments are the easy half. A comment AFTER an `if:` value is the half that matters:
+ * `if: always()  # github.event.pull_request...` leaves the job unguarded on every fork, and the
+ * real workflow documents this rule in a comment directly above its own `if:`, which makes the
+ * trailing spelling the natural next one to try.
+ */
+const stripYamlComments = (text) =>
+  text
+    .split("\n")
+    .map((line) => {
+      const at = commentStart(line);
+      return at === -1 ? line : line.slice(0, at);
+    })
+    .join("\n");
+
+/**
+ * The value of the `if:` key at exactly `indent` spaces, comments already stripped.
+ *
+ * Key-anchored on purpose. A guard is a condition only when it is the VALUE of an `if:` key. The
+ * same text in a `run:` body, a `name:`, or an `env:` value gates nothing -- matching the guard
+ * anywhere in the job text is precisely what let a job with the guard only in prose pass.
+ *
+ * A block scalar body (`if: |`) continues at deeper indentation than its key, so the body is
+ * collected too. `FORK_GUARD_RE` needs the two halves concatenated, because a folded or split
+ * condition puts the guard somewhere other than the first physical line.
+ */
+const ifConditionAt = (text, indent) => {
+  const keyPattern = new RegExp(`^ {${indent}}([A-Za-z0-9_-]+):(.*)$`);
+  // A block scalar body is deeper than its key by at least one column. Deriving that threshold
+  // from `indent` rather than fixing it at 6 is what makes the sentence above true of a job-level
+  // key at 4 and a step-level key at 6 alike; the two shapes in use are 6 and 10 columns.
+  const bodyPattern = new RegExp(`^ {${indent + 1},}\\S`);
+  const parts = [];
+  let collecting = false;
+  for (const line of text.split("\n")) {
+    const key = keyPattern.exec(line);
+    if (key !== null) {
+      // Any other key ends the previous `if:` and only an `if:` starts a new one.
+      if (key[1] !== "if") collecting = false;
+      else {
+        collecting = true;
+        parts.push(key[2].trim());
+      }
+      continue;
+    }
+    if (collecting && bodyPattern.test(line)) {
+      parts.push(line.trim());
+      continue;
+    }
+    if (line.trim() !== "") collecting = false;
+  }
+  return parts.join(" ");
+};
+
+/**
+ * A job body split into the job's own keys (`header`) and its steps.
+ *
+ * Two shapes this has to get right, each of which a fixed-indent heuristic gets wrong:
+ *
+ *   - The step list ENDS where the job's own keys resume, so a job-level `if:` written AFTER
+ *     `steps:` is still a job-level `if:`. YAML mapping order carries no meaning, so reading only
+ *     the header above `steps:` rejects a correctly guarded job.
+ *   - The step indent comes from the first dash rather than being assumed, because a sequence item
+ *     may legally sit at its parent key's own indent (`steps:` at 4 with `- ` at 4). A split that
+ *     hardcoded 6 spaces could not see those, and would then attribute the secret to the header,
+ *     where only a job-level `if:` can gate it -- so a guarded job read as an unguarded one.
+ */
+const splitJob = (jobBody) => {
+  const header = [];
+  const steps = [];
+  // Each step carries the indent of its OWN keys, which is the dash indent plus two. A step list
+  // written at its key's own indent has 4-column keys and a step list written conventionally has
+  // 8-column keys, so the value is recorded per step rather than assumed once.
+  let step = null;
+  let stepIndent = null;
+  let inSteps = false;
+
+  const flush = () => {
+    if (step !== null) {
+      steps.push({ text: step.join("\n"), keyIndent: stepIndent + 2 });
+      step = null;
+    }
+  };
+
+  for (const line of jobBody.split("\n")) {
+    if (/^ {4}steps:/.test(line)) {
+      flush();
+      inSteps = true;
+      header.push(line);
+      continue;
+    }
+    const indent = line.length - line.trimStart().length;
+    const startsStep =
+      /^ *- /.test(line) &&
+      indent <= 6 &&
+      (stepIndent === null || indent === stepIndent);
+    if (inSteps && startsStep) {
+      if (stepIndent === null) stepIndent = indent;
+      flush();
+      step = [line];
+      continue;
+    }
+    // A non-blank line at 4 columns or shallower, that is not a step, is the job's next key. This
+    // is what ends the step list, and dropping it lets a later `env:` value read as a job gate.
+    if (inSteps && line.trim() !== "" && indent <= 4) {
+      flush();
+      inSteps = false;
+    }
+    if (step !== null) step.push(line);
+    else header.push(line);
+  }
+  flush();
+  return { header: header.join("\n"), steps };
+};
+
+/**
+ * A step with its leading dash replaced by indentation, so the step's own keys sit where a
+ * mapping's keys sit, and every one of them at the same column.
+ *
+ * Only the FIRST line is rewritten: a `- ` deeper in the block belongs to a nested list or a shell
+ * body, and shifting it left would move text the parser then misreads. `keyIndent` comes from the
+ * step's own dash rather than a constant, so a step written at its key's own indent still has its
+ * keys where `ifConditionAt` looks for them, and the whitespace after the dash is consumed so
+ * `-   if:` lands on the same column as `- if:`.
+ */
+const undashStep = (step, keyIndent) =>
+  step.replace(/^ *-\s+/, " ".repeat(keyIndent));
+
+const readsSecret = (text, secret) => text.includes(`secrets.${secret}`);
+
+/**
+ * Whether `job` is really gated, rather than merely mentioning the guard.
+ *
+ * Two things a text search over the job body cannot tell apart, and both are what a plausible edit
+ * produces: the guard is PROSE (a comment, a `run:` body, a `name:`), or it is on a DIFFERENT unit
+ * than the one that reads the secret. So the guard has to be the value of an `if:` key, and it has
+ * to gate the unit that reads.
+ *
+ * A job-level `if:` gates everything, including the reads no step can reach -- a job-level `env:`,
+ * and a `uses:` caller's `secrets:` block. That makes it the whole answer when the guard is in it,
+ * which is the shape the real workflow uses. Failing that, a read in the header has nothing that
+ * could gate it, and a read in a step must carry the step's own condition.
+ *
+ * Anything this cannot attribute to a unit REJECTS. A gate that admits too much is the cheaper
+ * mistake here: a gate that rejects a correctly guarded workflow teaches its author to delete a
+ * real guard.
+ *
+ * "Cannot attribute" is not hypothetical. A step written in flow style (`- { if: ..., run: ... }`)
+ * is not recognised as a step at all -- the dash is followed by `{`, not a space -- so its secret
+ * reads as a header read and the job is rejected. Prettier normalises that spelling, and no
+ * workflow here uses it, but it is the shape that fails closed.
+ */
+const jobIsForkGated = (jobBody, secret) => {
+  const code = stripYamlComments(jobBody);
+  if (FORK_GUARD_RE.test(ifConditionAt(code, 4))) return true;
+  const { header, steps } = splitJob(code);
+  if (readsSecret(header, secret)) return false;
+  const readers = steps.filter((step) => readsSecret(step.text, secret));
+  if (readers.length === 0) return false;
+  return readers.every((step) =>
+    FORK_GUARD_RE.test(
+      ifConditionAt(undashStep(step.text, step.keyIndent), step.keyIndent),
+    ),
+  );
+};
+
+// Every job that reads a provider secret is behind the origin guard. Asserting the guard and the
+// secret separately proves only that both exist somewhere in the file, which is what a secret
+// moved into an unguarded job, or an unguarded job added next to a guarded one, would pass.
+// Proving they are in the same JOB is necessary but not sufficient, and proving the guard is in
+// the job at all is weaker still -- see `jobIsForkGated` for the shapes that mention the guard
+// without being gated by it.
 const assertSecretsStayInsideTheGuardedJob = (workflowText, secret) => {
   const jobs = workflowJobs(workflowText);
   assert.ok(jobs.length > 0, "the workflow must declare at least one job");
   const readers = jobs.filter((job) => job.body.includes(`secrets.${secret}`));
   assert.ok(readers.length > 0, `the workflow must still read ${secret}`);
   for (const { name, body } of readers) {
-    assert.match(
-      body,
-      /github\.event\.pull_request\.head\.repo\.full_name == github\.repository/,
+    assert.ok(
+      jobIsForkGated(body, secret),
       `job ${name} reads ${secret} without the fork guard that protects it`,
     );
   }
@@ -564,6 +794,841 @@ describe("PR28 workflow and public-asset contracts", () => {
       source.integrationWorkflow,
       "GROQ_API_KEY",
     );
+  });
+
+  // Two findings, and they are not the same defect, so the tests below are not the remedy for
+  // both. 4151834033 reported that the guard only had to exist SOMEWHERE in the workflow; that was
+  // already addressed before this change by `workflowJobs`, which proves the guard and the secret
+  // share a job. 4178853244 reported the narrower hole that survived it -- the guard was found
+  // anywhere in that job's text, so a comment or a step that does not read the secret satisfied
+  // it while the reading step ran unguarded on a fork. What follows covers the second, plus the
+  // shapes a later round of review turned up in the first attempt at covering it.
+  //
+  // The checks here fall into nested describes, one per concern: the guard appearing in prose,
+  // a trailing comment, a guard that is not on an `if:` key, a secret read where no step can gate
+  // it, and the header/step boundary. The `it`s directly below are the shapes that apply to more
+  // than one of those.
+  describe("the fork guard must be a real condition that gates the reader", () => {
+    const job = (name, body) =>
+      ["name: test", "on: pull_request", "jobs:", `  ${name}:`, body].join("\n");
+
+    // A `y` helper so no fixture body carries its own escape sequence.
+    const y = (...lines) => lines.join("\n");
+
+    // The guard must be an `if:` VALUE, not prose that merely contains the text. `if: always()`
+    // with the guard in a trailing comment is the exact bypass class the job was opened to close,
+    // and the real workflow puts a comment above its `if:`, which makes the trailing spelling the
+    // natural next one to try.
+    describe("a guard hidden in a trailing comment is not a guard", () => {
+      it("rejects a job-level if whose condition is always() and whose guard is a comment", () => {
+        const workflow = job(
+          "provider",
+          y(
+            "    if: always()  # github.event.pull_request.head.repo.full_name == github.repository",
+            "    steps:",
+            "      - run: echo ${{ secrets.GROQ_API_KEY }}",
+          ),
+        );
+        assert.throws(
+          () => assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+          /fork guard/,
+          "the condition is always(); the guard is only a comment on it",
+        );
+      });
+
+      it("rejects a step-level if whose condition is always() and whose guard is a comment", () => {
+        const workflow = job(
+          "provider",
+          y(
+            "    steps:",
+            "      - name: transcribe",
+            "        if: always()  # github.event.pull_request.head.repo.full_name == github.repository",
+            "        run: echo ${{ secrets.GROQ_API_KEY }}",
+          ),
+        );
+        assert.throws(
+          () => assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+          /fork guard/,
+          "the step condition is always(); the guard is only a comment on it",
+        );
+      });
+
+      it("rejects a guard that is a comment inside a run body", () => {
+        const workflow = job(
+          "provider",
+          y(
+            "    if: always()",
+            "    steps:",
+            "      - name: transcribe",
+            "        run: |",
+            "          # github.event.pull_request.head.repo.full_name == github.repository",
+            "          echo ${{ secrets.GROQ_API_KEY }}",
+          ),
+        );
+        assert.throws(
+          () => assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+          /fork guard/,
+          "a comment in a run body is not a condition",
+        );
+      });
+
+      it("still accepts a condition that carries the guard AND a trailing comment", () => {
+        // The control: stripping the comment must not also strip the condition.
+        const workflow = job(
+          "provider",
+          y(
+            "    if: github.event.pull_request.head.repo.full_name == github.repository # forks skip",
+            "    steps:",
+            "      - run: echo ${{ secrets.GROQ_API_KEY }}",
+          ),
+        );
+        assert.doesNotThrow(() =>
+          assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+        );
+      });
+    });
+
+    // The step path matched the guard ANYWHERE in the job text, so a `run:` body, a `name:` or an
+    // `env:` value that merely mentioned it counted. A guard has to sit on an `if:` key.
+    describe("only an if: key is a guard", () => {
+      it("rejects a guard that appears only in a step's run body", () => {
+        const workflow = job(
+          "provider",
+          y(
+            "    steps:",
+            "      - name: transcribe",
+            "        run: |",
+            "          echo gated on github.event.pull_request.head.repo.full_name == github.repository",
+            "          pnpm run integration ${{ secrets.GROQ_API_KEY }}",
+          ),
+        );
+        assert.throws(
+          () => assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+          /fork guard/,
+          "the guard is prose in a run body, not a condition",
+        );
+      });
+
+      it("rejects a guard that appears only in a step's name", () => {
+        const workflow = job(
+          "provider",
+          y(
+            "    steps:",
+            "      - name: github.event.pull_request.head.repo.full_name == github.repository",
+            "        run: echo ${{ secrets.GROQ_API_KEY }}",
+          ),
+        );
+        assert.throws(
+          () => assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+          /fork guard/,
+          "a step name gates nothing",
+        );
+      });
+
+      it("rejects a guard that appears only in a step's env value", () => {
+        const workflow = job(
+          "provider",
+          y(
+            "    steps:",
+            "      - name: transcribe",
+            "        env:",
+            "          NOTE: github.event.pull_request.head.repo.full_name == github.repository",
+            "        run: echo ${{ secrets.GROQ_API_KEY }}",
+          ),
+        );
+        assert.throws(
+          () => assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+          /fork guard/,
+          "an env value is not a condition",
+        );
+      });
+
+      it("accepts the guard on an if: key written on the dash line", () => {
+        // The control, and a shape the real workflows use: the condition can be the step's own
+        // first key, so there is no 8-space `if:` line for a key-anchored match to find.
+        const workflow = job(
+          "provider",
+          y(
+            "    steps:",
+            "      - if: github.event.pull_request.head.repo.full_name == github.repository",
+            "        run: echo ${{ secrets.GROQ_API_KEY }}",
+          ),
+        );
+        assert.doesNotThrow(() =>
+          assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+        );
+      });
+    });
+
+    // A secret can be read where no step can gate it: a job-level `env:`, or a `uses:` caller's
+    // `secrets:` block. The pre-change check accepted those and an early rewrite rejected them,
+    // which is the expensive direction -- an author facing a failing test on a correctly guarded
+    // job deletes the guard.
+    describe("a secret read outside a step needs a job-level guard", () => {
+      it("accepts a guarded job that passes the secret through env", () => {
+        const workflow = job(
+          "provider",
+          y(
+            "    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository",
+            "    env:",
+            "      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}",
+            "    steps:",
+            "      - run: pnpm run integration",
+          ),
+        );
+        assert.doesNotThrow(() =>
+          assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+        );
+      });
+
+      it("accepts a guarded job that passes the secret to a reusable workflow", () => {
+        const workflow = job(
+          "provider",
+          y(
+            "    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository",
+            "    uses: maus-inc/mausVoice/.github/workflows/groq.yml@main",
+            "    secrets:",
+            "      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}",
+          ),
+        );
+        assert.doesNotThrow(() =>
+          assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+        );
+      });
+
+      it("rejects an unguarded job that passes the secret through env", () => {
+        const workflow = job(
+          "provider",
+          y(
+            "    env:",
+            "      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}",
+            "    steps:",
+            "      - run: pnpm run integration",
+          ),
+        );
+        assert.throws(
+          () => assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+          /fork guard/,
+          "no step can gate a job-level env read",
+        );
+      });
+
+      it("rejects an unguarded job that passes the secret to a reusable workflow", () => {
+        const workflow = job(
+          "provider",
+          y(
+            "    uses: maus-inc/mausVoice/.github/workflows/groq.yml@main",
+            "    secrets:",
+            "      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}",
+          ),
+        );
+        assert.throws(
+          () => assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+          /fork guard/,
+          "no step can gate a uses: caller's secrets block",
+        );
+      });
+
+      it("accepts a job-level if written after steps", () => {
+        // YAML mapping order carries no meaning, so a job-level `if:` after the step list is
+        // still a job-level `if:`. Reading only the header above `steps:` rejects this.
+        const workflow = job(
+          "provider",
+          y(
+            "    steps:",
+            "      - run: echo ${{ secrets.GROQ_API_KEY }}",
+            "    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository",
+          ),
+        );
+        assert.doesNotThrow(() =>
+          assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+        );
+      });
+
+      it("accepts a step list whose dashes sit at the key's own indent", () => {
+        // Legal YAML, and a sequence item may sit at its parent key's indent. What this pins is
+        // only that a job-level gate still wins when the dashes sit there -- the job below IS
+        // gated at job level, so the answer is decided before the step split runs and hardcoding
+        // the step indent to 6 leaves this test green. The step indent itself is pinned by the
+        // step-level fixture in the nested describe below, which has no job-level gate at all.
+        const workflow = job(
+          "provider",
+          y(
+            "    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository",
+            "    steps:",
+            "    - run: echo ${{ secrets.GROQ_API_KEY }}",
+          ),
+        );
+        assert.doesNotThrow(() =>
+          assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+        );
+      });
+
+      it("rejects a job whose guard sits in an expression after the step list", () => {
+        // Note what this does NOT pin: the reading step below is unguarded, so it is rejected
+        // whether or not the step list ends where it should. Where the list ENDS is pinned by the
+        // second fixture in the nested describe below, whose reading step carries its own guard.
+        const workflow = job(
+          "provider",
+          y(
+            "    steps:",
+            "      - run: echo ${{ secrets.GROQ_API_KEY }}",
+            "    env:",
+            "      NOTE: github.event.pull_request.head.repo.full_name == github.repository",
+          ),
+        );
+        assert.throws(
+          () => assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+          /fork guard/,
+          "an env value after the steps is a job key, not a gate",
+        );
+      });
+    });
+
+    it("rejects a job whose only mention of the guard is a comment", () => {
+      const workflow = job(
+        "provider",
+        [
+          "    # fork code must not receive secrets, so this job is skipped when",
+          "    # github.event.pull_request.head.repo.full_name == github.repository",
+          "    steps:",
+          "      - run: echo ${{ secrets.GROQ_API_KEY }}",
+        ].join("\n"),
+      );
+      assert.throws(
+        () => assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+        /fork guard/,
+        "a comment is not a guard",
+      );
+    });
+
+    it("rejects a job whose guarded step does not read the secret", () => {
+      const workflow = job(
+        "provider",
+        [
+          "    steps:",
+          "      - name: lint",
+          "        if: github.event.pull_request.head.repo.full_name == github.repository",
+          "        run: echo lint",
+          "      - name: transcribe",
+          "        run: echo ${{ secrets.GROQ_API_KEY }}",
+        ].join("\n"),
+      );
+      assert.throws(
+        () => assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+        /fork guard/,
+        "a guard on a different step does not guard the reader",
+      );
+    });
+
+    it("accepts a single-line job-level if carrying the guard", () => {
+      // A check that only recognises the block-scalar form rejects correct workflow, which is
+      // worse than a check that accepts too much: the author faces a failing test on a guarded
+      // job, and the cheapest repair is to delete the guard. The single-line `if:` is the shape
+      // most people actually write, so it has to be recognised too.
+      const workflow = job(
+        "provider",
+        [
+          "    if: github.event.pull_request.head.repo.full_name == github.repository",
+          "    steps:",
+          "      - run: echo ${{ secrets.GROQ_API_KEY }}",
+        ].join("\n"),
+      );
+      assert.doesNotThrow(() =>
+        assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+      );
+    });
+
+    it("accepts a single-line job-level if that gates by disjunction", () => {
+      // The guard can also arrive as one half of a condition, which is how push-triggered jobs
+      // are written: run on push, or on a pull request from the same repository.
+      const workflow = job(
+        "provider",
+        [
+          "    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository",
+          "    steps:",
+          "      - run: echo ${{ secrets.GROQ_API_KEY }}",
+        ].join("\n"),
+      );
+      assert.doesNotThrow(() =>
+        assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+      );
+    });
+
+    it("rejects a job-level if whose guard is negated", () => {
+      // The control for the two above. `!=` names the same two paths but admits every FORK, so
+      // matching on the bare token would accept it. Pins that the operator is part of the check.
+      const workflow = job(
+        "provider",
+        [
+          "    if: github.event.pull_request.head.repo.full_name != github.repository",
+          "    steps:",
+          "      - run: echo ${{ secrets.GROQ_API_KEY }}",
+        ].join("\n"),
+      );
+      assert.throws(
+        () => assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+        /fork guard/,
+        "a negated guard admits every fork",
+      );
+    });
+
+    it("rejects a guard that is only a comment inside the reading step", () => {
+      // A comment stripping pass that is never exercised is a pass that does nothing, so this
+      // is the fixture that reaches the step-level path at all: there is NO job-level `if:`
+      // here, so the reader step's own guard is the only thing that could admit the job.
+      const workflow = job(
+        "provider",
+        [
+          "    steps:",
+          "      - name: transcribe",
+          "        # github.event.pull_request.head.repo.full_name == github.repository",
+          "        run: echo ${{ secrets.GROQ_API_KEY }}",
+        ].join("\n"),
+      );
+      assert.throws(
+        () => assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+        /fork guard/,
+        "a comment inside the reading step is not a guard",
+      );
+    });
+
+    it("rejects a job where one of two reading steps is unguarded", () => {
+      // Pins `every` rather than `some`. With a single reader the two are indistinguishable --
+      // both say "not gated" -- so a weakening from `every` to `some` would pass every other
+      // fixture here.
+      const workflow = job(
+        "provider",
+        [
+          "    steps:",
+          "      - name: guarded",
+          "        if: github.event.pull_request.head.repo.full_name == github.repository",
+          "        run: echo ${{ secrets.GROQ_API_KEY }}",
+          "      - name: unguarded",
+          "        run: echo ${{ secrets.GROQ_API_KEY }}",
+        ].join("\n"),
+      );
+      assert.throws(
+        () => assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+        /fork guard/,
+        "one unguarded reader is enough to expose the secret",
+      );
+    });
+
+    it("accepts a job where every reading step carries its own guard", () => {
+      // The control for the pair above, so the two cannot be satisfied by rejecting everything.
+      const workflow = job(
+        "provider",
+        [
+          "    steps:",
+          "      - name: first",
+          "        if: github.event.pull_request.head.repo.full_name == github.repository",
+          "        run: echo ${{ secrets.GROQ_API_KEY }}",
+          "      - name: second",
+          "        if: github.event.pull_request.head.repo.full_name == github.repository",
+          "        run: echo ${{ secrets.GROQ_API_KEY }}",
+        ].join("\n"),
+      );
+      assert.doesNotThrow(() =>
+        assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+      );
+    });
+
+    it("accepts a block scalar body indented one column past its key", () => {
+      // A block scalar's content must be deeper than its key, and one column is legal. The body
+      // threshold is derived from the key's own indent rather than fixed at 6, so a 5-column body
+      // under a 4-column `if:` is read as the condition instead of leaving the guard invisible
+      // and the job looking ungated.
+      const workflow = job(
+        "provider",
+        y(
+          "    if: |",
+          "     github.event_name == 'push' ||",
+          "     (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)",
+          "    steps:",
+          "      - run: echo ${{ secrets.GROQ_API_KEY }}",
+        ),
+      );
+      assert.doesNotThrow(() =>
+        assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+      );
+    });
+
+    // Line endings and job keys. Both of these made the gate fail in a way that looked like the
+    // author's problem rather than the check's: CRLF made every job look unguarded, and a comment
+    // after a job key made the workflow look like it declared no job at all.
+    describe("line endings and job keys", () => {
+      const crlfJob = (name, bodyLines) =>
+        [
+          "name: test",
+          "on: pull_request",
+          "jobs:",
+          `  ${name}:`,
+          ...bodyLines,
+        ].join("\r\n");
+
+      it("accepts a guarded job written with CRLF line endings", () => {
+        // Every pattern in the check is anchored per line and `.` does not match `\r`, so a CRLF
+        // checkout used to fail every key pattern at once, find no `if:` anywhere, and report every
+        // job as unguarded. The pre-change check was a substring match and did not care.
+        const workflow = crlfJob("provider", [
+          "    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository",
+          "    steps:",
+          "      - run: echo ${{ secrets.GROQ_API_KEY }}",
+        ]);
+        assert.doesNotThrow(() =>
+          assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+        );
+      });
+
+      it("still rejects an unguarded job written with CRLF line endings", () => {
+        // The control. Normalising line endings must not become a blanket accept.
+        const workflow = crlfJob("provider", [
+          "    steps:",
+          "      - run: echo ${{ secrets.GROQ_API_KEY }}",
+        ]);
+        assert.throws(
+          () => assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+          /fork guard/,
+        );
+      });
+
+      it("accepts a job whose key carries a trailing comment", () => {
+        // `  provider:  # gated` was not recognised as a job, so the gate failed with "the
+        // workflow must declare at least one job" -- an author who DID declare a job, told to
+        // declare one.
+        const workflow = y(
+          "name: test",
+          "on: pull_request",
+          "jobs:",
+          "  provider:  # reads a provider secret, so it is gated",
+          "    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository",
+          "    steps:",
+          "      - run: echo ${{ secrets.GROQ_API_KEY }}",
+        );
+        assert.doesNotThrow(() =>
+          assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+        );
+      });
+    });
+
+    // Which steps and which jobs count as readers. A reader test of `includes("secrets")` or of the
+    // bare secret name, or a reader filter that keeps everything, all make an ordinary workflow
+    // look unguarded. These are the shapes that catch them: a provider job with a lint step beside
+    // its reader, a workflow with a second job that reads nothing, and a step reading a different
+    // secret or merely printing this one.
+    describe("which steps and which jobs count as readers", () => {
+      const guard = "github.event.pull_request.head.repo.full_name == github.repository";
+
+      it("accepts a guarded reader step beside an unguarded step that reads nothing", () => {
+        // The ordinary shape of a provider workflow. A filter that treated every step as a reader
+        // would reject this.
+        const workflow = job(
+          "provider",
+          y(
+            "    steps:",
+            `      - if: ${guard}`,
+            "        run: echo ${{ secrets.GROQ_API_KEY }}",
+            "      - run: pnpm lint",
+          ),
+        );
+        assert.doesNotThrow(() =>
+          assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+        );
+      });
+
+      it("accepts a guarded reader job beside a second job that reads nothing", () => {
+        // The workflow-level twin. The real integration workflow declares exactly one job, so
+        // production data cannot catch a job filter that keeps every job.
+        const workflow = y(
+          "name: test",
+          "on: pull_request",
+          "jobs:",
+          "  provider:",
+          `    if: ${guard}`,
+          "    steps:",
+          "      - run: echo ${{ secrets.GROQ_API_KEY }}",
+          "  docs:",
+          "    runs-on: ubuntu-latest",
+          "    steps:",
+          "      - run: pnpm docs:build",
+        );
+        assert.doesNotThrow(() =>
+          assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+        );
+      });
+
+      it("accepts a guarded reader step beside a step reading a different secret", () => {
+        // Matching the `secrets` prefix rather than `secrets.GROQ_API_KEY` would make the second
+        // step a reader of this secret and reject a workflow that is correctly gated for it.
+        const workflow = job(
+          "provider",
+          y(
+            "    steps:",
+            `      - if: ${guard}`,
+            "        run: echo ${{ secrets.GROQ_API_KEY }}",
+            "      - run: curl ${{ secrets.TAVILY_API_KEY }}",
+          ),
+        );
+        assert.doesNotThrow(() =>
+          assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+        );
+      });
+
+      it("accepts a guarded reader step beside a step that only prints the secret's name", () => {
+        // The other direction: matching the bare name rather than the `secrets.` reference makes a
+        // diagnostic `echo` a reader.
+        const workflow = job(
+          "provider",
+          y(
+            "    steps:",
+            `      - if: ${guard}`,
+            "        run: echo ${{ secrets.GROQ_API_KEY }}",
+            "      - run: echo GROQ_API_KEY is configured in CI",
+          ),
+        );
+        assert.doesNotThrow(() =>
+          assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+        );
+      });
+    });
+
+    // Three parser spellings that each silently lose the guard. All fail closed, so each of these
+    // rejects a workflow that is in fact gated.
+    describe("spellings the condition parser must not lose", () => {
+      const guard = "github.event.pull_request.head.repo.full_name == github.repository";
+
+      it("accepts a guard inside a single-quoted scalar", () => {
+        // `char === "'"` has to open quote state too. With only `"` tracked, the ` # ` inside this
+        // string reads as a comment and the secret after it is truncated away.
+        const workflow = job(
+          "provider",
+          y(
+            "    steps:",
+            `      - if: ${guard}`,
+            "        run: sh -c 'echo a # b ${{ secrets.GROQ_API_KEY }}'",
+          ),
+        );
+        assert.doesNotThrow(() =>
+          assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+        );
+      });
+
+      it("accepts an if: key written after more than one space past the dash", () => {
+        // `-   if:` is three spaces wide. Consuming one space only leaves the key at column 10,
+        // where the step's own key column no longer matches and the guard goes unseen.
+        const workflow = job(
+          "provider",
+          y(
+            "    steps:",
+            `      -   if: ${guard}`,
+            "          run: echo ${{ secrets.GROQ_API_KEY }}",
+          ),
+        );
+        assert.doesNotThrow(() =>
+          assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+        );
+      });
+
+      it("accepts a guard split across the comparison in a block scalar", () => {
+        // The condition's lines are joined with a space, so a guard written across a line break
+        // reassembles. Joining with nothing leaves `==github.repository`, which is not the guard.
+        const workflow = job(
+          "provider",
+          y(
+            "    if: |",
+            "      (github.event_name == 'pull_request' &&",
+            "       github.event.pull_request.head.repo.full_name ==",
+            "       github.repository)",
+            "    steps:",
+            "      - run: echo ${{ secrets.GROQ_API_KEY }}",
+          ),
+        );
+        assert.doesNotThrow(() =>
+          assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+        );
+      });
+    });
+
+    it("still accepts a job-level if that really gates the reader", () => {
+      // The control: the shape the real workflow uses, so the fix cannot pass by rejecting
+      // everything.
+      const workflow = job(
+        "provider",
+        [
+          "    if: |",
+          "      github.event_name == 'push' ||",
+          "      (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)",
+          "    steps:",
+          "      - run: echo ${{ secrets.GROQ_API_KEY }}",
+        ].join("\n"),
+      );
+      assert.doesNotThrow(() =>
+        assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+      );
+    });
+
+    // Six fixtures written against MUTATIONS THAT SURVIVED the first proof. Each one failed to
+    // kill its mutation because an earlier check already produced the same verdict, so the
+    // mutation changed a behaviour nobody could observe. That is the state this project treats as
+    // a missing test: the branch exists, and nothing pins it.
+    describe("parsing the job: comments, the header and the steps", () => {
+      it("accepts a guarded step whose secret is read inside a quoted shell string", () => {
+        // Pins the quote handling in `commentStart`, and the `#` sits after a SPACE on purpose.
+        // A `#` right after a quote is already spared by the whitespace rule, so that spelling left
+        // the quote rule unpinned: deleting the entire quote state machine left the suite green.
+        // Here the whitespace rule alone would truncate the line, so the quote rule is what decides
+        // it -- and truncating loses the `secrets.` reference, which makes the job look like it has
+        // no reader, which fails closed and rejects a job that is genuinely guarded.
+        const workflow = job(
+          "provider",
+          y(
+            "    steps:",
+            "      - if: github.event.pull_request.head.repo.full_name == github.repository",
+            "        run: sh -c 'curl \"a # b\" -H \"auth: ${{ secrets.GROQ_API_KEY }}\"'",
+          ),
+        );
+        assert.doesNotThrow(() =>
+          assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+        );
+      });
+
+      it("accepts a guarded step whose secret follows an escaped quote and a hash", () => {
+        // Pins the backslash rule in `commentStart`. Inside a YAML double-quoted scalar `\"` is an
+        // escaped quote, so it does not close the scalar, and the ` # ` after it is data rather
+        // than a comment. Reading `\"` as the closing quote ends the scalar early, the `#` that
+        // follows reads as a comment, and the `secrets.` reference after it is truncated away --
+        // which leaves the job looking like it has no reader and rejects a job that is guarded.
+        const workflow = job(
+          "provider",
+          y(
+            "    steps:",
+            "      - if: github.event.pull_request.head.repo.full_name == github.repository",
+            "        run: \"echo \\\" # text\\\" ${{ secrets.GROQ_API_KEY }}\"",
+          ),
+        );
+        assert.doesNotThrow(() =>
+          assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+        );
+      });
+
+      it("accepts a guarded step whose secret is read after a URL fragment", () => {
+        // Pins the other half of YAML's comment rule: a `#` opens a comment only at the start of
+        // a line or after whitespace, so the `#` in `http://host/#v1` is part of the string. A
+        // reader that cuts there loses the `secrets.` reference that follows, the job then looks
+        // like it has no reader, and a correctly guarded job is rejected -- failing closed is
+        // right in general and still wrong here.
+        const workflow = job(
+          "provider",
+          y(
+            "    steps:",
+            "      - if: github.event.pull_request.head.repo.full_name == github.repository",
+            "        run: curl http://host/#v1 --header auth:${{ secrets.GROQ_API_KEY }}",
+          ),
+        );
+        assert.doesNotThrow(() =>
+          assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+        );
+      });
+
+      it("rejects a guarded step when a job-level env read is not gated", () => {
+        // Pins that a step's own condition does NOT gate a job-level `env:`. The check treats a
+        // header read as ungateable by anything but a job-level `if:` -- a step condition names a
+        // step, so it is not consulted for a value that lives above the step list. The step reads
+        // the same secret and IS guarded, which is what makes the verdict depend on the header
+        // check rather than on the step.
+        const workflow = job(
+          "provider",
+          y(
+            "    env:",
+            "      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}",
+            "    steps:",
+            "      - if: github.event.pull_request.head.repo.full_name == github.repository",
+            "        run: echo ${{ secrets.GROQ_API_KEY }}",
+          ),
+        );
+        assert.throws(
+          () => assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+          /fork guard/,
+          "a step condition does not gate a job-level env",
+        );
+      });
+
+      it("rejects a job whose only secret reference is inside a comment", () => {
+        // The caller selects a job as a reader from the RAW body, so a job can reach the check
+        // with nothing in the parsed code that reads anything. Fails closed rather than waving
+        // through a reference it cannot place.
+        const workflow = job(
+          "provider",
+          y(
+            "    # this job used to read ${{ secrets.GROQ_API_KEY }} on every fork",
+            "    steps:",
+            "      - run: echo lint",
+          ),
+        );
+        assert.throws(
+          () => assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+          /fork guard/,
+          "a reference in a comment is not a gate and not a reader",
+        );
+      });
+
+      it("accepts a step guard on a continuation line when dashes sit at the key's indent", () => {
+        // The dash-line fixture below puts the guard on the `- ` line. This one puts it on the
+        // step's next line instead, where the column is the step's OWN key indent -- 6 for a step
+        // written at 4, not the 8 a hardcoded column would assume.
+        const workflow = job(
+          "provider",
+          y(
+            "    steps:",
+            "    - run: echo ${{ secrets.GROQ_API_KEY }}",
+            "      if: github.event.pull_request.head.repo.full_name == github.repository",
+          ),
+        );
+        assert.doesNotThrow(() =>
+          assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+        );
+      });
+
+      it("accepts a step-level guard whose dashes sit at the key's own indent", () => {
+        // The sibling of the job-level fixture above. There the job-level check answered first, so
+        // the step indent was never exercised; here the STEP is the only gate, which is what makes
+        // the verdict depend on the step split.
+        const workflow = job(
+          "provider",
+          y(
+            "    steps:",
+            "    - if: github.event.pull_request.head.repo.full_name == github.repository",
+            "      run: echo ${{ secrets.GROQ_API_KEY }}",
+          ),
+        );
+        assert.doesNotThrow(() =>
+          assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+        );
+      });
+
+      it("rejects a guarded step when the ungated job-level env read comes after steps", () => {
+        // YAML mapping order carries no meaning, so the same job as the third fixture with its
+        // keys in the other order must reach the same verdict. This is the pair that pins where
+        // the step list ENDS: if it never ended, these trailing keys would be absorbed into the
+        // preceding step and the step's own condition would be read as gating them.
+        const workflow = job(
+          "provider",
+          y(
+            "    steps:",
+            "      - if: github.event.pull_request.head.repo.full_name == github.repository",
+            "        run: echo ${{ secrets.GROQ_API_KEY }}",
+            "    env:",
+            "      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}",
+          ),
+        );
+        assert.throws(
+          () => assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+          /fork guard/,
+          "key order does not change whether the env read is gated",
+        );
+      });
+    });
   });
 
   it("keeps docs checks non-executable at install time and checks internal links", () => {
