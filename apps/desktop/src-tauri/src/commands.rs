@@ -6276,7 +6276,10 @@ mod tests {
     #[test]
     fn recorded_audio_decoding_roundtrips_the_encoder() {
         let bytes = encode_recorded_audio(&[0.25, -0.75, 1.0], 16_000);
-        assert_eq!(decode_recorded_audio(&bytes), Ok((16_000, vec![0.25, -0.75, 1.0])));
+        assert_eq!(
+            decode_recorded_audio(&bytes),
+            Ok((16_000, vec![0.25, -0.75, 1.0]))
+        );
     }
 
     #[test]
