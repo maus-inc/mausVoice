@@ -9,7 +9,9 @@ import { getAppState, produceAppState, setAppState } from "../store";
 
 const {
   loadTranscriptionAudio,
+  importAudioFile: importAudioFileMock,
   updateTranscription,
+  storeTranscription: storeTranscriptionMock,
   transcribeAudio,
   postProcessTranscript,
   generateText,
@@ -20,7 +22,9 @@ const {
   dismissToast,
 } = vi.hoisted(() => ({
   loadTranscriptionAudio: vi.fn(),
+  importAudioFile: vi.fn(),
   updateTranscription: vi.fn(),
+  storeTranscription: vi.fn(),
   transcribeAudio: vi.fn(),
   postProcessTranscript: vi.fn(),
   generateText: vi.fn(),
@@ -34,6 +38,7 @@ const {
 vi.mock("../repos", () => ({
   getTranscriptionRepo: () => ({
     loadTranscriptionAudio,
+    importAudioFile: importAudioFileMock,
     updateTranscription,
   }),
   // Only the unparseable-response test below reaches the real post-processing
@@ -49,7 +54,7 @@ vi.mock("../repos", () => ({
 vi.mock("./transcribe.actions", () => ({
   transcribeAudio,
   postProcessTranscript,
-  storeTranscription: vi.fn(),
+  storeTranscription: storeTranscriptionMock,
 }));
 
 vi.mock("./app.actions", () => ({
@@ -108,7 +113,7 @@ vi.mock("../i18n/intl", async () => {
   };
 });
 
-const { retranscribeTranscription, openRetranscribeDialog } =
+const { importAudioFile, retranscribeTranscription, openRetranscribeDialog } =
   await import("./transcriptions.actions");
 const { POST_PROCESS_TRUNCATED_WARNING } =
   await import("../utils/prompt.utils");
@@ -1040,6 +1045,200 @@ describe("retranscribeTranscription unstyled post-processing", () => {
     expect(getAppState().transcriptions.retranscriptionSuccessIds).toEqual([
       "degraded",
     ]);
+  });
+
+  it("retranscribes the same History row once after the third partial-edit failure", async () => {
+    vi.useFakeTimers();
+    const random = vi.spyOn(Math, "random").mockReturnValue(1);
+    try {
+      const row = {
+        ...sampleTranscription("partial-chain"),
+        postProcessEditFailed: true,
+        postProcessEditFailureCount: 2,
+        postProcessEditAutoRetryUsed: null,
+      };
+      produceAppState((draft) => {
+        draft.transcriptionById[row.id] = row;
+        draft.transcriptions.transcriptionIds = [row.id];
+      });
+      transcribeAudio.mockResolvedValue({
+        rawTranscript: RAW_ASR,
+        sanitizedTranscript: RAW_ASR,
+        warnings: [],
+        metadata: {},
+      });
+      postProcessTranscript
+        .mockResolvedValueOnce({
+          transcript: RAW_ASR,
+          warnings: ["one edit could not be applied"],
+          metadata: {
+            postProcessFailed: false,
+            postProcessFallback: true,
+            postProcessEditFailed: true,
+            postProcessEditFailureCount: 3,
+          },
+        })
+        .mockResolvedValueOnce({
+          transcript: RAW_ASR,
+          warnings: ["another edit could not be applied"],
+          metadata: {
+            postProcessFailed: false,
+            postProcessFallback: true,
+            postProcessEditFailed: true,
+            postProcessEditFailureCount: 4,
+          },
+        });
+
+      await retranscribeTranscription({
+        transcriptionId: row.id,
+        toneId: "custom-tone",
+      });
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(updateTranscription).toHaveBeenCalledTimes(2);
+      expect(getAppState().transcriptionById[row.id]).toMatchObject({
+        postProcessEditFailureCount: 3,
+        postProcessEditAutoRetryUsed: true,
+      });
+
+      // Full jitter is pinned to the one-second cap here. The automatic pass
+      // uses the same row id and therefore produces a third repository update,
+      // not a new create call.
+      await vi.advanceTimersByTimeAsync(999);
+      expect(transcribeAudio).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(transcribeAudio).toHaveBeenCalledTimes(2);
+      expect(updateTranscription).toHaveBeenCalledTimes(3);
+      expect(updateTranscription.mock.calls[2]?.[0]).toMatchObject({
+        id: row.id,
+        postProcessEditFailureCount: 4,
+        postProcessEditAutoRetryUsed: true,
+      });
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      random.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not let a manual retry race the automatic recovery pass", async () => {
+    vi.useFakeTimers();
+    const random = vi.spyOn(Math, "random").mockReturnValue(1);
+    try {
+      const row = {
+        ...sampleTranscription("automatic-ownership"),
+        postProcessEditFailed: true,
+        postProcessEditFailureCount: 2,
+        postProcessEditAutoRetryUsed: null,
+      };
+      produceAppState((draft) => {
+        draft.transcriptionById[row.id] = row;
+        draft.transcriptions.transcriptionIds = [row.id];
+      });
+      transcribeAudio.mockResolvedValue({
+        rawTranscript: RAW_ASR,
+        sanitizedTranscript: RAW_ASR,
+        warnings: [],
+        metadata: {},
+      });
+      postProcessTranscript
+        .mockResolvedValueOnce({
+          transcript: RAW_ASR,
+          warnings: ["one edit could not be applied"],
+          metadata: {
+            postProcessFailed: false,
+            postProcessFallback: true,
+            postProcessEditFailed: true,
+            postProcessEditFailureCount: 3,
+          },
+        })
+        .mockResolvedValueOnce({
+          transcript: "Fully styled audio",
+          warnings: [],
+          metadata: { postProcessFailed: false },
+        });
+
+      await retranscribeTranscription({ transcriptionId: row.id });
+      await retranscribeTranscription({ transcriptionId: row.id });
+
+      expect(transcribeAudio).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(transcribeAudio).toHaveBeenCalledTimes(2);
+      expect(updateTranscription).toHaveBeenCalledTimes(3);
+      expect(updateTranscription.mock.calls[2]?.[0]).toMatchObject({
+        id: row.id,
+        transcript: "Fully styled audio",
+      });
+    } finally {
+      random.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it("schedules imported-audio recovery after storing the durable row", async () => {
+    vi.useFakeTimers();
+    const random = vi.spyOn(Math, "random").mockReturnValue(1);
+    try {
+      const row = {
+        ...sampleTranscription("imported-partial"),
+        postProcessEditFailed: true,
+        postProcessEditFailureCount: 3,
+        postProcessEditAutoRetryUsed: null,
+      };
+      produceAppState((draft) => {
+        draft.transcriptionById[row.id] = row;
+        draft.transcriptions.transcriptionIds = [row.id];
+      });
+      importAudioFileMock.mockResolvedValue({
+        samples: [0.1, 0.2],
+        sampleRate: 16000,
+      });
+      transcribeAudio.mockResolvedValue({
+        rawTranscript: RAW_ASR,
+        sanitizedTranscript: RAW_ASR,
+        warnings: [],
+        metadata: {},
+      });
+      postProcessTranscript.mockResolvedValue({
+        transcript: RAW_ASR,
+        warnings: ["one edit could not be applied"],
+        metadata: {
+          postProcessFailed: false,
+          postProcessFallback: true,
+          postProcessEditFailed: true,
+          postProcessEditFailureCount: 3,
+        },
+      });
+      storeTranscriptionMock.mockResolvedValue({
+        transcription: row,
+        wordCount: 4,
+      });
+      updateTranscription.mockImplementation((payload: Transcription) =>
+        Promise.resolve(payload),
+      );
+
+      await expect(
+        importAudioFile({ toneId: "custom-tone", languageCode: "en" }),
+      ).resolves.toBe(true);
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(storeTranscriptionMock).toHaveBeenCalledTimes(1);
+      expect(updateTranscription).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: row.id,
+          postProcessEditAutoRetryUsed: true,
+        }),
+      );
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(transcribeAudio).toHaveBeenCalledTimes(2);
+      expect(storeTranscriptionMock).toHaveBeenCalledTimes(1);
+      expect(updateTranscription).toHaveBeenCalledTimes(2);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      random.mockRestore();
+      vi.useRealTimers();
+    }
   });
 
   it("still keeps the polished transcript when a reply came back unusable", async () => {

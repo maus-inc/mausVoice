@@ -452,7 +452,20 @@ export class DictationStrategy extends BaseStrategy {
         });
       }
 
-      if (postProcessMetadata.postProcessFailed) {
+      if (postProcessMetadata.postProcessEditFailed) {
+        getLogger().warning(
+          "Post-processing edits could not be applied; preserving the original transcript without insertion",
+        );
+        await showToast({
+          message: getIntl().formatMessage({
+            defaultMessage:
+              "Styling was discarded because not all requested edits could be applied. The complete raw transcript is saved in History.",
+          }),
+          toastType: "error",
+          duration: 8000,
+          action: "open_transcriptions",
+        });
+      } else if (postProcessMetadata.postProcessFailed) {
         getLogger().warning(
           "Post-processing failed; preserving the transcript in History without insertion",
         );

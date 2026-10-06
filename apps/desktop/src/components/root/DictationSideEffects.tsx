@@ -24,6 +24,7 @@ import {
   setToolAlwaysAllow,
 } from "../../actions/tool.actions";
 import { storeTranscription } from "../../actions/transcribe.actions";
+import { scheduleAutomaticPostProcessEditRetry } from "../../actions/transcriptions.actions";
 import { recordStreak } from "../../actions/user.actions";
 import {
   useHotkeyFire,
@@ -349,7 +350,7 @@ export const postProcessFinalizedTranscript = async (
     (result.historyOwner ?? "stop-path") === "stop-path";
   if (willStore) {
     getLogger().verbose("Storing transcription");
-    await input.storeTranscriptionFn({
+    const stored = await input.storeTranscriptionFn({
       audio: input.audio,
       rawTranscript: input.rawTranscript ?? null,
       sanitizedTranscript,
@@ -361,6 +362,12 @@ export const postProcessFinalizedTranscript = async (
       remoteDeviceId: result.remoteDeviceId,
       trace: input.trace ?? null,
     });
+    if (stored.transcription) {
+      void scheduleAutomaticPostProcessEditRetry({
+        transcription: stored.transcription,
+        toneId: input.toneId,
+      });
+    }
   }
   input.refreshMember();
 
@@ -902,6 +909,10 @@ export const DictationSideEffects = () => {
             remoteDeviceId: null,
           });
           if (stored.transcription) {
+            void scheduleAutomaticPostProcessEditRetry({
+              transcription: stored.transcription,
+              toneId,
+            });
             await surfacePersistedReviewInHistory();
             return true;
           }

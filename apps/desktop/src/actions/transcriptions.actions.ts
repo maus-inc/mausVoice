@@ -1,9 +1,10 @@
 import { Transcription } from "@maus-inc/types";
-import { getRec } from "@maus-inc/utilities";
+import { delayed, getRec } from "@maus-inc/utilities";
 import dayjs from "dayjs";
 import { getIntl } from "../i18n/intl";
 import { getTranscriptionRepo } from "../repos";
 import { isPersistenceAllowed } from "../utils/incognito.utils";
+import { getLogger } from "../utils/log.utils";
 import { createId } from "../utils/id.utils";
 import { orFalse } from "../utils/nullable.utils";
 import { POST_PROCESS_TRUNCATED_WARNING } from "../utils/prompt.utils";
@@ -16,6 +17,10 @@ import {
 } from "../state/transcriptions.state";
 import { getAppState, produceAppState } from "../store";
 import { sanitizeTranscriptText } from "../utils/sanitize-transcript.utils";
+import {
+  getPostProcessEditRetranscribeDelayMs,
+  shouldAutomaticallyRetranscribePostProcessEditFailure,
+} from "../utils/post-process-retry.utils";
 import type { ReplacementRule } from "../utils/string.utils";
 import {
   getMyDictationLanguage,
@@ -71,6 +76,7 @@ type ProcessAudioParams = {
   sampleRate: number;
   toneId?: string | null;
   languageCode?: string | null;
+  postProcessEditFailureCount?: number | null;
 };
 
 type ProcessedAudio = Awaited<ReturnType<typeof processAudio>>;
@@ -103,6 +109,7 @@ const processAudio = async ({
   sampleRate,
   toneId,
   languageCode,
+  postProcessEditFailureCount,
 }: ProcessAudioParams) => {
   const transcribeResult = await transcribeAudio({
     samples,
@@ -117,6 +124,7 @@ const processAudio = async ({
     rawTranscript: sanitizedTranscript,
     toneId: toneId ?? null,
     dictationLanguage: languageCode ?? undefined,
+    postProcessEditFailureCount,
   });
 
   return { transcribeResult, sanitizedTranscript, postProcessResult };
@@ -188,6 +196,15 @@ const describeUnstyledRun = (
   metadata: PostProcessMetadata,
   postProcessWarnings: string[],
 ): { message: string; reason: string } => {
+  if (orFalse(metadata.postProcessEditFailed)) {
+    return {
+      message: getIntl().formatMessage({
+        defaultMessage:
+          "The requested styling edits failed, so the complete raw transcript was kept in History.",
+      }),
+      reason: postProcessWarnings.at(-1) ?? "post-process-edit-failure",
+    };
+  }
   if (orFalse(metadata.postProcessFailed)) {
     const reason = metadata.postProcessError ?? "";
     return {
@@ -220,6 +237,7 @@ const describeUnstyledRun = (
  */
 const isUnstyledPostProcess = (metadata: PostProcessMetadata): boolean =>
   orFalse(metadata.postProcessFailed) ||
+  orFalse(metadata.postProcessEditFailed) ||
   (orFalse(metadata.postProcessFallback) && !metadata.postProcessError);
 
 const updateStoredTranscription = async (
@@ -269,12 +287,28 @@ const updateStoredTranscription = async (
     postProcessDevice: metadata.postProcessDevice ?? null,
     postProcessModel: metadata.postProcessModel ?? null,
     // Match create-path sentinels: null = not attempted, true = failed,
-    // false = succeeded (set explicitly on the success path). A failed request
-    // and an unusable answer stay disjoint here: a degraded run leaves this
-    // false because the request itself succeeded, and the reason it was
-    // dropped rides on `warnings`, which the row does persist.
+    // false = succeeded. An unusable answer keeps the row's previous text and
+    // carries its semantic edit-failure chain forward; a successful run clears
+    // that chain so a later user-started chain can receive one recovery pass.
     postProcessProvider: metadata.postProcessProvider ?? null,
-    postProcessFailed: metadata.postProcessFailed ?? null,
+    postProcessFailed: unstyled
+      ? (metadata.postProcessFailed ?? transcription.postProcessFailed ?? null)
+      : (metadata.postProcessFailed ?? null),
+    postProcessEditFailed: unstyled
+      ? (metadata.postProcessEditFailed ??
+        transcription.postProcessEditFailed ??
+        null)
+      : null,
+    postProcessEditFailureCount: unstyled
+      ? (metadata.postProcessEditFailureCount ??
+        transcription.postProcessEditFailureCount ??
+        null)
+      : null,
+    postProcessEditAutoRetryUsed: unstyled
+      ? (metadata.postProcessEditAutoRetryUsed ??
+        transcription.postProcessEditAutoRetryUsed ??
+        null)
+      : null,
     postProcessFallback: metadata.postProcessFallback ?? null,
     postProcessError: metadata.postProcessError ?? null,
     warnings: warnings.length > 0 ? warnings : null,
@@ -303,6 +337,93 @@ type RetranscribeTranscriptionParams = {
 };
 
 const RETRANSCRIBE_LOADING_SNACKBAR_MS = 2 * 60 * 1000;
+const automaticRetranscriptionIds = new Set<string>();
+
+/**
+ * Mark a durable row before waiting, then run the one automatic recovery pass
+ * against that same row. The persisted marker makes the one-pass rule survive
+ * a restart and prevents a later manual failure chain from scheduling another
+ * automatic run for the same History item.
+ */
+export const scheduleAutomaticPostProcessEditRetry = async ({
+  transcription,
+  toneId,
+  languageCode,
+}: {
+  transcription: Transcription;
+  toneId?: string | null;
+  languageCode?: string | null;
+}): Promise<void> => {
+  const failureCount = transcription.postProcessEditFailureCount;
+  if (
+    !isPersistenceAllowed() ||
+    !transcription.audio?.filePath ||
+    transcription.postProcessEditFailed !== true ||
+    failureCount === null ||
+    failureCount === undefined ||
+    !shouldAutomaticallyRetranscribePostProcessEditFailure(failureCount) ||
+    transcription.postProcessEditAutoRetryUsed === true ||
+    automaticRetranscriptionIds.has(transcription.id)
+  ) {
+    return;
+  }
+
+  automaticRetranscriptionIds.add(transcription.id);
+  try {
+    const marked = await getTranscriptionRepo().updateTranscription({
+      ...transcription,
+      postProcessEditAutoRetryUsed: true,
+    });
+    const current = getRec(getAppState().transcriptionById, transcription.id);
+    if (
+      current?.postProcessEditFailed !== true ||
+      current.postProcessEditFailureCount !== failureCount
+    ) {
+      automaticRetranscriptionIds.delete(transcription.id);
+      return;
+    }
+    produceAppState((draft) => {
+      draft.transcriptionById[transcription.id] = marked;
+    });
+
+    const delayMs = getPostProcessEditRetranscribeDelayMs(failureCount);
+    getLogger().info(
+      `Scheduling audio retranscription after repeated post-processing edit failures in ${delayMs}ms`,
+    );
+
+    void delayed(delayMs)
+      .then(() => {
+        automaticRetranscriptionIds.delete(transcription.id);
+        const latest = getRec(
+          getAppState().transcriptionById,
+          transcription.id,
+        );
+        if (
+          latest?.postProcessEditFailed !== true ||
+          latest.postProcessEditFailureCount !== failureCount ||
+          latest.postProcessEditAutoRetryUsed !== true
+        ) {
+          return;
+        }
+        return retranscribeTranscription({
+          transcriptionId: transcription.id,
+          toneId,
+          languageCode,
+        });
+      })
+      .catch((error: unknown) => {
+        automaticRetranscriptionIds.delete(transcription.id);
+        getLogger().warning(
+          `Automatic audio retranscription was skipped: ${error}`,
+        );
+      });
+  } catch (error) {
+    automaticRetranscriptionIds.delete(transcription.id);
+    getLogger().warning(
+      `Could not persist automatic audio retranscription marker: ${error}`,
+    );
+  }
+};
 
 const retranscribeGenerationById = new Map<string, number>();
 
@@ -417,6 +538,8 @@ const performRetranscribe = async ({
     sampleRate: audioData.sampleRate,
     toneId,
     languageCode,
+    postProcessEditFailureCount:
+      transcription.postProcessEditFailureCount ?? null,
   });
   const updated = await updateStoredTranscription(transcription, processed);
 
@@ -473,8 +596,11 @@ const failRetranscribeRun = ({
 export const retranscribeTranscription = async (
   params: RetranscribeTranscriptionParams,
 ): Promise<void> => {
-  const { transcriptionId } = params;
-  if (isRetranscribingId(getAppState().transcriptions, transcriptionId)) {
+  const { transcriptionId, toneId, languageCode } = params;
+  if (
+    isRetranscribingId(getAppState().transcriptions, transcriptionId) ||
+    automaticRetranscriptionIds.has(transcriptionId)
+  ) {
     return;
   }
 
@@ -503,6 +629,11 @@ export const retranscribeTranscription = async (
         generation,
         message: update.unstyledMessage ?? "",
         reason: update.unstyledReason ?? undefined,
+      });
+      void scheduleAutomaticPostProcessEditRetry({
+        transcription: update.transcription,
+        toneId,
+        languageCode,
       });
       return;
     }
@@ -568,6 +699,14 @@ export const importAudioFile = async ({
     warnings: [...transcribeResult.warnings, ...postProcessResult.warnings],
   });
 
+  if (output.transcription) {
+    void scheduleAutomaticPostProcessEditRetry({
+      transcription: output.transcription,
+      toneId,
+      languageCode,
+    });
+  }
+
   if (!output.transcription && !isPersistenceAllowed()) {
     const memoryRecord: Transcription = {
       id: createId(),
@@ -593,6 +732,12 @@ export const importAudioFile = async ({
       postProcessProvider:
         postProcessResult.metadata?.postProcessProvider ?? null,
       postProcessFailed: postProcessResult.metadata?.postProcessFailed ?? null,
+      postProcessEditFailed:
+        postProcessResult.metadata?.postProcessEditFailed ?? null,
+      postProcessEditFailureCount:
+        postProcessResult.metadata?.postProcessEditFailureCount ?? null,
+      postProcessEditAutoRetryUsed:
+        postProcessResult.metadata?.postProcessEditAutoRetryUsed ?? null,
       postProcessFallback:
         postProcessResult.metadata?.postProcessFallback ?? null,
       postProcessError: postProcessResult.metadata?.postProcessError ?? null,

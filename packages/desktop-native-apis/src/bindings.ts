@@ -1343,6 +1343,19 @@ postProcessProvider?: string | null;
  */
 postProcessFailed?: boolean | null; 
 /**
+ * True when a provider edit could not be applied to the transcript.
+ */
+postProcessEditFailed?: boolean | null; 
+/**
+ * Number of edit-application failures in this transcription retry chain.
+ */
+postProcessEditFailureCount?: number | null; 
+/**
+ * True after the one automatic full-audio retranscription was consumed for
+ * this retry chain.
+ */
+postProcessEditAutoRetryUsed?: boolean | null; 
+/**
  * Sanitized, non-secret error message from a failed post-processing
  * request.
  */

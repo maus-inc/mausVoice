@@ -175,6 +175,10 @@ pub const USER_PROFILE_TIMESTAMPS_MIGRATION_SQL: &str =
 /// against databases that already applied some of those steps individually.
 pub const PENDING_AUDIO_DELETIONS_MIGRATION_SQL: &str =
     include_str!("migrations/090_pending_audio_deletions.sql");
+/// Persists semantic post-processing edit failures, their per-row retry-chain
+/// count, and the durable one-pass automatic-recovery guard.
+pub const POST_PROCESS_EDIT_FAILURE_MIGRATION_SQL: &str =
+    include_str!("migrations/091_post_process_edit_failure.sql");
 /// Schema pieces folded into [`CONSOLIDATED_V0_1_6_MIGRATION_SQL`] /
 /// [`migrations`]: `preserve_audio_on_failure`, `transcription_path`,
 /// `pill_placement`, `hands_free_delay_ms`, `auto_learn_dictionary_enabled`,
@@ -611,6 +615,12 @@ pub fn migrations() -> Vec<tauri_plugin_sql::Migration> {
             version: 90,
             description: "create_pending_audio_deletions_table",
             sql: PENDING_AUDIO_DELETIONS_MIGRATION_SQL,
+            kind: tauri_plugin_sql::MigrationKind::Up,
+        },
+        tauri_plugin_sql::Migration {
+            version: 91,
+            description: "post_process_edit_failure",
+            sql: POST_PROCESS_EDIT_FAILURE_MIGRATION_SQL,
             kind: tauri_plugin_sql::MigrationKind::Up,
         },
     ]

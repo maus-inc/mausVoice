@@ -679,7 +679,7 @@ describe("resolveProcessedTranscription", () => {
   const ONE_EDIT_SKIPPED = `Applied 0 of 1 post-processing edits; 1 could not be applied${SKIP_RULE}`;
   const ONE_OF_TWO_EDITS_SKIPPED = `Applied 1 of 2 post-processing edits; 1 could not be applied${SKIP_RULE}`;
 
-  it("applies edits and reports skipped ones as a warning", () => {
+  it("rejects a partially applied edit batch in production", () => {
     const resolution = resolveProcessedTranscription(
       JSON.stringify({
         edits: [
@@ -689,6 +689,26 @@ describe("resolveProcessedTranscription", () => {
         result: "",
       }),
       "we are gonna ship",
+    );
+
+    expect(resolution).toEqual({
+      status: "unusable",
+      reason: "partial-edits",
+      warning: ONE_OF_TWO_EDITS_SKIPPED,
+    });
+  });
+
+  it("allows a partially applied edit batch for an explicit preview", () => {
+    const resolution = resolveProcessedTranscription(
+      JSON.stringify({
+        edits: [
+          { find: "gonna", replace: "going to" },
+          { find: "missing phrase", replace: "x" },
+        ],
+        result: "",
+      }),
+      "we are gonna ship",
+      { allowPartialEdits: true },
     );
 
     expect(resolution).toEqual({
@@ -709,17 +729,15 @@ describe("resolveProcessedTranscription", () => {
     );
 
     expect(resolution).toMatchObject({
-      status: "cleaned",
-      transcript: "w0 w1",
+      status: "unusable",
+      reason: "partial-edits",
     });
-    if (resolution.status === "cleaned") {
-      expect(resolution.warning).toContain(
-        `Only the first ${MAX_TRANSCRIPTION_EDITS} edits were attempted.`,
-      );
-    }
+    expect(resolution.warning).toContain(
+      `Only the first ${MAX_TRANSCRIPTION_EDITS} edits were attempted.`,
+    );
   });
 
-  it("keeps the rewrite when no edit matched", () => {
+  it("rejects a rewrite when a declared edit did not match in production", () => {
     const resolution = resolveProcessedTranscription(
       JSON.stringify({
         edits: [{ find: "not present", replace: "x" }],
@@ -728,12 +746,10 @@ describe("resolveProcessedTranscription", () => {
       "we are gonna ship",
     );
 
-    // The rewrite covers the skipped edit, so there is nothing to warn about:
-    // the cleaned text was still produced.
     expect(resolution).toEqual({
-      status: "cleaned",
-      transcript: "We are going to ship.",
-      warning: null,
+      status: "unusable",
+      reason: "partial-edits",
+      warning: ONE_EDIT_SKIPPED,
     });
   });
 
@@ -769,8 +785,8 @@ describe("resolveProcessedTranscription", () => {
       // asking to delete "uh ", so the edit is skipped and counted. Reading it
       // as a deletion used to remove the word and report a clean success.
       expect(resolution).toEqual({
-        status: "cleaned",
-        transcript: "uh so anyway",
+        status: "unusable",
+        reason: "partial-edits",
         warning: ONE_EDIT_SKIPPED,
       });
     },
@@ -783,8 +799,8 @@ describe("resolveProcessedTranscription", () => {
     );
 
     expect(resolution).toEqual({
-      status: "cleaned",
-      transcript: "the meeting is at noon",
+      status: "unusable",
+      reason: "partial-edits",
       warning: ONE_EDIT_SKIPPED,
     });
   });
@@ -802,8 +818,8 @@ describe("resolveProcessedTranscription", () => {
     );
 
     expect(resolution).toEqual({
-      status: "cleaned",
-      transcript: "we are going to join the meeting",
+      status: "unusable",
+      reason: "partial-edits",
       warning: ONE_OF_TWO_EDITS_SKIPPED,
     });
   });
@@ -821,8 +837,8 @@ describe("resolveProcessedTranscription", () => {
     );
 
     expect(resolution).toEqual({
-      status: "cleaned",
-      transcript: "I cannot attend the meeting next week",
+      status: "unusable",
+      reason: "partial-edits",
       warning: ONE_OF_TWO_EDITS_SKIPPED,
     });
   });
@@ -919,13 +935,13 @@ describe("resolveProcessedTranscription", () => {
     // The totals describe every entry the model sent, so the unread one is
     // reported rather than quietly missing from the count.
     expect(resolution).toEqual({
-      status: "cleaned",
-      transcript: "we are going to ship",
+      status: "unusable",
+      reason: "partial-edits",
       warning: `Applied 1 of 2 post-processing edits; 1 could not be applied${SKIP_RULE}`,
     });
   });
 
-  it("keeps the rewrite when the edit list beside it could not be read", () => {
+  it("rejects a rewrite when a declared edit could not be read", () => {
     const resolution = resolveProcessedTranscription(
       JSON.stringify({
         edits: [{ find: 42, replace: "x" }],
@@ -934,12 +950,11 @@ describe("resolveProcessedTranscription", () => {
       "we are gonna ship",
     );
 
-    // The rewrite carries the text the unread edit asked for, so there is
-    // nothing left to report.
     expect(resolution).toEqual({
-      status: "cleaned",
-      transcript: "We are going to ship.",
-      warning: null,
+      status: "unusable",
+      reason: "unreadable-edits",
+      warning:
+        "Post-processing returned edits that could not be read; kept the raw transcript. The reply may not match the shape the provider was asked for.",
     });
   });
 

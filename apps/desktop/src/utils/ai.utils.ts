@@ -194,8 +194,9 @@ const splitsWord = (text: string, find: string, index: number): boolean => {
  * inside a word, and a missing replacement are all skipped rather than guessed
  * at, because rewriting the wrong span silently corrupts the dictation, while
  * leaving the model's edit unapplied only means that phrase stays as dictated.
- * Edits that do apply are kept, so a reply with one bad entry still improves
- * the rest of the text.
+ * Production rejects the whole edit batch when one entry is skipped. Preview
+ * callers can opt into the partial result when showing what the style managed to
+ * change.
  */
 export const applyTranscriptionEdits = (
   transcript: string,
@@ -330,21 +331,22 @@ export type ProcessedTranscriptionResolution =
       /**
        * "unparseable" means the reply was not JSON at all; "empty" means the
        * reply parsed but carried no text; "unreadable-edits" means it declared
-       * an edit list the reply's shape did not let us read, so the model asked
-       * for a change we could not act on. Production falls back to the raw
-       * transcript either way, while the style preview shows the model's own
-       * words for "unparseable" so a prose answer stays visible.
+       * an edit list the reply's shape did not let us read; "partial-edits"
+       * means one or more readable declared edits could not be applied.
+       * Production falls back to the raw transcript for every unusable result.
+       * The style preview may opt into showing a partially applied edit result.
        */
-      reason: "empty" | "unparseable" | "unreadable-edits";
+      reason: "empty" | "unparseable" | "unreadable-edits" | "partial-edits";
       warning: string;
     };
 
 /**
  * Resolves a cleanup reply into the text the pipeline should deliver.
  *
- * Order of preference: applied edits, then a full rewrite in `result`, then
- * the transcript unchanged. Edits win because they are the auditable shape:
- * each one either matched the transcript exactly once or was skipped.
+ * Production accepts a complete edit batch first, then a full rewrite in
+ * `result`, then the transcript unchanged. Any declared edit that is skipped
+ * rejects the production batch before the rewrite can be used. Previews may opt
+ * into the partial edit result because they do not insert it.
  *
  * `transcript` is the text the edits were generated against, so the caller
  * can pass the raw transcript for production and a preview sample for the
@@ -362,17 +364,22 @@ export type ProcessedTranscriptionResolution =
  * model sent alongside them is the better text and the edits only need
  * reporting.
  */
+type ResolveProcessedTranscriptionOptions = {
+  /**
+   * Previews can show what a style managed to change, while production must
+   * reject the whole edit batch when any requested edit is lost.
+   */
+  allowPartialEdits?: boolean;
+};
+
 const resolveAppliedEdits = (
   transcript: string,
   edits: TranscriptionEdit[],
   dropped: number,
   rewritten: string,
+  options: ResolveProcessedTranscriptionOptions,
 ): ProcessedTranscriptionResolution | null => {
   const application = applyTranscriptionEdits(transcript, edits);
-  const decides = application.applied > 0 || rewritten.length === 0;
-  if (!decides) {
-    return null;
-  }
   // Entries the reply did not let us read are counted with the ones that did
   // not match, so the totals describe every entry the model sent and an unread
   // one cannot vanish from the report.
@@ -384,13 +391,29 @@ const resolveAppliedEdits = (
     edits.length > MAX_TRANSCRIPTION_EDITS
       ? ` Only the first ${MAX_TRANSCRIPTION_EDITS} edits were attempted.`
       : "";
+  const warning =
+    skipped > 0
+      ? `Applied ${application.applied} of ${declared} post-processing edits; ${skipped} could not be applied (an edit only applies when it names find text as a string, its replacement is a string, and that find text matches the transcript exactly once, on the edges of a word).${capNote}`
+      : null;
+  if (skipped > 0 && !options.allowPartialEdits) {
+    return {
+      status: "unusable",
+      reason: edits.length === 0 ? "unreadable-edits" : "partial-edits",
+      warning:
+        edits.length === 0
+          ? "Post-processing returned edits that could not be read; kept the raw transcript. The reply may not match the shape the provider was asked for."
+          : (warning ??
+            "Post-processing edits could not all be applied; kept the raw transcript."),
+    };
+  }
+  const decides = application.applied > 0 || rewritten.length === 0;
+  if (!decides) {
+    return null;
+  }
   return {
     status: "cleaned",
     transcript: application.text,
-    warning:
-      skipped > 0
-        ? `Applied ${application.applied} of ${declared} post-processing edits; ${skipped} could not be applied (an edit only applies when it names find text as a string, its replacement is a string, and that find text matches the transcript exactly once, on the edges of a word).${capNote}`
-        : null,
+    warning,
   };
 };
 
@@ -417,6 +440,7 @@ const resolveDeclaredEdits = (
 export const resolveProcessedTranscription = (
   reply: string,
   transcript: string,
+  options: ResolveProcessedTranscriptionOptions = {},
 ): ProcessedTranscriptionResolution => {
   let parsed: unknown;
   try {
@@ -441,8 +465,14 @@ export const resolveProcessedTranscription = (
     readProcessedTranscriptionResponse(parsed);
   const rewritten = result.trim();
 
-  if (edits.length > 0) {
-    const applied = resolveAppliedEdits(transcript, edits, dropped, rewritten);
+  if (edits.length > 0 || dropped > 0) {
+    const applied = resolveAppliedEdits(
+      transcript,
+      edits,
+      dropped,
+      rewritten,
+      options,
+    );
     if (applied) {
       return applied;
     }

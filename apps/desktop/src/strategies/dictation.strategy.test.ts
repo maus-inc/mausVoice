@@ -761,6 +761,42 @@ describe("DictationStrategy backlog lifecycle", () => {
     expect(result.postProcessMetadata.postProcessFailed).toBe(true);
   });
 
+  it("blocks insertion when a provider edit batch is partial", async () => {
+    const { postProcessTranscript } =
+      await import("../actions/transcribe.actions");
+    vi.mocked(postProcessTranscript).mockResolvedValueOnce({
+      transcript: "complete raw transcript",
+      warnings: [
+        "Applied 1 of 2 post-processing edits; 1 could not be applied",
+      ],
+      metadata: {
+        postProcessFailed: false,
+        postProcessFallback: true,
+        postProcessEditFailed: true,
+        postProcessEditFailureCount: 1,
+      },
+    });
+    const { showToast } = await import("../actions/toast.actions");
+
+    const result = await new DictationStrategy().handleTranscript({
+      rawTranscript: "complete raw transcript",
+      toneId: "custom-tone",
+      currentApp: null,
+    } as never);
+
+    expect(routeTranscriptOutputMock).not.toHaveBeenCalled();
+    expect(showToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message:
+          "Styling was discarded because not all requested edits could be applied. The complete raw transcript is saved in History.",
+        toastType: "error",
+        action: "open_transcriptions",
+      }),
+    );
+    expect(result.transcript).toBe("complete raw transcript");
+    expect(result.postProcessMetadata.postProcessEditFailed).toBe(true);
+  });
+
   it("drops in-flight interim paste work when cleanup runs while target probe is pending", async () => {
     const strategy = new DictationStrategy();
     const probeStarted = deferred<void>();

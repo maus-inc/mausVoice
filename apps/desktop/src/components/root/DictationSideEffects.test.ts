@@ -1,13 +1,24 @@
+import type { Transcription } from "@maus-inc/types";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { navigateMock, surfaceMainWindowMock, warningMock } = vi.hoisted(() => ({
+const {
+  navigateMock,
+  scheduleAutomaticPostProcessEditRetryMock,
+  surfaceMainWindowMock,
+  warningMock,
+} = vi.hoisted(() => ({
   navigateMock: vi.fn(),
+  scheduleAutomaticPostProcessEditRetryMock: vi.fn(),
   surfaceMainWindowMock: vi.fn(),
   warningMock: vi.fn(),
 }));
 
 vi.mock("../../router", () => ({
   getBrowserRouter: () => ({ navigate: navigateMock }),
+}));
+vi.mock("../../actions/transcriptions.actions", () => ({
+  scheduleAutomaticPostProcessEditRetry:
+    scheduleAutomaticPostProcessEditRetryMock,
 }));
 vi.mock("../../hooks/tauri.hooks", () => ({
   useTauriListen: () => {},
@@ -474,6 +485,34 @@ describe("postProcessFinalizedTranscript", () => {
     await postProcessFinalizedTranscript(input);
 
     expect(storeTranscriptionFn).toHaveBeenCalledTimes(1);
+  });
+
+  it("schedules live recovery only after the durable row is stored", async () => {
+    scheduleAutomaticPostProcessEditRetryMock.mockClear();
+    const { input, storeTranscriptionFn } = buildInput();
+    const stored: Transcription = {
+      id: "live-partial",
+      transcript: "hello world",
+      createdAt: "2026-10-06T00:00:00.000Z",
+      createdByUserId: "user-1",
+      isDeleted: false,
+      audio: { filePath: "/tmp/live-partial.wav", durationMs: 1000 },
+      postProcessEditFailed: true,
+      postProcessEditFailureCount: 3,
+      postProcessEditAutoRetryUsed: null,
+    };
+    storeTranscriptionFn.mockResolvedValueOnce({
+      transcription: stored,
+      wordCount: 2,
+    });
+
+    await postProcessFinalizedTranscript(input);
+
+    expect(storeTranscriptionFn).toHaveBeenCalledTimes(1);
+    expect(scheduleAutomaticPostProcessEditRetryMock).toHaveBeenCalledWith({
+      transcription: stored,
+      toneId: null,
+    });
   });
 
   it("propagates a post-processing failure without sending idle or persisting", async () => {

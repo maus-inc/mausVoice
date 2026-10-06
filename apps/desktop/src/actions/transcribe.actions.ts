@@ -65,6 +65,7 @@ import {
   canApplyFastStyle,
 } from "../utils/fast-style.utils";
 import { getIntl } from "../i18n/intl";
+import { nextPostProcessEditFailureCount } from "../utils/post-process-retry.utils";
 import { showErrorSnackbar } from "./app.actions";
 import { addWordsToCurrentUser } from "./user.actions";
 
@@ -111,6 +112,8 @@ export type PostProcessInput = {
   rawTranscript: string;
   toneId: Nullable<string>;
   dictationLanguage?: string;
+  /** Number of edit-application failures already recorded for this row. */
+  postProcessEditFailureCount?: number | null;
   trace?: PipelineTrace | null;
 };
 
@@ -125,6 +128,12 @@ export type PostProcessMetadata = {
   postprocessDurationMs?: number | null;
   /** True when a post-processing request was attempted and failed. */
   postProcessFailed?: boolean | null;
+  /** True when the provider returned an edit that could not be applied. */
+  postProcessEditFailed?: boolean | null;
+  /** Number of edit-application failures in this transcription retry chain. */
+  postProcessEditFailureCount?: number | null;
+  /** True after the one automatic full-audio retranscription was consumed. */
+  postProcessEditAutoRetryUsed?: boolean | null;
   /**
    * True when post-processing failed and the deterministic local style produced
    * the output instead. The transcript is still delivered; this marks the row
@@ -309,19 +318,26 @@ export const transcribeAudio = async ({
 const resolvePostProcessedTranscript = (
   reply: string,
   rawTranscript: string,
-): { transcript: string; warning: string | null; unusable: boolean } => {
+): {
+  transcript: string;
+  warning: string | null;
+  unusable: boolean;
+  reason: "empty" | "unparseable" | "unreadable-edits" | "partial-edits" | null;
+} => {
   const resolution = resolveProcessedTranscription(reply, rawTranscript);
   if (resolution.status === "cleaned") {
     return {
       transcript: resolution.transcript,
       warning: resolution.warning,
       unusable: false,
+      reason: null,
     };
   }
   return {
     transcript: rawTranscript,
     warning: resolution.warning,
     unusable: true,
+    reason: resolution.reason,
   };
 };
 
@@ -336,6 +352,7 @@ type RunPostProcessingRequestArgs = {
   genProvider: Nullable<string>;
   metadata: PostProcessMetadata;
   warnings: string[];
+  previousEditFailureCount?: number | null;
 };
 
 const fallbackValue = (value: Nullable<string>, fallback: string): string =>
@@ -378,6 +395,7 @@ const applyPostProcessSuccess = (
   metadata: PostProcessMetadata,
   warnings: string[],
   postprocessStart: number,
+  previousEditFailureCount: number | null | undefined,
 ): string => {
   const postprocessDuration = performance.now() - postprocessStart;
   metadata.postprocessDurationMs = Math.round(postprocessDuration);
@@ -405,6 +423,15 @@ const applyPostProcessSuccess = (
     // only reads the failure sentinel would treat this as a finished
     // retranscription and overwrite text the user already had polished.
     metadata.postProcessFallback = true;
+    if (
+      parseResult.reason === "partial-edits" ||
+      parseResult.reason === "unreadable-edits"
+    ) {
+      metadata.postProcessEditFailed = true;
+      metadata.postProcessEditFailureCount = nextPostProcessEditFailureCount(
+        previousEditFailureCount,
+      );
+    }
   }
 
   metadata.postProcessMode =
@@ -636,6 +663,7 @@ const runPostProcessingRequest = async ({
   genProvider,
   metadata,
   warnings,
+  previousEditFailureCount,
 }: RunPostProcessingRequestArgs): Promise<string> => {
   beginPostProcessingRequest({
     metadata,
@@ -698,6 +726,7 @@ const runPostProcessingRequest = async ({
       metadata,
       warnings,
       postprocessStart,
+      previousEditFailureCount,
     );
   } catch (error) {
     // Terminal provider failure (e.g. Cerebras 402) or network error. Degrade
@@ -753,7 +782,12 @@ const runPostProcessingRequest = async ({
 };
 
 const applyPostProcessing = async (
-  { rawTranscript, toneId, dictationLanguage }: PostProcessInput,
+  {
+    rawTranscript,
+    toneId,
+    dictationLanguage,
+    postProcessEditFailureCount,
+  }: PostProcessInput,
   state: AppState,
   gen: ReturnType<typeof getGenerateTextRepo>,
   metadata: PostProcessMetadata,
@@ -789,6 +823,7 @@ const applyPostProcessing = async (
     genProvider: gen.provider,
     metadata,
     warnings,
+    previousEditFailureCount: postProcessEditFailureCount,
   });
 };
 
@@ -914,6 +949,12 @@ const buildTranscriptionRecord = ({
   postProcessModel: orNull(input.postProcessMetadata.postProcessModel),
   postProcessProvider: orNull(input.postProcessMetadata.postProcessProvider),
   postProcessFailed: input.postProcessMetadata.postProcessFailed ?? null,
+  postProcessEditFailed:
+    input.postProcessMetadata.postProcessEditFailed ?? null,
+  postProcessEditFailureCount:
+    input.postProcessMetadata.postProcessEditFailureCount ?? null,
+  postProcessEditAutoRetryUsed:
+    input.postProcessMetadata.postProcessEditAutoRetryUsed ?? null,
   postProcessFallback: input.postProcessMetadata.postProcessFallback ?? null,
   postProcessError: orNull(input.postProcessMetadata.postProcessError),
   transcriptionDurationMs: orNull(

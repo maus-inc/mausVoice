@@ -108,6 +108,33 @@ describe("postProcessTranscript provider attribution on failure", () => {
     expect(seenSignal?.aborted).toBe(true);
   });
 
+  it("keeps the complete raw transcript when one provider edit cannot be applied", async () => {
+    genRepo.generateText.mockResolvedValueOnce({
+      text: JSON.stringify({
+        edits: [
+          { find: "gonna", replace: "going to" },
+          { find: "missing phrase", replace: "x" },
+        ],
+        result: "",
+      }),
+      metadata: {
+        postProcessingMode: "api",
+        inferenceDevice: "API • Cerebras",
+      },
+    });
+
+    const result = await postProcessTranscript({
+      rawTranscript: "we are gonna ship",
+      toneId: null,
+    });
+
+    expect(result.transcript).toBe("we are gonna ship");
+    expect(result.metadata.postProcessFailed).toBe(false);
+    expect(result.metadata.postProcessFallback).toBe(true);
+    expect(result.metadata.postProcessEditFailed).toBe(true);
+    expect(result.metadata.postProcessEditFailureCount).toBe(1);
+  });
+
   it("records provider metadata on success", async () => {
     genRepo.generateText.mockResolvedValueOnce({
       text: JSON.stringify({ result: "Hello, world." }),
