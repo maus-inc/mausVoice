@@ -74,12 +74,12 @@ const TERMINATOR_CHARS = [".", "!", "?", "…", "。", "！", "？"];
 const SENTENCE_TERMINATORS: ReadonlySet<string> = new Set(TERMINATOR_CHARS);
 
 const TERMINATOR_CLASS_SOURCE = `[${TERMINATOR_CHARS.map((char) =>
-  char.replace(/[\\^\]-]/g, "\\$&"),
+  char.replace(/[\\^\]-]/g, String.raw`\$&`),
 ).join("")}]`;
 
 /** A sentence boundary is whitespace after a terminator and before a capital. */
 const SENTENCE_SPLIT_RE = new RegExp(
-  `(?<=${TERMINATOR_CLASS_SOURCE})\\s+(?=[A-Z0-9])`,
+  String.raw`(?<=${TERMINATOR_CLASS_SOURCE})\s+(?=[A-Z0-9])`,
   "g",
 );
 
@@ -167,6 +167,12 @@ export const findChunkCut = (
 };
 
 /**
+ * One chunk of a long dictation, plus what the transforms need to know about where it
+ * starts.
+ */
+type Chunk = { text: string; startsSentence: boolean };
+
+/**
  * Splits a dictation into chunks of at most `MAX_INPUT_CHARS`, each ending on a
  * boundary `findChunkCut` approves, so every transform can run over the whole
  * utterance instead of over a prefix of it.
@@ -175,15 +181,26 @@ export const findChunkCut = (
  * dictation takes exactly the path it always did and nothing about its output
  * changes. Nothing is dropped and nothing is re-ordered: the chunks concatenate
  * back to the input.
+ *
+ * `startsSentence` is the part that is not just bookkeeping. A chunk cut on a sentence
+ * boundary opens a sentence, and one cut at whitespace opens the middle of one -- and
+ * the transforms cannot tell the two apart on their own, because each of them TRIMS its
+ * chunk before running the `^`-anchored opener removals. Measured on a dictation with
+ * no terminator in the window: `so I went home` at the seam came back as `I went home`
+ * under four tones, because the whitespace fallback returns the index OF a space and the
+ * trim removed the one character that had marked the chunk as mid-sentence.
  */
-const splitIntoChunks = (text: string): string[] => {
-  if (text.length <= MAX_INPUT_CHARS) return [text];
+const splitIntoChunks = (text: string): Chunk[] => {
+  if (text.length <= MAX_INPUT_CHARS) return [{ text, startsSentence: true }];
 
-  const chunks: string[] = [];
+  const chunks: Chunk[] = [];
   let start = 0;
+  // Only the first chunk is known to open a sentence; a later one opens one only if the
+  // cut that produced it was a sentence boundary.
+  let startsSentence = true;
   while (start < text.length) {
     if (text.length - start <= MAX_INPUT_CHARS) {
-      chunks.push(text.slice(start));
+      chunks.push({ text: text.slice(start), startsSentence });
       break;
     }
     const windowEnd = start + MAX_INPUT_CHARS;
@@ -192,11 +209,38 @@ const splitIntoChunks = (text: string): string[] => {
     // one character, but a cut that fails to advance would spin forever, so the
     // window end is the floor.
     const nextStart = cut > start ? cut : windowEnd;
-    chunks.push(text.slice(start, nextStart));
+    chunks.push({ text: text.slice(start, nextStart), startsSentence });
+    // A cut at a real sentence boundary is the one case where the next chunk opens a
+    // sentence, and `findChunkCut` does not say which tier produced the cut -- so the
+    // text has to. Two characters decide it, because `findSentenceBoundary` has TWO
+    // returns and they point at different things:
+    //
+    //   `afterSpace > i + 1`  returns PAST the whitespace run, so the character at the
+    //                         cut is the next chunk's first letter;
+    //   `afterSpace >= end`   returns `afterSpace`, which equals `end`, so it points AT
+    //                         the separator -- the terminator was the last character of
+    //                         the window. That is still a real boundary, and the test
+    //                         "still takes a real boundary that falls on the window edge"
+    //                         pins that it is.
+    //
+    // So a non-space at the cut means a sentence start, and a space at the cut means one
+    // ONLY if the character before it terminates a sentence. Reading it the other way --
+    // a space always meaning mid-sentence -- left an opener behind the second return
+    // unremoved: the same words came back as "Alpha. so I went home." under the cap and
+    // "alpha alpha alpha. So I went home." over it.
+    //
+    // The terminator set is the one `findSentenceBoundary` itself tests, so the two agree
+    // on what counts; the whitespace vocabulary needs no separate case, because both
+    // functions use the same `isSpace`.
+    startsSentence =
+      nextStart < text.length &&
+      (!isSpace(text[nextStart] ?? "") ||
+        (nextStart > start &&
+          SENTENCE_TERMINATORS.has(text[nextStart - 1] ?? "")));
     start = nextStart;
   }
 
-  return chunks.filter((chunk) => chunk.length > 0);
+  return chunks.filter((chunk) => chunk.text.length > 0);
 };
 
 /**
@@ -254,9 +298,31 @@ const FILLER_RE = /\b(?:u[hm]+|er+|ah+|h?mm+)\b[,\s]*/gi;
 // immediately after a LEADING marker means the marker was its own sentence and
 // the words after it began a new one, so `^` accepts only a comma or the end of
 // the text -- the two shapes that really do make it a discourse marker.
-const EXTRA_FILLER_RE =
-  /(^you know\b\s*(?:,\s*|$))|,\s*you know\b\s*(?:,\s*|[.!?]+|$)/gi;
-const EXTRA_FILLER_COMMA_RE = /(?:^|\s)(?:I mean|so|well)\s*,\s*/gi;
+// The two anchors are two patterns, which is what the argument above asks for. One
+// alternation carrying both had a single tail that could not be right for either anchor, and
+// splitting them is also what brought the pair under the complexity budget the analyzer
+// reports against a single regex here.
+//
+// Equivalent output, but only in one order -- see the call site. The equivalence was first
+// measured over 180 probes that placed ONE marker at a time, which passed in either order
+// and was not enough: two markers in one string is the axis that decides it, and it is
+// pinned by a test.
+const EXTRA_FILLER_LEADING_RE = /^you know\b\s*(?:,\s*|$)/gi;
+const EXTRA_FILLER_MID_RE = /,\s*you know\b\s*(?:,\s*|[.!?]+|$)/gi;
+// One list, two patterns. `EXTRA_FILLER_COMMA_LEADING_RE` matches a comma-filled
+// connective that OPENED the text, and `EXTRA_FILLER_COMMA_MID_RE` one that sat inside a
+// clause; together they are the whole of what the single pattern used to do, and they are
+// kept apart because only the first is wrong on a chunk that merely continues a sentence.
+// The marker list is written once so the two cannot drift apart.
+const EXTRA_FILLER_COMMA_MARKERS = "I mean|so|well";
+const EXTRA_FILLER_COMMA_LEADING_RE = new RegExp(
+  String.raw`^(?:${EXTRA_FILLER_COMMA_MARKERS})\s*,\s*`,
+  "gi",
+);
+const EXTRA_FILLER_COMMA_MID_RE = new RegExp(
+  String.raw`\s(?:${EXTRA_FILLER_COMMA_MARKERS})\s*,\s*`,
+  "gi",
+);
 const SO_WELL_LEADING_RE = /^(?:so|well|yeah|okay|ok)\b[,\s]*/i;
 
 const REPEATED_WORD_RE = /\b(\w+)\s+\1\b/gi;
@@ -306,7 +372,7 @@ const CONTRACTION_MAP: Record<string, string> = {
 //
 // Making the apostrophe optional is right for most entries, because their bare forms
 // are not words and tolerating them is what catches speech-to-text output like
-// "dont stop". It is wrong for the four below, whose bare form IS a word, so for those
+// "dont stop". It is wrong for the entries below, whose bare form IS a word, so for those
 // the apostrophe is required. Both directions are deliberate: failing to expand a typo
 // costs something that still reads correctly, whereas matching a bare word rewrites a
 // sentence the speaker did not say.
@@ -332,6 +398,7 @@ const BARE_STEMS_THAT_ARE_WORDS = new Set([
   "let's", // "he lets go" became "he let us go"
   "we'll", // "as well as that" became "as we will as that"
   "we're", // "we were ready" became "we we are ready"
+  "won't", // "he was wont to nod" became "he was will not to nod"
 ]);
 
 const CONTRACTION_RES: Array<[RegExp, string]> = Object.entries(
@@ -416,15 +483,52 @@ const splitIntoSentences = (text: string): string[] => {
   return [normalized];
 };
 
-const removeFillerWords = (text: string, aggressive = false): string => {
+const removeFillerWords = (
+  text: string,
+  aggressive = false,
+  startsSentence = true,
+): string => {
   let out = text.replace(FILLER_RE, "");
   if (aggressive) {
-    out = out.replace(EXTRA_FILLER_RE, " ");
-    out = out.replace(EXTRA_FILLER_COMMA_RE, " ");
+    // LEADING first, then MID, and the order is load-bearing. The mid pattern is not
+    // anchored, so running it first can consume a `, you know<tail>` that sits inside the
+    // span the leading anchor owns, and the leading pass then fires again on the text the
+    // mid pass rewrote -- removing two markers where the single alternation removed one,
+    // and swallowing the sentence's closing punctuation on the way. `you know, you know?`
+    // came back as one space instead of ` you know?`, and `you know, you know? Did you?`
+    // came back as `you know  Did you?` -- the punctuation and the second marker's tail
+    // gone. Through the module both of those style to an EMPTY string, which is the
+    // outcome this module's own comments rank above a mispunctuated sentence.
+    //
+    // Leading first cannot do that. It matches at index 0 at most once -- `^` without the
+    // `m` flag cannot re-match past `lastIndex` -- so it consumes some span [0, k) and
+    // leaves the rest of the string alone. The mid pass then scans from new-index 1, which
+    // is original-index k: exactly where the single alternation resumes, because it too
+    // resumes past its first match. And the leading pass cannot create a mid match of its
+    // own, because it replaced its span with a single space where mid requires a comma.
+    out = out
+      .replace(EXTRA_FILLER_LEADING_RE, " ")
+      .replace(EXTRA_FILLER_MID_RE, " ");
+    // `EXTRA_FILLER_COMMA_RE` is `(?:^|\s)(?:I mean|so|well)\s*,\s*`, so it has an
+    // anchored alternative as well as a mid-clause one, and both DELETE. Only the anchored
+    // alternative is what a false sentence start feeds, so only that one is gated: the
+    // `^` branch is replaced out of the pattern rather than skipped, because skipping the
+    // whole replace would also stop the `\s` branch from firing mid-clause, which is
+    // separate existing behaviour this does not change.
+    //
+    // So a chunk that continues a sentence keeps `so,` and `I mean,`; a chunk that opens
+    // one still loses them, and a mid-clause one still loses them as it always did.
+    out = out.replace(EXTRA_FILLER_COMMA_MID_RE, " ");
+    if (startsSentence) out = out.replace(EXTRA_FILLER_COMMA_LEADING_RE, " ");
   }
   out = out.replace(REPEATED_WORD_RE, "$1");
   out = out.replace(/\s{2,}/g, " ").trim();
-  out = out.replace(SO_WELL_LEADING_RE, "");
+  // Only on a chunk that really does open a sentence. `SO_WELL_LEADING_RE` is anchored
+  // to `^` and it DELETES, so on a chunk cut at whitespace it would take a connective the
+  // speaker used mid-sentence. `startsSentence` is what distinguishes the two, and it
+  // cannot be recovered from the text: every transform trims its chunk first, which is
+  // what removed the leading space that had marked the seam.
+  if (startsSentence) out = out.replace(SO_WELL_LEADING_RE, "");
   return out;
 };
 
@@ -470,13 +574,17 @@ const breakIntoParagraphs = (text: string, sentencesPerPara = 3): string => {
   return paras.join("\n\n");
 };
 
-const toPolished = (raw: string, isFinal = true): string => {
+const toPolished = (
+  raw: string,
+  isFinal = true,
+  startsSentence = true,
+): string => {
   const guarded = assertWithinChunkSize(raw);
   let text = guarded.trim();
   if (!text) return text;
   text = applySymbolReplacements(text);
   text = fixSelfCorrections(text);
-  text = removeFillerWords(text, true);
+  text = removeFillerWords(text, true, startsSentence);
   text = fixCapitalizationAndPunctuation(text, isFinal);
   text = breakIntoParagraphs(text, 3);
   text = text.replaceAll("—", "-");
@@ -566,9 +674,19 @@ const toEmail = (
     liftGreeting,
     liftClosing,
     isFinal,
-  }: { liftGreeting: boolean; liftClosing: boolean; isFinal: boolean },
+    startsSentence,
+  }: {
+    liftGreeting: boolean;
+    liftClosing: boolean;
+    isFinal: boolean;
+    startsSentence: boolean;
+  },
 ): string => {
-  const polished = toPolished(assertWithinChunkSize(raw), isFinal);
+  const polished = toPolished(
+    assertWithinChunkSize(raw),
+    isFinal,
+    startsSentence,
+  );
   const sentences = splitIntoSentences(polished);
   if (sentences.length === 0) return polished;
 
@@ -586,12 +704,12 @@ const toEmail = (
 const CHAT_CONNECTIVE_RE =
   /\b(?:furthermore|moreover|additionally|consequently)\b[,\s]+(\S)/gi;
 
-const toChat = (raw: string, isFinal = true): string => {
+const toChat = (raw: string, isFinal = true, startsSentence = true): string => {
   const guarded = assertWithinChunkSize(raw);
   let text = guarded.trim();
   text = applySymbolReplacements(text);
   text = fixSelfCorrections(text);
-  text = removeFillerWords(text, true);
+  text = removeFillerWords(text, true, startsSentence);
   const sentences = splitIntoSentences(text);
   const cleaned = sentences
     .map((s) => deleteLeadingPhrase(s, CHAT_CONNECTIVE_RE))
@@ -651,9 +769,15 @@ const expandContractions = (text: string): string => {
   return out;
 };
 
-const toFormal = (raw: string, isFinal = true): string => {
+const toFormal = (
+  raw: string,
+  isFinal = true,
+  startsSentence = true,
+): string => {
   const text = rewriteInformalRegister(
-    expandContractions(toPolished(assertWithinChunkSize(raw), isFinal)),
+    expandContractions(
+      toPolished(assertWithinChunkSize(raw), isFinal, startsSentence),
+    ),
   )
     .replace(/\s{2,}/g, " ")
     .trim();
@@ -665,13 +789,22 @@ const PROMPT_OPENER_RE = /^(?:hey|hi|hello|so|well|um|uh)\b[,\s]*/i;
 const PROMPT_REQUEST_RE =
   /^(?:can you|could you|would you|please|I need you to|I want you to|I need|I want)\b\s*/i;
 
-const toPrompt = (raw: string, isFinal = true): string => {
+const toPrompt = (
+  raw: string,
+  isFinal = true,
+  startsSentence = true,
+): string => {
   const guarded = assertWithinChunkSize(raw);
   let text = guarded.trim();
   text = applySymbolReplacements(text);
   text = fixSelfCorrections(text);
-  text = removeFillerWords(text, true);
-  text = text.replace(PROMPT_OPENER_RE, "").replace(PROMPT_REQUEST_RE, "");
+  text = removeFillerWords(text, true, startsSentence);
+  // Both are anchored to `^` and both DELETE, and `PROMPT_REQUEST_RE` is the one that
+  // takes request words: `Can you send that file over again` at a whitespace seam came
+  // back as `Send it again`. Gated for the same reason as `SO_WELL_LEADING_RE` above.
+  if (startsSentence) {
+    text = text.replace(PROMPT_OPENER_RE, "").replace(PROMPT_REQUEST_RE, "");
+  }
 
   // Every sentence is kept. Condensing the request must not drop a constraint
   // the speaker stated after the opening, such as a deadline or a format
@@ -707,12 +840,12 @@ export const stripEdgePunctuation = (text: string): string => {
   return text.slice(start, end);
 };
 
-const toBullets = (raw: string): string => {
+const toBullets = (raw: string, startsSentence = true): string => {
   const guarded = assertWithinChunkSize(raw);
   let text = guarded.trim();
   text = applySymbolReplacements(text);
   text = fixSelfCorrections(text);
-  text = removeFillerWords(text, true);
+  text = removeFillerWords(text, true, startsSentence);
 
   const sentences = splitIntoSentences(text);
   if (sentences.length === 0) return text;
@@ -744,12 +877,16 @@ const toBullets = (raw: string): string => {
   return bullets.join("\n");
 };
 
-const toConcise = (raw: string, isFinal = true): string => {
+const toConcise = (
+  raw: string,
+  isFinal = true,
+  startsSentence = true,
+): string => {
   const guarded = assertWithinChunkSize(raw);
   let text = guarded.trim();
   text = applySymbolReplacements(text);
   text = fixSelfCorrections(text);
-  text = removeFillerWords(text, true);
+  text = removeFillerWords(text, true, startsSentence);
   text = deleteLeadingPhrase(text, HEDGING_RE);
   for (const [re, repl] of REDUNDANT_PHRASES) {
     text = text.replace(re, repl);
@@ -758,25 +895,52 @@ const toConcise = (raw: string, isFinal = true): string => {
   return fixCapitalizationAndPunctuation(text, isFinal);
 };
 
-const toNotes = (raw: string): string => {
+const ACTION_SENTENCE_RE =
+  /\b(?:need to|should|must|will|todo|action|next step|follow up|decide|decision)\b/i;
+
+/** What one chunk's sentences are: the ordinary ones, and the ones that name an action. */
+type NoteBuckets = { notes: string[]; actions: string[] };
+
+/**
+ * Split ONE chunk's sentences into the two buckets, without emitting either.
+ *
+ * Split out of the emit step because the two have to happen at different scopes. This
+ * function does no emitting at all: classification is per chunk because the chunk cap is per
+ * chunk, and the RESULT is accumulated across all of them before anything is written -- see
+ * `applyFastStyle`.
+ */
+const classifyForNotes = (raw: string, startsSentence = true): NoteBuckets => {
   const guarded = assertWithinChunkSize(raw);
   let text = guarded.trim();
   text = applySymbolReplacements(text);
   text = fixSelfCorrections(text);
-  text = removeFillerWords(text, true);
-  const sentences = splitIntoSentences(text);
-  if (sentences.length === 0) return text;
-
-  const actionRe =
-    /\b(?:need to|should|must|will|todo|action|next step|follow up|decide|decision)\b/i;
+  text = removeFillerWords(text, true, startsSentence);
   const notes: string[] = [];
   const actions: string[] = [];
-
-  for (const s of sentences) {
-    if (actionRe.test(s)) actions.push(s);
-    else notes.push(s);
+  for (const sentence of splitIntoSentences(text)) {
+    if (ACTION_SENTENCE_RE.test(sentence)) actions.push(sentence);
+    else notes.push(sentence);
   }
+  return { notes, actions };
+};
 
+/** Fold one chunk's buckets into the running totals, preserving order. */
+const mergeNoteBuckets = (
+  into: NoteBuckets,
+  from: NoteBuckets,
+): NoteBuckets => ({
+  notes: [...into.notes, ...from.notes],
+  actions: [...into.actions, ...from.actions],
+});
+
+/**
+ * Emit the accumulated buckets: every ordinary note, then every action.
+ *
+ * One call for the WHOLE dictation rather than one per chunk, which is the whole point --
+ * see `applyFastStyle`.
+ */
+const renderNotes = (buckets: NoteBuckets): string => {
+  const { notes, actions } = buckets;
   const parts: string[] = [];
   if (notes.length > 0) {
     parts.push(
@@ -792,7 +956,26 @@ const toNotes = (raw: string): string => {
     );
   }
 
-  return parts.join("\n").trim() || toBullets(guarded);
+  const rendered = parts.join("\n").trim();
+  if (rendered) return rendered;
+
+  // Both buckets empty. Every chunk reduced to nothing BEFORE classification -- filler,
+  // self-corrections and symbol replacements left no sentence behind -- so there is nothing to
+  // bullet, and the empty string is the honest answer.
+  //
+  // This path used to end in `toBullets(trimmed)`, the WHOLE transcript. `toBullets` asserts the
+  // chunk size, so past the cap that assert threw, the caller's `try` turned it into "return
+  // rawTranscript", and a dictation of nothing but filler came back as itself, unstyled.
+  //
+  // Not calling `toBullets` here is what closes that, and it is also why there is no argument to
+  // get wrong: `toBullets` runs the transform chain this path has already run, so on an input
+  // with no sentences left it returns "" whatever text it is handed. Measured over 11 inputs
+  // that reach this branch -- all-filler bodies from one chunk to two past the cap, filler
+  // around a sentence that is not an action, non-breaking-space and newline filler -- bulleting
+  // the last chunk, the first chunk, or the empty string was non-empty in 0 of them. So the
+  // argument could not have changed the output, and a bounded one would have been a false
+  // invariant rather than a fix.
+  return "";
 };
 
 /**
@@ -801,16 +984,19 @@ const toNotes = (raw: string): string => {
  * is invisible; the sentence-shaped tones rejoin on a space, which is what they
  * use between sentences already.
  */
+// How a chunk's styled text meets the next chunk's. The NOTES tone is ABSENT because it
+// does not go through `applyStyleToChunk` at all: `applyFastStyle` classifies every chunk and
+// emits once, so there is no per-chunk output of the notes tone to join. Adding an entry here
+// for it would be a lie about a path nothing takes.
 const CHUNK_JOIN_BY_TONE: Readonly<Record<string, string | undefined>> = {
   [EMAIL_TONE_ID]: "\n\n",
   [BULLETS_TONE_ID]: "\n",
-  [NOTES_TONE_ID]: "\n",
 };
 
 const applyStyleToChunk = (
   chunk: string,
   toneId: string,
-  position: { isFirst: boolean; isLast: boolean },
+  position: { isFirst: boolean; isLast: boolean; startsSentence: boolean },
 ): string => {
   switch (toneId) {
     // `POLISHED_TONE_ID` IS the string "default" (`tone.utils.ts:8`), so the
@@ -818,25 +1004,24 @@ const applyStyleToChunk = (
     // same value and could never be reached. Naming the constant only is what keeps
     // the value in one place.
     case POLISHED_TONE_ID:
-      return toPolished(chunk, position.isLast);
+      return toPolished(chunk, position.isLast, position.startsSentence);
     case EMAIL_TONE_ID:
       return toEmail(chunk, {
         liftGreeting: position.isFirst,
         liftClosing: position.isLast,
         isFinal: position.isLast,
+        startsSentence: position.startsSentence,
       });
     case CHAT_TONE_ID:
-      return toChat(chunk, position.isLast);
+      return toChat(chunk, position.isLast, position.startsSentence);
     case FORMAL_TONE_ID:
-      return toFormal(chunk, position.isLast);
+      return toFormal(chunk, position.isLast, position.startsSentence);
     case PROMPT_TONE_ID:
-      return toPrompt(chunk, position.isLast);
+      return toPrompt(chunk, position.isLast, position.startsSentence);
     case BULLETS_TONE_ID:
-      return toBullets(chunk);
+      return toBullets(chunk, position.startsSentence);
     case CONCISE_TONE_ID:
-      return toConcise(chunk, position.isLast);
-    case NOTES_TONE_ID:
-      return toNotes(chunk);
+      return toConcise(chunk, position.isLast, position.startsSentence);
     default:
       // Custom and deprecated tones reach here only when a caller skipped
       // canApplyFastStyle. A free-form prompt cannot be honoured locally, and a
@@ -864,11 +1049,14 @@ const applyStyleToChunk = (
  * takes `isLast`, and it is the reason `toPolished`, `toChat`, `toFormal`, `toConcise`,
  * `toPrompt` and `toEmail` all take it now.
  *
- * Not every transform is told, and saying so was the overstatement: `toBullets` and
- * `toNotes` are called with the chunk alone. Neither appends a sentence terminator —
- * one joins with newlines and the other restructures into notes — so there is nothing
- * for `isLast` to suppress. The rule is "every transform that appends a terminator",
- * not "every transform".
+ * Not every transform is told, and saying so was the overstatement: `toBullets` is called
+ * with the chunk alone. It appends no sentence terminator -- it emits one line per sentence
+ * and joins them with newlines -- so there is nothing for `isLast` to suppress. The rule is
+ * "every transform that appends a terminator", not "every transform".
+ *
+ * `toNotes` used to be the second name on that list. It is not called at all now: the notes
+ * tone restructures the WHOLE dictation rather than each chunk, so `applyFastStyle` handles
+ * it before `applyStyleToChunk` is reached and there is no `toNotes` to name here.
  */
 export const applyFastStyle = (
   rawTranscript: string,
@@ -883,12 +1071,43 @@ export const applyFastStyle = (
 
   try {
     const chunks = splitIntoChunks(trimmed);
+
+    // The notes tone is the one transform whose OUTPUT is a reordering, so it cannot be
+    // applied per chunk and concatenated. `toNotes` used to split a chunk into ordinary
+    // notes and actions and emit notes-then-actions for THAT chunk; applied per chunk, a
+    // long dictation came out as
+    //
+    //     [chunk1 notes][chunk1 actions][chunk2 notes][chunk2 actions]
+    //
+    // so an action from an early chunk sat ABOVE ordinary notes from a later one, and the
+    // same content reordered purely by crossing the cap. Measured before this change: an
+    // action at 14961 characters and a note after it styled to
+    // "- [ ] We need to ship the release today" followed by
+    // "- The weather in Lagos has been unusually wet this week", where under the cap the
+    // same two sentences give the notes first and the action last.
+    //
+    // So classify every chunk and emit once. The chunk cap still applies -- each chunk goes
+    // through `classifyForNotes`, which asserts it -- and the `try` still catches a throw
+    // from any chunk, so the raw transcript remains the answer when one fails.
+    if (toneId === NOTES_TONE_ID) {
+      const buckets = chunks.reduce<NoteBuckets>(
+        (into, chunk) =>
+          mergeNoteBuckets(
+            into,
+            classifyForNotes(chunk.text, chunk.startsSentence),
+          ),
+        { notes: [], actions: [] },
+      );
+      return renderNotes(buckets);
+    }
+
     const lastIndex = chunks.length - 1;
     return chunks
       .map((chunk, index) =>
-        applyStyleToChunk(chunk, toneId, {
+        applyStyleToChunk(chunk.text, toneId, {
           isFirst: index === 0,
           isLast: index === lastIndex,
+          startsSentence: chunk.startsSentence,
         }),
       )
       .join(CHUNK_JOIN_BY_TONE[toneId] ?? " ");

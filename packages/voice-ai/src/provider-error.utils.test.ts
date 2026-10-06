@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 // `Object.keys(...)` over the module, which is what pins the export surface.
 // Named imports would make that assertion impossible to write.
 import * as providerErrorUtils from "./provider-error.utils";
+import { redactSensitiveTokens } from "@maus-inc/utilities";
 
 describe("provider-error.utils", () => {
   it("exports only the readers and the scrubber, and no retry policy", () => {
@@ -502,6 +503,87 @@ describe("an authorization label with a scheme-prefixed value", () => {
     expect(output).not.toContain("Digest abc ");
     expect(output).toContain("is not authorized for this request");
   });
+
+  it("redacts the challenge after a prefixed authorization label too", () => {
+    // `AUTHORIZATION_LABELS` holds the two canonical spellings, and the scan rejects
+    // any candidate preceded by `[A-Za-z0-9_-]` as being inside a longer word. A header
+    // whose name is the canonical one BEHIND A PREFIX -- `x-authorization`, which is a
+    // real header several providers send -- trips that guard, so the label is never
+    // recognised and the whole Digest challenge survives.
+    //
+    // The guard is right about the words it was written for (`unauthorization`,
+    // `my_authorization_header`). What it got wrong was the vocabulary: `-` and `_` each
+    // do double duty, separating the words inside a longer identifier AND prefixing a
+    // header name, so both are listed below.
+    //
+    // Scoped to the labels this scanner actually knows. A first draft of this test also
+    // asserted `x-auth`, which is not a spelling of a label in `AUTHORIZATION_LABELS`
+    // at all -- so it was asserting a redaction the design does not promise, and it
+    // failed after the fix for that reason rather than because the fix was wrong.
+    const CHALLENGE = "nc" + "7f3a91";
+    for (const label of [
+      "x-authorization",
+      "X-Authorization",
+      "x-proxy-authorization",
+      // `_` prefixes a header name exactly as `-` does, and the shared scrubber in
+      // `utilities/src/error.ts` already redacted all three of these. This scanner did
+      // not, so the two disagreed on the same string and the weaker one had no
+      // backstop: `redactProviderMessage` never calls the shared scrubber.
+      "x_authorization",
+      "my_authorization",
+      "no_authorization",
+    ]) {
+      const output = providerErrorUtils.redactProviderMessage(
+        `${label}: Digest nonce=${CHALLENGE}, realm="eastus"`,
+      );
+      expect(output).not.toContain(CHALLENGE);
+      expect(output).not.toContain('realm="eastus"');
+      expect(output).toContain("[redacted]");
+    }
+  });
+
+  it("agrees with the shared scrubber about every one of those labels", () => {
+    // The disagreement is the defect, not either verdict. This test file imports
+    // `redactSensitiveTokens` from `@maus-inc/utilities` -- the same module
+    // `provider-error.utils.ts` imports `AUTHORIZATION_SCHEMES` and `schemeValueEnd` from,
+    // and the same module whose `src/error.ts` holds that scrubber -- so the two can be
+    // called on the same string here rather than compared from memory.
+    //
+    // Scoped to four shapes on purpose. `unauthorization` and `my_authorization_header`
+    // are in the list because agreeing to LEAK is as much a part of the contract as
+    // agreeing to redact: the next guard to be widened would have to break both redactors
+    // together to go unnoticed.
+    const CHALLENGE = "nc" + "7f3a91";
+    for (const label of [
+      "x-authorization",
+      "x_authorization",
+      "unauthorization",
+      "my_authorization_header",
+    ]) {
+      const message = `${label}: Digest nonce=${CHALLENGE}`;
+      const here = providerErrorUtils.redactProviderMessage(message);
+      const shared = redactSensitiveTokens(message);
+      expect(here.includes(CHALLENGE)).toBe(shared.includes(CHALLENGE));
+    }
+  });
+
+  it("still refuses a label that is genuinely inside a longer word", () => {
+    // The control for the case above. If the refusal were simply removed, these would
+    // start being redacted, which is the false positive it exists to prevent: a word that
+    // merely CONTAINS `authorization` is not a header name.
+    //
+    // These two are kept alive by different mechanisms, and the source comment says which.
+    // Neutralising only the guard leaves `my_authorization_header` untouched anyway -- it
+    // survives because no `:` or `=` follows the label -- so it is the weaker of the two
+    // controls here. `unauthorization` is the one that fails if the guard goes.
+    for (const message of [
+      "unauthorization: Digest abc",
+      "my_authorization_header: Digest abc",
+    ]) {
+      const output = providerErrorUtils.redactProviderMessage(message);
+      expect(output).toBe(message);
+    }
+  });
 });
 
 describe("an authorization label inside a JSON body", () => {
@@ -514,31 +596,36 @@ describe("an authorization label inside a JSON body", () => {
   const DIGEST_NONCE = "nc" + "7f3a91";
   const UNPREFIXED_CREDENTIAL = "abc1" + "23xyz";
 
+  // Finding 4174937922. The expected values here used to be `{"[redacted]"}` -- the key's
+  // own opening quote left with nothing to close, so the body did not parse. The label now
+  // survives when it is a quoted JSON key, which is what the `api_key` sibling already did
+  // for the same shape. Free text still erases the label, which the "scrubs %s" table above
+  // pins and the comment there explains.
   it.each([
     [
       "a quoted separator and a scheme",
       `{"authorization": "Digest nonce=${DIGEST_NONCE}, realm=eastus"}`,
-      '{"[redacted]"}',
+      '{"authorization": "[redacted]"}',
     ],
     [
       "no space after the separator",
       `{"authorization":"Digest nonce=${DIGEST_NONCE}, realm=eastus"}`,
-      '{"[redacted]"}',
+      '{"authorization":"[redacted]"}',
     ],
     [
       "a proxy-authorization field",
       `{"proxy-authorization": "Digest nonce=${DIGEST_NONCE}"}`,
-      '{"[redacted]"}',
+      '{"proxy-authorization": "[redacted]"}',
     ],
     [
       "a quoted value with no scheme word",
       `{"authorization":"${UNPREFIXED_CREDENTIAL}"}`,
-      '{"[redacted]"}',
+      '{"authorization":"[redacted]"}',
     ],
     [
       "a single-quoted label",
       `{'authorization': 'Digest nonce=${DIGEST_NONCE}'}`,
-      "{'[redacted]'}",
+      "{'authorization': '[redacted]'}",
     ],
   ])("redacts a JSON authorization field with %s", (_label, body, expected) => {
     const output = providerErrorUtils.redactProviderMessage(body);
@@ -552,7 +639,113 @@ describe("an authorization label inside a JSON body", () => {
       `{"authorization": "Digest nonce=${DIGEST_NONCE}", "model": "llama-3"}`,
     );
     expect(output).not.toContain(DIGEST_NONCE);
-    expect(output).toBe('{"[redacted]", "model": "llama-3"}');
+    expect(output).toBe('{"authorization": "[redacted]", "model": "llama-3"}');
+  });
+
+  // Finding 4174937922. The authorization scanner replaced the label AND the value but
+  // stopped short of the value's own closing quote, so a JSON body came out as
+  // `{"[redacted]"}` -- the key's opening quote with nothing for it to close.
+  //
+  // Whether anything re-reads a redacted string as JSON is NOT established: nothing on the
+  // path from here to persisted metadata parses one. So this is pinned as malformed output
+  // and the consequence is left open rather than asserted.
+  //
+  // The sibling scanner for `api_key` has the SAME defect, which an earlier version of the
+  // comment here denied -- `{"api_key":"x"}` gives `{"[redacted]"}` too, on any value that
+  // matches no secret prefix. It is not fixed by this commit, and the reason is in
+  // `redactAuthorizationLabels`: this test file expects label erasure of both scanners.
+  //
+  // So the subject here is the OUTPUT's parseability, over the shapes that differ in whether
+  // the key is quoted, whether there is a space after the colon, and whether a sibling field
+  // follows.
+  describe("a redacted authorization field leaves the body parseable", () => {
+    const parseable = (raw: string) => {
+      try {
+        JSON.parse(raw);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
+    // Every value here is a Digest challenge, not a Bearer token, and that is load-bearing
+    // rather than cosmetic. `PROVIDER_SECRET_PATTERNS` matches `Bearer <token>` FIRST and
+    // replaces the value, after which `redactAuthorizationLabels` finds nothing left to do --
+    // so five of these six rows, written with a Bearer value, passed against the pre-fix code
+    // and could not fail. Measured: parent output equals HEAD output for all of those.
+    it.each([
+      [
+        "a quoted key and value",
+        `{"authorization":"Digest nonce=${DIGEST_NONCE}, realm=eastus"}`,
+      ],
+      [
+        "a space after the colon",
+        `{"authorization": "Digest nonce=${DIGEST_NONCE}, realm=eastus"}`,
+      ],
+      [
+        "a sibling field after it",
+        `{"authorization":"Digest nonce=${DIGEST_NONCE}","model":"llama-3"}`,
+      ],
+      [
+        "a sibling field before it",
+        `{"model":"llama-3","authorization":"Digest nonce=${DIGEST_NONCE}"}`,
+      ],
+      [
+        "a nested object",
+        `{"outer":{"authorization":"Digest nonce=${DIGEST_NONCE}"}}`,
+      ],
+      [
+        "a proxy-authorization key",
+        `{"proxy-authorization":"Digest nonce=${DIGEST_NONCE}"}`,
+      ],
+      [
+        "a single-quoted key",
+        `{'authorization': 'Digest nonce=${DIGEST_NONCE}'}`,
+      ],
+    ])("keeps %s parseable", (_shape, body) => {
+      // The single-quoted row is skipped: `{'a': 1}` is not JSON in either direction, so
+      // asserting parseability there would be asserting something untrue.
+      if (body.startsWith("{'")) {
+        const output = providerErrorUtils.redactProviderMessage(body);
+        expect(output).toBe("{'authorization': '[redacted]'}");
+        return;
+      }
+      expect(parseable(body), `input should parse: ${body}`).toBe(true);
+      const output = providerErrorUtils.redactProviderMessage(body);
+      expect(parseable(output), `output must parse, got ${output}`).toBe(true);
+    });
+
+    it("keeps the sibling field's VALUE intact, not just its syntax", () => {
+      // A guard on the fix: preserving the label must not cost the rest of the document.
+      const output = providerErrorUtils.redactProviderMessage(
+        `{"authorization":"Digest nonce=${DIGEST_NONCE}","model":"llama-3"}`,
+      );
+      expect(JSON.parse(output)).toEqual({
+        authorization: "[redacted]",
+        model: "llama-3",
+      });
+    });
+
+    it("still erases the label in free text, which is the other half of the gate", () => {
+      // A Digest challenge, not a Bearer token: with a Bearer value this expectation held at
+      // the parent too, so it could not detect the gate either way. The Bearer form passes
+      // through `PROVIDER_SECRET_PATTERNS`, which replaces the VALUE and leaves `authorization:`
+      // behind -- that is a different pass, and reading it as evidence about this gate is what
+      // made the original version of this test say the label "keeps its label too".
+      //
+      // The label is erased here, deliberately: the "scrubs %s" table above pins that, and its
+      // comment gives the reason -- the fixtures avoid a contiguous credential-shaped token so
+      // the secret scanner does not read one as a leak.
+      for (const raw of [
+        `authorization: Digest nonce=${DIGEST_NONCE}, realm=eastus`,
+        `proxy-authorization: Digest nonce=${DIGEST_NONCE}`,
+        `authorization=Digest nonce=${DIGEST_NONCE}`,
+      ]) {
+        const output = providerErrorUtils.redactProviderMessage(raw);
+        expect(output, `for ${raw}`).toBe("[redacted]");
+        expect(output).not.toContain(DIGEST_NONCE);
+      }
+    });
   });
 
   describe("an authorization value that is quoted and is not a bare token", () => {

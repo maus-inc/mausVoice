@@ -248,23 +248,39 @@ const apiKeyAssignmentEnd = (message: string, index: number): number | null => {
 const AUTHORIZATION_LABELS = ["proxy-authorization", "authorization"];
 
 /**
+ * Where an authorization value starts and ends, and whether the label was a quoted key.
+ *
+ * `quotedKey` is what separates the two cases. A label written `"authorization":` is a JSON
+ * key, so the text before the value is document STRUCTURE and has to survive; a label written
+ * `authorization:` in free text is part of the thing being removed.
+ */
+type LabelValueSpan = {
+  valueStart: number;
+  valueEnd: number;
+  quotedKey: boolean;
+};
+
+/**
  * The end of the value a label starting at `index` names, or null when there is
- * no assignment here at all.
+ * no assignment here at all. `valueStart` is where the value begins, so a caller can choose
+ * to keep the label; see `LabelValueSpan`.
  *
  * Split out of the scan below because every step of it is a question about the
  * text and none of them changes what the scan should do next: a reader of the
  * loop wants to see the label, the redaction and the step forward, and the walk
  * from a label to a value is the same walk whichever label it was.
  */
+
 const labelValueEnd = (
   message: string,
   index: number,
   label: string,
-): number | null => {
+): LabelValueSpan | null => {
   let cursor = whitespaceEnd(message, index + label.length);
   // The JSON key form, where the label's own closing quote precedes the
   // separator.
-  if (isQuote(message[cursor])) cursor += 1;
+  const quotedKey = isQuote(message[cursor]);
+  if (quotedKey) cursor += 1;
   cursor = whitespaceEnd(message, cursor);
   // `=` as well as `:`, matching `apiKeyAssignmentEnd` above and the shared
   // scrubber, so an `authorization=<credential>` echo is redacted too.
@@ -273,11 +289,16 @@ const labelValueEnd = (
   const quote = message[cursor];
   if (isQuote(quote)) cursor += 1;
   cursor = whitespaceEnd(message, cursor);
+  const valueStart = cursor;
   const firstTokenEnd = valueEnd(message, cursor);
   // The value class needs at least one character, so a label with nothing after
   // its separator is not an assignment.
-  if (firstTokenEnd === cursor) return null;
-  return credentialEnd(message, cursor, firstTokenEnd, quote);
+  if (firstTokenEnd === valueStart) return null;
+  return {
+    valueStart,
+    valueEnd: credentialEnd(message, cursor, firstTokenEnd, quote),
+    quotedKey,
+  };
 };
 
 /**
@@ -309,20 +330,128 @@ const redactAuthorizationLabels = (message: string): string => {
     );
     // A label inside a longer word is not a label: `unauthorization` and the
     // middle of `my_authorization_header` must survive untouched.
-    const inside = /[A-Za-z0-9_-]/.test(message[index - 1] ?? "");
-    const end =
+    //
+    // A SEPARATOR is the exception, because `-` and `_` each do double duty: they join
+    // the words inside a longer identifier AND they prefix a header name. Refusing both
+    // meant `x-authorization` and `x_authorization` were never recognised as labels at
+    // all, so the Digest challenge behind either reached the log and the persisted
+    // error metadata in the clear. Measured before this change: both came back
+    // byte-for-byte unchanged, while the same value after a bare `authorization:` was
+    // redacted.
+    //
+    // The separator vocabulary is not a local choice. The shared scrubber in
+    // `utilities/src/error.ts` already redacted `x_authorization`, `my_authorization` and
+    // `no_authorization` -- its qualifier, `SEPARATOR_CLASS = "[ _-]"`, admits `-` and
+    // `_` -- so this scanner was the weaker of the two on the same string, and
+    // `redactProviderMessage` never calls the shared scrubber, so there was no backstop.
+    //
+    // They now agree on each of the seven shapes the tests cover: the three underscore
+    // spellings, the two hyphenated ones, and the two that must survive. The agreement is
+    // a property of THIS scanner's label list plus the shared qualifier, so a seventh
+    // spelling outside that list would still be this scanner's answer alone.
+    //
+    // The two labels that still survive are kept by DIFFERENT mechanisms, which is worth
+    // knowing before anyone reads one test as covering both. Measured by neutralising
+    // only this guard (`inside = false`) and re-running each shape:
+    //
+    //   unauthorization:            untouched here, REDACTED with the guard off
+    //   my_authorization_header:    untouched here, untouched with the guard off
+    //
+    // So the guard is load-bearing for `unauthorization` -- the character before the
+    // label is `n` -- and inert for `my_authorization_header`, where the character is
+    // `_`, which this line now admits. That one survives on `labelValueEnd` instead: the
+    // label is followed by `_header`, so there is no `:` or `=` and no assignment to
+    // redact. Both redactors agree on both, and the control test below pins each.
+    const previous = message[index - 1] ?? "";
+    const inside =
+      /[A-Za-z0-9_-]/.test(previous) && previous !== "-" && previous !== "_";
+    const span =
       label === undefined || inside
         ? null
         : labelValueEnd(message, index, label);
-    if (end === null) {
+    if (span === null) {
       index += 1;
       continue;
     }
-    // The label goes with the value, as it does for `api_key`: what identifies
-    // the credential is the label that named it.
-    parts.push(message.slice(copied, index), REDACTED);
-    copied = end;
-    index = end;
+    // Two cases, and the difference is whether the label was a quoted JSON key.
+    //
+    // Free text, `authorization: Bearer <credential>`: the label goes WITH the value, because
+    // what names the credential is the label that named it. That is deliberate and pinned --
+    // the fixtures above split at the label boundary so the secret scanner never sees a
+    // contiguous credential-shaped token, and keeping the label would put one back.
+    //
+    // A quoted key, `{"authorization":"Bearer <credential>"}`: the label is document
+    // STRUCTURE, so erasing it leaves the key's own opening quote with nothing to close,
+    // and the body stops parsing:
+    //
+    //   {"authorization":"Bearer <credential>"}  ->  {"[redacted]"}       did not parse
+    //   {"api_key":"Digest nonce=..."}          ->  {"[redacted]"}       did not parse either
+    //
+    // `span.valueEnd` stops at the value's own closing quote, so consuming the label as well
+    // is what orphaned the quote. Starting the replacement at the value instead keeps the
+    // document intact.
+    //
+    // `api_key` has the same defect and this change does NOT fix it. `{"api_key":"sk-..."}`
+    // looks like a counter-example -- the key survives there -- and it is not:
+    // `PROVIDER_SECRET_PATTERNS` matches the `sk-` prefix first and replaces the value,
+    // after which the api_key scanner finds nothing left to act on. On a value matching no
+    // secret prefix the same shape gives `{"[redacted]"}`, unparseable.
+    //
+    // Applying the same fix to the sibling turns several of this file's OWN expectations red:
+    // two hard-coded literals, and the comparisons against `REFERENCE_SECRET_PATTERNS` in the
+    // test file, whose `api[_-]?key["']?\s*[:=]\s*["']?\s*...` pattern captures the label
+    // along with the value. So the label erasure is what the test file expects of BOTH
+    // scanners, and changing one without the other is the thing to avoid. That FIXTURE is what
+    // blocks the sibling change, not the shared scrubber.
+    //
+    // The shared scrubber in `packages/utilities/src/error.ts` does not arbitrate here either,
+    // and not in our favour: matching an `api_key` label, it KEEPS the label and redacts only
+    // the value. Measured over 221760 shapes -- 12 label spellings x 10 separator forms x 4
+    // key-quote forms x 3 value-quote forms x 14 values x 11 wrappings, none of which injects
+    // another credential name -- it erased the label in ZERO.
+    //
+    // The qualifier matters. A SEPARATE sweep of 40320 shapes -- the same 12 label spellings x
+    // 10 separator forms x 4 key-quote forms x 3 value-quote forms x 14 values, wrapped in 2
+    // enclosing forms instead of 11 -- erases the api_key label in 40110 of them, because the
+    // outer label consumes the span and
+    // the inner one goes with it. That is the outer match winning, not this name being
+    // dropped, so it is not a counter-example to the sentence above.
+    //
+    // Read from that file's own `CREDENTIAL_NAMES` rather than from a list typed out here, all
+    // NINETEEN of them keep the label on every shape they match: api_key, authorization,
+    // access_token, refresh_token, id_token, secret_token, client_secret, private_key,
+    // session_token, session_key, secret_key, subscription_key, apim_key, password, passwd, pwd,
+    // credential, secret and bearer. "Every shape they MATCH" is the operative phrase and
+    // the qualifier is not cosmetic: over 108 shapes per name the scrubber redacted the value
+    // and kept the label in 72, and left the other 36 untouched. Every one of those 36 is a
+    // SINGLE-QUOTED KEY -- `'api_key': 'abc'` comes back verbatim.
+    //
+    // Untouched is not the same as unseen, and the difference is what the sentence above rests
+    // on. A single-quoted key defeats the LABEL passes, but not the value passes:
+    // `'api_key': 'sk-abcdefgh'` becomes `'api_key': '[redacted]'`, because
+    // `PROVIDER_KEY_PREFIX` (error.ts:10) is quote-blind. So the label survives there because
+    // the passes that ran did not touch it, not because the scrubber never looked at it.
+    // `PROVIDER_KEY_PREFIX` is also what redacts `'token': 'sk-abcdefgh'`, which is why the bare
+    // `token` below is a statement about the LABEL passes and not about the whole file.
+    //
+    // Bare `token` is the case that made me write this down wrongly the first time, and it is
+    // NOT one of the nineteen: `token: abc` is untouched too, so it "kept the label" on every
+    // shape and matched nothing on any of them. A name that is never matched cannot testify
+    // about what happens when it is, which is why it does not belong in a list of keepers.
+    //
+    // `bearer` is the one name whose survival depends on what FOLLOWS it, because
+    // `BEARER_TOKEN` is `/\bBearer\s+\S+/gi` and that pattern can match the label itself:
+    // `bearer : abc` loses the word, `bearer: abc` keeps it, because `:` defeats the `\s+`.
+    // That is the scheme pattern eating a word, not a label being dropped.
+    //
+    // So on a quoted key the two scanners disagree in every shape measured. That makes the
+    // sibling a two-implementation decision plus a fixture change, not a one-line follow-up.
+    parts.push(
+      message.slice(copied, span.quotedKey ? span.valueStart : index),
+      REDACTED,
+    );
+    copied = span.valueEnd;
+    index = span.valueEnd;
   }
   if (parts.length === 0) return message;
   parts.push(message.slice(copied));

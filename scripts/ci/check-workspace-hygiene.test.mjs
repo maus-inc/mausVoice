@@ -206,7 +206,26 @@ function pathsEntries(text) {
       // puts its items at six, and a workflow is free to indent further.
       const item = /^\s*-\s*(.+?)\s*$/.exec(line);
       if (item) {
-        entries.push(item[1].replace(/^["']|["']$/g, ""));
+        // A comment after the entry is not part of the pattern, and it must come off
+        // BEFORE the quotes do. `!/^["']|["']$/g` only reaches a closing quote that is
+        // already at end of line, so with `- "!scripts/ci/**"  # note` the quote is
+        // interior: it survives, and the comment becomes part of the glob. The result
+        // matches nothing, so a negated entry silently stops excluding anything and
+        // this guard reports a suite as covered that the workflow does not run --
+        // the opposite of the truth, and quietly, because a broken parse leaves
+        // nothing to notice.
+        //
+        // Only a `#` that begins the comment counts. A `#` inside a quoted pattern is
+        // legal in YAML and is part of the glob, so the comment scan starts at the
+        // quote when there is one.
+        const raw = item[1];
+        const quoted = /^["']/.test(raw);
+        const cut = quoted
+          ? raw.search(/(["'])\s+#/)
+          : raw.indexOf(" #");
+        entries.push(
+          (cut >= 0 ? raw.slice(0, cut) : raw).trim().replace(/^["']|["']$/g, ""),
+        );
         continue;
       }
       // A line at or left of the `paths:` key, or a non-item sibling of one,
@@ -687,6 +706,44 @@ describe("the trigger filter check compares executed paths to filter entries", (
       ),
       ["scripts/ci/windows-tauri-imports.test.mjs"],
       "a suite a `!` entry excludes is not covered, however broad the positive entry",
+    );
+  });
+
+  it("strips a trailing YAML comment from a quoted glob before reading it", () => {
+    // The same exclusion as the test above, written the way a workflow author
+    // naturally writes it -- quoted, with a comment explaining it. The extractor's
+    // quote strip is `/^["']|["']$/g`, so it only removes a CLOSING quote that is
+    // already at end of line. With a comment after it the quote is interior, so
+    // both halves go wrong at once: the closing quote survives, and the comment
+    // text is carried into the glob as though it were part of the pattern.
+    //
+    //     - "!scripts/ci/**"  # config guards need a human
+    //       ->  "!scripts/ci/**\"  # config guards need a human"
+    //
+    // That string matches nothing, so the exclusion is silently dropped and the
+    // guard reports the suite as COVERED -- asserting the opposite of what the
+    // workflow does, which is the exact failure the test above exists to prevent.
+    // It reads as covered precisely because the broken parse leaves nothing to
+    // exclude with.
+    assert.deepStrictEqual(
+      missingFromTriggerFilter(
+        [
+          "on:",
+          "  push:",
+          "    paths:",
+          '      - "scripts/**"',
+          '      - "!scripts/ci/**"  # the config guards need a human',
+          "jobs:",
+          "  unit:",
+          "    runs-on: ubuntu-latest",
+          "    steps:",
+          "      - run: node --test scripts/ci/windows-tauri-imports.test.mjs",
+          "",
+        ].join("\n"),
+        scanRoot,
+      ),
+      ["scripts/ci/windows-tauri-imports.test.mjs"],
+      "a comment after a quoted negated glob must not swallow the exclusion",
     );
   });
 
