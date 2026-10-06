@@ -19,9 +19,14 @@ const { platformState, windowMocks, focusHandlers, showError } = vi.hoisted(
       maximize: vi.fn(() => Promise.resolve(undefined)),
       unmaximize: vi.fn(() => Promise.resolve(undefined)),
       close: vi.fn(() => Promise.resolve(undefined)),
+      startDragging: vi.fn(() => Promise.resolve(undefined)),
       isMaximized: vi.fn(() => Promise.resolve(false)),
+      isMinimized: vi.fn(() => Promise.resolve(false)),
       onResized: vi.fn((): Promise<() => void> => Promise.resolve(vi.fn())),
       outerSize: vi.fn(() => Promise.resolve({ width: 1280, height: 800 })),
+      innerSize: vi.fn((): Promise<{ width: number; height: number }> =>
+        windowMocks.outerSize(),
+      ),
       scaleFactor: vi.fn(() => Promise.resolve(1)),
       isFocused: vi.fn(() => Promise.resolve(true)),
       onFocusChanged: vi.fn((..._args: unknown[]): Promise<() => void> =>
@@ -89,7 +94,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   focusHandlers.length = 0;
   windowMocks.isMaximized.mockResolvedValue(false);
+  windowMocks.isMinimized.mockResolvedValue(false);
   windowMocks.outerSize.mockResolvedValue({ width: 1280, height: 800 });
+  windowMocks.innerSize.mockImplementation(() => windowMocks.outerSize());
   windowMocks.scaleFactor.mockResolvedValue(1);
   windowMocks.onFocusChanged.mockImplementation((handler: unknown) => {
     focusHandlers.push(handler as (event: { payload: boolean }) => void);
@@ -138,6 +145,14 @@ const requireByLabel = (label: string) => {
   const button = buttonByLabel(label);
   if (!button) throw new Error(`No button with aria-label "${label}"`);
   return button;
+};
+
+const requireDragRegion = (): HTMLElement => {
+  const region = document.querySelector("[data-tauri-drag-region]");
+  if (!(region instanceof HTMLElement)) {
+    throw new Error("No [data-tauri-drag-region] element rendered");
+  }
+  return region;
 };
 
 describe("TitleBar on Windows and Linux", () => {
@@ -356,17 +371,102 @@ describe("TitleBar on Windows and Linux", () => {
     ).toBe("false");
   });
 
-  it("toggles maximize on double click of the drag region", async () => {
+  it("toggles maximize and restore on consecutive double clicks of the drag region", async () => {
     await renderBar();
 
-    const dragRegion = document.querySelector(
-      "[data-tauri-drag-region]",
-    ) as HTMLElement;
-    expect(dragRegion).toBeTruthy();
+    const dragRegion = requireDragRegion();
     await act(() => {
       dragRegion.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
     });
-    expect(windowMocks.maximize).toHaveBeenCalled();
+    expect(windowMocks.maximize).toHaveBeenCalledTimes(1);
+    expect(buttonByLabel("Restore")).toBeTruthy();
+
+    await act(() => {
+      dragRegion.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    });
+    expect(windowMocks.unmaximize).toHaveBeenCalledTimes(1);
+    expect(buttonByLabel("Maximize")).toBeTruthy();
+  });
+
+  it("stops drag-region mousedown and mouseup from bubbling to document and only starts dragging after pointer movement", async () => {
+    await renderBar();
+
+    const dragRegion = requireDragRegion();
+    const documentMouseDown = vi.fn();
+    const documentMouseUp = vi.fn();
+    document.addEventListener("mousedown", documentMouseDown);
+    document.addEventListener("mouseup", documentMouseUp);
+
+    try {
+      // Stationary click + double-click: must not bubble to Tauri's
+      // document-level `drag.js` listener or invoke `startDragging`.
+      await act(() => {
+        dragRegion.dispatchEvent(
+          new MouseEvent("mousedown", {
+            bubbles: true,
+            button: 0,
+            detail: 1,
+            clientX: 100,
+            clientY: 20,
+          }),
+        );
+        window.dispatchEvent(
+          new MouseEvent("mouseup", {
+            bubbles: true,
+            button: 0,
+            detail: 1,
+            clientX: 100,
+            clientY: 20,
+          }),
+        );
+        dragRegion.dispatchEvent(
+          new MouseEvent("mousedown", {
+            bubbles: true,
+            button: 0,
+            detail: 2,
+            clientX: 100,
+            clientY: 20,
+          }),
+        );
+        dragRegion.dispatchEvent(
+          new MouseEvent("mouseup", {
+            bubbles: true,
+            button: 0,
+            detail: 2,
+            clientX: 100,
+            clientY: 20,
+          }),
+        );
+      });
+      expect(documentMouseDown).not.toHaveBeenCalled();
+      expect(documentMouseUp).not.toHaveBeenCalled();
+      expect(windowMocks.startDragging).not.toHaveBeenCalled();
+
+      // Pointer press followed by movement >= 4px starts native window drag.
+      await act(() => {
+        dragRegion.dispatchEvent(
+          new MouseEvent("mousedown", {
+            bubbles: true,
+            button: 0,
+            detail: 1,
+            clientX: 100,
+            clientY: 20,
+          }),
+        );
+        window.dispatchEvent(
+          new MouseEvent("mousemove", {
+            bubbles: true,
+            buttons: 1,
+            clientX: 106,
+            clientY: 20,
+          }),
+        );
+      });
+      expect(windowMocks.startDragging).toHaveBeenCalledTimes(1);
+    } finally {
+      document.removeEventListener("mousedown", documentMouseDown);
+      document.removeEventListener("mouseup", documentMouseUp);
+    }
   });
 });
 
@@ -438,6 +538,58 @@ describe("TitleBar on macOS", () => {
     await act(() => {
       requireByLabel("Maximize").click();
     });
+    expect(windowMocks.maximize).toHaveBeenCalledTimes(1);
+  });
+
+  it("starts dragging on mousedown and toggles maximize once on stationary double-click release", async () => {
+    await renderBar();
+
+    const dragRegion = requireDragRegion();
+    await act(() => {
+      dragRegion.dispatchEvent(
+        new MouseEvent("mousedown", {
+          bubbles: true,
+          button: 0,
+          detail: 1,
+          clientX: 120,
+          clientY: 20,
+        }),
+      );
+    });
+    expect(windowMocks.startDragging).toHaveBeenCalledTimes(1);
+
+    // Second click of a double-click on macOS: must not start another drag,
+    // and must toggle maximize exactly once even if `dblclick` also fires.
+    await act(() => {
+      dragRegion.dispatchEvent(
+        new MouseEvent("mousedown", {
+          bubbles: true,
+          button: 0,
+          detail: 2,
+          clientX: 120,
+          clientY: 20,
+        }),
+      );
+      dragRegion.dispatchEvent(
+        new MouseEvent("mouseup", {
+          bubbles: true,
+          button: 0,
+          detail: 2,
+          clientX: 120,
+          clientY: 20,
+        }),
+      );
+      dragRegion.dispatchEvent(
+        new MouseEvent("dblclick", {
+          bubbles: true,
+          button: 0,
+          detail: 2,
+          clientX: 120,
+          clientY: 20,
+        }),
+      );
+    });
+    expect(windowMocks.startDragging).toHaveBeenCalledTimes(1);
     expect(windowMocks.maximize).toHaveBeenCalledTimes(1);
   });
 });
@@ -574,6 +726,75 @@ it("keeps the roomy bar when the window size is not known yet", async () => {
   await renderBar();
 
   expect(pxOf(requireByLabel("Close"), "width")).toBe(captionButtonSize(false));
+});
+
+it("ignores minimized resize ticks so minimizing a wide or maximized window does not flip to compact or clear maximize state", async () => {
+  let fireResize:
+    | ((event?: { payload?: { width: number; height: number } }) => void)
+    | undefined;
+  windowMocks.onResized.mockImplementation(((
+    handler: (event?: { payload?: { width: number; height: number } }) => void,
+  ): Promise<() => void> => {
+    fireResize = handler;
+    return Promise.resolve(() => undefined);
+  }) as never);
+  windowMocks.isMaximized.mockResolvedValue(true);
+  windowMocks.innerSize.mockResolvedValue({ width: 1920, height: 1080 });
+  await renderBar();
+  expect(buttonByLabel("Restore")).toBeTruthy();
+  expect(pxOf(requireByLabel("Close"), "width")).toBe(captionButtonSize(false));
+
+  // Windows WM_SIZE SIZE_MINIMIZED emits a (0, 0) payload and reports the
+  // 160x28 iconic taskbar rect from GetWindowRect while isMinimized() is true.
+  windowMocks.isMinimized.mockResolvedValue(true);
+  windowMocks.isMaximized.mockResolvedValue(false);
+  windowMocks.innerSize.mockResolvedValue({ width: 160, height: 28 });
+  await act(async () => {
+    fireResize?.({ payload: { width: 0, height: 0 } });
+    fireResize?.();
+    await Promise.resolve();
+  });
+
+  expect(buttonByLabel("Restore")).toBeTruthy();
+  expect(pxOf(requireByLabel("Close"), "width")).toBe(captionButtonSize(false));
+});
+
+it("discards an in-flight resize measurement that started before an optimistic maximize toggle", async () => {
+  let fireResize: (() => void) | undefined;
+  windowMocks.onResized.mockImplementation(((
+    handler: () => void,
+  ): Promise<() => void> => {
+    fireResize = handler;
+    return Promise.resolve(() => undefined);
+  }) as never);
+  await renderBar();
+
+  let resolveStaleMax!: (value: boolean) => void;
+  windowMocks.isMaximized.mockReturnValueOnce(
+    new Promise((done) => {
+      resolveStaleMax = done;
+    }),
+  );
+  await act(() => {
+    fireResize?.();
+  });
+
+  // User clicks Maximize while the earlier resize tick is still awaiting
+  // `isMaximized()`.
+  windowMocks.isMaximized.mockResolvedValueOnce(false);
+  await act(async () => {
+    requireByLabel("Maximize").click();
+    await Promise.resolve();
+  });
+  expect(buttonByLabel("Restore")).toBeTruthy();
+
+  // The stale pre-maximize resize measurement resolves `false` late and must
+  // not overwrite the optimistic `Restore` state.
+  await act(async () => {
+    resolveStaleMax(false);
+    await Promise.resolve();
+  });
+  expect(buttonByLabel("Restore")).toBeTruthy();
 });
 
 it.each([
