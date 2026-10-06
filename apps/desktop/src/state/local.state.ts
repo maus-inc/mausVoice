@@ -4,6 +4,15 @@ import type { TimingAggregate } from "../utils/pipeline-trace";
 export type LocalState = {
   assistantModeEnabled: boolean;
   powerModeEnabled: boolean;
+  /**
+   * Lets the assistant look at the screen and drive the mouse and keyboard.
+   *
+   * Session-local and off by default, like `powerModeEnabled`, because a
+   * screen-reading agent with no gate is a remote-input device. It is not a
+   * database preference: turning it on is a per-launch decision, and a
+   * persisted one would silently re-arm pointer control on the next start.
+   */
+  computerUseEnabled: boolean;
   lastDictationReminderShownAt: number | null;
   lastDictatedAt: number | null;
   lastSeenTrialExtensionClaimedAt: string | null;
@@ -30,6 +39,7 @@ export type LocalState = {
 export const INITIAL_LOCAL_STATE: LocalState = {
   assistantModeEnabled: false,
   powerModeEnabled: false,
+  computerUseEnabled: false,
   lastDictationReminderShownAt: null,
   lastDictatedAt: null,
   lastSeenTrialExtensionClaimedAt: null,

@@ -33,9 +33,9 @@ afterEach(() => {
   act(() => root.unmount());
   container.remove();
 });
-const render = (
+const mount = (
   variant: "default" | "overlay",
-  reason: unknown,
+  params: Record<string, unknown>,
   status: ToolPermission["status"] = "pending",
 ) => {
   const permission: ToolPermission = {
@@ -43,7 +43,7 @@ const render = (
     toolId: "read-notes",
     conversationId: "conversation",
     createdAt: 1,
-    params: { reason },
+    params,
     status,
   };
   act(() =>
@@ -60,6 +60,109 @@ const render = (
     ),
   );
 };
+
+const render = (
+  variant: "default" | "overlay",
+  reason: unknown,
+  status: ToolPermission["status"] = "pending",
+) => mount(variant, { reason }, status);
+
+/**
+ * Render a permission that carries a risk tier.
+ *
+ * The tier rides in `params`, because `ToolPermission` is a persisted record
+ * and a field cannot be added to it without a migration. These assertions are
+ * what keep the tier from being decoration: each one fails if the prompt goes
+ * back to treating a destructive action like a plain "Allow".
+ */
+const renderAtRisk = (risk: unknown) =>
+  mount("default", { reason: "Because it is destructive", risk });
+
+const buttonLabels = (): (string | null)[] =>
+  Array.from(container.querySelectorAll("button")).map(
+    (button) => button.textContent,
+  );
+
+describe("risk tiers reach the prompt", () => {
+  it.each([
+    ["low", () => de.reversible],
+    ["medium", () => de.changes_something_on_your_screen],
+    ["high", () => de.hard_to_undo],
+    ["critical", () => de.can_destroy_what_you_have],
+  ])("names the %s tier in plain language", (risk, label) => {
+    renderAtRisk(risk);
+    expect(container.textContent).toContain(label());
+  });
+
+  it("leaves a low or medium action offerable as a plain allow", () => {
+    renderAtRisk("medium");
+    expect(buttonLabels()).toEqual([de.deny, de.allow, de.always_allow]);
+  });
+
+  it("says it is confirming, not allowing, for a high tier", () => {
+    renderAtRisk("high");
+    expect(buttonLabels()).toEqual([
+      de.deny,
+      de.confirm_and_run,
+      de.always_allow,
+    ]);
+  });
+
+  it.each([
+    "constructor",
+    "toString",
+    "valueOf",
+    "hasOwnProperty",
+    "isPrototypeOf",
+    "propertyIsEnumerable",
+    "toLocaleString",
+    "__proto__",
+  ])(
+    "treats the prototype key %s as the worst tier, not as a tier at all",
+    (risk) => {
+      // `in` walks the prototype chain, so every one of these reads as a member
+      // of the tier map. Seven of them then render a plain Allow with a
+      // standing grant, and `__proto__` throws during render.
+      renderAtRisk(risk);
+      expect(buttonLabels()).toEqual([de.deny, de.confirm_and_run]);
+      expect(container.textContent).toContain(de.can_destroy_what_you_have);
+    },
+  );
+
+  it.each(["critical", "nonsense", 42, null, false, {}])(
+    "withholds a standing grant and warns for the unreadable tier %s",
+    (risk) => {
+      // Anything carrying a value that is not one of the four tiers is treated
+      // as the worst one. Reading it as a lesser tier is the direction that hands
+      // an action the prompt cannot describe a permanent exemption.
+      renderAtRisk(risk);
+      expect(buttonLabels()).toEqual([de.deny, de.confirm_and_run]);
+      expect(container.textContent).toContain(de.can_destroy_what_you_have);
+      expect(container.textContent).toContain(
+        de.this_one_cannot_be_taken_back_check_the_screen_before_you_co,
+      );
+    },
+  );
+
+  it("leaves a permission with no tier alone", () => {
+    // Every permission raised before tool risk existed has no tier at all. It
+    // must behave exactly as it did then, so an old record is neither upgraded
+    // into a warning nor handed over with a standing grant.
+    renderAtRisk(undefined);
+    expect(buttonLabels()).toEqual([de.deny, de.allow, de.always_allow]);
+    expect(container.textContent).not.toContain(de.confirm_and_run);
+    expect(container.textContent).not.toContain(
+      de.this_one_cannot_be_taken_back_check_the_screen_before_you_co,
+    );
+  });
+
+  it("offers no standing grant and still allows a refusal", () => {
+    renderAtRisk("critical");
+    const [deny] = Array.from(container.querySelectorAll("button"));
+    act(() => deny.click());
+    expect(onDeny).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe.each(["default", "overlay"] as const)(
   "%s tool permission",

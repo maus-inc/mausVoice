@@ -10,6 +10,7 @@ import type {
   LlmToolCall,
   ToolInfo,
 } from "@maus-inc/types";
+import { TOOL_RISK } from "@maus-inc/types";
 import {
   delayed,
   isLogBreakingControl,
@@ -21,15 +22,15 @@ import {
   getToolPermissionStatus,
   requestToolPermission,
 } from "../actions/tool.actions";
-import { getAgentRepo, getChatMessageRepo } from "../repos";
+import { getAgentRepo } from "../repos";
 import { createAgentRunState } from "../state/agent.state";
 import { getAppState, produceAppState } from "../store";
 import { createTool } from "../tools";
 import { modifyAgentState } from "../utils/agent.utils";
 import { getLogger } from "../utils/log.utils";
-import { humanizeScrub } from "../utils/humanize.utils";
 import type { PersistedRunOutcome } from "../utils/chat-parts.utils";
 import type { AgentTypeConfig } from "./agent-configs";
+import { finalizeAssistantMessage } from "./finalize-assistant-message";
 
 const POLL_INTERVAL_MS = 500;
 const MAX_CONTEXT_MESSAGES = 80;
@@ -487,67 +488,6 @@ export function abortAgentLoop(conversationId: string): void {
   });
 }
 
-/**
- * Persist the finished assistant message with scrubbed content and
- * retire its streaming entry, regardless of persistence outcome.
- */
-async function finalizeAssistantMessage(
-  messageId: string,
-  text: string,
-  toolCalls: LlmToolCall[],
-  toolStatuses: Record<string, ChatToolStatus>,
-  runOutcome?: PersistedRunOutcome,
-  isActive?: () => boolean,
-): Promise<void> {
-  if (isActive && !isActive()) return;
-  const message = getAppState().chatMessageById[messageId];
-  if (!message) return;
-  if (isActive && !isActive()) return;
-
-  // A19: Apply the humanize scrubber to remove AI-slop markers from the
-  // final assistant output before persisting and displaying it.
-  const cleaned = text ? humanizeScrub(text) : "";
-  const metadata =
-    toolCalls.length > 0
-      ? { type: "reasoning", toolCalls, toolStatuses }
-      : null;
-  const final = {
-    ...message,
-    content: cleaned,
-    // Terminal flags survive run-state cleanup/reload without saving raw
-    // provider diagnostics or freezing a translated label into history.
-    metadata: runOutcome ? { ...metadata, runOutcome } : metadata,
-  };
-
-  // Retire the streaming entry regardless of the persistence outcome.
-  // safeSideEffect swallows rejections from this function so the agent
-  // loop survives (the whole point of the wrapper); without the finally,
-  // a failed createChatMessage would leave the message stuck in
-  // streamingMessageById forever as an indefinitely-streaming bubble.
-  // On failure the in-memory copy still gets the scrubbed final text so
-  // the conversation view stays coherent for the session; only the
-  // durable history row is missing, and that is what the log records.
-  try {
-    if (!isActive || isActive()) {
-      await getChatMessageRepo().createChatMessage(final);
-      if (isActive && !isActive()) {
-        await getChatMessageRepo()
-          .deleteChatMessages([final.id])
-          .catch(() => undefined);
-      }
-    }
-  } finally {
-    produceAppState((draft) => {
-      // A deleted conversation/message must not be resurrected by a late write.
-      if (!isActive || isActive()) {
-        if (draft.chatMessageById[messageId])
-          draft.chatMessageById[messageId] = final;
-      }
-      delete draft.streamingMessageById[messageId];
-    });
-  }
-}
-
 /** Build the AgentLlmProvider that proxies streaming through the repo. */
 function createLlmProvider(): AgentLlmProvider {
   const { repo } = getAgentRepo();
@@ -585,6 +525,29 @@ function createAgentTools(
   }));
 }
 
+/**
+ * Run a tool once the permission decision is in, reporting a throw as a failed
+ * result rather than letting it escape into the loop.
+ */
+async function runApprovedTool(
+  info: ToolInfo,
+  params: Record<string, unknown>,
+  conversationId: string,
+): Promise<
+  | { success: true; result: Record<string, unknown> }
+  | { success: false; failureReason: string }
+> {
+  try {
+    const result = await executeTool(info.id, params, { conversationId });
+    return { success: true, result };
+  } catch (err) {
+    return {
+      success: false,
+      failureReason: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
 async function executeWithPermission(
   info: ToolInfo,
   params: Record<string, unknown>,
@@ -598,16 +561,15 @@ async function executeWithPermission(
   const tool = createTool(info);
   const permissionScope = `conversation:${conversationId}`;
 
+  // A low-risk tool has nothing to undo, so asking about it on every turn
+  // trains the user to click Allow without reading. The tool still runs
+  // through the same path either way, so the only difference is the question.
+  if (!TOOL_RISK[info.risk].prompt) {
+    return runApprovedTool(info, params, conversationId);
+  }
+
   if (tool.getAlwaysAllow(params, permissionScope)) {
-    try {
-      const result = await executeTool(info.id, params, { conversationId });
-      return { success: true, result };
-    } catch (err) {
-      return {
-        success: false,
-        failureReason: err instanceof Error ? err.message : String(err),
-      };
-    }
+    return runApprovedTool(info, params, conversationId);
   }
 
   const permissionParams = { ...params, reason };
@@ -639,15 +601,7 @@ async function executeWithPermission(
   );
 
   if (resolution === "allowed" && isActive()) {
-    try {
-      const result = await executeTool(info.id, params, { conversationId });
-      return { success: true, result };
-    } catch (err) {
-      return {
-        success: false,
-        failureReason: err instanceof Error ? err.message : String(err),
-      };
-    }
+    return runApprovedTool(info, params, conversationId);
   }
 
   return { success: false, failureReason: "Tool call was denied by user" };

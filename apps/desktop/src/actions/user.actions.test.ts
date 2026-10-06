@@ -52,13 +52,13 @@ vi.mock("../repos", () => ({
   getUserRepo: () => userRepoMock,
 }));
 
-const minimalToolInfo = (id: string): ToolInfo =>
-  ({
-    id,
-    description: id,
-    instructions: id,
-    schema: {},
-  }) as ToolInfo;
+const minimalToolInfo = (id: string): ToolInfo => ({
+  id,
+  description: id,
+  instructions: id,
+  schema: {},
+  risk: "low",
+});
 
 describe("setPillPlacement", () => {
   beforeEach(() => {

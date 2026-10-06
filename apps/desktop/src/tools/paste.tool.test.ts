@@ -36,6 +36,7 @@ const toolInfo: ToolInfo = {
   description: "Paste text",
   instructions: "Paste text",
   schema: { type: "object" },
+  risk: "medium",
 };
 
 describe("PasteTool review", () => {

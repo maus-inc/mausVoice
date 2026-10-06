@@ -40,3 +40,59 @@ Power mode adds the `run_terminal_command` tool. The Rust backend validates each
 Enabling power mode requires a warning confirmation, and the dialog asks you to restart mausVoice before relying on the change. Keep it off unless the task genuinely needs shell access. Never approve a command you do not understand, and avoid **Always allow** for terminal execution. Turning the switch off and restarting removes the terminal tool from the assistant, but previously remembered always-allow storage is a separate setting.
 
 For ordinary drafting and rewriting, leave power mode disabled. Screen-context and paste tools are enough for most field-focused work, and without shell access a mistaken or malicious instruction can do far less damage.
+
+## Computer use
+
+Computer use lets the assistant look at your screen and act on it, rather than only reading the focused field. It works with any model provider that offers computer use. When the selected provider does not, the app says so and names that provider instead of failing quietly.
+
+Turn it on under the Computer use switch in assistant mode settings. The first time you switch it on, a warning explains that the assistant can read the screen and move your mouse and keyboard. The setting does not carry across restarts, so computer use is off again the next time you open the app unless you turn it on once more. Power mode and computer use are separate switches, and accepting one is not accepting the other.
+
+How a task runs:
+
+1. The assistant captures a screenshot of the display your cursor is on.
+2. The model reads it and picks one action.
+3. The app asks you, when that action needs approval.
+4. The action runs, and a new screenshot shows the outcome.
+5. Steps 2 to 4 repeat until the model reports it is finished, until you press stop, or until the assistant notices it is going in circles.
+
+Screenshots are resized to 1280 pixels wide and compressed before they leave your machine.
+
+Computer use commands work only in the main window. The pill and floating windows cannot read the screen or move the pointer, so a page rendered there cannot drive your computer.
+
+### Risk levels and approvals
+
+Every computer-use action carries a risk level, and the level decides what happens:
+
+| Risk | What happens |
+| --- | --- |
+| Low | Runs straight away. These actions only read, such as taking a screenshot, checking the pointer position or waiting. |
+| Medium | Asks first. Scrolling and moving the pointer fall here. |
+| High | Asks first, and the prompt spells out what will happen and names the risk in plain words. Clicking, typing, dragging and key presses are all here. |
+| Critical | Warns before it asks, and the prompt offers no way to always allow it. |
+
+Today no computer-use action reaches the critical level, but a tool added later may.
+
+**Always allow** is remembered for that kind of action, not for the whole session. Allowing every click does not hand over your keyboard, and allowing the keyboard does not allow terminal commands.
+
+A model can also refuse an action before it reaches you. A refusal shows as skipped rather than failed, because the difference matters: a failure means something went wrong, and a refusal means you said no.
+
+### Stopping a run
+
+The stop button ends the run. It cancels the request in flight, cancels any action that has not started, and records the outcome. An action already running reports its result before the run closes, so you can see what happened before you stopped it.
+
+### When the assistant gets stuck
+
+If the assistant repeats the same action, or the screen stops changing, the run stops on its own and tells you what it noticed rather than continuing to click.
+
+### Platform support
+
+| Platform | Support |
+| --- | --- |
+| Linux, X11 | Full |
+| Windows | Full |
+| macOS | Full |
+| Linux, Wayland | Not yet |
+
+On Wayland the app cannot read the screen without a portal service, so computer use is unavailable rather than half-working.
+
+The Windows and macOS capture paths are written against the `windows` and `core-graphics` crate signatures. They are compiled by the Windows-gated CI job and the macOS release build respectively, not by the Linux clippy gate.

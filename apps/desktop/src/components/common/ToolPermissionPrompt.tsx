@@ -1,9 +1,14 @@
 import { Box, Button, Chip, Stack, Typography } from "@mui/material";
-import type { ToolPermission } from "@maus-inc/types";
-import { Check, CheckCheck, X } from "lucide-react";
+import type { ToolPermission, ToolRisk } from "@maus-inc/types";
+import { AlertTriangle, Check, CheckCheck, X } from "lucide-react";
 import { FormattedMessage } from "react-intl";
+import type { ReactNode } from "react";
 import { overlayOnDark } from "../../styles/palette";
 import { useAppStore } from "../../store";
+import {
+  permissionPromptPolicy,
+  readPermissionRisk,
+} from "../../utils/tool-permission.utils";
 import { ToolParamsTooltip } from "./ToolParamsTooltip";
 
 type ToolPermissionPromptProps = {
@@ -17,15 +22,34 @@ type ToolPermissionPromptProps = {
 type PermissionActionsProps = Pick<
   ToolPermissionPromptProps,
   "onAllow" | "onDeny" | "onAlwaysAllow"
-> & { overlay: boolean };
+> & { overlay: boolean; risk: ToolRisk | null };
+
+/**
+ * The label on the button that runs the action.
+ *
+ * A `high` action is not something the user waved through, so the button says
+ * what it is committing to rather than offering a bare "Allow" next to "Deny".
+ */
+const AllowLabel = ({ risk }: { risk: ToolRisk | null }) =>
+  risk === "high" || risk === "critical" ? (
+    <FormattedMessage defaultMessage="Confirm and run" />
+  ) : (
+    <FormattedMessage defaultMessage="Allow" />
+  );
 
 const PermissionActions = ({
   overlay,
+  risk,
   onAllow,
   onDeny,
   onAlwaysAllow,
 }: PermissionActionsProps) => {
   const iconSize = overlay ? 14 : 16;
+  const policy = permissionPromptPolicy({ risk: risk ?? undefined });
+  // A `critical` action is never offered a standing grant. "Always allow" is
+  // the one button here that survives the conversation and the restart, and
+  // there is no tier of consequence that a permanent exemption should outlive.
+  const offerAlwaysAllow = policy === null || !policy.warnBeforeRunning;
   const textButtonSx = overlay
     ? { color: overlayOnDark.muted, minWidth: 0 }
     : undefined;
@@ -50,22 +74,34 @@ const PermissionActions = ({
       <Button
         size="small"
         variant="contained"
+        color={risk === "critical" ? "error" : "primary"}
         onClick={onAllow}
         startIcon={<Check size={iconSize} strokeWidth={1.9} />}
       >
-        <FormattedMessage defaultMessage="Allow" />
+        <AllowLabel risk={risk} />
       </Button>
-      <Button
-        size="small"
-        variant="text"
-        onClick={onAlwaysAllow}
-        startIcon={<CheckCheck size={iconSize} strokeWidth={1.9} />}
-        sx={textButtonSx}
-      >
-        <FormattedMessage defaultMessage="Always allow" />
-      </Button>
+      {offerAlwaysAllow && (
+        <Button
+          size="small"
+          variant="text"
+          onClick={onAlwaysAllow}
+          startIcon={<CheckCheck size={iconSize} strokeWidth={1.9} />}
+          sx={textButtonSx}
+        >
+          <FormattedMessage defaultMessage="Always allow" />
+        </Button>
+      )}
     </Stack>
   );
+};
+
+const RISK_LABEL: Record<ToolRisk, ReactNode> = {
+  low: <FormattedMessage defaultMessage="Reversible" />,
+  medium: (
+    <FormattedMessage defaultMessage="Changes something on your screen" />
+  ),
+  high: <FormattedMessage defaultMessage="Hard to undo" />,
+  critical: <FormattedMessage defaultMessage="Can destroy what you have" />,
 };
 
 const PermissionDetails = ({
@@ -82,6 +118,8 @@ const PermissionDetails = ({
       ? permission.params.reason
       : null;
   const allowed = permission.status === "allowed";
+  const risk = readPermissionRisk(permission.params);
+  const policy = permissionPromptPolicy(permission.params);
   const appearance = overlay
     ? {
         heading: overlayOnDark.text,
@@ -101,6 +139,14 @@ const PermissionDetails = ({
         >
           {toolInfo?.description ?? permission.toolId}
         </Typography>
+        {risk && (
+          <Chip
+            size="small"
+            variant="outlined"
+            sx={{ color: appearance.secondary }}
+            label={RISK_LABEL[risk]}
+          />
+        )}
         <ToolParamsTooltip
           params={permission.params}
           iconColor={appearance.secondary}
@@ -126,6 +172,19 @@ const PermissionDetails = ({
           {reason}
         </Typography>
       )}
+      {policy?.warnBeforeRunning && (
+        <Stack direction="row" spacing={0.5} sx={{ alignItems: "flex-start" }}>
+          <AlertTriangle
+            size={appearance.iconSize}
+            strokeWidth={1.9}
+            style={{ marginTop: 2, flexShrink: 0 }}
+            color={appearance.secondary}
+          />
+          <Typography variant="caption" sx={{ color: appearance.secondary }}>
+            <FormattedMessage defaultMessage="This one cannot be taken back. Check the screen before you confirm." />
+          </Typography>
+        </Stack>
+      )}
     </Stack>
   );
 };
@@ -138,6 +197,7 @@ export const ToolPermissionPrompt = ({
   onAlwaysAllow,
 }: ToolPermissionPromptProps) => {
   const overlay = variant === "overlay";
+  const risk = readPermissionRisk(permission.params);
   const details = (
     <PermissionDetails permission={permission} overlay={overlay} />
   );
@@ -145,6 +205,7 @@ export const ToolPermissionPrompt = ({
     permission.status === "pending" ? (
       <PermissionActions
         overlay={overlay}
+        risk={risk}
         onAllow={onAllow}
         onDeny={onDeny}
         onAlwaysAllow={onAlwaysAllow}

@@ -3,6 +3,7 @@ import { produce } from "immer";
 import { INITIAL_APP_STATE } from "../state/app.state";
 import type { AppState } from "../state/app.state";
 import type { AgentConfig } from "@repo/agent";
+import type { ToolInfo } from "@maus-inc/types";
 import { createTool } from "../tools";
 import { executeTool, requestToolPermission } from "../actions/tool.actions";
 
@@ -741,11 +742,12 @@ describe("runAgent immutable-state lifecycle", () => {
     "does not execute a late-approved tool after its run is %s",
     async (termination) => {
       vi.useFakeTimers();
-      const info = {
+      const info: ToolInfo = {
         id: "test-tool",
         description: "test",
         instructions: "",
         schema: {},
+        risk: "medium",
       };
       live.toolInfoById[info.id] = info;
       vi.mocked(createTool).mockReturnValue({
@@ -984,5 +986,123 @@ describe("runAgent immutable-state lifecycle", () => {
         );
       }),
     ).toBe(false);
+  });
+});
+
+describe("runAgent risk-tier gating", () => {
+  let live: AppState;
+  const config = {
+    agentType: "chat",
+    systemPrompt: "",
+    getToolFilter: () => () => true,
+    maxIterations: 4,
+  };
+
+  const registerToolAtRisk = (risk: ToolInfo["risk"]) => {
+    const info: ToolInfo = {
+      id: "tiered-tool",
+      description: "A tool whose risk decides whether it asks",
+      instructions: "",
+      schema: {},
+      risk,
+    };
+    live.toolInfoById[info.id] = info;
+    return info;
+  };
+
+  /** Drive one tool call through the real permission path and return its output. */
+  const runTieredTool = async (risk: ToolInfo["risk"]) => {
+    const info = registerToolAtRisk(risk);
+    const execute = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(createTool).mockReturnValue({
+      info,
+      execute,
+      getAlwaysAllow: () => false,
+      setAlwaysAllow: vi.fn(),
+    });
+    // The tool has to run while the loop is still live: `executeWithPermission`
+    // checks `isActive()` first, and `activeLoops` is pruned once the run
+    // returns. Holding the generator open is what keeps the test on the branch
+    // it is meant to cover.
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    loopRunMock.mockImplementation(async function* () {
+      yield { type: "iteration-start", iteration: 0 };
+      await gate;
+      yield { type: "finish", reason: "stop" };
+    });
+    const { runAgent } = await import("./run-agent");
+    const run = runAgent(`tier-${risk}`, config);
+    await vi.waitFor(() =>
+      expect(loopConfigMock).toHaveBeenCalledWith(
+        expect.objectContaining({ tools: expect.any(Array) }),
+      ),
+    );
+    const tools = loopConfigMock.mock.calls.at(-1)?.[0].tools ?? [];
+    try {
+      return await tools[0].execute({
+        params: {},
+        reason: "test",
+        toolCallId: "tc-1",
+      });
+    } finally {
+      release();
+      await run;
+    }
+  };
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    setupAgentMocks();
+    live = structuredClone(INITIAL_APP_STATE);
+    getAppStateMock.mockImplementation(() => live);
+    produceAppStateMock.mockImplementation(
+      (recipe: (draft: AppState) => void) => {
+        live = produce(live, recipe);
+      },
+    );
+    humanizeScrubMock.mockImplementation((text: string) => text);
+    getChatMessageRepoCreateMock.mockImplementation((message) =>
+      Promise.resolve(message),
+    );
+    const { createAgentRunState } = await vi.importActual<
+      typeof import("../state/agent.state")
+    >("../state/agent.state");
+    const { modifyAgentState } = await vi.importActual<
+      typeof import("../utils/agent.utils")
+    >("../utils/agent.utils");
+    createAgentRunStateMock.mockImplementation(() =>
+      createAgentRunState("chat", 4),
+    );
+    modifyAgentStateMock.mockImplementation(modifyAgentState);
+  });
+
+  it("runs a low risk tool without asking the user", async () => {
+    await runTieredTool("low");
+    // Nothing was registered as pending, so the poll would never resolve and
+    // the tool would never run. Reaching an execute at all is the assertion.
+    expect(requestToolPermission).not.toHaveBeenCalled();
+    expect(executeTool).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["medium", "high"] as const)(
+    "asks the user before running a %s risk tool",
+    async (risk) => {
+      vi.mocked(requestToolPermission).mockReturnValue("perm-1");
+      getToolPermissionStatusMock.mockReturnValue({ status: "allowed" });
+      await runTieredTool(risk);
+      expect(requestToolPermission).toHaveBeenCalledTimes(1);
+      expect(executeTool).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("runs a denied tool's output as a failure rather than as a result", async () => {
+    vi.mocked(requestToolPermission).mockReturnValue("perm-1");
+    getToolPermissionStatusMock.mockReturnValue({ status: "denied" });
+    const output = await runTieredTool("high");
+    expect(executeTool).not.toHaveBeenCalled();
+    expect(output).toMatchObject({ success: false });
   });
 });

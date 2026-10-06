@@ -10,3 +10,7 @@ export const getIsAssistantModeEnabled = (state: AppState): boolean => {
 export const getIsPowerModeEnabled = (state: AppState): boolean => {
   return state.local.powerModeEnabled;
 };
+
+export const getIsComputerUseEnabled = (state: AppState): boolean => {
+  return state.local.computerUseEnabled;
+};

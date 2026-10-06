@@ -69,6 +69,37 @@ async cancelTyping() : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Capture a display.
+ * 
+ * Blocking, because the capture itself is synchronous OS work, but it runs off
+ * the async runtime's threads so a slow framebuffer does not stall whatever
+ * else the UI is doing.
+ */
+async captureScreen(request: CaptureRequest) : Promise<Result<CapturedFrame, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("capture_screen", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Zoom into a region of the screenshot the model was last shown.
+ * 
+ * The region is in that image's pixels, not the display's, because that is the
+ * space every provider states its `zoom` region in. It carries the previous
+ * frame so the crop happens here rather than in the renderer, which has no
+ * image decoder.
+ */
+async captureScreenRegion(previous: CapturedFrame, region: PhysicalRect) : Promise<Result<CapturedFrame, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("capture_screen_region", { previous, region }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async chatMessageCreate(message: ChatMessage) : Promise<Result<ChatMessage, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("chat_message_create", { message }) };
@@ -161,6 +192,172 @@ async checkMicrophonePermission() : Promise<Result<PermissionStatus, string>> {
 async clearLocalData() : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("clear_local_data") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Ask any in-flight computer-use input to stop.
+ * 
+ * The counterpart of the Stop button. It does not queue anything, so a stop
+ * that lands between two actions is picked up by the next one rather than
+ * being replayed into the action after it.
+ */
+async computerUseCancel() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("computer_use_cancel") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Click on a point of a display, in that display's pixels.
+ */
+async computerUseClick(displayId: number, x: number, y: number, button: MouseButton, clicks: number, modifiers: string[] | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("computer_use_click", { displayId, x, y, button, clicks, modifiers }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Drag between two points of a display, in that display's pixels.
+ */
+async computerUseDrag(displayId: number, fromX: number, fromY: number, toX: number, toY: number, button: MouseButton, modifiers: string[] | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("computer_use_drag", { displayId, fromX, fromY, toX, toY, button, modifiers }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Move the pointer to a point on a display, given in that display's pixels.
+ */
+async computerUseMove(displayId: number, x: number, y: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("computer_use_move", { displayId, x, y }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Where the pointer is, in desktop physical pixels.
+ * 
+ * `Ok(None)` means the platform cannot say, which the caller must handle
+ * rather than treat as the origin.
+ */
+async computerUsePointerPosition() : Promise<Result<[number, number] | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("computer_use_pointer_position") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Hold a mouse button down without releasing it.
+ */
+async computerUsePressButton(button: MouseButton) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("computer_use_press_button", { button }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Press and release a key chord, optionally repeating it or holding it down.
+ */
+async computerUsePressKey(chord: string, repeat: number | null, holdMs: number | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("computer_use_press_key", { chord, repeat, holdMs }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Hold a chord down without releasing it, for a following action.
+ */
+async computerUsePressKeyDown(chord: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("computer_use_press_key_down", { chord }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Release a mouse button held by `computer_use_press_button`.
+ */
+async computerUseReleaseButton(button: MouseButton) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("computer_use_release_button", { button }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Release a chord held by `computer_use_press_key_down`.
+ */
+async computerUseReleaseKeyUp(chord: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("computer_use_release_key_up", { chord }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Clear a previous cancel so a new run is not born stopped.
+ * 
+ * Separate from [`computer_use_cancel`] because the two are called from
+ * opposite ends of a run: one by the Stop button, the other when a run
+ * starts, and collapsing them would let a late cancel disarm the next run.
+ */
+async computerUseResetCancel() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("computer_use_reset_cancel") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Scroll a number of physical pixels, optionally moving the pointer to the
+ * point the scroll should happen at first.
+ */
+async computerUseScroll(direction: ScrollDirection, amount: number, displayId: number | null, x: number | null, y: number | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("computer_use_scroll", { direction, amount, displayId, x, y }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Type text into whatever has focus, optionally pressing Enter afterwards.
+ */
+async computerUseType(text: string, pressEnter: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("computer_use_type", { text, pressEnter }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Pause for a while, giving the Stop button a way to cut a wait short.
+ */
+async computerUseWait(durationMs: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("computer_use_wait", { durationMs }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -450,6 +647,21 @@ async hotkeyReplaceStyleHotkeys(prefix: string, hotkeys: Hotkey[]) : Promise<Res
 async hotkeySave(hotkey: Hotkey) : Promise<Result<Hotkey, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("hotkey_save", { hotkey }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Every display the machine has, in the geometry a capture will be stated in.
+ * 
+ * The frontend needs this before it can turn a model coordinate into a click:
+ * a model answers in the pixel space of the image it was shown, and that image
+ * belongs to one display whose origin may not be the desktop's.
+ */
+async listDisplays() : Promise<Result<DisplayGeometry[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_displays") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1182,6 +1394,66 @@ export type AppTarget = { id: string; name: string; createdAt: string; toneId: s
 export type AppTargetUpsertArgs = { id: string; name: string; toneId?: string | null; iconPath?: string | null; pasteKeybind?: string | null; insertionMethod?: string | null; typingSpeedMs?: number | null }
 export type AudioClip = "start_recording_clip" | "stop_recording_clip" | "alert_macos_clip" | "alert_windows_10_clip" | "alert_windows_11_clip"
 /**
+ * Which display to capture. Desktop capture is a whole-desktop operation on
+ * every platform, so the only meaningful choice is which display's coordinate
+ * space the result is stated in.
+ */
+export type CaptureDisplay = 
+/**
+ * The display the pointer is on. The default, because it is the one the
+ * user is looking at.
+ */
+"underCursor" | 
+/**
+ * The primary display.
+ */
+"primary" | 
+/**
+ * A specific display id from [`crate::platform::computer_use::displays`].
+ */
+{ id: number }
+/**
+ * Encoded image format.
+ * 
+ * `Png` exists for the computer-use providers, which reject a JPEG in a
+ * function result. It is never the default: rule 11 fixes JPEG 1280/80 for
+ * ordinary screenshots, and the provider requirement is enforced at the call
+ * site that knows it is talking to a computer-use endpoint rather than by
+ * making every capture pay for a PNG.
+ */
+export type CaptureFormat = { jpeg: { quality: number } } | "png"
+/**
+ * A capture request.
+ * 
+ * `max_width` of 0 means "do not resize", which is what a zoom region wants:
+ * a zoom is only useful at its native pixel density.
+ */
+export type CaptureRequest = { display?: CaptureDisplay; 
+/**
+ * Defaults to the whole chosen display.
+ */
+region?: PhysicalRect | null; maxWidth?: number; format?: CaptureFormat }
+/**
+ * An encoded capture on its way to the frontend.
+ * 
+ * `data` is base64 because that is what crosses the IPC boundary: rule 4
+ * requires JSON-serializable Rust types, and a byte array would become a
+ * `Vec<u8>` in TypeScript rather than the base64 string the provider APIs
+ * take.
+ */
+export type CapturedFrame = { data: string; mimeType: string; 
+/**
+ * Pixel dimensions of `data` as encoded. This is what the model's
+ * coordinates are stated against, and it is NOT the display size whenever
+ * a resize happened.
+ */
+imageWidth: number; imageHeight: number; 
+/**
+ * Physical pixels of the region captured, before any resize. The display
+ * area a coordinate has to land in.
+ */
+sourceWidth: number; sourceHeight: number; displayId: number }
+/**
  * Update metadata for a channel check. Mirrors the updater plugin's own
  * metadata shape so the frontend reuses the stock install path; `rawJson`
  * travels as text because specta cannot type an open JSON value, and the
@@ -1199,6 +1471,15 @@ export type CreateFloatingWindowArgs = { url: string;
  */
 route: string | null; title: string | null; width: number | null; height: number | null; minWidth: number | null; minHeight: number | null; x: number | null; y: number | null; decorations: boolean | null; transparent: boolean | null; resizable: boolean | null; focused: boolean | null }
 export type CurrentAppInfoResponse = { appName: string; iconBase64: string }
+/**
+ * Geometry of the display a capture was taken from, in physical pixels plus
+ * the desktop-space origin of that display.
+ * 
+ * `origin_x`/`origin_y` are signed because a display left of or above the
+ * primary one has a negative origin in the desktop coordinate space, and the
+ * conversion from a desktop coordinate to a display-local one has to know it.
+ */
+export type DisplayGeometry = { id: number; originX: number; originY: number; widthPx: number; heightPx: number; scaleFactor: number }
 export type ElementFingerprint = { automationId: string | null; className: string | null; controlType: number; name: string | null; frameworkId: string | null; childIndex: number; 
 /**
  * macOS only. AXRole of the element at this depth (e.g. "AXTextArea").
@@ -1278,6 +1559,10 @@ wroteFile: boolean;
 restartRequired: boolean }
 export type MenuIconVariant = "default" | "update"
 export type MonitorAtCursor = { x: number; y: number; width: number; height: number; visibleX: number; visibleY: number; visibleWidth: number; visibleHeight: number; scaleFactor: number; cursorX: number; cursorY: number }
+/**
+ * Which mouse button an action refers to.
+ */
+export type MouseButton = "left" | "right" | "middle"
 export type NativeSetupResult = "success" | "require-restart" | 
 /**
  * The user dismissed the privilege-elevation prompt (e.g. the polkit
@@ -1295,6 +1580,14 @@ export type PasteTargetState = "editable" | "not_editable" | "unknown"
 export type PermissionKind = "microphone" | "accessibility"
 export type PermissionState = "authorized" | "denied" | "restricted" | "not-determined"
 export type PermissionStatus = { kind: PermissionKind; state: PermissionState; promptShown: boolean }
+/**
+ * A rectangle in physical pixels, measured from the top-left of the desktop.
+ * 
+ * Coordinates are `u32` rather than `f64` on purpose: a rectangle is a set of
+ * whole pixels, and rounding a fractional rectangle outward silently enlarges
+ * it, which for a click target means clicking a neighbouring control.
+ */
+export type PhysicalRect = { x: number; y: number; width: number; height: number }
 export type PillWindowSize = "dictation" | "assistant_compact" | "assistant_expanded" | "assistant_typing"
 export type PrivateHttpRequest = { requestId: string; url: string; method: string; headers: Partial<{ [key in string]: string }>; 
 /**
@@ -1314,6 +1607,10 @@ export type RemoteSenderPairArgs = { receiverDeviceId: string; receiverName: str
 export type RunTerminalCommandResponse = { stdout: string; stderr: string; exitCode: number }
 export type ScreenContextInfo = { screenContext: string | null }
 export type ScreenVisibleArea = { topInset: number; bottomInset: number; leftInset: number; rightInset: number }
+/**
+ * The direction a scroll or two-axis scroll moves the content.
+ */
+export type ScrollDirection = "up" | "down" | "left" | "right"
 export type StartRecordingArgs = { preferredMicrophone: string | null }
 export type StartRecordingResponse = { sampleRate: number }
 export type StartRemoteReceiverArgs = { port?: number | null }

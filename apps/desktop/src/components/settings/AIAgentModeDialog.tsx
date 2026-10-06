@@ -16,6 +16,7 @@ import { FormattedMessage, useIntl } from "react-intl";
 import { produceAppState, useAppStore } from "../../store";
 import {
   getIsAssistantModeEnabled,
+  getIsComputerUseEnabled,
   getIsPowerModeEnabled,
 } from "../../utils/assistant-mode.utils";
 import { AGENT_DICTATE_HOTKEY } from "../../utils/keyboard.utils";
@@ -71,6 +72,7 @@ export const AIAgentModeDialog = () => {
   const titleId = useDialogTitleId();
   const assistantModeEnabled = useAppStore(getIsAssistantModeEnabled);
   const powerModeEnabled = useAppStore(getIsPowerModeEnabled);
+  const computerUseEnabled = useAppStore(getIsComputerUseEnabled);
   const handleClose = () => {
     produceAppState((draft) => {
       draft.settings.agentModeDialogOpen = false;
@@ -100,6 +102,30 @@ export const AIAgentModeDialog = () => {
       draft.local.powerModeEnabled = true;
     });
     setPowerModeWarningOpen(false);
+  };
+
+  // Computer use gets its own confirmation rather than sharing the power-mode
+  // one. The two are different risks in different words: power mode runs
+  // commands, computer use moves the pointer and presses keys, and a user who
+  // accepted the first sentence has not accepted the second.
+  const [computerUseWarningOpen, setComputerUseWarningOpen] = useState(false);
+  const computerUseWarningTitleId = useDialogTitleId();
+
+  const handleComputerUseToggle = (event: ChangeEvent<HTMLInputElement>) => {
+    if (event.target.checked) {
+      setComputerUseWarningOpen(true);
+    } else {
+      produceAppState((draft) => {
+        draft.local.computerUseEnabled = false;
+      });
+    }
+  };
+
+  const handleConfirmComputerUse = () => {
+    produceAppState((draft) => {
+      draft.local.computerUseEnabled = true;
+    });
+    setComputerUseWarningOpen(false);
   };
 
   return (
@@ -153,6 +179,53 @@ export const AIAgentModeDialog = () => {
             variant="contained"
           >
             <FormattedMessage defaultMessage="I understand, enable power mode" />
+          </Button>
+        </DialogActions>
+      </Dialog>
+      <Dialog
+        open={computerUseWarningOpen}
+        onClose={() => setComputerUseWarningOpen(false)}
+        maxWidth="xs"
+        fullWidth
+        role="dialog"
+        aria-labelledby={computerUseWarningTitleId}
+        aria-describedby={`${computerUseWarningTitleId}-description`}
+      >
+        <DialogTitle
+          id={computerUseWarningTitleId}
+          sx={{ display: "flex", alignItems: "center", gap: 1 }}
+        >
+          <WarningAmberRoundedIcon color="warning" />
+          <FormattedMessage defaultMessage="Let the assistant control your screen?" />
+        </DialogTitle>
+        <DialogContent>
+          <Typography
+            id={`${computerUseWarningTitleId}-description`}
+            variant="body2"
+            sx={{ color: "text.secondary" }}
+          >
+            <FormattedMessage defaultMessage="With computer use on, the assistant takes pictures of your screen and moves your mouse and types on your keyboard to carry out what you ask. Anything you can see on screen, it can read." />
+          </Typography>
+          <Typography variant="body2" sx={{ color: "text.secondary", mt: 1.5 }}>
+            <FormattedMessage defaultMessage="You are asked before the assistant clicks, types, moves the pointer or presses a key. Reading actions, such as taking a screenshot, run without asking. You can switch computer use off at any time from this screen." />
+          </Typography>
+          <Typography
+            variant="body2"
+            sx={{ color: "text.secondary", mt: 1.5, fontWeight: 600 }}
+          >
+            <FormattedMessage defaultMessage="Only turn this on for tasks you would have done yourself, and close anything with private or sensitive information before you start." />
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setComputerUseWarningOpen(false)}>
+            <FormattedMessage defaultMessage="Cancel" />
+          </Button>
+          <Button
+            onClick={handleConfirmComputerUse}
+            color="warning"
+            variant="contained"
+          >
+            <FormattedMessage defaultMessage="I understand, turn on computer use" />
           </Button>
         </DialogActions>
       </Dialog>
@@ -217,6 +290,18 @@ export const AIAgentModeDialog = () => {
               onChange={handlePowerModeToggle}
               ariaLabel={intl.formatMessage({
                 defaultMessage: "Power mode",
+              })}
+            />
+
+            <ToggleRow
+              title={<FormattedMessage defaultMessage="Computer use" />}
+              description={
+                <FormattedMessage defaultMessage="Let the assistant see your screen and control the mouse and keyboard, asking before anything that changes what is on screen. Off again when you restart mausVoice." />
+              }
+              checked={computerUseEnabled}
+              onChange={handleComputerUseToggle}
+              ariaLabel={intl.formatMessage({
+                defaultMessage: "Computer use",
               })}
             />
           </Stack>

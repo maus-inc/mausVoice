@@ -1,5 +1,11 @@
 import type { ChatMessage, Conversation } from "@maus-inc/types";
-import { abortAgentLoop, CHAT_AGENT_CONFIG, runAgent } from "../agents";
+import { abortAgentLoop } from "../agents";
+import { runAgentForSend } from "../agents/computer-use/route-agent-run";
+import { abortComputerUseRun } from "../agents/computer-use/run-computer-use-for-conversation";
+import {
+  abortComputerUse,
+  isComputerUseRunning,
+} from "../agents/computer-use/run-computer-use";
 import { getChatMessageRepo, getConversationRepo } from "../repos";
 import { getAppState, produceAppState } from "../store";
 import {
@@ -45,9 +51,17 @@ const enqueueConversationWrite = <T>(
 
 export const abortAgent = (conversationId: string): void => {
   abortAgentLoop(conversationId);
+  // Both halves are needed. The run flag stops the state machine publishing,
+  // and `abortComputerUse` is the only thing that reaches the loop's own abort,
+  // which is what stops the screen actions and releases a held key or button.
+  abortComputerUseRun(conversationId);
+  abortComputerUse(conversationId);
 };
 
 const isAgentRunning = (conversationId: string): boolean => {
+  if (isComputerUseRunning(conversationId)) {
+    return true;
+  }
   const status =
     getAppState().agentStateByConversationId[conversationId]?.status;
   return (
@@ -352,11 +366,11 @@ export const runAgentForConversation = async (
   ) {
     return;
   }
-  // runAgent owns the agent-state cleanup with an identity guard (it only
-  // removes state only while it owns the loop registration). A superseded run finishing after
-  // a newer run started must not delete the newer run's state, so no
+  // Each runner owns its own agent-state cleanup with an identity guard (it
+  // only removes state while it owns the run). A superseded run finishing
+  // after a newer run started must not delete the newer run's state, so no
   // cleanup is done here.
-  await runAgent(conversationId, CHAT_AGENT_CONFIG);
+  await runAgentForSend(conversationId);
 };
 
 const applySendToConversation = async (

@@ -6177,6 +6177,570 @@ pub async fn floating_window_list(app: AppHandle) -> Result<Vec<FloatingWindowIn
     Ok(out)
 }
 
+/// Window that is allowed to drive the screen.
+///
+/// A floating webview is a full renderer with the same invoke capability as the
+/// main window, and it shows content the user did not author. Letting one
+/// capture the screen or move the pointer would turn it into an input device,
+/// so the check lives in Rust rather than in the capability file: capabilities
+/// can only restrict a command wholesale, and here the command is safe for one
+/// caller and not the other.
+fn require_computer_use_window(window: &tauri::WebviewWindow) -> Result<(), String> {
+    require_main_window_label(window.label())
+}
+
+/// The label rule on its own, so the check can be tested without a live window.
+///
+/// A `WebviewWindow` cannot be constructed in a unit test, which would leave the
+/// one gate that stands between a floating webview and the user's screen
+/// untested.
+fn require_main_window_label(label: &str) -> Result<(), String> {
+    if label == "main" {
+        Ok(())
+    } else {
+        Err("Computer use is only available in the main window".to_string())
+    }
+}
+
+/// Every display the machine has, in the geometry a capture will be stated in.
+///
+/// The frontend needs this before it can turn a model coordinate into a click:
+/// a model answers in the pixel space of the image it was shown, and that image
+/// belongs to one display whose origin may not be the desktop's.
+#[tauri::command]
+#[specta::specta]
+pub fn list_displays(
+    window: tauri::WebviewWindow,
+) -> Result<Vec<crate::platform::computer_use::DisplayGeometry>, String> {
+    require_computer_use_window(&window)?;
+    crate::platform::computer_use::displays()
+}
+
+/// Capture a display.
+///
+/// Blocking, because the capture itself is synchronous OS work, but it runs off
+/// the async runtime's threads so a slow framebuffer does not stall whatever
+/// else the UI is doing.
+#[tauri::command]
+#[specta::specta]
+pub async fn capture_screen(
+    request: crate::platform::computer_use::CaptureRequest,
+    window: tauri::WebviewWindow,
+) -> Result<crate::platform::computer_use::CapturedFrame, String> {
+    require_computer_use_window(&window)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::platform::computer_use::capture_screen(&request)
+    })
+    .await
+    .map_err(|err| format!("Screen capture task failed: {err}"))?
+}
+
+/// Zoom into a region of the screenshot the model was last shown.
+///
+/// The region is in that image's pixels, not the display's, because that is the
+/// space every provider states its `zoom` region in. It carries the previous
+/// frame so the crop happens here rather than in the renderer, which has no
+/// image decoder.
+#[tauri::command]
+#[specta::specta]
+pub async fn capture_screen_region(
+    previous: crate::platform::computer_use::CapturedFrame,
+    region: crate::platform::computer_use::PhysicalRect,
+    window: tauri::WebviewWindow,
+) -> Result<crate::platform::computer_use::CapturedFrame, String> {
+    require_computer_use_window(&window)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::platform::computer_use::zoom_capture(previous, region)
+    })
+    .await
+    .map_err(|err| format!("Screen zoom task failed: {err}"))?
+}
+
+/// Where the pointer is, in desktop physical pixels.
+///
+/// `Ok(None)` means the platform cannot say, which the caller must handle
+/// rather than treat as the origin.
+#[tauri::command]
+#[specta::specta]
+pub fn computer_use_pointer_position(
+    window: tauri::WebviewWindow,
+) -> Result<Option<(u32, u32)>, String> {
+    require_computer_use_window(&window)?;
+    crate::platform::computer_use::input::pointer_position()
+}
+
+/// Move the pointer to a point on a display, given in that display's pixels.
+#[tauri::command]
+#[specta::specta]
+pub fn computer_use_move(
+    display_id: u32,
+    x: u32,
+    y: u32,
+    window: tauri::WebviewWindow,
+) -> Result<(), String> {
+    require_computer_use_window(&window)?;
+    let geometry = computer_use_display_geometry(display_id)?;
+    crate::platform::computer_use::input::move_pointer_on_display(x, y, &geometry)
+}
+
+/// Click on a point of a display, in that display's pixels.
+#[tauri::command]
+#[specta::specta]
+pub fn computer_use_click(
+    display_id: u32,
+    x: u32,
+    y: u32,
+    button: crate::platform::computer_use::input::MouseButton,
+    clicks: u32,
+    modifiers: Option<Vec<String>>,
+    window: tauri::WebviewWindow,
+) -> Result<(), String> {
+    require_computer_use_window(&window)?;
+    let geometry = computer_use_display_geometry(display_id)?;
+    let chord = computer_use_optional_chord(modifiers.as_deref())?;
+    crate::platform::computer_use::input::move_pointer_on_display(x, y, &geometry)?;
+    crate::platform::computer_use::input::click(button, clicks, chord.as_ref())
+}
+
+/// Hold a mouse button down without releasing it.
+#[tauri::command]
+#[specta::specta]
+pub fn computer_use_press_button(
+    button: crate::platform::computer_use::input::MouseButton,
+    window: tauri::WebviewWindow,
+) -> Result<(), String> {
+    require_computer_use_window(&window)?;
+    crate::platform::computer_use::input::press_button(button)
+}
+
+/// Release a mouse button held by `computer_use_press_button`.
+#[tauri::command]
+#[specta::specta]
+pub fn computer_use_release_button(
+    button: crate::platform::computer_use::input::MouseButton,
+    window: tauri::WebviewWindow,
+) -> Result<(), String> {
+    require_computer_use_window(&window)?;
+    crate::platform::computer_use::input::release_button(button)
+}
+
+/// Drag between two points of a display, in that display's pixels.
+// A drag is two points, a button, an optional modifier list and the calling
+// window. Grouping them would hide the fact that this is the one command with
+// no natural parameter object, and every other computer use command is
+// positional, so the allow is cheaper than an invented wrapper type.
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+#[specta::specta]
+pub async fn computer_use_drag(
+    display_id: u32,
+    from_x: u32,
+    from_y: u32,
+    to_x: u32,
+    to_y: u32,
+    button: crate::platform::computer_use::input::MouseButton,
+    modifiers: Option<Vec<String>>,
+    window: tauri::WebviewWindow,
+) -> Result<(), String> {
+    require_computer_use_window(&window)?;
+    let geometry = computer_use_display_geometry(display_id)?;
+    let chord = computer_use_optional_chord(modifiers.as_deref())?;
+    // Four OS round trips with movement between them, and an interpolated drag
+    // moves the pointer many more times, so this is the one input command
+    // that can outlive a frame. It goes to the blocking pool with the rest of
+    // the slow work rather than on the async runtime.
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::platform::computer_use::input::drag_on_display(
+            from_x,
+            from_y,
+            to_x,
+            to_y,
+            button,
+            chord.as_ref(),
+            &geometry,
+        )
+    })
+    .await
+    .map_err(|err| format!("Simulated drag task join error: {err}"))?
+}
+
+/// Scroll a number of physical pixels, optionally moving the pointer to the
+/// point the scroll should happen at first.
+#[tauri::command]
+#[specta::specta]
+pub fn computer_use_scroll(
+    direction: crate::platform::computer_use::input::ScrollDirection,
+    amount: u32,
+    display_id: Option<u32>,
+    x: Option<u32>,
+    y: Option<u32>,
+    window: tauri::WebviewWindow,
+) -> Result<(), String> {
+    require_computer_use_window(&window)?;
+    if let ScrollTarget::At { display_id, x, y } = classify_scroll_target(display_id, x, y)? {
+        let geometry = computer_use_display_geometry(display_id)?;
+        crate::platform::computer_use::input::move_pointer_on_display(x, y, &geometry)?;
+    }
+    crate::platform::computer_use::input::scroll(direction, i64::from(amount))
+}
+
+/// Where a scroll should be aimed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScrollTarget {
+    /// Under the pointer, wherever that already is.
+    Pointer,
+    /// At a named display and a point on it.
+    At { display_id: u32, x: u32, y: u32 },
+}
+
+/// Work out a scroll's aim from three independently optional fields.
+///
+/// A caller that names a point has said where it meant to scroll. If any part of
+/// that is missing, scrolling under whatever the pointer happens to be over
+/// performs a different action from the one that was asked for, and it reports
+/// success. So the three fields are all-or-nothing together rather than
+/// pairwise: naming a display without a point, or a point without a display,
+/// is refused instead of quietly ignored.
+fn classify_scroll_target(
+    display_id: Option<u32>,
+    x: Option<u32>,
+    y: Option<u32>,
+) -> Result<ScrollTarget, String> {
+    match (display_id, x, y) {
+        (None, None, None) => Ok(ScrollTarget::Pointer),
+        (Some(display_id), Some(x), Some(y)) => Ok(ScrollTarget::At { display_id, x, y }),
+        (None, _, _) => {
+            Err("A scroll position needs a display as well as x and y, or none of them".to_string())
+        }
+        (Some(_), _, _) => Err(
+            "A scroll position needs both x and y as well as a display, or none of them"
+                .to_string(),
+        ),
+    }
+}
+
+/// Press and release a key chord, optionally repeating it or holding it down.
+#[tauri::command]
+#[specta::specta]
+pub async fn computer_use_press_key(
+    chord: String,
+    repeat: Option<u32>,
+    hold_ms: Option<u64>,
+    window: tauri::WebviewWindow,
+) -> Result<(), String> {
+    require_computer_use_window(&window)?;
+    let gesture = computer_use_key_gesture(&chord, repeat, hold_ms)?;
+    tauri::async_runtime::spawn_blocking(move || match gesture {
+        KeyGesture::Tap(chord) => crate::platform::computer_use::input::press_chord(&chord),
+        KeyGesture::Repeat(chord, times) => {
+            crate::platform::computer_use::input::press_chord_repeated(&chord, times)
+        }
+        KeyGesture::Hold(chord, hold) => {
+            crate::platform::computer_use::input::press_chord_held(&chord, hold)
+        }
+    })
+    .await
+    .map_err(|err| format!("Key press task failed: {err}"))?
+}
+
+/// What a key request turned out to mean, once the chord has been parsed.
+///
+/// Parsed here rather than in the command body so that a malformed chord is
+/// rejected before any thread is spawned, and so the "repeat and hold are
+/// mutually exclusive" rule is a value rather than a branch.
+#[derive(Debug)]
+enum KeyGesture {
+    Tap(crate::platform::computer_use::input::KeyChord),
+    Repeat(crate::platform::computer_use::input::KeyChord, u32),
+    Hold(
+        crate::platform::computer_use::input::KeyChord,
+        std::time::Duration,
+    ),
+}
+
+fn computer_use_key_gesture(
+    chord: &str,
+    repeat: Option<u32>,
+    hold_ms: Option<u64>,
+) -> Result<KeyGesture, String> {
+    use crate::platform::computer_use::input::KeyChord;
+    let chord = KeyChord::parse(chord)?;
+    // One of the two, never both: a chord held for a duration and repeated N
+    // times is a gesture no provider means, and silently picking one would type
+    // something the model did not ask for.
+    if repeat.is_some() && hold_ms.is_some() {
+        return Err("A key cannot be both repeated and held".to_string());
+    }
+    if let Some(times) = repeat {
+        return Ok(KeyGesture::Repeat(chord, times));
+    }
+    match hold_ms {
+        Some(0) | None => Ok(KeyGesture::Tap(chord)),
+        Some(ms) => Ok(KeyGesture::Hold(
+            chord,
+            std::time::Duration::from_millis(ms),
+        )),
+    }
+}
+
+/// Hold a chord down without releasing it, for a following action.
+#[tauri::command]
+#[specta::specta]
+pub fn computer_use_press_key_down(
+    chord: String,
+    window: tauri::WebviewWindow,
+) -> Result<(), String> {
+    require_computer_use_window(&window)?;
+    crate::platform::computer_use::input::press_chord_down(
+        &crate::platform::computer_use::input::KeyChord::parse(&chord)?,
+    )
+}
+
+/// Release a chord held by `computer_use_press_key_down`.
+#[tauri::command]
+#[specta::specta]
+pub fn computer_use_release_key_up(
+    chord: String,
+    window: tauri::WebviewWindow,
+) -> Result<(), String> {
+    require_computer_use_window(&window)?;
+    crate::platform::computer_use::input::release_chord_up(
+        &crate::platform::computer_use::input::KeyChord::parse(&chord)?,
+    )
+}
+
+/// Type text into whatever has focus, optionally pressing Enter afterwards.
+#[tauri::command]
+#[specta::specta]
+pub async fn computer_use_type(
+    text: String,
+    press_enter: bool,
+    window: tauri::WebviewWindow,
+) -> Result<(), String> {
+    require_computer_use_window(&window)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::platform::computer_use::input::type_text(&text)?;
+        if press_enter {
+            crate::platform::computer_use::input::press_chord(
+                &crate::platform::computer_use::input::KeyChord::parse("enter")?,
+            )?;
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|err| format!("Typing task failed: {err}"))?
+}
+
+/// Pause for a while, giving the Stop button a way to cut a wait short.
+#[tauri::command]
+#[specta::specta]
+pub async fn computer_use_wait(
+    duration_ms: u64,
+    window: tauri::WebviewWindow,
+) -> Result<(), String> {
+    require_computer_use_window(&window)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::platform::computer_use::input::wait_cancellable(std::time::Duration::from_millis(
+            duration_ms,
+        ))?;
+        Ok(())
+    })
+    .await
+    .map_err(|err| format!("Wait task failed: {err}"))?
+}
+
+/// Ask any in-flight computer-use input to stop.
+///
+/// The counterpart of the Stop button. It does not queue anything, so a stop
+/// that lands between two actions is picked up by the next one rather than
+/// being replayed into the action after it.
+#[tauri::command]
+#[specta::specta]
+pub fn computer_use_cancel(window: tauri::WebviewWindow) -> Result<(), String> {
+    require_computer_use_window(&window)?;
+    crate::platform::computer_use::input::cancel_input();
+    Ok(())
+}
+
+/// Clear a previous cancel so a new run is not born stopped.
+///
+/// Separate from [`computer_use_cancel`] because the two are called from
+/// opposite ends of a run: one by the Stop button, the other when a run
+/// starts, and collapsing them would let a late cancel disarm the next run.
+#[tauri::command]
+#[specta::specta]
+pub fn computer_use_reset_cancel(window: tauri::WebviewWindow) -> Result<(), String> {
+    require_computer_use_window(&window)?;
+    crate::platform::computer_use::input::reset_input_cancel();
+    Ok(())
+}
+
+fn computer_use_display_geometry(
+    display_id: u32,
+) -> Result<crate::platform::computer_use::DisplayGeometry, String> {
+    crate::platform::computer_use::selected_display(&crate::platform::computer_use::CaptureRequest {
+        display: crate::platform::computer_use::CaptureDisplay::Id(display_id),
+        ..Default::default()
+    })
+}
+
+/// Turn an optional key list into a chord.
+///
+/// `None` and an empty list both mean "no modifiers", so a caller that has
+/// nothing to hold does not get an error for having nothing.
+fn computer_use_optional_chord(
+    keys: Option<&[String]>,
+) -> Result<Option<crate::platform::computer_use::input::KeyChord>, String> {
+    match keys {
+        None => Ok(None),
+        Some([]) => Ok(None),
+        Some(keys) => {
+            let spelling = keys.join("+");
+            crate::platform::computer_use::input::KeyChord::from_parts(keys, &spelling).map(Some)
+        }
+    }
+}
+
+#[cfg(test)]
+mod computer_use_tests {
+    use super::*;
+
+    #[test]
+    fn the_main_window_may_drive_the_screen() {
+        assert!(require_main_window_label("main").is_ok());
+    }
+
+    /// The gate that stops a floating webview from becoming an input device.
+    /// Asserted on the refusal text too, because the message is what a user
+    /// sees when a pill window somehow reaches for the screen.
+    #[test]
+    fn any_other_window_is_refused_with_a_message_naming_the_window() {
+        for label in ["floating-1", "pill", "main-webview", "MAIN", ""] {
+            let err = require_main_window_label(label).unwrap_err();
+            assert!(err.contains("main window"), "unhelpful message: {err}");
+        }
+    }
+
+    // `computer_use_display_geometry` has no test of its own, deliberately. It is
+    // five lines of wiring over `selected_display`, whose own failure message is
+    // covered in `capture.rs`. A test of the unknown-id path would need a
+    // display to be absent while the X connection is present, which is not a
+    // state this sandbox or CI can produce: with no X server at all the call
+    // fails earlier with "Could not connect to the X display".
+
+    #[test]
+    fn a_plain_key_request_is_a_single_tap() {
+        let gesture = computer_use_key_gesture("enter", None, None).unwrap();
+        assert!(matches!(gesture, KeyGesture::Tap(_)));
+    }
+
+    #[test]
+    fn a_repeated_key_request_is_repeated_that_many_times() {
+        let gesture = computer_use_key_gesture("tab", Some(4), None).unwrap();
+        match gesture {
+            KeyGesture::Repeat(_, times) => assert_eq!(times, 4),
+            other => panic!("expected a repeat, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_held_key_request_becomes_a_hold_of_that_length() {
+        let gesture = computer_use_key_gesture("shift", None, Some(1500)).unwrap();
+        match gesture {
+            KeyGesture::Hold(_, hold) => assert_eq!(hold, std::time::Duration::from_millis(1500)),
+            other => panic!("expected a hold, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_zero_length_hold_is_a_tap_rather_than_a_hold_of_nothing() {
+        let gesture = computer_use_key_gesture("shift", None, Some(0)).unwrap();
+        assert!(matches!(gesture, KeyGesture::Tap(_)));
+    }
+
+    #[test]
+    fn a_key_cannot_be_both_repeated_and_held() {
+        let err = computer_use_key_gesture("shift", Some(3), Some(500)).unwrap_err();
+        assert!(
+            err.contains("repeated and held"),
+            "unhelpful message: {err}"
+        );
+    }
+
+    #[test]
+    fn a_malformed_chord_is_refused_even_when_the_gesture_is_also_ambiguous() {
+        // Both errors apply to this request. The chord error must win, because
+        // a caller that sent an unparseable key learns nothing from also being
+        // told the combination was ambiguous.
+        let err = computer_use_key_gesture("ctrl+nope", Some(3), Some(500)).unwrap_err();
+        assert!(!err.contains("repeated and held"), "wrong error won: {err}");
+    }
+
+    #[test]
+    fn an_absent_modifier_means_no_modifier() {
+        assert!(computer_use_optional_chord(None).unwrap().is_none());
+    }
+
+    #[test]
+    fn an_empty_modifier_list_means_no_modifier() {
+        // A caller with nothing to hold should not be told it asked for nothing
+        // it could not name. This is the shape a model sends when it means "no
+        // modifiers", so treating it as an error would fail harmless clicks.
+        assert!(computer_use_optional_chord(Some(&[])).unwrap().is_none());
+    }
+
+    #[test]
+    fn a_modifier_chord_is_parsed_rather_than_passed_through() {
+        let keys = vec!["ctrl".to_string(), "shift".to_string()];
+        let chord = computer_use_optional_chord(Some(&keys)).unwrap();
+        assert!(chord.is_some());
+    }
+
+    #[test]
+    fn a_scroll_with_no_position_scrolls_under_the_pointer() {
+        assert_eq!(
+            classify_scroll_target(None, None, None).unwrap(),
+            ScrollTarget::Pointer
+        );
+    }
+
+    #[test]
+    fn a_scroll_with_a_whole_position_uses_it() {
+        assert_eq!(
+            classify_scroll_target(Some(3), Some(10), Some(20)).unwrap(),
+            ScrollTarget::At {
+                display_id: 3,
+                x: 10,
+                y: 20
+            }
+        );
+    }
+
+    #[test]
+    fn a_scroll_point_without_a_display_is_refused_rather_than_ignored() {
+        // Silently scrolling under the pointer instead of where the caller
+        // asked is the defect this closes: the action differs from the request
+        // and it still reports success.
+        let err = classify_scroll_target(None, Some(10), Some(20)).unwrap_err();
+        assert!(
+            err.contains("display"),
+            "message should name the field: {err}"
+        );
+    }
+
+    #[test]
+    fn a_scroll_display_without_a_point_is_refused_rather_than_ignored() {
+        let err = classify_scroll_target(Some(3), Some(10), None).unwrap_err();
+        assert!(err.contains("x and y"), "message should name both: {err}");
+    }
+
+    #[test]
+    fn a_malformed_modifier_is_refused_before_the_pointer_moves() {
+        let keys = vec!["ctrl".to_string(), "wat".to_string()];
+        assert!(computer_use_optional_chord(Some(&keys)).is_err());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

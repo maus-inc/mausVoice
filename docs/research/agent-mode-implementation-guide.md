@@ -1624,3 +1624,62 @@ All research was verified against primary sources:
 | shlawgathon/Computer-Use | `https://github.com/shlawgathon/Computer-Use` | Tauri 2 + xcap + enigo |
 | pipi-shrimp-agent | `https://github.com/mammut001/pipi-shrimp-agent` | Multi-provider agent runtime |
 | tiylabs/tiycore | Rust agent runtime | Protocol-based LLM abstraction |
+
+---
+
+## Appendix L: As-built reality
+
+This appendix records what was actually built, where each piece lives, and where the build diverges from the plan above. It is written after the fact, from the committed code, so the paths and names here are the ones to grep.
+
+### Files created
+
+| Path | Purpose |
+|---|---|
+| `packages/types/src/ai-computer-use.types.ts` | The portable vocabulary. `ComputerUseAction` (15 members), `ComputerUseScreenshot`, `ComputerUseTurn`, `ComputerUseSession`, `ComputerUseSessionFactory`, `ProviderCapabilities`, `COMPUTER_USE_ACTION_TYPES`. |
+| `packages/voice-ai/src/computer-use/coordinate-scale.ts` | Grid and capture-space coordinate conversion. |
+| `packages/voice-ai/src/computer-use/argument-readers.ts` | Shared readers that never default a missing field. |
+| `packages/voice-ai/src/computer-use/computer-use-transport.ts` | HTTP plus retry, turn termination guards, PNG assertion. |
+| `packages/voice-ai/src/computer-use/gemini-computer-use.ts` | Gemini `ComputerUseSession` adapter. |
+| `packages/voice-ai/src/computer-use/anthropic-computer-use.ts` | Anthropic `ComputerUseSession` adapter. |
+| `packages/voice-ai/src/computer-use/computer-use-registry.ts` | `COMPUTER_USE_PROVIDERS`, keyed by provider id. |
+| `apps/desktop/src-tauri/src/platform/computer_use/` | Capture and input per platform: `mod.rs`, `capture.rs`, `capture_linux.rs`, `capture_macos.rs`, `capture_windows.rs`, `input.rs`. |
+| `apps/desktop/src/agents/computer-use/computer-use-executor.ts` | Turns a portable action into native calls. |
+| `apps/desktop/src/agents/computer-use/computer-use-risk.ts` | Risk tier and plain-language summary per action. |
+| `apps/desktop/src/agents/computer-use/computer-use-loop.ts` | The turn loop and the stuck detector. |
+| `apps/desktop/src/agents/computer-use/computer-use-approval.ts` | Approval through the existing permission store. |
+| `apps/desktop/src/agents/computer-use/run-computer-use.ts` | Session construction from agent-mode prefs. |
+| `apps/desktop/src/agents/computer-use/run-computer-use-for-conversation.ts` | Maps loop events onto `AgentRunState` and chat messages. |
+| `apps/desktop/src/agents/computer-use/route-agent-run.ts` | Chooses computer use or the existing chat run. |
+| `apps/desktop/src/agents/computer-use/tauri-computer-use.host.ts` | The native host over the generated bindings. |
+| `apps/desktop/src/agents/finalize-assistant-message.ts` | Extracted from `run-agent.ts` so both runners finalize a message the same way. |
+| `apps/desktop/src/tools/README.md`, `apps/desktop/src-tauri/src/commands/README.md`, `apps/desktop/src-tauri/capabilities/README.md` | Documentation required before merge. |
+
+### Files changed
+
+`packages/types/src/ai-tool.types.ts` (added `ToolRisk`, `TOOL_RISK`, and a required `risk` on `ToolInfo`), `apps/desktop/src/tools/index.ts` (`assertRateable` guard, `staticInfo` takes a risk), `apps/desktop/src/utils/tool-permission.utils.ts` (action-scoped always-allow, revoke removes every scope), `apps/desktop/src/agents/run-agent.ts` (risk-tier-aware `executeWithPermission`, shared finalizer), `apps/desktop/src/actions/chat.actions.ts` (delegates to the router, aborts both runs, reports both as running), `apps/desktop/src/state/local.state.ts` and `apps/desktop/src/utils/assistant-mode.utils.ts` (the `computerUseEnabled` toggle), `apps/desktop/src/components/settings/AIAgentModeDialog.tsx` (the toggle and its own warning dialog), `apps/desktop/src-tauri/src/commands.rs`, `apps/desktop/src-tauri/src/app.rs`, `apps/desktop/src-tauri/src/platform/mod.rs`, `apps/desktop/src-tauri/examples/gen_bindings.rs`, `apps/desktop/src-tauri/Cargo.toml`, and `packages/desktop-native-apis/src/bindings.ts`.
+
+### Deviations from the plan
+
+**Three dependencies were rejected after reading their sources.**
+
+`xcap` was dropped in favour of platform APIs already in the crate. `windows` already exposes GDI through a feature another file imports, `core-graphics` is already a dependency, and `x11` is already there for the windowing work. Adding `xcap` would have meant a new crate plus a new fetch.
+
+`enigo` was rejected because the pinned 0.1.3 exposes only a string DSL, `eval(&mut Enigo, "click(100,200)")`, with no typed event. Input goes through `rdev`, which was already a dependency and already used by the hotkey code.
+
+`pixelcoords-core` was rejected because the crate already computes display geometry per platform. The only genuinely new arithmetic was converting between the three coordinate spaces, which is a small amount of testable arithmetic and belongs next to the capture code rather than behind a crate.
+
+**Capture is JPEG by default, with PNG where the provider demands it.** Ground rule 11 fixed JPEG at 1280 pixels and quality 80. Both providers also reject a non-PNG screenshot. The loop therefore always captures PNG at 1280 pixels wide, and the JPEG path exists for callers that want it. The two requirements are reconciled in one place rather than being left to the caller.
+
+**Screen capture is refused on Wayland rather than approximated.** Ground rule 15 removed Wayland from Phases 1 to 3, so the Linux backend returns a message naming the missing portal service instead of falling back to a path that would not work.
+
+**Computer use is a session-local switch, not a stored preference.** The toggle lives in `LocalState` next to `powerModeEnabled`, which already gates the terminal-command tool the same way. A stored preference would silently re-arm pointer control on the next launch.
+
+**There is no new agent status.** The computer-use runner writes into the existing `AgentRunState`, `StreamingMessageState` and chat-message shapes, so the current chat list, permission card and stop button work unchanged. Adding a status to the union would have touched every consumer for no user-visible gain.
+
+**The provider list is a registry, not a branch.** The plan described one adapter per provider. The build instead keys `COMPUTER_USE_PROVIDERS` by provider id and asks `supportsComputerUse` before routing, so adding a provider means adding one registration. Nothing above the registry knows a provider's name.
+
+### Verification notes
+
+The Linux build cannot see the Windows or macOS capture files. `cargo clippy --all-targets -D warnings` on Linux exits 0 without compiling them, and the CI job on `windows-2022` is the only authority there. Everything Windows-specific was written against the `windows` crate's own signatures and needs that job to confirm.
+
+Several defects in the first pass were only visible by running the code rather than reading it: a key parser that never called its named-key branch, a JPEG encoder handed a pixel format it rejects, a zoom that assumed the previous frame was PNG when the default capture is JPEG, and a coordinate helper used in the opposite direction from the one it converts.

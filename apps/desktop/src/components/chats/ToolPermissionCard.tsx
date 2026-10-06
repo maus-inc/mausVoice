@@ -16,6 +16,11 @@ export const ToolPermissionCard = ({ permission }: ToolPermissionCardProps) => {
       onAllow={() => resolveToolPermission(permission.id, "allowed")}
       onDeny={() => resolveToolPermission(permission.id, "denied")}
       onAlwaysAllow={() => {
+        // `setToolAlwaysAllow` writes the conversation scope so the grant
+        // applies immediately. A `computer_use:*` tool id also gets the action
+        // scope, so the same question is not asked again in the next
+        // conversation; the four registry tools get the conversation scope
+        // alone, which is what they got before tiers existed.
         setToolAlwaysAllow({
           toolId: permission.toolId,
           params: permission.params,

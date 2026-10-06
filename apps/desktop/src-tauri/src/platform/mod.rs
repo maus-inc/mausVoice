@@ -30,6 +30,12 @@ pub enum PasteKeybindSupport {
 
 pub mod common;
 
+// Deliberately not cfg-gated per OS. The whole point of this module is that the
+// frontend and the agent loop see ONE computer-use surface on every platform,
+// so gating it would mean every caller re-deriving which platforms have one.
+// The per-OS work is confined to the `capture_*` files inside it.
+pub mod computer_use;
+
 // Deliberately not `cfg`-gated. The decision the Windows resume watcher makes
 // from a `PBT_POWERSETTINGCHANGE` payload is pure data, and no CI job runs
 // `cargo test` on Windows, so it lives where it is tested on every platform.

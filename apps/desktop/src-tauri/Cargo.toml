@@ -65,7 +65,12 @@ base64 = "0.21"
 # to verify in-place updates.
 minisign-verify = "=0.2.5"
 ferrous-focus = { git = "https://github.com/MichaelWGibson/ferrous-focus" }
-image = { version = "0.25.2", default-features = false, features = ["jpeg"] }
+# `png` alongside `jpeg` for the computer-use capture path. Both computer-use
+# providers require a PNG result image and reject JPEG on a result, so a
+# capture that can only encode JPEG cannot complete a turn. png 0.18.1 is
+# already in this lockfile through image's own dependency graph, so the feature
+# adds no new download.
+image = { version = "0.25.2", default-features = false, features = ["jpeg", "png"] }
 rand = "0.8"
 sha2 = "0.10"
 chacha20poly1305 = "0.10"

@@ -5,9 +5,10 @@ import type {
 } from "@maus-inc/types";
 import { getToolRepo } from "../repos";
 import { getAppState, produceAppState } from "../store";
-import { createTool } from "../tools";
+import { createTool, getToolRegistryEntry } from "../tools";
 import type { ToolExecutionContext } from "../tools/base.tool";
 import { registerToolInfos, registerToolPermission } from "../utils/app.utils";
+import { setToolAlwaysAllow as setStoredAlwaysAllow } from "../utils/tool-permission.utils";
 
 export const loadTools = async (): Promise<void> => {
   const toolInfos = await getToolRepo().listToolInfos();
@@ -113,6 +114,16 @@ export const setToolAlwaysAllow = (opts: {
   const state = getAppState();
   const toolInfo = state.toolInfoById[opts.toolId];
   if (!toolInfo) return;
+  // Computer-use permissions are backed by a synthetic `ToolInfo` that has no
+  // `BaseTool`, because each action is executed by the computer-use loop
+  // rather than by a registered tool. Asking the registry for one threw, and
+  // the throw happened before the permission was resolved, so "Always allow"
+  // turned every prompt into the timeout denial it was meant to prevent. The
+  // storage helper is the same one those tools read their grants from.
+  if (!getToolRegistryEntry(opts.toolId)) {
+    setStoredAlwaysAllow(opts.toolId, opts.allowed, opts.scope);
+    return;
+  }
   const tool = createTool(toolInfo);
   tool.setAlwaysAllow(opts.params, opts.allowed, opts.scope);
 };
