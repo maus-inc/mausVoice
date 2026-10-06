@@ -1,5 +1,6 @@
 import {
   Button,
+  Container,
   Dialog,
   DialogActions,
   DialogContent,
@@ -159,7 +160,11 @@ export default function TranscriptionsPage() {
     <>
       <TranscriptionsSideEffects />
       <Stack spacing={2} sx={{ height: "100%" }}>
-        <TipCard id="review-before-insert" />
+        {/* Same column as the list below: a full-width banner read as a
+            window-level notice rather than part of the page. */}
+        <Container maxWidth="sm">
+          <TipCard id="review-before-insert" />
+        </Container>
         <ScrollListPage
           title={<FormattedMessage defaultMessage="History" />}
           subtitle={

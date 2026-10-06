@@ -1,4 +1,4 @@
-import { Stack } from "@mui/material";
+import { Container, Stack } from "@mui/material";
 import { useAppStore } from "../../store";
 import { getEffectiveStylingMode } from "../../utils/feature.utils";
 import { TipCard } from "../onboarding/TipCard";
@@ -11,7 +11,11 @@ export default function StylingPage() {
 
   return (
     <Stack spacing={2}>
-      <TipCard id="writing-styles" href="/dashboard/styling" />
+      {/* Same column as the style list below: a full-width banner read as a
+          window-level notice rather than part of the page. */}
+      <Container maxWidth="sm">
+        <TipCard id="writing-styles" />
+      </Container>
       {stylingMode === "manual" ? (
         <ManualStylingLayout />
       ) : (

@@ -1221,7 +1221,13 @@ export default function SettingsPage() {
         <FormattedMessage defaultMessage="How mausVoice should manage your transcriptions." />
       }
     >
-      <TipCard id="generative-provider" />
+      {/* The action focuses the Groq key row in place instead of navigating
+          (the Help list's "Open settings" href is a no-op on this page). */}
+      <TipCard
+        id="generative-provider"
+        actionLabel={<FormattedMessage defaultMessage="Add API key" />}
+        onAction={() => focusSetting("groq_api_key")}
+      />
       <SettingAnchor settingKey="deepgram_api_key" highlight={highlight}>
         <ListTile
           title={<FormattedMessage defaultMessage="Deepgram API key" />}
