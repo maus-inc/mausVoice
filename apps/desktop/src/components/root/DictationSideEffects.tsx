@@ -34,7 +34,11 @@ import {
 import { useTauriListen } from "../../hooks/tauri.hooks";
 import { useToastAction } from "../../hooks/toast.hooks";
 import { getBrowserRouter } from "../../router";
-import { createTranscriptionSession } from "../../sessions";
+import {
+  createTranscriptionSession,
+  resolveTranscriptionSessionKind,
+} from "../../sessions";
+import { startLiveProviderSession } from "../../sessions/provider-startup.utils";
 import { RecordingMode } from "../../state/app.state";
 import { getAppState, produceAppState, useAppStore } from "../../store";
 import { AgentStrategy } from "../../strategies/agent.strategy";
@@ -135,6 +139,11 @@ import { resetHotkeyFilter } from "../../utils/hotkey-filter.utils";
 
 type StartRecordingResponse = {
   sampleRate: number;
+};
+
+type PendingProviderStartup = {
+  operationId: number;
+  promise: Promise<void>;
 };
 
 type AbortMessage = {
@@ -461,6 +470,10 @@ export const DictationSideEffects = () => {
   const sessionRef = useRef<TranscriptionSession | null>(null);
   const audioChunkUnlistenRef = useRef<UnlistenFn | null>(null);
   const recordingOperationRef = useRef(0);
+  const providerStartupRef = useRef<PendingProviderStartup | null>(null);
+  const providerStartupAbortControllerRef = useRef<AbortController | null>(
+    null,
+  );
   const nativeStartOwnerRef = useRef<number | null>(null);
   const preDictationVolumeRef = useRef<number | null>(null);
   const recordingWarningTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -617,6 +630,11 @@ export const DictationSideEffects = () => {
       // Invalidate the operation token first so an in-flight start tail cannot
       // arm timers or dim the volume after teardown.
       recordingOperationRef.current += 1;
+      providerStartupAbortControllerRef.current?.abort(
+        new DOMException("Dictation view unmounted", "AbortError"),
+      );
+      providerStartupAbortControllerRef.current = null;
+      providerStartupRef.current = null;
       systemVolumeDim.endRecording();
       releaseRecordingResources({
         audioChunkUnlistenRef,
@@ -748,6 +766,11 @@ export const DictationSideEffects = () => {
       // act on a recording that is over, and end the dim, so a volume write
       // already in flight cannot apply after this returns.
       recordingOperationRef.current += 1;
+      providerStartupAbortControllerRef.current?.abort(
+        new DOMException("Dictation canceled", "AbortError"),
+      );
+      providerStartupAbortControllerRef.current = null;
+      providerStartupRef.current = null;
       systemVolumeDim.endRecording();
       getLogger().info(
         `Aborting recording (hasSession=${!!sessionRef.current}, hasStrategy=${!!strategyRef.current}${message ? `, reason=${String(message.body).slice(0, 120)}` : ""})`,
@@ -1032,6 +1055,7 @@ export const DictationSideEffects = () => {
 
   const stopRecordingRaw = useCallback(async (): Promise<RawStopResp> => {
     const ownedAudioChunkUnlisten = audioChunkUnlistenRef.current;
+    const pendingProviderStartup = providerStartupRef.current;
     getLogger().info("Stopping recording");
     clearRecordingTimers();
     // The recording is over from here, so the dim is ended now rather than after
@@ -1050,6 +1074,9 @@ export const DictationSideEffects = () => {
           shouldContinue: false,
           abortMessage: "No audio data received",
         };
+      }
+      if (pendingProviderStartup) {
+        await pendingProviderStartup.promise;
       }
       sendPillStageText(intl.formatMessage({ defaultMessage: "Transcribing" }));
       return await finalizeAndPostProcess({ audio, context });
@@ -1502,6 +1529,83 @@ export const DictationSideEffects = () => {
         }
         nativeStartOwnerRef.current = null;
         const startedSession = session;
+        const sessionKind = resolveTranscriptionSessionKind({
+          mode: transcriptPrefs.mode,
+          provider:
+            transcriptPrefs.mode === "api" ? transcriptPrefs.provider : null,
+        });
+        const cleanupStartedSession = () => {
+          try {
+            startedSession.cleanup();
+          } catch (error) {
+            getLogger().warning(
+              `Session cleanup failed after startup: ${error}`,
+            );
+          }
+        };
+        const replayStartupAudio = () => {
+          startupAudioBuffer.setSink((chunk, offset) => {
+            forwardAudioChunk(startedSession, chunk, offset);
+          });
+          startupAudioBuffer.replay();
+          startupAudioBuffer.reset();
+          audioForwardingReady = true;
+        };
+        const startActiveRecordingEffects = () => {
+          startUserRecordingTimers();
+          void systemVolumeDim.dim(operationId);
+        };
+
+        if (sessionKind === "live-streaming") {
+          const controller = new AbortController();
+          providerStartupAbortControllerRef.current = controller;
+          const startupPromise = (async () => {
+            try {
+              await startLiveProviderSession({
+                session: startedSession,
+                sampleRate,
+                controller,
+              });
+              if (!isCurrentStart()) {
+                cleanupStartedSession();
+                return;
+              }
+              replayStartupAudio();
+              sendPillStageText(null);
+            } catch (error) {
+              if (!isCurrentStart()) {
+                cleanupStartedSession();
+                return;
+              }
+              getLogger().warning(
+                `Live provider startup failed; preserving the captured recording: ${error}`,
+              );
+              cleanupStartedSession();
+              startupAudioBuffer.reset();
+              audioForwardingReady = true;
+              sendPillStageText(null);
+              if (!isStoppingRef.current) {
+                void stopRecording();
+              }
+            } finally {
+              if (providerStartupRef.current?.operationId === operationId) {
+                providerStartupRef.current = null;
+              }
+              if (providerStartupAbortControllerRef.current === controller) {
+                providerStartupAbortControllerRef.current = null;
+              }
+            }
+          })();
+          providerStartupRef.current = {
+            operationId,
+            promise: startupPromise,
+          };
+          sendPillStageText(
+            intl.formatMessage({ defaultMessage: "Connecting" }),
+          );
+          startActiveRecordingEffects();
+          return;
+        }
 
         await startedSession.onRecordingStart(sampleRate);
 
@@ -1509,28 +1613,12 @@ export const DictationSideEffects = () => {
           getLogger().warning(
             "Session was aborted while starting; skipping timers",
           );
-          startedSession.cleanup();
+          cleanupStartedSession();
           return;
         }
 
-        startupAudioBuffer.setSink((chunk, offset) => {
-          forwardAudioChunk(startedSession, chunk, offset);
-        });
-        startupAudioBuffer.replay();
-        startupAudioBuffer.reset();
-        audioForwardingReady = true;
-
-        // Keep the user-configured active-audio timers at their established
-        // start point after session initialization succeeds.
-        startUserRecordingTimers();
-        // Fire-and-forget. `startRecording` is an onActivate handler and the
-        // activation controller serialises activate before deactivate, so
-        // awaiting here would put the volume round trips in front of the stop
-        // that the user's key release triggers, keeping the microphone open past
-        // release. The dim retires itself on its own operation id, and every stop
-        // path ends it before awaiting anything, so a stop landing mid-dim is
-        // handled without awaiting.
-        void systemVolumeDim.dim(operationId);
+        replayStartupAudio();
+        startActiveRecordingEffects();
       } catch (error) {
         handleStartFailure(error, activeSession, operationId);
       }
@@ -1543,6 +1631,7 @@ export const DictationSideEffects = () => {
       prepareAutoStyle,
       hardResetHotkeyState,
       intl,
+      stopRecording,
       startProviderRecordingTimers,
       startUserRecordingTimers,
       systemVolumeDim,
@@ -1805,6 +1894,11 @@ export const DictationSideEffects = () => {
 
     // Stop the microphone/transcription without tearing down the assistant panel
     recordingOperationRef.current += 1;
+    providerStartupAbortControllerRef.current?.abort(
+      new DOMException("Switched to text mode", "AbortError"),
+    );
+    providerStartupAbortControllerRef.current = null;
+    providerStartupRef.current = null;
     systemVolumeDim.endRecording();
     clearRecordingTimers();
     hardResetHotkeyState();

@@ -184,6 +184,7 @@
   "connect_a_transcription_provider_like_groq_with_your_api_key": "Verbinden Sie einen Transkriptionsanbieter wie Groq mit Ihrem API-Schlüssel.",
   "connect_address_address_port": "Verbindungsadresse: {address}:{port}",
   "connect_your_api_keys": "API-Schlüssel verbinden",
+  "connecting": "Verbindung wird hergestellt",
   "continue": "Fortfahren",
   "continue_with_google": "Mit Google fortfahren",
   "control_when_the_dictation_pill_is_shown_on_screen": "Steuern Sie, wann die Diktier‑Pille auf dem Bildschirm angezeigt wird.",

@@ -1,5 +1,7 @@
 const TAP_THRESHOLD_MS = 500;
 
+type ActivationPhase = "idle" | "starting" | "active" | "stopping";
+
 export class ActivationController {
   private _isActive = false;
   private _isLocked = false;
@@ -7,17 +9,12 @@ export class ActivationController {
   private deactivateTimer: ReturnType<typeof setTimeout> | null = null;
   private pressTimestamp: number | null = null;
   private lastReleaseTimestamp: number | null = null;
-  private toggleInProgress = false;
+  private phase: ActivationPhase = "idle";
+  private stopRequested = false;
+  private operationGeneration = 0;
   private onActivateRef: (() => void) | null = null;
   private onDeactivateRef: (() => void) | null = null;
   private readonly holdToTalk: boolean;
-  // Serializes activate/deactivate side effects. The dictation callbacks are async at runtime
-  // (start/stopRecording), so a quick hold-to-talk press+release could otherwise fire
-  // stopRecording while startRecording is still initializing, clearing the session out from
-  // under the resuming start. Chaining through a promise guarantees a deactivate runs only
-  // after its preceding activate has fully settled. (The callbacks stay typed `() => void` to
-  // avoid a circular-inference chain in the consumer; `then` still awaits the thenable they
-  // return at runtime.)
   private opChain: Promise<void> = Promise.resolve();
 
   constructor(
@@ -58,47 +55,95 @@ export class ActivationController {
     }
   }
 
-  // Run a side effect after all previously queued ones settle. Prior failures are isolated
-  // so one rejected callback cannot stall the chain.
-  private runSerialized(op: (() => void | Promise<void>) | null): void {
-    if (!op) return;
-    this.opChain = this.opChain.catch(() => {}).then(() => op());
-  }
-
-  private doActivate(timestamp: number): void {
-    if (this._isActive) return;
-
-    this.clearPendingDeactivation();
-    this._isActive = true;
-    this.pressTimestamp = timestamp;
-    this.runSerialized(this.onActivateRef);
-  }
-
-  private doDeactivate(): void {
-    const wasActive = this._isActive;
-
-    this.clearPendingDeactivation();
+  private resetActiveState(): void {
     this._isActive = false;
     this._isLocked = false;
     this.ignoreNextActivation = false;
     this.pressTimestamp = null;
+  }
 
-    if (wasActive) {
-      this.runSerialized(this.onDeactivateRef);
+  private enqueue(op: () => void | Promise<void>): void {
+    this.opChain = this.opChain
+      .catch(() => undefined)
+      .then(() => op())
+      .catch(() => undefined);
+  }
+
+  private queueDeactivation(generation: number): void {
+    this.phase = "stopping";
+    this.stopRequested = false;
+    this.enqueue(async () => {
+      if (generation !== this.operationGeneration) return;
+      try {
+        await this.onDeactivateRef?.();
+      } finally {
+        if (generation === this.operationGeneration) {
+          this.phase = "idle";
+        }
+      }
+    });
+  }
+
+  private doActivate(timestamp: number): void {
+    if (this.phase !== "idle") return;
+
+    this.clearPendingDeactivation();
+    this.phase = "starting";
+    this._isActive = true;
+    this.pressTimestamp = timestamp;
+    const generation = ++this.operationGeneration;
+
+    this.enqueue(async () => {
+      if (generation !== this.operationGeneration) return;
+      try {
+        await this.onActivateRef?.();
+      } catch {
+        if (generation === this.operationGeneration) {
+          this.resetActiveState();
+          this.stopRequested = false;
+          this.phase = "idle";
+        }
+        return;
+      }
+
+      if (generation !== this.operationGeneration) return;
+      if (this.stopRequested) {
+        this.queueDeactivation(generation);
+      } else {
+        this.phase = "active";
+      }
+    });
+  }
+
+  private doDeactivate(): void {
+    this.clearPendingDeactivation();
+
+    if (this.phase === "starting") {
+      if (this.stopRequested) return;
+      this.stopRequested = true;
+      this.resetActiveState();
+      return;
     }
+
+    if (this.phase !== "active") {
+      this.resetActiveState();
+      return;
+    }
+
+    this.resetActiveState();
+    this.queueDeactivation(++this.operationGeneration);
   }
 
   handlePress(): void {
-    if (this.ignoreNextActivation) {
+    if (this.ignoreNextActivation || this.phase === "stopping") {
       return;
     }
 
     const now = Date.now();
-
     this.clearPendingDeactivation();
     this.pressTimestamp = now;
 
-    if (!this._isActive) {
+    if (this.phase === "idle") {
       this.doActivate(now);
     }
   }
@@ -109,8 +154,6 @@ export class ActivationController {
 
     if (!this._isActive) return;
 
-    // Pure hold-to-talk: releasing the key always stops, regardless of how long it was held.
-    // No tap-to-lock — the key being down is the entire "recording" state.
     if (this.holdToTalk) {
       this.doDeactivate();
       return;
@@ -126,29 +169,26 @@ export class ActivationController {
       } else {
         this._isLocked = true;
       }
-    } else {
-      if (!this._isLocked) {
-        this.doDeactivate();
-      }
+    } else if (!this._isLocked) {
+      this.doDeactivate();
     }
   }
 
   toggle(): void {
-    if (this.toggleInProgress) {
+    if (this.phase === "starting") {
+      this.doDeactivate();
       return;
     }
-    this.toggleInProgress = true;
-    try {
-      if (this._isActive) {
-        this.doDeactivate();
-      } else {
-        this._isLocked = true;
-        this.lastReleaseTimestamp = Date.now();
-        this.doActivate(Date.now());
-      }
-    } finally {
-      this.toggleInProgress = false;
+    if (this.phase === "stopping") return;
+
+    if (this.phase === "active") {
+      this.doDeactivate();
+      return;
     }
+
+    this._isLocked = true;
+    this.lastReleaseTimestamp = Date.now();
+    this.doActivate(Date.now());
   }
 
   reset(): void {
@@ -159,10 +199,10 @@ export class ActivationController {
   }
 
   forceReset(): void {
-    this._isActive = false;
-    this._isLocked = false;
-    this.ignoreNextActivation = false;
-    this.pressTimestamp = null;
+    this.operationGeneration += 1;
+    this.phase = "idle";
+    this.stopRequested = false;
+    this.resetActiveState();
     this.clearPendingDeactivation();
   }
 

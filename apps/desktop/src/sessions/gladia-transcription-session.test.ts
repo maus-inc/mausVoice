@@ -62,11 +62,13 @@ describe("GladiaTranscriptionSession", () => {
     const onSegment = vi.fn();
     session.setInterimResultCallback(onSegment);
 
-    await session.onRecordingStart(16000);
+    const started = session.onRecordingStart(16000);
+    await vi.waitFor(() => expect(mocks.sessionOptions).not.toBeNull());
     session.writeAudioChunk(new Float32Array(320).fill(0.25));
     expect(mocks.sendAudio).not.toHaveBeenCalled();
 
     mocks.sessionOptions?.onReady?.();
+    await started;
     expect(mocks.sendAudio).toHaveBeenCalledOnce();
     expect(mocks.sendAudio.mock.calls[0]?.[0]).toBeInstanceOf(ArrayBuffer);
 
@@ -82,8 +84,10 @@ describe("GladiaTranscriptionSession", () => {
 
   it("returns the provider result and exposes a pause-safe 179-minute cap", async () => {
     const session = new GladiaTranscriptionSession("key", "solaria-1");
-    await session.onRecordingStart(16000);
+    const started = session.onRecordingStart(16000);
+    await vi.waitFor(() => expect(mocks.sessionOptions).not.toBeNull());
     mocks.sessionOptions?.onReady?.();
+    await started;
 
     expect(session.getMaximumRecordingDurationMs()).toBe(179 * 60 * 1000);
     const result = await session.finalize({
@@ -105,8 +109,10 @@ describe("GladiaTranscriptionSession", () => {
 
   it("records Gladia's normalized model for an unsupported persisted value", async () => {
     const session = new GladiaTranscriptionSession("key", "retired-model");
-    await session.onRecordingStart(16000);
+    const started = session.onRecordingStart(16000);
+    await vi.waitFor(() => expect(mocks.sessionOptions).not.toBeNull());
     mocks.sessionOptions?.onReady?.();
+    await started;
 
     const result = await session.finalize({
       samples: new Float32Array(0),
@@ -120,8 +126,10 @@ describe("GladiaTranscriptionSession", () => {
 
   it("hands locally buffered reconnect audio to the SDK before finalizing", async () => {
     const session = new GladiaTranscriptionSession("key", "solaria-1");
-    await session.onRecordingStart(16000);
+    const started = session.onRecordingStart(16000);
+    await vi.waitFor(() => expect(mocks.sessionOptions).not.toBeNull());
     mocks.sessionOptions?.onReady?.();
+    await started;
     mocks.sessionOptions?.onConnectionInterrupted?.();
     session.writeAudioChunk(new Float32Array(320).fill(0.25));
     expect(mocks.sendAudio).not.toHaveBeenCalled();
@@ -136,11 +144,13 @@ describe("GladiaTranscriptionSession", () => {
     expect(mocks.cleanup).toHaveBeenCalledOnce();
   });
 
-  it("cleans buffers and the SDK session idempotently", async () => {
+  it("cleans buffers and the SDK session idempotently during startup", async () => {
     const session = new GladiaTranscriptionSession("key", null);
-    await session.onRecordingStart(16000);
+    const started = session.onRecordingStart(16000);
+    await vi.waitFor(() => expect(mocks.sessionOptions).not.toBeNull());
     session.cleanup();
     session.cleanup();
+    await expect(started).resolves.toBeUndefined();
 
     expect(mocks.cleanup).toHaveBeenCalledOnce();
   });

@@ -184,6 +184,7 @@
   "connect_a_transcription_provider_like_groq_with_your_api_key": "Connectez un fournisseur de transcription comme Groq avec votre clé API.",
   "connect_address_address_port": "Adresse de connexion : {address}:{port}",
   "connect_your_api_keys": "Connectez vos clés API",
+  "connecting": "Connexion en cours",
   "continue": "Continuer",
   "continue_with_google": "Continuer avec Google",
   "control_when_the_dictation_pill_is_shown_on_screen": "Contrôlez quand la pilule de dictée s'affiche à l’écran.",

@@ -303,6 +303,21 @@ describe("i18n catalogs", () => {
     }
   });
 
+  it("translates the live-provider Connecting status in every locale", () => {
+    const locales = loadLocales();
+    const english = messagesFor(locales, manifest.defaultLocale);
+    expect(english.connecting).toBe("Connecting");
+
+    for (const locale of (manifest.supportedLocales as string[]).filter(
+      (code) => code !== manifest.defaultLocale,
+    )) {
+      expect(locales[locale]?.connecting, `${locale}:connecting`).toBeTruthy();
+      expect(locales[locale]?.connecting, `${locale}:connecting`).not.toBe(
+        english.connecting,
+      );
+    }
+  });
+
   it("translates failed-transcription audio controls in every locale", () => {
     const locales = loadLocales();
     const keyedEnglish = messagesFor(locales, manifest.defaultLocale);

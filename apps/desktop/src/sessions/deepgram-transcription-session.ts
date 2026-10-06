@@ -10,6 +10,10 @@ import { loadMyEffectiveDictationLanguage } from "../utils/user.utils";
 import { BaseApiTranscriptionSession } from "./base-api-transcription-session";
 import { createTranscriptAccumulator } from "./transcript-accumulator.utils";
 import { createAudioChunkBuffer } from "./transcription-stream.utils";
+import {
+  addStartupAbortListener,
+  getStartupAbortReason,
+} from "./provider-startup.utils";
 
 type DeepgramStreamingSession = {
   finalize: () => Promise<string>;
@@ -25,6 +29,7 @@ const startDeepgramStreaming = async (
   language: string,
   keyterms: string[],
   onInterimResult?: (segment: string) => void,
+  signal?: AbortSignal,
 ): Promise<DeepgramStreamingSession> => {
   getLogger().verbose(
     `[${LOGGER_PREFIX}] Starting with sample rate:`,
@@ -133,6 +138,26 @@ const startDeepgramStreaming = async (
   };
 
   return new Promise((resolve, reject) => {
+    let startupSettled = false;
+    let removeAbortListener: () => void = () => undefined;
+
+    const rejectStartup = (error: unknown) => {
+      if (startupSettled) return;
+      startupSettled = true;
+      removeAbortListener();
+      cleanup();
+      reject(error);
+    };
+    const resolveStartup = () => {
+      if (startupSettled) return;
+      startupSettled = true;
+      removeAbortListener();
+      resolve({ finalize, cleanup, writeAudioChunk });
+    };
+
+    removeAbortListener = addStartupAbortListener(signal, rejectStartup);
+    if (startupSettled) return;
+
     const wsUrl = buildDeepgramWebSocketUrl({
       sampleRate,
       language,
@@ -142,15 +167,24 @@ const startDeepgramStreaming = async (
       `[${LOGGER_PREFIX}] Connecting to:`,
       redactQueryParamValues(wsUrl, ["keyterm"]),
     );
-    ws = new WebSocket(wsUrl, ["token", apiKey]);
+    try {
+      ws = new WebSocket(wsUrl, ["token", apiKey]);
+    } catch (error) {
+      rejectStartup(error);
+      return;
+    }
 
     ws.onopen = () => {
+      if (signal?.aborted) {
+        rejectStartup(getStartupAbortReason(signal));
+        return;
+      }
       getLogger().verbose(
         `[${LOGGER_PREFIX}] Connected, flushing buffered audio...`,
       );
       buffer.flush(false);
       getLogger().verbose(`[${LOGGER_PREFIX}] Session ready`);
-      resolve({ finalize, cleanup, writeAudioChunk });
+      resolveStartup();
     };
 
     ws.onmessage = (event) => {
@@ -189,6 +223,9 @@ const startDeepgramStreaming = async (
           getLogger().verbose(`[${LOGGER_PREFIX}] Metadata received:`, data);
         } else if (messageType === "Error" || data.error) {
           getLogger().error(`[${LOGGER_PREFIX}] Error from server:`, data);
+          if (!startupSettled) {
+            rejectStartup(new Error("Deepgram rejected the streaming session"));
+          }
         }
       } catch (error) {
         getLogger().error(`[${LOGGER_PREFIX}] Error parsing message:`, error);
@@ -197,8 +234,11 @@ const startDeepgramStreaming = async (
 
     ws.onerror = (error) => {
       getLogger().error(`[${LOGGER_PREFIX}] WebSocket error:`, error);
-      cleanup();
-      reject(new Error("WebSocket connection failed"));
+      if (!startupSettled) {
+        rejectStartup(new Error("WebSocket connection failed"));
+      } else {
+        cleanup();
+      }
     };
 
     ws.onclose = (event) => {
@@ -206,6 +246,12 @@ const startDeepgramStreaming = async (
         code: event.code,
         reason: event.reason,
       });
+      if (!startupSettled) {
+        rejectStartup(
+          new Error("WebSocket closed before the connection opened"),
+        );
+        return;
+      }
       if (isFinalized && finalizeResolver) {
         completeFinalize();
       }
@@ -230,11 +276,15 @@ export class DeepgramTranscriptionSession extends BaseApiTranscriptionSession {
     return true;
   }
 
-  async onRecordingStart(sampleRate: number): Promise<void> {
+  async onRecordingStart(
+    sampleRate: number,
+    signal?: AbortSignal,
+  ): Promise<void> {
     this.startupPromise = (async () => {
       try {
         const state = getAppState();
         const deepgramLanguage = await loadMyEffectiveDictationLanguage(state);
+        if (signal?.aborted) throw getStartupAbortReason(signal);
         const { terms: keyterms, warning } = buildProviderVocabulary(
           collectDictionaryEntries(state),
           DEEPGRAM_KEYTERM_BUDGET,
@@ -251,12 +301,14 @@ export class DeepgramTranscriptionSession extends BaseApiTranscriptionSession {
           deepgramLanguage,
           keyterms,
           this.interimCallback ?? undefined,
+          signal,
         );
         getLogger().verbose(
           "[Deepgram] Streaming session started successfully",
         );
       } catch (error) {
         getLogger().error("[Deepgram] Failed to start streaming:", error);
+        throw error;
       }
     })();
     await this.startupPromise;
@@ -266,7 +318,7 @@ export class DeepgramTranscriptionSession extends BaseApiTranscriptionSession {
     audio: Parameters<BaseApiTranscriptionSession["finalize"]>[0],
   ) {
     if (this.startupPromise) {
-      await this.startupPromise;
+      await this.startupPromise.catch(() => undefined);
     }
     return super.finalize(audio);
   }

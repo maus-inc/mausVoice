@@ -184,6 +184,7 @@
   "connect_a_transcription_provider_like_groq_with_your_api_key": "API 키로 Groq과 같은 음성 인식 제공자를 연결하세요.",
   "connect_address_address_port": "연결 주소: {address}:{port}",
   "connect_your_api_keys": "API 키 연결",
+  "connecting": "연결 중",
   "continue": "계속",
   "continue_with_google": "Google로 계속",
   "control_when_the_dictation_pill_is_shown_on_screen": "스크린에 dictation pill이 표시되는 시점을 제어합니다.",

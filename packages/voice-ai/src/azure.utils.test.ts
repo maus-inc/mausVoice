@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   azureTestIntegration,
   azureTranscribeAudio,
+  createAzureStreamingSession,
   buildSilentProbeWav,
   writeWavChunkId,
 } from "./azure.utils";
@@ -24,6 +25,15 @@ const speech = vi.hoisted(() => ({
   subscriptions: [] as string[][],
   formats: [] as unknown[][],
   calls: 0,
+  streaming: {
+    autoSessionStarted: true,
+    startupError: null as string | null,
+    hangStart: false,
+    sessionStarted: null as (() => void) | null,
+    pushStreamCloses: 0,
+    recognizerCloses: 0,
+    writes: [] as ArrayBuffer[],
+  },
 }));
 /** Where the probe's own log lines land, so a test can read them. */
 const consoleError = vi.hoisted(() => vi.fn());
@@ -52,14 +62,46 @@ vi.mock("microsoft-cognitiveservices-speech-sdk", () => ({
   },
   AudioInputStream: {
     createPushStream: () => ({
-      write: () => undefined,
-      close: () => undefined,
+      write: (buffer: ArrayBuffer) => speech.streaming.writes.push(buffer),
+      close: () => {
+        speech.streaming.pushStreamCloses += 1;
+      },
     }),
   },
   AudioConfig: {
     fromStreamInput: () => ({}),
   },
   SpeechRecognizer: class {
+    private sessionStartedHandler: (() => void) | null = null;
+
+    get sessionStarted() {
+      return this.sessionStartedHandler;
+    }
+
+    set sessionStarted(handler: (() => void) | null) {
+      this.sessionStartedHandler = handler;
+      speech.streaming.sessionStarted = handler;
+    }
+
+    startContinuousRecognitionAsync(
+      onStarted: () => void,
+      onError: (message: string) => void,
+    ) {
+      if (speech.streaming.hangStart) return;
+      if (speech.streaming.startupError !== null) {
+        onError(speech.streaming.startupError);
+        return;
+      }
+      onStarted();
+      if (speech.streaming.autoSessionStarted) {
+        this.sessionStarted?.();
+      }
+    }
+
+    stopContinuousRecognitionAsync(onStopped: () => void) {
+      onStopped();
+    }
+
     recognizeOnceAsync(
       callback: (result: unknown) => void,
       onError: (message: string) => void,
@@ -76,10 +118,9 @@ vi.mock("microsoft-cognitiveservices-speech-sdk", () => ({
       }
       callback(speech.result);
     }
-    // Deliberately empty: the recognizer's own state is the module-scoped
-    // `speech` object these tests read after the call, so there is nothing for
-    // a mock instance to hold and nothing here to release.
-    close() {}
+    close() {
+      speech.streaming.recognizerCloses += 1;
+    }
   },
   PhraseListGrammar: {
     fromRecognizer: () => ({
@@ -89,6 +130,10 @@ vi.mock("microsoft-cognitiveservices-speech-sdk", () => ({
   ResultReason: {
     RecognizedSpeech: "recognized",
     NoMatch: "no-match",
+    RecognizingSpeech: "recognizing",
+  },
+  CancellationReason: {
+    Error: "error",
   },
 }));
 
@@ -109,6 +154,13 @@ beforeEach(() => {
   speech.subscriptions = [];
   speech.formats = [];
   speech.calls = 0;
+  speech.streaming.autoSessionStarted = true;
+  speech.streaming.startupError = null;
+  speech.streaming.hangStart = false;
+  speech.streaming.sessionStarted = null;
+  speech.streaming.pushStreamCloses = 0;
+  speech.streaming.recognizerCloses = 0;
+  speech.streaming.writes = [];
   // The probe logs every failure it raises, which keeps the run readable and
   // lets the message-bound test read what was logged.
   vi.spyOn(console, "error").mockImplementation(consoleError);
@@ -185,6 +237,67 @@ const fromCharCodes = (...codes: number[]): string =>
   String.fromCharCode(...codes);
 
 const azureKeyFixture = (): string => hexString(32, 0);
+
+describe("createAzureStreamingSession startup", () => {
+  const input = {
+    subscriptionKey: "key",
+    region: "eastus",
+    sampleRate: 16_000,
+    language: "en-US",
+    phrases: [],
+  };
+
+  it("waits for the SDK sessionStarted event before resolving", async () => {
+    speech.streaming.autoSessionStarted = false;
+    const started = createAzureStreamingSession(input);
+    let settled = false;
+    void started.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
+    );
+    await Promise.resolve();
+
+    expect(settled).toBe(false);
+    const onSessionStarted = speech.streaming.sessionStarted;
+    expect(onSessionStarted).toBeTypeOf("function");
+    onSessionStarted?.();
+
+    const session = await started;
+    session.writeAudioChunk(new Float32Array([0.5, -0.5]));
+    const written = speech.streaming.writes[0];
+    expect(written).toBeInstanceOf(ArrayBuffer);
+    expect(written?.byteLength).toBe(4);
+    session.cleanup();
+  });
+
+  it("closes the Speech SDK recognizer when startup is aborted", async () => {
+    speech.streaming.autoSessionStarted = false;
+    const controller = new AbortController();
+    const started = createAzureStreamingSession({
+      ...input,
+      signal: controller.signal,
+    });
+
+    controller.abort(new Error("startup timed out"));
+
+    await expect(started).rejects.toThrow("startup timed out");
+    expect(speech.streaming.pushStreamCloses).toBe(1);
+    expect(speech.streaming.recognizerCloses).toBe(1);
+  });
+
+  it("rejects when the SDK reports a startup failure", async () => {
+    speech.streaming.startupError = "connection rejected";
+
+    await expect(createAzureStreamingSession(input)).rejects.toThrow(
+      "Failed to start Azure recognition: connection rejected",
+    );
+    expect(speech.streaming.recognizerCloses).toBe(1);
+  });
+});
 
 describe("azureTestIntegration", () => {
   it("reaches the recognizer with a real WAV header instead of throwing locally", async () => {
