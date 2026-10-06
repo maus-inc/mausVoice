@@ -3203,7 +3203,7 @@ pub async fn resume_recording(
 #[tauri::command]
 pub async fn store_transcription_audio(
     app: AppHandle,
-    request: tauri::ipc::Request,
+    request: tauri::ipc::Request<'_>,
 ) -> Result<TranscriptionAudioSnapshot, String> {
     let header_value = request
         .headers()
