@@ -388,6 +388,21 @@ export class DictationStrategy extends BaseStrategy {
     let pendingPersistence: HandleTranscriptResult["pendingPersistence"];
     const remoteDeviceId = this.getActiveRemoteTargetDeviceId();
 
+    // Records a late failure on the warning list and, when the row was already
+    // written concurrently with delivery, on the stored row itself. On the
+    // serial path the list rides on the store call that still lies ahead; the
+    // concurrent row needs the explicit append because its store already ran.
+    const recordFailureWarning = (errorMessage: string): void => {
+      postProcessWarnings.push(errorMessage);
+      if (pendingPersistence) {
+        void pendingPersistence.then(({ transcription }) => {
+          if (transcription) {
+            void appendTranscriptionWarnings(transcription.id, [errorMessage]);
+          }
+        });
+      }
+    };
+
     try {
       sanitizedTranscript = this.sanitizeTranscript(args.rawTranscript);
       if (sanitizedTranscript) {
@@ -566,6 +581,12 @@ export class DictationStrategy extends BaseStrategy {
           getLogger().info("Transcript output routed successfully");
         } catch (error) {
           getLogger().error(`Failed to route transcription output: ${error}`);
+          // A delivery failure is a failure of this utterance, so it rides on
+          // the row the same way a post-processing failure does: on the serial
+          // path via the warning list, on the concurrent row via the append.
+          recordFailureWarning(
+            error instanceof Error ? error.message : "An error occurred.",
+          );
           showErrorSnackbar(
             error instanceof Error
               ? error.message
@@ -576,21 +597,9 @@ export class DictationStrategy extends BaseStrategy {
     } catch (error) {
       getLogger().error(`Failed to process transcription: ${error}`);
 
-      const errorMessage =
-        error instanceof Error ? error.message : "An error occurred.";
-      postProcessWarnings.push(errorMessage);
-
-      if (pendingPersistence) {
-        // The row was already written concurrently with delivery, so this
-        // warning cannot ride on the original store call the way it does on
-        // the serial path. Attach it once the write settles so the stored row
-        // carries the same warnings either way.
-        void pendingPersistence.then(({ transcription }) => {
-          if (transcription) {
-            void appendTranscriptionWarnings(transcription.id, [errorMessage]);
-          }
-        });
-      }
+      recordFailureWarning(
+        error instanceof Error ? error.message : "An error occurred.",
+      );
 
       await showToast({
         message: "Transcription failed",

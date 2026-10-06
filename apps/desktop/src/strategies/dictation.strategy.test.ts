@@ -566,6 +566,7 @@ describe("DictationStrategy backlog lifecycle", () => {
       const { postProcessTranscript } =
         await import("../actions/transcribe.actions");
       vi.mocked(postProcessTranscript).mockImplementationOnce(async () => {
+        await Promise.resolve();
         const state = getAppState();
         setAppState(
           {
@@ -590,6 +591,36 @@ describe("DictationStrategy backlog lifecycle", () => {
 
       expect(persistTranscriptNow).not.toHaveBeenCalled();
       expect(result).toMatchObject({ historyOwner: "stop-path" });
+    });
+
+    it("attaches a delivery failure to the concurrent row", async () => {
+      // Routing rejects after the row was already written concurrently. The
+      // failure cannot ride on the original store call, so it must be appended
+      // to the stored row once the write settles.
+      const { appendTranscriptionWarnings } =
+        await import("../actions/transcribe.actions");
+      const appendMock = vi.mocked(appendTranscriptionWarnings);
+      appendMock.mockClear();
+      appendMock.mockResolvedValue(undefined);
+      const persistTranscriptNow = vi.fn().mockResolvedValue({
+        transcription: { id: "row-1" },
+        wordCount: 2,
+      });
+      routeTranscriptOutputMock.mockRejectedValueOnce(
+        new Error("paste failed"),
+      );
+
+      const result = await new DictationStrategy().handleTranscript(
+        createHandleTranscriptParams({
+          processedTranscript: "clean transcript",
+          persistTranscriptNow,
+        }),
+      );
+
+      expect(result).toMatchObject({ historyOwner: "concurrent" });
+      await vi.waitFor(() =>
+        expect(appendMock).toHaveBeenCalledWith("row-1", ["paste failed"]),
+      );
     });
 
     it("never rejects the pending write when persistence itself fails", async () => {

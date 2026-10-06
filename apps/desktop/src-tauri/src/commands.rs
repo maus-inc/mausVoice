@@ -3224,18 +3224,15 @@ pub async fn store_transcription_audio(
         }
     };
 
-    let (sample_rate, samples) = decode_recorded_audio(body)?;
+    let (sample_rate, mut samples) = decode_recorded_audio(body)?;
     if sample_rate == 0 {
         return Err("Audio sample rate must be greater than zero".to_string());
     }
 
-    let mut filtered: Vec<f32> = Vec::with_capacity(samples.len());
-    for sample in samples {
-        if sample.is_finite() {
-            filtered.push(sample);
-        }
-    }
-    if filtered.is_empty() {
+    // In place rather than a second Vec: the decoded buffer is the only copy
+    // from here to the WAV write, so filtering cannot double its peak memory.
+    samples.retain(|sample| sample.is_finite());
+    if samples.is_empty() {
         return Err("No usable audio samples provided".to_string());
     }
 
@@ -3243,7 +3240,7 @@ pub async fn store_transcription_audio(
         crate::system::audio_store::save_transcription_audio(
             &app,
             &transcription_id,
-            &filtered,
+            &samples,
             sample_rate,
         )
         .map_err(|err| err.to_string())
