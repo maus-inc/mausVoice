@@ -1,5 +1,4 @@
 import {
-  ArrowRight,
   Eye,
   MessageSquareText,
   PenLine,
@@ -10,19 +9,18 @@ import {
 import { Box, Button, IconButton, Stack, Typography } from "@mui/material";
 import type { SxProps } from "@mui/material/styles";
 import type { SystemStyleObject, Theme } from "@mui/system";
-import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import {
+  AnimatePresence,
+  motion,
+  useReducedMotion,
+  type Variants,
+} from "framer-motion";
 import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { dismissTip } from "../../actions/onboarding.actions";
 import { useAppStore } from "../../store";
-import {
-  enterTransition,
-  exitTransition,
-  fadeVariants,
-  riseVariants,
-} from "../../styles/motion";
-import { premiumSurface } from "../../styles/shadows";
+import { duration } from "../../styles/motion";
 import type { OnboardingTipId } from "../../utils/tips";
 
 export const TIP_COPY: Record<
@@ -69,18 +67,20 @@ export const TIP_COPY: Record<
 };
 
 /**
- * One glyph per tip, from the app's lucide set (stroke 1.9, the sanctioned
- * icon family). The tile the glyph sits in is drawn by `TipCardFrame`, so the
- * icon and its backing never drift apart.
+ * One bare glyph per tip, from the app's lucide set (stroke 1.9, the
+ * sanctioned icon family). 16px — the app's standard quiet-glyph size, the
+ * same as the dismiss X it sits opposite. `TipCardFrame` renders them at
+ * `text.secondary` with no tile behind them: a tip is a neutral nudge, and a
+ * solid square backing would be a surface the message doesn't need.
  */
 export const TIP_ICONS: Record<OnboardingTipId, ReactNode> = {
-  "generative-provider": <Sparkles size={18} strokeWidth={1.9} aria-hidden />,
-  "writing-styles": <PenLine size={18} strokeWidth={1.9} aria-hidden />,
+  "generative-provider": <Sparkles size={16} strokeWidth={1.9} aria-hidden />,
+  "writing-styles": <PenLine size={16} strokeWidth={1.9} aria-hidden />,
   "assistant-mode": (
-    <MessageSquareText size={18} strokeWidth={1.9} aria-hidden />
+    <MessageSquareText size={16} strokeWidth={1.9} aria-hidden />
   ),
-  "review-before-insert": <Eye size={18} strokeWidth={1.9} aria-hidden />,
-  "update-channel": <Rocket size={18} strokeWidth={1.9} aria-hidden />,
+  "review-before-insert": <Eye size={16} strokeWidth={1.9} aria-hidden />,
+  "update-channel": <Rocket size={16} strokeWidth={1.9} aria-hidden />,
 };
 
 export const useTip = (id: OnboardingTipId): boolean =>
@@ -114,19 +114,20 @@ const collectSx = (
 };
 
 /**
- * The presentational shell both tip surfaces render. A machined card from the
- * shared surface language (level1 face, divider hairline, `premiumSurface`
- * lift — the same treatment as dialogs and popovers) laid out as a
- * notification row: an icon tile the user reads first, the copy in the
- * middle, and the affordances (action, dismiss) gathered on the right, the
- * way the app's toasts gather theirs.
+ * The presentational shell both tip surfaces render: a notification _row_,
+ * not a banner. A flat level1 face with a 1px hairline and the standard card
+ * radius — the same material as a list row — so a tip reads as part of the
+ * page, never as an ad pinned to it.
+ *
+ * Deliberately quiet (Linear's inbox rows are the reference class for this
+ * component): a bare 16px glyph at `text.secondary` instead of an icon tile,
+ * no drop shadow (elevation shadows stay with floating layers — toasts,
+ * dialogs, popovers — per the "borders over shadows" rule), and the
+ * affordances gathered on the right the way the app's toasts gather theirs.
  *
  * `HelpPage` lists the same tips with a "Show again" action in place of the
  * dismiss control, so the copy, icons, and frame are all single-sourced here
  * and a change to tip presentation is made in one place.
- *
- * `dismissed` is carried as a prop rather than read from the store here, so
- * the same shell serves a live tip and a dismissed one.
  */
 export const TipCardFrame = ({
   title,
@@ -154,17 +155,15 @@ export const TipCardFrame = ({
         return {
           display: "flex",
           alignItems: "center",
-          gap: 1.5,
+          gap: 1,
           p: 2,
           pr: 1.5,
           borderRadius: 1,
           border: 1,
           borderColor: "divider",
+          // Flat on purpose: in-flow, the row separates by its luminance step
+          // (level1 over level0) and its hairline — no `premiumSurface` cast.
           bgcolor: "level1",
-          boxShadow: premiumSurface.light.rest,
-          ...theme.applyStyles("dark", {
-            boxShadow: premiumSurface.dark.rest,
-          }),
           ...overrides,
         };
       }}
@@ -176,15 +175,8 @@ export const TipCardFrame = ({
           sx={{
             display: "flex",
             alignItems: "center",
-            justifyContent: "center",
             flexShrink: 0,
-            width: 34,
-            height: 34,
-            // 8px is the codebase's small-chip tier (the sonner action chip),
-            // keeping the tile on a sanctioned radius instead of inventing one.
-            borderRadius: 8,
-            bgcolor: "level2",
-            color: "text.primary",
+            color: "text.secondary",
           }}
         >
           {icon}
@@ -208,7 +200,7 @@ export const TipCardFrame = ({
       <Stack
         direction="row"
         spacing={0.5}
-        sx={{ flexShrink: 0, alignItems: "center" }}
+        sx={{ flexShrink: 0, alignItems: "center", ml: 1 }}
       >
         {actions}
         {onDismiss && (
@@ -229,20 +221,41 @@ export const TipCardFrame = ({
 };
 
 /**
- * Entrance/exit motion for a live tip: rises in with the shared product-chrome
- * spring and lifts out on dismiss (opacity-only when the user prefers reduced
- * motion, mirroring `AnimateIn`). The store update waits for the exit to
- * finish so the layout reflows behind the card, not under it.
+ * Motion for a live tip: a quiet reveal — opacity plus a 6px rise on a
+ * 160ms ease-out, lifting out the same way on dismiss. No scale, no spring:
+ * DESIGN.md reserves springs for shared-layout indicators and sets content
+ * reveals at 120–180ms ease-out (Linear's rows appear and clear the same
+ * restrained way). Reduced motion drops the rise and keeps the same clock.
+ *
+ * The store update waits for the exit to finish so the layout reflows behind
+ * the card, not under it.
  */
+const tipVariants: Variants = {
+  hidden: { opacity: 0, y: 6 },
+  shown: { opacity: 1, y: 0, transition: { duration: 0.16, ease: "easeOut" } },
+  gone: {
+    opacity: 0,
+    y: -6,
+    transition: { duration: duration.exit, ease: "easeOut" },
+  },
+};
+const tipFadeVariants: Variants = {
+  hidden: { opacity: 0 },
+  shown: { opacity: 1, transition: { duration: 0.16, ease: "easeOut" } },
+  gone: {
+    opacity: 0,
+    transition: { duration: duration.exit, ease: "easeOut" },
+  },
+};
+
 const TipCardMotion = ({ children }: { children: ReactNode }) => {
   const reduceMotion = useReducedMotion();
   return (
     <motion.div
-      variants={reduceMotion ? fadeVariants : riseVariants}
+      variants={reduceMotion ? tipFadeVariants : tipVariants}
       initial="hidden"
       animate="shown"
       exit="gone"
-      transition={reduceMotion ? exitTransition : enterTransition}
     >
       {children}
     </motion.div>
@@ -318,8 +331,9 @@ export const TipCard = ({
                 <Button
                   size="small"
                   variant="outlined"
-                  endIcon={<ArrowRight size={14} strokeWidth={2} aria-hidden />}
                   onClick={action.onAction}
+                  // A quiet secondary action: no arrow, which would read as a
+                  // marketing CTA in an otherwise neutral row.
                   sx={{ textTransform: "none", borderRadius: 999 }}
                 >
                   {action.label}

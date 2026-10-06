@@ -144,6 +144,20 @@ describe("TipCard", () => {
     expect(dismissButton()).toBeTruthy();
   });
 
+  it("keeps the face flat: hairline, no elevation cast", async () => {
+    await renderCard();
+
+    const card = container.querySelector('[role="note"]');
+    if (!(card instanceof HTMLElement)) {
+      throw new Error("Card not found");
+    }
+    // The row separates by its level1 face and 1px hairline — in-flow tips
+    // must not borrow the floating-layer `premiumSurface` cast. jsdom reports
+    // an undeclared box-shadow as "" rather than "none".
+    expect(getComputedStyle(card).borderTopWidth).toBe("1px");
+    expect(["", "none"]).toContain(getComputedStyle(card).boxShadow);
+  });
+
   it("renders no action for a tip anchored on its own feature page", async () => {
     await renderCard();
 
