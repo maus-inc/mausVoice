@@ -343,6 +343,68 @@ describe("Gemini native transport", () => {
     ).resolves.toEqual({ text: "hello world.", wordsUsed: 2 });
   });
 
+  it.each([
+    {
+      name: "combines non-empty text followed by audioTranscription",
+      parts: [
+        { text: "  hello  " },
+        { audioTranscription: { text: "  world.  " } },
+      ],
+      expected: { text: "hello world.", wordsUsed: 2 },
+    },
+    {
+      name: "concatenates multiple text-only parts without adding separators",
+      parts: [{ text: "hel" }, { text: "lo " }, { text: "world." }],
+      expected: { text: "hello world.", wordsUsed: 2 },
+    },
+  ])("$name", async ({ parts, expected }) => {
+    const customFetch = vi
+      .fn()
+      .mockResolvedValue(
+        jsonResponse({ candidates: [{ content: { parts } }] }),
+      );
+
+    await expect(
+      geminiTranscribeAudio({
+        apiKey: "gemini-key",
+        model: "gemini-3.8-flash",
+        blob: new Uint8Array([1, 2, 3]).buffer,
+        mimeType: "audio/wav",
+        customFetch,
+      }),
+    ).resolves.toEqual(expected);
+  });
+
+  it("rejects an all-blank transcription response", async () => {
+    const customFetch = vi.fn().mockImplementation(() =>
+      Promise.resolve(
+        jsonResponse({
+          candidates: [
+            {
+              content: {
+                parts: [
+                  { text: "" },
+                  { text: " \n\t " },
+                  { audioTranscription: { text: " \n\t " } },
+                ],
+              },
+            },
+          ],
+        }),
+      ),
+    );
+
+    await expect(
+      geminiTranscribeAudio({
+        apiKey: "gemini-key",
+        model: "gemini-3.8-flash",
+        blob: new Uint8Array([1, 2, 3]).buffer,
+        mimeType: "audio/wav",
+        customFetch,
+      }),
+    ).rejects.toThrow("Transcription failed - empty response");
+  });
+
   it("falls back to inlineData when Files API upload fails for transcribe model", async () => {
     const customFetch = vi.fn().mockImplementation((url: string) => {
       if (url.includes("/upload/v1beta/files")) {
