@@ -9,11 +9,11 @@ import {
 } from "lucide-react";
 import { Box, Button, IconButton, Stack, Typography } from "@mui/material";
 import type { SxProps } from "@mui/material/styles";
+import type { SystemStyleObject, Theme } from "@mui/system";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import type { ReactNode } from "react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
-import { useNavigate } from "react-router-dom";
 import { dismissTip } from "../../actions/onboarding.actions";
 import { useAppStore } from "../../store";
 import {
@@ -87,6 +87,33 @@ export const useTip = (id: OnboardingTipId): boolean =>
   useAppStore((s) => !(s.local.dismissedTipIds ?? []).includes(id));
 
 /**
+ * Flattens every `SxProps` form (object, array, theme function, or a mix)
+ * into one style object for the given theme, so a caller's override (e.g.
+ * the Help list's dismissed-tip dim) merges over the frame's base styles
+ * instead of being dropped.
+ */
+const collectSx = (
+  value: SxProps<Theme> | undefined,
+  theme: Theme,
+): SystemStyleObject<Theme> => {
+  const out: Record<string, unknown> = {};
+  const walk = (part: SxProps<Theme> | undefined): void => {
+    if (!part) return;
+    if (typeof part === "function") {
+      walk(part(theme));
+      return;
+    }
+    if (Array.isArray(part)) {
+      part.forEach(walk);
+      return;
+    }
+    Object.assign(out, part);
+  };
+  walk(value);
+  return out as SystemStyleObject<Theme>;
+};
+
+/**
  * The presentational shell both tip surfaces render. A machined card from the
  * shared surface language (level1 face, divider hairline, `premiumSurface`
  * lift — the same treatment as dialogs and popovers) laid out as a
@@ -117,33 +144,30 @@ export const TipCardFrame = ({
   sx?: SxProps;
 }) => {
   const intl = useIntl();
-  // A single merged object: the frame's `sx` override (e.g. the Help list's
-  // dismissed-tip dim) spreads over the base styles rather than into a second
-  // sx entry, so the theme-aware shadow below stays a function-form style.
-  const overrides = sx
-    ? Array.isArray(sx)
-      ? Object.assign({}, ...sx)
-      : sx
-    : {};
   return (
     <Box
       role="note"
-      sx={(theme) => ({
-        display: "flex",
-        alignItems: "center",
-        gap: 1.5,
-        p: 2,
-        pr: 1.5,
-        borderRadius: 1,
-        border: 1,
-        borderColor: "divider",
-        bgcolor: "level1",
-        boxShadow: premiumSurface.light.rest,
-        ...theme.applyStyles("dark", {
-          boxShadow: premiumSurface.dark.rest,
-        }),
-        ...overrides,
-      })}
+      sx={(theme) => {
+        // Overrides resolve here (theme in hand) so any `SxProps` form a
+        // caller passes merges over the base instead of into a second entry.
+        const overrides = collectSx(sx, theme);
+        return {
+          display: "flex",
+          alignItems: "center",
+          gap: 1.5,
+          p: 2,
+          pr: 1.5,
+          borderRadius: 1,
+          border: 1,
+          borderColor: "divider",
+          bgcolor: "level1",
+          boxShadow: premiumSurface.light.rest,
+          ...theme.applyStyles("dark", {
+            boxShadow: premiumSurface.dark.rest,
+          }),
+          ...overrides,
+        };
+      }}
     >
       {icon ? (
         <Box
@@ -190,9 +214,11 @@ export const TipCardFrame = ({
             size="small"
             onClick={onDismiss}
             aria-label={intl.formatMessage({ defaultMessage: "Dismiss tip" })}
+            // No explicit glyph sizing: the theme sizes lucide glyphs inside
+            // icon buttons to the app-wide 16px / 1.9 stroke.
             sx={{ color: "text.secondary", ml: 0.5 }}
           >
-            <X size={14} strokeWidth={2} aria-hidden />
+            <X aria-hidden />
           </IconButton>
         )}
       </Stack>
@@ -221,42 +247,46 @@ const TipCardMotion = ({ children }: { children: ReactNode }) => {
   );
 };
 
+export type TipCardAction = {
+  /**
+   * The button's label. Required (rather than falling back to the tip's
+   * Help-list wording): in-page actions say what they do on this page, which
+   * is not the same thing as the Help list's navigate wording.
+   */
+  label: ReactNode;
+  /** In-place action (scroll + focus a control on this page). */
+  onAction: () => void;
+};
+
 export const TipCard = ({
   id,
-  href,
-  actionLabel,
-  onAction,
+  action,
 }: {
   id: OnboardingTipId;
-  /** Route the action button opens (the Help list uses the tip's anchor route). */
-  href?: string;
-  /**
-   * Label override for an in-page action whose honest wording differs from
-   * the Help list's (which always navigates, e.g. "Open settings").
-   */
-  actionLabel?: ReactNode;
-  /**
-   * In-place action (scroll + focus a control on this page) instead of
-   * navigating. Takes precedence over `href`.
-   */
-  onAction?: () => void;
+  /** In-page action; omit it when the feature the tip introduces is the page itself. */
+  action?: TipCardAction;
 }) => {
-  const navigate = useNavigate();
   const visible = useTip(id);
   const [closing, setClosing] = useState(false);
   const dismissedRef = useRef(false);
 
+  // A dismiss is a deliberate choice, so it must survive the exit being
+  // interrupted (the user navigating away mid-animation): without this the
+  // store update would be lost and the tip would reappear on the next visit.
+  // The ref guard keeps the exit-completion and unmount paths from both
+  // firing (and keeps StrictMode's double cleanup from double-tracking).
+  useEffect(() => {
+    if (!closing) return;
+    return () => {
+      if (!dismissedRef.current) {
+        dismissedRef.current = true;
+        dismissTip(id);
+      }
+    };
+  }, [closing, id]);
+
   if (!visible) return null;
   const copy = TIP_COPY[id];
-  const hasAction = onAction !== undefined || href !== undefined;
-
-  const handleAction = () => {
-    if (onAction) {
-      onAction();
-      return;
-    }
-    if (href) navigate(href);
-  };
 
   const handleDismiss = () => {
     if (closing) return;
@@ -266,8 +296,8 @@ export const TipCard = ({
   return (
     <AnimatePresence
       onExitComplete={() => {
-        // The exit can be interrupted by navigation; only persist the
-        // dismissal once it actually finished.
+        // Persist once the card has actually left; unmount handles the
+        // interrupted case.
         if (!dismissedRef.current) {
           dismissedRef.current = true;
           dismissTip(id);
@@ -282,15 +312,15 @@ export const TipCard = ({
             body={copy.body}
             onDismiss={handleDismiss}
             actions={
-              hasAction ? (
+              action ? (
                 <Button
                   size="small"
                   variant="outlined"
                   endIcon={<ArrowRight size={14} strokeWidth={2} aria-hidden />}
-                  onClick={handleAction}
+                  onClick={action.onAction}
                   sx={{ textTransform: "none", borderRadius: 999 }}
                 >
-                  {actionLabel ?? copy.action}
+                  {action.label}
                 </Button>
               ) : undefined
             }
