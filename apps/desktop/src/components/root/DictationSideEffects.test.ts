@@ -567,7 +567,31 @@ describe("postProcessFinalizedTranscript", () => {
     expect(order.indexOf("idle")).toBeLessThan(order.indexOf("store"));
     expect(storeTranscriptionFn.mock.calls[0]?.[0]).toMatchObject({
       createdAt: expect.any(String),
+      persistAllowedAtCapture: true,
     });
+  });
+
+  it("does not promise History when persistence was off at stop", async () => {
+    isPersistenceAllowedMock.mockReturnValue(false);
+    const { input, showToast } = buildInput({ droppedChars: 42 });
+
+    await postProcessFinalizedTranscript(input);
+    await flushHistoryPersist();
+
+    expect(showToast).toHaveBeenCalledTimes(1);
+    expect(showToast.mock.calls[0]?.[0]?.message).not.toContain("History");
+    expect(showToast.mock.calls[0]?.[0]?.message).toContain("42");
+  });
+
+  it("promises History when the review session already stored the row", async () => {
+    const { input, showToast } = buildInput({ droppedChars: 42 });
+    input.result = { ...input.result, historyOwner: "review" };
+
+    await postProcessFinalizedTranscript(input);
+    await flushHistoryPersist();
+
+    expect(showToast).toHaveBeenCalledTimes(1);
+    expect(showToast.mock.calls[0]?.[0]?.message).toContain("History");
   });
 
   it("copies PCM before the persist job runs so a later mutation cannot alias it", async () => {

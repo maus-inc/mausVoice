@@ -96,10 +96,7 @@ import {
   enqueueHistoryPersist,
   snapshotStopRecordingAudio,
 } from "../../utils/history-persist.utils";
-import {
-  isIncognitoModeEnabled,
-  isPersistenceAllowed,
-} from "../../utils/incognito.utils";
+import { isPersistenceAllowed } from "../../utils/incognito.utils";
 import { createId } from "../../utils/id.utils";
 import {
   AGENT_DICTATE_HOTKEY,
@@ -203,12 +200,19 @@ const enqueueTranscriptionHistory = (
   // take can reuse or mutate the stop-recording buffer while this job waits.
   const audio = snapshotStopRecordingAudio(input.audio);
   const createdAt = input.createdAt ?? dayjs().toISOString();
+  const persistAllowedAtCapture =
+    input.persistAllowedAtCapture ?? isPersistenceAllowed();
   return enqueueHistoryPersist(async () => {
-    const stored = await store({
-      ...input,
-      audio,
-      createdAt,
-    });
+    const stored = await withTimeout(
+      store({
+        ...input,
+        audio,
+        createdAt,
+        persistAllowedAtCapture,
+      }),
+      90_000,
+      context,
+    );
     try {
       options?.onStored?.(stored);
     } catch (error) {
@@ -341,7 +345,7 @@ export const formatReviewPersistenceFailure = (
 };
 
 const formatDroppedEndingMessage = (
-  kind: "history" | "incognito",
+  kind: "history" | "not-saved",
   droppedChars: number,
 ): string => {
   if (kind === "history") {
@@ -356,7 +360,7 @@ const formatDroppedEndingMessage = (
   return getIntl().formatMessage(
     {
       defaultMessage:
-        "That dictation outran fast styling, so its last {droppedChars} characters were left unstyled, and incognito mode is on, so that ending was not saved.",
+        "That dictation outran fast styling, so its last {droppedChars} characters were left unstyled, and that ending was not saved.",
     },
     { droppedChars },
   );
@@ -454,7 +458,7 @@ export const postProcessFinalizedTranscript = async (
     (result.historyOwner ?? "stop-path") === "stop-path";
   const droppedChars = postProcessMetadata?.fastStyleTruncatedChars;
   const persistAllowedAtStop = isPersistenceAllowed();
-  const notifyDroppedEnding = (kind: "history" | "incognito"): void => {
+  const notifyDroppedEnding = (kind: "history" | "not-saved"): void => {
     if (typeof droppedChars !== "number" || droppedChars <= 0) {
       return;
     }
@@ -469,8 +473,10 @@ export const postProcessFinalizedTranscript = async (
     );
   };
 
-  if (isIncognitoModeEnabled()) {
-    notifyDroppedEnding("incognito");
+  if (!persistAllowedAtStop) {
+    notifyDroppedEnding("not-saved");
+  } else if ((result.historyOwner ?? "stop-path") === "review") {
+    notifyDroppedEnding("history");
   }
   if (willStore) {
     getLogger().verbose("Storing transcription");

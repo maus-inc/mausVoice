@@ -833,6 +833,11 @@ export type StoreTranscriptionInput = {
   trace?: PipelineTrace | null;
   /** Captured when the utterance ended, not when the background write runs. */
   createdAt?: string;
+  /**
+   * Persistence decision at utterance end. If false, never write History even
+   * if incognito/ephemeral is turned off before the background job runs.
+   */
+  persistAllowedAtCapture?: boolean;
 };
 
 export type StoreTranscriptionOutput = {
@@ -1025,7 +1030,7 @@ export const storeTranscription = async (
   const wordsAdded = getWordsAdded(input.transcript);
   const transcriptionId = createId();
 
-  if (!isPersistenceAllowed()) {
+  if (!isPersistenceAllowed() || input.persistAllowedAtCapture === false) {
     getLogger().verbose(
       `Persistence suppressed: skipping storage (incognito=${incognitoEnabled}, includeInStats=${includeInStats}, words=${wordsAdded})`,
     );
