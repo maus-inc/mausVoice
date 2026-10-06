@@ -115,10 +115,11 @@ describe("audio intake ownership", () => {
     expect(mocks.listenCalls).toBe(1);
   });
 
-  it("falls back to the whole recording when the subscription fails", async () => {
-    // A subscription that cannot be established is a missing optimisation, not a
-    // broken dictation. Letting this reject reached the outer start-failure
-    // handler and reported "Recording failed" for a recording that was fine.
+  it("tolerates subscription failure so stop can recover the native recording", async () => {
+    // A subscription that cannot be established is not a reason to fail native
+    // capture. Non-streaming sessions can transcribe the full recording at stop;
+    // live sessions finalize empty and rely on the failed-transcription recovery
+    // path to retain audio when the strategy and persistence policy allow.
     mocks.rejectListen = true;
     const intake = await attachSessionAudioIntake(
       sessionWith(vi.fn()),
@@ -128,6 +129,7 @@ describe("audio intake ownership", () => {
     );
     expect(intake.unlisten).toBeNull();
     expect(intake.current).toBe(true);
+    expect(intake.subscriptionFailed).toBe(true);
   });
 
   it("skips registration for a session that takes no live audio", async () => {
@@ -140,6 +142,7 @@ describe("audio intake ownership", () => {
     expect(mocks.listenCalls).toBe(0);
     expect(intake.unlisten).toBeNull();
     expect(intake.current).toBe(true);
+    expect(intake.subscriptionFailed).toBe(false);
   });
 
   it("reports a superseded start that has nothing to attach", async () => {

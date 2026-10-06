@@ -71,9 +71,16 @@ export const startAssemblyAIStreaming = async (
     };
 
     const cleanup = () => {
-      if (ws && ws.readyState !== WebSocket.CLOSED) {
-        ws.close();
-        ws = null;
+      const socket = ws;
+      ws = null;
+      if (socket && socket.readyState !== WebSocket.CLOSED) {
+        try {
+          socket.close();
+        } catch (error) {
+          getLogger().warning(
+            `[${LOGGER_PREFIX}] Failed to close the WebSocket: ${error}`,
+          );
+        }
       }
       buffer.reset();
     };

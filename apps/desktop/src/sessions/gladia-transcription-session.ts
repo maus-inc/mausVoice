@@ -268,15 +268,35 @@ export class GladiaTranscriptionSession implements TranscriptionSession {
   cleanup(): void {
     this.generation++;
     this.finalized = true;
-    this.session?.cleanup();
+
+    const activeSession = this.session;
+    const pump = this.pump;
+    const resampler = this.resampler;
+    const resolveReady = this.readyResolve;
     this.session = null;
-    this.readyResolve?.();
+    this.pump = null;
+    this.resampler = null;
     this.readyResolve = null;
     this.readyPromise = null;
     this.streamReady = false;
-    this.pump?.resetBuffers();
-    this.pump = null;
-    this.resampler?.reset();
-    this.resampler = null;
+    resolveReady?.();
+
+    try {
+      activeSession?.cleanup();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.addWarning(`Gladia cleanup failed: ${message}`);
+      getLogger().warning(`Gladia cleanup failed: ${message}`);
+    }
+    try {
+      pump?.resetBuffers();
+    } catch (error) {
+      getLogger().warning(`Gladia audio-buffer cleanup failed: ${error}`);
+    }
+    try {
+      resampler?.reset();
+    } catch (error) {
+      getLogger().warning(`Gladia resampler cleanup failed: ${error}`);
+    }
   }
 }

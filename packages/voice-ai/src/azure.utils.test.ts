@@ -28,10 +28,12 @@ const speech = vi.hoisted(() => ({
   streaming: {
     autoSessionStarted: true,
     startupError: null as string | null,
+    phraseSetupError: null as string | null,
     hangStart: false,
     sessionStarted: null as (() => void) | null,
     pushStreamCloses: 0,
     recognizerCloses: 0,
+    cleanupOrder: [] as string[],
     writes: [] as ArrayBuffer[],
   },
 }));
@@ -65,6 +67,7 @@ vi.mock("microsoft-cognitiveservices-speech-sdk", () => ({
       write: (buffer: ArrayBuffer) => speech.streaming.writes.push(buffer),
       close: () => {
         speech.streaming.pushStreamCloses += 1;
+        speech.streaming.cleanupOrder.push("push-stream");
       },
     }),
   },
@@ -120,11 +123,17 @@ vi.mock("microsoft-cognitiveservices-speech-sdk", () => ({
     }
     close() {
       speech.streaming.recognizerCloses += 1;
+      speech.streaming.cleanupOrder.push("recognizer");
     }
   },
   PhraseListGrammar: {
     fromRecognizer: () => ({
-      addPhrase: (phrase: string) => capturedPhrases.push(phrase),
+      addPhrase: (phrase: string) => {
+        if (speech.streaming.phraseSetupError !== null) {
+          throw new Error(speech.streaming.phraseSetupError);
+        }
+        capturedPhrases.push(phrase);
+      },
     }),
   },
   ResultReason: {
@@ -156,10 +165,12 @@ beforeEach(() => {
   speech.calls = 0;
   speech.streaming.autoSessionStarted = true;
   speech.streaming.startupError = null;
+  speech.streaming.phraseSetupError = null;
   speech.streaming.hangStart = false;
   speech.streaming.sessionStarted = null;
   speech.streaming.pushStreamCloses = 0;
   speech.streaming.recognizerCloses = 0;
+  speech.streaming.cleanupOrder = [];
   speech.streaming.writes = [];
   // The probe logs every failure it raises, which keeps the run readable and
   // lets the message-bound test read what was logged.
@@ -287,6 +298,7 @@ describe("createAzureStreamingSession startup", () => {
     await expect(started).rejects.toThrow("startup timed out");
     expect(speech.streaming.pushStreamCloses).toBe(1);
     expect(speech.streaming.recognizerCloses).toBe(1);
+    expect(speech.streaming.cleanupOrder).toEqual(["push-stream", "recognizer"]);
   });
 
   it("rejects when the SDK reports a startup failure", async () => {
@@ -295,6 +307,17 @@ describe("createAzureStreamingSession startup", () => {
     await expect(createAzureStreamingSession(input)).rejects.toThrow(
       "Failed to start Azure recognition: connection rejected",
     );
+    expect(speech.streaming.recognizerCloses).toBe(1);
+  });
+
+  it("closes partially-created Azure resources when phrase-list setup throws", async () => {
+    speech.streaming.phraseSetupError = "invalid phrase";
+
+    await expect(
+      createAzureStreamingSession({ ...input, phrases: ["a phrase"] }),
+    ).rejects.toThrow("invalid phrase");
+
+    expect(speech.streaming.pushStreamCloses).toBe(1);
     expect(speech.streaming.recognizerCloses).toBe(1);
   });
 });

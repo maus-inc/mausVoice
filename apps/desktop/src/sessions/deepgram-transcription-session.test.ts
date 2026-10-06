@@ -16,7 +16,9 @@ class MockWebSocket {
   onerror: ((event: Event) => void) | null = null;
   onclose: ((event: CloseEvent) => void) | null = null;
   readonly send = vi.fn();
+  throwOnClose = false;
   readonly close = vi.fn(() => {
+    if (this.throwOnClose) throw new Error("socket close failed");
     this.readyState = MockWebSocket.CLOSED;
   });
 
@@ -84,6 +86,22 @@ describe("Deepgram provider startup cancellation", () => {
     await expect(startup).rejects.toBe(reason);
     expect(socket.close).toHaveBeenCalledOnce();
     expect(socket.readyState).toBe(MockWebSocket.CLOSED);
+  });
+
+  it("settles aborted startup when WebSocket close throws", async () => {
+    const session = new DeepgramTranscriptionSession("api-key");
+    const controller = new AbortController();
+    const reason = new Error("startup canceled");
+    const startup = session.onRecordingStart(16_000, controller.signal);
+    const socket = await waitForSocket();
+    socket.throwOnClose = true;
+
+    controller.abort(reason);
+
+    await expect(startup).rejects.toBe(reason);
+    expect(socket.close).toHaveBeenCalledOnce();
+    expect(() => session.cleanup()).not.toThrow();
+    expect(socket.close).toHaveBeenCalledOnce();
   });
 
   it("rejects a socket that closes before the provider session is ready", async () => {

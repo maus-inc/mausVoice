@@ -288,9 +288,16 @@ const startElevenLabsStreaming = async (
     };
 
     const cleanup = () => {
-      if (ws && ws.readyState !== WebSocket.CLOSED) {
-        ws.close();
-        ws = null;
+      const socket = ws;
+      ws = null;
+      if (socket && socket.readyState !== WebSocket.CLOSED) {
+        try {
+          socket.close();
+        } catch (error) {
+          getLogger().warning(
+            `[ElevenLabs WebSocket] Failed to close the WebSocket: ${error}`,
+          );
+        }
       }
       resetBuffers();
     };

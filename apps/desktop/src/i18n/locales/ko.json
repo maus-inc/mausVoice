@@ -884,6 +884,7 @@
   "transcription": "전사",
   "transcription_details": "음성 인식 세부 정보",
   "transcription_duration": "음성 인식 시간",
+  "transcription_failed_the_recording_audio_was_not_saved": "음성 변환에 실패했습니다. 녹음 오디오는 저장되지 않았습니다.",
   "transcription_failed_your_recording_is_saved_so_you_can_retr": "전사 실패. 녹음은 저장되어 다시 시도할 수 있습니다.",
   "transcription_model": "전사 모델",
   "transcription_model_name_e_g_whisper_1_gpt_4o_transcribe": "전사 모델 이름 (예: whisper-1, gpt-4o-transcribe)",

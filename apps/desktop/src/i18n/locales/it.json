@@ -884,6 +884,7 @@
   "transcription": "Trascrizione",
   "transcription_details": "Dettagli trascrizione",
   "transcription_duration": "Durata trascrizione",
+  "transcription_failed_the_recording_audio_was_not_saved": "Trascrizione non riuscita. L’audio della registrazione non è stato salvato.",
   "transcription_failed_your_recording_is_saved_so_you_can_retr": "Trascrizione non riuscita. La registrazione è salvata così puoi riprovare.",
   "transcription_model": "Modello di trascrizione",
   "transcription_model_name_e_g_whisper_1_gpt_4o_transcribe": "Nome del modello di trascrizione (es. whisper-1, gpt-4o-transcribe)",

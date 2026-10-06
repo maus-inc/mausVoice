@@ -14,6 +14,8 @@ export type SessionAudioIntake = {
   buffer: AudioChunkStartupBuffer;
   unlisten: UnlistenFn | null;
   current: boolean;
+  /** True only when registering the Tauri audio_chunk listener rejected. */
+  subscriptionFailed: boolean;
 };
 
 /**
@@ -57,9 +59,11 @@ export const forwardAudioChunk = (
  * A subscription that cannot be established is reported and tolerated rather
  * than thrown: a `local` or `after-stop` session still transcribes the whole
  * recording, so failing the start there would report "Recording failed" for a
- * dictation that was fine. A `live-streaming` session has no such fallback and
- * finalizes to an empty result, which is a gap in `DictationSideEffects` rather
- * than one this module can close.
+ * dictation that was fine. A `live-streaming` session cannot transcribe the full
+ * captured waveform after this failure and may finalize empty; the stop path
+ * still receives the native recording and the empty-result handler retains it
+ * for retry when the strategy and persistence preferences allow. This is
+ * recovery storage, not an automatic whole-recording transcription fallback.
  */
 export const attachSessionAudioIntake = async (
   session: TranscriptionSession,
@@ -72,7 +76,12 @@ export const attachSessionAudioIntake = async (
     // Nothing to attach, so report the real staleness result. Returning a
     // constant here would let a start that already lost the race overwrite the
     // shared listener ref and detach the recording that replaced it.
-    return { buffer, unlisten: null, current: isCurrent() };
+    return {
+      buffer,
+      unlisten: null,
+      current: isCurrent(),
+      subscriptionFailed: false,
+    };
   }
 
   let receivedChunkCount = 0;
@@ -81,10 +90,11 @@ export const attachSessionAudioIntake = async (
   let hasLoggedTrim = false;
 
   // A subscription that cannot be established is not a reason to fail the
-  // recording, and letting this reject reached the outer start-failure handler
-  // and showed "Recording failed" for a dictation that was perfectly fine. The
-  // caller tolerates a null `unlisten`; see the caveat on the catch below for
-  // the one session kind that cannot survive it.
+  // recording; letting this reject reached the outer start-failure handler and
+  // showed "Recording failed" for a dictation that was otherwise fine. The
+  // caller tolerates a null `unlisten`: local/after-stop sessions can use the
+  // captured recording directly, while live sessions route an empty result to
+  // failed-audio recovery at stop.
   let unlisten: UnlistenFn | null;
   try {
     unlisten = await listenToAudioChunks((samples, offset) => {
@@ -123,22 +133,37 @@ export const attachSessionAudioIntake = async (
       }
     });
   } catch (error) {
-    // Only a session whose `finalize` reads the whole recording passed to it can
-    // recover from this, and a live-streaming provider's cannot: it finalizes
-    // whatever its socket produced, and with no chunk ever written that is
-    // nothing. The recording still happens either way, so this is reported and
-    // the start continues; the empty-result path is what has to notice.
+    // With no audio_chunk listener, a live-streaming provider cannot use the
+    // native waveform passed to finalize; it returns whatever its socket produced
+    // (often no transcript). Keep capture running so stop can retain that waveform
+    // for retry through the empty-result handler when policy allows. This does not
+    // provide an automatic batch-transcription fallback.
     getLogger().warning(
-      `Could not subscribe to the audio chunk stream; the session has no live audio and can only recover by transcribing the whole recording: ${error}`,
+      `Could not subscribe to audio chunks. Non-streaming sessions may transcribe the captured recording at stop; live-streaming sessions cannot receive its audio and rely on retry retention when policy allows: ${error}`,
     );
-    return { buffer, unlisten: null, current: isCurrent() };
+    return {
+      buffer,
+      unlisten: null,
+      current: isCurrent(),
+      subscriptionFailed: true,
+    };
   }
 
   if (!isCurrent()) {
     unlisten();
-    return { buffer, unlisten: null, current: false };
+    return {
+      buffer,
+      unlisten: null,
+      current: false,
+      subscriptionFailed: false,
+    };
   }
-  return { buffer, unlisten, current: true };
+  return {
+    buffer,
+    unlisten,
+    current: true,
+    subscriptionFailed: false,
+  };
 };
 
 type NativeStartOwnerRef = { current: number | null };

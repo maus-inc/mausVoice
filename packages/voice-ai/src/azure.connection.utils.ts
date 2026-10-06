@@ -102,12 +102,13 @@ export const createAbortableAzureConnectionFactory = (
   },
 });
 
-export const disposeAzureConnections = (scope: AzureConnectionScope): void => {
+export const disposeAzureConnections = (
+  scope: AzureConnectionScope,
+  reason = "Azure speech session closed",
+): void => {
   for (const connection of [...scope.connections]) {
     try {
-      void connection
-        .dispose("Azure speech startup canceled")
-        .catch(() => undefined);
+      void connection.dispose(reason).catch(() => undefined);
     } catch {
       // One failing connection must not prevent the rest from being closed.
     }

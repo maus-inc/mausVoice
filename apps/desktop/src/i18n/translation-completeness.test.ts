@@ -24,6 +24,7 @@ const UNIVERSAL_SAFE = [
 const FAILURE_AUDIO_MESSAGES = [
   "keep_the_audio_snapshot_with_a_failed_transcription_so_you_c",
   "preserve_audio_on_failure",
+  "transcription_failed_the_recording_audio_was_not_saved",
 ] as const;
 
 type Messages = Record<string, string>;

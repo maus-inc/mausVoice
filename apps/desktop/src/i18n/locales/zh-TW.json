@@ -884,6 +884,7 @@
   "transcription": "文字轉錄",
   "transcription_details": "轉錄詳情",
   "transcription_duration": "轉錄持續時間",
+  "transcription_failed_the_recording_audio_was_not_saved": "轉錄失敗。錄音音訊未儲存。",
   "transcription_failed_your_recording_is_saved_so_you_can_retr": "轉錄失敗。您的錄音已儲存，可以重試。",
   "transcription_model": "轉錄模型",
   "transcription_model_name_e_g_whisper_1_gpt_4o_transcribe": "轉錄模型名稱（例如 whisper-1、gpt-4o-transcribe）",

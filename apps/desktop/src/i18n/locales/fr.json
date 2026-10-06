@@ -884,6 +884,7 @@
   "transcription": "Transcription",
   "transcription_details": "Détails de la transcription",
   "transcription_duration": "Durée de la transcription",
+  "transcription_failed_the_recording_audio_was_not_saved": "Échec de la transcription. L’audio de l’enregistrement n’a pas été sauvegardé.",
   "transcription_failed_your_recording_is_saved_so_you_can_retr": "Échec de la transcription. Votre enregistrement est sauvegardé pour que vous puissiez réessayer.",
   "transcription_model": "Modèle de transcription",
   "transcription_model_name_e_g_whisper_1_gpt_4o_transcribe": "Nom du modèle de transcription (p. ex. whisper-1, gpt-4o-transcribe)",

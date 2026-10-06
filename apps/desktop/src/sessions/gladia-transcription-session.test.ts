@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   sendAudio: vi.fn(),
   finalize: vi.fn().mockResolvedValue("final transcript"),
   cleanup: vi.fn(),
+  warning: vi.fn(),
   getWarnings: vi.fn(() => [] as string[]),
   createSession: vi.fn(),
   sessionOptions: null as null | {
@@ -36,6 +37,14 @@ vi.mock("../utils/user.utils", () => ({
   loadMyEffectiveDictationLanguage: vi.fn().mockResolvedValue("en-US"),
 }));
 
+vi.mock("../utils/log.utils", () => ({
+  getLogger: () => ({
+    error: vi.fn(),
+    verbose: vi.fn(),
+    warning: mocks.warning,
+  }),
+}));
+
 vi.mock("../utils/prompt.utils", () => ({
   collectDictionaryEntries: () => ({ sources: [], replacements: [] }),
 }));
@@ -47,6 +56,7 @@ beforeEach(() => {
   mocks.sendAudio.mockClear();
   mocks.finalize.mockClear();
   mocks.cleanup.mockClear();
+  mocks.warning.mockClear();
   mocks.getWarnings.mockClear();
   mocks.createSession.mockReset().mockReturnValue({
     sendAudio: mocks.sendAudio,
@@ -142,6 +152,25 @@ describe("GladiaTranscriptionSession", () => {
     expect(mocks.sendAudio).toHaveBeenCalledOnce();
     expect(mocks.finalize).toHaveBeenCalledOnce();
     expect(mocks.cleanup).toHaveBeenCalledOnce();
+  });
+
+  it("unblocks startup and contains SDK cleanup errors", async () => {
+    const session = new GladiaTranscriptionSession("key", null);
+    const started = session.onRecordingStart(16000);
+    await vi.waitFor(() => expect(mocks.sessionOptions).not.toBeNull());
+    mocks.cleanup.mockImplementationOnce(() => {
+      throw new Error("SDK cleanup failed");
+    });
+
+    expect(() => session.cleanup()).not.toThrow();
+    await expect(started).resolves.toBeUndefined();
+    session.writeAudioChunk(new Float32Array(320).fill(0.25));
+
+    expect(mocks.cleanup).toHaveBeenCalledOnce();
+    expect(mocks.sendAudio).not.toHaveBeenCalled();
+    expect(mocks.warning).toHaveBeenCalledWith(
+      expect.stringContaining("Gladia cleanup failed: SDK cleanup failed"),
+    );
   });
 
   it("cleans buffers and the SDK session idempotently during startup", async () => {

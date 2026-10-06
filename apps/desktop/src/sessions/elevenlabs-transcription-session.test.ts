@@ -59,6 +59,7 @@ class FakeWebSocket {
   readyState = FakeWebSocket.CONNECTING;
   url: string;
   sent: string[] = [];
+  throwOnClose = false;
   onopen: (() => void) | null = null;
   onmessage: ((event: { data: string }) => void) | null = null;
   onerror: ((error: unknown) => void) | null = null;
@@ -79,6 +80,7 @@ class FakeWebSocket {
   }
 
   close() {
+    if (this.throwOnClose) throw new Error("socket close failed");
     if (this.readyState === FakeWebSocket.CLOSED) return;
     this.readyState = FakeWebSocket.CLOSED;
     this.onclose?.({ code: 1000 });
@@ -213,6 +215,18 @@ describe("ElevenLabs audio retention across a socket close", () => {
 
     await expect(started).rejects.toThrow("startup timed out");
     expect(socket.readyState).toBe(FakeWebSocket.CLOSED);
+  });
+
+  it("clears retained audio even when WebSocket close throws", async () => {
+    const { session, socket } = await startSession();
+    socket.readyState = FakeWebSocket.CONNECTING;
+    session.writeAudioChunk(chunk());
+    expect(retainedSamples()).toBe(320);
+    socket.throwOnClose = true;
+
+    expect(() => session.cleanup()).not.toThrow();
+
+    expect(retainedSamples()).toBe(0);
   });
 
   it("stops retaining audio once the socket has gone away", async () => {
