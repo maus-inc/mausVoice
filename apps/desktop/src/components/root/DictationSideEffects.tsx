@@ -1757,12 +1757,15 @@ export const DictationSideEffects = () => {
   // map, strategy) and repushes on any change, so a per-component effect keyed
   // to just recording/styling state can't leave the listener stale.
 
-  // Both calls below are discarded, so a rejection from either would be
-  // unhandled rather than reported. They can both reject: `loadChatMessages`
-  // awaits a Tauri IPC with no try/catch of its own, and this callback awaits
-  // `surfaceMainWindow()` at the end. One reporter for both, so the two sites
-  // cannot drift apart in wording -- and named, because the same file already
-  // caught `navigate` on its promise six lines below with the inline form.
+  // `loadChatMessages` below is discarded, so a rejection from it would be
+  // unhandled rather than reported, and it can reject: it awaits
+  // `getChatMessageRepo().listChatMessages(...)` (`chat.actions.ts:288`) with no
+  // try/catch of its own, straight through to the Tauri IPC.
+  //
+  // `surfaceMainWindow()` was named here as a second source and cannot be one --
+  // `window.utils.ts:22-35` attaches `.catch()` to the invoke BEFORE awaiting the
+  // memoized promise, so `await surfaceWindowPromise` there cannot throw. Naming it
+  // would have sent the next reader looking for a rejection that is not reachable.
   const reportConversationOpenFailure = (error: unknown): void => {
     getLogger().warning(
       `Failed to open the conversation: ${error instanceof Error ? error.message : String(error)}`,
