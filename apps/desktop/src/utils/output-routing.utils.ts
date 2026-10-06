@@ -170,16 +170,16 @@ const insertLocalOutput = async (
   return insertLocalTranscriptOutputViaPaste(text, pasteKeybind, isInterim);
 };
 
-const deliverWithInsertionStage = async <T>(
+const deliverWithInsertionStage = async (
   isInterim: boolean | undefined,
   trace: PipelineTrace | null,
-  deliver: () => Promise<T>,
-): Promise<T> => {
+  deliver: () => Promise<RouteTranscriptOutputResult>,
+): Promise<RouteTranscriptOutputResult> => {
   if (!isInterim) {
     sendPillStageText(getIntl().formatMessage({ defaultMessage: "Inserting" }));
   }
   const result = await deliver();
-  if (!isInterim) markPipeline(trace, "inserted");
+  if (!isInterim && result.delivered) markPipeline(trace, "inserted");
   return result;
 };
 
@@ -212,33 +212,37 @@ export const routeTranscriptOutput = async (
     );
   }
 
-  const handsFreeDelayMs = getEffectiveHandsFreeDelayMs(prefs);
+  return deliverWithInsertionStage(args.isInterim, trace, async () => {
+    const handsFreeDelayMs = getEffectiveHandsFreeDelayMs(prefs);
 
-  if (handsFreeDelayMs > 0 && !args.isInterim) {
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, handsFreeDelayMs);
-    });
-    if (sessionId !== handsFreeSessionId) {
+    if (handsFreeDelayMs > 0 && !args.isInterim) {
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, handsFreeDelayMs);
+      });
+      if (sessionId !== handsFreeSessionId) {
+        return { delivered: false, remote: false, deliveredText: null };
+      }
+    }
+
+    const outcome = await insertLocalOutput(
+      context,
+      outputText,
+      args.isInterim,
+    );
+
+    if (args.isInterim && outcome === "copied_to_clipboard") {
       return { delivered: false, remote: false, deliveredText: null };
     }
-  }
 
-  const outcome = await deliverWithInsertionStage(args.isInterim, trace, () =>
-    insertLocalOutput(context, outputText, args.isInterim),
-  );
+    // After a final dictation lands in the target app, watch for corrections
+    // the user makes there and offer to learn them. Interim streamed segments
+    // are excluded: there is no single "final" paste to diff against.
+    if (!args.isInterim && args.mode === "dictation") {
+      beginEditWatch(outputText);
+    }
 
-  if (args.isInterim && outcome === "copied_to_clipboard") {
-    return { delivered: false, remote: false, deliveredText: null };
-  }
-
-  // After a final dictation lands in the target app, watch for corrections
-  // the user makes there and offer to learn them. Interim streamed segments
-  // are excluded: there is no single "final" paste to diff against.
-  if (!args.isInterim && args.mode === "dictation") {
-    beginEditWatch(outputText);
-  }
-
-  return { delivered: true, remote: false, deliveredText: outputText };
+    return { delivered: true, remote: false, deliveredText: outputText };
+  });
 };
 
 // ──────────────────────────────────────────────────────────────────────────────

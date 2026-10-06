@@ -48,6 +48,11 @@ const MAX_AMP = 1.3;
 const STROKE = 1.6;
 const LOAD_FRAC = 0.4;
 const LOAD_SPEED = 0.015;
+const LOAD_TRACK_ALPHA = 0.15;
+const LOAD_IND_ALPHA = 0.7;
+const LOAD_DIM_TRACK_ALPHA = 0.08;
+const LOAD_DIM_IND_ALPHA = 0.22;
+const STAGE_TEXT_ALPHA = 0.9;
 
 const WAVES = [
   { frequency: 0.8, multiplier: 1.6, phaseOffset: 0, opacity: 1 },
@@ -92,11 +97,13 @@ const nextTargetLevel = (
 export const NativePillCanvas = ({
   phase,
   hovered = false,
+  stageText,
   label,
   width = WW,
 }: {
   phase: PillPhase;
   hovered?: boolean;
+  stageText?: string | null;
   label?: string;
   width?: number;
 }) => {
@@ -110,6 +117,7 @@ export const NativePillCanvas = ({
   const stateRef = useRef({
     phase,
     hovered,
+    stageText,
     expandedW,
     expandedH,
     radiusCap,
@@ -119,6 +127,7 @@ export const NativePillCanvas = ({
   stateRef.current = {
     phase,
     hovered,
+    stageText,
     expandedW,
     expandedH,
     radiusCap,
@@ -227,28 +236,51 @@ export const NativePillCanvas = ({
 
       if (expand > 0.1 && s.phase === "loading") {
         drawClipped(() => {
+          const stage = s.stageText?.trim() ? s.stageText.trim() : null;
+          const trackAlpha =
+            (stage ? LOAD_DIM_TRACK_ALPHA : LOAD_TRACK_ALPHA) * expand;
+          const indicatorAlpha =
+            (stage ? LOAD_DIM_IND_ALPHA : LOAD_IND_ALPHA) * expand;
           const barH = 2;
-          const cy = ry + pillH / 2;
+          const barY = ry + (pillH - barH) / 2;
           const pad = pillH * 0.1;
           const tx = rx + pad;
-          const tw = pillW - pad * 2;
-          ctx.lineCap = "round";
-          ctx.lineWidth = barH;
-          ctx.strokeStyle = `rgba(255,255,255,${(0.15 * expand).toFixed(3)})`;
-          ctx.beginPath();
-          ctx.moveTo(tx, cy);
-          ctx.lineTo(tx + tw, cy);
-          ctx.stroke();
-          const iw = tw * LOAD_FRAC;
-          const ix = tx + (tw + iw) * loadOffset - iw;
-          const dl = Math.max(ix, tx);
-          const dr = Math.min(ix + iw, tx + tw);
-          if (dr > dl) {
-            ctx.strokeStyle = `rgba(255,255,255,${(0.7 * expand).toFixed(3)})`;
-            ctx.beginPath();
-            ctx.moveTo(dl, cy);
-            ctx.lineTo(dr, cy);
-            ctx.stroke();
+          const tw = Math.max(pillW - pad * 2, 0);
+          if (tw > 0) {
+            ctx.fillStyle = `rgba(255,255,255,${trackAlpha.toFixed(3)})`;
+            ctx.fillRect(tx, barY, tw, barH);
+            const iw = tw * LOAD_FRAC;
+            const effectiveOffset = s.reduceMotion ? 0.5 : loadOffset;
+            const ix = tx + (tw + iw) * effectiveOffset - iw;
+            const dl = Math.max(ix, tx);
+            const dr = Math.min(ix + iw, tx + tw);
+            if (dr > dl) {
+              ctx.fillStyle = `rgba(255,255,255,${indicatorAlpha.toFixed(3)})`;
+              ctx.fillRect(dl, barY, dr - dl, barH);
+            }
+          }
+          if (stage) {
+            ctx.font = "12px Satoshi, system-ui, sans-serif";
+            const maxW = Math.max(Math.max(pillW, EXPANDED_W) - 16, 0);
+            let label = stage;
+            if (maxW > 0 && ctx.measureText(label).width > maxW) {
+              const chars = Array.from(label);
+              let fitted = "";
+              for (let i = chars.length - 1; i >= 1; i--) {
+                const candidate = `${chars.slice(0, i).join("").trimEnd()}…`;
+                if (ctx.measureText(candidate).width <= maxW) {
+                  fitted = candidate;
+                  break;
+                }
+              }
+              label = fitted || (ctx.measureText("…").width <= maxW ? "…" : "");
+            }
+            if (label) {
+              ctx.fillStyle = `rgba(255,255,255,${(STAGE_TEXT_ALPHA * expand).toFixed(3)})`;
+              ctx.textAlign = "center";
+              ctx.textBaseline = "middle";
+              ctx.fillText(label, rx + pillW / 2, ry + pillH / 2 + 0.5);
+            }
           }
         });
       }

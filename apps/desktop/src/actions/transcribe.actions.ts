@@ -811,7 +811,9 @@ export const postProcessTranscript = async (
     warnings,
   );
 
-  markPipeline(input.trace, "polished");
+  if (metadata.postProcessMode !== "none") {
+    markPipeline(input.trace, "polished");
+  }
 
   return {
     transcript,

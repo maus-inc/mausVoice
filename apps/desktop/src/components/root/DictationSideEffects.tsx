@@ -900,6 +900,7 @@ export const DictationSideEffects = () => {
             ],
             remoteStatus: null,
             remoteDeviceId: null,
+            trace: pipelineTraceRef.current,
           });
           if (stored.transcription) {
             await surfacePersistedReviewInHistory();
@@ -1809,7 +1810,7 @@ export const DictationSideEffects = () => {
     clearRecordingTimers();
     hardResetHotkeyState();
     releaseAudioIntake();
-    invoke<void>("set_phase", { phase: "idle" }).catch(console.error);
+    void sendPhaseToPill("idle");
     invoke("stop_recording").catch((e) =>
       getLogger().verbose(
         `stop_recording failed during type mode switch: ${e}`,

@@ -641,10 +641,22 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             if phase == Phase::Recording && matches!(prev, Phase::Idle | Phase::Loading) {
                 clear_flash(state);
             }
+            if rust_pill_shared::should_clear_stage_text_on_phase(
+                prev == Phase::Loading,
+                phase == Phase::Idle,
+                phase == Phase::Loading,
+            ) {
+                *state.stage_text.borrow_mut() = None;
+            }
+            if phase == Phase::Loading && prev != Phase::Loading {
+                let offset = if reduced_motion() { 0.5 } else { 0.0 };
+                state.loading_offset.set(offset);
+            }
             if phase == Phase::Idle && prev != Phase::Idle {
                 state.target_level.set(0.0);
                 state.current_level.set(0.0);
                 state.wave_phase.set(0.0);
+                state.loading_offset.set(0.0);
             }
         }
         InMessage::Levels { levels } => {
@@ -715,7 +727,8 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             state.transcript_has_message.set(true);
         }
         InMessage::StageText { text } => {
-            *state.stage_text.borrow_mut() = text;
+            let stage = rust_pill_shared::active_stage_text(text.as_deref());
+            *state.stage_text.borrow_mut() = stage.map(str::to_owned);
         }
         InMessage::Visibility { visibility } => {
             state.visibility.set(visibility);
@@ -912,9 +925,13 @@ fn tick(state: &PillState, dt: f64) {
     );
 
     if is_loading {
-        state
-            .loading_offset
-            .set((state.loading_offset.get() + LOADING_SPEED * frame_scale) % 1.0);
+        let next_offset = rust_pill_shared::advance_loading_offset(
+            state.loading_offset.get(),
+            LOADING_SPEED,
+            dt,
+            reduced_motion(),
+        );
+        state.loading_offset.set(next_offset);
     }
 
     let tooltip_target = rust_pill_shared::style_tooltip_target(

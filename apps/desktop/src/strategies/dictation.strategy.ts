@@ -351,6 +351,9 @@ export class DictationStrategy extends BaseStrategy {
     await this.enqueuePasteWork(async () => {
       if (hasDictationBacklog()) {
         getLogger().info("Draining backlog segment(s) on finalize");
+        sendPillStageText(
+          getIntl().formatMessage({ defaultMessage: "Inserting" }),
+        );
         await this.drainBacklogAndAppendSpace();
       }
     });
@@ -393,9 +396,16 @@ export class DictationStrategy extends BaseStrategy {
           transcript = args.processedTranscript;
           postProcessMetadata = args.serverPostProcessMetadata ?? {};
         } else {
-          sendPillStageText(
-            getIntl().formatMessage({ defaultMessage: "Polishing" }),
-          );
+          const state = getAppState();
+          const effectiveToneId = args.toneId ?? getToneIdToUse(state);
+          const tone = effectiveToneId
+            ? state.toneById[effectiveToneId]
+            : undefined;
+          if (!tone?.shouldDisablePostProcessing) {
+            sendPillStageText(
+              getIntl().formatMessage({ defaultMessage: "Polishing" }),
+            );
+          }
           const result = await postProcessTranscript({
             rawTranscript: sanitizedTranscript,
             toneId: args.toneId,

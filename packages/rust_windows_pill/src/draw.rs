@@ -350,52 +350,54 @@ fn draw_loading(
         pill_radius(pill_w, pill_h, state.inflate_t.get()),
     );
 
-    if let Some(stage) = state.stage_text.borrow().as_deref() {
+    let stage_ref = state.stage_text.borrow();
+    let stage = rust_pill_shared::active_stage_text(stage_ref.as_deref());
+    let bar = rust_pill_shared::loading_bar_layout(
+        rx,
+        ry,
+        pill_w,
+        pill_h,
+        state.loading_offset.get(),
+        expand_t,
+        stage.is_some(),
+    );
+
+    // Paint the loading bar first so it sits dimly behind any stage text.
+    if bar.track_w > 0.0 {
+        gfx.fill_rect(
+            bar.track_x,
+            bar.bar_y,
+            bar.track_w,
+            bar.bar_h,
+            [1.0, 1.0, 1.0, bar.track_alpha],
+        );
+
+        if let Some((draw_left, draw_right)) = bar.indicator_span {
+            gfx.fill_rect(
+                draw_left,
+                bar.bar_y,
+                draw_right - draw_left,
+                bar.bar_h,
+                [1.0, 1.0, 1.0, bar.indicator_alpha],
+            );
+        }
+    }
+
+    if let Some(stage) = stage {
+        let max_w = rust_pill_shared::loading_stage_text_budget(pill_w, EXPANDED_PILL_WIDTH);
+        let stage = rust_pill_shared::text_fit::elide_to_width(stage, max_w, "…", |s| {
+            gfx.measure_text(s, 12.0, false).0
+        });
+        let text_alpha = rust_pill_shared::loading_stage_text_alpha(expand_t);
         gfx.draw_text_centered(
-            stage,
+            &stage,
             rx,
             ry,
             pill_w,
             pill_h,
             12.0,
             false,
-            [1.0, 1.0, 1.0, 0.9 * expand_t],
-        );
-        gfx.restore();
-
-        draw_edge_gradient(gfx, rx, ry, pill_w, pill_h, expand_t, state);
-        return;
-    }
-
-    let bar_h = 2.0;
-    let bar_y = ry + (pill_h - bar_h) / 2.0;
-    let pad = pill_h * 0.1;
-    let track_x = rx + pad;
-    let track_w = pill_w - pad * 2.0;
-
-    // Track line
-    gfx.fill_rect(
-        track_x,
-        bar_y,
-        track_w,
-        bar_h,
-        [1.0, 1.0, 1.0, 0.15 * expand_t],
-    );
-
-    // Moving indicator
-    let indicator_w = track_w * LOADING_BAR_WIDTH_FRAC;
-    let offset = state.loading_offset.get();
-    let ind_x = track_x + (track_w + indicator_w) * offset - indicator_w;
-
-    let draw_left = ind_x.max(track_x);
-    let draw_right = (ind_x + indicator_w).min(track_x + track_w);
-    if draw_right > draw_left {
-        gfx.fill_rect(
-            draw_left,
-            bar_y,
-            draw_right - draw_left,
-            bar_h,
-            [1.0, 1.0, 1.0, 0.7 * expand_t],
+            [1.0, 1.0, 1.0, text_alpha],
         );
     }
 

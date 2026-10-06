@@ -329,6 +329,208 @@ pub fn label_slide_y(base_y: f64, drag_t: f64) -> (f64, f64) {
     )
 }
 
+// -- Loading bar + stage text (shared by all pill renderers) --------------
+
+/// Height of the loading bar track and indicator in pixels.
+pub const LOADING_BAR_HEIGHT: f64 = 2.0;
+/// Horizontal inset of the loading track at each end, as a fraction of pill height.
+pub const LOADING_TRACK_PAD_FRAC: f64 = 0.1;
+/// Width of the moving loading indicator, as a fraction of the track width.
+pub const LOADING_BAR_WIDTH_FRAC: f64 = 0.4;
+/// Track opacity when no stage text is shown (`stage_text` is `None` or blank).
+pub const LOADING_TRACK_ALPHA: f64 = 0.15;
+/// Moving indicator opacity when no stage text is shown.
+pub const LOADING_INDICATOR_ALPHA: f64 = 0.7;
+/// Dimmed track opacity when stage text is rendered in front of the loading bar.
+pub const LOADING_DIMMED_TRACK_ALPHA: f64 = 0.08;
+/// Dimmed moving indicator opacity when stage text is rendered in front of the loading bar.
+///
+/// Sits well below the foreground stage label (`0.9`) and below the static
+/// paused indicator (`0.45`, which has no text above it) so the sweeping bar
+/// reads as background motion without competing with 12px glyph strokes along
+/// the pill's vertical centerline.
+pub const LOADING_DIMMED_INDICATOR_ALPHA: f64 = 0.22;
+/// Foreground stage text opacity during the loading phase.
+pub const LOADING_STAGE_TEXT_ALPHA: f64 = 0.9;
+/// Horizontal inset from each capsule end reserved when eliding stage text.
+pub const LOADING_STAGE_TEXT_INSET: f64 = 8.0;
+
+/// Clamps a progress/expansion value to `0.0..=1.0`, mapping non-finite inputs
+/// (`NaN`, `±Infinity`) to `0.0` because `f64::clamp` propagates `NaN`.
+fn unit_progress(value: f64) -> f64 {
+    if value.is_finite() {
+        value.clamp(0.0, 1.0)
+    } else {
+        0.0
+    }
+}
+
+/// Normalizes an optional stage label, treating empty or whitespace-only
+/// strings as absent so a blank IPC payload never dims the loading bar with
+/// nothing painted in front of it.
+pub fn active_stage_text(raw: Option<&str>) -> Option<&str> {
+    raw.map(str::trim).filter(|s| !s.is_empty())
+}
+
+/// Track and moving-indicator opacities for the loading bar.
+///
+/// When stage text is present, both layers drop to their dimmed values so the
+/// bar animates subtly behind the text; when absent, both stay at full loading
+/// brightness. `expand_t` is clamped to `0.0..=1.0` (and `0.0` if non-finite)
+/// so spring overshoot or invalid inputs never produce out-of-range alpha values.
+pub fn loading_bar_alphas(expand_t: f64, has_stage_text: bool) -> (f64, f64) {
+    let expand_t = unit_progress(expand_t);
+    let (track, indicator) = if has_stage_text {
+        (LOADING_DIMMED_TRACK_ALPHA, LOADING_DIMMED_INDICATOR_ALPHA)
+    } else {
+        (LOADING_TRACK_ALPHA, LOADING_INDICATOR_ALPHA)
+    };
+    (track * expand_t, indicator * expand_t)
+}
+
+/// Foreground opacity for the centered stage label in `Phase::Loading`.
+pub fn loading_stage_text_alpha(expand_t: f64) -> f64 {
+    LOADING_STAGE_TEXT_ALPHA * unit_progress(expand_t)
+}
+
+/// Whether a phase transition should clear the pill's `stage_text`.
+///
+/// `sendPillStageText("Finalizing audio")` is dispatched from `stopRecording`
+/// while the pill is still in `Phase::Recording` or `Phase::Paused`, right
+/// before `captureStopRecordingInfo()` dispatches `Phase::Loading`. Clearing
+/// `stage_text` on every non-`Loading` phase message would wipe that pre-loading
+/// label if an in-flight `Recording` or `Paused` phase message landed in between.
+/// Instead, `stage_text` is cleared whenever entering `Phase::Idle` or leaving
+/// `Phase::Loading` for another phase.
+#[inline]
+pub fn should_clear_stage_text_on_phase(
+    prev_is_loading: bool,
+    next_is_idle: bool,
+    next_is_loading: bool,
+) -> bool {
+    next_is_idle || (prev_is_loading && !next_is_loading)
+}
+
+/// Advances the `0.0..1.0` loading bar sweep offset for one frame, or freezes
+/// it at `0.5` (centered on the track) when OS reduced motion is active.
+#[inline]
+pub fn advance_loading_offset(current: f64, speed: f64, dt: f64, reduced_motion: bool) -> f64 {
+    if reduced_motion {
+        return 0.5;
+    }
+    let base = unit_progress(current);
+    let step = if speed.is_finite() && speed > 0.0 && dt.is_finite() && dt > 0.0 {
+        speed * (dt * 60.0).clamp(0.25, 3.0)
+    } else {
+        0.0
+    };
+    (base + step).rem_euclid(1.0)
+}
+
+/// Horizontal pixel budget for eliding the centered `stage_text` label.
+///
+/// Uses `pill_w.max(expanded_pill_w)` minus both capsule-end insets so the
+/// elided string stays invariant while `pill_w` springs open toward
+/// `expanded_pill_w` (avoiding per-frame ellipsis jitter) while still eliding
+/// localized strings that exceed the expanded capsule's inner width.
+#[inline]
+pub fn loading_stage_text_budget(pill_w: f64, expanded_pill_w: f64) -> f64 {
+    let target_w = match (pill_w.is_finite(), expanded_pill_w.is_finite()) {
+        (true, true) => pill_w.max(expanded_pill_w),
+        (true, false) => pill_w,
+        (false, true) => expanded_pill_w,
+        (false, false) => 0.0,
+    };
+    (target_w - 2.0 * LOADING_STAGE_TEXT_INSET).max(0.0)
+}
+
+/// Geometry and opacities for one frame of the pill loading bar.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LoadingBarLayout {
+    /// Height of the track and indicator in pixels (`2.0`).
+    pub bar_h: f64,
+    /// Top edge of the bar, vertically centered in the pill.
+    pub bar_y: f64,
+    /// Vertical center line (`bar_y + bar_h / 2.0`), used by stroke-based backends.
+    pub center_y: f64,
+    /// Left edge of the track inside the pill (`rx + pill_h * 0.1`).
+    pub track_x: f64,
+    /// Full width of the track (`(pill_w - pad * 2.0).max(0.0)`).
+    pub track_w: f64,
+    /// Clipped `(left, right)` span of the moving indicator when visible (`right > left`).
+    pub indicator_span: Option<(f64, f64)>,
+    /// Track opacity after `expand_t` and stage-text dimming.
+    pub track_alpha: f64,
+    /// Moving indicator opacity after `expand_t` and stage-text dimming.
+    pub indicator_alpha: f64,
+}
+
+/// Computes the loading bar geometry and layer opacities for a given frame.
+///
+/// All three native pill renderers call this helper before painting `stage_text`
+/// so the bar is always laid out identically and painted behind the text.
+/// Non-finite or non-positive pill dimensions return a zero-width layout with
+/// `indicator_span: None` so no backend receives `NaN` coordinates.
+pub fn loading_bar_layout(
+    rx: f64,
+    ry: f64,
+    pill_w: f64,
+    pill_h: f64,
+    loading_offset: f64,
+    expand_t: f64,
+    has_stage_text: bool,
+) -> LoadingBarLayout {
+    let bar_h = LOADING_BAR_HEIGHT;
+    if !rx.is_finite()
+        || !ry.is_finite()
+        || !pill_w.is_finite()
+        || !pill_h.is_finite()
+        || pill_w <= 0.0
+        || pill_h <= 0.0
+    {
+        return LoadingBarLayout {
+            bar_h,
+            bar_y: 0.0,
+            center_y: bar_h / 2.0,
+            track_x: 0.0,
+            track_w: 0.0,
+            indicator_span: None,
+            track_alpha: 0.0,
+            indicator_alpha: 0.0,
+        };
+    }
+
+    let bar_y = ry + (pill_h - bar_h) / 2.0;
+    let center_y = bar_y + bar_h / 2.0;
+    let pad = pill_h * LOADING_TRACK_PAD_FRAC;
+    let track_x = rx + pad;
+    let track_w = (pill_w - pad * 2.0).max(0.0);
+
+    let indicator_w = track_w * LOADING_BAR_WIDTH_FRAC;
+    let offset = unit_progress(loading_offset);
+    let ind_x = track_x + (track_w + indicator_w) * offset - indicator_w;
+    let draw_left = ind_x.max(track_x);
+    let draw_right = (ind_x + indicator_w).min(track_x + track_w);
+    let indicator_span = if track_w > 0.0 && draw_right > draw_left {
+        Some((draw_left, draw_right))
+    } else {
+        None
+    };
+
+    let (track_alpha, indicator_alpha) = loading_bar_alphas(expand_t, has_stage_text);
+
+    LoadingBarLayout {
+        bar_h,
+        bar_y,
+        center_y,
+        track_x,
+        track_w,
+        indicator_span,
+        track_alpha,
+        indicator_alpha,
+    }
+}
+
 /// Shared font-registration failure log.
 ///
 /// Strategy: draw-time critical paths (macOS NSFont, Windows DirectWrite
@@ -2751,6 +2953,161 @@ mod tests {
                 // cutoff keeps to a single frame.
                 assert!((drag_y - idle_y - LABEL_SLIDE_OFFSET).abs() < 1e-12);
             }
+        }
+    }
+
+    // -- Loading bar + stage text --------------------------------------------
+
+    const _: () = {
+        // When stage text is present, the loading bar must be strictly dimmer
+        // than the unobstructed loading bar and strictly dimmer than the
+        // foreground stage text so it reads as background motion.
+        assert!(LOADING_DIMMED_TRACK_ALPHA > 0.0);
+        assert!(LOADING_DIMMED_TRACK_ALPHA < LOADING_TRACK_ALPHA);
+        assert!(LOADING_DIMMED_INDICATOR_ALPHA > LOADING_DIMMED_TRACK_ALPHA);
+        assert!(LOADING_DIMMED_INDICATOR_ALPHA < LOADING_INDICATOR_ALPHA);
+        assert!(LOADING_DIMMED_INDICATOR_ALPHA < LOADING_STAGE_TEXT_ALPHA * 0.5);
+    };
+
+    #[test]
+    fn active_stage_text_rejects_missing_and_whitespace_only_labels() {
+        assert_eq!(active_stage_text(None), None);
+        assert_eq!(active_stage_text(Some("")), None);
+        assert_eq!(active_stage_text(Some("   \t\n ")), None);
+        assert_eq!(active_stage_text(Some("  Transcribing  ")), Some("Transcribing"));
+        assert_eq!(active_stage_text(Some("Finalizing audio")), Some("Finalizing audio"));
+    }
+
+    #[test]
+    fn loading_bar_alphas_dim_when_stage_text_is_present_and_clamp_expand() {
+        let (full_track, full_ind) = loading_bar_alphas(1.0, false);
+        let (dim_track, dim_ind) = loading_bar_alphas(1.0, true);
+        let text_alpha = loading_stage_text_alpha(1.0);
+
+        assert!((full_track - LOADING_TRACK_ALPHA).abs() < 1e-12);
+        assert!((full_ind - LOADING_INDICATOR_ALPHA).abs() < 1e-12);
+        assert!((dim_track - LOADING_DIMMED_TRACK_ALPHA).abs() < 1e-12);
+        assert!((dim_ind - LOADING_DIMMED_INDICATOR_ALPHA).abs() < 1e-12);
+        assert!(dim_track < full_track);
+        assert!(dim_ind < full_ind);
+        assert!(dim_ind < text_alpha);
+
+        // Collapsed or negative expand_t produces zero alpha; overshoot clamps to 1.0.
+        assert_eq!(loading_bar_alphas(0.0, true), (0.0, 0.0));
+        assert_eq!(loading_bar_alphas(-2.0, false), (0.0, 0.0));
+        assert_eq!(loading_bar_alphas(1.5, true), loading_bar_alphas(1.0, true));
+        assert_eq!(loading_stage_text_alpha(-1.0), 0.0);
+        assert_eq!(loading_stage_text_alpha(2.0), loading_stage_text_alpha(1.0));
+
+        // Non-finite expand_t values must resolve to 0.0 rather than NaN.
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert_eq!(loading_bar_alphas(bad, false), (0.0, 0.0));
+            assert_eq!(loading_bar_alphas(bad, true), (0.0, 0.0));
+            assert_eq!(loading_stage_text_alpha(bad), 0.0);
+        }
+    }
+
+    #[test]
+    fn loading_bar_layout_clips_indicator_to_track_and_handles_degenerate_widths() {
+        let mid = loading_bar_layout(40.0, 20.0, 120.0, 32.0, 0.5, 1.0, true);
+        assert!((mid.bar_h - 2.0).abs() < 1e-12);
+        assert!((mid.bar_y - 35.0).abs() < 1e-12);
+        assert!((mid.center_y - 36.0).abs() < 1e-12);
+        assert!((mid.track_x - 43.2).abs() < 1e-12);
+        assert!((mid.track_w - 113.6).abs() < 1e-12);
+        let (left, right) = mid.indicator_span.expect("midpoint indicator is visible");
+        assert!(left >= mid.track_x - 1e-12);
+        assert!(right <= mid.track_x + mid.track_w + 1e-12);
+        assert!((right - left - mid.track_w * LOADING_BAR_WIDTH_FRAC).abs() < 1e-9);
+
+        // At offset 0.0 and 1.0 the indicator sits just outside the track ends.
+        let at_start = loading_bar_layout(40.0, 20.0, 120.0, 32.0, 0.0, 1.0, false);
+        let at_end = loading_bar_layout(40.0, 20.0, 120.0, 32.0, 1.0, 1.0, false);
+        assert_eq!(at_start.indicator_span, None);
+        assert_eq!(at_end.indicator_span, None);
+
+        // Non-finite loading_offset must map to 0.0 (no indicator span) rather
+        // than letting IEEE 754 max/min turn NaN into a full-track indicator.
+        for bad_offset in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let layout = loading_bar_layout(40.0, 20.0, 120.0, 32.0, bad_offset, 1.0, true);
+            assert_eq!(layout.indicator_span, None);
+        }
+
+        // Non-finite or non-positive pill geometry yields an inert layout with no NaNs.
+        for bad_w in [0.0, -10.0, f64::NAN, f64::INFINITY] {
+            let layout = loading_bar_layout(40.0, 20.0, bad_w, 32.0, 0.5, 1.0, true);
+            assert_eq!(layout.track_w, 0.0);
+            assert_eq!(layout.indicator_span, None);
+            assert_eq!(layout.track_alpha, 0.0);
+            assert_eq!(layout.indicator_alpha, 0.0);
+        }
+
+        // Degenerate pill width where 2 * pad >= pill_w yields a zero-width track
+        // and no indicator span rather than a negative width.
+        let tiny = loading_bar_layout(0.0, 0.0, 4.0, 32.0, 0.5, 1.0, true);
+        assert_eq!(tiny.track_w, 0.0);
+        assert_eq!(tiny.indicator_span, None);
+    }
+
+    #[test]
+    fn stage_text_phase_clearing_and_loading_offset_respect_ordering_and_reduced_motion() {
+        // Entering Idle always clears stage_text.
+        assert!(should_clear_stage_text_on_phase(false, true, false));
+        assert!(should_clear_stage_text_on_phase(true, true, false));
+        // Leaving Loading for Recording/Paused clears stale stage_text.
+        assert!(should_clear_stage_text_on_phase(true, false, false));
+        // Staying in Loading or still in Recording/Paused (when stopRecording sends
+        // "Finalizing audio" right before Phase::Loading) preserves stage_text.
+        assert!(!should_clear_stage_text_on_phase(true, false, true));
+        assert!(!should_clear_stage_text_on_phase(false, false, false));
+        assert!(!should_clear_stage_text_on_phase(false, false, true));
+
+        // Reduced motion centers the indicator at 0.5 without sweeping.
+        assert_eq!(advance_loading_offset(0.1, 0.015, 1.0 / 60.0, true), 0.5);
+        // Normal motion scales by 60fps-relative dt and wraps into 0.0..1.0.
+        let step_60hz = advance_loading_offset(0.2, 0.015, 1.0 / 60.0, false);
+        assert!((step_60hz - 0.215).abs() < 1e-12);
+        let wrapped = advance_loading_offset(0.995, 0.015, 1.0 / 60.0, false);
+        assert!((wrapped - 0.01).abs() < 1e-12);
+
+        // Stage text width budget stays stable across spring expansion.
+        assert!((loading_stage_text_budget(55.2, 120.0) - 104.0).abs() < 1e-12);
+        assert!((loading_stage_text_budget(120.0, 120.0) - 104.0).abs() < 1e-12);
+        assert_eq!(loading_stage_text_budget(f64::NAN, f64::NAN), 0.0);
+    }
+
+    #[test]
+    fn all_three_pills_draw_loading_bar_behind_stage_text_with_balanced_state() {
+        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        for crate_dir in ["rust_gtk_pill", "rust_macos_pill", "rust_windows_pill"] {
+            let path = manifest.join(format!("../{crate_dir}/src/draw.rs"));
+            let src = std::fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
+            let raw_body = src
+                .split("fn draw_loading(")
+                .nth(1)
+                .and_then(|rest| rest.split("\n}\n").next())
+                .unwrap_or_else(|| panic!("{crate_dir}: draw_loading not found"));
+            let body: String = raw_body
+                .lines()
+                .map(|line| line.split("//").next().unwrap_or(""))
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            assert!(!body.contains("return;"));
+            assert!(body.contains("rust_pill_shared::active_stage_text("));
+            assert!(body.contains("bar.track_alpha") && body.contains("bar.indicator_alpha"));
+            assert!(body.contains("rust_pill_shared::loading_stage_text_alpha("));
+            assert!(body.contains("rust_pill_shared::loading_stage_text_budget("));
+            assert!(body.contains("rust_pill_shared::text_fit::elide_to_width("));
+            let bar_pos = body.find("rust_pill_shared::loading_bar_layout(").unwrap();
+            let stage_pos = body.find("if let Some(stage) = stage").unwrap();
+            let grad_pos = body.find("draw_edge_gradient(").unwrap();
+            assert!(bar_pos < stage_pos && stage_pos < grad_pos);
+            assert_eq!(body.matches("draw_edge_gradient(").count(), 1);
+            let saves = body.matches(".save()").count();
+            let restores = body.matches(".restore()").count();
+            assert_eq!(saves, restores);
         }
     }
 }

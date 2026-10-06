@@ -584,10 +584,22 @@ fn perform_tick() {
                     if phase == Phase::Recording && matches!(prev, Phase::Idle | Phase::Loading) {
                         clear_flash(&ctx.state);
                     }
+                    if rust_pill_shared::should_clear_stage_text_on_phase(
+                        prev == Phase::Loading,
+                        phase == Phase::Idle,
+                        phase == Phase::Loading,
+                    ) {
+                        *ctx.state.stage_text.borrow_mut() = None;
+                    }
+                    if phase == Phase::Loading && prev != Phase::Loading {
+                        let offset = if reduced_motion() { 0.5 } else { 0.0 };
+                        ctx.state.loading_offset.set(offset);
+                    }
                     if phase == Phase::Idle && prev != Phase::Idle {
                         ctx.state.target_level.set(0.0);
                         ctx.state.current_level.set(0.0);
                         ctx.state.wave_phase.set(0.0);
+                        ctx.state.loading_offset.set(0.0);
                     }
                 }
                 InMessage::Levels { levels } => {
@@ -661,7 +673,8 @@ fn perform_tick() {
                     ctx.state.transcript_has_message.set(true);
                 }
                 InMessage::StageText { text } => {
-                    *ctx.state.stage_text.borrow_mut() = text;
+                    let stage = rust_pill_shared::active_stage_text(text.as_deref());
+                    *ctx.state.stage_text.borrow_mut() = stage.map(str::to_owned);
                 }
                 InMessage::Visibility { visibility } => {
                     ctx.state.visibility.set(visibility);
@@ -1144,9 +1157,13 @@ fn tick(state: &PillState, window: id, dt: f64) {
 
     // Loading offset
     if is_loading {
-        state
-            .loading_offset
-            .set((state.loading_offset.get() + LOADING_SPEED * frame_scale) % 1.0);
+        let next_offset = rust_pill_shared::advance_loading_offset(
+            state.loading_offset.get(),
+            LOADING_SPEED,
+            dt,
+            reduced_motion(),
+        );
+        state.loading_offset.set(next_offset);
     }
 
     // Tooltip animation (spring)
