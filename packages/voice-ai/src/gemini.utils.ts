@@ -272,24 +272,40 @@ const GEMINI_SCHEMA_TYPE_MAP: Record<string, string> = {
   object: "OBJECT",
 };
 
-const convertJsonSchemaArrayItem = (item: unknown): unknown =>
+type JsonSchemaConverter = (
+  schema: Record<string, unknown>,
+) => Record<string, unknown>;
+
+const convertJsonSchemaArrayItem = (
+  item: unknown,
+  convertSchema: JsonSchemaConverter,
+): unknown =>
   typeof item === "object" && item !== null
-    ? convertJsonSchemaToGeminiSchema(item as Record<string, unknown>)
+    ? convertSchema(item as Record<string, unknown>)
     : item;
 
-const convertJsonSchemaValue = (value: unknown): unknown => {
-  if (Array.isArray(value)) return value.map(convertJsonSchemaArrayItem);
+const convertJsonSchemaValue = (
+  value: unknown,
+  convertSchema: JsonSchemaConverter,
+): unknown => {
+  if (Array.isArray(value)) {
+    return value.map((item) => convertJsonSchemaArrayItem(item, convertSchema));
+  }
   if (typeof value === "object" && value !== null) {
-    return convertJsonSchemaToGeminiSchema(value as Record<string, unknown>);
+    return convertSchema(value as Record<string, unknown>);
   }
   return value;
 };
 
-const convertJsonSchemaEntry = (key: string, value: unknown): unknown => {
+const convertJsonSchemaEntry = (
+  key: string,
+  value: unknown,
+  convertSchema: JsonSchemaConverter,
+): unknown => {
   if (key === "type" && typeof value === "string") {
     return GEMINI_SCHEMA_TYPE_MAP[value] ?? value;
   }
-  return convertJsonSchemaValue(value);
+  return convertJsonSchemaValue(value, convertSchema);
 };
 
 const convertJsonSchemaToGeminiSchema = (
@@ -299,7 +315,11 @@ const convertJsonSchemaToGeminiSchema = (
 
   const converted: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(schema)) {
-    converted[key] = convertJsonSchemaEntry(key, value);
+    converted[key] = convertJsonSchemaEntry(
+      key,
+      value,
+      convertJsonSchemaToGeminiSchema,
+    );
   }
   return converted;
 };

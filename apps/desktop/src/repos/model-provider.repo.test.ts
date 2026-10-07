@@ -174,12 +174,17 @@ describe("provider model discovery", () => {
         }),
       ),
     ];
-    pluginFetchMock.mockImplementation(() => Promise.resolve(pages.shift()!));
+    pluginFetchMock.mockImplementation(() => {
+      const page = pages.shift();
+      if (!page) throw new Error("Unexpected Gemini pagination request");
+      return Promise.resolve(page);
+    });
     const repo = new GeminiModelProviderRepo();
 
     await expect(
       repo.getTranscriptionModels({ apiKey: "gemini-key" }),
     ).resolves.toEqual(["gemini-3.5-transcribe", "gemini-future-flash"]);
+    expect(pluginFetchMock).toHaveBeenCalledTimes(2);
     expect(pluginFetchMock).toHaveBeenNthCalledWith(
       1,
       "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000",
