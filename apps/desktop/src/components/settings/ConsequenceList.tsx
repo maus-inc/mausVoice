@@ -54,7 +54,10 @@ export const ConsequenceList = ({
         p: 0,
         listStyle: "none",
         display: "grid",
-        gap: 0.75,
+        // One step of the theme's spacing scale, like every other gap in the
+        // app: this list sits inside a dialog, and an off-scale gap here is the
+        // kind of detail that makes a surface feel hand-tuned rather than built.
+        gap: 1,
       }}
     >
       {items.map((item, index) => (
@@ -64,14 +67,16 @@ export const ConsequenceList = ({
           // eslint-disable-next-line react/no-array-index-key
           key={index}
           component="li"
-          sx={{ display: "flex", gap: 1.25, alignItems: "flex-start" }}
+          sx={{ display: "flex", gap: 1, alignItems: "flex-start" }}
         >
           <Box
             aria-hidden
             sx={{
               width: 5,
               height: 5,
-              mt: "7px",
+              // Half a line of the text beside it, so the dot stays on the
+              // first line's optical centre if the type scale ever moves.
+              mt: "0.5em",
               borderRadius: "50%",
               bgcolor: "error.main",
               opacity: 0.75,

@@ -3,6 +3,7 @@ import type { ChangeEvent } from "react";
 import { useState } from "react";
 import { FormattedMessage } from "react-intl";
 import { produceAppState, useAppStore } from "../../../store";
+import type { AppState } from "../../../state/app.state";
 import {
   setAutoLearnDictionaryEnabled,
   setAutoLearnFromEditsEnabled,
@@ -24,6 +25,25 @@ const openDialog = (key: "multiDeviceDialogOpen") => {
   });
 };
 
+/**
+ * The switches this page reads, in the order they are destructured below.
+ *
+ * Each one carries its own default, so a switch is never rendered unset, and the
+ * defaults live here rather than in the JSX because they are the behaviour, not
+ * the presentation.
+ */
+const selectPrivacyToggles = (state: AppState) => {
+  const preferences = getMyUserPreferences(state);
+  return [
+    preferences?.incognitoModeEnabled ?? false,
+    preferences?.incognitoModeIncludeInStats ?? false,
+    preferences?.preserveAudioOnFailure ?? true,
+    preferences?.elevenLabsKeytermsEnabled ?? false,
+    preferences?.autoLearnDictionaryEnabled ?? true,
+    preferences?.autoLearnFromEditsEnabled ?? false,
+  ] as const;
+};
+
 export default function PrivacyDataSettingsPage() {
   const availability = useSettingsAvailability();
   const [
@@ -33,17 +53,7 @@ export default function PrivacyDataSettingsPage() {
     elevenLabsKeytermsEnabled,
     autoLearnDictionaryEnabled,
     autoLearnFromEditsEnabled,
-  ] = useAppStore((state) => {
-    const preferences = getMyUserPreferences(state);
-    return [
-      preferences?.incognitoModeEnabled ?? false,
-      preferences?.incognitoModeIncludeInStats ?? false,
-      preferences?.preserveAudioOnFailure ?? true,
-      preferences?.elevenLabsKeytermsEnabled ?? false,
-      preferences?.autoLearnDictionaryEnabled ?? true,
-      preferences?.autoLearnFromEditsEnabled ?? false,
-    ] as const;
-  });
+  ] = useAppStore(selectPrivacyToggles);
   const [confirmSurcharge, setConfirmSurcharge] = useState(false);
 
   const toggle =
@@ -67,32 +77,41 @@ export default function PrivacyDataSettingsPage() {
     );
   };
 
+  // Both rows in the first group are platform- and provider-gated, so on a
+  // build where neither applies the group would render as a heading over an
+  // empty card. A group is only drawn when it has at least one row.
+  const showsLeavingDevice =
+    availability.where_your_dictation_audio_goes ||
+    availability.elevenlabs_keyterms;
+
   return (
     <>
-      <SettingGroup
-        title={<FormattedMessage defaultMessage="What leaves your device" />}
-      >
-        {availability.where_your_dictation_audio_goes && (
-          <SettingRow
-            settingKey="where_your_dictation_audio_goes"
-            title={
-              <FormattedMessage defaultMessage="Where your dictation audio goes" />
-            }
-            description={<AudioTransmissionDisclosure variant="setting" />}
-          />
-        )}
-        {availability.elevenlabs_keyterms && (
-          <SettingToggleRow
-            settingKey="elevenlabs_keyterms"
-            title={<FormattedMessage defaultMessage="ElevenLabs keyterms" />}
-            description={
-              <FormattedMessage defaultMessage="Sends your dictionary to ElevenLabs as keyterms for better name accuracy. Adds a 20% surcharge to every ElevenLabs transcription." />
-            }
-            checked={elevenLabsKeytermsEnabled}
-            onChange={handleToggleElevenLabsKeyterms}
-          />
-        )}
-      </SettingGroup>
+      {showsLeavingDevice && (
+        <SettingGroup
+          title={<FormattedMessage defaultMessage="What leaves your device" />}
+        >
+          {availability.where_your_dictation_audio_goes && (
+            <SettingRow
+              settingKey="where_your_dictation_audio_goes"
+              title={
+                <FormattedMessage defaultMessage="Where your dictation audio goes" />
+              }
+              description={<AudioTransmissionDisclosure variant="setting" />}
+            />
+          )}
+          {availability.elevenlabs_keyterms && (
+            <SettingToggleRow
+              settingKey="elevenlabs_keyterms"
+              title={<FormattedMessage defaultMessage="ElevenLabs keyterms" />}
+              description={
+                <FormattedMessage defaultMessage="Sends your dictionary to ElevenLabs as keyterms for better name accuracy. Adds a 20% surcharge to every ElevenLabs transcription." />
+              }
+              checked={elevenLabsKeytermsEnabled}
+              onChange={handleToggleElevenLabsKeyterms}
+            />
+          )}
+        </SettingGroup>
+      )}
 
       <SettingGroup
         title={<FormattedMessage defaultMessage="History and storage" />}

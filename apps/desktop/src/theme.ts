@@ -542,7 +542,16 @@ export const theme = createTheme({
                 backgroundColor: theme.vars.palette.error.dark,
                 boxShadow: premiumSurface.dark.hover,
               },
-              "&:active": { boxShadow: premiumSurface.dark.active },
+              // The fill is restated here for the same reason the light block
+              // states it: the `contained` override's own `&:active` paints
+              // chalk (a light fill) and outranks this variant for any property
+              // this block leaves out, which left the label unreadable on a
+              // light flash the moment the button was pressed.
+              "&:active": {
+                transform: "scale(0.98) translateY(0)",
+                boxShadow: premiumSurface.dark.active,
+                backgroundColor: theme.vars.palette.error.dark,
+              },
             }),
           }),
         },

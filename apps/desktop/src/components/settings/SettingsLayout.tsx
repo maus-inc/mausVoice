@@ -75,19 +75,13 @@ const SettingsRailLink = ({
 );
 
 const SettingsSearchResults = ({
-  query,
+  hits,
   onSelect,
 }: {
-  query: string;
+  hits: SettingHit[];
   onSelect: (hit: SettingHit) => void;
 }) => {
-  const availability = useSettingsAvailability();
-  const intl = useIntl();
-  const results = useMemo(
-    () => searchSettings(query, { availability, messages: intl.messages }),
-    [query, availability, intl.messages],
-  );
-  const groups = useMemo(() => searchResultsByPage(results), [results]);
+  const groups = useMemo(() => searchResultsByPage(hits), [hits]);
 
   if (groups.length === 0) {
     return (
@@ -168,6 +162,21 @@ const SettingsSearchResults = ({
 };
 
 /**
+ * Whether a keydown should move focus to the search box.
+ *
+ * A bare `/` from anywhere on the surface is the shortcut people expect from a
+ * search box. A modified `/` belongs to the browser or the app, and a `/` typed
+ * inside a field has to reach that field, so both are left alone.
+ */
+const isSearchShortcut = (event: KeyboardEvent): boolean => {
+  if (event.key !== "/" || event.metaKey || event.ctrlKey) {
+    return false;
+  }
+  const target = event.target as HTMLElement | null;
+  return !target || !/^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName);
+};
+
+/**
  * The settings surface: a rail of pages, a search field, and the current page.
  *
  * The rail and the search field sit in their own column that stays put while
@@ -188,6 +197,11 @@ export const SettingsLayout = () => {
   const [highlight, setHighlight] = useState<string | null>(null);
   const highlightTimer = useRef<number | null>(null);
   const searchInput = useRef<HTMLInputElement | null>(null);
+  const availability = useSettingsAvailability();
+  const hits = useMemo(
+    () => searchSettings(query, { availability, messages: intl.messages }),
+    [query, availability, intl.messages],
+  );
 
   const focusSetting = useCallback((key: string) => {
     setQuery("");
@@ -216,6 +230,12 @@ export const SettingsLayout = () => {
   // carries `#setting-<key>`, and this turns that hash into a highlight and a
   // scroll, then clears the highlight so the outline is not permanent.
   useEffect(() => {
+    // Remembered before the hash is handled, not after: a deep link to a row
+    // still puts the person on that page, and `Cmd+,` has to reopen it rather
+    // than whichever page they happened to arrive from.
+    if (activePage) {
+      rememberLastSettingsPage(activePage.id);
+    }
     const anchor = location.hash.startsWith("#")
       ? location.hash.slice(1)
       : location.hash;
@@ -227,18 +247,13 @@ export const SettingsLayout = () => {
       return;
     }
     setHighlight(null);
-    if (activePage) {
-      rememberLastSettingsPage(activePage.id);
-    }
   }, [location.hash, activePage, focusSetting]);
 
   // `/` reaches search from anywhere on the surface, which is the shortcut
   // people already expect from search boxes.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "/" || event.metaKey || event.ctrlKey) return;
-      const target = event.target as HTMLElement | null;
-      if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
+      if (!isSearchShortcut(event)) return;
       event.preventDefault();
       searchInput.current?.focus();
     };
@@ -281,6 +296,14 @@ export const SettingsLayout = () => {
             onKeyDown={(event) => {
               if (event.key === "Escape") {
                 setQuery("");
+                return;
+              }
+              // Enter opens the first result, the way a search box behaves
+              // everywhere else: the panel is one Tab away for anyone who
+              // would rather pick a different row.
+              if (event.key === "Enter" && hits.length > 0) {
+                event.preventDefault();
+                openHit(hits[0]);
               }
             }}
             placeholder={intl.formatMessage({
@@ -324,7 +347,7 @@ export const SettingsLayout = () => {
         </Stack>
         <Box sx={{ flexGrow: 1, minWidth: 0, width: "100%" }}>
           {searching ? (
-            <SettingsSearchResults query={query} onSelect={openHit} />
+            <SettingsSearchResults hits={hits} onSelect={openHit} />
           ) : (
             <>
               {activePage && (

@@ -1033,7 +1033,10 @@ export const setMyProfileImage = (dataUrl: Nullable<string>): void => {
     if (dataUrl) {
       draft.local.profileImageByUserId[userId] = dataUrl;
     } else {
-      delete draft.local.profileImageByUserId[userId];
+      // `delete` is the idiomatic Immer draft operation and matches the rest of
+      // the codebase. DeepSource JS-0320 flags the dynamic key, but the removal
+      // is intentional and the key is a user id this app generated.
+      delete draft.local.profileImageByUserId[userId]; // skipcq: JS-0320
     }
   });
 };

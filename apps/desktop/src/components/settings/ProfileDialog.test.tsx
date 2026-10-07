@@ -30,6 +30,7 @@ import { IntlProvider } from "react-intl";
 import { INITIAL_APP_STATE } from "../../state/app.state";
 import { getAppState, produceAppState, setAppState } from "../../store";
 import { ensureUiHarness } from "../../../test/helpers/jsdom-ui-harness";
+import { requireElement } from "../../../test/helpers/dom";
 import en from "../../i18n/locales/en.json";
 import { ProfileDialog } from "./ProfileDialog";
 
@@ -80,7 +81,7 @@ describe("ProfileDialog", () => {
       window.HTMLInputElement.prototype,
       "value",
     )?.set;
-    await act(async () => {
+    act(() => {
       setter?.call(input, value);
       input.dispatchEvent(new window.Event("input", { bubbles: true }));
     });
@@ -100,6 +101,10 @@ describe("ProfileDialog", () => {
     });
     await act(async () => {
       input.dispatchEvent(new window.Event("change", { bubbles: true }));
+      // The chosen file is decoded off-thread and the dialog commits in a
+      // microtask after the change event, so the callback has to await a tick
+      // for that commit to land before the assertions run.
+      await Promise.resolve();
     });
   };
 
@@ -152,11 +157,10 @@ describe("ProfileDialog", () => {
   it("commits on Enter, because the body is a form", async () => {
     open();
 
-    await type(nameInput()!, "Morgan Lee Jr.");
-    const form = dialog()?.querySelector("form");
-    expect(form).not.toBeNull();
-    await act(async () => {
-      form!.dispatchEvent(
+    await type(requireElement(nameInput(), "the name field"), "Morgan Lee Jr.");
+    const form = requireElement(dialog()?.querySelector("form"), "the form");
+    act(() => {
+      form.dispatchEvent(
         new window.Event("submit", { bubbles: true, cancelable: true }),
       );
     });
@@ -167,12 +171,15 @@ describe("ProfileDialog", () => {
   it("saves nothing on Cancel", async () => {
     open();
 
-    await type(nameInput()!, "Someone Else");
-    const cancel = [...(dialog()?.querySelectorAll("button") ?? [])].find(
-      (button) => button.textContent?.trim() === "Cancel",
+    await type(requireElement(nameInput(), "the name field"), "Someone Else");
+    const cancel = requireElement(
+      [...(dialog()?.querySelectorAll("button") ?? [])].find(
+        (button) => button.textContent?.trim() === "Cancel",
+      ),
+      "the Cancel button",
     );
-    await act(async () => {
-      cancel?.click();
+    act(() => {
+      cancel.click();
     });
 
     expect(mocks.setUserName).not.toHaveBeenCalled();

@@ -45,18 +45,230 @@ const AVATAR_ERROR_COPY: Record<AvatarReadError, React.ReactNode> = {
 };
 
 /**
+ * The camera that fades in over the photo while it is hovered or focused.
+ *
+ * Decorative: the button under it already carries the label, so this only makes
+ * the circle look editable.
+ */
+const AvatarHoverScrim = () => (
+  <Box
+    aria-hidden
+    className="avatar-edit-scrim"
+    sx={{
+      position: "absolute",
+      inset: 0,
+      borderRadius: "50%",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      color: "common.white",
+      bgcolor: "rgba(0, 0, 0, 0.45)",
+      opacity: 0,
+      transition: "opacity 150ms ease",
+    }}
+  >
+    <CameraAltOutlined fontSize="small" />
+  </Box>
+);
+
+/**
+ * The small camera badge pinned to the corner of the photo.
+ *
+ * It is the affordance that reads at rest, when the scrim is invisible, and it
+ * is what makes the circle look like a file picker rather than a picture.
+ */
+const AvatarCameraBadge = () => (
+  <Box
+    aria-hidden
+    sx={{
+      position: "absolute",
+      right: 0,
+      bottom: 0,
+      width: 28,
+      height: 28,
+      borderRadius: "50%",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      bgcolor: "primary.main",
+      color: "primary.contrastText",
+      border: 2,
+      // Matches the well it sits on, not the dialog behind it, so the badge
+      // reads as attached to the photo.
+      borderColor: "level2",
+    }}
+  >
+    <CameraAltOutlined sx={{ fontSize: 15 }} />
+  </Box>
+);
+
+type ProfilePhotoWellProps = {
+  /** The photo being edited: the saved one, or the one just picked. */
+  image: string | null;
+  /** The saved name, which is what the circle falls back to when there is no photo. */
+  name: string;
+  /** The line under the photo: the format note until there is news to report. */
+  status: string;
+  error: AvatarReadError | null;
+  saving: boolean;
+  onFile: (file: File | undefined) => void;
+  onRemove: () => void;
+};
+
+/**
+ * The photo input: a large circle, one line of status, and the two verbs.
+ *
+ * The well is set apart from the field below it because the two are different
+ * kinds of input, and the preview is the stored image rather than the file that
+ * was picked, so the circle someone approves is the circle they get everywhere
+ * else. A native file input cannot be styled or labelled usefully, so it is
+ * hidden behind the circle and the button beside it.
+ */
+const ProfilePhotoWell = ({
+  image,
+  name,
+  status,
+  error,
+  saving,
+  onFile,
+  onRemove,
+}: ProfilePhotoWellProps) => {
+  const intl = useIntl();
+  const fileInput = useRef<HTMLInputElement | null>(null);
+  const pickFile = () => fileInput.current?.click();
+
+  return (
+    <Box
+      sx={{
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        gap: 0.5,
+        px: 2,
+        py: 2.5,
+        // One step of the theme radius: the same 14px the app's cards use,
+        // rather than a pixel literal.
+        borderRadius: 1,
+        bgcolor: "level2",
+      }}
+    >
+      <Box sx={{ position: "relative", mb: 1 }}>
+        <Box
+          component="button"
+          type="button"
+          onClick={pickFile}
+          disabled={saving}
+          aria-label={intl.formatMessage({
+            defaultMessage: "Change profile photo",
+          })}
+          sx={{
+            display: "block",
+            p: 0,
+            border: 0,
+            borderRadius: "50%",
+            background: "none",
+            cursor: saving ? "not-allowed" : "pointer",
+            opacity: saving ? 0.6 : 1,
+            "&:hover .avatar-edit-scrim, &:focus-visible .avatar-edit-scrim": {
+              opacity: 1,
+            },
+            "&:focus-visible": {
+              outline: "2px solid",
+              outlineColor: "primary.main",
+              outlineOffset: 2,
+            },
+          }}
+        >
+          <UserAvatar name={name} src={image} size={AVATAR_PREVIEW_SIZE} />
+          <AvatarHoverScrim />
+        </Box>
+        <AvatarCameraBadge />
+      </Box>
+      {/* One line, always present, so the picker's outcome is announced without
+          reserving an empty row: it carries the format note until there is a
+          status to report instead. It sits directly under the photo it
+          describes, ahead of the buttons. */}
+      <Typography
+        role="status"
+        aria-live="polite"
+        variant="caption"
+        sx={{
+          color: "text.secondary",
+          textAlign: "center",
+          minHeight: "1.25em",
+        }}
+      >
+        {status || (
+          <FormattedMessage defaultMessage="PNG, JPG, or WebP, up to 5 MB. Cropped to a square." />
+        )}
+      </Typography>
+      {/* Both verbs are spelled out rather than left to the circle, and they
+          share a line so the removal appearing after a pick cannot shove the
+          dialog around. */}
+      <Stack direction="row" spacing={0.5} sx={{ alignItems: "center" }}>
+        <Button
+          size="small"
+          color="inherit"
+          startIcon={<CameraAltOutlined sx={{ fontSize: 18 }} />}
+          onClick={pickFile}
+          disabled={saving}
+        >
+          <FormattedMessage defaultMessage="Change photo" />
+        </Button>
+        {image && (
+          <Button
+            size="small"
+            color="inherit"
+            startIcon={<DeleteOutlineOutlined sx={{ fontSize: 18 }} />}
+            onClick={onRemove}
+            disabled={saving}
+          >
+            <FormattedMessage defaultMessage="Remove photo" />
+          </Button>
+        )}
+      </Stack>
+      <input
+        ref={fileInput}
+        type="file"
+        accept={AVATAR_FILE_ACCEPT}
+        hidden
+        tabIndex={-1}
+        aria-hidden
+        onChange={(event) => {
+          onFile(event.target.files?.[0]);
+          // Clearing lets the same file be chosen twice in a row, which is
+          // otherwise a no-op because no change event fires.
+          event.target.value = "";
+        }}
+      />
+      {error && (
+        <Alert
+          severity="error"
+          variant="outlined"
+          sx={{
+            mt: 1,
+            py: 0,
+            alignItems: "center",
+            "& .MuiAlert-message": { py: 1 },
+          }}
+        >
+          {AVATAR_ERROR_COPY[error]}
+        </Alert>
+      )}
+    </Box>
+  );
+};
+
+/**
  * Name and photo, in one dialog.
  *
  * The photo sits above the name because it is the thing people come here to
  * change and it needs the room: a large circle reads as the subject of the
  * dialog, and the camera badge on its corner is the affordance that says it is
- * editable. The preview is the stored image rather than the file that was
- * picked, so the circle someone approves is the circle they get everywhere
- * else, including the title bar behind the dialog.
+ * editable.
  *
  * Edits are held until Save, so Cancel leaves both the name and the photo as
- * they were, and the file input is hidden behind the avatar button because a
- * native file input cannot be styled or labelled usefully.
+ * they were.
  */
 export const ProfileDialog = () => {
   const intl = useIntl();
@@ -71,20 +283,27 @@ export const ProfileDialog = () => {
   const [imageStatus, setImageStatus] = useState("");
   const [saveFailed, setSaveFailed] = useState(false);
   const [saving, setSaving] = useState(false);
-  const fileInput = useRef<HTMLInputElement | null>(null);
+  const wasOpen = useRef(false);
+  // Every pick gets a ticket, and a decode only lands if its ticket is still
+  // the newest one. A large photo decodes after a smaller one picked a moment
+  // later, and the slower file must not replace the newer choice.
+  const pickTicket = useRef(0);
 
-  // Re-seed on every open: the dialog is mounted for the life of the app, so
-  // without this a cancelled edit would come back the next time it is opened.
+  // Re-seed when the dialog opens, and only then. It is mounted for the life of
+  // the app, so without this a cancelled edit would come back the next time; and
+  // seeding on every change of the saved name would throw the draft away
+  // mid-save, because saving the name updates the store this reads.
   useEffect(() => {
-    if (!open) {
-      return;
+    if (open && !wasOpen.current) {
+      pickTicket.current += 1;
+      setName(initialName);
+      setImage(initialImage);
+      setImageError(null);
+      setImageStatus("");
+      setSaveFailed(false);
+      setSaving(false);
     }
-    setName(initialName);
-    setImage(initialImage);
-    setImageError(null);
-    setImageStatus("");
-    setSaveFailed(false);
-    setSaving(false);
+    wasOpen.current = open;
   }, [open, initialName, initialImage]);
 
   const close = useCallback(() => {
@@ -98,8 +317,14 @@ export const ProfileDialog = () => {
       if (!file) {
         return;
       }
+      const ticket = pickTicket.current + 1;
+      pickTicket.current = ticket;
       setImageError(null);
       const result = await readAvatarFile(file);
+      if (ticket !== pickTicket.current) {
+        // A later pick, or a reopen, has already replaced this one.
+        return;
+      }
       if (result.ok) {
         setImage(result.dataUrl);
         setImageStatus(
@@ -168,175 +393,15 @@ export const ProfileDialog = () => {
         </DialogTitle>
         <DialogContent>
           <Stack spacing={2}>
-            {/* The photo gets its own well: it is a different kind of input
-                from the field below it, and setting it apart stops the dialog
-                reading as one centred column of loose pieces. */}
-            <Box
-              sx={{
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
-                gap: 0.5,
-                px: 2,
-                py: 2.5,
-                // One step of the theme radius: the same 14px the app's cards
-                // use, rather than a pixel literal.
-                borderRadius: 1,
-                bgcolor: "level2",
-              }}
-            >
-              <Box sx={{ position: "relative", mb: 1 }}>
-                <Box
-                  component="button"
-                  type="button"
-                  onClick={() => fileInput.current?.click()}
-                  disabled={saving}
-                  aria-label={intl.formatMessage({
-                    defaultMessage: "Change profile photo",
-                  })}
-                  sx={{
-                    display: "block",
-                    p: 0,
-                    border: 0,
-                    borderRadius: "50%",
-                    background: "none",
-                    cursor: saving ? "not-allowed" : "pointer",
-                    opacity: saving ? 0.6 : 1,
-                    "&:hover .avatar-edit-scrim, &:focus-visible .avatar-edit-scrim":
-                      {
-                        opacity: 1,
-                      },
-                    "&:focus-visible": {
-                      outline: "2px solid",
-                      outlineColor: "primary.main",
-                      outlineOffset: 2,
-                    },
-                  }}
-                >
-                  <UserAvatar
-                    name={initialName}
-                    src={image}
-                    size={AVATAR_PREVIEW_SIZE}
-                  />
-                  {/* Decorative: the button already carries the label, so the
-                      overlay is only there to make the circle look editable. */}
-                  <Box
-                    aria-hidden
-                    className="avatar-edit-scrim"
-                    sx={{
-                      position: "absolute",
-                      inset: 0,
-                      borderRadius: "50%",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      color: "common.white",
-                      bgcolor: "rgba(0, 0, 0, 0.45)",
-                      opacity: 0,
-                      transition: "opacity 150ms ease",
-                    }}
-                  >
-                    <CameraAltOutlined fontSize="small" />
-                  </Box>
-                </Box>
-                <Box
-                  aria-hidden
-                  sx={{
-                    position: "absolute",
-                    right: 0,
-                    bottom: 0,
-                    width: 28,
-                    height: 28,
-                    borderRadius: "50%",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    bgcolor: "primary.main",
-                    color: "primary.contrastText",
-                    border: 2,
-                    // Matches the well it sits on, not the dialog behind it, so
-                    // the badge reads as attached to the photo.
-                    borderColor: "level2",
-                  }}
-                >
-                  <CameraAltOutlined sx={{ fontSize: 15 }} />
-                </Box>
-              </Box>
-              {/* One line, always present, so the picker's outcome is announced
-                  without reserving an empty row: it carries the format note
-                  until there is a status to report instead. It sits directly
-                  under the photo it describes, ahead of the buttons. */}
-              <Typography
-                role="status"
-                aria-live="polite"
-                variant="caption"
-                sx={{
-                  color: "text.secondary",
-                  textAlign: "center",
-                  minHeight: "1.25em",
-                }}
-              >
-                {imageStatus || (
-                  <FormattedMessage defaultMessage="PNG, JPG, or WebP, up to 5 MB. Cropped to a square." />
-                )}
-              </Typography>
-              {/* Both verbs are spelled out rather than left to the circle, and
-                  they share a line so the removal appearing after a pick cannot
-                  shove the dialog around. */}
-              <Stack
-                direction="row"
-                spacing={0.5}
-                sx={{ alignItems: "center" }}
-              >
-                <Button
-                  size="small"
-                  color="inherit"
-                  startIcon={<CameraAltOutlined sx={{ fontSize: 18 }} />}
-                  onClick={() => fileInput.current?.click()}
-                  disabled={saving}
-                >
-                  <FormattedMessage defaultMessage="Change photo" />
-                </Button>
-                {image && (
-                  <Button
-                    size="small"
-                    color="inherit"
-                    startIcon={<DeleteOutlineOutlined sx={{ fontSize: 18 }} />}
-                    onClick={handleRemove}
-                    disabled={saving}
-                  >
-                    <FormattedMessage defaultMessage="Remove photo" />
-                  </Button>
-                )}
-              </Stack>
-            </Box>
-            <input
-              ref={fileInput}
-              type="file"
-              accept={AVATAR_FILE_ACCEPT}
-              hidden
-              tabIndex={-1}
-              aria-hidden
-              onChange={(event) => {
-                void handlePick(event.target.files?.[0]);
-                // Clearing lets the same file be chosen twice in a row, which is
-                // otherwise a no-op because no change event fires.
-                event.target.value = "";
-              }}
+            <ProfilePhotoWell
+              image={image}
+              name={initialName}
+              status={imageStatus}
+              error={imageError}
+              saving={saving}
+              onFile={(file) => void handlePick(file)}
+              onRemove={handleRemove}
             />
-            {imageError && (
-              <Alert
-                severity="error"
-                variant="outlined"
-                sx={{
-                  py: 0,
-                  alignItems: "center",
-                  "& .MuiAlert-message": { py: 1 },
-                }}
-              >
-                {AVATAR_ERROR_COPY[imageError]}
-              </Alert>
-            )}
             <TextField
               label={<FormattedMessage defaultMessage="Name" />}
               value={name}

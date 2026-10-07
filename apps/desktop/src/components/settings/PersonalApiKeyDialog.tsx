@@ -80,12 +80,12 @@ export const PersonalApiKeyDialog = ({
   );
   const [value, setValue] = useState("");
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
     if (open) {
       setValue("");
-      setError(null);
+      setErrorMessage(null);
       setSaving(false);
     }
   }, [open, provider]);
@@ -103,20 +103,20 @@ export const PersonalApiKeyDialog = ({
     }
 
     setSaving(true);
-    setError(null);
+    setErrorMessage(null);
     try {
       await copy.save(trimmed);
       showSnackbar(copy.savedMessage, { mode: "success" });
       onClose();
-    } catch (caught) {
+    } catch (error) {
       const message =
-        caught instanceof Error
-          ? caught.message
+        error instanceof Error
+          ? error.message
           : intl.formatMessage({
               defaultMessage: "Could not save the API key.",
             });
-      setError(message);
-      showErrorSnackbar(caught);
+      setErrorMessage(message);
+      showErrorSnackbar(error);
     } finally {
       setSaving(false);
     }
@@ -138,7 +138,7 @@ export const PersonalApiKeyDialog = ({
               />
             </Typography>
           )}
-          {error && <Alert severity="error">{error}</Alert>}
+          {errorMessage && <Alert severity="error">{errorMessage}</Alert>}
           <TextField
             autoFocus
             fullWidth

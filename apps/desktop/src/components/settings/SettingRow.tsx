@@ -9,6 +9,7 @@ import {
 } from "@mui/material";
 import type { ChangeEvent, ReactNode } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { getLogger } from "../../utils/log.utils";
 import { settingAnchorId } from "./settings-routes";
 import { useSettingHighlight } from "./settings-highlight";
 
@@ -115,8 +116,10 @@ const cssPixels = (value: number | string): number =>
 const actionPillSx = (
   tone: "primary" | "error",
   // Two pixels inside the app's button radius, from the same token, so the pill
-  // and the buttons it sits beside cannot drift apart.
-  radius: number,
+  // and the buttons it sits beside cannot drift apart. A CSS length string, not
+  // a number: `sx` multiplies a numeric radius by `shape.borderRadius`, so the
+  // pixel value this computes has to be spelled out to survive as pixels.
+  radius: string,
 ): SxProps<Theme> => ({
   display: "inline-flex",
   alignItems: "center",
@@ -141,6 +144,79 @@ const actionPillSx = (
         bgcolor: "level2",
       }),
 });
+
+type SettingRowAction = { label: ReactNode; tone?: "primary" | "error" };
+
+type SettingRowControlColumnProps = {
+  value?: ReactNode;
+  control?: ReactNode;
+  action?: SettingRowAction;
+  externalUrl?: string;
+  interactive: boolean;
+};
+
+/**
+ * The right-hand column: the reported value, the control, the action pill and
+ * the trailing affordance, in that order.
+ *
+ * It is one component rather than markup inside `SettingRow` because two rows
+ * that differ in what they hold still have to line up, and the arrow is the
+ * only part that depends on what the row does: outward for a URL, a chevron for
+ * something that opens in place, and nothing when the row already spells out
+ * its verb in the action pill.
+ */
+const SettingRowControlColumn = ({
+  value,
+  control,
+  action,
+  externalUrl,
+  interactive,
+}: SettingRowControlColumnProps) => {
+  const theme = useTheme();
+
+  let trailingIcon: ReactNode = null;
+  if (externalUrl) {
+    trailingIcon = (
+      <ArrowOutwardRounded sx={{ fontSize: 18, color: "text.secondary" }} />
+    );
+  } else if (interactive && !action) {
+    trailingIcon = (
+      <ChevronRightRounded sx={{ fontSize: 20, color: "text.secondary" }} />
+    );
+  }
+
+  return (
+    <Box sx={controlColumnSx}>
+      {value != null && (
+        <Typography
+          variant="body2"
+          sx={{
+            color: "text.secondary",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {value}
+        </Typography>
+      )}
+      {control}
+      {action && (
+        <Box
+          component="span"
+          className="setting-row-action"
+          sx={actionPillSx(
+            action.tone ?? "primary",
+            `${cssPixels(theme.shape.borderRadius) - 2}px`,
+          )}
+        >
+          {action.label}
+        </Box>
+      )}
+      {trailingIcon}
+    </Box>
+  );
+};
 
 export type SettingRowProps = {
   /** Registry key: the row's anchor id and search identity. */
@@ -182,7 +258,6 @@ export const SettingRow = ({
   externalUrl,
   disabled,
 }: SettingRowProps) => {
-  const theme = useTheme();
   const highlight = useSettingHighlight(settingKey);
   const anchorId = settingAnchorId(settingKey);
   const titleId = `${anchorId}-label`;
@@ -194,17 +269,16 @@ export const SettingRow = ({
       return;
     }
     if (externalUrl) {
-      void openUrl(externalUrl);
+      // Handled rather than discarded: the opener rejects when the operating
+      // system has nothing registered for the URL, and an unhandled rejection
+      // in a click handler is invisible.
+      openUrl(externalUrl).catch((error: unknown) => {
+        getLogger().warning(`Failed to open ${externalUrl}: ${error}`);
+      });
       return;
     }
     onClick?.();
   };
-
-  const trailingIcon = externalUrl ? (
-    <ArrowOutwardRounded sx={{ fontSize: 18, color: "text.secondary" }} />
-  ) : interactive && !action ? (
-    <ChevronRightRounded sx={{ fontSize: 20, color: "text.secondary" }} />
-  ) : null;
 
   const body = (
     <>
@@ -227,38 +301,13 @@ export const SettingRow = ({
         titleId={titleId}
         descriptionId={descriptionId}
       />
-      <Box sx={controlColumnSx}>
-        {value != null && (
-          <Typography
-            variant="body2"
-            sx={{
-              color: "text.secondary",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {value}
-          </Typography>
-        )}
-        {control}
-        {action && (
-          <Box
-            component="span"
-            className="setting-row-action"
-            sx={actionPillSx(
-              action.tone ?? "primary",
-              // `shape.borderRadius` is typed `number | string`, and the sx
-              // prop multiplies a number by that token, so this has to be the
-              // resolved pixel value rather than a scale step.
-              cssPixels(theme.shape.borderRadius) - 2,
-            )}
-          >
-            {action.label}
-          </Box>
-        )}
-        {trailingIcon}
-      </Box>
+      <SettingRowControlColumn
+        value={value}
+        control={control}
+        action={action}
+        externalUrl={externalUrl}
+        interactive={interactive}
+      />
     </>
   );
 
@@ -363,6 +412,45 @@ export type SettingGroupProps = {
 };
 
 /**
+ * The heading of a group.
+ *
+ * A destructive group gets the quieter label treatment: same words, different
+ * weight, so the signal costs the page no extra space. The margin shrinks when
+ * a description follows, because the description supplies the gap.
+ */
+const groupHeadingSx = (
+  danger: boolean,
+  hasDescription: boolean,
+): SxProps<Theme> => ({
+  display: "block",
+  fontWeight: 700,
+  color: danger ? "error.main" : "text.primary",
+  ...(danger ? { letterSpacing: "0.06em", textTransform: "uppercase" } : {}),
+  mb: hasDescription ? 0.5 : 1.5,
+});
+
+/** The card every group's rows sit in. */
+const groupCardSx: SxProps<Theme> = {
+  border: 1,
+  borderRadius: 2,
+  bgcolor: "level1",
+  overflow: "hidden",
+  "& > * + *": { borderTop: 1, borderColor: "divider" },
+};
+
+/**
+ * The card treatment for a dangerous group: the error colour at a low alpha,
+ * taken from the theme channel so it follows the palette in both schemes rather
+ * than naming a red.
+ */
+const dangerCardSx: SxProps<Theme> = {
+  borderColor: (theme: Theme) =>
+    `rgb(${theme.vars?.palette?.error.mainChannel} / 0.35)`,
+  bgcolor: (theme: Theme) =>
+    `rgb(${theme.vars?.palette?.error.mainChannel} / 0.04)`,
+};
+
+/**
  * A titled card of rows. The card supplies the enclosure and the shared
  * control column does the alignment, so groups read as groups without relying
  * on whitespace alone.
@@ -380,18 +468,7 @@ export const SettingGroup = ({
       // difference is the signal, and it costs the page no extra space.
       variant={danger ? "caption" : "h6"}
       component="h2"
-      sx={{
-        display: "block",
-        fontWeight: 700,
-        color: danger ? "error.main" : "text.primary",
-        ...(danger
-          ? {
-              letterSpacing: "0.06em",
-              textTransform: "uppercase",
-            }
-          : {}),
-        mb: description ? 0.5 : 1.5,
-      }}
+      sx={groupHeadingSx(Boolean(danger), Boolean(description))}
     >
       {title}
     </Typography>
@@ -403,25 +480,7 @@ export const SettingGroup = ({
         {description}
       </Typography>
     )}
-    <Box
-      sx={[
-        {
-          border: 1,
-          borderRadius: 2,
-          bgcolor: "level1",
-          overflow: "hidden",
-          "& > * + *": { borderTop: 1, borderColor: "divider" },
-        },
-        danger
-          ? {
-              borderColor: (theme: Theme) =>
-                `rgb(${theme.vars?.palette?.error.mainChannel} / 0.35)`,
-              bgcolor: (theme: Theme) =>
-                `rgb(${theme.vars?.palette?.error.mainChannel} / 0.04)`,
-            }
-          : { borderColor: "divider" },
-      ]}
-    >
+    <Box sx={[groupCardSx, danger ? dangerCardSx : { borderColor: "divider" }]}>
       {children}
     </Box>
   </Box>

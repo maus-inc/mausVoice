@@ -169,11 +169,85 @@ describe("ClearLocalDataDialog", () => {
     );
   });
 
+  it("reports a partial clear instead of reloading into the data it kept", async () => {
+    window.localStorage.setItem(LOCAL_STATE_STORAGE_KEY, "{}");
+    const removeItem = window.localStorage.removeItem.bind(window.localStorage);
+    const spy = vi
+      .spyOn(window.localStorage, "removeItem")
+      .mockImplementation((key: string) => {
+        if (key === LOCAL_STATE_STORAGE_KEY) {
+          throw new Error("storage is read-only");
+        }
+        removeItem(key);
+      });
+    const reload = vi.fn();
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { ...window.location, reload },
+    });
+
+    openDialog();
+    render();
+    typeConfirmation("clear");
+    act(() => {
+      confirmButton()?.click();
+    });
+
+    await vi.waitFor(() => {
+      expect(document.body.textContent).toContain(
+        "Some stored data could not be removed",
+      );
+    });
+    // Reloading would restore the state the dialog just promised to remove.
+    expect(reload).not.toHaveBeenCalled();
+    expect(document.querySelector("input")).not.toBeNull();
+
+    spy.mockRestore();
+  });
+
+  it("cannot be dismissed out from under a wipe that is already running", async () => {
+    let finishWipe: (() => void) | null = null;
+    mocks.invoke.mockImplementation((command: string) =>
+      command === "clear_local_data"
+        ? new Promise<void>((resolve) => {
+            finishWipe = resolve;
+          })
+        : Promise.resolve(),
+    );
+
+    openDialog();
+    render();
+    typeConfirmation("clear");
+    act(() => {
+      confirmButton()?.click();
+    });
+
+    await vi.waitFor(() => {
+      expect(mocks.invoke).toHaveBeenCalledWith("clear_local_data");
+    });
+
+    // Escape is the path the disabled Cancel button cannot cover.
+    act(() => {
+      document.dispatchEvent(
+        new window.KeyboardEvent("keydown", {
+          key: "Escape",
+          bubbles: true,
+        }),
+      );
+    });
+
+    expect(document.querySelector("input")).not.toBeNull();
+
+    await act(async () => {
+      finishWipe?.();
+    });
+  });
+
   it("keeps the dialog open and reports the failure when the wipe fails", async () => {
     mocks.invoke.mockImplementation((command: string) =>
       command === "clear_local_data"
         ? Promise.reject(new Error("database is locked"))
-        : Promise.resolve(undefined),
+        : Promise.resolve(),
     );
 
     openDialog();

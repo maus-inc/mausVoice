@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../../i18n/locales/en.json";
 import { ensureUiHarness } from "../../../test/helpers/jsdom-ui-harness";
+import { requireElement } from "../../../test/helpers/dom";
 
 vi.mock("react-intl", async (importOriginal) => {
   const { reactIntlWithIdsModule } =
@@ -108,7 +109,12 @@ describe("SettingRow", () => {
       }),
     );
 
-    click(container.querySelector('[id="setting-name"]')!);
+    click(
+      requireElement(
+        container.querySelector('[id="setting-name"]'),
+        "the name row",
+      ),
+    );
     expect(onClick).toHaveBeenCalledTimes(1);
   });
 
@@ -123,7 +129,12 @@ describe("SettingRow", () => {
       }),
     );
 
-    click(container.querySelector('[id="setting-name"]')!);
+    click(
+      requireElement(
+        container.querySelector('[id="setting-name"]'),
+        "the name row",
+      ),
+    );
     expect(onClick).not.toHaveBeenCalled();
   });
 

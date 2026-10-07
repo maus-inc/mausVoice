@@ -17,19 +17,6 @@ import { isPillPlacementAvailable } from "./PillPlacementSetting";
 import type { SettingAvailability } from "../../utils/settings-registry";
 
 /**
- * Whether the account rows can act. The local build has no session, so those
- * rows stay out of the page, out of search and out of deep links.
- */
-const getAccountAvailability = (
-  state: Parameters<typeof getIsLoggedIn>[0],
-) => ({
-  signed_in_as: getIsLoggedIn(state),
-  change_password: getIsLoggedIn(state) && getHasEmailProvider(state),
-  sign_out: getIsLoggedIn(state),
-  delete_account: getIsLoggedIn(state),
-});
-
-/**
  * One snapshot of which rows the current platform, provider and preferences
  * make renderable.
  *
@@ -52,7 +39,14 @@ export const useSettingsAvailability = (): SettingAvailability => {
       platform === "macos" || platform === "windows",
       platform === "windows",
       isPillPlacementAvailable(),
-      getAccountAvailability(state),
+      // The account flags are read one by one rather than as the record
+      // `getAccountAvailability` returns: a fresh object every render is a new
+      // reference to every memo that depends on this hook, and the tuple is
+      // what the store's deep comparison is good at.
+      getIsLoggedIn(state),
+      getIsLoggedIn(state) && getHasEmailProvider(state),
+      getIsLoggedIn(state),
+      getIsLoggedIn(state),
     ] as const;
   });
 
@@ -65,7 +59,10 @@ export const useSettingsAvailability = (): SettingAvailability => {
     supportsCorrectionWatch,
     isWindows,
     pillPlacementAvailable,
-    account,
+    signedInAs,
+    changePassword,
+    signOut,
+    deleteAccount,
   ] = snapshot;
 
   return useMemo(
@@ -78,7 +75,10 @@ export const useSettingsAvailability = (): SettingAvailability => {
       pill_placement: pillPlacementAvailable,
       elevenlabs_keyterms: transcriptionProvider === "elevenlabs",
       where_your_dictation_audio_goes: audioDisclosureVisible,
-      ...account,
+      signed_in_as: signedInAs,
+      change_password: changePassword,
+      sign_out: signOut,
+      delete_account: deleteAccount,
     }),
     [
       dictationLimitEnabled,
@@ -89,7 +89,10 @@ export const useSettingsAvailability = (): SettingAvailability => {
       pillPlacementAvailable,
       transcriptionProvider,
       audioDisclosureVisible,
-      account,
+      signedInAs,
+      changePassword,
+      signOut,
+      deleteAccount,
     ],
   );
 };

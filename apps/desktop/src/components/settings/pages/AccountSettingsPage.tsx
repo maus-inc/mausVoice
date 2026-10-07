@@ -5,36 +5,49 @@ import {
 } from "@mui/icons-material";
 import { FormattedMessage } from "react-intl";
 import { signOut } from "../../../actions/login.actions";
-import { useMyProfileImage, useMyUser } from "../../../hooks/user.hooks";
+import { useMyProfileImage } from "../../../hooks/user.hooks";
+import type { AppState } from "../../../state/app.state";
 import { produceAppState, useAppStore } from "../../../store";
 import {
   getEffectivePlan,
   planToDisplayName,
 } from "../../../utils/member.utils";
 import { logOnRejection } from "../../../utils/promise.utils";
+import { getMyUser } from "../../../utils/user.utils";
 import { UserAvatar } from "../../common/UserAvatar";
 import { SettingGroup, SettingRow } from "../SettingRow";
 import { useSettingsAvailability } from "../settings-availability";
 
+/**
+ * The identity the account rows report: what the profile row shows for a name,
+ * the address the account is signed in with, and the plan it is on.
+ *
+ * The three are read together because they are one subject, and the store
+ * compares selector results deeply, so a fresh object per call is the intended
+ * shape. The email is null in the local build, where there is no session.
+ */
+const selectAccountIdentity = (state: AppState) => ({
+  name: getMyUser(state)?.name ?? "",
+  email: state.auth?.email ?? null,
+  planName: planToDisplayName(getEffectivePlan(state)),
+});
+
+const openDialog = (
+  key:
+    | "profileDialogOpen"
+    | "changePasswordDialogOpen"
+    | "deleteAccountDialog"
+    | "clearLocalDataDialogOpen",
+) => {
+  produceAppState((draft) => {
+    draft.settings[key] = true;
+  });
+};
+
 export default function AccountSettingsPage() {
   const availability = useSettingsAvailability();
-  const user = useMyUser();
+  const { name, email, planName } = useAppStore(selectAccountIdentity);
   const profileImage = useMyProfileImage();
-  const email = useAppStore((state) => state.auth?.email ?? null);
-  const planName = useAppStore((state) =>
-    planToDisplayName(getEffectivePlan(state)),
-  );
-
-  const open = (
-    key:
-      | "profileDialogOpen"
-      | "changePasswordDialogOpen"
-      | "deleteAccountDialog"
-      | "clearLocalDataDialogOpen",
-  ) =>
-    produceAppState((draft) => {
-      draft.settings[key] = true;
-    });
 
   return (
     <>
@@ -43,16 +56,14 @@ export default function AccountSettingsPage() {
             the taller avatar and the verb the row actually performs. */}
         <SettingRow
           settingKey="name"
-          icon={
-            <UserAvatar name={user?.name ?? ""} src={profileImage} size={48} />
-          }
+          icon={<UserAvatar name={name} src={profileImage} size={48} />}
           title={<FormattedMessage defaultMessage="Name" />}
           description={
             <FormattedMessage defaultMessage="How you appear in mausVoice, and the name it writes with on your behalf." />
           }
-          value={user?.name || null}
+          value={name || null}
           action={{ label: <FormattedMessage defaultMessage="Edit" /> }}
-          onClick={() => open("profileDialogOpen")}
+          onClick={() => openDialog("profileDialogOpen")}
         />
         {availability.signed_in_as && (
           <SettingRow
@@ -85,7 +96,7 @@ export default function AccountSettingsPage() {
                 values={{ email: email ?? "" }}
               />
             }
-            onClick={() => open("changePasswordDialogOpen")}
+            onClick={() => openDialog("changePasswordDialogOpen")}
           />
         )}
         {availability.sign_out && (
@@ -122,7 +133,7 @@ export default function AccountSettingsPage() {
             label: <FormattedMessage defaultMessage="Clear data" />,
             tone: "error",
           }}
-          onClick={() => open("clearLocalDataDialogOpen")}
+          onClick={() => openDialog("clearLocalDataDialogOpen")}
         />
         {availability.delete_account && (
           <SettingRow
@@ -136,7 +147,7 @@ export default function AccountSettingsPage() {
               label: <FormattedMessage defaultMessage="Delete" />,
               tone: "error",
             }}
-            onClick={() => open("deleteAccountDialog")}
+            onClick={() => openDialog("deleteAccountDialog")}
           />
         )}
       </SettingGroup>

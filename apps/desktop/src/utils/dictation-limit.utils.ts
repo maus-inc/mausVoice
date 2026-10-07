@@ -33,7 +33,9 @@ export const getEffectiveDictationLimitMinutes = (
  *
  * A value above the maximum is refused rather than clamped: the field reports
  * the bound and keeps what was typed, so the number someone entered is never
- * quietly replaced with a different one. `0` stays valid and means no limit.
+ * quietly replaced with a different one. `0` stays valid and means no limit,
+ * and so is a fraction refused: the preference is stored in whole minutes, so
+ * accepting `1.9` would save a one-minute cap while the field said otherwise.
  */
 export const parseDictationLimitMinutes = (input: string): number | null => {
   const trimmed = input.trim();
@@ -44,13 +46,14 @@ export const parseDictationLimitMinutes = (input: string): number | null => {
   const minutes = Number(trimmed);
   if (
     !Number.isFinite(minutes) ||
+    !Number.isInteger(minutes) ||
     minutes < 0 ||
     minutes > MAX_DICTATION_LIMIT_MINUTES
   ) {
     return null;
   }
 
-  return Math.floor(minutes);
+  return minutes;
 };
 
 export type DictationRecordingTimerDurations = {

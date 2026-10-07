@@ -27,13 +27,24 @@ export const ClearLocalDataDialog = () => {
   const [isClearing, setIsClearing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const handleClose = () => {
+  /** Put the dialog away and forget everything typed into it. */
+  const close = () => {
     produceAppState((draft) => {
       draft.settings.clearLocalDataDialogOpen = false;
     });
     setConfirmationValue("");
     setIsClearing(false);
     setErrorMessage(null);
+  };
+
+  // Escape and a click on the backdrop both arrive here, so the dialog cannot
+  // be dismissed out from under a wipe that is already running: the button is
+  // disabled for the same reason, and a half-finished wipe with the dialog gone
+  // would leave nothing to report on.
+  const handleDismiss = () => {
+    if (!isClearing) {
+      close();
+    }
   };
 
   const confirmationMatches =
@@ -67,18 +78,32 @@ export const ClearLocalDataDialog = () => {
 
       await invoke("clear_local_data");
 
-      handleClose();
-
       // The Rust side wipes the database and the managed audio directory;
       // everything this app keeps in localStorage lives outside both, so the
       // photo, dismissed tips and account anchors would otherwise survive a
       // wipe that promises to remove them. The session keys are not in that
       // list: clearing local data is not a sign-out.
       //
-      // This runs after `handleClose` on purpose. Closing updates the store,
-      // and the persist middleware rewrites its key on every change, so wiping
-      // first would leave a freshly serialized key behind.
-      clearAppDataStorage();
+      // The dialog is deliberately left open across this and the reload. Closing
+      // it updates the store, and the persist middleware rewrites its own key on
+      // every state change, so a close before the wipe would put a freshly
+      // serialized key back; and a wipe the browser refuses has to be able to
+      // say so to someone who is still looking at the dialog. The reload takes
+      // the dialog down with everything else.
+      const failedKeys = clearAppDataStorage();
+      if (failedKeys.length > 0) {
+        // Reloading anyway would restore exactly the state the dialog just
+        // promised to remove, so the honest answer is to name the problem and
+        // keep the confirmation field on screen for a retry.
+        setErrorMessage(
+          intl.formatMessage({
+            defaultMessage:
+              "Some stored data could not be removed. Quit and reopen mausVoice, then try again.",
+          }),
+        );
+        setIsClearing(false);
+        return;
+      }
       // A hard reload is the simplest way to flush every in-memory store
       // (Zustand, React state, transcription sessions, subscription
       // handles) that may still hold references to wiped data.
@@ -93,7 +118,7 @@ export const ClearLocalDataDialog = () => {
   };
 
   return (
-    <Dialog open={open} onClose={handleClose} fullWidth maxWidth="sm">
+    <Dialog open={open} onClose={handleDismiss} fullWidth maxWidth="sm">
       <DialogTitle>
         <FormattedMessage defaultMessage="Clear local data" />
       </DialogTitle>
@@ -182,7 +207,7 @@ export const ClearLocalDataDialog = () => {
         </Stack>
       </DialogContent>
       <DialogActions>
-        <Button onClick={handleClose} disabled={isClearing}>
+        <Button onClick={close} disabled={isClearing}>
           <FormattedMessage defaultMessage="Cancel" />
         </Button>
         <Button

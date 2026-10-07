@@ -116,7 +116,12 @@ export default function SystemSettingsPage() {
   const handleToggleAlwaysRequestAdmin = (
     event: ChangeEvent<HTMLInputElement>,
   ) => {
-    void setAlwaysRequestAdminOnStartup(event.target.checked);
+    // `logOnRejection`, not a bare `void`: the write shows its own error
+    // snackbar and then rethrows, so the rejection has to be handled here.
+    logOnRejection(
+      setAlwaysRequestAdminOnStartup(event.target.checked),
+      "settings page: setAlwaysRequestAdminOnStartup",
+    );
   };
 
   return (

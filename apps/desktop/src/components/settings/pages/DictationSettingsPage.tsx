@@ -11,6 +11,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { useNavigate } from "react-router-dom";
 import { produceAppState, useAppStore } from "../../../store";
+import type { AppState } from "../../../state/app.state";
 import {
   setDictationLimitMinutes,
   setHandsFreeDelayMs,
@@ -62,6 +63,29 @@ const openDialog = (
   });
 };
 
+/**
+ * The settings this page reads, in the order they are destructured below.
+ *
+ * Each one carries its own default, so the page never has to ask whether a
+ * preference has been set. The store compares selector results deeply, so a
+ * fresh tuple per call is the intended shape here.
+ */
+const selectDictationState = (state: AppState) => {
+  const preferences = getMyUserPreferences(state);
+  const user = getMyUser(state);
+  return [
+    user?.preferredLanguage ?? getDetectedSystemLocale(),
+    preferences?.spokenCommandsEnabled ?? true,
+    preferences?.hallucinationFilterEnabled ?? true,
+    preferences?.inDictationStyleSwitchingEnabled ?? false,
+    preferences?.realtimeOutputEnabled ?? false,
+    preferences?.reviewBeforeInsert ?? false,
+    getEffectiveDictationLimitMinutes(preferences),
+    getEffectiveHandsFreeDelayMs(preferences),
+    getGenerativePrefs(state).mode !== "none",
+  ] as const;
+};
+
 export default function DictationSettingsPage() {
   const intl = useIntl();
   const navigate = useNavigate();
@@ -77,21 +101,7 @@ export default function DictationSettingsPage() {
     dictationLimitMinutes,
     handsFreeDelayMs,
     hasPostProcessing,
-  ] = useAppStore((state) => {
-    const preferences = getMyUserPreferences(state);
-    const user = getMyUser(state);
-    return [
-      user?.preferredLanguage ?? getDetectedSystemLocale(),
-      preferences?.spokenCommandsEnabled ?? true,
-      preferences?.hallucinationFilterEnabled ?? true,
-      preferences?.inDictationStyleSwitchingEnabled ?? false,
-      preferences?.realtimeOutputEnabled ?? false,
-      preferences?.reviewBeforeInsert ?? false,
-      getEffectiveDictationLimitMinutes(preferences),
-      getEffectiveHandsFreeDelayMs(preferences),
-      getGenerativePrefs(state).mode !== "none",
-    ] as const;
-  });
+  ] = useAppStore(selectDictationState);
 
   const languageWarning = (() => {
     if (hasPostProcessing || dictationLanguage === KEYBOARD_LAYOUT_LANGUAGE) {
@@ -111,8 +121,10 @@ export default function DictationSettingsPage() {
     // snackbar and then rethrows, so this chain rejects and `void` would leave
     // an unhandled rejection on top of the toast.
     logOnRejection(
-      setPreferredLanguage(nextValue).then(() => {
-        loadTones();
+      setPreferredLanguage(nextValue).then(async () => {
+        // Awaited rather than fired and forgotten: the language changes which
+        // tones are available, and the chain is what `logOnRejection` reports on.
+        await loadTones();
       }),
       "settings: setPreferredLanguage",
     );
@@ -152,10 +164,24 @@ export default function DictationSettingsPage() {
     [intl],
   );
 
+  // The minutes field is stricter than the seconds field, so it gets its own
+  // sentence: it refuses fractions, and "between 0 and 35791" would not say so.
+  const wholeMinutesMessage = useCallback(
+    (max: number) =>
+      intl.formatMessage(
+        {
+          defaultMessage:
+            "Enter a whole number of minutes from 0 to {max}. The value was not saved.",
+        },
+        { max: intl.formatNumber(max) },
+      ),
+    [intl],
+  );
+
   const commitLimit = () => {
     const minutes = parseDictationLimitMinutes(limitInput);
     if (minutes === null) {
-      setLimitError(outOfRangeMessage(MAX_DICTATION_LIMIT_MINUTES));
+      setLimitError(wholeMinutesMessage(MAX_DICTATION_LIMIT_MINUTES));
       return;
     }
 
@@ -164,9 +190,13 @@ export default function DictationSettingsPage() {
     if (minutes === lastCommittedLimit.current) {
       return;
     }
-    lastCommittedLimit.current = minutes;
+    // Marked once the write lands, not before it: a write that fails shows its
+    // own snackbar and leaves the preference alone, and marking it here would
+    // make the same number look already-committed and silently refuse a retry.
     logOnRejection(
-      setDictationLimitMinutes(minutes),
+      setDictationLimitMinutes(minutes).then(() => {
+        lastCommittedLimit.current = minutes;
+      }),
       "settings page: setDictationLimitMinutes",
     );
   };
@@ -183,9 +213,11 @@ export default function DictationSettingsPage() {
     if (milliseconds === lastCommittedDelay.current) {
       return;
     }
-    lastCommittedDelay.current = milliseconds;
+    // Marked once the write lands, for the same reason as the minutes field.
     logOnRejection(
-      setHandsFreeDelayMs(milliseconds),
+      setHandsFreeDelayMs(milliseconds).then(() => {
+        lastCommittedDelay.current = milliseconds;
+      }),
       "settings page: setHandsFreeDelayMs",
     );
   };
