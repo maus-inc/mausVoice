@@ -1017,7 +1017,7 @@
   "what_s_new": "最新消息",
   "what_should_we_call_you": "我們該怎麼稱呼您？",
   "what_stays_on_this_computer_what_leaves_it_and_how_to_remove": "哪些內容留在這部電腦、哪些會離開，以及如何移除。",
-  "what_your_current_plan_includes_change_it_from_the_mausvoice": "目前方案包含的內容。請在 mausVoice 網站上變更。",
+  "what_your_current_plan_includes_it_is_set_on_your_account_no": "目前方案包含的內容。此設定在你的帳戶中管理，而非應用程式內。",
   "when_enabled_mausvoice_appends_v1_to_the_base_url_unless_it": "啟用後，若 Base URL 尚未以 /v1 結尾，mausVoice 會自動拼上 /v1。對於直接在所填 Base URL 上提供 /models 與 /chat/completions 的伺服器，請關閉此項。",
   "when_enabled_mausvoice_will_start_the_multi_device_receiver": "啟用後，mausVoice 會在啟動時自動使用已儲存的接收埠啟動多裝置接收器。",
   "where_speech_becomes_text_on_this_computer_or_through_a_prov": "語音在哪裡變成文字：這部電腦或透過供應商。",

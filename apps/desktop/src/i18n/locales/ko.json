@@ -1017,7 +1017,7 @@
   "what_s_new": "새로운 소식",
   "what_should_we_call_you": "어떻게 불러 드릴까요?",
   "what_stays_on_this_computer_what_leaves_it_and_how_to_remove": "이 컴퓨터에 남는 것과 나가는 것, 그리고 제거 방법입니다.",
-  "what_your_current_plan_includes_change_it_from_the_mausvoice": "현재 요금제에 포함된 내용입니다. mausVoice 웹사이트에서 변경하세요.",
+  "what_your_current_plan_includes_it_is_set_on_your_account_no": "현재 요금제에 포함된 내용입니다. 앱이 아니라 계정에서 설정합니다.",
   "when_enabled_mausvoice_appends_v1_to_the_base_url_unless_it": "활성화하면 mausVoice가 Base URL 끝이 /v1이 아니면 /v1을 추가합니다. 입력한 Base URL에서 /models와 /chat/completions를 바로 제공하는 서버에서는 이 옵션을 끄세요.",
   "when_enabled_mausvoice_will_start_the_multi_device_receiver": "활성화하면, mausVoice은 저장된 수신 포트를 사용하여 시작 시 멀티 디바이스 수신기를 자동으로 시작합니다.",
   "where_speech_becomes_text_on_this_computer_or_through_a_prov": "음성이 텍스트가 되는 위치: 이 컴퓨터 또는 제공자를 통해.",

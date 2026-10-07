@@ -161,6 +161,11 @@ describe("ClearLocalDataDialog", () => {
     });
 
     const commands = mocks.invoke.mock.calls.map(([command]) => command);
+    // Presence first: `indexOf` returns -1 for a command that never ran, and -1
+    // is less than every real index, so an ordering check on its own would pass
+    // if the teardown were deleted outright.
+    expect(commands).toContain("stop_key_listener");
+    expect(commands).toContain("stop_recording");
     expect(commands.indexOf("stop_key_listener")).toBeLessThan(
       commands.indexOf("clear_local_data"),
     );

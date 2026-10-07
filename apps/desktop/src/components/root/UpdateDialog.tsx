@@ -13,7 +13,7 @@ import {
   Stack,
   Typography,
 } from "@mui/material";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { openExternalUrl } from "../../utils/open-url.utils";
 import { isReadOnlyFilesystemInstallError } from "@maus-inc/desktop-utils";
 import { useCallback, useMemo, useState } from "react";
 import { FormattedMessage, useIntl, type IntlShape } from "react-intl";
@@ -349,7 +349,7 @@ export const UpdateDialog = () => {
     if (!manualInstallerUrl) {
       return;
     }
-    openUrl(manualInstallerUrl);
+    openExternalUrl(manualInstallerUrl);
   }, [manualInstallerUrl]);
 
   return (

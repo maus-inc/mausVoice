@@ -10,9 +10,9 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { openExternalUrl } from "../../utils/open-url.utils";
 import { showErrorSnackbar, showSnackbar } from "../../actions/app.actions";
 import {
   savePersonalDeepgramApiKey,
@@ -80,6 +80,7 @@ export const PersonalApiKeyDialog = ({
   );
   const [value, setValue] = useState("");
   const [saving, setSaving] = useState(false);
+  const keyRef = useRef<HTMLInputElement | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
@@ -87,6 +88,10 @@ export const PersonalApiKeyDialog = ({
       setValue("");
       setErrorMessage(null);
       setSaving(false);
+      // The field is the dialog's whole purpose, so it takes the focus. Set
+      // here rather than as an `autoFocus` attribute, which fires as markup and
+      // cannot be deferred; this is the repo's established rule for dialogs.
+      keyRef.current?.focus();
     }
   }, [open, provider]);
 
@@ -140,7 +145,7 @@ export const PersonalApiKeyDialog = ({
           )}
           {errorMessage && <Alert severity="error">{errorMessage}</Alert>}
           <TextField
-            autoFocus
+            inputRef={keyRef}
             fullWidth
             size="small"
             type="password"
@@ -159,7 +164,7 @@ export const PersonalApiKeyDialog = ({
             component="button"
             type="button"
             variant="body2"
-            onClick={() => openUrl(copy.consoleUrl)}
+            onClick={() => openExternalUrl(copy.consoleUrl)}
             sx={{ alignSelf: "flex-start" }}
           >
             {copy.consoleLabel}

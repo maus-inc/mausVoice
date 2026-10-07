@@ -8,8 +8,7 @@ import {
   type Theme,
 } from "@mui/material";
 import type { ChangeEvent, ReactNode } from "react";
-import { openUrl } from "@tauri-apps/plugin-opener";
-import { getLogger } from "../../utils/log.utils";
+import { openExternalUrl } from "../../utils/open-url.utils";
 import { settingAnchorId } from "./settings-routes";
 import { useSettingHighlight } from "./settings-highlight";
 
@@ -269,12 +268,7 @@ export const SettingRow = ({
       return;
     }
     if (externalUrl) {
-      // Handled rather than discarded: the opener rejects when the operating
-      // system has nothing registered for the URL, and an unhandled rejection
-      // in a click handler is invisible.
-      openUrl(externalUrl).catch((error: unknown) => {
-        getLogger().warning(`Failed to open ${externalUrl}: ${error}`);
-      });
+      openExternalUrl(externalUrl);
       return;
     }
     onClick?.();

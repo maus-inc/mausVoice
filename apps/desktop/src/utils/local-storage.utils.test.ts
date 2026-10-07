@@ -1,11 +1,13 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { THEME_MODE_STORAGE_KEY } from "../theme";
 import {
   ACCOUNT_CREATED_AT_STORAGE_KEY,
   APP_DATA_STORAGE_KEYS,
   APP_DATA_STORAGE_PREFIXES,
   clearAppDataStorage,
   LAST_SETTINGS_PAGE_STORAGE_KEY,
+  LEGACY_THEME_MODE_STORAGE_KEY,
   LOCAL_STATE_STORAGE_KEY,
   ONBOARDED_AT_STORAGE_KEY,
   PREVIEW_LOCAL_STATE_STORAGE_KEY,
@@ -24,27 +26,37 @@ describe("clearAppDataStorage", () => {
     window.localStorage.clear();
   });
 
-  it("covers every key the app writes", () => {
-    expect([...APP_DATA_STORAGE_KEYS].sort()).toEqual(
-      [
-        LOCAL_STATE_STORAGE_KEY,
-        PREVIEW_LOCAL_STATE_STORAGE_KEY,
-        LEGACY_LOCAL_STATE_STORAGE_KEY,
-        ACCOUNT_CREATED_AT_STORAGE_KEY,
-        ONBOARDED_AT_STORAGE_KEY,
-        LAST_SETTINGS_PAGE_STORAGE_KEY,
-      ].sort(),
-    );
+  // Behaviour, not the shape of the list: every named key is set, then the wipe
+  // runs, then each one is checked. Asserting the list against the same
+  // constants it is built from would pass while an app-written key was missing
+  // from it, which is how the theme key went unnoticed in the first place.
+  it("removes every key the app names, whatever namespace they are in", () => {
+    const themeKey = THEME_MODE_STORAGE_KEY;
+    for (const key of [...APP_DATA_STORAGE_KEYS, themeKey]) {
+      window.localStorage.setItem(key, "value");
+    }
+
+    clearAppDataStorage();
+
+    for (const key of [...APP_DATA_STORAGE_KEYS, themeKey]) {
+      expect(window.localStorage.getItem(key)).toBeNull();
+    }
   });
 
-  // The wipe works from the namespaces, so a key that is not under one of them
-  // would be named above and still survive.
-  it("keeps every named key inside a wiped namespace", () => {
-    for (const key of APP_DATA_STORAGE_KEYS) {
-      expect(
-        APP_DATA_STORAGE_PREFIXES.some((prefix) => key.startsWith(prefix)),
-      ).toBe(true);
-    }
+  // The theme key is defined in `theme.ts`, which is the independent source: if
+  // the two ever diverge, the wipe stops covering the appearance preference and
+  // this is what says so.
+  it("covers the theme mode the app writes through the theme provider", () => {
+    expect(APP_DATA_STORAGE_KEYS).toContain(THEME_MODE_STORAGE_KEY);
+    window.localStorage.setItem(THEME_MODE_STORAGE_KEY, "dark");
+    window.localStorage.setItem(LEGACY_THEME_MODE_STORAGE_KEY, "dark");
+
+    clearAppDataStorage();
+
+    expect(window.localStorage.getItem(THEME_MODE_STORAGE_KEY)).toBeNull();
+    expect(
+      window.localStorage.getItem(LEGACY_THEME_MODE_STORAGE_KEY),
+    ).toBeNull();
   });
 
   it("removes keys named per item, which no fixed list can enumerate", () => {
@@ -71,6 +83,39 @@ describe("clearAppDataStorage", () => {
     expect(
       window.localStorage.getItem("mausvoice:checklist-dismissed"),
     ).toBeNull();
+  });
+
+  // The legacy names are history, not choices: someone who upgraded still has
+  // state under them, so the exact strings are pinned rather than trusted, and
+  // the wipe is checked against the strings themselves.
+  it("removes state written under the names this app used before", () => {
+    expect(LEGACY_LOCAL_STATE_STORAGE_KEY).toBe("voquill-local-state");
+    expect(PREVIEW_LOCAL_STATE_STORAGE_KEY).toBe(
+      "mausvoice-browser-preview-local-state",
+    );
+    window.localStorage.setItem("voquill-local-state", "{}");
+    window.localStorage.setItem("mausvoice-browser-preview-local-state", "{}");
+    window.localStorage.setItem("voquill-pending-deletes", "[]");
+
+    clearAppDataStorage();
+
+    expect(window.localStorage.getItem("voquill-local-state")).toBeNull();
+    expect(
+      window.localStorage.getItem("mausvoice-browser-preview-local-state"),
+    ).toBeNull();
+    expect(window.localStorage.getItem("voquill-pending-deletes")).toBeNull();
+  });
+
+  // A prefix is a blunt instrument, so its breadth is the risk: one that covered
+  // the auth session would turn a wipe into a sign-out. Firebase's namespace is
+  // the one thing here that must stay outside every prefix the app owns.
+  it("owns no namespace wide enough to hold the auth session", () => {
+    const sessionKey = "firebase:authUser:key:[DEFAULT]";
+
+    for (const prefix of APP_DATA_STORAGE_PREFIXES) {
+      expect(prefix.length).toBeGreaterThan(0);
+      expect(sessionKey.startsWith(prefix)).toBe(false);
+    }
   });
 
   it("reports the keys the browser refused to remove", () => {
@@ -104,14 +149,23 @@ describe("clearAppDataStorage", () => {
         },
       }),
     );
-    window.localStorage.setItem("mui-mode", "dark");
 
     clearAppDataStorage();
 
     expect(window.localStorage.getItem(LOCAL_STATE_STORAGE_KEY)).toBeNull();
-    // A key this app does not own, so nothing here can be mistaken for a
-    // blanket localStorage wipe.
-    expect(window.localStorage.getItem("mui-mode")).toBe("dark");
+  });
+
+  // The one thing a wipe must not take with it. The session keys are on a
+  // different origin namespace, and this is what keeps a broadened wipe from
+  // signing the person out.
+  it("leaves a key this app never wrote alone", () => {
+    window.localStorage.setItem("some-other-app:preference", "keep");
+
+    clearAppDataStorage();
+
+    expect(window.localStorage.getItem("some-other-app:preference")).toBe(
+      "keep",
+    );
   });
 
   it("removes the account anchors and the remembered settings page", () => {

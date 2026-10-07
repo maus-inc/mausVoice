@@ -18,6 +18,7 @@ vi.mock("react-intl", async (importOriginal) => {
 import { INITIAL_APP_STATE } from "../../state/app.state";
 import { setAppState } from "../../store";
 import { ensureUiHarness } from "../../../test/helpers/jsdom-ui-harness";
+import { requireElement } from "../../../test/helpers/dom";
 import en from "../../i18n/locales/en.json";
 import { LAST_SETTINGS_PAGE_STORAGE_KEY } from "../../utils/local-storage.utils";
 import { SettingsEntryRedirect, SettingsLayout } from "./SettingsLayout";
@@ -157,6 +158,29 @@ describe("SettingsLayout", () => {
     // first hit was opened rather than the query simply being dropped.
     expect(railCurrent()).toBe("Privacy and data");
     expect(searchInput()?.value).toBe("");
+  });
+
+  it("shows the page when one is chosen from the rail mid-search", async () => {
+    await render("/dashboard/settings/appearance");
+    setQuery("incognito");
+    expect(container.textContent).toContain("Privacy and data");
+
+    // The rail changes the route without touching the query, so the results
+    // panel would otherwise keep standing in for the page that was chosen.
+    const railLink = [...container.querySelectorAll("a")].find(
+      (link) => link.textContent === "Shortcuts",
+    );
+    act(() => {
+      requireElement(railLink, "the Shortcuts rail link").dispatchEvent(
+        new window.MouseEvent("click", { bubbles: true, cancelable: true }),
+      );
+    });
+
+    expect(searchInput()?.value).toBe("");
+    expect(railCurrent()).toBe("Shortcuts");
+    // The results panel labels each group with an overline; the page header
+    // does not, so its absence is what says the page is back.
+    expect(container.querySelector(".MuiTypography-overline")).toBeNull();
   });
 
   it("clears the query on Escape without leaving the page", async () => {

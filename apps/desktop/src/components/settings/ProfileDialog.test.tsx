@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   setMyProfileImage: vi.fn(),
   useMyUser: vi.fn(),
   useMyProfileImage: vi.fn(),
+  readAvatarFile: vi.fn(),
 }));
 
 vi.mock("../../actions/user.actions", () => ({
@@ -18,6 +19,13 @@ vi.mock("../../actions/user.actions", () => ({
 vi.mock("../../hooks/user.hooks", () => ({
   useMyUser: () => mocks.useMyUser(),
   useMyProfileImage: () => mocks.useMyProfileImage(),
+}));
+
+// The decode needs a canvas, so the dialog test drives the wiring around it:
+// what the component does with a decoded photo, and what it does with a refusal.
+vi.mock("../../utils/avatar.utils", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../utils/avatar.utils")>()),
+  readAvatarFile: (file: File) => mocks.readAvatarFile(file),
 }));
 
 vi.mock("react-intl", async (importOriginal) => {
@@ -120,6 +128,13 @@ describe("ProfileDialog", () => {
     mocks.useMyUser.mockReturnValue(USER);
     mocks.useMyProfileImage.mockReset();
     mocks.useMyProfileImage.mockReturnValue(null);
+    mocks.readAvatarFile.mockReset();
+    // Default to a refusal, so a test that does not care about the decode still
+    // exercises the branch the dialog has to answer.
+    mocks.readAvatarFile.mockResolvedValue({
+      ok: false,
+      error: "unsupported-type",
+    });
   });
 
   afterEach(() => {
@@ -159,13 +174,97 @@ describe("ProfileDialog", () => {
 
     await type(requireElement(nameInput(), "the name field"), "Morgan Lee Jr.");
     const form = requireElement(dialog()?.querySelector("form"), "the form");
-    act(() => {
+    await act(async () => {
       form.dispatchEvent(
         new window.Event("submit", { bubbles: true, cancelable: true }),
       );
     });
 
     expect(mocks.setUserName).toHaveBeenCalledWith("Morgan Lee Jr.");
+  });
+
+  it("previews the decoded photo and saves it with the name", async () => {
+    mocks.readAvatarFile.mockResolvedValue({
+      ok: true,
+      dataUrl: "data:image/jpeg;base64,NEW",
+    });
+    open();
+
+    await pick(new File(["x"], "photo.png", { type: "image/png" }));
+
+    // The line under the circle reports what is about to be saved, and the
+    // save arms only because the photo differs from the stored one.
+    expect(dialog()?.textContent).toContain("New photo ready to save.");
+    const save = [...(dialog()?.querySelectorAll("button") ?? [])].find(
+      (button) => button.textContent?.trim() === "Save",
+    );
+    expect(save?.hasAttribute("disabled")).toBe(false);
+
+    await type(requireElement(nameInput(), "the name field"), "Morgan Lee Jr.");
+    // Awaited, so the save's own state updates land inside the act: the dialog
+    // is mounted until its exit transition finishes.
+    await act(async () => {
+      requireElement(dialog()?.querySelector("form"), "the form").dispatchEvent(
+        new window.Event("submit", { bubbles: true, cancelable: true }),
+      );
+    });
+
+    await vi.waitFor(() => {
+      expect(mocks.setMyProfileImage).toHaveBeenCalledWith(
+        "data:image/jpeg;base64,NEW",
+      );
+    });
+    expect(mocks.setUserName).toHaveBeenCalledWith("Morgan Lee Jr.");
+  });
+
+  it("saves only the photo when the name is unchanged", async () => {
+    mocks.readAvatarFile.mockResolvedValue({
+      ok: true,
+      dataUrl: "data:image/jpeg;base64,NEW",
+    });
+    open();
+
+    await pick(new File(["x"], "photo.png", { type: "image/png" }));
+    // Awaited, so the save's own state updates land inside the act: the dialog
+    // is mounted until its exit transition finishes.
+    await act(async () => {
+      requireElement(dialog()?.querySelector("form"), "the form").dispatchEvent(
+        new window.Event("submit", { bubbles: true, cancelable: true }),
+      );
+    });
+
+    await vi.waitFor(() => {
+      expect(mocks.setMyProfileImage).toHaveBeenCalledWith(
+        "data:image/jpeg;base64,NEW",
+      );
+    });
+    expect(mocks.setUserName).not.toHaveBeenCalled();
+  });
+
+  it("arms removal when the photo is removed", async () => {
+    mocks.useMyProfileImage.mockReturnValue("data:image/png;base64,OLD");
+    open();
+
+    const remove = [...(dialog()?.querySelectorAll("button") ?? [])].find(
+      (button) => button.textContent?.trim() === "Remove photo",
+    );
+    act(() => {
+      requireElement(remove, "the Remove photo button").click();
+    });
+
+    expect(dialog()?.textContent).toContain("Photo will be removed on save.");
+
+    // Awaited, so the save's own state updates land inside the act: the dialog
+    // is mounted until its exit transition finishes.
+    await act(async () => {
+      requireElement(dialog()?.querySelector("form"), "the form").dispatchEvent(
+        new window.Event("submit", { bubbles: true, cancelable: true }),
+      );
+    });
+
+    await vi.waitFor(() => {
+      expect(mocks.setMyProfileImage).toHaveBeenCalledWith(null);
+    });
   });
 
   it("saves nothing on Cancel", async () => {

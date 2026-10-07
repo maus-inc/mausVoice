@@ -6,13 +6,16 @@ import { ChangelogFetchError } from "../../actions/changelog.actions";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { fetchChangelogMock, openUrlMock, getVersionMock } = vi.hoisted(() => ({
-  fetchChangelogMock: vi.fn(),
-  // `openUrl` is consumed with `.catch()` and `getVersion` with `.then()`, so
-  // both fakes have to hand back a promise like the real plugin calls do.
-  openUrlMock: vi.fn(() => Promise.resolve(undefined)),
-  getVersionMock: vi.fn(() => Promise.resolve("0.1.7")),
-}));
+const { fetchChangelogMock, openUrlMock, getVersionMock, loggerMock } =
+  vi.hoisted(() => ({
+    fetchChangelogMock: vi.fn(),
+    // `openUrl` is consumed with `.catch()` and `getVersion` with `.then()`, so
+    // both fakes have to hand back a promise like the real plugin calls do.
+    openUrlMock: vi.fn(() => Promise.resolve(undefined)),
+    getVersionMock: vi.fn(() => Promise.resolve("0.1.7")),
+    // The opener failure is reported through the app logger, not the console.
+    loggerMock: { warning: vi.fn() },
+  }));
 
 vi.mock("react-intl", async (importOriginal) => {
   const { reactIntlWithIdsModule } =
@@ -31,6 +34,10 @@ vi.mock("@tauri-apps/plugin-opener", () => ({
 
 vi.mock("@tauri-apps/api/app", () => ({
   getVersion: getVersionMock,
+}));
+
+vi.mock("../../utils/log.utils", () => ({
+  getLogger: () => loggerMock,
 }));
 
 import { ChangelogDialog } from "./ChangelogDialog";
@@ -107,25 +114,29 @@ const flush = async () => {
 
 describe("ChangelogDialog", () => {
   it("handles an opener failure without navigating and allows retry", async () => {
-    const log = vi.spyOn(console, "error").mockImplementation(() => {});
-    try {
-      fetchChangelogMock.mockResolvedValueOnce([
-        { ...entries[0], body: "[Details](https://example.com/notes)" },
-      ]);
-      openUrlMock.mockRejectedValueOnce(new Error("opener unavailable"));
-      renderDialog();
-      await flush();
-      const anchor = document.querySelector("a")!;
-      // Sync act scope: the click only calls `preventDefault()` and hands the
-      // URL to `openUrl`, whose `.catch` only logs. No React state is set from
-      // a microtask here, so the scope does not need to be async.
-      await act(() => anchor.click());
-      expect(log).toHaveBeenCalledWith("Failed to open release-note link.");
-      await act(() => anchor.click());
-      expect(openUrlMock).toHaveBeenCalledTimes(2);
-    } finally {
-      log.mockRestore();
-    }
+    const startedAt = window.location.href;
+    fetchChangelogMock.mockResolvedValueOnce([
+      { ...entries[0], body: "[Details](https://example.com/notes)" },
+    ]);
+    openUrlMock.mockRejectedValueOnce(new Error("opener unavailable"));
+    renderDialog();
+    await flush();
+    const anchor = document.querySelector("a")!;
+    // Sync act scope: the click only calls `preventDefault()` and hands the
+    // URL to `openUrl`, whose `.catch` only logs. No React state is set from
+    // a microtask here, so the scope does not need to be async.
+    await act(() => anchor.click());
+
+    // The failure is reported rather than swallowed, and the webview stayed put
+    // instead of following the link in place of the browser.
+    expect(loggerMock.warning).toHaveBeenCalledWith(
+      expect.stringContaining("https://example.com/notes"),
+    );
+    expect(window.location.href).toBe(startedAt);
+
+    openUrlMock.mockResolvedValueOnce(undefined);
+    await act(() => anchor.click());
+    expect(openUrlMock).toHaveBeenCalledTimes(2);
   });
   it.each(["https://example.com/notes", "http://example.com/notes"])(
     "opens Markdown %s in the external browser, never the webview",

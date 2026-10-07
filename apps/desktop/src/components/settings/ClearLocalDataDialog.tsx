@@ -12,7 +12,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { produceAppState, useAppStore } from "../../store";
 import { clearAppDataStorage } from "../../utils/local-storage.utils";
@@ -26,6 +26,17 @@ export const ClearLocalDataDialog = () => {
   const [confirmationValue, setConfirmationValue] = useState("");
   const [isClearing, setIsClearing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const confirmationRef = useRef<HTMLInputElement | null>(null);
+
+  // The field someone has to type into gets the focus, spelled out here rather
+  // than as an `autoFocus` attribute: the attribute fires as markup and cannot
+  // be deferred, so it races anything else that moves focus in the same commit.
+  // This mirrors ContextMenu's "focus after commit, not via autoFocus" rule.
+  useEffect(() => {
+    if (open) {
+      confirmationRef.current?.focus();
+    }
+  }, [open]);
 
   /** Put the dialog away and forget everything typed into it. */
   const close = () => {
@@ -177,7 +188,7 @@ export const ClearLocalDataDialog = () => {
               />
             </Typography>
             <TextField
-              autoFocus
+              inputRef={confirmationRef}
               fullWidth
               // No visible label: the line above it already names the word to
               // type, and repeating it in a floating label is one more element

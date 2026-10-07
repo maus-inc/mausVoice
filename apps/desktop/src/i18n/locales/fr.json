@@ -1017,7 +1017,7 @@
   "what_s_new": "Quoi de neuf",
   "what_should_we_call_you": "Comment devrions-nous vous appeler ?",
   "what_stays_on_this_computer_what_leaves_it_and_how_to_remove": "Ce qui reste sur cet ordinateur, ce qui en sort et comment le supprimer.",
-  "what_your_current_plan_includes_change_it_from_the_mausvoice": "Ce que comprend votre forfait actuel. Modifiez-le depuis le site mausVoice.",
+  "what_your_current_plan_includes_it_is_set_on_your_account_no": "Ce que comprend votre forfait actuel. Il se gère depuis votre compte, pas depuis l’application.",
   "when_enabled_mausvoice_appends_v1_to_the_base_url_unless_it": "Activé, mausVoice ajoute /v1 à l'URL de base, sauf si celle-ci se termine déjà par /v1. Désactivez-le pour les serveurs qui exposent /models et /chat/completions directement sur l'URL de base saisie.",
   "when_enabled_mausvoice_will_start_the_multi_device_receiver": "Lorsqu'il est activé, mausVoice démarrera automatiquement le récepteur multi-appareils au lancement en utilisant le port du récepteur enregistré.",
   "where_speech_becomes_text_on_this_computer_or_through_a_prov": "Où la parole devient texte : sur cet ordinateur ou via un fournisseur.",

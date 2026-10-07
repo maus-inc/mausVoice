@@ -249,6 +249,13 @@ export const SettingsLayout = () => {
     setHighlight(null);
   }, [location.hash, activePage, focusSetting]);
 
+  // A query belongs to the page it was typed on. Without this, picking a page
+  // from the rail while a search is open leaves the results panel standing in
+  // for the page that was just chosen, because the rail only changes the route.
+  useEffect(() => {
+    setQuery("");
+  }, [location.pathname]);
+
   // `/` reaches search from anywhere on the surface, which is the shortcut
   // people already expect from search boxes.
   useEffect(() => {

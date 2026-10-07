@@ -876,6 +876,7 @@ export const REGISTRY: RegistryEntry[] = [
     usedIn: [
       `${D}components/onboarding/SignInForm.tsx`,
       `${D}components/settings/pages/PrivacyDataSettingsPage.tsx`,
+      `${D}components/settings/pages/SystemSettingsPage.tsx`,
       `${D}components/settings/UpdateChannelSetting.tsx`,
       `${D}components/styling/ManualStylingRow.tsx`,
       `${D}components/tones/ToneEditorDialog.tsx`,
@@ -1082,7 +1083,6 @@ export const REGISTRY: RegistryEntry[] = [
       `${D}components/common/MenuPopover.tsx`,
       `${D}components/dashboard/DashboardMenu.tsx`,
       `${D}components/dashboard/UpdateListTile.tsx`,
-      `${D}components/settings/SettingRow.tsx`,
       `${D}components/styling/AppStylingRow.tsx`,
       `${D}components/styling/ManualStylingRow.tsx`,
     ],

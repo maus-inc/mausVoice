@@ -14,6 +14,20 @@ export const MAX_AVATAR_SOURCE_BYTES = 5 * 1024 * 1024;
 /** Edge length of the stored image, in pixels. */
 export const AVATAR_IMAGE_SIZE = 256;
 
+/** Quality of the stored JPEG. High enough that a photo does not look softened. */
+export const AVATAR_JPEG_QUALITY = 0.9;
+
+/**
+ * The largest stored data URL the app will keep, in characters.
+ *
+ * The photo lives in the persisted local slice, which the store re-serializes
+ * and writes on every change, so this string is what decides how much of the
+ * origin's storage quota one picture may take. A 256px JPEG lands around 30 KB,
+ * and a PNG that keeps alpha on busy content can be an order of magnitude
+ * larger, which is the case this cap exists for.
+ */
+export const MAX_STORED_AVATAR_CHARS = 200_000;
+
 export const ACCEPTED_AVATAR_MIME_TYPES = [
   "image/png",
   "image/jpeg",
@@ -86,6 +100,36 @@ const usesTransparency = (
 };
 
 /**
+ * The drawn square as the string that gets stored.
+ *
+ * Alpha is worth keeping while it is affordable: a cutout encodes small as PNG,
+ * and the same pixels as JPEG would turn transparent areas black. A photo with
+ * a few semi-transparent pixels, though, takes the PNG branch at many times the
+ * JPEG's size, so anything over the cap is encoded as a JPEG instead, with the
+ * pixels painted onto white first so a cutout becomes a light picture rather
+ * than a dark rectangle.
+ */
+const encodeSquare = (
+  canvas: HTMLCanvasElement,
+  context: CanvasRenderingContext2D,
+): string => {
+  if (usesTransparency(context, AVATAR_IMAGE_SIZE)) {
+    const png = canvas.toDataURL("image/png");
+    if (png.length <= MAX_STORED_AVATAR_CHARS) {
+      return png;
+    }
+    // `destination-over` paints behind the pixels already drawn, so the
+    // transparent ones get white instead of black.
+    context.globalCompositeOperation = "destination-over";
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, AVATAR_IMAGE_SIZE, AVATAR_IMAGE_SIZE);
+    context.globalCompositeOperation = "source-over";
+  }
+
+  return canvas.toDataURL("image/jpeg", AVATAR_JPEG_QUALITY);
+};
+
+/**
  * Read a chosen file into the stored square, or say why it cannot be used.
  *
  * `imageOrientation: "from-image"` matters for photos taken on a phone: their
@@ -126,11 +170,7 @@ export const readAvatarFile = async (file: File): Promise<AvatarReadResult> => {
     );
     bitmap.close();
 
-    const dataUrl = usesTransparency(context, AVATAR_IMAGE_SIZE)
-      ? canvas.toDataURL("image/png")
-      : canvas.toDataURL("image/jpeg", 0.9);
-
-    return { ok: true, dataUrl };
+    return { ok: true, dataUrl: encodeSquare(canvas, context) };
   } catch {
     // A file that declares an accepted type can still fail to decode, which is
     // the one path here that is not the person's fault and must not surface as

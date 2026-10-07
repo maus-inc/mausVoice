@@ -23,13 +23,16 @@ import {
   easeOutCubic,
   easeOutQuint,
 } from "./styles/motion";
+import { THEME_MODE_STORAGE_KEY } from "./utils/local-storage.utils";
 
 const easeOut = cssEase(easeOutQuint);
 
 const uiFont = '"Satoshi", system-ui, -apple-system, sans-serif';
 /** TAN-PARADISO only via CSS var(--font-display) on logo + welcome/name. */
 
-export const THEME_MODE_STORAGE_KEY = "mui-mode";
+// Re-exported from the one module that names every key this app stores, so the
+// appearance preference cannot drift from the key a local-data wipe removes.
+export { THEME_MODE_STORAGE_KEY };
 export const THEME_COLOR_SCHEME_SELECTOR = "data-mui-color-scheme";
 export const THEME_PROVIDER_CONFIG = {
   defaultMode: "system",

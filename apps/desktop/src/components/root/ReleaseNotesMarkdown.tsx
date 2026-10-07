@@ -1,4 +1,4 @@
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { openExternalUrl } from "../../utils/open-url.utils";
 import type { ComponentProps } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -30,12 +30,11 @@ const ReleaseNoteLink = ({ href, children }: ComponentProps<"a">) => {
       target="_blank"
       rel="noopener noreferrer"
       onClick={(event) => {
+        // The anchor is real, so a middle click or a "copy link" still works;
+        // the plugin is only for the plain left click. A failure keeps the app
+        // where it is and the link can be retried.
         event.preventDefault();
-        void openUrl(url).catch(() => {
-          // Keep the app in place on failure, without logging a remote URL or
-          // creating an unhandled event-handler rejection. The link can retry.
-          console.error("Failed to open release-note link.");
-        });
+        openExternalUrl(url);
       }}
     >
       {children}

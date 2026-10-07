@@ -8,7 +8,7 @@ import {
   Stack,
   Typography,
 } from "@mui/material";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { openExternalUrl } from "../../utils/open-url.utils";
 import { FormattedMessage } from "react-intl";
 
 type GpuMigrationDialogProps = {
@@ -21,7 +21,7 @@ export const GpuMigrationDialog = ({
   onClose,
 }: GpuMigrationDialogProps) => {
   const handleOpenDownloadPage = () => {
-    openUrl("https://maus-inc.github.io/mausVoice/");
+    openExternalUrl("https://maus-inc.github.io/mausVoice/");
   };
 
   return (

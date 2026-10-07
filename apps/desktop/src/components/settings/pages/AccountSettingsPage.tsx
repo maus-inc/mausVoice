@@ -79,7 +79,7 @@ export default function AccountSettingsPage() {
           settingKey="plan"
           title={<FormattedMessage defaultMessage="Plan" />}
           description={
-            <FormattedMessage defaultMessage="What your current plan includes. Change it from the mausVoice website." />
+            <FormattedMessage defaultMessage="What your current plan includes. It is set on your account, not from inside the app." />
           }
           value={planName}
         />

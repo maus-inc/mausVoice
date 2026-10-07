@@ -1,16 +1,21 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  AVATAR_IMAGE_SIZE,
+  AVATAR_JPEG_QUALITY,
   computeSquareCrop,
   MAX_AVATAR_SOURCE_BYTES,
+  MAX_STORED_AVATAR_CHARS,
+  readAvatarFile,
   validateAvatarFile,
 } from "./avatar.utils";
 
 /**
- * The avatar pipeline decides what a chosen file becomes before it is stored.
- * The encode step needs a real canvas, so it is exercised in the browser pass;
- * what is pinned here is the pair of decisions that silently produce a wrong
- * image when they are wrong: which crop is taken, and which files are refused.
+ * The avatar pipeline decides what a chosen file becomes before it is stored,
+ * and it is the one place in the app that turns a file into persisted state. The
+ * crop, the file gate and the encode are all pinned here: jsdom has no canvas,
+ * so the encode is driven through a stub that records what the pipeline drew and
+ * what it asked the canvas to encode.
  */
 describe("computeSquareCrop", () => {
   it("takes the centre square of a landscape photo", () => {
@@ -84,5 +89,178 @@ describe("validateAvatarFile", () => {
         size: MAX_AVATAR_SOURCE_BYTES * 4,
       }),
     ).toBe("unsupported-type");
+  });
+});
+
+type CanvasStub = {
+  context: CanvasRenderingContext2D;
+  calls: {
+    drawImage: unknown[][];
+    toDataUrl: { type: string; quality?: number }[];
+    fills: { fillStyle: string; composite: string }[];
+  };
+};
+
+/**
+ * A canvas that answers the four things the pipeline asks of one, and records
+ * the rest. `transparent` decides what the alpha scan finds, and `pngLength`
+ * sets how large the PNG encoder pretends its output is.
+ */
+const installCanvas = ({
+  transparent = false,
+  pngLength = 1_000,
+}: { transparent?: boolean; pngLength?: number } = {}): CanvasStub => {
+  const calls: CanvasStub["calls"] = {
+    drawImage: [],
+    toDataUrl: [],
+    fills: [],
+  };
+  const pixels = new Uint8ClampedArray(
+    AVATAR_IMAGE_SIZE * AVATAR_IMAGE_SIZE * 4,
+  );
+  pixels.fill(255);
+  if (transparent) {
+    pixels[3] = 120;
+  }
+
+  const context = {
+    globalCompositeOperation: "source-over",
+    fillStyle: "",
+    drawImage: (...args: unknown[]) => calls.drawImage.push(args),
+    getImageData: () => ({ data: pixels }),
+    fillRect: () =>
+      calls.fills.push({
+        fillStyle: String(context.fillStyle),
+        composite: String(context.globalCompositeOperation),
+      }),
+  } as unknown as CanvasRenderingContext2D;
+
+  const canvas = {
+    width: 0,
+    height: 0,
+    getContext: () => context,
+    toDataURL: (type: string, quality?: number) => {
+      calls.toDataUrl.push({ type, quality });
+      return type === "image/png"
+        ? `data:image/png;base64,${"A".repeat(pngLength)}`
+        : "data:image/jpeg;base64,JPEG";
+    },
+  } as unknown as HTMLCanvasElement;
+
+  vi.spyOn(document, "createElement").mockImplementation((tag: string) => {
+    if (tag !== "canvas") {
+      throw new Error(`Unexpected element requested: ${tag}`);
+    }
+    return canvas as unknown as HTMLElement;
+  });
+
+  return { context, calls };
+};
+
+const installBitmap = (width = 1200, height = 800) => {
+  const close = vi.fn();
+  vi.stubGlobal(
+    "createImageBitmap",
+    vi.fn(async () => ({ width, height, close })),
+  );
+  return { close };
+};
+
+const pngFile = () => new File(["x"], "photo.png", { type: "image/png" });
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
+
+describe("readAvatarFile", () => {
+  it("draws the centre square and stores a JPEG for an opaque photo", async () => {
+    const canvas = installCanvas();
+    installBitmap(1200, 800);
+
+    const result = await readAvatarFile(pngFile());
+
+    expect(result).toEqual({
+      ok: true,
+      dataUrl: "data:image/jpeg;base64,JPEG",
+    });
+    // 200, 0, 800, 800 of the source into the whole 256px square.
+    expect(canvas.calls.drawImage[0]).toEqual([
+      { width: 1200, height: 800, close: expect.any(Function) },
+      200,
+      0,
+      800,
+      800,
+      0,
+      0,
+      AVATAR_IMAGE_SIZE,
+      AVATAR_IMAGE_SIZE,
+    ]);
+    expect(canvas.calls.toDataUrl).toEqual([
+      { type: "image/jpeg", quality: AVATAR_JPEG_QUALITY },
+    ]);
+  });
+
+  it("keeps alpha as a PNG while the encoded image fits the budget", async () => {
+    const canvas = installCanvas({ transparent: true, pngLength: 1_000 });
+    installBitmap(512, 512);
+
+    const result = await readAvatarFile(pngFile());
+
+    expect(result.ok && result.dataUrl.startsWith("data:image/png")).toBe(true);
+    expect(canvas.calls.toDataUrl).toEqual([{ type: "image/png" }]);
+    // Nothing was flattened, because nothing had to be.
+    expect(canvas.calls.fills).toEqual([]);
+  });
+
+  it("falls back to a JPEG on white when a transparent PNG is too large", async () => {
+    const canvas = installCanvas({
+      transparent: true,
+      pngLength: MAX_STORED_AVATAR_CHARS + 1,
+    });
+    installBitmap(512, 512);
+
+    const result = await readAvatarFile(pngFile());
+
+    expect(result).toEqual({
+      ok: true,
+      dataUrl: "data:image/jpeg;base64,JPEG",
+    });
+    // The white wash goes behind the pixels, not over them.
+    expect(canvas.calls.fills).toEqual([
+      { fillStyle: "#ffffff", composite: "destination-over" },
+    ]);
+    expect(canvas.calls.toDataUrl).toEqual([
+      { type: "image/png" },
+      { type: "image/jpeg", quality: AVATAR_JPEG_QUALITY },
+    ]);
+  });
+
+  it("reports a file it cannot decode instead of rejecting", async () => {
+    installCanvas();
+    vi.stubGlobal(
+      "createImageBitmap",
+      vi.fn(async () => {
+        throw new Error("decode failed");
+      }),
+    );
+
+    expect(await readAvatarFile(pngFile())).toEqual({
+      ok: false,
+      error: "unreadable",
+    });
+  });
+
+  it("refuses an unsupported type before touching the decoder", async () => {
+    installCanvas();
+    const decode = vi.fn();
+    vi.stubGlobal("createImageBitmap", decode);
+
+    const result = await readAvatarFile(
+      new File(["x"], "notes.txt", { type: "text/plain" }),
+    );
+
+    expect(result).toEqual({ ok: false, error: "unsupported-type" });
+    expect(decode).not.toHaveBeenCalled();
   });
 });
