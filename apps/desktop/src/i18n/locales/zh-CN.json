@@ -531,6 +531,7 @@
   "no_threads_found": "未找到对话",
   "no_transcriptions_yet": "暂无转录。",
   "no_word_limits": "没有字数限制",
+  "not_all_requested_styling_edits_could_be_applied_so_the_styl": "无法应用所有请求的样式编辑，因此样式已舍弃。本会话中无法使用历史记录，因此原始转录未保存。",
   "not_checked_yet": "尚未检查。",
   "not_configured": "未配置",
   "not_provided": "未提供。",

@@ -1313,6 +1313,64 @@ describe("retranscribeTranscription unstyled post-processing", () => {
     }
   });
 
+  it("records an interrupted attempt that never reached post-processing", async () => {
+    vi.useFakeTimers();
+    try {
+      const row = {
+        ...sampleTranscription("interrupted-audio"),
+        postProcessEditFailed: true,
+        postProcessEditFailureCount: 3,
+        postProcessEditAutoRetryUsed: true,
+      };
+      produceAppState((draft) => {
+        draft.transcriptionById[row.id] = row;
+        draft.transcriptions.transcriptionIds = [row.id];
+      });
+      // The audio itself is gone, so the pass fails before post-processing has
+      // anything to write. Without the record below, every later launch would
+      // deliver the same claim again.
+      loadTranscriptionAudio.mockRejectedValueOnce(new Error("no audio"));
+
+      resumeInterruptedPostProcessEditRetries([row]);
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(transcribeAudio).not.toHaveBeenCalled();
+      expect(updateTranscription).toHaveBeenCalledWith(
+        expect.objectContaining({ id: row.id, postProcessFailed: true }),
+      );
+      expect(getAppState().transcriptionById[row.id]?.postProcessFailed).toBe(
+        true,
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not deliver a claim whose attempt is already recorded", async () => {
+    vi.useFakeTimers();
+    try {
+      const row = {
+        ...sampleTranscription("attempt-recorded"),
+        postProcessEditFailed: true,
+        postProcessEditFailureCount: 3,
+        postProcessEditAutoRetryUsed: true,
+        postProcessFailed: true,
+      };
+      produceAppState((draft) => {
+        draft.transcriptionById[row.id] = row;
+        draft.transcriptions.transcriptionIds = [row.id];
+      });
+
+      resumeInterruptedPostProcessEditRetries([row]);
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(transcribeAudio).not.toHaveBeenCalled();
+      expect(updateTranscription).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("still keeps the polished transcript when a reply came back unusable", async () => {
     // The other run that sets the same flag: the request succeeded and the
     // answer was dropped, so the text this run holds is raw ASR and the row must

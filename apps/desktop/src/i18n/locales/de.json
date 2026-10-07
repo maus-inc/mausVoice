@@ -531,6 +531,7 @@
   "no_threads_found": "Keine Unterhaltungen gefunden",
   "no_transcriptions_yet": "Noch keine Transkriptionen.",
   "no_word_limits": "Keine Wortbegrenzungen",
+  "not_all_requested_styling_edits_could_be_applied_so_the_styl": "Nicht alle angeforderten Formatierungsänderungen konnten angewendet werden, daher wurde die Formatierung verworfen. Der Verlauf ist in dieser Sitzung nicht verfügbar, deshalb wurde das rohe Transkript nicht gespeichert.",
   "not_checked_yet": "Noch nicht geprüft.",
   "not_configured": "Nicht konfiguriert",
   "not_provided": "Nicht angegeben.",

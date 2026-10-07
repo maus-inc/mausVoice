@@ -1351,8 +1351,7 @@ postProcessEditFailed?: boolean | null;
  */
 postProcessEditFailureCount?: number | null; 
 /**
- * True after the one automatic full-audio retranscription was consumed for
- * this retry chain.
+ * True after the one automatic full-audio retranscription was consumed.
  */
 postProcessEditAutoRetryUsed?: boolean | null; 
 /**

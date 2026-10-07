@@ -400,7 +400,7 @@ export const scheduleAutomaticPostProcessEditRetry = async ({
     );
 
     void delayed(delayMs)
-      .then(() => {
+      .then(async () => {
         automaticRetranscriptionIds.delete(transcription.id);
         const latest = getRec(
           getAppState().transcriptionById,
@@ -413,7 +413,7 @@ export const scheduleAutomaticPostProcessEditRetry = async ({
         ) {
           return;
         }
-        return retranscribeTranscription({
+        await retranscribeTranscription({
           transcriptionId: transcription.id,
           toneId,
           languageCode,
@@ -601,9 +601,9 @@ const failRetranscribeRun = ({
   releaseRetranscribeGeneration(transcriptionId, generation);
 };
 
-export const retranscribeTranscription = async (
+export async function retranscribeTranscription(
   params: RetranscribeTranscriptionParams,
-): Promise<void> => {
+): Promise<void> {
   const { transcriptionId, toneId, languageCode } = params;
   if (
     isRetranscribingId(getAppState().transcriptions, transcriptionId) ||
@@ -670,7 +670,7 @@ export const retranscribeTranscription = async (
       error,
     });
   }
-};
+}
 
 /**
  * Deliver the automatic recovery a previous process claimed and never ran.
@@ -685,6 +685,55 @@ export const retranscribeTranscription = async (
  * Rows resume through the same retranscription path, which updates the existing
  * History row rather than writing a second one.
  */
+const isResumableAutomaticRetry = (transcription: Transcription): boolean =>
+  transcription.postProcessEditFailed === true &&
+  transcription.postProcessEditAutoRetryUsed === true &&
+  transcription.postProcessEditFailureCount ===
+    POST_PROCESS_EDIT_FAILURE_RETRANSCRIBE_AFTER + 1 &&
+  // A row already carrying a post-processing failure had its recovery attempt
+  // delivered and recorded, so it must not be delivered again.
+  transcription.postProcessFailed !== true &&
+  Boolean(transcription.audio?.filePath);
+
+/**
+ * Deliver one claimed pass and make sure the attempt is recorded either way.
+ *
+ * A pass that reaches post-processing writes the row itself, and what lands
+ * there is what tells this function the claim is settled: a styled run clears
+ * the chain, and a run that failed styling stores a higher count. A pass that
+ * fails before post-processing, for instance when the audio or the transcription
+ * step fails, leaves the row exactly as it was, so nothing would stop the next
+ * launch from delivering the same claim again. That case is recorded here as a
+ * post-processing failure, which keeps the delivery to one attempt per claim.
+ */
+const resumeAutomaticRetry = async (
+  transcription: Transcription,
+): Promise<void> => {
+  await retranscribeTranscription({ transcriptionId: transcription.id });
+  const latest = getRec(getAppState().transcriptionById, transcription.id);
+  if (
+    latest === undefined ||
+    latest.postProcessEditFailureCount !==
+      transcription.postProcessEditFailureCount ||
+    latest.postProcessEditAutoRetryUsed !== true
+  ) {
+    return;
+  }
+  try {
+    const attempted = await getTranscriptionRepo().updateTranscription({
+      ...latest,
+      postProcessFailed: true,
+    });
+    produceAppState((draft) => {
+      draft.transcriptionById[transcription.id] = attempted;
+    });
+  } catch (error) {
+    getLogger().warning(
+      `Could not record the interrupted audio retranscription attempt: ${error}`,
+    );
+  }
+};
+
 export const resumeInterruptedPostProcessEditRetries = (
   transcriptions: Transcription[],
 ): void => {
@@ -692,14 +741,8 @@ export const resumeInterruptedPostProcessEditRetries = (
     return;
   }
   for (const transcription of transcriptions) {
-    if (
-      transcription.postProcessEditFailed === true &&
-      transcription.postProcessEditAutoRetryUsed === true &&
-      transcription.postProcessEditFailureCount ===
-        POST_PROCESS_EDIT_FAILURE_RETRANSCRIBE_AFTER + 1 &&
-      transcription.audio?.filePath
-    ) {
-      void retranscribeTranscription({ transcriptionId: transcription.id });
+    if (isResumableAutomaticRetry(transcription)) {
+      void resumeAutomaticRetry(transcription);
     }
   }
 };

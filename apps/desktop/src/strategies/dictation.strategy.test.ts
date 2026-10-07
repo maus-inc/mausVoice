@@ -797,6 +797,50 @@ describe("DictationStrategy backlog lifecycle", () => {
     expect(result.postProcessMetadata.postProcessEditFailed).toBe(true);
   });
 
+  it("does not promise a History row when persistence is suppressed", async () => {
+    const state = structuredClone(INITIAL_APP_STATE);
+    state.userPrefs = {
+      ...createDefaultPreferences(),
+      userId: LOCAL_USER_ID,
+      incognitoModeEnabled: true,
+    };
+    setAppState(state, true);
+
+    const { postProcessTranscript } =
+      await import("../actions/transcribe.actions");
+    vi.mocked(postProcessTranscript).mockResolvedValueOnce({
+      transcript: "complete raw transcript",
+      warnings: [
+        "Applied 1 of 2 post-processing edits; 1 could not be applied",
+      ],
+      metadata: {
+        postProcessFailed: false,
+        postProcessFallback: true,
+        postProcessEditFailed: true,
+        postProcessEditFailureCount: 1,
+      },
+    });
+    const { showToast } = await import("../actions/toast.actions");
+
+    await new DictationStrategy().handleTranscript({
+      rawTranscript: "complete raw transcript",
+      toneId: "custom-tone",
+      currentApp: null,
+    } as never);
+
+    // Incognito suppresses both store paths, so the row the persisted copy
+    // promises does not exist, and the open-History action is dropped with it.
+    expect(showToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message:
+          "Not all requested styling edits could be applied, so the styling was discarded. History is unavailable in this session, so the raw transcript was not saved.",
+        toastType: "error",
+        action: undefined,
+      }),
+    );
+    expect(routeTranscriptOutputMock).not.toHaveBeenCalled();
+  });
+
   it("drops in-flight interim paste work when cleanup runs while target probe is pending", async () => {
     const strategy = new DictationStrategy();
     const probeStarted = deferred<void>();

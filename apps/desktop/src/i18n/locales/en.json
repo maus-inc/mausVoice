@@ -531,6 +531,7 @@
   "no_threads_found": "No threads found",
   "no_transcriptions_yet": "No transcriptions yet.",
   "no_word_limits": "No word limits",
+  "not_all_requested_styling_edits_could_be_applied_so_the_styl": "Not all requested styling edits could be applied, so the styling was discarded. History is unavailable in this session, so the raw transcript was not saved.",
   "not_checked_yet": "Not checked yet.",
   "not_configured": "Not configured",
   "not_provided": "Not provided.",

@@ -531,6 +531,7 @@
   "no_threads_found": "Nessuna conversazione trovata",
   "no_transcriptions_yet": "Nessuna trascrizione ancora.",
   "no_word_limits": "Nessun limite di parole",
+  "not_all_requested_styling_edits_could_be_applied_so_the_styl": "Non è stato possibile applicare tutte le modifiche di stile richieste, quindi la formattazione è stata scartata. La cronologia non è disponibile in questa sessione, perciò la trascrizione grezza non è stata salvata.",
   "not_checked_yet": "Non ancora controllato.",
   "not_configured": "Non configurato",
   "not_provided": "Non fornito.",

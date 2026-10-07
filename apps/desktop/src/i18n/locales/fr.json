@@ -531,6 +531,7 @@
   "no_threads_found": "Aucune discussion trouvée",
   "no_transcriptions_yet": "Aucune transcription pour le moment.",
   "no_word_limits": "Pas de limite de mots",
+  "not_all_requested_styling_edits_could_be_applied_so_the_styl": "Toutes les modifications de style demandées n'ont pas pu être appliquées, le style a donc été ignoré. L'historique n'est pas disponible dans cette session, la transcription brute n'a donc pas été enregistrée.",
   "not_checked_yet": "Pas encore vérifié.",
   "not_configured": "Non configuré",
   "not_provided": "Non fourni.",

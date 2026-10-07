@@ -531,6 +531,7 @@
   "no_threads_found": "找不到對話",
   "no_transcriptions_yet": "尚無文字稿。",
   "no_word_limits": "沒有字數限制",
+  "not_all_requested_styling_edits_could_be_applied_so_the_styl": "無法套用所有要求的樣式編輯，因此樣式已捨棄。本工作階段無法使用歷史記錄，因此原始逐字稿未儲存。",
   "not_checked_yet": "尚未檢查。",
   "not_configured": "尚未設定",
   "not_provided": "未提供。",

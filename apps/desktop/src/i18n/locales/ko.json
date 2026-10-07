@@ -531,6 +531,7 @@
   "no_threads_found": "대화를 찾을 수 없습니다",
   "no_transcriptions_yet": "아직 전사본이 없습니다.",
   "no_word_limits": "단어 제한이 없습니다",
+  "not_all_requested_styling_edits_could_be_applied_so_the_styl": "요청한 스타일 편집을 모두 적용할 수 없어 스타일이 삭제되었습니다. 이 세션에서는 기록을 사용할 수 없으므로 원본 텍스트가 저장되지 않았습니다.",
   "not_checked_yet": "아직 확인되지 않았습니다.",
   "not_configured": "구성되지 않음",
   "not_provided": "제공되지 않음.",

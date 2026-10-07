@@ -531,6 +531,7 @@
   "no_threads_found": "Nenhuma conversa encontrada",
   "no_transcriptions_yet": "Ainda não há transcrições.",
   "no_word_limits": "Sem limites de palavras",
+  "not_all_requested_styling_edits_could_be_applied_so_the_styl": "Não foi possível aplicar todas as alterações de estilo solicitadas, por isso o estilo foi descartado. O Histórico não está disponível nesta sessão, por isso a transcrição bruta não foi guardada.",
   "not_checked_yet": "Ainda não verificado.",
   "not_configured": "Não configurado",
   "not_provided": "Não fornecido.",
