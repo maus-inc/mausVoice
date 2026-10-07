@@ -524,6 +524,19 @@ describe("storeTranscription persistence suppression", () => {
     setAppState(structuredClone(INITIAL_APP_STATE), true);
   });
 
+  it("does not persist a take captured while persistence was off after it is turned on", async () => {
+    applyState({ incognitoModeEnabled: false });
+
+    const result = await storeTranscription({
+      ...storeInput(),
+      persistAllowedAtCapture: false,
+    });
+
+    expect(result.transcription).toBeNull();
+    expect(createTranscriptionMock).not.toHaveBeenCalled();
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
   it("skips storage and counts words when incognito opts into stats", async () => {
     applyState({
       incognitoModeEnabled: true,
