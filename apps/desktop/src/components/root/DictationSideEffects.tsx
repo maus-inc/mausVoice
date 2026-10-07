@@ -46,7 +46,10 @@ import { AgentStrategy } from "../../strategies/agent.strategy";
 import { BaseStrategy } from "../../strategies/base.strategy";
 import { DictationStrategy } from "../../strategies/dictation.strategy";
 import { TextFieldInfo } from "../../types/accessibility.types";
-import type { ReviewedTranscriptPersistenceInput } from "../../types/strategy.types";
+import type {
+  HandleTranscriptResult,
+  ReviewedTranscriptPersistenceInput,
+} from "../../types/strategy.types";
 import {
   attachSessionAudioIntake,
   createCurrentSegmentGuard,
@@ -456,14 +459,51 @@ export const postProcessFinalizedTranscript = async (
     `Post-processing complete: transcript=${transcript ? `${transcript.length} chars` : "empty"}, warnings=${postProcessWarnings.length}`,
   );
   await input.sendIdle();
+  scheduleStopPathHistory({
+    input,
+    strategy,
+    historyOwner: result.historyOwner,
+    transcript,
+    sanitizedTranscript,
+    postProcessMetadata,
+    postProcessWarnings,
+    remoteStatus: result.remoteStatus,
+    remoteDeviceId: result.remoteDeviceId,
+  });
+  input.refreshMember();
+  return {
+    shouldContinue: result.shouldContinue,
+  };
+};
+
+const scheduleStopPathHistory = ({
+  input,
+  strategy,
+  historyOwner,
+  transcript,
+  sanitizedTranscript,
+  postProcessMetadata,
+  postProcessWarnings,
+  remoteStatus,
+  remoteDeviceId,
+}: {
+  input: PostTranscriptInput;
+  strategy: PostTranscriptInput["strategy"];
+  historyOwner: HandleTranscriptResult["historyOwner"];
+  transcript: HandleTranscriptResult["transcript"];
+  sanitizedTranscript: HandleTranscriptResult["sanitizedTranscript"];
+  postProcessMetadata: HandleTranscriptResult["postProcessMetadata"];
+  postProcessWarnings: HandleTranscriptResult["postProcessWarnings"];
+  remoteStatus: HandleTranscriptResult["remoteStatus"];
+  remoteDeviceId: HandleTranscriptResult["remoteDeviceId"];
+}): void => {
   // "stop-path" is the default: a strategy that never went through review
   // persisted nothing, so this is the only place the row gets written. A
   // review that reported an owner already wrote it, or is holding it on the
   // pill after a failure it told the user to retry from. Writing here in that
   // last case would contradict the toast and duplicate the row on the retry.
-  const willStore =
-    strategy.shouldStoreTranscript() &&
-    (result.historyOwner ?? "stop-path") === "stop-path";
+  const owner = historyOwner ?? "stop-path";
+  const willStore = strategy.shouldStoreTranscript() && owner === "stop-path";
   const droppedChars = postProcessMetadata?.fastStyleTruncatedChars;
   const persistAllowedAtStop =
     (input.persistAllowedAtCapture ?? isPersistenceAllowed()) &&
@@ -485,7 +525,7 @@ export const postProcessFinalizedTranscript = async (
 
   if (!persistAllowedAtStop) {
     notifyDroppedEnding("not-saved");
-  } else if ((result.historyOwner ?? "stop-path") === "review") {
+  } else if (owner === "review") {
     notifyDroppedEnding("history");
   } else if (!willStore) {
     notifyDroppedEnding("not-saved");
@@ -505,8 +545,8 @@ export const postProcessFinalizedTranscript = async (
         transcriptionMetadata: input.transcribeResult.metadata,
         postProcessMetadata,
         warnings: [...input.transcribeResult.warnings, ...postProcessWarnings],
-        remoteStatus: result.remoteStatus,
-        remoteDeviceId: result.remoteDeviceId,
+        remoteStatus,
+        remoteDeviceId,
         trace: input.trace ?? null,
         createdAt: input.createdAt,
         persistAllowedAtCapture: input.persistAllowedAtCapture,
@@ -521,10 +561,6 @@ export const postProcessFinalizedTranscript = async (
       },
     ).catch(() => undefined);
   }
-  input.refreshMember();
-  return {
-    shouldContinue: result.shouldContinue,
-  };
 };
 
 type StopContext = {
