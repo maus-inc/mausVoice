@@ -87,6 +87,11 @@ describe("normalizeSpokenForms", () => {
     expect(normalizeSpokenForms("i weigh two hundred pounds")).toBe(
       "i weigh 200 pounds",
     );
+    // The cue must be in the same sentence: a full stop after the unit makes
+    // what follows a new sentence, not a weight word. Raised by CodeRabbit.
+    expect(normalizeSpokenForms("it costs five pounds. Of course")).toBe(
+      "it costs £5. Of course",
+    );
     // Money keeps its symbol.
     expect(normalizeSpokenForms("it costs five pounds")).toBe("it costs £5");
     expect(normalizeSpokenForms("a twenty pound note")).toBe("a £20 note");

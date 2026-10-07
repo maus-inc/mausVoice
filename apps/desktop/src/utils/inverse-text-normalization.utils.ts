@@ -636,6 +636,11 @@ const wordAfterUnit = (
   segments: readonly Segment[],
   nextIndex: number,
 ): string | null => {
+  const unit = segments[nextIndex + 1];
+  // The word after the unit only says anything about the unit when the two are
+  // in the same sentence: "it costs five pounds. Of course" is not a weight,
+  // and the full stop is carried by the unit word itself.
+  if (!unit || SENTENCE_BOUNDARY_RE.test(unit.text)) return null;
   const afterUnit = segments[nextIndex + 2];
   const afterUnitWord = segments[nextIndex + 3];
   if (!afterUnit?.isSpace || !afterUnitWord || afterUnitWord.isSpace)
