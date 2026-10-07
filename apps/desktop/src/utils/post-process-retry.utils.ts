@@ -10,7 +10,7 @@ const finiteNonNegativeInteger = (value: number | null | undefined): number => {
 };
 
 export const nextPostProcessEditFailureCount = (
-  previousCount: number | null | undefined,
+  previousCount?: number | null,
 ): number => finiteNonNegativeInteger(previousCount) + 1;
 
 /**

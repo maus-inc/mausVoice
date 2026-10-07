@@ -113,8 +113,12 @@ vi.mock("../i18n/intl", async () => {
   };
 });
 
-const { importAudioFile, retranscribeTranscription, openRetranscribeDialog } =
-  await import("./transcriptions.actions");
+const {
+  importAudioFile,
+  resumeInterruptedPostProcessEditRetries,
+  retranscribeTranscription,
+  openRetranscribeDialog,
+} = await import("./transcriptions.actions");
 const { POST_PROCESS_TRUNCATED_WARNING } =
   await import("../utils/prompt.utils");
 
@@ -1252,6 +1256,59 @@ describe("retranscribeTranscription unstyled post-processing", () => {
       expect(vi.getTimerCount()).toBe(0);
     } finally {
       random.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it("resumes the automatic pass a previous process claimed and never ran", async () => {
+    vi.useFakeTimers();
+    try {
+      const row = {
+        ...sampleTranscription("interrupted-claim"),
+        postProcessEditFailed: true,
+        postProcessEditFailureCount: 3,
+        postProcessEditAutoRetryUsed: true,
+      };
+      produceAppState((draft) => {
+        draft.transcriptionById[row.id] = row;
+        draft.transcriptions.transcriptionIds = [row.id];
+      });
+
+      resumeInterruptedPostProcessEditRetries([row]);
+      await vi.advanceTimersByTimeAsync(0);
+
+      // The pass runs against the row the claim names, so History is updated
+      // rather than appended to.
+      expect(transcribeAudio).toHaveBeenCalledTimes(1);
+      expect(updateTranscription).toHaveBeenCalledWith(
+        expect.objectContaining({ id: row.id, transcript: "Hello there" }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("leaves a claimed row alone once its pass has reported back", async () => {
+    vi.useFakeTimers();
+    try {
+      const row = {
+        ...sampleTranscription("claim-reported"),
+        postProcessEditFailed: true,
+        // The pass that claimed this row already failed again, which is what a
+        // higher count records. Resuming it here would be a second pass.
+        postProcessEditFailureCount: 4,
+        postProcessEditAutoRetryUsed: true,
+      };
+      produceAppState((draft) => {
+        draft.transcriptionById[row.id] = row;
+        draft.transcriptions.transcriptionIds = [row.id];
+      });
+
+      resumeInterruptedPostProcessEditRetries([row]);
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(transcribeAudio).not.toHaveBeenCalled();
+    } finally {
       vi.useRealTimers();
     }
   });

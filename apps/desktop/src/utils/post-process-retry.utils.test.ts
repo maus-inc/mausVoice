@@ -10,7 +10,7 @@ import {
 
 describe("post-process edit retry policy", () => {
   it("increments a missing or invalid persisted count from zero", () => {
-    expect(nextPostProcessEditFailureCount(undefined)).toBe(1);
+    expect(nextPostProcessEditFailureCount()).toBe(1);
     expect(nextPostProcessEditFailureCount(null)).toBe(1);
     expect(nextPostProcessEditFailureCount(Number.NaN)).toBe(1);
     expect(nextPostProcessEditFailureCount(-4)).toBe(1);

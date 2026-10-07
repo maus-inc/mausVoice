@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef } from "react";
+import { resumeInterruptedPostProcessEditRetries } from "../../actions/transcriptions.actions";
 import { refreshCurrentUser } from "../../actions/user.actions";
 import { useAsyncEffect } from "../../hooks/async.hooks";
 import { getTranscriptionRepo } from "../../repos";
@@ -34,6 +35,9 @@ export const HomeSideEffects = () => {
       registerTranscriptions(draft, transcriptions);
       draft.transcriptions.transcriptionIds = transcriptions.map((t) => t.id);
     });
+    // Same handoff as the History page: a claim written before a restart has no
+    // process behind it, so the first surface that loads History delivers it.
+    resumeInterruptedPostProcessEditRetries(transcriptions);
   }, [refresh]);
 
   useEffect(() => {

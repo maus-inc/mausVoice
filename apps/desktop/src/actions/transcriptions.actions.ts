@@ -19,6 +19,7 @@ import { getAppState, produceAppState } from "../store";
 import { sanitizeTranscriptText } from "../utils/sanitize-transcript.utils";
 import {
   getPostProcessEditRetranscribeDelayMs,
+  POST_PROCESS_EDIT_FAILURE_RETRANSCRIBE_AFTER,
   shouldAutomaticallyRetranscribePostProcessEditFailure,
 } from "../utils/post-process-retry.utils";
 import type { ReplacementRule } from "../utils/string.utils";
@@ -370,18 +371,25 @@ export const scheduleAutomaticPostProcessEditRetry = async ({
 
   automaticRetranscriptionIds.add(transcription.id);
   try {
-    const marked = await getTranscriptionRepo().updateTranscription({
-      ...transcription,
-      postProcessEditAutoRetryUsed: true,
-    });
-    const current = getRec(getAppState().transcriptionById, transcription.id);
+    // Claim from the row the app is holding, and check it before the write.
+    // The caller can hand over a row that a user edit or a manual
+    // retranscription has already replaced, and writing that stale row back
+    // would undo the newer run. A missing row falls back to the caller's copy,
+    // which is what the live and imported paths always supply.
+    const current =
+      getRec(getAppState().transcriptionById, transcription.id) ??
+      transcription;
     if (
-      current?.postProcessEditFailed !== true ||
+      current.postProcessEditFailed !== true ||
       current.postProcessEditFailureCount !== failureCount
     ) {
       automaticRetranscriptionIds.delete(transcription.id);
       return;
     }
+    const marked = await getTranscriptionRepo().updateTranscription({
+      ...current,
+      postProcessEditAutoRetryUsed: true,
+    });
     produceAppState((draft) => {
       draft.transcriptionById[transcription.id] = marked;
     });
@@ -661,6 +669,38 @@ export const retranscribeTranscription = async (
       message: error instanceof Error ? error.message : "",
       error,
     });
+  }
+};
+
+/**
+ * Deliver the automatic recovery a previous process claimed and never ran.
+ *
+ * The claim is written before the back-off wait, so quitting, crashing, or
+ * losing power during that wait leaves a row marked as claimed with no pass
+ * running behind it. The failure count is what tells the two states apart: the
+ * claim is written at the count that triggered it, and a pass that did run
+ * stores a higher count when it fails again. So a marker still sitting at the
+ * trigger count means the pass never reported back, and it is started here.
+ *
+ * Rows resume through the same retranscription path, which updates the existing
+ * History row rather than writing a second one.
+ */
+export const resumeInterruptedPostProcessEditRetries = (
+  transcriptions: Transcription[],
+): void => {
+  if (!isPersistenceAllowed()) {
+    return;
+  }
+  for (const transcription of transcriptions) {
+    if (
+      transcription.postProcessEditFailed === true &&
+      transcription.postProcessEditAutoRetryUsed === true &&
+      transcription.postProcessEditFailureCount ===
+        POST_PROCESS_EDIT_FAILURE_RETRANSCRIBE_AFTER + 1 &&
+      transcription.audio?.filePath
+    ) {
+      void retranscribeTranscription({ transcriptionId: transcription.id });
+    }
   }
 };
 
