@@ -262,9 +262,8 @@ export const handleEmptyTranscriptionResult = async (
     strategy.shouldStoreTranscript() &&
     persistAllowedAtCapture &&
     isPersistenceAllowed();
-  const queuedHistory =
-    canPersist &&
-    !isHistoryPersistQueueFull() &&
+  let queuedHistory = false;
+  if (canPersist && !isHistoryPersistQueueFull()) {
     enqueueTranscriptionHistory(
       input.storeTranscriptionFn,
       {
@@ -281,7 +280,9 @@ export const handleEmptyTranscriptionResult = async (
         persistAllowedAtCapture,
       },
       "storing failed-transcription history",
-    ) !== undefined;
+    ).catch(() => undefined);
+    queuedHistory = true;
+  }
   // Two literal descriptors: the extractor cannot follow a ternary inside one
   // formatMessage call, and promising a background save when the row was not
   // queued is a lie.
@@ -518,7 +519,7 @@ export const postProcessFinalizedTranscript = async (
           }
         },
       },
-    );
+    ).catch(() => undefined);
   }
   input.refreshMember();
   return {
