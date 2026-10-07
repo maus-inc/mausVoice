@@ -254,11 +254,7 @@ export const azureTranscribeAudio = async ({
       return;
     }
 
-    if (!recognizer) {
-      reject(new Error("Azure recognition resources could not be created"));
-      return;
-    }
-    const activeRecognizer = recognizer;
+    const activeRecognizer = recognizer!;
 
     // `recognizeOnceAsync` is callback-only: it takes no signal and has no
     // deadline of its own, so a connection that never answers leaves this
@@ -952,12 +948,12 @@ export const createAzureStreamingSession = async ({
       return;
     }
 
-    if (!pushStream || !recognizer) {
-      reject(new Error("Azure streaming resources could not be created"));
+    if (!pushStream) {
+      reject(new Error("Azure streaming push stream could not be created"));
       return;
     }
     const activePushStream = pushStream;
-    const activeRecognizer = recognizer;
+    const activeRecognizer = recognizer!;
 
     let fullTranscript = "";
     let isFinalized = false;
