@@ -76,7 +76,7 @@ afterEach(() => {
 
 const renderToneSelect = async () => {
   root = createRoot(container);
-  await act(async () => {
+  await act(() => {
     root?.render(
       createElement(ToneSelect, {
         value: tone.id,
@@ -104,7 +104,7 @@ describe("ToneSelect", () => {
     const stylePicker =
       container.querySelector<HTMLElement>('[role="combobox"]');
     expect(stylePicker).toBeDefined();
-    await act(async () => {
+    await act(() => {
       stylePicker?.dispatchEvent(
         new MouseEvent("mousedown", {
           bubbles: true,

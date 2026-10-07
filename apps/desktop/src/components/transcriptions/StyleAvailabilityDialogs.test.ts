@@ -146,7 +146,7 @@ const accessibleDialogName = (): string | null => {
 const openCombobox = async (label: string): Promise<HTMLElement> => {
   const combobox = findComboboxNamed(label);
   if (!combobox) throw new Error(`Could not find the ${label} selector.`);
-  await act(async () => {
+  await act(() => {
     combobox.dispatchEvent(
       new MouseEvent("mousedown", {
         bubbles: true,
@@ -164,7 +164,7 @@ const findMenuItemContainingText = (text: string): HTMLElement | undefined =>
   );
 
 const clickMenuItem = async (item: HTMLElement): Promise<void> => {
-  await act(async () => {
+  await act(() => {
     item.dispatchEvent(
       new MouseEvent("click", { bubbles: true, cancelable: true }),
     );
@@ -210,7 +210,7 @@ describe("Import audio style availability", () => {
 
   const renderPage = async () => {
     root = createRoot(container);
-    await act(async () => {
+    await act(() => {
       root?.render(
         createElement(
           MemoryRouter,
@@ -224,7 +224,7 @@ describe("Import audio style availability", () => {
   const openImportDialog = async () => {
     const button = findButton("Import audio");
     expect(button).toBeDefined();
-    await act(async () => {
+    await act(() => {
       button?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
   };
@@ -360,7 +360,7 @@ describe("Retranscribe style availability", () => {
 
   const renderDialog = async () => {
     root = createRoot(container);
-    await act(async () => {
+    await act(() => {
       root?.render(createElement(RetranscribeDialog));
     });
   };

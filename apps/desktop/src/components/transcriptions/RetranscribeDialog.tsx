@@ -52,7 +52,7 @@ const languageOptions = (
   label: DICTATION_LANGUAGES[code],
 }));
 
-// MUI Select attaches selection and click behavior to direct MenuItem children.
+/** MUI Select must receive direct MenuItem children to attach option behavior. */
 const checkableMenuItem = (
   value: string,
   label: React.ReactNode,
