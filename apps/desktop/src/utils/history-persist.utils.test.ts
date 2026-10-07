@@ -47,7 +47,7 @@ describe("enqueueHistoryPersist", () => {
     let releaseFirst: () => void = () => undefined;
     const first = enqueueHistoryPersist(
       () =>
-        new Promise((resolve) => {
+        new Promise<void>((resolve) => {
           order.push("first-start");
           releaseFirst = () => {
             order.push("first-end");
@@ -80,19 +80,16 @@ describe("enqueueHistoryPersist", () => {
   });
 
   it("rejects a new job when the queue is already full", async () => {
-    const release: Array<() => void> = [];
-    const hang = () =>
-      new Promise<void>((resolve) => {
-        release.push(resolve);
-      });
+    const hang = () => new Promise<void>(() => undefined);
     for (let i = 0; i < MAX_HISTORY_PERSIST_QUEUE; i += 1) {
       void enqueueHistoryPersist(hang, `job-${i}`);
     }
     await expect(
-      enqueueHistoryPersist(() => Promise.resolve(), "overflow"),
+      enqueueHistoryPersist(() => Promise.resolve(), "overflow", {
+        awaited: true,
+      }),
     ).rejects.toThrow(/queue full/);
-    release.forEach((done) => done());
-    await flushHistoryPersist();
+    resetHistoryPersistQueue();
   });
 
   it("still runs a later job after an earlier rejection", async () => {
