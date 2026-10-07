@@ -25,13 +25,24 @@ export const shouldAutomaticallyRetranscribePostProcessEditFailure = (
   POST_PROCESS_EDIT_FAILURE_RETRANSCRIBE_AFTER;
 
 /**
+ * A uniform value in [0, 1) from the platform crypto generator.
+ *
+ * `Math.random` is not used here even though the value only spaces out retries:
+ * the repository's static analysis flags a pseudorandom generator as a security
+ * finding wherever it appears, and both the desktop webview and Node expose the
+ * crypto generator, so the scanner-clean source costs nothing.
+ */
+const cryptoUnitInterval = (): number =>
+  crypto.getRandomValues(new Uint32Array(1))[0] / 2 ** 32;
+
+/**
  * Full jitter keeps repeated local retries from lining up while the exponential
  * cap prevents a single History row from waiting without bound. The optional
  * random value makes the policy deterministic in unit tests.
  */
 export const getPostProcessEditRetranscribeDelayMs = (
   failureCount: number,
-  random = Math.random(),
+  random = cryptoUnitInterval(),
 ): number => {
   const attempt = Math.max(
     0,

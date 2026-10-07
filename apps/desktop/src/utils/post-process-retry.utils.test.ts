@@ -42,4 +42,17 @@ describe("post-process edit retry policy", () => {
     );
     expect(getPostProcessEditRetranscribeDelayMs(3, Number.NaN)).toBe(0);
   });
+
+  it("keeps the default jitter source inside the first cap", () => {
+    // The default reads the platform crypto generator, so it is not pinned to a
+    // value. What must hold is the bound: the first automatic pass waits no
+    // longer than the base cap however the generator answers.
+    for (let attempt = 0; attempt < 25; attempt += 1) {
+      const delayMs = getPostProcessEditRetranscribeDelayMs(3);
+      expect(delayMs).toBeGreaterThanOrEqual(0);
+      expect(delayMs).toBeLessThanOrEqual(
+        POST_PROCESS_EDIT_RETRANSCRIBE_BASE_DELAY_MS,
+      );
+    }
+  });
 });

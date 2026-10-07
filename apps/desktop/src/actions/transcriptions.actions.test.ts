@@ -126,6 +126,21 @@ const startIgnoredRun = (transcriptionId: string): void => {
   retranscribeTranscription({ transcriptionId }).catch(() => undefined);
 };
 
+/**
+ * Pin the jitter source to its maximum, which is one tick under the first cap.
+ * The recovery pass draws its delay from the platform crypto generator rather
+ * than `Math.random`, so this spy is what makes the wait deterministic.
+ */
+const pinJitterToMaximum = () =>
+  vi
+    .spyOn(globalThis.crypto, "getRandomValues")
+    .mockImplementation(<T extends ArrayBufferView | null>(array: T): T => {
+      if (array instanceof Uint32Array) {
+        array[0] = 0xffffffff;
+      }
+      return array;
+    });
+
 const sampleTranscription = (id: string): Transcription => ({
   id,
   createdAt: "2026-08-01T00:00:00.000Z",
@@ -1049,7 +1064,7 @@ describe("retranscribeTranscription unstyled post-processing", () => {
 
   it("retranscribes the same History row once after the third partial-edit failure", async () => {
     vi.useFakeTimers();
-    const random = vi.spyOn(Math, "random").mockReturnValue(1);
+    const random = pinJitterToMaximum();
     try {
       const row = {
         ...sampleTranscription("partial-chain"),
@@ -1101,10 +1116,10 @@ describe("retranscribeTranscription unstyled post-processing", () => {
         postProcessEditAutoRetryUsed: true,
       });
 
-      // Full jitter is pinned to the one-second cap here. The automatic pass
-      // uses the same row id and therefore produces a third repository update,
-      // not a new create call.
-      await vi.advanceTimersByTimeAsync(999);
+      // The pinned jitter maximum is 999ms, one tick under the one-second cap.
+      // The automatic pass uses the same row id and therefore produces a third
+      // repository update, not a new create call.
+      await vi.advanceTimersByTimeAsync(998);
       expect(transcribeAudio).toHaveBeenCalledTimes(1);
       await vi.advanceTimersByTimeAsync(1);
       expect(transcribeAudio).toHaveBeenCalledTimes(2);
@@ -1123,7 +1138,7 @@ describe("retranscribeTranscription unstyled post-processing", () => {
 
   it("does not let a manual retry race the automatic recovery pass", async () => {
     vi.useFakeTimers();
-    const random = vi.spyOn(Math, "random").mockReturnValue(1);
+    const random = pinJitterToMaximum();
     try {
       const row = {
         ...sampleTranscription("automatic-ownership"),
@@ -1177,7 +1192,7 @@ describe("retranscribeTranscription unstyled post-processing", () => {
 
   it("schedules imported-audio recovery after storing the durable row", async () => {
     vi.useFakeTimers();
-    const random = vi.spyOn(Math, "random").mockReturnValue(1);
+    const random = pinJitterToMaximum();
     try {
       const row = {
         ...sampleTranscription("imported-partial"),
