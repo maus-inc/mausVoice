@@ -94,10 +94,14 @@ const isActiveTicket = (
 const shouldApplySize = (minimized: boolean, size: WindowSize): boolean =>
   !minimized && hasPositiveDimensions(size);
 
-const isContradictoryPendingMaximized = (
-  pending: boolean | null,
+const consumeContradictoryPendingMaximized = (
+  pendingRef: React.MutableRefObject<boolean | null>,
   measured: boolean,
-): boolean => pending !== null && pending !== measured;
+): boolean => {
+  const pending = pendingRef.current;
+  pendingRef.current = null;
+  return pending !== null && pending !== measured;
+};
 
 const toLogicalWidth = (physicalWidth: number, scale: number): number =>
   physicalWidth / (scale || 1);
@@ -161,14 +165,10 @@ const useWindowMetrics = () => {
       if (
         !active ||
         minimizedNow ||
-        isContradictoryPendingMaximized(
-          pendingMaximizedRef.current,
-          maximizedNow,
-        )
+        consumeContradictoryPendingMaximized(pendingMaximizedRef, maximizedNow)
       ) {
         return;
       }
-      pendingMaximizedRef.current = null;
       maximizedRef.current = maximizedNow;
       setMaximized(maximizedNow);
     };

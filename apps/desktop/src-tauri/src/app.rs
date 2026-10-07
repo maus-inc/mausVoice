@@ -134,8 +134,7 @@ static LAST_NORMAL_MAIN_SIZE: Mutex<Option<PhysicalSize<u32>>> = Mutex::new(None
 static LAST_MAIN_MAXIMIZED: AtomicBool = AtomicBool::new(false);
 
 /// Returns `true` when `size` represents an unminimized, non-work-area-filling
-/// normal window size rather than a `(0, 0)` minimized size or a maximized
-/// full-screen work-area size.
+/// normal window size that fits within the monitor work area.
 fn is_normal_window_size(size: PhysicalSize<u32>, work_area: Option<PhysicalSize<u32>>) -> bool {
     if size.width == 0 || size.height == 0 {
         return false;
@@ -143,13 +142,23 @@ fn is_normal_window_size(size: PhysicalSize<u32>, work_area: Option<PhysicalSize
     let Some(work) = work_area else {
         return true;
     };
-    size.width.saturating_add(2) < work.width || size.height.saturating_add(2) < work.height
+    size.width <= work.width
+        && size.height <= work.height
+        && (size.width.saturating_add(2) < work.width
+            || size.height.saturating_add(2) < work.height)
 }
 
-/// Returns `true` when `size` has positive dimensions that cover the monitor
-/// work area (i.e. a maximized/full-work-area window size).
+/// Returns `true` when `size` matches the monitor work area within 2px on both
+/// axes (the geometry produced when a window is maximized on that monitor),
+/// distinguishing it from an oversized window saved on a larger monitor.
 fn is_work_area_window_size(size: PhysicalSize<u32>, work_area: Option<PhysicalSize<u32>>) -> bool {
-    size.width > 0 && size.height > 0 && !is_normal_window_size(size, work_area)
+    if size.width == 0 || size.height == 0 {
+        return false;
+    }
+    let Some(work) = work_area else {
+        return false;
+    };
+    size.width.abs_diff(work.width) <= 2 && size.height.abs_diff(work.height) <= 2
 }
 
 /// Determines whether the restored main window came from a maximized session,
@@ -773,17 +782,22 @@ mod tests {
     #[test]
     fn is_maximized_session_detects_work_area_size_when_flags_are_false() {
         let work_area = Some(PhysicalSize::new(1920, 1040));
+        let smaller_work = Some(PhysicalSize::new(1280, 720));
         let zero = PhysicalSize::new(0, 0);
         let full = PhysicalSize::new(1920, 1040);
         let normal = PhysicalSize::new(1100, 700);
+        let oversized = PhysicalSize::new(1600, 900);
 
         assert!(!is_work_area_window_size(zero, work_area));
         assert!(is_work_area_window_size(full, work_area));
         assert!(!is_work_area_window_size(normal, work_area));
+        assert!(!is_work_area_window_size(oversized, smaller_work));
+        assert!(!is_normal_window_size(oversized, smaller_work));
 
         let full_state = (full, false);
         let norm_state = (normal, false);
         let zero_state = (zero, false);
+        let over_state = (oversized, false);
         let flagged_norm = (normal, true);
 
         assert!(is_maximized_session(full_state, full_state, work_area));
@@ -792,6 +806,7 @@ mod tests {
         assert!(is_maximized_session(flagged_norm, norm_state, work_area));
         assert!(!is_maximized_session(norm_state, norm_state, work_area));
         assert!(!is_maximized_session(zero_state, zero_state, work_area));
+        assert!(!is_maximized_session(over_state, over_state, smaller_work));
     }
 
     #[test]
