@@ -12,6 +12,7 @@ vi.mock("./log.utils", () => ({
 import {
   enqueueHistoryPersist,
   flushHistoryPersist,
+  MAX_HISTORY_PERSIST_QUEUE,
   resetHistoryPersistQueue,
   snapshotStopRecordingAudio,
 } from "./history-persist.utils";
@@ -50,7 +51,7 @@ describe("enqueueHistoryPersist", () => {
           order.push("first-start");
           releaseFirst = () => {
             order.push("first-end");
-            resolve(undefined);
+            resolve();
           };
         }),
       "first",
@@ -76,6 +77,22 @@ describe("enqueueHistoryPersist", () => {
       { awaited: true },
     );
     await expect(pending).rejects.toBe(failure);
+  });
+
+  it("rejects a new job when the queue is already full", async () => {
+    const release: Array<() => void> = [];
+    const hang = () =>
+      new Promise<void>((resolve) => {
+        release.push(resolve);
+      });
+    for (let i = 0; i < MAX_HISTORY_PERSIST_QUEUE; i += 1) {
+      void enqueueHistoryPersist(hang, `job-${i}`);
+    }
+    await expect(
+      enqueueHistoryPersist(() => Promise.resolve(), "overflow"),
+    ).rejects.toThrow(/queue full/);
+    release.forEach((done) => done());
+    await flushHistoryPersist();
   });
 
   it("still runs a later job after an earlier rejection", async () => {

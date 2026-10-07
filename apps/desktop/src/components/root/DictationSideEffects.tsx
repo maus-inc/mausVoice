@@ -186,6 +186,7 @@ export type HandleEmptyResultInput = {
   refreshMember: () => void;
   /** Clears Transcribing before the background History write is scheduled. */
   sendIdle?: () => Promise<void>;
+  createdAt?: string;
 };
 
 const enqueueTranscriptionHistory = (
@@ -203,16 +204,14 @@ const enqueueTranscriptionHistory = (
   const persistAllowedAtCapture =
     input.persistAllowedAtCapture ?? isPersistenceAllowed();
   return enqueueHistoryPersist(async () => {
-    const stored = await withTimeout(
-      store({
-        ...input,
-        audio,
-        createdAt,
-        persistAllowedAtCapture,
-      }),
-      90_000,
-      context,
-    );
+    // Do not race this store with a timeout. persistTail must wait until the
+    // native WAV write settles, or the next job overlaps store_transcription_audio.
+    const stored = await store({
+      ...input,
+      audio,
+      createdAt,
+      persistAllowedAtCapture,
+    });
     try {
       options?.onStored?.(stored);
     } catch (error) {
@@ -291,7 +290,7 @@ export const handleEmptyTranscriptionResult = async (
         warnings: transcriptionWarnings,
         remoteStatus: null,
         remoteDeviceId: null,
-        createdAt: dayjs().toISOString(),
+        createdAt: input.createdAt,
       },
       "storing failed-transcription history",
     );
@@ -523,6 +522,7 @@ type FinalizedRecording = {
   toneId: string | null;
   rawTranscript: string;
   transcribeResult: TranscriptionSessionResult;
+  createdAt: string;
 };
 
 const FINALIZE_TIMEOUT_MS = 90_000;
@@ -919,6 +919,7 @@ export const DictationSideEffects = () => {
   const captureStopRecordingInfo = useCallback(async (): Promise<{
     audio: StopRecordingResponse | null;
     context: Promise<StopContext>;
+    createdAt: string;
   }> => {
     tryPlayAudioChime("stop_recording_clip");
     getLogger().verbose("Invoking stop_recording and fetching a11y info");
@@ -945,7 +946,7 @@ export const DictationSideEffects = () => {
         getLogger().verbose(
           `Recording stopped (samples=${outAudio?.samples?.length ?? 0})`,
         );
-        return outAudio;
+        return { outAudio, createdAt: dayjs().toISOString() };
       } catch (error) {
         getLogger().error(`Failed to stop recording: ${error}`);
         runToast(
@@ -961,7 +962,11 @@ export const DictationSideEffects = () => {
       }
     });
 
-    return { audio, context };
+    return {
+      audio: audio?.outAudio ?? null,
+      context,
+      createdAt: audio?.createdAt ?? dayjs().toISOString(),
+    };
   }, [intl, sendPhaseToPill]);
 
   const processFinalizedRecording = useCallback(
@@ -972,6 +977,7 @@ export const DictationSideEffects = () => {
       toneId,
       rawTranscript,
       transcribeResult,
+      createdAt,
     }: FinalizedRecording): Promise<RawStopResp> => {
       const session = sessionRef.current;
       const strategy = strategyRef.current;
@@ -982,7 +988,6 @@ export const DictationSideEffects = () => {
         return Promise.resolve({ shouldContinue: false });
       }
 
-      const createdAt = dayjs().toISOString();
       const persistReviewedTranscript = async ({
         transcript: reviewedTranscript,
         sanitizedTranscript: reviewedSanitizedTranscript,
@@ -1059,9 +1064,11 @@ export const DictationSideEffects = () => {
     async ({
       audio,
       context,
+      createdAt,
     }: {
       audio: StopRecordingResponse;
       context: Promise<StopContext>;
+      createdAt: string;
     }): Promise<RawStopResp> => {
       getLogger().info("Finalizing transcription session");
       // Transcription needs only the audio, so it starts before the focus
@@ -1122,6 +1129,7 @@ export const DictationSideEffects = () => {
             storeTranscriptionFn: storeTranscription,
             refreshMember,
             sendIdle: () => sendPhaseToPill("idle"),
+            createdAt,
           });
         }
         getLogger().warning("stopRecordingRaw: no rawTranscript from finalize");
@@ -1135,6 +1143,7 @@ export const DictationSideEffects = () => {
         toneId,
         rawTranscript,
         transcribeResult,
+        createdAt,
       });
     },
     [processFinalizedRecording, sendPhaseToPill],
@@ -1153,7 +1162,7 @@ export const DictationSideEffects = () => {
     systemVolumeDim.endRecording();
 
     try {
-      const { audio, context } = await captureStopRecordingInfo();
+      const { audio, context, createdAt } = await captureStopRecordingInfo();
       if (!audio) {
         getLogger().warning("stopRecordingRaw: no audio data received");
         return {
@@ -1162,7 +1171,7 @@ export const DictationSideEffects = () => {
         };
       }
       sendPillStageText(intl.formatMessage({ defaultMessage: "Transcribing" }));
-      return await finalizeAndPostProcess({ audio, context });
+      return await finalizeAndPostProcess({ audio, context, createdAt });
     } catch (error) {
       const errorName = error instanceof Error ? ` [name=${error.name}]` : "";
       getLogger().error(`Error during stopRecording: ${error}${errorName}`);

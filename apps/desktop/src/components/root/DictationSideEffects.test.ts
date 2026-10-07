@@ -156,7 +156,7 @@ afterEach(() => {
 describe("handleEmptyTranscriptionResult (#418)", () => {
   it("shows a recovery toast and stores a failure marker without emitting recording_failed", async () => {
     const showToast = vi.fn<HandleEmptyResultInput["showToast"]>(() =>
-      Promise.resolve(undefined),
+      Promise.resolve(),
     );
     const storeTranscriptionFn = vi.fn<
       HandleEmptyResultInput["storeTranscriptionFn"]
@@ -198,8 +198,9 @@ describe("handleEmptyTranscriptionResult (#418)", () => {
 
   it("idles the pill before scheduling the failed-transcription save", async () => {
     const order: string[] = [];
-    const sendIdle = vi.fn(async () => {
+    const sendIdle = vi.fn(() => {
       order.push("idle");
+      return Promise.resolve();
     });
     const storeTranscriptionFn = vi.fn<
       HandleEmptyResultInput["storeTranscriptionFn"]
@@ -217,7 +218,7 @@ describe("handleEmptyTranscriptionResult (#418)", () => {
       },
       strategy: baseStrategyStub(),
       formatMessage: (descriptor) => descriptor.defaultMessage,
-      showToast: () => Promise.resolve(undefined),
+      showToast: () => Promise.resolve(),
       storeTranscriptionFn,
       refreshMember: vi.fn(),
       sendIdle,
@@ -268,7 +269,7 @@ describe("handleEmptyTranscriptionResult (#418)", () => {
       },
       strategy: baseStrategyStub(),
       formatMessage: (descriptor) => descriptor.defaultMessage,
-      showToast: () => Promise.resolve(undefined),
+      showToast: () => Promise.resolve(),
       storeTranscriptionFn,
       refreshMember: vi.fn(),
     });
@@ -281,7 +282,7 @@ describe("handleEmptyTranscriptionResult (#418)", () => {
   it("does not enqueue a failed-transcription row when persistence is off", async () => {
     isPersistenceAllowedMock.mockReturnValue(false);
     const showToast = vi.fn<HandleEmptyResultInput["showToast"]>(() =>
-      Promise.resolve(undefined),
+      Promise.resolve(),
     );
     const storeTranscriptionFn = vi.fn<
       HandleEmptyResultInput["storeTranscriptionFn"]
@@ -308,7 +309,7 @@ describe("handleEmptyTranscriptionResult (#418)", () => {
 
   it("skips the audio store when strategy.shouldStoreTranscript() is false", async () => {
     const showToast = vi.fn<HandleEmptyResultInput["showToast"]>(() =>
-      Promise.resolve(undefined),
+      Promise.resolve(),
     );
     const storeTranscriptionFn = vi.fn<
       HandleEmptyResultInput["storeTranscriptionFn"]

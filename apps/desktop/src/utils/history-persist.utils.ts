@@ -13,6 +13,8 @@ import { logOnRejection } from "./promise.utils";
 
 let persistTail: Promise<void> = Promise.resolve();
 let queueDepth = 0;
+/** Bound copied PCM payloads waiting behind a slow WAV write. */
+export const MAX_HISTORY_PERSIST_QUEUE = 4;
 
 export const snapshotStopRecordingAudio = (
   audio: StopRecordingResponse,
@@ -41,6 +43,17 @@ export const enqueueHistoryPersist = <T>(
   context: string,
   options?: EnqueueHistoryPersistOptions,
 ): Promise<T> => {
+  if (queueDepth >= MAX_HISTORY_PERSIST_QUEUE) {
+    const error = new Error(
+      `History persist queue full (${queueDepth}): ${context}`,
+    );
+    getLogger().warning(error.message);
+    const rejected = Promise.reject(error);
+    if (!options?.awaited) {
+      logOnRejection(rejected, context);
+    }
+    return rejected;
+  }
   queueDepth += 1;
   if (queueDepth > 1) {
     getLogger().verbose(
