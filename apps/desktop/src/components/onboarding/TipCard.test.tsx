@@ -235,6 +235,8 @@ describe("TipCard", () => {
     });
 
     expect(onAction).toHaveBeenCalledTimes(1);
+    // The action performs an in-page jump; it must not consume the tip.
+    expect(mocks.dismissTip).not.toHaveBeenCalled();
   });
 });
 
