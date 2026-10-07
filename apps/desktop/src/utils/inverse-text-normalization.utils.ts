@@ -666,6 +666,12 @@ const isAttributiveUnitName = (
   SINGULAR_CURRENCY_UNITS.has(lowered) &&
   unitFollowers(segments, nextIndex, 1).length > 0;
 
+/** The two spellings of the unit word this ambiguity belongs to. */
+const POUND_WORDS: ReadonlySet<string> = new Set(["pound", "pounds"]);
+
+/** The follower words that make a pound a weight. */
+const WEIGHT_FOLLOWERS: ReadonlySet<string> = new Set(["weight", "weights"]);
+
 /** Forms of "weigh", which make the pounds that follow them a weight. */
 const WEIGH_WORDS: ReadonlySet<string> = new Set([
   "weigh",
@@ -690,10 +696,10 @@ const isWeightPound = (
   runStart: number,
   lowered: string,
 ): boolean => {
-  if (lowered !== "pound" && lowered !== "pounds") return false;
+  if (!POUND_WORDS.has(lowered)) return false;
   if (WEIGH_WORDS.has(wordBefore(segments, runStart))) return true;
   const [follower, afterFollower] = unitFollowers(segments, nextIndex, 2);
-  if (follower === "weight" || follower === "weights") return true;
+  if (WEIGHT_FOLLOWERS.has(follower)) return true;
   return follower === "of" && afterFollower !== "course";
 };
 
