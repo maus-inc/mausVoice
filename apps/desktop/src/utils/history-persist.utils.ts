@@ -16,6 +16,9 @@ let queueDepth = 0;
 /** Bound copied PCM payloads waiting behind a slow WAV write. */
 export const MAX_HISTORY_PERSIST_QUEUE = 4;
 
+export const isHistoryPersistQueueFull = (): boolean =>
+  queueDepth >= MAX_HISTORY_PERSIST_QUEUE;
+
 export const snapshotStopRecordingAudio = (
   audio: StopRecordingResponse,
 ): StopRecordingResponse => {

@@ -94,6 +94,7 @@ import {
 import { getEffectiveStylingMode } from "../../utils/feature.utils";
 import {
   enqueueHistoryPersist,
+  isHistoryPersistQueueFull,
   snapshotStopRecordingAudio,
 } from "../../utils/history-persist.utils";
 import { isPersistenceAllowed } from "../../utils/incognito.utils";
@@ -261,34 +262,26 @@ export const handleEmptyTranscriptionResult = async (
     strategy.shouldStoreTranscript() &&
     persistAllowedAtCapture &&
     isPersistenceAllowed();
-  let queuedHistory = false;
-  if (canPersist) {
-    try {
-      const pending = enqueueTranscriptionHistory(
-        input.storeTranscriptionFn,
-        {
-          audio,
-          rawTranscript: null,
-          sanitizedTranscript: null,
-          transcript: null,
-          transcriptionMetadata: transcribeResult?.metadata ?? {},
-          postProcessMetadata: {},
-          warnings: transcriptionWarnings,
-          remoteStatus: null,
-          remoteDeviceId: null,
-          createdAt: input.createdAt,
-          persistAllowedAtCapture,
-        },
-        "storing failed-transcription history",
-      );
-      pending.catch(() => undefined);
-      queuedHistory = true;
-    } catch (error) {
-      getLogger().warning(
-        `Could not queue failed-transcription history: ${error}`,
-      );
-    }
-  }
+  const queuedHistory =
+    canPersist &&
+    !isHistoryPersistQueueFull() &&
+    enqueueTranscriptionHistory(
+      input.storeTranscriptionFn,
+      {
+        audio,
+        rawTranscript: null,
+        sanitizedTranscript: null,
+        transcript: null,
+        transcriptionMetadata: transcribeResult?.metadata ?? {},
+        postProcessMetadata: {},
+        warnings: transcriptionWarnings,
+        remoteStatus: null,
+        remoteDeviceId: null,
+        createdAt: input.createdAt,
+        persistAllowedAtCapture,
+      },
+      "storing failed-transcription history",
+    ) !== undefined;
   // Two literal descriptors: the extractor cannot follow a ternary inside one
   // formatMessage call, and promising a background save when the row was not
   // queued is a lie.
@@ -496,10 +489,12 @@ export const postProcessFinalizedTranscript = async (
   } else if (!willStore) {
     notifyDroppedEnding("not-saved");
   }
-  if (willStore) {
+  if (willStore && isHistoryPersistQueueFull()) {
+    getLogger().warning("History persist queue full; skipping stop-path save");
+    notifyDroppedEnding("not-saved");
+  } else if (willStore) {
     getLogger().verbose("Storing transcription");
-    try {
-    const pending = enqueueTranscriptionHistory(
+    enqueueTranscriptionHistory(
       input.storeTranscriptionFn,
       {
         audio: input.audio,
@@ -524,11 +519,6 @@ export const postProcessFinalizedTranscript = async (
         },
       },
     );
-    pending.catch(() => undefined);
-    } catch (error) {
-      getLogger().warning(`Could not queue transcription history: ${error}`);
-      notifyDroppedEnding("not-saved");
-    }
   }
   input.refreshMember();
   return {
