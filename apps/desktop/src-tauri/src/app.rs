@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tauri::{
@@ -126,6 +127,11 @@ const WINDOW_STATE_FLAGS: StateFlags = StateFlags::SIZE.union(StateFlags::MAXIMI
 /// normal size here lets `save_main_window_state` and startup sanitization
 /// preserve a real unmaximized restore size across sessions.
 static LAST_NORMAL_MAIN_SIZE: Mutex<Option<PhysicalSize<u32>>> = Mutex::new(None);
+/// Tracks whether the main window's latest non-minimized resize was maximized or
+/// filled the monitor work area, so closing/hiding on undecorated macOS or
+/// exiting after `tauri-plugin-window-state`'s `RunEvent::Exit` callback does
+/// not lose the maximized state.
+static LAST_MAIN_MAXIMIZED: AtomicBool = AtomicBool::new(false);
 
 /// Returns `true` when `size` represents an unminimized, non-work-area-filling
 /// normal window size rather than a `(0, 0)` minimized size or a maximized
@@ -138,6 +144,26 @@ fn is_normal_window_size(size: PhysicalSize<u32>, work_area: Option<PhysicalSize
         return true;
     };
     size.width.saturating_add(2) < work.width || size.height.saturating_add(2) < work.height
+}
+
+/// Returns `true` when `size` has positive dimensions that cover the monitor
+/// work area (i.e. a maximized/full-work-area window size).
+fn is_work_area_window_size(size: PhysicalSize<u32>, work_area: Option<PhysicalSize<u32>>) -> bool {
+    size.width > 0 && size.height > 0 && !is_normal_window_size(size, work_area)
+}
+
+/// Determines whether the restored main window came from a maximized session,
+/// including undecorated macOS sessions where both the saved and live maximize
+/// flags can read `false` while the saved or restored size covers the work area.
+fn is_maximized_session(
+    saved: (PhysicalSize<u32>, bool),
+    live: (PhysicalSize<u32>, bool),
+    work_area: Option<PhysicalSize<u32>>,
+) -> bool {
+    saved.1
+        || live.1
+        || is_work_area_window_size(saved.0, work_area)
+        || is_work_area_window_size(live.0, work_area)
 }
 
 fn current_work_area_size(window: &Window) -> Option<PhysicalSize<u32>> {
@@ -158,11 +184,14 @@ fn default_main_physical_size(scale_factor: f64) -> PhysicalSize<u32> {
 }
 
 fn record_main_window_resize(window: &Window, size: PhysicalSize<u32>) {
-    if window.is_minimized().unwrap_or(false) || window.is_maximized().unwrap_or(false) {
+    if window.is_minimized().unwrap_or(false) || size.width == 0 || size.height == 0 {
         return;
     }
     let work_area = current_work_area_size(window);
-    if !is_normal_window_size(size, work_area) {
+    let normal = is_normal_window_size(size, work_area);
+    let maximized = window.is_maximized().unwrap_or(false) || !normal;
+    LAST_MAIN_MAXIMIZED.store(maximized, Ordering::SeqCst);
+    if maximized {
         return;
     }
     if let Ok(mut slot) = LAST_NORMAL_MAIN_SIZE.lock() {
@@ -208,7 +237,6 @@ fn save_main_window_state(app_handle: &tauri::AppHandle) {
         .flatten()
         .map(|monitor| monitor.work_area().size);
     let scale = main_window.scale_factor().unwrap_or(1.0);
-    let is_maximized = main_window.is_maximized().unwrap_or(false);
     let fallback_size = LAST_NORMAL_MAIN_SIZE
         .lock()
         .ok()
@@ -239,8 +267,11 @@ fn save_main_window_state(app_handle: &tauri::AppHandle) {
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
     let saved_size = PhysicalSize::new(saved_width, saved_height);
+    let is_maximized = main_window.is_maximized().unwrap_or(false)
+        || LAST_MAIN_MAXIMIZED.load(Ordering::SeqCst)
+        || is_work_area_window_size(saved_size, work_area);
     let needs_size_fix = !is_normal_window_size(saved_size, work_area);
-    let needs_max_fix = is_maximized && !saved_maximized;
+    let needs_max_fix = saved_maximized != is_maximized;
     if needs_size_fix || needs_max_fix {
         if needs_size_fix {
             let width = serde_json::Value::from(fallback_size.width);
@@ -249,7 +280,7 @@ fn save_main_window_state(app_handle: &tauri::AppHandle) {
             main_entry.insert("height".to_string(), height);
         }
         if needs_max_fix {
-            let max_val = serde_json::Value::from(true);
+            let max_val = serde_json::Value::from(is_maximized);
             main_entry.insert("maximized".to_string(), max_val);
         }
         if let Ok(updated) = serde_json::to_vec_pretty(&root) {
@@ -270,18 +301,29 @@ fn sanitize_restored_main_window(main_window: &WebviewWindow) {
         .flatten()
         .map(|monitor| monitor.work_area().size);
     let scale = main_window.scale_factor().unwrap_or(1.0);
+    let saved_entry = read_saved_main_window_entry(main_window.app_handle());
+    let (saved_size, _) = saved_entry;
+    let live_maximized = main_window.is_maximized().unwrap_or(false);
+    let live_entry = (inner_size, live_maximized);
+    let was_maximized = is_maximized_session(saved_entry, live_entry, work_area);
+    LAST_MAIN_MAXIMIZED.store(was_maximized, Ordering::SeqCst);
+
     if is_normal_window_size(inner_size, work_area) {
         if let Ok(mut slot) = LAST_NORMAL_MAIN_SIZE.lock() {
             *slot = Some(inner_size);
         }
+        if was_maximized && !live_maximized {
+            let _ = main_window.maximize();
+        }
         return;
     }
 
-    let (saved_size, saved_maximized) = read_saved_main_window_entry(main_window.app_handle());
-    let was_maximized = saved_maximized || main_window.is_maximized().unwrap_or(false);
     if was_maximized && is_normal_window_size(saved_size, work_area) {
         if let Ok(mut slot) = LAST_NORMAL_MAIN_SIZE.lock() {
             *slot = Some(saved_size);
+        }
+        if !live_maximized {
+            let _ = main_window.maximize();
         }
         return;
     }
@@ -311,6 +353,9 @@ fn handle_run_event(app_handle: &tauri::AppHandle, event: RunEvent) {
             if let Err(err) = crate::platform::keyboard::stop_key_listener() {
                 log::error!("Failed to stop keyboard listener on exit: {err}");
             }
+        }
+        RunEvent::Exit => {
+            save_main_window_state(app_handle);
         }
         #[cfg(target_os = "macos")]
         RunEvent::Reopen { .. } => {
@@ -696,7 +741,10 @@ pub fn run(context: tauri::Context) -> Result<(), tauri::Error> {
 
 #[cfg(test)]
 mod tests {
-    use super::{default_main_physical_size, is_normal_window_size, WINDOW_STATE_FLAGS};
+    use super::{
+        default_main_physical_size, is_maximized_session, is_normal_window_size,
+        is_work_area_window_size, WINDOW_STATE_FLAGS,
+    };
     use tauri::PhysicalSize;
     use tauri_plugin_window_state::StateFlags;
 
@@ -720,6 +768,30 @@ mod tests {
         assert!(!is_normal_window_size(almost_full, work_area));
         assert!(is_normal_window_size(normal, work_area));
         assert!(is_normal_window_size(normal, None));
+    }
+
+    #[test]
+    fn is_maximized_session_detects_work_area_size_when_flags_are_false() {
+        let work_area = Some(PhysicalSize::new(1920, 1040));
+        let zero = PhysicalSize::new(0, 0);
+        let full = PhysicalSize::new(1920, 1040);
+        let normal = PhysicalSize::new(1100, 700);
+
+        assert!(!is_work_area_window_size(zero, work_area));
+        assert!(is_work_area_window_size(full, work_area));
+        assert!(!is_work_area_window_size(normal, work_area));
+
+        let full_state = (full, false);
+        let norm_state = (normal, false);
+        let zero_state = (zero, false);
+        let flagged_norm = (normal, true);
+
+        assert!(is_maximized_session(full_state, full_state, work_area));
+        assert!(is_maximized_session(norm_state, full_state, work_area));
+        assert!(is_maximized_session(full_state, norm_state, work_area));
+        assert!(is_maximized_session(flagged_norm, norm_state, work_area));
+        assert!(!is_maximized_session(norm_state, norm_state, work_area));
+        assert!(!is_maximized_session(zero_state, zero_state, work_area));
     }
 
     #[test]
