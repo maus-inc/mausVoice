@@ -74,6 +74,31 @@ describe("abortable Azure SDK connections", () => {
     expect(scope.connections.size).toBe(0);
   });
 
+  it("preserves a caller's non-string abort reason during connection disposal", async () => {
+    const controller = new AbortController();
+    const reason = {
+      toString: () => {
+        throw new Error("abort reasons need not be strings");
+      },
+    };
+    const scope = createAzureConnectionScope(controller.signal);
+    const { factory, dispose } = createConnection();
+    const abortableFactory = createAbortableAzureConnectionFactory(
+      factory,
+      scope,
+    );
+    const capturedConnection = await createConnectionFrom(abortableFactory);
+    const opening = capturedConnection.open();
+    const rejected = expect(opening).rejects.toBe(reason);
+
+    controller.abort(reason);
+    await rejected;
+    await Promise.resolve();
+
+    expect(dispose).toHaveBeenCalledOnce();
+    expect(scope.connections.size).toBe(0);
+  });
+
   it("does not start the SDK handshake when the signal was already aborted", async () => {
     const controller = new AbortController();
     const reason = new DOMException("Canceled", "AbortError");

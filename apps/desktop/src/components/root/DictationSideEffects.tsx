@@ -1616,7 +1616,9 @@ export const DictationSideEffects = () => {
                 return;
               }
               replayStartupAudio();
-              sendPillStageText(null);
+              if (!isStoppingRef.current) {
+                sendPillStageText(null);
+              }
             } catch (error) {
               if (!isCurrentStart()) {
                 cleanupStartedSession();
@@ -1628,8 +1630,8 @@ export const DictationSideEffects = () => {
               cleanupStartedSession();
               startupAudioBuffer.reset();
               audioForwardingReady = true;
-              sendPillStageText(null);
               if (!isStoppingRef.current) {
+                sendPillStageText(null);
                 void stopRecording();
               }
             } finally {

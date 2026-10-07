@@ -49,4 +49,38 @@ describe("live provider startup", () => {
 
     expect(controller.signal.aborted).toBe(false);
   });
+
+  it("settles promptly when the provider ignores caller cancellation", async () => {
+    const controller = new AbortController();
+    const reason = new DOMException("Dictation canceled", "AbortError");
+    const onRecordingStart = vi.fn(() => new Promise<void>(() => undefined));
+    const startup = startLiveProviderSession({
+      session: pendingSession(onRecordingStart),
+      sampleRate: 16_000,
+      controller,
+      timeoutMs: 10_000,
+    });
+    const rejected = expect(startup).rejects.toBe(reason);
+
+    controller.abort(reason);
+
+    await rejected;
+    expect(onRecordingStart).toHaveBeenCalledOnce();
+  });
+
+  it("does not start the provider when the controller is already aborted", async () => {
+    const controller = new AbortController();
+    const reason = new Error("already canceled");
+    controller.abort(reason);
+    const onRecordingStart = vi.fn().mockResolvedValue(undefined);
+
+    await expect(
+      startLiveProviderSession({
+        session: pendingSession(onRecordingStart),
+        sampleRate: 16_000,
+        controller,
+      }),
+    ).rejects.toBe(reason);
+    expect(onRecordingStart).not.toHaveBeenCalled();
+  });
 });

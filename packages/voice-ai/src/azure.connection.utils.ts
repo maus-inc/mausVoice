@@ -45,7 +45,7 @@ export const createAbortableAzureConnectionFactory = (
       if (!signal) return openConnection();
       if (signal.aborted) {
         void connection
-          .dispose(String(getAbortReason(signal)))
+          .dispose("Azure connection aborted")
           .catch(() => undefined);
         return Promise.reject(getAbortReason(signal));
       }
@@ -61,7 +61,7 @@ export const createAbortableAzureConnectionFactory = (
         const handleAbort = () => {
           if (!finish()) return;
           void connection
-            .dispose(String(getAbortReason(signal)))
+            .dispose("Azure connection aborted")
             .catch(() => undefined);
           reject(getAbortReason(signal));
         };

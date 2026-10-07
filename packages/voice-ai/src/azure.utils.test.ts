@@ -37,6 +37,10 @@ const speech = vi.hoisted(() => ({
     writes: [] as ArrayBuffer[],
   },
 }));
+const connectionState = vi.hoisted(() => ({
+  openCalls: 0,
+  disposeCalls: 0,
+}));
 /** Where the probe's own log lines land, so a test can read them. */
 const consoleError = vi.hoisted(() => vi.fn());
 
@@ -76,6 +80,41 @@ vi.mock("microsoft-cognitiveservices-speech-sdk", () => ({
   },
   SpeechRecognizer: class {
     private sessionStartedHandler: (() => void) | null = null;
+    private connectionFactory: {
+      create: () => Promise<{
+        open: () => Promise<never>;
+        dispose: () => Promise<void>;
+        events: {
+          attach: (listener: (event: { name: string }) => void) => void;
+        };
+      }>;
+    } | null = null;
+
+    constructor() {
+      const factory = {
+        create: async () => ({
+          open: () => {
+            connectionState.openCalls += 1;
+            return new Promise<never>(() => undefined);
+          },
+          dispose: async () => {
+            connectionState.disposeCalls += 1;
+          },
+          events: { attach: () => undefined },
+        }),
+      };
+      this.createServiceRecognizer({}, factory, {}, {});
+    }
+
+    createServiceRecognizer(
+      _authentication: unknown,
+      connectionFactory: NonNullable<typeof this.connectionFactory>,
+      _audioConfig: unknown,
+      _recognizerConfig: unknown,
+    ) {
+      this.connectionFactory = connectionFactory;
+      return {};
+    }
 
     get sessionStarted() {
       return this.sessionStartedHandler;
@@ -113,6 +152,13 @@ vi.mock("microsoft-cognitiveservices-speech-sdk", () => ({
       // What a blackholed connection looks like to this API: neither callback
       // ever arrives, because `recognizeOnceAsync` has no signal of its own.
       if (speech.hang) {
+        const connectionFactory = this.connectionFactory;
+        if (connectionFactory) {
+          void connectionFactory
+            .create()
+            .then((connection) => connection.open())
+            .catch(() => undefined);
+        }
         return;
       }
       if (speech.error !== null) {
@@ -163,6 +209,8 @@ beforeEach(() => {
   speech.subscriptions = [];
   speech.formats = [];
   speech.calls = 0;
+  connectionState.openCalls = 0;
+  connectionState.disposeCalls = 0;
   speech.streaming.autoSessionStarted = true;
   speech.streaming.startupError = null;
   speech.streaming.phraseSetupError = null;
@@ -208,6 +256,23 @@ describe("azureTranscribeAudio phrase list", () => {
     });
 
     expect(capturedPhrases).toEqual([]);
+  });
+
+  it("closes one-shot resources when phrase-list setup fails", async () => {
+    speech.streaming.phraseSetupError = "invalid phrase";
+
+    await expect(
+      azureTranscribeAudio({
+        subscriptionKey: "key",
+        region: "eastus",
+        blob: wavBlob(),
+        phrases: ["invalid phrase"],
+      }),
+    ).rejects.toThrow("invalid phrase");
+
+    expect(speech.streaming.pushStreamCloses).toBe(1);
+    expect(speech.streaming.recognizerCloses).toBe(1);
+    expect(connectionState.disposeCalls).toBe(0);
   });
 });
 
@@ -298,7 +363,10 @@ describe("createAzureStreamingSession startup", () => {
     await expect(started).rejects.toThrow("startup timed out");
     expect(speech.streaming.pushStreamCloses).toBe(1);
     expect(speech.streaming.recognizerCloses).toBe(1);
-    expect(speech.streaming.cleanupOrder).toEqual(["push-stream", "recognizer"]);
+    expect(speech.streaming.cleanupOrder).toEqual([
+      "push-stream",
+      "recognizer",
+    ]);
   });
 
   it("rejects when the SDK reports a startup failure", async () => {
@@ -551,6 +619,10 @@ describe("azureTestIntegration", () => {
       const raised = expect(pending).rejects.toThrow(/could not be reached/);
       await vi.advanceTimersByTimeAsync(60_000);
       await raised;
+      await Promise.resolve();
+      expect(connectionState.openCalls).toBe(1);
+      expect(connectionState.disposeCalls).toBe(1);
+      expect(speech.streaming.recognizerCloses).toBe(1);
     } finally {
       vi.useRealTimers();
     }
@@ -1088,6 +1160,10 @@ describe("cancelling an Azure recognition", () => {
     controller.abort();
 
     await expect(pending).rejects.toThrow(/cancelled/i);
+    await Promise.resolve();
+    expect(connectionState.openCalls).toBe(0);
+    expect(connectionState.disposeCalls).toBe(1);
+    expect(speech.streaming.recognizerCloses).toBe(1);
   });
 
   it("rejects without reaching the recognizer when the signal is already aborted", async () => {

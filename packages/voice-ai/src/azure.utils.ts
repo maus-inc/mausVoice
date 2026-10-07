@@ -180,41 +180,85 @@ export const azureTranscribeAudio = async ({
   signal,
 }: AzureTranscriptionArgs): Promise<AzureTranscribeAudioOutput> => {
   return new Promise((resolve, reject) => {
-    const azureLocale = mapToAzureLocale(language);
-    const trimmedRegion = region.trim();
-    const trimmedKey = subscriptionKey.trim();
-
-    const speechConfig = sdk.SpeechConfig.fromSubscription(
-      trimmedKey,
-      trimmedRegion,
+    const connectionController = new AbortController();
+    const connectionScope = createAzureConnectionScope(
+      connectionController.signal,
     );
-    speechConfig.speechRecognitionLanguage = azureLocale;
+    let pushStream: ReturnType<
+      typeof sdk.AudioInputStream.createPushStream
+    > | null = null;
+    let pushStreamClosed = false;
+    let recognizer: sdk.SpeechRecognizer | null = null;
+    const closePushStream = (): void => {
+      if (!pushStream || pushStreamClosed) return;
+      pushStreamClosed = true;
+      try {
+        pushStream.close();
+      } catch {
+        // Stream cleanup must not replace the original failure.
+      }
+    };
 
-    const audioBuffer =
-      blob instanceof ArrayBuffer ? blob : (blob.buffer as ArrayBuffer);
+    try {
+      const azureLocale = mapToAzureLocale(language);
+      const trimmedRegion = region.trim();
+      const trimmedKey = subscriptionKey.trim();
 
-    const dataView = new DataView(audioBuffer);
-    const sampleRate = dataView.getUint32(24, true);
-    const bitsPerSample = dataView.getUint16(34, true);
-    const channels = dataView.getUint16(22, true);
+      const speechConfig = sdk.SpeechConfig.fromSubscription(
+        trimmedKey,
+        trimmedRegion,
+      );
+      speechConfig.speechRecognitionLanguage = azureLocale;
 
-    const audioFormat = sdk.AudioStreamFormat.getWaveFormatPCM(
-      sampleRate,
-      bitsPerSample,
-      channels,
-    );
-    const pushStream = sdk.AudioInputStream.createPushStream(audioFormat);
+      const audioBuffer =
+        blob instanceof ArrayBuffer ? blob : (blob.buffer as ArrayBuffer);
 
-    const uint8Array = new Uint8Array(audioBuffer);
-    const wavHeaderSize = 44;
-    const audioData = uint8Array.slice(wavHeaderSize);
+      const dataView = new DataView(audioBuffer);
+      const sampleRate = dataView.getUint32(24, true);
+      const bitsPerSample = dataView.getUint16(34, true);
+      const channels = dataView.getUint16(22, true);
 
-    pushStream.write(audioData.buffer);
-    pushStream.close();
+      const audioFormat = sdk.AudioStreamFormat.getWaveFormatPCM(
+        sampleRate,
+        bitsPerSample,
+        channels,
+      );
+      pushStream = sdk.AudioInputStream.createPushStream(audioFormat);
 
-    const audioConfig = sdk.AudioConfig.fromStreamInput(pushStream);
-    const recognizer = new sdk.SpeechRecognizer(speechConfig, audioConfig);
-    applyPhraseList(recognizer, phrases);
+      const uint8Array = new Uint8Array(audioBuffer);
+      const wavHeaderSize = 44;
+      const audioData = uint8Array.slice(wavHeaderSize);
+
+      pushStream.write(audioData.buffer);
+      closePushStream();
+
+      const audioConfig = sdk.AudioConfig.fromStreamInput(pushStream);
+      recognizer = createAbortableAzureRecognizer(
+        speechConfig,
+        audioConfig,
+        connectionScope,
+      );
+      applyPhraseList(recognizer, phrases);
+    } catch (error) {
+      closePushStream();
+      disposeAzureConnections(
+        connectionScope,
+        "Azure recognition setup failed",
+      );
+      try {
+        recognizer?.close();
+      } catch {
+        // A partial recognizer must not hide the setup failure.
+      }
+      reject(error);
+      return;
+    }
+
+    if (!recognizer) {
+      reject(new Error("Azure recognition resources could not be created"));
+      return;
+    }
+    const activeRecognizer = recognizer;
 
     // `recognizeOnceAsync` is callback-only: it takes no signal and has no
     // deadline of its own, so a connection that never answers leaves this
@@ -223,7 +267,26 @@ export const azureTranscribeAudio = async ({
     // not write the promise a second time — and the timer is always cleared, so
     // a probe that answered in time is not rejected afterwards.
     let settled = false;
+    let recognizerCloseRequested = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    const closeRecognizer = (abortReason?: unknown): void => {
+      if (recognizerCloseRequested) return;
+      recognizerCloseRequested = true;
+      if (abortReason !== undefined && !connectionController.signal.aborted) {
+        connectionController.abort(abortReason);
+      }
+      disposeAzureConnections(
+        connectionScope,
+        abortReason === undefined
+          ? "Azure recognition completed"
+          : "Azure recognition canceled",
+      );
+      try {
+        activeRecognizer.close();
+      } catch {
+        // Cleanup must not replace the recognition result or failure.
+      }
+    };
     const settleOnce = (settle: () => void): void => {
       if (settled) return;
       settled = true;
@@ -235,7 +298,10 @@ export const azureTranscribeAudio = async ({
       settle();
     };
     const onAbort = (): void => {
-      recognizer.close();
+      closeRecognizer(
+        signal?.reason ??
+          new DOMException("The operation was aborted", "AbortError"),
+      );
       settleOnce(() =>
         reject(
           new AzureRecognitionError(
@@ -258,11 +324,11 @@ export const azureTranscribeAudio = async ({
 
     if (timeoutMs !== undefined) {
       timer = setTimeout(() => {
-        recognizer.close();
         // Worded so the transport rules read it as unreachable, which is what a
         // blackholed connection is: nothing came back over the network, and the
         // key was never judged.
         const reason = `Timed out after ${timeoutMs}ms: no answer arrived from the network.`;
+        closeRecognizer(new DOMException(reason, "TimeoutError"));
         settleOnce(() =>
           reject(
             new AzureRecognitionError(
@@ -274,36 +340,48 @@ export const azureTranscribeAudio = async ({
       }, timeoutMs);
     }
 
-    recognizer.recognizeOnceAsync(
-      (result) => {
-        recognizer.close();
-        settleOnce(() => {
-          if (result.reason === sdk.ResultReason.RecognizedSpeech) {
-            resolve({ text: result.text });
-          } else if (result.reason === sdk.ResultReason.NoMatch) {
-            resolve({ text: "" });
-          } else {
+    try {
+      activeRecognizer.recognizeOnceAsync(
+        (result) => {
+          closeRecognizer();
+          settleOnce(() => {
+            if (result.reason === sdk.ResultReason.RecognizedSpeech) {
+              resolve({ text: result.text });
+            } else if (result.reason === sdk.ResultReason.NoMatch) {
+              resolve({ text: "" });
+            } else {
+              reject(
+                new AzureRecognitionError(
+                  `Azure recognition failed: ${result.errorDetails}`,
+                  result.errorDetails,
+                ),
+              );
+            }
+          });
+        },
+        (error) => {
+          closeRecognizer();
+          settleOnce(() =>
             reject(
               new AzureRecognitionError(
-                `Azure recognition failed: ${result.errorDetails}`,
-                result.errorDetails,
+                `Azure API request failed: ${error}`,
+                error,
               ),
-            );
-          }
-        });
-      },
-      (error) => {
-        recognizer.close();
-        settleOnce(() =>
-          reject(
-            new AzureRecognitionError(
-              `Azure API request failed: ${error}`,
-              error,
             ),
+          );
+        },
+      );
+    } catch (error) {
+      closeRecognizer(error);
+      settleOnce(() =>
+        reject(
+          new AzureRecognitionError(
+            `Azure API request failed: ${error}`,
+            error instanceof Error ? error.message : String(error),
           ),
-        );
-      },
-    );
+        ),
+      );
+    }
   });
 };
 
@@ -833,8 +911,9 @@ export const createAzureStreamingSession = async ({
     const trimmedRegion = region.trim();
     const trimmedKey = subscriptionKey.trim();
     const connectionScope = createAzureConnectionScope(signal);
-    let pushStream: ReturnType<typeof sdk.AudioInputStream.createPushStream> | null =
-      null;
+    let pushStream: ReturnType<
+      typeof sdk.AudioInputStream.createPushStream
+    > | null = null;
     let recognizer: sdk.SpeechRecognizer | null = null;
 
     try {
@@ -900,9 +979,7 @@ export const createAzureStreamingSession = async ({
       }
     };
 
-    const closeRecognizer = (
-      reason = "Azure speech session closed",
-    ) => {
+    const closeRecognizer = (reason = "Azure speech session closed") => {
       closePushStream();
       disposeAzureConnections(connectionScope, reason);
       if (recognizerCloseRequested) return;

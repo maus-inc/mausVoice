@@ -219,9 +219,12 @@ describe("ElevenLabs audio retention across a socket close", () => {
 
   it("clears retained audio even when WebSocket close throws", async () => {
     const { session, socket } = await startSession();
+    session.writeAudioChunk(new Float32Array(1700).fill(0.5));
+    expect(retainedSamples()).toBe(100);
+
     socket.readyState = FakeWebSocket.CONNECTING;
     session.writeAudioChunk(chunk());
-    expect(retainedSamples()).toBe(320);
+    expect(retainedSamples()).toBe(420);
     socket.throwOnClose = true;
 
     expect(() => session.cleanup()).not.toThrow();
