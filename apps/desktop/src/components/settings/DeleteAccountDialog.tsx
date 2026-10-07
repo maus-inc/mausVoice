@@ -1,5 +1,4 @@
 import {
-  Box,
   Button,
   CircularProgress,
   Dialog,
@@ -16,6 +15,7 @@ import { FormattedMessage, useIntl } from "react-intl";
 import { showSnackbar } from "../../actions/app.actions";
 import { getAuthRepo } from "../../repos";
 import { produceAppState, useAppStore } from "../../store";
+import { ConfirmationPhrase } from "./ConfirmationPhrase";
 import { ConsequenceList } from "./ConsequenceList";
 
 export const DeleteAccountDialog = () => {
@@ -128,22 +128,7 @@ export const DeleteAccountDialog = () => {
                 defaultMessage="Type {phrase} to confirm."
                 values={{
                   phrase: (
-                    <Box
-                      component="code"
-                      sx={{
-                        fontFamily: "ui-monospace, SFMono-Regular, monospace",
-                        fontSize: "0.875em",
-                        px: 0.75,
-                        py: 0.25,
-                        borderRadius: 0.5,
-                        border: 1,
-                        borderColor: "divider",
-                        bgcolor: "level2",
-                        wordBreak: "break-all",
-                      }}
-                    >
-                      {userEmail ?? ""}
-                    </Box>
+                    <ConfirmationPhrase>{userEmail ?? ""}</ConfirmationPhrase>
                   ),
                 }}
               />

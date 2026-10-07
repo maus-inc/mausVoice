@@ -421,9 +421,11 @@ export const ProfileDialog = () => {
             )}
           </Stack>
         </DialogContent>
-        <DialogActions
-          sx={{ px: 3, py: 2, borderTop: 1, borderColor: "divider", gap: 1 }}
-        >
+        {/* No rule above the buttons and no local padding: the theme already
+            sets this footer's spacing, MUI already spaces the two buttons, and
+            every other dialog in the app ends on whitespace. A hairline here
+            was the one footer that drew a line the rest of the app does not. */}
+        <DialogActions>
           <Button onClick={close} disabled={saving} color="inherit">
             <FormattedMessage defaultMessage="Cancel" />
           </Button>

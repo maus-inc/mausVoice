@@ -1,7 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import {
   Alert,
-  Box,
   Button,
   CircularProgress,
   Dialog,
@@ -16,6 +15,7 @@ import { useEffect, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { produceAppState, useAppStore } from "../../store";
 import { clearAppDataStorage } from "../../utils/local-storage.utils";
+import { ConfirmationPhrase } from "./ConfirmationPhrase";
 import { ConsequenceList } from "./ConsequenceList";
 
 const CONFIRMATION_PHRASE = "clear";
@@ -165,24 +165,9 @@ export const ClearLocalDataDialog = () => {
                 defaultMessage="Type {phrase} to confirm."
                 values={{
                   phrase: (
-                    // The literal someone has to reproduce is set apart from
-                    // the instruction around it: as running text it read like
-                    // part of the sentence and was easy to mistype.
-                    <Box
-                      component="code"
-                      sx={{
-                        fontFamily: "ui-monospace, SFMono-Regular, monospace",
-                        fontSize: "0.875em",
-                        px: 0.75,
-                        py: 0.25,
-                        borderRadius: 0.5,
-                        border: 1,
-                        borderColor: "divider",
-                        bgcolor: "level2",
-                      }}
-                    >
+                    <ConfirmationPhrase>
                       {CONFIRMATION_PHRASE}
-                    </Box>
+                    </ConfirmationPhrase>
                   ),
                 }}
               />
