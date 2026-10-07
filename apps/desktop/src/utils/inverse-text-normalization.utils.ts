@@ -681,6 +681,22 @@ const isWeightPound = (
   return follower === "of" || follower === "weight" || follower === "weights";
 };
 
+/**
+ * The symbol for a unit word, or undefined when the word is not money.
+ *
+ * "Pound" is both a currency and a weight, so the money reading is the default
+ * and a weight phrase takes it away.
+ */
+const currencySymbolFor = (
+  segments: readonly Segment[],
+  nextIndex: number,
+  runStart: number,
+  lowered: string,
+): string | undefined =>
+  isWeightPound(segments, nextIndex, runStart, lowered)
+    ? undefined
+    : CURRENCY_SYMBOLS[lowered];
+
 /** "per cent" and "per cents", where the space and the second word are the unit. */
 const readPerCentUnit = (
   segments: readonly Segment[],
@@ -724,9 +740,12 @@ const readTrailingUnit = (
     nextIndex,
     word.lowered,
   );
-  const currency = isWeightPound(segments, nextIndex, runStart, word.lowered)
-    ? undefined
-    : CURRENCY_SYMBOLS[word.lowered];
+  const currency = currencySymbolFor(
+    segments,
+    nextIndex,
+    runStart,
+    word.lowered,
+  );
   if (currency) {
     unit.currencyPrefix = currency;
     unit.trailingPunctuation = word.punctuation;
