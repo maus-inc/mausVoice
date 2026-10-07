@@ -161,18 +161,26 @@ fn is_work_area_window_size(size: PhysicalSize<u32>, work_area: Option<PhysicalS
     size.width.abs_diff(work.width) <= 2 && size.height.abs_diff(work.height) <= 2
 }
 
-/// Determines whether the restored main window came from a maximized session,
-/// including undecorated macOS sessions where both the saved and live maximize
-/// flags can read `false` while the saved or restored size covers the work area.
+/// Returns `true` on undecorated macOS windows where `tauri-plugin-window-state`
+/// hardcodes `is_maximized = false` during `WindowEvent::Resized`.
+fn infer_maximized_from_work_area(decorated: bool) -> bool {
+    cfg!(target_os = "macos") && !decorated
+}
+
+/// Determines whether the restored main window came from a maximized session.
+/// When `infer_from_work_area` is `true` (undecorated macOS), a saved or
+/// restored size matching the monitor work area also counts as maximized.
 fn is_maximized_session(
     saved: (PhysicalSize<u32>, bool),
     live: (PhysicalSize<u32>, bool),
     work_area: Option<PhysicalSize<u32>>,
+    infer_from_work_area: bool,
 ) -> bool {
     saved.1
         || live.1
-        || is_work_area_window_size(saved.0, work_area)
-        || is_work_area_window_size(live.0, work_area)
+        || (infer_from_work_area
+            && (is_work_area_window_size(saved.0, work_area)
+                || is_work_area_window_size(live.0, work_area)))
 }
 
 fn current_work_area_size(window: &Window) -> Option<PhysicalSize<u32>> {
@@ -198,9 +206,12 @@ fn record_main_window_resize(window: &Window, size: PhysicalSize<u32>) {
     }
     let work_area = current_work_area_size(window);
     let normal = is_normal_window_size(size, work_area);
-    let maximized = window.is_maximized().unwrap_or(false) || !normal;
+    let decorated = window.is_decorated().unwrap_or(false);
+    let infer_max = infer_maximized_from_work_area(decorated);
+    let maximized = window.is_maximized().unwrap_or(false)
+        || (infer_max && is_work_area_window_size(size, work_area));
     LAST_MAIN_MAXIMIZED.store(maximized, Ordering::SeqCst);
-    if maximized {
+    if !normal || maximized {
         return;
     }
     if let Ok(mut slot) = LAST_NORMAL_MAIN_SIZE.lock() {
@@ -276,9 +287,11 @@ fn save_main_window_state(app_handle: &tauri::AppHandle) {
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
     let saved_size = PhysicalSize::new(saved_width, saved_height);
+    let decorated = main_window.is_decorated().unwrap_or(false);
+    let infer_max = infer_maximized_from_work_area(decorated);
     let is_maximized = main_window.is_maximized().unwrap_or(false)
         || LAST_MAIN_MAXIMIZED.load(Ordering::SeqCst)
-        || is_work_area_window_size(saved_size, work_area);
+        || (infer_max && is_work_area_window_size(saved_size, work_area));
     let needs_size_fix = !is_normal_window_size(saved_size, work_area);
     let needs_max_fix = saved_maximized != is_maximized;
     if needs_size_fix || needs_max_fix {
@@ -310,11 +323,13 @@ fn sanitize_restored_main_window(main_window: &WebviewWindow) {
         .flatten()
         .map(|monitor| monitor.work_area().size);
     let scale = main_window.scale_factor().unwrap_or(1.0);
-    let saved_entry = read_saved_main_window_entry(main_window.app_handle());
-    let (saved_size, _) = saved_entry;
+    let saved = read_saved_main_window_entry(main_window.app_handle());
+    let (saved_size, _) = saved;
     let live_maximized = main_window.is_maximized().unwrap_or(false);
-    let live_entry = (inner_size, live_maximized);
-    let was_maximized = is_maximized_session(saved_entry, live_entry, work_area);
+    let live = (inner_size, live_maximized);
+    let decorated = main_window.is_decorated().unwrap_or(false);
+    let infer_max = infer_maximized_from_work_area(decorated);
+    let was_maximized = is_maximized_session(saved, live, work_area, infer_max);
     LAST_MAIN_MAXIMIZED.store(was_maximized, Ordering::SeqCst);
 
     if is_normal_window_size(inner_size, work_area) {
@@ -781,32 +796,33 @@ mod tests {
 
     #[test]
     fn is_maximized_session_detects_work_area_size_when_flags_are_false() {
-        let work_area = Some(PhysicalSize::new(1920, 1040));
-        let smaller_work = Some(PhysicalSize::new(1280, 720));
+        let work = Some(PhysicalSize::new(1920, 1040));
+        let small = Some(PhysicalSize::new(1280, 720));
         let zero = PhysicalSize::new(0, 0);
         let full = PhysicalSize::new(1920, 1040);
-        let normal = PhysicalSize::new(1100, 700);
-        let oversized = PhysicalSize::new(1600, 900);
+        let norm = PhysicalSize::new(1100, 700);
+        let over = PhysicalSize::new(1600, 900);
 
-        assert!(!is_work_area_window_size(zero, work_area));
-        assert!(is_work_area_window_size(full, work_area));
-        assert!(!is_work_area_window_size(normal, work_area));
-        assert!(!is_work_area_window_size(oversized, smaller_work));
-        assert!(!is_normal_window_size(oversized, smaller_work));
+        assert!(!is_work_area_window_size(zero, work));
+        assert!(is_work_area_window_size(full, work));
+        assert!(!is_work_area_window_size(norm, work));
+        assert!(!is_work_area_window_size(over, small));
+        assert!(!is_normal_window_size(over, small));
 
-        let full_state = (full, false);
-        let norm_state = (normal, false);
-        let zero_state = (zero, false);
-        let over_state = (oversized, false);
-        let flagged_norm = (normal, true);
+        let full_s = (full, false);
+        let norm_s = (norm, false);
+        let zero_s = (zero, false);
+        let over_s = (over, false);
+        let flag_s = (norm, true);
 
-        assert!(is_maximized_session(full_state, full_state, work_area));
-        assert!(is_maximized_session(norm_state, full_state, work_area));
-        assert!(is_maximized_session(full_state, norm_state, work_area));
-        assert!(is_maximized_session(flagged_norm, norm_state, work_area));
-        assert!(!is_maximized_session(norm_state, norm_state, work_area));
-        assert!(!is_maximized_session(zero_state, zero_state, work_area));
-        assert!(!is_maximized_session(over_state, over_state, smaller_work));
+        assert!(is_maximized_session(full_s, full_s, work, true));
+        assert!(is_maximized_session(norm_s, full_s, work, true));
+        assert!(is_maximized_session(full_s, norm_s, work, true));
+        assert!(!is_maximized_session(full_s, full_s, work, false));
+        assert!(is_maximized_session(flag_s, norm_s, work, false));
+        assert!(!is_maximized_session(norm_s, norm_s, work, true));
+        assert!(!is_maximized_session(zero_s, zero_s, work, true));
+        assert!(!is_maximized_session(over_s, over_s, small, true));
     }
 
     #[test]
