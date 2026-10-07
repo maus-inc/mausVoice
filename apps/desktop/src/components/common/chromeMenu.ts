@@ -1,8 +1,10 @@
 import type { SxProps, Theme } from "@mui/material";
+import type { SystemStyleObject } from "@mui/system";
+import { activeRowSx } from "../../styles/selection";
 import { hairline, premiumSurface } from "../../styles/shadows";
 
 /** Watermelon dropdown paper: hairline + rest lift, not hover-stage chrome. */
-export const chromeMenuPaperSx: SxProps<Theme> = (theme) => ({
+const chromeMenuPaperStyles = (theme: Theme): SystemStyleObject<Theme> => ({
   borderRadius: 1.5,
   py: 0.5,
   mt: 0.5,
@@ -22,6 +24,13 @@ export const chromeMenuPaperSx: SxProps<Theme> = (theme) => ({
   }),
 });
 
+export const chromeMenuPaperSx: SxProps<Theme> = chromeMenuPaperStyles;
+
+export const chromeStyleSelectMenuPaperSx: SxProps<Theme> = (theme) => ({
+  ...chromeMenuPaperStyles(theme),
+  maxHeight: "min(360px, calc(100vh - 96px))",
+});
+
 export const chromeMenuItemSx = {
   borderRadius: 1,
   mx: 0.5,
@@ -31,6 +40,14 @@ export const chromeMenuItemSx = {
   alignItems: "center",
   justifyContent: "space-between",
   gap: 1,
+} as const;
+
+export const chromeSelectMenuItemSx = {
+  ...chromeMenuItemSx,
+  ...activeRowSx,
+  "&.Mui-selected": {
+    fontWeight: 600,
+  },
 } as const;
 
 export const selectedOptionLabel = <Option>(
@@ -47,6 +64,14 @@ export const chromeSelectMenuProps = {
   slotProps: {
     paper: {
       sx: chromeMenuPaperSx,
+    },
+  },
+} as const;
+
+export const chromeStyleSelectMenuProps = {
+  slotProps: {
+    paper: {
+      sx: chromeStyleSelectMenuPaperSx,
     },
   },
 } as const;

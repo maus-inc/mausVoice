@@ -74,6 +74,15 @@ const tone: Tone = {
   sortOrder: 0,
 };
 
+const alternateTone: Tone = {
+  id: "tone-2",
+  name: "Clean transcript",
+  promptTemplate: "Clean up the transcript.",
+  isSystem: false,
+  createdAt: 0,
+  sortOrder: 1,
+};
+
 const postProcessingKey: ApiKey = {
   id: "post-processing-key",
   name: "Post-processing",
@@ -87,6 +96,7 @@ const resetState = () => setAppState(structuredClone(INITIAL_APP_STATE), true);
 const seedTone = () => {
   produceAppState((draft) => {
     draft.toneById[tone.id] = tone;
+    draft.toneById[alternateTone.id] = alternateTone;
   });
 };
 
@@ -113,6 +123,63 @@ const hasStyleField = (): boolean =>
   [...document.body.querySelectorAll("label")].some(
     (label) => label.textContent?.trim() === "Style",
   );
+
+const findComboboxNamed = (label: string): HTMLElement | undefined =>
+  [...document.body.querySelectorAll<HTMLElement>('[role="combobox"]')].find(
+    (combobox) =>
+      combobox
+        .getAttribute("aria-labelledby")
+        ?.split(/\s+/)
+        .some(
+          (id) => document.getElementById(id)?.textContent?.trim() === label,
+        ),
+  );
+
+const accessibleDialogName = (): string | null => {
+  const dialog = document.body.querySelector<HTMLElement>('[role="dialog"]');
+  const titleId = dialog?.getAttribute("aria-labelledby");
+  return titleId
+    ? (document.getElementById(titleId)?.textContent ?? null)
+    : null;
+};
+
+const openCombobox = async (label: string): Promise<HTMLElement> => {
+  const combobox = findComboboxNamed(label);
+  if (!combobox) throw new Error(`Could not find the ${label} selector.`);
+  await act(async () => {
+    combobox.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        cancelable: true,
+        button: 0,
+      }),
+    );
+  });
+  return combobox;
+};
+
+const findMenuItemContainingText = (text: string): HTMLElement | undefined =>
+  [...document.body.querySelectorAll<HTMLElement>(".MuiMenuItem-root")].find(
+    (item) => item.textContent?.includes(text),
+  );
+
+const clickMenuItem = async (item: HTMLElement): Promise<void> => {
+  await act(async () => {
+    item.dispatchEvent(
+      new MouseEvent("click", { bubbles: true, cancelable: true }),
+    );
+  });
+};
+
+const clickMenuItemContainingText = async (
+  text: string,
+): Promise<HTMLElement> => {
+  const item = findMenuItemContainingText(text);
+  if (!item)
+    throw new Error(`Could not find the menu item containing ${text}.`);
+  await clickMenuItem(item);
+  return item;
+};
 
 const settle = async () => {
   await act(async () => {
@@ -177,6 +244,71 @@ describe("Import audio style availability", () => {
     expect(hasStyleField()).toBe(true);
   });
 
+  it("associates Style and Language labels with their selectors", async () => {
+    await renderPage();
+    await openImportDialog();
+
+    expect(findComboboxNamed("Style")).toBeDefined();
+    expect(findComboboxNamed("Language")).toBeDefined();
+  });
+
+  it("marks the selected style in the popup", async () => {
+    await renderPage();
+    await openImportDialog();
+    await openCombobox("Style");
+
+    const selectedStyle = findMenuItemContainingText(tone.name);
+    expect(selectedStyle?.classList.contains("Mui-selected")).toBe(true);
+    expect(selectedStyle?.querySelector(".lucide-check")).not.toBeNull();
+  });
+
+  it("keeps the dialog and selected values when the import action returns no file", async () => {
+    vi.useFakeTimers();
+    try {
+      mocks.importAudioFile.mockResolvedValue(false);
+      await renderPage();
+      await openImportDialog();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_000);
+      });
+
+      await openCombobox("Style");
+      await clickMenuItemContainingText(alternateTone.name);
+      await openCombobox("Language");
+      await clickMenuItemContainingText("Français");
+
+      const importDialogBeforeImport =
+        document.body.querySelector<HTMLElement>('[role="dialog"]');
+      expect(importDialogBeforeImport).not.toBeNull();
+      const chooseFile = findButton("Choose file");
+      expect(chooseFile).toBeDefined();
+      await act(async () => {
+        chooseFile?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+        await Promise.resolve();
+      });
+      await settle();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_000);
+      });
+
+      expect(document.body.querySelector('[role="dialog"]')).toBe(
+        importDialogBeforeImport,
+      );
+
+      expect(mocks.importAudioFile).toHaveBeenCalledWith({
+        toneId: alternateTone.id,
+        languageCode: "fr",
+      });
+      expect(findButton("Choose file")?.disabled).toBe(false);
+      expect(findComboboxNamed("Style")?.textContent).toContain(
+        alternateTone.name,
+      );
+      expect(findComboboxNamed("Language")?.textContent).toContain("Français");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("keeps styles and imports with style when post-processing is turned off (fast path)", async () => {
     enablePostProcessing();
     await renderPage();
@@ -233,10 +365,45 @@ describe("Retranscribe style availability", () => {
     });
   };
 
+  it("labels the dialog with its visible title", async () => {
+    await renderDialog();
+
+    expect(accessibleDialogName()).toBe("Retranscribe");
+  });
+
   it("shows styles even while post-processing is disabled via fast path", async () => {
     await renderDialog();
 
     expect(hasStyleField()).toBe(true);
+  });
+
+  it("passes the selected style to retranscription", async () => {
+    await renderDialog();
+
+    const stylePicker = await openCombobox("Style");
+    const selectedStyle = findMenuItemContainingText(tone.name);
+    expect(selectedStyle?.classList.contains("Mui-selected")).toBe(true);
+    expect(selectedStyle?.querySelector(".lucide-check")).not.toBeNull();
+    await clickMenuItemContainingText(alternateTone.name);
+    expect(stylePicker.textContent).toContain(alternateTone.name);
+
+    const languagePicker = await openCombobox("Language");
+    await clickMenuItemContainingText("Français");
+    expect(languagePicker.textContent).toContain("Français");
+
+    const transcribe = findButton("Transcribe");
+    expect(transcribe).toBeDefined();
+    act(() => {
+      transcribe?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(mocks.retranscribeTranscription).toHaveBeenCalledWith(
+      expect.objectContaining({
+        transcriptionId: "transcription-1",
+        toneId: alternateTone.id,
+        languageCode: "fr",
+      }),
+    );
   });
 
   it("keeps styles visible when post-processing is disabled (fast path)", async () => {

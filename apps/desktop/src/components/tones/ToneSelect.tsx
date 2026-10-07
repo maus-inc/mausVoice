@@ -1,4 +1,5 @@
 import { Add, Edit, Public } from "@mui/icons-material";
+import { Check } from "lucide-react";
 import {
   FormControl,
   IconButton,
@@ -13,10 +14,15 @@ import {
 } from "@mui/material";
 import type { Tone } from "@maus-inc/types";
 import { getRec } from "@maus-inc/utilities";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useId, useMemo, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { setLocalStorageValue } from "../../actions/local-storage.actions";
 import { openToneEditorDialog } from "../../actions/tone.actions";
+import {
+  chromeMenuItemSx,
+  chromeSelectMenuItemSx,
+  chromeStyleSelectMenuProps,
+} from "../common/chromeMenu";
 import { useAppStore } from "../../store";
 import { getSortedToneIds } from "../../utils/tone.utils";
 import { getMyUserPreferences } from "../../utils/user.utils";
@@ -45,6 +51,7 @@ export const ToneSelect = ({
   trueDefault,
 }: ToneSelectProps) => {
   const intl = useIntl();
+  const labelId = useId();
   const toneById = useAppStore((state) => state.toneById);
   const defaultTone = useAppStore((state) => {
     const userPreferences = getMyUserPreferences(state);
@@ -81,17 +88,23 @@ export const ToneSelect = ({
 
   return (
     <FormControl size={selectSize} sx={formControlSx}>
-      {label && <InputLabel shrink>{label}</InputLabel>}
+      {label && (
+        <InputLabel id={labelId} shrink>
+          {label}
+        </InputLabel>
+      )}
       <Select
         open={menuOpen}
         onOpen={handleSelectOpen}
         onClose={handleSelectClose}
+        labelId={label ? labelId : undefined}
         value={resolvedValue}
         displayEmpty
         onChange={handleToneChange}
         size={selectSize}
         disabled={disabled}
         label={label}
+        MenuProps={chromeStyleSelectMenuProps}
         renderValue={(selected) => {
           if (!selected) {
             return defaultTone && !trueDefault ? (
@@ -107,7 +120,7 @@ export const ToneSelect = ({
           return toneById[selected]?.name ?? selected;
         }}
       >
-        <MenuItem value={ADD_TONE_MENU_VALUE}>
+        <MenuItem value={ADD_TONE_MENU_VALUE} sx={chromeMenuItemSx}>
           <Stack
             direction="row"
             spacing={1}
@@ -122,7 +135,7 @@ export const ToneSelect = ({
           </Stack>
         </MenuItem>
         {tones.map((tone) => (
-          <MenuItem key={tone.id} value={tone.id}>
+          <MenuItem key={tone.id} value={tone.id} sx={chromeSelectMenuItemSx}>
             <Stack
               direction="row"
               sx={{
@@ -132,28 +145,37 @@ export const ToneSelect = ({
               }}
             >
               <div>{tone.name}</div>
-              {tone.isGlobal ? (
-                <Tooltip
-                  title={intl.formatMessage({
-                    defaultMessage:
-                      "This is a global style and cannot be edited",
-                  })}
-                >
-                  <Public fontSize="small" sx={{ color: "text.secondary" }} />
-                </Tooltip>
-              ) : !tone.isSystem ? (
-                <IconButton
-                  size="small"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    event.preventDefault();
-                    setMenuOpen(false);
-                    openToneEditorDialog({ mode: "edit", toneId: tone.id });
-                  }}
-                >
-                  <Edit fontSize="small" />
-                </IconButton>
-              ) : null}
+              <Stack
+                direction="row"
+                spacing={0.5}
+                sx={{ alignItems: "center" }}
+              >
+                {tone.id === resolvedValue ? (
+                  <Check size={16} strokeWidth={2} aria-hidden="true" />
+                ) : null}
+                {tone.isGlobal ? (
+                  <Tooltip
+                    title={intl.formatMessage({
+                      defaultMessage:
+                        "This is a global style and cannot be edited",
+                    })}
+                  >
+                    <Public fontSize="small" sx={{ color: "text.secondary" }} />
+                  </Tooltip>
+                ) : !tone.isSystem ? (
+                  <IconButton
+                    size="small"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      event.preventDefault();
+                      setMenuOpen(false);
+                      openToneEditorDialog({ mode: "edit", toneId: tone.id });
+                    }}
+                  >
+                    <Edit fontSize="small" />
+                  </IconButton>
+                ) : null}
+              </Stack>
             </Stack>
           </MenuItem>
         ))}
