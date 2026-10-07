@@ -542,6 +542,28 @@ const hasScaleWord = (words: readonly string[]): boolean =>
   words.some((word) => SCALES[word.toLowerCase()] !== undefined);
 
 /**
+ * The words one token adds to a number run, or null when the run ends here.
+ *
+ * "and" joins a scale word to its remainder and is never a number on its own,
+ * so it only continues a run that already had one. A comma groups digits inside
+ * one written number ("one thousand, two hundred and thirty four"), so it only
+ * carries a run that already had a scale word; anywhere else it separates two
+ * numbers, and "we sold twenty, three of them" is twenty and three.
+ */
+const numberRunStep = (
+  candidateText: string,
+  words: readonly string[],
+  previousToken: string,
+): string[] | null => {
+  if (isJoiningToken(candidateText)) {
+    return hasScaleWord(words) ? ["and"] : null;
+  }
+  if (!isNumberToken(candidateText)) return null;
+  if (previousToken.endsWith(",") && !hasScaleWord(words)) return null;
+  return numberWordsOf(candidateText);
+};
+
+/**
  * Collects the run of number words that starts here.
  *
  * The run ends at the first word that is not a number, at a word the cardinal
@@ -564,21 +586,13 @@ const collectNumberRun = (
       cursor += 1;
       continue;
     }
-    const candidateText = numberTokenText(candidate.text);
-    if (isJoiningToken(candidateText)) {
-      // Only a scale word before it makes "and" part of one number.
-      if (!hasScaleWord(words)) break;
-      words.push("and");
-    } else if (isNumberToken(candidateText)) {
-      // A comma groups digits inside one written number ("one thousand, two
-      // hundred and thirty four"), so it only carries a run that already had a
-      // scale word. Anywhere else it separates two numbers: "we sold twenty,
-      // three of them" is twenty and three, not twenty-three.
-      if (previousToken.endsWith(",") && !hasScaleWord(words)) break;
-      words.push(...numberWordsOf(candidateText));
-    } else {
-      break;
-    }
+    const step = numberRunStep(
+      numberTokenText(candidate.text),
+      words,
+      previousToken,
+    );
+    if (step === null) break;
+    words.push(...step);
     lastTokenIndex = cursor;
     previousToken = candidate.text;
     cursor += 1;
@@ -606,6 +620,44 @@ const isCentWord = (segment: Segment | undefined): boolean =>
     ),
   );
 
+/** The word after a run, split into its letters and the punctuation it carries. */
+const unitWordAt = (
+  segments: readonly Segment[],
+  nextIndex: number,
+): { lowered: string; punctuation: string } | null => {
+  const wordSegment = segments[nextIndex + 1];
+  if (!wordSegment || wordSegment.isSpace) return null;
+  const lowered = wordSegment.text.toLowerCase().replace(/[.,!?;:]+$/, "");
+  return { lowered, punctuation: wordSegment.text.slice(lowered.length) };
+};
+
+/** Whether a singular currency name stands in front of a noun it describes. */
+const isAttributiveUnitName = (
+  segments: readonly Segment[],
+  nextIndex: number,
+  lowered: string,
+): boolean => {
+  if (!SINGULAR_CURRENCY_UNITS.has(lowered)) return false;
+  const afterUnit = segments[nextIndex + 2];
+  const afterUnitWord = segments[nextIndex + 3];
+  return Boolean(afterUnit?.isSpace && afterUnitWord && !afterUnitWord.isSpace);
+};
+
+/** "per cent" and "per cents", where the space and the second word are the unit. */
+const readPerCentUnit = (
+  segments: readonly Segment[],
+  nextIndex: number,
+  unit: TrailingUnit,
+): TrailingUnit => {
+  const cents = segments[nextIndex + 3];
+  if (!isCentWord(cents)) return unit;
+  const cleaned = cents.text.toLowerCase().replace(/[.,!?;:]+$/, "");
+  unit.percentSuffix = "%";
+  unit.trailingPunctuation = cents.text.slice(cleaned.length);
+  unit.trailingIndex = nextIndex + 3;
+  return unit;
+};
+
 /**
  * Reads the currency or percent word that follows a run, if there is one.
  *
@@ -624,41 +676,30 @@ const readTrailingUnit = (
     trailingPunctuation: "",
     attributiveUnit: false,
   };
-  const separator = segments[nextIndex];
-  if (!separator?.isSpace) return unit;
+  if (!segments[nextIndex]?.isSpace) return unit;
+  const word = unitWordAt(segments, nextIndex);
+  if (!word) return unit;
 
-  const wordSegment = segments[nextIndex + 1];
-  const word = wordSegment && !wordSegment.isSpace ? wordSegment.text : "";
-  const lowered = word.toLowerCase().replace(/[.,!?;:]+$/, "");
-  const punctuation = word.slice(lowered.length);
-  const afterUnit = segments[nextIndex + 2];
-  const afterUnitWord = segments[nextIndex + 3];
-  unit.attributiveUnit =
-    SINGULAR_CURRENCY_UNITS.has(lowered) &&
-    Boolean(afterUnit?.isSpace && afterUnitWord && !afterUnitWord.isSpace);
-
-  const currency = CURRENCY_SYMBOLS[lowered];
+  unit.attributiveUnit = isAttributiveUnitName(
+    segments,
+    nextIndex,
+    word.lowered,
+  );
+  const currency = CURRENCY_SYMBOLS[word.lowered];
   if (currency) {
     unit.currencyPrefix = currency;
-    unit.trailingPunctuation = punctuation;
+    unit.trailingPunctuation = word.punctuation;
     unit.trailingIndex = nextIndex + 1;
     return unit;
   }
-  if (lowered === "percent") {
+  if (word.lowered === "percent") {
     unit.percentSuffix = "%";
-    unit.trailingPunctuation = punctuation;
+    unit.trailingPunctuation = word.punctuation;
     unit.trailingIndex = nextIndex + 1;
     return unit;
   }
-  // "per cent" / "per cents", where the space and the second word are the unit.
-  if (lowered === "per" && isCentWord(segments[nextIndex + 3])) {
-    const cents = segments[nextIndex + 3];
-    const centsWord = cents.text.toLowerCase().replace(/[.,!?;:]+$/, "");
-    unit.percentSuffix = "%";
-    unit.trailingPunctuation = cents.text.slice(centsWord.length);
-    unit.trailingIndex = nextIndex + 3;
-  }
-  return unit;
+  if (word.lowered !== "per") return unit;
+  return readPerCentUnit(segments, nextIndex, unit);
 };
 
 /** Whether the run counted anything out, as opposed to only scaling it. */
