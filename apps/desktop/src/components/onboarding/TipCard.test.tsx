@@ -112,7 +112,7 @@ const buttonWithText = (text: string): HTMLButtonElement => {
 const renderCard = (
   props: Parameters<typeof TipCard>[0] = { id: "review-before-insert" },
 ) =>
-  act(async () => {
+  act(() => {
     root.render(
       createElement(MemoryRouter, null, createElement(TipCard, props)),
     );
@@ -253,7 +253,7 @@ describe("TipCardFrame", () => {
     props: Parameters<typeof TipCardFrame>[0] &
       Partial<Parameters<typeof TipCardFrame>[0]>,
   ) =>
-    act(async () => {
+    act(() => {
       root.render(
         createElement(
           ThemeProvider,
