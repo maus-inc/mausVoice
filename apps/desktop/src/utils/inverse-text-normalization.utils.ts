@@ -631,16 +631,54 @@ const unitWordAt = (
   return { lowered, punctuation: wordSegment.text.slice(lowered.length) };
 };
 
+/** The word that follows a unit word, with its punctuation removed, or null. */
+const wordAfterUnit = (
+  segments: readonly Segment[],
+  nextIndex: number,
+): string | null => {
+  const afterUnit = segments[nextIndex + 2];
+  const afterUnitWord = segments[nextIndex + 3];
+  if (!afterUnit?.isSpace || !afterUnitWord || afterUnitWord.isSpace)
+    return null;
+  return afterUnitWord.text.toLowerCase().replace(/[.,!?;:]+$/, "");
+};
+
 /** Whether a singular currency name stands in front of a noun it describes. */
 const isAttributiveUnitName = (
   segments: readonly Segment[],
   nextIndex: number,
   lowered: string,
+): boolean =>
+  SINGULAR_CURRENCY_UNITS.has(lowered) &&
+  wordAfterUnit(segments, nextIndex) !== null;
+
+/** Forms of "weigh", which make the pounds that follow them a weight. */
+const WEIGH_WORDS: ReadonlySet<string> = new Set([
+  "weigh",
+  "weighs",
+  "weighed",
+  "weighing",
+]);
+
+/**
+ * Whether a "pound" in this position measures weight rather than money.
+ *
+ * "Pound" is both. "Five pounds of sugar", "two pound weights", and "it weighs
+ * five pounds" are weights; "it costs five pounds" and "a twenty pound note"
+ * are money. The phrase after the word and a form of "weigh" before the number
+ * are the two cues a dictation gives, and without a cue the word is read as
+ * money, which is what it usually is.
+ */
+const isWeightPound = (
+  segments: readonly Segment[],
+  nextIndex: number,
+  runStart: number,
+  lowered: string,
 ): boolean => {
-  if (!SINGULAR_CURRENCY_UNITS.has(lowered)) return false;
-  const afterUnit = segments[nextIndex + 2];
-  const afterUnitWord = segments[nextIndex + 3];
-  return Boolean(afterUnit?.isSpace && afterUnitWord && !afterUnitWord.isSpace);
+  if (lowered !== "pound" && lowered !== "pounds") return false;
+  if (WEIGH_WORDS.has(wordBefore(segments, runStart))) return true;
+  const follower = wordAfterUnit(segments, nextIndex);
+  return follower === "of" || follower === "weight" || follower === "weights";
 };
 
 /** "per cent" and "per cents", where the space and the second word are the unit. */
@@ -668,6 +706,7 @@ const readPerCentUnit = (
 const readTrailingUnit = (
   segments: readonly Segment[],
   nextIndex: number,
+  runStart: number,
 ): TrailingUnit => {
   const unit: TrailingUnit = {
     currencyPrefix: "",
@@ -685,7 +724,9 @@ const readTrailingUnit = (
     nextIndex,
     word.lowered,
   );
-  const currency = CURRENCY_SYMBOLS[word.lowered];
+  const currency = isWeightPound(segments, nextIndex, runStart, word.lowered)
+    ? undefined
+    : CURRENCY_SYMBOLS[word.lowered];
   if (currency) {
     unit.currencyPrefix = currency;
     unit.trailingPunctuation = word.punctuation;
@@ -793,7 +834,7 @@ const applyCardinalRules = (text: string): string => {
     const { words, lastTokenIndex } = collectNumberRun(segments, index);
     const nextIndex = lastTokenIndex + 1;
     const parsedRun = parseCardinal(words);
-    const unit = readTrailingUnit(segments, nextIndex);
+    const unit = readTrailingUnit(segments, nextIndex, index);
     // A run after "point" or "dot" is the tail of a decimal this pass does not
     // write, so it keeps the words the speaker used.
     const followsDecimalWord = ["point", "dot"].includes(

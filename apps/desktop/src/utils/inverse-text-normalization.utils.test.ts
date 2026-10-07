@@ -72,6 +72,29 @@ describe("normalizeSpokenForms", () => {
     expect(normalizeSpokenForms("thirty euros")).toBe("€30");
   });
 
+  it("reads pound as weight when the phrase says so, and as money otherwise", () => {
+    // Raised by CodeRabbit: "pound" is both a currency and a weight, and the
+    // weight shapes were written with a pound sign.
+    expect(normalizeSpokenForms("five pounds of sugar")).toBe(
+      "five pounds of sugar",
+    );
+    expect(normalizeSpokenForms("two pound weights")).toBe("two pound weights");
+    expect(normalizeSpokenForms("the parcel weighs five pounds")).toBe(
+      "the parcel weighs five pounds",
+    );
+    // A form of "weigh" names the weight, so the count is still written, just
+    // without the currency it never had.
+    expect(normalizeSpokenForms("i weigh two hundred pounds")).toBe(
+      "i weigh 200 pounds",
+    );
+    // Money keeps its symbol.
+    expect(normalizeSpokenForms("it costs five pounds")).toBe("it costs £5");
+    expect(normalizeSpokenForms("a twenty pound note")).toBe("a £20 note");
+    expect(normalizeSpokenForms("the price is twenty pounds")).toBe(
+      "the price is £20",
+    );
+  });
+
   it("keeps a comma that separates two numbers, and one that groups digits", () => {
     expect(normalizeSpokenForms("we sold twenty, three of them")).toBe(
       "we sold 20, three of them",
