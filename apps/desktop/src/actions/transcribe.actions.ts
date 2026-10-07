@@ -55,6 +55,7 @@ import {
   type TranscriptionSegment,
 } from "../utils/hallucination.utils";
 import { getToneById, getToneConfig } from "../utils/tone.utils";
+import { getMyDictationLanguage } from "../utils/user.utils";
 import {
   getMyEffectiveUserId,
   getMyUserName,
@@ -725,6 +726,7 @@ const runPostProcessingRequest = async ({
       metadata,
       warnings,
       reason: "llm-failed",
+      dictionaryTerms: getFastStyleDictionaryTerms(state),
     });
     if (fast !== null) {
       recordPostProcessFailure(
@@ -794,19 +796,24 @@ const applyPostProcessing = async (
     return rawTranscript;
   }
 
-  // A short dictation in a prose style is styled by the local transforms
-  // instead of the provider. The request carries the whole style prompt and a
-  // reasoning-token floor, so the round trip costs the same for three words as
-  // for three paragraphs; for three words it buys very little. The decision and
-  // its reason are logged because the row records what ran, not why.
+  // A short English dictation in a prose style is styled by the local
+  // transforms instead of the provider. The request carries the whole style
+  // prompt and a reasoning-token floor, so the round trip costs the same for
+  // three words as for three paragraphs; for three words it buys very little.
+  // The decision and its reason are logged because the row records what ran,
+  // not why.
+  // The import path knows the file's language; a live dictation carries it on
+  // the state, resolved the same way the transcription call resolved it.
+  const language = dictationLanguage ?? getMyDictationLanguage(state);
   const route = resolvePostProcessingRoute({
     transcript: rawTranscript,
     toneId,
     enabled: state.settings.fastStyleShortDictationsEnabled,
+    language,
   });
   if (route.route === "local") {
     getLogger().info(
-      `Short dictation styled locally (${route.reason}), skipping the provider for tone=${toneId}`,
+      `Short dictation styled locally (${route.reason}), skipping the provider for tone=${toneId}, language=${language}`,
     );
     const fast = applyFastLocalStyle({
       rawTranscript,

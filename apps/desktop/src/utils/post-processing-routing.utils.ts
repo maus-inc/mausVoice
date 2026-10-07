@@ -12,15 +12,18 @@
  *
  * The thresholds are deliberately tight. A dictation that routes locally and
  * should not have loses quality; one that routes to the provider and should not
- * have costs a second. The second error is the cheaper one, so the limits are
- * set at roughly the shape the feature was asked for: a word, a sentence, or
- * about two sentences.
+ * have costs a second. The second error is the cheaper one, so a dictation
+ * routes locally only when it is a word, a sentence, or about two sentences:
+ * at most two sentences, at most thirty words, and at most two hundred
+ * characters, which is also the bound that holds for a run-on dictation that
+ * never received a terminator.
  */
 import { Nullable } from "@maus-inc/types";
 import {
   FAST_STYLE_PROSE_TONE_IDS,
   countFastStyleSentences,
 } from "./fast-style.utils";
+import { isEnglishSanitizeLanguage } from "./sanitize-language.utils";
 import { countWords } from "./string.utils";
 
 /** At most this many sentences, under the transforms' own sentence definition. */
@@ -43,6 +46,7 @@ export type PostProcessingRoute = "local" | "api";
 export type PostProcessingRouteReason =
   | "local-short-dictation"
   | "api-routing-disabled"
+  | "api-non-english-dictation"
   | "api-tone-has-no-local-prose-transform"
   | "api-dictation-not-short";
 
@@ -71,14 +75,25 @@ export const isShortDictation = (text: string): boolean => {
  * here so this stays a pure function. A tone without a local prose transform
  * (email, bullets, notes, a custom tone) always takes the provider: those
  * transforms restructure the text, and that is the half an LLM does better.
+ *
+ * The transforms are English-only, and they delete words: "um" is a filler in
+ * English and a preposition in German, so a German dictation styled locally
+ * came back as "Wir treffen uns am montag drei uhr". The language is therefore
+ * a hard condition, and a dictation the app cannot place as English by its
+ * language setting keeps the provider path it had before this feature.
  */
 export const resolvePostProcessingRoute = (args: {
   transcript: string;
   toneId: Nullable<string>;
   enabled: boolean;
+  /** The dictation language as a code or a sentinel, never the transcript. */
+  language: string;
 }): PostProcessingRouteDecision => {
   if (!args.enabled) {
     return { route: "api", reason: "api-routing-disabled" };
+  }
+  if (!isEnglishSanitizeLanguage(args.language)) {
+    return { route: "api", reason: "api-non-english-dictation" };
   }
   if (!args.toneId || !FAST_STYLE_PROSE_TONE_IDS.has(args.toneId)) {
     return { route: "api", reason: "api-tone-has-no-local-prose-transform" };

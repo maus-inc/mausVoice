@@ -506,7 +506,7 @@ const SPOKEN_DOMAIN_RE = new RegExp(
 // function word, otherwise "look at example.com" would lose its verb.
 const SPOKEN_EMAIL_FRAME_SOURCE = "to|is|contact|reach";
 const SPOKEN_EMAIL_RE = new RegExp(
-  String.raw`\b(?:${SPOKEN_EMAIL_FRAME_SOURCE})\s+([\p{L}\p{N}._%+-]{2,})\s+at\s+([\p{L}\p{N}-]+\.(?:${SPOKEN_TLD_SOURCE}))\b`,
+  String.raw`\b(${SPOKEN_EMAIL_FRAME_SOURCE})\s+([\p{L}\p{N}._%+-]{2,})\s+at\s+([\p{L}\p{N}-]+\.(?:${SPOKEN_TLD_SOURCE}))\b`,
   "giu",
 );
 
@@ -702,6 +702,35 @@ const SELF_CORRECTION_LEAD_STOPLIST = new Set([
   "before",
 ]);
 
+/**
+ * The word inside a token, for comparing a lead against the stoplists.
+ *
+ * A possessive or contraction is compared as the word it wraps, so "there's no
+ * wait at the clinic" reads as "there" and is recognised as ordinary grammar.
+ */
+const selfCorrectionWord = (text: string): string =>
+  text
+    .toLowerCase()
+    .replace(/[^a-z'\u2019]/g, "")
+    .replace(/(?:n['\u2019]t|['\u2019]s)$/, "");
+
+/**
+ * Whether a spoken self-correction should drop the word in front of its marker.
+ *
+ * False when the marker is preceded by grammar rather than a value ("there is
+ * no wait at the clinic"), when the lead is itself part of a marker phrase ("no
+ * wait make that thursday" handed in "wait"), or when an infinitive follows the
+ * marker ("sorry i meant to call you" is an apology, not a correction).
+ */
+const isSelfCorrection = (lead: string, after: string): boolean => {
+  const cleanedLead = selfCorrectionWord(lead);
+  if (!cleanedLead || SELF_CORRECTION_LEAD_STOPLIST.has(cleanedLead)) {
+    return false;
+  }
+  if (SELF_CORRECTION_MARKER_TAILS.has(cleanedLead)) return false;
+  return selfCorrectionWord(after) !== "to";
+};
+
 const fixSelfCorrections = (text: string): string => {
   if (text.length > SELF_CORRECTION_MAX_CHARS) return text;
   let out = text;
@@ -709,23 +738,14 @@ const fixSelfCorrections = (text: string): string => {
     out = out.replace(
       SELF_CORRECTION_UNPUNCTUATED_RE,
       (
-        _match,
+        match,
         lead: string,
         _marker: string,
         after: string,
         offset: number,
         whole: string,
       ) => {
-        const cleanedLead = lead.toLowerCase().replace(/[^a-z']/g, "");
-        if (!cleanedLead || SELF_CORRECTION_LEAD_STOPLIST.has(cleanedLead)) {
-          return _match;
-        }
-        if (SELF_CORRECTION_MARKER_TAILS.has(cleanedLead)) return _match;
-        // "sorry i meant to call you" is an apology, not a correction of the
-        // word in front of the marker, so an infinitive after it is left alone.
-        if (after.toLowerCase().replace(/[^a-z']/g, "") === "to") {
-          return _match;
-        }
+        if (!isSelfCorrection(lead, after)) return match;
         // The deleted span may have opened a sentence, in which case the word
         // that follows it needs the capital back.
         const before = whole.slice(0, offset);
@@ -758,11 +778,13 @@ const joinSpokenDomains = (text: string): string =>
   );
 
 const joinSpokenEmails = (text: string): string =>
-  text.replace(SPOKEN_EMAIL_RE, (match, localPart: string, domain: string) => {
-    const frame = match.slice(0, match.toLowerCase().indexOf(" at "));
-    if (SPOKEN_ADDRESS_STOPWORDS.has(localPart.toLowerCase())) return match;
-    return `${frame} ${localPart}@${domain}`;
-  });
+  text.replace(
+    SPOKEN_EMAIL_RE,
+    (match, frame: string, localPart: string, domain: string) => {
+      if (SPOKEN_ADDRESS_STOPWORDS.has(localPart.toLowerCase())) return match;
+      return `${frame} ${localPart}@${domain}`;
+    },
+  );
 
 const applySymbolReplacements = (text: string): string => {
   let out = text;
@@ -1350,7 +1372,9 @@ const applyDictionaryCasing = (
     .filter(
       (term) =>
         term.length >= 2 &&
-        /[A-Z]/.test(term) &&
+        // Unicode-aware: "Beyoncé" and "École" carry a capital the ASCII test
+        // could not see.
+        term !== term.toLowerCase() &&
         /^[\p{L}\p{N}]/u.test(term) &&
         /[\p{L}\p{N}]$/u.test(term) &&
         // A term that is an ordinary lowercase word ("IT", "US", "No") would
@@ -1362,7 +1386,11 @@ const applyDictionaryCasing = (
   let out = text;
   for (const term of candidates) {
     const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    out = out.replace(new RegExp(`\\b${escaped}\\b`, "gi"), (match) =>
+    // Lookarounds rather than `\b`: the ASCII word boundary never matched a
+    // term that starts or ends in a non-ASCII letter ("Beyoncé"), so those
+    // terms were silently skipped.
+    const pattern = `(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`;
+    out = out.replace(new RegExp(pattern, "giu"), (match) =>
       match === term ? match : term,
     );
   }

@@ -290,6 +290,36 @@ describe("postProcessTranscript fast local style", () => {
     expect(result.warnings.join(" ")).toContain("Fast local style");
   });
 
+  it("applies dictionary casing on the provider-failure fallback", async () => {
+    genRepo.generateText.mockRejectedValueOnce(new Error("provider rejected"));
+    const state = structuredClone(INITIAL_APP_STATE);
+    // Routing off, so the provider is what runs and fails, and the fallback is
+    // the subject.
+    state.settings.fastStyleShortDictationsEnabled = false;
+    state.termById = {
+      term1: {
+        id: "term1",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        sourceValue: "GitHub",
+        destinationValue: "GitHub",
+        isReplacement: false,
+      },
+    };
+    state.dictionary = { termIds: ["term1"], status: "idle" };
+    setAppState(state, true);
+
+    const result = await postProcessTranscript({
+      rawTranscript: "i use github daily",
+      toneId: "default",
+    });
+
+    // The fallback is the same local transform the routing path runs, so it
+    // must carry the dictionary too; without it the user's spelling was lost
+    // only on the failure path.
+    expect(result.transcript).toBe("I use GitHub daily.");
+    expect(result.metadata.postProcessFallback).toBe(true);
+  });
+
   it("returns the raw transcript unchanged when the tone has no local style", async () => {
     genRepo.generateText.mockRejectedValueOnce(new Error("provider rejected"));
 
@@ -564,6 +594,25 @@ describe("postProcessTranscript short dictation routing", () => {
     });
 
     expect(genRepo.generateText).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends a short non-English dictation to the provider", async () => {
+    genRepo.generateText.mockResolvedValueOnce({
+      text: JSON.stringify({ result: "Wir treffen uns am Montag." }),
+    });
+    const state = structuredClone(INITIAL_APP_STATE);
+    state.dictationLanguageOverride = "de";
+    setAppState(state, true);
+
+    const result = await postProcessTranscript({
+      rawTranscript: "wir treffen uns am montag um drei uhr",
+      toneId: "default",
+    });
+
+    // The local transforms delete English fillers, and "um" is a preposition in
+    // German, so this dictation must not be styled locally.
+    expect(genRepo.generateText).toHaveBeenCalledTimes(1);
+    expect(result.metadata.postProcessMode).toBe("api");
   });
 
   it("sends a short dictation to the provider when the preference is off", async () => {

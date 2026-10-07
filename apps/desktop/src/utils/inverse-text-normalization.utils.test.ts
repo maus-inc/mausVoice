@@ -72,11 +72,25 @@ describe("normalizeSpokenForms", () => {
     expect(normalizeSpokenForms("thirty euros")).toBe("€30");
   });
 
+  it("keeps a comma that separates two numbers, and one that groups digits", () => {
+    expect(normalizeSpokenForms("we sold twenty, three of them")).toBe(
+      "we sold 20, three of them",
+    );
+    expect(
+      normalizeSpokenForms("one thousand, two hundred and thirty four"),
+    ).toBe("1,234");
+    expect(
+      normalizeSpokenForms("the total is one thousand, two hundred and fifty."),
+    ).toBe("the total is 1,250.");
+  });
+
   it("writes percentages", () => {
     expect(normalizeSpokenForms("fifty percent")).toBe("50%");
     expect(normalizeSpokenForms("one hundred percent")).toBe("100%");
     expect(normalizeSpokenForms("forty five per cent")).toBe("45%");
     expect(normalizeSpokenForms("twenty three percent.")).toBe("23%.");
+    // "per cent" carries its punctuation on the second word.
+    expect(normalizeSpokenForms("forty five per cent.")).toBe("45%.");
   });
 
   it("writes times with a meridiem", () => {

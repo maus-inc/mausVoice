@@ -199,6 +199,67 @@ type CardinalParse = {
   words: string[];
 };
 
+type CardinalState = {
+  value: number;
+  current: number;
+  sawScale: boolean;
+  previous: "small" | "tens" | "scale" | null;
+};
+
+/** Adds one of the numbers below twenty, or refuses the run. */
+const addSmallNumber = (state: CardinalState, small: number): boolean => {
+  if (state.previous === "small") return false;
+  if (state.previous === "tens" && small >= 10) return false;
+  state.current += small;
+  state.previous = "small";
+  return true;
+};
+
+/**
+ * Adds a tens word, or refuses the run.
+ *
+ * A small or tens word before a tens word is two numbers, not one: "nineteen
+ * eighty four" is a year and "three thirty" is a time, so neither is written as
+ * the sum this parser would otherwise produce.
+ */
+const addTensNumber = (state: CardinalState, tens: number): boolean => {
+  if (state.previous === "small" || state.previous === "tens") return false;
+  state.current += tens;
+  state.previous = "tens";
+  return true;
+};
+
+/** Adds a scale word, which carries what came before it up into the value. */
+const addScaleNumber = (state: CardinalState, scale: number): void => {
+  if (scale === 100) {
+    state.current = (state.current === 0 ? 1 : state.current) * 100;
+  } else {
+    state.value += (state.current === 0 ? 1 : state.current) * scale;
+    state.current = 0;
+  }
+  state.sawScale = true;
+  state.previous = "scale";
+};
+
+/** Adds one word to the run, or refuses the run when the word does not fit. */
+const addCardinalWord = (state: CardinalState, word: string): boolean => {
+  const small = SMALL_NUMBERS[word];
+  if (small !== undefined) return addSmallNumber(state, small);
+  const tens = TENS[word];
+  if (tens !== undefined) return addTensNumber(state, tens);
+  const scale = SCALES[word];
+  if (scale === undefined) return false;
+  addScaleNumber(state, scale);
+  return true;
+};
+
+/** "and" joins a scale to its remainder and never opens or ends a run. */
+const isJoiningWord = (
+  state: CardinalState,
+  index: number,
+  length: number,
+): boolean => state.sawScale && index > 0 && index < length - 1;
+
 /**
  * Parses a run of number words, or null when the run is not a well-formed
  * cardinal.
@@ -210,54 +271,23 @@ type CardinalParse = {
  */
 const parseCardinal = (words: readonly string[]): CardinalParse | null => {
   if (words.length === 0) return null;
-  let value = 0;
-  let current = 0;
-  let sawScale = false;
-  let previous: "small" | "tens" | "scale" | null = null;
+  const state: CardinalState = {
+    value: 0,
+    current: 0,
+    sawScale: false,
+    previous: null,
+  };
 
   for (let index = 0; index < words.length; index += 1) {
     const word = words[index].toLowerCase();
-
     if (word === "and") {
-      // "and" only ever joins a scale to its remainder and never ends a run.
-      if (!sawScale || index === 0 || index === words.length - 1) return null;
+      if (!isJoiningWord(state, index, words.length)) return null;
       continue;
     }
-
-    const small = SMALL_NUMBERS[word];
-    if (small !== undefined) {
-      if (previous === "small") return null;
-      if (previous === "tens" && small >= 10) return null;
-      current += small;
-      previous = "small";
-      continue;
-    }
-
-    const tens = TENS[word];
-    if (tens !== undefined) {
-      if (previous === "tens") return null;
-      // A small word before a tens word is two numbers, not one: "nineteen
-      // eighty four" is a year and "three thirty" is a time, so neither is
-      // written as the sum this parser would otherwise produce.
-      if (previous === "small") return null;
-      current += tens;
-      previous = "tens";
-      continue;
-    }
-
-    const scale = SCALES[word];
-    if (scale === undefined) return null;
-    if (scale === 100) {
-      current = (current === 0 ? 1 : current) * 100;
-    } else {
-      value += (current === 0 ? 1 : current) * scale;
-      current = 0;
-    }
-    sawScale = true;
-    previous = "scale";
+    if (!addCardinalWord(state, word)) return null;
   }
 
-  return { value: value + current, words: [...words] };
+  return { value: state.value + state.current, words: [...words] };
 };
 
 /** A bare cardinal converts unless it is a single small number word. */
@@ -299,6 +329,84 @@ const numberTokenText = (text: string): string =>
 export const isSpokenNumberWord = (word: string): boolean =>
   NUMBER_WORDS.has(word.toLowerCase());
 
+/** A minute spelled as "oh five": the "oh" and one digit below ten. */
+const spelledMinute = (rest: readonly string[]): number | null => {
+  if (rest.length !== 1) return null;
+  const value = SMALL_NUMBERS[rest[0]];
+  return value === undefined || value > 9 ? null : value;
+};
+
+/** A minute spelled as "thirty", "forty five", or "twenty three". */
+const tensMinute = (words: readonly string[]): number | null => {
+  const [first, ...rest] = words;
+  const tens = TENS[first];
+  if (tens === undefined) return null;
+  if (rest.length === 0) return tens;
+  if (rest.length !== 1) return null;
+  const unit = SMALL_NUMBERS[rest[0]];
+  return unit === undefined || unit > 9 ? null : tens + unit;
+};
+
+/** Minutes use their own parser: "thirty" is 30, "twenty three" is 23. */
+const parseMinuteWords = (text: string): number | null => {
+  const words = numberWordsOf(text.trim().replace(/\s+/g, "-"))
+    .filter((word) => word.length > 0)
+    .map((word) => word.toLowerCase());
+  const [first, ...rest] = words;
+  if (first === "o" || first === "oh") return spelledMinute(rest);
+  return tensMinute(words);
+};
+
+/**
+ * A written clock time, or null when the hour or minute cannot be read.
+ *
+ * "three thirty pm" and "nine am" carry a meridiem; "twelve o'clock" and a time
+ * opening with a preposition carry none, and a bare hour is only written when
+ * the text said it was a time.
+ */
+const formatClockTime = (
+  hour: number,
+  minuteWords: string | undefined,
+  meridiem: string | null,
+): string | null => {
+  if (meridiem === null) {
+    if (!minuteWords) return `${hour}:00`;
+    const minute = parseMinuteWords(minuteWords);
+    if (minute === null) return null;
+    return `${hour}:${minute.toString().padStart(2, "0")}`;
+  }
+  if (!minuteWords) return `${hour} ${meridiem}`;
+  const minute = parseMinuteWords(minuteWords);
+  if (minute === null) return null;
+  return `${hour}:${minute.toString().padStart(2, "0")} ${meridiem}`;
+};
+
+/** "three to five pm" as a range of written clock times. */
+const formatClockRange = (
+  from: number | undefined,
+  to: number | undefined,
+  meridiem: string | null,
+): string | null => {
+  if (from === undefined || to === undefined || meridiem === null) return null;
+  return `${from} to ${to} ${meridiem}`;
+};
+
+/** A clock time opened by a time preposition: "by eleven forty five". */
+const formatCuedClockTime = (
+  cue: string,
+  hour: number | undefined,
+  ohMinute: string | undefined,
+  minute: string | undefined,
+): string | null => {
+  const minuteText = ohMinute ?? minute;
+  if (hour === undefined || !minuteText) return null;
+  const parsedMinute = parseMinuteWords(
+    ohMinute ? `o ${ohMinute}` : minuteText,
+  );
+  if (parsedMinute === null) return null;
+  return `${cue} ${hour}:${parsedMinute.toString().padStart(2, "0")}`;
+};
+
 const applyTimeRules = (text: string): string => {
   let out = text;
 
@@ -323,19 +431,12 @@ const applyTimeRules = (text: string): string => {
   // "three to five pm" reads as a range of clock times.
   out = out.replace(
     /\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s+to\s+(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s+(a\.?\s?m\.?|p\.?\s?m\.?)\b/gi,
-    (match, from: string, to: string, tail: string) => {
-      const parsedFrom = SMALL_NUMBERS[from.toLowerCase()];
-      const parsedTo = SMALL_NUMBERS[to.toLowerCase()];
-      const meridiem = normalizeMeridiem(tail);
-      if (
-        parsedFrom === undefined ||
-        parsedTo === undefined ||
-        meridiem === null
-      ) {
-        return match;
-      }
-      return `${parsedFrom} to ${parsedTo} ${meridiem}`;
-    },
+    (match, from: string, to: string, tail: string) =>
+      formatClockRange(
+        SMALL_NUMBERS[from.toLowerCase()],
+        SMALL_NUMBERS[to.toLowerCase()],
+        normalizeMeridiem(tail),
+      ) ?? match,
   );
 
   // "three thirty pm", "three oh five p.m.", "nine am", "twelve o'clock".
@@ -344,22 +445,9 @@ const applyTimeRules = (text: string): string => {
     (match, hour: string, minute: string | undefined, tail: string) => {
       const parsedHour = SMALL_NUMBERS[hour.toLowerCase()];
       if (parsedHour === undefined) return match;
-
-      const meridiem = normalizeMeridiem(tail);
-      if (meridiem === null) {
-        // "o'clock" with no minute reads as the top of the hour.
-        if (!minute) return `${parsedHour}:00`;
-        const parsedMinute = parseMinuteWords(minute);
-        if (parsedMinute === null) return match;
-        return `${parsedHour}:${parsedMinute.toString().padStart(2, "0")}`;
-      }
-
-      if (!minute) return `${parsedHour} ${meridiem}`;
-      const parsedMinute = parseMinuteWords(minute);
-      if (parsedMinute === null) return match;
-      return `${parsedHour}:${parsedMinute
-        .toString()
-        .padStart(2, "0")} ${meridiem}`;
+      return (
+        formatClockTime(parsedHour, minute, normalizeMeridiem(tail)) ?? match
+      );
     },
   );
 
@@ -373,43 +461,16 @@ const applyTimeRules = (text: string): string => {
       hour: string,
       ohMinute: string | undefined,
       minute: string | undefined,
-    ) => {
-      const parsedHour = SMALL_NUMBERS[hour.toLowerCase()];
-      if (parsedHour === undefined) return match;
-      const minuteText = ohMinute ?? minute;
-      if (!minuteText) return match;
-      const parsedMinute = parseMinuteWords(
-        ohMinute ? `o ${ohMinute}` : minuteText,
-      );
-      if (parsedMinute === null) return match;
-      return `${cue} ${parsedHour}:${parsedMinute.toString().padStart(2, "0")}`;
-    },
+    ) =>
+      formatCuedClockTime(
+        cue,
+        SMALL_NUMBERS[hour.toLowerCase()],
+        ohMinute,
+        minute,
+      ) ?? match,
   );
 
   return out;
-};
-
-/** Minutes use their own parser: "thirty" is 30, "twenty three" is 23. */
-const parseMinuteWords = (text: string): number | null => {
-  const words = numberWordsOf(text.trim().replace(/\s+/g, "-")).filter(
-    (word) => word.length > 0,
-  );
-  const lowered = words.map((word) => word.toLowerCase());
-  const [first, ...rest] = lowered;
-
-  if (first === "o" || first === "oh") {
-    if (rest.length !== 1) return null;
-    const value = SMALL_NUMBERS[rest[0]];
-    return value === undefined || value > 9 ? null : value;
-  }
-
-  const tens = TENS[first];
-  if (tens === undefined) return null;
-  if (rest.length === 0) return tens;
-  if (rest.length !== 1) return null;
-  const unit = SMALL_NUMBERS[rest[0]];
-  if (unit === undefined || unit > 9) return null;
-  return tens + unit;
 };
 
 const applyDateRules = (text: string): string => {
@@ -450,161 +511,256 @@ const applyDateRules = (text: string): string => {
  * rejected phrase ("nineteen eighty four") cannot be re-read as smaller
  * convertible ones ("eighty four").
  */
+const runText = (
+  segments: readonly Segment[],
+  from: number,
+  to: number,
+): string =>
+  segments
+    .slice(from, to + 1)
+    .map((segment) => segment.text)
+    .join("");
+
+/**
+ * The word that ends the token before this segment, when the two are separate
+ * tokens. Used to recognise the "point" a decimal is built on.
+ */
+const wordBefore = (segments: readonly Segment[], from: number): string => {
+  const gap = segments[from - 1];
+  const word = segments[from - 2];
+  if (!gap?.isSpace || !word || word.isSpace) return "";
+  return numberTokenText(word.text).toLowerCase();
+};
+
+type NumberRun = {
+  words: string[];
+  lastTokenIndex: number;
+};
+
+/** Whether the words so far contain a scale word ("hundred", "thousand"). */
+const hasScaleWord = (words: readonly string[]): boolean =>
+  words.some((word) => SCALES[word.toLowerCase()] !== undefined);
+
+/**
+ * Collects the run of number words that starts here.
+ *
+ * The run ends at the first word that is not a number, at a word the cardinal
+ * parser will reject as a unit ("nineteen eighty four" is one run, so its parts
+ * cannot be re-read as smaller ones), and at sentence or clause punctuation,
+ * because "one thousand. Twenty five arrived" is two statements and not 1,025.
+ */
+const collectNumberRun = (
+  segments: readonly Segment[],
+  start: number,
+): NumberRun => {
+  const words: string[] = [];
+  let lastTokenIndex = start;
+  let cursor = start;
+  let previousToken = "";
+
+  while (cursor < segments.length) {
+    const candidate = segments[cursor];
+    if (candidate.isSpace) {
+      cursor += 1;
+      continue;
+    }
+    const candidateText = numberTokenText(candidate.text);
+    if (isJoiningToken(candidateText)) {
+      // Only a scale word before it makes "and" part of one number.
+      if (!hasScaleWord(words)) break;
+      words.push("and");
+    } else if (isNumberToken(candidateText)) {
+      // A comma groups digits inside one written number ("one thousand, two
+      // hundred and thirty four"), so it only carries a run that already had a
+      // scale word. Anywhere else it separates two numbers: "we sold twenty,
+      // three of them" is twenty and three, not twenty-three.
+      if (previousToken.endsWith(",") && !hasScaleWord(words)) break;
+      words.push(...numberWordsOf(candidateText));
+    } else {
+      break;
+    }
+    lastTokenIndex = cursor;
+    previousToken = candidate.text;
+    cursor += 1;
+    if (SENTENCE_BOUNDARY_RE.test(candidate.text)) break;
+  }
+
+  return { words, lastTokenIndex };
+};
+
+type TrailingUnit = {
+  currencyPrefix: string;
+  percentSuffix: string;
+  trailingIndex: number;
+  trailingPunctuation: string;
+  attributiveUnit: boolean;
+};
+
+/** Whether a token is the word "cent" or "cents", punctuation aside. */
+const isCentWord = (segment: Segment | undefined): boolean =>
+  Boolean(
+    segment &&
+    !segment.isSpace &&
+    ["cent", "cents"].includes(
+      segment.text.toLowerCase().replace(/[.,!?;:]+$/, ""),
+    ),
+  );
+
+/**
+ * Reads the currency or percent word that follows a run, if there is one.
+ *
+ * A singular currency name in front of a noun is attributive rather than a
+ * unit ("the million dollar question" names a question), so the caller keeps
+ * the words it is attached to.
+ */
+const readTrailingUnit = (
+  segments: readonly Segment[],
+  nextIndex: number,
+): TrailingUnit => {
+  const unit: TrailingUnit = {
+    currencyPrefix: "",
+    percentSuffix: "",
+    trailingIndex: -1,
+    trailingPunctuation: "",
+    attributiveUnit: false,
+  };
+  const separator = segments[nextIndex];
+  if (!separator?.isSpace) return unit;
+
+  const wordSegment = segments[nextIndex + 1];
+  const word = wordSegment && !wordSegment.isSpace ? wordSegment.text : "";
+  const lowered = word.toLowerCase().replace(/[.,!?;:]+$/, "");
+  const punctuation = word.slice(lowered.length);
+  const afterUnit = segments[nextIndex + 2];
+  const afterUnitWord = segments[nextIndex + 3];
+  unit.attributiveUnit =
+    SINGULAR_CURRENCY_UNITS.has(lowered) &&
+    Boolean(afterUnit?.isSpace && afterUnitWord && !afterUnitWord.isSpace);
+
+  const currency = CURRENCY_SYMBOLS[lowered];
+  if (currency) {
+    unit.currencyPrefix = currency;
+    unit.trailingPunctuation = punctuation;
+    unit.trailingIndex = nextIndex + 1;
+    return unit;
+  }
+  if (lowered === "percent") {
+    unit.percentSuffix = "%";
+    unit.trailingPunctuation = punctuation;
+    unit.trailingIndex = nextIndex + 1;
+    return unit;
+  }
+  // "per cent" / "per cents", where the space and the second word are the unit.
+  if (lowered === "per" && isCentWord(segments[nextIndex + 3])) {
+    const cents = segments[nextIndex + 3];
+    const centsWord = cents.text.toLowerCase().replace(/[.,!?;:]+$/, "");
+    unit.percentSuffix = "%";
+    unit.trailingPunctuation = cents.text.slice(centsWord.length);
+    unit.trailingIndex = nextIndex + 3;
+  }
+  return unit;
+};
+
+/** Whether the run counted anything out, as opposed to only scaling it. */
+const hasExplicitQuantity = (words: readonly string[]): boolean =>
+  words.some(
+    (word) =>
+      SMALL_NUMBERS[word.toLowerCase()] !== undefined ||
+      TENS[word.toLowerCase()] !== undefined,
+  );
+
+/**
+ * Whether a run is written out.
+ *
+ * A currency or percent unit makes it a quantity. Without one, a bare cardinal
+ * writes once it is past a single small number. A run after "point" or "dot" is
+ * the tail of a decimal this pass does not write, and a scale word on its own
+ * in front of an attributive currency name is not a quantity at all, so both
+ * keep the words the speaker used.
+ */
+const isConvertibleRun = (
+  parsed: CardinalParse | null,
+  words: readonly string[],
+  followsDecimalWord: boolean,
+  unit: TrailingUnit,
+): parsed is CardinalParse => {
+  if (parsed === null || followsDecimalWord) return false;
+  if (unit.attributiveUnit && !hasExplicitQuantity(words)) return false;
+  if (unit.currencyPrefix.length > 0 || unit.percentSuffix.length > 0) {
+    return true;
+  }
+  return isConvertibleBareCardinal(parsed);
+};
+
+/** Writes a convertible run, with the punctuation that belonged to it. */
+const writeRun = (
+  output: string[],
+  parsed: CardinalParse,
+  unit: TrailingUnit,
+  runPunctuation: string,
+): void => {
+  // "a hundred" and "a twenty" read as quantities once the number is written,
+  // so the article that was already emitted goes with it. "a one" never reaches
+  // here, and an attributive unit keeps its article ("a $5 bill").
+  const previous = output[output.length - 1];
+  const beforePrevious = output[output.length - 2];
+  if (
+    !unit.attributiveUnit &&
+    beforePrevious !== undefined &&
+    previous !== undefined &&
+    /^(?:a|an)$/i.test(beforePrevious) &&
+    /^\s+$/.test(previous)
+  ) {
+    output.pop();
+    output.pop();
+  }
+  output.push(
+    `${unit.currencyPrefix}${formatCardinal(parsed.value)}${unit.percentSuffix}`,
+  );
+  // The number test stripped the punctuation that ended the sentence on the
+  // last word of the run, so it is put back after the digits.
+  output.push(
+    unit.trailingIndex > 0 ? unit.trailingPunctuation : runPunctuation,
+  );
+};
+
+/**
+ * Converts every run of number words, with the currency or percent word that
+ * follows a run folded into the number it belongs to.
+ */
 const applyCardinalRules = (text: string): string => {
   const segments = segmentText(text);
   const output: string[] = [];
   let index = 0;
 
-  const runText = (from: number, to: number): string =>
-    segments
-      .slice(from, to + 1)
-      .map((segment) => segment.text)
-      .join("");
-
-  /**
-   * The word that ends the token before this segment, when the two are separate
-   * tokens. Used to recognise the "point" a decimal is built on.
-   */
-  const wordBefore = (from: number): string => {
-    const gap = segments[from - 1];
-    const word = segments[from - 2];
-    if (!gap?.isSpace || !word || word.isSpace) return "";
-    return numberTokenText(word.text).toLowerCase();
-  };
-
   while (index < segments.length) {
     const segment = segments[index];
-
     if (segment.isSpace || !isNumberToken(numberTokenText(segment.text))) {
       output.push(segment.text);
       index += 1;
       continue;
     }
 
-    const words: string[] = [];
-    let cursor = index;
-    let lastTokenIndex = index;
-    while (cursor < segments.length) {
-      const candidate = segments[cursor];
-      if (candidate.isSpace) {
-        cursor += 1;
-        continue;
-      }
-      const candidateText = numberTokenText(candidate.text);
-      if (isJoiningToken(candidateText)) {
-        // Only a scale word before it makes "and" part of one number.
-        const joinsScale = words.some(
-          (word) => SCALES[word.toLowerCase()] !== undefined,
-        );
-        if (!joinsScale) break;
-        words.push("and");
-        lastTokenIndex = cursor;
-        cursor += 1;
-        continue;
-      }
-      if (!isNumberToken(candidateText)) break;
-      words.push(...numberWordsOf(candidateText));
-      lastTokenIndex = cursor;
-      cursor += 1;
-      // Sentence and clause punctuation ends the run: "one thousand. Twenty
-      // five arrived" is two statements, not 1,025.
-      if (SENTENCE_BOUNDARY_RE.test(candidate.text)) break;
-    }
-
+    const { words, lastTokenIndex } = collectNumberRun(segments, index);
     const nextIndex = lastTokenIndex + 1;
     const parsedRun = parseCardinal(words);
+    const unit = readTrailingUnit(segments, nextIndex);
     // A run after "point" or "dot" is the tail of a decimal this pass does not
     // write, so it keeps the words the speaker used.
-    const followsDecimalWord = ["point", "dot"].includes(wordBefore(index));
-
-    // A currency or percent word directly after the run belongs to it.
-    let currencyPrefix = "";
-    let percentSuffix = "";
-    let trailingIndex = -1;
-    let trailingPunctuation = "";
-    let attributiveUnit = false;
-    const separator = segments[nextIndex];
-    if (separator?.isSpace) {
-      const wordSegment = segments[nextIndex + 1];
-      const word = wordSegment && !wordSegment.isSpace ? wordSegment.text : "";
-      const lowered = word.toLowerCase().replace(/[.,!?;:]+$/, "");
-      const punctuation = word.slice(lowered.length);
-      const afterUnit = segments[nextIndex + 2];
-      const afterUnitWord = segments[nextIndex + 3];
-      attributiveUnit =
-        SINGULAR_CURRENCY_UNITS.has(lowered) &&
-        Boolean(afterUnit?.isSpace && afterUnitWord && !afterUnitWord.isSpace);
-      if (CURRENCY_SYMBOLS[lowered]) {
-        currencyPrefix = CURRENCY_SYMBOLS[lowered];
-        trailingPunctuation = punctuation;
-        trailingIndex = nextIndex + 1;
-      } else if (lowered === "percent") {
-        percentSuffix = "%";
-        trailingPunctuation = punctuation;
-        trailingIndex = nextIndex + 1;
-      } else if (lowered === "per") {
-        // "per cent" / "per cents", where the space is part of the unit.
-        const cents = segments[nextIndex + 3];
-        const centsWord =
-          cents && !cents.isSpace
-            ? cents.text.toLowerCase().replace(/[.,!?;:]+$/, "")
-            : "";
-        if (centsWord === "cent" || centsWord === "cents") {
-          percentSuffix = "%";
-          trailingIndex = nextIndex + 3;
-        }
-      }
-    }
-
-    const hasUnit = currencyPrefix.length > 0 || percentSuffix.length > 0;
-    const hasExplicitQuantity = words.some(
-      (word) =>
-        SMALL_NUMBERS[word.toLowerCase()] !== undefined ||
-        TENS[word.toLowerCase()] !== undefined,
+    const followsDecimalWord = ["point", "dot"].includes(
+      wordBefore(segments, index),
     );
-    const convertible =
-      parsedRun !== null &&
-      !followsDecimalWord &&
-      // A scale word on its own in front of an attributive currency name is not
-      // a quantity: "the million dollar question" names a question.
-      !(attributiveUnit && !hasExplicitQuantity) &&
-      (hasUnit || isConvertibleBareCardinal(parsedRun));
 
-    if (!convertible) {
-      output.push(runText(index, lastTokenIndex));
+    if (!isConvertibleRun(parsedRun, words, followsDecimalWord, unit)) {
+      output.push(runText(segments, index, lastTokenIndex));
       index = nextIndex;
       continue;
     }
 
-    const parsed = parsedRun as CardinalParse;
-    // "a hundred" and "a twenty" read as quantities once the number is written,
-    // so the article that was already emitted goes with it. "a one" never
-    // reaches here: a bare single small number does not convert.
-    const previous = output[output.length - 1];
-    const beforePrevious = output[output.length - 2];
-    if (
-      !attributiveUnit &&
-      beforePrevious !== undefined &&
-      previous !== undefined &&
-      /^(?:a|an)$/i.test(beforePrevious) &&
-      /^\s+$/.test(previous)
-    ) {
-      output.pop();
-      output.pop();
-    }
-    output.push(
-      `${currencyPrefix}${formatCardinal(parsed.value)}${percentSuffix}`,
-    );
-    if (trailingIndex > 0) {
-      output.push(trailingPunctuation);
-    } else {
-      // The number test stripped the punctuation that ended the sentence on the
-      // last word of the run, so it is put back after the digits.
-      output.push(
-        segments[lastTokenIndex].text.match(TRAILING_PUNCTUATION_RE)?.[0] ?? "",
-      );
-    }
-    index = trailingIndex > 0 ? trailingIndex + 1 : nextIndex;
+    const runPunctuation =
+      segments[lastTokenIndex].text.match(TRAILING_PUNCTUATION_RE)?.[0] ?? "";
+    writeRun(output, parsedRun, unit, runPunctuation);
+    index = unit.trailingIndex > 0 ? unit.trailingIndex + 1 : nextIndex;
   }
 
   return output.join("");

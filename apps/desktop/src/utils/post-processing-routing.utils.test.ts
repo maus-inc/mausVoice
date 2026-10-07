@@ -50,6 +50,7 @@ describe("resolvePostProcessingRoute", () => {
           transcript: "send the report by friday",
           toneId,
           enabled: true,
+          language: "en",
         }),
       ).toEqual({ route: "local", reason: "local-short-dictation" });
     }
@@ -62,6 +63,7 @@ describe("resolvePostProcessingRoute", () => {
           transcript: "send the report by friday",
           toneId,
           enabled: true,
+          language: "en",
         }),
       ).toEqual({
         route: "api",
@@ -77,6 +79,7 @@ describe("resolvePostProcessingRoute", () => {
           transcript: "send the report by friday",
           toneId,
           enabled: true,
+          language: "en",
         }).route,
       ).toBe("api");
     }
@@ -88,18 +91,45 @@ describe("resolvePostProcessingRoute", () => {
         transcript: "hello",
         toneId: "default",
         enabled: false,
+        language: "en",
       }),
     ).toEqual({ route: "api", reason: "api-routing-disabled" });
+  });
+
+  it("keeps a non-English dictation on the provider", () => {
+    for (const language of ["de", "fr-CA", "auto", "primary", ""]) {
+      expect(
+        resolvePostProcessingRoute({
+          transcript: "send the report by friday",
+          toneId: "default",
+          enabled: true,
+          language,
+        }),
+      ).toEqual({ route: "api", reason: "api-non-english-dictation" });
+    }
+  });
+
+  it("routes an English dictation locally for a regional English code", () => {
+    for (const language of ["en", "en-US", "EN"]) {
+      expect(
+        resolvePostProcessingRoute({
+          transcript: "send the report by friday",
+          toneId: "default",
+          enabled: true,
+          language,
+        }).route,
+      ).toBe("local");
+    }
   });
 
   it("keeps a long dictation on the provider", () => {
     expect(
       resolvePostProcessingRoute({
         transcript:
-          "This is a longer dictation. ".repeat(5) +
-          "It has several sentences and a lot of words to clean up properly.",
+          "This is a longer dictation. It has several sentences and a lot of words to clean up properly. It keeps going so that it is clearly past every bound, with one more sentence for good measure.",
         toneId: "default",
         enabled: true,
+        language: "en",
       }),
     ).toEqual({ route: "api", reason: "api-dictation-not-short" });
   });

@@ -1681,6 +1681,13 @@ describe("fast style written-form passes", () => {
     expect(
       applyFastStyle("send it to mike at example dot com", "default"),
     ).toBe("Send it to mike@example.com.");
+    // The frame is taken from the pattern, not by cutting the match at " at ":
+    // reading it out of the match left the local part inside the frame, and a
+    // local part with a dot in it was delivered twice because the repeated-word
+    // pass could not collapse the pair.
+    expect(
+      applyFastStyle("send it to john.smith at example dot com", "default"),
+    ).toBe("Send it to john.smith@example.com.");
     expect(
       applyFastStyle("my email is jane at mausvoice dot com", "default"),
     ).toBe("My email is jane@mausvoice.com.");
@@ -1710,6 +1717,11 @@ describe("fast style written-form passes", () => {
   it("keeps a literal 'no wait' that is not a correction", () => {
     expect(applyFastStyle("there is no wait at the clinic", "default")).toBe(
       "There is no wait at the clinic.",
+    );
+    // The stoplists are written with the bare word, so a contraction has to be
+    // compared as the word it wraps: without that this became "At the clinic."
+    expect(applyFastStyle("there's no wait at the clinic", "default")).toBe(
+      "There's no wait at the clinic.",
     );
   });
 
@@ -1748,6 +1760,13 @@ describe("fast style written-form passes", () => {
         dictionaryTerms: ["GitHub"],
       }),
     ).toBe("I use GitHub daily.");
+    // A term that begins or ends in a non-ASCII letter, which an ASCII word
+    // boundary never matched.
+    expect(
+      applyFastStyle("i saw beyoncé and then école in zürich", "default", {
+        dictionaryTerms: ["Beyoncé", "École", "Zürich"],
+      }),
+    ).toBe("I saw Beyoncé and then École in Zürich.");
   });
 
   it("does not rewrite a dictionary term that is already spelled right", () => {
