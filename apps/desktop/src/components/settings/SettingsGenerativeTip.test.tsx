@@ -11,7 +11,7 @@ vi.mock("@tauri-apps/api/core", async (importOriginal) => {
 });
 
 vi.mock("@tauri-apps/plugin-opener", () => ({
-  openUrl: vi.fn(() => Promise.resolve(undefined)),
+  openUrl: vi.fn(() => Promise.resolve()),
 }));
 
 vi.mock("react-router-dom", () => ({
@@ -113,14 +113,14 @@ describe("generative-provider tip action", () => {
   });
 
   const drainFrames = async () => {
-    await act(async () => {
+    await act(() => {
       for (const frame of frames.splice(0)) frame(0);
     });
   };
 
   const renderPage = async () => {
     platform.name = "windows";
-    await act(async () => {
+    await act(() => {
       root?.render(createElement(SettingsPage));
     });
     await drainFrames();
@@ -131,7 +131,7 @@ describe("generative-provider tip action", () => {
       (button) => button.textContent === "Add API key",
     );
     expect(addButton).toBeTruthy();
-    await act(async () => {
+    await act(() => {
       addButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
   };
@@ -165,7 +165,10 @@ describe("generative-provider tip action", () => {
     expect(row).not.toBeNull();
     expect(
       scrollCalls.some(
-        (call) => call.el === row && call.options?.block === "center",
+        (call) =>
+          call.el === row &&
+          call.options?.block === "center" &&
+          call.options?.behavior === "smooth",
       ),
     ).toBe(true);
   });
