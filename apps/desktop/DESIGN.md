@@ -100,16 +100,16 @@ The Windows and Linux caption buttons are three square targets inset from the ba
 
 ## Tips & inline notifications
 
-In-page tips (`components/onboarding/TipCard.tsx`, listed on Help) are **rows, not banners**: a flat `level1` face, a 1px `divider` hairline, radius 14, laid out as a notification row — bare glyph · copy · right-hand affordances. A tip reads as part of the page's content, never as an ad pinned to it.
+In-page tips (`components/onboarding/TipCard.tsx`, listed on Help) are rows, not banners. A tip is a flat `level1` face with a 1px `divider` hairline and the standard card radius, laid out as a notification row: bare glyph, copy, right-hand affordances. A tip reads as part of the page content, not as an ad pinned to the page.
 
-Reference class: **Linear's inbox rows** (the gold standard for this exact component) and the callout work in premium design-system kits (Atera; Dribbble callout sets). Deliberate choices, and what each rules out:
+The reference is Linear's inbox rows, the closest published work for this exact component, and the callout work in premium design-system kits (Atera, Dribbble callout sets) confirms the pattern. Each choice below names what it rules out.
 
-- **Flat, no cast.** No `premiumSurface` on a tip card. Elevation shadows stay with floating layers (toasts, dialogs, popovers); in-flow, the row separates on its luminance step (`level1` over `level0`) and its hairline. ("Don't add drop shadows on cards. Elevation is built from the surface ladder, not from shadows." — Raycast's design system; Linear's rows carry no cast at all.)
-- **Bare glyph, no tile.** One 16px lucide glyph (stroke 1.9) at `text.secondary`, aligned with the title — the same size as the dismiss X it sits opposite. No icon chip or tile behind it: a solid square backing is the stock "notification card" of template UIs, and a tip is neutral, so it has no status hue to justify a tinted chip (the Atera-style tinted chip is for status-bearing alerts, which this app does not make with tips).
-- **Type and measure.** `titleSmall` (−0.01em) states the claim; `body2` at `text.secondary` supplies the "why"; both capped at 60ch. Decision-relevant detail first — in-app cards do their job in roughly ten words.
-- **One quiet action + dismiss.** A single outlined pill (999) per tip, **no arrow** — an arrow reads as a marketing CTA, and tips are not marketing (Vercel's secondary actions are quiet pills; none carry arrows). Dismiss is a bare 16px X at `text.secondary`. More than one primary action and it stops being a notification and starts being a modal.
-- **Motion.** Reveal and exit run 160ms / 180ms ease-out with a 6px rise; no scale, no spring (springs stay with shared-layout indicators — see Motion). Reduced motion drops the rise.
-- **Dismissal is a choice that persists**, including when the exit is interrupted by navigation (see the `TipCard` unmount guard).
+- **Flat, no cast.** No `premiumSurface` on a tip card. Elevation shadows stay with floating layers (toasts, dialogs, popovers). In flow, the row separates on its luminance step (`level1` over `level0`) and its hairline. Raycast's design system states the rule. No drop shadows on cards. Elevation comes from the surface ladder. Linear's rows carry no cast at all.
+- **Bare glyph, no tile.** One 16px lucide glyph (stroke 1.9) at `text.secondary`, aligned with the title, the same size as the dismiss X it sits opposite. No icon chip or tile behind it. A solid square backing is the stock "notification card" of template UIs, and a tip is neutral, so it has no status hue to justify a tinted chip. Tinted chips like Atera's serve status-bearing alerts, which tips are not.
+- **Type and measure.** `titleSmall` (-0.01em) states the claim. `body2` at `text.secondary` supplies the reason. Both cap at 60ch. The decision-relevant detail comes first. In-app cards do their job in roughly ten words.
+- **One quiet action, one dismiss.** Each tip carries at most one outlined pill (999) with no arrow. An arrow reads as a marketing CTA, and tips are not marketing. Vercel's secondary actions are quiet pills, and none carry arrows. Dismiss is a bare 16px X at `text.secondary`. More than one primary action makes it a modal, not a notification.
+- **Motion.** Reveal and exit run 160ms / 180ms ease-out with a 6px rise. No scale, no spring. Springs stay with shared-layout indicators (see Motion). Reduced motion drops the rise.
+- **Dismissal is a choice that persists**, including when navigation interrupts the exit. See the `TipCard` unmount guard.
 
 ## Recording state machine (pill + composer)
 
