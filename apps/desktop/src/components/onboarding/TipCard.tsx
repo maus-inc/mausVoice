@@ -83,6 +83,10 @@ export const TIP_ICONS: Record<OnboardingTipId, ReactNode> = {
   "update-channel": <Rocket size={16} strokeWidth={1.9} aria-hidden />,
 };
 
+/**
+ * Subscribes a component to a tip's visibility: true while the tip has not
+ * been dismissed, false after `dismissTip` has persisted it.
+ */
 export const useTip = (id: OnboardingTipId): boolean =>
   useAppStore((s) => !(s.local.dismissedTipIds ?? []).includes(id));
 
@@ -269,10 +273,21 @@ export type TipCardAction = {
    * is not the same thing as the Help list's navigate wording.
    */
   label: ReactNode;
-  /** In-place action (scroll + focus a control on this page). */
+  /** In-place action performed on this page (e.g. reveal and open the control the tip is about). */
   onAction: () => void;
 };
 
+/**
+ * The live in-page tip, rendered at the top of a feature page. Shows only
+ * while the tip is not dismissed, animates a short entrance, and on dismiss
+ * animates out and persists the dismissal once the exit finishes (an
+ * interrupted exit is persisted on unmount instead, so navigating away
+ * mid-animation cannot resurrect the tip).
+ *
+ * `action` is optional because the tips anchored on their own feature page
+ * (Styling, Transcriptions) introduce the page itself and have nothing to
+ * do in place; the others may offer one quiet in-page action.
+ */
 export const TipCard = ({
   id,
   action,
