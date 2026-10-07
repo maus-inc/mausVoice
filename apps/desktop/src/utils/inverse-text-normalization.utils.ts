@@ -734,6 +734,25 @@ const isConvertibleRun = (
 };
 
 /** Writes a convertible run, with the punctuation that belonged to it. */
+/** The article and the space in front of a run, when they belong to it. */
+const dropArticleBeforeNumber = (
+  output: string[],
+  unit: TrailingUnit,
+): void => {
+  const previous = output[output.length - 1];
+  const beforePrevious = output[output.length - 2];
+  if (
+    unit.attributiveUnit ||
+    beforePrevious === undefined ||
+    previous === undefined
+  ) {
+    return;
+  }
+  if (!/^(?:a|an)$/i.test(beforePrevious) || !/^\s+$/.test(previous)) return;
+  output.pop();
+  output.pop();
+};
+
 const writeRun = (
   output: string[],
   parsed: CardinalParse,
@@ -743,18 +762,7 @@ const writeRun = (
   // "a hundred" and "a twenty" read as quantities once the number is written,
   // so the article that was already emitted goes with it. "a one" never reaches
   // here, and an attributive unit keeps its article ("a $5 bill").
-  const previous = output[output.length - 1];
-  const beforePrevious = output[output.length - 2];
-  if (
-    !unit.attributiveUnit &&
-    beforePrevious !== undefined &&
-    previous !== undefined &&
-    /^(?:a|an)$/i.test(beforePrevious) &&
-    /^\s+$/.test(previous)
-  ) {
-    output.pop();
-    output.pop();
-  }
+  dropArticleBeforeNumber(output, unit);
   output.push(
     `${unit.currencyPrefix}${formatCardinal(parsed.value)}${unit.percentSuffix}`,
   );

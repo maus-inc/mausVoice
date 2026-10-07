@@ -711,8 +711,8 @@ const SELF_CORRECTION_LEAD_STOPLIST = new Set([
 const selfCorrectionWord = (text: string): string =>
   text
     .toLowerCase()
-    .replace(/[^a-z'\u2019]/g, "")
-    .replace(/(?:n['\u2019]t|['\u2019]s)$/, "");
+    .replace(/[^a-z'\u2019]/gu, "")
+    .replace(/(?:n['\u2019]t|['\u2019]s)$/u, "");
 
 /**
  * Whether a spoken self-correction should drop the word in front of its marker.
