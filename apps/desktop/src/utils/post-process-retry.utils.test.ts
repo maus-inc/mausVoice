@@ -16,16 +16,17 @@ describe("post-process edit retry policy", () => {
     expect(nextPostProcessEditFailureCount(-4)).toBe(1);
   });
 
-  it("triggers only on the third failure in a chain", () => {
+  it("triggers after the failure count exceeds the two-failure threshold", () => {
     expect(
       shouldAutomaticallyRetranscribePostProcessEditFailure(
         POST_PROCESS_EDIT_FAILURE_RETRANSCRIBE_AFTER,
       ),
     ).toBe(false);
     expect(shouldAutomaticallyRetranscribePostProcessEditFailure(3)).toBe(true);
-    expect(shouldAutomaticallyRetranscribePostProcessEditFailure(4)).toBe(
-      false,
-    );
+    // A marker-write failure must not make a later failure in the same chain
+    // ineligible for recovery. The durable marker and in-flight set still bound
+    // the actual automatic pass to one run.
+    expect(shouldAutomaticallyRetranscribePostProcessEditFailure(4)).toBe(true);
     expect(shouldAutomaticallyRetranscribePostProcessEditFailure(null)).toBe(
       false,
     );

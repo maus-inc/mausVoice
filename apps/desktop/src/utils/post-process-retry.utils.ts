@@ -21,8 +21,8 @@ export const nextPostProcessEditFailureCount = (
 export const shouldAutomaticallyRetranscribePostProcessEditFailure = (
   failureCount: number | null | undefined,
 ): boolean =>
-  finiteNonNegativeInteger(failureCount) ===
-  POST_PROCESS_EDIT_FAILURE_RETRANSCRIBE_AFTER + 1;
+  finiteNonNegativeInteger(failureCount) >
+  POST_PROCESS_EDIT_FAILURE_RETRANSCRIBE_AFTER;
 
 /**
  * Full jitter keeps repeated local retries from lining up while the exponential

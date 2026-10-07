@@ -490,6 +490,7 @@ describe("postProcessFinalizedTranscript", () => {
   it("schedules live recovery only after the durable row is stored", async () => {
     scheduleAutomaticPostProcessEditRetryMock.mockClear();
     const { input, storeTranscriptionFn } = buildInput();
+    input.languageCode = "fr";
     const stored: Transcription = {
       id: "live-partial",
       transcript: "hello world",
@@ -512,6 +513,7 @@ describe("postProcessFinalizedTranscript", () => {
     expect(scheduleAutomaticPostProcessEditRetryMock).toHaveBeenCalledWith({
       transcription: stored,
       toneId: null,
+      languageCode: "fr",
     });
   });
 

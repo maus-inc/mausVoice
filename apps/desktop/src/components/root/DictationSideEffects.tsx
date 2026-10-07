@@ -284,6 +284,8 @@ export type PostTranscriptInput = {
   a11yInfo: TextFieldInfo | null;
   appTarget: AppTarget | null;
   toneId: string | null;
+  /** Language captured for this recording, so delayed recovery uses the same language. */
+  languageCode?: string | null;
   rawTranscript: string;
   transcribeResult: TranscriptionSessionResult;
   strategy: Pick<BaseStrategy, "handleTranscript" | "shouldStoreTranscript">;
@@ -366,6 +368,9 @@ export const postProcessFinalizedTranscript = async (
       void scheduleAutomaticPostProcessEditRetry({
         transcription: stored.transcription,
         toneId: input.toneId,
+        ...(input.languageCode === undefined
+          ? {}
+          : { languageCode: input.languageCode }),
       });
     }
   }
@@ -426,6 +431,7 @@ type FinalizedRecording = {
   a11yInfo: TextFieldInfo | null;
   appTarget: AppTarget | null;
   toneId: string | null;
+  languageCode?: string | null;
   rawTranscript: string;
   transcribeResult: TranscriptionSessionResult;
 };
@@ -875,6 +881,7 @@ export const DictationSideEffects = () => {
       a11yInfo,
       appTarget,
       toneId,
+      languageCode,
       rawTranscript,
       transcribeResult,
     }: FinalizedRecording): Promise<RawStopResp> => {
@@ -912,6 +919,7 @@ export const DictationSideEffects = () => {
             void scheduleAutomaticPostProcessEditRetry({
               transcription: stored.transcription,
               toneId,
+              ...(languageCode === undefined ? {} : { languageCode }),
             });
             await surfacePersistedReviewInHistory();
             return true;
@@ -938,6 +946,7 @@ export const DictationSideEffects = () => {
         a11yInfo,
         appTarget,
         toneId,
+        languageCode,
         rawTranscript,
         transcribeResult,
         strategy,
@@ -966,6 +975,10 @@ export const DictationSideEffects = () => {
       context: Promise<StopContext>;
     }): Promise<RawStopResp> => {
       getLogger().info("Finalizing transcription session");
+      // Capture the language before the stop path clears the recording state.
+      // The delayed recovery pass must use the same language as this utterance,
+      // not a preference the user may choose while it is waiting.
+      const languageCode = getAppState().dictationLanguageOverride;
       // Transcription needs only the audio, so it starts before the focus
       // context and style persistence below instead of queueing behind them.
       const transcription = withTimeout(
@@ -1034,6 +1047,7 @@ export const DictationSideEffects = () => {
         a11yInfo,
         appTarget,
         toneId,
+        languageCode,
         rawTranscript,
         transcribeResult,
       });

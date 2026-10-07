@@ -958,6 +958,23 @@ describe("resolveProcessedTranscription", () => {
     });
   });
 
+  it("rejects a non-array edit declaration instead of accepting its rewrite", () => {
+    const resolution = resolveProcessedTranscription(
+      JSON.stringify({
+        edits: null,
+        result: "We are going to ship.",
+      }),
+      "we are gonna ship",
+    );
+
+    expect(resolution).toEqual({
+      status: "unusable",
+      reason: "unreadable-edits",
+      warning:
+        "Post-processing returned edits that could not be read; kept the raw transcript. The reply may not match the shape the provider was asked for.",
+    });
+  });
+
   it("treats an empty transcript as clean instead of failed", () => {
     const resolution = resolveProcessedTranscription(
       JSON.stringify({ edits: [], result: "" }),

@@ -254,19 +254,22 @@ const unwrapSingleObject = (
 };
 
 /**
- * `dropped` counts the entries that named no usable `find` text, so no edit
- * could be read from them. They are counted rather than discarded because a
- * reply the provider mangled is a failure to report, and a count is the only
- * way the resolver can tell it apart from a model that chose to change nothing.
+ * `dropped` counts entries that named no usable `find` text, plus a malformed
+ * declared edit list, so no requested edit can disappear as a clean no-op. They
+ * are counted rather than discarded because a reply the provider mangled is a
+ * failure to report, and a count is the only way the resolver can tell it apart
+ * from an empty edit list.
  */
 type ReadEdits = {
   edits: TranscriptionEdit[];
   dropped: number;
 };
 
-const readEdits = (value: unknown): ReadEdits => {
+const readEdits = (value: unknown, declared: boolean): ReadEdits => {
   if (!Array.isArray(value)) {
-    return { edits: [], dropped: 0 };
+    // A present but non-array `edits` field is a malformed edit declaration,
+    // not the same as a response that omitted edits altogether.
+    return { edits: [], dropped: declared ? 1 : 0 };
   }
   const edits: TranscriptionEdit[] = [];
   let dropped = 0;
@@ -315,10 +318,11 @@ const readProcessedTranscriptionResponse = (
       ? (parsed as Record<string, unknown>)
       : {};
   const source = hasResponseKeys(record) ? record : unwrapSingleObject(record);
-  const { edits, dropped } = readEdits(source.edits);
+  const editsDeclared = "edits" in source;
+  const { edits, dropped } = readEdits(source.edits, editsDeclared);
   return {
     edits,
-    editsDeclared: Array.isArray(source.edits),
+    editsDeclared,
     dropped,
     result: typeof source.result === "string" ? source.result : "",
   };
