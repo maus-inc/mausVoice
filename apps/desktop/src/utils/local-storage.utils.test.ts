@@ -12,6 +12,7 @@ import {
   ONBOARDED_AT_STORAGE_KEY,
   PREVIEW_LOCAL_STATE_STORAGE_KEY,
   LEGACY_LOCAL_STATE_STORAGE_KEY,
+  StorageUnavailableError,
   TOOL_ALWAYS_ALLOW_STORAGE_PREFIX,
 } from "./local-storage.utils";
 
@@ -158,6 +159,28 @@ describe("clearAppDataStorage", () => {
   // The one thing a wipe must not take with it. The session keys are on a
   // different origin namespace, and this is what keeps a broadened wipe from
   // signing the person out.
+  // A browser that blocks storage throws when `window.localStorage` is read,
+  // before a single key is looked at. Nothing was removed in that case, so the
+  // wipe reports the failure instead of an empty one: the dialog reloads on an
+  // empty list, and reloading there would leave the data in place.
+  it("refuses to report success when storage cannot be read at all", () => {
+    const original = Object.getOwnPropertyDescriptor(window, "localStorage");
+    Object.defineProperty(window, "localStorage", {
+      configurable: true,
+      get() {
+        throw new Error("storage is blocked by policy");
+      },
+    });
+
+    try {
+      expect(() => clearAppDataStorage()).toThrow(StorageUnavailableError);
+    } finally {
+      if (original) {
+        Object.defineProperty(window, "localStorage", original);
+      }
+    }
+  });
+
   it("leaves a key this app never wrote alone", () => {
     window.localStorage.setItem("some-other-app:preference", "keep");
 

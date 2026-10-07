@@ -305,6 +305,16 @@ export const SettingsLayout = () => {
                 setQuery("");
                 return;
               }
+              // A key pressed while an input method editor is composing belongs
+              // to the IME, not to the search box: for Korean and Chinese that
+              // is how a candidate list is confirmed, and for Japanese how a
+              // conversion is committed. Chrome reports the boundary as key
+              // code 229 with an empty `key`, and the composing flag stays true
+              // on the event that ends the composition, so both are checked
+              // before anything acts on the key.
+              if (event.nativeEvent.isComposing || event.keyCode === 229) {
+                return;
+              }
               // Enter opens the first result, the way a search box behaves
               // everywhere else: the panel is one Tab away for anyone who
               // would rather pick a different row.

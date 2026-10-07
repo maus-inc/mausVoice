@@ -14,7 +14,10 @@ import {
 import { useEffect, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { produceAppState, useAppStore } from "../../store";
-import { clearAppDataStorage } from "../../utils/local-storage.utils";
+import {
+  clearAppDataStorage,
+  StorageUnavailableError,
+} from "../../utils/local-storage.utils";
 import { ConfirmationPhrase } from "./ConfirmationPhrase";
 import { ConsequenceList } from "./ConsequenceList";
 
@@ -120,9 +123,22 @@ export const ClearLocalDataDialog = () => {
       // handles) that may still hold references to wiped data.
       window.location.reload();
     } catch (error) {
-      console.error("Failed to clear local data", error);
+      // A blocked origin is the one failure whose own message means nothing to
+      // the person reading it, so it gets the sentence naming what to do
+      // instead. Everything else keeps its message: those come from the native
+      // command and from this code, and paraphrasing them would drop whatever
+      // the person would have to act on.
       const message =
-        error instanceof Error ? error.message : "Failed to clear local data.";
+        error instanceof StorageUnavailableError
+          ? intl.formatMessage({
+              defaultMessage:
+                "mausVoice could not reach this computer\u2019s storage, so nothing was removed. Check that the app is allowed to store data, then try again.",
+            })
+          : error instanceof Error
+            ? error.message
+            : intl.formatMessage({
+                defaultMessage: "Failed to clear local data.",
+              });
       setErrorMessage(message);
       setIsClearing(false);
     }

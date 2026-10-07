@@ -149,6 +149,23 @@ const listAppDataStorageKeys = (storage: Storage): string[] => {
 };
 
 /**
+ * Storage this app cannot reach at all.
+ *
+ * `getLocalStorage` returns null when reading `window.localStorage` throws, and
+ * a browser that blocks storage does it on the property itself, before any key
+ * is read. That is not the same as having nothing to remove: the app's keys are
+ * unreadable rather than absent, so the wipe cannot say it removed them. It
+ * throws instead of reporting an empty failure list, which would let a caller
+ * reload as though the reset had happened.
+ */
+export class StorageUnavailableError extends Error {
+  constructor() {
+    super("local-storage-unavailable");
+    this.name = "StorageUnavailableError";
+  }
+}
+
+/**
  * Remove everything this app keeps in localStorage.
  *
  * Returns the keys the browser refused to delete, so a caller that made a
@@ -159,7 +176,9 @@ const listAppDataStorageKeys = (storage: Storage): string[] => {
  */
 export const clearAppDataStorage = (): string[] => {
   const storage = getLocalStorage();
-  if (!storage) return [];
+  if (!storage) {
+    throw new StorageUnavailableError();
+  }
 
   const failed: string[] = [];
   for (const key of listAppDataStorageKeys(storage)) {

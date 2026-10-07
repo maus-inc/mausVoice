@@ -248,6 +248,44 @@ describe("ClearLocalDataDialog", () => {
     });
   });
 
+  // The browser blocking storage is the failure a person can act on: it is a
+  // setting, not a transient error, and the raw cause reads as a stack trace.
+  // The dialog keeps its own sentence for it and does not reload.
+  it("names the problem when the browser refuses to reach storage", async () => {
+    const original = Object.getOwnPropertyDescriptor(window, "localStorage");
+    Object.defineProperty(window, "localStorage", {
+      configurable: true,
+      get() {
+        throw new Error("storage is blocked by policy");
+      },
+    });
+    const reload = vi.fn();
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { ...window.location, reload },
+    });
+
+    try {
+      openDialog();
+      render();
+      typeConfirmation("clear");
+      act(() => {
+        confirmButton()?.click();
+      });
+
+      await vi.waitFor(() => {
+        expect(document.body.textContent).toContain(
+          "could not reach this computer",
+        );
+      });
+      expect(reload).not.toHaveBeenCalled();
+    } finally {
+      if (original) {
+        Object.defineProperty(window, "localStorage", original);
+      }
+    }
+  });
+
   it("keeps the dialog open and reports the failure when the wipe fails", async () => {
     mocks.invoke.mockImplementation((command: string) =>
       command === "clear_local_data"

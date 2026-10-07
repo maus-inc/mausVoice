@@ -91,14 +91,14 @@ describe("SettingsLayout", () => {
     });
   };
 
-  const press = (key: string) => {
+  const press = (key: string, init: KeyboardEventInit = {}) => {
     const input = searchInput();
     if (!input) {
       throw new Error("Expected the search field to be rendered");
     }
     act(() => {
       input.dispatchEvent(
-        new window.KeyboardEvent("keydown", { key, bubbles: true }),
+        new window.KeyboardEvent("keydown", { key, bubbles: true, ...init }),
       );
     });
   };
@@ -158,6 +158,32 @@ describe("SettingsLayout", () => {
     // first hit was opened rather than the query simply being dropped.
     expect(railCurrent()).toBe("Privacy and data");
     expect(searchInput()?.value).toBe("");
+  });
+
+  // Korean, Chinese and Japanese input goes through an IME, and there Enter
+  // belongs to the composition: it confirms a candidate, it does not submit.
+  // Opening the first hit on that keystroke would navigate away mid-word.
+  it("leaves Enter to the input method while a composition is running", async () => {
+    await render("/dashboard/settings/account");
+
+    setQuery("incognito");
+    press("Enter", { isComposing: true });
+
+    expect(railCurrent()).toBe("Account");
+    expect(searchInput()?.value).toBe("incognito");
+  });
+
+  // Engines report the composition boundary as key code 229, and the key it
+  // carries can still read as Enter, which is the case the composition flag
+  // alone does not cover.
+  it("ignores the key the browser sends at a composition boundary", async () => {
+    await render("/dashboard/settings/account");
+
+    setQuery("incognito");
+    press("Enter", { keyCode: 229 });
+
+    expect(railCurrent()).toBe("Account");
+    expect(searchInput()?.value).toBe("incognito");
   });
 
   it("shows the page when one is chosen from the rail mid-search", async () => {
