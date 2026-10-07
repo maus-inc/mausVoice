@@ -21,7 +21,7 @@ import { importAudioFile } from "../../actions/transcriptions.actions";
 import { useAppStore } from "../../store";
 import { threadDayGroup, type ThreadDayGroup } from "../../utils/date.utils";
 import { TranscriptionsSideEffects } from "./TranscriptionsSideEffects";
-import { TipCard } from "../onboarding/TipCard";
+import { TipCard, useTip } from "../onboarding/TipCard";
 import { TranscriptionRow } from "./TranscriptRow";
 import { ScrollListPage } from "../common/ScrollListPage";
 import {
@@ -54,6 +54,7 @@ const languageOptions = (
 
 export default function TranscriptionsPage() {
   const intl = useIntl();
+  const tipVisible = useTip("review-before-insert");
   const transcriptionIds = useAppStore(
     (state) => state.transcriptions.transcriptionIds,
   );
@@ -159,11 +160,15 @@ export default function TranscriptionsPage() {
     <>
       <TranscriptionsSideEffects />
       <Stack spacing={2} sx={{ height: "100%" }}>
-        {/* Same column as the list below: a full-width banner read as a
-            window-level notice rather than part of the page. */}
-        <Container maxWidth="sm">
-          <TipCard id="review-before-insert" />
-        </Container>
+        {/* Same column as the list below, so the tip aligns with the rows
+            instead of reading as a window-level banner. The wrapper only
+            exists while the tip is visible: once dismissed (after its exit
+            animation finishes) no empty container or stack spacing remains. */}
+        {tipVisible && (
+          <Container maxWidth="sm">
+            <TipCard id="review-before-insert" />
+          </Container>
+        )}
         <ScrollListPage
           title={<FormattedMessage defaultMessage="History" />}
           subtitle={
