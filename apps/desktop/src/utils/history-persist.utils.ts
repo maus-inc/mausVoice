@@ -48,11 +48,7 @@ export const enqueueHistoryPersist = <T>(
       `History persist queue full (${queueDepth}): ${context}`,
     );
     getLogger().warning(error.message);
-    const rejected = Promise.reject(error);
-    if (!options?.awaited) {
-      logOnRejection(rejected, context);
-    }
-    return rejected;
+    throw error;
   }
   queueDepth += 1;
   if (queueDepth > 1) {

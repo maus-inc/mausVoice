@@ -82,13 +82,12 @@ describe("enqueueHistoryPersist", () => {
   it("rejects a new job when the queue is already full", async () => {
     const hang = () => new Promise<void>(() => undefined);
     for (let i = 0; i < MAX_HISTORY_PERSIST_QUEUE; i += 1) {
-      void enqueueHistoryPersist(hang, `job-${i}`);
+      const pending = enqueueHistoryPersist(hang, `job-${i}`);
+      pending.catch(() => undefined);
     }
-    await expect(
-      enqueueHistoryPersist(() => Promise.resolve(), "overflow", {
-        awaited: true,
-      }),
-    ).rejects.toThrow(/queue full/);
+    expect(() =>
+      enqueueHistoryPersist(() => Promise.resolve(), "overflow"),
+    ).toThrow(/queue full/);
     resetHistoryPersistQueue();
   });
 

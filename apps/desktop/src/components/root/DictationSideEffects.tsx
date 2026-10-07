@@ -187,6 +187,7 @@ export type HandleEmptyResultInput = {
   /** Clears Transcribing before the background History write is scheduled. */
   sendIdle?: () => Promise<void>;
   createdAt?: string;
+  persistAllowedAtCapture?: boolean;
 };
 
 const enqueueTranscriptionHistory = (
@@ -254,12 +255,44 @@ export const handleEmptyTranscriptionResult = async (
   if (input.sendIdle) {
     await input.sendIdle();
   }
-  const willPersist =
-    strategy.shouldStoreTranscript() && isPersistenceAllowed();
+  const persistAllowedAtCapture =
+    input.persistAllowedAtCapture ?? isPersistenceAllowed();
+  const canPersist =
+    strategy.shouldStoreTranscript() &&
+    persistAllowedAtCapture &&
+    isPersistenceAllowed();
+  let queuedHistory = false;
+  if (canPersist) {
+    try {
+      const pending = enqueueTranscriptionHistory(
+        input.storeTranscriptionFn,
+        {
+          audio,
+          rawTranscript: null,
+          sanitizedTranscript: null,
+          transcript: null,
+          transcriptionMetadata: transcribeResult?.metadata ?? {},
+          postProcessMetadata: {},
+          warnings: transcriptionWarnings,
+          remoteStatus: null,
+          remoteDeviceId: null,
+          createdAt: input.createdAt,
+          persistAllowedAtCapture,
+        },
+        "storing failed-transcription history",
+      );
+      pending.catch(() => undefined);
+      queuedHistory = true;
+    } catch (error) {
+      getLogger().warning(
+        `Could not queue failed-transcription history: ${error}`,
+      );
+    }
+  }
   // Two literal descriptors: the extractor cannot follow a ternary inside one
-  // formatMessage call, and promising a background save when persistence is
-  // off (incognito / ephemeral) is a lie.
-  const recoveryMessage = willPersist
+  // formatMessage call, and promising a background save when the row was not
+  // queued is a lie.
+  const recoveryMessage = queuedHistory
     ? formatMessage({
         defaultMessage:
           "Transcription failed. Saving the recording in the background so you can retry.",
@@ -276,25 +309,6 @@ export const handleEmptyTranscriptionResult = async (
     },
     "empty-transcription recovery toast",
   );
-
-  if (willPersist) {
-    void enqueueTranscriptionHistory(
-      input.storeTranscriptionFn,
-      {
-        audio,
-        rawTranscript: null,
-        sanitizedTranscript: null,
-        transcript: null,
-        transcriptionMetadata: transcribeResult?.metadata ?? {},
-        postProcessMetadata: {},
-        warnings: transcriptionWarnings,
-        remoteStatus: null,
-        remoteDeviceId: null,
-        createdAt: input.createdAt,
-      },
-      "storing failed-transcription history",
-    );
-  }
 
   input.refreshMember();
   return { handled: true };
@@ -411,6 +425,7 @@ export type PostTranscriptInput = {
   trace?: PipelineTrace | null;
   /** Utterance end time. History rows must not stamp the delayed write. */
   createdAt?: string;
+  persistAllowedAtCapture?: boolean;
 };
 
 export const postProcessFinalizedTranscript = async (
@@ -456,7 +471,9 @@ export const postProcessFinalizedTranscript = async (
     strategy.shouldStoreTranscript() &&
     (result.historyOwner ?? "stop-path") === "stop-path";
   const droppedChars = postProcessMetadata?.fastStyleTruncatedChars;
-  const persistAllowedAtStop = isPersistenceAllowed();
+  const persistAllowedAtStop =
+    (input.persistAllowedAtCapture ?? isPersistenceAllowed()) &&
+    isPersistenceAllowed();
   const notifyDroppedEnding = (kind: "history" | "not-saved"): void => {
     if (typeof droppedChars !== "number" || droppedChars <= 0) {
       return;
@@ -476,10 +493,13 @@ export const postProcessFinalizedTranscript = async (
     notifyDroppedEnding("not-saved");
   } else if ((result.historyOwner ?? "stop-path") === "review") {
     notifyDroppedEnding("history");
+  } else if (!willStore) {
+    notifyDroppedEnding("not-saved");
   }
   if (willStore) {
     getLogger().verbose("Storing transcription");
-    void enqueueTranscriptionHistory(
+    try {
+    const pending = enqueueTranscriptionHistory(
       input.storeTranscriptionFn,
       {
         audio: input.audio,
@@ -493,6 +513,7 @@ export const postProcessFinalizedTranscript = async (
         remoteDeviceId: result.remoteDeviceId,
         trace: input.trace ?? null,
         createdAt: input.createdAt,
+        persistAllowedAtCapture: input.persistAllowedAtCapture,
       },
       "storing transcription history",
       {
@@ -503,6 +524,11 @@ export const postProcessFinalizedTranscript = async (
         },
       },
     );
+    pending.catch(() => undefined);
+    } catch (error) {
+      getLogger().warning(`Could not queue transcription history: ${error}`);
+      notifyDroppedEnding("not-saved");
+    }
   }
   input.refreshMember();
   return {
@@ -523,6 +549,7 @@ type FinalizedRecording = {
   rawTranscript: string;
   transcribeResult: TranscriptionSessionResult;
   createdAt: string;
+  persistAllowedAtCapture: boolean;
 };
 
 const FINALIZE_TIMEOUT_MS = 90_000;
@@ -920,7 +947,9 @@ export const DictationSideEffects = () => {
     audio: StopRecordingResponse | null;
     context: Promise<StopContext>;
     createdAt: string;
+    persistAllowedAtCapture: boolean;
   }> => {
+    const persistAllowedAtCapture = isPersistenceAllowed();
     tryPlayAudioChime("stop_recording_clip");
     getLogger().verbose("Invoking stop_recording and fetching a11y info");
     // Focus/app lookups (accessibility tree walk, icon extraction, app
@@ -966,6 +995,7 @@ export const DictationSideEffects = () => {
       audio: audio?.outAudio ?? null,
       context,
       createdAt: audio?.createdAt ?? dayjs().toISOString(),
+      persistAllowedAtCapture,
     };
   }, [intl, sendPhaseToPill]);
 
@@ -978,6 +1008,7 @@ export const DictationSideEffects = () => {
       rawTranscript,
       transcribeResult,
       createdAt,
+      persistAllowedAtCapture,
     }: FinalizedRecording): Promise<RawStopResp> => {
       const session = sessionRef.current;
       const strategy = strategyRef.current;
@@ -1013,6 +1044,7 @@ export const DictationSideEffects = () => {
             remoteStatus: null,
             remoteDeviceId: null,
             createdAt,
+            persistAllowedAtCapture,
           });
           if (stored.transcription) {
             await surfacePersistedReviewInHistory();
@@ -1055,6 +1087,7 @@ export const DictationSideEffects = () => {
         persistReviewedTranscript,
         trace: pipelineTraceRef.current,
         createdAt,
+        persistAllowedAtCapture,
       });
     },
     [sendPhaseToPill],
@@ -1065,10 +1098,12 @@ export const DictationSideEffects = () => {
       audio,
       context,
       createdAt,
+      persistAllowedAtCapture,
     }: {
       audio: StopRecordingResponse;
       context: Promise<StopContext>;
       createdAt: string;
+      persistAllowedAtCapture: boolean;
     }): Promise<RawStopResp> => {
       getLogger().info("Finalizing transcription session");
       // Transcription needs only the audio, so it starts before the focus
@@ -1130,6 +1165,7 @@ export const DictationSideEffects = () => {
             refreshMember,
             sendIdle: () => sendPhaseToPill("idle"),
             createdAt,
+            persistAllowedAtCapture,
           });
         }
         getLogger().warning("stopRecordingRaw: no rawTranscript from finalize");
@@ -1144,6 +1180,7 @@ export const DictationSideEffects = () => {
         rawTranscript,
         transcribeResult,
         createdAt,
+        persistAllowedAtCapture,
       });
     },
     [processFinalizedRecording, sendPhaseToPill],
@@ -1162,7 +1199,8 @@ export const DictationSideEffects = () => {
     systemVolumeDim.endRecording();
 
     try {
-      const { audio, context, createdAt } = await captureStopRecordingInfo();
+      const { audio, context, createdAt, persistAllowedAtCapture } =
+        await captureStopRecordingInfo();
       if (!audio) {
         getLogger().warning("stopRecordingRaw: no audio data received");
         return {
@@ -1171,7 +1209,12 @@ export const DictationSideEffects = () => {
         };
       }
       sendPillStageText(intl.formatMessage({ defaultMessage: "Transcribing" }));
-      return await finalizeAndPostProcess({ audio, context, createdAt });
+      return await finalizeAndPostProcess({
+        audio,
+        context,
+        createdAt,
+        persistAllowedAtCapture,
+      });
     } catch (error) {
       const errorName = error instanceof Error ? ` [name=${error.name}]` : "";
       getLogger().error(`Error during stopRecording: ${error}${errorName}`);

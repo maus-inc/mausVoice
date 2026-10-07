@@ -524,6 +524,17 @@ describe("postProcessFinalizedTranscript", () => {
     expect(call?.message).toContain("42");
   });
 
+  it("does not promise History when the strategy skips storage", async () => {
+    const { input, showToast } = buildInput({ store: false, droppedChars: 42 });
+
+    await postProcessFinalizedTranscript(input);
+    await flushHistoryPersist();
+
+    expect(showToast).toHaveBeenCalledTimes(1);
+    expect(showToast.mock.calls[0]?.[0]?.message).not.toContain("History");
+    expect(showToast.mock.calls[0]?.[0]?.message).toContain("42");
+  });
+
   it("does not follow an incognito truncation notice with a History promise", async () => {
     isPersistenceAllowedMock.mockReturnValue(false);
     const { input, showToast } = buildInput({ droppedChars: 42 });
