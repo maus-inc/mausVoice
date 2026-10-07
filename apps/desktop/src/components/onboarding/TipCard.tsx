@@ -291,9 +291,8 @@ export const TipCard = ({
   // The ref guard keeps the exit-completion and unmount paths from both
   // firing (and keeps StrictMode's double cleanup from double-tracking).
   useEffect(() => {
-    if (!closing) return;
     return () => {
-      if (!dismissedRef.current) {
+      if (closing && !dismissedRef.current) {
         dismissedRef.current = true;
         dismissTip(id);
       }
