@@ -4,14 +4,19 @@ import { persist } from "zustand/middleware";
 import { createWithEqualityFn } from "zustand/traditional";
 import { INITIAL_APP_STATE, type AppState } from "../state/app.state";
 import { INITIAL_LOCAL_STATE } from "../state/local.state";
+import {
+  LEGACY_LOCAL_STATE_STORAGE_KEY,
+  LOCAL_STATE_STORAGE_KEY,
+  PREVIEW_LOCAL_STATE_STORAGE_KEY,
+} from "../utils/local-storage.utils";
 
 // Preview state must never read or overwrite a user's desktop preferences.
 // Vite exposes VITE_PREVIEW only from the dedicated preview mode.
 const IS_BROWSER_PREVIEW = import.meta.env.VITE_PREVIEW === "true";
 const CURRENT_STORAGE_KEY = IS_BROWSER_PREVIEW
-  ? "mausvoice-browser-preview-local-state"
-  : "mausvoice-local-state";
-const LEGACY_STORAGE_KEY = "voquill-local-state";
+  ? PREVIEW_LOCAL_STATE_STORAGE_KEY
+  : LOCAL_STATE_STORAGE_KEY;
+const LEGACY_STORAGE_KEY = LEGACY_LOCAL_STATE_STORAGE_KEY;
 
 // The rebrand renamed the persisted Zustand key from "voquill-local-state" to
 // "mausvoice-local-state", which would normally reset every persisted local

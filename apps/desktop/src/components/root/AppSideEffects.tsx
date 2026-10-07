@@ -847,12 +847,15 @@ export const AppSideEffects = () => {
     },
   });
 
-  // Hotkey to open settings (Cmd+, on macOS)
+  // Hotkey to open settings (Cmd+, on macOS). `/dashboard/settings` is the
+  // entry route, which redirects to the page last used, so the shortcut does
+  // not reset the surface to the first page; the prefix check keeps a press
+  // while already in settings from reloading the window.
   useKeyDownHandler({
     keys: [","],
     meta: true,
     callback: () => {
-      if (window.location.pathname !== "/dashboard/settings") {
+      if (!window.location.pathname.startsWith("/dashboard/settings")) {
         window.location.href = "/dashboard/settings";
       }
     },

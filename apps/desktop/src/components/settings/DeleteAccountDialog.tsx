@@ -1,5 +1,4 @@
 import {
-  Alert,
   Box,
   Button,
   CircularProgress,
@@ -17,6 +16,7 @@ import { FormattedMessage, useIntl } from "react-intl";
 import { showSnackbar } from "../../actions/app.actions";
 import { getAuthRepo } from "../../repos";
 import { produceAppState, useAppStore } from "../../store";
+import { ConsequenceList } from "./ConsequenceList";
 
 export const DeleteAccountDialog = () => {
   const intl = useIntl();
@@ -97,51 +97,78 @@ export const DeleteAccountDialog = () => {
         </Typography>
       </DialogTitle>
       <DialogContent>
-        <Alert severity="warning" sx={{ mb: 2 }}>
-          <FormattedMessage defaultMessage="This action cannot be undone. All your data will be permanently deleted." />
-        </Alert>
-        <Typography variant="body1" component="div" sx={{ mb: 2 }}>
-          <FormattedMessage defaultMessage="Are you sure you want to delete your account? This will:" />
-        </Typography>
-        <Box component="ul" sx={{ pl: 2, mb: 2 }}>
-          <Typography component="li" variant="body2">
-            <FormattedMessage defaultMessage="Permanently delete all your data" />
-          </Typography>
-          <Typography component="li" variant="body2">
-            <FormattedMessage defaultMessage="Cancel any active subscriptions" />
-          </Typography>
-          <Typography component="li" variant="body2">
-            <FormattedMessage defaultMessage="Remove access to all premium features" />
-          </Typography>
-          <Typography component="li" variant="body2">
-            <FormattedMessage defaultMessage="Sign you out immediately" />
-          </Typography>
-        </Box>
-        {userEmail && (
-          <Typography variant="body2" color="textSecondary" sx={{ mb: 2 }}>
-            <FormattedMessage
-              defaultMessage="Account to be deleted: {email}"
-              values={{ email: <strong>{userEmail}</strong> }}
+        <Stack spacing={2.5}>
+          {/* The consequences are the dialog, so they are a list rather than a
+              sentence: the same one the local-data wipe uses, for the same
+              reason. */}
+          <ConsequenceList
+            label={<FormattedMessage defaultMessage="This removes" />}
+            items={[
+              <FormattedMessage
+                key="data"
+                defaultMessage="Permanently delete all your data"
+              />,
+              <FormattedMessage
+                key="subscriptions"
+                defaultMessage="Cancel any active subscriptions"
+              />,
+              <FormattedMessage
+                key="premium"
+                defaultMessage="Remove access to all premium features"
+              />,
+              <FormattedMessage
+                key="signout"
+                defaultMessage="Sign you out immediately"
+              />,
+            ]}
+          />
+          <Stack spacing={1.5}>
+            <Typography variant="body2">
+              <FormattedMessage
+                defaultMessage="Type {phrase} to confirm."
+                values={{
+                  phrase: (
+                    <Box
+                      component="code"
+                      sx={{
+                        fontFamily: "ui-monospace, SFMono-Regular, monospace",
+                        fontSize: "0.875em",
+                        px: 0.75,
+                        py: 0.25,
+                        borderRadius: 0.5,
+                        border: 1,
+                        borderColor: "divider",
+                        bgcolor: "level2",
+                        wordBreak: "break-all",
+                      }}
+                    >
+                      {userEmail ?? ""}
+                    </Box>
+                  ),
+                }}
+              />
+            </Typography>
+            <TextField
+              fullWidth
+              variant="outlined"
+              slotProps={{
+                htmlInput: {
+                  "aria-label": intl.formatMessage({
+                    defaultMessage: "Your email address",
+                  }),
+                },
+              }}
+              placeholder={userEmail || ""}
+              value={confirmationEmail}
+              onChange={handleEmailChange}
+              size="small"
+              autoComplete="off"
+              autoCapitalize="off"
+              autoCorrect="off"
+              spellCheck={false}
             />
-          </Typography>
-        )}
-
-        <Typography variant="body2" sx={{ mb: 1 }}>
-          <FormattedMessage defaultMessage="To confirm, type your email address below:" />
-        </Typography>
-        <TextField
-          fullWidth
-          variant="outlined"
-          placeholder={userEmail || ""}
-          value={confirmationEmail}
-          onChange={handleEmailChange}
-          size="small"
-          sx={{ mb: 2 }}
-          autoComplete="off"
-          autoCapitalize="off"
-          autoCorrect="off"
-          spellCheck={false}
-        />
+          </Stack>
+        </Stack>
       </DialogContent>
       <DialogActions>
         <Button onClick={handleClose} variant="text" disabled={busy}>

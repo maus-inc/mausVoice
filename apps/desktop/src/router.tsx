@@ -15,7 +15,17 @@ import { AppHeader } from "./components/root/Header.tsx";
 import Root from "./components/root/Root.tsx";
 import { Guard } from "./components/routing/Guard.tsx";
 import { Redirect } from "./components/routing/Redirectors.tsx";
-import SettingsPage from "./components/settings/SettingsPage.tsx";
+import {
+  SettingsEntryRedirect,
+  SettingsLayout,
+} from "./components/settings/SettingsLayout.tsx";
+import AccountSettingsPage from "./components/settings/pages/AccountSettingsPage.tsx";
+import AiModelsSettingsPage from "./components/settings/pages/AiModelsSettingsPage.tsx";
+import AppearanceSettingsPage from "./components/settings/pages/AppearanceSettingsPage.tsx";
+import DictationSettingsPage from "./components/settings/pages/DictationSettingsPage.tsx";
+import PrivacyDataSettingsPage from "./components/settings/pages/PrivacyDataSettingsPage.tsx";
+import ShortcutsSettingsPage from "./components/settings/pages/ShortcutsSettingsPage.tsx";
+import SystemSettingsPage from "./components/settings/pages/SystemSettingsPage.tsx";
 import StylingPage from "./components/styling/StylingPage.tsx";
 import TranscriptionsPage from "./components/transcriptions/TranscriptionsPage.tsx";
 import WelcomePage from "./components/welcome/WelcomePage.tsx";
@@ -98,7 +108,47 @@ const appRoutes = (root: ReactNode) => [
               },
               {
                 path: "settings",
-                element: <SettingsPage />,
+                element: <SettingsLayout />,
+                children: [
+                  {
+                    index: true,
+                    element: <SettingsEntryRedirect />,
+                  },
+                  {
+                    path: "dictation",
+                    element: <DictationSettingsPage />,
+                  },
+                  {
+                    path: "ai-models",
+                    element: <AiModelsSettingsPage />,
+                  },
+                  {
+                    path: "shortcuts",
+                    element: <ShortcutsSettingsPage />,
+                  },
+                  {
+                    path: "appearance",
+                    element: <AppearanceSettingsPage />,
+                  },
+                  {
+                    path: "privacy-data",
+                    element: <PrivacyDataSettingsPage />,
+                  },
+                  {
+                    path: "system",
+                    element: <SystemSettingsPage />,
+                  },
+                  {
+                    path: "account",
+                    element: <AccountSettingsPage />,
+                  },
+                  {
+                    // An unknown page name, including an old one, resolves to
+                    // the page the person last used rather than a blank pane.
+                    path: "*",
+                    element: <SettingsEntryRedirect />,
+                  },
+                ],
               },
               {
                 path: "transcriptions",

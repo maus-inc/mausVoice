@@ -2,7 +2,7 @@
 
 - Status: **reused** — real component from `apps/desktop/src/components/common/ConfirmDialog.tsx`.
 - Source of truth: `apps/desktop/src/components/common/ConfirmDialog.tsx`.
-- Used in: SignInForm, SettingsPage, ManualStylingRow, ToneEditorDialog.
+- Used in: SignInForm, PrivacyDataSettingsPage, UpdateChannelSetting, SystemSettingsPage, ManualStylingRow, ToneEditorDialog.
 
 ## Purpose
 

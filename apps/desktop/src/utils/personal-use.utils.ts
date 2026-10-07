@@ -1,4 +1,5 @@
 import { DEEPGRAM_TRANSCRIPTION_MODELS } from "@maus-inc/voice-ai";
+import type { ApiKey } from "@maus-inc/types";
 import type { TranscriptionMode } from "../types/ai.types";
 
 export const PERSONAL_GROQ_API_KEY_ID = "personal-groq";
@@ -15,6 +16,34 @@ export const PERSONAL_DEEPGRAM_TRANSCRIPTION_MODEL =
 export const PERSONAL_USER_ID = "local-user-id";
 export const PERSONAL_USER_EMAIL = "personal@mausvoice.local";
 export const PERSONAL_USER_DISPLAY_NAME = "Personal User";
+
+/**
+ * The stored personal key for a provider, matched by id first and by name
+ * second, because keys created before the ids above existed carry the name
+ * only. One selector so the settings page, the key dialog and the actions
+ * cannot disagree about which key counts as the personal one.
+ */
+export const findPersonalApiKey = (
+  apiKeys: readonly ApiKey[],
+  provider: "groq" | "deepgram",
+): ApiKey | null => {
+  const id =
+    provider === "groq"
+      ? PERSONAL_GROQ_API_KEY_ID
+      : PERSONAL_DEEPGRAM_API_KEY_ID;
+  const name =
+    provider === "groq"
+      ? PERSONAL_GROQ_API_KEY_NAME
+      : PERSONAL_DEEPGRAM_API_KEY_NAME;
+
+  return (
+    apiKeys.find((apiKey) => apiKey.id === id) ??
+    apiKeys.find(
+      (apiKey) => apiKey.provider === provider && apiKey.name.trim() === name,
+    ) ??
+    null
+  );
+};
 
 export const isPersonalUseProEnabled = (): boolean => true;
 

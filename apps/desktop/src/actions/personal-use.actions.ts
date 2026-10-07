@@ -11,26 +11,15 @@ import {
   PERSONAL_GROQ_API_KEY_NAME,
   PERSONAL_GROQ_POST_PROCESSING_MODEL,
   PERSONAL_GROQ_TRANSCRIPTION_MODEL,
+  findPersonalApiKey,
   isPersonalUseEnabled,
   resolvePersonalTranscriptionTarget,
 } from "../utils/personal-use.utils";
 
 const PREVIOUS_PERSONAL_GROQ_TRANSCRIPTION_MODEL = "whisper-large-v3";
 
-const getPersonalGroqApiKey = (): ApiKey | null => {
-  const state = getAppState();
-  return (
-    state.settings.apiKeys.find(
-      (apiKey) => apiKey.id === PERSONAL_GROQ_API_KEY_ID,
-    ) ??
-    state.settings.apiKeys.find(
-      (apiKey) =>
-        apiKey.provider === "groq" &&
-        apiKey.name.trim() === PERSONAL_GROQ_API_KEY_NAME,
-    ) ??
-    null
-  );
-};
+const getPersonalGroqApiKey = (): ApiKey | null =>
+  findPersonalApiKey(getAppState().settings.apiKeys, "groq");
 
 const upsertPersonalGroqApiKey = async (
   configuredKey: string,
@@ -79,20 +68,8 @@ const upsertPersonalGroqApiKey = async (
   return updateApiKey(updatePayload);
 };
 
-const getPersonalDeepgramApiKey = (): ApiKey | null => {
-  const state = getAppState();
-  return (
-    state.settings.apiKeys.find(
-      (apiKey) => apiKey.id === PERSONAL_DEEPGRAM_API_KEY_ID,
-    ) ??
-    state.settings.apiKeys.find(
-      (apiKey) =>
-        apiKey.provider === "deepgram" &&
-        apiKey.name.trim() === PERSONAL_DEEPGRAM_API_KEY_NAME,
-    ) ??
-    null
-  );
-};
+const getPersonalDeepgramApiKey = (): ApiKey | null =>
+  findPersonalApiKey(getAppState().settings.apiKeys, "deepgram");
 
 const upsertPersonalDeepgramApiKey = async (
   configuredKey: string,
