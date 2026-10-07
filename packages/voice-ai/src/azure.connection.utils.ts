@@ -20,6 +20,60 @@ export const createAzureConnectionScope = (
 const getAbortReason = (signal: AbortSignal): unknown =>
   signal.reason ?? new DOMException("The operation was aborted", "AbortError");
 
+const createAbortableOpen = (
+  connection: IConnection,
+  signal: AbortSignal | undefined,
+): IConnection["open"] => {
+  const openConnection = connection.open.bind(connection);
+
+  return () => {
+    if (!signal) return openConnection();
+    if (signal.aborted) {
+      void connection
+        .dispose("Azure connection aborted")
+        .catch(() => undefined);
+      return Promise.reject(getAbortReason(signal));
+    }
+
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = (): boolean => {
+        if (settled) return false;
+        settled = true;
+        signal.removeEventListener("abort", handleAbort);
+        return true;
+      };
+      const handleAbort = (): void => {
+        if (!finish()) return;
+        void connection
+          .dispose("Azure connection aborted")
+          .catch(() => undefined);
+        reject(getAbortReason(signal));
+      };
+
+      signal.addEventListener("abort", handleAbort, { once: true });
+      if (signal.aborted) {
+        handleAbort();
+        return;
+      }
+
+      // Promise construction turns a synchronous SDK throw into a rejection,
+      // so the shared settlement path also removes the abort listener.
+      const opening = new Promise<Awaited<ReturnType<IConnection["open"]>>>(
+        (resolveOpen) => resolveOpen(openConnection()),
+      );
+      opening.then(
+        (response) => {
+          if (finish()) resolve(response);
+        },
+        (error: unknown) => {
+          if (finish()) reject(error);
+        },
+      );
+    });
+  };
+};
+
 /**
  * The Speech SDK's recognizer disposal waits for its connection promise. If a
  * WebSocket handshake never settles, `recognizer.close()` therefore cannot
@@ -39,49 +93,7 @@ export const createAbortableAzureConnectionFactory = (
     const connection = await factory.create(config, authInfo, connectionId);
     scope.connections.add(connection);
 
-    const openConnection = connection.open.bind(connection);
-    connection.open = () => {
-      const { signal } = scope;
-      if (!signal) return openConnection();
-      if (signal.aborted) {
-        void connection
-          .dispose("Azure connection aborted")
-          .catch(() => undefined);
-        return Promise.reject(getAbortReason(signal));
-      }
-
-      return new Promise((resolve, reject) => {
-        let settled = false;
-        const finish = () => {
-          if (settled) return false;
-          settled = true;
-          signal.removeEventListener("abort", handleAbort);
-          return true;
-        };
-        const handleAbort = () => {
-          if (!finish()) return;
-          void connection
-            .dispose("Azure connection aborted")
-            .catch(() => undefined);
-          reject(getAbortReason(signal));
-        };
-
-        signal.addEventListener("abort", handleAbort, { once: true });
-        if (signal.aborted) {
-          handleAbort();
-          return;
-        }
-
-        openConnection().then(
-          (response) => {
-            if (finish()) resolve(response);
-          },
-          (error: unknown) => {
-            if (finish()) reject(error);
-          },
-        );
-      });
-    };
+    connection.open = createAbortableOpen(connection, scope.signal);
 
     const disposeConnection = connection.dispose.bind(connection);
     let disposePromise: Promise<void> | null = null;
@@ -106,7 +118,7 @@ export const disposeAzureConnections = (
   scope: AzureConnectionScope,
   reason = "Azure speech session closed",
 ): void => {
-  for (const connection of [...scope.connections]) {
+  for (const connection of scope.connections) {
     try {
       void connection.dispose(reason).catch(() => undefined);
     } catch {

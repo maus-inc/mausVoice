@@ -2,6 +2,11 @@ const TAP_THRESHOLD_MS = 500;
 
 type ActivationPhase = "idle" | "starting" | "active" | "stopping";
 
+/** Keep synchronous callback compatibility while adopting promises returned by async callbacks. */
+const invokeActivationCallback = (
+  callback: (() => void) | null,
+): Promise<void> => Promise.resolve(callback?.());
+
 export class ActivationController {
   private _isActive = false;
   private _isLocked = false;
@@ -75,7 +80,7 @@ export class ActivationController {
     this.enqueue(async () => {
       if (generation !== this.operationGeneration) return;
       try {
-        await this.onDeactivateRef?.();
+        await invokeActivationCallback(this.onDeactivateRef);
       } finally {
         if (generation === this.operationGeneration) {
           this.phase = "idle";
@@ -96,7 +101,7 @@ export class ActivationController {
     this.enqueue(async () => {
       if (generation !== this.operationGeneration) return;
       try {
-        await this.onActivateRef?.();
+        await invokeActivationCallback(this.onActivateRef);
       } catch {
         if (generation === this.operationGeneration) {
           this.resetActiveState();

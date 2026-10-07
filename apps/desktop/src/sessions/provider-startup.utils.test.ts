@@ -68,6 +68,32 @@ describe("live provider startup", () => {
     expect(onRecordingStart).toHaveBeenCalledOnce();
   });
 
+  it("removes the abort listener when provider startup throws synchronously", async () => {
+    const controller = new AbortController();
+    const error = new Error("provider setup failed");
+    const onRecordingStart = vi.fn(() => {
+      throw error;
+    });
+    const removeEventListener = vi.spyOn(
+      controller.signal,
+      "removeEventListener",
+    );
+
+    await expect(
+      startLiveProviderSession({
+        session: pendingSession(onRecordingStart),
+        sampleRate: 16_000,
+        controller,
+      }),
+    ).rejects.toBe(error);
+
+    expect(onRecordingStart).toHaveBeenCalledOnce();
+    expect(removeEventListener).toHaveBeenCalledWith(
+      "abort",
+      expect.any(Function),
+    );
+  });
+
   it("does not start the provider when the controller is already aborted", async () => {
     const controller = new AbortController();
     const reason = new Error("already canceled");

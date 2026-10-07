@@ -32,7 +32,7 @@ export const addStartupAbortListener = (
   };
 };
 
-export const startLiveProviderSession = ({
+export const startLiveProviderSession = async ({
   session,
   sampleRate,
   controller,
@@ -44,7 +44,7 @@ export const startLiveProviderSession = ({
   timeoutMs?: number;
 }): Promise<void> => {
   const { signal } = controller;
-  if (signal.aborted) return Promise.reject(getStartupAbortReason(signal));
+  if (signal.aborted) throw getStartupAbortReason(signal);
 
   let removeAbortListener: () => void = () => undefined;
   const canceled = new Promise<never>((_, reject) => {
@@ -55,21 +55,17 @@ export const startLiveProviderSession = ({
     return canceled;
   }
 
-  let startup: Promise<void>;
   try {
-    startup = session.onRecordingStart(sampleRate, signal);
-  } catch (error) {
+    await withTimeout(
+      Promise.race([session.onRecordingStart(sampleRate, signal), canceled]),
+      timeoutMs,
+      "Live transcription provider startup",
+      () =>
+        controller.abort(
+          new DOMException("Provider startup timed out", "TimeoutError"),
+        ),
+    );
+  } finally {
     removeAbortListener();
-    return Promise.reject(error);
   }
-
-  return withTimeout(
-    Promise.race([startup, canceled]),
-    timeoutMs,
-    "Live transcription provider startup",
-    () =>
-      controller.abort(
-        new DOMException("Provider startup timed out", "TimeoutError"),
-      ),
-  ).finally(removeAbortListener);
 };

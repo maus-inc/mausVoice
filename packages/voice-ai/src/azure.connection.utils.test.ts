@@ -74,6 +74,57 @@ describe("abortable Azure SDK connections", () => {
     expect(scope.connections.size).toBe(0);
   });
 
+  it("removes the abort listener when the SDK open call throws synchronously", async () => {
+    const controller = new AbortController();
+    const scope = createAzureConnectionScope(controller.signal);
+    const { factory, open } = createConnection();
+    const error = new Error("SDK open failed");
+    open.mockImplementation(() => {
+      throw error;
+    });
+    const abortableFactory = createAbortableAzureConnectionFactory(
+      factory,
+      scope,
+    );
+    const capturedConnection = await createConnectionFrom(abortableFactory);
+    const removeEventListener = vi.spyOn(
+      controller.signal,
+      "removeEventListener",
+    );
+
+    await expect(capturedConnection.open()).rejects.toBe(error);
+
+    expect(removeEventListener).toHaveBeenCalledWith(
+      "abort",
+      expect.any(Function),
+    );
+  });
+
+  it("disposes every tracked connection while removing it from the set", async () => {
+    const scope = createAzureConnectionScope();
+    const first = createConnection();
+    const second = createConnection();
+    const factory = {
+      create: vi
+        .fn()
+        .mockResolvedValueOnce(first.connection)
+        .mockResolvedValueOnce(second.connection),
+    } as unknown as IConnectionFactory;
+    const abortableFactory = createAbortableAzureConnectionFactory(
+      factory,
+      scope,
+    );
+
+    await createConnectionFrom(abortableFactory);
+    await createConnectionFrom(abortableFactory);
+    disposeAzureConnections(scope);
+    await Promise.resolve();
+
+    expect(first.dispose).toHaveBeenCalledOnce();
+    expect(second.dispose).toHaveBeenCalledOnce();
+    expect(scope.connections.size).toBe(0);
+  });
+
   it("preserves a caller's non-string abort reason during connection disposal", async () => {
     const controller = new AbortController();
     const reason = {
