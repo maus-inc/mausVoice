@@ -341,6 +341,23 @@ const RETRANSCRIBE_LOADING_SNACKBAR_MS = 2 * 60 * 1000;
 const automaticRetranscriptionIds = new Set<string>();
 
 /**
+ * Whether this row is the one the automatic pass is owed to: a persisted
+ * semantic edit failure past the failure threshold, with the audio still on
+ * disk, that has not already been claimed by a pass in this process or in a
+ * previous one.
+ */
+const canScheduleAutomaticRetry = (
+  transcription: Transcription,
+  failureCount: number,
+): boolean =>
+  isPersistenceAllowed() &&
+  Boolean(transcription.audio?.filePath) &&
+  transcription.postProcessEditFailed === true &&
+  shouldAutomaticallyRetranscribePostProcessEditFailure(failureCount) &&
+  transcription.postProcessEditAutoRetryUsed !== true &&
+  !automaticRetranscriptionIds.has(transcription.id);
+
+/**
  * Mark a durable row before waiting, then run the one automatic recovery pass
  * against that same row. The persisted marker makes the one-pass rule survive
  * a restart and prevents a later manual failure chain from scheduling another
@@ -357,14 +374,9 @@ export const scheduleAutomaticPostProcessEditRetry = async ({
 }): Promise<void> => {
   const failureCount = transcription.postProcessEditFailureCount;
   if (
-    !isPersistenceAllowed() ||
-    !transcription.audio?.filePath ||
-    transcription.postProcessEditFailed !== true ||
     failureCount === null ||
     failureCount === undefined ||
-    !shouldAutomaticallyRetranscribePostProcessEditFailure(failureCount) ||
-    transcription.postProcessEditAutoRetryUsed === true ||
-    automaticRetranscriptionIds.has(transcription.id)
+    !canScheduleAutomaticRetry(transcription, failureCount)
   ) {
     return;
   }
