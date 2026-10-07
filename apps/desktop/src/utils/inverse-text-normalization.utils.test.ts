@@ -92,6 +92,11 @@ describe("normalizeSpokenForms", () => {
     expect(normalizeSpokenForms("it costs five pounds. Of course")).toBe(
       "it costs £5. Of course",
     );
+    // "Of course" is the one "of" that does not weigh anything, and it arrives
+    // after a comma as often as after a full stop.
+    expect(normalizeSpokenForms("it costs five pounds, of course")).toBe(
+      "it costs £5, of course",
+    );
     // Money keeps its symbol.
     expect(normalizeSpokenForms("it costs five pounds")).toBe("it costs £5");
     expect(normalizeSpokenForms("a twenty pound note")).toBe("a £20 note");

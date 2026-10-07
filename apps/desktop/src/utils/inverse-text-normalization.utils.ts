@@ -631,21 +631,30 @@ const unitWordAt = (
   return { lowered, punctuation: wordSegment.text.slice(lowered.length) };
 };
 
-/** The word that follows a unit word, with its punctuation removed, or null. */
-const wordAfterUnit = (
+/**
+ * The words that follow a unit word, up to `count`, with their punctuation
+ * removed. Empty when the unit ends its sentence: "it costs five pounds. Of
+ * course" has no follower, because the full stop belongs to the unit word.
+ *
+ * `segments` alternates words and whitespace, so the nth word after the unit
+ * sits two segments past the previous one.
+ */
+const unitFollowers = (
   segments: readonly Segment[],
   nextIndex: number,
-): string | null => {
+  count: number,
+): string[] => {
   const unit = segments[nextIndex + 1];
-  // The word after the unit only says anything about the unit when the two are
-  // in the same sentence: "it costs five pounds. Of course" is not a weight,
-  // and the full stop is carried by the unit word itself.
-  if (!unit || SENTENCE_BOUNDARY_RE.test(unit.text)) return null;
-  const afterUnit = segments[nextIndex + 2];
-  const afterUnitWord = segments[nextIndex + 3];
-  if (!afterUnit?.isSpace || !afterUnitWord || afterUnitWord.isSpace)
-    return null;
-  return afterUnitWord.text.toLowerCase().replace(/[.,!?;:]+$/, "");
+  if (!unit || SENTENCE_BOUNDARY_RE.test(unit.text)) return [];
+  const words: string[] = [];
+  while (words.length < count) {
+    const index = nextIndex + 3 + words.length * 2;
+    const gap = segments[index - 1];
+    const word = segments[index];
+    if (!gap?.isSpace || !word || word.isSpace) break;
+    words.push(word.text.toLowerCase().replace(/[.,!?;:]+$/, ""));
+  }
+  return words;
 };
 
 /** Whether a singular currency name stands in front of a noun it describes. */
@@ -655,7 +664,7 @@ const isAttributiveUnitName = (
   lowered: string,
 ): boolean =>
   SINGULAR_CURRENCY_UNITS.has(lowered) &&
-  wordAfterUnit(segments, nextIndex) !== null;
+  unitFollowers(segments, nextIndex, 1).length > 0;
 
 /** Forms of "weigh", which make the pounds that follow them a weight. */
 const WEIGH_WORDS: ReadonlySet<string> = new Set([
@@ -672,7 +681,8 @@ const WEIGH_WORDS: ReadonlySet<string> = new Set([
  * five pounds" are weights; "it costs five pounds" and "a twenty pound note"
  * are money. The phrase after the word and a form of "weigh" before the number
  * are the two cues a dictation gives, and without a cue the word is read as
- * money, which is what it usually is.
+ * money, which is what it usually is. "Of course" is the one "of" that does not
+ * weigh anything.
  */
 const isWeightPound = (
   segments: readonly Segment[],
@@ -682,8 +692,9 @@ const isWeightPound = (
 ): boolean => {
   if (lowered !== "pound" && lowered !== "pounds") return false;
   if (WEIGH_WORDS.has(wordBefore(segments, runStart))) return true;
-  const follower = wordAfterUnit(segments, nextIndex);
-  return follower === "of" || follower === "weight" || follower === "weights";
+  const [follower, afterFollower] = unitFollowers(segments, nextIndex, 2);
+  if (follower === "weight" || follower === "weights") return true;
+  return follower === "of" && afterFollower !== "course";
 };
 
 /**
