@@ -538,6 +538,10 @@ const applyFeaturePreferences = (
     preferences.hallucinationFilterEnabled,
     true,
   );
+  draft.settings.fastStyleShortDictationsEnabled = preferenceOr(
+    preferences.fastStyleShortDictationsEnabled,
+    true,
+  );
   draft.settings.reviewBeforeInsert = preferences.reviewBeforeInsert === true;
   // `preferenceOr` preserves an explicit `[]` (deny-all) because `[] ?? null`
   // is `[]`, and defaults to `null` ("follow registry defaults") rather than

@@ -75,6 +75,7 @@ import {
   setAutoLearnFromEditsEnabled,
   setDictationLimitMinutes,
   setDictationPillVisibility,
+  setFastStyleShortDictationsEnabled,
   setHallucinationFilterEnabled,
   setHandsFreeDelayMs,
   setIgnoreUpdateDialog,
@@ -333,6 +334,10 @@ export default function SettingsPage() {
   const autoLaunchLoading = autoLaunchStatus === "loading";
   const intl = useIntl();
 
+  const postProcessingMode = useAppStore(
+    (state) => getGenerativePrefs(state).mode,
+  );
+
   const dictationLanguage = useAppStore((state) => {
     const user = getMyUser(state);
     return user?.preferredLanguage ?? getDetectedSystemLocale();
@@ -541,6 +546,7 @@ export default function SettingsPage() {
     spokenCommandsEnabled,
     reviewBeforeInsert,
     hallucinationFilterEnabled,
+    fastStyleShortDictationsEnabled,
     inDictationStyleSwitchingEnabled,
     transcriptionProvider,
     showAudioDisclosure,
@@ -569,6 +575,7 @@ export default function SettingsPage() {
       prefs?.spokenCommandsEnabled ?? true,
       prefs?.reviewBeforeInsert ?? false,
       prefs?.hallucinationFilterEnabled ?? true,
+      prefs?.fastStyleShortDictationsEnabled ?? true,
       prefs?.inDictationStyleSwitchingEnabled ?? false,
       transcriptionPrefs.mode === "api" ? transcriptionPrefs.provider : null,
       disclosureIsVisible(getTranscriptionAudioDisclosure(state)),
@@ -595,6 +602,9 @@ export default function SettingsPage() {
       pill_placement: isPillPlacementAvailable(),
       elevenlabs_keyterms: transcriptionProvider === "elevenlabs",
       where_your_dictation_audio_goes: showAudioDisclosure,
+      // With post-processing off every built-in style already uses the local
+      // transforms, so the switch would change nothing.
+      fast_styling_for_short_dictations: postProcessingMode !== "none",
     }),
     [
       showDictationLimitSetting,
@@ -605,6 +615,7 @@ export default function SettingsPage() {
       platform,
       transcriptionProvider,
       showAudioDisclosure,
+      postProcessingMode,
     ],
   );
 
@@ -795,6 +806,15 @@ export default function SettingsPage() {
     logOnRejection(
       setHallucinationFilterEnabled(event.target.checked),
       "settings page: setHallucinationFilterEnabled",
+    );
+  };
+
+  const handleToggleFastStyleShortDictations = (
+    event: ChangeEvent<HTMLInputElement>,
+  ) => {
+    logOnRejection(
+      setFastStyleShortDictationsEnabled(event.target.checked),
+      "settings page: setFastStyleShortDictationsEnabled",
     );
   };
 
@@ -1282,6 +1302,28 @@ export default function SettingsPage() {
           onClick={openPostProcessingDialog}
         />
       </SettingAnchor>
+      {availability.fast_styling_for_short_dictations && (
+        <SettingAnchor
+          settingKey="fast_styling_for_short_dictations"
+          highlight={highlight}
+        >
+          <SettingSection
+            title={
+              <FormattedMessage defaultMessage="Fast styling for short dictations" />
+            }
+            description={
+              <FormattedMessage defaultMessage="Style a word, a sentence, or about two sentences on your device instead of waiting for the post-processing provider. Longer dictations always use the provider." />
+            }
+            action={
+              <Switch
+                edge="end"
+                checked={fastStyleShortDictationsEnabled}
+                onChange={handleToggleFastStyleShortDictations}
+              />
+            }
+          />
+        </SettingAnchor>
+      )}
       <SettingAnchor settingKey="assistant_mode" highlight={highlight}>
         <ListTile
           title={

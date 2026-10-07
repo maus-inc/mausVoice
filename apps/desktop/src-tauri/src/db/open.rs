@@ -398,7 +398,7 @@ async fn retire_consolidated_migrations(
 ///
 /// That is a shipped-blocker, not a latent one: 073 and 074 are in the released 0.1.6, so
 /// every database that release wrote carries these two names, and this build ships 1-70 plus
-/// 89 and 90, so both versions are unconfigured here and both go down the retirement path.
+/// 89 through 91, so both versions are unconfigured here and both go down the retirement path.
 /// `a_database_written_by_the_released_0_1_6_upgrades` is the test that failed before this
 /// fix; it takes the four names from the released branch's own registrations rather than
 /// from this list, which is the only way a typo in the list can be caught by anything.

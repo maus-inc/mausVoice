@@ -15,6 +15,10 @@
  */
 
 import {
+  isSpokenNumberWord,
+  normalizeSpokenForms,
+} from "./inverse-text-normalization.utils";
+import {
   BULLETS_TONE_ID,
   CHAT_TONE_ID,
   CONCISE_TONE_ID,
@@ -422,13 +426,89 @@ const REDUNDANT_PHRASES: Array<[RegExp, string]> = [
   [/\bfor the purpose of\b/gi, "for"],
 ];
 
+const SPOKEN_TLD_SOURCE = "com|org|net|io|ai|co|dev|app";
+
 const SYMBOL_MAP: Array<[RegExp, string]> = [
   [/\bhashtag\b\s*/gi, "#"],
   [/\bat sign\b\s*/gi, "@"],
-  [/\bdot com\b/gi, ".com"],
   [/\bnew line\b/gi, "\n"],
   [/\bnew paragraph\b/gi, "\n\n"],
 ];
+
+// Grammar rather than content. In front of "dot" these words make a phrase
+// ("the dot com bubble"), not a domain, and as the local part of a spoken
+// address they are what "at" already said ("look at example.com"), so both
+// address rules refuse them.
+const SPOKEN_ADDRESS_STOPWORDS = new Set([
+  "a",
+  "an",
+  "the",
+  "this",
+  "that",
+  "these",
+  "those",
+  "my",
+  "your",
+  "our",
+  "their",
+  "its",
+  "his",
+  "her",
+  "him",
+  "them",
+  "me",
+  "it",
+  "us",
+  "you",
+  "i",
+  "we",
+  "they",
+  "he",
+  "she",
+  "there",
+  "here",
+  "now",
+  "then",
+  "look",
+  "back",
+  "no",
+  "not",
+  "each",
+  "every",
+  "one",
+  "all",
+  "some",
+  "any",
+]);
+
+// A spoken domain is "<host> dot <tld>". The host is what keeps the space in
+// "example dot com" from becoming "example .com", and it has to be introduced
+// the way an address is: "to", "at", "is", a preposition, or one of the words
+// that name a site. Without that, the host is whatever noun sat in front of
+// "dot" -- the earlier rule that joined the pair on its own wrote
+// "The.com bubble" and "in the.com folder", and matching any two words wrote
+// "we use.com". "dot" is as common as "at", so the frame is the evidence that
+// separates an address from a phrase, exactly as it does for the email rule. A
+// dictation that is only a domain ("example dot com" on its own) therefore keeps
+// its words, which is the price of never inventing one.
+const SPOKEN_DOMAIN_FRAME_SOURCE = "to|is|at|on|from|via|visit|called|named";
+const SPOKEN_DOMAIN_FRAMES: ReadonlySet<string> = new Set(
+  SPOKEN_DOMAIN_FRAME_SOURCE.split("|"),
+);
+const SPOKEN_DOMAIN_RE = new RegExp(
+  String.raw`\b([\p{L}\p{N}][\p{L}\p{N}-]*)\s+dot\s?(${SPOKEN_TLD_SOURCE})\b`,
+  "giu",
+);
+
+// A spoken email address: "<local part> at <domain>.<tld>". "at" is one of the
+// commonest words in English, so the local part must be introduced by a frame
+// that promises an address ("to", "is", "contact"...) and must not itself be a
+// function word, otherwise "look at example.com" would lose its verb.
+const SPOKEN_EMAIL_FRAME_SOURCE = "to|is|contact|reach";
+const SPOKEN_EMAIL_RE = new RegExp(
+  String.raw`\b(${SPOKEN_EMAIL_FRAME_SOURCE})\s+([\p{L}\p{N}._%+-]{2,})\s+at\s+([\p{L}\p{N}-]+\.(?:${SPOKEN_TLD_SOURCE}))\b`,
+  "giu",
+);
 
 const capitalizeFirst = (s: string): string =>
   s.length === 0 ? s : s[0].toUpperCase() + s.slice(1);
@@ -483,6 +563,15 @@ const splitIntoSentences = (text: string): string[] => {
   return [normalized];
 };
 
+/**
+ * Sentence count under the same definition the transforms split on: a text
+ * with no sentence terminator is one sentence, not zero. Callers that decide
+ * whether input is short enough for the local path use this rather than a
+ * second, drifting definition of a sentence.
+ */
+export const countFastStyleSentences = (text: string): number =>
+  splitIntoSentences(text).length;
+
 const removeFillerWords = (
   text: string,
   aggressive = false,
@@ -521,7 +610,12 @@ const removeFillerWords = (
     out = out.replace(EXTRA_FILLER_COMMA_MID_RE, " ");
     if (startsSentence) out = out.replace(EXTRA_FILLER_COMMA_LEADING_RE, " ");
   }
-  out = out.replace(REPEATED_WORD_RE, "$1");
+  // A repeated number word is a number, not a stutter: "twenty twenty six" is a
+  // year and "nine nine nine" is what it looks like, and the written-form pass
+  // reads the repetition to tell both apart from a count.
+  out = out.replace(REPEATED_WORD_RE, (match, word: string) =>
+    isSpokenNumberWord(word) ? match : word,
+  );
   out = out.replace(/\s{2,}/g, " ").trim();
   // Only on a chunk that really does open a sentence. `SO_WELL_LEADING_RE` is anchored
   // to `^` and it DELETES, so on a chunk cut at whitespace it would take a connective the
@@ -532,10 +626,133 @@ const removeFillerWords = (
   return out;
 };
 
+// Self-correction markers that do not need the comma the precise pattern
+// requires. "make that" and "wait no" are part of the shape of the sentence, and
+// so is the corrected value itself: only the single token before the marker is
+// dropped, which is what keeps "send the report by friday no wait thursday" as
+// "send the report by thursday" instead of losing the request with the date.
+const SELF_CORRECTION_MARKER_SOURCE =
+  "no wait make that|no wait|wait no|make that|or rather|sorry i meant|i meant";
+
+const SELF_CORRECTION_UNPUNCTUATED_RE = new RegExp(
+  String.raw`(\S+)(\s+(?:${SELF_CORRECTION_MARKER_SOURCE})\s*,?\s+)(\S+)`,
+  "gi",
+);
+
+// The last word of every marker phrase. The pattern matches a marker from the
+// token in front of it, so a marker at the start of the text can hand its own
+// word in as the lead: "no wait make that thursday" put "wait" in front of
+// "make that" and the token before it was deleted, turning the dictation into
+// "No Thursday." A lead that is itself part of a marker is not a value being
+// corrected.
+const SELF_CORRECTION_MARKER_TAILS: ReadonlySet<string> = new Set(
+  SELF_CORRECTION_MARKER_SOURCE.split("|").map(
+    (marker) => marker.split(" ").pop() ?? "",
+  ),
+);
+
+// A token that makes the phrase in front of the marker an ordinary English
+// phrase rather than a value being corrected: "there is no wait at the clinic".
+const SELF_CORRECTION_LEAD_STOPLIST = new Set([
+  "is",
+  "was",
+  "are",
+  "were",
+  "be",
+  "been",
+  "being",
+  "there",
+  "the",
+  "a",
+  "an",
+  "and",
+  "but",
+  "or",
+  "with",
+  "without",
+  "of",
+  "for",
+  "in",
+  "on",
+  "at",
+  "no",
+  "not",
+  "have",
+  "has",
+  "had",
+  "do",
+  "does",
+  "did",
+  "will",
+  "would",
+  "can",
+  "could",
+  "should",
+  "must",
+  "may",
+  "might",
+  "to",
+  "from",
+  "so",
+  "then",
+  "if",
+  "when",
+  "while",
+  "after",
+  "before",
+]);
+
+/**
+ * The word inside a token, for comparing a lead against the stoplists.
+ *
+ * A possessive or contraction is compared as the word it wraps, so "there's no
+ * wait at the clinic" reads as "there" and is recognised as ordinary grammar.
+ */
+const selfCorrectionWord = (text: string): string =>
+  text
+    .toLowerCase()
+    .replace(/[^a-z'\u2019]/gu, "")
+    .replace(/(?:n['\u2019]t|['\u2019]s)$/u, "");
+
+/**
+ * Whether a spoken self-correction should drop the word in front of its marker.
+ *
+ * False when the marker is preceded by grammar rather than a value ("there is
+ * no wait at the clinic"), when the lead is itself part of a marker phrase ("no
+ * wait make that thursday" handed in "wait"), or when an infinitive follows the
+ * marker ("sorry i meant to call you" is an apology, not a correction).
+ */
+const isSelfCorrection = (lead: string, after: string): boolean => {
+  const cleanedLead = selfCorrectionWord(lead);
+  if (!cleanedLead || SELF_CORRECTION_LEAD_STOPLIST.has(cleanedLead)) {
+    return false;
+  }
+  if (SELF_CORRECTION_MARKER_TAILS.has(cleanedLead)) return false;
+  return selfCorrectionWord(after) !== "to";
+};
+
 const fixSelfCorrections = (text: string): string => {
   if (text.length > SELF_CORRECTION_MAX_CHARS) return text;
   let out = text;
   try {
+    out = out.replace(
+      SELF_CORRECTION_UNPUNCTUATED_RE,
+      (
+        match,
+        lead: string,
+        _marker: string,
+        after: string,
+        offset: number,
+        whole: string,
+      ) => {
+        if (!isSelfCorrection(lead, after)) return match;
+        // The deleted span may have opened a sentence, in which case the word
+        // that follows it needs the capital back.
+        const before = whole.slice(0, offset);
+        const opensSentence = before.length === 0 || /[.!?]\s+$/.test(before);
+        return opensSentence ? capitalizeFirst(after) : after;
+      },
+    );
     out = out.replace(SELF_CORRECTION_PRECISE_RE, "");
   } catch {
     return text;
@@ -543,12 +760,38 @@ const fixSelfCorrections = (text: string): string => {
   return out.replace(/\s{2,}/g, " ").trim();
 };
 
+const joinSpokenDomains = (text: string): string =>
+  text.replace(
+    SPOKEN_DOMAIN_RE,
+    (
+      match,
+      host: string,
+      tld: string,
+      offset: number,
+      whole: string,
+    ): string => {
+      if (SPOKEN_ADDRESS_STOPWORDS.has(host.toLowerCase())) return match;
+      const before = whole.slice(0, offset).match(/(\S+)\s+$/);
+      const frame = before?.[1].toLowerCase().replace(/[^a-z]/g, "") ?? "";
+      return SPOKEN_DOMAIN_FRAMES.has(frame) ? `${host}.${tld}` : match;
+    },
+  );
+
+const joinSpokenEmails = (text: string): string =>
+  text.replace(
+    SPOKEN_EMAIL_RE,
+    (match, frame: string, localPart: string, domain: string) => {
+      if (SPOKEN_ADDRESS_STOPWORDS.has(localPart.toLowerCase())) return match;
+      return `${frame} ${localPart}@${domain}`;
+    },
+  );
+
 const applySymbolReplacements = (text: string): string => {
   let out = text;
   for (const [re, repl] of SYMBOL_MAP) {
     out = out.replace(re, repl);
   }
-  return out;
+  return joinSpokenEmails(joinSpokenDomains(out));
 };
 
 const fixCapitalizationAndPunctuation = (
@@ -1058,9 +1301,121 @@ const applyStyleToChunk = (
  * tone restructures the WHOLE dictation rather than each chunk, so `applyFastStyle` handles
  * it before `applyStyleToChunk` is reached and there is no `toNotes` to name here.
  */
+// Weekday and month names are proper nouns in written English, and the API
+// styles capitalize them ("Fix grammar, punctuation, and formatting"), so the
+// local path has to as well or a short dictation that routes locally reads
+// worse than the same text sent to the provider. "march", "may" and "august"
+// are left out: they are ordinary words too ("we march first", "you may").
+const CALENDAR_WORD_RE =
+  /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday|january|february|april|june|july|september|october|november|december)\b/gi;
+
+const capitalizeCalendarWords = (text: string): string =>
+  text.replace(CALENDAR_WORD_RE, (match) => capitalizeFirst(match));
+
+// Words whose lowercase spelling is common enough that a dictionary term
+// matching one of them must not be applied case-insensitively.
+const COMMON_WORD_TERMS: ReadonlySet<string> = new Set([
+  "it",
+  "is",
+  "us",
+  "no",
+  "so",
+  "to",
+  "in",
+  "on",
+  "at",
+  "be",
+  "as",
+  "an",
+  "or",
+  "of",
+  "my",
+  "me",
+  "he",
+  "we",
+  "do",
+  "go",
+  "if",
+  "up",
+  "off",
+  "one",
+  "all",
+  "and",
+  "the",
+  "for",
+  "you",
+  "but",
+  "not",
+  "now",
+  "new",
+  "may",
+  "data",
+  "test",
+  "app",
+]);
+
+export type FastStyleOptions = {
+  /**
+   * Canonical spellings from the user's dictionary. A term that appears with a
+   * different casing in the output is rewritten to the dictionary's spelling.
+   */
+  dictionaryTerms?: readonly string[];
+};
+
+const applyDictionaryCasing = (
+  text: string,
+  terms: readonly string[] | undefined,
+): string => {
+  if (!text || !terms || terms.length === 0) return text;
+  // Longest first, so a term that contains another is not half-rewritten.
+  const candidates = terms
+    .filter(
+      (term) =>
+        term.length >= 2 &&
+        // Unicode-aware: "Beyoncé" and "École" carry a capital the ASCII test
+        // could not see.
+        term !== term.toLowerCase() &&
+        /^[\p{L}\p{N}]/u.test(term) &&
+        /[\p{L}\p{N}]$/u.test(term) &&
+        // A term that is an ordinary lowercase word ("IT", "US", "No") would
+        // rewrite every occurrence of that word. The dictionary is there to fix
+        // spelling, not to recase the language.
+        !COMMON_WORD_TERMS.has(term.toLowerCase()),
+    )
+    .sort((a, b) => b.length - a.length);
+  let out = text;
+  for (const term of candidates) {
+    const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    // Lookarounds rather than `\b`: the ASCII word boundary never matched a
+    // term that starts or ends in a non-ASCII letter ("Beyoncé"), so those
+    // terms were silently skipped.
+    const pattern = `(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`;
+    out = out.replace(new RegExp(pattern, "giu"), (match) =>
+      match === term ? match : term,
+    );
+  }
+  return out;
+};
+
+/**
+ * The written-form and dictionary passes run once, on the finished text, so a
+ * phrase split across two chunks is still recognised as one phrase.
+ */
+const finalizeFastStyle = (
+  styled: string,
+  options: FastStyleOptions,
+): string => {
+  const withWrittenForms = normalizeSpokenForms(styled);
+  const withCalendarCasing = capitalizeCalendarWords(withWrittenForms);
+  // Dictionary terms run last, so the user's spelling outranks the built-in
+  // casing rules for anything they have added a term for.
+  return applyDictionaryCasing(withCalendarCasing, options.dictionaryTerms);
+};
+
 export const applyFastStyle = (
   rawTranscript: string,
   toneId: string | null,
+  options: FastStyleOptions = {},
 ): string => {
   const trimmed = rawTranscript.trim();
   if (!trimmed) return trimmed;
@@ -1098,11 +1453,11 @@ export const applyFastStyle = (
           ),
         { notes: [], actions: [] },
       );
-      return renderNotes(buckets);
+      return finalizeFastStyle(renderNotes(buckets), options);
     }
 
     const lastIndex = chunks.length - 1;
-    return chunks
+    const styled = chunks
       .map((chunk, index) =>
         applyStyleToChunk(chunk.text, toneId, {
           isFirst: index === 0,
@@ -1111,6 +1466,7 @@ export const applyFastStyle = (
         }),
       )
       .join(CHUNK_JOIN_BY_TONE[toneId] ?? " ");
+    return finalizeFastStyle(styled, options);
   } catch {
     // A transform threw. The raw transcript is the only answer that cannot lose
     // what was said, so it is what the caller gets.
@@ -1144,6 +1500,21 @@ const FAST_STYLE_TONE_IDS: ReadonlySet<string> = new Set([
   BULLETS_TONE_ID,
   CONCISE_TONE_ID,
   NOTES_TONE_ID,
+]);
+
+/**
+ * The built-in prose styles, the subset of [`FAST_STYLE_TONE_IDS`] whose local
+ * transform only edits prose in place. The structured styles (email, bullets,
+ * notes) are excluded from short-dictation routing because they restructure the
+ * text, and restructuring is the part an LLM does better; they still take the
+ * local transform when no LLM is configured.
+ */
+export const FAST_STYLE_PROSE_TONE_IDS: ReadonlySet<string> = new Set([
+  POLISHED_TONE_ID,
+  CHAT_TONE_ID,
+  FORMAL_TONE_ID,
+  PROMPT_TONE_ID,
+  CONCISE_TONE_ID,
 ]);
 
 /**

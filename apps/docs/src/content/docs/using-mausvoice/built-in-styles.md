@@ -27,6 +27,10 @@ Older installations may still show a deprecated built-in such as Light, Casual, 
 
 Verbatim and globally turning **AI post processing** Off both avoid the generative rewrite, but their scope differs: Verbatim is a selectable style, so another app or the next manual selection can still use post-processing. The global Off setting disables rewriting for every style.
 
+## Local styling for short dictations
+
+Polished, Chat, Concise, Formal, and Prompt have deterministic local transforms. When post-processing is on and an English dictation is at most two sentences, about thirty words, and under two hundred characters, those transforms style it directly instead of calling the provider, so the result is instant and the post-processing step runs on the computer. The transform handles filler, false starts, repetitions, self-corrections, spoken symbols and domains, spoken dates, times, numbers, currency and percentages, and capitalizes day and month names. Longer dictations, and dictations in another language or in Auto-detect, still use the provider, which is where grammar rewriting and restructuring happen. Turn this off under **Settings → AI and processing → Fast styling for short dictations**.
+
 ## Output accuracy
 
 Model output for Polished, Email, Chat, and custom styles is probabilistic. Compare Raw and final text in History before trusting a style with legal wording, code, names, dates, or quotations.
