@@ -425,57 +425,6 @@ export type PostTranscriptInput = {
   persistAllowedAtCapture?: boolean;
 };
 
-export const postProcessFinalizedTranscript = async (
-  input: PostTranscriptInput,
-): Promise<RawStopResp> => {
-  const { strategy } = input;
-  if (input.isAgentMode) {
-    await input.sendIdle();
-  }
-  getLogger().info("Post-processing transcript");
-  const result = await withTimeout(
-    strategy.handleTranscript({
-      rawTranscript: input.rawTranscript,
-      processedTranscript: input.transcribeResult.processedTranscript,
-      serverPostProcessMetadata: input.transcribeResult.postProcessMetadata,
-      toneId: input.toneId,
-      a11yInfo: input.a11yInfo,
-      currentApp: input.appTarget,
-      loadingToken: null,
-      audio: input.audio,
-      transcriptionMetadata: input.transcribeResult.metadata,
-      transcriptionWarnings: input.transcribeResult.warnings,
-      persistReviewedTranscript: input.persistReviewedTranscript,
-      trace: input.trace ?? null,
-    }),
-    input.handleTranscriptTimeoutMs,
-    "Transcript post-processing",
-  );
-  const transcript = result.transcript;
-  const sanitizedTranscript = result.sanitizedTranscript;
-  const postProcessMetadata = result.postProcessMetadata;
-  const postProcessWarnings = result.postProcessWarnings;
-  getLogger().verbose(
-    `Post-processing complete: transcript=${transcript ? `${transcript.length} chars` : "empty"}, warnings=${postProcessWarnings.length}`,
-  );
-  await input.sendIdle();
-  scheduleStopPathHistory({
-    input,
-    strategy,
-    historyOwner: result.historyOwner,
-    transcript,
-    sanitizedTranscript,
-    postProcessMetadata,
-    postProcessWarnings,
-    remoteStatus: result.remoteStatus,
-    remoteDeviceId: result.remoteDeviceId,
-  });
-  input.refreshMember();
-  return {
-    shouldContinue: result.shouldContinue,
-  };
-};
-
 const scheduleStopPathHistory = ({
   input,
   strategy,
@@ -529,11 +478,10 @@ const scheduleStopPathHistory = ({
     notifyDroppedEnding("history");
   } else if (!willStore) {
     notifyDroppedEnding("not-saved");
-  }
-  if (willStore && isHistoryPersistQueueFull()) {
+  } else if (isHistoryPersistQueueFull()) {
     getLogger().warning("History persist queue full; skipping stop-path save");
     notifyDroppedEnding("not-saved");
-  } else if (willStore) {
+  } else {
     getLogger().verbose("Storing transcription");
     enqueueTranscriptionHistory(
       input.storeTranscriptionFn,
@@ -561,6 +509,57 @@ const scheduleStopPathHistory = ({
       },
     ).catch(() => undefined);
   }
+};
+
+export const postProcessFinalizedTranscript = async (
+  input: PostTranscriptInput,
+): Promise<RawStopResp> => {
+  const { strategy } = input;
+  if (input.isAgentMode) {
+    await input.sendIdle();
+  }
+  getLogger().info("Post-processing transcript");
+  const result = await withTimeout(
+    strategy.handleTranscript({
+      rawTranscript: input.rawTranscript,
+      processedTranscript: input.transcribeResult.processedTranscript,
+      serverPostProcessMetadata: input.transcribeResult.postProcessMetadata,
+      toneId: input.toneId,
+      a11yInfo: input.a11yInfo,
+      currentApp: input.appTarget,
+      loadingToken: null,
+      audio: input.audio,
+      transcriptionMetadata: input.transcribeResult.metadata,
+      transcriptionWarnings: input.transcribeResult.warnings,
+      persistReviewedTranscript: input.persistReviewedTranscript,
+      trace: input.trace ?? null,
+    }),
+    input.handleTranscriptTimeoutMs,
+    "Transcript post-processing",
+  );
+  const transcript = result.transcript;
+  const sanitizedTranscript = result.sanitizedTranscript;
+  const postProcessMetadata = result.postProcessMetadata;
+  const postProcessWarnings = result.postProcessWarnings;
+  getLogger().verbose(
+    `Post-processing complete: transcript=${transcript ? `${transcript.length} chars` : "empty"}, warnings=${postProcessWarnings.length}`,
+  );
+  await input.sendIdle();
+  scheduleStopPathHistory({
+    input,
+    strategy,
+    historyOwner: result.historyOwner,
+    transcript,
+    sanitizedTranscript,
+    postProcessMetadata,
+    postProcessWarnings,
+    remoteStatus: result.remoteStatus,
+    remoteDeviceId: result.remoteDeviceId,
+  });
+  input.refreshMember();
+  return {
+    shouldContinue: result.shouldContinue,
+  };
 };
 
 type StopContext = {
