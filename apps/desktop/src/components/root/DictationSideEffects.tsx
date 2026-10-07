@@ -452,11 +452,15 @@ const scheduleStopPathHistory = ({
   // pill after a failure it told the user to retry from. Writing here in that
   // last case would contradict the toast and duplicate the row on the retry.
   const owner = historyOwner ?? "stop-path";
-  const willStore = strategy.shouldStoreTranscript() && owner === "stop-path";
-  const droppedChars = postProcessMetadata?.fastStyleTruncatedChars;
   const persistAllowedAtStop =
     (input.persistAllowedAtCapture ?? isPersistenceAllowed()) &&
     isPersistenceAllowed();
+  const canEnqueue =
+    strategy.shouldStoreTranscript() &&
+    owner === "stop-path" &&
+    persistAllowedAtStop &&
+    !isHistoryPersistQueueFull();
+  const droppedChars = postProcessMetadata?.fastStyleTruncatedChars;
   const notifyDroppedEnding = (kind: "history" | "not-saved"): void => {
     if (typeof droppedChars !== "number" || droppedChars <= 0) {
       return;
@@ -472,16 +476,7 @@ const scheduleStopPathHistory = ({
     );
   };
 
-  if (!persistAllowedAtStop) {
-    notifyDroppedEnding("not-saved");
-  } else if (owner === "review") {
-    notifyDroppedEnding("history");
-  } else if (!willStore) {
-    notifyDroppedEnding("not-saved");
-  } else if (isHistoryPersistQueueFull()) {
-    getLogger().warning("History persist queue full; skipping stop-path save");
-    notifyDroppedEnding("not-saved");
-  } else {
+  if (canEnqueue) {
     getLogger().verbose("Storing transcription");
     enqueueTranscriptionHistory(
       input.storeTranscriptionFn,
@@ -508,7 +503,16 @@ const scheduleStopPathHistory = ({
         },
       },
     ).catch(() => undefined);
+    return;
   }
+  if (
+    strategy.shouldStoreTranscript() &&
+    owner === "stop-path" &&
+    persistAllowedAtStop
+  ) {
+    getLogger().warning("History persist queue full; skipping stop-path save");
+  }
+  notifyDroppedEnding(owner === "review" ? "history" : "not-saved");
 };
 
 export const postProcessFinalizedTranscript = async (
