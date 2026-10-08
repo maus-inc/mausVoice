@@ -215,15 +215,18 @@ const fetchGeminiModelCatalog = async (
 ): Promise<GeminiModel[] | null> => {
   const models: GeminiModel[] = [];
   const seenPageTokens = new Set<string>();
-  let pageToken: string | undefined;
-
-  do {
+  // `undefined` starts discovery; `null` marks a page with no continuation.
+  let pageToken: string | null | undefined;
+  while (pageToken !== null) {
     const payload = await fetchGeminiModelPage(apiKey, pageToken);
     if (!payload) return null;
     models.push(...(payload.models ?? []));
 
     const nextPageToken = payload.nextPageToken;
-    if (!nextPageToken) return models;
+    if (!nextPageToken) {
+      pageToken = null;
+      continue;
+    }
     if (seenPageTokens.has(nextPageToken)) {
       logModelDiscoveryFailure(
         "Gemini",
@@ -234,7 +237,7 @@ const fetchGeminiModelCatalog = async (
 
     seenPageTokens.add(nextPageToken);
     pageToken = nextPageToken;
-  } while (pageToken);
+  }
 
   return models;
 };
