@@ -190,6 +190,19 @@ function isGeminiTranscriptionModel(modelId: string): boolean {
 
 type GeminiModel = NonNullable<GeminiListResponse["models"]>[number];
 
+const GEMINI_REPEATED_PAGE_TOKEN = Symbol("repeated Gemini page token");
+type GeminiPageToken = string | null | typeof GEMINI_REPEATED_PAGE_TOKEN;
+
+const getNextGeminiPageToken = (
+  pageToken: string | undefined,
+  seenPageTokens: Set<string>,
+): GeminiPageToken => {
+  if (!pageToken) return null;
+  if (seenPageTokens.has(pageToken)) return GEMINI_REPEATED_PAGE_TOKEN;
+  seenPageTokens.add(pageToken);
+  return pageToken;
+};
+
 const fetchGeminiModelPage = async (
   apiKey: string,
   pageToken?: string,
@@ -222,20 +235,17 @@ const fetchGeminiModelCatalog = async (
     if (!payload) return null;
     models.push(...(payload.models ?? []));
 
-    const nextPageToken = payload.nextPageToken;
-    if (!nextPageToken) {
-      pageToken = null;
-      continue;
-    }
-    if (seenPageTokens.has(nextPageToken)) {
+    const nextPageToken = getNextGeminiPageToken(
+      payload.nextPageToken,
+      seenPageTokens,
+    );
+    if (nextPageToken === GEMINI_REPEATED_PAGE_TOKEN) {
       logModelDiscoveryFailure(
         "Gemini",
         "model discovery returned a repeated page token",
       );
       return null;
     }
-
-    seenPageTokens.add(nextPageToken);
     pageToken = nextPageToken;
   }
 
