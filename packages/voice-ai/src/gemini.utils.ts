@@ -270,19 +270,96 @@ const GEMINI_SCHEMA_TYPE_MAP: Record<string, string> = {
   boolean: "BOOLEAN",
   array: "ARRAY",
   object: "OBJECT",
+  null: "NULL",
 };
 
 type JsonSchemaConverter = (
   schema: Record<string, unknown>,
 ) => Record<string, unknown>;
 
+type JsonSchemaTypeConversion =
+  | { kind: "single"; type: unknown; nullable?: true }
+  | { kind: "union"; types: string[] };
+
+const isJsonSchemaObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const convertJsonSchemaTypeName = (type: string): string => {
+  const mappedType = GEMINI_SCHEMA_TYPE_MAP[type];
+  return typeof mappedType === "string" ? mappedType : type;
+};
+
+const normalizeJsonSchemaTypeArray = (types: unknown[]): string[] => {
+  if (types.length === 0) {
+    throw new TypeError("Gemini JSON Schema type unions cannot be empty");
+  }
+  return [
+    ...new Set(
+      types.map((type) => {
+        if (typeof type !== "string") {
+          throw new TypeError(
+            "Gemini JSON Schema type unions must contain only strings",
+          );
+        }
+        return type === "NULL" ? "null" : type;
+      }),
+    ),
+  ];
+};
+
+const convertJsonSchemaType = (value: unknown): JsonSchemaTypeConversion => {
+  if (typeof value === "string") {
+    return { kind: "single", type: convertJsonSchemaTypeName(value) };
+  }
+  if (!Array.isArray(value)) return { kind: "single", type: value };
+
+  const types = normalizeJsonSchemaTypeArray(value);
+  const nonNullableTypes = types.filter((type) => type !== "null");
+  if (nonNullableTypes.length === 0) {
+    return { kind: "single", type: "NULL" };
+  }
+  const singleType = nonNullableTypes[0];
+  if (nonNullableTypes.length === 1 && singleType !== undefined) {
+    return {
+      kind: "single",
+      type: convertJsonSchemaTypeName(singleType),
+      ...(types.includes("null") ? { nullable: true } : {}),
+    };
+  }
+  return { kind: "union", types };
+};
+
+const applyJsonSchemaType = (
+  schema: Record<string, unknown>,
+  conversion: JsonSchemaTypeConversion,
+): void => {
+  if (conversion.kind === "single") {
+    schema.type = conversion.type;
+    if (conversion.nullable) schema.nullable = true;
+    return;
+  }
+
+  const existingAnyOf = schema.anyOf;
+  const typeSchemas = conversion.types.map((type) => ({
+    type: convertJsonSchemaTypeName(type),
+  }));
+  if (existingAnyOf === undefined) {
+    schema.anyOf = typeSchemas;
+    return;
+  }
+  if (!Array.isArray(existingAnyOf)) {
+    throw new TypeError("Gemini JSON Schema anyOf must be an array");
+  }
+  schema.anyOf = typeSchemas.map((typeSchema) => ({
+    ...typeSchema,
+    anyOf: existingAnyOf,
+  }));
+};
+
 const convertJsonSchemaArrayItem = (
   item: unknown,
   convertSchema: JsonSchemaConverter,
-): unknown =>
-  typeof item === "object" && item !== null
-    ? convertSchema(item as Record<string, unknown>)
-    : item;
+): unknown => (isJsonSchemaObject(item) ? convertSchema(item) : item);
 
 const convertJsonSchemaValue = (
   value: unknown,
@@ -291,10 +368,20 @@ const convertJsonSchemaValue = (
   if (Array.isArray(value)) {
     return value.map((item) => convertJsonSchemaArrayItem(item, convertSchema));
   }
-  if (typeof value === "object" && value !== null) {
-    return convertSchema(value as Record<string, unknown>);
-  }
-  return value;
+  return convertJsonSchemaArrayItem(value, convertSchema);
+};
+
+const convertJsonSchemaProperties = (
+  value: unknown,
+  convertSchema: JsonSchemaConverter,
+): unknown => {
+  if (!isJsonSchemaObject(value)) return value;
+  return Object.fromEntries(
+    Object.entries(value).map(([name, schema]) => [
+      name,
+      convertJsonSchemaArrayItem(schema, convertSchema),
+    ]),
+  );
 };
 
 const convertJsonSchemaEntry = (
@@ -302,24 +389,32 @@ const convertJsonSchemaEntry = (
   value: unknown,
   convertSchema: JsonSchemaConverter,
 ): unknown => {
-  if (key === "type" && typeof value === "string") {
-    return GEMINI_SCHEMA_TYPE_MAP[value] ?? value;
+  switch (key) {
+    case "properties":
+      return convertJsonSchemaProperties(value, convertSchema);
+    case "items":
+    case "anyOf":
+      return convertJsonSchemaValue(value, convertSchema);
+    default:
+      return value;
   }
-  return convertJsonSchemaValue(value, convertSchema);
 };
 
 const convertJsonSchemaToGeminiSchema = (
   schema: Record<string, unknown>,
 ): Record<string, unknown> => {
-  if (!schema || typeof schema !== "object") return schema;
+  if (!isJsonSchemaObject(schema)) return schema;
 
-  const converted: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(schema)) {
-    converted[key] = convertJsonSchemaEntry(
-      key,
-      value,
-      convertJsonSchemaToGeminiSchema,
-    );
+  const converted: Record<string, unknown> = Object.fromEntries(
+    Object.entries(schema)
+      .filter(([key]) => key !== "type")
+      .map(([key, value]) => [
+        key,
+        convertJsonSchemaEntry(key, value, convertJsonSchemaToGeminiSchema),
+      ]),
+  );
+  if (Object.prototype.hasOwnProperty.call(schema, "type")) {
+    applyJsonSchemaType(converted, convertJsonSchemaType(schema.type));
   }
   return converted;
 };

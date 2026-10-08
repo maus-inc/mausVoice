@@ -634,6 +634,114 @@ describe("Gemini native transport", () => {
     expect(body).not.toHaveProperty("generationConfig");
   });
 
+  it("converts JSON Schema unions without rewriting example values", async () => {
+    const customFetch = vi
+      .fn()
+      .mockResolvedValue(
+        sseResponse([
+          'data: {"candidates":[{"content":{"parts":[{"text":"ok"}]}}]}\r\n\r\n',
+        ]),
+      );
+    const events = [];
+    for await (const event of geminiStreamChat({
+      apiKey: "gemini-key",
+      model: "gemini-3.8-flash",
+      input: {
+        messages: [{ role: "user", content: "Hello" }],
+        tools: [
+          {
+            name: "lookup",
+            parameters: {
+              type: "object",
+              properties: {
+                nullableName: {
+                  type: ["string", "null"],
+                  default: { type: "string" },
+                  examples: [{ type: "integer", nested: { type: "boolean" } }],
+                },
+                stringOrNumber: { type: ["string", "number"] },
+                nestedNullableArray: {
+                  type: "array",
+                  items: { type: ["integer", "null"] },
+                },
+                constrainedUnion: {
+                  type: ["string", "number"],
+                  anyOf: [
+                    { type: "integer" },
+                    {
+                      type: "object",
+                      properties: { enabled: { type: "boolean" } },
+                    },
+                  ],
+                },
+                regularAnyOf: {
+                  anyOf: [{ type: "string" }, { type: "number" }],
+                },
+              },
+            },
+          },
+        ],
+      },
+      customFetch,
+    })) {
+      events.push(event);
+    }
+
+    expect(events).toContainEqual({ type: "text-delta", text: "ok" });
+    const body = transportBody<{
+      tools?: Array<{
+        functionDeclarations?: Array<{
+          parameters?: Record<string, unknown>;
+        }>;
+      }>;
+    }>(customFetch.mock.calls, 0);
+    expect(body.tools?.[0]?.functionDeclarations?.[0]?.parameters).toEqual({
+      type: "OBJECT",
+      properties: {
+        nullableName: {
+          type: "STRING",
+          nullable: true,
+          default: { type: "string" },
+          examples: [{ type: "integer", nested: { type: "boolean" } }],
+        },
+        stringOrNumber: {
+          anyOf: [{ type: "STRING" }, { type: "NUMBER" }],
+        },
+        nestedNullableArray: {
+          type: "ARRAY",
+          items: { type: "INTEGER", nullable: true },
+        },
+        constrainedUnion: {
+          anyOf: [
+            {
+              type: "STRING",
+              anyOf: [
+                { type: "INTEGER" },
+                {
+                  type: "OBJECT",
+                  properties: { enabled: { type: "BOOLEAN" } },
+                },
+              ],
+            },
+            {
+              type: "NUMBER",
+              anyOf: [
+                { type: "INTEGER" },
+                {
+                  type: "OBJECT",
+                  properties: { enabled: { type: "BOOLEAN" } },
+                },
+              ],
+            },
+          ],
+        },
+        regularAnyOf: {
+          anyOf: [{ type: "STRING" }, { type: "NUMBER" }],
+        },
+      },
+    });
+  });
+
   it("reports a turn that ended in a function call as tool-calls", async () => {
     // Gemini has no tool-call finish reason: this turn is reported as a plain
     // STOP, which reads as "the model finished talking" on a turn that is
