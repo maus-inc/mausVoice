@@ -262,9 +262,9 @@ export type TranscriptionPrefs =
  * Providers with an implemented batch transcription route — i.e. parity with
  * the `getTranscribeAudioRepo()` switch branches in `repos/index.ts` (mirrored
  * here to avoid a circular import). This is NOT the same as the
- * `supportsTranscriptionModels()` capability flags: Azure is always available
- * in the transcription UI (special-cased by region in `ApiKeyList`), so
- * `AzureModelProviderRepo.supportsTranscriptionModels()` returns `false` while
+ * `supportsTranscriptionModels` capability flags: Azure is always available
+ * in the transcription UI (special-cased by region in `ApiKeyList`), so the
+ * `AzureModelProviderRepo.supportsTranscriptionModels` flag is `false` while
  * `azure` still has a real dispatch branch and must stay in this set. A
  * selected key whose provider is not in this set cannot be transcribed and is
  * treated as stale.

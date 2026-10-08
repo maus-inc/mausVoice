@@ -1154,8 +1154,6 @@ export const geminiGenerateTextResponse = ({
       const usageMetadata = response.usageMetadata;
       const tokensUsed = usageMetadata?.totalTokenCount ?? countWords(text);
 
-      console.log("gemini llm usage:", usageMetadata);
-
       return { text, tokensUsed };
     },
   });

@@ -36,8 +36,8 @@ vi.mock("../../actions/app.actions", () => ({
 
 vi.mock("../../repos", () => ({
   getModelProviderRepo: () => ({
-    supportsTranscriptionModels: () => true,
-    supportsGenerativeTextModels: () => true,
+    supportsTranscriptionModels: true,
+    supportsGenerativeTextModels: true,
     getTranscriptionModels: mocks.getTranscriptionModels,
     getGenerativeTextModels: mocks.getGenerativeTextModels,
   }),
