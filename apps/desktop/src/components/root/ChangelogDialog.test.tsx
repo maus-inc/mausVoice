@@ -118,7 +118,13 @@ describe("ChangelogDialog", () => {
     fetchChangelogMock.mockResolvedValueOnce([
       { ...entries[0], body: "[Details](https://example.com/notes)" },
     ]);
-    openUrlMock.mockRejectedValueOnce(new Error("opener unavailable"));
+    // The opener quotes the URL back in its rejection, which is how a remote
+    // URL would reach the log even after the caller stopped writing it there.
+    openUrlMock.mockRejectedValueOnce(
+      new Error(
+        "Failed to open https://example.com/notes?access_token=secret-value",
+      ),
+    );
     renderDialog();
     await flush();
     const anchor = document.querySelector("a")!;
@@ -132,11 +138,11 @@ describe("ChangelogDialog", () => {
     expect(loggerMock.warning).toHaveBeenCalledWith(
       expect.stringContaining("a link in the release notes"),
     );
-    // The URL is remote content from the GitHub API, so it is named in the log
-    // rather than written into it.
-    expect(loggerMock.warning).not.toHaveBeenCalledWith(
-      expect.stringContaining("https://example.com/notes"),
-    );
+    // Nothing about the URL reaches the log: not from this call site, and not
+    // through the opener's own message.
+    const logged = loggerMock.warning.mock.calls.flat().join(" ");
+    expect(logged).not.toContain("example.com");
+    expect(logged).not.toContain("secret-value");
     expect(window.location.href).toBe(startedAt);
 
     openUrlMock.mockResolvedValueOnce(undefined);
