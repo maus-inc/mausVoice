@@ -28,6 +28,7 @@ import {
 } from "../../actions/post-process-error-category";
 import {
   closeTranscriptionDetailsDialog,
+  getUnusableResponseType,
   openRetranscribeDialog,
 } from "../../actions/transcriptions.actions";
 import { AppState } from "../../state/app.state";
@@ -258,19 +259,39 @@ export const TranscriptionDetailsDialog = () => {
       .map((warning) => warning.trim())
       .filter((warning) => warning.length > 0)
       .map((warning) => {
-        if (!isPostProcessErrorCategory(warning)) return warning;
-        const feedback = getPostProcessFeedback(
-          {
-            postProcessFailed: transcription.postProcessFailed,
-            postProcessFallback: transcription.postProcessFallback,
-            postProcessError: warning,
-          },
-          "history-details",
-        );
-        return (
-          feedback?.message ??
-          intl.formatMessage(postProcessErrorReason(warning))
-        );
+        if (isPostProcessErrorCategory(warning)) {
+          const feedback = getPostProcessFeedback(
+            {
+              postProcessFailed: transcription.postProcessFailed,
+              postProcessFallback: transcription.postProcessFallback,
+              postProcessError: warning,
+            },
+            "history-details",
+          );
+          return (
+            feedback?.message ??
+            intl.formatMessage(postProcessErrorReason(warning))
+          );
+        }
+        // Rows that fell back after an unusable reply keep the raw marker as
+        // their warning, which means nothing to the user. Show the same
+        // explanation the retranscribe toast used.
+        if (
+          !transcription.postProcessFailed &&
+          transcription.postProcessFallback
+        ) {
+          const unusableFeedback = getPostProcessFeedback(
+            {
+              postProcessFailed: false,
+              postProcessFallback: true,
+              postProcessError: null,
+            },
+            "history-details",
+            { unusableResponseType: getUnusableResponseType(warning) },
+          );
+          if (unusableFeedback) return unusableFeedback.message;
+        }
+        return warning;
       });
   }, [
     intl,

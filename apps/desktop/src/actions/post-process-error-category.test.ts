@@ -131,6 +131,30 @@ describe("classifyPostProcessErrorCategory", () => {
     ).toBe(POST_PROCESS_ERROR_CATEGORY.rateLimit);
   });
 
+  it("reads quota and limit wording from a 401 or 403 before calling it authentication", () => {
+    expect(
+      classifyPostProcessErrorCategory({
+        status: 403,
+        message: "Your credit balance is too low to access the API.",
+      }),
+    ).toBe(POST_PROCESS_ERROR_CATEGORY.quotaOrPayment);
+    expect(
+      classifyPostProcessErrorCategory({
+        status: 401,
+        message: "OpenRouter in-flight budget exhausted",
+      }),
+    ).toBe(POST_PROCESS_ERROR_CATEGORY.providerLimit);
+    expect(
+      classifyPostProcessErrorCategory({
+        status: 401,
+        message: "Too many requests; retry later.",
+      }),
+    ).toBe(POST_PROCESS_ERROR_CATEGORY.rateLimit);
+    expect(classifyPostProcessErrorCategory({ status: 403 })).toBe(
+      POST_PROCESS_ERROR_CATEGORY.authentication,
+    );
+  });
+
   it("recognizes OpenRouter's transient in-flight budget before quota wording", () => {
     expect(
       classifyPostProcessErrorCategory({

@@ -375,7 +375,7 @@ export const postProcessFinalizedTranscript = async (
   // A fast-style result can report an unstyled tail. Show that feedback only
   // after storage tells us whether History can recover the original text.
   const truncatedMessage = getFastStyleTruncationMessage(
-    postProcessMetadata?.fastStyleTruncatedChars,
+    postProcessMetadata.fastStyleTruncatedChars,
     {
       canRecoverFromHistory: historyEntryAvailable,
       context: "dictation",

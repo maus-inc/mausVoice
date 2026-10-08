@@ -269,6 +269,48 @@ describe("retranscribeTranscription feedback", () => {
     );
   });
 
+  it("keeps both rows' feedback when a batch finishes two styled fallbacks", async () => {
+    seedTranscription("a");
+    seedTranscription("b");
+    postProcessTranscript
+      .mockResolvedValueOnce({
+        transcript: "Styled transcript A",
+        warnings: [],
+        metadata: {
+          postProcessFailed: false,
+          postProcessFallback: true,
+          postProcessError: POST_PROCESS_ERROR_CATEGORY.quotaOrPayment,
+        },
+      })
+      .mockResolvedValueOnce({
+        transcript: "Styled transcript B",
+        warnings: [],
+        metadata: {
+          postProcessFailed: false,
+          postProcessFallback: true,
+          postProcessError: POST_PROCESS_ERROR_CATEGORY.rateLimit,
+        },
+      });
+
+    await Promise.all([
+      retranscribeTranscription({ transcriptionId: "a" }),
+      retranscribeTranscription({ transcriptionId: "b" }),
+    ]);
+
+    const firstMessage =
+      "Online styling failed because the provider reported a quota or billing issue. Your local style was applied instead.";
+    const secondMessage =
+      "Online styling failed because the provider rate limit was reached. Your local style was applied instead.";
+    const completionCalls = showCompletionToast.mock
+      .calls as unknown as readonly [string, number?, string?][];
+    const mergedCall = completionCalls.find(([message]) =>
+      message.includes(secondMessage),
+    );
+    expect(mergedCall?.[0]).toContain(firstMessage);
+    expect(mergedCall?.[0]).toContain(secondMessage);
+    expect(mergedCall?.[1]).toBe(8_000);
+  });
+
   it("recovers cleanly on error so the row is enabled again", async () => {
     seedTranscription("a");
     loadTranscriptionAudio.mockRejectedValue(new Error("no audio"));
@@ -786,7 +828,7 @@ describe("retranscribeTranscription persistence gate", () => {
 
     expect(updateTranscription).not.toHaveBeenCalled();
     expect(showSnackbar).toHaveBeenCalledWith(
-      "Styling failed because the provider request or usage limit was reached. History does not contain the raw transcript.",
+      "Styling failed because the provider request or usage limit was reached. The raw transcript is available in this session, but was not saved in History.",
       expect.objectContaining({ mode: "error", action: undefined }),
     );
   });
@@ -1401,7 +1443,7 @@ describe("importAudioFile post-processing feedback", () => {
     await runImportAudioFile({ toneId: "default" });
 
     expect(showSnackbar).toHaveBeenCalledWith(
-      "Styling failed because the provider request or usage limit was reached. History does not contain the raw transcript.",
+      "Styling failed because the provider request or usage limit was reached. The raw transcript is available in this session, but was not saved in History.",
       expect.objectContaining({ mode: "error", action: undefined }),
     );
   });
@@ -1437,7 +1479,7 @@ describe("importAudioFile post-processing feedback", () => {
     await runImportAudioFile({ toneId: "default" });
 
     expect(showSnackbar).toHaveBeenCalledWith(
-      "The online styling reply was unusable. History does not contain the original transcript.",
+      "The online styling reply was unusable. The original transcript is available in this session, but was not saved in History.",
       expect.objectContaining({ mode: "info", action: undefined }),
     );
   });

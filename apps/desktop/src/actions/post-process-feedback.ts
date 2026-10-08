@@ -42,9 +42,11 @@ const STYLING_FAILED_WITHOUT_HISTORY_DICTATION_MESSAGE = defineMessage({
   defaultMessage:
     "Styling failed because {reason}. The app did not insert the transcript or save it in History.",
 });
+// The run's raw transcript still sits on the session's History row; only
+// the permanent copy is missing, so the wording must not claim History lost it.
 const STYLING_FAILED_WITHOUT_HISTORY_MESSAGE = defineMessage({
   defaultMessage:
-    "Styling failed because {reason}. History does not contain the raw transcript.",
+    "Styling failed because {reason}. The raw transcript is available in this session, but was not saved in History.",
 });
 const UNUSABLE_DICTATION_MESSAGE = defineMessage({
   defaultMessage: "Online styling could not be used for this dictation.",
@@ -83,9 +85,11 @@ const UNUSABLE_IMPORT_MESSAGE = defineMessage({
   defaultMessage:
     "The original transcript was saved because the online styling reply was unusable.",
 });
+// The import keeps a session-only History row with the original transcript,
+// so say it is available for now rather than claim History never got it.
 const UNUSABLE_IMPORT_WITHOUT_HISTORY_MESSAGE = defineMessage({
   defaultMessage:
-    "The online styling reply was unusable. History does not contain the original transcript.",
+    "The online styling reply was unusable. The original transcript is available in this session, but was not saved in History.",
 });
 const FAST_STYLE_TRUNCATION_DICTATION_MESSAGE = defineMessage({
   defaultMessage:

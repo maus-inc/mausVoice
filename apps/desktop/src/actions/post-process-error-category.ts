@@ -329,11 +329,34 @@ const classifyStructuredDetails = (
 
 const CATEGORY_BY_STATUS: ReadonlyMap<number, PostProcessErrorCategory> =
   new Map([
-    [401, POST_PROCESS_ERROR_CATEGORY.authentication],
-    [403, POST_PROCESS_ERROR_CATEGORY.authentication],
     [408, POST_PROCESS_ERROR_CATEGORY.timedOut],
     [504, POST_PROCESS_ERROR_CATEGORY.timedOut],
   ]);
+
+// A billing failure can arrive as a 401 or 403 with quota wording in the body,
+// so the prose checks run ahead of the authentication verdict: a user with an
+// exhausted balance belongs on the billing screen, and sending them to replace
+// a key that works is the more expensive of the two mistakes.
+const AUTHENTICATION_STATUS_RULES: readonly ClassificationRule[] = [
+  {
+    markers: OPENROUTER_IN_FLIGHT_BUDGET_MARKERS,
+    category: POST_PROCESS_ERROR_CATEGORY.providerLimit,
+  },
+  {
+    markers: QUOTA_OR_BILLING_MESSAGE_MARKERS,
+    category: POST_PROCESS_ERROR_CATEGORY.quotaOrPayment,
+  },
+  {
+    markers: RATE_LIMIT_MESSAGE_MARKERS,
+    category: POST_PROCESS_ERROR_CATEGORY.rateLimit,
+  },
+];
+
+const classifyAuthenticationStatus = (
+  message: string,
+): PostProcessErrorCategory =>
+  matchClassificationRules(message, AUTHENTICATION_STATUS_RULES) ??
+  POST_PROCESS_ERROR_CATEGORY.authentication;
 
 const classifyPaymentRequiredStatus = (
   message: string,
@@ -361,13 +384,28 @@ const classifyRateLimitedStatus = (message: string): PostProcessErrorCategory =>
   matchClassificationRules(message, RATE_LIMITED_STATUS_RULES) ??
   POST_PROCESS_ERROR_CATEGORY.providerLimit;
 
+// Statuses that only narrow further once the message is read. 401 and 403 stay
+// here because a billing or limit failure can surface under them.
+const AUTHENTICATION_STATUSES: ReadonlySet<number> = new Set([401, 403]);
+
+const STATUS_MESSAGE_CLASSIFIERS = new Map<
+  number,
+  (message: string) => PostProcessErrorCategory
+>([
+  [402, classifyPaymentRequiredStatus],
+  [429, classifyRateLimitedStatus],
+]);
+
 const classifyStatus = (
   status: number | undefined,
   message: string,
 ): PostProcessErrorCategory | undefined => {
   if (status === undefined) return undefined;
-  if (status === 402) return classifyPaymentRequiredStatus(message);
-  if (status === 429) return classifyRateLimitedStatus(message);
+  if (AUTHENTICATION_STATUSES.has(status)) {
+    return classifyAuthenticationStatus(message);
+  }
+  const classifier = STATUS_MESSAGE_CLASSIFIERS.get(status);
+  if (classifier) return classifier(message);
   if (status >= 500) return POST_PROCESS_ERROR_CATEGORY.provider;
   return CATEGORY_BY_STATUS.get(status);
 };

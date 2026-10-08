@@ -159,7 +159,7 @@ const getUnstyledRunReason = (
     ? (metadata.postProcessError ?? "")
     : (postProcessWarnings.at(-1) ?? "");
 
-const getUnusableResponseType = (
+export const getUnusableResponseType = (
   reason: string,
 ): "truncated" | "unreadable" | undefined => {
   if (!reason) return undefined;
@@ -398,6 +398,24 @@ const combineRetranscribeSuccessFeedback = (
   };
 };
 
+/**
+ * A batch shows one completion toast, but two rows finishing in the same
+ * batch can each carry feedback. Merge them instead of letting the later row
+ * overwrite the earlier one and drop its outcome from the toast.
+ */
+const mergeRetranscribeBatchFeedback = (
+  existing: RetranscribeSuccessFeedback | null,
+  incoming: RetranscribeSuccessFeedback,
+): RetranscribeSuccessFeedback => {
+  if (!existing) return incoming;
+  return {
+    message: [existing.message, incoming.message].join(" "),
+    severity: incoming.severity === "error" ? "error" : existing.severity,
+    action: existing.action ?? incoming.action,
+    duration: 8_000,
+  };
+};
+
 const showRetranscribeSuccessFeedback = (
   feedback: RetranscribeSuccessFeedback | null = null,
 ) => {
@@ -604,7 +622,10 @@ export const retranscribeTranscription = async (
       update.truncationMessage,
     );
     if (feedback && !hasRetranscribeBatchError) {
-      pendingRetranscribeFeedback = feedback;
+      pendingRetranscribeFeedback = mergeRetranscribeBatchFeedback(
+        pendingRetranscribeFeedback,
+        feedback,
+      );
     }
     produceAppState((draft) => {
       finishRetranscribe(draft.transcriptions, transcriptionId, true);
@@ -681,21 +702,21 @@ export const importAudioFile = async ({
       inferenceDevice: transcribeResult.metadata?.inferenceDevice ?? null,
       transcriptionPrompt:
         transcribeResult.metadata?.transcriptionPrompt ?? null,
-      postProcessPrompt: postProcessResult.metadata?.postProcessPrompt ?? null,
+      postProcessPrompt: postProcessResult.metadata.postProcessPrompt ?? null,
       transcriptionApiKeyId:
         transcribeResult.metadata?.transcriptionApiKeyId ?? null,
       postProcessApiKeyId:
-        postProcessResult.metadata?.postProcessApiKeyId ?? null,
+        postProcessResult.metadata.postProcessApiKeyId ?? null,
       transcriptionMode: transcribeResult.metadata?.transcriptionMode ?? null,
-      postProcessMode: postProcessResult.metadata?.postProcessMode ?? null,
-      postProcessDevice: postProcessResult.metadata?.postProcessDevice ?? null,
-      postProcessModel: postProcessResult.metadata?.postProcessModel ?? null,
+      postProcessMode: postProcessResult.metadata.postProcessMode ?? null,
+      postProcessDevice: postProcessResult.metadata.postProcessDevice ?? null,
+      postProcessModel: postProcessResult.metadata.postProcessModel ?? null,
       postProcessProvider:
-        postProcessResult.metadata?.postProcessProvider ?? null,
-      postProcessFailed: postProcessResult.metadata?.postProcessFailed ?? null,
+        postProcessResult.metadata.postProcessProvider ?? null,
+      postProcessFailed: postProcessResult.metadata.postProcessFailed ?? null,
       postProcessFallback:
-        postProcessResult.metadata?.postProcessFallback ?? null,
-      postProcessError: postProcessResult.metadata?.postProcessError ?? null,
+        postProcessResult.metadata.postProcessFallback ?? null,
+      postProcessError: postProcessResult.metadata.postProcessError ?? null,
       warnings: [...transcribeResult.warnings, ...postProcessResult.warnings],
       audio: undefined,
       remoteStatus: null,
@@ -703,7 +724,7 @@ export const importAudioFile = async ({
       transcriptionDurationMs:
         transcribeResult.metadata?.transcriptionDurationMs ?? null,
       postprocessDurationMs:
-        postProcessResult.metadata?.postprocessDurationMs ?? null,
+        postProcessResult.metadata.postprocessDurationMs ?? null,
     };
     produceAppState((draft) => {
       draft.transcriptionById[memoryRecord.id] = memoryRecord;

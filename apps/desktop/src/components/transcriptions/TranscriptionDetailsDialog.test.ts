@@ -4,6 +4,7 @@ import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import type { Transcription } from "@maus-inc/types";
 import { POST_PROCESS_ERROR_CATEGORY } from "../../actions/post-process-error-category";
+import { POST_PROCESS_TRUNCATED_WARNING } from "../../utils/prompt.utils";
 import { INITIAL_APP_STATE } from "../../state/app.state";
 import { getAppState, produceAppState, setAppState } from "../../store";
 import { setMatchMedia } from "../../../test/helpers/jsdom-ui-harness";
@@ -171,6 +172,21 @@ describe("TranscriptionDetailsDialog post-processing model field", () => {
       "Online styling failed because the provider request or usage limit was reached. Your local style was applied instead.",
     );
     expect(bodyText()).not.toContain("Styling failed because");
+  });
+
+  it("describes a raw unusable-response marker instead of showing it verbatim", async () => {
+    seed({
+      warnings: [POST_PROCESS_TRUNCATED_WARNING],
+      postProcessFailed: false,
+      postProcessFallback: true,
+      postProcessError: null,
+    });
+    root = await render(container);
+
+    expect(bodyText()).toContain(
+      "The incomplete styling reply was discarded at the model's output limit. The previous text was kept.",
+    );
+    expect(bodyText()).not.toContain(POST_PROCESS_TRUNCATED_WARNING);
   });
 
   it("refreshes warning feedback when outcome metadata changes but warnings do not", async () => {
