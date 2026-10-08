@@ -132,11 +132,11 @@ const collectProviderDetails = (
   error: unknown,
 ): {
   status: number | undefined;
-  structured: string;
+  structuredFields: string[];
 } => {
   const outer = asRecord(error);
   const nestedRecords = collectNestedProviderRecords(error);
-  const structuredValues = [
+  const structuredFields = [
     readProviderCode(error),
     outer?.type,
     outer?.name,
@@ -151,7 +151,9 @@ const collectProviderDetails = (
       record.reason,
       record.limit_source,
     ]),
-  ].filter((value): value is string => typeof value === "string");
+  ]
+    .filter((value): value is string => typeof value === "string")
+    .map((value) => value.toLowerCase());
 
   const nestedStatus = nestedRecords
     .map((record) => readProviderStatus(record))
@@ -159,7 +161,7 @@ const collectProviderDetails = (
 
   return {
     status: readProviderStatus(error) ?? nestedStatus,
-    structured: structuredValues.join(" ").toLowerCase(),
+    structuredFields,
   };
 };
 
@@ -315,10 +317,15 @@ const STRUCTURED_CLASSIFICATION_RULES: readonly ClassificationRule[] = [
   },
 ];
 
+// Match each structured field on its own instead of a joined string. Markers
+// with a space (the in-flight budget wording) would otherwise match across two
+// unrelated fields, and a provider code must stay one token to mean anything.
 const classifyStructuredDetails = (
-  structured: string,
+  structuredFields: readonly string[],
 ): PostProcessErrorCategory | undefined =>
-  matchClassificationRules(structured, STRUCTURED_CLASSIFICATION_RULES);
+  STRUCTURED_CLASSIFICATION_RULES.find((rule) =>
+    structuredFields.some((field) => includesAny(field, rule.markers)),
+  )?.category;
 
 const CATEGORY_BY_STATUS: ReadonlyMap<number, PostProcessErrorCategory> =
   new Map([
@@ -422,13 +429,13 @@ export const classifyPostProcessErrorCategory = (
   error: unknown,
   fallbackMessage?: string,
 ): PostProcessErrorCategory => {
-  const { status, structured } = collectProviderDetails(error);
+  const { status, structuredFields } = collectProviderDetails(error);
   const message = [fallbackMessage, getErrorMessage(error)]
     .filter((part): part is string => typeof part === "string")
     .join(" ")
     .toLowerCase();
 
-  const structuredCategory = classifyStructuredDetails(structured);
+  const structuredCategory = classifyStructuredDetails(structuredFields);
   if (structuredCategory) return structuredCategory;
 
   const statusCategory = classifyStatus(status, message);

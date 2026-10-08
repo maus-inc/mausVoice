@@ -161,6 +161,21 @@ describe("classifyPostProcessErrorCategory", () => {
     ).toBe(POST_PROCESS_ERROR_CATEGORY.providerLimit);
   });
 
+  it("does not match a spaced marker across two separate structured fields", () => {
+    // Joined, these two fields read "...in-flight budget...", but each field on
+    // its own carries no budget marker, so they must not classify as a limit.
+    expect(
+      classifyPostProcessErrorCategory({
+        code: "x in-flight",
+        type: "budget y",
+      }),
+    ).toBe(POST_PROCESS_ERROR_CATEGORY.provider);
+    // A marker that genuinely sits inside one field still matches.
+    expect(
+      classifyPostProcessErrorCategory({ code: "hit in-flight budget cap" }),
+    ).toBe(POST_PROCESS_ERROR_CATEGORY.providerLimit);
+  });
+
   it("falls back to explicit message text when no structured fields are present", () => {
     expect(
       classifyPostProcessErrorCategory("402 payment required, quota exhausted"),

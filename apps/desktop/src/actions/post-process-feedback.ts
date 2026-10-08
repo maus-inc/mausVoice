@@ -138,11 +138,16 @@ const UNUSABLE_HISTORY_MESSAGES_BY_TYPE: Record<
   ],
 };
 
+const needsUnrecoverableHistoryWording = (
+  options: PostProcessFeedbackOptions,
+  hasPreviousTranscript: boolean,
+): boolean => !hasPreviousTranscript && options.canRecoverFromHistory === false;
+
 const getHistoryUnusableMessage = (
   options: PostProcessFeedbackOptions,
 ): MessageDescriptor => {
   const hasPreviousTranscript = options.hasPreviousTranscript ?? true;
-  if (!hasPreviousTranscript && options.canRecoverFromHistory === false) {
+  if (needsUnrecoverableHistoryWording(options, hasPreviousTranscript)) {
     return UNUSABLE_HISTORY_WITHOUT_PERSISTENCE_MESSAGE;
   }
   const pair =
@@ -177,9 +182,10 @@ const getFailedMessageDescriptor = (
 const getFailedFeedback = (
   metadata: PostProcessFeedbackMetadata,
   context: PostProcessFeedbackContext,
-  canRecoverFromHistory: boolean,
+  options: PostProcessFeedbackOptions,
 ): PostProcessFeedback => {
   const intl = getIntl();
+  const canRecoverFromHistory = options.canRecoverFromHistory ?? true;
   const reason = intl.formatMessage(
     postProcessErrorReason(metadata.postProcessError),
   );
@@ -207,6 +213,11 @@ const getLocalFallbackFeedback = (
   };
 };
 
+const isExceptionalPostProcess = (
+  metadata: PostProcessFeedbackMetadata,
+): boolean =>
+  Boolean(metadata.postProcessFailed) || Boolean(metadata.postProcessFallback);
+
 /**
  * Describe only exceptional post-processing outcomes. Expected local styling
  * and normal online success return null and stay quiet.
@@ -216,13 +227,12 @@ export const getPostProcessFeedback = (
   context: PostProcessFeedbackContext,
   options: PostProcessFeedbackOptions = {},
 ): PostProcessFeedback | null => {
-  if (!metadata.postProcessFailed && !metadata.postProcessFallback) {
+  if (!isExceptionalPostProcess(metadata)) {
     return null;
   }
 
-  const canRecoverFromHistory = options.canRecoverFromHistory ?? true;
   if (metadata.postProcessFailed) {
-    return getFailedFeedback(metadata, context, canRecoverFromHistory);
+    return getFailedFeedback(metadata, context, options);
   }
   if (metadata.postProcessError) {
     return getLocalFallbackFeedback(metadata);

@@ -186,7 +186,7 @@ const describeUnstyledRun = (
 };
 
 const openTranscriptionsHistory = (): void => {
-  void import("../router")
+  import("../router")
     .then(({ getBrowserRouter }) =>
       getBrowserRouter().navigate("/dashboard/transcriptions"),
     )
