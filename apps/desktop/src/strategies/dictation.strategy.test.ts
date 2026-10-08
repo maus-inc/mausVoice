@@ -174,30 +174,6 @@ const createHandleTranscriptParams = (
   ...overrides,
 });
 
-/**
- * The payload of the nth `showToast` call.
- *
- * These assertions used to read `mock.calls[0]![0]`, and a regression that
- * stopped showing a toast surfaced as a `TypeError` reading `.message` of
- * `undefined` -- which says the toast was absent but not that none was shown.
- */
-const toastCall = <T>(
-  mocked: { mock: { calls: readonly unknown[][] } },
-  call = 0,
-): T => {
-  const args = mocked.mock.calls[call];
-  if (!args) {
-    throw new Error(
-      `Expected showToast to be called at index ${call}, but it was called ${mocked.mock.calls.length} time(s)`,
-    );
-  }
-  const payload = args[0];
-  if (payload === undefined) {
-    throw new Error(`Expected showToast call ${call} to carry a payload`);
-  }
-  return payload as T;
-};
-
 describe("DictationStrategy backlog lifecycle", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -480,13 +456,7 @@ describe("DictationStrategy backlog lifecycle", () => {
     const result = await new DictationStrategy().handleTranscript(args);
 
     expect(routeTranscriptOutputMock).not.toHaveBeenCalled();
-    expect(showToast).toHaveBeenCalledWith(
-      expect.objectContaining({
-        message:
-          "Styling failed: Quota or payment required. The raw transcript is saved in History.",
-        toastType: "error",
-      }),
-    );
+    expect(showToast).not.toHaveBeenCalled();
     expect(result).toMatchObject({
       transcript: "fallback raw text",
       postProcessMetadata: {
@@ -496,22 +466,7 @@ describe("DictationStrategy backlog lifecycle", () => {
     });
   });
 
-  it("does not claim the local style ran when the provider reply was unusable", async () => {
-    // `postProcessFallback` is set on TWO different runs, and
-    // `transcriptions.actions.ts` says so in its own words: "covers two different runs
-    // and cannot be read on its own". This reads it bare, so it fires for both.
-    //
-    //   the request FAILED, the local style succeeded -> postProcessError set.
-    //     The text really is styled, and the toast is true.
-    //   the request SUCCEEDED but the reply was unusable (truncated JSON, prose, `{}`)
-    //     -> postProcessFailed stays false and no error is recorded
-    //     (transcribe.actions.ts:402-408, "The request succeeded, so postProcessFailed
-    //     stays false"). The text stored is the raw ASR, and no local style ran.
-    //
-    // The second case used to tell the user "Online styling was unavailable, so the
-    // local style was used instead" -- which is the opposite of what happened. The row
-    // is still marked unstyled by `isUnstyledPostProcess`, so History shows the real
-    // state; this only stops the toast asserting something false.
+  it("routes the original transcript when the provider reply was unusable", async () => {
     const { postProcessTranscript } =
       await import("../actions/transcribe.actions");
     vi.mocked(postProcessTranscript).mockResolvedValueOnce({
@@ -536,17 +491,13 @@ describe("DictationStrategy backlog lifecycle", () => {
       transcriptionWarnings: [],
     } satisfies HandleTranscriptParams);
 
-    const messages = vi
-      .mocked(showToast)
-      .mock.calls.map((call) => call[0]?.message);
-    expect(messages).not.toContain(
-      "Online styling was unavailable, so the local style was used instead.",
-    );
+    expect(routeTranscriptOutputMock).toHaveBeenCalled();
+    expect(showToast).not.toHaveBeenCalled();
   });
 
-  it("still says the local style ran when the provider request actually failed", async () => {
-    // The control for the case above: this is the run the message is written for, and
-    // gating on the separator must not silence it.
+  it("routes local fast-style output before post-process feedback is shown", async () => {
+    // The strategy routes the local output; the root side effect shows feedback
+    // only after the transcript's persistence outcome is known.
     const { postProcessTranscript } =
       await import("../actions/transcribe.actions");
     vi.mocked(postProcessTranscript).mockResolvedValueOnce({
@@ -572,12 +523,8 @@ describe("DictationStrategy backlog lifecycle", () => {
       transcriptionWarnings: [],
     } satisfies HandleTranscriptParams);
 
-    expect(showToast).toHaveBeenCalledWith(
-      expect.objectContaining({
-        message:
-          "Online styling was unavailable, so the local style was used instead.",
-      }),
-    );
+    expect(routeTranscriptOutputMock).toHaveBeenCalled();
+    expect(showToast).not.toHaveBeenCalled();
   });
 
   it("routes final output without an arbitrary delay", async () => {
@@ -668,12 +615,10 @@ describe("DictationStrategy backlog lifecycle", () => {
     expect(result.sanitizedTranscript).toBe("original text");
   });
 
-  it("shows the classified reason and no provider text when a model is retired", async () => {
-    // The provider message for a retired Groq model names the model id, both
-    // models in the chain, and both provider causes. It is diagnostic text and
-    // it stays in the log. What the user reads is the fixed category the
-    // classifier derives from it, so no provider-controlled string and no
-    // model id is ever rendered in the interface.
+  it("preserves the classified reason and provider metadata without showing feedback early", async () => {
+    // The provider message for a retired Groq model names the model id and
+    // both causes. The strategy preserves only the fixed category for History;
+    // the root side effect shows feedback after the row's save result is known.
     const { postProcessTranscript } =
       await import("../actions/transcribe.actions");
     vi.mocked(postProcessTranscript).mockResolvedValueOnce({
@@ -687,24 +632,25 @@ describe("DictationStrategy backlog lifecycle", () => {
 
     const { showToast } = await import("../actions/toast.actions");
 
-    await new DictationStrategy().handleTranscript({
+    const result = await new DictationStrategy().handleTranscript({
       rawTranscript: "fallback raw text",
       toneId: "custom-tone",
       currentApp: null,
     } as never);
 
-    const toast = toastCall<{ message: string }>(vi.mocked(showToast));
-    expect(toast.message).toBe(
-      "Styling failed: Provider error. The raw transcript is saved in History.",
+    expect(showToast).not.toHaveBeenCalled();
+    expect(result.postProcessMetadata).toMatchObject({
+      postProcessFailed: true,
+      postProcessError: POST_PROCESS_ERROR_CATEGORY.provider,
+    });
+    expect(result.postProcessMetadata.postProcessError).not.toContain(
+      "gpt-oss",
     );
-    expect(toast.message).not.toContain("gpt-oss");
-    expect(toast.message).not.toContain("{reason}");
   });
 
-  it("falls back to a fixed reason when the failure carried no category", async () => {
+  it("preserves a missing category for the shared feedback fallback", async () => {
     // A failure that never reached `recordPostProcessFailure` leaves the field
-    // null. The toast must still render a complete sentence rather than
-    // printing an empty reason or a leftover placeholder.
+    // null. The shared feedback formatter supplies the localized default reason.
     const { postProcessTranscript } =
       await import("../actions/transcribe.actions");
     vi.mocked(postProcessTranscript).mockResolvedValueOnce({
@@ -715,18 +661,18 @@ describe("DictationStrategy backlog lifecycle", () => {
 
     const { showToast } = await import("../actions/toast.actions");
 
-    await new DictationStrategy().handleTranscript({
+    const result = await new DictationStrategy().handleTranscript({
       rawTranscript: "fallback raw text",
       toneId: "custom-tone",
       currentApp: null,
     } as never);
 
-    expect(toastCall<{ message: string }>(vi.mocked(showToast)).message).toBe(
-      "Styling failed: Provider error. The raw transcript is saved in History.",
-    );
+    expect(showToast).not.toHaveBeenCalled();
+    expect(result.postProcessMetadata.postProcessFailed).toBe(true);
+    expect(result.postProcessMetadata.postProcessError).toBeNull();
   });
 
-  it("blocks insertion and shows error toast when post-processing fails", async () => {
+  it("blocks insertion and defers post-processing feedback until persistence", async () => {
     const { postProcessTranscript } =
       await import("../actions/transcribe.actions");
     vi.mocked(postProcessTranscript).mockResolvedValueOnce({
@@ -749,13 +695,8 @@ describe("DictationStrategy backlog lifecycle", () => {
 
     // Insertion is blocked: routeTranscriptOutput is NOT called
     expect(routeTranscriptOutputMock).not.toHaveBeenCalled();
-    // Toast notification is shown
-    expect(showToast).toHaveBeenCalledWith(
-      expect.objectContaining({
-        message: expect.stringContaining("Styling failed"),
-        toastType: "error",
-      }),
-    );
+    // The root side effect shows feedback after it knows whether the row saved.
+    expect(showToast).not.toHaveBeenCalled();
     // Transcript is preserved for storage in history
     expect(result.transcript).toBe("fallback raw text");
     expect(result.postProcessMetadata.postProcessFailed).toBe(true);

@@ -6,12 +6,13 @@ import {
   type ToastType,
 } from "../types/toast.types";
 
-function getActionLabel(action: ToastAction): string {
+export function getToastActionLabel(action: ToastAction): string {
   const intl = getIntl();
   switch (action) {
     case "upgrade":
       return intl.formatMessage({ defaultMessage: "Upgrade" });
     case "open_agent_settings":
+    case "open_post_processing_settings":
       return intl.formatMessage({ defaultMessage: "Fix" });
     case "surface_window":
       return intl.formatMessage({ defaultMessage: "Open" });
@@ -76,12 +77,12 @@ export async function showToast(options: ShowToastOptions): Promise<void> {
     action: options.action
       ? encodeToastActionToken(options.action, options.proposalId)
       : null,
-    action_label: options.action ? getActionLabel(options.action) : null,
+    action_label: options.action ? getToastActionLabel(options.action) : null,
     reject_action: options.rejectAction
       ? encodeToastActionToken(options.rejectAction, options.proposalId)
       : null,
     reject_action_label: options.rejectAction
-      ? getActionLabel(options.rejectAction)
+      ? getToastActionLabel(options.rejectAction)
       : null,
   });
 }
@@ -116,6 +117,7 @@ export async function showPersistentToast(
 export async function showCompletionToast(
   message: string,
   duration = 4000,
+  action?: ToastAction,
 ): Promise<void> {
-  await showToast({ message, toastType: "info", duration });
+  await showToast({ message, toastType: "info", duration, action });
 }

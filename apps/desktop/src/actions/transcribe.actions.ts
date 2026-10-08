@@ -451,7 +451,7 @@ const recordPostProcessFailure = (
   metadata.postprocessDurationMs = Math.round(postprocessDuration);
   metadata.postProcessFailed = true;
   const rawMessage = unknownToMessage(error) || "Post-processing failed";
-  const category = classifyPostProcessErrorCategory(rawMessage);
+  const category = classifyPostProcessErrorCategory(error, rawMessage);
   const sanitizedMessage = redactTranscriptContent(rawMessage, rawTranscript);
   metadata.postProcessError = category;
   getLogger().error(
@@ -496,9 +496,8 @@ const beginPostProcessingRequest = ({
 };
 
 /**
- * Record that fast local styling dropped characters. Both fast-style call paths
- * route through here so the user-facing warning cannot drift from the cap that
- * actually truncated the text, and so neither path can truncate silently.
+ * Record a dropped tail only when the fast-style measurement reports one.
+ * Both local-style paths share this check so stored metadata and feedback agree.
  */
 const recordFastStyleTruncation = (
   rawTranscript: string,
@@ -557,7 +556,7 @@ const recordFastStyleTruncation = (
 /**
  * Deterministic local styling, shared by both fast paths: no LLM configured,
  * and the LLM path falling back after a provider failure. Records mode,
- * duration and any truncation, then returns the styled text, or null when the
+ * duration and any reported truncation, then returns the styled text, or null when the
  * tone has no local transform or the transform threw, so the caller keeps its
  * own behaviour.
  *

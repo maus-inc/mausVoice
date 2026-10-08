@@ -19,6 +19,7 @@ import {
   runStartupElevationPreflight,
 } from "../../actions/elevation.actions";
 import { loadPairedRemoteDevices } from "../../actions/paired-remote-device.actions";
+import { openPostProcessingSettings } from "../../actions/settings.actions";
 import {
   refreshRemoteReceiverStatus,
   startRemoteReceiver,
@@ -885,6 +886,9 @@ export const AppSideEffects = () => {
       produceAppState((draft) => {
         draft.settings.agentModeDialogOpen = true;
       });
+    } else if (payload.action === "open_post_processing_settings") {
+      void surfaceMainWindow();
+      openPostProcessingSettings();
     } else if (payload.action === "surface_window") {
       void surfaceMainWindow();
     } else if (payload.action === "open_transcriptions") {

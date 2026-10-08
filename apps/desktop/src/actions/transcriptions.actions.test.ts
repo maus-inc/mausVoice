@@ -5,13 +5,16 @@ import { INITIAL_APP_STATE } from "../state/app.state";
 import { RETRANSCRIPTION_SUCCESS_VISIBLE_MS } from "../state/transcriptions.state";
 import type { PostProcessMetadata } from "./transcribe.actions";
 import { createDefaultPreferences } from "./user.actions";
+import { POST_PROCESS_ERROR_CATEGORY } from "./post-process-error-category";
 import { getAppState, produceAppState, setAppState } from "../store";
 
 const {
   loadTranscriptionAudio,
+  importAudioFileMock,
   updateTranscription,
   transcribeAudio,
   postProcessTranscript,
+  storeTranscription,
   generateText,
   showSnackbar,
   showErrorSnackbar,
@@ -20,9 +23,11 @@ const {
   dismissToast,
 } = vi.hoisted(() => ({
   loadTranscriptionAudio: vi.fn(),
+  importAudioFileMock: vi.fn(),
   updateTranscription: vi.fn(),
   transcribeAudio: vi.fn(),
   postProcessTranscript: vi.fn(),
+  storeTranscription: vi.fn(),
   generateText: vi.fn(),
   showSnackbar: vi.fn(),
   showErrorSnackbar: vi.fn(),
@@ -34,6 +39,7 @@ const {
 vi.mock("../repos", () => ({
   getTranscriptionRepo: () => ({
     loadTranscriptionAudio,
+    importAudioFile: importAudioFileMock,
     updateTranscription,
   }),
   // Only the unparseable-response test below reaches the real post-processing
@@ -49,7 +55,7 @@ vi.mock("../repos", () => ({
 vi.mock("./transcribe.actions", () => ({
   transcribeAudio,
   postProcessTranscript,
-  storeTranscription: vi.fn(),
+  storeTranscription,
 }));
 
 vi.mock("./app.actions", () => ({
@@ -74,6 +80,16 @@ vi.mock("./toast.actions", async () => ({
   showPersistentToast,
   showCompletionToast,
   dismissToast,
+  getToastActionLabel: (action: string) => {
+    switch (action) {
+      case "open_post_processing_settings":
+        return "Fix";
+      case "open_transcriptions":
+        return "Open history";
+      default:
+        return action;
+    }
+  },
   showToast: vi.fn(() => Promise.resolve()),
 }));
 
@@ -108,8 +124,11 @@ vi.mock("../i18n/intl", async () => {
   };
 });
 
-const { retranscribeTranscription, openRetranscribeDialog } =
-  await import("./transcriptions.actions");
+const {
+  retranscribeTranscription,
+  openRetranscribeDialog,
+  importAudioFile: runImportAudioFile,
+} = await import("./transcriptions.actions");
 const { POST_PROCESS_TRUNCATED_WARNING } =
   await import("../utils/prompt.utils");
 
@@ -217,6 +236,39 @@ describe("retranscribeTranscription feedback", () => {
     expect(getAppState().transcriptions.retranscriptionSuccessIds).toEqual([]);
   });
 
+  it("combines local-fallback and fast-style truncation feedback", async () => {
+    seedTranscription("truncated-fast-style");
+    postProcessTranscript.mockResolvedValueOnce({
+      transcript: "Fast-styled transcript",
+      warnings: [],
+      metadata: {
+        postProcessFailed: false,
+        postProcessFallback: true,
+        postProcessError: POST_PROCESS_ERROR_CATEGORY.quotaOrPayment,
+        fastStyleTruncatedChars: 42,
+      },
+    });
+
+    await retranscribeTranscription({
+      transcriptionId: "truncated-fast-style",
+    });
+
+    const message =
+      "Online styling failed because the provider reported a quota or billing issue. Your local style was applied instead. Fast styling left the last 42 characters of the audio unstyled. The unstyled ending is in History.";
+    expect(showSnackbar).toHaveBeenCalledWith(
+      message,
+      expect.objectContaining({
+        mode: "info",
+        action: expect.objectContaining({ label: "Fix" }),
+      }),
+    );
+    expect(showCompletionToast).toHaveBeenCalledWith(
+      message,
+      8_000,
+      "open_post_processing_settings",
+    );
+  });
+
   it("recovers cleanly on error so the row is enabled again", async () => {
     seedTranscription("a");
     loadTranscriptionAudio.mockRejectedValue(new Error("no audio"));
@@ -304,6 +356,45 @@ describe("retranscribeTranscription feedback", () => {
       "b",
     ]);
     expect(showCompletionToast).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not replace one concurrent retranscription error with another run's completion", async () => {
+    seedTranscription("a");
+    seedTranscription("b");
+
+    let releaseA:
+      ((value: { samples: number[]; sampleRate: number }) => void) | undefined;
+    loadTranscriptionAudio.mockImplementation((id: string) =>
+      id === "a"
+        ? new Promise((resolve) => {
+            releaseA = resolve;
+          })
+        : Promise.reject(new Error("no audio")),
+    );
+    postProcessTranscript.mockResolvedValueOnce({
+      transcript: "Locally styled transcript",
+      warnings: [],
+      metadata: {
+        postProcessFailed: false,
+        postProcessFallback: true,
+        postProcessError: POST_PROCESS_ERROR_CATEGORY.quotaOrPayment,
+      },
+    });
+
+    const runA = retranscribeTranscription({ transcriptionId: "a" });
+    const runB = retranscribeTranscription({ transcriptionId: "b" });
+    await runB;
+
+    expect(showErrorSnackbar).toHaveBeenCalledWith("no audio");
+    releaseA?.({ samples: [0, 1], sampleRate: 16000 });
+    await runA;
+
+    expect(showCompletionToast).not.toHaveBeenCalled();
+    expect(showSnackbar).not.toHaveBeenCalledWith(
+      expect.stringContaining("Online styling failed"),
+      expect.anything(),
+    );
+    expect(dismissToast).toHaveBeenCalled();
   });
 
   it("does not let a stale success timer wipe a newer success on the same row", async () => {
@@ -658,6 +749,47 @@ describe("retranscribeTranscription persistence gate", () => {
       "retranscribed text",
     );
   });
+
+  it("does not promise History for a truncated run in an ephemeral session", async () => {
+    seedGated(true);
+    postProcessTranscript.mockResolvedValueOnce({
+      transcript: "retranscribed text",
+      warnings: [],
+      metadata: { fastStyleTruncatedChars: 42 },
+    });
+
+    await retranscribeTranscription({ transcriptionId: "tx-gate" });
+
+    const message =
+      "Fast styling left the last 42 characters unstyled. The app did not save them in History.";
+    expect(updateTranscription).not.toHaveBeenCalled();
+    expect(showSnackbar).toHaveBeenCalledWith(
+      message,
+      expect.objectContaining({ mode: "info" }),
+    );
+    expect(showCompletionToast).toHaveBeenCalledWith(message, 8_000);
+  });
+
+  it("does not claim a failed retranscription was saved during an ephemeral session", async () => {
+    seedGated(true);
+    postProcessTranscript.mockResolvedValueOnce({
+      transcript: "raw retranscribed",
+      warnings: [POST_PROCESS_ERROR_CATEGORY.providerLimit],
+      metadata: {
+        postProcessFailed: true,
+        postProcessFallback: false,
+        postProcessError: POST_PROCESS_ERROR_CATEGORY.providerLimit,
+      },
+    });
+
+    await retranscribeTranscription({ transcriptionId: "tx-gate" });
+
+    expect(updateTranscription).not.toHaveBeenCalled();
+    expect(showSnackbar).toHaveBeenCalledWith(
+      "Styling failed because the provider request or usage limit was reached. History does not contain the raw transcript.",
+      expect.objectContaining({ mode: "error", action: undefined }),
+    );
+  });
 });
 
 describe("retranscribeTranscription unstyled post-processing", () => {
@@ -665,21 +797,21 @@ describe("retranscribeTranscription unstyled post-processing", () => {
   const RAW_ASR = "raw asr from this run";
   /** The category `recordPostProcessFailure` records for a 402. */
   const QUOTA_CATEGORY = "Quota or payment required (402)";
-  /**
-   * The localized descriptor `postProcessErrorReason` resolves that category to.
-   * The category itself is internal vocabulary: it carries the HTTP status and
-   * would print in English in every locale.
-   */
-  const QUOTA_COPY = "Quota or payment required";
+  /** Localized reason shown inside the shared styling-failure feedback. */
+  const QUOTA_REASON = "the provider reported a quota or billing issue";
+  const QUOTA_COPY =
+    "Styling failed because the provider reported a quota or billing issue. The raw transcript is saved in History.";
   /** The reason recorded for an answer that parsed but failed validation. */
   const VALIDATION_WARNING =
     "Post-processing response validation failed: result is required";
   /** Localized copy for a reply that ran out of the model's output budget. */
   const TRUNCATED_COPY =
-    "The styling reply was cut off at the model's output limit, so the partial reply was discarded and the previous text was kept.";
+    "The incomplete styling reply was discarded at the model's output limit. The previous text was kept.";
   /** Localized copy for a reply that came back unreadable. */
   const UNREADABLE_COPY =
-    "The styling reply could not be read, so it was discarded and the previous text was kept.";
+    "The unreadable styling reply was discarded, leaving the previous text in place.";
+  const UNREADABLE_EMPTY_COPY =
+    "The invalid styling reply was discarded, and the raw transcript was saved instead.";
 
   const seedStyledRow = (id: string, transcript: string) => {
     produceAppState((draft) => {
@@ -711,7 +843,10 @@ describe("retranscribeTranscription unstyled post-processing", () => {
 
   /** Every string the user was shown, joined for a substring check. */
   const shownToUser = () =>
-    showErrorSnackbar.mock.calls.map(([message]) => String(message)).join(" ");
+    [
+      ...showSnackbar.mock.calls.map(([message]) => String(message)),
+      ...showErrorSnackbar.mock.calls.map(([message]) => String(message)),
+    ].join(" ");
 
   let consoleError: ReturnType<typeof vi.spyOn>;
 
@@ -761,20 +896,48 @@ describe("retranscribeTranscription unstyled post-processing", () => {
     expect(updateTranscription.mock.calls[0]?.[0]).toMatchObject({
       postProcessFallback: null,
     });
-    // The run failed, so the row must not show a success check or completion
-    // toast. The snackbar gets the localized descriptor for the recorded
-    // category; the category itself stays in the log, because `showErrorSnackbar`
-    // renders its argument verbatim and the category is internal vocabulary.
+    // The error includes a localized cause and a link back to History. The
+    // provider's category remains internal and is never shown verbatim.
     expect(getAppState().transcriptions.retranscriptionSuccessIds).toEqual([]);
     expect(showCompletionToast).not.toHaveBeenCalled();
-    expect(showErrorSnackbar).toHaveBeenCalledWith(QUOTA_COPY);
+    expect(showSnackbar).toHaveBeenCalledWith(
+      QUOTA_COPY,
+      expect.objectContaining({
+        mode: "error",
+        action: expect.objectContaining({ label: "Open history" }),
+      }),
+    );
+    expect(showErrorSnackbar).not.toHaveBeenCalled();
     expect(shownToUser()).not.toContain(QUOTA_CATEGORY);
     expect(intlFormatMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ defaultMessage: QUOTA_COPY }),
+      expect.objectContaining({ defaultMessage: QUOTA_REASON }),
     );
     expect(console.error).toHaveBeenCalledWith(
       "Failed to retranscribe audio",
       QUOTA_CATEGORY,
+    );
+  });
+
+  it("preserves the History action when failure and truncation feedback are combined", async () => {
+    seedStyledRow("failed-truncated", POLISHED);
+    mockUnstyledPostProcess(
+      {
+        postProcessFailed: true,
+        postProcessFallback: false,
+        postProcessError: POST_PROCESS_ERROR_CATEGORY.providerLimit,
+        fastStyleTruncatedChars: 42,
+      },
+      [POST_PROCESS_ERROR_CATEGORY.providerLimit],
+    );
+
+    await retranscribeTranscription({ transcriptionId: "failed-truncated" });
+
+    expect(showSnackbar).toHaveBeenCalledWith(
+      "Styling failed because the provider request or usage limit was reached. The raw transcript is saved in History. Fast styling left the last 42 characters of the audio unstyled. The unstyled ending is in History.",
+      expect.objectContaining({
+        mode: "error",
+        action: expect.objectContaining({ label: "Open history" }),
+      }),
     );
   });
 
@@ -796,12 +959,13 @@ describe("retranscribeTranscription unstyled post-processing", () => {
         postProcessFailed: false,
       }),
     );
-    // The stored warning stays English because it lives on the row, but the
-    // toast resolves a localized sentence for it and logs the raw reason.
-    expect(showErrorSnackbar).toHaveBeenCalledWith(TRUNCATED_COPY);
-    expect(showErrorSnackbar).not.toHaveBeenCalledWith(
-      POST_PROCESS_TRUNCATED_WARNING,
+    // The stored warning stays internal, while the informational feedback
+    // distinguishes an unusable reply from a provider request failure.
+    expect(showSnackbar).toHaveBeenCalledWith(
+      TRUNCATED_COPY,
+      expect.objectContaining({ mode: "info" }),
     );
+    expect(showErrorSnackbar).not.toHaveBeenCalled();
     expect(console.error).toHaveBeenCalledWith(
       "Failed to retranscribe audio",
       POST_PROCESS_TRUNCATED_WARNING,
@@ -816,7 +980,7 @@ describe("retranscribeTranscription unstyled post-processing", () => {
     expect(getAppState().transcriptions.retranscriptionSuccessIds).toEqual([
       "truncated",
     ]);
-    expect(showErrorSnackbar).toHaveBeenCalledTimes(1);
+    expect(showErrorSnackbar).not.toHaveBeenCalled();
   });
 
   it("keeps the polished transcript when the provider response cannot be parsed", async () => {
@@ -853,15 +1017,17 @@ describe("retranscribeTranscription unstyled post-processing", () => {
     expect(getAppState().transcriptionById["unparseable"]?.transcript).toBe(
       POLISHED,
     );
-    // Unusable styling is not a finished retranscription, so the row must not
-    // report success. The toast names the outcome in localized copy, and the
-    // parse error that explains it stays in the log instead of leaking through
-    // a snackbar, Zod issue list and all.
+    // Unusable styling is not a finished retranscription. The informational
+    // feedback names the outcome without exposing parser or validation details.
     expect(getAppState().transcriptions.retranscriptionSuccessIds).toEqual([]);
     expect(showCompletionToast).not.toHaveBeenCalled();
-    expect(showErrorSnackbar).toHaveBeenCalledWith(UNREADABLE_COPY);
+    expect(showSnackbar).toHaveBeenCalledWith(
+      UNREADABLE_COPY,
+      expect.objectContaining({ mode: "info" }),
+    );
+    expect(showErrorSnackbar).not.toHaveBeenCalled();
     expect(shownToUser()).not.toContain("Could not parse or repair");
-    expect(showErrorSnackbar).not.toHaveBeenCalledWith(unparsed.warnings[0]);
+    expect(shownToUser()).not.toContain(unparsed.warnings[0]);
     expect(console.error).toHaveBeenCalledWith(
       "Failed to retranscribe audio",
       unparsed.warnings[0],
@@ -889,18 +1055,39 @@ describe("retranscribeTranscription unstyled post-processing", () => {
         postProcessFailed: false,
       }),
     );
-    // The recorded reason is not shown. The toast describes the outcome, and a
-    // validation failure must not borrow the cut-off copy any more than the
-    // raw schema issue list is shown.
-    expect(showErrorSnackbar).toHaveBeenCalledWith(UNREADABLE_COPY);
-    expect(showErrorSnackbar).not.toHaveBeenCalledWith(VALIDATION_WARNING);
-    expect(shownToUser()).not.toContain("validation failed");
-    expect(showErrorSnackbar).not.toHaveBeenCalledWith(
-      POST_PROCESS_TRUNCATED_WARNING,
+    // The recorded reason is not shown. The toast describes the unusable reply,
+    // without borrowing the cut-off copy or exposing schema details.
+    expect(showSnackbar).toHaveBeenCalledWith(
+      UNREADABLE_EMPTY_COPY,
+      expect.objectContaining({ mode: "info" }),
     );
+    expect(showErrorSnackbar).not.toHaveBeenCalled();
+    expect(shownToUser()).not.toContain("validation failed");
+    expect(shownToUser()).not.toContain(VALIDATION_WARNING);
     expect(console.error).toHaveBeenCalledWith(
       "Failed to retranscribe audio",
       VALIDATION_WARNING,
+    );
+  });
+
+  it("uses raw ASR for a whitespace-only previous transcript", async () => {
+    seedStyledRow("whitespace-only", "   ");
+    mockUnstyledPostProcess(
+      { postProcessFailed: false, postProcessFallback: true },
+      [VALIDATION_WARNING],
+    );
+
+    await retranscribeTranscription({ transcriptionId: "whitespace-only" });
+
+    expect(updateTranscription).toHaveBeenCalledWith(
+      expect.objectContaining({
+        transcript: RAW_ASR,
+        rawTranscript: RAW_ASR,
+      }),
+    );
+    expect(showSnackbar).toHaveBeenCalledWith(
+      UNREADABLE_EMPTY_COPY,
+      expect.objectContaining({ mode: "info" }),
     );
   });
 
@@ -922,7 +1109,10 @@ describe("retranscribeTranscription unstyled post-processing", () => {
     expect(intlFormatMessage).toHaveBeenCalledWith(
       expect.objectContaining({ defaultMessage: TRUNCATED_COPY }),
     );
-    expect(showErrorSnackbar).toHaveBeenCalledWith(TRUNCATED_COPY);
+    expect(showSnackbar).toHaveBeenCalledWith(
+      TRUNCATED_COPY,
+      expect.objectContaining({ mode: "info" }),
+    );
 
     // The other unusable-answer branch, through the same layer.
     seedStyledRow("localized-unreadable", POLISHED);
@@ -938,7 +1128,10 @@ describe("retranscribeTranscription unstyled post-processing", () => {
     expect(intlFormatMessage).toHaveBeenCalledWith(
       expect.objectContaining({ defaultMessage: UNREADABLE_COPY }),
     );
-    expect(showErrorSnackbar).toHaveBeenLastCalledWith(UNREADABLE_COPY);
+    expect(showSnackbar).toHaveBeenCalledWith(
+      UNREADABLE_COPY,
+      expect.objectContaining({ mode: "info" }),
+    );
   });
 
   it("tells a cut-off reply apart from an unreadable one", async () => {
@@ -960,9 +1153,9 @@ describe("retranscribeTranscription unstyled post-processing", () => {
 
     await retranscribeTranscription({ transcriptionId: "unreadable" });
 
-    const shown = showErrorSnackbar.mock.calls.map(([message]) =>
-      String(message),
-    );
+    const shown = showSnackbar.mock.calls
+      .map(([message]) => String(message))
+      .filter((message) => [TRUNCATED_COPY, UNREADABLE_COPY].includes(message));
     expect(shown).toEqual([TRUNCATED_COPY, UNREADABLE_COPY]);
   });
 
@@ -1037,6 +1230,20 @@ describe("retranscribeTranscription unstyled post-processing", () => {
       degraded.transcript,
     );
     expect(showErrorSnackbar).not.toHaveBeenCalled();
+    const fallbackMessage =
+      "Online styling failed because the provider reported a quota or billing issue. Your local style was applied instead.";
+    expect(showSnackbar).toHaveBeenCalledWith(
+      fallbackMessage,
+      expect.objectContaining({
+        mode: "info",
+        action: expect.objectContaining({ label: "Fix" }),
+      }),
+    );
+    expect(showCompletionToast).toHaveBeenCalledWith(
+      fallbackMessage,
+      4000,
+      "open_post_processing_settings",
+    );
     expect(getAppState().transcriptions.retranscriptionSuccessIds).toEqual([
       "degraded",
     ]);
@@ -1061,6 +1268,193 @@ describe("retranscribeTranscription unstyled post-processing", () => {
         postProcessFallback: true,
       }),
     );
-    expect(showErrorSnackbar).toHaveBeenCalledWith(UNREADABLE_COPY);
+    expect(showSnackbar).toHaveBeenCalledWith(
+      UNREADABLE_COPY,
+      expect.objectContaining({ mode: "info" }),
+    );
+  });
+});
+
+describe("importAudioFile post-processing feedback", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetState();
+    importAudioFileMock.mockResolvedValue({
+      samples: [0.1, 0.2],
+      sampleRate: 16000,
+    });
+    transcribeAudio.mockResolvedValue({
+      rawTranscript: "um imported audio",
+      sanitizedTranscript: "um imported audio",
+      warnings: [],
+      metadata: {},
+    });
+    storeTranscription.mockResolvedValue({
+      transcription: sampleTranscription("imported"),
+    });
+  });
+
+  const setPostProcessResult = (
+    metadata: PostProcessMetadata,
+    warnings: string[] = [],
+  ) => {
+    postProcessTranscript.mockResolvedValue({
+      transcript: "Imported transcript",
+      warnings,
+      metadata,
+    });
+  };
+
+  it("explains a provider failure and offers settings after local styling", async () => {
+    setPostProcessResult({
+      postProcessFailed: false,
+      postProcessFallback: true,
+      postProcessError: POST_PROCESS_ERROR_CATEGORY.quotaOrPayment,
+    });
+
+    await expect(runImportAudioFile({ toneId: "default" })).resolves.toBe(true);
+
+    expect(showSnackbar).toHaveBeenCalledWith(
+      "Online styling failed because the provider reported a quota or billing issue. Your local style was applied instead.",
+      expect.objectContaining({
+        mode: "info",
+        action: expect.objectContaining({ label: "Fix" }),
+      }),
+    );
+  });
+
+  it("combines local-fallback and fast-style truncation feedback", async () => {
+    setPostProcessResult({
+      postProcessFailed: false,
+      postProcessFallback: true,
+      postProcessError: POST_PROCESS_ERROR_CATEGORY.quotaOrPayment,
+      fastStyleTruncatedChars: 42,
+    });
+
+    await expect(runImportAudioFile({ toneId: "default" })).resolves.toBe(true);
+
+    expect(showSnackbar).toHaveBeenCalledWith(
+      "Online styling failed because the provider reported a quota or billing issue. Your local style was applied instead. Fast styling left the last 42 characters of the audio unstyled. The unstyled ending is in History.",
+      expect.objectContaining({
+        mode: "info",
+        action: expect.objectContaining({ label: "Fix" }),
+      }),
+    );
+  });
+
+  it("preserves the History action when failure and truncation feedback are combined", async () => {
+    setPostProcessResult({
+      postProcessFailed: true,
+      postProcessFallback: false,
+      postProcessError: POST_PROCESS_ERROR_CATEGORY.providerLimit,
+      fastStyleTruncatedChars: 42,
+    });
+
+    await runImportAudioFile({ toneId: "default" });
+
+    expect(showSnackbar).toHaveBeenCalledWith(
+      "Styling failed because the provider request or usage limit was reached. The raw transcript is saved in History. Fast styling left the last 42 characters of the audio unstyled. The unstyled ending is in History.",
+      expect.objectContaining({
+        mode: "error",
+        action: expect.objectContaining({ label: "Open history" }),
+      }),
+    );
+  });
+
+  it("warns when imported fast styling leaves the audio tail unstyled", async () => {
+    setPostProcessResult({ fastStyleTruncatedChars: 42 });
+
+    await expect(runImportAudioFile({ toneId: "default" })).resolves.toBe(true);
+
+    expect(showSnackbar).toHaveBeenCalledWith(
+      "Fast styling left the last 42 characters of the audio unstyled. The unstyled ending is in History.",
+      expect.objectContaining({ mode: "info", action: undefined }),
+    );
+  });
+
+  it("reports a complete styling failure and offers History", async () => {
+    setPostProcessResult({
+      postProcessFailed: true,
+      postProcessFallback: false,
+      postProcessError: POST_PROCESS_ERROR_CATEGORY.providerLimit,
+    });
+
+    await runImportAudioFile({ toneId: "default" });
+
+    expect(showSnackbar).toHaveBeenCalledWith(
+      "Styling failed because the provider request or usage limit was reached. The raw transcript is saved in History.",
+      expect.objectContaining({
+        mode: "error",
+        action: expect.objectContaining({ label: "Open history" }),
+      }),
+    );
+  });
+
+  it("does not promise History when a failed import was not stored", async () => {
+    setPostProcessResult({
+      postProcessFailed: true,
+      postProcessFallback: false,
+      postProcessError: POST_PROCESS_ERROR_CATEGORY.providerLimit,
+    });
+    storeTranscription.mockResolvedValue({ transcription: null });
+
+    await runImportAudioFile({ toneId: "default" });
+
+    expect(showSnackbar).toHaveBeenCalledWith(
+      "Styling failed because the provider request or usage limit was reached. History does not contain the raw transcript.",
+      expect.objectContaining({ mode: "error", action: undefined }),
+    );
+  });
+
+  it("does not promise History for truncated imported audio in incognito mode", async () => {
+    setPostProcessResult({ fastStyleTruncatedChars: 42 });
+    const state = structuredClone(INITIAL_APP_STATE);
+    state.userPrefs = createDefaultPreferences();
+    state.userPrefs.incognitoModeEnabled = true;
+    setAppState(state, true);
+    storeTranscription.mockResolvedValue({ transcription: null, wordCount: 0 });
+
+    await expect(runImportAudioFile({ toneId: "default" })).resolves.toBe(true);
+
+    expect(showSnackbar).toHaveBeenCalledWith(
+      "Fast styling left the last 42 characters unstyled. The app did not save them in History.",
+      expect.objectContaining({ mode: "info", action: undefined }),
+    );
+  });
+
+  it("does not promise History for an unusable imported reply in incognito mode", async () => {
+    setPostProcessResult({
+      postProcessFailed: false,
+      postProcessFallback: true,
+      postProcessError: null,
+    });
+    const state = structuredClone(INITIAL_APP_STATE);
+    state.userPrefs = createDefaultPreferences();
+    state.userPrefs.incognitoModeEnabled = true;
+    setAppState(state, true);
+    storeTranscription.mockResolvedValue({ transcription: null, wordCount: 0 });
+
+    await runImportAudioFile({ toneId: "default" });
+
+    expect(showSnackbar).toHaveBeenCalledWith(
+      "The online styling reply was unusable. History does not contain the original transcript.",
+      expect.objectContaining({ mode: "info", action: undefined }),
+    );
+  });
+
+  it("uses the original transcript when an online reply is unusable", async () => {
+    setPostProcessResult({
+      postProcessFailed: false,
+      postProcessFallback: true,
+      postProcessError: null,
+    });
+
+    await runImportAudioFile({ toneId: "default" });
+
+    expect(showSnackbar).toHaveBeenCalledWith(
+      "The original transcript was saved because the online styling reply was unusable.",
+      expect.objectContaining({ mode: "info" }),
+    );
+    expect(showSnackbar.mock.calls.at(-1)?.[0]).not.toContain("local style");
   });
 });

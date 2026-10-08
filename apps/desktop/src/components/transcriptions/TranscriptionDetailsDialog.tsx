@@ -21,6 +21,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { saveCorrectedTranscript } from "../../actions/auto-learn.actions";
 import { showErrorSnackbar, showSnackbar } from "../../actions/app.actions";
+import { getPostProcessFeedback } from "../../actions/post-process-feedback";
+import {
+  isPostProcessErrorCategory,
+  postProcessErrorReason,
+} from "../../actions/post-process-error-category";
 import {
   closeTranscriptionDetailsDialog,
   openRetranscribeDialog,
@@ -251,8 +256,28 @@ export const TranscriptionDetailsDialog = () => {
     }
     return transcription.warnings
       .map((warning) => warning.trim())
-      .filter((warning) => warning.length > 0);
-  }, [transcription?.warnings]);
+      .filter((warning) => warning.length > 0)
+      .map((warning) => {
+        if (!isPostProcessErrorCategory(warning)) return warning;
+        const feedback = getPostProcessFeedback(
+          {
+            postProcessFailed: transcription.postProcessFailed,
+            postProcessFallback: transcription.postProcessFallback,
+            postProcessError: warning,
+          },
+          "history-details",
+        );
+        return (
+          feedback?.message ??
+          intl.formatMessage(postProcessErrorReason(warning))
+        );
+      });
+  }, [
+    intl,
+    transcription?.postProcessFailed,
+    transcription?.postProcessFallback,
+    transcription?.warnings,
+  ]);
 
   const startEditingFinal = () => {
     setFinalDraft(finalTranscriptText);

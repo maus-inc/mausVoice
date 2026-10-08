@@ -2,6 +2,12 @@ import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { produceAppState, getAppState } from "../store";
 import { showErrorSnackbar } from "./app.actions";
 
+export const openPostProcessingSettings = (): void => {
+  produceAppState((draft) => {
+    draft.settings.aiPostProcessingDialogOpen = true;
+  });
+};
+
 const isTauriEnvironment = (): boolean => {
   if (typeof window === "undefined") {
     return false;

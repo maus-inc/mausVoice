@@ -8,6 +8,12 @@ import { createId } from "../utils/id.utils";
 import { orFalse } from "../utils/nullable.utils";
 import { POST_PROCESS_TRUNCATED_WARNING } from "../utils/prompt.utils";
 import {
+  getFastStyleTruncationMessage,
+  getPostProcessFeedback,
+  getPostProcessFeedbackToastAction,
+  type PostProcessFeedback,
+} from "./post-process-feedback";
+import {
   beginRetranscribe,
   clearRetranscribeSuccess,
   finishRetranscribe,
@@ -23,9 +29,10 @@ import {
   getMyUserPreferences,
 } from "../utils/user.utils";
 import { showErrorSnackbar, showSnackbar } from "./app.actions";
-import { postProcessErrorReason } from "./post-process-error-category";
+import { openPostProcessingSettings } from "./settings.actions";
 import {
   dismissToast,
+  getToastActionLabel,
   runToast,
   showCompletionToast,
   showPersistentToast,
@@ -130,79 +137,69 @@ type RetranscribeUpdate = {
    * on a styled run.
    */
   unstyledMessage: string | null;
-  /**
-   * The recorded reason behind `unstyledMessage`, in the vocabulary the run
-   * stored, and always carried in the log so a support report keeps the cause.
-   * Null on a styled run.
-   *
-   * It is never shown. For a response that came back unusable it is a developer
-   * string (a parse error, a schema issue list, the token-limit warning); for a
-   * request that never came back it is the recorded failure category, a closed
-   * vocabulary the run builds from the HTTP status with the transcript stripped
-   * out. `unstyledMessage` is the localized sentence for either, and
-   * `postProcessErrorReason` is what turns the category into one.
-   */
+  /** Recorded provider or parse detail, kept in logs and hidden from the user. */
   unstyledReason: string | null;
+  /** Localized outcome and action for a run that left styling unavailable. */
+  unstyledFeedback: PostProcessFeedback | null;
+  /** Feedback for an unstyled audio tail when fast-style metadata reports one. */
+  truncationMessage: string | null;
   transcription: Transcription;
 };
 
 /**
- * The copy for a response that came back but could not be styled. The reason
- * the post-processing step recorded for that answer is a developer string (a
- * parse error, a schema issue list, the token-limit warning), so it is logged
- * and never shown. Only the outcome is localized, and a cut-off reply reads
- * differently from an unreadable one because running out of output budget and
- * receiving a broken payload are different problems for the user to retry.
- */
-const unstyledResponseMessage = (reason: string): string => {
-  if (!reason) {
-    // Nothing was recorded, so there is no outcome to describe. The error
-    // surface falls back to its own generic retranscription copy.
-    return "";
-  }
-  const intl = getIntl();
-  if (reason === POST_PROCESS_TRUNCATED_WARNING) {
-    return intl.formatMessage({
-      defaultMessage:
-        "The styling reply was cut off at the model's output limit, so the partial reply was discarded and the previous text was kept.",
-    });
-  }
-  return intl.formatMessage({
-    defaultMessage:
-      "The styling reply could not be read, so it was discarded and the previous text was kept.",
-  });
-};
-
-/**
- * The surface copy and the log detail for a run that produced no styling. A
- * request that never came back reports its recorded failure category, which is
- * a closed vocabulary the row already stores: the user reads the localized
- * descriptor for it, and the category itself stays in the log. A response that
- * came back unusable has no category, so the cause comes from the warnings the
- * post-processing step already recorded on the run: it appends the reason it
- * dropped that answer last, after any dispatch or glossary warning, so the
- * final entry is the cause. That reason stays in the log; the user gets the
- * localized outcome sentence for it.
+ * Build localized feedback for a run that left the row without usable styling.
+ * Provider details remain in the log; only the classified reason or outcome is
+ * shown to the user.
  */
 const describeUnstyledRun = (
   metadata: PostProcessMetadata,
   postProcessWarnings: string[],
-): { message: string; reason: string } => {
-  if (orFalse(metadata.postProcessFailed)) {
-    const reason = metadata.postProcessError ?? "";
-    return {
-      // The category is internal vocabulary ("Rate limit exceeded (429)"), and
-      // `showErrorSnackbar` renders its argument verbatim, so it is resolved to
-      // its localized descriptor rather than printed. An unrecognized category
-      // still resolves, to the generic provider error.
-      message: reason
-        ? getIntl().formatMessage(postProcessErrorReason(reason))
-        : "",
-      reason,
-    };
+  hasPreviousTranscript: boolean,
+  canRecoverFromHistory: boolean,
+): {
+  message: string;
+  reason: string;
+  feedback: PostProcessFeedback | null;
+} => {
+  const reason = orFalse(metadata.postProcessFailed)
+    ? (metadata.postProcessError ?? "")
+    : (postProcessWarnings.at(-1) ?? "");
+  let unusableResponseType: "truncated" | "unreadable" | undefined;
+  if (reason) {
+    unusableResponseType =
+      reason === POST_PROCESS_TRUNCATED_WARNING ? "truncated" : "unreadable";
   }
-  const reason = postProcessWarnings.at(-1) ?? "";
-  return { message: unstyledResponseMessage(reason), reason };
+  const feedback = getPostProcessFeedback(metadata, "history-retranscription", {
+    hasPreviousTranscript,
+    unusableResponseType,
+    canRecoverFromHistory,
+  });
+  return { message: feedback?.message ?? "", reason, feedback };
+};
+
+const openTranscriptionsHistory = (): void => {
+  void import("../router")
+    .then(({ getBrowserRouter }) =>
+      getBrowserRouter().navigate("/dashboard/transcriptions"),
+    )
+    .catch((error: unknown) => {
+      console.error("Failed to open transcription history", error);
+    });
+};
+
+const getFeedbackSnackbarAction = (
+  feedback: PostProcessFeedback,
+): { label: string; onClick: () => void } | undefined => {
+  if (!feedback.action) return undefined;
+  return {
+    label: getToastActionLabel(
+      getPostProcessFeedbackToastAction(feedback.action),
+    ),
+    onClick:
+      feedback.action === "fix"
+        ? openPostProcessingSettings
+        : openTranscriptionsHistory,
+  };
 };
 
 /**
@@ -238,22 +235,31 @@ const updateStoredTranscription = async (
   };
   const finalTranscript = postProcessResult.transcript;
   if (!finalTranscript) throw new Error("Retranscription produced no text.");
+  const hasPreviousTranscript = transcription.transcript.trim().length > 0;
+  const canRecoverFromHistory = isPersistenceAllowed();
+  const truncationMessage = getFastStyleTruncationMessage(
+    postProcessResult.metadata.fastStyleTruncatedChars,
+    { canRecoverFromHistory, context: "audio" },
+  );
   const unstyled = isUnstyledPostProcess(postProcessResult.metadata);
+  // An unusable reply keeps meaningful existing text. Use new raw ASR only
+  // when the row has none.
+  const transcriptToPersist =
+    unstyled && hasPreviousTranscript
+      ? transcription.transcript
+      : finalTranscript;
   const unstyledRun = unstyled
     ? describeUnstyledRun(
         postProcessResult.metadata,
         postProcessResult.warnings,
+        hasPreviousTranscript,
+        canRecoverFromHistory,
       )
     : null;
 
   const payload: Transcription = {
     ...transcription,
-    transcript: unstyled
-      ? // Nothing styled came back, so the text this row already holds stays
-        // the best answer. Falling back to the new raw ASR covers a row that
-        // was never styled in the first place.
-        transcription.transcript || finalTranscript
-      : finalTranscript,
+    transcript: transcriptToPersist,
     sanitizedTranscript,
     modelSize: metadata.modelSize ?? null,
     inferenceDevice: metadata.inferenceDevice ?? null,
@@ -285,13 +291,15 @@ const updateStoredTranscription = async (
   };
   // During an ephemeral session the update stays memory-only: build the fresh
   // payload for the caller but never write it through to the repository.
-  const stored = isPersistenceAllowed()
+  const stored = canRecoverFromHistory
     ? await getTranscriptionRepo().updateTranscription(payload)
     : payload;
   return {
     styled: !unstyled,
     unstyledMessage: unstyledRun?.message ?? null,
     unstyledReason: unstyledRun?.reason ?? null,
+    unstyledFeedback: unstyledRun?.feedback ?? null,
+    truncationMessage,
     transcription: stored,
   };
 };
@@ -333,6 +341,12 @@ let ownsRetranscribeNativeToast = false;
  * batch's loading toast.
  */
 let retranscribeFeedbackGeneration = 0;
+type RetranscribeSuccessFeedback = Pick<
+  PostProcessFeedback,
+  "message" | "severity" | "action"
+> & { duration?: number };
+let pendingRetranscribeFeedback: RetranscribeSuccessFeedback | null = null;
+let hasRetranscribeBatchError = false;
 
 const retranscribeFeedbackCopy = () => {
   const intl = getIntl();
@@ -351,15 +365,51 @@ const retranscribeFeedbackCopy = () => {
 
 const showRetranscribeLoadingFeedback = () => {
   const { loading } = retranscribeFeedbackCopy();
+  pendingRetranscribeFeedback = null;
+  hasRetranscribeBatchError = false;
   showSnackbar(loading, { duration: RETRANSCRIBE_LOADING_SNACKBAR_MS });
   ownsRetranscribeNativeToast = true;
   retranscribeFeedbackGeneration += 1;
   runToast(showPersistentToast(loading, RETRANSCRIBE_LOADING_SNACKBAR_MS));
 };
 
-const showRetranscribeSuccessFeedback = () => {
+const combineRetranscribeSuccessFeedback = (
+  feedback: PostProcessFeedback | null,
+  truncationMessage: string | null,
+): RetranscribeSuccessFeedback | null => {
+  const messages = [feedback?.message, truncationMessage].filter(
+    (message): message is string => Boolean(message),
+  );
+  if (messages.length === 0) return null;
+
+  return {
+    message: messages.join(" "),
+    severity: feedback?.severity ?? "info",
+    action: feedback?.action,
+    duration: truncationMessage ? 8_000 : undefined,
+  };
+};
+
+const showRetranscribeSuccessFeedback = (
+  feedback: RetranscribeSuccessFeedback | null = null,
+) => {
   const { complete } = retranscribeFeedbackCopy();
-  showSnackbar(complete, { mode: "success" });
+  const message = feedback?.message ?? complete;
+  const toastAction =
+    feedback?.action === "fix"
+      ? getPostProcessFeedbackToastAction(feedback.action)
+      : undefined;
+  showSnackbar(message, {
+    mode: feedback ? feedback.severity : "success",
+    ...(toastAction
+      ? {
+          action: {
+            label: getToastActionLabel(toastAction),
+            onClick: openPostProcessingSettings,
+          },
+        }
+      : {}),
+  });
   // The completion toast carries its own short duration, so the long-lived
   // loading toast is no longer ours once it is replaced.
   ownsRetranscribeNativeToast = false;
@@ -371,7 +421,16 @@ const showRetranscribeSuccessFeedback = () => {
     if (generation !== retranscribeFeedbackGeneration) {
       return undefined;
     }
-    return showCompletionToast(complete);
+    if (toastAction) {
+      return showCompletionToast(
+        message,
+        feedback?.duration ?? 4000,
+        toastAction,
+      );
+    }
+    return feedback?.duration
+      ? showCompletionToast(message, feedback.duration)
+      : showCompletionToast(message);
   };
   // Show the completion toast even when the dismiss round trip fails, so a
   // transient IPC error cannot leave the user without the finished state.
@@ -392,10 +451,22 @@ const syncRetranscribeFeedback = (event: "success" | "error" | "abandoned") => {
   if (inFlight > 0) {
     return;
   }
-  if (event === "success") {
-    showRetranscribeSuccessFeedback();
+  if (hasRetranscribeBatchError) {
+    hasRetranscribeBatchError = false;
+    pendingRetranscribeFeedback = null;
+    dismissRetranscribeLoadingFeedback();
     return;
   }
+  if (
+    event === "success" ||
+    (event === "error" && pendingRetranscribeFeedback)
+  ) {
+    const feedback = pendingRetranscribeFeedback;
+    pendingRetranscribeFeedback = null;
+    showRetranscribeSuccessFeedback(feedback);
+    return;
+  }
+  pendingRetranscribeFeedback = null;
   dismissRetranscribeLoadingFeedback();
 };
 
@@ -453,19 +524,30 @@ const failRetranscribeRun = ({
   message,
   reason,
   error,
+  feedback,
 }: {
   transcriptionId: string;
   generation: number;
   message: string;
   reason?: string;
   error?: unknown;
+  feedback?: PostProcessFeedback | null;
 }): void => {
   produceAppState((draft) => {
     finishRetranscribe(draft.transcriptions, transcriptionId, false);
   });
   console.error("Failed to retranscribe audio", error ?? reason ?? message);
   const { failed } = retranscribeFeedbackCopy();
-  showErrorSnackbar(message || failed);
+  if (feedback) {
+    showSnackbar(message || feedback.message, {
+      mode: feedback.severity,
+      action: getFeedbackSnackbarAction(feedback),
+    });
+  } else {
+    showErrorSnackbar(message || failed);
+  }
+  hasRetranscribeBatchError = true;
+  pendingRetranscribeFeedback = null;
   syncRetranscribeFeedback("error");
   releaseRetranscribeGeneration(transcriptionId, generation);
 };
@@ -501,10 +583,20 @@ export const retranscribeTranscription = async (
       failRetranscribeRun({
         transcriptionId,
         generation,
-        message: update.unstyledMessage ?? "",
+        message: [update.unstyledMessage, update.truncationMessage]
+          .filter((message): message is string => Boolean(message))
+          .join(" "),
         reason: update.unstyledReason ?? undefined,
+        feedback: update.unstyledFeedback,
       });
       return;
+    }
+    const feedback = combineRetranscribeSuccessFeedback(
+      getPostProcessFeedback(update.transcription, "history-retranscription"),
+      update.truncationMessage,
+    );
+    if (feedback && !hasRetranscribeBatchError) {
+      pendingRetranscribeFeedback = feedback;
     }
     produceAppState((draft) => {
       finishRetranscribe(draft.transcriptions, transcriptionId, true);
@@ -607,6 +699,26 @@ export const importAudioFile = async ({
     };
     produceAppState((draft) => {
       draft.transcriptionById[memoryRecord.id] = memoryRecord;
+    });
+  }
+
+  const canRecoverFromHistory = output.transcription !== null;
+  const feedback = getPostProcessFeedback(
+    postProcessResult.metadata,
+    "audio-import",
+    { canRecoverFromHistory },
+  );
+  const truncationMessage = getFastStyleTruncationMessage(
+    postProcessResult.metadata.fastStyleTruncatedChars,
+    { canRecoverFromHistory, context: "audio" },
+  );
+  const messages = [feedback?.message, truncationMessage].filter(
+    (message): message is string => Boolean(message),
+  );
+  if (messages.length > 0) {
+    showSnackbar(messages.join(" "), {
+      mode: feedback?.severity ?? "info",
+      action: feedback ? getFeedbackSnackbarAction(feedback) : undefined,
     });
   }
   return true;

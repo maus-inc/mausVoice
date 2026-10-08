@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { INITIAL_APP_STATE } from "../state/app.state";
 import { setAppState } from "../store";
+import { POST_PROCESS_ERROR_CATEGORY } from "./post-process-error-category";
 
 const { genRepo, loggerMock } = vi.hoisted(() => {
   const genRepo = {
@@ -87,6 +88,27 @@ describe("postProcessTranscript provider attribution on failure", () => {
     expect(result.metadata.postProcessError).toContain("402");
     // The failure is surfaced as a warning, not thrown.
     expect(result.warnings.join(" ")).toContain("402");
+  });
+
+  it("classifies structured provider codes before an ambiguous status and message", async () => {
+    class QuotaError extends Error {
+      status = 429;
+      code = "insufficient_quota";
+
+      constructor() {
+        super("provider rejected the request");
+      }
+    }
+    genRepo.generateText.mockRejectedValueOnce(new QuotaError());
+
+    const result = await postProcessTranscript({
+      rawTranscript: "hello world",
+      toneId: null,
+    });
+
+    expect(result.metadata.postProcessError).toBe(
+      POST_PROCESS_ERROR_CATEGORY.quotaOrPayment,
+    );
   });
 
   it("aborts the provider signal after a non-timeout failure", async () => {

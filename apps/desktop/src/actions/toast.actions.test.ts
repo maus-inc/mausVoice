@@ -15,7 +15,7 @@ import {
   encodeToastActionToken,
 } from "../types/toast.types";
 
-const { dismissToast, showPersistentToast, showToast } =
+const { dismissToast, showCompletionToast, showPersistentToast, showToast } =
   await import("./toast.actions");
 
 const payloadTypes = () =>
@@ -138,6 +138,20 @@ describe("toast action proposal correlation", () => {
     const payload = payloadOf(0);
     expect(payload.action).toBe("upgrade");
     expect(payload.action_label).toBe("Upgrade");
+  });
+
+  it("labels the post-processing settings action as Fix", async () => {
+    await showCompletionToast(
+      "Online styling failed. Local style was used instead.",
+      6000,
+      "open_post_processing_settings",
+    );
+
+    expect(payloadOf(0)).toMatchObject({
+      action: "open_post_processing_settings",
+      action_label: "Fix",
+      duration: 6,
+    });
   });
 
   it("reads a clicked token back into the action and the proposal it named", () => {
