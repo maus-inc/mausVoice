@@ -887,7 +887,7 @@ export const AppSideEffects = () => {
         draft.settings.agentModeDialogOpen = true;
       });
     } else if (payload.action === "open_post_processing_settings") {
-      surfaceMainWindow();
+      void surfaceMainWindow();
       openPostProcessingSettings();
     } else if (payload.action === "surface_window") {
       void surfaceMainWindow();
