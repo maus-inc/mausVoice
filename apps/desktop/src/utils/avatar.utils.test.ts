@@ -104,8 +104,11 @@ type CanvasStub = {
 /**
  * A canvas that answers the four things the pipeline asks of one, and records
  * the rest. `transparent` decides what the alpha scan finds, and `pngLength`
- * sets how large the PNG encoder pretends its output is.
+ * sets how large the PNG encoder pretends its output is. The length the app
+ * measures is `PNG_DATA_URL_PREFIX.length + pngLength`, which is what the
+ * budget cases below are written against.
  */
+const PNG_DATA_URL_PREFIX = "data:image/png;base64,";
 const installCanvas = ({
   transparent = false,
   pngLength = 1_000,
@@ -142,7 +145,7 @@ const installCanvas = ({
     toDataURL: (type: string, quality?: number) => {
       calls.toDataUrl.push({ type, quality });
       return type === "image/png"
-        ? `data:image/png;base64,${"A".repeat(pngLength)}`
+        ? `${PNG_DATA_URL_PREFIX}${"A".repeat(pngLength)}`
         : "data:image/jpeg;base64,JPEG";
     },
   } as unknown as HTMLCanvasElement;
@@ -159,11 +162,9 @@ const installCanvas = ({
 
 const installBitmap = (width = 1200, height = 800) => {
   const close = vi.fn();
-  vi.stubGlobal(
-    "createImageBitmap",
-    vi.fn(async () => ({ width, height, close })),
-  );
-  return { close };
+  const decode = vi.fn(async () => ({ width, height, close }));
+  vi.stubGlobal("createImageBitmap", decode);
+  return { close, decode };
 };
 
 const pngFile = () => new File(["x"], "photo.png", { type: "image/png" });
@@ -176,9 +177,16 @@ afterEach(() => {
 describe("readAvatarFile", () => {
   it("draws the centre square and stores a JPEG for an opaque photo", async () => {
     const canvas = installCanvas();
-    installBitmap(1200, 800);
+    const bitmap = installBitmap(1200, 800);
+    const file = pngFile();
 
-    const result = await readAvatarFile(pngFile());
+    const result = await readAvatarFile(file);
+
+    // The rotation of a photo taken on a phone lives in its EXIF, which a canvas
+    // draw ignores; without this option the square comes out sideways.
+    expect(bitmap.decode).toHaveBeenCalledWith(file, {
+      imageOrientation: "from-image",
+    });
 
     expect(result).toEqual({
       ok: true,
@@ -213,10 +221,28 @@ describe("readAvatarFile", () => {
     expect(canvas.calls.fills).toEqual([]);
   });
 
+  // The budget is inclusive: a PNG exactly at the cap is still affordable, and
+  // a `<` where the rule says `<=` would re-encode it for nothing.
+  it("keeps a transparent PNG that lands exactly on the budget", async () => {
+    const canvas = installCanvas({
+      transparent: true,
+      pngLength: MAX_STORED_AVATAR_CHARS - PNG_DATA_URL_PREFIX.length,
+    });
+    installBitmap(512, 512);
+
+    const result = await readAvatarFile(pngFile());
+
+    // The cap the encoder compares against is the whole string, not the payload.
+    expect(result.ok && result.dataUrl.length).toBe(MAX_STORED_AVATAR_CHARS);
+    expect(result.ok && result.dataUrl.startsWith("data:image/png")).toBe(true);
+    expect(canvas.calls.toDataUrl).toEqual([{ type: "image/png" }]);
+    expect(canvas.calls.fills).toEqual([]);
+  });
+
   it("falls back to a JPEG on white when a transparent PNG is too large", async () => {
     const canvas = installCanvas({
       transparent: true,
-      pngLength: MAX_STORED_AVATAR_CHARS + 1,
+      pngLength: MAX_STORED_AVATAR_CHARS - PNG_DATA_URL_PREFIX.length + 1,
     });
     installBitmap(512, 512);
 

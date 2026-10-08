@@ -30,11 +30,15 @@ const ReleaseNoteLink = ({ href, children }: ComponentProps<"a">) => {
       target="_blank"
       rel="noopener noreferrer"
       onClick={(event) => {
-        // The anchor is real, so a middle click or a "copy link" still works;
-        // the plugin is only for the plain left click. A failure keeps the app
-        // where it is and the link can be retried.
+        // Every click is intercepted, whatever button it came from: this is a
+        // desktop window, so the browser's answer to a modified or middle click
+        // — a new tab — has nowhere to open, and the alternative to handling it
+        // here is a webview that navigates away from the app to whatever the
+        // release notes linked to. The href and target stay real, so the link's
+        // context menu and assistive technology still see a link and can copy
+        // its address.
         event.preventDefault();
-        openExternalUrl(url);
+        openExternalUrl(url, "a link in the release notes");
       }}
     >
       {children}

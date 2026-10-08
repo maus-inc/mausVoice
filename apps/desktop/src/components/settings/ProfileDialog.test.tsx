@@ -95,6 +95,23 @@ describe("ProfileDialog", () => {
     });
   };
 
+  /** A decode the test resolves by hand, to hold the dialog mid-pick. */
+  const deferredDecode = () => {
+    let settle!: (result: { ok: true; dataUrl: string }) => void;
+    const promise = new Promise<{ ok: true; dataUrl: string }>((resolve) => {
+      settle = resolve;
+    });
+    return { promise, settle };
+  };
+
+  const button = (label: string) =>
+    [...(dialog()?.querySelectorAll("button") ?? [])].find(
+      (candidate) => candidate.textContent?.trim() === label,
+    );
+
+  const previewImage = () =>
+    dialog()?.querySelector<HTMLImageElement>("img") ?? null;
+
   const pick = async (file: File) => {
     const input = document.querySelector<HTMLInputElement>(
       '[role="dialog"] input[type="file"]',
@@ -192,13 +209,15 @@ describe("ProfileDialog", () => {
 
     await pick(new File(["x"], "photo.png", { type: "image/png" }));
 
+    // The circle itself is the preview: the decoded photo has to be the image
+    // the dialog is drawing, not just something state is holding.
+    expect(previewImage()?.getAttribute("src")).toBe(
+      "data:image/jpeg;base64,NEW",
+    );
     // The line under the circle reports what is about to be saved, and the
     // save arms only because the photo differs from the stored one.
     expect(dialog()?.textContent).toContain("New photo ready to save.");
-    const save = [...(dialog()?.querySelectorAll("button") ?? [])].find(
-      (button) => button.textContent?.trim() === "Save",
-    );
-    expect(save?.hasAttribute("disabled")).toBe(false);
+    expect(button("Save")?.hasAttribute("disabled")).toBe(false);
 
     await type(requireElement(nameInput(), "the name field"), "Morgan Lee Jr.");
     // Awaited, so the save's own state updates land inside the act: the dialog
@@ -239,6 +258,92 @@ describe("ProfileDialog", () => {
       );
     });
     expect(mocks.setUserName).not.toHaveBeenCalled();
+  });
+
+  // A save that lands while the decode is still running would compare the
+  // previous photo against the stored one, find nothing to write, and drop the
+  // photo that was a moment away from being ready.
+  it("keeps Save out of reach until the picked photo finishes decoding", async () => {
+    const decode = deferredDecode();
+    mocks.readAvatarFile.mockReturnValue(decode.promise);
+    open();
+
+    // The name change arms Save on its own, which is what makes the race real:
+    // without the decode being part of the gate, this save would go through
+    // while `image` still held the previous photo, and the pick would be lost.
+    await type(requireElement(nameInput(), "the name field"), "Morgan Lee Jr.");
+    expect(button("Save")?.hasAttribute("disabled")).toBe(false);
+
+    await pick(new File(["x"], "photo.png", { type: "image/png" }));
+
+    expect(dialog()?.textContent).toContain("Preparing photo...");
+    expect(button("Save")?.hasAttribute("disabled")).toBe(true);
+
+    await act(async () => {
+      decode.settle({ ok: true, dataUrl: "data:image/jpeg;base64,SLOW" });
+    });
+
+    expect(dialog()?.textContent).toContain("New photo ready to save.");
+    expect(button("Save")?.hasAttribute("disabled")).toBe(false);
+
+    // Both edits go in together now that the decode has landed.
+    await act(async () => {
+      requireElement(dialog()?.querySelector("form"), "the form").dispatchEvent(
+        new window.Event("submit", { bubbles: true, cancelable: true }),
+      );
+    });
+    await vi.waitFor(() => {
+      expect(mocks.setMyProfileImage).toHaveBeenCalledWith(
+        "data:image/jpeg;base64,SLOW",
+      );
+    });
+    expect(mocks.setUserName).toHaveBeenCalledWith("Morgan Lee Jr.");
+  });
+
+  // Two picks in a row: a large file chosen first can decode after a small one
+  // chosen second. The second choice is the one the person made, so it wins.
+  it("keeps the photo picked last when an earlier decode lands after it", async () => {
+    const first = deferredDecode();
+    const second = deferredDecode();
+    mocks.readAvatarFile
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+    open();
+
+    await pick(new File(["slow"], "slow.png", { type: "image/png" }));
+    await pick(new File(["quick"], "quick.png", { type: "image/png" }));
+
+    await act(async () => {
+      second.settle({ ok: true, dataUrl: "data:image/jpeg;base64,QUICK" });
+    });
+    await act(async () => {
+      first.settle({ ok: true, dataUrl: "data:image/jpeg;base64,SLOW" });
+    });
+
+    expect(previewImage()?.getAttribute("src")).toBe(
+      "data:image/jpeg;base64,QUICK",
+    );
+  });
+
+  // Removing is a decision about what the dialog will save, so a pick still
+  // decoding must not undo it a moment later.
+  it("lets an explicit removal settle a pick that is still decoding", async () => {
+    const decode = deferredDecode();
+    mocks.readAvatarFile.mockReturnValue(decode.promise);
+    mocks.useMyProfileImage.mockReturnValue("data:image/png;base64,OLD");
+    open();
+
+    await pick(new File(["x"], "photo.png", { type: "image/png" }));
+    act(() => {
+      requireElement(button("Remove photo"), "the Remove photo button").click();
+    });
+
+    await act(async () => {
+      decode.settle({ ok: true, dataUrl: "data:image/jpeg;base64,SLOW" });
+    });
+
+    expect(dialog()?.textContent).toContain("Photo will be removed on save.");
+    expect(previewImage()).toBeNull();
   });
 
   it("arms removal when the photo is removed", async () => {

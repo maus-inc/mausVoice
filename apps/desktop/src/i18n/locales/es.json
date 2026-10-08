@@ -496,7 +496,6 @@
   "make_it_sound_like_a_professional_but_friendly_email_use_jar": "Haz que suene como un correo profesional pero amigable. Usa jerga y palabras divertidas.",
   "make_this_shorter_or_turn_it_into_bullets": "Hazlo más corto o conviértelo en viñetas",
   "manual": "Manual",
-  "mausvoice_could_not_reach_this_computer_s_storage_so_nothing": "mausVoice no pudo acceder al almacenamiento de este equipo, así que no se eliminó nada. Comprueba que la aplicación pueda guardar datos e inténtalo de nuevo.",
   "mausvoice_is_an_ai_dictation_tool_it_needs_microphone_and_ac": "mausVoice es una herramienta de dictado con IA. Necesita acceso al micrófono y a la accesibilidad para funcionar correctamente.",
   "mausvoice_may_misunderstand_you_on_occasion_add_glossary_ter": "mausVoice puede malinterpretarte en ocasiones. Añade términos del glosario para favorecer el reconocimiento de los nombres y palabras que usas, o define una regla de reemplazo para corregir la ortografía automáticamente.",
   "mausvoice_needs_accessibility_permissions_to_paste_transcrip": "mausVoice necesita permisos de accesibilidad para pegar transcripciones en campos de texto enfocados.",
@@ -645,6 +644,7 @@
   "preference_saved": "Preferencia guardada.",
   "preferences_and_settings": "Preferencias y ajustes",
   "preferred_microphone": "Micrófono preferido",
+  "preparing_photo": "Preparando la foto…",
   "preserve_audio_on_failure": "Conservar el audio en caso de error",
   "press_and_hold_your_hotkey_then_start_talking_when_you_relea": "Mantén presionada tu tecla de acceso rápido, luego comienza a hablar. Cuando sueltes la tecla, tu discurso se convertirá en texto.",
   "press_cancel_again_to_discard_audio_already_sent_to_provider": "Pulsa cancelar de nuevo para descartar. El audio ya enviado a {provider} no se puede recuperar.",
@@ -1062,5 +1062,6 @@
   "your_own_groq_key_for_transcription_and_text_generation": "Tu propia clave de Groq, para transcripción y generación de texto.",
   "your_profile_photo": "Tu foto de perfil",
   "your_profile_your_sign_in_and_your_account": "Tu perfil, tu inicio de sesión y tu cuenta.",
-  "your_recording_is_sent_to_provider_in_pieces_as_you_pause_an": "Tu grabación se envía a {provider} por partes mientras haces pausas, y el resto cuando te detienes. El audio ya enviado no se puede recuperar."
+  "your_recording_is_sent_to_provider_in_pieces_as_you_pause_an": "Tu grabación se envía a {provider} por partes mientras haces pausas, y el resto cuando te detienes. El audio ya enviado no se puede recuperar.",
+  "your_saved_recordings_and_history_were_removed_but_mausvoice": "Tus grabaciones e historial guardados se eliminaron, pero mausVoice no pudo acceder al almacenamiento de este equipo, así que algunas preferencias pueden permanecer. Comprueba que la aplicación pueda guardar datos e inténtalo de nuevo."
 }

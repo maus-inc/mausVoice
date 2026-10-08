@@ -496,7 +496,6 @@
   "make_it_sound_like_a_professional_but_friendly_email_use_jar": "让它听起来像一封专业而友好的邮件。使用行业术语和有趣的词汇。",
   "make_this_shorter_or_turn_it_into_bullets": "缩短这段文字，或改成要点列表",
   "manual": "手册",
-  "mausvoice_could_not_reach_this_computer_s_storage_so_nothing": "mausVoice 无法访问此计算机的存储空间，因此没有删除任何内容。请检查应用是否有权保存数据，然后重试。",
   "mausvoice_is_an_ai_dictation_tool_it_needs_microphone_and_ac": "mausVoice 是一款 AI 语音输入工具。它需要麦克风和辅助功能访问权限才能正常工作。",
   "mausvoice_may_misunderstand_you_on_occasion_add_glossary_ter": "mausVoice 偶尔可能听错。添加词汇表词条有助于更准确地识别您常用的名称和词语，也可以定义替换规则来自动纠正拼写。",
   "mausvoice_needs_accessibility_permissions_to_paste_transcrip": "mausVoice 需要获取辅助功能权限，以便将转录内容粘贴到当前选定的文本框中。",
@@ -645,6 +644,7 @@
   "preference_saved": "偏好设置已保存。",
   "preferences_and_settings": "偏好设置与各项设置",
   "preferred_microphone": "首选麦克风",
+  "preparing_photo": "正在准备照片…",
   "preserve_audio_on_failure": "失败时保留音频",
   "press_and_hold_your_hotkey_then_start_talking_when_you_relea": "按住快捷键，然后开始说话。松开后，您的语音将被转换为文字。",
   "press_cancel_again_to_discard_audio_already_sent_to_provider": "再次按取消键以丢弃。已发送给 {provider} 的音频无法收回。",
@@ -1062,5 +1062,6 @@
   "your_own_groq_key_for_transcription_and_text_generation": "你自己的 Groq 密钥，用于转录和文本生成。",
   "your_profile_photo": "你的个人资料照片",
   "your_profile_your_sign_in_and_your_account": "你的个人资料、登录信息和账户。",
-  "your_recording_is_sent_to_provider_in_pieces_as_you_pause_an": "录音会在你停顿时分段发送到 {provider}，其余部分在停止后发送。已发送的音频无法收回。"
+  "your_recording_is_sent_to_provider_in_pieces_as_you_pause_an": "录音会在你停顿时分段发送到 {provider}，其余部分在停止后发送。已发送的音频无法收回。",
+  "your_saved_recordings_and_history_were_removed_but_mausvoice": "你保存的录音和记录已删除，但 mausVoice 无法访问此计算机的存储空间，因此部分偏好设置可能仍然保留。请检查应用是否有权保存数据，然后重试。"
 }

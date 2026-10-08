@@ -36,7 +36,7 @@ const ConsoleLink = ({
   <Link
     component="button"
     variant="body2"
-    onClick={() => openExternalUrl(url)}
+    onClick={() => openExternalUrl(url, "the provider console")}
     sx={{ alignSelf: "flex-start" }}
   >
     <Stack

@@ -283,6 +283,8 @@ export const ProfileDialog = () => {
   const [imageStatus, setImageStatus] = useState("");
   const [saveFailed, setSaveFailed] = useState(false);
   const [saving, setSaving] = useState(false);
+  // A pick is decoding, and there is nothing to save until it lands.
+  const [preparing, setPreparing] = useState(false);
   const wasOpen = useRef(false);
   // Every pick gets a ticket, and a decode only lands if its ticket is still
   // the newest one. A large photo decodes after a smaller one picked a moment
@@ -302,6 +304,7 @@ export const ProfileDialog = () => {
       setImageStatus("");
       setSaveFailed(false);
       setSaving(false);
+      setPreparing(false);
     }
     wasOpen.current = open;
   }, [open, initialName, initialImage]);
@@ -310,6 +313,11 @@ export const ProfileDialog = () => {
     produceAppState((draft) => {
       draft.settings.profileDialogOpen = false;
     });
+    // The dialog is mounted for the life of the app, so a decode that lands
+    // after this would write into a draft nobody is looking at and that the
+    // next open would have to undo.
+    pickTicket.current += 1;
+    setPreparing(false);
   }, []);
 
   const handlePick = useCallback(
@@ -320,11 +328,17 @@ export const ProfileDialog = () => {
       const ticket = pickTicket.current + 1;
       pickTicket.current = ticket;
       setImageError(null);
+      setPreparing(true);
+      setImageStatus(
+        intl.formatMessage({ defaultMessage: "Preparing photo..." }),
+      );
       const result = await readAvatarFile(file);
       if (ticket !== pickTicket.current) {
-        // A later pick, or a reopen, has already replaced this one.
+        // A later pick, a removal, or a close already owns the draft, and the
+        // one that owns it is the one that clears the wait.
         return;
       }
+      setPreparing(false);
       if (result.ok) {
         setImage(result.dataUrl);
         setImageStatus(
@@ -341,6 +355,11 @@ export const ProfileDialog = () => {
   );
 
   const handleRemove = useCallback(() => {
+    // Removing is a decision about the photo the dialog will save, so it also
+    // settles any pick still decoding: without this, a slow decode would put
+    // the removed photo back a moment later.
+    pickTicket.current += 1;
+    setPreparing(false);
     setImage(null);
     setImageError(null);
     setImageStatus(
@@ -350,11 +369,15 @@ export const ProfileDialog = () => {
 
   const trimmed = useMemo(() => name.trim(), [name]);
   const canSave = useMemo(() => {
-    if (!user || saving || trimmed.length === 0) {
+    // `preparing` is part of the gate rather than a cosmetic state: while a
+    // decode is in flight, `image` still holds the previous photo, so a save
+    // here would compare it to the stored one, find nothing to do, and drop the
+    // photo that is a moment away from being ready.
+    if (!user || saving || preparing || trimmed.length === 0) {
       return false;
     }
     return trimmed !== initialName.trim() || image !== initialImage;
-  }, [user, saving, trimmed, initialName, image, initialImage]);
+  }, [user, saving, preparing, trimmed, initialName, image, initialImage]);
 
   const handleSave = useCallback(async () => {
     if (!canSave) {

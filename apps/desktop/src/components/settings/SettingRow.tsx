@@ -268,7 +268,7 @@ export const SettingRow = ({
       return;
     }
     if (externalUrl) {
-      openExternalUrl(externalUrl);
+      openExternalUrl(externalUrl, "the link for this setting");
       return;
     }
     onClick?.();

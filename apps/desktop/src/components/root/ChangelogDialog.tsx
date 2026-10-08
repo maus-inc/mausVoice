@@ -122,7 +122,7 @@ const ReleaseRow = ({
         size="small"
         variant="text"
         sx={{ mt: 0.5, px: 0 }}
-        onClick={() => openExternalUrl(entry.url)}
+        onClick={() => openExternalUrl(entry.url, "the release notes page")}
       >
         <FormattedMessage defaultMessage="View on GitHub" />
       </Button>
@@ -219,7 +219,9 @@ export const ChangelogDialog = ({
               <Button
                 variant="text"
                 size="small"
-                onClick={() => openExternalUrl(GITHUB_RELEASES_PAGE_URL)}
+                onClick={() =>
+                  openExternalUrl(GITHUB_RELEASES_PAGE_URL, "the releases page")
+                }
               >
                 <FormattedMessage defaultMessage="Open releases page" />
               </Button>

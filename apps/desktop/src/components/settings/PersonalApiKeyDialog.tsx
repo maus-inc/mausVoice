@@ -164,7 +164,9 @@ export const PersonalApiKeyDialog = ({
             component="button"
             type="button"
             variant="body2"
-            onClick={() => openExternalUrl(copy.consoleUrl)}
+            onClick={() =>
+              openExternalUrl(copy.consoleUrl, "the provider console")
+            }
             sx={{ alignSelf: "flex-start" }}
           >
             {copy.consoleLabel}

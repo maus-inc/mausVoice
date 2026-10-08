@@ -34,9 +34,12 @@ const CONFIRMATION_PHRASE = "clear";
  */
 const describeClearFailure = (error: unknown, intl: IntlShape): string => {
   if (error instanceof StorageUnavailableError) {
+    // Specific about which half happened: the native wipe has already removed
+    // the database and the audio by the time this throws, so saying nothing was
+    // removed would send someone looking for data that is already gone.
     return intl.formatMessage({
       defaultMessage:
-        "mausVoice could not reach this computer\u2019s storage, so nothing was removed. Check that the app is allowed to store data, then try again.",
+        "Your saved recordings and history were removed, but mausVoice could not reach this computer\u2019s storage, so some preferences may remain. Check that the app is allowed to store data, then try again.",
     });
   }
   if (error instanceof Error) {

@@ -496,7 +496,6 @@
   "make_it_sound_like_a_professional_but_friendly_email_use_jar": "Make it sound like a professional but friendly email. Use jargon and fun words.",
   "make_this_shorter_or_turn_it_into_bullets": "Make this shorter or turn it into bullets",
   "manual": "Manual",
-  "mausvoice_could_not_reach_this_computer_s_storage_so_nothing": "mausVoice could not reach this computer’s storage, so nothing was removed. Check that the app is allowed to store data, then try again.",
   "mausvoice_is_an_ai_dictation_tool_it_needs_microphone_and_ac": "mausVoice is an AI dictation tool. It needs microphone and accessibility access in order to function properly.",
   "mausvoice_may_misunderstand_you_on_occasion_add_glossary_ter": "mausVoice may misunderstand you on occasion. Add glossary terms to bias recognition toward the names and words you use, or define a replacement rule to fix the spelling automatically.",
   "mausvoice_needs_accessibility_permissions_to_paste_transcrip": "mausVoice needs accessibility permissions to paste transcriptions into focused text fields.",
@@ -645,6 +644,7 @@
   "preference_saved": "Preference saved.",
   "preferences_and_settings": "Preferences and settings",
   "preferred_microphone": "Preferred microphone",
+  "preparing_photo": "Preparing photo...",
   "preserve_audio_on_failure": "Preserve audio on failure",
   "press_and_hold_your_hotkey_then_start_talking_when_you_relea": "Press and hold your hotkey, then start talking. When you release the key, your speech will be converted to text.",
   "press_cancel_again_to_discard_audio_already_sent_to_provider": "Press cancel again to discard. Audio already sent to {provider} can't be recalled.",
@@ -1062,5 +1062,6 @@
   "your_own_groq_key_for_transcription_and_text_generation": "Your own Groq key, for transcription and text generation.",
   "your_profile_photo": "Your profile photo",
   "your_profile_your_sign_in_and_your_account": "Your profile, your sign-in, and your account.",
-  "your_recording_is_sent_to_provider_in_pieces_as_you_pause_an": "Your recording is sent to {provider} in pieces as you pause, and the rest once you stop. Audio already sent cannot be recalled."
+  "your_recording_is_sent_to_provider_in_pieces_as_you_pause_an": "Your recording is sent to {provider} in pieces as you pause, and the rest once you stop. Audio already sent cannot be recalled.",
+  "your_saved_recordings_and_history_were_removed_but_mausvoice": "Your saved recordings and history were removed, but mausVoice could not reach this computer’s storage, so some preferences may remain. Check that the app is allowed to store data, then try again."
 }

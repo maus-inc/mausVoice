@@ -130,6 +130,11 @@ describe("ChangelogDialog", () => {
     // The failure is reported rather than swallowed, and the webview stayed put
     // instead of following the link in place of the browser.
     expect(loggerMock.warning).toHaveBeenCalledWith(
+      expect.stringContaining("a link in the release notes"),
+    );
+    // The URL is remote content from the GitHub API, so it is named in the log
+    // rather than written into it.
+    expect(loggerMock.warning).not.toHaveBeenCalledWith(
       expect.stringContaining("https://example.com/notes"),
     );
     expect(window.location.href).toBe(startedAt);

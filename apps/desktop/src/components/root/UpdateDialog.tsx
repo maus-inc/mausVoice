@@ -349,7 +349,7 @@ export const UpdateDialog = () => {
     if (!manualInstallerUrl) {
       return;
     }
-    openExternalUrl(manualInstallerUrl);
+    openExternalUrl(manualInstallerUrl, "the manual download");
   }, [manualInstallerUrl]);
 
   return (
