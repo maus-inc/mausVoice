@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { defineMessage, type MessageDescriptor } from "react-intl";
 import { getIntl } from "../i18n/intl";
 import {
   encodeToastActionToken,
@@ -6,26 +7,32 @@ import {
   type ToastType,
 } from "../types/toast.types";
 
-export function getToastActionLabel(action: ToastAction): string {
-  const intl = getIntl();
-  switch (action) {
-    case "upgrade":
-      return intl.formatMessage({ defaultMessage: "Upgrade" });
-    case "open_agent_settings":
-    case "open_post_processing_settings":
-      return intl.formatMessage({ defaultMessage: "Fix" });
-    case "surface_window":
-      return intl.formatMessage({ defaultMessage: "Open" });
-    case "open_transcriptions":
-      return intl.formatMessage({ defaultMessage: "Open history" });
-    case "confirm_cancel_transcription":
-      return intl.formatMessage({ defaultMessage: "Yes, cancel" });
-    case "auto_learn_accept":
-      return intl.formatMessage({ defaultMessage: "Add" });
-    case "auto_learn_reject":
-      return intl.formatMessage({ defaultMessage: "Ignore" });
-  }
-}
+const UPGRADE_TOAST_ACTION_LABEL = defineMessage({ defaultMessage: "Upgrade" });
+const FIX_TOAST_ACTION_LABEL = defineMessage({ defaultMessage: "Fix" });
+const OPEN_TOAST_ACTION_LABEL = defineMessage({ defaultMessage: "Open" });
+const OPEN_HISTORY_TOAST_ACTION_LABEL = defineMessage({
+  defaultMessage: "Open history",
+});
+const CONFIRM_CANCEL_TOAST_ACTION_LABEL = defineMessage({
+  defaultMessage: "Yes, cancel",
+});
+const ADD_TOAST_ACTION_LABEL = defineMessage({ defaultMessage: "Add" });
+const IGNORE_TOAST_ACTION_LABEL = defineMessage({ defaultMessage: "Ignore" });
+
+/** Every action's button wording, keyed so no path can fall off the end. */
+const TOAST_ACTION_LABELS: Record<ToastAction, MessageDescriptor> = {
+  upgrade: UPGRADE_TOAST_ACTION_LABEL,
+  open_agent_settings: FIX_TOAST_ACTION_LABEL,
+  open_post_processing_settings: FIX_TOAST_ACTION_LABEL,
+  surface_window: OPEN_TOAST_ACTION_LABEL,
+  open_transcriptions: OPEN_HISTORY_TOAST_ACTION_LABEL,
+  confirm_cancel_transcription: CONFIRM_CANCEL_TOAST_ACTION_LABEL,
+  auto_learn_accept: ADD_TOAST_ACTION_LABEL,
+  auto_learn_reject: IGNORE_TOAST_ACTION_LABEL,
+};
+
+export const getToastActionLabel = (action: ToastAction): string =>
+  getIntl().formatMessage(TOAST_ACTION_LABELS[action]);
 
 export type ShowToastOptions = {
   message: string;
@@ -114,10 +121,10 @@ export async function showPersistentToast(
   await showToast({ message, toastType: "info", duration });
 }
 
-export async function showCompletionToast(
+export const showCompletionToast = async (
   message: string,
   duration = 4000,
   action?: ToastAction,
-): Promise<void> {
+): Promise<void> => {
   await showToast({ message, toastType: "info", duration, action });
-}
+};

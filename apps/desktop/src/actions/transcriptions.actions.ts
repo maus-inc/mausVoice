@@ -151,6 +151,21 @@ type RetranscribeUpdate = {
  * Provider details remain in the log; only the classified reason or outcome is
  * shown to the user.
  */
+const getUnstyledRunReason = (
+  metadata: PostProcessMetadata,
+  postProcessWarnings: string[],
+): string =>
+  orFalse(metadata.postProcessFailed)
+    ? (metadata.postProcessError ?? "")
+    : (postProcessWarnings.at(-1) ?? "");
+
+const getUnusableResponseType = (
+  reason: string,
+): "truncated" | "unreadable" | undefined => {
+  if (!reason) return undefined;
+  return reason === POST_PROCESS_TRUNCATED_WARNING ? "truncated" : "unreadable";
+};
+
 const describeUnstyledRun = (
   metadata: PostProcessMetadata,
   postProcessWarnings: string[],
@@ -161,17 +176,10 @@ const describeUnstyledRun = (
   reason: string;
   feedback: PostProcessFeedback | null;
 } => {
-  const reason = orFalse(metadata.postProcessFailed)
-    ? (metadata.postProcessError ?? "")
-    : (postProcessWarnings.at(-1) ?? "");
-  let unusableResponseType: "truncated" | "unreadable" | undefined;
-  if (reason) {
-    unusableResponseType =
-      reason === POST_PROCESS_TRUNCATED_WARNING ? "truncated" : "unreadable";
-  }
+  const reason = getUnstyledRunReason(metadata, postProcessWarnings);
   const feedback = getPostProcessFeedback(metadata, "history-retranscription", {
     hasPreviousTranscript,
-    unusableResponseType,
+    unusableResponseType: getUnusableResponseType(reason),
     canRecoverFromHistory,
   });
   return { message: feedback?.message ?? "", reason, feedback };

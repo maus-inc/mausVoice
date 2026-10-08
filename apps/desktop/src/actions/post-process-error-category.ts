@@ -94,38 +94,35 @@ const asRecord = (value: unknown): ErrorRecord | undefined =>
     ? (value as ErrorRecord)
     : undefined;
 
+/** The property names that carry a nested provider record on an error. */
+const NESTED_PROVIDER_RECORD_KEYS = [
+  "fallbackCause",
+  "primaryCause",
+  "cause",
+  "error",
+  "response",
+  "data",
+  "metadata",
+] as const;
+
 const collectNestedProviderRecords = (error: unknown): ErrorRecord[] => {
   const outer = asRecord(error);
-  const pending = [
-    asRecord(outer?.fallbackCause),
-    asRecord(outer?.primaryCause),
-    asRecord(outer?.cause),
-    asRecord(outer?.error),
-    asRecord(outer?.response),
-    asRecord(outer?.data),
-    asRecord(outer?.metadata),
-  ].filter((record): record is ErrorRecord => record !== undefined);
+  const pending = NESTED_PROVIDER_RECORD_KEYS.map((key) =>
+    asRecord(outer?.[key]),
+  ).filter((record): record is ErrorRecord => record !== undefined);
   const visited = new Set<ErrorRecord>();
   const records: ErrorRecord[] = [];
 
-  for (let index = 0; index < pending.length; index += 1) {
-    const record = pending[index];
-    if (!record || visited.has(record)) continue;
+  // `pending` is a queue: the iterator visits children appended during the
+  // walk, so one pass reaches every depth without recursion.
+  for (const record of pending) {
+    if (visited.has(record)) continue;
     visited.add(record);
     records.push(record);
-    pending.push(
-      ...[
-        "fallbackCause",
-        "primaryCause",
-        "cause",
-        "error",
-        "response",
-        "data",
-        "metadata",
-      ]
-        .map((key) => asRecord(record[key]))
-        .filter((nested): nested is ErrorRecord => nested !== undefined),
-    );
+    for (const key of NESTED_PROVIDER_RECORD_KEYS) {
+      const nested = asRecord(record[key]);
+      if (nested !== undefined) pending.push(nested);
+    }
   }
 
   return records;
@@ -272,94 +269,146 @@ const NETWORK_MESSAGE_MARKERS = [
   "fetch failed",
 ] as const;
 
+type ClassificationRule = {
+  markers: readonly string[];
+  category: PostProcessErrorCategory;
+};
+
+/** First rule whose markers appear in the value wins. Order is the behaviour. */
+const matchClassificationRules = (
+  value: string,
+  rules: readonly ClassificationRule[],
+): PostProcessErrorCategory | undefined =>
+  rules.find((rule) => includesAny(value, rule.markers))?.category;
+
+// The structured cascade: provider codes and shape names beat prose. The
+// in-flight budget check runs first everywhere it can appear, because a
+// budget error is a request limit and not an expired balance.
+const STRUCTURED_CLASSIFICATION_RULES: readonly ClassificationRule[] = [
+  {
+    markers: OPENROUTER_IN_FLIGHT_BUDGET_MARKERS,
+    category: POST_PROCESS_ERROR_CATEGORY.providerLimit,
+  },
+  {
+    markers: QUOTA_OR_BILLING_CODES,
+    category: POST_PROCESS_ERROR_CATEGORY.quotaOrPayment,
+  },
+  {
+    markers: RATE_LIMIT_CODES,
+    category: POST_PROCESS_ERROR_CATEGORY.rateLimit,
+  },
+  {
+    markers: AUTHENTICATION_CODES,
+    category: POST_PROCESS_ERROR_CATEGORY.authentication,
+  },
+  {
+    markers: STRUCTURED_TIMEOUT_CODES,
+    category: POST_PROCESS_ERROR_CATEGORY.timedOut,
+  },
+  {
+    markers: STRUCTURED_ABORT_CODES,
+    category: POST_PROCESS_ERROR_CATEGORY.aborted,
+  },
+  {
+    markers: STRUCTURED_NETWORK_CODES,
+    category: POST_PROCESS_ERROR_CATEGORY.network,
+  },
+];
+
 const classifyStructuredDetails = (
   structured: string,
-): PostProcessErrorCategory | undefined => {
-  if (includesAny(structured, OPENROUTER_IN_FLIGHT_BUDGET_MARKERS)) {
-    return POST_PROCESS_ERROR_CATEGORY.providerLimit;
-  }
-  if (includesAny(structured, QUOTA_OR_BILLING_CODES)) {
-    return POST_PROCESS_ERROR_CATEGORY.quotaOrPayment;
-  }
-  if (includesAny(structured, RATE_LIMIT_CODES)) {
-    return POST_PROCESS_ERROR_CATEGORY.rateLimit;
-  }
-  if (includesAny(structured, AUTHENTICATION_CODES)) {
-    return POST_PROCESS_ERROR_CATEGORY.authentication;
-  }
-  if (includesAny(structured, STRUCTURED_TIMEOUT_CODES)) {
-    return POST_PROCESS_ERROR_CATEGORY.timedOut;
-  }
-  if (includesAny(structured, STRUCTURED_ABORT_CODES)) {
-    return POST_PROCESS_ERROR_CATEGORY.aborted;
-  }
-  if (includesAny(structured, STRUCTURED_NETWORK_CODES)) {
-    return POST_PROCESS_ERROR_CATEGORY.network;
-  }
-  return undefined;
-};
+): PostProcessErrorCategory | undefined =>
+  matchClassificationRules(structured, STRUCTURED_CLASSIFICATION_RULES);
+
+const CATEGORY_BY_STATUS: ReadonlyMap<number, PostProcessErrorCategory> =
+  new Map([
+    [401, POST_PROCESS_ERROR_CATEGORY.authentication],
+    [403, POST_PROCESS_ERROR_CATEGORY.authentication],
+    [408, POST_PROCESS_ERROR_CATEGORY.timedOut],
+    [504, POST_PROCESS_ERROR_CATEGORY.timedOut],
+  ]);
+
+const classifyPaymentRequiredStatus = (
+  message: string,
+): PostProcessErrorCategory =>
+  includesAny(message, OPENROUTER_IN_FLIGHT_BUDGET_MARKERS)
+    ? POST_PROCESS_ERROR_CATEGORY.providerLimit
+    : POST_PROCESS_ERROR_CATEGORY.quotaOrPayment;
+
+const RATE_LIMITED_STATUS_RULES: readonly ClassificationRule[] = [
+  {
+    markers: OPENROUTER_IN_FLIGHT_BUDGET_MARKERS,
+    category: POST_PROCESS_ERROR_CATEGORY.providerLimit,
+  },
+  {
+    markers: QUOTA_OR_BILLING_MESSAGE_MARKERS,
+    category: POST_PROCESS_ERROR_CATEGORY.quotaOrPayment,
+  },
+  {
+    markers: RATE_LIMIT_MESSAGE_MARKERS,
+    category: POST_PROCESS_ERROR_CATEGORY.rateLimit,
+  },
+];
+
+const classifyRateLimitedStatus = (message: string): PostProcessErrorCategory =>
+  matchClassificationRules(message, RATE_LIMITED_STATUS_RULES) ??
+  POST_PROCESS_ERROR_CATEGORY.providerLimit;
 
 const classifyStatus = (
   status: number | undefined,
   message: string,
 ): PostProcessErrorCategory | undefined => {
-  switch (status) {
-    case 402:
-      return includesAny(message, OPENROUTER_IN_FLIGHT_BUDGET_MARKERS)
-        ? POST_PROCESS_ERROR_CATEGORY.providerLimit
-        : POST_PROCESS_ERROR_CATEGORY.quotaOrPayment;
-    case 429:
-      if (includesAny(message, OPENROUTER_IN_FLIGHT_BUDGET_MARKERS)) {
-        return POST_PROCESS_ERROR_CATEGORY.providerLimit;
-      }
-      if (includesAny(message, QUOTA_OR_BILLING_MESSAGE_MARKERS)) {
-        return POST_PROCESS_ERROR_CATEGORY.quotaOrPayment;
-      }
-      if (includesAny(message, RATE_LIMIT_MESSAGE_MARKERS)) {
-        return POST_PROCESS_ERROR_CATEGORY.rateLimit;
-      }
-      return POST_PROCESS_ERROR_CATEGORY.providerLimit;
-    case 401:
-    case 403:
-      return POST_PROCESS_ERROR_CATEGORY.authentication;
-    case 408:
-    case 504:
-      return POST_PROCESS_ERROR_CATEGORY.timedOut;
-    default:
-      return status !== undefined && status >= 500
-        ? POST_PROCESS_ERROR_CATEGORY.provider
-        : undefined;
-  }
+  if (status === undefined) return undefined;
+  if (status === 402) return classifyPaymentRequiredStatus(message);
+  if (status === 429) return classifyRateLimitedStatus(message);
+  if (status >= 500) return POST_PROCESS_ERROR_CATEGORY.provider;
+  return CATEGORY_BY_STATUS.get(status);
 };
 
+// The prose cascade, run only when codes and status had nothing to say. The
+// quota test runs ahead of the 401 wording on purpose: a billing failure can
+// arrive as a 401 with `insufficient_quota` in the body. Timeout runs ahead
+// of abort because a timed-out request is also an aborted one.
+const MESSAGE_CLASSIFICATION_RULES: readonly ClassificationRule[] = [
+  {
+    markers: OPENROUTER_IN_FLIGHT_BUDGET_MARKERS,
+    category: POST_PROCESS_ERROR_CATEGORY.providerLimit,
+  },
+  {
+    markers: QUOTA_OR_BILLING_MESSAGE_MARKERS,
+    category: POST_PROCESS_ERROR_CATEGORY.quotaOrPayment,
+  },
+  {
+    markers: RATE_LIMIT_MESSAGE_MARKERS,
+    category: POST_PROCESS_ERROR_CATEGORY.rateLimit,
+  },
+  {
+    markers: AUTHENTICATION_MESSAGE_MARKERS,
+    category: POST_PROCESS_ERROR_CATEGORY.authentication,
+  },
+  {
+    markers: TIMEOUT_MESSAGE_MARKERS,
+    category: POST_PROCESS_ERROR_CATEGORY.timedOut,
+  },
+  {
+    markers: ABORT_MESSAGE_MARKERS,
+    category: POST_PROCESS_ERROR_CATEGORY.aborted,
+  },
+  {
+    markers: NETWORK_MESSAGE_MARKERS,
+    category: POST_PROCESS_ERROR_CATEGORY.network,
+  },
+];
+
 const classifyMessage = (message: string): PostProcessErrorCategory => {
-  if (includesAny(message, OPENROUTER_IN_FLIGHT_BUDGET_MARKERS)) {
-    return POST_PROCESS_ERROR_CATEGORY.providerLimit;
-  }
-  if (includesAny(message, QUOTA_OR_BILLING_MESSAGE_MARKERS)) {
+  const matched = matchClassificationRules(
+    message,
+    MESSAGE_CLASSIFICATION_RULES,
+  );
+  if (matched) return matched;
+  if (/\b429\b/.test(message)) return POST_PROCESS_ERROR_CATEGORY.providerLimit;
+  if (/\b402\b/.test(message))
     return POST_PROCESS_ERROR_CATEGORY.quotaOrPayment;
-  }
-  if (includesAny(message, RATE_LIMIT_MESSAGE_MARKERS)) {
-    return POST_PROCESS_ERROR_CATEGORY.rateLimit;
-  }
-  if (includesAny(message, AUTHENTICATION_MESSAGE_MARKERS)) {
-    return POST_PROCESS_ERROR_CATEGORY.authentication;
-  }
-  if (includesAny(message, TIMEOUT_MESSAGE_MARKERS)) {
-    return POST_PROCESS_ERROR_CATEGORY.timedOut;
-  }
-  if (includesAny(message, ABORT_MESSAGE_MARKERS)) {
-    return POST_PROCESS_ERROR_CATEGORY.aborted;
-  }
-  if (includesAny(message, NETWORK_MESSAGE_MARKERS)) {
-    return POST_PROCESS_ERROR_CATEGORY.network;
-  }
-  if (/\b429\b/.test(message)) {
-    return POST_PROCESS_ERROR_CATEGORY.providerLimit;
-  }
-  if (/\b402\b/.test(message)) {
-    return POST_PROCESS_ERROR_CATEGORY.quotaOrPayment;
-  }
   return POST_PROCESS_ERROR_CATEGORY.provider;
 };
 

@@ -1,4 +1,4 @@
-import { defineMessage } from "react-intl";
+import { defineMessage, type MessageDescriptor } from "react-intl";
 import { getIntl } from "../i18n/intl";
 import type { ToastAction } from "../types/toast.types";
 import { postProcessErrorReason } from "./post-process-error-category";
@@ -106,35 +106,105 @@ type PostProcessFeedbackOptions = {
   canRecoverFromHistory?: boolean;
 };
 
-const getUnusableResponseMessage = (
-  context: PostProcessFeedbackContext,
-  options: PostProcessFeedbackOptions,
-) => {
-  if (context === "dictation") return UNUSABLE_DICTATION_MESSAGE;
-  if (context === "audio-import") {
-    return options.canRecoverFromHistory === false
-      ? UNUSABLE_IMPORT_WITHOUT_HISTORY_MESSAGE
-      : UNUSABLE_IMPORT_MESSAGE;
-  }
+const UNUSABLE_IMPORT_BY_PERSISTENCE = {
+  recoverable: UNUSABLE_IMPORT_MESSAGE,
+  ephemeral: UNUSABLE_IMPORT_WITHOUT_HISTORY_MESSAGE,
+} as const;
 
+const getImportUnusableMessage = (
+  options: PostProcessFeedbackOptions,
+): MessageDescriptor =>
+  options.canRecoverFromHistory === false
+    ? UNUSABLE_IMPORT_BY_PERSISTENCE.ephemeral
+    : UNUSABLE_IMPORT_BY_PERSISTENCE.recoverable;
+
+// For each reply failure type, the wording when the row already holds text
+// and the wording when it does not.
+const UNUSABLE_HISTORY_MESSAGES_BY_TYPE: Record<
+  "truncated" | "unreadable" | "generic",
+  readonly [MessageDescriptor, MessageDescriptor]
+> = {
+  truncated: [
+    UNUSABLE_HISTORY_TRUNCATED_MESSAGE,
+    UNUSABLE_HISTORY_TRUNCATED_WITHOUT_PREVIOUS_TEXT_MESSAGE,
+  ],
+  unreadable: [
+    UNUSABLE_HISTORY_UNREADABLE_MESSAGE,
+    UNUSABLE_HISTORY_UNREADABLE_WITHOUT_PREVIOUS_TEXT_MESSAGE,
+  ],
+  generic: [
+    UNUSABLE_HISTORY_MESSAGE,
+    UNUSABLE_HISTORY_WITHOUT_PREVIOUS_TEXT_MESSAGE,
+  ],
+};
+
+const getHistoryUnusableMessage = (
+  options: PostProcessFeedbackOptions,
+): MessageDescriptor => {
   const hasPreviousTranscript = options.hasPreviousTranscript ?? true;
   if (!hasPreviousTranscript && options.canRecoverFromHistory === false) {
     return UNUSABLE_HISTORY_WITHOUT_PERSISTENCE_MESSAGE;
   }
-  const wasTruncated = options.unusableResponseType === "truncated";
-  if (wasTruncated) {
-    return hasPreviousTranscript
-      ? UNUSABLE_HISTORY_TRUNCATED_MESSAGE
-      : UNUSABLE_HISTORY_TRUNCATED_WITHOUT_PREVIOUS_TEXT_MESSAGE;
+  const pair =
+    UNUSABLE_HISTORY_MESSAGES_BY_TYPE[
+      options.unusableResponseType ?? "generic"
+    ];
+  return pair[hasPreviousTranscript ? 0 : 1];
+};
+
+const getUnusableResponseMessage = (
+  context: PostProcessFeedbackContext,
+  options: PostProcessFeedbackOptions,
+): MessageDescriptor => {
+  if (context === "dictation") return UNUSABLE_DICTATION_MESSAGE;
+  if (context === "audio-import") return getImportUnusableMessage(options);
+  return getHistoryUnusableMessage(options);
+};
+
+const getFailedMessageDescriptor = (
+  context: PostProcessFeedbackContext,
+  canRecoverFromHistory: boolean,
+): MessageDescriptor => {
+  if (context === "history-details")
+    return STYLING_FAILED_HISTORY_DETAILS_MESSAGE;
+  if (canRecoverFromHistory) return STYLING_FAILED_MESSAGE;
+  if (context === "dictation") {
+    return STYLING_FAILED_WITHOUT_HISTORY_DICTATION_MESSAGE;
   }
-  if (options.unusableResponseType === "unreadable") {
-    return hasPreviousTranscript
-      ? UNUSABLE_HISTORY_UNREADABLE_MESSAGE
-      : UNUSABLE_HISTORY_UNREADABLE_WITHOUT_PREVIOUS_TEXT_MESSAGE;
-  }
-  return hasPreviousTranscript
-    ? UNUSABLE_HISTORY_MESSAGE
-    : UNUSABLE_HISTORY_WITHOUT_PREVIOUS_TEXT_MESSAGE;
+  return STYLING_FAILED_WITHOUT_HISTORY_MESSAGE;
+};
+
+const getFailedFeedback = (
+  metadata: PostProcessFeedbackMetadata,
+  context: PostProcessFeedbackContext,
+  canRecoverFromHistory: boolean,
+): PostProcessFeedback => {
+  const intl = getIntl();
+  const reason = intl.formatMessage(
+    postProcessErrorReason(metadata.postProcessError),
+  );
+  const message = getFailedMessageDescriptor(context, canRecoverFromHistory);
+  return {
+    kind: "failed",
+    severity: "error",
+    message: intl.formatMessage(message, { reason }),
+    action: canRecoverFromHistory ? "history" : undefined,
+  };
+};
+
+const getLocalFallbackFeedback = (
+  metadata: PostProcessFeedbackMetadata,
+): PostProcessFeedback => {
+  const intl = getIntl();
+  const reason = intl.formatMessage(
+    postProcessErrorReason(metadata.postProcessError),
+  );
+  return {
+    kind: "local-fallback",
+    severity: "info",
+    message: intl.formatMessage(LOCAL_FALLBACK_MESSAGE, { reason }),
+    action: "fix",
+  };
 };
 
 /**
@@ -150,45 +220,20 @@ export const getPostProcessFeedback = (
     return null;
   }
 
-  const intl = getIntl();
   const canRecoverFromHistory = options.canRecoverFromHistory ?? true;
-
   if (metadata.postProcessFailed) {
-    const reason = intl.formatMessage(
-      postProcessErrorReason(metadata.postProcessError),
-    );
-    let message = STYLING_FAILED_WITHOUT_HISTORY_MESSAGE;
-    if (context === "history-details") {
-      message = STYLING_FAILED_HISTORY_DETAILS_MESSAGE;
-    } else if (canRecoverFromHistory) {
-      message = STYLING_FAILED_MESSAGE;
-    } else if (context === "dictation") {
-      message = STYLING_FAILED_WITHOUT_HISTORY_DICTATION_MESSAGE;
-    }
-    return {
-      kind: "failed",
-      severity: "error",
-      message: intl.formatMessage(message, { reason }),
-      action: canRecoverFromHistory ? "history" : undefined,
-    };
+    return getFailedFeedback(metadata, context, canRecoverFromHistory);
   }
-
   if (metadata.postProcessError) {
-    const reason = intl.formatMessage(
-      postProcessErrorReason(metadata.postProcessError),
-    );
-    return {
-      kind: "local-fallback",
-      severity: "info",
-      message: intl.formatMessage(LOCAL_FALLBACK_MESSAGE, { reason }),
-      action: "fix",
-    };
+    return getLocalFallbackFeedback(metadata);
   }
 
   return {
     kind: "unusable-response",
     severity: "info",
-    message: intl.formatMessage(getUnusableResponseMessage(context, options)),
+    message: getIntl().formatMessage(
+      getUnusableResponseMessage(context, options),
+    ),
   };
 };
 
@@ -202,24 +247,30 @@ type FastStyleTruncationOptions = {
  * wording stays accurate for dictation and saved audio, while the no-History
  * variant avoids promising a durable recovery path.
  */
+const hasDroppedTail = (
+  droppedChars: number | null | undefined,
+): droppedChars is number =>
+  typeof droppedChars === "number" &&
+  Number.isFinite(droppedChars) &&
+  droppedChars > 0;
+
+const getFastStyleTruncationDescriptor = (
+  options: FastStyleTruncationOptions,
+): MessageDescriptor => {
+  if (!options.canRecoverFromHistory) {
+    return FAST_STYLE_TRUNCATION_WITHOUT_HISTORY_MESSAGE;
+  }
+  return options.context === "dictation"
+    ? FAST_STYLE_TRUNCATION_DICTATION_MESSAGE
+    : FAST_STYLE_TRUNCATION_AUDIO_MESSAGE;
+};
+
 export const getFastStyleTruncationMessage = (
   droppedChars: number | null | undefined,
   options: FastStyleTruncationOptions,
 ): string | null => {
-  if (
-    typeof droppedChars !== "number" ||
-    !Number.isFinite(droppedChars) ||
-    droppedChars <= 0
-  ) {
-    return null;
-  }
-
-  let descriptor = FAST_STYLE_TRUNCATION_WITHOUT_HISTORY_MESSAGE;
-  if (options.canRecoverFromHistory) {
-    descriptor =
-      options.context === "dictation"
-        ? FAST_STYLE_TRUNCATION_DICTATION_MESSAGE
-        : FAST_STYLE_TRUNCATION_AUDIO_MESSAGE;
-  }
-  return getIntl().formatMessage(descriptor, { droppedChars });
+  if (!hasDroppedTail(droppedChars)) return null;
+  return getIntl().formatMessage(getFastStyleTruncationDescriptor(options), {
+    droppedChars,
+  });
 };

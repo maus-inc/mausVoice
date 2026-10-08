@@ -186,7 +186,7 @@ describe("TranscriptionDetailsDialog post-processing model field", () => {
     expect(bodyText()).toContain("Your local style was applied instead.");
     const storedWarnings = getAppState().transcriptionById["t-1"]?.warnings;
 
-    await act(async () => {
+    act(() => {
       produceAppState((draft) => {
         const transcription = draft.transcriptionById["t-1"];
         if (!transcription)
