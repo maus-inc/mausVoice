@@ -189,6 +189,21 @@ describe("TranscriptionDetailsDialog post-processing model field", () => {
     expect(bodyText()).not.toContain(POST_PROCESS_TRUNCATED_WARNING);
   });
 
+  it("keeps unrelated warnings verbatim on a fallback row", async () => {
+    const dictionaryWarning =
+      "Some dictionary entries were omitted from the post-processing glossary because the safe prompt budget was reached.";
+    seed({
+      warnings: [dictionaryWarning],
+      postProcessFailed: false,
+      postProcessFallback: true,
+      postProcessError: null,
+    });
+    root = await render(container);
+
+    expect(bodyText()).toContain(dictionaryWarning);
+    expect(bodyText()).not.toContain("styling reply was discarded");
+  });
+
   it("refreshes warning feedback when outcome metadata changes but warnings do not", async () => {
     const warnings = [POST_PROCESS_ERROR_CATEGORY.providerLimit];
     seed({

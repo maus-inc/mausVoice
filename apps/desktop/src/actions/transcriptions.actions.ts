@@ -3,6 +3,11 @@ import { getRec } from "@maus-inc/utilities";
 import dayjs from "dayjs";
 import { getIntl } from "../i18n/intl";
 import { getTranscriptionRepo } from "../repos";
+import {
+  POST_PROCESS_EMPTY_REPLY_WARNING,
+  POST_PROCESS_UNPARSEABLE_WARNING_PREFIX,
+  POST_PROCESS_UNREADABLE_EDITS_WARNING,
+} from "../utils/ai.utils";
 import { isPersistenceAllowed } from "../utils/incognito.utils";
 import { createId } from "../utils/id.utils";
 import { orFalse } from "../utils/nullable.utils";
@@ -165,6 +170,16 @@ export const getUnusableResponseType = (
   if (!reason) return undefined;
   return reason === POST_PROCESS_TRUNCATED_WARNING ? "truncated" : "unreadable";
 };
+
+/**
+ * Rows can carry benign warnings next to an unusable-reply marker, so only the
+ * marker strings themselves qualify for the explanatory feedback swap.
+ */
+export const isUnusableResponseWarning = (warning: string): boolean =>
+  warning === POST_PROCESS_TRUNCATED_WARNING ||
+  warning === POST_PROCESS_EMPTY_REPLY_WARNING ||
+  warning === POST_PROCESS_UNREADABLE_EDITS_WARNING ||
+  warning.startsWith(POST_PROCESS_UNPARSEABLE_WARNING_PREFIX);
 
 const describeUnstyledRun = (
   metadata: PostProcessMetadata,

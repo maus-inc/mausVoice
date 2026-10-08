@@ -323,6 +323,18 @@ const readProcessedTranscriptionResponse = (
   };
 };
 
+/**
+ * The warning strings an unusable styling reply leaves on the row. They stay
+ * in English by design: history code recognizes them and swaps in localized
+ * feedback, so they are stable markers rather than user-facing copy.
+ */
+export const POST_PROCESS_UNPARSEABLE_WARNING_PREFIX =
+  "Failed to parse post-processing response:";
+export const POST_PROCESS_UNREADABLE_EDITS_WARNING =
+  "Post-processing returned edits that could not be read; kept the raw transcript. The reply may not match the shape the provider was asked for.";
+export const POST_PROCESS_EMPTY_REPLY_WARNING =
+  "Post-processing returned no usable text; kept the raw transcript. The reply may have been truncated at the model's token limit.";
+
 export type ProcessedTranscriptionResolution =
   | { status: "cleaned"; transcript: string; warning: string | null }
   | {
@@ -407,8 +419,7 @@ const resolveDeclaredEdits = (
     return {
       status: "unusable",
       reason: "unreadable-edits",
-      warning:
-        "Post-processing returned edits that could not be read; kept the raw transcript. The reply may not match the shape the provider was asked for.",
+      warning: POST_PROCESS_UNREADABLE_EDITS_WARNING,
     };
   }
   return { status: "cleaned", transcript, warning: null };
@@ -433,7 +444,7 @@ export const resolveProcessedTranscription = (
     return {
       status: "unusable",
       reason: "unparseable",
-      warning: `Failed to parse post-processing response: ${unknownToMessage(error)}.${truncationHint}`,
+      warning: `${POST_PROCESS_UNPARSEABLE_WARNING_PREFIX} ${unknownToMessage(error)}.${truncationHint}`,
     };
   }
 
@@ -463,8 +474,7 @@ export const resolveProcessedTranscription = (
   return {
     status: "unusable",
     reason: "empty",
-    warning:
-      "Post-processing returned no usable text; kept the raw transcript. The reply may have been truncated at the model's token limit.",
+    warning: POST_PROCESS_EMPTY_REPLY_WARNING,
   };
 };
 
