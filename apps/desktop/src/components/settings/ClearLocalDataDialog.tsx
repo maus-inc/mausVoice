@@ -12,7 +12,7 @@ import {
   Typography,
 } from "@mui/material";
 import { useEffect, useRef, useState } from "react";
-import { FormattedMessage, useIntl } from "react-intl";
+import { FormattedMessage, useIntl, type IntlShape } from "react-intl";
 import { produceAppState, useAppStore } from "../../store";
 import {
   clearAppDataStorage,
@@ -22,6 +22,30 @@ import { ConfirmationPhrase } from "./ConfirmationPhrase";
 import { ConsequenceList } from "./ConsequenceList";
 
 const CONFIRMATION_PHRASE = "clear";
+
+/**
+ * What to tell someone whose clear failed.
+ *
+ * A blocked origin is the one failure whose own message means nothing to the
+ * person reading it, so it gets the sentence naming what to do instead.
+ * Everything else keeps its own message: those come from the native command and
+ * from this code, and paraphrasing them would drop whatever the person would
+ * have to act on.
+ */
+const describeClearFailure = (error: unknown, intl: IntlShape): string => {
+  if (error instanceof StorageUnavailableError) {
+    return intl.formatMessage({
+      defaultMessage:
+        "mausVoice could not reach this computer\u2019s storage, so nothing was removed. Check that the app is allowed to store data, then try again.",
+    });
+  }
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return intl.formatMessage({
+    defaultMessage: "Failed to clear local data.",
+  });
+};
 
 export const ClearLocalDataDialog = () => {
   const intl = useIntl();
@@ -123,23 +147,7 @@ export const ClearLocalDataDialog = () => {
       // handles) that may still hold references to wiped data.
       window.location.reload();
     } catch (error) {
-      // A blocked origin is the one failure whose own message means nothing to
-      // the person reading it, so it gets the sentence naming what to do
-      // instead. Everything else keeps its message: those come from the native
-      // command and from this code, and paraphrasing them would drop whatever
-      // the person would have to act on.
-      const message =
-        error instanceof StorageUnavailableError
-          ? intl.formatMessage({
-              defaultMessage:
-                "mausVoice could not reach this computer\u2019s storage, so nothing was removed. Check that the app is allowed to store data, then try again.",
-            })
-          : error instanceof Error
-            ? error.message
-            : intl.formatMessage({
-                defaultMessage: "Failed to clear local data.",
-              });
-      setErrorMessage(message);
+      setErrorMessage(describeClearFailure(error, intl));
       setIsClearing(false);
     }
   };
