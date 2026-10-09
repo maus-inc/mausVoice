@@ -94,13 +94,37 @@ const isActiveTicket = (
 const shouldApplySize = (minimized: boolean, size: WindowSize): boolean =>
   !minimized && hasPositiveDimensions(size);
 
-const consumeContradictoryPendingMaximized = (
-  pendingRef: React.MutableRefObject<boolean | null>,
+const PENDING_MAXIMIZE_TTL_MS = 500;
+
+interface PendingMaximized {
+  value: boolean;
+  expiresAt: number;
+}
+
+const createPendingMaximized = (value: boolean): PendingMaximized => ({
+  value,
+  expiresAt: Date.now() + PENDING_MAXIMIZE_TTL_MS,
+});
+
+const isActivePendingMaximized = (
+  pending: PendingMaximized | null,
+  now: number,
+): pending is PendingMaximized => pending !== null && now < pending.expiresAt;
+
+const shouldIgnoreMeasuredMaximized = (
+  pendingRef: React.MutableRefObject<PendingMaximized | null>,
   measured: boolean,
 ): boolean => {
   const pending = pendingRef.current;
-  pendingRef.current = null;
-  return pending !== null && pending !== measured;
+  if (!isActivePendingMaximized(pending, Date.now())) {
+    pendingRef.current = null;
+    return false;
+  }
+  if (pending.value === measured) {
+    pendingRef.current = null;
+    return false;
+  }
+  return true;
 };
 
 const toLogicalWidth = (physicalWidth: number, scale: number): number =>
@@ -130,11 +154,11 @@ const useWindowMetrics = () => {
   const sizeTicketRef = useRef(0);
   const maxTicketRef = useRef(0);
   const maximizedRef = useRef(false);
-  const pendingMaximizedRef = useRef<boolean | null>(null);
+  const pendingMaximizedRef = useRef<PendingMaximized | null>(null);
 
   const applyMaximized = useCallback((value: boolean) => {
     maxTicketRef.current += 1;
-    pendingMaximizedRef.current = value;
+    pendingMaximizedRef.current = createPendingMaximized(value);
     maximizedRef.current = value;
     setMaximized(value);
   }, []);
@@ -165,7 +189,7 @@ const useWindowMetrics = () => {
       if (
         !active ||
         minimizedNow ||
-        consumeContradictoryPendingMaximized(pendingMaximizedRef, maximizedNow)
+        shouldIgnoreMeasuredMaximized(pendingMaximizedRef, maximizedNow)
       ) {
         return;
       }
@@ -383,7 +407,7 @@ const beginPlatformDrag = (
 const useWindowControls = (
   applyMaximized: (value: boolean) => void,
   maximizedRef: React.MutableRefObject<boolean>,
-  pendingMaximizedRef: React.MutableRefObject<boolean | null>,
+  pendingMaximizedRef: React.MutableRefObject<PendingMaximized | null>,
 ) => {
   const togglePendingRef = useRef(false);
 
@@ -403,7 +427,7 @@ const useWindowControls = (
     const next = !previous;
     togglePendingRef.current = true;
     maximizedRef.current = next;
-    pendingMaximizedRef.current = next;
+    pendingMaximizedRef.current = createPendingMaximized(next);
     (next ? win.maximize() : win.unmaximize())
       .then(() => {
         applyMaximized(next);

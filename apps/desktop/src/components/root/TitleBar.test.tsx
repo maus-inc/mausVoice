@@ -808,8 +808,18 @@ it("discards an in-flight resize measurement that started before an optimistic m
   });
   expect(buttonByLabel("Restore")).toBeTruthy();
 
-  // The first resize tick before GTK/macOS updates `isMaximized()` (still
-  // reporting `false`) is consumed without reverting `Restore`.
+  // Multiple resize ticks during the macOS/GTK transition animation (still
+  // reporting `false` before the pending window expires) do not revert
+  // `Restore`.
+  const nowSpy = vi.spyOn(Date, "now").mockReturnValue(1_000);
+  await act(async () => {
+    requireByLabel("Restore").click();
+    await Promise.resolve();
+  });
+  await act(async () => {
+    requireByLabel("Maximize").click();
+    await Promise.resolve();
+  });
   windowMocks.isMaximized.mockResolvedValueOnce(false);
   await act(async () => {
     fireResize?.();
@@ -817,15 +827,23 @@ it("discards an in-flight resize measurement that started before an optimistic m
   });
   expect(buttonByLabel("Restore")).toBeTruthy();
 
-  // After that single contradictory snapshot is consumed, a subsequent native
-  // `false` measurement (e.g. an OS restore or a window manager that left the
-  // window unmaximized) is accepted rather than rejected indefinitely.
+  windowMocks.isMaximized.mockResolvedValueOnce(false);
+  await act(async () => {
+    fireResize?.();
+    await Promise.resolve();
+  });
+  expect(buttonByLabel("Restore")).toBeTruthy();
+
+  // Once the pending guard expires, a contradictory native `false` measurement
+  // is accepted so an OS restore or rejected maximize is not ignored forever.
+  nowSpy.mockReturnValue(2_000);
   windowMocks.isMaximized.mockResolvedValueOnce(false);
   await act(async () => {
     fireResize?.();
     await Promise.resolve();
   });
   expect(buttonByLabel("Maximize")).toBeTruthy();
+  nowSpy.mockRestore();
 });
 
 it.each([
