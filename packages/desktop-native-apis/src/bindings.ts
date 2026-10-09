@@ -230,6 +230,14 @@ async copyToClipboard(text: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async dailyActivityList(startDate: string, endDate: string) : Promise<Result<DailyWordActivity[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("daily_activity_list", { startDate, endDate }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Downloads a `.dmg` installer to a temp directory and opens it through
  * macOS's default handler. This is used as a fallback when the normal
@@ -1058,6 +1066,14 @@ async userGetOne() : Promise<Result<User | null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async userRecordUsage(eventId: string, localDate: string, wordCount: number) : Promise<Result<User, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("user_record_usage", { eventId, localDate, wordCount }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async userPreferencesCompareSetExpansionFlags(args: UserPreferencesCompareSetExpansionFlagsArgs) : Promise<Result<UserPreferences | null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("user_preferences_compare_set_expansion_flags", { args }) };
@@ -1199,6 +1215,7 @@ export type CreateFloatingWindowArgs = { url: string;
  */
 route: string | null; title: string | null; width: number | null; height: number | null; minWidth: number | null; minHeight: number | null; x: number | null; y: number | null; decorations: boolean | null; transparent: boolean | null; resizable: boolean | null; focused: boolean | null }
 export type CurrentAppInfoResponse = { appName: string; iconBase64: string }
+export type DailyWordActivity = { localDate: string; wordCount: number }
 export type ElementFingerprint = { automationId: string | null; className: string | null; controlType: number; name: string | null; frameworkId: string | null; childIndex: number; 
 /**
  * macOS only. AXRole of the element at this depth (e.g. "AXTextArea").

@@ -39,6 +39,12 @@ export const surfaces = {
   },
 } as const;
 
+/** Neutral intensity ramps for the daily-word heatmap (empty → most active). */
+export const activityHeatmap = {
+  light: ["#ECE8E1", "#D8D3C9", "#B8B2A7", "#8D887E", "#625D54"],
+  dark: ["#1F1F21", "#38383A", "#565658", "#7A7A7C", "#A8A8AA"],
+} as const;
+
 const hexToRgb = (hex: string) => {
   const value = Number.parseInt(hex.replace("#", ""), 16);
   return `${(value >> 16) & 255}, ${(value >> 8) & 255}, ${value & 255}`;

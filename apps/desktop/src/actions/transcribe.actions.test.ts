@@ -9,6 +9,7 @@ import {
 } from "./transcribe.actions";
 import { createDefaultPreferences } from "./user.actions";
 import { LocalTranscribeAudioRepo } from "../repos/transcribe-audio.repo";
+import { localDateKeyFromIso } from "../utils/date.utils";
 
 // One second of a low-amplitude tone. The energy-based silence gate
 // short-circuits all-zero (digital silence) samples before reaching the
@@ -21,7 +22,7 @@ const makeToneSamples = (sampleRate = 16000): Float32Array => {
   return samples;
 };
 
-const { loggerMock, invokeMock, addWordsMock } = vi.hoisted(() => ({
+const { loggerMock, invokeMock, recordUsageWordsMock } = vi.hoisted(() => ({
   loggerMock: {
     info: vi.fn(),
     warning: vi.fn(),
@@ -33,7 +34,7 @@ const { loggerMock, invokeMock, addWordsMock } = vi.hoisted(() => ({
     }),
   },
   invokeMock: vi.fn(),
-  addWordsMock: vi.fn(),
+  recordUsageWordsMock: vi.fn(),
 }));
 
 vi.mock("../utils/log.utils", () => ({ getLogger: () => loggerMock }));
@@ -73,7 +74,7 @@ vi.mock("../repos", async (importOriginal) => {
 
 vi.mock("./user.actions", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./user.actions")>();
-  return { ...actual, addWordsToCurrentUser: addWordsMock };
+  return { ...actual, recordUsageWords: recordUsageWordsMock };
 });
 
 const staleOllamaState = () => {
@@ -263,11 +264,11 @@ describe("storeTranscription audio retention", () => {
       durationMs: 100,
     });
     // `once` so a hang cannot leak into a later block: nothing else resets
-    // `addWordsMock`, and a module mock stays pending for the rest of the file.
+    // `recordUsageWordsMock`, and a module mock stays pending for the rest of the file.
     purgeStaleAudioMock.mockImplementationOnce(
       () => new Promise<string[]>(() => undefined),
     );
-    addWordsMock.mockImplementationOnce(
+    recordUsageWordsMock.mockImplementationOnce(
       () => new Promise<void>(() => undefined),
     );
 
@@ -408,6 +409,22 @@ describe("storeTranscription empty-audio retention (#418)", () => {
     expect(stored.transcript).toBe("hello world");
     expect(stored.rawTranscript).toBe("hello world");
     expect(result.transcription).not.toBeNull();
+    expect(recordUsageWordsMock).toHaveBeenCalledWith(
+      stored.id,
+      localDateKeyFromIso(stored.createdAt),
+      2,
+    );
+  });
+
+  it("does not meter a transcription received from another device", async () => {
+    setPrefs({});
+
+    const result = await storeTranscription(
+      buildInput({ remoteStatus: "received" }),
+    );
+
+    expect(result.transcription).not.toBeNull();
+    expect(recordUsageWordsMock).not.toHaveBeenCalled();
   });
 
   it("saves a transcription-failure marker when samples and transcript are empty but warnings exist", async () => {
@@ -431,6 +448,7 @@ describe("storeTranscription empty-audio retention (#418)", () => {
     expect(stored.transcript).toBe("[Transcription Failed]");
     expect(stored.warnings).toEqual(["provider failed: timeout"]);
     expect(result.transcription).not.toBeNull();
+    expect(recordUsageWordsMock).not.toHaveBeenCalled();
   });
 
   it("skips storage entirely when samples, transcript, and warnings are all empty", async () => {
@@ -534,27 +552,23 @@ describe("storeTranscription persistence suppression", () => {
 
     expect(result.transcription).toBeNull();
     expect(result.wordCount).toBe(3);
-    expect(addWordsMock).toHaveBeenCalledWith(3);
+    expect(recordUsageWordsMock).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(String),
+      3,
+    );
   });
 
   it("does not hold the stop path on the usage write in incognito", async () => {
-    // The non-incognito sibling calls `void recordUsageWords(...)` and the comment
-    // above it says why: the session stays locked until the stop path returns, so
-    // awaiting a queued profile write lets a pill click land in the gap, be accepted
-    // by the pill, and then be dropped by the app. Commit 9a638fa40 applied that
-    // reasoning to the sibling and left the incognito branch awaiting.
-    //
-    // This asserts the thing that actually went wrong -- ordering -- rather than the
-    // call, which a test can see either way. `addWordsToCurrentUser` is held
-    // unresolved; if `storeTranscription` still settles, the write is not on the path
-    // the user is waiting on.
+    // Keep the profile write unresolved. The stop path must still settle after
+    // saving the transcription rather than waiting for this background update.
     applyState({
       incognitoModeEnabled: true,
       incognitoModeIncludeInStats: true,
     });
 
     let releaseUsageWrite: (() => void) | undefined;
-    addWordsMock.mockImplementationOnce(
+    recordUsageWordsMock.mockImplementationOnce(
       () =>
         new Promise<void>((resolve) => {
           releaseUsageWrite = resolve;
@@ -567,14 +581,19 @@ describe("storeTranscription persistence suppression", () => {
       return result;
     });
 
-    // Let the microtask queue drain: anything the implementation awaits has had every
-    // chance to block by now.
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(settled).toBe(true);
-    expect(addWordsMock).toHaveBeenCalledWith(3);
-
-    // The write is still owed; the test releases it so the pending promise settles.
-    releaseUsageWrite?.();
+    try {
+      await vi.waitFor(() => {
+        expect(settled).toBe(true);
+      });
+    } finally {
+      // Release the mocked write even if the expectation times out.
+      releaseUsageWrite?.();
+    }
+    expect(recordUsageWordsMock).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(String),
+      3,
+    );
     await expect(pending).resolves.toMatchObject({ wordCount: 3 });
   });
 
@@ -588,7 +607,7 @@ describe("storeTranscription persistence suppression", () => {
 
     expect(result.transcription).toBeNull();
     expect(result.wordCount).toBe(3);
-    expect(addWordsMock).not.toHaveBeenCalled();
+    expect(recordUsageWordsMock).not.toHaveBeenCalled();
   });
 
   it.each([false, true])(
@@ -601,7 +620,7 @@ describe("storeTranscription persistence suppression", () => {
       const result = await storeTranscription(storeInput());
       expect(result.transcription).toBeNull();
       expect(result.wordCount).toBe(3);
-      expect(addWordsMock).not.toHaveBeenCalled();
+      expect(recordUsageWordsMock).not.toHaveBeenCalled();
       expect(createTranscriptionMock).not.toHaveBeenCalled();
       expect(invokeMock).not.toHaveBeenCalled();
     },

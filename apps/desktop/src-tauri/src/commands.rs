@@ -196,7 +196,9 @@ impl Drop for TypingSession {
 
 /// User-data tables wiped by `clear_local_data`. Extend this list when
 /// adding a table that stores user content — a missed table is a privacy leak.
-const USER_DATA_TABLES_TO_CLEAR: [&str; 12] = [
+const USER_DATA_TABLES_TO_CLEAR: [&str; 14] = [
+    "daily_word_activity_events",
+    "daily_word_activity",
     "chat_messages",
     "conversations",
     "user_profiles",
@@ -2031,6 +2033,36 @@ pub async fn user_get_one(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn user_record_usage(
+    event_id: String,
+    local_date: String,
+    word_count: i64,
+    database: State<'_, crate::state::OptionKeyDatabase>,
+) -> Result<crate::domain::User, String> {
+    crate::db::daily_activity_queries::record_usage_words(
+        database.pool(),
+        &event_id,
+        &local_date,
+        word_count,
+    )
+    .await
+    .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn daily_activity_list(
+    start_date: String,
+    end_date: String,
+    database: State<'_, crate::state::OptionKeyDatabase>,
+) -> Result<Vec<crate::domain::DailyWordActivity>, String> {
+    crate::db::daily_activity_queries::fetch_daily_activity(database.pool(), &start_date, &end_date)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn user_preferences_set(
     preferences: crate::domain::UserPreferences,
     database: State<'_, crate::state::OptionKeyDatabase>,
@@ -2934,13 +2966,13 @@ pub async fn tone_delete(
         .map_err(|err| err.to_string())
 }
 
-#[tauri::command]
-#[specta::specta]
-pub async fn clear_local_data(
-    app: AppHandle,
-    database: State<'_, crate::state::OptionKeyDatabase>,
-) -> Result<(), String> {
-    let pool = database.pool();
+/// Delete the database portion of a local-data wipe atomically. The activity
+/// lock covers the history snapshot, so a concurrent backfill cannot recreate
+/// totals from transcription rows that this transaction has just removed.
+async fn clear_local_data_from_database(
+    pool: &sqlx::SqlitePool,
+) -> Result<Vec<String>, sqlx::Error> {
+    let _activity_write_guard = crate::db::daily_activity_queries::lock_activity_writes().await;
 
     // Wipe every user-data table. When adding user-data tables, extend
     // `USER_DATA_TABLES_TO_CLEAR` — the UI explicitly promises "this will
@@ -2949,26 +2981,33 @@ pub async fn clear_local_data(
     //
     // Table names are all `&'static str` literals from this source file
     // (never user input), so `format!` is safe from SQL injection here.
-
-    // Collect IDs with non-empty snapshot markers before wiping
-    // transcriptions so their generated managed filenames can be deleted
-    // after commit. This preserves the existing empty-marker behavior.
+    // Collect audio IDs before wiping transcriptions so their managed files
+    // can be deleted after commit. This preserves empty-marker behavior.
     let audio_ids: Vec<String> = sqlx::query_scalar::<_, String>(
         "SELECT id FROM transcriptions WHERE audio_path IS NOT NULL AND audio_path != ''",
     )
-    .fetch_all(&pool)
-    .await
-    .map_err(|err| err.to_string())?;
+    .fetch_all(pool)
+    .await?;
 
-    let mut transaction = pool.begin().await.map_err(|err| err.to_string())?;
+    let mut transaction = pool.begin().await?;
     for table in USER_DATA_TABLES_TO_CLEAR {
         let statement = format!("DELETE FROM {table}");
-        sqlx::query(&statement)
-            .execute(&mut *transaction)
-            .await
-            .map_err(|err| err.to_string())?;
+        sqlx::query(&statement).execute(&mut *transaction).await?;
     }
-    transaction.commit().await.map_err(|err| err.to_string())?;
+    transaction.commit().await?;
+    Ok(audio_ids)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn clear_local_data(
+    app: AppHandle,
+    database: State<'_, crate::state::OptionKeyDatabase>,
+) -> Result<(), String> {
+    let pool = database.pool();
+    let audio_ids = clear_local_data_from_database(&pool)
+        .await
+        .map_err(|err| err.to_string())?;
 
     // After commit, open the managed root once, delete every filename derived
     // from the recorded IDs, then sweep orphaned WAVs through that same held
@@ -6180,6 +6219,7 @@ pub async fn floating_window_list(app: AppHandle) -> Result<Vec<FloatingWindowIn
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::TimeZone;
 
     static PRIVATE_HTTP_CANCELLATION_TEST_LOCK: once_cell::sync::Lazy<tokio::sync::Mutex<()>> =
         once_cell::sync::Lazy::new(|| tokio::sync::Mutex::new(()));
@@ -7964,6 +8004,102 @@ mod tests {
         }
 
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn clear_local_data_cannot_be_followed_by_stale_backfill_rows() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("in-memory pool must open");
+        for migration in crate::db::migrations() {
+            sqlx::raw_sql(migration.sql)
+                .execute(&pool)
+                .await
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "apply migration {} ({}): {error}",
+                        migration.version, migration.description
+                    )
+                });
+        }
+
+        let timestamp = chrono::Local
+            .with_ymd_and_hms(2026, 1, 2, 12, 0, 0)
+            .single()
+            .expect("valid local timestamp");
+        let date = timestamp.format("%Y-%m-%d").to_string();
+        sqlx::query(
+            "INSERT INTO transcriptions (id, transcript, timestamp, audio_path)
+             VALUES ('stale-backfill', 'one two', ?1, 'snapshot')",
+        )
+        .bind(timestamp.timestamp_millis())
+        .execute(&pool)
+        .await
+        .expect("seed history row");
+
+        // Queue the wipe before the dashboard read while both are held behind
+        // an activity write. The read must not capture a page before the wipe
+        // commits and replay it afterward.
+        let activity_write_guard = crate::db::daily_activity_queries::lock_activity_writes().await;
+        let (clear_started_tx, clear_started_rx) = tokio::sync::oneshot::channel();
+        let clear_pool = pool.clone();
+        let clear = tokio::spawn(async move {
+            clear_started_tx
+                .send(())
+                .expect("test receiver must be listening");
+            clear_local_data_from_database(&clear_pool).await
+        });
+        // This current-thread test runtime polls each task through its first
+        // pending lock acquisition before resuming this task, so the channels
+        // establish the shared mutex's FIFO waiter order without sleeps.
+        clear_started_rx.await.expect("clear task must start");
+
+        let (backfill_started_tx, backfill_started_rx) = tokio::sync::oneshot::channel();
+        let activity_pool = pool.clone();
+        let activity_date = date.clone();
+        let backfill = tokio::spawn(async move {
+            backfill_started_tx
+                .send(())
+                .expect("test receiver must be listening");
+            crate::db::daily_activity_queries::fetch_daily_activity(
+                activity_pool,
+                &activity_date,
+                &activity_date,
+            )
+            .await
+        });
+        backfill_started_rx.await.expect("backfill task must start");
+        drop(activity_write_guard);
+
+        let cleared_audio_ids = clear
+            .await
+            .expect("clear task must not panic")
+            .expect("database wipe must succeed");
+        assert_eq!(cleared_audio_ids, vec!["stale-backfill".to_string()]);
+        assert!(backfill
+            .await
+            .expect("backfill task must not panic")
+            .expect("daily activity read must succeed")
+            .is_empty());
+
+        let history_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM transcriptions")
+            .fetch_one(&pool)
+            .await
+            .expect("read remaining history count");
+        let event_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM daily_word_activity_events")
+                .fetch_one(&pool)
+                .await
+                .expect("read remaining event count");
+        let activity_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM daily_word_activity")
+            .fetch_one(&pool)
+            .await
+            .expect("read remaining activity count");
+        assert_eq!(history_count, 0);
+        assert_eq!(event_count, 0);
+        assert_eq!(activity_count, 0);
     }
 
     #[test]

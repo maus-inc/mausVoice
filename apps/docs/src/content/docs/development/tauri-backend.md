@@ -30,6 +30,12 @@ Return structured errors across invokes and treat a missing sidecar/pill as a re
 
 Typical domains: `start_recording` / `stop_recording` / `list_microphones`, `paste` / `simulate_type`, `transcription_*`, `user_*`, `api_key_*` (encrypt before persist).
 
-## Security reminder
+## Daily activity accounting
+
+Migration 91 creates the daily totals and the event ledger. The ledger stores an event id, local date, word count, and whether the event came from live metering or a transcription-history backfill. It does not copy transcript text. `clear_local_data` removes both tables.
+
+`daily_activity_list` validates an inclusive local-date range, repairs missing rows from saved transcriptions within that range in timestamp-and-id order, then returns the range. Its indexed UTC timestamp window has a two-day margin for local offsets, and each row is checked against the exact local dates. Backfill uses the same whitespace and UTF-16 word-count rules as the TypeScript `countWords` helper. It skips failed markers and transcriptions received from another device. Since older rows have no usage snapshot, their first backfill estimates the count from the transcript text then stored. Later edits and retranscriptions do not re-meter that event; if a new row's live meter is still pending, its arrival replaces the estimate with the original live count. Backfill changes chart totals only because the profile counters already include legacy history.
+
+`user_record_usage` uses an idempotent transaction to add a live event to the daily total and update the applicable monthly and lifetime profile counters. A duplicate live event is a no-op; if the dashboard backfills the same saved transcription first, the live call promotes that ledger row and reconciles its chart count to the authoritative live count while incrementing the profile only once. A late event from an older month still affects lifetime totals without regressing the newer monthly total. The incognito opt-in sends a random event id, local date, and word count. It sends no transcript or audio. Numeric totals remain within JavaScript's safe-integer range.
 
 External provider hosts belong in CSP `connect-src` and `http:default`, **not** `remote.urls`. `remote.urls` stays localhost-only so those origins cannot invoke IPC. Never add `*` to CSP.
