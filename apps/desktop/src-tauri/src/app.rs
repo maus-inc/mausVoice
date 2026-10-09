@@ -133,9 +133,14 @@ static LAST_NORMAL_MAIN_SIZE: Mutex<Option<PhysicalSize<u32>>> = Mutex::new(None
 /// not lose the maximized state.
 static LAST_MAIN_MAXIMIZED: AtomicBool = AtomicBool::new(false);
 
-/// Returns `true` when `size` represents an unminimized, non-work-area-filling
-/// normal window size that fits within the monitor work area.
-fn is_normal_window_size(size: PhysicalSize<u32>, work_area: Option<PhysicalSize<u32>>) -> bool {
+/// Returns `true` for normal restore dimensions that fit within the work area.
+/// Near-work-area dimensions are excluded when maximized or when geometry inference is enabled.
+fn is_normal_window_size(
+    size: PhysicalSize<u32>,
+    work_area: Option<PhysicalSize<u32>>,
+    is_maximized: bool,
+    infer_from_work_area: bool,
+) -> bool {
     if size.width == 0 || size.height == 0 {
         return false;
     }
@@ -144,8 +149,7 @@ fn is_normal_window_size(size: PhysicalSize<u32>, work_area: Option<PhysicalSize
     };
     size.width <= work.width
         && size.height <= work.height
-        && (size.width.saturating_add(2) < work.width
-            || size.height.saturating_add(2) < work.height)
+        && !((is_maximized || infer_from_work_area) && is_work_area_window_size(size, work_area))
 }
 
 /// Returns `true` when `size` matches the monitor work area within 2px on both
@@ -205,13 +209,12 @@ fn record_main_window_resize(window: &Window, size: PhysicalSize<u32>) {
         return;
     }
     let work_area = current_work_area_size(window);
-    let normal = is_normal_window_size(size, work_area);
     let decorated = window.is_decorated().unwrap_or(false);
     let infer_max = infer_maximized_from_work_area(decorated);
-    let maximized = window.is_maximized().unwrap_or(false)
-        || (infer_max && is_work_area_window_size(size, work_area));
+    let live_maximized = window.is_maximized().unwrap_or(false);
+    let maximized = live_maximized || (infer_max && is_work_area_window_size(size, work_area));
     LAST_MAIN_MAXIMIZED.store(maximized, Ordering::SeqCst);
-    if !normal || maximized {
+    if maximized || !is_normal_window_size(size, work_area, live_maximized, infer_max) {
         return;
     }
     if let Ok(mut slot) = LAST_NORMAL_MAIN_SIZE.lock() {
@@ -292,7 +295,7 @@ fn save_main_window_state(app_handle: &tauri::AppHandle) {
     let is_maximized = main_window.is_maximized().unwrap_or(false)
         || LAST_MAIN_MAXIMIZED.load(Ordering::SeqCst)
         || (infer_max && is_work_area_window_size(saved_size, work_area));
-    let needs_size_fix = !is_normal_window_size(saved_size, work_area);
+    let needs_size_fix = !is_normal_window_size(saved_size, work_area, is_maximized, infer_max);
     let needs_max_fix = saved_maximized != is_maximized;
     if needs_size_fix || needs_max_fix {
         if needs_size_fix {
@@ -332,7 +335,7 @@ fn sanitize_restored_main_window(main_window: &WebviewWindow) {
     let was_maximized = is_maximized_session(saved, live, work_area, infer_max);
     LAST_MAIN_MAXIMIZED.store(was_maximized, Ordering::SeqCst);
 
-    if is_normal_window_size(inner_size, work_area) {
+    if is_normal_window_size(inner_size, work_area, was_maximized, infer_max) {
         if let Ok(mut slot) = LAST_NORMAL_MAIN_SIZE.lock() {
             *slot = Some(inner_size);
         }
@@ -342,7 +345,7 @@ fn sanitize_restored_main_window(main_window: &WebviewWindow) {
         return;
     }
 
-    if was_maximized && is_normal_window_size(saved_size, work_area) {
+    if was_maximized && is_normal_window_size(saved_size, work_area, was_maximized, infer_max) {
         if let Ok(mut slot) = LAST_NORMAL_MAIN_SIZE.lock() {
             *slot = Some(saved_size);
         }
@@ -766,8 +769,8 @@ pub fn run(context: tauri::Context) -> Result<(), tauri::Error> {
 #[cfg(test)]
 mod tests {
     use super::{
-        default_main_physical_size, is_maximized_session, is_normal_window_size,
-        is_work_area_window_size, WINDOW_STATE_FLAGS,
+        default_main_physical_size, infer_maximized_from_work_area, is_maximized_session,
+        is_normal_window_size, is_work_area_window_size, WINDOW_STATE_FLAGS,
     };
     use tauri::PhysicalSize;
     use tauri_plugin_window_state::StateFlags;
@@ -780,18 +783,33 @@ mod tests {
     }
 
     #[test]
-    fn normal_window_size_rejects_minimized_and_work_area_dimensions() {
+    fn normal_window_size_respects_maximized_state_and_inference() {
         let work_area = Some(PhysicalSize::new(1920, 1040));
         let zero = PhysicalSize::new(0, 0);
         let full = PhysicalSize::new(1920, 1040);
         let almost_full = PhysicalSize::new(1919, 1039);
         let normal = PhysicalSize::new(1100, 700);
 
-        assert!(!is_normal_window_size(zero, work_area));
-        assert!(!is_normal_window_size(full, work_area));
-        assert!(!is_normal_window_size(almost_full, work_area));
-        assert!(is_normal_window_size(normal, work_area));
-        assert!(is_normal_window_size(normal, None));
+        assert!(!is_normal_window_size(zero, work_area, false, false));
+        assert!(is_normal_window_size(full, work_area, false, false));
+        assert!(is_normal_window_size(almost_full, work_area, false, false));
+        assert!(!is_normal_window_size(full, work_area, true, false));
+        assert!(!is_normal_window_size(almost_full, work_area, true, false));
+        assert!(is_normal_window_size(normal, work_area, true, false));
+        assert!(!is_normal_window_size(full, work_area, false, true));
+        assert!(!is_normal_window_size(almost_full, work_area, false, true));
+        assert!(is_normal_window_size(normal, work_area, false, true));
+        assert!(is_normal_window_size(normal, None, false, false));
+        assert!(is_normal_window_size(normal, None, true, false));
+    }
+
+    #[test]
+    fn work_area_inference_is_limited_to_undecorated_macos_windows() {
+        assert!(!infer_maximized_from_work_area(true));
+        assert_eq!(
+            infer_maximized_from_work_area(false),
+            cfg!(target_os = "macos")
+        );
     }
 
     #[test]
@@ -807,7 +825,7 @@ mod tests {
         assert!(is_work_area_window_size(full, work));
         assert!(!is_work_area_window_size(norm, work));
         assert!(!is_work_area_window_size(over, small));
-        assert!(!is_normal_window_size(over, small));
+        assert!(!is_normal_window_size(over, small, false, false));
 
         let full_s = (full, false);
         let norm_s = (norm, false);
