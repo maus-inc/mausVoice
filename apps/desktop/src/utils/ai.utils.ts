@@ -265,6 +265,17 @@ type ReadEdits = {
   dropped: number;
 };
 
+const readEditEntry = (entry: unknown): TranscriptionEdit | null => {
+  if (typeof entry !== "object" || entry === null) {
+    return null;
+  }
+  const { find, replace } = entry as { find?: unknown; replace?: unknown };
+  if (typeof find !== "string") {
+    return null;
+  }
+  return { find, replace: typeof replace === "string" ? replace : null };
+};
+
 const readEdits = (value: unknown, declared: boolean): ReadEdits => {
   if (!Array.isArray(value)) {
     // A present but non-array `edits` field is a malformed edit declaration,
@@ -274,19 +285,12 @@ const readEdits = (value: unknown, declared: boolean): ReadEdits => {
   const edits: TranscriptionEdit[] = [];
   let dropped = 0;
   for (const entry of value) {
-    if (typeof entry !== "object" || entry === null) {
+    const edit = readEditEntry(entry);
+    if (edit === null) {
       dropped += 1;
       continue;
     }
-    const { find, replace } = entry as { find?: unknown; replace?: unknown };
-    if (typeof find !== "string") {
-      dropped += 1;
-      continue;
-    }
-    edits.push({
-      find,
-      replace: typeof replace === "string" ? replace : null,
-    });
+    edits.push(edit);
   }
   return { edits, dropped };
 };
@@ -345,23 +349,6 @@ export type ProcessedTranscriptionResolution =
     };
 
 /**
- * Resolves a cleanup reply into the text the pipeline should deliver.
- *
- * Production accepts a complete edit batch first, then a full rewrite in
- * `result`, then the transcript unchanged. Any declared edit that is skipped
- * rejects the production batch before the rewrite can be used. Previews may opt
- * into the partial edit result because they do not insert it.
- *
- * `transcript` is the text the edits were generated against, so the caller
- * can pass the raw transcript for production and a preview sample for the
- * style dialog. An empty transcript resolves to itself without a warning:
- * there is nothing to clean, and warning about an empty reply to empty input
- * would be noise. So does a reply carrying an empty edit list, which is how
- * the model answers when the tone already matches the speaker. A list we
- * could not read is neither of those: the model asked for a change that is
- * now lost, so it is reported as unusable rather than passed off as clean.
- */
-/**
  * The edits branch of `resolveProcessedTranscription`, split out so the order of
  * preference reads as a list rather than as nesting. Returns null when the
  * edits do not decide the outcome, which is the one case where a rewrite the
@@ -376,6 +363,53 @@ type ResolveProcessedTranscriptionOptions = {
   allowPartialEdits?: boolean;
 };
 
+/**
+ * The warning for an edit list the reply's shape did not let us read, shared
+ * by the two paths that report one.
+ */
+const UNREADABLE_EDITS_WARNING =
+  "Post-processing returned edits that could not be read; kept the raw transcript. The reply may not match the shape the provider was asked for.";
+
+/**
+ * The skip warning for an edit batch, naming the matching rule so the count
+ * reads as a report rather than a mystery. Null when nothing was skipped.
+ */
+const editSkipWarning = (
+  applied: number,
+  declared: number,
+  skipped: number,
+  edits: TranscriptionEdit[],
+): string | null => {
+  if (skipped === 0) {
+    return null;
+  }
+  // The cap can drop edits before they are ever matched, so the warning names
+  // the matching rule instead of claiming every skip was a miss.
+  const capNote =
+    edits.length > MAX_TRANSCRIPTION_EDITS
+      ? ` Only the first ${MAX_TRANSCRIPTION_EDITS} edits were attempted.`
+      : "";
+  return `Applied ${applied} of ${declared} post-processing edits; ${skipped} could not be applied (an edit only applies when it names find text as a string, its replacement is a string, and that find text matches the transcript exactly once, on the edges of a word).${capNote}`;
+};
+
+/**
+ * The production verdict for a batch with skipped entries: the whole batch is
+ * rejected. The reason separates a list that could not be read from one that
+ * was readable but not fully applicable.
+ */
+const rejectPartialEditBatch = (
+  edits: TranscriptionEdit[],
+  warning: string | null,
+): ProcessedTranscriptionResolution => ({
+  status: "unusable",
+  reason: edits.length === 0 ? "unreadable-edits" : "partial-edits",
+  warning:
+    edits.length === 0
+      ? UNREADABLE_EDITS_WARNING
+      : (warning ??
+        "Post-processing edits could not all be applied; kept the raw transcript."),
+});
+
 const resolveAppliedEdits = (
   transcript: string,
   edits: TranscriptionEdit[],
@@ -389,29 +423,18 @@ const resolveAppliedEdits = (
   // one cannot vanish from the report.
   const declared = edits.length + dropped;
   const skipped = application.skipped + dropped;
-  // The cap can drop edits before they are ever matched, so the warning names
-  // the matching rule instead of claiming every skip was a miss.
-  const capNote =
-    edits.length > MAX_TRANSCRIPTION_EDITS
-      ? ` Only the first ${MAX_TRANSCRIPTION_EDITS} edits were attempted.`
-      : "";
-  const warning =
-    skipped > 0
-      ? `Applied ${application.applied} of ${declared} post-processing edits; ${skipped} could not be applied (an edit only applies when it names find text as a string, its replacement is a string, and that find text matches the transcript exactly once, on the edges of a word).${capNote}`
-      : null;
+  const warning = editSkipWarning(
+    application.applied,
+    declared,
+    skipped,
+    edits,
+  );
   if (skipped > 0 && !options.allowPartialEdits) {
-    return {
-      status: "unusable",
-      reason: edits.length === 0 ? "unreadable-edits" : "partial-edits",
-      warning:
-        edits.length === 0
-          ? "Post-processing returned edits that could not be read; kept the raw transcript. The reply may not match the shape the provider was asked for."
-          : (warning ??
-            "Post-processing edits could not all be applied; kept the raw transcript."),
-    };
+    return rejectPartialEditBatch(edits, warning);
   }
-  const decides = application.applied > 0 || rewritten.length === 0;
-  if (!decides) {
+  // The edits only fail to decide the outcome when none applied and a rewrite
+  // the model sent alongside them is the better text.
+  if (application.applied === 0 && rewritten.length > 0) {
     return null;
   }
   return {
@@ -434,13 +457,77 @@ const resolveDeclaredEdits = (
     return {
       status: "unusable",
       reason: "unreadable-edits",
-      warning:
-        "Post-processing returned edits that could not be read; kept the raw transcript. The reply may not match the shape the provider was asked for.",
+      warning: UNREADABLE_EDITS_WARNING,
     };
   }
   return { status: "cleaned", transcript, warning: null };
 };
 
+/**
+ * The resolution for a reply that did not parse, with the truncation hint a
+ * cut-off answer needs: a reply that opens an object and never closes it was
+ * cut off at the model's token limit rather than malformed, and the two need
+ * different remedies: a bigger output budget, not a retry.
+ */
+const unparseableReplyResolution = (
+  reply: string,
+  error: unknown,
+): ProcessedTranscriptionResolution => {
+  const truncationHint = isLikelyTruncatedJson(reply)
+    ? " The model output may have been truncated at its token limit."
+    : "";
+  return {
+    status: "unusable",
+    reason: "unparseable",
+    warning: `Failed to parse post-processing response: ${unknownToMessage(error)}.${truncationHint}`,
+  };
+};
+
+/**
+ * The fallbacks once edits are out of the way: the rewrite, then an empty
+ * transcript resolving to itself, then a declared-but-empty edit list, and
+ * finally a reply with no usable text at all.
+ */
+const resolveNonEditReply = (
+  transcript: string,
+  rewritten: string,
+  editsDeclared: boolean,
+  dropped: number,
+): ProcessedTranscriptionResolution => {
+  if (rewritten.length > 0) {
+    return { status: "cleaned", transcript: rewritten, warning: null };
+  }
+  if (transcript.trim().length === 0) {
+    return { status: "cleaned", transcript, warning: null };
+  }
+  if (editsDeclared) {
+    return resolveDeclaredEdits(transcript, dropped);
+  }
+  return {
+    status: "unusable",
+    reason: "empty",
+    warning:
+      "Post-processing returned no usable text; kept the raw transcript. The reply may have been truncated at the model's token limit.",
+  };
+};
+
+/**
+ * Resolves a cleanup reply into the text the pipeline should deliver.
+ *
+ * Production accepts a complete edit batch first, then a full rewrite in
+ * `result`, then the transcript unchanged. Any declared edit that is skipped
+ * rejects the production batch before the rewrite can be used. Previews may opt
+ * into the partial edit result because they do not insert it.
+ *
+ * `transcript` is the text the edits were generated against, so the caller
+ * can pass the raw transcript for production and a preview sample for the
+ * style dialog. An empty transcript resolves to itself without a warning:
+ * there is nothing to clean, and warning about an empty reply to empty input
+ * would be noise. So does a reply carrying an empty edit list, which is how
+ * the model answers when the tone already matches the speaker. A list we
+ * could not read is neither of those: the model asked for a change that is
+ * now lost, so it is reported as unusable rather than passed off as clean.
+ */
 export const resolveProcessedTranscription = (
   reply: string,
   transcript: string,
@@ -450,19 +537,7 @@ export const resolveProcessedTranscription = (
   try {
     parsed = parsePostProcessingJson(reply);
   } catch (error) {
-    // A reply that opens an object and never closes it was cut off at the
-    // model's token limit rather than malformed, and the two need different
-    // remedies: a bigger output budget, not a retry. Saying so is the only
-    // signal the user gets, because the parse error alone reads like noise.
-    const truncated = isLikelyTruncatedJson(reply);
-    const truncationHint = truncated
-      ? " The model output may have been truncated at its token limit."
-      : "";
-    return {
-      status: "unusable",
-      reason: "unparseable",
-      warning: `Failed to parse post-processing response: ${unknownToMessage(error)}.${truncationHint}`,
-    };
+    return unparseableReplyResolution(reply, error);
   }
 
   const { edits, editsDeclared, dropped, result } =
@@ -482,24 +557,7 @@ export const resolveProcessedTranscription = (
     }
   }
 
-  if (rewritten.length > 0) {
-    return { status: "cleaned", transcript: rewritten, warning: null };
-  }
-
-  if (transcript.trim().length === 0) {
-    return { status: "cleaned", transcript, warning: null };
-  }
-
-  if (editsDeclared) {
-    return resolveDeclaredEdits(transcript, dropped);
-  }
-
-  return {
-    status: "unusable",
-    reason: "empty",
-    warning:
-      "Post-processing returned no usable text; kept the raw transcript. The reply may have been truncated at the model's token limit.",
-  };
+  return resolveNonEditReply(transcript, rewritten, editsDeclared, dropped);
 };
 
 const preferenceOr = <T>(value: T | null | undefined, fallback: T): T =>

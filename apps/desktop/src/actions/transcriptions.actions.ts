@@ -6,7 +6,7 @@ import { getTranscriptionRepo } from "../repos";
 import { isPersistenceAllowed } from "../utils/incognito.utils";
 import { getLogger } from "../utils/log.utils";
 import { createId } from "../utils/id.utils";
-import { orFalse } from "../utils/nullable.utils";
+import { orFalse, orNull } from "../utils/nullable.utils";
 import { POST_PROCESS_TRUNCATED_WARNING } from "../utils/prompt.utils";
 import {
   beginRetranscribe,
@@ -41,6 +41,7 @@ import {
   storeTranscription,
   transcribeAudio,
   type PostProcessMetadata,
+  type TranscriptionMetadata,
 } from "./transcribe.actions";
 
 export const openTranscriptionDetailsDialog = (transcriptionId: string) => {
@@ -241,6 +242,133 @@ const isUnstyledPostProcess = (metadata: PostProcessMetadata): boolean =>
   orFalse(metadata.postProcessEditFailed) ||
   (orFalse(metadata.postProcessFallback) && !metadata.postProcessError);
 
+/** This run's value when it recorded one, otherwise the value the row holds. */
+const carriedForward = <T>(
+  next: T | null | undefined,
+  previous: T | null | undefined,
+): T | null => next ?? previous ?? null;
+
+/**
+ * The metadata-derived fields every retranscription copies onto the row, with
+ * absent values normalized to the row's null sentinel. Durations are included
+ * because they must be re-read from the fresh run; spreading the old record
+ * otherwise leaves stale timings in history after a retranscription.
+ */
+type MetadataBackedTranscriptionFields = Pick<
+  Transcription,
+  | "modelSize"
+  | "inferenceDevice"
+  | "transcriptionPrompt"
+  | "postProcessPrompt"
+  | "transcriptionApiKeyId"
+  | "postProcessApiKeyId"
+  | "transcriptionMode"
+  | "postProcessMode"
+  | "postProcessDevice"
+  | "postProcessModel"
+  | "postProcessProvider"
+  | "postProcessFallback"
+  | "postProcessError"
+  | "transcriptionDurationMs"
+  | "postprocessDurationMs"
+>;
+
+const orNullMetadataFields = (
+  metadata: TranscriptionMetadata,
+): MetadataBackedTranscriptionFields => ({
+  modelSize: orNull(metadata.modelSize),
+  inferenceDevice: orNull(metadata.inferenceDevice),
+  transcriptionPrompt: orNull(metadata.transcriptionPrompt),
+  postProcessPrompt: orNull(metadata.postProcessPrompt),
+  transcriptionApiKeyId: orNull(metadata.transcriptionApiKeyId),
+  postProcessApiKeyId: orNull(metadata.postProcessApiKeyId),
+  transcriptionMode: orNull(metadata.transcriptionMode),
+  postProcessMode: orNull(metadata.postProcessMode),
+  postProcessDevice: orNull(metadata.postProcessDevice),
+  postProcessModel: orNull(metadata.postProcessModel),
+  postProcessProvider: orNull(metadata.postProcessProvider),
+  postProcessFallback: orNull(metadata.postProcessFallback),
+  postProcessError: orNull(metadata.postProcessError),
+  transcriptionDurationMs: orNull(metadata.transcriptionDurationMs),
+  postprocessDurationMs: orNull(metadata.postprocessDurationMs),
+});
+
+/**
+ * The four post-processing sentinels, under the rule the retranscribe path
+ * keeps. They match the create-path sentinels: null = not attempted, true =
+ * failed, false = succeeded. A styled run records its own outcome and clears
+ * any previous edit-failure chain, so a later user-started chain can receive
+ * one recovery pass. An unstyled run keeps the row's previous chain when this
+ * run recorded nothing of its own, so an unusable answer cannot erase the
+ * failure history the recovery decision reads.
+ */
+const postProcessOutcomeFields = (
+  metadata: PostProcessMetadata,
+  transcription: Transcription,
+  unstyled: boolean,
+): {
+  postProcessFailed: boolean | null;
+  postProcessEditFailed: boolean | null;
+  postProcessEditFailureCount: number | null;
+  postProcessEditAutoRetryUsed: boolean | null;
+} =>
+  unstyled
+    ? {
+        postProcessFailed: carriedForward(
+          metadata.postProcessFailed,
+          transcription.postProcessFailed,
+        ),
+        postProcessEditFailed: carriedForward(
+          metadata.postProcessEditFailed,
+          transcription.postProcessEditFailed,
+        ),
+        postProcessEditFailureCount: carriedForward(
+          metadata.postProcessEditFailureCount,
+          transcription.postProcessEditFailureCount,
+        ),
+        postProcessEditAutoRetryUsed: carriedForward(
+          metadata.postProcessEditAutoRetryUsed,
+          transcription.postProcessEditAutoRetryUsed,
+        ),
+      }
+    : {
+        postProcessFailed: orNull(metadata.postProcessFailed),
+        postProcessEditFailed: null,
+        postProcessEditFailureCount: null,
+        postProcessEditAutoRetryUsed: null,
+      };
+
+/**
+ * The text a retranscribed row should hold. Nothing styled came back, so the
+ * text this row already holds stays the best answer; falling back to the new
+ * raw ASR covers a row that was never styled in the first place.
+ */
+const resolveRetranscribedText = (
+  transcription: Transcription,
+  finalTranscript: string,
+  unstyled: boolean,
+): string =>
+  unstyled ? transcription.transcript || finalTranscript : finalTranscript;
+
+/** The message and reason pair an unstyled run reports, null on a styled one. */
+const unstyledFeedback = (
+  unstyledRun: { message: string; reason: string } | null,
+): { unstyledMessage: string | null; unstyledReason: string | null } => ({
+  unstyledMessage: unstyledRun?.message ?? null,
+  unstyledReason: unstyledRun?.reason ?? null,
+});
+
+/**
+ * During an ephemeral session the update stays memory-only: build the fresh
+ * payload for the caller but never write it through to the repository.
+ */
+const persistTranscriptionUpdate = async (
+  payload: Transcription,
+): Promise<Transcription> =>
+  isPersistenceAllowed()
+    ? await getTranscriptionRepo().updateTranscription(payload)
+    : payload;
+
 const updateStoredTranscription = async (
   transcription: Transcription,
   processed: ProcessedAudio,
@@ -267,66 +395,23 @@ const updateStoredTranscription = async (
 
   const payload: Transcription = {
     ...transcription,
-    transcript: unstyled
-      ? // Nothing styled came back, so the text this row already holds stays
-        // the best answer. Falling back to the new raw ASR covers a row that
-        // was never styled in the first place.
-        transcription.transcript || finalTranscript
-      : finalTranscript,
+    transcript: resolveRetranscribedText(
+      transcription,
+      finalTranscript,
+      unstyled,
+    ),
     sanitizedTranscript,
-    modelSize: metadata.modelSize ?? null,
-    inferenceDevice: metadata.inferenceDevice ?? null,
+    ...orNullMetadataFields(metadata),
+    ...postProcessOutcomeFields(metadata, transcription, unstyled),
     // The raw ASR from this run is the only record of what was actually said,
     // so it is stored even when the styled transcript is left untouched.
     rawTranscript: transcribeResult.rawTranscript || finalTranscript,
-    transcriptionPrompt: metadata.transcriptionPrompt ?? null,
-    postProcessPrompt: metadata.postProcessPrompt ?? null,
-    transcriptionApiKeyId: metadata.transcriptionApiKeyId ?? null,
-    postProcessApiKeyId: metadata.postProcessApiKeyId ?? null,
-    transcriptionMode: metadata.transcriptionMode ?? null,
-    postProcessMode: metadata.postProcessMode ?? null,
-    postProcessDevice: metadata.postProcessDevice ?? null,
-    postProcessModel: metadata.postProcessModel ?? null,
-    // Match create-path sentinels: null = not attempted, true = failed,
-    // false = succeeded. An unusable answer keeps the row's previous text and
-    // carries its semantic edit-failure chain forward; a successful run clears
-    // that chain so a later user-started chain can receive one recovery pass.
-    postProcessProvider: metadata.postProcessProvider ?? null,
-    postProcessFailed: unstyled
-      ? (metadata.postProcessFailed ?? transcription.postProcessFailed ?? null)
-      : (metadata.postProcessFailed ?? null),
-    postProcessEditFailed: unstyled
-      ? (metadata.postProcessEditFailed ??
-        transcription.postProcessEditFailed ??
-        null)
-      : null,
-    postProcessEditFailureCount: unstyled
-      ? (metadata.postProcessEditFailureCount ??
-        transcription.postProcessEditFailureCount ??
-        null)
-      : null,
-    postProcessEditAutoRetryUsed: unstyled
-      ? (metadata.postProcessEditAutoRetryUsed ??
-        transcription.postProcessEditAutoRetryUsed ??
-        null)
-      : null,
-    postProcessFallback: metadata.postProcessFallback ?? null,
-    postProcessError: metadata.postProcessError ?? null,
     warnings: warnings.length > 0 ? warnings : null,
-    // Durations must be re-read from the fresh run; spreading the old record
-    // otherwise leaves stale timings in history after a retranscription.
-    transcriptionDurationMs: metadata.transcriptionDurationMs ?? null,
-    postprocessDurationMs: metadata.postprocessDurationMs ?? null,
   };
-  // During an ephemeral session the update stays memory-only: build the fresh
-  // payload for the caller but never write it through to the repository.
-  const stored = isPersistenceAllowed()
-    ? await getTranscriptionRepo().updateTranscription(payload)
-    : payload;
+  const stored = await persistTranscriptionUpdate(payload);
   return {
     styled: !unstyled,
-    unstyledMessage: unstyledRun?.message ?? null,
-    unstyledReason: unstyledRun?.reason ?? null,
+    ...unstyledFeedback(unstyledRun),
     transcription: stored,
   };
 };
@@ -340,22 +425,130 @@ type RetranscribeTranscriptionParams = {
 const RETRANSCRIBE_LOADING_SNACKBAR_MS = 2 * 60 * 1000;
 const automaticRetranscriptionIds = new Set<string>();
 
+type AutomaticRetryParams = {
+  transcription: Transcription;
+  toneId?: string | null;
+  languageCode?: string | null;
+};
+
 /**
- * Whether this row is the one the automatic pass is owed to: a persisted
- * semantic edit failure past the failure threshold, with the audio still on
- * disk, that has not already been claimed by a pass in this process or in a
- * previous one.
+ * A semantic edit failure this process has not already claimed for itself or
+ * settled, so the row is still owed its one automatic recovery pass.
  */
-const canScheduleAutomaticRetry = (
+const isClaimableEditFailure = (transcription: Transcription): boolean =>
+  transcription.postProcessEditFailed === true &&
+  transcription.postProcessEditAutoRetryUsed !== true;
+
+const hasStoredAudio = (transcription: Transcription): boolean =>
+  Boolean(transcription.audio?.filePath);
+
+const canScheduleAutomaticRetry = (transcription: Transcription): boolean =>
+  isClaimableEditFailure(transcription) &&
+  hasStoredAudio(transcription) &&
+  shouldAutomaticallyRetranscribePostProcessEditFailure(
+    transcription.postProcessEditFailureCount,
+  ) &&
+  !automaticRetranscriptionIds.has(transcription.id);
+
+/**
+ * The failure count that makes this row eligible for its one automatic pass,
+ * or null when it is not eligible. Persistence gates the claim because the
+ * marker that enforces the one-pass rule is a durable column.
+ */
+const automaticRetryFailureCount = (
+  transcription: Transcription,
+): number | null => {
+  if (!isPersistenceAllowed() || !canScheduleAutomaticRetry(transcription)) {
+    return null;
+  }
+  return transcription.postProcessEditFailureCount ?? null;
+};
+
+/**
+ * A row still standing at the failure count this claim was written for. The
+ * live row can change under a claim, and only this exact state means the
+ * failure that triggered it has not been superseded.
+ */
+const isClaimedFailureRow = (
   transcription: Transcription,
   failureCount: number,
 ): boolean =>
-  isPersistenceAllowed() &&
-  Boolean(transcription.audio?.filePath) &&
   transcription.postProcessEditFailed === true &&
-  shouldAutomaticallyRetranscribePostProcessEditFailure(failureCount) &&
-  transcription.postProcessEditAutoRetryUsed !== true &&
-  !automaticRetranscriptionIds.has(transcription.id);
+  transcription.postProcessEditFailureCount === failureCount;
+
+/**
+ * Claim the live row before waiting. The claim is written from the row the app
+ * is holding rather than the caller's copy, which a user edit or a manual
+ * retranscription may already have replaced; a missing row falls back to the
+ * caller's copy, which is what the live and imported paths always supply.
+ * Returns the marked row, or null when the live row no longer matches the
+ * failure that triggered the claim.
+ */
+const claimAutomaticRetryRow = async (
+  transcription: Transcription,
+  failureCount: number,
+): Promise<Transcription | null> => {
+  const current =
+    getRec(getAppState().transcriptionById, transcription.id) ?? transcription;
+  if (!isClaimedFailureRow(current, failureCount)) {
+    return null;
+  }
+  const marked = await getTranscriptionRepo().updateTranscription({
+    ...current,
+    postProcessEditAutoRetryUsed: true,
+  });
+  produceAppState((draft) => {
+    draft.transcriptionById[transcription.id] = marked;
+  });
+  return marked;
+};
+
+/**
+ * Deliver the pass once the back-off expires: release the in-process claim,
+ * re-check the live row, and retranscribe the same History row. The count and
+ * the marker still sitting at their claim-time values is what says no newer
+ * run superseded the claim while it waited.
+ */
+const deliverAutomaticRetry = async (
+  params: AutomaticRetryParams,
+  failureCount: number,
+): Promise<void> => {
+  const { transcription, toneId, languageCode } = params;
+  automaticRetranscriptionIds.delete(transcription.id);
+  const latest = getRec(getAppState().transcriptionById, transcription.id);
+  if (
+    latest === undefined ||
+    !isClaimedFailureRow(latest, failureCount) ||
+    latest.postProcessEditAutoRetryUsed !== true
+  ) {
+    return;
+  }
+  await retranscribeTranscription({
+    transcriptionId: transcription.id,
+    toneId,
+    languageCode,
+  });
+};
+
+const scheduleAutomaticRetryDelivery = (
+  params: AutomaticRetryParams,
+  failureCount: number,
+  delayMs: number,
+): void => {
+  getLogger().info(
+    `Scheduling audio retranscription after repeated post-processing edit failures in ${delayMs}ms`,
+  );
+  // Fire-and-forget: the delivery owns its failure reporting through the
+  // catch below, so the caller never waits on the recovery pass.
+  delayed(delayMs)
+    .then(() => deliverAutomaticRetry(params, failureCount))
+    .catch((error: unknown) => {
+      automaticRetranscriptionIds.delete(params.transcription.id);
+      getLogger().warning(
+        `Automatic audio retranscription was skipped: ${error}`,
+      );
+    });
+};
 
 /**
  * Mark a durable row before waiting, then run the one automatic recovery pass
@@ -363,80 +556,27 @@ const canScheduleAutomaticRetry = (
  * a restart and prevents a later manual failure chain from scheduling another
  * automatic run for the same History item.
  */
-export const scheduleAutomaticPostProcessEditRetry = async ({
-  transcription,
-  toneId,
-  languageCode,
-}: {
-  transcription: Transcription;
-  toneId?: string | null;
-  languageCode?: string | null;
-}): Promise<void> => {
-  const failureCount = transcription.postProcessEditFailureCount;
-  if (
-    failureCount === null ||
-    failureCount === undefined ||
-    !canScheduleAutomaticRetry(transcription, failureCount)
-  ) {
+export const scheduleAutomaticPostProcessEditRetry = async (
+  params: AutomaticRetryParams,
+): Promise<void> => {
+  const { transcription } = params;
+  const failureCount = automaticRetryFailureCount(transcription);
+  if (failureCount === null) {
     return;
   }
 
   automaticRetranscriptionIds.add(transcription.id);
   try {
-    // Claim from the row the app is holding, and check it before the write.
-    // The caller can hand over a row that a user edit or a manual
-    // retranscription has already replaced, and writing that stale row back
-    // would undo the newer run. A missing row falls back to the caller's copy,
-    // which is what the live and imported paths always supply.
-    const current =
-      getRec(getAppState().transcriptionById, transcription.id) ??
-      transcription;
-    if (
-      current.postProcessEditFailed !== true ||
-      current.postProcessEditFailureCount !== failureCount
-    ) {
+    const marked = await claimAutomaticRetryRow(transcription, failureCount);
+    if (marked === null) {
       automaticRetranscriptionIds.delete(transcription.id);
       return;
     }
-    const marked = await getTranscriptionRepo().updateTranscription({
-      ...current,
-      postProcessEditAutoRetryUsed: true,
-    });
-    produceAppState((draft) => {
-      draft.transcriptionById[transcription.id] = marked;
-    });
-
-    const delayMs = getPostProcessEditRetranscribeDelayMs(failureCount);
-    getLogger().info(
-      `Scheduling audio retranscription after repeated post-processing edit failures in ${delayMs}ms`,
+    scheduleAutomaticRetryDelivery(
+      params,
+      failureCount,
+      getPostProcessEditRetranscribeDelayMs(failureCount),
     );
-
-    void delayed(delayMs)
-      .then(async () => {
-        automaticRetranscriptionIds.delete(transcription.id);
-        const latest = getRec(
-          getAppState().transcriptionById,
-          transcription.id,
-        );
-        if (
-          latest?.postProcessEditFailed !== true ||
-          latest.postProcessEditFailureCount !== failureCount ||
-          latest.postProcessEditAutoRetryUsed !== true
-        ) {
-          return;
-        }
-        await retranscribeTranscription({
-          transcriptionId: transcription.id,
-          toneId,
-          languageCode,
-        });
-      })
-      .catch((error: unknown) => {
-        automaticRetranscriptionIds.delete(transcription.id);
-        getLogger().warning(
-          `Automatic audio retranscription was skipped: ${error}`,
-        );
-      });
   } catch (error) {
     automaticRetranscriptionIds.delete(transcription.id);
     getLogger().warning(
@@ -613,18 +753,11 @@ const failRetranscribeRun = ({
   releaseRetranscribeGeneration(transcriptionId, generation);
 };
 
-export async function retranscribeTranscription(
-  params: RetranscribeTranscriptionParams,
-): Promise<void> {
-  const { transcriptionId, toneId, languageCode } = params;
-  if (
-    isRetranscribingId(getAppState().transcriptions, transcriptionId) ||
-    automaticRetranscriptionIds.has(transcriptionId)
-  ) {
-    return;
-  }
-
-  const generation = nextRetranscribeGeneration(transcriptionId);
+/**
+ * Start a run's in-flight bookkeeping: mark the row retranscribing and show
+ * the loading feedback once, when this is the only run in flight.
+ */
+const beginRetranscribeRun = (transcriptionId: string): void => {
   const wasAnyInFlight =
     getAppState().transcriptions.retranscribingIds.length > 0;
   produceAppState((draft) => {
@@ -633,54 +766,127 @@ export async function retranscribeTranscription(
   if (!wasAnyInFlight) {
     showRetranscribeLoadingFeedback();
   }
+};
 
-  try {
-    const update = await performRetranscribe(params);
+/**
+ * The success tail: mark the row finished, show the completion feedback, and
+ * clear the success check once it has been visible long enough. The timeout
+ * re-checks the generation so a newer run's feedback is never cleared by an
+ * older run's timer.
+ */
+const finishRetranscribeSuccess = (
+  transcriptionId: string,
+  generation: number,
+): void => {
+  produceAppState((draft) => {
+    finishRetranscribe(draft.transcriptions, transcriptionId, true);
+  });
+  syncRetranscribeFeedback("success");
+  globalThis.setTimeout(() => {
     if (!isCurrentRetranscribeGeneration(transcriptionId, generation)) {
-      abandonRetranscribeRun();
-      return;
-    }
-    if (!update.styled) {
-      // The row now holds its previous text plus this run's raw ASR, which is
-      // a usable outcome for the user but not the styling they asked for, so it
-      // must not be reported as a finished retranscription.
-      failRetranscribeRun({
-        transcriptionId,
-        generation,
-        message: update.unstyledMessage ?? "",
-        reason: update.unstyledReason ?? undefined,
-      });
-      void scheduleAutomaticPostProcessEditRetry({
-        transcription: update.transcription,
-        toneId,
-        languageCode,
-      });
       return;
     }
     produceAppState((draft) => {
-      finishRetranscribe(draft.transcriptions, transcriptionId, true);
+      clearRetranscribeSuccess(draft.transcriptions, transcriptionId);
     });
-    syncRetranscribeFeedback("success");
-    globalThis.setTimeout(() => {
-      if (!isCurrentRetranscribeGeneration(transcriptionId, generation)) {
-        return;
-      }
-      produceAppState((draft) => {
-        clearRetranscribeSuccess(draft.transcriptions, transcriptionId);
-      });
-      releaseRetranscribeGeneration(transcriptionId, generation);
-    }, RETRANSCRIPTION_SUCCESS_VISIBLE_MS);
-  } catch (error) {
-    if (!isCurrentRetranscribeGeneration(transcriptionId, generation)) {
-      abandonRetranscribeRun();
-      return;
-    }
+    releaseRetranscribeGeneration(transcriptionId, generation);
+  }, RETRANSCRIPTION_SUCCESS_VISIBLE_MS);
+};
+
+const completeRetranscribeRun = ({
+  transcriptionId,
+  generation,
+  update,
+  toneId,
+  languageCode,
+}: {
+  transcriptionId: string;
+  generation: number;
+  update: RetranscribeUpdate;
+  toneId?: string | null;
+  languageCode?: string | null;
+}): boolean => {
+  if (!isCurrentRetranscribeGeneration(transcriptionId, generation)) {
+    abandonRetranscribeRun();
+    return true;
+  }
+  if (!update.styled) {
+    // The row now holds its previous text plus this run's raw ASR, which is
+    // a usable outcome for the user but not the styling they asked for, so it
+    // must not be reported as a finished retranscription.
     failRetranscribeRun({
       transcriptionId,
       generation,
-      message: error instanceof Error ? error.message : "",
-      error,
+      message: update.unstyledMessage ?? "",
+      reason: update.unstyledReason ?? undefined,
     });
+    // Fire-and-forget: the scheduler reports its own failures.
+    scheduleAutomaticPostProcessEditRetry({
+      transcription: update.transcription,
+      toneId,
+      languageCode,
+    });
+    return true;
+  }
+  finishRetranscribeSuccess(transcriptionId, generation);
+  return true;
+};
+
+const handleRetranscribeError = ({
+  transcriptionId,
+  generation,
+  error,
+}: {
+  transcriptionId: string;
+  generation: number;
+  error: unknown;
+}): boolean => {
+  if (!isCurrentRetranscribeGeneration(transcriptionId, generation)) {
+    abandonRetranscribeRun();
+    return true;
+  }
+  failRetranscribeRun({
+    transcriptionId,
+    generation,
+    message: error instanceof Error ? error.message : "",
+    error,
+  });
+  return true;
+};
+
+/**
+ * Run one retranscription pass for a History row.
+ *
+ * Returns whether this call started a run. False means another run was
+ * already in flight for the row, or a pending automatic pass already owned
+ * it, so nothing ran and the caller must not read the row as settled by this
+ * call.
+ */
+export async function retranscribeTranscription(
+  params: RetranscribeTranscriptionParams,
+): Promise<boolean> {
+  const { transcriptionId, toneId, languageCode } = params;
+  if (
+    isRetranscribingId(getAppState().transcriptions, transcriptionId) ||
+    automaticRetranscriptionIds.has(transcriptionId)
+  ) {
+    return false;
+  }
+
+  const generation = nextRetranscribeGeneration(transcriptionId);
+  beginRetranscribeRun(transcriptionId);
+
+  try {
+    const update = await performRetranscribe(params);
+    return completeRetranscribeRun({
+      transcriptionId,
+      generation,
+      update,
+      toneId,
+      languageCode,
+    });
+  } catch (error) {
+    return handleRetranscribeError({ transcriptionId, generation, error });
   }
 }
 
@@ -708,20 +914,14 @@ const isResumableAutomaticRetry = (transcription: Transcription): boolean =>
   Boolean(transcription.audio?.filePath);
 
 /**
- * Deliver one claimed pass and make sure the attempt is recorded either way.
- *
- * A pass that reaches post-processing writes the row itself, and what lands
- * there is what tells this function the claim is settled: a styled run clears
- * the chain, and a run that failed styling stores a higher count. A pass that
- * fails before post-processing, for instance when the audio or the transcription
- * step fails, leaves the row exactly as it was, so nothing would stop the next
- * launch from delivering the same claim again. That case is recorded here as a
- * post-processing failure, which keeps the delivery to one attempt per claim.
+ * Record a delivered attempt that never reached post-processing, so a later
+ * launch cannot deliver the same claim again. The row being unchanged from
+ * the claim, with its count and marker still in place, is what tells a run
+ * that failed before post-processing apart from one that settled the row.
  */
-const resumeAutomaticRetry = async (
+const recordUnsettledRetryAttempt = async (
   transcription: Transcription,
 ): Promise<void> => {
-  await retranscribeTranscription({ transcriptionId: transcription.id });
   const latest = getRec(getAppState().transcriptionById, transcription.id);
   if (
     latest === undefined ||
@@ -746,6 +946,35 @@ const resumeAutomaticRetry = async (
   }
 };
 
+/**
+ * Deliver one claimed pass and make sure the attempt is recorded either way.
+ *
+ * A pass that reaches post-processing writes the row itself, and what lands
+ * there is what tells this function the claim is settled: a styled run clears
+ * the chain, and a run that failed styling stores a higher count. A pass that
+ * fails before post-processing, for instance when the audio or the
+ * transcription step fails, leaves the row exactly as it was, so nothing
+ * would stop the next launch from delivering the same claim again. That case
+ * is recorded as a post-processing failure, which keeps the delivery to one
+ * attempt per claim.
+ *
+ * A call that did not start a pass, because a manual run or the scheduler
+ * already owned the row, records nothing: the owner settles the row, and a
+ * quit before it does leaves the claim resumable rather than spent. Writing
+ * the failure marker here anyway would let a duplicate caller spend the claim
+ * while a pass is still in flight.
+ */
+const resumeAutomaticRetry = async (
+  transcription: Transcription,
+): Promise<void> => {
+  const started = await retranscribeTranscription({
+    transcriptionId: transcription.id,
+  });
+  if (started) {
+    await recordUnsettledRetryAttempt(transcription);
+  }
+};
+
 export const resumeInterruptedPostProcessEditRetries = (
   transcriptions: Transcription[],
 ): void => {
@@ -754,7 +983,8 @@ export const resumeInterruptedPostProcessEditRetries = (
   }
   for (const transcription of transcriptions) {
     if (isResumableAutomaticRetry(transcription)) {
-      void resumeAutomaticRetry(transcription);
+      // Fire-and-forget: the resume path records or re-delivers on its own.
+      resumeAutomaticRetry(transcription);
     }
   }
 };
@@ -795,7 +1025,8 @@ export const importAudioFile = async ({
   });
 
   if (output.transcription) {
-    void scheduleAutomaticPostProcessEditRetry({
+    // Fire-and-forget: the scheduler reports its own failures.
+    scheduleAutomaticPostProcessEditRetry({
       transcription: output.transcription,
       toneId,
       languageCode,

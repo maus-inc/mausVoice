@@ -365,12 +365,11 @@ export const postProcessFinalizedTranscript = async (
       trace: input.trace ?? null,
     });
     if (stored.transcription) {
-      void scheduleAutomaticPostProcessEditRetry({
+      // Fire-and-forget: the scheduler reports its own failures.
+      scheduleAutomaticPostProcessEditRetry({
         transcription: stored.transcription,
         toneId: input.toneId,
-        ...(input.languageCode === undefined
-          ? {}
-          : { languageCode: input.languageCode }),
+        languageCode: input.languageCode,
       });
     }
   }
@@ -916,10 +915,11 @@ export const DictationSideEffects = () => {
             remoteDeviceId: null,
           });
           if (stored.transcription) {
-            void scheduleAutomaticPostProcessEditRetry({
+            // Fire-and-forget: the scheduler reports its own failures.
+            scheduleAutomaticPostProcessEditRetry({
               transcription: stored.transcription,
               toneId,
-              ...(languageCode === undefined ? {} : { languageCode }),
+              languageCode,
             });
             await surfacePersistedReviewInHistory();
             return true;
