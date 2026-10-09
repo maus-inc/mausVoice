@@ -57,11 +57,10 @@ const createAbortableOpen = (
         return;
       }
 
-      // Promise construction turns a synchronous SDK throw into a rejection,
-      // so the shared settlement path also removes the abort listener.
-      const opening = new Promise<Awaited<ReturnType<IConnection["open"]>>>(
-        (resolveOpen) => resolveOpen(openConnection()),
-      );
+      // `.then()` turns a synchronous SDK throw into a rejection rather than
+      // letting it escape, so the shared settlement path also removes the
+      // abort listener.
+      const opening = Promise.resolve().then(() => openConnection());
       opening.then(
         (response) => {
           if (finish()) resolve(response);
