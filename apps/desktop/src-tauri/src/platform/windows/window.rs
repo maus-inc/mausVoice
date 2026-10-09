@@ -77,15 +77,9 @@ pub fn surface_main_window(window: &WebviewWindow) -> Result<(), String> {
         .run_on_main_thread(move || {
             let result = (|| -> Result<(), String> {
                 let hwnd: HWND = window_for_handle.hwnd().map_err(|err| err.to_string())?;
-                let was_minimized = window_for_handle.is_minimized().unwrap_or(false);
 
                 unsafe {
-                    // Only call `SW_RESTORE` when the window is minimized: in
-                    // Win32, `SW_RESTORE` on a maximized non-minimized window
-                    // unmaximizes it to its normal rect.
-                    if was_minimized {
-                        let _ = ShowWindow(hwnd, SW_RESTORE);
-                    }
+                    let _ = ShowWindow(hwnd, SW_RESTORE);
                     let _ = ShowWindow(hwnd, SW_SHOW);
                     let _ = SetForegroundWindow(hwnd);
                     let _ = SetWindowPos(

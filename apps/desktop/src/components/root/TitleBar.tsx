@@ -94,6 +94,12 @@ const isActiveTicket = (
 const shouldApplySize = (minimized: boolean, size: WindowSize): boolean =>
   !minimized && hasPositiveDimensions(size);
 
+/**
+ * Upper bound (ms) for suppressing contradictory `isMaximized()` reads emitted
+ * by intermediate `onResized` frames during macOS AppKit `setFrame:animate:YES`
+ * (~150-250ms) and GTK async `window-state-event` transitions, while expiring
+ * quickly enough to reflect a subsequent window-manager unmaximize.
+ */
 const PENDING_MAXIMIZE_TTL_MS = 500;
 
 interface PendingMaximized {
@@ -341,6 +347,12 @@ const isMacDoubleClickRelease = (
   detail === 2 &&
   isWithinDragThreshold(origin, clientX, clientY);
 
+/**
+ * Arms `skipRef` across the current event dispatch and clears it on the next
+ * macrotask (`setTimeout(..., 0)`), so it outlives microtasks between
+ * `mouseup(detail === 2)` and a synthesized `dblclick`, yet expires if no
+ * `dblclick` is dispatched.
+ */
 const armSingleTurnDblClickSkip = (
   skipRef: React.MutableRefObject<boolean>,
 ) => {

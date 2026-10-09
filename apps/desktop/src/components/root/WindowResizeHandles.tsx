@@ -101,11 +101,7 @@ export const getGrips = (rightCaptionButtons: boolean): readonly Grip[] => {
  * back to the window manager via `startResizeDragging`, which keeps the resize
  * running on the native side (no per-frame IPC, no cursor drift).
  */
-export const WindowResizeHandles = ({
-  disabled = false,
-}: {
-  disabled?: boolean;
-} = {}) => {
+export const WindowResizeHandles = () => {
   const startResize = useCallback(
     (direction: ResizeDirection) => (event: React.PointerEvent) => {
       // Primary button only: a right-click near an edge must still open menus.
@@ -118,10 +114,7 @@ export const WindowResizeHandles = ({
     [],
   );
 
-  // Maximized windows cannot be edge-resized, and leaving the z-index 2000
-  // top/corner grips mounted steals the top strip of the title bar from drag
-  // and double-click gestures while showing resize cursors at the screen edges.
-  if (disabled || !isTauriRuntime()) return null;
+  if (!isTauriRuntime()) return null;
 
   const grips = getGrips(hasRightCaptionButtons(getPlatform()));
 

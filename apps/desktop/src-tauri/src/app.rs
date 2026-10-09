@@ -152,6 +152,12 @@ fn is_normal_window_size(size: PhysicalSize<u32>, work_area: Option<PhysicalSize
 /// geometry produced when the window is maximized on that monitor),
 /// distinguishing it from near-work-area normal windows and oversized windows
 /// saved on a larger monitor.
+///
+/// Exact equality (`==`) is intentional: `tao` derives both the borderless
+/// maximize frame and `monitor.work_area().size` from the same native work-area
+/// rect (`NSScreen.visibleFrame` / `_NET_WORKAREA`), whereas a pixel tolerance
+/// would misclassify manually sized near-work-area windows (for example
+/// `1919×1039` on a `1920×1040` work area) and discard the user's restore size.
 fn is_work_area_window_size(size: PhysicalSize<u32>, work_area: Option<PhysicalSize<u32>>) -> bool {
     if size.width == 0 || size.height == 0 {
         return false;
