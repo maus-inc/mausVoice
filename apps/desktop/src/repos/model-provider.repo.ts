@@ -223,6 +223,33 @@ const fetchGeminiModelPage = async (
   return (await response.json()) as GeminiListResponse;
 };
 
+type GeminiCatalogPage = {
+  models: GeminiModel[];
+  nextPageToken: string | null;
+};
+
+const readGeminiCatalogPage = async (
+  apiKey: string,
+  pageToken: string | undefined,
+  seenPageTokens: Set<string>,
+): Promise<GeminiCatalogPage | null> => {
+  const payload = await fetchGeminiModelPage(apiKey, pageToken);
+  if (!payload) return null;
+
+  const nextPageToken = getNextGeminiPageToken(
+    payload.nextPageToken,
+    seenPageTokens,
+  );
+  if (nextPageToken === GEMINI_REPEATED_PAGE_TOKEN) {
+    logModelDiscoveryFailure(
+      "Gemini",
+      "model discovery returned a repeated page token",
+    );
+    return null;
+  }
+  return { models: payload.models ?? [], nextPageToken };
+};
+
 const fetchGeminiModelCatalog = async (
   apiKey: string,
 ): Promise<GeminiModel[] | null> => {
@@ -231,22 +258,10 @@ const fetchGeminiModelCatalog = async (
   // `undefined` starts discovery; `null` marks a page with no continuation.
   let pageToken: string | null | undefined;
   while (pageToken !== null) {
-    const payload = await fetchGeminiModelPage(apiKey, pageToken);
-    if (!payload) return null;
-    models.push(...(payload.models ?? []));
-
-    const nextPageToken = getNextGeminiPageToken(
-      payload.nextPageToken,
-      seenPageTokens,
-    );
-    if (nextPageToken === GEMINI_REPEATED_PAGE_TOKEN) {
-      logModelDiscoveryFailure(
-        "Gemini",
-        "model discovery returned a repeated page token",
-      );
-      return null;
-    }
-    pageToken = nextPageToken;
+    const page = await readGeminiCatalogPage(apiKey, pageToken, seenPageTokens);
+    if (!page) return null;
+    models.push(...page.models);
+    pageToken = page.nextPageToken;
   }
 
   return models;

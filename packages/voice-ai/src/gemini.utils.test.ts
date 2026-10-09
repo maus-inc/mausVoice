@@ -660,6 +660,7 @@ describe("Gemini native transport", () => {
                   examples: [{ type: "integer", nested: { type: "boolean" } }],
                 },
                 stringOrNumber: { type: ["string", "number"] },
+                nullOnlyUnion: { type: ["null"] },
                 nestedNullableArray: {
                   type: "array",
                   items: { type: ["integer", "null"] },
@@ -707,6 +708,7 @@ describe("Gemini native transport", () => {
         stringOrNumber: {
           anyOf: [{ type: "STRING" }, { type: "NUMBER" }],
         },
+        nullOnlyUnion: { type: "NULL" },
         nestedNullableArray: {
           type: "ARRAY",
           items: { type: "INTEGER", nullable: true },

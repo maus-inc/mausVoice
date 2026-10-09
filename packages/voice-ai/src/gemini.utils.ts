@@ -307,26 +307,26 @@ const normalizeJsonSchemaTypeArray = (types: unknown[]): string[] => {
   ];
 };
 
+const convertJsonSchemaTypeUnion = (
+  types: string[],
+): JsonSchemaTypeConversion => {
+  const valueTypes = types.filter((type) => type !== "null");
+  const valueType = valueTypes[0];
+  if (valueType === undefined) return { kind: "single", type: "NULL" };
+  if (valueTypes.length > 1) return { kind: "union", types };
+  return {
+    kind: "single",
+    type: convertJsonSchemaTypeName(valueType),
+    ...(types.includes("null") ? { nullable: true } : {}),
+  };
+};
+
 const convertJsonSchemaType = (value: unknown): JsonSchemaTypeConversion => {
   if (typeof value === "string") {
     return { kind: "single", type: convertJsonSchemaTypeName(value) };
   }
   if (!Array.isArray(value)) return { kind: "single", type: value };
-
-  const types = normalizeJsonSchemaTypeArray(value);
-  const nonNullableTypes = types.filter((type) => type !== "null");
-  if (nonNullableTypes.length === 0) {
-    return { kind: "single", type: "NULL" };
-  }
-  const singleType = nonNullableTypes[0];
-  if (nonNullableTypes.length === 1 && singleType !== undefined) {
-    return {
-      kind: "single",
-      type: convertJsonSchemaTypeName(singleType),
-      ...(types.includes("null") ? { nullable: true } : {}),
-    };
-  }
-  return { kind: "union", types };
+  return convertJsonSchemaTypeUnion(normalizeJsonSchemaTypeArray(value));
 };
 
 const applyJsonSchemaType = (
@@ -413,7 +413,7 @@ const convertJsonSchemaToGeminiSchema = (
         convertJsonSchemaEntry(key, value, convertJsonSchemaToGeminiSchema),
       ]),
   );
-  if (Object.prototype.hasOwnProperty.call(schema, "type")) {
+  if (Object.hasOwn(schema, "type")) {
     applyJsonSchemaType(converted, convertJsonSchemaType(schema.type));
   }
   return converted;
