@@ -567,7 +567,9 @@ mod tests {
             Some("custom-tone")
         );
         assert_eq!(
-            read_back[0].post_process_edit_retry_language_code.as_deref(),
+            read_back[0]
+                .post_process_edit_retry_language_code
+                .as_deref(),
             Some("fr")
         );
     }
