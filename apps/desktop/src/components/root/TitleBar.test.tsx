@@ -604,6 +604,47 @@ describe("TitleBar on macOS", () => {
     });
     expect(windowMocks.startDragging).toHaveBeenCalledTimes(1);
     expect(windowMocks.maximize).toHaveBeenCalledTimes(1);
+
+    // If no `dblclick` follows a macOS `mouseup(detail=2)` in that turn, the
+    // suppression flag expires so the next unrelated `dblclick` still works.
+    await act(async () => {
+      dragRegion.dispatchEvent(
+        new MouseEvent("mousedown", {
+          bubbles: true,
+          button: 0,
+          detail: 2,
+          clientX: 120,
+          clientY: 20,
+        }),
+      );
+      dragRegion.dispatchEvent(
+        new MouseEvent("mouseup", {
+          bubbles: true,
+          button: 0,
+          detail: 2,
+          clientX: 120,
+          clientY: 20,
+        }),
+      );
+      await new Promise((resolve) => {
+        window.setTimeout(resolve, 0);
+      });
+    });
+    expect(windowMocks.unmaximize).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      dragRegion.dispatchEvent(
+        new MouseEvent("dblclick", {
+          bubbles: true,
+          button: 0,
+          detail: 2,
+          clientX: 120,
+          clientY: 20,
+        }),
+      );
+      await Promise.resolve();
+    });
+    expect(windowMocks.maximize).toHaveBeenCalledTimes(2);
   });
 });
 

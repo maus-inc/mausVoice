@@ -341,6 +341,15 @@ const isMacDoubleClickRelease = (
   detail === 2 &&
   isWithinDragThreshold(origin, clientX, clientY);
 
+const armSingleTurnDblClickSkip = (
+  skipRef: React.MutableRefObject<boolean>,
+) => {
+  skipRef.current = true;
+  window.setTimeout(() => {
+    skipRef.current = false;
+  }, 0);
+};
+
 const bindDeferredDrag = (
   startX: number,
   startY: number,
@@ -506,7 +515,7 @@ const useWindowControls = (
           event.clientY,
         )
       ) {
-        skipNextDblClickRef.current = true;
+        armSingleTurnDblClickSkip(skipNextDblClickRef);
         toggleMax();
       }
     },
