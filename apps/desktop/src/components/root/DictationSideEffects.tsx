@@ -37,6 +37,7 @@ import { getBrowserRouter } from "../../router";
 import {
   createTranscriptionSession,
   resolveTranscriptionSessionKind,
+  type TranscriptionSessionKind,
 } from "../../sessions";
 import { startLiveProviderSession } from "../../sessions/provider-startup.utils";
 import { RecordingMode } from "../../state/app.state";
@@ -168,6 +169,8 @@ type RawStopResp = {
 export type HandleEmptyResultInput = {
   audio: StopRecordingResponse;
   transcribeResult: TranscriptionSessionResult | undefined;
+  /** Kind of the session that produced this result, per the dispatch table. */
+  sessionKind: TranscriptionSessionKind;
   audioIntakeSubscriptionFailed?: boolean;
   strategy: Pick<BaseStrategy, "shouldStoreTranscript">;
   formatMessage: (descriptor: { defaultMessage: string }) => string;
@@ -186,6 +189,7 @@ export const handleEmptyTranscriptionResult = async (
   const {
     audio,
     transcribeResult,
+    sessionKind,
     audioIntakeSubscriptionFailed = false,
     strategy,
     formatMessage,
@@ -196,7 +200,14 @@ export const handleEmptyTranscriptionResult = async (
   if (rawTranscript) {
     return { handled: false };
   }
-  const recoveryWarnings = audioIntakeSubscriptionFailed
+  // A failed intake subscription costs a live-streaming provider its whole
+  // transcript, so only that kind earns the recovery warning. Batch/after-stop
+  // and local sessions still transcribe the captured recording, so a warning
+  // here would mark their honest empty results as live-provider failures.
+  const recoveryWarnings = requiresLiveIntakeRecovery(
+    sessionKind,
+    audioIntakeSubscriptionFailed,
+  )
     ? [
         ...transcriptionWarnings,
         "Live audio could not be sent to the transcription provider because the audio-chunk subscription failed.",
@@ -500,6 +511,8 @@ export const DictationSideEffects = () => {
   const audioChunkUnlistenRef = useRef<UnlistenFn | null>(null);
   const recordingOperationRef = useRef(0);
   const audioIntakeSubscriptionFailedRef = useRef(false);
+  /** Session kind of the open recording; read at stop by the empty-result handler. */
+  const recordingSessionKindRef = useRef<TranscriptionSessionKind>("local");
   const providerStartupRef = useRef<PendingProviderStartup | null>(null);
   const providerStartupAbortControllerRef = useRef<AbortController | null>(
     null,
@@ -1006,10 +1019,12 @@ export const DictationSideEffects = () => {
       audio,
       context,
       audioIntakeSubscriptionFailed,
+      recordingSessionKind,
     }: {
       audio: StopRecordingResponse;
       context: Promise<StopContext>;
       audioIntakeSubscriptionFailed: boolean;
+      recordingSessionKind: TranscriptionSessionKind;
     }): Promise<RawStopResp> => {
       getLogger().info("Finalizing transcription session");
       // Transcription needs only the audio, so it starts before the focus
@@ -1064,6 +1079,7 @@ export const DictationSideEffects = () => {
           await handleEmptyTranscriptionResult({
             audio,
             transcribeResult,
+            sessionKind: recordingSessionKind,
             audioIntakeSubscriptionFailed,
             strategy: strategyRef.current,
             formatMessage: intl.formatMessage,
@@ -1093,6 +1109,7 @@ export const DictationSideEffects = () => {
     const pendingProviderStartup = providerStartupRef.current;
     const audioIntakeSubscriptionFailed =
       audioIntakeSubscriptionFailedRef.current;
+    const recordingSessionKind = recordingSessionKindRef.current;
     getLogger().info("Stopping recording");
     clearRecordingTimers();
     // The recording is over from here, so the dim is ended now rather than after
@@ -1120,6 +1137,7 @@ export const DictationSideEffects = () => {
         audio,
         context,
         audioIntakeSubscriptionFailed,
+        recordingSessionKind,
       });
     } catch (error) {
       const errorName = error instanceof Error ? ` [name=${error.name}]` : "";
@@ -1489,19 +1507,16 @@ export const DictationSideEffects = () => {
           session.cleanup();
           return;
         }
-        // Only a live-streaming provider loses its transcript when the
-        // audio-chunk subscription fails — it cannot transcribe the native
-        // recording at stop. Batch/after-stop and local sessions still can
-        // (the failure only disables pause pretranscription), so flagging
-        // them would mislabel their empty results as live-provider failures.
-        audioIntakeSubscriptionFailedRef.current = requiresLiveIntakeRecovery(
-          resolveTranscriptionSessionKind({
-            mode: transcriptPrefs.mode,
-            provider:
-              transcriptPrefs.mode === "api" ? transcriptPrefs.provider : null,
-          }),
-          intake.subscriptionFailed,
-        );
+        audioIntakeSubscriptionFailedRef.current = intake.subscriptionFailed;
+        // The stop path passes both values to the empty-result handler, which
+        // decides whether a lost subscription is a live-provider failure
+        // (live-streaming kind) or only lost pause pretranscription
+        // (batch/after-stop/local kinds still transcribe the recording).
+        recordingSessionKindRef.current = resolveTranscriptionSessionKind({
+          mode: transcriptPrefs.mode,
+          provider:
+            transcriptPrefs.mode === "api" ? transcriptPrefs.provider : null,
+        });
         audioChunkUnlistenRef.current?.();
         audioChunkUnlistenRef.current = intake.unlisten;
 

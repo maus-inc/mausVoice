@@ -163,6 +163,7 @@ describe("handleEmptyTranscriptionResult (#418)", () => {
         metadata: {},
         warnings: ["provider timed out"],
       },
+      sessionKind: "live-streaming",
       strategy: baseStrategyStub(),
       formatMessage: (descriptor) => descriptor.defaultMessage,
       showToast,
@@ -217,6 +218,7 @@ describe("handleEmptyTranscriptionResult (#418)", () => {
         metadata: {},
         warnings: ["provider timed out"],
       },
+      sessionKind: "live-streaming",
       strategy: baseStrategyStub(),
       formatMessage: (descriptor) => descriptor.defaultMessage,
       showToast,
@@ -252,6 +254,7 @@ describe("handleEmptyTranscriptionResult (#418)", () => {
     await handleEmptyTranscriptionResult({
       audio: { samples: new Float32Array([0.1]), sampleRate: 16_000 },
       transcribeResult: { rawTranscript: null, metadata: {}, warnings: [] },
+      sessionKind: "live-streaming",
       audioIntakeSubscriptionFailed: true,
       strategy: baseStrategyStub(),
       formatMessage: (descriptor) => descriptor.defaultMessage,
@@ -266,6 +269,31 @@ describe("handleEmptyTranscriptionResult (#418)", () => {
     expect(asToastCall(showToast).message).toBe(
       "Transcription failed. Your recording is saved so you can retry.",
     );
+  });
+
+  it("ignores a failed intake subscription for a batch/after-stop session", async () => {
+    // The failure only disables pause pretranscription for these kinds; the
+    // full recording is still transcribed at stop, so an empty provider result
+    // must not gain the live-provider warning or be stored as a failure.
+    const showToast = vi.fn<HandleEmptyResultInput["showToast"]>();
+    const storeTranscriptionFn =
+      vi.fn<HandleEmptyResultInput["storeTranscriptionFn"]>();
+
+    const result = await handleEmptyTranscriptionResult({
+      audio: { samples: new Float32Array([0.1]), sampleRate: 16_000 },
+      transcribeResult: { rawTranscript: null, metadata: {}, warnings: [] },
+      sessionKind: "after-stop",
+      audioIntakeSubscriptionFailed: true,
+      strategy: baseStrategyStub(),
+      formatMessage: (descriptor) => descriptor.defaultMessage,
+      showToast,
+      storeTranscriptionFn,
+      refreshMember: vi.fn(),
+    });
+
+    expect(result).toEqual({ handled: false });
+    expect(storeTranscriptionFn).not.toHaveBeenCalled();
+    expect(showToast).not.toHaveBeenCalled();
   });
 
   it("reports a storage failure without rejecting the stop flow", async () => {
@@ -284,6 +312,7 @@ describe("handleEmptyTranscriptionResult (#418)", () => {
           metadata: {},
           warnings: ["provider timed out"],
         },
+        sessionKind: "live-streaming",
         strategy: baseStrategyStub(),
         formatMessage: (descriptor) => descriptor.defaultMessage,
         showToast,
@@ -315,6 +344,7 @@ describe("handleEmptyTranscriptionResult (#418)", () => {
         metadata: {},
         warnings: ["provider failed"],
       },
+      sessionKind: "live-streaming",
       strategy: baseStrategyStub({ shouldStoreTranscript: () => false }),
       formatMessage: (descriptor) => descriptor.defaultMessage,
       showToast,
@@ -337,6 +367,7 @@ describe("handleEmptyTranscriptionResult (#418)", () => {
         metadata: {},
         warnings: [],
       },
+      sessionKind: "live-streaming",
       strategy: baseStrategyStub(),
       formatMessage: (descriptor) => descriptor.defaultMessage,
       showToast: vi.fn<HandleEmptyResultInput["showToast"]>(),
@@ -357,6 +388,7 @@ describe("handleEmptyTranscriptionResult (#418)", () => {
         metadata: {},
         warnings: [],
       },
+      sessionKind: "live-streaming",
       strategy: baseStrategyStub(),
       formatMessage: (descriptor) => descriptor.defaultMessage,
       showToast,
