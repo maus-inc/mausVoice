@@ -113,7 +113,11 @@ fn bind_transcription_fields<'q>(
         .bind(transcription.post_process_edit_failure_count)
         .bind(transcription.post_process_edit_auto_retry_used)
         .bind(transcription.post_process_edit_retry_tone_id.as_deref())
-        .bind(transcription.post_process_edit_retry_language_code.as_deref())
+        .bind(
+            transcription
+                .post_process_edit_retry_language_code
+                .as_deref(),
+        )
 }
 
 fn serialize_warnings(warnings: &Option<Vec<String>>) -> Option<String> {
