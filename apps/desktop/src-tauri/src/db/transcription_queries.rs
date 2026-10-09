@@ -542,8 +542,14 @@ mod tests {
         assert_eq!(returned.post_process_edit_failed, Some(true));
         assert_eq!(returned.post_process_edit_failure_count, Some(3));
         assert_eq!(returned.post_process_edit_auto_retry_used, Some(true));
-        assert_eq!(returned.post_process_edit_retry_tone_id.as_deref(), Some("custom-tone"));
-        assert_eq!(returned.post_process_edit_retry_language_code.as_deref(), Some("fr"));
+        assert_eq!(
+            returned.post_process_edit_retry_tone_id.as_deref(),
+            Some("custom-tone")
+        );
+        assert_eq!(
+            returned.post_process_edit_retry_language_code.as_deref(),
+            Some("fr")
+        );
         let read_back = fetch_transcriptions(pool, 10, 0)
             .await
             .expect("rows must be readable");
@@ -552,8 +558,14 @@ mod tests {
         assert_eq!(read_back[0].post_process_edit_failed, Some(true));
         assert_eq!(read_back[0].post_process_edit_failure_count, Some(3));
         assert_eq!(read_back[0].post_process_edit_auto_retry_used, Some(true));
-        assert_eq!(read_back[0].post_process_edit_retry_tone_id.as_deref(), Some("custom-tone"));
-        assert_eq!(read_back[0].post_process_edit_retry_language_code.as_deref(), Some("fr"));
+        assert_eq!(
+            read_back[0].post_process_edit_retry_tone_id.as_deref(),
+            Some("custom-tone")
+        );
+        assert_eq!(
+            read_back[0].post_process_edit_retry_language_code.as_deref(),
+            Some("fr")
+        );
     }
 
     #[tokio::test]
