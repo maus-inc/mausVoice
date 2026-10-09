@@ -52,6 +52,7 @@ import {
   forwardAudioChunk,
   isRecordingStartCurrent,
   releaseRecordingResources,
+  requiresLiveIntakeRecovery,
   stopNativeRecordingForAbort,
   stopOwnedNativeStart,
 } from "./dictation-recording-intake";
@@ -1488,7 +1489,19 @@ export const DictationSideEffects = () => {
           session.cleanup();
           return;
         }
-        audioIntakeSubscriptionFailedRef.current = intake.subscriptionFailed;
+        // Only a live-streaming provider loses its transcript when the
+        // audio-chunk subscription fails — it cannot transcribe the native
+        // recording at stop. Batch/after-stop and local sessions still can
+        // (the failure only disables pause pretranscription), so flagging
+        // them would mislabel their empty results as live-provider failures.
+        audioIntakeSubscriptionFailedRef.current = requiresLiveIntakeRecovery(
+          resolveTranscriptionSessionKind({
+            mode: transcriptPrefs.mode,
+            provider:
+              transcriptPrefs.mode === "api" ? transcriptPrefs.provider : null,
+          }),
+          intake.subscriptionFailed,
+        );
         audioChunkUnlistenRef.current?.();
         audioChunkUnlistenRef.current = intake.unlisten;
 

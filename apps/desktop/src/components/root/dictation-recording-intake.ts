@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { listenToAudioChunks } from "../../sessions/audio-chunk-events";
+import type { TranscriptionSessionKind } from "../../sessions";
 import type { BaseStrategy } from "../../strategies/base.strategy";
 import type { TranscriptionSession } from "../../types/transcription-session.types";
 import {
@@ -17,6 +18,25 @@ export type SessionAudioIntake = {
   /** True only when registering the Tauri audio_chunk listener rejected. */
   subscriptionFailed: boolean;
 };
+
+/**
+ * Whether a failed audio-chunk subscription marks the recording's empty stop
+ * result as a live-provider failure that routes into failed-audio recovery.
+ *
+ * Only live-streaming providers meet that bar: they cannot use the native
+ * waveform at stop, so a lost subscription leaves them with no transcript at
+ * all. Batch/after-stop and local sessions still transcribe the captured
+ * recording — the failure only disables pause pretranscription — so flagging
+ * them would store honest empty results as failures with a live-provider
+ * warning that never applied to them.
+ *
+ * The discriminator is the session kind recorded at construction, not
+ * `supportsStreaming()`: Azure streams audio live yet returns false from it.
+ */
+export const requiresLiveIntakeRecovery = (
+  sessionKind: TranscriptionSessionKind,
+  subscriptionFailed: boolean,
+): boolean => subscriptionFailed && sessionKind === "live-streaming";
 
 /**
  * A recording start is current only while its operation id, session, and

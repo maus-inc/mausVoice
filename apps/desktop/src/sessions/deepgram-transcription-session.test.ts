@@ -140,3 +140,91 @@ describe("Deepgram provider startup cancellation", () => {
     expect(socket.readyState).toBe(MockWebSocket.CLOSED);
   });
 });
+
+describe("Deepgram rejection after startup has settled", () => {
+  /** Opens the socket and resolves startup, so the session is live. */
+  const startLiveSession = async () => {
+    const session = new DeepgramTranscriptionSession("api-key");
+    const startup = session.onRecordingStart(16_000);
+    const socket = await waitForSocket();
+    socket.readyState = MockWebSocket.OPEN;
+    socket.onopen?.({} as Event);
+    await expect(startup).resolves.toBeUndefined();
+    return { session, socket };
+  };
+
+  const sendServerError = (socket: MockSocket, message: string) => {
+    socket.onmessage?.({
+      data: JSON.stringify({ type: "Error", message }),
+    } as MessageEvent);
+  };
+
+  it("surfaces the rejection as a failed finalization instead of a warning-free empty result", async () => {
+    const { session, socket } = await startLiveSession();
+
+    // Startup is already settled when Deepgram rejects the session; only
+    // logging this would let finalize return "" with no warnings, bypassing
+    // failed-audio recovery.
+    sendServerError(socket, "account access revoked");
+
+    const result = await session.finalize({
+      samples: new Float32Array(),
+      sampleRate: 16_000,
+    });
+
+    expect(result.rawTranscript).toBeNull();
+    expect(result.warnings).toEqual([
+      expect.stringContaining("account access revoked"),
+    ]);
+    expect(socket.close).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the transcript that accumulated before a late rejection", async () => {
+    const { session, socket } = await startLiveSession();
+
+    socket.onmessage?.({
+      data: JSON.stringify({
+        type: "Results",
+        is_final: true,
+        channel: { alternatives: [{ transcript: "hello there" }] },
+      }),
+    } as MessageEvent);
+    sendServerError(socket, "socket quota exceeded");
+
+    const result = await session.finalize({
+      samples: new Float32Array(),
+      sampleRate: 16_000,
+    });
+
+    expect(result.rawTranscript).toBe("hello there");
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("settles an in-flight finalize as a failure when the rejection closes the socket", async () => {
+    const { session, socket } = await startLiveSession();
+
+    const finalizePromise = session.finalize({
+      samples: new Float32Array(),
+      sampleRate: 16_000,
+    });
+    // The class-level finalize awaits startup before streaming finalize sends
+    // CloseStream, so the frame arrives after a microtask.
+    await vi.waitFor(() =>
+      expect(socket.send).toHaveBeenCalledWith(
+        JSON.stringify({ type: "CloseStream" }),
+      ),
+    );
+
+    sendServerError(socket, "credentials revoked");
+    socket.onclose?.({
+      code: 1008,
+      reason: "invalid credentials",
+    } as CloseEvent);
+
+    const result = await finalizePromise;
+    expect(result.rawTranscript).toBeNull();
+    expect(result.warnings).toEqual([
+      expect.stringContaining("credentials revoked"),
+    ]);
+  });
+});

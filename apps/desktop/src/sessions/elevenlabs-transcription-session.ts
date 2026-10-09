@@ -15,9 +15,12 @@ import { drainSamples } from "./audio-buffer.utils";
 import { BaseApiTranscriptionSession } from "./base-api-transcription-session";
 import { createTranscriptAccumulator } from "./transcript-accumulator.utils";
 import {
-  addStartupAbortListener,
-  getStartupAbortReason,
-} from "./provider-startup.utils";
+  attachStreamingSocketHandlers,
+  closeStreamingSocket,
+  createFinalizeBookkeeper,
+  createStartupSettler,
+} from "./streaming-session.utils";
+import { getStartupAbortReason } from "./provider-startup.utils";
 
 type ElevenLabsStreamingSession = {
   finalize: () => Promise<string>;
@@ -142,8 +145,6 @@ const startElevenLabsStreaming = async (
   return new Promise((resolve, reject) => {
     let ws: WebSocket | null = null;
     let isFinalized = false;
-    let startupSettled = false;
-    let removeAbortListener: () => void = () => undefined;
     let sentChunkCount = 0;
     let pendingChunks: Float32Array[] = [];
     const pendingSampleCountRef = { value: 0 };
@@ -288,39 +289,18 @@ const startElevenLabsStreaming = async (
     };
 
     const cleanup = () => {
+      // Detach before closing: a socket that fires `onclose` synchronously
+      // inside close() re-enters cleanup and must observe null here.
       const socket = ws;
       ws = null;
-      if (socket && socket.readyState !== WebSocket.CLOSED) {
-        try {
-          socket.close();
-        } catch (error) {
-          getLogger().warning(
-            `[ElevenLabs WebSocket] Failed to close the WebSocket: ${error}`,
-          );
-        }
-      }
-      resetBuffers();
+      closeStreamingSocket(socket, resetBuffers, "ElevenLabs WebSocket");
     };
 
-    const rejectStartup = (error: unknown) => {
-      if (startupSettled) return;
-      startupSettled = true;
-      removeAbortListener();
-      cleanup();
-      reject(error);
-    };
-    const resolveStartup = () => {
-      if (startupSettled) return;
-      startupSettled = true;
-      removeAbortListener();
-      resolve({ finalize, cleanup, writeAudioChunk });
-    };
-
-    removeAbortListener = addStartupAbortListener(signal, rejectStartup);
-    if (startupSettled) return;
-
-    let finalizeResolver: ((text: string) => void) | null = null;
-    let finalizeTimeout: ReturnType<typeof setTimeout> | null = null;
+    const bookkeeper = createFinalizeBookkeeper({
+      cleanup,
+      getText,
+      loggerPrefix: "ElevenLabs WebSocket",
+    });
 
     const finalize = (): Promise<string> => {
       return new Promise((resolveFinalize) => {
@@ -339,7 +319,6 @@ const startElevenLabsStreaming = async (
         }
 
         isFinalized = true;
-        finalizeResolver = resolveFinalize;
 
         flushPendingSamples(true);
         getLogger().verbose(
@@ -349,17 +328,11 @@ const startElevenLabsStreaming = async (
         );
 
         if (ws && ws.readyState === WebSocket.OPEN) {
-          finalizeTimeout = setTimeout(() => {
-            getLogger().verbose(
-              "[ElevenLabs WebSocket] Timeout waiting for final transcript, length:",
-              getText().length,
-            );
-            cleanup();
-            if (finalizeResolver) {
-              finalizeResolver(getText());
-              finalizeResolver = null;
-            }
-          }, 6000);
+          bookkeeper.begin(resolveFinalize);
+          bookkeeper.armTimeout(
+            6000,
+            "Timeout waiting for final transcript, length:",
+          );
         } else {
           cleanup();
           resolveFinalize(getText());
@@ -367,21 +340,14 @@ const startElevenLabsStreaming = async (
       });
     };
 
-    const completeFinalize = () => {
-      if (finalizeTimeout) {
-        clearTimeout(finalizeTimeout);
-        finalizeTimeout = null;
-      }
-      if (finalizeResolver) {
-        getLogger().verbose(
-          "[ElevenLabs WebSocket] Completing finalize with transcript length:",
-          getText().length,
-        );
-        cleanup();
-        finalizeResolver(getText());
-        finalizeResolver = null;
-      }
-    };
+    const settler = createStartupSettler<ElevenLabsStreamingSession>({
+      signal,
+      cleanup,
+      resolve,
+      reject,
+      session: { finalize, cleanup, writeAudioChunk },
+    });
+    if (settler.settled) return;
 
     const audioFormat = `pcm_${sampleRate}`;
     // Keyterm prompting: repeated `keyterms` query parameters bias the
@@ -402,7 +368,7 @@ const startElevenLabsStreaming = async (
     try {
       ws = new WebSocket(wsUrl);
     } catch (error) {
-      rejectStartup(error);
+      settler.rejectStartup(error);
       return;
     }
 
@@ -434,21 +400,21 @@ const startElevenLabsStreaming = async (
             onInterimResult(committedText);
           }
           if (isFinalized) {
-            completeFinalize();
+            bookkeeper.complete();
           }
         } else if (messageType === "partial_transcript") {
           transcriptState.setPartial(data.text || "");
         } else if (messageType === "session_started") {
           getLogger().verbose("[ElevenLabs WebSocket] Session started:", data);
           flushPendingSamples(false);
-          resolveStartup();
+          settler.resolveStartup();
         } else if (
           typeof messageType === "string" &&
           messageType.toLowerCase().includes("error")
         ) {
           getLogger().error("[ElevenLabs WebSocket] Error from server:", data);
-          if (!startupSettled) {
-            rejectStartup(
+          if (!settler.settled) {
+            settler.rejectStartup(
               new Error(
                 String(
                   data.error ??
@@ -467,26 +433,13 @@ const startElevenLabsStreaming = async (
       }
     };
 
-    ws.onerror = (error) => {
-      getLogger().error("[ElevenLabs WebSocket] WebSocket error:", error);
-      if (!startupSettled) {
-        rejectStartup(new Error("WebSocket connection failed"));
-      } else {
-        cleanup();
-      }
-    };
-
-    ws.onclose = (event) => {
-      getLogger().verbose("[ElevenLabs WebSocket] WebSocket closed:", {
-        code: event.code,
-        reason: event.reason,
-      });
-      if (!startupSettled) {
-        rejectStartup(new Error("WebSocket closed before the session started"));
-        return;
-      }
-      cleanup();
-    };
+    attachStreamingSocketHandlers({
+      socket: ws,
+      settler,
+      cleanup,
+      loggerPrefix: "ElevenLabs WebSocket",
+      earlyCloseErrorMessage: "WebSocket closed before the session started",
+    });
   });
 };
 

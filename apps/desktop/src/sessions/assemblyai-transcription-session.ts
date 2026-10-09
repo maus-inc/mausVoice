@@ -9,9 +9,12 @@ import { BaseApiTranscriptionSession } from "./base-api-transcription-session";
 import { createTranscriptAccumulator } from "./transcript-accumulator.utils";
 import { createAudioChunkBuffer } from "./transcription-stream.utils";
 import {
-  addStartupAbortListener,
-  getStartupAbortReason,
-} from "./provider-startup.utils";
+  attachStreamingSocketHandlers,
+  closeStreamingSocket,
+  createBufferedChunkWriter,
+  createStartupSettler,
+} from "./streaming-session.utils";
+import { getStartupAbortReason } from "./provider-startup.utils";
 
 type AssemblyAIStreamingSession = {
   finalize: () => Promise<string>;
@@ -39,8 +42,6 @@ export const startAssemblyAIStreaming = async (
   return new Promise((resolve, reject) => {
     let ws: WebSocket | null = null;
     let isFinalized = false;
-    let startupSettled = false;
-    let removeAbortListener: () => void = () => undefined;
     const transcriptState = createTranscriptAccumulator();
 
     const buffer = createAudioChunkBuffer(() => ws, {
@@ -54,53 +55,19 @@ export const startAssemblyAIStreaming = async (
 
     const getText = () => transcriptState.text();
 
-    const writeAudioChunk = (chunk: Float32Array) => {
-      if (isFinalized) return;
-      try {
-        // Always queue the chunk, even while the socket is still connecting.
-        // flush() is a no-op until the socket is OPEN and onopen drains the
-        // backlog, so speech captured during connect is not lost.
-        buffer.push(chunk);
-        buffer.flush(false);
-      } catch (error) {
-        getLogger().error(
-          `[${LOGGER_PREFIX}] Error sending audio chunk:`,
-          error,
-        );
-      }
-    };
+    const writeAudioChunk = createBufferedChunkWriter({
+      buffer,
+      isFinalized: () => isFinalized,
+      loggerPrefix: LOGGER_PREFIX,
+    });
 
     const cleanup = () => {
+      // Detach before closing: a socket that fires `onclose` synchronously
+      // inside close() re-enters cleanup and must observe null here.
       const socket = ws;
       ws = null;
-      if (socket && socket.readyState !== WebSocket.CLOSED) {
-        try {
-          socket.close();
-        } catch (error) {
-          getLogger().warning(
-            `[${LOGGER_PREFIX}] Failed to close the WebSocket: ${error}`,
-          );
-        }
-      }
-      buffer.reset();
+      closeStreamingSocket(socket, () => buffer.reset(), LOGGER_PREFIX);
     };
-
-    const rejectStartup = (error: unknown) => {
-      if (startupSettled) return;
-      startupSettled = true;
-      removeAbortListener();
-      cleanup();
-      reject(error);
-    };
-    const resolveStartup = () => {
-      if (startupSettled) return;
-      startupSettled = true;
-      removeAbortListener();
-      resolve({ finalize, cleanup, writeAudioChunk });
-    };
-
-    removeAbortListener = addStartupAbortListener(signal, rejectStartup);
-    if (startupSettled) return;
 
     const finalize = (): Promise<string> => {
       return new Promise((resolveFinalize) => {
@@ -158,6 +125,15 @@ export const startAssemblyAIStreaming = async (
       });
     };
 
+    const settler = createStartupSettler<AssemblyAIStreamingSession>({
+      signal,
+      cleanup,
+      resolve,
+      reject,
+      session: { finalize, cleanup, writeAudioChunk },
+    });
+    if (settler.settled) return;
+
     // Keyterms prompting: a JSON-encoded array of terms (up to 100, each at
     // most 50 characters) biases the streaming model toward the user's
     // dictionary vocabulary.
@@ -176,7 +152,7 @@ export const startAssemblyAIStreaming = async (
     try {
       ws = new WebSocket(wsUrl);
     } catch (error) {
-      rejectStartup(error);
+      settler.rejectStartup(error);
       return;
     }
 
@@ -198,11 +174,11 @@ export const startAssemblyAIStreaming = async (
         if (data.type === "Begin") {
           getLogger().info(`[${LOGGER_PREFIX}] Session ready`);
           buffer.flush(false);
-          resolveStartup();
+          settler.resolveStartup();
           return;
         }
-        if (data.type === "Error" && !startupSettled) {
-          rejectStartup(
+        if (data.type === "Error" && !settler.settled) {
+          settler.rejectStartup(
             new Error(
               String(
                 data.error ?? data.message ?? "AssemblyAI rejected the session",
@@ -237,26 +213,14 @@ export const startAssemblyAIStreaming = async (
       }
     };
 
-    ws.onerror = (error) => {
-      getLogger().error(`[${LOGGER_PREFIX}] WebSocket error:`, error);
-      if (!startupSettled) {
-        rejectStartup(new Error("WebSocket connection failed"));
-      } else {
-        cleanup();
-      }
-    };
-
-    ws.onclose = (event) => {
-      getLogger().info(`[${LOGGER_PREFIX}] WebSocket closed:`, {
-        code: event.code,
-        reason: event.reason,
-      });
-      if (!startupSettled) {
-        rejectStartup(new Error("WebSocket closed before the session began"));
-        return;
-      }
-      cleanup();
-    };
+    attachStreamingSocketHandlers({
+      socket: ws,
+      settler,
+      cleanup,
+      loggerPrefix: LOGGER_PREFIX,
+      earlyCloseErrorMessage: "WebSocket closed before the session began",
+      closeLogLevel: "info",
+    });
   });
 };
 
