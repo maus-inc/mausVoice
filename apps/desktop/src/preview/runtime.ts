@@ -152,6 +152,9 @@ const toLocalTranscription = (
     transcription.postProcessEditFailureCount ?? null,
   postProcessEditAutoRetryUsed:
     transcription.postProcessEditAutoRetryUsed ?? null,
+  postProcessEditRetryToneId: transcription.postProcessEditRetryToneId ?? null,
+  postProcessEditRetryLanguageCode:
+    transcription.postProcessEditRetryLanguageCode ?? null,
   postProcessFallback: transcription.postProcessFallback ?? null,
   postProcessError: transcription.postProcessError ?? null,
   transcriptionDurationMs: transcription.transcriptionDurationMs ?? null,

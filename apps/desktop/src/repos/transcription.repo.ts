@@ -94,6 +94,9 @@ const toLocalTranscription = (
     transcription.postProcessEditFailureCount ?? null,
   postProcessEditAutoRetryUsed:
     transcription.postProcessEditAutoRetryUsed ?? null,
+  postProcessEditRetryToneId: transcription.postProcessEditRetryToneId ?? null,
+  postProcessEditRetryLanguageCode:
+    transcription.postProcessEditRetryLanguageCode ?? null,
   postProcessFallback: transcription.postProcessFallback ?? null,
   postProcessError: orNull(transcription.postProcessError),
   transcriptionDurationMs: orNull(transcription.transcriptionDurationMs),
@@ -131,6 +134,10 @@ const fromLocalTranscription = (
     transcription.postProcessEditFailureCount ?? undefined,
   postProcessEditAutoRetryUsed:
     transcription.postProcessEditAutoRetryUsed ?? undefined,
+  postProcessEditRetryToneId:
+    transcription.postProcessEditRetryToneId ?? undefined,
+  postProcessEditRetryLanguageCode:
+    transcription.postProcessEditRetryLanguageCode ?? undefined,
   postProcessFallback: transcription.postProcessFallback ?? undefined,
   postProcessError: orUndefined(transcription.postProcessError),
   transcriptionDurationMs: orUndefined(transcription.transcriptionDurationMs),

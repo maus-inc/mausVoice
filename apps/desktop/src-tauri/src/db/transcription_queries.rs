@@ -38,6 +38,8 @@ const TRANSCRIPTION_COLUMNS: &[&str] = &[
     "post_process_edit_failed",
     "post_process_edit_failure_count",
     "post_process_edit_auto_retry_used",
+    "post_process_edit_retry_tone_id",
+    "post_process_edit_retry_language_code",
 ];
 
 fn transcription_column_list() -> String {
@@ -110,6 +112,8 @@ fn bind_transcription_fields<'q>(
         .bind(transcription.post_process_edit_failed)
         .bind(transcription.post_process_edit_failure_count)
         .bind(transcription.post_process_edit_auto_retry_used)
+        .bind(transcription.post_process_edit_retry_tone_id.as_deref())
+        .bind(transcription.post_process_edit_retry_language_code.as_deref())
 }
 
 fn serialize_warnings(warnings: &Option<Vec<String>>) -> Option<String> {
@@ -155,6 +159,10 @@ fn row_to_transcription(row: SqliteRow) -> Result<Transcription, sqlx::Error> {
             .try_get::<Option<i64>, _>("post_process_edit_failure_count")?,
         post_process_edit_auto_retry_used: row
             .try_get::<Option<bool>, _>("post_process_edit_auto_retry_used")?,
+        post_process_edit_retry_tone_id: row
+            .try_get::<Option<String>, _>("post_process_edit_retry_tone_id")?,
+        post_process_edit_retry_language_code: row
+            .try_get::<Option<String>, _>("post_process_edit_retry_language_code")?,
         post_process_fallback: row.try_get::<Option<bool>, _>("post_process_fallback")?,
         post_process_error: row.try_get::<Option<String>, _>("post_process_error")?,
         transcription_duration_ms: row.try_get::<Option<i64>, _>("transcription_duration_ms")?,
@@ -291,6 +299,8 @@ mod tests {
             post_process_edit_failed: None,
             post_process_edit_failure_count: None,
             post_process_edit_auto_retry_used: None,
+            post_process_edit_retry_tone_id: None,
+            post_process_edit_retry_language_code: None,
             post_process_fallback: None,
             post_process_error: None,
             transcription_duration_ms: None,
@@ -520,6 +530,8 @@ mod tests {
         stored.post_process_edit_failed = Some(true);
         stored.post_process_edit_failure_count = Some(3);
         stored.post_process_edit_auto_retry_used = Some(true);
+        stored.post_process_edit_retry_tone_id = Some("custom-tone".to_string());
+        stored.post_process_edit_retry_language_code = Some("fr".to_string());
 
         let returned = update_transcription(pool.clone(), &stored)
             .await
@@ -530,6 +542,8 @@ mod tests {
         assert_eq!(returned.post_process_edit_failed, Some(true));
         assert_eq!(returned.post_process_edit_failure_count, Some(3));
         assert_eq!(returned.post_process_edit_auto_retry_used, Some(true));
+        assert_eq!(returned.post_process_edit_retry_tone_id.as_deref(), Some("custom-tone"));
+        assert_eq!(returned.post_process_edit_retry_language_code.as_deref(), Some("fr"));
         let read_back = fetch_transcriptions(pool, 10, 0)
             .await
             .expect("rows must be readable");
@@ -538,6 +552,8 @@ mod tests {
         assert_eq!(read_back[0].post_process_edit_failed, Some(true));
         assert_eq!(read_back[0].post_process_edit_failure_count, Some(3));
         assert_eq!(read_back[0].post_process_edit_auto_retry_used, Some(true));
+        assert_eq!(read_back[0].post_process_edit_retry_tone_id.as_deref(), Some("custom-tone"));
+        assert_eq!(read_back[0].post_process_edit_retry_language_code.as_deref(), Some("fr"));
     }
 
     #[tokio::test]

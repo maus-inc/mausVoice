@@ -955,6 +955,9 @@ const buildTranscriptionRecord = ({
     input.postProcessMetadata.postProcessEditFailureCount ?? null,
   postProcessEditAutoRetryUsed:
     input.postProcessMetadata.postProcessEditAutoRetryUsed ?? null,
+  // Retry context is written only when a recovery pass claims the row.
+  postProcessEditRetryToneId: null,
+  postProcessEditRetryLanguageCode: null,
   postProcessFallback: input.postProcessMetadata.postProcessFallback ?? null,
   postProcessError: orNull(input.postProcessMetadata.postProcessError),
   transcriptionDurationMs: orNull(

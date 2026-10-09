@@ -311,6 +311,8 @@ const postProcessOutcomeFields = (
   postProcessEditFailed: boolean | null;
   postProcessEditFailureCount: number | null;
   postProcessEditAutoRetryUsed: boolean | null;
+  postProcessEditRetryToneId: string | null;
+  postProcessEditRetryLanguageCode: string | null;
 } =>
   unstyled
     ? {
@@ -330,12 +332,20 @@ const postProcessOutcomeFields = (
           metadata.postProcessEditAutoRetryUsed,
           transcription.postProcessEditAutoRetryUsed,
         ),
+        postProcessEditRetryToneId: orNull(
+          transcription.postProcessEditRetryToneId,
+        ),
+        postProcessEditRetryLanguageCode: orNull(
+          transcription.postProcessEditRetryLanguageCode,
+        ),
       }
     : {
         postProcessFailed: orNull(metadata.postProcessFailed),
         postProcessEditFailed: null,
         postProcessEditFailureCount: null,
         postProcessEditAutoRetryUsed: null,
+        postProcessEditRetryToneId: null,
+        postProcessEditRetryLanguageCode: null,
       };
 
 /**
@@ -432,6 +442,34 @@ type AutomaticRetryParams = {
 };
 
 /**
+ * The restyle context a claim records for its recovery pass. An empty string
+ * is the recorded "none": the failed run used no tone or no language override,
+ * which is a value to restore, not a gap to fill from whatever the user has
+ * selected by the time the pass runs. Null means no claim ever recorded one.
+ */
+type RecordedRetryContext = {
+  toneId: string | null;
+  languageCode: string | null;
+};
+
+const retryContextColumn = (value: string | null | undefined): string =>
+  value ?? "";
+
+const recordedRetryContext = (
+  transcription: Transcription,
+): RecordedRetryContext | null => {
+  const toneId = transcription.postProcessEditRetryToneId;
+  const languageCode = transcription.postProcessEditRetryLanguageCode;
+  if (toneId === null || toneId === undefined) {
+    return null;
+  }
+  if (languageCode === null || languageCode === undefined) {
+    return null;
+  }
+  return { toneId: toneId || null, languageCode: languageCode || null };
+};
+
+/**
  * A semantic edit failure this process has not already claimed for itself or
  * settled, so the row is still owed its one automatic recovery pass.
  */
@@ -481,13 +519,16 @@ const isClaimedFailureRow = (
  * is holding rather than the caller's copy, which a user edit or a manual
  * retranscription may already have replaced; a missing row falls back to the
  * caller's copy, which is what the live and imported paths always supply.
- * Returns the marked row, or null when the live row no longer matches the
- * failure that triggered the claim.
+ * The failed run's tone and language are recorded with the marker, because the
+ * process that resumes the claim after a restart has no other way to know
+ * which style the pass is owed under. Returns the marked row, or null when the
+ * live row no longer matches the failure that triggered the claim.
  */
 const claimAutomaticRetryRow = async (
-  transcription: Transcription,
+  params: AutomaticRetryParams,
   failureCount: number,
 ): Promise<Transcription | null> => {
+  const { transcription, toneId, languageCode } = params;
   const current =
     getRec(getAppState().transcriptionById, transcription.id) ?? transcription;
   if (!isClaimedFailureRow(current, failureCount)) {
@@ -496,6 +537,8 @@ const claimAutomaticRetryRow = async (
   const marked = await getTranscriptionRepo().updateTranscription({
     ...current,
     postProcessEditAutoRetryUsed: true,
+    postProcessEditRetryToneId: retryContextColumn(toneId),
+    postProcessEditRetryLanguageCode: retryContextColumn(languageCode),
   });
   produceAppState((draft) => {
     draft.transcriptionById[transcription.id] = marked;
@@ -505,15 +548,16 @@ const claimAutomaticRetryRow = async (
 
 /**
  * Deliver the pass once the back-off expires: release the in-process claim,
- * re-check the live row, and retranscribe the same History row. The count and
- * the marker still sitting at their claim-time values is what says no newer
- * run superseded the claim while it waited.
+ * re-check the live row, and retranscribe the same History row with the style
+ * and language the claim recorded. The count and the marker still sitting at
+ * their claim-time values is what says no newer run superseded the claim while
+ * it waited.
  */
 const deliverAutomaticRetry = async (
   params: AutomaticRetryParams,
   failureCount: number,
 ): Promise<void> => {
-  const { transcription, toneId, languageCode } = params;
+  const { transcription } = params;
   automaticRetranscriptionIds.delete(transcription.id);
   const latest = getRec(getAppState().transcriptionById, transcription.id);
   if (
@@ -523,10 +567,14 @@ const deliverAutomaticRetry = async (
   ) {
     return;
   }
+  const context = recordedRetryContext(latest);
+  if (context === null) {
+    return;
+  }
   await retranscribeTranscription({
     transcriptionId: transcription.id,
-    toneId,
-    languageCode,
+    toneId: context.toneId,
+    languageCode: context.languageCode,
   });
 };
 
@@ -567,7 +615,7 @@ export const scheduleAutomaticPostProcessEditRetry = async (
 
   automaticRetranscriptionIds.add(transcription.id);
   try {
-    const marked = await claimAutomaticRetryRow(transcription, failureCount);
+    const marked = await claimAutomaticRetryRow(params, failureCount);
     if (marked === null) {
       automaticRetranscriptionIds.delete(transcription.id);
       return;
@@ -793,7 +841,7 @@ const finishRetranscribeSuccess = (
   }, RETRANSCRIPTION_SUCCESS_VISIBLE_MS);
 };
 
-const completeRetranscribeRun = ({
+const completeRetranscribeRun = async ({
   transcriptionId,
   generation,
   update,
@@ -805,7 +853,7 @@ const completeRetranscribeRun = ({
   update: RetranscribeUpdate;
   toneId?: string | null;
   languageCode?: string | null;
-}): boolean => {
+}): Promise<boolean> => {
   if (!isCurrentRetranscribeGeneration(transcriptionId, generation)) {
     abandonRetranscribeRun();
     return true;
@@ -820,8 +868,9 @@ const completeRetranscribeRun = ({
       message: update.unstyledMessage ?? "",
       reason: update.unstyledReason ?? undefined,
     });
-    // Fire-and-forget: the scheduler reports its own failures.
-    scheduleAutomaticPostProcessEditRetry({
+    // The scheduler returns once its claim is written and the delivery is
+    // timed, so waiting here only covers the durable marker, never the pass.
+    await scheduleAutomaticPostProcessEditRetry({
       transcription: update.transcription,
       toneId,
       languageCode,
@@ -862,9 +911,9 @@ const handleRetranscribeError = ({
  * it, so nothing ran and the caller must not read the row as settled by this
  * call.
  */
-export async function retranscribeTranscription(
+export const retranscribeTranscription = async (
   params: RetranscribeTranscriptionParams,
-): Promise<boolean> {
+): Promise<boolean> => {
   const { transcriptionId, toneId, languageCode } = params;
   if (
     isRetranscribingId(getAppState().transcriptions, transcriptionId) ||
@@ -878,7 +927,7 @@ export async function retranscribeTranscription(
 
   try {
     const update = await performRetranscribe(params);
-    return completeRetranscribeRun({
+    return await completeRetranscribeRun({
       transcriptionId,
       generation,
       update,
@@ -888,7 +937,7 @@ export async function retranscribeTranscription(
   } catch (error) {
     return handleRetranscribeError({ transcriptionId, generation, error });
   }
-}
+};
 
 /**
  * Deliver the automatic recovery a previous process claimed and never ran.
@@ -963,12 +1012,25 @@ const recordUnsettledRetryAttempt = async (
  * quit before it does leaves the claim resumable rather than spent. Writing
  * the failure marker here anyway would let a duplicate caller spend the claim
  * while a pass is still in flight.
+ *
+ * A claim that cannot say which tone or language it was owed under, because it
+ * predates the columns that record them, is settled without a pass: restyling
+ * with whatever the user has selected by now would write a different style
+ * over the raw transcript, and preserving that transcript is the whole point
+ * of the recovery design.
  */
 const resumeAutomaticRetry = async (
   transcription: Transcription,
 ): Promise<void> => {
+  const context = recordedRetryContext(transcription);
+  if (context === null) {
+    await recordUnsettledRetryAttempt(transcription);
+    return;
+  }
   const started = await retranscribeTranscription({
     transcriptionId: transcription.id,
+    toneId: context.toneId,
+    languageCode: context.languageCode,
   });
   if (started) {
     await recordUnsettledRetryAttempt(transcription);
@@ -983,8 +1045,13 @@ export const resumeInterruptedPostProcessEditRetries = (
   }
   for (const transcription of transcriptions) {
     if (isResumableAutomaticRetry(transcription)) {
-      // Fire-and-forget: the resume path records or re-delivers on its own.
-      resumeAutomaticRetry(transcription);
+      // Fire-and-forget, with a backstop: the resume path records or
+      // re-delivers on its own, and this catch only surfaces the unexpected.
+      resumeAutomaticRetry(transcription).catch((error: unknown) => {
+        getLogger().warning(
+          `Automatic audio retranscription resume failed: ${error}`,
+        );
+      });
     }
   }
 };
@@ -1025,8 +1092,9 @@ export const importAudioFile = async ({
   });
 
   if (output.transcription) {
-    // Fire-and-forget: the scheduler reports its own failures.
-    scheduleAutomaticPostProcessEditRetry({
+    // The scheduler returns once its claim is written and the delivery is
+    // timed, so waiting here only covers the durable marker, never the pass.
+    await scheduleAutomaticPostProcessEditRetry({
       transcription: output.transcription,
       toneId,
       languageCode,
@@ -1064,6 +1132,9 @@ export const importAudioFile = async ({
         postProcessResult.metadata?.postProcessEditFailureCount ?? null,
       postProcessEditAutoRetryUsed:
         postProcessResult.metadata?.postProcessEditAutoRetryUsed ?? null,
+      // Retry context is written only when a recovery pass claims the row.
+      postProcessEditRetryToneId: null,
+      postProcessEditRetryLanguageCode: null,
       postProcessFallback:
         postProcessResult.metadata?.postProcessFallback ?? null,
       postProcessError: postProcessResult.metadata?.postProcessError ?? null,

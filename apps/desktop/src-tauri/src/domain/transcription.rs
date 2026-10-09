@@ -57,6 +57,14 @@ pub struct Transcription {
     /// True after the one automatic full-audio retranscription was consumed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub post_process_edit_auto_retry_used: Option<bool>,
+    /// Tone the claimed recovery pass restyles with, or an empty string when
+    /// the failed run used none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub post_process_edit_retry_tone_id: Option<String>,
+    /// Language the claimed recovery pass retranscribes with, or an empty
+    /// string when the failed run used no override.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub post_process_edit_retry_language_code: Option<String>,
     /// Sanitized, non-secret error message from a failed post-processing
     /// request.
     #[serde(skip_serializing_if = "Option::is_none")]

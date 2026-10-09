@@ -365,8 +365,9 @@ export const postProcessFinalizedTranscript = async (
       trace: input.trace ?? null,
     });
     if (stored.transcription) {
-      // Fire-and-forget: the scheduler reports its own failures.
-      scheduleAutomaticPostProcessEditRetry({
+      // The scheduler returns once its claim is written and the delivery is
+      // timed, so waiting here only covers the durable marker, never the pass.
+      await scheduleAutomaticPostProcessEditRetry({
         transcription: stored.transcription,
         toneId: input.toneId,
         languageCode: input.languageCode,
@@ -915,8 +916,9 @@ export const DictationSideEffects = () => {
             remoteDeviceId: null,
           });
           if (stored.transcription) {
-            // Fire-and-forget: the scheduler reports its own failures.
-            scheduleAutomaticPostProcessEditRetry({
+            // The scheduler returns once its claim is written and the delivery
+            // is timed, so waiting here only covers the durable marker.
+            await scheduleAutomaticPostProcessEditRetry({
               transcription: stored.transcription,
               toneId,
               languageCode,

@@ -1355,6 +1355,16 @@ postProcessEditFailureCount?: number | null;
  */
 postProcessEditAutoRetryUsed?: boolean | null; 
 /**
+ * Tone the claimed recovery pass restyles with, or an empty string when
+ * the failed run used none.
+ */
+postProcessEditRetryToneId?: string | null; 
+/**
+ * Language the claimed recovery pass retranscribes with, or an empty
+ * string when the failed run used no override.
+ */
+postProcessEditRetryLanguageCode?: string | null; 
+/**
  * Sanitized, non-secret error message from a failed post-processing
  * request.
  */

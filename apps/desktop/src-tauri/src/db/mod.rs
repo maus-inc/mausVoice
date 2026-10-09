@@ -179,6 +179,9 @@ pub const PENDING_AUDIO_DELETIONS_MIGRATION_SQL: &str =
 /// count, and the durable one-pass automatic-recovery guard.
 pub const POST_PROCESS_EDIT_FAILURE_MIGRATION_SQL: &str =
     include_str!("migrations/091_post_process_edit_failure.sql");
+/// Persists the tone and language a claimed recovery pass must reuse.
+pub const POST_PROCESS_EDIT_RETRY_CONTEXT_MIGRATION_SQL: &str =
+    include_str!("migrations/092_post_process_edit_retry_context.sql");
 /// Schema pieces folded into [`CONSOLIDATED_V0_1_6_MIGRATION_SQL`] /
 /// [`migrations`]: `preserve_audio_on_failure`, `transcription_path`,
 /// `pill_placement`, `hands_free_delay_ms`, `auto_learn_dictionary_enabled`,
@@ -621,6 +624,12 @@ pub fn migrations() -> Vec<tauri_plugin_sql::Migration> {
             version: 91,
             description: "post_process_edit_failure",
             sql: POST_PROCESS_EDIT_FAILURE_MIGRATION_SQL,
+            kind: tauri_plugin_sql::MigrationKind::Up,
+        },
+        tauri_plugin_sql::Migration {
+            version: 92,
+            description: "post_process_edit_retry_context",
+            sql: POST_PROCESS_EDIT_RETRY_CONTEXT_MIGRATION_SQL,
             kind: tauri_plugin_sql::MigrationKind::Up,
         },
     ]

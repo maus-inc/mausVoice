@@ -1267,6 +1267,8 @@ describe("retranscribeTranscription unstyled post-processing", () => {
         expect.objectContaining({
           id: row.id,
           postProcessEditAutoRetryUsed: true,
+          postProcessEditRetryToneId: "custom-tone",
+          postProcessEditRetryLanguageCode: "en",
         }),
       );
 
@@ -1289,6 +1291,8 @@ describe("retranscribeTranscription unstyled post-processing", () => {
         postProcessEditFailed: true,
         postProcessEditFailureCount: 3,
         postProcessEditAutoRetryUsed: true,
+        postProcessEditRetryToneId: "",
+        postProcessEditRetryLanguageCode: "",
       };
       produceAppState((draft) => {
         draft.transcriptionById[row.id] = row;
@@ -1303,6 +1307,68 @@ describe("retranscribeTranscription unstyled post-processing", () => {
       expect(transcribeAudio).toHaveBeenCalledTimes(1);
       expect(updateTranscription).toHaveBeenCalledWith(
         expect.objectContaining({ id: row.id, transcript: "Hello there" }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("resumes the automatic pass with the style and language the claim recorded", async () => {
+    vi.useFakeTimers();
+    try {
+      const row = {
+        ...sampleTranscription("recorded-context"),
+        postProcessEditFailed: true,
+        postProcessEditFailureCount: 3,
+        postProcessEditAutoRetryUsed: true,
+        postProcessEditRetryToneId: "custom-tone",
+        postProcessEditRetryLanguageCode: "fr",
+      };
+      produceAppState((draft) => {
+        draft.transcriptionById[row.id] = row;
+        draft.transcriptions.transcriptionIds = [row.id];
+      });
+
+      resumeInterruptedPostProcessEditRetries([row]);
+      await vi.advanceTimersByTimeAsync(0);
+
+      // The pass restyles under the claim's own selections, not whatever the
+      // user has selected by the time the resume runs.
+      expect(postProcessTranscript).toHaveBeenCalledWith(
+        expect.objectContaining({
+          toneId: "custom-tone",
+          dictationLanguage: "fr",
+        }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("records the attempt without running when the claim lost its style context", async () => {
+    vi.useFakeTimers();
+    try {
+      // A claim written before the context columns existed cannot say which
+      // tone or language its pass was owed under.
+      const row = {
+        ...sampleTranscription("context-free-claim"),
+        postProcessEditFailed: true,
+        postProcessEditFailureCount: 3,
+        postProcessEditAutoRetryUsed: true,
+      };
+      produceAppState((draft) => {
+        draft.transcriptionById[row.id] = row;
+        draft.transcriptions.transcriptionIds = [row.id];
+      });
+
+      resumeInterruptedPostProcessEditRetries([row]);
+      await vi.advanceTimersByTimeAsync(0);
+
+      // Restyling with the currently selected style would write a different
+      // style over the raw transcript, so the claim is settled without a run.
+      expect(transcribeAudio).not.toHaveBeenCalled();
+      expect(updateTranscription).toHaveBeenCalledWith(
+        expect.objectContaining({ id: row.id, postProcessFailed: true }),
       );
     } finally {
       vi.useRealTimers();
@@ -1342,6 +1408,8 @@ describe("retranscribeTranscription unstyled post-processing", () => {
         postProcessEditFailed: true,
         postProcessEditFailureCount: 3,
         postProcessEditAutoRetryUsed: true,
+        postProcessEditRetryToneId: "",
+        postProcessEditRetryLanguageCode: "",
       };
       produceAppState((draft) => {
         draft.transcriptionById[row.id] = row;
@@ -1400,6 +1468,8 @@ describe("retranscribeTranscription unstyled post-processing", () => {
         postProcessEditFailed: true,
         postProcessEditFailureCount: 3,
         postProcessEditAutoRetryUsed: true,
+        postProcessEditRetryToneId: "",
+        postProcessEditRetryLanguageCode: "",
       };
       produceAppState((draft) => {
         draft.transcriptionById[row.id] = row;
