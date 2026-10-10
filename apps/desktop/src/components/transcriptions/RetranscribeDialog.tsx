@@ -13,7 +13,7 @@ import {
 import { Check } from "lucide-react";
 import type { Tone } from "@maus-inc/types";
 import { getRec } from "@maus-inc/utilities";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useId, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import {
   closeRetranscribeDialog,
@@ -22,18 +22,20 @@ import {
 import { useAppStore } from "../../store";
 import {
   AUTO_LANGUAGE,
-  DICTATION_LANGUAGES,
   type DictationLanguageCode,
+  getRenderSafeLanguageLabel,
   ORDERED_DICTATION_LANGUAGES,
   toSelectableDictationLanguage,
 } from "../../utils/language.utils";
 import { isStyleSelectionAvailable } from "../../utils/post-processing.utils";
 import { getSortedToneIds } from "../../utils/tone.utils";
 import { getMyDictationLanguage } from "../../utils/user.utils";
+import { useDialogTitleId } from "../common/DialogTitleWithClose";
 import {
   chromeDialogPaperSx,
-  chromeMenuItemSx,
+  chromeSelectMenuItemSx,
   chromeSelectMenuProps,
+  chromeStyleSelectMenuProps,
   selectedOptionLabel,
 } from "../common/chromeMenu";
 
@@ -44,27 +46,16 @@ const languageOptions = (
   ] satisfies DictationLanguageCode[]
 ).map((code) => ({
   code,
-  label: DICTATION_LANGUAGES[code],
+  label: getRenderSafeLanguageLabel(code),
 }));
 
-/**
- * A select option that shows a check beside the currently chosen value.
- *
- * Extracted so the style and language pickers read as one element per option
- * instead of a MenuItem wrapping the label and a conditional Check five JSX
- * levels deep inside Dialog>DialogContent>Stack>FormControl>Select. The `key`
- * stays at each `.map` call site; only the row shape moved.
- */
-const CheckableMenuItem = ({
-  value,
-  label,
-  selected,
-}: {
-  value: string;
-  label: React.ReactNode;
-  selected: boolean;
-}) => (
-  <MenuItem value={value} sx={chromeMenuItemSx}>
+/** MUI Select must receive direct MenuItem children to attach option behavior. */
+const checkableMenuItem = (
+  value: string,
+  label: React.ReactNode,
+  selected: boolean,
+) => (
+  <MenuItem key={value} value={value} sx={chromeSelectMenuItemSx}>
     {label}
     {selected ? <Check size={16} strokeWidth={2} /> : null}
   </MenuItem>
@@ -72,6 +63,9 @@ const CheckableMenuItem = ({
 
 export const RetranscribeDialog = () => {
   const intl = useIntl();
+  const dialogTitleId = useDialogTitleId();
+  const styleLabelId = useId();
+  const languageLabelId = useId();
 
   const open = useAppStore(
     (state) => state.transcriptions.retranscribeDialogOpen,
@@ -135,26 +129,28 @@ export const RetranscribeDialog = () => {
       onClose={handleClose}
       maxWidth="xs"
       fullWidth
+      aria-labelledby={dialogTitleId}
       slotProps={{ paper: { sx: chromeDialogPaperSx } }}
     >
-      <DialogTitle>
+      <DialogTitle id={dialogTitleId}>
         <FormattedMessage defaultMessage="Retranscribe" />
       </DialogTitle>
       <DialogContent>
         <Stack spacing={2.5} sx={{ mt: 1 }}>
           {styleSelectionAvailable && (
             <FormControl fullWidth size="small">
-              <InputLabel>
+              <InputLabel id={styleLabelId}>
                 <FormattedMessage defaultMessage="Style" />
               </InputLabel>
               <Select
+                labelId={styleLabelId}
                 label={intl.formatMessage({ defaultMessage: "Style" })}
                 value={selectedToneId ?? ""}
                 onChange={(e) => {
                   const value = e.target.value;
                   setSelectedToneId(value || null);
                 }}
-                MenuProps={chromeSelectMenuProps}
+                MenuProps={chromeStyleSelectMenuProps}
                 renderValue={(value) =>
                   selectedOptionLabel(
                     value,
@@ -164,22 +160,22 @@ export const RetranscribeDialog = () => {
                   )
                 }
               >
-                {tones.map((tone) => (
-                  <CheckableMenuItem
-                    key={tone.id}
-                    value={tone.id}
-                    label={tone.name}
-                    selected={tone.id === selectedToneId}
-                  />
-                ))}
+                {tones.map((tone) =>
+                  checkableMenuItem(
+                    tone.id,
+                    tone.name,
+                    tone.id === selectedToneId,
+                  ),
+                )}
               </Select>
             </FormControl>
           )}
           <FormControl fullWidth size="small">
-            <InputLabel>
+            <InputLabel id={languageLabelId}>
               <FormattedMessage defaultMessage="Language" />
             </InputLabel>
             <Select
+              labelId={languageLabelId}
               label={intl.formatMessage({ defaultMessage: "Language" })}
               value={selectedLanguage}
               onChange={(e) =>
@@ -195,14 +191,9 @@ export const RetranscribeDialog = () => {
                 )
               }
             >
-              {languageOptions.map(({ code, label }) => (
-                <CheckableMenuItem
-                  key={code}
-                  value={code}
-                  label={label}
-                  selected={code === selectedLanguage}
-                />
-              ))}
+              {languageOptions.map(({ code, label }) =>
+                checkableMenuItem(code, label, code === selectedLanguage),
+              )}
             </Select>
           </FormControl>
         </Stack>

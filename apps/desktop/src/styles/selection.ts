@@ -6,10 +6,9 @@ import { cssEase, duration, easeOutCubic } from "./motion";
  *
  * MUI's default `.Mui-selected` wash is a few percent of `action.selected`,
  * which is impossible to find at a glance in a long, scrolling model list. The
- * active row instead gets an always-present rail that only changes colour, a
- * neutral tinted fill, and a check glyph. It is intentionally neutral (no
- * accent) so it reads as "selected" without reintroducing the blue the app
- * moved away from.
+ * active row instead gets a clearly visible neutral tinted fill plus a check
+ * glyph at the consumer. It is intentionally neutral (no accent) so it reads
+ * as "selected" without reintroducing the blue the app moved away from.
  */
 
 /**
@@ -42,9 +41,6 @@ export const selectedOutlineSx = (theme: Theme, ringWidth = 1) => ({
   boxShadow: `0 0 0 ${ringWidth}px ${theme.vars.palette.text.primary}`,
 });
 
-/** Width of the rail that marks the active row. */
-const RAIL_WIDTH = 3;
-
 const ease = cssEase(easeOutCubic);
 const transition = `${duration.fast}s ${ease}`;
 
@@ -53,19 +49,20 @@ const transition = `${duration.fast}s ${ease}`;
  * (plain rows) or MUI's `.Mui-selected` (menu items) — both selectors are
  * handled here so the two menus cannot drift apart.
  *
- * The rail is always present and merely changes colour, so selecting a row
- * never shifts its contents. Timing is a subtle tint fade; the global
+ * Selection reads as a neutral tinted fill (plus the consumer's check glyph
+ * and weight). An earlier revision drew a 3px left rail here; a border-left
+ * above 1px on a rounded row paints as a stray bracket arc along the curved
+ * corners — the exact side-stripe anti-pattern DESIGN.md bans — so the fill
+ * alone carries the state. Timing is a subtle tint fade; the global
  * reduced-motion reset in the theme neutralises it.
  */
 export const activeRowSx = {
-  borderLeft: `${RAIL_WIDTH}px solid transparent`,
-  transition: `background-color ${transition}, border-color ${transition}`,
+  transition: `background-color ${transition}`,
   "&:hover": {
     backgroundColor: "action.hover",
   },
   "&[data-active='true'], &.Mui-selected": {
-    // Neutral onyx rail + a low-contrast neutral fill (no accent colour).
-    borderLeftColor: "text.primary",
+    // Low-contrast neutral fill (no accent colour, no stripe).
     backgroundColor: "action.selected",
     "&:hover": {
       backgroundColor: "action.selected",
