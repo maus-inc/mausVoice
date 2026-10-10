@@ -345,6 +345,8 @@ const LANGUAGE_EXONYMS: Partial<Record<DictationLanguageCode, string>> = {
   my: "Burmese",
   bo: "Tibetan",
   am: "Amharic",
+  hy: "Armenian",
+  ka: "Georgian",
   ja: "Japanese",
   ko: "Korean",
   zh: "Chinese",
