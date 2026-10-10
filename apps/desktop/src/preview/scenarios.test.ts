@@ -30,6 +30,7 @@ describe("browser preview scenarios", () => {
     const snapshot = createPreviewScenario("populated");
 
     expect(snapshot.data.transcriptions).toHaveLength(3);
+    expect(snapshot.data.dailyActivity.length).toBeGreaterThan(0);
     expect(snapshot.data.terms).toHaveLength(3);
     expect(snapshot.data.conversations).toHaveLength(2);
     expect(snapshot.data.apiKeys).toEqual(
@@ -60,6 +61,7 @@ describe("browser preview scenarios", () => {
     const snapshot = createPreviewScenario("empty");
 
     expect(snapshot.data.transcriptions).toEqual([]);
+    expect(snapshot.data.dailyActivity).toEqual([]);
     expect(snapshot.data.terms).toEqual([]);
     expect(snapshot.data.conversations).toEqual([]);
     expect(snapshot.state.transcriptions.transcriptionIds).toEqual([]);

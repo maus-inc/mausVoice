@@ -10,6 +10,9 @@ import type {
   User,
   UserPreferences,
 } from "@maus-inc/types";
+import { countWords } from "@maus-inc/utilities";
+import type { DailyWordActivity } from "../types/home.types";
+import { toLocalDateKey, toLocalMonthKey } from "../utils/date.utils";
 import { INITIAL_APP_STATE, type AppState } from "../state/app.state";
 import { createDefaultPreferences } from "../actions/user.actions";
 import { getDefaultSystemTones } from "../utils/tone.utils";
@@ -69,6 +72,7 @@ export type PreviewData = {
   hotkeys: Hotkey[];
   appTargets: AppTarget[];
   transcriptions: Transcription[];
+  dailyActivity: DailyWordActivity[];
   conversations: Conversation[];
   chatMessages: ChatMessage[];
 };
@@ -85,7 +89,21 @@ const PREVIEW_AUTH = {
   providers: ["preview"],
 };
 
-const now = "2026-09-09T09:30:00.000Z";
+const previewNow = new Date();
+const now = previewNow.toISOString();
+const previewToday = toLocalDateKey(previewNow);
+const previewMonth = toLocalMonthKey(previewNow);
+
+const previewDateDaysAgo = (
+  daysAgo: number,
+  hour: number,
+  minute: number,
+): string => {
+  const date = new Date(previewNow);
+  date.setDate(date.getDate() - daysAgo);
+  date.setHours(hour, minute, 0, 0);
+  return date.toISOString();
+};
 
 const createPreviewUser = (onboarded: boolean): User => ({
   id: LOCAL_USER_ID,
@@ -101,7 +119,7 @@ const createPreviewUser = (onboarded: boolean): User => ({
   preferredMicrophone: "Preview microphone",
   preferredLanguage: "en",
   wordsThisMonth: 12_840,
-  wordsThisMonthMonth: "2026-09",
+  wordsThisMonthMonth: previewMonth,
   wordsTotal: 84_120,
   playInteractionChime: true,
   interactionFeedbackVolume: 0.35,
@@ -112,7 +130,7 @@ const createPreviewUser = (onboarded: boolean): User => ({
   selectedToneId: "email",
   activeToneIds: ["default", "email", "notes"],
   streak: 12,
-  streakRecordedAt: "2026-09-09",
+  streakRecordedAt: previewToday,
   referralSource: "Preview scenario",
 });
 
@@ -217,7 +235,7 @@ const previewAppTargets: AppTarget[] = [
 const previewTranscriptions: Transcription[] = [
   {
     id: "transcription-brief",
-    createdAt: "2026-09-09T08:46:00.000Z",
+    createdAt: previewDateDaysAgo(1, 8, 46),
     createdByUserId: LOCAL_USER_ID,
     // Long enough to exceed the 3-line clamp so the Show more/Show less
     // disclosure control is exercisable in the browser preview.
@@ -236,7 +254,7 @@ const previewTranscriptions: Transcription[] = [
   },
   {
     id: "transcription-status",
-    createdAt: "2026-09-08T15:20:00.000Z",
+    createdAt: previewDateDaysAgo(2, 15, 20),
     createdByUserId: LOCAL_USER_ID,
     transcript:
       "Design review: simplify the empty state, tighten the heading, and make the primary action more explicit.",
@@ -249,7 +267,7 @@ const previewTranscriptions: Transcription[] = [
   },
   {
     id: "transcription-email",
-    createdAt: "2026-09-06T11:10:00.000Z",
+    createdAt: previewDateDaysAgo(4, 11, 10),
     createdByUserId: LOCAL_USER_ID,
     transcript:
       "Hi team, the prototype is ready for feedback. Please add comments before Thursday afternoon. Thanks, Morgan.",
@@ -307,6 +325,71 @@ const previewChatMessages: ChatMessage[] = [
   },
 ];
 
+const createPreviewDailyActivity = (): DailyWordActivity[] => {
+  const offsetsAndCounts: Array<[number, number]> = [
+    [0, 612],
+    [1, 248],
+    [2, 1_026],
+    [4, 384],
+    [6, 1_840],
+    [8, 118],
+    [11, 705],
+    [14, 2_460],
+    [18, 324],
+    [22, 1_230],
+    [27, 492],
+    [32, 876],
+    [38, 1_710],
+    [45, 260],
+    [53, 1_095],
+    [62, 540],
+    [74, 1_426],
+    [88, 342],
+    [103, 1_980],
+    [121, 716],
+    [147, 1_118],
+    [176, 470],
+    [204, 1_590],
+    [232, 890],
+    [261, 1_340],
+    [291, 622],
+    [322, 1_760],
+    [350, 410],
+  ];
+  const transcriptionWordsByDate = new Map<string, number>();
+  for (const transcription of previewTranscriptions) {
+    if (
+      transcription.remoteStatus === "received" ||
+      transcription.transcript === "[Transcription Failed]"
+    ) {
+      continue;
+    }
+    const createdAt = new Date(transcription.createdAt);
+    if (!Number.isFinite(createdAt.valueOf())) continue;
+    const localDate = toLocalDateKey(createdAt);
+    transcriptionWordsByDate.set(
+      localDate,
+      (transcriptionWordsByDate.get(localDate) ?? 0) +
+        countWords(transcription.transcript),
+    );
+  }
+
+  return offsetsAndCounts.map(([offset, wordCount]) => {
+    const date = new Date(
+      previewNow.getFullYear(),
+      previewNow.getMonth(),
+      previewNow.getDate(),
+      12,
+    );
+    date.setDate(date.getDate() - offset);
+    const localDate = toLocalDateKey(date);
+    return {
+      localDate,
+      wordCount: wordCount + (transcriptionWordsByDate.get(localDate) ?? 0),
+    };
+  });
+};
+
 const clone = <T>(value: T): T => structuredClone(value);
 
 const setCollectionsOnState = (state: AppState, data: PreviewData): void => {
@@ -341,6 +424,8 @@ const setCollectionsOnState = (state: AppState, data: PreviewData): void => {
   state.transcriptions.transcriptionIds = data.transcriptions.map(
     (transcription) => transcription.id,
   );
+  state.home.dailyActivity = clone(data.dailyActivity);
+  state.home.dailyActivityStatus = "success";
   state.chat.conversationIds = data.conversations.map(
     (conversation) => conversation.id,
   );
@@ -410,6 +495,7 @@ const populatedSnapshot = (): PreviewScenarioSnapshot =>
     hotkeys: clone(previewHotkeys),
     appTargets: clone(previewAppTargets),
     transcriptions: clone(previewTranscriptions),
+    dailyActivity: createPreviewDailyActivity(),
     conversations: clone(previewConversations),
     chatMessages: clone(previewChatMessages),
   });
@@ -422,6 +508,7 @@ const emptySnapshot = (): PreviewScenarioSnapshot =>
     hotkeys: clone(previewHotkeys),
     appTargets: [],
     transcriptions: [],
+    dailyActivity: [],
     conversations: [],
     chatMessages: [],
   });
@@ -437,6 +524,7 @@ const welcomeSnapshot = (): PreviewScenarioSnapshot => ({
     hotkeys: [],
     appTargets: [],
     transcriptions: [],
+    dailyActivity: [],
     conversations: [],
     chatMessages: [],
   },
@@ -475,6 +563,7 @@ const onboardingSnapshot = (): PreviewScenarioSnapshot => {
       hotkeys: clone(previewHotkeys),
       appTargets: [],
       transcriptions: [],
+      dailyActivity: [],
       conversations: [],
       chatMessages: [],
     },
@@ -500,6 +589,7 @@ export const createPreviewScenario = (
           hotkeys: clone(previewHotkeys),
           appTargets: clone(previewAppTargets),
           transcriptions: clone(previewTranscriptions),
+          dailyActivity: createPreviewDailyActivity(),
           conversations: clone(previewConversations),
           chatMessages: clone(previewChatMessages),
         },

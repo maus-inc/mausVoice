@@ -22,6 +22,7 @@ import { OverlayPhase } from "../types/overlay.types";
 import { PermissionMap } from "../types/permission.types";
 
 import { AgentRunState } from "./agent.state";
+import { HomeState, INITIAL_HOME_STATE } from "./home.state";
 import { AutoLearnState, INITIAL_AUTO_LEARN_STATE } from "./auto-learn.state";
 import { ChatState, INITIAL_CHAT_STATE } from "./chat.state";
 import { DictionaryState, INITIAL_DICTIONARY_STATE } from "./dictionary.state";
@@ -129,6 +130,7 @@ export type AppState = {
    * in `pill-review.actions`.
    */
   pendingPillReview: Nullable<{ id: string; text: string }>;
+  home: HomeState;
   chat: ChatState;
 
   snackbarMessage?: string;
@@ -204,6 +206,7 @@ export const INITIAL_APP_STATE: AppState = {
   pillConversationId: null,
   assistantInputMode: "voice",
   pendingPillReview: null,
+  home: INITIAL_HOME_STATE,
   local: INITIAL_LOCAL_STATE,
   chat: INITIAL_CHAT_STATE,
   onboarding: INITIAL_ONBOARDING_STATE,

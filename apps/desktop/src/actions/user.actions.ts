@@ -48,6 +48,7 @@ import {
 import { showErrorSnackbar } from "./app.actions";
 import { refreshUpdatesForChannelChange } from "./updater.actions";
 import { setLocalStorageValue } from "./local-storage.actions";
+import { notifyDailyActivityChanged } from "../utils/daily-activity.events";
 
 // Serializes profile mutations. `setMyUser` upserts the whole row, so two
 // overlapping writes can clobber each other: whichever lands last wins, and a
@@ -212,13 +213,6 @@ export const updateUserPreferences = (
     }
   });
 
-const getCurrentUsageMonth = (): string => {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = `${now.getMonth() + 1}`.padStart(2, "0");
-  return `${year}-${month}`;
-};
-
 const getCurrentDateString = (): string => dayjs().format("YYYY-MM-DD");
 
 const getYesterdayDateString = (): string =>
@@ -352,28 +346,36 @@ export const recordStreak = async (): Promise<void> => {
   }
 };
 
-export const addWordsToCurrentUser = async (
+export const recordUsageWords = (
+  eventId: string,
+  localDate: string,
   wordCount: number,
-): Promise<void> => {
-  if (wordCount <= 0) {
-    return;
-  }
+): Promise<void> =>
+  enqueueUserMutation(async () => {
+    if (!Number.isSafeInteger(wordCount) || wordCount <= 0) {
+      return;
+    }
 
-  await updateUser(
-    (user) => {
-      const currentMonth = getCurrentUsageMonth();
-      if (user.wordsThisMonthMonth !== currentMonth) {
-        user.wordsThisMonth = 0;
-        user.wordsThisMonthMonth = currentMonth;
-      }
-
-      user.wordsThisMonth += wordCount;
-      user.wordsTotal += wordCount;
-    },
-    "Unable to update usage. User not found.",
-    "Failed to update usage metrics. Please try again.",
-  );
-};
+    try {
+      const user = await getUserRepo().recordUsageWords(
+        eventId,
+        localDate,
+        wordCount,
+      );
+      produceAppState((draft) => {
+        setCurrentUser(draft, user);
+      });
+      notifyDailyActivityChanged();
+    } catch (error) {
+      getLogger().error(`Failed to record usage metrics: ${error}`);
+      showErrorSnackbar(
+        getIntl().formatMessage({
+          defaultMessage: "Failed to update usage metrics. Please try again.",
+        }),
+      );
+      throw error;
+    }
+  });
 
 // Runs on the same chain as `updateUser` so a refresh never reads a row that a
 // queued save is halfway through writing. It must never be called from inside

@@ -40,6 +40,11 @@ The two schemes have their own temperature rather than being inversions of each 
 - Border radius 14 for cards; controls handled via MUI components symmetric. Keep consistent. Don't mix pill/soft/hard per component.
 - 4px base spacing rhythm; generous separation around content, compact inside rows.
 
+## Home analytics
+
+- The daily-word heatmap uses the neutral intensity ramps in `styles/palette.ts`; it is a compact, Sunday-first 53-week calendar in the Home flow, not a separate side panel. Its legend, per-day tooltips, aggregate summary, and screen-reader list expose the counts without relying on color alone. Empty and future days use distinct styling.
+- Home metrics share the same card treatment as the rest of the app. The dashboard widens its routed content to use the available canvas; it does not add a shell-side panel or a second hotkey card.
+
 ## Motion
 
 - Settings/deleted: 120–180ms ease‑out, exponential absorb. No **bounce** (damping < 20); snappy springs (damping ≥ 28) sanctioned for shared-layout indicators only. Reduced-motion honored everywhere (global kill-switch in `theme.ts`); keyboard‑invoked actions never animate.

@@ -102,6 +102,43 @@ describe("user repo IPC boundary for interactionFeedbackVolume", () => {
  * tenured account as brand new. The clock is pinned here so any dependence on
  * "now" is a hard failure rather than a flake.
  */
+describe("LocalUserRepo.recordUsageWords", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("sends the stable event identity and maps the returned profile", async () => {
+    capturedInvoke.mockResolvedValue({
+      id: LOCAL_USER_ID,
+      name: "Test",
+      bio: "",
+      onboarded: true,
+      preferredMicrophone: null,
+      preferredLanguage: null,
+      wordsThisMonth: 25,
+      wordsThisMonthMonth: "2026-10",
+      wordsTotal: 125,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      onboardedAt: null,
+    });
+
+    const result = await new LocalUserRepo().recordUsageWords(
+      "transcription-1",
+      "2026-10-08",
+      25,
+    );
+
+    expect(capturedInvoke).toHaveBeenCalledWith("user_record_usage", {
+      eventId: "transcription-1",
+      localDate: "2026-10-08",
+      wordCount: 25,
+    });
+    expect(result.wordsThisMonth).toBe(25);
+    expect(result.wordsTotal).toBe(125);
+    expect(result.updatedAt).toBeTypeOf("string");
+  });
+});
+
 describe("user repo profile timestamps", () => {
   const ACCOUNT_CREATED_AT_KEY = "mausvoice:account-created-at";
   const ONBOARDED_AT_KEY = "mausvoice:onboarded-at";

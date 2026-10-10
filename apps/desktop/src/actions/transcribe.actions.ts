@@ -66,7 +66,8 @@ import {
 } from "../utils/fast-style.utils";
 import { getIntl } from "../i18n/intl";
 import { showErrorSnackbar } from "./app.actions";
-import { addWordsToCurrentUser } from "./user.actions";
+import { recordUsageWords as recordUsageWordsAction } from "./user.actions";
+import { localDateKeyFromIso, toLocalDateKey } from "../utils/date.utils";
 
 export type TranscribeAudioInput = {
   samples: AudioSamples;
@@ -851,12 +852,16 @@ const getSampleCount = (samples: StopRecordingResponse["samples"]): number =>
 const getWordsAdded = (transcript: string | null): number =>
   transcript ? countWords(transcript) : 0;
 
-const recordUsageWords = async (wordsAdded: number): Promise<void> => {
+const recordUsageWords = async (
+  eventId: string,
+  localDate: string,
+  wordsAdded: number,
+): Promise<void> => {
   if (wordsAdded <= 0) {
     return;
   }
   try {
-    await addWordsToCurrentUser(wordsAdded);
+    await recordUsageWordsAction(eventId, localDate, wordsAdded);
   } catch (error) {
     console.error("Failed to update usage metrics", error);
   }
@@ -1037,21 +1042,23 @@ export const storeTranscription = async (
     // Counting words is an incognito-only option. An ephemeral session never
     // opted into usage statistics.
     //
-    // `void`, not `await`, and for the same reason its non-incognito sibling is
-    // `void`: the session stays locked until this function returns, so awaiting a
-    // queued profile write holds the lock across an IPC and a pill click that lands
-    // in the gap is accepted by the pill and then dropped by the app. Commit
-    // 9a638fa40 applied that to the sibling and left this branch awaiting.
-    // `recordUsageWords` owns its own error handling, so discarding the promise
-    // cannot produce an unhandled rejection, and the cost of being late is one
-    // dictation's word count.
+    // The stop path holds the recording session until this function returns.
+    // Do not wait for the queued profile write here, or a new pill click can
+    // land in the gap and be dropped. The helper handles failures before the
+    // promise is discarded.
     if (
       wordsAdded > 0 &&
+      !transcriptionFailed &&
+      input.remoteStatus !== "received" &&
       includeInStats &&
       incognitoEnabled &&
       !isEphemeralSessionActive()
     ) {
-      void recordUsageWords(wordsAdded);
+      void recordUsageWords(
+        transcriptionId,
+        toLocalDateKey(new Date()),
+        wordsAdded,
+      );
     }
 
     return { transcription: null, wordCount: wordsAdded };
@@ -1098,10 +1105,20 @@ export const storeTranscription = async (
   // get here, so it looks clickable, but this session stays locked until the
   // stop path returns. Awaiting two slow calls here held that lock across a
   // queued profile write and a disk scan, so a click landing in that gap was
-  // accepted by the pill and then dropped by the app. Both calls own their error
-  // handling, and both are safe to land late: a missed word count is one
-  // dictation of statistics, and a missed sweep runs again on the next one.
-  void recordUsageWords(wordsAdded);
+  // accepted by the pill and then dropped by the app. Usage carries the saved
+  // row's stable id so a delayed live write and a dashboard repair cannot count
+  // one dictation twice; the sweep can safely run again on the next dictation.
+  if (
+    wordsAdded > 0 &&
+    !transcriptionFailed &&
+    storedTranscription.remoteStatus !== "received"
+  ) {
+    void recordUsageWords(
+      storedTranscription.id,
+      localDateKeyFromIso(storedTranscription.createdAt),
+      wordsAdded,
+    );
+  }
   void purgeStaleAudioSnapshots();
 
   markPipeline(input.trace, "persisted");

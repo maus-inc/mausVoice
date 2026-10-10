@@ -4,6 +4,7 @@ import { getAppState, setAppState } from "../store";
 import { LOCAL_USER_ID } from "../utils/user.utils";
 import {
   createDefaultPreferences,
+  recordUsageWords,
   refreshCurrentUser,
   setAgentToolEnabled,
   setPreserveAudioOnFailure,
@@ -34,6 +35,18 @@ const { loggerMock, prefsRepoMock, userRepoMock } = vi.hoisted(() => {
       Promise.resolve(user),
     ),
     getMyUser: vi.fn<() => Promise<User | null>>(() => Promise.resolve(null)),
+    recordUsageWords: vi.fn<
+      (eventId: string, localDate: string, wordCount: number) => Promise<User>
+    >((_eventId, _localDate, _wordCount) =>
+      Promise.resolve({
+        id: "local-user-id",
+        name: "Test",
+        bio: "",
+        onboarded: true,
+        wordsThisMonth: 0,
+        wordsTotal: 0,
+      } as User),
+    ),
   };
   return { loggerMock, prefsRepoMock, userRepoMock };
 });
@@ -51,6 +64,43 @@ vi.mock("../repos", () => ({
   getUserPreferencesRepo: () => prefsRepoMock,
   getUserRepo: () => userRepoMock,
 }));
+
+describe("recordUsageWords", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setAppState(structuredClone(INITIAL_APP_STATE), true);
+  });
+
+  afterEach(() => {
+    setAppState(structuredClone(INITIAL_APP_STATE), true);
+  });
+
+  it("stores the authoritative profile returned by native usage metering", async () => {
+    const recordedUser: User = {
+      id: LOCAL_USER_ID,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-10-08T00:00:00.000Z",
+      name: "Morgan",
+      bio: "",
+      onboarded: true,
+      playInteractionChime: true,
+      hasFinishedTutorial: true,
+      wordsThisMonth: 18,
+      wordsThisMonthMonth: "2026-10",
+      wordsTotal: 180,
+    };
+    userRepoMock.recordUsageWords.mockResolvedValue(recordedUser);
+
+    await recordUsageWords("transcription-1", "2026-10-08", 18);
+
+    expect(userRepoMock.recordUsageWords).toHaveBeenCalledWith(
+      "transcription-1",
+      "2026-10-08",
+      18,
+    );
+    expect(getAppState().userById[LOCAL_USER_ID]).toEqual(recordedUser);
+  });
+});
 
 const minimalToolInfo = (id: string): ToolInfo =>
   ({
