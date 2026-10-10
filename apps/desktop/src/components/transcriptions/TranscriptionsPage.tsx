@@ -1,6 +1,5 @@
 import {
   Button,
-  Container,
   Dialog,
   DialogActions,
   DialogContent,
@@ -21,7 +20,8 @@ import { importAudioFile } from "../../actions/transcriptions.actions";
 import { useAppStore } from "../../store";
 import { threadDayGroup, type ThreadDayGroup } from "../../utils/date.utils";
 import { TranscriptionsSideEffects } from "./TranscriptionsSideEffects";
-import { TipCard, useTip } from "../onboarding/TipCard";
+import { useTip } from "../onboarding/TipCard";
+import { TipToastTrigger } from "../onboarding/TipToast";
 import { TranscriptionRow } from "./TranscriptRow";
 import { ScrollListPage } from "../common/ScrollListPage";
 import {
@@ -160,15 +160,9 @@ export default function TranscriptionsPage() {
     <>
       <TranscriptionsSideEffects />
       <Stack spacing={2} sx={{ height: "100%" }}>
-        {/* Same column as the list below, so the tip aligns with the rows
-            instead of reading as a window-level banner. The wrapper only
-            exists while the tip is visible: once dismissed (after its exit
-            animation finishes) no empty container or stack spacing remains. */}
-        {tipVisible && (
-          <Container maxWidth="sm">
-            <TipCard id="review-before-insert" />
-          </Container>
-        )}
+        {/* The tip now lives in the toast layer, not this column, so
+            showing and clearing it never touches this page's own layout. */}
+        <TipToastTrigger id="review-before-insert" visible={tipVisible} />
         <ScrollListPage
           title={<FormattedMessage defaultMessage="History" />}
           subtitle={
