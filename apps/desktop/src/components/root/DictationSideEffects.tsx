@@ -25,6 +25,7 @@ import {
 } from "../../actions/tool.actions";
 import { storeTranscription } from "../../actions/transcribe.actions";
 import { scheduleAutomaticPostProcessEditRetry } from "../../actions/transcriptions.actions";
+import type { ToastAction } from "../../types/toast.types";
 import { recordStreak } from "../../actions/user.actions";
 import {
   useHotkeyFire,
@@ -299,6 +300,7 @@ export type PostTranscriptInput = {
     message: string;
     toastType: "info" | "error";
     duration?: number;
+    action?: ToastAction;
   }) => Promise<void> | void;
   /** Review-before-insert persistence hook; forwarded to the strategy. */
   persistReviewedTranscript?: (
@@ -350,6 +352,7 @@ export const postProcessFinalizedTranscript = async (
   const willStore =
     strategy.shouldStoreTranscript() &&
     (result.historyOwner ?? "stop-path") === "stop-path";
+  let savedInHistory = false;
   if (willStore) {
     getLogger().verbose("Storing transcription");
     const stored = await input.storeTranscriptionFn({
@@ -365,6 +368,7 @@ export const postProcessFinalizedTranscript = async (
       trace: input.trace ?? null,
     });
     if (stored.transcription) {
+      savedInHistory = true;
       // The scheduler returns once its claim is written and the delivery is
       // timed, so waiting here only covers the durable marker, never the pass.
       await scheduleAutomaticPostProcessEditRetry({
@@ -373,6 +377,34 @@ export const postProcessFinalizedTranscript = async (
         languageCode: input.languageCode,
       });
     }
+  }
+  if (postProcessMetadata?.postProcessEditFailed) {
+    // A partial edit batch blocks insertion, so this row is the only copy of
+    // what was said, and which sentence to use depends on whether a row was
+    // actually written: persistence being allowed does not mean the write
+    // succeeded, and an unconditional "saved in History" would point the user
+    // at a row that does not exist. The action is dropped with the row: a
+    // toast that offers to open History for a transcript that was never saved
+    // would be an offer to look at nothing.
+    const message = savedInHistory
+      ? getIntl().formatMessage({
+          defaultMessage:
+            "Styling was discarded because not all requested edits could be applied. The complete raw transcript is saved in History.",
+        })
+      : getIntl().formatMessage({
+          // Worded differently from the persisted copy on purpose: this
+          // project derives message ids from the message text, and both
+          // sentences answering the same event with the same opening words is
+          // an id collision the extractor refuses.
+          defaultMessage:
+            "Not all requested styling edits could be applied, so the styling was discarded. History is unavailable in this session, so the raw transcript was not saved.",
+        });
+    await input.showToast({
+      message,
+      toastType: "error",
+      duration: 8_000,
+      action: savedInHistory ? "open_transcriptions" : undefined,
+    });
   }
   input.refreshMember();
 

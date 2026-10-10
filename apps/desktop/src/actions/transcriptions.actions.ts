@@ -540,8 +540,16 @@ const isClaimedFailureRow = (
 
 const retranscribeGenerationById = new Map<string, number>();
 
+/**
+ * Generations come from one global sequence rather than a per-row count: a
+ * failed run releases its entry from the map, and a per-row count would then
+ * hand the freed number to a later run, letting an older run's timer match
+ * and clear it.
+ */
+let retranscribeGenerationSequence = 0;
+
 const nextRetranscribeGeneration = (transcriptionId: string): number => {
-  const next = (retranscribeGenerationById.get(transcriptionId) ?? 0) + 1;
+  const next = ++retranscribeGenerationSequence;
   retranscribeGenerationById.set(transcriptionId, next);
   return next;
 };

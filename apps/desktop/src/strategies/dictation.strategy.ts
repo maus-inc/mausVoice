@@ -4,7 +4,6 @@ import { showErrorSnackbar, showSnackbar } from "../actions/app.actions";
 import { tryRegisterCurrentAppTarget } from "../actions/app-target.actions";
 import { getIntl } from "../i18n/intl";
 import { postProcessErrorReason } from "../actions/post-process-error-category";
-import { isPersistenceAllowed } from "../utils/incognito.utils";
 import { showToast } from "../actions/toast.actions";
 import {
   postProcessTranscript,
@@ -457,32 +456,10 @@ export class DictationStrategy extends BaseStrategy {
         getLogger().warning(
           "Post-processing edits could not be applied; preserving the original transcript without insertion",
         );
-        // Which sentence to use depends on whether a row was written.
-        // `isPersistenceAllowed()` is false under incognito mode and during an
-        // ephemeral session, and both store paths consult it before writing, so
-        // an unconditional "saved in History" would point the user at a row
-        // that does not exist. The action is dropped with the row: a toast that
-        // offers to open History for a transcript that was never saved would be
-        // an offer to look at nothing.
-        const historyAvailable = isPersistenceAllowed();
-        await showToast({
-          message: historyAvailable
-            ? getIntl().formatMessage({
-                defaultMessage:
-                  "Styling was discarded because not all requested edits could be applied. The complete raw transcript is saved in History.",
-              })
-            : getIntl().formatMessage({
-                // Worded differently from the persisted copy on purpose: this
-                // project derives message ids from the message text, and both
-                // sentences answering the same event with the same opening
-                // words is an id collision the extractor refuses.
-                defaultMessage:
-                  "Not all requested styling edits could be applied, so the styling was discarded. History is unavailable in this session, so the raw transcript was not saved.",
-              }),
-          toastType: "error",
-          duration: 8000,
-          action: historyAvailable ? "open_transcriptions" : undefined,
-        });
+        // The History toast is the caller's to show once storage has actually
+        // produced a row: persistence being allowed does not mean the write
+        // succeeded. Routing stays blocked here either way, so the row is
+        // what preserves the raw transcript.
       } else if (postProcessMetadata.postProcessFailed) {
         getLogger().warning(
           "Post-processing failed; preserving the transcript in History without insertion",
