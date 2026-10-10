@@ -29,6 +29,7 @@ import {
   coerceToDictationLanguage,
   mapDictationLanguageToWhisperLanguage,
 } from "../utils/language.utils";
+import { encodeRecordedAudio } from "../utils/recorded-audio.utils";
 import { orFalse, orNull } from "../utils/nullable.utils";
 import { withTimeout } from "../utils/timeout.utils";
 import { getLogger } from "../utils/log.utils";
@@ -868,13 +869,14 @@ const persistAudioSnapshot = async (
   sampleRate: number,
 ): Promise<TranscriptionAudioSnapshot | undefined> => {
   try {
+    // Raw-body invoke: the samples cross IPC as packed f32 bytes with the id
+    // in a header, the same framing `stop_recording` uses on the way out. A
+    // JSON number array of this size costs hundreds of milliseconds to
+    // serialize on long dictations and sits directly on the save path.
     return await invoke<TranscriptionAudioSnapshot>(
       "store_transcription_audio",
-      {
-        id: transcriptionId,
-        samples,
-        sampleRate,
-      },
+      encodeRecordedAudio(samples, sampleRate),
+      { headers: { "x-transcription-id": transcriptionId } },
     );
   } catch (error) {
     getLogger().error("Failed to persist audio snapshot", error);
@@ -952,6 +954,36 @@ const persistTranscription = async (
     console.error("Failed to store transcription", error);
     showErrorSnackbar("Unable to save transcription. Please try again.");
     return null;
+  }
+};
+
+/**
+ * Attach warnings to an already-persisted row.
+ *
+ * History persistence starts concurrently with output delivery (see the
+ * dictation strategy), so a failure the delivery reports after the row is
+ * written cannot ride on the original store call the way it does on the
+ * serial path. This closes that gap: the row ends up carrying the same
+ * warnings either way. A row that vanished in between (deleted, or never
+ * persisted because persistence is suppressed) is simply skipped.
+ */
+export const appendTranscriptionWarnings = async (
+  transcriptionId: string,
+  warnings: string[],
+): Promise<void> => {
+  if (warnings.length === 0) return;
+  const existing = getAppState().transcriptionById[transcriptionId];
+  if (!existing) return;
+  try {
+    const stored = await getTranscriptionRepo().updateTranscription({
+      ...existing,
+      warnings: [...(existing.warnings ?? []), ...warnings],
+    });
+    produceAppState((draft) => {
+      draft.transcriptionById[stored.id] = stored;
+    });
+  } catch (error) {
+    getLogger().error("Failed to append transcription warnings", error);
   }
 };
 

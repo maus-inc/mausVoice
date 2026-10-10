@@ -1,6 +1,7 @@
 import type { AppTarget, Nullable } from "@maus-inc/types";
 import type {
   PostProcessMetadata,
+  StoreTranscriptionOutput,
   TranscribeAudioMetadata,
 } from "../actions/transcribe.actions";
 import type { TextFieldInfo } from "./accessibility.types";
@@ -40,6 +41,15 @@ export type HandleTranscriptParams = {
   persistReviewedTranscript?: (
     input: ReviewedTranscriptPersistenceInput,
   ) => Promise<boolean>;
+  /**
+   * Persists the History row the moment the transcript is final, so the write
+   * runs while the output is still being delivered instead of queueing behind
+   * the paste. Only used when delivery cannot change the stored text (no
+   * review-before-insert, no remote target).
+   */
+  persistTranscriptNow?: (
+    input: ReviewedTranscriptPersistenceInput,
+  ) => Promise<StoreTranscriptionOutput>;
 };
 
 export type HandleTranscriptResult = {
@@ -51,6 +61,11 @@ export type HandleTranscriptResult = {
   remoteStatus?: "sent" | "received" | null;
   remoteDeviceId?: string | null;
   historyOwner?: HistoryOwner;
+  /**
+   * The already-started History write, when persistence ran concurrently with
+   * delivery. The stop path awaits this instead of writing the row itself.
+   */
+  pendingPersistence?: Promise<StoreTranscriptionOutput>;
 };
 
 /**
@@ -71,4 +86,10 @@ export type HistoryOwner =
    * must not write it as well: that would contradict the promise and leave the
    * retry writing a duplicate row.
    */
-  | "pill";
+  | "pill"
+  /**
+   * The strategy started the write itself, concurrently with delivery, and
+   * handed the promise back on `pendingPersistence`. The stop path must await
+   * that promise rather than write a second row.
+   */
+  | "concurrent";

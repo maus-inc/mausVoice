@@ -246,6 +246,25 @@ pub fn encode_recorded_audio(samples: &[f32], sample_rate: u32) -> Vec<u8> {
     bytes
 }
 
+/// Inverse of [`encode_recorded_audio`], for the direction the frontend sends
+/// a recording back (`store_transcription_audio`). One wire format describes a
+/// recording in both directions.
+pub fn decode_recorded_audio(bytes: &[u8]) -> Result<(u32, Vec<f32>), String> {
+    if bytes.len() < 4 {
+        return Err("Recorded audio payload is missing its sample-rate header".to_string());
+    }
+    let sample_rate = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+    let payload = &bytes[4..];
+    if payload.len() % 4 != 0 {
+        return Err("Recorded audio payload ends in a truncated sample".to_string());
+    }
+    let mut samples = Vec::with_capacity(payload.len() / 4);
+    for chunk in payload.chunks_exact(4) {
+        samples.push(f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
+    }
+    Ok((sample_rate, samples))
+}
+
 #[derive(serde::Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct StartRecordingResponse {
@@ -3173,45 +3192,61 @@ pub async fn resume_recording(
         .map_err(|err| err.to_string())?
 }
 
+/// Raw-body command, so it is registered in `app.rs` but kept out of the
+/// Specta bindings (Specta cannot describe `ipc::Request`), mirroring
+/// `stop_recording`. The frontend sends the samples as the packed
+/// `[sample_rate: u32 LE][samples: f32 LE...]` body produced by
+/// `encodeRecordedAudio` and names the transcription in the
+/// `x-transcription-id` header. The previous JSON `samples: number[]` form
+/// serialized the whole recording as text on the save critical path, which is
+/// the same cost `stop_recording` already moved off its own path.
 #[tauri::command]
-#[specta::specta]
 pub async fn store_transcription_audio(
     app: AppHandle,
-    id: String,
-    samples: Vec<f64>,
-    sample_rate: u32,
+    request: tauri::ipc::Request<'_>,
 ) -> Result<TranscriptionAudioSnapshot, String> {
+    let header_value = request
+        .headers()
+        .get("x-transcription-id")
+        .ok_or_else(|| "Missing the x-transcription-id header".to_string())?;
+    let transcription_id = header_value
+        .to_str()
+        .map_err(|_| "The x-transcription-id header is not valid UTF-8".to_string())?
+        .to_string();
+    if transcription_id.is_empty() {
+        return Err("Missing the x-transcription-id header".to_string());
+    }
+
+    let body = match request.body() {
+        tauri::ipc::InvokeBody::Raw(raw) => raw.as_slice(),
+        tauri::ipc::InvokeBody::Json(_) => {
+            return Err("store_transcription_audio expects a raw audio body".to_string());
+        }
+    };
+
+    let (sample_rate, mut samples) = decode_recorded_audio(body)?;
     if sample_rate == 0 {
         return Err("Audio sample rate must be greater than zero".to_string());
     }
 
-    let mut filtered = Vec::with_capacity(samples.len());
-    for sample in samples {
-        if sample.is_finite() {
-            filtered.push(sample as f32);
-        }
-    }
-
-    if filtered.is_empty() {
+    // In place rather than a second Vec: the decoded buffer is the only copy
+    // from here to the WAV write, so filtering cannot double its peak memory.
+    samples.retain(|sample| sample.is_finite());
+    if samples.is_empty() {
         return Err("No usable audio samples provided".to_string());
     }
 
-    let handle = app.clone();
-    let audio_id = id.clone();
-
-    let result = tauri::async_runtime::spawn_blocking(move || {
+    tauri::async_runtime::spawn_blocking(move || {
         crate::system::audio_store::save_transcription_audio(
-            &handle,
-            &audio_id,
-            &filtered,
+            &app,
+            &transcription_id,
+            &samples,
             sample_rate,
         )
         .map_err(|err| err.to_string())
     })
     .await
-    .map_err(|err| err.to_string())?;
-
-    result
+    .map_err(|err| err.to_string())?
 }
 
 #[derive(serde::Deserialize, specta::Type)]
@@ -6221,6 +6256,38 @@ mod tests {
         expected.extend_from_slice(&(-1.0_f32).to_le_bytes());
         assert_eq!(bytes, expected);
         assert_eq!(encode_recorded_audio(&[], 0), vec![0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn recorded_audio_decoding_reads_the_wire_layout() {
+        let bytes: &[u8] = &[
+            0x80, 0xBB, 0x00, 0x00, // 48000 = 0x0000BB80, u32 LE
+            0x00, 0x00, 0x00, 0x3F, // 0.5 = 0x3F000000, f32 LE
+            0x00, 0x00, 0x80, 0xBF, // -1.0 = 0xBF800000, f32 LE
+        ];
+        assert_eq!(decode_recorded_audio(bytes), Ok((48_000, vec![0.5, -1.0])));
+        assert_eq!(decode_recorded_audio(&[0, 0, 0, 0]), Ok((0, vec![])));
+    }
+
+    #[test]
+    fn recorded_audio_decoding_rejects_short_and_truncated_bodies() {
+        assert_eq!(
+            decode_recorded_audio(&[0x80, 0xBB, 0x00]),
+            Err("Recorded audio payload is missing its sample-rate header".to_string())
+        );
+        assert_eq!(
+            decode_recorded_audio(&[0x80, 0xBB, 0x00, 0x00, 0x00, 0x00, 0x3F]),
+            Err("Recorded audio payload ends in a truncated sample".to_string())
+        );
+    }
+
+    #[test]
+    fn recorded_audio_decoding_roundtrips_the_encoder() {
+        let bytes = encode_recorded_audio(&[0.25, -0.75, 1.0], 16_000);
+        assert_eq!(
+            decode_recorded_audio(&bytes),
+            Ok((16_000, vec![0.25, -0.75, 1.0]))
+        );
     }
 
     #[test]
