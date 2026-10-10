@@ -6,11 +6,12 @@ export const chromeMenuPaperSx: SxProps<Theme> = (theme) => ({
   borderRadius: 1.5,
   py: 0.5,
   mt: 0.5,
-  // Scrollable rather than clipped. `overflow: "hidden"` cut off any option
-  // past the viewport's bottom, which the language menu and every long provider
-  // list hit. The horizontal axis stays hidden so the rounded corners still
-  // clip the content, and `auto` on the vertical axis is what gives the paper a
+  // Every chrome menu bounds itself and scrolls. Without a maxHeight the
+  // language paper ran past the window's bottom edge and clipped mid-row;
+  // the horizontal axis stays hidden so the rounded corners still clip the
+  // content, and `auto` on the vertical axis gives the paper a themed
   // scrollbar only when it actually overflows.
+  maxHeight: "min(400px, calc(100vh - 96px))",
   overflowX: "hidden",
   overflowY: "auto",
   border: hairline.light(0.06),
@@ -22,11 +23,24 @@ export const chromeMenuPaperSx: SxProps<Theme> = (theme) => ({
   }),
 });
 
+export const chromeMenuPaperSx: SxProps<Theme> = chromeMenuPaperStyles;
+
+export const chromeStyleSelectMenuPaperSx: SxProps<Theme> = (theme) => ({
+  ...chromeMenuPaperStyles(theme),
+  maxHeight: "min(360px, calc(100vh - 96px))",
+});
+
+/**
+ * Compact picker row: 14px type on a 4px rhythm lands in DESIGN.md's dense
+ * 32-36px row band, matching the Attio/Linear-class pickers this chrome was
+ * measured against. Symmetric radius, no stripes.
+ */
 export const chromeMenuItemSx = {
   borderRadius: 1,
   mx: 0.5,
   my: 0.25,
-  py: 1,
+  py: 0.75,
+  fontSize: "0.875rem",
   display: "flex",
   alignItems: "center",
   justifyContent: "space-between",

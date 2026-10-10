@@ -22,8 +22,8 @@ import {
 import { useAppStore } from "../../store";
 import {
   AUTO_LANGUAGE,
-  DICTATION_LANGUAGES,
   type DictationLanguageCode,
+  getRenderSafeLanguageLabel,
   ORDERED_DICTATION_LANGUAGES,
   toSelectableDictationLanguage,
 } from "../../utils/language.utils";
@@ -32,8 +32,9 @@ import { getSortedToneIds } from "../../utils/tone.utils";
 import { getMyDictationLanguage } from "../../utils/user.utils";
 import {
   chromeDialogPaperSx,
-  chromeMenuItemSx,
+  chromeSelectMenuItemSx,
   chromeSelectMenuProps,
+  chromeStyleSelectMenuProps,
   selectedOptionLabel,
 } from "../common/chromeMenu";
 
@@ -44,7 +45,7 @@ const languageOptions = (
   ] satisfies DictationLanguageCode[]
 ).map((code) => ({
   code,
-  label: DICTATION_LANGUAGES[code],
+  label: getRenderSafeLanguageLabel(code),
 }));
 
 /**
@@ -64,7 +65,7 @@ const CheckableMenuItem = ({
   label: React.ReactNode;
   selected: boolean;
 }) => (
-  <MenuItem value={value} sx={chromeMenuItemSx}>
+  <MenuItem value={value} sx={chromeSelectMenuItemSx}>
     {label}
     {selected ? <Check size={16} strokeWidth={2} /> : null}
   </MenuItem>
@@ -154,7 +155,7 @@ export const RetranscribeDialog = () => {
                   const value = e.target.value;
                   setSelectedToneId(value || null);
                 }}
-                MenuProps={chromeSelectMenuProps}
+                MenuProps={chromeStyleSelectMenuProps}
                 renderValue={(value) =>
                   selectedOptionLabel(
                     value,
