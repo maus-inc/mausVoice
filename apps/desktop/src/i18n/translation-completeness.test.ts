@@ -24,6 +24,7 @@ const UNIVERSAL_SAFE = [
 const FAILURE_AUDIO_MESSAGES = [
   "keep_the_audio_snapshot_with_a_failed_transcription_so_you_c",
   "preserve_audio_on_failure",
+  "transcription_failed_the_recording_audio_was_not_saved",
 ] as const;
 
 type Messages = Record<string, string>;
@@ -300,6 +301,21 @@ describe("i18n catalogs", () => {
     ]) {
       expect(korean[key], `ko:${key} must exist`).toBeTypeOf("string");
       expect(korean[key], `ko:${key}`).not.toMatch(audioWording);
+    }
+  });
+
+  it("translates the live-provider Connecting status in every locale", () => {
+    const locales = loadLocales();
+    const english = messagesFor(locales, manifest.defaultLocale);
+    expect(english.connecting).toBe("Connecting");
+
+    for (const locale of (manifest.supportedLocales as string[]).filter(
+      (code) => code !== manifest.defaultLocale,
+    )) {
+      expect(locales[locale]?.connecting, `${locale}:connecting`).toBeTruthy();
+      expect(locales[locale]?.connecting, `${locale}:connecting`).not.toBe(
+        english.connecting,
+      );
     }
   });
 

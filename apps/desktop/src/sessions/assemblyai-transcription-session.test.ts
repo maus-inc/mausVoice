@@ -19,6 +19,7 @@ const createdSockets: FakeWebSocket[] = [];
  * `close`-without-`error` path the startup promise has to survive.
  */
 let closeInsteadOfOpen = false;
+let sendBeginOnOpen = true;
 
 class FakeWebSocket {
   static OPEN = 1;
@@ -26,6 +27,8 @@ class FakeWebSocket {
   readyState = FakeWebSocket.OPEN;
   url: string;
   sent: string[] = [];
+  closeCalls = 0;
+  throwOnClose = false;
   onopen: (() => void) | null = null;
   onmessage: ((event: { data: string }) => void) | null = null;
   onerror: ((error: unknown) => void) | null = null;
@@ -41,6 +44,9 @@ class FakeWebSocket {
         return;
       }
       this.onopen?.();
+      if (sendBeginOnOpen) {
+        this.onmessage?.({ data: JSON.stringify({ type: "Begin" }) });
+      }
     });
   }
 
@@ -53,6 +59,8 @@ class FakeWebSocket {
   }
 
   close() {
+    this.closeCalls += 1;
+    if (this.throwOnClose) throw new Error("socket close failed");
     if (this.readyState === FakeWebSocket.CLOSED) return;
     this.readyState = FakeWebSocket.CLOSED;
     this.onclose?.({ code: 1000 });
@@ -120,6 +128,7 @@ describe("AssemblyAI streaming connection parameters", () => {
   beforeEach(() => {
     createdSockets.length = 0;
     closeInsteadOfOpen = false;
+    sendBeginOnOpen = true;
     vi.stubGlobal("WebSocket", FakeWebSocket);
   });
 
@@ -127,7 +136,7 @@ describe("AssemblyAI streaming connection parameters", () => {
     vi.unstubAllGlobals();
   });
 
-  it("rejects when the socket closes before it ever opens", async () => {
+  it("rejects when the socket closes before the session begins", async () => {
     // A promise nobody settles is the worst of the three outcomes available
     // here: `onRecordingStart` awaits it, so the session never becomes ready and
     // the caller neither starts recording nor learns that the provider is
@@ -141,9 +150,51 @@ describe("AssemblyAI streaming connection parameters", () => {
       ),
       new Promise((resolve) => setTimeout(() => resolve("STILL PENDING"), 50)),
     ]);
-    expect(outcome).toBe(
-      "rejected: WebSocket closed before the connection opened",
+    expect(outcome).toBe("rejected: WebSocket closed before the session began");
+  });
+
+  it("waits for Begin and closes the socket when startup is aborted", async () => {
+    sendBeginOnOpen = false;
+    const controller = new AbortController();
+    const started = startAssemblyAIStreaming(
+      "test-key",
+      16000,
+      [],
+      undefined,
+      controller.signal,
     );
+    await flushMicrotasks();
+
+    const socket = createdSockets.at(-1);
+    expect(socket).toBeTruthy();
+    expect(socket?.readyState).toBe(FakeWebSocket.OPEN);
+
+    controller.abort(new Error("startup timed out"));
+
+    await expect(started).rejects.toThrow("startup timed out");
+    expect(socket?.readyState).toBe(FakeWebSocket.CLOSED);
+  });
+
+  it("settles aborted startup even if WebSocket close throws", async () => {
+    sendBeginOnOpen = false;
+    const controller = new AbortController();
+    const started = startAssemblyAIStreaming(
+      "test-key",
+      16000,
+      [],
+      undefined,
+      controller.signal,
+    );
+    await flushMicrotasks();
+
+    const socket = createdSockets.at(-1);
+    if (!socket) throw new Error("Expected AssemblyAI to create a WebSocket");
+    socket.throwOnClose = true;
+
+    controller.abort(new Error("startup canceled"));
+
+    await expect(started).rejects.toThrow("startup canceled");
+    expect(socket?.closeCalls).toBe(1);
   });
 
   it("still resolves normally when the socket closes after opening", async () => {

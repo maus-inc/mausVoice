@@ -11,12 +11,16 @@ vi.mock("../utils/log.utils", () => ({
   redactQueryParamValues: (url: string) => url,
 }));
 
-vi.mock("../utils/secure-fetch.utils", () => ({
-  secureFetch: vi.fn(async () => ({
+const secureFetchMock = vi.hoisted(() =>
+  vi.fn(async () => ({
     ok: true,
     json: async () => ({ token: "single-use-token" }),
     text: async () => "",
   })),
+);
+
+vi.mock("../utils/secure-fetch.utils", () => ({
+  secureFetch: secureFetchMock,
 }));
 
 vi.mock("../store", () => ({ getAppState: () => ({}) }));
@@ -55,6 +59,7 @@ class FakeWebSocket {
   readyState = FakeWebSocket.CONNECTING;
   url: string;
   sent: string[] = [];
+  throwOnClose = false;
   onopen: (() => void) | null = null;
   onmessage: ((event: { data: string }) => void) | null = null;
   onerror: ((error: unknown) => void) | null = null;
@@ -75,6 +80,7 @@ class FakeWebSocket {
   }
 
   close() {
+    if (this.throwOnClose) throw new Error("socket close failed");
     if (this.readyState === FakeWebSocket.CLOSED) return;
     this.readyState = FakeWebSocket.CLOSED;
     this.onclose?.({ code: 1000 });
@@ -127,6 +133,9 @@ const startSession = async () => {
   await vi.waitFor(() => expect(createdSockets.length).toBeGreaterThan(0));
   const socket = latestSocket();
   socket.open();
+  socket.onmessage?.({
+    data: JSON.stringify({ message_type: "session_started" }),
+  });
   await started;
   return { session, socket };
 };
@@ -138,6 +147,7 @@ describe("ElevenLabs audio retention across a socket close", () => {
   beforeEach(() => {
     createdSockets.length = 0;
     queueCounters.length = 0;
+    secureFetchMock.mockClear();
     vi.stubGlobal("WebSocket", FakeWebSocket);
   });
 
@@ -156,15 +166,7 @@ describe("ElevenLabs audio retention across a socket close", () => {
     expect(retainedSamples()).toBe(0);
   });
 
-  it("has no writer at all while the socket is connecting", async () => {
-    // What the comment above `pendingChunks.push` used to promise -- that a
-    // chunk arriving while the socket is CONNECTING is queued and replayed by
-    // `onopen` -- describes a state this class cannot reach. The stream session
-    // is handed out from `ws.onopen` and not before, so while the handshake is
-    // in flight `BaseApiTranscriptionSession.writeAudioChunk` has no session to
-    // forward to and the audio is dropped. Pinned because the test that used to
-    // cover this window was titled "keeps audio queued while the socket is still
-    // connecting" and never wrote a chunk inside it.
+  it("waits for session_started after the WebSocket opens", async () => {
     const session = new ElevenLabsTranscriptionSession("test-key");
     const started = session.onRecordingStart(16000);
     await vi.waitFor(() => expect(createdSockets.length).toBeGreaterThan(0));
@@ -172,17 +174,62 @@ describe("ElevenLabs audio retention across a socket close", () => {
     expect(socket.readyState).toBe(FakeWebSocket.CONNECTING);
 
     session.writeAudioChunk(chunk());
-
     socket.open();
+
+    let settled = false;
+    void started.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
+    );
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    socket.onmessage?.({
+      data: JSON.stringify({ message_type: "session_started" }),
+    });
     await started;
+
     expect(socket.readyState).toBe(FakeWebSocket.OPEN);
-    // Nothing was held across the handshake, so `onopen`'s drain had nothing to
-    // send. The write after the open does go out, which is what makes the empty
-    // `sent` above a fact about the connecting window rather than a queue that
-    // never worked in the first place.
     expect(socket.sent).toEqual([]);
     session.writeAudioChunk(chunk());
     expect(socket.sent.length).toBeGreaterThan(0);
+  });
+
+  it("aborts pending provider startup and closes the WebSocket", async () => {
+    const controller = new AbortController();
+    const session = new ElevenLabsTranscriptionSession("test-key");
+    const started = session.onRecordingStart(16000, controller.signal);
+    await vi.waitFor(() => expect(createdSockets.length).toBeGreaterThan(0));
+    const socket = latestSocket();
+
+    expect(secureFetchMock).toHaveBeenCalledWith(
+      "https://api.elevenlabs.io/v1/single-use-token/realtime_scribe",
+      expect.objectContaining({ signal: controller.signal }),
+    );
+
+    controller.abort(new Error("startup timed out"));
+
+    await expect(started).rejects.toThrow("startup timed out");
+    expect(socket.readyState).toBe(FakeWebSocket.CLOSED);
+  });
+
+  it("clears retained audio even when WebSocket close throws", async () => {
+    const { session, socket } = await startSession();
+    session.writeAudioChunk(new Float32Array(1700).fill(0.5));
+    expect(retainedSamples()).toBe(100);
+
+    socket.readyState = FakeWebSocket.CONNECTING;
+    session.writeAudioChunk(chunk());
+    expect(retainedSamples()).toBe(420);
+    socket.throwOnClose = true;
+
+    expect(() => session.cleanup()).not.toThrow();
+
+    expect(retainedSamples()).toBe(0);
   });
 
   it("stops retaining audio once the socket has gone away", async () => {
