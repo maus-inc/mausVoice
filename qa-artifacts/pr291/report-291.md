@@ -2,7 +2,7 @@
 
 I ran this branch and its base side by side in the sanctioned browser preview, drove every changed surface by hand, and read the results out of the live DOM and computed styles. Verdict: the change does what the description says. The Style menu is compact and bounded, the selected row is unmistakable, the focus ring is the designed silver one, the Language menu no longer runs past the window, and the Retranscribe options became real options again.
 
-Two things drove this pass. First, the Retranscribe Style list was broken on the base: its options rendered but registered as zero selectable options, so nothing could be chosen. That is the important user-visible fix here and it is proven below by driving a real selection. Second, the language labels. The branch swaps 34 endonyms for English exonyms to avoid tofu boxes on systems without CJK, Arabic, Devanagari, Greek, Hebrew, and Thai fonts. I could not reproduce that tofu in this sandbox because it ships broad font coverage, so I say so plainly rather than claiming a fix I did not witness.
+Two things drove this pass. First, the Retranscribe Style list was broken on the base: its rows rendered inside a `listbox` but carried `role="menuitem"`, so MUI Select saw zero selectable options and the value could not change. That is the important user-visible fix here and it is proven below by driving a real selection. Second, the language labels. The branch swaps 34 endonyms for English exonyms to avoid tofu boxes on systems without CJK, Arabic, Devanagari, Greek, Hebrew, and Thai fonts. I could not reproduce that tofu in this sandbox because it ships broad font coverage, so I say so plainly rather than claiming a fix I did not witness.
 
 ### Before and after
 
@@ -34,8 +34,8 @@ The recording walks the Import dialog: open the Style menu, hover a row, pick a 
 | Selected row weight and glyph | weight 400, low-contrast fill, check only where already present | weight 600, fill, explicit check on Style rows |
 | Outlined field radius | 14px | 7px |
 | Outlined focus | 2px `rgb(26,23,18)` border swap, no ring | 1px `rgba(107,103,96,0.6)` border plus `rgba(107,103,96,0.14)` 3px ring |
-| Retranscribe Style options | 0 selectable options | 9 selectable options |
-| Retranscribe selection | could not change | changed from Meeting notes to Polished |
+| Retranscribe Style rows | `role="menuitem"`, 0 selectable options, value frozen | `role="option"`, 9 selectable options, value changes |
+| Import Style and Language rows | already functional, 9 and 106 `role="option"` | unchanged, still functional |
 | Import Style and Language ARIA | labels have empty ids, comboboxes have no `aria-labelledby` | labels carry ids, comboboxes point at them |
 | Settings language paper | 300px, radius 14 | 400px, radius 21 |
 | Dialog name | `aria-labelledby` present | unchanged, still present |
@@ -78,14 +78,27 @@ branch: Mui-focused, borderWidth 1px, borderColor rgba(107, 103, 96, 0.6),
         boxShadow rgba(107, 103, 96, 0.14) 0px 0px 0px 3px, radius 7px
 ```
 
-**Retranscribe Style menu**, driven with a real click:
+**Retranscribe Style menu**, the root cause and the fix:
 
 ```
-base:   optionCount 0, value stayed "Meeting notes"
-branch: optionCount 9, clicked "Polished", value became "Polished", changed true
+base rows:   <ul role="listbox"> <li role="menuitem"> Meeting notes ...
+             roleOptionCount 0, menuItemCount 9
+             click "Polished" -> value stayed "Meeting notes"
+branch rows: <ul role="listbox" aria-labelledby="_r_2_"> <li role="option" aria-selected> ...
+             roleOptionCount 9, menuItemCount 9
+             click "Polished" -> value became "Polished", changed true
 ```
 
-The base rows render inside the listbox but MUI does not treat them as options, so a user cannot pick a style. The branch emits direct MenuItem children, which is what the description calls out.
+The base rows render inside the listbox but are marked `menuitem`, so MUI Select finds nothing to select. The branch renders direct MenuItem children with the option role, which is what the description calls out.
+
+**Import Style and Language menus**, for contrast, were already functional on the base:
+
+```
+base:   style roleOption 9,  language roleOption 106, listbox role correct
+branch: style roleOption 9,  language roleOption 106, listbox role correct
+```
+
+So the Import dialog change is styling plus ARIA, not a functional repair. The functional repair is confined to the Retranscribe dialog.
 
 **Accessible naming**, Import and Retranscribe dialogs:
 
@@ -128,11 +141,11 @@ branch: maxHeight 400px, radius 21px, selected fontWeight 600
 **Suites**, run locally on this head:
 
 ```
-desktop unit:          230 files, 3043 tests passed
-ToneSelect:            2 passed
+desktop unit:             230 files, 3043 tests passed
+ToneSelect:               2 passed
 StyleAvailabilityDialogs: 10 passed
-shadows:               22 passed
-desktop check-types:   passed
+shadows:                  22 passed
+desktop check-types:      passed
 ```
 
 </details>
