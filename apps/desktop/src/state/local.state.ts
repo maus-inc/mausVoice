@@ -25,6 +25,15 @@ export type LocalState = {
   onboardingSessionUserId: string | null;
   /** Per-provider pipeline timing medians, keyed by transcription mode. */
   providerTiming: Record<string, TimingAggregate>;
+  /**
+   * Custom profile photo per user id, as a downscaled data URL.
+   *
+   * Device-local by design: it is the person's own picture for this copy of the
+   * app, and there is no image column on the account record to sync it to. See
+   * `readAvatarFile` for why what is stored is a 256px square rather than the
+   * file that was chosen.
+   */
+  profileImageByUserId: Record<string, string>;
 };
 
 export const INITIAL_LOCAL_STATE: LocalState = {
@@ -46,4 +55,5 @@ export const INITIAL_LOCAL_STATE: LocalState = {
   onboardingNameDraftUserId: null,
   onboardingSessionUserId: null,
   providerTiming: {},
+  profileImageByUserId: {},
 };

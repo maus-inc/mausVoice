@@ -6,17 +6,16 @@ import { useAppStore } from "../../store";
 import { logOnRejection } from "../../utils/promise.utils";
 import { getMyUserPreferences } from "../../utils/user.utils";
 import { SegmentedControl } from "../common/SegmentedControl";
-import { SettingSection } from "../common/SettingSection";
+import { SettingRow } from "./SettingRow";
 
 /**
  * Whether the native pill implements the `pill_placement` IPC message.
  *
  * Only the native Windows pill does. The GTK pill drops it as an unknown
- * message and the macOS pill ignores it, so on those platforms the control is
- * not rendered. The same predicate belongs in the settings page's availability
- * snapshot, which is what settings search and `?setting=` deep links read, or
- * the setting stays searchable and deep-linkable on platforms that have no such
- * control.
+ * message and the macOS pill ignores it, so on those platforms the row is not
+ * rendered. The same predicate belongs in the settings availability snapshot,
+ * which is what search and `?setting=` deep links read, or the setting stays
+ * searchable and deep-linkable on platforms that have no such control.
  */
 export const isPillPlacementAvailable = (): boolean => isWindows();
 
@@ -42,18 +41,13 @@ export const PillPlacementSetting = () => {
   };
 
   return (
-    <SettingSection
-      // Every other row on the settings page renders its title as `body1`,
-      // which MUI maps to a `<p>`. A screen reader cannot navigate to "Pill
-      // placement" as a section heading that way, so this row opts into a real
-      // heading element. `h5` nests directly under the page's own `h4` title
-      // with no level skipped in between.
-      titleComponent="h5"
+    <SettingRow
+      settingKey="pill_placement"
       title={<FormattedMessage defaultMessage="Pill placement" />}
       description={
-        <FormattedMessage defaultMessage="Choose whether the dictation pill anchors to the top or bottom of the screen." />
+        <FormattedMessage defaultMessage="Whether the dictation pill anchors to the top or the bottom of the screen." />
       }
-      action={
+      control={
         <SegmentedControl<PillPlacement>
           value={placement}
           onChange={handleChange}

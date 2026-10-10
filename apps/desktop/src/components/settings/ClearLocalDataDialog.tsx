@@ -1,8 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import {
   Alert,
-  AlertTitle,
   Button,
+  CircularProgress,
   Dialog,
   DialogActions,
   DialogContent,
@@ -11,25 +11,81 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import { useState } from "react";
-import { FormattedMessage } from "react-intl";
+import { useEffect, useRef, useState } from "react";
+import { FormattedMessage, useIntl, type IntlShape } from "react-intl";
 import { produceAppState, useAppStore } from "../../store";
+import {
+  clearAppDataStorage,
+  StorageUnavailableError,
+} from "../../utils/local-storage.utils";
+import { ConfirmationPhrase } from "./ConfirmationPhrase";
+import { ConsequenceList } from "./ConsequenceList";
 
 const CONFIRMATION_PHRASE = "clear";
 
+/**
+ * What to tell someone whose clear failed.
+ *
+ * A blocked origin is the one failure whose own message means nothing to the
+ * person reading it, so it gets the sentence naming what to do instead.
+ * Everything else keeps its own message: those come from the native command and
+ * from this code, and paraphrasing them would drop whatever the person would
+ * have to act on.
+ */
+const describeClearFailure = (error: unknown, intl: IntlShape): string => {
+  if (error instanceof StorageUnavailableError) {
+    // Specific about which half happened: the native wipe has already removed
+    // the database and the audio by the time this throws, so saying nothing was
+    // removed would send someone looking for data that is already gone.
+    return intl.formatMessage({
+      defaultMessage:
+        "Your saved recordings and history were removed, but mausVoice could not reach this computer\u2019s storage, so some preferences may remain. Check that the app is allowed to store data, then try again.",
+    });
+  }
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return intl.formatMessage({
+    defaultMessage: "Failed to clear local data.",
+  });
+};
+
 export const ClearLocalDataDialog = () => {
+  const intl = useIntl();
   const open = useAppStore((state) => state.settings.clearLocalDataDialogOpen);
   const [confirmationValue, setConfirmationValue] = useState("");
   const [isClearing, setIsClearing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const confirmationRef = useRef<HTMLInputElement | null>(null);
 
-  const handleClose = () => {
+  // The field someone has to type into gets the focus, spelled out here rather
+  // than as an `autoFocus` attribute: the attribute fires as markup and cannot
+  // be deferred, so it races anything else that moves focus in the same commit.
+  // This mirrors ContextMenu's "focus after commit, not via autoFocus" rule.
+  useEffect(() => {
+    if (open) {
+      confirmationRef.current?.focus();
+    }
+  }, [open]);
+
+  /** Put the dialog away and forget everything typed into it. */
+  const close = () => {
     produceAppState((draft) => {
       draft.settings.clearLocalDataDialogOpen = false;
     });
     setConfirmationValue("");
     setIsClearing(false);
     setErrorMessage(null);
+  };
+
+  // Escape and a click on the backdrop both arrive here, so the dialog cannot
+  // be dismissed out from under a wipe that is already running: the button is
+  // disabled for the same reason, and a half-finished wipe with the dialog gone
+  // would leave nothing to report on.
+  const handleDismiss = () => {
+    if (!isClearing) {
+      close();
+    }
   };
 
   const confirmationMatches =
@@ -62,67 +118,110 @@ export const ClearLocalDataDialog = () => {
       }
 
       await invoke("clear_local_data");
-      handleClose();
+
+      // The Rust side wipes the database and the managed audio directory;
+      // everything this app keeps in localStorage lives outside both, so the
+      // photo, dismissed tips and account anchors would otherwise survive a
+      // wipe that promises to remove them. The session keys are not in that
+      // list: clearing local data is not a sign-out.
+      //
+      // The dialog is deliberately left open across this and the reload. Closing
+      // it updates the store, and the persist middleware rewrites its own key on
+      // every state change, so a close before the wipe would put a freshly
+      // serialized key back; and a wipe the browser refuses has to be able to
+      // say so to someone who is still looking at the dialog. The reload takes
+      // the dialog down with everything else.
+      const failedKeys = clearAppDataStorage();
+      if (failedKeys.length > 0) {
+        // Reloading anyway would restore exactly the state the dialog just
+        // promised to remove, so the honest answer is to name the problem and
+        // keep the confirmation field on screen for a retry.
+        setErrorMessage(
+          intl.formatMessage({
+            defaultMessage:
+              "Some stored data could not be removed. Quit and reopen mausVoice, then try again.",
+          }),
+        );
+        setIsClearing(false);
+        return;
+      }
       // A hard reload is the simplest way to flush every in-memory store
       // (Zustand, React state, transcription sessions, subscription
       // handles) that may still hold references to wiped data.
       window.location.reload();
     } catch (error) {
-      console.error("Failed to clear local data", error);
-      const message =
-        error instanceof Error ? error.message : "Failed to clear local data.";
-      setErrorMessage(message);
+      setErrorMessage(describeClearFailure(error, intl));
       setIsClearing(false);
     }
   };
 
   return (
-    <Dialog open={open} onClose={handleClose} fullWidth maxWidth="sm">
+    <Dialog open={open} onClose={handleDismiss} fullWidth maxWidth="sm">
       <DialogTitle>
         <FormattedMessage defaultMessage="Clear local data" />
       </DialogTitle>
       <DialogContent>
-        <Stack spacing={2} sx={{ mt: 1 }}>
-          <Alert severity="warning" variant="outlined">
-            <AlertTitle>
-              <FormattedMessage defaultMessage="This action permanently removes local data" />
-            </AlertTitle>
-            <Typography variant="body2">
-              <FormattedMessage defaultMessage="This will delete all preferences, dictionary entries, and saved transcriptions from this device. The action cannot be undone." />
-            </Typography>
-          </Alert>
-          <Typography variant="body2">
-            <FormattedMessage
-              defaultMessage="To confirm, type {phrase} below and click Clear local data."
-              values={{
-                phrase: (
-                  <Typography
-                    component="span"
-                    variant="body2"
-                    sx={{
-                      fontWeight: "bold",
-                      fontFamily: "inherit",
-                    }}
-                  >
-                    {CONFIRMATION_PHRASE}
-                  </Typography>
-                ),
-              }}
-            />
-          </Typography>
-          <TextField
-            autoFocus
-            fullWidth
-            label={<FormattedMessage defaultMessage="Confirmation phrase" />}
-            value={confirmationValue}
-            onChange={(event) => setConfirmationValue(event.target.value)}
-            disabled={isClearing}
-            placeholder={CONFIRMATION_PHRASE}
-            autoComplete="off"
-            autoCapitalize="off"
-            autoCorrect="off"
-            spellCheck={false}
+        <Stack spacing={2.5} sx={{ mt: 1 }}>
+          <ConsequenceList
+            label={<FormattedMessage defaultMessage="This removes" />}
+            items={[
+              <FormattedMessage
+                key="preferences"
+                defaultMessage="Preferences and settings"
+              />,
+              <FormattedMessage
+                key="photo"
+                defaultMessage="Your profile photo"
+              />,
+              <FormattedMessage
+                key="dictionary"
+                defaultMessage="Dictionary entries"
+              />,
+              <FormattedMessage
+                key="transcriptions"
+                defaultMessage="Saved transcriptions and audio"
+              />,
+            ]}
           />
+          <Typography variant="body2" sx={{ color: "text.secondary" }}>
+            <FormattedMessage defaultMessage="This cannot be undone. Your account and sign-in stay as they are." />
+          </Typography>
+          <Stack spacing={1.5}>
+            <Typography variant="body2">
+              <FormattedMessage
+                defaultMessage="Type {phrase} to confirm."
+                values={{
+                  phrase: (
+                    <ConfirmationPhrase>
+                      {CONFIRMATION_PHRASE}
+                    </ConfirmationPhrase>
+                  ),
+                }}
+              />
+            </Typography>
+            <TextField
+              inputRef={confirmationRef}
+              fullWidth
+              // No visible label: the line above it already names the word to
+              // type, and repeating it in a floating label is one more element
+              // competing with the instruction. The accessible name stays.
+              slotProps={{
+                htmlInput: {
+                  "aria-label": intl.formatMessage({
+                    defaultMessage: "Confirmation phrase",
+                  }),
+                },
+              }}
+              value={confirmationValue}
+              onChange={(event) => setConfirmationValue(event.target.value)}
+              disabled={isClearing}
+              placeholder={CONFIRMATION_PHRASE}
+              autoComplete="off"
+              autoCapitalize="off"
+              autoCorrect="off"
+              spellCheck={false}
+            />
+          </Stack>
           {errorMessage && (
             <Alert severity="error" variant="outlined">
               {errorMessage}
@@ -131,17 +230,34 @@ export const ClearLocalDataDialog = () => {
         </Stack>
       </DialogContent>
       <DialogActions>
-        <Button onClick={handleClose} disabled={isClearing}>
+        <Button onClick={close} disabled={isClearing}>
           <FormattedMessage defaultMessage="Cancel" />
         </Button>
         <Button
           color="error"
           variant="contained"
-          onClick={handleClear}
+          onClick={() => void handleClear()}
           disabled={!confirmationMatches || isClearing}
+          // The label stays while the button is busy, so the control never
+          // loses its name during the one action that empties the device.
+          aria-busy={isClearing || undefined}
         >
           {isClearing ? (
-            <FormattedMessage defaultMessage="Clearing..." />
+            <Stack
+              direction="row"
+              spacing={1}
+              sx={{ alignItems: "center", justifyContent: "center" }}
+            >
+              <CircularProgress
+                size={16}
+                color="inherit"
+                role="progressbar"
+                aria-label={intl.formatMessage({ defaultMessage: "Working" })}
+              />
+              <span>
+                <FormattedMessage defaultMessage="Clear local data" />
+              </span>
+            </Stack>
           ) : (
             <FormattedMessage defaultMessage="Clear local data" />
           )}

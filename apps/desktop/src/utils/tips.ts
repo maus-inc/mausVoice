@@ -1,3 +1,8 @@
+import {
+  settingAnchorId,
+  settingsPagePath,
+} from "../components/settings/settings-routes";
+
 /**
  * Contextual tips for features deferred out of first run. Ids are stable:
  * dismissal and analytics key off them, so never rename one. Add the id
@@ -18,9 +23,15 @@ export type OnboardingTip = {
 };
 
 export const ONBOARDING_TIPS: OnboardingTip[] = [
-  { id: "generative-provider", href: "/dashboard/settings" },
+  {
+    id: "generative-provider",
+    href: `${settingsPagePath("ai-models")}#${settingAnchorId("ai_post_processing")}`,
+  },
   { id: "writing-styles", href: "/dashboard/styling" },
   { id: "assistant-mode", href: "/dashboard/chats" },
   { id: "review-before-insert", href: "/dashboard/transcriptions" },
-  { id: "update-channel", href: "/dashboard/settings" },
+  {
+    id: "update-channel",
+    href: `${settingsPagePath("system")}#${settingAnchorId("update_channel")}`,
+  },
 ];

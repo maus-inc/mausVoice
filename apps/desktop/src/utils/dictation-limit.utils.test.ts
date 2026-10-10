@@ -6,6 +6,7 @@ import {
   getProviderRecordingTimerDurations,
   MAX_DICTATION_LIMIT_MINUTES,
   normalizeDictationLimitMinutes,
+  parseDictationLimitMinutes,
   shouldEnableDictationLimit,
 } from "./dictation-limit.utils";
 
@@ -108,5 +109,31 @@ describe("getDictationRecordingTimerDurations", () => {
       warningDurationMs: (MAX_DICTATION_LIMIT_MINUTES - 1) * 60_000,
       autoStopDurationMs: MAX_DICTATION_LIMIT_MINUTES * 60_000,
     });
+  });
+});
+
+describe("parseDictationLimitMinutes", () => {
+  it("accepts whole minutes in range, including zero", () => {
+    expect(parseDictationLimitMinutes("0")).toBe(0);
+    expect(parseDictationLimitMinutes(" 12 ")).toBe(12);
+    expect(
+      parseDictationLimitMinutes(String(MAX_DICTATION_LIMIT_MINUTES)),
+    ).toBe(MAX_DICTATION_LIMIT_MINUTES);
+  });
+
+  it("refuses a fraction rather than saving a shorter limit", () => {
+    // The preference stores whole minutes, so flooring 1.9 would cap a
+    // recording at one minute while the field still read 1.9.
+    expect(parseDictationLimitMinutes("1.9")).toBeNull();
+    expect(parseDictationLimitMinutes("2.0")).toBe(2);
+  });
+
+  it("refuses values outside the range the timers can hold", () => {
+    expect(parseDictationLimitMinutes("")).toBeNull();
+    expect(parseDictationLimitMinutes("many")).toBeNull();
+    expect(parseDictationLimitMinutes("-1")).toBeNull();
+    expect(
+      parseDictationLimitMinutes(String(MAX_DICTATION_LIMIT_MINUTES + 1)),
+    ).toBeNull();
   });
 });

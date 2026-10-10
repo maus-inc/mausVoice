@@ -22,7 +22,7 @@ const UNIVERSAL_SAFE = [
 // preservation setting. Unlike a model identifier, they must not fall back to
 // English in any supported locale.
 const FAILURE_AUDIO_MESSAGES = [
-  "keep_the_audio_snapshot_with_a_failed_transcription_so_you_c",
+  "keeps_the_audio_of_a_failed_transcription_so_you_can_replay",
   "preserve_audio_on_failure",
 ] as const;
 

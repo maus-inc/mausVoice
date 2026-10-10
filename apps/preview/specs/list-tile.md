@@ -2,7 +2,7 @@
 
 - Status: **reused** — real component + MuiListItemButton/MuiListItemText theme.
 - Source of truth: `apps/desktop/src/theme.ts` (MuiListItemButton, MuiListItemText), `apps/desktop/src/components/common/ListTile.tsx`, `OverflowTypography.tsx`.
-- Used in: MenuPopover, DashboardMenu, UpdateListTile, SettingsPage, AppStylingRow, ManualStylingRow.
+- Used in: MenuPopover, DashboardMenu, UpdateListTile, AppStylingRow, ManualStylingRow.
 
 ## Purpose
 

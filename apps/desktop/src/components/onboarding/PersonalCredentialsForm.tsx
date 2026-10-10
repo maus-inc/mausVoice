@@ -9,7 +9,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { openExternalUrl } from "../../utils/open-url.utils";
 import { useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import remoteImage from "../../assets/2-remote.png";
@@ -36,7 +36,7 @@ const ConsoleLink = ({
   <Link
     component="button"
     variant="body2"
-    onClick={() => openUrl(url)}
+    onClick={() => openExternalUrl(url, "the provider console")}
     sx={{ alignSelf: "flex-start" }}
   >
     <Stack

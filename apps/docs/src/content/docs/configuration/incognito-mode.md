@@ -7,7 +7,7 @@ sidebar:
 
 ## What Incognito does
 
-Incognito mode suppresses new transcription history and managed audio snapshots so dictated text does not appear in **History** and is not paired with an audio file. It also suppresses glossary writes: correcting a transcript updates it in memory only, and the proper nouns the correction would have taught the dictionary are not stored. Enabling it is prospective: existing rows and snapshots stay until you remove them separately (per-row delete in **History**, or **Settings → Privacy and data → Danger zone → Clear local data** for a broader reset).
+Incognito mode suppresses new transcription history and managed audio snapshots so dictated text does not appear in **History** and is not paired with an audio file. It also suppresses glossary writes: correcting a transcript updates it in memory only, and the proper nouns the correction would have taught the dictionary are not stored. Enabling it is prospective: existing rows and snapshots stay until you remove them separately (per-row delete in **History**, or **Settings → Account → Danger zone → Clear local data** for a broader reset).
 
 Usage statistics have their own toggle, **Include incognito in stats**. With it on, words dictated in Incognito still count toward your personal totals; with it off, they do not. The two settings are independent.
 

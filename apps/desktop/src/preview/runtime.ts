@@ -207,6 +207,23 @@ const toDatabase = (data: PreviewData): PreviewDatabase => ({
   receiverEnabled: false,
 });
 
+/**
+ * What is left of the preview database after a local-data wipe: nothing. The
+ * desktop deletes the rows; the preview has no rows to keep.
+ */
+const EMPTY_PREVIEW_DATA: PreviewData = {
+  user: null,
+  preferences: null,
+  terms: [],
+  apiKeys: [],
+  customTones: [],
+  hotkeys: [],
+  appTargets: [],
+  transcriptions: [],
+  conversations: [],
+  chatMessages: [],
+};
+
 const getList = (records: Map<string, WireRecord>): WireRecord[] =>
   [...records.values()].map(clone);
 
@@ -307,6 +324,14 @@ class PreviewRuntime {
     switch (command) {
       case "user_get_one":
         return clone(this.database.user);
+      // The desktop command wipes the SQLite database and the managed audio
+      // directory, and the settings dialog reloads the window straight after.
+      // Emptying the preview's tables keeps that call sequence drivable from
+      // the settings page; the reload then re-seeds the active scenario, which
+      // is how every other reload in the preview behaves.
+      case "clear_local_data":
+        this.database = toDatabase(EMPTY_PREVIEW_DATA);
+        return undefined;
       case "user_set_one":
         this.database.user = clone(asRecord(args.user));
         return clone(this.database.user);
