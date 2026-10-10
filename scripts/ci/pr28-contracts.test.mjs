@@ -63,10 +63,7 @@ const PATHS = [
   ["effects", "apps/desktop/src/components/root/AppSideEffects.tsx"],
   ["macOverlay", "apps/desktop/src-tauri/src/platform/macos/overlay.rs"],
   ["linuxOverlay", "apps/desktop/src-tauri/src/platform/linux/overlay.rs"],
-  [
-    "windowsOverlay",
-    "apps/desktop/src-tauri/src/platform/windows/overlay.rs",
-  ],
+  ["windowsOverlay", "apps/desktop/src-tauri/src/platform/windows/overlay.rs"],
   ["commonPlatform", "apps/desktop/src-tauri/src/platform/common.rs"],
   ["macPill", "packages/rust_macos_pill/src/app.rs"],
   ["gtkPill", "packages/rust_gtk_pill/src/pill.rs"],
@@ -89,10 +86,7 @@ const PATHS = [
   ["windowsGfx", "packages/rust_windows_pill/src/gfx.rs"],
   ["recording", "apps/desktop/src-tauri/src/domain/recording.rs"],
   ["audioChunks", "apps/desktop/src/sessions/audio-chunk-events.ts"],
-  [
-    "intake",
-    "apps/desktop/src/components/root/dictation-recording-intake.ts",
-  ],
+  ["intake", "apps/desktop/src/components/root/dictation-recording-intake.ts"],
   ["integrationWorkflow", ".github/workflows/test-desktop-integration.yml"],
   ["docsWorkflow", ".github/workflows/test-docs.yml"],
   ["index", "index.html"],
@@ -159,9 +153,7 @@ const workflowJobs = (workflowText) => {
 // that way is rejected rather than admitted.
 const FORK_GUARD_SOURCE =
   "github.event.pull_request.head.repo.full_name == github.repository";
-const FORK_GUARD_RE = new RegExp(
-  FORK_GUARD_SOURCE.replace(/\./g, "\\."),
-);
+const FORK_GUARD_RE = new RegExp(FORK_GUARD_SOURCE.replace(/\./g, "\\."));
 
 /**
  * Where the YAML comment starts on `line`, or -1 when the line has none.
@@ -188,7 +180,8 @@ const commentStart = (line) => {
       quote = char;
       continue;
     }
-    if (char === "#" && (index === 0 || /\s/.test(line[index - 1]))) return index;
+    if (char === "#" && (index === 0 || /\s/.test(line[index - 1])))
+      return index;
   }
   return -1;
 };
@@ -810,7 +803,9 @@ describe("PR28 workflow and public-asset contracts", () => {
   // than one of those.
   describe("the fork guard must be a real condition that gates the reader", () => {
     const job = (name, body) =>
-      ["name: test", "on: pull_request", "jobs:", `  ${name}:`, body].join("\n");
+      ["name: test", "on: pull_request", "jobs:", `  ${name}:`, body].join(
+        "\n",
+      );
 
     // A `y` helper so no fixture body carries its own escape sequence.
     const y = (...lines) => lines.join("\n");
@@ -1318,7 +1313,8 @@ describe("PR28 workflow and public-asset contracts", () => {
     // its reader, a workflow with a second job that reads nothing, and a step reading a different
     // secret or merely printing this one.
     describe("which steps and which jobs count as readers", () => {
-      const guard = "github.event.pull_request.head.repo.full_name == github.repository";
+      const guard =
+        "github.event.pull_request.head.repo.full_name == github.repository";
 
       it("accepts a guarded reader step beside an unguarded step that reads nothing", () => {
         // The ordinary shape of a provider workflow. A filter that treated every step as a reader
@@ -1396,7 +1392,8 @@ describe("PR28 workflow and public-asset contracts", () => {
     // Three parser spellings that each silently lose the guard. All fail closed, so each of these
     // rejects a workflow that is in fact gated.
     describe("spellings the condition parser must not lose", () => {
-      const guard = "github.event.pull_request.head.repo.full_name == github.repository";
+      const guard =
+        "github.event.pull_request.head.repo.full_name == github.repository";
 
       it("accepts a guard inside a single-quoted scalar", () => {
         // `char === "'"` has to open quote state too. With only `"` tracked, the ` # ` inside this
@@ -1485,7 +1482,7 @@ describe("PR28 workflow and public-asset contracts", () => {
           y(
             "    steps:",
             "      - if: github.event.pull_request.head.repo.full_name == github.repository",
-            "        run: sh -c 'curl \"a # b\" -H \"auth: ${{ secrets.GROQ_API_KEY }}\"'",
+            '        run: sh -c \'curl "a # b" -H "auth: ${{ secrets.GROQ_API_KEY }}"\'',
           ),
         );
         assert.doesNotThrow(() =>
@@ -1504,7 +1501,7 @@ describe("PR28 workflow and public-asset contracts", () => {
           y(
             "    steps:",
             "      - if: github.event.pull_request.head.repo.full_name == github.repository",
-            "        run: \"echo \\\" # text\\\" ${{ secrets.GROQ_API_KEY }}\"",
+            '        run: "echo \\" # text\\" ${{ secrets.GROQ_API_KEY }}"',
           ),
         );
         assert.doesNotThrow(() =>
@@ -2308,5 +2305,147 @@ describe("PR28 live audio chunk contract", () => {
     assert.match(source.audioChunks, /offset\?: number/);
     assert.match(source.audioChunks, /payload\.offset \?\? null/);
     assert.match(source.intake, /if \(offset === null\)/);
+  });
+});
+
+describe("native pill loading animation behind stage text", () => {
+  it("paints the dimmed loading bar before stage_text with balanced clip state on every platform", () => {
+    const shared = read("packages/rust_pill_shared/src/lib.rs");
+    assert.match(shared, /fn unit_progress\(value: f64\) -> f64/);
+    assert.match(shared, /pub fn active_stage_text\(/);
+    assert.match(shared, /pub fn loading_bar_layout\(/);
+    assert.match(shared, /pub const LOADING_DIMMED_TRACK_ALPHA: f64 = 0\.08;/);
+    assert.match(
+      shared,
+      /pub const LOADING_DIMMED_INDICATOR_ALPHA: f64 = 0\.22;/,
+    );
+
+    for (const platform of ["gtk", "macos", "windows"]) {
+      const rawDraw = readFileSync(
+        resolve(repoRoot, `packages/rust_${platform}_pill/src/draw.rs`),
+        "utf8",
+      );
+      const rawFn = rawDraw.split("fn draw_loading(")[1].split("\n}\n")[0];
+      const body = rawFn
+        .split("\n")
+        .map((line) => line.replace(/\/\/.*$/, ""))
+        .join(" ")
+        .replace(/\s+/g, " ")
+        .trim();
+
+      assert.doesNotMatch(
+        body,
+        /\breturn;/,
+        `${platform}: draw_loading must not return early when stage_text is present`,
+      );
+      assert.match(
+        body,
+        /rust_pill_shared::active_stage_text\(/,
+        `${platform}: draw_loading must normalize stage_text via active_stage_text`,
+      );
+      assert.match(
+        body,
+        /\bbar\.track_alpha\b/,
+        `${platform}: draw_loading must use shared bar.track_alpha`,
+      );
+      assert.match(
+        body,
+        /\bbar\.indicator_alpha\b/,
+        `${platform}: draw_loading must use shared bar.indicator_alpha`,
+      );
+      assert.match(
+        body,
+        /rust_pill_shared::loading_stage_text_alpha\(/,
+        `${platform}: draw_loading must use shared loading_stage_text_alpha`,
+      );
+      assert.doesNotMatch(
+        body,
+        /\b0\.15\b|\b0\.7\b|\b0\.9\b/,
+        `${platform}: draw_loading must not hardcode legacy alpha literals`,
+      );
+
+      const barIndex = body.indexOf("rust_pill_shared::loading_bar_layout(");
+      const indicatorIndex = body.indexOf("bar.indicator_span");
+      const stageIndex = body.indexOf("if let Some(stage) = stage");
+      const gradientIndex = body.indexOf("draw_edge_gradient(");
+
+      assert.ok(barIndex !== -1, `${platform}: missing loading_bar_layout`);
+      assert.ok(indicatorIndex !== -1, `${platform}: missing indicator_span`);
+      assert.ok(stageIndex !== -1, `${platform}: missing stage text block`);
+      assert.ok(
+        barIndex < indicatorIndex &&
+          indicatorIndex < stageIndex &&
+          stageIndex < gradientIndex,
+        `${platform}: loading bar must paint before stage_text, and edge gradient last`,
+      );
+      assert.equal(
+        body.match(/draw_edge_gradient\(/g)?.length,
+        1,
+        `${platform}: draw_edge_gradient must execute once per frame`,
+      );
+      assert.equal(
+        body.match(/\.save\(\)/g)?.length,
+        body.match(/\.restore\(\)/g)?.length,
+        `${platform}: save() and restore() calls must be balanced in draw_loading`,
+      );
+      assert.ok(
+        body.includes("rust_pill_shared::loading_stage_text_budget(") &&
+          body.includes("rust_pill_shared::text_fit::elide_to_width("),
+        `${platform}: draw_loading must fit stage_text via loading_stage_text_budget and elide_to_width`,
+      );
+    }
+  });
+
+  it("clears stage_text via should_clear_stage_text_on_phase, advances loading_offset with reduced_motion, and normalizes StageText IPC", () => {
+    const shared = read("packages/rust_pill_shared/src/lib.rs");
+    assert.match(
+      shared,
+      /pub fn should_clear_stage_text_on_phase\(/,
+      "rust_pill_shared must define should_clear_stage_text_on_phase",
+    );
+    assert.match(
+      shared,
+      /pub fn advance_loading_offset\(/,
+      "rust_pill_shared must define advance_loading_offset",
+    );
+
+    for (const [label, text] of [
+      ["gtk", source.gtkPill],
+      ["macos", source.macApp],
+      ["windows", source.windowsPill],
+    ]) {
+      const phaseArm = text
+        .split("InMessage::Phase { phase, seq } => {")[1]
+        .split("InMessage::Levels")[0];
+      assert.match(
+        phaseArm,
+        /if rust_pill_shared::should_clear_stage_text_on_phase\(\s*prev == Phase::Loading,\s*phase == Phase::Idle,\s*phase == Phase::Loading,\s*\) \{\s*\*[\w.]*stage_text\.borrow_mut\(\) = None;\s*\}/,
+        `${label}: InMessage::Phase must clear stage_text via should_clear_stage_text_on_phase`,
+      );
+      assert.match(
+        phaseArm,
+        /if phase == Phase::Loading && prev != Phase::Loading \{\s*let offset = if reduced_motion\(\) \{ 0\.5 \} else \{ 0\.0 \};\s*[\w.]*loading_offset\.set\(offset\);\s*\}/,
+        `${label}: InMessage::Phase must initialize loading_offset (respecting reduced_motion) when entering Phase::Loading`,
+      );
+      assert.match(
+        phaseArm,
+        /if phase == Phase::Idle && prev != Phase::Idle \{[^}]*loading_offset\.set\(0\.0\);/,
+        `${label}: InMessage::Phase must reset loading_offset when returning to Phase::Idle`,
+      );
+      assert.match(
+        text,
+        /rust_pill_shared::advance_loading_offset\(\s*state\.loading_offset\.get\(\),\s*LOADING_SPEED,\s*dt,\s*reduced_motion\(\),\s*\)/,
+        `${label}: tick must advance loading_offset via rust_pill_shared::advance_loading_offset with dt and reduced_motion()`,
+      );
+
+      const stageTextArm = text
+        .split("InMessage::StageText { text } => {")[1]
+        .split("}")[0];
+      assert.match(
+        stageTextArm,
+        /let stage = rust_pill_shared::active_stage_text\(text\.as_deref\(\)\);\s*\*[\w.]*stage_text\.borrow_mut\(\) = stage\.map\(str::to_owned\);/,
+        `${label}: InMessage::StageText must normalize incoming text via active_stage_text`,
+      );
+    }
   });
 });

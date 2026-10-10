@@ -748,7 +748,7 @@ export const DictationSideEffects = () => {
       if (phaseBookkeeperRef.current.getLastSent() === "idle") {
         return;
       }
-      void sendPhaseToPill("idle");
+      sendPhaseToPill("idle");
     }, PHASE_HEARTBEAT_INTERVAL_MS);
     return () => clearInterval(interval);
   }, [sendPhaseToPill]);
@@ -946,6 +946,7 @@ export const DictationSideEffects = () => {
             ],
             remoteStatus: null,
             remoteDeviceId: null,
+            trace: pipelineTraceRef.current,
           });
           if (stored.transcription) {
             // The scheduler returns once its claim is written and the delivery
@@ -1868,7 +1869,7 @@ export const DictationSideEffects = () => {
     clearRecordingTimers();
     hardResetHotkeyState();
     releaseAudioIntake();
-    invoke<void>("set_phase", { phase: "idle" }).catch(console.error);
+    void sendPhaseToPill("idle");
     invoke("stop_recording").catch((e) =>
       getLogger().verbose(
         `stop_recording failed during type mode switch: ${e}`,

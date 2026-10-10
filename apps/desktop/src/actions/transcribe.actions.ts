@@ -115,6 +115,7 @@ export type PostProcessInput = {
   /** Number of edit-application failures already recorded for this row. */
   postProcessEditFailureCount?: number | null;
   trace?: PipelineTrace | null;
+  onPolishStart?: () => void;
 };
 
 export type PostProcessMetadata = {
@@ -787,6 +788,7 @@ const applyPostProcessing = async (
     toneId,
     dictationLanguage,
     postProcessEditFailureCount,
+    onPolishStart,
   }: PostProcessInput,
   state: AppState,
   gen: ReturnType<typeof getGenerateTextRepo>,
@@ -807,11 +809,15 @@ const applyPostProcessing = async (
       warnings,
       reason: "no-llm",
     });
-    if (fast !== null) return fast.styled;
+    if (fast !== null) {
+      onPolishStart?.();
+      return fast.styled;
+    }
     getLogger().info("No post-processing repo configured, skipping");
     metadata.postProcessMode = "none";
     return rawTranscript;
   }
+  onPolishStart?.();
   return await runPostProcessingRequest({
     state,
     rawTranscript,
@@ -846,7 +852,9 @@ export const postProcessTranscript = async (
     warnings,
   );
 
-  markPipeline(input.trace, "polished");
+  if (metadata.postProcessMode !== "none") {
+    markPipeline(input.trace, "polished");
+  }
 
   return {
     transcript,

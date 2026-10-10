@@ -170,17 +170,51 @@ const insertLocalOutput = async (
   return insertLocalTranscriptOutputViaPaste(text, pasteKeybind, isInterim);
 };
 
-const deliverWithInsertionStage = async <T>(
+const waitForHandsFreeDelay = async (
+  prefs: ReturnType<typeof getMyUserPreferences>,
+  sessionId: number,
+  isInterim: boolean | undefined,
+): Promise<boolean> => {
+  const handsFreeDelayMs = getEffectiveHandsFreeDelayMs(prefs);
+  if (handsFreeDelayMs <= 0 || isInterim) {
+    return true;
+  }
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, handsFreeDelayMs);
+  });
+  return sessionId === handsFreeSessionId;
+};
+
+const deliverWithInsertionStage = async (
   isInterim: boolean | undefined,
   trace: PipelineTrace | null,
-  deliver: () => Promise<T>,
-): Promise<T> => {
+  deliver: () => Promise<RouteTranscriptOutputResult>,
+): Promise<RouteTranscriptOutputResult> => {
   if (!isInterim) {
     sendPillStageText(getIntl().formatMessage({ defaultMessage: "Inserting" }));
   }
   const result = await deliver();
-  if (!isInterim) markPipeline(trace, "inserted");
+  if (!isInterim && result.delivered) markPipeline(trace, "inserted");
   return result;
+};
+
+const resolveLocalInsertResult = (
+  args: RouteTranscriptOutputArgs,
+  outputText: string,
+  outcome: Awaited<ReturnType<typeof insertLocalOutput>>,
+): RouteTranscriptOutputResult => {
+  if (args.isInterim && outcome === "copied_to_clipboard") {
+    return { delivered: false, remote: false, deliveredText: null };
+  }
+
+  // After a final dictation lands in the target app, watch for corrections
+  // the user makes there and offer to learn them. Interim streamed segments
+  // are excluded: there is no single "final" paste to diff against.
+  if (!args.isInterim && args.mode === "dictation") {
+    beginEditWatch(outputText);
+  }
+
+  return { delivered: true, remote: false, deliveredText: outputText };
 };
 
 export const routeTranscriptOutput = async (
@@ -212,33 +246,24 @@ export const routeTranscriptOutput = async (
     );
   }
 
-  const handsFreeDelayMs = getEffectiveHandsFreeDelayMs(prefs);
-
-  if (handsFreeDelayMs > 0 && !args.isInterim) {
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, handsFreeDelayMs);
-    });
-    if (sessionId !== handsFreeSessionId) {
+  return deliverWithInsertionStage(args.isInterim, trace, async () => {
+    const canProceed = await waitForHandsFreeDelay(
+      prefs,
+      sessionId,
+      args.isInterim,
+    );
+    if (!canProceed) {
       return { delivered: false, remote: false, deliveredText: null };
     }
-  }
 
-  const outcome = await deliverWithInsertionStage(args.isInterim, trace, () =>
-    insertLocalOutput(context, outputText, args.isInterim),
-  );
+    const outcome = await insertLocalOutput(
+      context,
+      outputText,
+      args.isInterim,
+    );
 
-  if (args.isInterim && outcome === "copied_to_clipboard") {
-    return { delivered: false, remote: false, deliveredText: null };
-  }
-
-  // After a final dictation lands in the target app, watch for corrections
-  // the user makes there and offer to learn them. Interim streamed segments
-  // are excluded: there is no single "final" paste to diff against.
-  if (!args.isInterim && args.mode === "dictation") {
-    beginEditWatch(outputText);
-  }
-
-  return { delivered: true, remote: false, deliveredText: outputText };
+    return resolveLocalInsertResult(args, outputText, outcome);
+  });
 };
 
 // ──────────────────────────────────────────────────────────────────────────────

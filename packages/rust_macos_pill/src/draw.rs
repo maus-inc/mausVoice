@@ -340,52 +340,45 @@ fn draw_loading(
     gfx::rounded_rect(ctx, rx, ry, pill_w, pill_h, radius);
     ctx.clip();
 
-    if let Some(stage) = state.stage_text.borrow().as_deref() {
-        ctx.select_font_face("Satoshi", false, false);
-        ctx.set_font_size(12.0);
-        let ext = ctx.text_extents(stage);
-        let tx = rx + (pill_w - ext.width) / 2.0 - ext.x_bearing;
-        let ty = ry + (pill_h - ext.height) / 2.0 - ext.y_bearing;
-        ctx.set_source_rgba(1.0, 1.0, 1.0, 0.9 * expand_t);
-        ctx.save();
-        ctx.move_to(tx, ty);
-        ctx.show_text(stage);
-        ctx.restore();
-        ctx.restore();
+    let stage_ref = state.stage_text.borrow();
+    let stage = rust_pill_shared::active_stage_text(stage_ref.as_deref());
+    let bar = rust_pill_shared::loading_bar_layout(
+        rx,
+        ry,
+        pill_w,
+        pill_h,
+        state.loading_offset.get(),
+        expand_t,
+        stage.is_some(),
+    );
 
-        draw_edge_gradient(ctx, rx, ry, pill_w, pill_h, radius, expand_t);
-        return;
+    // Paint the loading bar first so it sits dimly behind any stage text.
+    if bar.track_w > 0.0 {
+        ctx.set_source_rgba(1.0, 1.0, 1.0, bar.track_alpha);
+        ctx.rectangle(bar.track_x, bar.bar_y, bar.track_w, bar.bar_h);
+        ctx.fill();
+
+        if let Some((draw_left, draw_right)) = bar.indicator_span {
+            ctx.set_source_rgba(1.0, 1.0, 1.0, bar.indicator_alpha);
+            ctx.rectangle(draw_left, bar.bar_y, draw_right - draw_left, bar.bar_h);
+            ctx.fill();
+        }
     }
 
-    let bar_h = 2.0;
-    let bar_y = ry + (pill_h - bar_h) / 2.0;
-    let pad = pill_h * 0.1;
-    let track_x = rx + pad;
-    let track_w = pill_w - pad * 2.0;
-
-    // Track line
-    ctx.set_source_rgba(1.0, 1.0, 1.0, 0.15 * expand_t);
-    ctx.set_line_width(bar_h);
-    ctx.set_line_cap_round();
-    ctx.move_to(track_x, bar_y + bar_h / 2.0);
-    ctx.line_to(track_x + track_w, bar_y + bar_h / 2.0);
-    ctx.stroke();
-
-    // Moving indicator
-    let indicator_w = track_w * LOADING_BAR_WIDTH_FRAC;
-    let offset = state.loading_offset.get();
-    let ind_x = track_x + (track_w + indicator_w) * offset - indicator_w;
-
-    ctx.set_source_rgba(1.0, 1.0, 1.0, 0.7 * expand_t);
-    ctx.set_line_width(bar_h);
-    ctx.set_line_cap_round();
-
-    let draw_left = ind_x.max(track_x);
-    let draw_right = (ind_x + indicator_w).min(track_x + track_w);
-    if draw_right > draw_left {
-        ctx.move_to(draw_left, bar_y + bar_h / 2.0);
-        ctx.line_to(draw_right, bar_y + bar_h / 2.0);
-        ctx.stroke();
+    if let Some(stage) = stage {
+        ctx.select_font_face("Satoshi", false, false);
+        ctx.set_font_size(12.0);
+        let max_w = rust_pill_shared::loading_stage_text_budget(pill_w, EXPANDED_PILL_WIDTH);
+        let stage = rust_pill_shared::text_fit::elide_to_width(stage, max_w, "…", |s| {
+            ctx.text_extents(s).width
+        });
+        let ext = ctx.text_extents(&stage);
+        let tx = rx + (pill_w - ext.width) / 2.0 - ext.x_bearing;
+        let ty = ry + (pill_h - ext.height) / 2.0 - ext.y_bearing;
+        let text_alpha = rust_pill_shared::loading_stage_text_alpha(expand_t);
+        ctx.set_source_rgba(1.0, 1.0, 1.0, text_alpha);
+        ctx.move_to(tx, ty);
+        ctx.show_text(&stage);
     }
 
     ctx.restore();
