@@ -14,7 +14,7 @@ export const ButtonDemo = () => {
   return (
     <DemoSection
       title="Variants"
-      hint="contained = primary CTA (ink in light, white in dark) · text = quiet · flat = machined surface · blue = the one accent. All: radius 12, 600 weight, 15px, ripple off, press scale 0.97."
+      hint="contained = primary CTA (ink in light, white in dark) · text = quiet · flat = machined surface · chrome = the one accent. All: radius 12, 600 weight, 15px, ripple off, press scale 0.97."
     >
       <TryIt>hover, keyboard-focus (Tab), and press each button.</TryIt>
       <Matrix>
@@ -22,7 +22,7 @@ export const ButtonDemo = () => {
           <Button variant="contained">Contained</Button>
           <Button variant="text">Text</Button>
           <Button variant="flat">Flat</Button>
-          <Button variant="blue">Blue</Button>
+          <Button variant="chrome">Chrome</Button>
         </State>
         <State label="with icons">
           <Button variant="contained" startIcon={<AddIcon />}>
@@ -45,8 +45,8 @@ export const ButtonDemo = () => {
           <Button variant="flat" disabled>
             Flat
           </Button>
-          <Button variant="blue" disabled>
-            Blue
+          <Button variant="chrome" disabled>
+            Chrome
           </Button>
         </State>
         <State label="loading (action pattern: disable + spinner)">

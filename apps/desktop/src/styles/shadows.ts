@@ -170,6 +170,19 @@ export const switchTrack = {
 } as const;
 
 /**
+ * The designed focus ring for form chrome: one soft silver wash, no offset
+ * blur tricks. Form fields carry it instead of MUI's default 2px charcoal
+ * border swap, so focus reads as brand chrome rather than an error outline.
+ * The colour is the chrome accent (DESIGN.md: "focus rings are designed,
+ * brand-tinted"; the accent is silver/ink for focus rings and selection
+ * washes).
+ */
+export const focusRing = {
+  light: `0 0 0 3px rgba(${accent.light.rgb}, 0.14)`,
+  dark: `0 0 0 3px rgba(${accent.dark.rgb}, 0.18)`,
+} as const;
+
+/**
  * 1px translucent hairline used instead of a shadow to separate faces
  * (DESIGN.md: "borders over shadows"). `strength` picks how present it is.
  */

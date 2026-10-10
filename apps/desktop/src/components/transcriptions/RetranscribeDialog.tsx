@@ -24,8 +24,8 @@ import {
 import { useAppStore } from "../../store";
 import {
   AUTO_LANGUAGE,
-  DICTATION_LANGUAGES,
   type DictationLanguageCode,
+  getRenderSafeLanguageLabel,
   ORDERED_DICTATION_LANGUAGES,
   toSelectableDictationLanguage,
 } from "../../utils/language.utils";
@@ -49,7 +49,7 @@ const languageOptions = (
   ] satisfies DictationLanguageCode[]
 ).map((code) => ({
   code,
-  label: DICTATION_LANGUAGES[code],
+  label: getRenderSafeLanguageLabel(code),
 }));
 
 /** MUI Select must receive direct MenuItem children to attach option behavior. */
@@ -197,7 +197,12 @@ export const RetranscribeDialog = () => {
               }
             >
               {languageOptions.map(({ code, label }) =>
-                checkableMenuItem(code, label, code === selectedLanguage),
+                checkableMenuItem(
+                  code,
+                  label,
+                  code === selectedLanguage,
+                  chromeSelectMenuItemSx,
+                ),
               )}
             </Select>
           </FormControl>
