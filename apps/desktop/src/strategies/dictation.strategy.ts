@@ -464,7 +464,15 @@ export class DictationStrategy extends BaseStrategy {
         });
       }
 
-      if (postProcessMetadata.postProcessFailed) {
+      if (postProcessMetadata.postProcessEditFailed) {
+        getLogger().warning(
+          "Post-processing edits could not be applied; preserving the original transcript without insertion",
+        );
+        // The History toast is the caller's to show once storage has actually
+        // produced a row: persistence being allowed does not mean the write
+        // succeeded. Routing stays blocked here either way, so the row is
+        // what preserves the raw transcript.
+      } else if (postProcessMetadata.postProcessFailed) {
         getLogger().warning(
           "Post-processing failed; preserving the transcript in History without insertion",
         );

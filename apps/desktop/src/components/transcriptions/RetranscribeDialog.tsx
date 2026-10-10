@@ -17,7 +17,7 @@ import { useCallback, useEffect, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import {
   closeRetranscribeDialog,
-  retranscribeTranscription,
+  retranscribeTranscriptionWithRecovery,
 } from "../../actions/transcriptions.actions";
 import { useAppStore } from "../../store";
 import {
@@ -116,7 +116,7 @@ export const RetranscribeDialog = () => {
     if (!transcriptionId || isRetranscribing) return;
 
     closeRetranscribeDialog();
-    void retranscribeTranscription({
+    void retranscribeTranscriptionWithRecovery({
       transcriptionId,
       toneId: styleSelectionAvailable ? selectedToneId : null,
       languageCode: selectedLanguage,

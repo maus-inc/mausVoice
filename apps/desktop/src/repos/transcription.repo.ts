@@ -89,6 +89,14 @@ const toLocalTranscription = (
   postProcessModel: orNull(transcription.postProcessModel),
   postProcessProvider: orNull(transcription.postProcessProvider),
   postProcessFailed: transcription.postProcessFailed ?? null,
+  postProcessEditFailed: transcription.postProcessEditFailed ?? null,
+  postProcessEditFailureCount:
+    transcription.postProcessEditFailureCount ?? null,
+  postProcessEditAutoRetryUsed:
+    transcription.postProcessEditAutoRetryUsed ?? null,
+  postProcessEditRetryToneId: transcription.postProcessEditRetryToneId ?? null,
+  postProcessEditRetryLanguageCode:
+    transcription.postProcessEditRetryLanguageCode ?? null,
   postProcessFallback: transcription.postProcessFallback ?? null,
   postProcessError: orNull(transcription.postProcessError),
   transcriptionDurationMs: orNull(transcription.transcriptionDurationMs),
@@ -121,6 +129,15 @@ const fromLocalTranscription = (
   postProcessModel: orUndefined(transcription.postProcessModel),
   postProcessProvider: orUndefined(transcription.postProcessProvider),
   postProcessFailed: transcription.postProcessFailed ?? undefined,
+  postProcessEditFailed: transcription.postProcessEditFailed ?? undefined,
+  postProcessEditFailureCount:
+    transcription.postProcessEditFailureCount ?? undefined,
+  postProcessEditAutoRetryUsed:
+    transcription.postProcessEditAutoRetryUsed ?? undefined,
+  postProcessEditRetryToneId:
+    transcription.postProcessEditRetryToneId ?? undefined,
+  postProcessEditRetryLanguageCode:
+    transcription.postProcessEditRetryLanguageCode ?? undefined,
   postProcessFallback: transcription.postProcessFallback ?? undefined,
   postProcessError: orUndefined(transcription.postProcessError),
   transcriptionDurationMs: orUndefined(transcription.transcriptionDurationMs),

@@ -11,7 +11,10 @@ const mocks = vi.hoisted(() => ({
   closeRetranscribeDialog: vi.fn(),
   importAudioFile: vi.fn().mockResolvedValue(undefined),
   openFileDialog: vi.fn().mockResolvedValue("/tmp/import.wav"),
-  retranscribeTranscription: vi.fn().mockResolvedValue(undefined),
+  retranscribeTranscriptionWithRecovery: vi.fn().mockResolvedValue({
+    started: true,
+    update: null,
+  }),
 }));
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
@@ -21,7 +24,8 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
 vi.mock("../../actions/transcriptions.actions", () => ({
   closeRetranscribeDialog: mocks.closeRetranscribeDialog,
   importAudioFile: mocks.importAudioFile,
-  retranscribeTranscription: mocks.retranscribeTranscription,
+  retranscribeTranscriptionWithRecovery:
+    mocks.retranscribeTranscriptionWithRecovery,
 }));
 
 vi.mock("react-intl", async (importOriginal) => {
@@ -209,7 +213,10 @@ describe("Retranscribe style availability", () => {
     resetState();
     seedTone();
     vi.clearAllMocks();
-    mocks.retranscribeTranscription.mockResolvedValue(undefined);
+    mocks.retranscribeTranscriptionWithRecovery.mockResolvedValue({
+      started: true,
+      update: null,
+    });
     produceAppState((draft) => {
       draft.transcriptions.retranscribeDialogOpen = true;
       draft.transcriptions.retranscribeDialogTranscriptionId =
@@ -253,7 +260,7 @@ describe("Retranscribe style availability", () => {
       transcribe?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
-    expect(mocks.retranscribeTranscription).toHaveBeenCalledWith(
+    expect(mocks.retranscribeTranscriptionWithRecovery).toHaveBeenCalledWith(
       expect.objectContaining({
         transcriptionId: "transcription-1",
         toneId: expect.any(String),

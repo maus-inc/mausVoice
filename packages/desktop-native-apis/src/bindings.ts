@@ -1343,6 +1343,28 @@ postProcessProvider?: string | null;
  */
 postProcessFailed?: boolean | null; 
 /**
+ * True when a provider edit could not be applied to the transcript.
+ */
+postProcessEditFailed?: boolean | null; 
+/**
+ * Number of edit-application failures in this transcription retry chain.
+ */
+postProcessEditFailureCount?: number | null; 
+/**
+ * True after the one automatic full-audio retranscription was consumed.
+ */
+postProcessEditAutoRetryUsed?: boolean | null; 
+/**
+ * Tone the claimed recovery pass restyles with, or an empty string when
+ * the failed run used none.
+ */
+postProcessEditRetryToneId?: string | null; 
+/**
+ * Language the claimed recovery pass retranscribes with, or an empty
+ * string when the failed run used no override.
+ */
+postProcessEditRetryLanguageCode?: string | null; 
+/**
  * Sanitized, non-secret error message from a failed post-processing
  * request.
  */

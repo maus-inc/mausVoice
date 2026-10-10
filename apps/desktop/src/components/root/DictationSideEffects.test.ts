@@ -1,13 +1,24 @@
+import type { Transcription } from "@maus-inc/types";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { navigateMock, surfaceMainWindowMock, warningMock } = vi.hoisted(() => ({
+const {
+  navigateMock,
+  scheduleAutomaticPostProcessEditRetryMock,
+  surfaceMainWindowMock,
+  warningMock,
+} = vi.hoisted(() => ({
   navigateMock: vi.fn(),
+  scheduleAutomaticPostProcessEditRetryMock: vi.fn(),
   surfaceMainWindowMock: vi.fn(),
   warningMock: vi.fn(),
 }));
 
 vi.mock("../../router", () => ({
   getBrowserRouter: () => ({ navigate: navigateMock }),
+}));
+vi.mock("../../actions/transcriptions.actions", () => ({
+  scheduleAutomaticPostProcessEditRetry:
+    scheduleAutomaticPostProcessEditRetryMock,
 }));
 vi.mock("../../hooks/tauri.hooks", () => ({
   useTauriListen: () => {},
@@ -45,11 +56,13 @@ import type {
   PostTranscriptInput,
 } from "./DictationSideEffects";
 import type { BaseStrategy } from "../../strategies/base.strategy";
+import type { ToastAction } from "../../types/toast.types";
 
 type ToastCall = {
   message: string;
   toastType: "info" | "error";
   duration?: number;
+  action?: ToastAction;
 };
 
 type StoreCall = {
@@ -278,6 +291,8 @@ describe("postProcessFinalizedTranscript", () => {
       store?: boolean;
       agent?: boolean;
       droppedChars?: number;
+      editFailed?: boolean;
+      storedRow?: boolean;
     } = {},
   ) => {
     const order: string[] = [];
@@ -289,10 +304,14 @@ describe("postProcessFinalizedTranscript", () => {
         shouldContinue: false,
         transcript: "hello world",
         sanitizedTranscript: "hello world",
-        postProcessMetadata:
-          options.droppedChars === undefined
+        postProcessMetadata: {
+          ...(options.droppedChars === undefined
             ? {}
-            : { fastStyleTruncatedChars: options.droppedChars },
+            : { fastStyleTruncatedChars: options.droppedChars }),
+          ...(options.editFailed === true
+            ? { postProcessEditFailed: true }
+            : {}),
+        },
         postProcessWarnings: [],
         remoteStatus: null,
         remoteDeviceId: null,
@@ -302,7 +321,13 @@ describe("postProcessFinalizedTranscript", () => {
       PostTranscriptInput["storeTranscriptionFn"]
     >(() => {
       order.push("store");
-      return Promise.resolve({ transcription: null, wordCount: 0 });
+      return Promise.resolve({
+        transcription:
+          options.storedRow === true
+            ? ({ id: "stored-row" } as unknown as Transcription)
+            : null,
+        wordCount: 0,
+      });
     });
     const strategy: PostTranscriptInput["strategy"] = {
       handleTranscript,
@@ -391,6 +416,57 @@ describe("postProcessFinalizedTranscript", () => {
     expect(showToast).not.toHaveBeenCalled();
   });
 
+  it("tells the user the raw transcript is in History once the row is stored", async () => {
+    const { input, showToast, storeTranscriptionFn } = buildInput({
+      editFailed: true,
+      storedRow: true,
+    });
+
+    await postProcessFinalizedTranscript(input);
+
+    // The toast waits for the store call, so its promise is backed by a row.
+    expect(storeTranscriptionFn).toHaveBeenCalledTimes(1);
+    expect(showToast).toHaveBeenCalledTimes(1);
+    const call = asToastCall(showToast);
+    expect(call?.toastType).toBe("error");
+    expect(call?.message).toContain("saved in History");
+    expect(call?.action).toBe("open_transcriptions");
+  });
+
+  it("does not promise History when the store returns no row", async () => {
+    // Persistence is allowed and the store path runs, but the write itself
+    // came back empty, so the saved-in-History wording would point the user
+    // at a row that does not exist.
+    const { input, showToast, storeTranscriptionFn } = buildInput({
+      editFailed: true,
+    });
+
+    await postProcessFinalizedTranscript(input);
+
+    expect(storeTranscriptionFn).toHaveBeenCalledTimes(1);
+    expect(showToast).toHaveBeenCalledTimes(1);
+    const call = asToastCall(showToast);
+    expect(call?.message).not.toContain("saved in History");
+    expect(call?.action).toBeUndefined();
+  });
+
+  it("does not promise History for a failed edit when nothing is stored", async () => {
+    // Incognito mode skips storage entirely, so the raw transcript exists
+    // nowhere and the open-History action is dropped with the row.
+    const { input, showToast, storeTranscriptionFn } = buildInput({
+      editFailed: true,
+      store: false,
+    });
+
+    await postProcessFinalizedTranscript(input);
+
+    expect(storeTranscriptionFn).not.toHaveBeenCalled();
+    expect(showToast).toHaveBeenCalledTimes(1);
+    const call = asToastCall(showToast);
+    expect(call?.message).not.toContain("saved in History");
+    expect(call?.action).toBeUndefined();
+  });
+
   it("sends idle after handleTranscript and before storeTranscription", async () => {
     const { input, order, handleTranscript, storeTranscriptionFn } =
       buildInput();
@@ -474,6 +550,36 @@ describe("postProcessFinalizedTranscript", () => {
     await postProcessFinalizedTranscript(input);
 
     expect(storeTranscriptionFn).toHaveBeenCalledTimes(1);
+  });
+
+  it("schedules live recovery only after the durable row is stored", async () => {
+    scheduleAutomaticPostProcessEditRetryMock.mockClear();
+    const { input, storeTranscriptionFn } = buildInput();
+    input.languageCode = "fr";
+    const stored: Transcription = {
+      id: "live-partial",
+      transcript: "hello world",
+      createdAt: "2026-10-06T00:00:00.000Z",
+      createdByUserId: "user-1",
+      isDeleted: false,
+      audio: { filePath: "/tmp/live-partial.wav", durationMs: 1000 },
+      postProcessEditFailed: true,
+      postProcessEditFailureCount: 3,
+      postProcessEditAutoRetryUsed: null,
+    };
+    storeTranscriptionFn.mockResolvedValueOnce({
+      transcription: stored,
+      wordCount: 2,
+    });
+
+    await postProcessFinalizedTranscript(input);
+
+    expect(storeTranscriptionFn).toHaveBeenCalledTimes(1);
+    expect(scheduleAutomaticPostProcessEditRetryMock).toHaveBeenCalledWith({
+      transcription: stored,
+      toneId: null,
+      languageCode: "fr",
+    });
   });
 
   it("propagates a post-processing failure without sending idle or persisting", async () => {

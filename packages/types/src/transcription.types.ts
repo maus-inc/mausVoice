@@ -21,6 +21,13 @@ export type Transcription = {
   postProcessModel?: string | null;
   postProcessProvider?: string | null;
   postProcessFailed?: boolean | null;
+  postProcessEditFailed?: boolean | null;
+  postProcessEditFailureCount?: number | null;
+  postProcessEditAutoRetryUsed?: boolean | null;
+  /** Tone the claimed recovery pass restyles with; empty string records "none". */
+  postProcessEditRetryToneId?: string | null;
+  /** Language the claimed recovery pass retranscribes with; empty string records "none". */
+  postProcessEditRetryLanguageCode?: string | null;
   postProcessFallback?: boolean | null;
   postProcessError?: string | null;
   transcriptionDurationMs?: number | null;

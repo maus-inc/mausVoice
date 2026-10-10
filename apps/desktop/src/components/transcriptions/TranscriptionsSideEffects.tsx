@@ -1,3 +1,4 @@
+import { resumeInterruptedPostProcessEditRetries } from "../../actions/transcriptions.actions";
 import { useAsyncEffect } from "../../hooks/async.hooks";
 import { useOnExit } from "../../hooks/helper.hooks";
 import { getTranscriptionRepo } from "../../repos";
@@ -12,6 +13,10 @@ export const TranscriptionsSideEffects = () => {
       registerTranscriptions(draft, transcriptions);
       draft.transcriptions.transcriptionIds = transcriptions.map((t) => t.id);
     });
+    // A row a previous run claimed for automatic recovery and never reported
+    // back on is picked up here, because the claim outlives the process that
+    // wrote it.
+    resumeInterruptedPostProcessEditRetries(transcriptions);
   }, []);
 
   useOnExit(() => {
