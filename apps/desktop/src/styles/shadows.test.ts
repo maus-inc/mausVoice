@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import { theme } from "../theme";
 import {
   accentSurface,
-  focusRing,
   insetRim,
   parseShadowLayers,
   premiumSurface,
@@ -328,7 +327,6 @@ describe("theme.ts consumers", () => {
       ...Object.values(switchTrack),
       ...Object.values(raisedEdge),
       ...Object.values(insetRim),
-      ...Object.values(focusRing),
       "none",
     ]);
     const found = new Set<string>();

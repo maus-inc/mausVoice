@@ -11,7 +11,6 @@ import {
 } from "./styles/palette";
 import {
   accentSurface,
-  focusRing,
   hairline,
   premiumSurface,
   switchThumb,
@@ -242,48 +241,6 @@ export const theme = createTheme({
           },
         },
       }),
-    },
-
-    MuiOutlinedInput: {
-      styleOverrides: {
-        root: ({ theme }) => ({
-          // DESIGN.md radius ladder: 7 for chips/inputs, not the 14 card step.
-          borderRadius: 7,
-          "& .MuiOutlinedInput-notchedOutline": {
-            borderColor: ink(0.14),
-            transition:
-              "border-color 120ms ease-out, box-shadow 120ms ease-out",
-          },
-          "&:hover .MuiOutlinedInput-notchedOutline": {
-            borderColor: ink(0.28),
-          },
-          // Focus reads as the designed silver ring, not MUI's default 2px
-          // charcoal border swap: the hairline stays 1px and tints toward the
-          // chrome accent while an offset wash carries the rest of the signal.
-          "&.Mui-focused .MuiOutlinedInput-notchedOutline": {
-            borderColor: `rgba(${accent.light.rgb}, 0.6)`,
-            borderWidth: 1,
-          },
-          "&.Mui-focused": {
-            boxShadow: focusRing.light,
-          },
-          ...theme.applyStyles("dark", {
-            "& .MuiOutlinedInput-notchedOutline": {
-              borderColor: highlight(0.14),
-            },
-            "&:hover .MuiOutlinedInput-notchedOutline": {
-              borderColor: highlight(0.3),
-            },
-            "&.Mui-focused .MuiOutlinedInput-notchedOutline": {
-              borderColor: `rgba(${accent.dark.rgb}, 0.65)`,
-              borderWidth: 1,
-            },
-            "&.Mui-focused": {
-              boxShadow: focusRing.dark,
-            },
-          }),
-        }),
-      },
     },
 
     MuiDialog: {
