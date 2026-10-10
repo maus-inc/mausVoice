@@ -49,6 +49,7 @@ The two schemes have their own temperature rather than being inversions of each 
 
 - Everything interactive: default/hover/focus‑visible/active/disabled/loading. Press feedback `scale(0.97)` (or inset press).
 - Focus rings are designed, brand‑tinted, 2px offset 2.
+- Outlined inputs are the exception: they signal focus with the 2px charcoal border swap at the field's own radius, not a ring. That swap is the sanctioned treatment; it reads as the app's machined chrome. Do not replace it with a ring or a thinner hairline.
 
 ## Themed browser surfaces
 
@@ -57,7 +58,18 @@ The two schemes have their own temperature rather than being inversions of each 
 ## Anti-patterns
 
 - Side-stripe borders >1px; gradient text; decorative glass; `transition-all`; pure black/white; lucide-only generic icon (once stroke); ceil matching radius. See `craft-floor`.
+- Native endonyms in pickers for scripts the font stack cannot render (tofu). Outside Latin/Cyrillic coverage, menus fall back to English exonyms.
 - Emoji‑as‑icons. No.
+
+## Mandatory process for UI work
+
+Every change that touches `apps/desktop` or `apps/preview` UI runs this before the first edit. Small polish is not exempt; the generic defaults slip in on the one-line edits.
+
+1. **Load the world.** Read this file and the design-system baseline (`docs/design-system-baseline.md`) fully into context.
+2. **Load the skill sets.** The design skill sets named in the AGENTS.md skill index, currently impeccable and antislopui, including each set's floor or bans document (`craft-floor.md` for impeccable), immediately before the edit. Fetch them from their upstream sources when not vendored.
+3. **Recon spree.** Gather current references for the component at hand from premium design sources and comparable shipped product UI (Dribbble, Pinterest, Attio/Linear-class pickers and the like), and pull the before/after QA-artifact screenshots for the touched surface.
+4. **Weigh, then ship.** Measure every radius, slope, density, state, and label against the gathered references and this file. The committed world wins over habit.
+5. **Cite.** The PR description lists the references consulted. A UI diff without them is not reviewable.
 
 ## Window surfaces
 
@@ -114,4 +126,4 @@ The Windows and Linux caption buttons are three square targets inset from the ba
 
 ## Radius
 
-- 7 chips/inputs · 14 cards/rows/dialogs (MUI radius 1) · 28 large dialogs · 999 pills only.
+- 7 chips · 14 cards/rows/dialogs/inputs (MUI radius 1) · 28 large dialogs · 999 pills only.
