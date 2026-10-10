@@ -78,7 +78,7 @@ describe("provider model discovery", () => {
     });
   });
 
-  it("accepts current Gemini text models while excluding specialized catalogs", async () => {
+  it("uses successful Gemini discovery without inventing omitted transcription models", async () => {
     pluginFetchMock.mockImplementation(() =>
       Promise.resolve(
         new Response(
@@ -147,6 +147,82 @@ describe("provider model discovery", () => {
     await expect(
       repo.getTranscriptionModels({ apiKey: "gemini-key" }),
     ).resolves.toEqual(["gemini-3.5-transcribe", "gemini-3.8-flash"]);
+  });
+
+  it("follows Gemini model catalog page tokens", async () => {
+    const nextPageToken = "next/page+token";
+    const pages = [
+      new Response(
+        JSON.stringify({
+          models: [
+            {
+              name: "models/gemini-3.5-transcribe",
+              supportedGenerationMethods: ["generateContent"],
+            },
+          ],
+          nextPageToken,
+        }),
+      ),
+      new Response(
+        JSON.stringify({
+          models: [
+            {
+              name: "models/gemini-future-flash",
+              supportedGenerationMethods: ["generateContent"],
+            },
+          ],
+        }),
+      ),
+    ];
+    pluginFetchMock.mockImplementation(() => {
+      const page = pages.shift();
+      if (!page) throw new Error("Unexpected Gemini pagination request");
+      return Promise.resolve(page);
+    });
+    const repo = new GeminiModelProviderRepo();
+
+    await expect(
+      repo.getTranscriptionModels({ apiKey: "gemini-key" }),
+    ).resolves.toEqual(["gemini-3.5-transcribe", "gemini-future-flash"]);
+    expect(pluginFetchMock).toHaveBeenCalledTimes(2);
+    expect(pluginFetchMock).toHaveBeenNthCalledWith(
+      1,
+      "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000",
+      expect.objectContaining({ method: "GET" }),
+    );
+    expect(pluginFetchMock).toHaveBeenNthCalledWith(
+      2,
+      "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000&pageToken=next%2Fpage%2Btoken",
+      expect.objectContaining({ method: "GET" }),
+    );
+  });
+
+  it("stops Gemini discovery when a page token repeats", async () => {
+    pluginFetchMock.mockImplementation(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            models: [
+              {
+                name: "models/gemini-discovered-flash",
+                supportedGenerationMethods: ["generateContent"],
+              },
+            ],
+            nextPageToken: "repeated-token",
+          }),
+        ),
+      ),
+    );
+    const repo = new GeminiModelProviderRepo();
+
+    const models = await repo.getTranscriptionModels({ apiKey: "gemini-key" });
+
+    expect(pluginFetchMock).toHaveBeenCalledTimes(2);
+    expect(models).toContain("gemini-3.5-transcribe");
+    expect(models).not.toContain("gemini-discovered-flash");
+    expect(loggerVerboseMock).toHaveBeenCalledWith(
+      "Gemini model discovery failed (model discovery returned a repeated page token)",
+    );
   });
 
   it("separates OpenAI chat and file-transcription models", async () => {

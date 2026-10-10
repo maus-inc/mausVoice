@@ -62,8 +62,8 @@ const getAvailableProviders = (context: ApiKeyListContext): ApiKeyProvider[] =>
     if (p === "azure") return true;
     const repo = getModelProviderRepo(p);
     return context === "transcription"
-      ? repo.supportsTranscriptionModels()
-      : repo.supportsGenerativeTextModels();
+      ? repo.supportsTranscriptionModels
+      : repo.supportsGenerativeTextModels;
   });
 
 const ApiKeyFormActions = ({
@@ -935,8 +935,8 @@ export const ApiKeyList = ({
     }
     const repo = getModelProviderRepo(key.provider);
     return context === "transcription"
-      ? repo.supportsTranscriptionModels()
-      : repo.supportsGenerativeTextModels();
+      ? repo.supportsTranscriptionModels
+      : repo.supportsGenerativeTextModels;
   });
 
   const status = useAppStore((state) => state.settings.apiKeysStatus);

@@ -36,6 +36,7 @@ type GeminiListResponse = {
     name?: string;
     supportedGenerationMethods?: string[];
   }>;
+  nextPageToken?: string;
 };
 
 export type FetchModelsOptions = {
@@ -46,8 +47,8 @@ export type FetchModelsOptions = {
 };
 
 export abstract class BaseModelProviderRepo extends BaseRepo {
-  abstract supportsGenerativeTextModels(): boolean;
-  abstract supportsTranscriptionModels(): boolean;
+  abstract readonly supportsGenerativeTextModels: boolean;
+  abstract readonly supportsTranscriptionModels: boolean;
   abstract getGenerativeTextModels(
     options: FetchModelsOptions,
   ): Promise<string[]>;
@@ -187,14 +188,110 @@ function isGeminiTranscriptionModel(modelId: string): boolean {
   return !GEMINI_REASONING_MARKERS.some((marker) => modelId.includes(marker));
 }
 
-export class GroqModelProviderRepo extends BaseModelProviderRepo {
-  supportsGenerativeTextModels(): boolean {
-    return true;
+type GeminiModel = NonNullable<GeminiListResponse["models"]>[number];
+
+const GEMINI_REPEATED_PAGE_TOKEN = Symbol("repeated Gemini page token");
+type GeminiPageToken = string | null | typeof GEMINI_REPEATED_PAGE_TOKEN;
+
+const getNextGeminiPageToken = (
+  pageToken: string | undefined,
+  seenPageTokens: Set<string>,
+): GeminiPageToken => {
+  if (!pageToken) return null;
+  if (seenPageTokens.has(pageToken)) return GEMINI_REPEATED_PAGE_TOKEN;
+  seenPageTokens.add(pageToken);
+  return pageToken;
+};
+
+const fetchGeminiModelPage = async (
+  apiKey: string,
+  pageToken?: string,
+): Promise<GeminiListResponse | null> => {
+  const url = new URL(
+    "https://generativelanguage.googleapis.com/v1beta/models",
+  );
+  url.searchParams.set("pageSize", "1000");
+  if (pageToken) url.searchParams.set("pageToken", pageToken);
+
+  const response = await fetch(url.toString(), {
+    headers: { "x-goog-api-key": apiKey },
+  });
+  if (!response.ok) {
+    logModelDiscoveryResponseFailure("Gemini", response);
+    return null;
+  }
+  return (await response.json()) as GeminiListResponse;
+};
+
+type GeminiCatalogPage = {
+  models: GeminiModel[];
+  nextPageToken: string | null;
+};
+
+const readGeminiCatalogPage = async (
+  apiKey: string,
+  pageToken: string | undefined,
+  seenPageTokens: Set<string>,
+): Promise<GeminiCatalogPage | null> => {
+  const payload = await fetchGeminiModelPage(apiKey, pageToken);
+  if (!payload) return null;
+
+  const nextPageToken = getNextGeminiPageToken(
+    payload.nextPageToken,
+    seenPageTokens,
+  );
+  if (nextPageToken === GEMINI_REPEATED_PAGE_TOKEN) {
+    logModelDiscoveryFailure(
+      "Gemini",
+      "model discovery returned a repeated page token",
+    );
+    return null;
+  }
+  return { models: payload.models ?? [], nextPageToken };
+};
+
+const fetchGeminiModelCatalog = async (
+  apiKey: string,
+): Promise<GeminiModel[] | null> => {
+  const models: GeminiModel[] = [];
+  const seenPageTokens = new Set<string>();
+  // `undefined` starts discovery; `null` marks a page with no continuation.
+  let pageToken: string | null | undefined;
+  while (pageToken !== null) {
+    const page = await readGeminiCatalogPage(apiKey, pageToken, seenPageTokens);
+    if (!page) return null;
+    models.push(...page.models);
+    pageToken = page.nextPageToken;
   }
 
-  supportsTranscriptionModels(): boolean {
-    return true;
+  return models;
+};
+
+const filterGeminiModelCatalog = (models: GeminiModel[]): string[] => {
+  if (models.length === 0) {
+    getLogger().verbose("Gemini model discovery returned empty models array");
+    return [];
   }
+
+  const filtered = models
+    .filter((model) =>
+      (model.supportedGenerationMethods ?? []).includes("generateContent"),
+    )
+    .map((model) => (model.name ?? "").replace(/^models\//, "").trim())
+    .filter((id) => isGeneralGeminiModel(id) || isGeminiTranscriptionModel(id))
+    .sort((a, b) => a.localeCompare(b));
+  if (filtered.length === 0) {
+    getLogger().verbose(
+      "Gemini model discovery filtered to 0 after marker checks",
+    );
+  }
+  return filtered;
+};
+
+export class GroqModelProviderRepo extends BaseModelProviderRepo {
+  readonly supportsGenerativeTextModels = true;
+
+  readonly supportsTranscriptionModels = true;
 
   private fetchModels(options: FetchModelsOptions): Promise<string[]> {
     if (!options.apiKey) return noModels();
@@ -221,13 +318,9 @@ export class GroqModelProviderRepo extends BaseModelProviderRepo {
 }
 
 export class OpenAIModelProviderRepo extends BaseModelProviderRepo {
-  supportsGenerativeTextModels(): boolean {
-    return true;
-  }
+  readonly supportsGenerativeTextModels = true;
 
-  supportsTranscriptionModels(): boolean {
-    return true;
-  }
+  readonly supportsTranscriptionModels = true;
 
   private fetchModels(options: FetchModelsOptions): Promise<string[]> {
     if (!options.apiKey) return noModels();
@@ -256,13 +349,9 @@ export class OpenAIModelProviderRepo extends BaseModelProviderRepo {
 }
 
 export class ClaudeModelProviderRepo extends BaseModelProviderRepo {
-  supportsGenerativeTextModels(): boolean {
-    return true;
-  }
+  readonly supportsGenerativeTextModels = true;
 
-  supportsTranscriptionModels(): boolean {
-    return false;
-  }
+  readonly supportsTranscriptionModels = false;
 
   private async fetchModels(options: FetchModelsOptions): Promise<string[]> {
     if (!options.apiKey) return [];
@@ -296,13 +385,9 @@ export class ClaudeModelProviderRepo extends BaseModelProviderRepo {
 }
 
 export class CerebrasModelProviderRepo extends BaseModelProviderRepo {
-  supportsGenerativeTextModels(): boolean {
-    return true;
-  }
+  readonly supportsGenerativeTextModels = true;
 
-  supportsTranscriptionModels(): boolean {
-    return false;
-  }
+  readonly supportsTranscriptionModels = false;
 
   private fetchModels(options: FetchModelsOptions): Promise<string[]> {
     if (!options.apiKey) return noModels();
@@ -326,13 +411,9 @@ export class CerebrasModelProviderRepo extends BaseModelProviderRepo {
 }
 
 export class DeepSeekModelProviderRepo extends BaseModelProviderRepo {
-  supportsGenerativeTextModels(): boolean {
-    return true;
-  }
+  readonly supportsGenerativeTextModels = true;
 
-  supportsTranscriptionModels(): boolean {
-    return false;
-  }
+  readonly supportsTranscriptionModels = false;
 
   private fetchModels(options: FetchModelsOptions): Promise<string[]> {
     if (!options.apiKey) return noModels();
@@ -356,13 +437,9 @@ export class DeepSeekModelProviderRepo extends BaseModelProviderRepo {
 }
 
 export class GeminiModelProviderRepo extends BaseModelProviderRepo {
-  supportsGenerativeTextModels(): boolean {
-    return true;
-  }
+  readonly supportsGenerativeTextModels = true;
 
-  supportsTranscriptionModels(): boolean {
-    return true;
-  }
+  readonly supportsTranscriptionModels = true;
 
   async getGenerativeTextModels(
     options: FetchModelsOptions,
@@ -377,46 +454,18 @@ export class GeminiModelProviderRepo extends BaseModelProviderRepo {
     const fetched = (await this.fetchModels(options)).filter(
       isGeminiTranscriptionModel,
     );
+    // Trust a non-empty discovered transcription catalog; use the static list
+    // only when discovery provides no transcription options.
     return fetched.length > 0 ? fetched : [...GEMINI_TRANSCRIPTION_MODELS];
   }
 
   private async fetchModels(options: FetchModelsOptions): Promise<string[]> {
-    // Returns union of transcription + generative; narrowing happens in
-    // getGenerativeTextModels / getTranscriptionModels callers (finding 15).
+    // Returns the union of transcription and generative models; callers narrow
+    // it by capability before using the discovered catalog.
     if (!options.apiKey) return [];
     try {
-      const response = await fetch(
-        "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000",
-        { headers: { "x-goog-api-key": options.apiKey } },
-      );
-      if (!response.ok) {
-        logModelDiscoveryResponseFailure("Gemini", response);
-        return [];
-      }
-      const payload = (await response.json()) as GeminiListResponse;
-      if (!payload.models || payload.models.length === 0) {
-        getLogger().verbose(
-          "Gemini model discovery returned empty models array",
-        );
-        return [];
-      }
-      // `payload.models` is proven non-empty by the guard above, so the `?? []`
-      // fallback here is dead.
-      const filtered = payload.models
-        .filter((m) =>
-          (m.supportedGenerationMethods ?? []).includes("generateContent"),
-        )
-        .map((m) => (m.name ?? "").replace(/^models\//, "").trim())
-        .filter(
-          (id) => isGeneralGeminiModel(id) || isGeminiTranscriptionModel(id),
-        )
-        .sort((a, b) => a.localeCompare(b));
-      if (filtered.length === 0) {
-        getLogger().verbose(
-          "Gemini model discovery filtered to 0 after marker checks",
-        );
-      }
-      return filtered;
+      const models = await fetchGeminiModelCatalog(options.apiKey);
+      return models ? filterGeminiModelCatalog(models) : [];
     } catch {
       logModelDiscoveryFailure("Gemini", "request or response parsing failed");
       return [];
@@ -425,13 +474,9 @@ export class GeminiModelProviderRepo extends BaseModelProviderRepo {
 }
 
 export class AzureModelProviderRepo extends BaseModelProviderRepo {
-  supportsGenerativeTextModels(): boolean {
-    return true;
-  }
+  readonly supportsGenerativeTextModels = true;
 
-  supportsTranscriptionModels(): boolean {
-    return false;
-  }
+  readonly supportsTranscriptionModels = false;
 
   async getGenerativeTextModels(
     options: FetchModelsOptions,
@@ -458,9 +503,7 @@ export class AzureModelProviderRepo extends BaseModelProviderRepo {
 }
 
 export class OllamaModelProviderRepo extends BaseModelProviderRepo {
-  supportsGenerativeTextModels(): boolean {
-    return true;
-  }
+  readonly supportsGenerativeTextModels = true;
 
   // Stock Ollama has no speech-to-text endpoint: its OpenAI-compatible
   // surface covers chat, completions, models, embeddings, and responses
@@ -468,9 +511,7 @@ export class OllamaModelProviderRepo extends BaseModelProviderRepo {
   // transcription capability here previously let Ollama appear in the
   // transcription selector while getTranscribeAudioRepo() had no Ollama
   // branch. Keep it false so capability filtering and dispatch agree.
-  supportsTranscriptionModels(): boolean {
-    return false;
-  }
+  readonly supportsTranscriptionModels = false;
 
   getGenerativeTextModels(options: FetchModelsOptions): Promise<string[]> {
     return this.fetchModels(options);
@@ -499,13 +540,9 @@ export class OllamaModelProviderRepo extends BaseModelProviderRepo {
 }
 
 export class OpenAICompatibleModelProviderRepo extends BaseModelProviderRepo {
-  supportsGenerativeTextModels(): boolean {
-    return true;
-  }
+  readonly supportsGenerativeTextModels = true;
 
-  supportsTranscriptionModels(): boolean {
-    return true;
-  }
+  readonly supportsTranscriptionModels = true;
 
   getGenerativeTextModels(options: FetchModelsOptions): Promise<string[]> {
     return this.fetchModels(options);
@@ -531,13 +568,9 @@ export class OpenAICompatibleModelProviderRepo extends BaseModelProviderRepo {
 }
 
 export class SpeachesModelProviderRepo extends BaseModelProviderRepo {
-  supportsGenerativeTextModels(): boolean {
-    return false;
-  }
+  readonly supportsGenerativeTextModels = false;
 
-  supportsTranscriptionModels(): boolean {
-    return true;
-  }
+  readonly supportsTranscriptionModels = true;
 
   getGenerativeTextModels(): Promise<string[]> {
     return noModels();
@@ -551,13 +584,9 @@ export class SpeachesModelProviderRepo extends BaseModelProviderRepo {
 }
 
 export class OpenRouterModelProviderRepo extends BaseModelProviderRepo {
-  supportsGenerativeTextModels(): boolean {
-    return true;
-  }
+  readonly supportsGenerativeTextModels = true;
 
-  supportsTranscriptionModels(): boolean {
-    return true;
-  }
+  readonly supportsTranscriptionModels = true;
 
   getGenerativeTextModels(options: FetchModelsOptions): Promise<string[]> {
     if (!options.apiKey) return noModels();
@@ -582,13 +611,9 @@ export class OpenRouterModelProviderRepo extends BaseModelProviderRepo {
 }
 
 export class AldeaModelProviderRepo extends BaseModelProviderRepo {
-  supportsGenerativeTextModels(): boolean {
-    return false;
-  }
+  readonly supportsGenerativeTextModels = false;
 
-  supportsTranscriptionModels(): boolean {
-    return true;
-  }
+  readonly supportsTranscriptionModels = true;
 
   getGenerativeTextModels(): Promise<string[]> {
     return noModels();
@@ -600,13 +625,9 @@ export class AldeaModelProviderRepo extends BaseModelProviderRepo {
 }
 
 export class AssemblyAIModelProviderRepo extends BaseModelProviderRepo {
-  supportsGenerativeTextModels(): boolean {
-    return false;
-  }
+  readonly supportsGenerativeTextModels = false;
 
-  supportsTranscriptionModels(): boolean {
-    return true;
-  }
+  readonly supportsTranscriptionModels = true;
 
   getGenerativeTextModels(): Promise<string[]> {
     return noModels();
@@ -618,13 +639,9 @@ export class AssemblyAIModelProviderRepo extends BaseModelProviderRepo {
 }
 
 export class ElevenLabsModelProviderRepo extends BaseModelProviderRepo {
-  supportsGenerativeTextModels(): boolean {
-    return false;
-  }
+  readonly supportsGenerativeTextModels = false;
 
-  supportsTranscriptionModels(): boolean {
-    return true;
-  }
+  readonly supportsTranscriptionModels = true;
 
   getGenerativeTextModels(): Promise<string[]> {
     return noModels();
@@ -636,13 +653,9 @@ export class ElevenLabsModelProviderRepo extends BaseModelProviderRepo {
 }
 
 export class GladiaModelProviderRepo extends BaseModelProviderRepo {
-  supportsGenerativeTextModels(): boolean {
-    return false;
-  }
+  readonly supportsGenerativeTextModels = false;
 
-  supportsTranscriptionModels(): boolean {
-    return true;
-  }
+  readonly supportsTranscriptionModels = true;
 
   getGenerativeTextModels(): Promise<string[]> {
     return noModels();
@@ -654,13 +667,9 @@ export class GladiaModelProviderRepo extends BaseModelProviderRepo {
 }
 
 export class XaiModelProviderRepo extends BaseModelProviderRepo {
-  supportsGenerativeTextModels(): boolean {
-    return false;
-  }
+  readonly supportsGenerativeTextModels = false;
 
-  supportsTranscriptionModels(): boolean {
-    return true;
-  }
+  readonly supportsTranscriptionModels = true;
 
   getGenerativeTextModels(): Promise<string[]> {
     return noModels();
@@ -673,13 +682,9 @@ export class XaiModelProviderRepo extends BaseModelProviderRepo {
 }
 
 export class DeepgramModelProviderRepo extends BaseModelProviderRepo {
-  supportsGenerativeTextModels(): boolean {
-    return false;
-  }
+  readonly supportsGenerativeTextModels = false;
 
-  supportsTranscriptionModels(): boolean {
-    return true;
-  }
+  readonly supportsTranscriptionModels = true;
 
   getGenerativeTextModels(): Promise<string[]> {
     return noModels();

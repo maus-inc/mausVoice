@@ -201,7 +201,7 @@ describe("Gemini native transport", () => {
     });
   });
 
-  it("uses Files API and audioTranscriptionConfig for dedicated transcribe model", async () => {
+  it("uses Files API and extracts audioTranscription text for the dedicated model", async () => {
     const customFetch = vi
       .fn()
       .mockImplementation((url: string, init?: RequestInit) => {
@@ -238,7 +238,18 @@ describe("Gemini native transport", () => {
         return Promise.resolve(
           jsonResponse({
             candidates: [
-              { content: { parts: [{ text: "transcript via transcribe" }] } },
+              {
+                content: {
+                  parts: [
+                    { text: "" },
+                    {
+                      audioTranscription: {
+                        text: "transcript via transcribe",
+                      },
+                    },
+                  ],
+                },
+              },
             ],
           }),
         );
@@ -287,6 +298,137 @@ describe("Gemini native transport", () => {
         (i as RequestInit)?.method === "DELETE",
     );
     expect(deleteCalls.length).toBe(1);
+  });
+
+  it("preserves word boundaries between diarized transcription parts", async () => {
+    const customFetch = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("/upload/v1beta/files")) {
+        return Promise.resolve(new Response("upload failed", { status: 500 }));
+      }
+      return Promise.resolve(
+        jsonResponse({
+          candidates: [
+            {
+              content: {
+                parts: [
+                  {
+                    audioTranscription: {
+                      text: "hello",
+                      speakerLabel: "spk_1",
+                    },
+                  },
+                  {
+                    audioTranscription: {
+                      text: "world.",
+                      speakerLabel: "spk_2",
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+      );
+    });
+
+    await expect(
+      geminiTranscribeAudio({
+        apiKey: "gemini-key",
+        model: "gemini-3.5-transcribe",
+        blob: new Uint8Array([1, 2, 3]).buffer,
+        mimeType: "audio/wav",
+        enableDiarization: true,
+        customFetch,
+      }),
+    ).resolves.toEqual({ text: "hello world.", wordsUsed: 2 });
+  });
+
+  it.each([
+    {
+      name: "combines non-empty text followed by audioTranscription",
+      parts: [
+        { text: "  hello  " },
+        { audioTranscription: { text: "  world.  " } },
+      ],
+      expected: { text: "hello world.", wordsUsed: 2 },
+    },
+    {
+      name: "concatenates multiple text-only parts without adding separators",
+      parts: [{ text: "hel" }, { text: "lo " }, { text: "world." }],
+      expected: { text: "hello world.", wordsUsed: 2 },
+    },
+  ])("$name", async ({ parts, expected }) => {
+    const customFetch = vi
+      .fn()
+      .mockResolvedValue(
+        jsonResponse({ candidates: [{ content: { parts } }] }),
+      );
+
+    await expect(
+      geminiTranscribeAudio({
+        apiKey: "gemini-key",
+        model: "gemini-3.8-flash",
+        blob: new Uint8Array([1, 2, 3]).buffer,
+        mimeType: "audio/wav",
+        customFetch,
+      }),
+    ).resolves.toEqual(expected);
+  });
+
+  it("rejects an all-blank transcription response", async () => {
+    const customFetch = vi.fn().mockImplementation(() =>
+      Promise.resolve(
+        jsonResponse({
+          candidates: [
+            {
+              content: {
+                parts: [
+                  { text: "" },
+                  { text: " \n\t " },
+                  { audioTranscription: { text: " \n\t " } },
+                ],
+              },
+            },
+          ],
+        }),
+      ),
+    );
+
+    await expect(
+      geminiTranscribeAudio({
+        apiKey: "gemini-key",
+        model: "gemini-3.8-flash",
+        blob: new Uint8Array([1, 2, 3]).buffer,
+        mimeType: "audio/wav",
+        customFetch,
+      }),
+    ).rejects.toThrow("Transcription failed - empty response");
+  });
+
+  it("rejects whitespace-only text parts from a transcription response", async () => {
+    const customFetch = vi.fn().mockImplementation(() =>
+      Promise.resolve(
+        jsonResponse({
+          candidates: [
+            {
+              content: {
+                parts: [{ text: "  " }, { text: " \n\t " }],
+              },
+            },
+          ],
+        }),
+      ),
+    );
+
+    await expect(
+      geminiTranscribeAudio({
+        apiKey: "gemini-key",
+        model: "gemini-3.8-flash",
+        blob: new Uint8Array([1, 2, 3]).buffer,
+        mimeType: "audio/wav",
+        customFetch,
+      }),
+    ).rejects.toThrow("Transcription failed - empty response");
   });
 
   it("falls back to inlineData when Files API upload fails for transcribe model", async () => {
@@ -433,7 +575,16 @@ describe("Gemini native transport", () => {
             name: "lookup",
             parameters: {
               type: "object",
-              properties: { id: { type: "integer" } },
+              properties: {
+                id: { type: "integer" },
+                nested: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: { enabled: { type: "boolean" } },
+                  },
+                },
+              },
             },
           },
         ],
@@ -469,9 +620,128 @@ describe("Gemini native transport", () => {
     const body = JSON.parse(init?.body as string);
     expect(body.tools[0].functionDeclarations[0].parameters).toEqual({
       type: "OBJECT",
-      properties: { id: { type: "INTEGER" } },
+      properties: {
+        id: { type: "INTEGER" },
+        nested: {
+          type: "ARRAY",
+          items: {
+            type: "OBJECT",
+            properties: { enabled: { type: "BOOLEAN" } },
+          },
+        },
+      },
     });
     expect(body).not.toHaveProperty("generationConfig");
+  });
+
+  it("converts JSON Schema unions without rewriting example values", async () => {
+    const customFetch = vi
+      .fn()
+      .mockResolvedValue(
+        sseResponse([
+          'data: {"candidates":[{"content":{"parts":[{"text":"ok"}]}}]}\r\n\r\n',
+        ]),
+      );
+    const events = [];
+    for await (const event of geminiStreamChat({
+      apiKey: "gemini-key",
+      model: "gemini-3.8-flash",
+      input: {
+        messages: [{ role: "user", content: "Hello" }],
+        tools: [
+          {
+            name: "lookup",
+            parameters: {
+              type: "object",
+              properties: {
+                nullableName: {
+                  type: ["string", "null"],
+                  default: { type: "string" },
+                  examples: [{ type: "integer", nested: { type: "boolean" } }],
+                },
+                stringOrNumber: { type: ["string", "number"] },
+                nullOnlyUnion: { type: ["null"] },
+                nestedNullableArray: {
+                  type: "array",
+                  items: { type: ["integer", "null"] },
+                },
+                constrainedUnion: {
+                  type: ["string", "number"],
+                  anyOf: [
+                    { type: "integer" },
+                    {
+                      type: "object",
+                      properties: { enabled: { type: "boolean" } },
+                    },
+                  ],
+                },
+                regularAnyOf: {
+                  anyOf: [{ type: "string" }, { type: "number" }],
+                },
+              },
+            },
+          },
+        ],
+      },
+      customFetch,
+    })) {
+      events.push(event);
+    }
+
+    expect(events).toContainEqual({ type: "text-delta", text: "ok" });
+    const body = transportBody<{
+      tools?: Array<{
+        functionDeclarations?: Array<{
+          parameters?: Record<string, unknown>;
+        }>;
+      }>;
+    }>(customFetch.mock.calls, 0);
+    expect(body.tools?.[0]?.functionDeclarations?.[0]?.parameters).toEqual({
+      type: "OBJECT",
+      properties: {
+        nullableName: {
+          type: "STRING",
+          nullable: true,
+          default: { type: "string" },
+          examples: [{ type: "integer", nested: { type: "boolean" } }],
+        },
+        stringOrNumber: {
+          anyOf: [{ type: "STRING" }, { type: "NUMBER" }],
+        },
+        nullOnlyUnion: { type: "NULL" },
+        nestedNullableArray: {
+          type: "ARRAY",
+          items: { type: "INTEGER", nullable: true },
+        },
+        constrainedUnion: {
+          anyOf: [
+            {
+              type: "STRING",
+              anyOf: [
+                { type: "INTEGER" },
+                {
+                  type: "OBJECT",
+                  properties: { enabled: { type: "BOOLEAN" } },
+                },
+              ],
+            },
+            {
+              type: "NUMBER",
+              anyOf: [
+                { type: "INTEGER" },
+                {
+                  type: "OBJECT",
+                  properties: { enabled: { type: "BOOLEAN" } },
+                },
+              ],
+            },
+          ],
+        },
+        regularAnyOf: {
+          anyOf: [{ type: "STRING" }, { type: "NUMBER" }],
+        },
+      },
+    });
   });
 
   it("reports a turn that ended in a function call as tool-calls", async () => {
