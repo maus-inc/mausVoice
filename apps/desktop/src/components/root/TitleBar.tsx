@@ -2,7 +2,7 @@ import { Box, IconButton, Stack } from "@mui/material";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { IconNode } from "lucide";
 import { Minus, Plus, X } from "lucide";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useIntl } from "react-intl";
 import { showErrorSnackbar } from "../../actions/app.actions";
 import { useIsDarkMode } from "../../hooks/color-scheme.hooks";
@@ -50,6 +50,93 @@ const MAXIMIZE_GLYPH: IconNode = [
 ];
 
 /**
+ * Minimum pointer travel in CSS pixels before a primary-button press on the
+ * title bar hands off to `win.startDragging()`.
+ *
+ * Tauri's injected `drag.js` invokes `plugin:window|start_dragging` on the very
+ * first `mousedown` (`detail === 1`) before the pointer has moved. On
+ * undecorated windows (`decorations: false`) that immediate OS move loop
+ * (1) unmaximizes a maximized window while leaving it at full-screen width
+ * (tauri#11945), (2) swallows the first `mouseup` on Windows/Linux so the
+ * browser never synthesizes `dblclick` (tauri#10767), and (3) on `detail === 2`
+ * invokes `internal_toggle_maximize` right before `onDoubleClick` fires
+ * `toggleMax`, toggling maximize twice and canceling out.
+ */
+const DRAG_START_DISTANCE_PX = 4;
+
+type WindowSize = { width: number; height: number };
+
+type DragPoint = { x: number; y: number };
+
+const hasPositiveDimensions = (size: WindowSize | undefined): boolean => {
+  if (size === undefined) return true;
+  return size.width > 0 && size.height > 0;
+};
+
+const readWindowSize = (
+  win: ReturnType<typeof getCurrentWindow>,
+): Promise<WindowSize> =>
+  typeof win.innerSize === "function" ? win.innerSize() : win.outerSize();
+
+const readWindowMinimized = (
+  win: ReturnType<typeof getCurrentWindow>,
+): Promise<boolean> =>
+  typeof win.isMinimized === "function"
+    ? win.isMinimized()
+    : Promise.resolve(false);
+
+const isActiveTicket = (
+  canceled: boolean,
+  current: number,
+  latest: number,
+): boolean => !canceled && current === latest;
+
+const shouldApplySize = (minimized: boolean, size: WindowSize): boolean =>
+  !minimized && hasPositiveDimensions(size);
+
+/**
+ * Upper bound (ms) for suppressing contradictory `isMaximized()` reads emitted
+ * by intermediate `onResized` frames during macOS AppKit `setFrame:animate:YES`
+ * (~150-250ms) and GTK async `window-state-event` transitions, while expiring
+ * quickly enough to reflect a subsequent window-manager unmaximize.
+ */
+const PENDING_MAXIMIZE_TTL_MS = 500;
+
+interface PendingMaximized {
+  value: boolean;
+  expiresAt: number;
+}
+
+const createPendingMaximized = (value: boolean): PendingMaximized => ({
+  value,
+  expiresAt: Date.now() + PENDING_MAXIMIZE_TTL_MS,
+});
+
+const isActivePendingMaximized = (
+  pending: PendingMaximized | null,
+  now: number,
+): pending is PendingMaximized => pending !== null && now < pending.expiresAt;
+
+const shouldIgnoreMeasuredMaximized = (
+  pendingRef: React.MutableRefObject<PendingMaximized | null>,
+  measured: boolean,
+): boolean => {
+  const pending = pendingRef.current;
+  if (!isActivePendingMaximized(pending, Date.now())) {
+    pendingRef.current = null;
+    return false;
+  }
+  if (pending.value === measured) {
+    pendingRef.current = null;
+    return false;
+  }
+  return true;
+};
+
+const toLogicalWidth = (physicalWidth: number, scale: number): number =>
+  physicalWidth / (scale || 1);
+
+/**
  * One `onResized` subscription carrying both the maximized flag and the bar
  * density.
  *
@@ -60,43 +147,90 @@ const MAXIMIZE_GLYPH: IconNode = [
  * the responses to a burst of resize events are unordered, so "last write wins"
  * is not the same as "newest measurement wins".
  *
- * Returns the maximized flag and whether the bar should render compact.
+ * Returns the maximized flag, an optimistic setter, the synchronous maximized
+ * ref, the pending unconfirmed maximize ref, and whether the bar should render
+ * compact.
  */
 const useWindowMetrics = () => {
   const [maximized, setMaximized] = useState(false);
   const [compact, setCompact] = useState(false);
+  // Separate monotonic tickets for width vs. maximized state so an optimistic
+  // maximize toggle guards `setMaximized` against stale pre-click measurements
+  // without discarding the latest width measurement for `setCompact`.
+  const sizeTicketRef = useRef(0);
+  const maxTicketRef = useRef(0);
+  const maximizedRef = useRef(false);
+  const pendingMaximizedRef = useRef<PendingMaximized | null>(null);
+
+  const applyMaximized = useCallback((value: boolean) => {
+    maxTicketRef.current += 1;
+    pendingMaximizedRef.current = createPendingMaximized(value);
+    maximizedRef.current = value;
+    setMaximized(value);
+  }, []);
 
   useEffect(() => {
     if (!isTauriRuntime()) return;
     let unlisten: (() => void) | undefined;
     let canceled = false;
     const win = getCurrentWindow();
-    // Monotonic ticket per measurement. A response is applied only if no newer
-    // measurement has started since, so a late reply for an older size is
-    // dropped rather than reverting the bar to a density the window has left.
-    let ticket = 0;
 
-    const read = async () => {
-      const current = ++ticket;
-      const settled = () => !canceled && current === ticket;
+    const applyMeasuredSize = (
+      ticket: number,
+      minimizedNow: boolean,
+      size: WindowSize,
+      scale: number,
+    ) => {
+      const active = isActiveTicket(canceled, ticket, sizeTicketRef.current);
+      if (!active || !shouldApplySize(minimizedNow, size)) return;
+      setCompact(isCompactWidth(toLogicalWidth(size.width, scale)));
+    };
+
+    const applyMeasuredMaximized = (
+      ticket: number,
+      minimizedNow: boolean,
+      maximizedNow: boolean,
+    ) => {
+      const active = isActiveTicket(canceled, ticket, maxTicketRef.current);
+      if (
+        !active ||
+        minimizedNow ||
+        shouldIgnoreMeasuredMaximized(pendingMaximizedRef, maximizedNow)
+      ) {
+        return;
+      }
+      maximizedRef.current = maximizedNow;
+      setMaximized(maximizedNow);
+    };
+
+    const read = async (event?: { payload?: WindowSize }) => {
+      // On Windows (`WM_SIZE` `SIZE_MINIMIZED`), `tao` emits `Resized(0, 0)`
+      // and clears `WindowFlags::MAXIMIZED`, while `outerSize()` (`GetWindowRect`)
+      // reports the 160x28 iconic taskbar slot. Ignoring zero-dimension resize
+      // payloads and minimized windows keeps the bar from flipping to compact
+      // or losing its maximized state while minimized.
+      if (!hasPositiveDimensions(event?.payload)) return;
+      const sizeTicket = ++sizeTicketRef.current;
+      const maxTicket = ++maxTicketRef.current;
       try {
-        const [size, maximizedNow, scale] = await Promise.all([
-          win.outerSize(),
+        // Prefer `innerSize()` over `outerSize()`: on an undecorated window the
+        // webview fills the client area, whereas `outerSize()` on Linux (`tao`
+        // 0.34.8) initializes from `root_origin()` and lags `configure-event`
+        // via asynchronous `frame_extents()`, and on Windows includes the
+        // invisible DWM shadow border and returns 160x28 when minimized.
+        const [size, maximizedNow, minimizedNow, scale] = await Promise.all([
+          readWindowSize(win),
           win.isMaximized(),
+          readWindowMinimized(win),
           win.scaleFactor(),
         ]);
-        if (!settled()) return;
-        // `outerSize()` reports physical device pixels, but every length in the
-        // bar is a logical CSS pixel. Comparing the two directly would make the
-        // threshold fire late on a scaled display: at 200% scaling a 1000px
-        // window measures 2000, so a 900px threshold would never trigger.
-        setCompact(isCompactWidth(size.width / (scale || 1)));
-        setMaximized(maximizedNow);
+        applyMeasuredSize(sizeTicket, minimizedNow, size, scale);
+        applyMeasuredMaximized(maxTicket, minimizedNow, maximizedNow);
       } catch {
         /* the window went away mid-measurement; the next tick re-reads */
       }
     };
-    void read();
+    read().catch(() => undefined);
 
     win
       .onResized(read)
@@ -127,7 +261,13 @@ const useWindowMetrics = () => {
   // The setter is handed back so a caption-button click can update the flag
   // optimistically, without the bar waiting for the next resize event to
   // confirm what the window just did.
-  return [maximized, setMaximized, compact] as const;
+  return [
+    maximized,
+    applyMaximized,
+    maximizedRef,
+    pendingMaximizedRef,
+    compact,
+  ] as const;
 };
 
 const useWindowFocused = () => {
@@ -180,7 +320,118 @@ const runWindowControl = async (
   }
 };
 
-const useWindowControls = (setMaximized: (value: boolean) => void) => {
+const startWindowDrag = () => {
+  const win = getCurrentWindow();
+  if (typeof win.startDragging === "function") {
+    win.startDragging().catch(showErrorSnackbar);
+  }
+};
+
+const isPrimaryButtonHeld = (buttons: number): boolean => (buttons & 1) !== 0;
+
+const isWithinDragThreshold = (
+  origin: DragPoint | null,
+  clientX: number,
+  clientY: number,
+): boolean =>
+  origin !== null &&
+  Math.hypot(clientX - origin.x, clientY - origin.y) < DRAG_START_DISTANCE_PX;
+
+const isMacDoubleClickRelease = (
+  detail: number,
+  origin: DragPoint | null,
+  clientX: number,
+  clientY: number,
+): boolean =>
+  getPlatform() === "macos" &&
+  detail === 2 &&
+  isWithinDragThreshold(origin, clientX, clientY);
+
+/**
+ * Arms `skipRef` across the current event dispatch and clears it on the next
+ * macrotask (`setTimeout(..., 0)`), so it outlives microtasks between
+ * `mouseup(detail === 2)` and a synthesized `dblclick`, yet expires if no
+ * `dblclick` is dispatched.
+ */
+const armSingleTurnDblClickSkip = (
+  skipRef: React.MutableRefObject<boolean>,
+) => {
+  skipRef.current = true;
+  window.setTimeout(() => {
+    skipRef.current = false;
+  }, 0);
+};
+
+const bindDeferredDrag = (
+  startX: number,
+  startY: number,
+  cleanupRef: React.MutableRefObject<(() => void) | null>,
+) => {
+  const controller = new AbortController();
+  const cleanup = () => {
+    controller.abort();
+    if (cleanupRef.current === cleanup) {
+      cleanupRef.current = null;
+    }
+  };
+
+  const handleMove = (moveEvent: MouseEvent) => {
+    if (!isPrimaryButtonHeld(moveEvent.buttons)) {
+      cleanup();
+      return;
+    }
+    if (
+      isWithinDragThreshold(
+        { x: startX, y: startY },
+        moveEvent.clientX,
+        moveEvent.clientY,
+      )
+    ) {
+      return;
+    }
+    cleanup();
+    startWindowDrag();
+  };
+
+  cleanupRef.current = cleanup;
+  window.addEventListener("mousemove", handleMove, {
+    signal: controller.signal,
+  });
+  window.addEventListener("mouseup", cleanup, {
+    capture: true,
+    signal: controller.signal,
+  });
+  window.addEventListener("blur", cleanup, {
+    signal: controller.signal,
+  });
+};
+
+const beginPlatformDrag = (
+  startX: number,
+  startY: number,
+  cleanupRef: React.MutableRefObject<(() => void) | null>,
+) => {
+  if (!isTauriRuntime()) return;
+  // On macOS, `tao`'s `drag_window()` passes `NSApp.currentEvent()` to
+  // `-[NSWindow performWindowDragWithEvent:]`, which requires the current
+  // AppKit event to be `LeftMouseDown`; AppKit's WindowServer natively waits
+  // for pointer movement before moving the window. On Windows and Linux,
+  // starting the OS move loop before pointer movement swallows `mouseup`
+  // (tauri#10767) and unmaximizes on a stationary click (tauri#11945).
+  if (getPlatform() === "macos") {
+    startWindowDrag();
+    return;
+  }
+  bindDeferredDrag(startX, startY, cleanupRef);
+};
+
+const useWindowControls = (
+  applyMaximized: (value: boolean) => void,
+  maximizedRef: React.MutableRefObject<boolean>,
+  pendingMaximizedRef: React.MutableRefObject<PendingMaximized | null>,
+) => {
+  const togglePendingRef = useRef(false);
+
   const minimize = useCallback(
     () =>
       runWindowControl(async () => {
@@ -190,22 +441,27 @@ const useWindowControls = (setMaximized: (value: boolean) => void) => {
     [],
   );
 
-  const toggleMax = useCallback(
-    () =>
-      runWindowControl(async () => {
-        if (!isTauriRuntime()) return;
-        const win = getCurrentWindow();
-        const isMax = await win.isMaximized();
-        if (isMax) {
-          await win.unmaximize();
-          setMaximized(false);
-        } else {
-          await win.maximize();
-          setMaximized(true);
-        }
-      }),
-    [setMaximized],
-  );
+  const toggleMax = useCallback(() => {
+    if (!isTauriRuntime() || togglePendingRef.current) return;
+    const win = getCurrentWindow();
+    const previous = maximizedRef.current;
+    const next = !previous;
+    togglePendingRef.current = true;
+    maximizedRef.current = next;
+    pendingMaximizedRef.current = createPendingMaximized(next);
+    (next ? win.maximize() : win.unmaximize())
+      .then(() => {
+        applyMaximized(next);
+      })
+      .catch((error: unknown) => {
+        pendingMaximizedRef.current = null;
+        maximizedRef.current = previous;
+        showErrorSnackbar(error);
+      })
+      .finally(() => {
+        togglePendingRef.current = false;
+      });
+  }, [applyMaximized, maximizedRef, pendingMaximizedRef]);
 
   const close = useCallback(
     () =>
@@ -216,7 +472,84 @@ const useWindowControls = (setMaximized: (value: boolean) => void) => {
     [],
   );
 
-  return { minimize, toggleMax, close };
+  const dragCleanupRef = useRef<(() => void) | null>(null);
+  const doubleClickOriginRef = useRef<DragPoint | null>(null);
+  const skipNextDblClickRef = useRef(false);
+
+  useEffect(
+    () => () => {
+      dragCleanupRef.current?.();
+    },
+    [],
+  );
+
+  const onDragRegionMouseDown = useCallback(
+    (event: React.MouseEvent<HTMLElement>) => {
+      if (event.button !== 0) return;
+      // Prevent text selection on double-click and stop propagation before the
+      // event bubbles from the React root to `document`, where Tauri's injected
+      // `drag.js` listener lives.
+      event.preventDefault();
+      event.stopPropagation();
+      dragCleanupRef.current?.();
+      skipNextDblClickRef.current = false;
+
+      // The second press of a double-click is handled by `onDoubleClick` (or
+      // `onDragRegionMouseUp` on macOS); never start a drag on a multi-click.
+      if (event.detail >= 2) {
+        doubleClickOriginRef.current = { x: event.clientX, y: event.clientY };
+        return;
+      }
+      doubleClickOriginRef.current = null;
+      beginPlatformDrag(event.clientX, event.clientY, dragCleanupRef);
+    },
+    [],
+  );
+
+  const onDragRegionMouseUp = useCallback(
+    (event: React.MouseEvent<HTMLElement>) => {
+      if (event.button !== 0) return;
+      // On macOS, Tauri's `drag.js` invokes `internal_toggle_maximize` from a
+      // document-level `mouseup` listener when `detail === 2`. Stopping
+      // propagation here prevents `drag.js` from double-toggling.
+      event.stopPropagation();
+      dragCleanupRef.current?.();
+      const origin = doubleClickOriginRef.current;
+      doubleClickOriginRef.current = null;
+      // On macOS, `performWindowDragWithEvent:` on the first press consumes the
+      // first `mouseup` in AppKit, so WebKit may not synthesize `dblclick` on
+      // the second release even though `mouseup` arrives with `detail === 2`.
+      if (
+        isMacDoubleClickRelease(
+          event.detail,
+          origin,
+          event.clientX,
+          event.clientY,
+        )
+      ) {
+        armSingleTurnDblClickSkip(skipNextDblClickRef);
+        toggleMax();
+      }
+    },
+    [toggleMax],
+  );
+
+  const onDragRegionDoubleClick = useCallback(() => {
+    if (skipNextDblClickRef.current) {
+      skipNextDblClickRef.current = false;
+      return;
+    }
+    toggleMax();
+  }, [toggleMax]);
+
+  return {
+    minimize,
+    toggleMax,
+    close,
+    onDragRegionMouseDown,
+    onDragRegionMouseUp,
+    onDragRegionDoubleClick,
+  };
 };
 
 /**
@@ -516,19 +849,40 @@ const titleBarSx = (dark: boolean, trafficLights: boolean) =>
     boxShadow: dark ? titleBarShadow.dark : titleBarShadow.light,
   }) as const;
 
+const leftClusterSx = (trafficLights: boolean, focused: boolean) =>
+  ({
+    alignItems: "center",
+    position: "relative",
+    zIndex: 1,
+    pl: trafficLights ? 1 : 0.5,
+    color: "text.primary",
+    opacity: focused ? 1 : 0.6,
+    pointerEvents: "none",
+  }) as const;
+
+const resolveTitleBarPlatform = () =>
+  isTauriRuntime() ? getPlatform() : "unknown";
+
 export const TitleBar = () => {
   const dark = useIsDarkMode();
   const intl = useIntl();
-  const platform = isTauriRuntime() ? getPlatform() : "unknown";
   // Same predicate the resize grips use, so the chrome and the grips can never
   // disagree. Browser preview ("unknown") gets right-side caption buttons.
-  const trafficLights = !hasRightCaptionButtons(platform);
+  const trafficLights = !hasRightCaptionButtons(resolveTitleBarPlatform());
   // Maximized flag and bar density come from one subscription: they change in
   // the same event, so reading them separately issued duplicated IPC on every
   // tick of a resize drag.
-  const [maximized, setMaximized, compact] = useWindowMetrics();
+  const [maximized, setMaximized, maximizedRef, pendingMaximizedRef, compact] =
+    useWindowMetrics();
   const focused = useWindowFocused();
-  const { minimize, toggleMax, close } = useWindowControls(setMaximized);
+  const {
+    minimize,
+    toggleMax,
+    close,
+    onDragRegionMouseDown,
+    onDragRegionMouseUp,
+    onDragRegionDoubleClick,
+  } = useWindowControls(setMaximized, maximizedRef, pendingMaximizedRef);
 
   const minimizeLabel = intl.formatMessage({ defaultMessage: "Minimize" });
   const maximizeLabel = maximized
@@ -538,16 +892,19 @@ export const TitleBar = () => {
 
   return (
     <>
-      <WindowResizeHandles />
+      <WindowResizeHandles disabled={maximized} />
       <Box data-focused={focused} sx={titleBarSx(dark, trafficLights)}>
         {/*
-          Full-bleed drag region. Double-click to maximise is handled explicitly:
-          with `decorations: false` the webview does not reliably synthesise the
-          native double-click-to-maximise behaviour for a drag region.
+          Full-bleed drag region. Mouse events are stopped from bubbling to
+          Tauri's document-level `drag.js` listener so stationary clicks do not
+          unmaximize the window and double-clicks do not fire both
+          `internal_toggle_maximize` and `toggleMax`.
         */}
         <Box
           data-tauri-drag-region
-          onDoubleClick={toggleMax}
+          onMouseDown={onDragRegionMouseDown}
+          onMouseUp={onDragRegionMouseUp}
+          onDoubleClick={onDragRegionDoubleClick}
           sx={{
             position: "absolute",
             inset: 0,
@@ -571,24 +928,15 @@ export const TitleBar = () => {
         <Stack
           direction="row"
           spacing={1}
-          sx={{
-            alignItems: "center",
-            position: "relative",
-            zIndex: 1,
-            pl: trafficLights ? 1 : 0.5,
-            color: "text.primary",
-            opacity: focused ? 1 : 0.6,
-          }}
+          sx={leftClusterSx(trafficLights, focused)}
         >
-          <ThemeModeToggle />
+          <Box sx={{ display: "inline-flex", pointerEvents: "auto" }}>
+            <ThemeModeToggle />
+          </Box>
           <LogoWithText compact={compact} />
         </Stack>
 
-        <Box
-          sx={{ flex: 1 }}
-          data-tauri-drag-region
-          onDoubleClick={toggleMax}
-        />
+        <Box sx={{ flex: 1, pointerEvents: "none" }} />
 
         {trafficLights ? null : (
           <CaptionButtons
