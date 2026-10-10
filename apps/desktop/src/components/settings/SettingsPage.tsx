@@ -65,7 +65,10 @@ import {
   savePersonalDeepgramApiKey,
   savePersonalGroqApiKey,
 } from "../../actions/personal-use.actions";
-import { setAutoLaunchEnabled } from "../../actions/settings.actions";
+import {
+  openPostProcessingSettings,
+  setAutoLaunchEnabled,
+} from "../../actions/settings.actions";
 import { SettingSection } from "../common/SettingSection";
 import { TipCard } from "../onboarding/TipCard";
 import { loadTones } from "../../actions/tone.actions";
@@ -387,12 +390,6 @@ export default function SettingsPage() {
   const openTranscriptionDialog = () => {
     produceAppState((draft) => {
       draft.settings.aiTranscriptionDialogOpen = true;
-    });
-  };
-
-  const openPostProcessingDialog = () => {
-    produceAppState((draft) => {
-      draft.settings.aiPostProcessingDialogOpen = true;
     });
   };
 
@@ -994,7 +991,7 @@ export default function SettingsPage() {
                         component="button"
                         color="inherit"
                         sx={{ verticalAlign: "baseline" }}
-                        onClick={openPostProcessingDialog}
+                        onClick={openPostProcessingSettings}
                       >
                         <FormattedMessage defaultMessage="Fix issue" />
                       </Link>
@@ -1279,7 +1276,7 @@ export default function SettingsPage() {
         <ListTile
           title={<FormattedMessage defaultMessage="AI post processing" />}
           leading={<AutoFixHighOutlined />}
-          onClick={openPostProcessingDialog}
+          onClick={openPostProcessingSettings}
         />
       </SettingAnchor>
       <SettingAnchor settingKey="assistant_mode" highlight={highlight}>

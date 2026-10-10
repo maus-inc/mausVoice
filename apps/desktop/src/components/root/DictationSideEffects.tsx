@@ -16,8 +16,12 @@ import {
   sendChatMessage,
 } from "../../actions/chat.actions";
 import { refreshMember } from "../../actions/member.actions";
+import {
+  getFastStyleTruncationMessage,
+  getPostProcessFeedback,
+  getPostProcessFeedbackToastAction,
+} from "../../actions/post-process-feedback";
 import { dismissToast, runToast, showToast } from "../../actions/toast.actions";
-import { getIntl } from "../../i18n/intl";
 import { applyInDictationStyleSwitch } from "../../actions/tone.actions";
 import {
   resolveToolPermission,
@@ -41,6 +45,7 @@ import { AgentStrategy } from "../../strategies/agent.strategy";
 import { BaseStrategy } from "../../strategies/base.strategy";
 import { DictationStrategy } from "../../strategies/dictation.strategy";
 import { TextFieldInfo } from "../../types/accessibility.types";
+import type { ToastAction } from "../../types/toast.types";
 import type { ReviewedTranscriptPersistenceInput } from "../../types/strategy.types";
 import {
   attachSessionAudioIntake,
@@ -296,6 +301,7 @@ export type PostTranscriptInput = {
     message: string;
     toastType: "info" | "error";
     duration?: number;
+    action?: ToastAction;
   }) => Promise<void> | void;
   /** Review-before-insert persistence hook; forwarded to the strategy. */
   persistReviewedTranscript?: (
@@ -347,9 +353,10 @@ export const postProcessFinalizedTranscript = async (
   const willStore =
     strategy.shouldStoreTranscript() &&
     (result.historyOwner ?? "stop-path") === "stop-path";
+  let historyEntryAvailable = result.historyOwner === "review";
   if (willStore) {
     getLogger().verbose("Storing transcription");
-    await input.storeTranscriptionFn({
+    const stored = await input.storeTranscriptionFn({
       audio: input.audio,
       rawTranscript: input.rawTranscript ?? null,
       sanitizedTranscript,
@@ -361,47 +368,42 @@ export const postProcessFinalizedTranscript = async (
       remoteDeviceId: result.remoteDeviceId,
       trace: input.trace ?? null,
     });
+    historyEntryAvailable = stored.transcription !== null;
   }
   input.refreshMember();
 
-  // Fast styling caps its input, so a long dictation reaches the destination
-  // with its ending unstyled. The warning was recorded on the row and nothing
-  // else, so the user got incomplete text with no notice during dictation. It
-  // is raised here rather than in the action because surfacing it is a UI
-  // concern, and this is where both facts it depends on are known.
-  const droppedChars = postProcessMetadata?.fastStyleTruncatedChars;
-  if (typeof droppedChars === "number" && droppedChars > 0) {
-    // The wording differs because the promise does. With the row stored, the
-    // untruncated raw text is in History and the user can recover the ending;
-    // in incognito nothing is stored at all, so promising History would be a lie.
-    // Deliberately different wording from the warning recorded on the History row.
-    // This project derives message ids from a content hash, so reusing that
-    // sentence here is an id collision and the extractor refuses it. The two are
-    // also different surfaces: that one is a stored record, this one is a live
-    // notification, and a transient toast does not need to read like a log line.
-    //
-    // Two calls rather than one call with a conditional descriptor, because the
-    // extractor needs `id` and `defaultMessage` as string literals in the
-    // argument and cannot follow a ternary.
-    const message = willStore
-      ? getIntl().formatMessage(
-          {
-            defaultMessage:
-              "Fast styling left the last {droppedChars} characters of that dictation unstyled. The unstyled ending is in History.",
-          },
-          { droppedChars },
-        )
-      : getIntl().formatMessage(
-          {
-            defaultMessage:
-              "That dictation outran fast styling, so its last {droppedChars} characters were left unstyled, and incognito mode is on, so that ending was not saved.",
-          },
-          { droppedChars },
-        );
+  // A fast-style result can report an unstyled tail. Show that feedback only
+  // after storage tells us whether History can recover the original text.
+  const truncatedMessage = getFastStyleTruncationMessage(
+    postProcessMetadata.fastStyleTruncatedChars,
+    {
+      canRecoverFromHistory: historyEntryAvailable,
+      context: "dictation",
+    },
+  );
+
+  const postProcessFeedback = getPostProcessFeedback(
+    postProcessMetadata,
+    "dictation",
+    { canRecoverFromHistory: historyEntryAvailable },
+  );
+  if (postProcessFeedback || truncatedMessage) {
+    const feedbackMessages = [
+      postProcessFeedback?.message,
+      truncatedMessage,
+    ].filter((message): message is string => Boolean(message));
+    // The native pill displays one toast at a time, so keep both outcomes and
+    // the Fix action when fast-style metadata reports an unstyled tail.
     await input.showToast({
-      message,
-      toastType: "info",
-      duration: 8_000,
+      message: feedbackMessages.join(" "),
+      toastType: postProcessFeedback?.severity ?? "info",
+      duration:
+        postProcessFeedback?.kind === "failed" || truncatedMessage
+          ? 8_000
+          : 5_000,
+      action: postProcessFeedback?.action
+        ? getPostProcessFeedbackToastAction(postProcessFeedback.action)
+        : undefined,
     });
   }
   return {

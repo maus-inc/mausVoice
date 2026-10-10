@@ -6,58 +6,210 @@ import { createMessageId } from "../../scripts/formatjs-id.mjs";
 import en from "../i18n/locales/en.json";
 import {
   classifyPostProcessErrorCategory,
+  isPostProcessErrorCategory,
   POST_PROCESS_ERROR_CATEGORY,
   POST_PROCESS_ERROR_REASONS,
+  type PostProcessErrorCategory,
   postProcessErrorReason,
   UNKNOWN_POST_PROCESS_ERROR_REASON,
 } from "./post-process-error-category";
 
 /**
- * One representative provider message per classifier branch. The list is the
- * contract the table below is checked against, so a branch added to the
- * classifier without a message fails here instead of printing an internal
- * English string into a translated locale.
+ * One representative provider error per stored category. The record is typed
+ * against the category union, so a new category needs both a branch input and
+ * a localized reason before this test can compile.
  */
-const BRANCH_MESSAGES: Readonly<Record<string, string>> = {
-  [POST_PROCESS_ERROR_CATEGORY.quotaOrPayment]: "402 payment required",
-  [POST_PROCESS_ERROR_CATEGORY.rateLimit]: "429 rate limit",
-  [POST_PROCESS_ERROR_CATEGORY.authentication]: "401 unauthorized",
-  [POST_PROCESS_ERROR_CATEGORY.timedOut]: "the request timed out",
-  [POST_PROCESS_ERROR_CATEGORY.aborted]: "the request was aborted",
-  [POST_PROCESS_ERROR_CATEGORY.network]: "fetch failed",
-  [POST_PROCESS_ERROR_CATEGORY.provider]:
-    "something the classifier cannot place",
+const BRANCH_ERRORS: Readonly<Record<PostProcessErrorCategory, unknown>> = {
+  [POST_PROCESS_ERROR_CATEGORY.quotaOrPayment]: { status: 402 },
+  [POST_PROCESS_ERROR_CATEGORY.rateLimit]: {
+    status: 429,
+    code: "rate_limit_exceeded",
+  },
+  [POST_PROCESS_ERROR_CATEGORY.providerLimit]: { status: 429 },
+  [POST_PROCESS_ERROR_CATEGORY.authentication]: { status: 401 },
+  [POST_PROCESS_ERROR_CATEGORY.timedOut]: { status: 408 },
+  [POST_PROCESS_ERROR_CATEGORY.aborted]: { code: "ERR_CANCELED" },
+  [POST_PROCESS_ERROR_CATEGORY.network]: { code: "ECONNREFUSED" },
+  [POST_PROCESS_ERROR_CATEGORY.provider]: { status: 503 },
 };
 
 describe("classifyPostProcessErrorCategory", () => {
   it("returns exactly the categories that have a localized reason", () => {
     const returned = new Set(
-      Object.values(BRANCH_MESSAGES).map((message) =>
-        classifyPostProcessErrorCategory(message),
+      Object.values(BRANCH_ERRORS).map((error) =>
+        classifyPostProcessErrorCategory(error),
       ),
     );
 
-    expect([...returned].sort()).toEqual(Object.keys(BRANCH_MESSAGES).sort());
+    expect([...returned].sort()).toEqual(Object.keys(BRANCH_ERRORS).sort());
   });
 
-  it("has a descriptor for every classifier branch", () => {
-    for (const category of Object.keys(BRANCH_MESSAGES)) {
+  it("has a descriptor for every stored category", () => {
+    for (const category of Object.values(POST_PROCESS_ERROR_CATEGORY)) {
       expect(POST_PROCESS_ERROR_REASONS[category]).toBeDefined();
     }
   });
 
-  it("reads 402 before 401 so a billing body is not classified as auth", () => {
-    // Order is the whole point of the classifier. Some providers put "quota" in
-    // a body that also carries a 401, and the wrong branch sends the user to
-    // fix their key instead of their balance.
+  it("uses a structured quota code before an ambiguous 429 status", () => {
     expect(
-      classifyPostProcessErrorCategory("402 payment required, quota exhausted"),
+      classifyPostProcessErrorCategory({
+        status: 429,
+        code: "insufficient_quota",
+      }),
     ).toBe(POST_PROCESS_ERROR_CATEGORY.quotaOrPayment);
   });
 
+  it("reads a specific nested code when an SDK wrapper has a generic code", () => {
+    expect(
+      classifyPostProcessErrorCategory({
+        status: 429,
+        code: "ERR_BAD_REQUEST",
+        error: { code: "insufficient_quota" },
+      }),
+    ).toBe(POST_PROCESS_ERROR_CATEGORY.quotaOrPayment);
+  });
+
+  it("classifies structured errors kept inside a provider fallback chain", () => {
+    const error = Object.assign(new Error("Both provider models failed"), {
+      primaryCause: { status: 404, code: "model_not_found" },
+      fallbackCause: { status: 429, code: "rate_limit_exceeded" },
+    });
+
+    expect(classifyPostProcessErrorCategory(error)).toBe(
+      POST_PROCESS_ERROR_CATEGORY.rateLimit,
+    );
+  });
+
+  it("classifies abort and timeout names when error messages are empty", () => {
+    expect(
+      classifyPostProcessErrorCategory(new DOMException("", "AbortError")),
+    ).toBe(POST_PROCESS_ERROR_CATEGORY.aborted);
+    expect(
+      classifyPostProcessErrorCategory(new DOMException("", "TimeoutError")),
+    ).toBe(POST_PROCESS_ERROR_CATEGORY.timedOut);
+  });
+
+  it("prefers a structured code over conflicting message text", () => {
+    expect(
+      classifyPostProcessErrorCategory({
+        status: 429,
+        code: "rate_limit_exceeded",
+        message: "OpenRouter in-flight budget exhausted",
+      }),
+    ).toBe(POST_PROCESS_ERROR_CATEGORY.rateLimit);
+  });
+
+  it("keeps an unexplained 429 neutral instead of calling it a rate limit", () => {
+    expect(classifyPostProcessErrorCategory({ status: 429 })).toBe(
+      POST_PROCESS_ERROR_CATEGORY.providerLimit,
+    );
+  });
+
+  it("uses a nested provider message when a wrapper has only the HTTP status", () => {
+    const error = Object.assign(new Error("Provider request failed"), {
+      status: 429,
+      error: { message: "The account quota has been exhausted." },
+    });
+
+    expect(
+      classifyPostProcessErrorCategory(error, "Provider request failed"),
+    ).toBe(POST_PROCESS_ERROR_CATEGORY.quotaOrPayment);
+  });
+
+  it("uses explicit 429 message details only when the status and code are ambiguous", () => {
+    expect(
+      classifyPostProcessErrorCategory({
+        status: 429,
+        message: "The account quota has been exhausted.",
+      }),
+    ).toBe(POST_PROCESS_ERROR_CATEGORY.quotaOrPayment);
+    expect(
+      classifyPostProcessErrorCategory({
+        status: 429,
+        message: "Too many requests; retry later.",
+      }),
+    ).toBe(POST_PROCESS_ERROR_CATEGORY.rateLimit);
+  });
+
+  it("reads quota and limit wording from a 401 or 403 before calling it authentication", () => {
+    expect(
+      classifyPostProcessErrorCategory({
+        status: 403,
+        message: "Your credit balance is too low to access the API.",
+      }),
+    ).toBe(POST_PROCESS_ERROR_CATEGORY.quotaOrPayment);
+    expect(
+      classifyPostProcessErrorCategory({
+        status: 401,
+        message: "OpenRouter in-flight budget exhausted",
+      }),
+    ).toBe(POST_PROCESS_ERROR_CATEGORY.providerLimit);
+    expect(
+      classifyPostProcessErrorCategory({
+        status: 401,
+        message: "Too many requests; retry later.",
+      }),
+    ).toBe(POST_PROCESS_ERROR_CATEGORY.rateLimit);
+    expect(classifyPostProcessErrorCategory({ status: 403 })).toBe(
+      POST_PROCESS_ERROR_CATEGORY.authentication,
+    );
+  });
+
+  it("recognizes OpenRouter's transient in-flight budget before quota wording", () => {
+    expect(
+      classifyPostProcessErrorCategory({
+        status: 402,
+        error: {
+          code: "insufficient_quota",
+          metadata: { limit_source: "openrouter_in_flight_budget" },
+        },
+      }),
+    ).toBe(POST_PROCESS_ERROR_CATEGORY.providerLimit);
+    expect(
+      classifyPostProcessErrorCategory({
+        status: 402,
+        cause: {
+          error: {
+            code: "insufficient_quota",
+            reason: "in_flight_budget_exhausted",
+            metadata: { limit_source: "openrouter_in_flight_budget" },
+          },
+        },
+      }),
+    ).toBe(POST_PROCESS_ERROR_CATEGORY.providerLimit);
+    expect(
+      classifyPostProcessErrorCategory({
+        status: 402,
+        message: "OpenRouter in-flight budget exhausted",
+      }),
+    ).toBe(POST_PROCESS_ERROR_CATEGORY.providerLimit);
+  });
+
+  it("does not match a spaced marker across two separate structured fields", () => {
+    // Joined, these two fields read "...in-flight budget...", but each field on
+    // its own carries no budget marker, so they must not classify as a limit.
+    expect(
+      classifyPostProcessErrorCategory({
+        code: "x in-flight",
+        type: "budget y",
+      }),
+    ).toBe(POST_PROCESS_ERROR_CATEGORY.provider);
+    // A marker that genuinely sits inside one field still matches.
+    expect(
+      classifyPostProcessErrorCategory({ code: "hit in-flight budget cap" }),
+    ).toBe(POST_PROCESS_ERROR_CATEGORY.providerLimit);
+  });
+
+  it("falls back to explicit message text when no structured fields are present", () => {
+    expect(
+      classifyPostProcessErrorCategory("402 payment required, quota exhausted"),
+    ).toBe(POST_PROCESS_ERROR_CATEGORY.quotaOrPayment);
+    expect(classifyPostProcessErrorCategory("429 too many requests")).toBe(
+      POST_PROCESS_ERROR_CATEGORY.rateLimit,
+    );
+  });
+
   it("reads timeout before abort so a deadline is not reported as a cancel", () => {
-    // The provider SDKs phrase a timed-out request as an abort, so checking
-    // abort first would report every timeout as something the user cancelled.
     expect(
       classifyPostProcessErrorCategory("the request timed out and was aborted"),
     ).toBe(POST_PROCESS_ERROR_CATEGORY.timedOut);
@@ -65,11 +217,20 @@ describe("classifyPostProcessErrorCategory", () => {
 });
 
 describe("postProcessErrorReason", () => {
+  it("recognizes stored categories without claiming arbitrary warning text", () => {
+    for (const category of Object.values(POST_PROCESS_ERROR_CATEGORY)) {
+      expect(isPostProcessErrorCategory(category)).toBe(true);
+    }
+    expect(isPostProcessErrorCategory("The response was truncated")).toBe(
+      false,
+    );
+  });
+
   it("resolves a stored category to its message", () => {
     expect(
       postProcessErrorReason(POST_PROCESS_ERROR_CATEGORY.rateLimit)
         .defaultMessage,
-    ).toBe("Rate limit exceeded");
+    ).toBe("the provider rate limit was reached");
   });
 
   it("falls back for a category an older build wrote", () => {
@@ -79,15 +240,19 @@ describe("postProcessErrorReason", () => {
     expect(
       postProcessErrorReason("Some category removed two releases ago")
         .defaultMessage,
-    ).toBe("Provider error");
+    ).toBe("the post-processing provider returned an error");
   });
 
   it("falls back for a missing category", () => {
-    expect(postProcessErrorReason(null).defaultMessage).toBe("Provider error");
-    expect(postProcessErrorReason(undefined).defaultMessage).toBe(
-      "Provider error",
+    expect(postProcessErrorReason(null).defaultMessage).toBe(
+      "the post-processing provider returned an error",
     );
-    expect(postProcessErrorReason("").defaultMessage).toBe("Provider error");
+    expect(postProcessErrorReason(undefined).defaultMessage).toBe(
+      "the post-processing provider returned an error",
+    );
+    expect(postProcessErrorReason("").defaultMessage).toBe(
+      "the post-processing provider returned an error",
+    );
   });
 
   it.each([
@@ -196,7 +361,8 @@ describe("catalog coverage", () => {
       const text = node.getText(source).replace(/\s+/g, "");
       return (
         text === "PostProcessErrorReason" ||
-        text === "Readonly<Record<string,PostProcessErrorReason>>"
+        text ===
+          "Readonly<Record<PostProcessErrorCategory,PostProcessErrorReason>>"
       );
     };
 

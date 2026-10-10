@@ -19,15 +19,56 @@ import {
 import { getRec } from "@maus-inc/utilities";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
+import type { MessageDescriptor } from "react-intl";
 import { saveCorrectedTranscript } from "../../actions/auto-learn.actions";
 import { showErrorSnackbar, showSnackbar } from "../../actions/app.actions";
+import { getPostProcessFeedback } from "../../actions/post-process-feedback";
+import {
+  isPostProcessErrorCategory,
+  postProcessErrorReason,
+} from "../../actions/post-process-error-category";
 import {
   closeTranscriptionDetailsDialog,
+  getUnusableResponseType,
+  isUnusableResponseWarning,
   openRetranscribeDialog,
 } from "../../actions/transcriptions.actions";
 import { AppState } from "../../state/app.state";
 import { useAppStore } from "../../store";
 import { TranscriptionTextBlock } from "./TranscriptionTextBlock";
+
+const resolveCategoryWarning = (
+  warning: string,
+  postProcessFailed: boolean | null | undefined,
+  postProcessFallback: boolean | null | undefined,
+  formatReason: (descriptor: MessageDescriptor) => string,
+): string => {
+  const feedback = getPostProcessFeedback(
+    {
+      postProcessFailed,
+      postProcessFallback,
+      postProcessError: warning,
+    },
+    "history-details",
+  );
+  return feedback?.message ?? formatReason(postProcessErrorReason(warning));
+};
+
+// Rows that fell back after an unusable reply keep the raw marker as their
+// warning, which means nothing to the user. Show the same explanation the
+// retranscribe toast used instead.
+const resolveUnusableWarning = (warning: string): string => {
+  const feedback = getPostProcessFeedback(
+    {
+      postProcessFailed: false,
+      postProcessFallback: true,
+      postProcessError: null,
+    },
+    "history-details",
+    { unusableResponseType: getUnusableResponseType(warning) },
+  );
+  return feedback?.message ?? warning;
+};
 
 const formatModelSizeLabel = (modelSize?: string | null): React.ReactNode => {
   const value = modelSize?.trim();
@@ -251,8 +292,33 @@ export const TranscriptionDetailsDialog = () => {
     }
     return transcription.warnings
       .map((warning) => warning.trim())
-      .filter((warning) => warning.length > 0);
-  }, [transcription?.warnings]);
+      .filter((warning) => warning.length > 0)
+      .map((warning) => {
+        if (isPostProcessErrorCategory(warning)) {
+          return resolveCategoryWarning(
+            warning,
+            transcription.postProcessFailed,
+            transcription.postProcessFallback,
+            (descriptor) => intl.formatMessage(descriptor),
+          );
+        }
+        // Translate only the known unusable-reply markers; a fallback row can
+        // also carry unrelated warnings that must stay verbatim.
+        if (
+          !transcription.postProcessFailed &&
+          transcription.postProcessFallback &&
+          isUnusableResponseWarning(warning)
+        ) {
+          return resolveUnusableWarning(warning);
+        }
+        return warning;
+      });
+  }, [
+    intl,
+    transcription?.postProcessFailed,
+    transcription?.postProcessFallback,
+    transcription?.warnings,
+  ]);
 
   const startEditingFinal = () => {
     setFinalDraft(finalTranscriptText);

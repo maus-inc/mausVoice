@@ -40,6 +40,9 @@ import {
   postProcessFinalizedTranscript,
   surfacePersistedReviewInHistory,
 } from "./DictationSideEffects";
+import type { Transcription } from "@maus-inc/types";
+import { POST_PROCESS_ERROR_CATEGORY } from "../../actions/post-process-error-category";
+import type { PostProcessMetadata } from "../../actions/transcribe.actions";
 import type {
   HandleEmptyResultInput,
   PostTranscriptInput,
@@ -50,6 +53,7 @@ type ToastCall = {
   message: string;
   toastType: "info" | "error";
   duration?: number;
+  action?: string;
 };
 
 type StoreCall = {
@@ -276,8 +280,10 @@ describe("postProcessFinalizedTranscript", () => {
   const buildInput = (
     options: {
       store?: boolean;
+      storeResult?: boolean;
       agent?: boolean;
       droppedChars?: number;
+      postProcessMetadata?: PostProcessMetadata;
     } = {},
   ) => {
     const order: string[] = [];
@@ -291,8 +297,11 @@ describe("postProcessFinalizedTranscript", () => {
         sanitizedTranscript: "hello world",
         postProcessMetadata:
           options.droppedChars === undefined
-            ? {}
-            : { fastStyleTruncatedChars: options.droppedChars },
+            ? (options.postProcessMetadata ?? {})
+            : {
+                ...options.postProcessMetadata,
+                fastStyleTruncatedChars: options.droppedChars,
+              },
         postProcessWarnings: [],
         remoteStatus: null,
         remoteDeviceId: null,
@@ -302,7 +311,11 @@ describe("postProcessFinalizedTranscript", () => {
       PostTranscriptInput["storeTranscriptionFn"]
     >(() => {
       order.push("store");
-      return Promise.resolve({ transcription: null, wordCount: 0 });
+      return Promise.resolve({
+        transcription:
+          options.storeResult === false ? null : ({} as Transcription),
+        wordCount: 0,
+      });
     });
     const strategy: PostTranscriptInput["strategy"] = {
       handleTranscript,
@@ -320,6 +333,7 @@ describe("postProcessFinalizedTranscript", () => {
         message: string;
         toastType: "info" | "error";
         duration?: number;
+        action?: string;
       }) => {
         order.push("toast");
         return Promise.resolve();
@@ -381,14 +395,148 @@ describe("postProcessFinalizedTranscript", () => {
 
     expect(showToast).toHaveBeenCalledTimes(1);
     const call = showToast.mock.calls[0]?.[0];
-    expect(call?.message).not.toContain("History");
     expect(call?.message).toContain("42");
+    expect(call?.message).toContain("did not save them in History");
+    expect(call?.message).not.toContain("ending is in History");
+  });
+
+  it("uses the actual store result when warning about History", async () => {
+    const { input, storeTranscriptionFn, showToast } = buildInput({
+      storeResult: false,
+      droppedChars: 42,
+    });
+
+    await postProcessFinalizedTranscript(input);
+
+    expect(storeTranscriptionFn).toHaveBeenCalledTimes(1);
+    expect(showToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message:
+          "Fast styling left the last 42 characters unstyled. The app did not save them in History.",
+        toastType: "info",
+      }),
+    );
   });
 
   it("stays quiet when nothing was truncated", async () => {
     const { input, showToast } = buildInput();
     await postProcessFinalizedTranscript(input);
     expect(showToast).not.toHaveBeenCalled();
+  });
+
+  it("offers History only after a failed transcript was stored", async () => {
+    const { input, order, showToast } = buildInput({
+      postProcessMetadata: {
+        postProcessFailed: true,
+        postProcessError: POST_PROCESS_ERROR_CATEGORY.quotaOrPayment,
+      },
+    });
+
+    await postProcessFinalizedTranscript(input);
+
+    expect(order).toEqual([
+      "handleTranscript",
+      "idle",
+      "store",
+      "refresh",
+      "toast",
+    ]);
+    expect(showToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message:
+          "Styling failed because the provider reported a quota or billing issue. The raw transcript is saved in History.",
+        toastType: "error",
+        duration: 8_000,
+        action: "open_transcriptions",
+      }),
+    );
+  });
+
+  it("preserves the History action when failure and truncation feedback are combined", async () => {
+    const { input, showToast } = buildInput({
+      droppedChars: 42,
+      postProcessMetadata: {
+        postProcessFailed: true,
+        postProcessFallback: false,
+        postProcessError: POST_PROCESS_ERROR_CATEGORY.providerLimit,
+      },
+    });
+
+    await postProcessFinalizedTranscript(input);
+
+    expect(showToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message:
+          "Styling failed because the provider request or usage limit was reached. The raw transcript is saved in History. Fast styling left the last 42 characters of that dictation unstyled. The unstyled ending is in History.",
+        toastType: "error",
+        duration: 8_000,
+        action: "open_transcriptions",
+      }),
+    );
+  });
+
+  it("does not claim or open History when a failed transcript was not stored", async () => {
+    const { input, showToast } = buildInput({
+      storeResult: false,
+      postProcessMetadata: {
+        postProcessFailed: true,
+        postProcessError: POST_PROCESS_ERROR_CATEGORY.providerLimit,
+      },
+    });
+
+    await postProcessFinalizedTranscript(input);
+
+    expect(showToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message:
+          "Styling failed because the provider request or usage limit was reached. The app did not insert the transcript or save it in History.",
+        toastType: "error",
+        action: undefined,
+      }),
+    );
+  });
+
+  it("offers settings when local styling handled a provider failure", async () => {
+    const { input, showToast } = buildInput({
+      postProcessMetadata: {
+        postProcessFailed: false,
+        postProcessFallback: true,
+        postProcessError: POST_PROCESS_ERROR_CATEGORY.quotaOrPayment,
+      },
+    });
+
+    await postProcessFinalizedTranscript(input);
+
+    expect(showToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message:
+          "Online styling failed because the provider reported a quota or billing issue. Your local style was applied instead.",
+        toastType: "info",
+        action: "open_post_processing_settings",
+      }),
+    );
+  });
+
+  it("keeps local-fallback and truncation feedback in one actionable toast", async () => {
+    const { input, showToast } = buildInput({
+      droppedChars: 42,
+      postProcessMetadata: {
+        postProcessFailed: false,
+        postProcessFallback: true,
+        postProcessError: POST_PROCESS_ERROR_CATEGORY.quotaOrPayment,
+      },
+    });
+
+    await postProcessFinalizedTranscript(input);
+
+    expect(showToast).toHaveBeenCalledTimes(1);
+    expect(showToast).toHaveBeenCalledWith({
+      message:
+        "Online styling failed because the provider reported a quota or billing issue. Your local style was applied instead. Fast styling left the last 42 characters of that dictation unstyled. The unstyled ending is in History.",
+      toastType: "info",
+      duration: 8_000,
+      action: "open_post_processing_settings",
+    });
   });
 
   it("sends idle after handleTranscript and before storeTranscription", async () => {

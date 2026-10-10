@@ -3,7 +3,6 @@ import type { Nullable } from "@maus-inc/types";
 import { showErrorSnackbar, showSnackbar } from "../actions/app.actions";
 import { tryRegisterCurrentAppTarget } from "../actions/app-target.actions";
 import { getIntl } from "../i18n/intl";
-import { postProcessErrorReason } from "../actions/post-process-error-category";
 import { showToast } from "../actions/toast.actions";
 import {
   postProcessTranscript,
@@ -422,73 +421,18 @@ export class DictationStrategy extends BaseStrategy {
 
       if (
         postProcessMetadata.postProcessFallback &&
-        postProcessMetadata.postProcessError
+        postProcessMetadata.postProcessError &&
+        !postProcessMetadata.postProcessFailed
       ) {
-        // The provider failed but the deterministic local style produced usable
-        // output, so the transcript is still delivered. Warn without blocking.
-        //
-        // The `postProcessError` half is not decoration, and it points the way it looks
-        // like it should not. `postProcessFallback` is set on two different runs and
-        // `transcriptions.actions.ts` says so in its own words -- "covers two different
-        // runs and cannot be read on its own". This one did not, so it toasted for both.
-        //
-        // The two runs separate on the error being present, and this is the direction
-        // that is easy to get backwards. A request that SUCCEEDED but returned an
-        // unusable reply also sets the flag, with `postProcessFailed` left false and NO
-        // error recorded (transcribe.actions.ts:402-408) -- nothing local ran there, and
-        // the text is the raw ASR, so the message below claims the opposite of what
-        // happened. A request that FAILED records the category, and that is the run the
-        // message is written for. `isUnstyledPostProcess` reads it as
-        // `postProcessFallback && !postProcessError`, which is the complementary pair.
-        //
-        // Nothing is lost by not toasting on the unusable reply. The run's `warnings`
-        // are persisted with it (`transcribe.actions.ts:917`) and rendered in
-        // TranscriptionDetailsDialog, so History shows the real state.
-        //
-        // Not `isUnstyledPostProcess`, which is the tempting name here: it has exactly one
-        // call site, inside `updateStoredTranscription`, and that is reached only from
-        // `performRetranscribe`. A fresh dictation never evaluates it. It reads the flag
-        // the other way round anyway -- `postProcessFailed || (postProcessFallback &&
-        // !postProcessError)` -- so its `!postProcessError` term is this `if`'s
-        // `postProcessError`, negated.
         getLogger().warning(
           "Post-processing provider failed; delivered the local fast style instead",
         );
-        await showToast({
-          message: getIntl().formatMessage({
-            defaultMessage:
-              "Online styling was unavailable, so the local style was used instead.",
-          }),
-          toastType: "info",
-          duration: 5000,
-        });
       }
 
       if (postProcessMetadata.postProcessFailed) {
         getLogger().warning(
-          "Post-processing failed; preserving the transcript in History without insertion",
+          "Post-processing failed; preserving the transcript without insertion",
         );
-        // The reason is the classified category, resolved to a localized
-        // message. The provider's own message is not rendered: only the Groq
-        // and Cerebras paths scrub credential material, and the Groq chain text
-        // names a model id the provider chose, so the full detail stays in the
-        // log. This string is the same one persisted on the transcription row,
-        // so a user who opens History reads the same words.
-        const reason = postProcessErrorReason(
-          postProcessMetadata.postProcessError,
-        );
-        await showToast({
-          message: getIntl().formatMessage(
-            {
-              defaultMessage:
-                "Styling failed: {reason}. The raw transcript is saved in History.",
-            },
-            { reason: getIntl().formatMessage(reason) },
-          ),
-          toastType: "error",
-          duration: 8000,
-          action: "open_transcriptions",
-        });
       } else if (transcript) {
         try {
           getLogger().verbose(
