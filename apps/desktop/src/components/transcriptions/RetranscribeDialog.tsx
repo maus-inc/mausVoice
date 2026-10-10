@@ -9,8 +9,6 @@ import {
   MenuItem,
   Select,
   Stack,
-  type SxProps,
-  type Theme,
 } from "@mui/material";
 import { Check } from "lucide-react";
 import type { Tone } from "@maus-inc/types";
@@ -35,7 +33,6 @@ import { getMyDictationLanguage } from "../../utils/user.utils";
 import { useDialogTitleId } from "../common/DialogTitleWithClose";
 import {
   chromeDialogPaperSx,
-  chromeMenuItemSx,
   chromeSelectMenuItemSx,
   chromeSelectMenuProps,
   chromeStyleSelectMenuProps,
@@ -57,9 +54,8 @@ const checkableMenuItem = (
   value: string,
   label: React.ReactNode,
   selected: boolean,
-  sx: SxProps<Theme> = chromeMenuItemSx,
 ) => (
-  <MenuItem key={value} value={value} sx={sx}>
+  <MenuItem key={value} value={value} sx={chromeSelectMenuItemSx}>
     {label}
     {selected ? <Check size={16} strokeWidth={2} /> : null}
   </MenuItem>
@@ -169,7 +165,6 @@ export const RetranscribeDialog = () => {
                     tone.id,
                     tone.name,
                     tone.id === selectedToneId,
-                    chromeSelectMenuItemSx,
                   ),
                 )}
               </Select>
@@ -197,12 +192,7 @@ export const RetranscribeDialog = () => {
               }
             >
               {languageOptions.map(({ code, label }) =>
-                checkableMenuItem(
-                  code,
-                  label,
-                  code === selectedLanguage,
-                  chromeSelectMenuItemSx,
-                ),
+                checkableMenuItem(code, label, code === selectedLanguage),
               )}
             </Select>
           </FormControl>

@@ -3,6 +3,13 @@ import type { SystemStyleObject } from "@mui/system";
 import { activeRowSx } from "../../styles/selection";
 import { hairline, premiumSurface } from "../../styles/shadows";
 
+/**
+ * Vertical space reserved outside an open menu: the 40px title bar plus the
+ * dialog margins and padding a picker usually opens inside. Keeping it in one
+ * named constant stops the two paper variants from drifting apart.
+ */
+const MENU_VIEWPORT_INSET = 96;
+
 /** Watermelon dropdown paper: hairline + rest lift, not hover-stage chrome. */
 const chromeMenuPaperStyles = (theme: Theme): SystemStyleObject<Theme> => ({
   borderRadius: 1.5,
@@ -13,7 +20,7 @@ const chromeMenuPaperStyles = (theme: Theme): SystemStyleObject<Theme> => ({
   // the horizontal axis stays hidden so the rounded corners still clip the
   // content, and `auto` on the vertical axis gives the paper a themed
   // scrollbar only when it actually overflows.
-  maxHeight: "min(400px, calc(100vh - 96px))",
+  maxHeight: `min(400px, calc(100vh - ${MENU_VIEWPORT_INSET}px))`,
   overflowX: "hidden",
   overflowY: "auto",
   border: hairline.light(0.06),
@@ -29,7 +36,7 @@ export const chromeMenuPaperSx: SxProps<Theme> = chromeMenuPaperStyles;
 
 export const chromeStyleSelectMenuPaperSx: SxProps<Theme> = (theme) => ({
   ...chromeMenuPaperStyles(theme),
-  maxHeight: "min(360px, calc(100vh - 96px))",
+  maxHeight: `min(360px, calc(100vh - ${MENU_VIEWPORT_INSET}px))`,
 });
 
 /**
