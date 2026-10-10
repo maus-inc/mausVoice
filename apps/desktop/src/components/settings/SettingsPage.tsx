@@ -67,7 +67,8 @@ import {
 } from "../../actions/personal-use.actions";
 import { setAutoLaunchEnabled } from "../../actions/settings.actions";
 import { SettingSection } from "../common/SettingSection";
-import { TipCard } from "../onboarding/TipCard";
+import { useTip } from "../onboarding/TipCard";
+import { TipToastTrigger } from "../onboarding/TipToast";
 import { loadTones } from "../../actions/tone.actions";
 import {
   setAlwaysRequestAdminOnStartup,
@@ -1221,19 +1222,17 @@ export default function SettingsPage() {
         <FormattedMessage defaultMessage="How mausVoice should manage your transcriptions." />
       }
     >
-      {/* The action completes the task in place instead of navigating: it
-          scrolls to and highlights the Groq key row (visible if the dialog
-          is closed again) and opens the key dialog, whose input carries
-          autoFocus, so keyboard focus lands on the field. (The Help list's
-          "Open settings" wording is a no-op on this page.) */}
-      <TipCard
+      {/* The toast's click action completes the task in place instead of
+          navigating. It scrolls to and highlights the Groq key row (visible
+          if the dialog is closed again) and opens the key dialog, whose
+          input carries autoFocus, so keyboard focus lands on the field.
+          (The Help list's "Open settings" wording is a no-op on this page.) */}
+      <TipToastTrigger
         id="generative-provider"
-        action={{
-          label: <FormattedMessage defaultMessage="Add API key" />,
-          onAction: () => {
-            focusSetting("groq_api_key");
-            openGroqDialog();
-          },
+        visible={useTip("generative-provider")}
+        onAction={() => {
+          focusSetting("groq_api_key");
+          openGroqDialog();
         }}
       />
       <SettingAnchor settingKey="deepgram_api_key" highlight={highlight}>

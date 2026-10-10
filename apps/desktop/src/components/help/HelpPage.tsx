@@ -2,9 +2,61 @@ import { Box, Button, Stack, Typography } from "@mui/material";
 import { FormattedMessage } from "react-intl";
 import { useNavigate } from "react-router-dom";
 import { resetTip } from "../../actions/onboarding.actions";
+import tipToastPattern from "../../assets/tip-toast-pattern.png";
 import { useAppStore } from "../../store";
 import { ONBOARDING_TIPS } from "../../utils/tips";
 import { TIP_COPY, TIP_ICONS, TipCardFrame } from "../onboarding/TipCard";
+import { scrimGlyph, thumbnailScrim } from "../onboarding/TipToast";
+
+/**
+ * A 40x40 crop of the same pattern art the live toast uses, with the tip's
+ * own glyph as a scrim badge, so a row here previews what the toast for
+ * that tip actually looks like instead of a disconnected generic icon.
+ */
+const TipThumbnail = ({ tipId }: { tipId: keyof typeof TIP_ICONS }) => (
+  <Box
+    sx={(theme) => ({
+      position: "relative",
+      width: 40,
+      height: 40,
+      // A tier tighter than the card radius. This thumbnail sits inside a
+      // row, not at a window edge, the same relationship a nested chip or
+      // avatar has to its own card. `theme.shape.borderRadius` is typed as
+      // `number | string` for responsive themes; this app's is always the
+      // number set in `theme.ts`.
+      borderRadius: `${(theme.shape.borderRadius as number) - 4}px`,
+      overflow: "hidden",
+      flexShrink: 0,
+    })}
+  >
+    <Box
+      component="img"
+      src={tipToastPattern}
+      alt=""
+      aria-hidden
+      sx={{
+        width: "100%",
+        height: "100%",
+        objectFit: "cover",
+        display: "block",
+      }}
+    />
+    <Box
+      aria-hidden
+      sx={{
+        position: "absolute",
+        inset: 0,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        bgcolor: thumbnailScrim,
+        color: scrimGlyph,
+      }}
+    >
+      {TIP_ICONS[tipId]}
+    </Box>
+  </Box>
+);
 
 export default function HelpPage() {
   const navigate = useNavigate();
@@ -29,13 +81,15 @@ export default function HelpPage() {
             return (
               <TipCardFrame
                 key={tip.id}
-                icon={TIP_ICONS[tip.id]}
+                icon={<TipThumbnail tipId={tip.id} />}
                 title={copy.title}
                 body={copy.body}
                 // This list is where dismissed tips are browsed, so the dimming
                 // is the only signal distinguishing them from live ones. It
-                // belongs to the card rather than to `TipCardFrame`, which also
-                // serves first-run tips that cannot be dismissed at all.
+                // stays an `sx` override from this one caller rather than an
+                // `isDismissed` prop on `TipCardFrame` itself, which stays a
+                // thin, generic row shell with no opinion of its own on
+                // dismissal state.
                 sx={{ opacity: isDismissed ? 0.65 : 1 }}
                 actions={
                   <>

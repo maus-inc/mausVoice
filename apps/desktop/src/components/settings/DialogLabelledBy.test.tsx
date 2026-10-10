@@ -21,10 +21,7 @@ vi.mock("../../actions/transcriptions.actions", () => ({
 vi.mock("../transcriptions/TranscriptionsSideEffects", () => ({
   TranscriptionsSideEffects: () => null,
 }));
-vi.mock("../onboarding/TipCard", () => ({
-  TipCard: () => null,
-  useTip: () => false,
-}));
+vi.mock("../onboarding/TipCard", () => ({ useTip: () => false }));
 vi.mock("../transcriptions/TranscriptRow", () => ({
   TranscriptionRow: () => null,
 }));

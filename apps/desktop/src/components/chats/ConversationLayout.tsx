@@ -7,7 +7,8 @@ import { sendChatMessage } from "../../actions/chat.actions";
 import { useAppStore } from "../../store";
 import { getLogger } from "../../utils/log.utils";
 import { FadingScrollArea } from "../common/FadingScrollArea";
-import { TipCard } from "../onboarding/TipCard";
+import { useTip } from "../onboarding/TipCard";
+import { TipToastTrigger } from "../onboarding/TipToast";
 import { AgentLiveAnnouncer } from "./AgentLiveAnnouncer";
 import { ChatMessageBubble } from "./ChatMessageBubble";
 import { ChatPromptBox } from "./ChatPromptBox";
@@ -128,9 +129,7 @@ export const ConversationLayout = ({
         overflow: "hidden",
       }}
     >
-      <Box sx={{ px: 2, pt: 2 }}>
-        <TipCard id="assistant-mode" />
-      </Box>
+      <TipToastTrigger id="assistant-mode" visible={useTip("assistant-mode")} />
       <AgentLiveAnnouncer
         agentRunning={agentRunning}
         latestMessageId={messageIds.at(-1) ?? null}

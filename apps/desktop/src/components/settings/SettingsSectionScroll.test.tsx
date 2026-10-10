@@ -49,7 +49,10 @@ vi.mock("react-intl", async (importOriginal) => {
   };
 });
 
-import { ensureUiHarness } from "../../../test/helpers/jsdom-ui-harness";
+import {
+  ensureUiHarness,
+  setMatchMedia,
+} from "../../../test/helpers/jsdom-ui-harness";
 import { sectionAnchorId } from "./SettingsSectionNav";
 import { SETTING_SECTIONS } from "../../utils/settings-registry";
 import SettingsPage from "./SettingsPage";
@@ -79,12 +82,7 @@ describe("settings section scroll tracking", () => {
   let frames: Array<FrameRequestCallback>;
 
   beforeEach(() => {
-    window.matchMedia = ((query: string) => ({
-      matches: false,
-      media: query,
-      addEventListener: () => undefined,
-      removeEventListener: () => undefined,
-    })) as unknown as typeof window.matchMedia;
+    setMatchMedia(false);
     // jsdom does not run rAF, so the sampler is driven explicitly: a queued
     // frame is exactly the pending measurement the page is waiting on.
     frames = [];
@@ -107,8 +105,19 @@ describe("settings section scroll tracking", () => {
     root = createRoot(container);
   });
 
-  afterEach(() => {
-    act(() => root?.unmount());
+  afterEach(async () => {
+    await act(() => root?.unmount());
+    // The page's tips now render as toasts; unmounting clears them, and
+    // sonner debounces that clear through a `requestAnimationFrame` on its
+    // own module-level store, which outlives this test. Draining now, while
+    // this test's rAF stub is still installed, flushes that debounce before
+    // the stub is restored, so the next test does not inherit a pending
+    // callback queued against sonner's shared store.
+    for (let round = 0; round < 5 && frames.length > 0; round += 1) {
+      await act(() => {
+        for (const frame of frames.splice(0)) frame(0);
+      });
+    }
     root = null;
     container.remove();
     scroller.remove();

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, createElement } from "react";
+import { act, createElement, Fragment } from "react";
 import { createRoot } from "react-dom/client";
 import { INITIAL_APP_STATE } from "../../state/app.state";
 import { setAppState } from "../../store";
@@ -49,17 +49,29 @@ vi.mock("react-intl", async (importOriginal) => {
   };
 });
 
-import { ensureUiHarness } from "../../../test/helpers/jsdom-ui-harness";
+import { ThemeProvider } from "@mui/material/styles";
+import {
+  ensureUiHarness,
+  setMatchMedia,
+} from "../../../test/helpers/jsdom-ui-harness";
+import { SonnerToaster } from "../root/SonnerToaster";
+import { THEME_PROVIDER_CONFIG, theme } from "../../theme";
 import SettingsPage from "./SettingsPage";
 
 ensureUiHarness();
 
 /**
- * The generative-provider tip's "Add API key" action must complete the task
- * in place: open the Groq key dialog with keyboard focus on its input (the
- * dialog's TextField carries autoFocus), and reveal the Groq row (smooth
+ * The generative-provider tip's click action must complete the task in
+ * place. It opens the Groq key dialog with keyboard focus on its input (the
+ * dialog's TextField carries autoFocus), and reveals the Groq row (smooth
  * scroll + highlight) so the user lands there if they close the dialog
  * without saving.
+ *
+ * The tip itself now renders into sonner's toast layer rather than into
+ * `SettingsPage`'s own tree, so this test mounts the real `SonnerToaster`
+ * alongside the page, the same pairing `main.tsx` mounts them in. The
+ * toaster mounts first, so it has subscribed to the store before the page's
+ * mount effect calls `showTipToast`.
  */
 describe("generative-provider tip action", () => {
   let container: HTMLDivElement;
@@ -70,12 +82,10 @@ describe("generative-provider tip action", () => {
   let scrollCalls: Array<{ el: Element; options?: ScrollIntoViewOptions }>;
 
   beforeEach(() => {
-    window.matchMedia = ((query: string) => ({
-      matches: false,
-      media: query,
-      addEventListener: () => undefined,
-      removeEventListener: () => undefined,
-    })) as unknown as typeof window.matchMedia;
+    // The plain stub this file used before `ThemeProvider` needed it lacks
+    // `addListener`/`removeListener`, which MUI's cssVars scheme watcher
+    // still calls; the shared harness stub implements the full legacy API.
+    setMatchMedia(false);
     frames = [];
     vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
       frames.push(cb);
@@ -102,8 +112,19 @@ describe("generative-provider tip action", () => {
     root = createRoot(container);
   });
 
-  afterEach(() => {
-    act(() => root?.unmount());
+  afterEach(async () => {
+    await act(() => root?.unmount());
+    // Unmounting clears each tip's toast, and sonner's own dismissal is
+    // itself debounced through a `requestAnimationFrame` it schedules on a
+    // *module-level* store that outlives this test. Draining now, while
+    // this test's rAF stub is still installed, flushes that debounce before
+    // the stub is restored, so the next test does not inherit a pending
+    // callback queued against sonner's shared store.
+    for (let round = 0; round < 5 && frames.length > 0; round += 1) {
+      await act(() => {
+        for (const frame of frames.splice(0)) frame(0);
+      });
+    }
     root = null;
     container.remove();
     document.body.innerHTML = "";
@@ -121,18 +142,33 @@ describe("generative-provider tip action", () => {
   const renderPage = async () => {
     platform.name = "windows";
     await act(() => {
-      root?.render(createElement(SettingsPage));
+      root?.render(
+        createElement(
+          ThemeProvider,
+          { theme, ...THEME_PROVIDER_CONFIG },
+          createElement(Fragment, null, [
+            createElement(SonnerToaster, { key: "toaster" }),
+            createElement(SettingsPage, { key: "page" }),
+          ]),
+        ),
+      );
     });
     await drainFrames();
   };
 
   const clickTipAction = async () => {
-    const addButton = Array.from(container.querySelectorAll("button")).find(
-      (button) => button.textContent === "Add API key",
+    // This page also anchors the `update-channel` tip (UpdateChannelSetting
+    // further down), so both toasts are on screen at once; find the card by
+    // its own title rather than assuming toast stacking order.
+    const card = Array.from(
+      document.querySelectorAll('[data-tip-toast="true"]'),
+    ).find((candidate) =>
+      candidate.textContent?.includes("Add an AI provider for polishing"),
     );
-    expect(addButton).toBeTruthy();
+    const tipBody = card?.querySelector('[role="button"]');
+    expect(tipBody).toBeTruthy();
     await act(() => {
-      addButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      tipBody?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
   };
 

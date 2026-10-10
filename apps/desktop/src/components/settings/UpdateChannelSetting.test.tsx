@@ -15,10 +15,16 @@ vi.mock("react-intl", async (importOriginal) => {
   return reactIntlWithIdsModule(importOriginal);
 });
 
-// The contextual `update-channel` tip needs a Router, which this test has no
-// router for. Stubbed to a marker so the anchor is still asserted on.
+// The live tip now renders into sonner's toast layer, not this component's
+// own DOM, so there is nothing here to assert on directly. Both are stubbed
+// to a marker div carrying the id, so the anchor (which id is wired up at
+// this call site) is still asserted on without a Router or a Toaster.
 vi.mock("../onboarding/TipCard", () => ({
-  TipCard: ({ id }: { id: string }) => createElement("div", { "data-tip": id }),
+  useTip: () => true,
+}));
+vi.mock("../onboarding/TipToast", () => ({
+  TipToastTrigger: ({ id }: { id: string }) =>
+    createElement("div", { "data-tip": id }),
 }));
 
 vi.mock("../../actions/user.actions", async (importOriginal) => {
