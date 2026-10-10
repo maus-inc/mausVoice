@@ -34,6 +34,7 @@ export const NativePillDemo = () => {
                 <NativePillCanvas
                   phase={p}
                   hovered={p === "idle" ? true : undefined}
+                  stageText={p === "loading" ? "Transcribing" : undefined}
                   width={200}
                 />
               </State>
@@ -69,7 +70,12 @@ export const NativePillDemo = () => {
                 hover {hovered ? "on" : "off"}
               </Button>
             </Stack>
-            <NativePillCanvas phase={phase} hovered={hovered} width={240} />
+            <NativePillCanvas
+              phase={phase}
+              hovered={hovered}
+              stageText={phase === "loading" ? "Transcribing" : undefined}
+              width={240}
+            />
           </State>
         </Matrix>
       </DemoSection>
