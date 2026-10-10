@@ -1221,7 +1221,21 @@ export default function SettingsPage() {
         <FormattedMessage defaultMessage="How mausVoice should manage your transcriptions." />
       }
     >
-      <TipCard id="generative-provider" />
+      {/* The action completes the task in place instead of navigating: it
+          scrolls to and highlights the Groq key row (visible if the dialog
+          is closed again) and opens the key dialog, whose input carries
+          autoFocus, so keyboard focus lands on the field. (The Help list's
+          "Open settings" wording is a no-op on this page.) */}
+      <TipCard
+        id="generative-provider"
+        action={{
+          label: <FormattedMessage defaultMessage="Add API key" />,
+          onAction: () => {
+            focusSetting("groq_api_key");
+            openGroqDialog();
+          },
+        }}
+      />
       <SettingAnchor settingKey="deepgram_api_key" highlight={highlight}>
         <ListTile
           title={<FormattedMessage defaultMessage="Deepgram API key" />}

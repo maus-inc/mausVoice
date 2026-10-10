@@ -56,7 +56,7 @@ The two schemes have their own temperature rather than being inversions of each 
 
 ## Anti-patterns
 
-- Side-stripe borders >1px; gradient text; decorative glass; `transition-all`; pure black/white; lucide-only generic icon (once stroke); ceil matching radius. See `craft-floor`.
+- Side-stripe borders >1px; gradient text; decorative glass; `transition-all`; pure black/white; lucide-only generic icon (once stroke); ceil matching radius; drop-shadowed in-flow cards; icon tiles behind neutral glyphs; arrows on secondary actions. See `craft-floor`.
 - Emoji‑as‑icons. No.
 
 ## Window surfaces
@@ -97,6 +97,19 @@ The Windows and Linux caption buttons are three square targets inset from the ba
 
 - sonner, bottom-right, themed via GlobalStyles bridge (`SonnerToaster.tsx`).
 - Destructive actions ship UNDO. Max 4 visible; group repeats.
+
+## Tips & inline notifications
+
+In-page tips (`components/onboarding/TipCard.tsx`, listed on Help) are rows, not banners. A tip is a flat `level1` face with a 1px `divider` hairline and the standard card radius, laid out as a notification row: bare glyph, copy, right-hand affordances. A tip reads as part of the page content, not as an ad pinned to the page.
+
+The reference is Linear's inbox rows, the closest published work for this exact component, and the callout work in premium design-system kits (Atera, Dribbble callout sets) confirms the pattern. Each choice below names what it rules out.
+
+- **Flat, no cast.** No `premiumSurface` on a tip card. Elevation shadows stay with floating layers (toasts, dialogs, popovers). In flow, the row separates on its luminance step (`level1` over `level0`) and its hairline. Raycast's design system states the rule. No drop shadows on cards. Elevation comes from the surface ladder. Linear's rows carry no cast at all.
+- **Bare glyph, no tile.** One 16px lucide glyph (stroke 1.9) at `text.secondary`, aligned with the title, the same size as the dismiss X it sits opposite. No icon chip or tile behind it. A solid square backing is the stock "notification card" of template UIs, and a tip is neutral, so it has no status hue to justify a tinted chip. Tinted chips like Atera's serve status-bearing alerts, which tips are not.
+- **Type and measure.** `titleSmall` (-0.01em) states the claim. `body2` at `text.secondary` supplies the reason. Both cap at 60ch. The decision-relevant detail comes first. In-app cards do their job in roughly ten words.
+- **One quiet action, one dismiss.** Each tip carries at most one outlined pill (999) with no arrow. An arrow reads as a marketing CTA, and tips are not marketing. Vercel's secondary actions are quiet pills, and none carry arrows. Dismiss is a bare 16px X at `text.secondary`. More than one primary action makes it a modal, not a notification.
+- **Motion.** Reveal and exit run 160ms / 180ms ease-out with a 6px rise. No scale, no spring. Springs stay with shared-layout indicators (see Motion). Reduced motion drops the rise.
+- **Dismissal is a choice that persists**, including when navigation interrupts the exit. See the `TipCard` unmount guard.
 
 ## Recording state machine (pill + composer)
 
