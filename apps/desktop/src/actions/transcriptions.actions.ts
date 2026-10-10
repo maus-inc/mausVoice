@@ -751,7 +751,7 @@ const finishRetranscribeSuccess = (
  * run stored, or null when a newer run superseded it, which is the state a
  * caller must not schedule a recovery pass against.
  */
-const completeRetranscribeRun = async ({
+const completeRetranscribeRun = ({
   transcriptionId,
   generation,
   update,
@@ -759,7 +759,7 @@ const completeRetranscribeRun = async ({
   transcriptionId: string;
   generation: number;
   update: RetranscribeUpdate;
-}): Promise<RetranscribeUpdate | null> => {
+}): RetranscribeUpdate | null => {
   if (!isCurrentRetranscribeGeneration(transcriptionId, generation)) {
     abandonRetranscribeRun();
     return null;
@@ -831,7 +831,7 @@ export const retranscribeTranscription = async (
     const update = await performRetranscribe(params);
     return {
       started: true,
-      update: await completeRetranscribeRun({
+      update: completeRetranscribeRun({
         transcriptionId,
         generation,
         update,

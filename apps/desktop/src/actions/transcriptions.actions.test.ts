@@ -1332,6 +1332,11 @@ describe("retranscribeTranscription unstyled post-processing", () => {
       expect(updateTranscription).toHaveBeenCalledWith(
         expect.objectContaining({ id: row.id, transcript: "Hello there" }),
       );
+      // The claim recorded no tone and no language override, so the pass runs
+      // under those defaults rather than whatever the user has selected since.
+      expect(postProcessTranscript).toHaveBeenCalledWith(
+        expect.objectContaining({ toneId: null, dictationLanguage: undefined }),
+      );
     } finally {
       vi.useRealTimers();
     }

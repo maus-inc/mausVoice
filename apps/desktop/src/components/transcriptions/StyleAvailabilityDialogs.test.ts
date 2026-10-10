@@ -11,7 +11,10 @@ const mocks = vi.hoisted(() => ({
   closeRetranscribeDialog: vi.fn(),
   importAudioFile: vi.fn().mockResolvedValue(undefined),
   openFileDialog: vi.fn().mockResolvedValue("/tmp/import.wav"),
-  retranscribeTranscriptionWithRecovery: vi.fn().mockResolvedValue(undefined),
+  retranscribeTranscriptionWithRecovery: vi.fn().mockResolvedValue({
+    started: true,
+    update: null,
+  }),
 }));
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
@@ -210,7 +213,10 @@ describe("Retranscribe style availability", () => {
     resetState();
     seedTone();
     vi.clearAllMocks();
-    mocks.retranscribeTranscriptionWithRecovery.mockResolvedValue(undefined);
+    mocks.retranscribeTranscriptionWithRecovery.mockResolvedValue({
+      started: true,
+      update: null,
+    });
     produceAppState((draft) => {
       draft.transcriptions.retranscribeDialogOpen = true;
       draft.transcriptions.retranscribeDialogTranscriptionId =
