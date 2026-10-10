@@ -224,19 +224,15 @@ export const TipToastCard = ({ id, onAction, onDismiss }: TipToastProps) => {
           {icon}
         </Box>
         <Box sx={{ minWidth: 0 }}>
-          <Typography
-            variant="titleSmall"
-            noWrap
-            sx={{ letterSpacing: "-0.01em" }}
-          >
+          {/* The row version (`TipCardFrame`) wraps this same title and body
+              in full rather than truncating them, and every tip's copy is
+              already written to this card's width. Wrapping, not `noWrap`,
+              keeps that promise here. A tip's guidance is never cut short by
+              an ellipsis, and the toast simply grows to fit it. */}
+          <Typography variant="titleSmall" sx={{ letterSpacing: "-0.01em" }}>
             {copy.title}
           </Typography>
-          <Typography
-            variant="body2"
-            color="text.secondary"
-            noWrap
-            sx={{ mt: 0.25 }}
-          >
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
             {copy.body}
           </Typography>
         </Box>

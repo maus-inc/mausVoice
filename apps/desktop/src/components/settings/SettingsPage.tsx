@@ -1222,19 +1222,6 @@ export default function SettingsPage() {
         <FormattedMessage defaultMessage="How mausVoice should manage your transcriptions." />
       }
     >
-      {/* The toast's click action completes the task in place instead of
-          navigating. It scrolls to and highlights the Groq key row (visible
-          if the dialog is closed again) and opens the key dialog, whose
-          input carries autoFocus, so keyboard focus lands on the field.
-          (The Help list's "Open settings" wording is a no-op on this page.) */}
-      <TipToastTrigger
-        id="generative-provider"
-        visible={useTip("generative-provider")}
-        onAction={() => {
-          focusSetting("groq_api_key");
-          openGroqDialog();
-        }}
-      />
       <SettingAnchor settingKey="deepgram_api_key" highlight={highlight}>
         <ListTile
           title={<FormattedMessage defaultMessage="Deepgram API key" />}
@@ -1790,6 +1777,22 @@ export default function SettingsPage() {
         >
           <FormattedMessage defaultMessage="Settings" />
         </Typography>
+        {/* Rendered here, outside the search results branch below, so
+            searching does not mount and unmount the toast on every
+            keystroke. The toast's click action completes the task in place
+            instead of navigating. It scrolls to and highlights the Groq key
+            row (visible if the dialog is closed again) and opens the key
+            dialog, whose input carries autoFocus, so keyboard focus lands on
+            the field. (The Help list's "Open settings" wording is a no-op on
+            this page.) */}
+        <TipToastTrigger
+          id="generative-provider"
+          visible={useTip("generative-provider")}
+          onAction={() => {
+            focusSetting("groq_api_key");
+            openGroqDialog();
+          }}
+        />
         <TextField
           fullWidth
           size="small"
