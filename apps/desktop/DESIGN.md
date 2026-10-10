@@ -110,8 +110,6 @@ This replaces the first revision of this section, which put tips inline on the p
 - **Dismissal persists the instant it happens.** Both the corner X and the body click call `dismissTip` synchronously, before sonner's own exit animation starts, not after it finishes. This is a deliberate simplification over the row version's unmount guard. There is no "interrupted exit" to race against when the store write already landed before any animation began. Sonner's own pointer-driven swipe-to-dismiss gesture is turned off (`dismissible: false`) because it is the one removal path this card does not render its own control for. Left on, a swipe would delete the toast without ever calling `dismissTip`, so the tip would read as gone but reappear on the next visit. Every dismissal instead goes through this card's own click and keyboard handlers, the one path that calls it.
 - **Lifecycle matches the page, not the session.** A tip toast shows for as long as its owning page is mounted and not yet dismissed (`TipToastTrigger`), and clears, without persisting, the moment the page unmounts. Leaving the page is not the same choice as dismissing the tip. The toast reuses sonner's own `duration: Infinity`, slide, stacking, and bottom-right position; it does not invent a second toast system.
 
-
-
 ## Recording state machine (pill + composer)
 
 - States: idle | recording | preview. Documented here; no dedicated state module.
