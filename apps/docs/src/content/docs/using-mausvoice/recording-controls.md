@@ -7,7 +7,7 @@ sidebar:
 
 The primary gesture is **hold, speak, release**. It is not a toggle by default: press and keep the configured shortcut down while speaking, then release to finish the audio segment.
 
-The default is **Fn** on macOS and **Left Meta + Left Control** on Windows. Defaults are only a starting point; **Settings → General → Hotkey shortcuts** shows the effective bindings for the current profile. Linux bindings depend on desktop integration and user configuration.
+The default is **Fn** on macOS and **Left Meta + Left Control** on Windows. Defaults are only a starting point; **Settings → Shortcuts → Hotkey shortcuts** shows the effective bindings for the current profile. Linux bindings depend on desktop integration and user configuration.
 
 Press **Escape** to cancel an active transcription. Cancellation is useful after an accidental trigger or when focus moved to a sensitive target. Confirm that the pill returns to idle before beginning another recording.
 

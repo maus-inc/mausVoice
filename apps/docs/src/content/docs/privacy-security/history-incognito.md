@@ -7,7 +7,7 @@ sidebar:
 
 Normal operation stores transcription rows and attempts to save their audio snapshots. Audio uses the `transcription-audio/` directory under the app data root; metadata and text live in `mausvoice.db` in the app config directory. Automatic cleanup retains managed audio for only the 20 newest transcription rows that have audio.
 
-**Incognito mode** prevents new transcription history and audio snapshots from being saved. A separate **Include incognito in stats** option decides whether words dictated in Incognito contribute to usage statistics.
+**Incognito mode** prevents new transcription history and audio snapshots from being saved, and prevents glossary terms from being learned from a correction. Learned terms are proper nouns copied out of dictated text, so they are suppressed on the same grounds as the transcript they came from; the confirmation toast reports that the dictionary was left alone rather than staying silent. A separate **Include incognito in stats** option decides whether words dictated in Incognito contribute to usage statistics.
 
 Enabling Incognito is prospective. Review and remove existing history separately; use **Clear local data** only when its broader deletion of preferences, dictionary entries, and transcriptions is intended. Model files and logs occupy their own directories and should not be assumed to disappear with one history action.
 

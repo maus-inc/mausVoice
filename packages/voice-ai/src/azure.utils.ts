@@ -1,3 +1,4 @@
+import { unknownToMessage } from "@maus-inc/utilities";
 import * as sdk from "microsoft-cognitiveservices-speech-sdk";
 
 export type AzureTranscriptionArgs = {
@@ -5,14 +6,64 @@ export type AzureTranscriptionArgs = {
   region: string;
   blob: ArrayBuffer | Buffer;
   language?: string;
-  prompt?: string;
+  /** Vocabulary terms fed to the recognizer's phrase list. */
+  phrases?: string[];
+  /**
+   * Deadline for the whole recognition round trip, in milliseconds. Omitted by
+   * every streaming and batch caller, which have their own lifecycle; see
+   * `azureTestIntegration` for the probe that needs one.
+   */
+  timeoutMs?: number;
+  /**
+   * Cancels the recognition. The Azure SDK's `recognizeOnceAsync` is
+   * callback-only and takes neither a signal nor a deadline, so without this a
+   * caller that gave up still waits for a recognizer nobody is listening to --
+   * a stop button that does not stop anything until the service answers.
+   */
+  signal?: AbortSignal;
 };
 
 export type AzureTranscribeAudioOutput = {
   text: string;
 };
 
+/**
+ * A failure from the Azure recognizer, with the SDK's own reason kept beside
+ * the message.
+ *
+ * The recognizer reports a failure as prose only: its public one-shot API is
+ * `recognizeOnceAsync(cb, err?: (e: string) => void)`, and a failed handshake
+ * is rejected as the raw string built in the SDK's `ServiceRecognizerBase`
+ * ("Unable to contact server. StatusCode: 401, <endpoint> Reason: ..."). There
+ * is no structured error to read, so the reason is carried as data here and
+ * the credential probe classifies it instead of guessing from the message.
+ */
+export class AzureRecognitionError extends Error {
+  readonly reason: string;
+
+  constructor(message: string, reason: string) {
+    super(message);
+    this.name = "AzureRecognitionError";
+    this.reason = reason;
+  }
+}
+
 const AZURE_LOCALE_REGEX = /^[a-z]{2,3}-[A-Z]{2}$/;
+
+const applyPhraseList = (
+  recognizer: sdk.SpeechRecognizer,
+  phrases: string[] | undefined,
+): void => {
+  if (!phrases || phrases.length === 0) return;
+  // The phrase list takes plain terms and supports multi-word phrases, so
+  // the caller passes vocabulary terms directly and never a prompt sentence,
+  // whose instruction words would bias recognition.
+  const phraseListGrammar = sdk.PhraseListGrammar.fromRecognizer(recognizer);
+  phrases
+    .map((phrase) => phrase.trim())
+    .filter((phrase) => phrase.length > 0)
+    .forEach((phrase) => phraseListGrammar.addPhrase(phrase));
+};
 
 const mapToAzureLocale = (language?: string): string => {
   if (!language || language.trim() === "") {
@@ -112,7 +163,9 @@ export const azureTranscribeAudio = async ({
   region,
   blob,
   language = "en-US",
-  prompt,
+  phrases,
+  timeoutMs,
+  signal,
 }: AzureTranscriptionArgs): Promise<AzureTranscribeAudioOutput> => {
   return new Promise((resolve, reject) => {
     const azureLocale = mapToAzureLocale(language);
@@ -149,29 +202,94 @@ export const azureTranscribeAudio = async ({
 
     const audioConfig = sdk.AudioConfig.fromStreamInput(pushStream);
     const recognizer = new sdk.SpeechRecognizer(speechConfig, audioConfig);
+    applyPhraseList(recognizer, phrases);
 
-    if (prompt) {
-      const phraseListGrammar =
-        sdk.PhraseListGrammar.fromRecognizer(recognizer);
-      const phrases = prompt.split(/[\s,]+/).filter((p) => p.length > 0);
-      phrases.forEach((phrase) => phraseListGrammar.addPhrase(phrase));
+    // `recognizeOnceAsync` is callback-only: it takes no signal and has no
+    // deadline of its own, so a connection that never answers leaves this
+    // promise pending for the life of the process. The recognizer's two
+    // callbacks and the timer race for the one settle, so whichever loses must
+    // not write the promise a second time — and the timer is always cleared, so
+    // a probe that answered in time is not rejected afterwards.
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const settleOnce = (settle: () => void): void => {
+      if (settled) return;
+      settled = true;
+      if (timer !== undefined) clearTimeout(timer);
+      // A listener left on the caller's signal keeps this whole closure -- the
+      // recognizer, the audio buffer, the decoded samples -- alive for as long
+      // as the signal does, which for a session controller is the app's lifetime.
+      signal?.removeEventListener("abort", onAbort);
+      settle();
+    };
+    const onAbort = (): void => {
+      recognizer.close();
+      settleOnce(() =>
+        reject(
+          new AzureRecognitionError(
+            "Azure recognition cancelled by the caller",
+            "cancelled before Azure answered",
+          ),
+        ),
+      );
+    };
+    if (signal?.aborted) {
+      // A call that arrives already cancelled settles here rather than waiting
+      // for a recognizer it will never want. The recognizer and the push stream
+      // are built by the time this runs, so this saves the round trip rather
+      // than the construction -- which is what still happens on a cancellation
+      // that arrives later.
+      onAbort();
+      return;
+    }
+    signal?.addEventListener("abort", onAbort, { once: true });
+
+    if (timeoutMs !== undefined) {
+      timer = setTimeout(() => {
+        recognizer.close();
+        // Worded so the transport rules read it as unreachable, which is what a
+        // blackholed connection is: nothing came back over the network, and the
+        // key was never judged.
+        const reason = `Timed out after ${timeoutMs}ms: no answer arrived from the network.`;
+        settleOnce(() =>
+          reject(
+            new AzureRecognitionError(
+              `Azure API request failed: ${reason}`,
+              reason,
+            ),
+          ),
+        );
+      }, timeoutMs);
     }
 
     recognizer.recognizeOnceAsync(
       (result) => {
         recognizer.close();
-
-        if (result.reason === sdk.ResultReason.RecognizedSpeech) {
-          resolve({ text: result.text });
-        } else if (result.reason === sdk.ResultReason.NoMatch) {
-          resolve({ text: "" });
-        } else {
-          reject(new Error(`Azure recognition failed: ${result.errorDetails}`));
-        }
+        settleOnce(() => {
+          if (result.reason === sdk.ResultReason.RecognizedSpeech) {
+            resolve({ text: result.text });
+          } else if (result.reason === sdk.ResultReason.NoMatch) {
+            resolve({ text: "" });
+          } else {
+            reject(
+              new AzureRecognitionError(
+                `Azure recognition failed: ${result.errorDetails}`,
+                result.errorDetails,
+              ),
+            );
+          }
+        });
       },
       (error) => {
         recognizer.close();
-        reject(new Error(`Azure API request failed: ${error}`));
+        settleOnce(() =>
+          reject(
+            new AzureRecognitionError(
+              `Azure API request failed: ${error}`,
+              error,
+            ),
+          ),
+        );
       },
     );
   });
@@ -182,23 +300,440 @@ export type AzureTestIntegrationArgs = {
   region: string;
 };
 
+/** Bytes in a canonical 44-byte PCM WAV header. */
+const WAV_HEADER_BYTES = 44;
+/** Every WAV chunk id (`RIFF`, `WAVE`, `fmt `, `data`) is a four-byte field. */
+const WAV_CHUNK_ID_BYTES = 4;
+const PROBE_SAMPLE_RATE = 16_000;
+const PROBE_CHANNELS = 1;
+const PROBE_BITS_PER_SAMPLE = 16;
+/** 0.3s of frames, long enough for the service to run one recognition turn. */
+const PROBE_FRAMES = 4_800;
+
+/**
+ * Write a WAV chunk id.
+ *
+ * The field is exactly four ASCII bytes, and both halves of that are checked
+ * before anything is written rather than left to the caller to get right: a
+ * shorter tag leaves the id padded with whatever the buffer already held, and a
+ * longer one runs straight into the chunk size or sample-rate field that
+ * follows. Either way the header is one no reader agrees on, and this is an
+ * exported helper, so the length is this function's contract rather than an
+ * internal caller's habit. Validating first also means a refused tag cannot
+ * leave a half-written id behind.
+ *
+ * The ASCII test comes first because `for...of` walks code points rather than
+ * UTF-16 code units: an astral character arrives here whole, and writing its
+ * low byte would corrupt the id for every reader of the file.
+ */
+export const writeWavChunkId = (
+  view: DataView,
+  offset: number,
+  tag: string,
+): void => {
+  // Code points rather than UTF-16 units, so an astral tag is one character
+  // here and is still measured as the one character it is.
+  const characters = [...tag];
+  for (const character of characters) {
+    const codePoint = character.codePointAt(0) ?? 0;
+    if (codePoint > 0x7f) {
+      throw new RangeError(
+        `A WAV chunk id is ASCII, so "${tag}" cannot be written at offset ${offset}.`,
+      );
+    }
+  }
+  if (characters.length !== WAV_CHUNK_ID_BYTES) {
+    throw new RangeError(
+      `A WAV chunk id is ${WAV_CHUNK_ID_BYTES} bytes, so "${tag}" (${characters.length}) cannot be written at offset ${offset}.`,
+    );
+  }
+
+  // Only now, with the whole tag known to be four ASCII characters, is
+  // anything written.
+  let index = 0;
+  for (const character of characters) {
+    view.setUint8(offset + index, character.codePointAt(0) ?? 0);
+    index += 1;
+  }
+};
+
+/**
+ * A real silent WAV file. The probe used to hand the recognizer a 0-byte
+ * buffer, which made `azureTranscribeAudio` throw a `RangeError` while reading
+ * the sample rate out of the header, so the probe never reached Azure and
+ * reported success for every key. The PCM payload stays zeroed, which is
+ * genuine silence and comes back as a completed `NoMatch`.
+ */
+export const buildSilentProbeWav = (): ArrayBuffer => {
+  const bytesPerSample = PROBE_BITS_PER_SAMPLE / 8;
+  const blockAlign = PROBE_CHANNELS * bytesPerSample;
+  const dataBytes = PROBE_FRAMES * blockAlign;
+  const buffer = new ArrayBuffer(WAV_HEADER_BYTES + dataBytes);
+  const view = new DataView(buffer);
+
+  writeWavChunkId(view, 0, "RIFF");
+  view.setUint32(4, 36 + dataBytes, true); // chunk size after the RIFF header
+  writeWavChunkId(view, 8, "WAVE");
+  writeWavChunkId(view, 12, "fmt ");
+  view.setUint32(16, 16, true); // PCM fmt chunk size
+  view.setUint16(20, 1, true); // WAVE_FORMAT_PCM
+  view.setUint16(22, PROBE_CHANNELS, true);
+  view.setUint32(24, PROBE_SAMPLE_RATE, true);
+  view.setUint32(28, PROBE_SAMPLE_RATE * blockAlign, true); // byte rate
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, PROBE_BITS_PER_SAMPLE, true);
+  writeWavChunkId(view, 36, "data");
+  view.setUint32(40, dataBytes, true);
+
+  return buffer;
+};
+
+/**
+ * What the probe can tell apart from the SDK's prose. Only a rejected
+ * credential is a reason to report "provide a valid API key"; every other
+ * outcome has a different fix, so it carries its own message instead.
+ */
+type AzureProbeFailure =
+  "credential" | "region" | "quota" | "unreachable" | "unknown";
+
+/** The handshake status the SDK embeds in its own failure message. */
+const AZURE_STATUS_CODE = /StatusCode:\s*(\d+)/i;
+
+/**
+ * 400 is absent on purpose. Azure answers a bad request for reasons that have
+ * nothing to do with the key (an unsupported audio format, a malformed WAV),
+ * so the status on its own cannot mean the credential was rejected. A 400 that
+ * really is an invalid key carries the service's own wording beside it, and
+ * the keyword rules below read that.
+ *
+ * There is deliberately no catch-all for the statuses left over. A 3xx, 4xx or
+ * 5xx that reached the service is evidence about the request, not about the
+ * key, and the keyword rules below already give the ones that carry a specific
+ * wording their own bucket. The rest fall through to "unknown", which tells the
+ * user the key could not be confirmed without inventing a cause.
+ */
+const CREDENTIAL_STATUS_CODES = new Set([401, 403]);
+const REGION_STATUS_CODES = new Set([404]);
+const QUOTA_STATUS_CODES = new Set([429]);
+/** The SDK reports 0 when the socket never reached the service at all. */
+const UNREACHABLE_STATUS_CODES = new Set([0]);
+
+const matchesAny = (reason: string, patterns: readonly RegExp[]): boolean =>
+  patterns.some((pattern) => pattern.test(reason));
+
+/**
+ * The SDK's own text for a key it refuses, quoted from
+ * `microsoft-cognitiveservices-speech-sdk` 1.51.0.
+ * `SpeechConfig.fromSubscription` calls
+ * `Contracts.throwIfNullOrWhitespace(subscriptionKey, "subscriptionKey")`,
+ * which throws `"throwIfNullOrWhitespace:subscriptionKey"` before any request
+ * leaves the process. That is the message a whitespace-only key produces here,
+ * and it carries no status, no "authentication", and no "key" wording that the
+ * keyword rules around it would catch, so it needs a pattern of its own.
+ */
+const BLANK_KEY_PATTERN =
+  /throwIfNullOr(?:Whitespace|Undefined):\s*subscriptionKey/i;
+
+/**
+ * Classify the reason the SDK handed over. The status code inside the SDK's
+ * own message is the strongest signal it offers, so it is read first; the
+ * keyword rules cover the SDK's local validation messages and the service body
+ * on a REST rejection, which carry no status of their own.
+ *
+ * A rule here has to match something no earlier rule matches, because the list
+ * is scanned in order and every entry returns the same classification. The SDK
+ * twin of the region message,
+ * `RestConfigBase.privRestErrors.authInvalidSubscriptionKey` ("You must specify
+ * either an authentication token to use, or a Cognitive Speech subscription
+ * key."), is the reason `/authentication/i` is in the list; it needs no
+ * pattern of its own, and adding one would be dead weight.
+ */
+const classifyAzureProbeFailure = (reason: string): AzureProbeFailure => {
+  const statusCode = AZURE_STATUS_CODE.exec(reason)?.[1];
+  const status = statusCode === undefined ? undefined : Number(statusCode);
+  if (status !== undefined) {
+    if (CREDENTIAL_STATUS_CODES.has(status)) return "credential";
+    if (REGION_STATUS_CODES.has(status)) return "region";
+    if (QUOTA_STATUS_CODES.has(status)) return "quota";
+    if (UNREACHABLE_STATUS_CODES.has(status)) return "unreachable";
+  }
+  if (
+    matchesAny(reason, [
+      BLANK_KEY_PATTERN,
+      /invalid subscription key/i,
+      /access denied/i,
+      /authentication/i,
+      /\bunauthorized\b/i,
+    ])
+  ) {
+    return "credential";
+  }
+  if (matchesAny(reason, [/\bregion\b/i, /resource not found/i])) {
+    return "region";
+  }
+  if (matchesAny(reason, [/\bquota\b/i, /exhausted/i, /rate limit/i])) {
+    return "quota";
+  }
+  // The transport rules only decide whether the service was reached at all,
+  // and only a reason with no status can say it did not answer. Every handshake
+  // rejection is prefixed with "Unable to contact server" whatever the service
+  // replied, so on a 400 or a 500 that wording is the SDK's own boilerplate:
+  // reading it as unreachability tells the user to check a network, proxy and
+  // firewall that all worked. Such a reason lands in "unknown", which is what
+  // the status supports — Azure reached the service, and the service could not
+  // be read as confirming the key. Status 0 never reaches here: the table above
+  // already called it unreachable.
+  if (
+    status === undefined &&
+    matchesAny(reason, [
+      /unable to contact/i,
+      /\bnetwork\b/i,
+      /econnrefused/i,
+      /getaddrinfo/i,
+      /timed?\s?out/i,
+      /enotfound/i,
+    ])
+  ) {
+    return "unreachable";
+  }
+  return "unknown";
+};
+
+const describeAzureProbeFailure = (
+  failure: Exclude<AzureProbeFailure, "credential">,
+  region: string,
+): string => {
+  switch (failure) {
+    case "region":
+      return `Azure rejected the region "${region}". Use the region of the Speech resource, not the one the key was copied from.`;
+    case "quota":
+      return "Azure accepted the key but the subscription has no quota left. Raise the quota or wait for it to reset.";
+    case "unreachable":
+      return "Azure could not be reached from this machine. Check the network and any proxy or firewall.";
+    case "unknown":
+      return "Azure could not confirm the key.";
+  }
+};
+
+const readAzureReason = (error: unknown): string => {
+  if (error instanceof AzureRecognitionError) {
+    return error.reason;
+  }
+  return error instanceof Error ? error.message : String(error);
+};
+
+/**
+ * How much of the SDK's own prose rides along in the message the settings
+ * screen puts in a snackbar. `ApiKeyList` hands `error.message` straight to
+ * `showErrorSnackbar`, which is `String(message)` with no cap of its own, and a
+ * handshake rejection embeds a full web-services error document. The diagnosis
+ * sentence carries the action; the excerpt only helps a user who recognises
+ * their own key or region in it.
+ */
+const AZURE_REASON_EXCERPT_CHARS = 120;
+
+/**
+ * Redacts credential-shaped values out of text this app does not control.
+ *
+ * The reason is third-party prose: a gateway or proxy can echo the key it was
+ * given, and the excerpt that carries it is shown in two places, the webview
+ * console handed to the native log sink, whose rolled file the user attaches to
+ * a diagnostics export, and the settings snackbar. That sink's sanitizer only
+ * knows the labels this app writes itself, so nothing downstream would remove a
+ * token that arrived inside someone else's sentence.
+ *
+ * `unknownToMessage` runs before this and covers the shapes it knows, a Bearer
+ * token, its own list of labels, and a provider-prefixed token. What arrives
+ * here is what it missed: a gateway header it has no label for, a value with no
+ * provider prefix, and a token that carries no label at all.
+ *
+ * The match is deliberately loose on the value and strict on the label, because
+ * a false positive costs a diagnosis and a false negative publishes a key. The
+ * label may be quoted, because an error body or a gateway echo arrives as JSON,
+ * where a closing quote sits between the label and the separator.
+ *
+ * Every quantifier here is bounded on purpose. The reason is text a remote end
+ * chose, so a pattern with two adjacent unbounded whitespace runs would let it
+ * choose input that backtracks, and a trailing boundary after a greedy run
+ * makes the engine retry every shorter length. That is defence in depth rather
+ * than a live hazard: `unknownToMessage` already caps the string these run over
+ * at 512 characters, so the input is bounded before it ever reaches here.
+ */
+const AZURE_CREDENTIAL_PATTERNS: RegExp[] = [
+  // A labelled credential: `Ocp-Apim-Subscription-Key: v`, `api_key=v`,
+  // `{"access_token":"v"}`, `x-api-key: v` and so on. Matching the shape of the
+  // label rather than listing names keeps this one quantifier pair instead of
+  // five nested alternations, and it also catches names nobody enumerated, such
+  // as `client_secret` or `x-amz-security-token`.
+  //
+  // It over-matches on purpose: any label merely ENDING in one of those words
+  // is redacted whatever follows it, so `monkey=5` is redacted too. The text
+  // reaching this is an Azure failure reason, where no such field exists, and a
+  // redaction control that hides one harmless value is far cheaper than one that
+  // lets a key through because a new vendor prefix was not enumerated.
+  //
+  // The 24 bounds how much LABEL text the engine inspects before the credential
+  // word, and it is sized above every label that reaches this code: the longest
+  // one this app's own gateway sends, `Ocp-Apim-Subscription-Key`, puts 22
+  // characters in front of `Key`. It cannot put a credential back, which is the
+  // only property the number has to have, and the reason is structural: the
+  // `(?:key|token|...)` alternation is what makes the whole pattern match, so a
+  // value is redacted only once that word has been read inside the budgeted
+  // run. A label longer than the budget is simply re-matched from the next word
+  // boundary inside it -- `-` is one -- and the run it skips over is label text
+  // rather than value text, so the match still spans the credential and the
+  // label reads back whole. `a-f-o-o-bar-baz-qux-quux-corge-Key: v` is redacted
+  // from `baz-Key` and prints as the label it started from.
+  /\b[a-z0-9_.-]{0,24}(?:key|token|secret|password|credential)\b["']{0,2}[ \t]{0,4}[:=][ \t]{0,4}["']{0,2}\S+/gi,
+  // `Authorization: <scheme> <credential>`, for any scheme. The value runs to
+  // the end of the line rather than to the next space, because the scheme is
+  // not a fixed list: a scheme this pattern does not know still carries the
+  // credential after it, so `Authorization: ApiKey v` must lose the v and not
+  // only the scheme word. It also covers the parameters a scheme carries, such
+  // as the nonce in a Digest header.
+  /\bauthorization\b["']{0,2}[ \t]{0,4}[:=][ \t]{0,2}["']?[^\r\n]+/gi,
+  // A bare provider-style token, wherever it appears. The body class lists only
+  // `A-Z`: the `i` flag already matches lowercase, so spelling out `a-z` would
+  // match exactly the same characters, and the flag cannot be dropped because an
+  // uppercase prefix has to be redacted too.
+  /\b(?:sk|pk|rk)-[A-Z0-9_-]{8,}/gi,
+  // A JWT, which is long and structurally unmistakable. Its whole body is
+  // base64url plus the two dots, so one class covers every segment and the
+  // length is what makes it distinctive.
+  /\beyJ[A-Za-z0-9_.-]{20,}/g,
+];
+
+const redactCredentialShapedText = (text: string): string =>
+  AZURE_CREDENTIAL_PATTERNS.reduce(
+    (redacted, pattern) =>
+      redacted.replace(pattern, (match) => {
+        // A quoted label leaves its closing quote in front of the separator, so
+        // the label is cut before that quote and the separator is kept as it
+        // was written, which leaves a readable `label: [redacted]`. The quote
+        // run is bounded because a label is a handful of characters at most.
+        const separator = match.search(/[:=]/);
+        if (separator === -1) return "[redacted]";
+        const label = match.slice(0, separator).replace(/["']{1,2}$/, "");
+        return `${label}${match[separator]} [redacted]`;
+      }),
+    text,
+  );
+
+/**
+ * Remove the exact credential the caller supplied, wherever it appears in the
+ * reason.
+ *
+ * The patterns above all match on shape, and an Azure subscription key is 32
+ * characters of hex: no provider prefix, no label, no scheme, so a bare echo of
+ * it in a gateway sentence matches none of them. The caller holds the value, so
+ * the one thing that cannot be guessed is substituted directly rather than left
+ * to another pattern for a key shape nobody has seen yet.
+ */
+const redactSuppliedKey = (text: string, subscriptionKey: string): string => {
+  const literal = subscriptionKey.trim();
+  // A short or blank key cannot be a credential, and redacting it everywhere
+  // would replace ordinary words in the excerpt.
+  if (literal.length < 8) return text;
+  return text.replace(
+    // `String.raw` so the escape stays readable: the literal backslash in front
+    // of `$&` is the character that has to reach the pattern, and the same
+    // spelling as `escapeRegExp` in the desktop app.
+    new RegExp(literal.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`), "g"),
+    "[redacted]",
+  );
+};
+
+/**
+ * One bounded, single-line excerpt of the SDK's reason, safe to put in front of
+ * a user. Redaction runs before the bound, so a credential is never present to
+ * be cut in half, and the remainder keeps the status code, endpoint and wording
+ * the diagnosis is read from. The reason arrives as multi-line service prose, so
+ * the whitespace is collapsed before the cut lands on a word boundary.
+ */
+const azureReasonExcerpt = (
+  reason: string,
+  limit: number,
+  subscriptionKey: string,
+): string => {
+  const flattened = redactCredentialShapedText(
+    // The supplied key is removed first: everything downstream reshapes the
+    // text, so a key left in place could be cut in half and survive as a
+    // fragment no pattern still matches.
+    unknownToMessage(redactSuppliedKey(reason, subscriptionKey)),
+  )
+    .replace(/\s+/g, " ")
+    .trim();
+  if (flattened.length <= limit) {
+    return flattened;
+  }
+  const truncated = flattened.slice(0, limit);
+  const lastSpace = truncated.lastIndexOf(" ");
+  const body =
+    lastSpace > limit / 2 ? truncated.slice(0, lastSpace) : truncated;
+  return `${body.trimEnd()}…`;
+};
+
+/**
+ * The budget for the excerpt that goes to the log, which is longer than the
+ * snackbar's because the log is read to answer a support request rather than at
+ * a glance, and it keeps the redacted markers that show a credential was
+ * present.
+ *
+ * Both ends of the range come from the reasons the tests in this file log. The
+ * lower end is the fully redacted gateway reason, 209 characters, so a bound
+ * under 209 cuts that record and drops the markers, which is the only thing the
+ * log line is there for. The upper end is the cap the bounds test puts on the
+ * logged record, under 600 characters, and an excerpt is its bound plus at most
+ * one ellipsis, so the bound stays at 598 or below. The value below sits just
+ * above the lower end and well under the upper one.
+ */
+const AZURE_REASON_LOG_CHARS = 240;
+
+/**
+ * How long the credential probe waits before it stops waiting.
+ *
+ * The probe used to hand the recognizer a 0-byte buffer, which threw a
+ * `RangeError` while the header was being parsed, so it always resolved without
+ * a request leaving the process and never needed a deadline. It now sends a real
+ * silent WAV and really talks to Azure, and the SDK's one-shot API has neither a
+ * signal nor a timeout: a captive portal or a firewall DROP leaves the promise
+ * pending forever. `ApiKeyList` holds `setTestingApiKeyId` for the whole promise,
+ * so the card would spin with no cancel path. This is the same budget
+ * `gladiaTestIntegration` gives its probe.
+ */
+const AZURE_PROBE_TIMEOUT_MS = 10_000;
+
 export const azureTestIntegration = async ({
   subscriptionKey,
   region,
 }: AzureTestIntegrationArgs): Promise<boolean> => {
   try {
-    const silentBuffer = new ArrayBuffer(0);
     await azureTranscribeAudio({
       subscriptionKey,
       region,
-      blob: silentBuffer,
+      blob: buildSilentProbeWav(),
+      timeoutMs: AZURE_PROBE_TIMEOUT_MS,
     });
     return true;
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : "";
-    return (
-      !errorMessage.includes("authentication") &&
-      !errorMessage.includes("subscription")
+    // Fail closed, but do not mislabel. Only a completed recognition round trip
+    // proves the credentials work, and the reason decides what the caller is
+    // told: a rejected credential returns false, because that is the one
+    // outcome where "provide a valid API key" is the right advice. Every other
+    // outcome is raised with a redacted, single-line, capped excerpt of the
+    // reason, because ApiKeyList hands that message to showErrorSnackbar, and
+    // the same excerpt with a longer budget goes to the log for support.
+    const reason = readAzureReason(error);
+    const failure = classifyAzureProbeFailure(reason);
+    if (failure === "credential") {
+      return false;
+    }
+    console.error(
+      "Azure integration probe failed:",
+      azureReasonExcerpt(reason, AZURE_REASON_LOG_CHARS, subscriptionKey),
+    );
+    throw new Error(
+      `${describeAzureProbeFailure(failure, region)} Azure reported: ${azureReasonExcerpt(reason, AZURE_REASON_EXCERPT_CHARS, subscriptionKey)}`,
     );
   }
 };
@@ -214,7 +749,8 @@ export type CreateAzureStreamingSessionArgs = {
   region: string;
   sampleRate: number;
   language?: string;
-  prompt?: string;
+  /** Vocabulary terms fed to the recognizer's phrase list. */
+  phrases?: string[];
 };
 
 export const createAzureStreamingSession = async ({
@@ -222,7 +758,7 @@ export const createAzureStreamingSession = async ({
   region,
   sampleRate,
   language,
-  prompt,
+  phrases,
 }: CreateAzureStreamingSessionArgs): Promise<AzureStreamingSession> => {
   return new Promise((resolve, reject) => {
     const azureLocale = mapToAzureLocale(language);
@@ -243,13 +779,7 @@ export const createAzureStreamingSession = async ({
     const pushStream = sdk.AudioInputStream.createPushStream(audioFormat);
     const audioConfig = sdk.AudioConfig.fromStreamInput(pushStream);
     const recognizer = new sdk.SpeechRecognizer(speechConfig, audioConfig);
-
-    if (prompt) {
-      const phraseListGrammar =
-        sdk.PhraseListGrammar.fromRecognizer(recognizer);
-      const phrases = prompt.split(/[\s,]+/).filter((p) => p.length > 0);
-      phrases.forEach((phrase) => phraseListGrammar.addPhrase(phrase));
-    }
+    applyPhraseList(recognizer, phrases);
 
     let fullTranscript = "";
     let isFinalized = false;

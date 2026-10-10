@@ -1,0 +1,670 @@
+// @vitest-environment jsdom
+import { act, createElement, useState } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("react-intl", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("react-intl")>();
+  return {
+    ...actual,
+    useIntl: () => ({
+      formatMessage: ({ defaultMessage }: { defaultMessage: string }) =>
+        defaultMessage,
+    }),
+  };
+});
+
+import {
+  ContextMenuProvider,
+  isEditableTarget,
+  useContextMenu,
+} from "./ContextMenu";
+
+(
+  globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
+).IS_REACT_ACT_ENVIRONMENT = true;
+
+let container: HTMLDivElement;
+let root: Root;
+
+beforeEach(() => {
+  container = document.createElement("div");
+  document.body.appendChild(container);
+  root = createRoot(container);
+});
+
+afterEach(() => {
+  act(() => root.unmount());
+  container.remove();
+  document.body.innerHTML = "";
+});
+
+const nativeContextMenu = (target: Element, x = 120, y = 80): MouseEvent => {
+  const event = new MouseEvent("contextmenu", {
+    bubbles: true,
+    cancelable: true,
+    clientX: x,
+    clientY: y,
+  });
+  act(() => {
+    target.dispatchEvent(event);
+  });
+  return event;
+};
+
+/**
+ * A right-click the way the browser sends one: the `mousedown` first, then the
+ * focusing steps it runs as its default action, then the `contextmenu`.
+ *
+ * jsdom does not run the focusing steps, so a test that dispatches only
+ * `contextmenu` leaves the old focus sitting in `document.activeElement` and
+ * cannot tell a working restore from a broken one. The steps unfocus the
+ * current element when the target is not focusable, which is exactly the case
+ * for the surfaces with no focusable ancestor, so that is what this does and
+ * it asserts the resulting focus really is on the body.
+ */
+const browserRightClick = (target: Element, x = 120, y = 80): MouseEvent => {
+  act(() => {
+    target.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        cancelable: true,
+        button: 2,
+        clientX: x,
+        clientY: y,
+      }),
+    );
+  });
+  act(() => {
+    (document.activeElement as HTMLElement | null)?.blur();
+  });
+  expect(document.activeElement).toBe(document.body);
+  return nativeContextMenu(target, x, y);
+};
+
+/**
+ * `querySelector` that throws when nothing matches, the same shape as the
+ * `openContextMenu` guard in `test/helpers/context-menu.ts`. A non-null
+ * assertion would hand the next line a `null` that surfaces as a TypeError
+ * naming neither the selector nor the surface, whereas this fails with the
+ * selector that came up empty.
+ */
+const queryRequired = <T extends Element = HTMLElement>(
+  scope: ParentNode,
+  selector: string,
+): T => {
+  const found = scope.querySelector<T>(selector);
+  if (!found) {
+    throw new Error(
+      `Expected an element matching "${selector}" to be rendered`,
+    );
+  }
+  return found;
+};
+
+describe("ContextMenuProvider", () => {
+  it("shows the clipboard menu on input right-click without throwing", () => {
+    act(() => {
+      root.render(
+        createElement(
+          ContextMenuProvider,
+          null,
+          createElement("input", { defaultValue: "hello" }),
+        ),
+      );
+    });
+
+    const input = queryRequired(container, "input");
+    // Regression: the provider passes a NATIVE MouseEvent to handleContextMenu,
+    // which previously dereferenced the React-only `nativeEvent` property and
+    // threw a TypeError (suppressing the menu after preventDefault()).
+    expect(() => nativeContextMenu(input)).not.toThrow();
+
+    const menu = queryRequired(document, '[role="menu"]');
+    expect(menu).not.toBeNull();
+    expect(menu.textContent).toContain("Copy");
+    expect(menu.textContent).toContain("Paste");
+    expect(menu.textContent).toContain("Select All");
+  });
+
+  const copyItem = (): HTMLElement | undefined =>
+    Array.from(document.querySelectorAll('[role="menuitem"]')).find((el) =>
+      el.textContent?.includes("Copy"),
+    ) as HTMLElement | undefined;
+
+  it("enables Copy only when the input actually has a selection", () => {
+    const render = (select: boolean) => {
+      act(() => {
+        root.render(
+          createElement(
+            ContextMenuProvider,
+            null,
+            createElement("input", { defaultValue: "hello world" }),
+          ),
+        );
+      });
+      const input = queryRequired<HTMLInputElement>(container, "input");
+      if (select) {
+        // window.getSelection() does NOT reflect <input> selection — the menu
+        // must read selectionStart/selectionEnd instead (regression: Copy was
+        // previously always disabled for inputs).
+        input.setSelectionRange(0, 5);
+      }
+      nativeContextMenu(input);
+    };
+
+    render(false);
+    expect(copyItem()?.getAttribute("aria-disabled")).toBe("true");
+
+    render(true);
+    expect(copyItem()?.getAttribute("aria-disabled")).toBeNull();
+  });
+
+  it("leaves non-input surfaces to the default webview menu", () => {
+    act(() => {
+      root.render(
+        createElement(
+          ContextMenuProvider,
+          null,
+          createElement("div", null, "plain surface"),
+        ),
+      );
+    });
+
+    const surface = queryRequired(container, "div");
+    const event = new MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+      clientX: 50,
+      clientY: 50,
+    });
+    act(() => {
+      surface.dispatchEvent(event);
+    });
+
+    // preventDefault() must NOT fire for non-inputs, so the webview's native
+    // menu is preserved (no custom menu is rendered either).
+    expect(event.defaultPrevented).toBe(false);
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+  });
+});
+
+describe("isEditableTarget", () => {
+  it("returns true for inputs/textareas and false for plain elements", () => {
+    const input = document.createElement("input");
+    expect(isEditableTarget(input)).toBe(true);
+    const textarea = document.createElement("textarea");
+    expect(isEditableTarget(textarea)).toBe(true);
+    const div = document.createElement("div");
+    expect(isEditableTarget(div)).toBe(false);
+    expect(isEditableTarget(null)).toBe(false);
+  });
+
+  it("returns true for contenteditable hosts and their descendants", () => {
+    const host = document.createElement("div");
+    host.setAttribute("contenteditable", "true");
+    expect(isEditableTarget(host)).toBe(true);
+    const child = document.createElement("span");
+    child.textContent = "x";
+    host.appendChild(child);
+    expect(isEditableTarget(child)).toBe(true);
+  });
+});
+
+describe("useContextMenu", () => {
+  const Harness = () => {
+    const menu = useContextMenu();
+    const [lastLabel, setLastLabel] = useState<string | null>(null);
+    return createElement(
+      "div",
+      null,
+      createElement(
+        "button",
+        {
+          "data-testid": "target",
+          onContextMenu: (e: React.MouseEvent) =>
+            menu.handleContextMenu(e.nativeEvent, [
+              {
+                label: "Do thing",
+                onClick: () => setLastLabel("thing"),
+              },
+            ]),
+        },
+        "right-click me",
+      ),
+      createElement("span", { "data-testid": "result" }, lastLabel ?? "none"),
+      menu.renderMenu(),
+    );
+  };
+
+  /**
+   * A surface with nothing focusable in it or above it, matching the wired
+   * hosts that render a plain `div`/`Stack`, plus a focusable control
+   * elsewhere in the app for the user to have come from.
+   */
+  const BareHarness = () => {
+    const menu = useContextMenu();
+    return createElement(
+      "div",
+      null,
+      createElement("input", { "data-testid": "search" }),
+      createElement(
+        "div",
+        {
+          "data-testid": "bare",
+          onContextMenu: (e: React.MouseEvent) =>
+            menu.handleContextMenu(e.nativeEvent, [
+              { label: "Do thing", onClick: () => undefined },
+            ]),
+        },
+        createElement("span", { "data-testid": "bare-text" }, "right-click me"),
+      ),
+      menu.renderMenu(),
+    );
+  };
+
+  it("does not suppress the native menu when there are no items", () => {
+    const EmptyHarness = () => {
+      const menu = useContextMenu();
+      return createElement(
+        "div",
+        null,
+        createElement(
+          "button",
+          {
+            "data-testid": "empty",
+            onContextMenu: (e: React.MouseEvent) =>
+              menu.handleContextMenu(e.nativeEvent, []),
+          },
+          "right-click me",
+        ),
+        menu.renderMenu(),
+      );
+    };
+    act(() => {
+      root.render(createElement(EmptyHarness));
+    });
+    const button = queryRequired(container, '[data-testid="empty"]');
+    const event = new MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+      clientX: 120,
+      clientY: 80,
+    });
+    act(() => {
+      button.dispatchEvent(event);
+    });
+    // An empty item list must NOT preventDefault (which would suppress the
+    // platform menu) and must not render a menu.
+    expect(event.defaultPrevented).toBe(false);
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+  });
+
+  it("closes on Escape", () => {
+    act(() => {
+      root.render(createElement(Harness));
+    });
+    const button = queryRequired(container, "button");
+    nativeContextMenu(button);
+    expect(document.querySelector('[role="menu"]')).not.toBeNull();
+
+    act(() => {
+      document.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+      );
+    });
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+  });
+
+  it("closes on Tab without swallowing the key, so focus is not trapped", () => {
+    act(() => {
+      root.render(createElement(Harness));
+    });
+    const button = queryRequired(container, "button");
+    nativeContextMenu(button);
+    expect(document.querySelector('[role="menu"]')).not.toBeNull();
+
+    // A vertical menu must not cycle focus with Tab: the menu has to dismiss
+    // AND leave the event alone, otherwise keyboard focus cannot leave the
+    // open menu and Escape becomes the only undiscoverable way out.
+    const event = new KeyboardEvent("keydown", {
+      key: "Tab",
+      bubbles: true,
+      cancelable: true,
+    });
+    act(() => {
+      document.dispatchEvent(event);
+    });
+
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  it("returns focus to the surface on Tab instead of dropping it on the body", () => {
+    act(() => {
+      root.render(createElement(Harness));
+    });
+    const button = queryRequired(container, "button");
+    nativeContextMenu(button);
+    expect(document.activeElement).toBe(
+      document.body.querySelector('[role="menu"]'),
+    );
+
+    act(() => {
+      document.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Tab",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
+
+    // The menu held the focused node, so dismissing it without a restore
+    // target unmounts whatever was focused and leaves the document on the
+    // body. The browser's next Tab then restarts from the top of the page
+    // rather than continuing where the user was.
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+    expect(document.activeElement).toBe(button);
+  });
+
+  it("returns focus to the nearest focusable ancestor of a non-focusable surface host", () => {
+    // Every wired surface renders its host as a plain `Box component="div"`
+    // with no tabIndex, so the element the user right-clicked can never take
+    // focus and `focus()` on it is a no-op. Restoring to it dropped the user
+    // on the body, from where the next Tab restarts at the top of the
+    // document. The row's own focusable child is the real return target.
+    const RowHarness = () => {
+      const menu = useContextMenu();
+      return createElement(
+        "div",
+        {
+          "data-testid": "row",
+          onContextMenu: (e: React.MouseEvent) =>
+            menu.handleContextMenu(e.nativeEvent, [
+              { label: "Do thing", onClick: () => undefined },
+            ]),
+        },
+        createElement(
+          "div",
+          { "data-testid": "row-button", role: "button", tabIndex: 0 },
+          createElement(
+            "span",
+            { "data-testid": "row-text" },
+            "right-click me",
+          ),
+        ),
+        menu.renderMenu(),
+      );
+    };
+    act(() => {
+      root.render(createElement(RowHarness));
+    });
+
+    const text = queryRequired(container, '[data-testid="row-text"]');
+    const rowButton = queryRequired(container, '[data-testid="row-button"]');
+    nativeContextMenu(text);
+    expect(document.activeElement).toBe(
+      document.body.querySelector('[role="menu"]'),
+    );
+
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    });
+
+    // The host div is not focusable, so the restore has to land on the
+    // focusable row inside it rather than nowhere.
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+    expect(document.activeElement).toBe(rowButton);
+  });
+
+  it("restores the focused element when the surface host cannot take focus", () => {
+    // Same non-focusable host, but nothing inside it can take focus either, so
+    // there is no target on the surface at all. The element that holds focus is
+    // then the only place the user can be put back. Opening the menu from the
+    // keyboard sends no mousedown, so nothing unfocused it.
+    act(() => {
+      root.render(createElement(BareHarness));
+    });
+
+    const input = container.querySelector(
+      '[data-testid="search"]',
+    ) as HTMLInputElement;
+    act(() => input.focus());
+    expect(document.activeElement).toBe(input);
+
+    nativeContextMenu(queryRequired(container, '[data-testid="bare-text"]'));
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    });
+
+    expect(document.activeElement).toBe(input);
+  });
+
+  it("restores the element a right-click unfocused on a surface with nothing focusable", () => {
+    // This is the shape of `TranscriptRow` and `ChatMessageBubble`: a plain
+    // `div`/`Stack` host, no focusable ancestor anywhere above it, and a menu
+    // opened by right-clicking its text. The mousedown the browser sends first
+    // runs its focusing steps, which unfocus the element the user was on, so by
+    // the time the menu opens `document.activeElement` is the body. Only an
+    // element captured before that mousedown can name where to go back to, and
+    // reading the live one lands the user on the body, from where the next Tab
+    // restarts at the top of the document.
+    act(() => {
+      root.render(createElement(BareHarness));
+    });
+
+    const input = container.querySelector(
+      '[data-testid="search"]',
+    ) as HTMLInputElement;
+    act(() => input.focus());
+    expect(document.activeElement).toBe(input);
+
+    browserRightClick(queryRequired(container, '[data-testid="bare-text"]'));
+    expect(document.activeElement).toBe(
+      document.body.querySelector('[role="menu"]'),
+    );
+
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    });
+
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+    expect(document.activeElement).not.toBe(document.body);
+    expect(document.activeElement).toBe(input);
+  });
+
+  it("closes on Shift+Tab without swallowing the key either", () => {
+    act(() => {
+      root.render(createElement(Harness));
+    });
+    const button = queryRequired(container, "button");
+    nativeContextMenu(button);
+    expect(document.querySelector('[role="menu"]')).not.toBeNull();
+
+    const event = new KeyboardEvent("keydown", {
+      key: "Tab",
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    act(() => {
+      document.dispatchEvent(event);
+    });
+
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  it("renders the menu into document.body, outside transformed ancestors", () => {
+    act(() => {
+      root.render(createElement(Harness));
+    });
+    const button = queryRequired(container, "button");
+    nativeContextMenu(button, 200, 150);
+
+    const menu = document.body.querySelector('[role="menu"]');
+    expect(menu).not.toBeNull();
+    // The portal must lift the menu out of the render container so no
+    // ancestor's `filter`/`transform` can re-anchor or clip it.
+    expect(container.contains(menu)).toBe(false);
+    // Its positioned wrapper lives directly under <body>.
+    const positioned = menu?.parentElement;
+    expect(positioned).not.toBeNull();
+    expect(positioned?.parentElement).toBe(document.body);
+  });
+
+  it("consumes Escape before host (e.g. dialog) keydown handlers see it", () => {
+    const dialogKeydownSpy = vi.fn();
+    document.addEventListener("keydown", dialogKeydownSpy);
+    try {
+      act(() => {
+        root.render(createElement(Harness));
+      });
+      nativeContextMenu(queryRequired(container, "button"));
+
+      const event = new KeyboardEvent("keydown", {
+        key: "Escape",
+        bubbles: true,
+        cancelable: true,
+      });
+      act(() => {
+        document.dispatchEvent(event);
+      });
+
+      // The menu closed and the event never continued to bubble-phase
+      // listeners, so a wrapping MUI dialog survives the Escape.
+      expect(document.querySelector('[role="menu"]')).toBeNull();
+      expect(dialogKeydownSpy).not.toHaveBeenCalled();
+    } finally {
+      document.removeEventListener("keydown", dialogKeydownSpy);
+    }
+  });
+
+  it("moves keyboard focus into the menu so arrow navigation works", () => {
+    act(() => {
+      root.render(createElement(Harness));
+    });
+    nativeContextMenu(queryRequired(container, "button"));
+
+    const menu = document.body.querySelector('[role="menu"]');
+    expect(document.activeElement).toBe(menu);
+  });
+
+  it("runs the item action and closes on click", () => {
+    act(() => {
+      root.render(createElement(Harness));
+    });
+    const button = queryRequired(container, "button");
+    nativeContextMenu(button);
+
+    const item = Array.from(
+      document.querySelectorAll('[role="menuitem"]'),
+    ).find((el) => el.textContent?.includes("Do thing")) as HTMLElement;
+    expect(item).toBeTruthy();
+
+    act(() => {
+      item.click();
+    });
+    expect(queryRequired(container, '[data-testid="result"]').textContent).toBe(
+      "thing",
+    );
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+  });
+
+  it("keeps the menu open when scrolling inside the menu itself", () => {
+    act(() => {
+      root.render(createElement(Harness));
+    });
+    const button = queryRequired(container, "button");
+    nativeContextMenu(button);
+    const menu = queryRequired(document, '[role="menu"]');
+    expect(menu).not.toBeNull();
+
+    // The menu scrolls itself (overflowY: auto) when it has many items; that
+    // must NOT dismiss the menu. The window scroll listener is registered in
+    // the capture phase, so a scroll event dispatched on the menu element
+    // reaches it with the menu as target.
+    act(() => {
+      menu.dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+    expect(document.querySelector('[role="menu"]')).not.toBeNull();
+  });
+
+  it("closes the menu when an external element scrolls", () => {
+    act(() => {
+      root.render(createElement(Harness));
+    });
+    const button = queryRequired(container, "button");
+    nativeContextMenu(button);
+    expect(document.querySelector('[role="menu"]')).not.toBeNull();
+
+    act(() => {
+      document.body.dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+  });
+
+  // The scroll listener is on `window` with capture, so `e.target` is whatever
+  // scrolled. A page-level scroll targets `document`, not an Element -- and
+  // `Document` has no `closest`, so the handler used to throw a TypeError on
+  // exactly this event and the `closeMenu` below it never ran. The test above
+  // dispatches on `document.body`, which is an Element, so it passed regardless.
+  it("closes the menu when the document itself scrolls, without throwing", () => {
+    act(() => {
+      root.render(createElement(Harness));
+    });
+    const button = queryRequired(container, "button");
+    nativeContextMenu(button);
+    expect(document.querySelector('[role="menu"]')).not.toBeNull();
+
+    act(() => {
+      document.dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+  });
+});
+
+describe("surface yields editable right-clicks to the provider", () => {
+  it("shows the clipboard menu (not the surface menu) on an input", () => {
+    const SurfaceHarness = () => {
+      const menu = useContextMenu();
+      return createElement(
+        "div",
+        {
+          // A surface that yields editable targets to the provider, matching
+          // the wired surfaces (TranscriptRow/DictionaryRow/…).
+          onContextMenu: (e: React.MouseEvent) => {
+            if (isEditableTarget(e.target)) return;
+            menu.handleContextMenu(e.nativeEvent, [
+              {
+                label: "Delete",
+                danger: true,
+                onClick: () => undefined,
+              },
+            ]);
+          },
+        },
+        createElement("input", { defaultValue: "hello" }),
+        menu.renderMenu(),
+      );
+    };
+
+    act(() => {
+      root.render(
+        createElement(ContextMenuProvider, null, createElement(SurfaceHarness)),
+      );
+    });
+
+    const input = queryRequired(container, "input");
+    nativeContextMenu(input);
+
+    const menu = queryRequired(document, '[role="menu"]');
+    expect(menu).not.toBeNull();
+    // The provider's clipboard menu wins over the surface's Delete item.
+    expect(menu.textContent).toContain("Copy");
+    expect(menu.textContent).toContain("Paste");
+    expect(menu.textContent).not.toContain("Delete");
+  });
+});

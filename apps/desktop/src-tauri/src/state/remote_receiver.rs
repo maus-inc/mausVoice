@@ -52,7 +52,7 @@ impl RemoteReceiverState {
         let mut hasher = Sha256::new();
         hasher.update(device_name.as_bytes());
         let digest = hasher.finalize();
-        let device_id = format!("device-{:x}", digest)[..23].to_string();
+        let device_id = format!("device-{digest:x}")[..23].to_string();
 
         Self {
             inner: Arc::new(Mutex::new(RemoteReceiverStateInner {

@@ -9,7 +9,7 @@ Assistant mode is an experimental command workflow, separate from ordinary dicta
 
 ## Configure it
 
-1. Open **Settings → Processing → Assistant mode**.
+1. Open **Settings → AI and processing → Assistant mode**.
 2. Choose **API** and select or add a credential whose provider supports generative text. **Off** leaves the assistant without an LLM backend.
 3. Configure the **Assistant hotkey**.
 4. Turn on the separate **Assistant mode** switch. This feature is disabled by default.
@@ -20,7 +20,7 @@ The assistant has its own provider selection. Changing the transcription provide
 
 Hold the configured assistant shortcut, speak an instruction, and release it. The voice is transcribed using the active transcription configuration, but the recognized text becomes a chat message rather than a normal history row. The assistant conversation appears in the pill and under **Chats** in the main navigation.
 
-Useful companion shortcuts are listed under **Settings → General → Hotkey shortcuts**:
+Useful companion shortcuts are listed under **Settings → Shortcuts → Hotkey shortcuts**:
 
 - **Open chat** opens the current assistant conversation in the main window.
 - **Cancel transcription** cancels the active dictation or assistant session.
@@ -35,7 +35,7 @@ The built-in tool set can read the focused field and surrounding screen context,
 
 ## Power mode
 
-Power mode adds the `run_terminal_command` tool. On Windows it invokes the proposed string through `cmd /C`; on macOS and Linux it uses `sh -c`. Commands run with the mausVoice process's full user permissions and are not placed in a sandbox. They can read or change files, start programs, install software when permissions allow, and expose information through their output.
+Power mode adds the `run_terminal_command` tool. The Rust backend validates each command against `ALLOWED_COMMANDS` (Unix: `ls`, `pwd`, `echo`, `cat`, `which`, `whoami`, `date`, `uname`, `df`, `du`, `head`, `tail`, `wc`, plus `open`/`xdg-open`; Windows: `whoami`, `where`, `hostname`, `explorer`) and executes directly, without a shell (`sh -c` / `cmd /C`). Shell metacharacters such as `/`, `\`, `;`, `|`, `&`, and `$` are rejected anywhere in an argument, and a bare `..` argument is refused. Absolute paths and paths into subdirectories or parent directories are not allowed. Commands may use bare names in their default working directory and other non-path arguments, but cannot be directed to an arbitrary location. Commands run with the mausVoice process's full user permissions.
 
 Enabling power mode requires a warning confirmation, and the dialog asks you to restart mausVoice before relying on the change. Keep it off unless the task genuinely needs shell access. Never approve a command you do not understand, and avoid **Always allow** for terminal execution. Turning the switch off and restarting removes the terminal tool from the assistant, but previously remembered always-allow storage is a separate setting.
 

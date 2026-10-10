@@ -5,10 +5,12 @@ sidebar:
   order: 15
 ---
 
-After processing, mausVoice places output on the clipboard and delivers it with the configured insertion strategy. Open **Settings → General → Text insertion options** to choose between clipboard paste and simulated typing.
+After processing, mausVoice delivers the output with the configured insertion strategy: paste puts the text on the clipboard, simulated typing sends keystrokes. Open **Settings → Dictation → Text insertion options** to choose between clipboard paste and simulated typing.
 
 Defaults are clipboard **paste**, **Shift+Insert** as the paste key sequence, and a **5 ms** delay for simulated typing. These are operational defaults, not guarantees for every target. Terminals, remote desktops, password fields, games, browser canvases, and elevated windows can intercept or reject synthetic input.
 
 Use paste for normal editors because it is fast and preserves a single atomic block. Try simulated typing when an application refuses programmatic paste, and increase its delay if characters arrive out of order or go missing. Per-application overrides can preserve a special choice for a troublesome target without slowing every other app.
+
+When **Review before insert** is enabled in **Settings → Dictation**, the native pill's editable assistant panel opens after processing and before insertion. For dictation, you can edit the text, then insert, copy, cancel, or open History. An agent's Paste action instead saves an edited **Open** choice as a pending card in Chats: opening the main window changes focus, so copy the text from that card and paste it manually in the intended app. Builds without a native pill use the composer fallback. This applies to both paste and simulated typing.
 
 Insertion failure does not imply transcription failure. Check History or the clipboard. If the correct text exists there, keep the provider settings unchanged and troubleshoot focus, permissions, paste shortcut, or typing delay.

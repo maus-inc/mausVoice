@@ -13,10 +13,10 @@ declare module "@mui/material/styles" {
     goldBg: string;
     goldFg: string;
     shadow: string;
-    blue: string;
-    blueHover: string;
-    blueActive: string;
-    onBlue: string;
+    chrome: string;
+    chromeHover: string;
+    chromeActive: string;
+    onChrome: string;
 
     level0: string;
     level1: string;
@@ -27,10 +27,10 @@ declare module "@mui/material/styles" {
     goldBg?: string;
     goldFg?: string;
     shadow?: string;
-    blue?: string;
-    blueHover?: string;
-    blueActive?: string;
-    onBlue?: string;
+    chrome?: string;
+    chromeHover?: string;
+    chromeActive?: string;
+    onChrome?: string;
 
     level0?: string;
     level1?: string;
@@ -42,7 +42,7 @@ declare module "@mui/material/styles" {
 declare module "@mui/material/Button" {
   interface ButtonPropsVariantOverrides {
     flat: true;
-    blue: true;
+    chrome: true;
   }
 }
 declare module "@mui/material/Card" {

@@ -1,4 +1,5 @@
-import { fetch } from "@tauri-apps/plugin-http";
+import { HttpError } from "@maus-inc/utilities";
+import { secureFetch as fetch } from "./secure-fetch.utils";
 
 export const SPEACHES_DEFAULT_URL = "http://localhost:8000";
 export const SPEACHES_DEFAULT_MODEL = "Systran/faster-whisper-large-v3";
@@ -16,14 +17,21 @@ export const speachesTestIntegration = async ({
   try {
     response = await fetch(`${url}/health`);
   } catch (error) {
+    // No HTTP response ever arrived, so there is no status to report. This stays
+    // a plain error: a statusless failure is still worth another attempt, and a
+    // made-up one would be read as a client error that must not be retried.
     throw new Error(
       `Unable to connect to Speaches at ${url}. Make sure Speaches is running. ${error}`,
     );
   }
 
   if (!response.ok) {
-    throw new Error(
+    // The status is carried as data, not as prose, so a retry policy can read a
+    // terminal 4xx as terminal and honour a rate-limit hint on a 429 or 503.
+    throw new HttpError(
+      response.status,
       `Speaches returned an error (status ${response.status}). Check your configuration.`,
+      { retryAfter: response.headers.get("retry-after") },
     );
   }
 
@@ -37,6 +45,7 @@ export type SpeachesTranscriptionArgs = {
   ext: string;
   prompt?: string;
   language?: string;
+  signal?: AbortSignal;
 };
 
 export type SpeachesTranscribeAudioOutput = {
@@ -50,6 +59,7 @@ export const speachesTranscribeAudio = async ({
   ext,
   prompt,
   language,
+  signal,
 }: SpeachesTranscriptionArgs): Promise<SpeachesTranscribeAudioOutput> => {
   const url = baseUrl.replace(/\/$/, "");
 
@@ -67,18 +77,26 @@ export const speachesTranscribeAudio = async ({
   const response = await fetch(`${url}/v1/audio/transcriptions`, {
     method: "POST",
     body: formData,
+    signal,
   });
 
   if (!response.ok) {
     const errorText = await response.text().catch(() => "Unknown error");
-    throw new Error(
+    // The status travels on the error as data so the shared retry policy stops
+    // on a terminal status and waits out a `Retry-After` hint. The message is
+    // unchanged, so callers and the settings snackbar read exactly as before.
+    throw new HttpError(
+      response.status,
       `Speaches transcription failed: ${response.status} - ${errorText}`,
+      { retryAfter: response.headers.get("retry-after") },
     );
   }
 
   const data = (await response.json()) as { text?: string };
 
   if (!data.text) {
+    // A 2xx body with no text is a malformed payload, not an HTTP failure, so
+    // there is no status to report and it stays a plain error.
     throw new Error("Transcription failed: no text in response");
   }
 

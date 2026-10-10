@@ -1,13 +1,11 @@
-import AddIcon from "@mui/icons-material/Add";
-import CheckRoundedIcon from "@mui/icons-material/CheckRounded";
-import DeleteOutlineIcon from "@mui/icons-material/DeleteOutlined";
-import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
+import { Check, Pencil, Plus, Trash2 } from "lucide-react";
 import {
   Autocomplete,
   Box,
   Button,
   CircularProgress,
   Dialog,
+  Divider,
   DialogActions,
   DialogContent,
   DialogTitle,
@@ -18,10 +16,16 @@ import {
   TextField,
   Tooltip,
   Typography,
+  useTheme,
 } from "@mui/material";
 import { API_KEY_PROVIDERS, type ApiKeyProvider } from "@maus-inc/types";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { FormattedMessage, useIntl } from "react-intl";
+import {
+  defineMessages,
+  FormattedMessage,
+  useIntl,
+  type IntlShape,
+} from "react-intl";
 import {
   createApiKey,
   deleteApiKey,
@@ -36,6 +40,8 @@ import {
 import { useAppStore } from "../../store";
 import { getModelProviderRepo } from "../../repos";
 import type { FetchModelsOptions } from "../../repos/model-provider.repo";
+import { cssEase, duration, easeOutQuint } from "../../styles/motion";
+import { selectedOutlineSx } from "../../styles/selection";
 import { getProviderFormConfig } from "./api-key-provider-config";
 import { OllamaModelPicker } from "./OllamaModelPicker";
 import { OpenAICompatibleModelPicker } from "./OpenAICompatibleModelPicker";
@@ -60,16 +66,74 @@ const getAvailableProviders = (context: ApiKeyListContext): ApiKeyProvider[] =>
       : repo.supportsGenerativeTextModels();
   });
 
+const ApiKeyFormActions = ({
+  onCancel,
+  onSave,
+  saving,
+  canSave,
+  onTest,
+  testing,
+}: {
+  onCancel: () => void;
+  onSave: () => void;
+  saving: boolean;
+  canSave: boolean;
+  onTest?: () => void;
+  testing?: boolean;
+}) => {
+  return (
+    <Box sx={{ display: "flex", gap: 1, justifyContent: "flex-end" }}>
+      {onTest && (
+        <Button
+          variant="outlined"
+          size="small"
+          onClick={onTest}
+          disabled={testing || saving}
+        >
+          {testing ? (
+            <FormattedMessage defaultMessage="Testing..." />
+          ) : (
+            <FormattedMessage defaultMessage="Test" />
+          )}
+        </Button>
+      )}
+      <Button
+        variant="outlined"
+        onClick={onCancel}
+        size="small"
+        disabled={saving}
+      >
+        <FormattedMessage defaultMessage="Cancel" />
+      </Button>
+      <Button
+        variant="contained"
+        size="small"
+        onClick={onSave}
+        disabled={!canSave || saving}
+      >
+        {saving ? (
+          <FormattedMessage defaultMessage="Saving..." />
+        ) : (
+          <FormattedMessage defaultMessage="Save" />
+        )}
+      </Button>
+    </Box>
+  );
+};
+
+type AddApiKeyPayload = {
+  name: string;
+  provider: SettingsApiKeyProvider;
+  key: string;
+  baseUrl?: string;
+  azureRegion?: string;
+  transcriptionModel?: string;
+  includeV1Path?: boolean;
+  transcriptionPath?: string;
+};
+
 type AddApiKeyCardProps = {
-  onSave: (
-    name: string,
-    provider: SettingsApiKeyProvider,
-    key: string,
-    baseUrl?: string,
-    azureRegion?: string,
-    transcriptionModel?: string,
-    includeV1Path?: boolean,
-  ) => Promise<void>;
+  onSave: (payload: AddApiKeyPayload) => Promise<void>;
   onCancel: () => void;
   context: ApiKeyListContext;
 };
@@ -108,16 +172,20 @@ const AddApiKeyCard = ({ onSave, onCancel, context }: AddApiKeyCardProps) => {
       const includeV1PathValue = config.showIncludeV1Path
         ? includeV1Path
         : undefined;
+      const transcriptionPath = fieldValues.transcriptionPath
+        ? fieldValues.transcriptionPath
+        : undefined;
 
-      await onSave(
+      await onSave({
         name,
         provider,
-        apiKeyValue,
+        key: apiKeyValue,
         baseUrl,
         azureRegion,
         transcriptionModel,
-        includeV1PathValue,
-      );
+        includeV1Path: includeV1PathValue,
+        transcriptionPath,
+      });
       setName("");
       setFieldValues({});
       setIncludeV1Path(true);
@@ -183,28 +251,12 @@ const AddApiKeyCard = ({ onSave, onCancel, context }: AddApiKeyCardProps) => {
         includeV1Path={includeV1Path}
         onIncludeV1PathChange={setIncludeV1Path}
       />
-      <Box sx={{ display: "flex", gap: 1, justifyContent: "flex-end" }}>
-        <Button
-          variant="outlined"
-          onClick={onCancel}
-          size="small"
-          disabled={saving}
-        >
-          <FormattedMessage defaultMessage="Cancel" />
-        </Button>
-        <Button
-          variant="contained"
-          size="small"
-          onClick={handleSave}
-          disabled={!canSave || saving}
-        >
-          {saving ? (
-            <FormattedMessage defaultMessage="Saving..." />
-          ) : (
-            <FormattedMessage defaultMessage="Save" />
-          )}
-        </Button>
-      </Box>
+      <ApiKeyFormActions
+        onCancel={onCancel}
+        onSave={() => void handleSave()}
+        saving={saving}
+        canSave={canSave}
+      />
     </Paper>
   );
 };
@@ -218,6 +270,7 @@ type EditApiKeyCardProps = {
     azureRegion?: string | null;
     includeV1Path?: boolean | null;
     transcriptionModel?: string | null;
+    transcriptionPath?: string | null;
   }) => Promise<void>;
   onCancel: () => void;
   onTest: (overrides: Partial<SettingsApiKey>) => void;
@@ -240,6 +293,8 @@ const EditApiKeyCard = ({
     if (apiKey.azureRegion) initial.azureRegion = apiKey.azureRegion;
     if (apiKey.transcriptionModel)
       initial.transcriptionModel = apiKey.transcriptionModel;
+    if (apiKey.transcriptionPath)
+      initial.transcriptionPath = apiKey.transcriptionPath;
     return initial;
   });
   const [includeV1Path, setIncludeV1Path] = useState(
@@ -281,6 +336,12 @@ const EditApiKeyCard = ({
       const transcriptionModel = hasTranscriptionModelField
         ? fieldValues.transcriptionModel || null
         : undefined;
+      const hasTranscriptionPathField = config.fields.some(
+        (f) => f.key === "transcriptionPath",
+      );
+      const transcriptionPath = hasTranscriptionPathField
+        ? fieldValues.transcriptionPath || null
+        : undefined;
 
       await onSave({
         name,
@@ -289,6 +350,7 @@ const EditApiKeyCard = ({
         azureRegion,
         includeV1Path: includeV1PathValue,
         transcriptionModel,
+        transcriptionPath,
       });
     } catch (error) {
       console.error("Failed to save API key", error);
@@ -313,20 +375,26 @@ const EditApiKeyCard = ({
       overrides.baseUrl = fieldValues.baseUrl || config.defaultBaseUrl;
     if (fieldValues.azureRegion)
       overrides.azureRegion = fieldValues.azureRegion;
+    const hasTranscriptionModelField = config.fields.some(
+      (f) => f.key === "transcriptionModel",
+    );
+    if (hasTranscriptionModelField) {
+      overrides.transcriptionModel = fieldValues.transcriptionModel || null;
+    }
+    if (config.showIncludeV1Path) overrides.includeV1Path = includeV1Path;
     onTest(overrides);
-  }, [name, fieldValues, config.defaultBaseUrl, onTest]);
+  }, [name, fieldValues, config, includeV1Path, onTest]);
 
   return (
     <Paper
       variant="outlined"
-      sx={{
+      sx={(theme) => ({
         p: 2,
         display: "flex",
         flexDirection: "column",
         gap: 1.5,
-        borderColor: "primary.main",
-        borderWidth: 1,
-      }}
+        ...selectedOutlineSx(theme),
+      })}
     >
       <Typography
         variant="body2"
@@ -357,40 +425,14 @@ const EditApiKeyCard = ({
         onIncludeV1PathChange={setIncludeV1Path}
         isEditing
       />
-      <Box sx={{ display: "flex", gap: 1, justifyContent: "flex-end" }}>
-        <Button
-          variant="outlined"
-          size="small"
-          onClick={handleTest}
-          disabled={testing || saving}
-        >
-          {testing ? (
-            <FormattedMessage defaultMessage="Testing..." />
-          ) : (
-            <FormattedMessage defaultMessage="Test" />
-          )}
-        </Button>
-        <Button
-          variant="outlined"
-          onClick={onCancel}
-          size="small"
-          disabled={saving}
-        >
-          <FormattedMessage defaultMessage="Cancel" />
-        </Button>
-        <Button
-          variant="contained"
-          size="small"
-          onClick={handleSave}
-          disabled={!canSave || saving}
-        >
-          {saving ? (
-            <FormattedMessage defaultMessage="Saving..." />
-          ) : (
-            <FormattedMessage defaultMessage="Save" />
-          )}
-        </Button>
-      </Box>
+      <ApiKeyFormActions
+        onCancel={onCancel}
+        onSave={() => void handleSave()}
+        saving={saving}
+        canSave={canSave}
+        onTest={handleTest}
+        testing={testing}
+      />
     </Paper>
   );
 };
@@ -402,6 +444,54 @@ const getModelForContext = (
   return context === "transcription"
     ? (apiKey.transcriptionModel ?? null)
     : (apiKey.postProcessingModel ?? null);
+};
+
+/**
+ * The single description of what the model picker in a given section is for.
+ *
+ * The visible caption and the input's accessible name both read this, so a
+ * translator who rewords the caption in one locale cannot leave the
+ * aria-label holding the old wording, and the message stays defined once.
+ *
+ * defineMessages rather than a plain object because that is the shape
+ * scripts/i18n-extract-with-prune.mjs reads. A descriptor returned from a
+ * helper and spread at the call site is invisible to the extractor, which then
+ * prunes the key and every translation with it. The i18n extraction and catalog
+ * sync checks in CI are what catch that.
+ */
+const modelSetupMessages = defineMessages({
+  transcription: { defaultMessage: "Transcription model" },
+  "post-processing": { defaultMessage: "Post-processing model" },
+});
+
+const modelSetupLabel = (intl: IntlShape, context: ApiKeyListContext): string =>
+  intl.formatMessage(modelSetupMessages[context]);
+
+/**
+ * The model choice is a sub-section of the connection card, so it reads as
+ * one: a full-bleed hairline, then a captioned field group. Rendered only
+ * alongside an actual picker — provider pickers always have controls; the
+ * generic fetch-based picker gates itself below.
+ */
+const ModelSetupSection = ({
+  context,
+  children,
+}: {
+  context: ApiKeyListContext;
+  children: React.ReactNode;
+}) => {
+  const intl = useIntl();
+  return (
+    <>
+      <Divider sx={{ mx: -2 }} />
+      <Stack spacing={1} sx={{ width: "100%", pt: 0.25 }}>
+        <Typography variant="subtitle2">
+          {modelSetupLabel(intl, context)}
+        </Typography>
+        {children}
+      </Stack>
+    </>
+  );
 };
 
 const ModelPickerForProvider = ({
@@ -419,7 +509,7 @@ const ModelPickerForProvider = ({
 }) => {
   if (apiKey.provider === "openrouter" && context === "post-processing") {
     return (
-      <Box onClick={(e) => e.stopPropagation()}>
+      <ModelSetupSection context={context}>
         <OpenRouterModelPicker
           apiKeyId={apiKey.id}
           selectedModel={currentModel}
@@ -427,13 +517,13 @@ const ModelPickerForProvider = ({
           disabled={disabled}
         />
         <OpenRouterProviderRouting apiKeyId={apiKey.id} disabled={disabled} />
-      </Box>
+      </ModelSetupSection>
     );
   }
 
   if (apiKey.provider === "ollama" && context === "post-processing") {
     return (
-      <Box onClick={(e) => e.stopPropagation()}>
+      <ModelSetupSection context={context}>
         <OllamaModelPicker
           baseUrl={apiKey.baseUrl ?? null}
           apiKey={apiKey.keyFull}
@@ -441,7 +531,7 @@ const ModelPickerForProvider = ({
           onModelSelect={onModelChange}
           disabled={disabled}
         />
-      </Box>
+      </ModelSetupSection>
     );
   }
 
@@ -450,15 +540,17 @@ const ModelPickerForProvider = ({
     context === "post-processing"
   ) {
     return (
-      <Box onClick={(e) => e.stopPropagation()}>
+      <ModelSetupSection context={context}>
         <OpenAICompatibleModelPicker
+          apiKeyId={apiKey.id}
           baseUrl={apiKey.baseUrl ?? null}
           apiKey={apiKey.keyFull}
+          includeV1Path={apiKey.includeV1Path}
           selectedModel={currentModel}
           onModelSelect={onModelChange}
           disabled={disabled}
         />
-      </Box>
+      </ModelSetupSection>
     );
   }
 
@@ -486,6 +578,7 @@ const GenericModelPicker = ({
   onModelChange: (model: string | null) => void;
   disabled: boolean;
 }) => {
+  const intl = useIntl();
   const [models, setModels] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
@@ -497,7 +590,9 @@ const GenericModelPicker = ({
   useEffect(() => {
     const options: FetchModelsOptions = {
       apiKey: apiKey.keyFull ?? undefined,
+      apiKeyId: apiKey.id,
       baseUrl: apiKey.baseUrl ?? undefined,
+      includeV1Path: apiKey.includeV1Path,
     };
 
     let cancelled = false;
@@ -522,12 +617,19 @@ const GenericModelPicker = ({
     return () => {
       cancelled = true;
     };
-  }, [repo, apiKey.keyFull, apiKey.baseUrl, context]);
+  }, [
+    repo,
+    apiKey.id,
+    apiKey.keyFull,
+    apiKey.baseUrl,
+    apiKey.includeV1Path,
+    context,
+  ]);
 
   if (models.length === 0 && !isLoading) return null;
 
   return (
-    <Box onClick={(e) => e.stopPropagation()}>
+    <ModelSetupSection context={context}>
       <Autocomplete
         freeSolo
         options={models}
@@ -547,11 +649,17 @@ const GenericModelPicker = ({
         renderInput={(params) => (
           <TextField
             {...params}
-            label={<FormattedMessage defaultMessage="Model" />}
             placeholder="Select or type a model"
             slotProps={{
               ...params.slotProps,
-
+              htmlInput: {
+                ...params.slotProps.htmlInput,
+                // The visible subtitle2 caption labels the field group; the
+                // input itself is announced with the same wording. Both read
+                // from modelSetupLabel so a rewording in one locale cannot
+                // leave the accessible name behind.
+                "aria-label": modelSetupLabel(intl, context),
+              },
               input: {
                 ...params.slotProps.input,
                 endAdornment: (
@@ -565,9 +673,46 @@ const GenericModelPicker = ({
           />
         )}
       />
-    </Box>
+    </ModelSetupSection>
   );
 };
+
+/**
+ * One icon button in a key card's action row, with its tooltip.
+ *
+ * Extracted so the edit and delete actions read as one element each instead of
+ * a Tooltip>span>IconButton trio nested four JSX levels deep inside the card's
+ * Paper>Stack>Stack. The `title` is a ReactNode passed by the caller, so each
+ * `defaultMessage` literal stays where the extractor can read it. The `span` is
+ * kept because a disabled IconButton does not fire pointer events, so the
+ * tooltip needs a live element to hover.
+ */
+const ApiKeyCardAction = ({
+  title,
+  onClick,
+  disabled,
+  color,
+  icon,
+}: {
+  title: React.ReactNode;
+  onClick: () => void;
+  disabled: boolean;
+  color?: "error";
+  icon: React.ReactNode;
+}) => (
+  <Tooltip title={title}>
+    <span>
+      <IconButton
+        size="small"
+        color={color}
+        onClick={onClick}
+        disabled={disabled}
+      >
+        {icon}
+      </IconButton>
+    </span>
+  </Tooltip>
+);
 
 const ApiKeyCard = ({
   apiKey,
@@ -593,6 +738,7 @@ const ApiKeyCard = ({
   context: ApiKeyListContext;
 }) => {
   const intl = useIntl();
+  const theme = useTheme();
   const config = useMemo(
     () => getProviderFormConfig(apiKey.provider, context),
     [apiKey.provider, context],
@@ -602,94 +748,143 @@ const ApiKeyCard = ({
   return (
     <Paper
       variant="outlined"
-      onClick={onSelect}
-      sx={{
-        p: 2,
-        borderColor: selected ? "primary.main" : "divider",
-        borderWidth: 1,
-        cursor: "pointer",
-        transition: "border-color 0.2s ease, box-shadow 0.2s ease",
-        boxShadow: selected
-          ? (theme) => `0 0 0 1px ${theme.palette.primary.main}`
-          : "none",
-        ":hover": {
-          borderColor: selected ? "primary.main" : "action.active",
+      sx={[
+        {
+          p: 2,
+          borderColor: "divider",
+          borderWidth: 1,
+          display: "flex",
+          flexDirection: "column",
+          gap: 1.5,
+          width: "100%",
+          transition: "border-color 0.2s ease, box-shadow 0.2s ease",
         },
-        display: "flex",
-        flexDirection: "column",
-        gap: 2,
-        width: "100%",
-      }}
+        selected && selectedOutlineSx,
+      ]}
     >
       <Stack
         direction="row"
         sx={{
-          alignItems: "center",
+          alignItems: "flex-start",
           justifyContent: "space-between",
-          gap: 2,
+          gap: 1,
           width: "100%",
         }}
       >
-        <Stack spacing={0.5} sx={{ flex: 1, minWidth: 0 }}>
-          <Stack
-            direction="row"
-            sx={{
-              alignItems: "center",
-              gap: 0.75,
-            }}
-          >
-            <Typography
-              variant="subtitle1"
+        {/* Selection lives on the meta region alone — never on the whole
+            card. A giant Paper click target nested its own buttons and the
+            model input, so taps meant for the field re-selected the key
+            (and nested interactive regions confuse assistive tech). The
+            meta region is a real button sibling to the actions; the model
+            section below is non-interactive container. */}
+        <Box
+          component="button"
+          type="button"
+          aria-pressed={selected}
+          aria-disabled={testing || deleting}
+          onClick={() => {
+            // `aria-disabled` rather than `disabled`: a disabled button leaves
+            // the tab order and blurs itself if it held focus, so activating
+            // Test or Delete on the card a keyboard user had just selected
+            // dropped focus to `<body>` and sent the next Tab back to the top of
+            // the settings page. This stays focusable, and the guard below is
+            // what makes it inert.
+            if (testing || deleting) return;
+            onSelect();
+          }}
+          sx={{
+            // A native <button> for real semantics: Enter and Space activate
+            // it, Space does not scroll the page, and it participates in form
+            // submission. The UA button styling is neutralised below so the
+            // element looks like the meta region it replaces.
+            appearance: "none",
+            display: "block",
+            flex: 1,
+            minWidth: 0,
+            m: -1,
+            p: 1,
+            border: 0,
+            borderRadius: 0.75,
+            background: "none",
+            font: "inherit",
+            color: "inherit",
+            textAlign: "left",
+            cursor: "pointer",
+            transition: `background-color ${duration.fast * 1000}ms ${cssEase(easeOutQuint)}`,
+            "&:hover": { bgcolor: "action.hover" },
+            "&:focus-visible": {
+              outline: `2px solid ${theme.vars?.palette.primary.main ?? theme.palette.primary.main}`,
+              outlineOffset: 2,
+            },
+            // Matched on the attribute rather than `:disabled`, since the
+            // element is no longer natively disabled.
+            '&[aria-disabled="true"]': {
+              cursor: "default",
+              bgcolor: "transparent",
+            },
+            "@media (prefers-reduced-motion: reduce)": {
+              transition: "none",
+            },
+          }}
+        >
+          <Stack spacing={0.25}>
+            <Stack
+              direction="row"
               sx={{
-                fontWeight: 600,
+                alignItems: "center",
+                gap: 0.75,
               }}
             >
-              {apiKey.name}
-            </Typography>
-            {selected && (
-              <CheckRoundedIcon
-                fontSize="small"
-                sx={{ color: "text.primary", flexShrink: 0 }}
-                titleAccess={intl.formatMessage({ defaultMessage: "Selected" })}
-              />
-            )}
-          </Stack>
-          <Typography
-            variant="body2"
-            sx={{
-              color: "text.secondary",
-            }}
-          >
-            {config.displayName}
-          </Typography>
-          {apiKey.keySuffix ? (
+              <Typography
+                variant="body1"
+                sx={{
+                  fontWeight: 600,
+                }}
+              >
+                {apiKey.name}
+              </Typography>
+              {selected && (
+                <Check
+                  size={16}
+                  strokeWidth={1.9}
+                  aria-label={intl.formatMessage({
+                    defaultMessage: "Selected",
+                  })}
+                  style={{ flexShrink: 0 }}
+                />
+              )}
+            </Stack>
             <Typography
               variant="caption"
               sx={{
                 color: "text.secondary",
               }}
             >
-              <FormattedMessage
-                defaultMessage="Ends with {suffix}"
-                values={{ suffix: apiKey.keySuffix }}
-              />
+              {config.displayName}
+              {apiKey.keySuffix ? (
+                <>
+                  {" · "}
+                  <FormattedMessage
+                    defaultMessage="Ends with {suffix}"
+                    values={{ suffix: apiKey.keySuffix }}
+                  />
+                </>
+              ) : null}
             </Typography>
-          ) : null}
-        </Stack>
+          </Stack>
+        </Box>
         <Stack
           direction="row"
           spacing={1}
           sx={{
             alignItems: "center",
+            flexShrink: 0,
           }}
         >
           <Button
             variant="outlined"
             size="small"
-            onClick={(event) => {
-              event.stopPropagation();
-              onTest();
-            }}
+            onClick={onTest}
             disabled={testing || deleting}
           >
             {testing ? (
@@ -698,35 +893,19 @@ const ApiKeyCard = ({
               <FormattedMessage defaultMessage="Test" />
             )}
           </Button>
-          <Tooltip title={<FormattedMessage defaultMessage="Edit key" />}>
-            <span>
-              <IconButton
-                size="small"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onEdit();
-                }}
-                disabled={deleting || testing}
-              >
-                <EditOutlinedIcon fontSize="small" />
-              </IconButton>
-            </span>
-          </Tooltip>
-          <Tooltip title={<FormattedMessage defaultMessage="Delete key" />}>
-            <span>
-              <IconButton
-                size="small"
-                color="error"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onDelete();
-                }}
-                disabled={deleting || testing}
-              >
-                <DeleteOutlineIcon fontSize="small" />
-              </IconButton>
-            </span>
-          </Tooltip>
+          <ApiKeyCardAction
+            title={<FormattedMessage defaultMessage="Edit key" />}
+            onClick={onEdit}
+            disabled={deleting || testing}
+            icon={<Pencil size={16} strokeWidth={1.9} />}
+          />
+          <ApiKeyCardAction
+            title={<FormattedMessage defaultMessage="Delete key" />}
+            onClick={onDelete}
+            disabled={deleting || testing}
+            color="error"
+            icon={<Trash2 size={16} strokeWidth={1.9} />}
+          />
         </Stack>
       </Stack>
       <ModelPickerForProvider
@@ -786,15 +965,16 @@ export const ApiKeyList = ({
   }, [apiKeys, selectedApiKeyId, onChange]);
 
   const handleAddApiKey = useCallback(
-    async (
-      name: string,
-      provider: SettingsApiKeyProvider,
-      key: string,
-      baseUrl?: string,
-      azureRegion?: string,
-      transcriptionModel?: string,
-      includeV1Path?: boolean,
-    ) => {
+    async ({
+      name,
+      provider,
+      key,
+      baseUrl,
+      azureRegion,
+      transcriptionModel,
+      includeV1Path,
+      transcriptionPath,
+    }: AddApiKeyPayload) => {
       const created = await createApiKey({
         id: generateApiKeyId(),
         name,
@@ -803,6 +983,7 @@ export const ApiKeyList = ({
         baseUrl,
         azureRegion,
         includeV1Path,
+        transcriptionPath,
       });
 
       if (transcriptionModel) {
@@ -894,6 +1075,7 @@ export const ApiKeyList = ({
         azureRegion?: string | null;
         includeV1Path?: boolean | null;
         transcriptionModel?: string | null;
+        transcriptionPath?: string | null;
       },
     ) => {
       await updateApiKey({
@@ -907,6 +1089,11 @@ export const ApiKeyList = ({
           payload.transcriptionModel !== undefined
             ? payload.transcriptionModel
             : undefined,
+        transcriptionPath:
+          payload.transcriptionPath !== undefined
+            ? payload.transcriptionPath
+            : undefined,
+        clearTranscriptionPath: payload.transcriptionPath === null,
       });
       setEditingApiKeyId(null);
     },
@@ -916,6 +1103,13 @@ export const ApiKeyList = ({
   const handleTestEditingApiKey = useCallback(
     async (apiKey: SettingsApiKey, overrides: Partial<SettingsApiKey>) => {
       const merged = { ...apiKey, ...overrides };
+      if (
+        apiKey.provider === "openai-compatible" &&
+        merged.baseUrl !== apiKey.baseUrl
+      ) {
+        showErrorSnackbar("Save endpoint URL changes before testing them.");
+        return;
+      }
       setTestingApiKeyId(apiKey.id);
       try {
         const config = getProviderFormConfig(merged.provider, context);
@@ -1009,7 +1203,7 @@ export const ApiKeyList = ({
       </Typography>
       <Button
         variant="contained"
-        startIcon={<AddIcon />}
+        startIcon={<Plus size={16} strokeWidth={1.9} />}
         onClick={() => setShowAddCard(true)}
       >
         <FormattedMessage defaultMessage="Add API key" />
@@ -1081,7 +1275,7 @@ export const ApiKeyList = ({
       ) : apiKeys.length > 0 || shouldShowError ? (
         <Button
           variant="outlined"
-          startIcon={<AddIcon />}
+          startIcon={<Plus size={16} strokeWidth={1.9} />}
           onClick={() => setShowAddCard(true)}
           sx={{ alignSelf: "flex-start" }}
         >

@@ -1,4 +1,7 @@
-use std::{fs, io, path::{Path, PathBuf}};
+use std::{
+    fs, io,
+    path::{Path, PathBuf},
+};
 use tauri::Manager;
 
 use super::models::WhisperModelSize;
@@ -33,9 +36,7 @@ pub fn database_path(app: &tauri::AppHandle) -> io::Result<PathBuf> {
 
 fn migrate_legacy_database(app: &tauri::AppHandle, current_path: &Path) -> io::Result<()> {
     let legacy_dir = match app.path().app_config_dir() {
-        Ok(dir) => dir
-            .parent()
-            .map(|base| base.join(LEGACY_CONFIG_DIR_NAME)),
+        Ok(dir) => dir.parent().map(|base| base.join(LEGACY_CONFIG_DIR_NAME)),
         Err(_) => None,
     };
     let Some(legacy_dir) = legacy_dir else {
@@ -58,27 +59,15 @@ fn migrate_legacy_database(app: &tauri::AppHandle, current_path: &Path) -> io::R
     for sidecar in ["-wal", "-shm"] {
         let legacy_sidecar = legacy_dir.join(format!("{LEGACY_DB_FILENAME}{sidecar}"));
         if legacy_sidecar.exists() {
-            let _ = fs::copy(&legacy_sidecar, current_path.with_file_name(format!(
-                "{}{sidecar}",
-                crate::db::DB_FILENAME
-            )));
+            let _ = fs::copy(
+                &legacy_sidecar,
+                current_path.with_file_name(format!("{}{sidecar}", crate::db::DB_FILENAME)),
+            );
         }
     }
-    log::info!(
-        "Migrated legacy database from {:?} to {:?}",
-        legacy_db,
-        current_path
-    );
+    log::info!("Migrated legacy database from {legacy_db:?} to {current_path:?}");
 
     Ok(())
-}
-
-pub fn database_url(app: &tauri::AppHandle) -> io::Result<String> {
-    let path = database_path(app)?;
-    let path_str = path
-        .to_str()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Invalid database path"))?;
-    Ok(format!("sqlite:{path_str}"))
 }
 
 fn resolved_app_data_dir(app: &tauri::AppHandle) -> io::Result<PathBuf> {
@@ -106,9 +95,7 @@ pub fn migrate_legacy_models(app: &tauri::AppHandle) -> io::Result<()> {
     let migrated = migrate_model_files(&legacy_dir, &current_dir)?;
     if migrated > 0 {
         log::info!(
-            "Migrated {migrated} local transcription model file(s) from {:?} to {:?}",
-            legacy_dir,
-            current_dir
+            "Migrated {migrated} local transcription model file(s) from {legacy_dir:?} to {current_dir:?}"
         );
     }
 
@@ -148,8 +135,7 @@ fn migrate_model_files(legacy_dir: &Path, current_dir: &Path) -> io::Result<usiz
                     io::Error::new(
                         copy_error.kind(),
                         format!(
-                            "failed to migrate model file {:?} after rename error ({rename_error}): {copy_error}",
-                            source
+                            "failed to migrate model file {source:?} after rename error ({rename_error}): {copy_error}"
                         ),
                     )
                 })?;

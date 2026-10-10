@@ -9,10 +9,12 @@
 //   RELEASE_NAME    - e.g. mausVoice v0.1.3
 //   RELEASE_PRERELEASE - "true" | "false"
 //   RELEASE_NOTES   - optional markdown for "What's new" ("" = auto from commits)
-// Writes the final markdown to stdout.
+// Writes the final markdown to stdout. RELEASE_NOTES_FILE optionally receives
+// the normalized notes alone for the changelog and updater consumers.
 
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { normalizeReleaseNotes } from "./release-notes.mjs";
 
 const artifactsRoot = path.resolve(process.env.ARTIFACTS_DIR ?? "dist");
 const version = process.env.RELEASE_VERSION ?? "";
@@ -71,28 +73,28 @@ async function collectFiles(dir) {
 
 function classify(fileName) {
   const lower = fileName.toLowerCase();
-  const ext = path.extname(lower);
-  if (
-    lower.includes("setup") ||
-    lower.includes("installer") ||
-    ext === ".exe"
-  ) {
+  // Detached minisign signatures are never downloadable installers — skip
+  // them so a `mausVoice_x.x.x_x64-setup.exe.sig` isn't offered as a Windows
+  // installer download.
+  if (lower.endsWith(".sig")) return null;
+  if (lower.endsWith(".app.tar.gz"))
+    return { platform: "macOS", kind: "app", label: "macOS app archive" };
+  if (lower.endsWith(".dmg"))
+    return { platform: "macOS", kind: "dmg", label: "macOS DMG (.dmg)" };
+  if (lower.endsWith(".exe"))
     return {
       platform: "Windows",
       kind: "installer",
       label: "Windows installer (.exe)",
     };
-  }
-  if (ext === ".msi")
+  if (lower.endsWith(".msi"))
     return { platform: "Windows", kind: "msi", label: "Windows MSI (.msi)" };
-  if (ext === ".appimage")
+  if (lower.endsWith(".appimage"))
     return { platform: "Linux", kind: "appimage", label: "Linux AppImage" };
-  if (ext === ".deb")
+  if (lower.endsWith(".deb"))
     return { platform: "Linux", kind: "deb", label: "Linux DEB (.deb)" };
-  if (lower.endsWith(".app.tar.gz"))
-    return { platform: "macOS", kind: "app", label: "macOS app archive" };
-  if (ext === ".dmg")
-    return { platform: "macOS", kind: "dmg", label: "macOS DMG (.dmg)" };
+  if (lower.endsWith(".rpm"))
+    return { platform: "Linux", kind: "rpm", label: "Linux RPM (.rpm)" };
   return null;
 }
 
@@ -132,7 +134,7 @@ async function autoNotes() {
       .trim()
       .split("\n")
       .map((s) => s.trim())
-      .find(Boolean);
+      .find((candidate) => candidate && candidate !== tag);
     const range = prev ? `${prev}..HEAD` : "HEAD";
     const logResult = spawnSync(
       "git",
@@ -175,18 +177,20 @@ const linDeb = downloads.find(
 const linAppImage = downloads.find(
   (d) => d.platform === "Linux" && d.kind === "appimage",
 );
+const linRpm = downloads.find(
+  (d) => d.platform === "Linux" && d.kind === "rpm",
+);
 
-let notes = customNotes.trim();
-if (!notes) notes = (await autoNotes()) ?? "";
+let notes = normalizeReleaseNotes(customNotes);
+if (!notes) notes = normalizeReleaseNotes(await autoNotes());
 if (!notes)
   notes =
     "This release continues the mausVoice desktop line with the changes on this branch.";
-const noteItems = notes
-  .split("\n")
-  .map((line) => line.trim())
-  .filter(Boolean)
-  .map((line) => (line.startsWith("- ") ? line : `- ${line}`))
-  .join("\n");
+if (process.env.RELEASE_NOTES_FILE) {
+  const notesPath = path.resolve(process.env.RELEASE_NOTES_FILE);
+  await fs.mkdir(path.dirname(notesPath), { recursive: true });
+  await fs.writeFile(notesPath, notes, "utf8");
+}
 
 const githubBase = `https://github.com/${owner}/${repo}`;
 const releasesUrl = `${githubBase}/releases`;
@@ -211,12 +215,12 @@ const downloadChips = [
         ),
       ]
     : []),
-  ...(linDeb || linAppImage
+  ...(linDeb || linAppImage || linRpm
     ? [
         houseBadge(
           "linux",
           "Download mausVoice for Linux",
-          assetUrl((linAppImage ?? linDeb).basename),
+          assetUrl((linAppImage ?? linDeb ?? linRpm).basename),
         ),
       ]
     : []),
@@ -241,7 +245,7 @@ const body = [
   "<details>",
   "<summary><b>What's new</b></summary>",
   "",
-  noteItems,
+  notes,
   "",
   "</details>",
   "",
@@ -258,9 +262,9 @@ const body = [
   ...(win
     ? [`| Windows | ${markdownLink(win.basename, assetUrl(win.basename))} |`]
     : []),
-  ...(linDeb || linAppImage
+  ...(linDeb || linAppImage || linRpm
     ? [
-        `| Linux | ${[linDeb, linAppImage]
+        `| Linux | ${[linDeb, linAppImage, linRpm]
           .filter(Boolean)
           .map((d) => markdownLink(d.basename, assetUrl(d.basename)))
           .join(" · ")} |`,

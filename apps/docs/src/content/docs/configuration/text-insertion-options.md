@@ -5,7 +5,7 @@ sidebar:
   order: 9
 ---
 
-Open **Settings → General → Text insertion options**. The global insertion mode defaults to clipboard paste, with **Shift+Insert** as the paste keystroke. Simulated typing defaults to a **5 ms** delay between events.
+Open **Settings → Dictation → Text insertion options**. The global insertion mode defaults to clipboard paste, with **Shift+Insert** as the paste keystroke. Simulated typing defaults to a **5 ms** delay between events.
 
 Prefer paste for ordinary editors. It is fast and gives the target one coherent clipboard payload. Prefer simulated typing for an app that refuses synthetic paste, but raise the delay when characters disappear or reorder.
 

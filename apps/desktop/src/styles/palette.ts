@@ -95,8 +95,81 @@ export const text = {
   },
 } as const;
 
-/** The single accent. Kept verbatim from the previous palette. */
+/**
+ * Quiet silver/ink chrome accent — never hue-blue.
+ * Used for focus rings, selection wash, segmented chrome, sliders.
+ * Switches use ink/chalk (grey-black), not this metal.
+ */
 export const accent = {
-  light: { rgb: "27, 138, 248", main: "#1b8af8ff" },
-  dark: { rgb: "49, 152, 255", main: "#3198ffff" },
+  light: { rgb: "107, 103, 96", main: "#6B6760" },
+  dark: { rgb: "196, 192, 184", main: "#C4C0B8" },
+} as const;
+
+/**
+ * Resting glyph colour for the caption cluster.
+ *
+ * The glyph is dimmer at rest than body text, and the button it sits in is dimmer
+ * too. Hover and press both bring the button back to full, so the cluster reads
+ * as three peers at every step of the pointer's journey.
+ */
+export const captionButtonGlyph = {
+  light: "rgba(0, 0, 0, 0.7)",
+  dark: "rgba(255, 255, 255, 0.8)",
+} as const;
+
+/**
+ * Caption-button hover fill, and the pressed fill behind it.
+ *
+ * Close is tinted exactly like minimize and maximize. That is deliberate and
+ * not an oversight. In Windows and Linux a custom close button that paints
+ * itself red advertises a destructive action, and this window intercepts
+ * `CloseRequested` to hide to tray, so nothing is discarded. A neutral wash
+ * keeps the cluster reading as three peers. `error.main` stays reserved for
+ * actions that actually destroy data.
+ */
+export const captionButtonHover = {
+  light: "rgba(0, 0, 0, 0.05)",
+  dark: "rgba(255, 255, 255, 0.1)",
+} as const;
+
+export const captionButtonActive = {
+  light: "rgba(0, 0, 0, 0.12)",
+  dark: "rgba(255, 255, 255, 0.22)",
+} as const;
+
+/**
+ * Resting opacity of each caption button, cleared by hover and press.
+ *
+ * Windows dims unfocused chrome rather than removing it, and a cluster that
+ * vanished would take the only visible cue that the window has controls. This is
+ * the per-button rest value and it is only half the story: the cluster's focus
+ * dim is applied once on the wrapper, so the two multiply and a hovered button
+ * on an unfocused window still renders dimmed.
+ */
+export const captionButtonRestOpacity = 0.8;
+
+/**
+ * The window wash, shared by the title bar and the navigation rail.
+ *
+ * Those two are the same material, so they have to be the same colour. This
+ * token makes that structural instead of a coincidence: the rail used to carry
+ * its own gradient while the bar carried a separate fill, so the two could be
+ * retuned independently and leave a visible step where they met. The routed
+ * content area deliberately does not use it; see `DESIGN.md`.
+ *
+ * One tier of lift at the top settling back into the canvas, so light reads as
+ * falling from the top of the window. Built from the surface ladder rather than
+ * from hexes, so it cannot drift off `level0`.
+ */
+export const chromeWash = {
+  light: `linear-gradient(180deg, ${surfaceAlpha(surfaces.light.level1, 0.7)} 0%, ${surfaceAlpha(surfaces.light.level0, 0.35)} 100%)`,
+  dark: `linear-gradient(180deg, ${surfaceAlpha(surfaces.dark.level2, 0.55)} 0%, ${surfaceAlpha(surfaces.dark.level0, 0.2)} 100%)`,
+} as const;
+
+/** Sanctioned overlay-on-screenshot alphas (pill overlay). */
+export const overlayOnDark = {
+  text: "rgba(242, 241, 238, 0.92)",
+  muted: "rgba(242, 241, 238, 0.5)",
+  hairline: "rgba(242, 241, 238, 0.2)",
+  wash: "rgba(242, 241, 238, 0.06)",
 } as const;

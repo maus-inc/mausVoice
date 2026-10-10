@@ -1,3 +1,4 @@
+import { DEEPGRAM_TRANSCRIPTION_MODELS } from "@maus-inc/voice-ai";
 import type { TranscriptionMode } from "../types/ai.types";
 
 export const PERSONAL_GROQ_API_KEY_ID = "personal-groq";
@@ -7,6 +8,10 @@ export const PERSONAL_GROQ_POST_PROCESSING_MODEL = "openai/gpt-oss-20b";
 
 export const PERSONAL_DEEPGRAM_API_KEY_ID = "personal-deepgram";
 export const PERSONAL_DEEPGRAM_API_KEY_NAME = "Personal Deepgram";
+// Derived from the provider's own model list so the preset cannot drift from
+// what DeepgramModelProviderRepo will offer in the model picker.
+export const PERSONAL_DEEPGRAM_TRANSCRIPTION_MODEL =
+  DEEPGRAM_TRANSCRIPTION_MODELS[0];
 export const PERSONAL_USER_ID = "local-user-id";
 export const PERSONAL_USER_EMAIL = "personal@mausvoice.local";
 export const PERSONAL_USER_DISPLAY_NAME = "Personal User";
