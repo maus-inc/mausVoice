@@ -12,6 +12,7 @@ import enMessages from "../i18n/locales/en.json";
  * longer matches a literal fails `settings-registry.test.ts`.
  */
 export type SettingsPageId =
+  | "home"
   | "dictation"
   | "ai-models"
   | "shortcuts"
@@ -27,6 +28,16 @@ export type SettingsPageMeta = {
 };
 
 export const SETTINGS_PAGES: SettingsPageMeta[] = [
+  {
+    // The landing page: the two things a person checks most, and a way into
+    // every page that owns them. It is named Overview rather than Home because
+    // the app's own rail already has a Home, and two Homes one rail apart name
+    // two different places.
+    id: "home",
+    titleKey: "overview",
+    descriptionKey:
+      "the_shortcuts_you_use_most_and_the_models_doing_the_work_rig",
+  },
   {
     id: "dictation",
     titleKey: "dictation",
@@ -69,7 +80,12 @@ export const SETTINGS_PAGES: SettingsPageMeta[] = [
   },
 ];
 
-export const DEFAULT_SETTINGS_PAGE: SettingsPageId = "dictation";
+/**
+ * The page a first-ever visit lands on. The surface remembers the last page
+ * someone opened and reopens it, so this decides the landing once, not every
+ * time: a returning person is not dragged back to the overview.
+ */
+export const DEFAULT_SETTINGS_PAGE: SettingsPageId = "home";
 
 export const settingsPageOf = (id: string): SettingsPageMeta | undefined =>
   SETTINGS_PAGES.find((page) => page.id === id);

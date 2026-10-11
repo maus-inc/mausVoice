@@ -1,4 +1,4 @@
-import { ArrowOutwardRounded, ChevronRightRounded } from "@mui/icons-material";
+import { ArrowUpRight, ChevronRight } from "lucide-react";
 import {
   Box,
   Switch,
@@ -10,94 +10,20 @@ import {
 import type { ChangeEvent, ReactNode } from "react";
 import { openExternalUrl } from "../../utils/open-url.utils";
 import { settingAnchorId } from "./settings-routes";
+import {
+  controlColumnSx,
+  interactiveSx,
+  rowSx,
+  SettingRowText,
+  TrailingGlyph,
+} from "./setting-row-chassis";
 import { useSettingHighlight } from "./settings-highlight";
 
-/**
- * One row of a settings group.
- *
- * Every row is the same shape: a label column that takes the remaining width
- * and a control column of fixed width, so controls share a left edge down the
- * page and titles wrap at the same place. The row carries its anchor id, which
- * is what deep links, search results and the highlight all point at.
- */
-const rowSx: SxProps = {
-  display: "flex",
-  alignItems: "center",
-  gap: 2,
-  width: "100%",
-  minHeight: 56,
-  px: 2,
-  py: 1.25,
-  m: 0,
-  border: 0,
-  background: "none",
-  font: "inherit",
-  color: "inherit",
-  textAlign: "left",
-  textDecoration: "none",
-};
-
-const interactiveSx: SxProps = {
-  cursor: "pointer",
-  transition: "background-color 150ms ease",
-  "&:hover": { backgroundColor: "action.hover" },
-  "&:hover .setting-row-action": { backgroundColor: "action.selected" },
-  "&:disabled": { cursor: "not-allowed", opacity: 0.5 },
-  "&:focus-visible": {
-    outline: "2px solid",
-    outlineColor: "primary.main",
-    outlineOffset: -2,
-  },
-};
-
-const highlightSx: SxProps = {
+const highlightSx: SxProps<Theme> = {
   outline: "2px solid",
   outlineColor: "primary.main",
   outlineOffset: -2,
 };
-
-/** Shared control column: one width, right aligned, for every row. */
-const controlColumnSx: SxProps = {
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "flex-end",
-  gap: 1,
-  flexShrink: 0,
-  width: { xs: "auto", md: 240 },
-  maxWidth: "60%",
-};
-
-const labelColumnSx: SxProps = {
-  flexGrow: 1,
-  minWidth: 0,
-};
-
-export const SettingRowText = ({
-  title,
-  description,
-  titleId,
-  descriptionId,
-}: {
-  title: ReactNode;
-  description?: ReactNode;
-  titleId: string;
-  descriptionId?: string;
-}) => (
-  <Box sx={labelColumnSx}>
-    <Typography id={titleId} variant="body1" sx={{ fontWeight: 600 }}>
-      {title}
-    </Typography>
-    {description && (
-      <Typography
-        id={descriptionId}
-        variant="body2"
-        sx={{ color: "text.secondary", mt: 0.25 }}
-      >
-        {description}
-      </Typography>
-    )}
-  </Box>
-);
 
 /** Read a theme length that may be a number or a CSS length. */
 const cssPixels = (value: number | string): number =>
@@ -176,11 +102,15 @@ const SettingRowControlColumn = ({
   let trailingIcon: ReactNode = null;
   if (externalUrl) {
     trailingIcon = (
-      <ArrowOutwardRounded sx={{ fontSize: 18, color: "text.secondary" }} />
+      <TrailingGlyph>
+        <ArrowUpRight size={18} strokeWidth={1.9} />
+      </TrailingGlyph>
     );
   } else if (interactive && !action) {
     trailingIcon = (
-      <ChevronRightRounded sx={{ fontSize: 20, color: "text.secondary" }} />
+      <TrailingGlyph>
+        <ChevronRight size={20} strokeWidth={1.9} />
+      </TrailingGlyph>
     );
   }
 
@@ -423,10 +353,16 @@ const groupHeadingSx = (
   mb: hasDescription ? 0.5 : 1.5,
 });
 
-/** The card every group's rows sit in. */
+/**
+ * The card every group's rows sit in.
+ *
+ * Radius 1 is the app's card step (14). The 28 step belongs to large dialogs,
+ * and a settings card sitting at a dialog's radius read softer than the world
+ * it lives in.
+ */
 const groupCardSx: SxProps<Theme> = {
   border: 1,
-  borderRadius: 2,
+  borderRadius: 1,
   bgcolor: "level1",
   overflow: "hidden",
   "& > * + *": { borderTop: 1, borderColor: "divider" },

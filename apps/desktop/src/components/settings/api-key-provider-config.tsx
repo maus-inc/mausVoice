@@ -327,6 +327,26 @@ const AZURE_STT_CONFIG: ProviderFormConfig = {
   },
 };
 
+/**
+ * A provider's display name, or null when this build has no config for it.
+ *
+ * A persisted key can carry a provider string written by a newer build, and the
+ * surfaces that name a provider in running copy (the audio disclosure, the
+ * overview's model rows) must not crash over one. `getProviderFormConfig`
+ * throws for a provider it has no config for, which is why this wraps it rather
+ * than letting each caller decide.
+ */
+export const getProviderDisplayName = (
+  provider: ApiKeyProvider,
+  context: ApiKeyListContext,
+): string | null => {
+  try {
+    return getProviderFormConfig(provider, context).displayName;
+  } catch {
+    return null;
+  }
+};
+
 export function getProviderFormConfig(
   provider: ApiKeyProvider,
   context: ApiKeyListContext,

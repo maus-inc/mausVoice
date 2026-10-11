@@ -249,7 +249,7 @@ The `debug-assist` Cargo feature in `src-tauri/Cargo.toml` compiles Tauri's `dev
 
 Routing is modeled as a small directed graph of nodes (`welcome`, `onboarding`, `routing`, `dashboard`, `notFound`). Edges have conditions over app state. Dashboard sub-routes: home, settings, transcriptions, dictionary, styling, chats, apps.
 
-Settings is one route per page (`/dashboard/settings/<page>`: dictation, ai-models, shortcuts, appearance, privacy-data, system, account). `src/utils/settings-registry.ts` is the single source for the pages, their groups, and every row, and it drives the rail, search and availability. `SettingsLayout.tsx` renders the rail and resolves `?setting=` / `?section=` entry links.
+Settings is one route per page (`/dashboard/settings/<page>`: home, dictation, ai-models, shortcuts, appearance, privacy-data, system, account). `home` is the overview the rail lists first and the page a first-ever open lands on; the surface remembers the last page opened after that. `src/utils/settings-registry.ts` is the single source for the pages, their groups, and every row, and it drives the rail, search and availability. The overview's rows are summaries without registry keys (`components/settings/SettingSummaryRow.tsx`): they deep-link to the row that owns the setting instead of registering a second anchor for it. `SettingsLayout.tsx` renders the rail and resolves `?setting=` / `?section=` entry links.
 
 ### Onboarding steps (`src/components/onboarding/`)
 

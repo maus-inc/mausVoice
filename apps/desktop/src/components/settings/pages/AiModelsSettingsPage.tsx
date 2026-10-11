@@ -1,9 +1,4 @@
-import {
-  AutoAwesomeOutlined,
-  AutoFixHighOutlined,
-  GraphicEqOutlined,
-  KeyOutlined,
-} from "@mui/icons-material";
+import { AudioLines, Bot, KeyRound, WandSparkles } from "lucide-react";
 import { Chip } from "@mui/material";
 import type { StylingMode } from "@maus-inc/types";
 import type { ChangeEvent } from "react";
@@ -86,7 +81,7 @@ export default function AiModelsSettingsPage() {
           description={
             <FormattedMessage defaultMessage="Your own Deepgram key, for fast streaming transcription." />
           }
-          icon={<KeyOutlined />}
+          icon={<KeyRound size={22} strokeWidth={1.9} />}
           control={<ConfiguredChip configured={hasDeepgramKey} />}
           onClick={() => setKeyDialog("deepgram")}
         />
@@ -96,7 +91,7 @@ export default function AiModelsSettingsPage() {
           description={
             <FormattedMessage defaultMessage="Where speech becomes text: on this computer, or through a provider." />
           }
-          icon={<GraphicEqOutlined />}
+          icon={<AudioLines size={22} strokeWidth={1.9} />}
           onClick={() => openDialog("aiTranscriptionDialogOpen")}
         />
       </SettingGroup>
@@ -110,7 +105,7 @@ export default function AiModelsSettingsPage() {
           description={
             <FormattedMessage defaultMessage="Your own Groq key, for transcription and text generation." />
           }
-          icon={<KeyOutlined />}
+          icon={<KeyRound size={22} strokeWidth={1.9} />}
           control={<ConfiguredChip configured={hasGroqKey} />}
           onClick={() => setKeyDialog("groq")}
         />
@@ -120,7 +115,7 @@ export default function AiModelsSettingsPage() {
           description={
             <FormattedMessage defaultMessage="Cleanup and rewriting applied to dictated text before it is inserted." />
           }
-          icon={<AutoFixHighOutlined />}
+          icon={<WandSparkles size={22} strokeWidth={1.9} />}
           onClick={() => openDialog("aiPostProcessingDialogOpen")}
         />
       </SettingGroup>
@@ -132,7 +127,7 @@ export default function AiModelsSettingsPage() {
           description={
             <FormattedMessage defaultMessage="Ask questions, edit text, and run tools from the same place you dictate." />
           }
-          icon={<AutoAwesomeOutlined />}
+          icon={<Bot size={22} strokeWidth={1.9} />}
           control={
             <Chip
               size="small"

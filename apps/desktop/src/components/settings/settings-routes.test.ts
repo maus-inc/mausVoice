@@ -1,6 +1,9 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from "vitest";
-import { SETTINGS_PAGES } from "../../utils/settings-registry";
+import {
+  DEFAULT_SETTINGS_PAGE,
+  SETTINGS_PAGES,
+} from "../../utils/settings-registry";
 import {
   getLastSettingsPage,
   rememberLastSettingsPage,
@@ -68,10 +71,13 @@ describe("settings routes", () => {
     ).toBe("appearance");
   });
 
-  it("reopens the last page visited, and the first page when there is none", () => {
+  it("reopens the last page visited, and the default page when there is none", () => {
+    // Named through the registry rather than spelled out: which page a first
+    // visit lands on is an information-architecture decision, and this test is
+    // about resolution order, not about which page currently holds the spot.
     expect(
       resolveSettingsTarget({ setting: null, section: null }, {}).page,
-    ).toBe("dictation");
+    ).toBe(DEFAULT_SETTINGS_PAGE);
 
     rememberLastSettingsPage("privacy-data");
     expect(getLastSettingsPage()).toBe("privacy-data");
@@ -85,7 +91,7 @@ describe("settings routes", () => {
     expect(getLastSettingsPage()).toBeNull();
     expect(
       resolveSettingsTarget({ setting: null, section: null }, {}).page,
-    ).toBe("dictation");
+    ).toBe(DEFAULT_SETTINGS_PAGE);
   });
 
   it("prefers an explicit setting over an old section link", () => {

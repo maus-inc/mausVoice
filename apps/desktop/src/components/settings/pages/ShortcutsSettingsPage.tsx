@@ -1,4 +1,4 @@
-import { KeyboardAltOutlined, KeyOutlined } from "@mui/icons-material";
+import { KeyRound, Keyboard } from "lucide-react";
 import { FormattedMessage } from "react-intl";
 import { produceAppState } from "../../../store";
 import { SettingGroup, SettingRow } from "../SettingRow";
@@ -19,7 +19,7 @@ export default function ShortcutsSettingsPage() {
           description={
             <FormattedMessage defaultMessage="The key that starts and stops dictation, and every other shortcut mausVoice listens for." />
           }
-          icon={<KeyboardAltOutlined />}
+          icon={<Keyboard size={22} strokeWidth={1.9} />}
           onClick={() => openDialog("shortcutsDialogOpen")}
         />
       </SettingGroup>
@@ -31,7 +31,7 @@ export default function ShortcutsSettingsPage() {
           description={
             <FormattedMessage defaultMessage="Bind a key to each writing style, so you can switch without opening the app." />
           }
-          icon={<KeyOutlined />}
+          icon={<KeyRound size={22} strokeWidth={1.9} />}
           onClick={() => openDialog("styleHotkeysDialogOpen")}
         />
       </SettingGroup>

@@ -14,6 +14,12 @@ export const SETTINGS_PAGE_COPY: Record<
   SettingsPageId,
   { title: ReactNode; description: ReactNode }
 > = {
+  home: {
+    title: <FormattedMessage defaultMessage="Overview" />,
+    description: (
+      <FormattedMessage defaultMessage="The shortcuts you use most, and the models doing the work right now." />
+    ),
+  },
   dictation: {
     title: <FormattedMessage defaultMessage="Dictation" />,
     description: (

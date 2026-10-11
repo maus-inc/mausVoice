@@ -23,6 +23,7 @@ import AccountSettingsPage from "./components/settings/pages/AccountSettingsPage
 import AiModelsSettingsPage from "./components/settings/pages/AiModelsSettingsPage.tsx";
 import AppearanceSettingsPage from "./components/settings/pages/AppearanceSettingsPage.tsx";
 import DictationSettingsPage from "./components/settings/pages/DictationSettingsPage.tsx";
+import HomeSettingsPage from "./components/settings/pages/HomeSettingsPage.tsx";
 import PrivacyDataSettingsPage from "./components/settings/pages/PrivacyDataSettingsPage.tsx";
 import ShortcutsSettingsPage from "./components/settings/pages/ShortcutsSettingsPage.tsx";
 import SystemSettingsPage from "./components/settings/pages/SystemSettingsPage.tsx";
@@ -113,6 +114,10 @@ const appRoutes = (root: ReactNode) => [
                   {
                     index: true,
                     element: <SettingsEntryRedirect />,
+                  },
+                  {
+                    path: "home",
+                    element: <HomeSettingsPage />,
                   },
                   {
                     path: "dictation",
