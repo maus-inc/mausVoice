@@ -133,23 +133,38 @@ export default function DictationSettingsPage() {
   const [limitInput, setLimitInput] = useState(String(dictationLimitMinutes));
   const [limitError, setLimitError] = useState<string | null>(null);
   const lastCommittedLimit = useRef(dictationLimitMinutes);
+  // The write this page last started, so the value that lands from it can be
+  // told apart from a value that changed somewhere else.
+  const pendingLimit = useRef<number | null>(null);
 
   const [delayInput, setDelayInput] = useState(
     formatHandsFreeDelaySeconds(handsFreeDelayMs),
   );
   const [delayError, setDelayError] = useState<string | null>(null);
   const lastCommittedDelay = useRef(handsFreeDelayMs);
+  const pendingDelay = useRef<number | null>(null);
 
+  // Seeding a field is only ever right for a value from somewhere else. The
+  // value this page just sent arrives here too, and by then someone may have
+  // typed the next draft into the field: writing the saved value back over it
+  // would silently lose the edit, which is the one thing a preferences field
+  // must not do. The pending ref is that difference.
   useEffect(() => {
     lastCommittedLimit.current = dictationLimitMinutes;
-    setLimitInput(String(dictationLimitMinutes));
-    setLimitError(null);
+    if (dictationLimitMinutes !== pendingLimit.current) {
+      setLimitInput(String(dictationLimitMinutes));
+      setLimitError(null);
+    }
+    pendingLimit.current = null;
   }, [dictationLimitMinutes]);
 
   useEffect(() => {
     lastCommittedDelay.current = handsFreeDelayMs;
-    setDelayInput(formatHandsFreeDelaySeconds(handsFreeDelayMs));
-    setDelayError(null);
+    if (handsFreeDelayMs !== pendingDelay.current) {
+      setDelayInput(formatHandsFreeDelaySeconds(handsFreeDelayMs));
+      setDelayError(null);
+    }
+    pendingDelay.current = null;
   }, [handsFreeDelayMs]);
 
   const outOfRangeMessage = useCallback(
@@ -193,6 +208,7 @@ export default function DictationSettingsPage() {
     // Marked once the write lands, not before it: a write that fails shows its
     // own snackbar and leaves the preference alone, and marking it here would
     // make the same number look already-committed and silently refuse a retry.
+    pendingLimit.current = minutes;
     logOnRejection(
       setDictationLimitMinutes(minutes).then(() => {
         lastCommittedLimit.current = minutes;
@@ -214,6 +230,7 @@ export default function DictationSettingsPage() {
       return;
     }
     // Marked once the write lands, for the same reason as the minutes field.
+    pendingDelay.current = milliseconds;
     logOnRejection(
       setHandsFreeDelayMs(milliseconds).then(() => {
         lastCommittedDelay.current = milliseconds;
