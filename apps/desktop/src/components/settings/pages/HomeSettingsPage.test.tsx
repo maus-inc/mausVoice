@@ -182,6 +182,7 @@ describe("HomeSettingsPage", () => {
             id: "key-1",
             name: "Groq",
             provider: "groq",
+            keyFull: "gsk_test",
             createdAt: "2026-01-01T00:00:00.000Z",
           },
         },
@@ -200,6 +201,35 @@ describe("HomeSettingsPage", () => {
     expect(row("AI post processing")?.textContent).toContain("Groq");
     expect(row("AI post processing")?.textContent).toContain("Cloud");
     expect(row("Assistant mode")?.textContent).toContain("Groq");
+  });
+
+  it("stops naming a provider the runtime would not dispatch to", () => {
+    // A selected key with no credential behind it is not a configured
+    // provider: the dispatch path falls back, so "Groq · Cloud" would describe
+    // a request the app never makes.
+    act(() => {
+      setAppState((state) => ({
+        ...state,
+        apiKeyById: {
+          "key-1": {
+            id: "key-1",
+            name: "Groq",
+            provider: "groq",
+            createdAt: "2026-01-01T00:00:00.000Z",
+          },
+        },
+        settings: {
+          ...state.settings,
+          aiPostProcessing: { mode: "api", selectedApiKeyId: "key-1" },
+        },
+      }));
+    });
+
+    render();
+
+    const text = row("AI post processing")?.textContent ?? "";
+    expect(text).toContain("Not configured");
+    expect(text).not.toContain("Cloud");
   });
 
   it("links each row to the setting it reports", () => {

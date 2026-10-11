@@ -1,10 +1,14 @@
 import { AudioLines, Bot, WandSparkles } from "lucide-react";
 import { Box, Stack, Typography } from "@mui/material";
 import { FormattedMessage, useIntl } from "react-intl";
-import type { ApiKeyProvider } from "@maus-inc/types";
 import { useAppStore } from "../../../store";
 import type { AppState } from "../../../state/app.state";
-import { getProviderDisplayName } from "../api-key-provider-config";
+import type { SettingsApiKey } from "../../../state/settings.state";
+import {
+  getProviderDisplayName,
+  getProviderLocation,
+  type ProviderLocation,
+} from "../api-key-provider-config";
 import type { ApiKeyListContext } from "../ApiKeyList";
 import { HotkeyBadge } from "../../common/HotkeyBadge";
 import {
@@ -21,10 +25,12 @@ import {
   normalizeLocalWhisperModel,
 } from "../../../utils/local-transcription.utils";
 import {
+  getAgentModePrefs,
   getEffectiveAgentMode,
   getEffectivePostProcessingMode,
   getEffectiveTranscriptionMode,
-  getSelectedTranscriptionProvider,
+  getGenerativePrefs,
+  getTranscriptionPrefs,
 } from "../../../utils/user.utils";
 import { SettingGroup } from "../SettingRow";
 import { SettingSummaryRow } from "../SettingSummaryRow";
@@ -132,14 +138,17 @@ const QuickShortcutsCard = () => {
   );
 };
 
-/** The provider a key id belongs to, without resolving the key itself. */
-const providerOfKey = (
+/**
+ * The key row a selection points at, unresolved.
+ *
+ * The row itself is what a summary needs: it carries the provider *and* the base
+ * URL, and the base URL is half of where the work actually happens.
+ */
+const apiKeyOf = (
   state: AppState,
   keyId: string | null,
-): ApiKeyProvider | null => {
-  const key = keyId ? state.apiKeyById[keyId] : undefined;
-  return (key?.provider as ApiKeyProvider | undefined) ?? null;
-};
+): SettingsApiKey | null =>
+  (keyId ? state.apiKeyById[keyId] : undefined) ?? null;
 
 /**
  * One model row's state, resolved to the words the row shows.
@@ -163,7 +172,8 @@ const YourModelsCard = () => {
     transcriptionModel,
     transcriptionReady,
     transcriptionStatusesLoaded,
-    transcriptionProvider,
+    transcriptionKey,
+    transcriptionDispatches,
   ] = useAppStore((state) => {
     const config = state.settings.aiTranscription;
     const model = normalizeLocalWhisperModel(config.modelSize);
@@ -173,19 +183,33 @@ const YourModelsCard = () => {
       model,
       Boolean(status?.downloaded && status?.valid),
       config.localModelManagement.modelStatusesLoaded,
-      getSelectedTranscriptionProvider(state),
+      apiKeyOf(state, config.selectedApiKeyId),
+      // What the app would actually dispatch with, which is not the same thing
+      // as the mode that is selected: a key row with no credential in it falls
+      // back at runtime, and a summary of the selection would describe a
+      // request the app never makes.
+      getTranscriptionPrefs(state).mode === "api",
     ] as const;
   });
 
-  const [postProcessingMode, postProcessingProvider] = useAppStore((state) => [
-    getEffectivePostProcessingMode(state),
-    providerOfKey(state, state.settings.aiPostProcessing.selectedApiKeyId),
-  ]);
+  const [postProcessingMode, postProcessingKey, postProcessingDispatches] =
+    useAppStore(
+      (state) =>
+        [
+          getEffectivePostProcessingMode(state),
+          apiKeyOf(state, state.settings.aiPostProcessing.selectedApiKeyId),
+          getGenerativePrefs(state).mode === "api",
+        ] as const,
+    );
 
-  const [agentMode, agentProvider] = useAppStore((state) => [
-    getEffectiveAgentMode(state),
-    providerOfKey(state, state.settings.agentMode.selectedApiKeyId),
-  ]);
+  const [agentMode, agentKey, agentDispatches] = useAppStore(
+    (state) =>
+      [
+        getEffectiveAgentMode(state),
+        apiKeyOf(state, state.settings.agentMode.selectedApiKeyId),
+        getAgentModePrefs(state).mode === "api",
+      ] as const,
+  );
 
   const localModel = LOCAL_MODEL_OPTIONS.find(
     (option) => option.value === transcriptionModel,
@@ -202,15 +226,41 @@ const YourModelsCard = () => {
   });
   const off = intl.formatMessage({ defaultMessage: "Off" });
 
-  const apiProviderOf = (
-    provider: ApiKeyProvider | null,
+  // Where the work happens, in the app's own words: the local engine's row says
+  // "On this computer" for the same reason an endpoint on loopback does.
+  const locationWord = (location: ProviderLocation): string | null => {
+    if (location === "local") {
+      return onThisComputer;
+    }
+    if (location === "cloud") {
+      return cloud;
+    }
+    // A base URL that cannot be read tells us nothing about where the bytes go,
+    // so the row reports the provider and stops rather than guessing.
+    return null;
+  };
+
+  const apiRowOf = (
+    key: SettingsApiKey | null,
     context: ApiKeyListContext,
+    dispatches: boolean,
   ): ModelSummary => {
-    const name = provider ? getProviderDisplayName(provider, context) : null;
+    // A selection the runtime will not use is not a configured provider, and
+    // "Cloud" beside it would describe a request the app never makes. The page
+    // that owns the setting is one click away and names the missing piece.
+    if (!key || !dispatches) {
+      return { description: notConfigured, value: null, attention: true };
+    }
+    const name = getProviderDisplayName(key.provider, context);
+    // A provider this build has no entry for is the same answer: nothing here
+    // can say where the work happens, so the row does not say anything.
+    if (!name) {
+      return { description: notConfigured, value: null, attention: true };
+    }
     return {
-      description: name ?? notConfigured,
-      value: name ? cloud : null,
-      attention: name === null,
+      description: name,
+      value: locationWord(getProviderLocation(key.provider, key.baseUrl)),
+      attention: false,
     };
   };
 
@@ -232,17 +282,21 @@ const YourModelsCard = () => {
           value: onThisComputer,
           attention: localModelMissing,
         }
-      : apiProviderOf(transcriptionProvider, "transcription");
+      : apiRowOf(transcriptionKey, "transcription", transcriptionDispatches);
 
   const postProcessingSummary =
     postProcessingMode === "none"
       ? { description: off, value: null, attention: false }
-      : apiProviderOf(postProcessingProvider, "post-processing");
+      : apiRowOf(
+          postProcessingKey,
+          "post-processing",
+          postProcessingDispatches,
+        );
 
   const agentSummary =
     agentMode === "none"
       ? { description: off, value: null, attention: false }
-      : apiProviderOf(agentProvider, "post-processing");
+      : apiRowOf(agentKey, "post-processing", agentDispatches);
 
   return (
     <SettingGroup title={<FormattedMessage defaultMessage="Your models" />}>

@@ -29,7 +29,10 @@ import {
   createOpenAICompatibleFetch,
   secureFetch,
 } from "../../utils/secure-fetch.utils";
-import { speachesTestIntegration } from "../../utils/speaches.utils";
+import {
+  SPEACHES_DEFAULT_URL,
+  speachesTestIntegration,
+} from "../../utils/speaches.utils";
 import type { ApiKeyListContext } from "./ApiKeyList";
 
 export type ProviderFieldDescriptor = {
@@ -240,12 +243,12 @@ function getOpenAICompatibleConfig(
 
 const SPEACHES_CONFIG: ProviderFormConfig = {
   displayName: "Speaches",
-  defaultBaseUrl: "http://localhost:8000",
+  defaultBaseUrl: SPEACHES_DEFAULT_URL,
   fields: [
     {
       key: "baseUrl",
       label: <FormattedMessage defaultMessage="Speaches URL" />,
-      placeholder: "http://localhost:8000",
+      placeholder: SPEACHES_DEFAULT_URL,
       helperText: (
         <FormattedMessage defaultMessage="URL of your local Speaches Docker instance" />
       ),
@@ -263,7 +266,7 @@ const SPEACHES_CONFIG: ProviderFormConfig = {
   ],
   testIntegration: (apiKey) =>
     speachesTestIntegration({
-      baseUrl: apiKey.baseUrl || "http://localhost:8000",
+      baseUrl: apiKey.baseUrl || SPEACHES_DEFAULT_URL,
     }),
 };
 
@@ -344,6 +347,59 @@ export const getProviderDisplayName = (
     return getProviderFormConfig(provider, context).displayName;
   } catch {
     return null;
+  }
+};
+
+/**
+ * Where a provider's work actually happens.
+ *
+ * A provider is not the same thing as a cloud service. Ollama, Speaches and an
+ * OpenAI-compatible server are all addressed by a base URL that defaults to
+ * loopback and may point anywhere, so a surface that writes "Cloud" beside them
+ * is making a claim it cannot support — wrong for the machine sitting on the
+ * person's desk, and wrong for the privacy story the app tells elsewhere.
+ *
+ * `unknown` is a real answer rather than a fallback to `cloud`: a base URL that
+ * cannot be read tells us nothing about where the bytes go, and the caller then
+ * reports no location instead of a wrong one.
+ */
+export type ProviderLocation = "local" | "cloud" | "unknown";
+
+/** Providers addressed by a base URL the person supplies. */
+const ENDPOINT_PROVIDERS: ReadonlySet<ApiKeyProvider> = new Set([
+  "ollama",
+  "speaches",
+  "openai-compatible",
+]);
+
+const LOOPBACK_HOST =
+  /^(?:localhost|127(?:\.\d{1,3}){3}|\[::1\]|::1|0\.0\.0\.0)$/i;
+
+/**
+ * The URL each endpoint provider falls back to, so "no base URL saved" is not
+ * mistaken for "no location known": the request path uses these same defaults.
+ */
+const DEFAULT_ENDPOINT_URLS: Partial<Record<ApiKeyProvider, string>> = {
+  ollama: OLLAMA_DEFAULT_URL,
+  speaches: SPEACHES_DEFAULT_URL,
+  "openai-compatible": OPENAI_COMPATIBLE_DEFAULT_URL,
+};
+
+export const getProviderLocation = (
+  provider: ApiKeyProvider,
+  baseUrl: string | null | undefined,
+): ProviderLocation => {
+  if (!ENDPOINT_PROVIDERS.has(provider)) {
+    return "cloud";
+  }
+  const url = baseUrl?.trim() || DEFAULT_ENDPOINT_URLS[provider];
+  if (!url) {
+    return "unknown";
+  }
+  try {
+    return LOOPBACK_HOST.test(new URL(url).hostname) ? "local" : "cloud";
+  } catch {
+    return "unknown";
   }
 };
 
