@@ -47,6 +47,11 @@ export const useSettingsAvailability = (): SettingAvailability => {
       getIsLoggedIn(state) && getHasEmailProvider(state),
       getIsLoggedIn(state),
       getIsLoggedIn(state),
+      // Whether the key list has arrived. Everything the app knows about a
+      // selected provider is unknown until it has: "not loaded yet" and "not
+      // available here" are different answers, and the flags built from it are
+      // reported as unknown rather than as false.
+      state.settings.apiKeysStatus === "success",
     ] as const;
   });
 
@@ -63,18 +68,30 @@ export const useSettingsAvailability = (): SettingAvailability => {
     changePassword,
     signOut,
     deleteAccount,
+    apiKeysKnown,
   ] = snapshot;
 
   return useMemo(
     () => ({
-      dictation_limit: dictationLimitEnabled,
+      // The three flags that read the key list stay absent until it loads. An
+      // absent key means "unknown", which `isSettingAvailable` reads as
+      // available, so a `?setting=` deep link that arrives before the list does
+      // still resolves: reading a not-yet-loaded source as `false` threw the
+      // link away and landed the person on another page. The flags that read
+      // the platform, the user record or the preferences are settled by the
+      // time any surface renders.
+      dictation_limit: apiKeysKnown ? dictationLimitEnabled : undefined,
       automatic_style_loading: stylingMode === "manual",
       include_incognito_in_stats: incognitoModeEnabled,
       learn_from_corrections: supportsCorrectionWatch,
       always_run_as_administrator: isWindows,
       pill_placement: pillPlacementAvailable,
-      elevenlabs_keyterms: transcriptionProvider === "elevenlabs",
-      where_your_dictation_audio_goes: audioDisclosureVisible,
+      elevenlabs_keyterms: apiKeysKnown
+        ? transcriptionProvider === "elevenlabs"
+        : undefined,
+      where_your_dictation_audio_goes: apiKeysKnown
+        ? audioDisclosureVisible
+        : undefined,
       signed_in_as: signedInAs,
       change_password: changePassword,
       sign_out: signOut,
@@ -93,6 +110,7 @@ export const useSettingsAvailability = (): SettingAvailability => {
       changePassword,
       signOut,
       deleteAccount,
+      apiKeysKnown,
     ],
   );
 };
