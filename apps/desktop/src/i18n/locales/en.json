@@ -1072,7 +1072,7 @@
   "your_operating_system_is_preventing_mausvoice_from_modifying": "Your operating system is preventing mausVoice from modifying files in its current install location. Use the download button to get the latest installer, then run it to complete the update manually.",
   "your_own_deepgram_key_for_fast_streaming_transcription": "Your own Deepgram key, for fast streaming transcription.",
   "your_own_groq_key_for_transcription_and_text_generation": "Your own Groq key, for transcription and text generation.",
-  "your_profile_photo": "Your profile photo",
+  "your_profile_name_and_photo": "Your profile name and photo",
   "your_profile_your_sign_in_and_your_account": "Your profile, your sign-in, and your account.",
   "your_recording_is_sent_to_provider_in_pieces_as_you_pause_an": "Your recording is sent to {provider} in pieces as you pause, and the rest once you stop. Audio already sent cannot be recalled.",
   "your_saved_recordings_and_history_were_removed_but_mausvoice": "Your saved recordings and history were removed, but mausVoice could not reach this computer’s storage, so some preferences may remain. Check that the app is allowed to store data, then try again."

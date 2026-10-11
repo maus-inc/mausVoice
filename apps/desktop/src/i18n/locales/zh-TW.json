@@ -1072,7 +1072,7 @@
   "your_operating_system_is_preventing_mausvoice_from_modifying": "作業系統正在封鎖 mausVoice 修改其目前安裝位置中的檔案。請使用下載按鈕取得最新安裝程式，然後執行它以手動完成更新。",
   "your_own_deepgram_key_for_fast_streaming_transcription": "您自己的 Deepgram 金鑰，用於快速串流轉錄。",
   "your_own_groq_key_for_transcription_and_text_generation": "您自己的 Groq 金鑰，用於轉錄與文字生成。",
-  "your_profile_photo": "你的個人資料照片",
+  "your_profile_name_and_photo": "你的個人資料名稱和照片",
   "your_profile_your_sign_in_and_your_account": "您的個人資料、登入資訊與帳戶。",
   "your_recording_is_sent_to_provider_in_pieces_as_you_pause_an": "錄音會在你停頓時分段傳送給 {provider}，其餘部分在停止後傳送。已傳送的音訊無法收回。",
   "your_saved_recordings_and_history_were_removed_but_mausvoice": "你儲存的錄音與紀錄已刪除，但 mausVoice 無法存取這台電腦的儲存空間，因此部分偏好設定可能仍然保留。請確認應用程式可以儲存資料，然後再試一次。"

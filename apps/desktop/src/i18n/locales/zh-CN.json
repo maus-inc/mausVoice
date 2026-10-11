@@ -1072,7 +1072,7 @@
   "your_operating_system_is_preventing_mausvoice_from_modifying": "操作系统正在阻止 mausVoice 修改其当前安装位置中的文件。请使用下载按钮获取最新安装程序，然后运行它以手动完成更新。",
   "your_own_deepgram_key_for_fast_streaming_transcription": "你自己的 Deepgram 密钥，用于快速流式转录。",
   "your_own_groq_key_for_transcription_and_text_generation": "你自己的 Groq 密钥，用于转录和文本生成。",
-  "your_profile_photo": "你的个人资料照片",
+  "your_profile_name_and_photo": "你的个人资料名称和照片",
   "your_profile_your_sign_in_and_your_account": "你的个人资料、登录信息和账户。",
   "your_recording_is_sent_to_provider_in_pieces_as_you_pause_an": "录音会在你停顿时分段发送到 {provider}，其余部分在停止后发送。已发送的音频无法收回。",
   "your_saved_recordings_and_history_were_removed_but_mausvoice": "你保存的录音和记录已删除，但 mausVoice 无法访问此计算机的存储空间，因此部分偏好设置可能仍然保留。请检查应用是否有权保存数据，然后重试。"

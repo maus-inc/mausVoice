@@ -1072,7 +1072,7 @@
   "your_operating_system_is_preventing_mausvoice_from_modifying": "Dein Betriebssystem verhindert, dass mausVoice Dateien im aktuellen Installationsverzeichnis ändert. Lade über die Download-Schaltfläche den neuesten Installer herunter und führe ihn aus, um das Update manuell abzuschließen.",
   "your_own_deepgram_key_for_fast_streaming_transcription": "Dein eigener Deepgram-Schlüssel für schnelle Streaming-Transkription.",
   "your_own_groq_key_for_transcription_and_text_generation": "Dein eigener Groq-Schlüssel für Transkription und Texterstellung.",
-  "your_profile_photo": "Dein Profilbild",
+  "your_profile_name_and_photo": "Dein Profilname und dein Profilbild",
   "your_profile_your_sign_in_and_your_account": "Dein Profil, deine Anmeldung und dein Konto.",
   "your_recording_is_sent_to_provider_in_pieces_as_you_pause_an": "Deine Aufnahme wird in Teilen an {provider} gesendet, während du Pausen machst, und der Rest, sobald du stoppst. Bereits gesendetes Audio kann nicht zurückgerufen werden.",
   "your_saved_recordings_and_history_were_removed_but_mausvoice": "Deine gespeicherten Aufnahmen und dein Verlauf wurden entfernt, aber mausVoice konnte nicht auf den Speicher dieses Computers zugreifen, daher können einige Einstellungen erhalten bleiben. Prüfe, ob die App Daten speichern darf, und versuche es erneut."

@@ -1072,7 +1072,7 @@
   "your_operating_system_is_preventing_mausvoice_from_modifying": "운영 체제로 인해 mausVoice가 현재 설치 위치의 파일을 수정할 수 없습니다. 다운로드 버튼으로 최신 설치 파일을 내려받은 뒤 실행하여 업데이트를 수동으로 완료하세요.",
   "your_own_deepgram_key_for_fast_streaming_transcription": "빠른 스트리밍 전사를 위한 본인의 Deepgram 키입니다.",
   "your_own_groq_key_for_transcription_and_text_generation": "전사와 텍스트 생성을 위한 본인의 Groq 키입니다.",
-  "your_profile_photo": "프로필 사진",
+  "your_profile_name_and_photo": "프로필 이름과 사진",
   "your_profile_your_sign_in_and_your_account": "프로필, 로그인, 계정 정보입니다.",
   "your_recording_is_sent_to_provider_in_pieces_as_you_pause_an": "녹음은 말하는 사이를 멈출 때마다 {provider}에 조각으로 전송되고, 나머지는 멈춘 뒤에 전송됩니다. 이미 전송된 오디오는 되돌릴 수 없습니다.",
   "your_saved_recordings_and_history_were_removed_but_mausvoice": "저장된 녹음과 기록은 삭제되었지만 mausVoice가 이 컴퓨터의 저장소에 접근하지 못해 일부 환경 설정이 남아 있을 수 있습니다. 앱이 데이터를 저장할 수 있는지 확인한 뒤 다시 시도하세요."

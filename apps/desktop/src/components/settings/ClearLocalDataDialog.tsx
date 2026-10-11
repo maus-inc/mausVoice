@@ -145,9 +145,13 @@ export const ClearLocalDataDialog = () => {
                 key="preferences"
                 defaultMessage="Preferences and settings"
               />,
+              // The name and the photo are two stores — the name is a column
+              // on `user_profiles`, which the native wipe deletes, and the
+              // photo is this device's own file — but they are one thing to
+              // the person reading this list.
               <FormattedMessage
-                key="photo"
-                defaultMessage="Your profile photo"
+                key="profile"
+                defaultMessage="Your profile name and photo"
               />,
               <FormattedMessage
                 key="dictionary"
