@@ -378,6 +378,11 @@ const LOOPBACK_HOST =
 /**
  * The URL each endpoint provider falls back to, so "no base URL saved" is not
  * mistaken for "no location known": the request path uses these same defaults.
+ *
+ * Note what "not loopback" means below: the address of an endpoint provider is
+ * whatever the person configured, so a server on the office network, a
+ * self-hosted box on a VPS and a hosted API all look alike from here. Only
+ * loopback is a fact this code can read.
  */
 const DEFAULT_ENDPOINT_URLS: Partial<Record<ApiKeyProvider, string>> = {
   ollama: OLLAMA_DEFAULT_URL,
@@ -397,7 +402,11 @@ export const getProviderLocation = (
     return "unknown";
   }
   try {
-    return LOOPBACK_HOST.test(new URL(url).hostname) ? "local" : "cloud";
+    // Loopback is the only answer the URL gives away: anything else is an
+    // address this code cannot place — a machine on the same network, a
+    // self-hosted server, a hosted API — so it reports that it does not know
+    // rather than calling every non-loopback host "Cloud".
+    return LOOPBACK_HOST.test(new URL(url).hostname) ? "local" : "unknown";
   } catch {
     return "unknown";
   }

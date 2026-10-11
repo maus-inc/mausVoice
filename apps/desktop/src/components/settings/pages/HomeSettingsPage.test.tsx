@@ -232,6 +232,37 @@ describe("HomeSettingsPage", () => {
     expect(text).not.toContain("Cloud");
   });
 
+  it("does not call an endpoint it cannot place Cloud", () => {
+    // An endpoint provider is whatever the person configured: a server on the
+    // office network is not "Cloud", and it is not "On this computer" either,
+    // so the row names the provider and stops.
+    act(() => {
+      setAppState((state) => ({
+        ...state,
+        apiKeyById: {
+          "key-2": {
+            id: "key-2",
+            name: "Home server",
+            provider: "openai-compatible",
+            baseUrl: "http://192.168.1.20:8000",
+            createdAt: "2026-01-01T00:00:00.000Z",
+          },
+        },
+        settings: {
+          ...state.settings,
+          aiPostProcessing: { mode: "api", selectedApiKeyId: "key-2" },
+        },
+      }));
+    });
+
+    render();
+
+    const text = row("AI post processing")?.textContent ?? "";
+    expect(text).toContain("OpenAI Compatible");
+    expect(text).not.toContain("Cloud");
+    expect(text).not.toContain("On this computer");
+  });
+
   it("links each row to the setting it reports", () => {
     render();
 
