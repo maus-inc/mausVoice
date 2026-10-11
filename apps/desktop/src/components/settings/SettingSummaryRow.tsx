@@ -82,6 +82,29 @@ export type SettingSummaryRowProps = SettingSummaryTarget & {
  * a summary cannot drift from the rows it summarizes. What it does not share is
  * the anchor: see `linksTo`.
  */
+/**
+ * Where a summary row goes, or null when it has nowhere to go.
+ *
+ * The rule lives here rather than inline: a row that reports a setting opens
+ * that setting's own row, a row that opens a page takes the page, and a
+ * setting the registry no longer knows about resolves to nothing. The last
+ * case is why this returns null instead of a string — see the component.
+ *
+ * Both spellings are optional here rather than a union because the caller has
+ * already destructured its props; the union on `SettingSummaryTarget` is what
+ * stops a row being given both at the call site.
+ */
+const summaryTarget = (
+  linksTo: string | undefined,
+  path: string | undefined,
+): string | null => {
+  const entry = linksTo ? settingEntryOf(linksTo) : undefined;
+  if (entry) {
+    return `${settingsPagePath(entry.page)}#${settingAnchorId(entry.key)}`;
+  }
+  return path ?? null;
+};
+
 export const SettingSummaryRow = ({
   linksTo,
   path,
@@ -93,18 +116,13 @@ export const SettingSummaryRow = ({
   attention,
 }: SettingSummaryRowProps) => {
   const navigate = useNavigate();
-  const entry = linksTo ? settingEntryOf(linksTo) : undefined;
+  const to = summaryTarget(linksTo, path);
 
   // A summary whose setting no longer exists would link nowhere, so it renders
-  // nothing rather than a row that looks actionable and is not. A page link is
-  // its own target and needs no entry.
-  if (linksTo && !entry) {
+  // nothing rather than a row that looks actionable and is not.
+  if (!to) {
     return null;
   }
-
-  const to = entry
-    ? `${settingsPagePath(entry.page)}#${settingAnchorId(entry.key)}`
-    : (path as string);
 
   return (
     <Box
