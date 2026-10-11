@@ -1064,6 +1064,8 @@
   "you_may_need_to_reload_your_compositor_for_changes_to_take_e": "변경 사항을 적용하려면 컴포지터를 다시 로드해야 할 수 있습니다.",
   "you_re_currently_on_version_version_the_app_will_restart_aft": "현재 버전 {version}을(를) 사용 중입니다. 업데이트가 완료되면 앱이 다시 시작됩니다.",
   "you_re_up_to_date": "최신 상태입니다.",
+  "your_account_has_been_deleted": "계정이 삭제되었습니다",
+  "your_account_has_been_deleted_but_some_stored_data_could_not": "계정이 삭제되었지만 일부 저장된 데이터를 삭제하지 못했습니다. mausVoice를 종료했다가 다시 열어 주세요.",
   "your_azure_openai_resource_endpoint_url": "Azure OpenAI 리소스 엔드포인트 URL",
   "your_email_address": "이메일 주소",
   "your_models": "내 모델",

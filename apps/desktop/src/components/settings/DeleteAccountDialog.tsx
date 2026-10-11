@@ -9,12 +9,13 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import { invoke } from "@tauri-apps/api/core";
 import { useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { showSnackbar } from "../../actions/app.actions";
 import { getAuthRepo } from "../../repos";
 import { produceAppState, useAppStore } from "../../store";
+import { clearLocalData } from "../../utils/local-data.utils";
+import { logOnRejection } from "../../utils/promise.utils";
 import { ConfirmationPhrase } from "./ConfirmationPhrase";
 import { ConsequenceList } from "./ConsequenceList";
 
@@ -39,38 +40,57 @@ export const DeleteAccountDialog = () => {
       return;
     }
 
+    setBusy(true);
     try {
-      setBusy(true);
       await getAuthRepo().deleteMyAccount();
-
-      // Tear down long-running native subsystems before wiping data so
-      // in-flight callbacks don't race against the cleared DB. Same
-      // rationale as ClearLocalDataDialog.
-      try {
-        await invoke("stop_key_listener");
-      } catch {
-        /* no listener active */
-      }
-      try {
-        await invoke("stop_recording");
-      } catch {
-        /* no active recording */
-      }
-
-      await invoke("clear_local_data");
-      setConfirmationEmail("");
-      showSnackbar("You account has been deleted", { duration: 15000 });
-      produceAppState((state) => {
-        state.settings.deleteAccountDialog = false;
-      });
-      await getAuthRepo().signOut();
     } catch {
+      // Only this call failing means the deletion failed. Everything below runs
+      // after the account is gone, which is why it is outside this `try`: the
+      // wipe used to sit inside it, so a wipe that could not finish was
+      // reported as "your account could not be deleted" for an account that no
+      // longer existed.
       showSnackbar(
         "An error occurred while attempting to delete your account. Please try again later.",
       );
-    } finally {
       setBusy(false);
+      return;
     }
+
+    // Everything this device was keeping for the account goes too, through the
+    // same seam "Clear local data" uses: wiping only the native half here is
+    // what left the profile photo — a picture of the person's face — in
+    // localStorage after a deletion that promised to remove it.
+    let leftoverData = false;
+    try {
+      const { storageFailedKeys } = await clearLocalData();
+      leftoverData = storageFailedKeys.length > 0;
+    } catch {
+      // The wipe throws when this app cannot reach storage at all, which is the
+      // strongest version of "some of it may still be here" rather than a
+      // reason to say nothing.
+      leftoverData = true;
+    }
+
+    setConfirmationEmail("");
+    showSnackbar(
+      leftoverData
+        ? intl.formatMessage({
+            defaultMessage:
+              "Your account has been deleted, but some stored data could not be removed. Quit and reopen mausVoice.",
+          })
+        : intl.formatMessage({
+            defaultMessage: "Your account has been deleted",
+          }),
+      { duration: 15000 },
+    );
+    produceAppState((state) => {
+      state.settings.deleteAccountDialog = false;
+    });
+    // Fire-and-forget, matching the sign-out row on the account page: the toast
+    // above has already told the person what happened, and a failing sign-out
+    // cannot make a deleted account undeleted.
+    logOnRejection(getAuthRepo().signOut(), "account deletion: signOut");
+    setBusy(false);
   };
 
   const handleEmailChange = (event: React.ChangeEvent<HTMLInputElement>) => {

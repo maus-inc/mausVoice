@@ -1064,6 +1064,8 @@
   "you_may_need_to_reload_your_compositor_for_changes_to_take_e": "Potrebbe essere necessario ricaricare il compositore per rendere effettive le modifiche.",
   "you_re_currently_on_version_version_the_app_will_restart_aft": "Stai usando la versione {version}. L'app si riavvierà dopo che l'aggiornamento sarà completato.",
   "you_re_up_to_date": "Sei aggiornato.",
+  "your_account_has_been_deleted": "Il tuo account è stato eliminato",
+  "your_account_has_been_deleted_but_some_stored_data_could_not": "Il tuo account è stato eliminato, ma non è stato possibile rimuovere alcuni dati salvati. Chiudi e riapri mausVoice.",
   "your_azure_openai_resource_endpoint_url": "URL dell'endpoint della tua risorsa Azure OpenAI",
   "your_email_address": "Il tuo indirizzo email",
   "your_models": "I tuoi modelli",

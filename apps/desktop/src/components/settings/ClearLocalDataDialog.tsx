@@ -1,4 +1,3 @@
-import { invoke } from "@tauri-apps/api/core";
 import {
   Alert,
   Button,
@@ -14,10 +13,8 @@ import {
 import { useEffect, useRef, useState } from "react";
 import { FormattedMessage, useIntl, type IntlShape } from "react-intl";
 import { produceAppState, useAppStore } from "../../store";
-import {
-  clearAppDataStorage,
-  StorageUnavailableError,
-} from "../../utils/local-storage.utils";
+import { clearLocalData } from "../../utils/local-data.utils";
+import { StorageUnavailableError } from "../../utils/local-storage.utils";
 import { ConfirmationPhrase } from "./ConfirmationPhrase";
 import { ConsequenceList } from "./ConsequenceList";
 
@@ -100,30 +97,9 @@ export const ClearLocalDataDialog = () => {
     setErrorMessage(null);
 
     try {
-      // Tear down long-running native subsystems BEFORE wiping the DB and
-      // reloading. If a recorder or global key listener is left running
-      // past `clear_local_data`, its in-flight callbacks will race the
-      // page reload against a now-empty / VACUUM'd database and emit
-      // errors into the fresh session. Best-effort: ignore per-command
-      // failures (there may not be an active recording/listener to stop).
-      try {
-        await invoke("stop_key_listener");
-      } catch {
-        /* no listener active */
-      }
-      try {
-        await invoke("stop_recording");
-      } catch {
-        /* no active recording */
-      }
-
-      await invoke("clear_local_data");
-
-      // The Rust side wipes the database and the managed audio directory;
-      // everything this app keeps in localStorage lives outside both, so the
-      // photo, dismissed tips and account anchors would otherwise survive a
-      // wipe that promises to remove them. The session keys are not in that
-      // list: clearing local data is not a sign-out.
+      // The wipe lives in one place because deleting the account has to remove
+      // the same things; see `clearLocalData` for what those are and why each
+      // step is there.
       //
       // The dialog is deliberately left open across this and the reload. Closing
       // it updates the store, and the persist middleware rewrites its own key on
@@ -131,7 +107,7 @@ export const ClearLocalDataDialog = () => {
       // serialized key back; and a wipe the browser refuses has to be able to
       // say so to someone who is still looking at the dialog. The reload takes
       // the dialog down with everything else.
-      const failedKeys = clearAppDataStorage();
+      const { storageFailedKeys: failedKeys } = await clearLocalData();
       if (failedKeys.length > 0) {
         // Reloading anyway would restore exactly the state the dialog just
         // promised to remove, so the honest answer is to name the problem and

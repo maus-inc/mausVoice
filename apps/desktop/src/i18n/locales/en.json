@@ -1064,6 +1064,8 @@
   "you_may_need_to_reload_your_compositor_for_changes_to_take_e": "You may need to reload your compositor for changes to take effect.",
   "you_re_currently_on_version_version_the_app_will_restart_aft": "You're currently on version {version}. The app will restart after the update finishes.",
   "you_re_up_to_date": "You're up to date.",
+  "your_account_has_been_deleted": "Your account has been deleted",
+  "your_account_has_been_deleted_but_some_stored_data_could_not": "Your account has been deleted, but some stored data could not be removed. Quit and reopen mausVoice.",
   "your_azure_openai_resource_endpoint_url": "Your Azure OpenAI resource endpoint URL",
   "your_email_address": "Your email address",
   "your_models": "Your models",
