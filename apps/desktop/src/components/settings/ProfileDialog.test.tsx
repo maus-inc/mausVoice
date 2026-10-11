@@ -186,6 +186,43 @@ describe("ProfileDialog", () => {
     expect(dialog()).not.toBeNull();
   });
 
+  it("refuses Escape while the save it started is still landing", async () => {
+    let settle!: () => void;
+    mocks.setUserName.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          settle = resolve;
+        }),
+    );
+
+    open();
+    await type(requireElement(nameInput(), "the name field"), "Morgan Lee Jr.");
+    const form = requireElement(dialog()?.querySelector("form"), "the form");
+    await act(async () => {
+      form.dispatchEvent(
+        new window.Event("submit", { bubbles: true, cancelable: true }),
+      );
+    });
+
+    // Escape is the path the disabled Cancel button cannot cover, and it must
+    // not report a cancellation the dialog cannot deliver. MUI listens for it
+    // on the modal root, so the event has to start inside the dialog and
+    // bubble — a `document`-level dispatch never reaches that handler, and an
+    // assertion after one would pass whatever the dialog did.
+    act(() => {
+      requireElement(dialog(), "the open dialog").dispatchEvent(
+        new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+      );
+    });
+    expect(getAppState().settings.profileDialogOpen).toBe(true);
+
+    await act(async () => {
+      settle();
+    });
+    expect(mocks.setUserName).toHaveBeenCalledWith("Morgan Lee Jr.");
+    expect(getAppState().settings.profileDialogOpen).toBe(false);
+  });
+
   it("commits on Enter, because the body is a form", async () => {
     open();
 

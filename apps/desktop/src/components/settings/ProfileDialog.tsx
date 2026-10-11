@@ -400,7 +400,16 @@ export const ProfileDialog = () => {
   }, [canSave, trimmed, initialName, image, initialImage, close]);
 
   return (
-    <Dialog open={open} onClose={close} maxWidth="xs" fullWidth>
+    <Dialog
+      open={open}
+      // Escape and a backdrop click arrive here, and a save in flight is the
+      // one moment they are refused: the edits are already being written, so
+      // dismissing would promise a cancellation this dialog cannot deliver.
+      // The Cancel button is disabled for the same reason.
+      onClose={saving ? undefined : close}
+      maxWidth="xs"
+      fullWidth
+    >
       {/* A form, not a stack of fields: with one text field in a dialog, Enter
           is the expected way to commit, and only a real form gives the browser
           that behaviour for free. */}

@@ -20,7 +20,7 @@ vi.mock("react-intl", async (importOriginal) => {
 
 import { IntlProvider } from "react-intl";
 import { INITIAL_APP_STATE } from "../../state/app.state";
-import { produceAppState, setAppState } from "../../store";
+import { getAppState, produceAppState, setAppState } from "../../store";
 import {
   ACCOUNT_CREATED_AT_STORAGE_KEY,
   LOCAL_STATE_STORAGE_KEY,
@@ -231,9 +231,12 @@ describe("ClearLocalDataDialog", () => {
       expect(mocks.invoke).toHaveBeenCalledWith("clear_local_data");
     });
 
-    // Escape is the path the disabled Cancel button cannot cover.
+    // Escape is the path the disabled Cancel button cannot cover. MUI listens
+    // for it on the modal root, so the event starts inside the dialog and
+    // bubbles: a `document`-level dispatch never reaches that handler, and an
+    // assertion after one would pass whatever the dialog did.
     act(() => {
-      document.dispatchEvent(
+      document.querySelector<HTMLElement>('[role="dialog"]')?.dispatchEvent(
         new window.KeyboardEvent("keydown", {
           key: "Escape",
           bubbles: true,
@@ -241,7 +244,10 @@ describe("ClearLocalDataDialog", () => {
       );
     });
 
-    expect(document.querySelector("input")).not.toBeNull();
+    // The flag, not the element: a dismissed dialog is unmounted after its
+    // exit transition, so a DOM check here would pass while the dialog was
+    // already on its way out.
+    expect(getAppState().settings.clearLocalDataDialogOpen).toBe(true);
 
     await act(async () => {
       finishWipe?.();
