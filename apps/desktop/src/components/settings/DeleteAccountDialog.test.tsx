@@ -111,6 +111,10 @@ describe("DeleteAccountDialog", () => {
     root = createRoot(container);
     window.localStorage.clear();
     mocks.invoke.mockReset();
+    // The explicit `undefined` is the argument these mocks' types ask for:
+    // `mockResolvedValue()` does not compile against them ("Expected 1
+    // arguments, but got 0"), so dropping it is a type error rather than a
+    // tidy-up.
     mocks.invoke.mockResolvedValue(undefined);
     mocks.deleteMyAccount.mockReset();
     mocks.deleteMyAccount.mockResolvedValue(undefined);
@@ -149,7 +153,7 @@ describe("DeleteAccountDialog", () => {
     mocks.invoke.mockImplementation((command: unknown) =>
       command === "clear_local_data"
         ? Promise.reject(new Error("database is locked"))
-        : Promise.resolve(undefined),
+        : Promise.resolve(),
     );
 
     render();
