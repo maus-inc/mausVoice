@@ -1066,7 +1066,7 @@
   "you_re_currently_on_version_version_the_app_will_restart_aft": "您目前使用的是版本 {version}。应用程序将在更新完成后重启。",
   "you_re_up_to_date": "已是最新版本。",
   "your_account_has_been_deleted": "你的账户已删除",
-  "your_account_has_been_deleted_but_some_stored_data_could_not": "你的账户已删除，但部分已存储的数据无法删除。请退出并重新打开 mausVoice，然后重试。",
+  "your_account_has_been_deleted_but_some_stored_data_could_not": "你的账户已删除，但部分已存储的数据无法删除。请退出并重新打开 mausVoice。",
   "your_azure_openai_resource_endpoint_url": "您的 Azure OpenAI 资源端点网址(Endpoint URL)",
   "your_email_address": "你的邮箱地址",
   "your_models": "你的模型",
