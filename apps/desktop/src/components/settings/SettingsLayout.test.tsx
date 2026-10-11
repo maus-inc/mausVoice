@@ -209,6 +209,42 @@ describe("SettingsLayout", () => {
     expect(container.querySelector(".MuiTypography-overline")).toBeNull();
   });
 
+  it("lights up a hit that is already the address", async () => {
+    // A row on the page already open, already in the address bar: navigating
+    // there changes nothing, so the hash effect never runs and the row the
+    // person just picked would stay dark.
+    const row = document.createElement("div");
+    row.id = "setting-hands_free_output_delay";
+    const scrollIntoView = vi.fn();
+    row.scrollIntoView = scrollIntoView;
+    document.body.appendChild(row);
+
+    try {
+      await render(
+        "/dashboard/settings/dictation#setting-hands_free_output_delay",
+      );
+      // The deep link itself lands on the row on mount, which is what the
+      // first call is. What is under test here is what a picked hit does
+      // afterwards, so the record starts empty.
+      await act(async () => {
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+      });
+      scrollIntoView.mockClear();
+
+      setQuery("hands-free output");
+      press("Enter");
+
+      // The scroll is deferred to the next frame, after the row is painted.
+      await act(async () => {
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+      });
+
+      expect(scrollIntoView).toHaveBeenCalled();
+    } finally {
+      row.remove();
+    }
+  });
+
   it("clears the query on Escape without leaving the page", async () => {
     await render("/dashboard/settings/appearance");
 

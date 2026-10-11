@@ -270,9 +270,19 @@ export const SettingsLayout = () => {
 
   const openHit = (hit: SettingHit) => {
     setQuery("");
-    navigate(
-      `${settingsPagePath(hit.entry.page)}#${settingAnchorId(hit.entry.key)}`,
-    );
+    const target = `${settingsPagePath(hit.entry.page)}#${settingAnchorId(
+      hit.entry.key,
+    )}`;
+    // A hit for a row on the page already open, with that row already in the
+    // address, is a navigation to where we are: the router would change
+    // nothing, the hash effect below would not run, and the row the person
+    // picked would neither light up nor scroll into view. So the one case the
+    // effect cannot see is handled here, with the same call it makes.
+    if (`${location.pathname}${location.hash}` === target) {
+      focusSetting(hit.entry.key);
+      return;
+    }
+    navigate(target);
   };
 
   const searching = query.trim().length > 0;
