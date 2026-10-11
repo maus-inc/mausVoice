@@ -39,6 +39,11 @@ const AVATAR_ERROR_COPY: Record<AvatarReadError, React.ReactNode> = {
   "too-large": (
     <FormattedMessage defaultMessage="That image is larger than 5 MB. Choose a smaller one." />
   ),
+  // The file itself is small; its dimensions are not. Saying "larger than
+  // 5 MB" would send someone looking for a byte count that is already fine.
+  "too-many-pixels": (
+    <FormattedMessage defaultMessage="That image is too big to open. Choose a smaller one." />
+  ),
   unreadable: (
     <FormattedMessage defaultMessage="That image could not be read. Try another file." />
   ),

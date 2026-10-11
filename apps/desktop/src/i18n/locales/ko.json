@@ -872,6 +872,7 @@
   "that_dictation_outran_fast_styling_so_its_last_droppedchars": "해당 받아쓰기가 빠른 스타일링 길이를 초과해 마지막 {droppedChars}개 문자가 스타일링되지 않았고, 시크릿 모드가 켜져 있어 그 부분은 저장되지 않았습니다.",
   "that_image_could_not_be_read_try_another_file": "이미지를 읽을 수 없습니다. 다른 파일을 사용해 보세요.",
   "that_image_is_larger_than_5_mb_choose_a_smaller_one": "이미지가 5MB를 초과합니다. 더 작은 이미지를 선택하세요.",
+  "that_image_is_too_big_to_open_choose_a_smaller_one": "이 이미지는 너무 커서 열 수 없습니다. 더 작은 이미지를 선택하세요.",
   "the_account_this_copy_of_mausvoice_is_using": "이 mausVoice 사본이 사용하는 계정입니다.",
   "the_application_encountered_an_unexpected_error": "애플리케이션에 예기치 않은 오류가 발생했습니다.",
   "the_chime_that_marks_recording_start_and_stop_and_how_far_ev": "녹음 시작과 종료를 알리는 소리, 그리고 말하는 동안 나머지가 얼마나 어두워지는지입니다.",

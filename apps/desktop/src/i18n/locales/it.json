@@ -872,6 +872,7 @@
   "that_dictation_outran_fast_styling_so_its_last_droppedchars": "Quella dettatura ha superato la formattazione rapida, quindi gli ultimi {droppedChars} caratteri sono rimasti non formattati, e la modalità invisibile è attiva, perciò quel finale non è stato salvato.",
   "that_image_could_not_be_read_try_another_file": "Non è stato possibile leggere l'immagine. Prova un altro file.",
   "that_image_is_larger_than_5_mb_choose_a_smaller_one": "L'immagine supera i 5 MB. Scegline una più piccola.",
+  "that_image_is_too_big_to_open_choose_a_smaller_one": "Questa immagine è troppo grande per essere aperta. Scegline una più piccola.",
   "the_account_this_copy_of_mausvoice_is_using": "L'account usato da questa copia di mausVoice.",
   "the_application_encountered_an_unexpected_error": "L'applicazione ha riscontrato un errore imprevisto.",
   "the_chime_that_marks_recording_start_and_stop_and_how_far_ev": "Il suono che segna l'inizio e la fine della registrazione, e quanto si attenua tutto il resto mentre parli.",

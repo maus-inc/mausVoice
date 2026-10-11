@@ -872,6 +872,7 @@
   "that_dictation_outran_fast_styling_so_its_last_droppedchars": "該段聽寫超出了快速排版的長度限制，因此最後 {droppedChars} 個字元未經排版；且目前為隱私模式，該部分內容未儲存。",
   "that_image_could_not_be_read_try_another_file": "無法讀取該圖片。請改用其他檔案。",
   "that_image_is_larger_than_5_mb_choose_a_smaller_one": "該圖片超過 5 MB。請選擇較小的圖片。",
+  "that_image_is_too_big_to_open_choose_a_smaller_one": "這張圖片太大，無法開啟。請選擇一張較小的圖片。",
   "the_account_this_copy_of_mausvoice_is_using": "這份 mausVoice 使用的帳戶。",
   "the_application_encountered_an_unexpected_error": "應用程式發生未預期的錯誤。",
   "the_chime_that_marks_recording_start_and_stop_and_how_far_ev": "標示錄音開始與結束的提示音，以及說話時其他內容變暗的程度。",

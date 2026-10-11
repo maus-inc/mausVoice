@@ -262,6 +262,50 @@ describe("readAvatarFile", () => {
     ]);
   });
 
+  /** A PNG whose IHDR declares a size, valid enough for the header reader. */
+  const pngHeaderFile = (width: number, height: number) => {
+    const bytes = new Uint8Array(24);
+    bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
+    const view = new DataView(bytes.buffer);
+    view.setUint32(16, width);
+    view.setUint32(20, height);
+    return new File([bytes], "photo.png", { type: "image/png" });
+  };
+
+  it("refuses a header that declares more pixels than it can open, before decoding", async () => {
+    const bitmap = installBitmap();
+    installCanvas();
+
+    const result = await readAvatarFile(pngHeaderFile(30_000, 30_000));
+
+    // The point of reading the header first: a few kilobytes of file must not
+    // turn into a multi-gigabyte allocation.
+    expect(result).toEqual({ ok: false, error: "too-many-pixels" });
+    expect(bitmap.decode).not.toHaveBeenCalled();
+  });
+
+  it("opens an image the header says is large but within the budget", async () => {
+    const bitmap = installBitmap();
+    installCanvas();
+
+    const result = await readAvatarFile(pngHeaderFile(6_000, 4_000));
+
+    expect(result.ok).toBe(true);
+    expect(bitmap.decode).toHaveBeenCalled();
+  });
+
+  it("does not guess at a header it cannot read", async () => {
+    const bitmap = installBitmap();
+    installCanvas();
+
+    // `pngFile()` is a one-byte file with a PNG type: no header this parser
+    // recognises, so the decode path decides, as it did before the guard.
+    const result = await readAvatarFile(pngFile());
+
+    expect(result.ok).toBe(true);
+    expect(bitmap.decode).toHaveBeenCalled();
+  });
+
   it("reports a file it cannot decode instead of rejecting", async () => {
     installCanvas();
     vi.stubGlobal(

@@ -872,6 +872,7 @@
   "that_dictation_outran_fast_styling_so_its_last_droppedchars": "Dieses Diktat war zu lang für die schnelle Formatierung, daher blieben die letzten {droppedChars} Zeichen unformatiert, und der Inkognito-Modus ist aktiv, sodass dieses Ende nicht gespeichert wurde.",
   "that_image_could_not_be_read_try_another_file": "Dieses Bild konnte nicht gelesen werden. Versuche eine andere Datei.",
   "that_image_is_larger_than_5_mb_choose_a_smaller_one": "Dieses Bild ist größer als 5 MB. Wähle ein kleineres.",
+  "that_image_is_too_big_to_open_choose_a_smaller_one": "Dieses Bild ist zu groß, um es zu öffnen. Wähle ein kleineres.",
   "the_account_this_copy_of_mausvoice_is_using": "Das Konto, das diese Kopie von mausVoice verwendet.",
   "the_application_encountered_an_unexpected_error": "Die Anwendung ist auf einen unerwarteten Fehler gestoßen.",
   "the_chime_that_marks_recording_start_and_stop_and_how_far_ev": "Der Ton, der Aufnahmestart und -ende markiert, und wie stark alles andere während des Sprechens abgedimmt wird.",

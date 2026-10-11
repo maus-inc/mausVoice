@@ -872,6 +872,7 @@
   "that_dictation_outran_fast_styling_so_its_last_droppedchars": "该段听写超出了快速排版的长度限制，因此最后 {droppedChars} 个字符未经过排版；且当前为隐身模式，该部分内容未保存。",
   "that_image_could_not_be_read_try_another_file": "无法读取该图片。请换一个文件。",
   "that_image_is_larger_than_5_mb_choose_a_smaller_one": "该图片超过 5 MB。请选择更小的图片。",
+  "that_image_is_too_big_to_open_choose_a_smaller_one": "这张图片太大，无法打开。请选择一张较小的图片。",
   "the_account_this_copy_of_mausvoice_is_using": "此份 mausVoice 使用的账户。",
   "the_application_encountered_an_unexpected_error": "应用程序遇到了意外错误。",
   "the_chime_that_marks_recording_start_and_stop_and_how_far_ev": "标记录音开始和结束的提示音，以及说话时其他内容的变暗程度。",

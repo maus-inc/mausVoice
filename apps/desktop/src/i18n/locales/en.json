@@ -872,6 +872,7 @@
   "that_dictation_outran_fast_styling_so_its_last_droppedchars": "That dictation outran fast styling, so its last {droppedChars} characters were left unstyled, and incognito mode is on, so that ending was not saved.",
   "that_image_could_not_be_read_try_another_file": "That image could not be read. Try another file.",
   "that_image_is_larger_than_5_mb_choose_a_smaller_one": "That image is larger than 5 MB. Choose a smaller one.",
+  "that_image_is_too_big_to_open_choose_a_smaller_one": "That image is too big to open. Choose a smaller one.",
   "the_account_this_copy_of_mausvoice_is_using": "The account this copy of mausVoice is using.",
   "the_application_encountered_an_unexpected_error": "The application encountered an unexpected error.",
   "the_chime_that_marks_recording_start_and_stop_and_how_far_ev": "The chime that marks recording start and stop, and how far everything else dims while you speak.",
