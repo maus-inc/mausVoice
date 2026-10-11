@@ -217,15 +217,18 @@ const YourModelsCard = () => {
   // A loaded status that says "not on disk" is the only thing that makes the
   // missing-model word true; before the statuses load, the app does not know.
   const localModelMissing = transcriptionStatusesLoaded && !transcriptionReady;
+  // The catalogue name when this build knows the model, and the raw id when it
+  // does not, so a model added ahead of its entry still names itself.
+  const localModelName = localModel
+    ? intl.formatMessage(localModel.label)
+    : transcriptionModel;
 
   const transcriptionSummary: ModelSummary =
     transcriptionMode === "local"
       ? {
           description: localModelMissing
             ? intl.formatMessage({ defaultMessage: "Not downloaded yet" })
-            : localModel
-              ? intl.formatMessage(localModel.label)
-              : transcriptionModel,
+            : localModelName,
           value: onThisComputer,
           attention: localModelMissing,
         }
