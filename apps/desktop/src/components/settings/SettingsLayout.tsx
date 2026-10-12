@@ -302,9 +302,9 @@ export const SettingsLayout = () => {
         sx={{
           alignItems: "flex-start",
           // The scroll box above this is a definite height, so the surface can
-          // claim the rest of it. A page is then free to use the leftover space
-          // — centring on the overview, which is otherwise a two-card answer
-          // pinned to the top of an empty window.
+          // claim the rest of it. That is what gives the block below a free
+          // space to be centred in instead of the content sitting at the top of
+          // an otherwise empty window.
           minHeight: "100%",
         }}
       >
@@ -392,8 +392,8 @@ export const SettingsLayout = () => {
             minWidth: 0,
             width: "100%",
             // Stretched to the surface rather than to its own content, and a
-            // column, so a page that has space to spare can take it: see
-            // `minHeight` above.
+            // column, so the heading-and-page block below has free space to be
+            // centred in: see `minHeight` above.
             alignSelf: "stretch",
             display: "flex",
             flexDirection: "column",
@@ -402,7 +402,17 @@ export const SettingsLayout = () => {
           {searching ? (
             <SettingsSearchResults hits={hits} onSelect={openHit} />
           ) : (
-            <>
+            // The heading travels with the page it names. Centring the page
+            // alone left the heading stranded at the top of the surface with
+            // the free space halved into two gaps — one under the heading, one
+            // under the content — which read as a broken composition rather
+            // than a centred one. As one block, the spare space becomes the
+            // margin above and below the whole thing.
+            //
+            // `auto` margins are what make that safe: they absorb free space
+            // when there is some, and resolve to zero when the page is taller
+            // than the surface, so a long page is laid out exactly as before.
+            <Box sx={{ my: "auto", width: "100%" }}>
               {activePage && (
                 <Box sx={{ mb: 4 }}>
                   <Typography
@@ -421,7 +431,7 @@ export const SettingsLayout = () => {
                 </Box>
               )}
               <Outlet />
-            </>
+            </Box>
           )}
         </Box>
       </Stack>

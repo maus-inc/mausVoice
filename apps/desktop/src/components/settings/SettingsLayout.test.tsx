@@ -245,6 +245,50 @@ describe("SettingsLayout", () => {
     }
   });
 
+  it("keeps the heading with its page, so the two centre as one block", async () => {
+    await render("/dashboard/settings/appearance");
+
+    const heading = requireElement(
+      container.querySelector("h1"),
+      "the page heading",
+    );
+    const rail = requireElement(
+      container.querySelector('nav[aria-label="Settings sections"]'),
+      "the rail",
+    );
+
+    /** The deepest element both are inside. */
+    const commonAncestor = (a: Element, b: Element): Element => {
+      let node: Element | null = a;
+      while (node && !node.contains(b)) {
+        node = node.parentElement;
+      }
+      return requireElement(node, "a common ancestor");
+    };
+
+    // The rail and the heading are the two columns of the surface; the heading
+    // lives in the content one.
+    const surface = commonAncestor(rail, heading);
+    const contentColumn = requireElement(
+      Array.from(surface.children).find((child) => child.contains(heading)),
+      "the content column",
+    );
+
+    // The heading and the page are wrapped in a block of their own rather than
+    // standing as two separate children of the column. That block is what
+    // carries the `auto` margins that centre the pair when the page is shorter
+    // than the surface. Centring the page alone left the heading stranded at
+    // the top and split the free space into two gaps — one under the heading,
+    // one under the page — which is the composition this keeps together.
+    expect(contentColumn.children).toHaveLength(1);
+    const block = requireElement(
+      contentColumn.firstElementChild,
+      "the heading-and-page block",
+    );
+    expect(block.contains(heading)).toBe(true);
+    expect(block.children.length).toBeGreaterThan(1);
+  });
+
   it("clears the query on Escape without leaving the page", async () => {
     await render("/dashboard/settings/appearance");
 
