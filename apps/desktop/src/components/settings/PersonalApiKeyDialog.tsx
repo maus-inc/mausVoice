@@ -11,7 +11,12 @@ import {
   Typography,
 } from "@mui/material";
 import { useEffect, useRef, useState } from "react";
-import { FormattedMessage, useIntl } from "react-intl";
+import {
+  defineMessage,
+  FormattedMessage,
+  useIntl,
+  type MessageDescriptor,
+} from "react-intl";
 import { openExternalUrl } from "../../utils/open-url.utils";
 import { showErrorSnackbar, showSnackbar } from "../../actions/app.actions";
 import {
@@ -29,7 +34,10 @@ type ProviderCopy = {
   consoleUrl: string;
   consoleLabel: React.ReactNode;
   placeholder?: string;
-  savedMessage: string;
+  /** A descriptor rather than a sentence: the snackbar has to speak the
+   *  person's locale, and this table is built once at module scope, before
+   *  there is an `intl` to ask. */
+  savedMessage: MessageDescriptor;
   save: (key: string) => Promise<unknown>;
 };
 
@@ -41,7 +49,9 @@ const PROVIDER_COPY: Record<PersonalApiKeyProvider, ProviderCopy> = {
     ),
     consoleUrl: "https://console.deepgram.com/",
     consoleLabel: <FormattedMessage defaultMessage="Open Deepgram API keys" />,
-    savedMessage: "Deepgram API key saved",
+    savedMessage: defineMessage({
+      defaultMessage: "Deepgram API key saved",
+    }),
     save: savePersonalDeepgramApiKey,
   },
   groq: {
@@ -52,7 +62,9 @@ const PROVIDER_COPY: Record<PersonalApiKeyProvider, ProviderCopy> = {
     consoleUrl: "https://console.groq.com/keys",
     consoleLabel: <FormattedMessage defaultMessage="Open Groq API keys" />,
     placeholder: "gsk_...",
-    savedMessage: "Groq API key saved",
+    savedMessage: defineMessage({
+      defaultMessage: "Groq API key saved",
+    }),
     save: savePersonalGroqApiKey,
   },
 };
@@ -111,7 +123,9 @@ export const PersonalApiKeyDialog = ({
     setErrorMessage(null);
     try {
       await copy.save(trimmed);
-      showSnackbar(copy.savedMessage, { mode: "success" });
+      showSnackbar(intl.formatMessage(copy.savedMessage), {
+        mode: "success",
+      });
       onClose();
     } catch (error) {
       const message =
