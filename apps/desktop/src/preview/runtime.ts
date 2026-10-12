@@ -208,7 +208,6 @@ const toDatabase = (data: PreviewData): PreviewDatabase => ({
   receiverEnabled: false,
 });
 
-
 const getList = (records: Map<string, WireRecord>): WireRecord[] =>
   [...records.values()].map(clone);
 

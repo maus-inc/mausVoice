@@ -6,7 +6,6 @@ import {
   DialogContent,
   DialogContentText,
   DialogTitle,
-  Stack,
 } from "@mui/material";
 import { ReactNode, useId } from "react";
 import { FormattedMessage, useIntl } from "react-intl";

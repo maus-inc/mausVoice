@@ -108,12 +108,6 @@ export const DeleteAccountDialog = () => {
     setBusy(false);
   };
 
-  const handleConfirmationChange = (
-    event: React.ChangeEvent<HTMLInputElement>,
-  ) => {
-    setConfirmationValue(event.target.value);
-  };
-
   return (
     <Dialog
       open={open}
