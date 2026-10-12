@@ -96,8 +96,25 @@ const selectDictationState = (state: AppState) => {
  * that changed somewhere else, including an older write landing after a newer
  * one.
  */
-const MAX_TRACKED_WRITES = 8;
-
+/**
+ * The values this page has written to the store and whose arrival has not been
+ * seen yet.
+ *
+ * A number field here commits on blur, and the store only carries a written
+ * value once the repository call returns, so two writes can be in flight at
+ * once. Keeping every value in flight — not just the most recent — is what
+ * lets the sync effects tell the page's own writes apart from a preference
+ * that changed somewhere else, including an older write landing after a newer
+ * one.
+ *
+ * The set holds exactly the writes that have not reported back. Each value
+ * leaves it either by causing the arrival the effect claims it from, or by its
+ * save failing, which leaves the store untouched and so means no arrival is
+ * coming. That is what bounds it: the size is the number of writes in flight,
+ * and nothing here can hold a value that is still on its way — which a cap
+ * would, turning the arrival of an evicted value into a change from elsewhere
+ * and writing it back over a newer draft.
+ */
 const useOwnWrites = () => {
   const writes = useRef<Set<number>>(new Set());
   return useMemo(
@@ -105,18 +122,6 @@ const useOwnWrites = () => {
       /** Records a value this page has sent to the store. */
       record: (value: number) => {
         writes.current.add(value);
-        // Only the values of writes that are still in flight — or whose save
-        // failed and may be retried — can still arrive, and a failed save adds
-        // one entry each time. The oldest are dropped so a long session cannot
-        // grow this without bound; more than a few writes in flight at once is
-        // already unusual.
-        while (writes.current.size > MAX_TRACKED_WRITES) {
-          const oldest = writes.current.values().next().value;
-          if (oldest === undefined) {
-            break;
-          }
-          writes.current.delete(oldest);
-        }
       },
       /**
        * Whether the value that just arrived is one this page wrote. The claim
@@ -124,6 +129,10 @@ const useOwnWrites = () => {
        * from somewhere else.
        */
       claim: (value: number) => writes.current.delete(value),
+      /** Drops a write whose save failed, because it will never arrive. */
+      abandon: (value: number) => {
+        writes.current.delete(value);
+      },
     }),
     [],
   );
@@ -264,6 +273,7 @@ export default function DictationSettingsPage() {
         if (requestedLimit.current === minutes) {
           requestedLimit.current = null;
         }
+        limitWrites.abandon(minutes);
         throw error;
       }),
       "settings page: setDictationLimitMinutes",
@@ -290,6 +300,7 @@ export default function DictationSettingsPage() {
         if (requestedDelay.current === milliseconds) {
           requestedDelay.current = null;
         }
+        delayWrites.abandon(milliseconds);
         throw error;
       }),
       "settings page: setHandsFreeDelayMs",

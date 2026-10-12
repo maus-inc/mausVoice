@@ -219,6 +219,41 @@ describe("DictationSettingsPage", () => {
     expect(limitField()?.value).toBe(String(SAVED_MINUTES));
   });
 
+  it("does not let a late write overwrite a draft after another save failed", async () => {
+    // The set of writes this page is waiting on must not grow a cap: a value
+    // dropped from it would arrive as a "change from elsewhere" and be written
+    // over the field. Ten commits in a row, each landing after the next, keep
+    // the newest value on screen.
+    const { settleNext } = deferredWrite();
+    render();
+
+    for (const value of [
+      "10",
+      "11",
+      "12",
+      "13",
+      "14",
+      "15",
+      "16",
+      "17",
+      "18",
+    ]) {
+      const field = requireElement(limitField(), "the dictation limit field");
+      typeAndCommit(field, value);
+    }
+    expect(mocks.setDictationLimitMinutes).toHaveBeenCalledTimes(9);
+
+    // Every earlier write lands, oldest first, while the newest is on screen.
+    await act(async () => {
+      for (let landed = 0; landed < 8; landed += 1) {
+        settleNext();
+        await Promise.resolve();
+      }
+    });
+
+    expect(limitField()?.value).toBe("18");
+  });
+
   it("allows the same number again after a save failed", async () => {
     mocks.setDictationLimitMinutes.mockRejectedValue(new Error("offline"));
     render();
