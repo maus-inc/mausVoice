@@ -139,7 +139,10 @@ export const useSavedNumberField = ({
     writes.record(value);
     requested.current = value;
     logOnRejection(
-      save(value).catch((failure: unknown) => {
+      // `error_` because the field's own message state is `error`: same
+      // convention as the rest of the app where a caught error has to live
+      // beside one.
+      save(value).catch((error_: unknown) => {
         // A failed save shows its own snackbar and leaves the preference alone,
         // so the same number has to be committable again. Only this write's
         // request is forgotten — a newer one may have replaced it while this
@@ -148,7 +151,7 @@ export const useSavedNumberField = ({
           requested.current = null;
         }
         writes.abandon(value);
-        throw failure;
+        throw error_;
       }),
       context,
     );
