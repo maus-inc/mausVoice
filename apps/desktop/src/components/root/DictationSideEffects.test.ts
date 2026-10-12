@@ -371,12 +371,22 @@ describe("postProcessFinalizedTranscript", () => {
     };
   };
 
+  /**
+   * Runs the pipeline the way the stop path does: the pipeline resolves with
+   * persistence deferred, then the caller runs the persistence step.
+   */
+  const runPipeline = async (input: PostTranscriptInput) => {
+    const result = await postProcessFinalizedTranscript(input);
+    await result.persist?.();
+    return result;
+  };
+
   it("tells the user when fast styling dropped the end of a long dictation", async () => {
     // The warning used to be recorded on the row and nowhere else, so the user
     // received incomplete text with no notice during dictation at all.
     const { input, showToast } = buildInput({ droppedChars: 42 });
 
-    await postProcessFinalizedTranscript(input);
+    await runPipeline(input);
 
     expect(showToast).toHaveBeenCalledTimes(1);
     const call = showToast.mock.calls[0]?.[0];
@@ -391,7 +401,7 @@ describe("postProcessFinalizedTranscript", () => {
     // written.
     const { input, showToast } = buildInput({ store: false, droppedChars: 42 });
 
-    await postProcessFinalizedTranscript(input);
+    await runPipeline(input);
 
     expect(showToast).toHaveBeenCalledTimes(1);
     const call = showToast.mock.calls[0]?.[0];
@@ -406,7 +416,7 @@ describe("postProcessFinalizedTranscript", () => {
       droppedChars: 42,
     });
 
-    await postProcessFinalizedTranscript(input);
+    await runPipeline(input);
 
     expect(storeTranscriptionFn).toHaveBeenCalledTimes(1);
     expect(showToast).toHaveBeenCalledWith(
@@ -420,7 +430,7 @@ describe("postProcessFinalizedTranscript", () => {
 
   it("stays quiet when nothing was truncated", async () => {
     const { input, showToast } = buildInput();
-    await postProcessFinalizedTranscript(input);
+    await runPipeline(input);
     expect(showToast).not.toHaveBeenCalled();
   });
 
@@ -432,7 +442,7 @@ describe("postProcessFinalizedTranscript", () => {
       },
     });
 
-    await postProcessFinalizedTranscript(input);
+    await runPipeline(input);
 
     expect(order).toEqual([
       "handleTranscript",
@@ -462,7 +472,7 @@ describe("postProcessFinalizedTranscript", () => {
       },
     });
 
-    await postProcessFinalizedTranscript(input);
+    await runPipeline(input);
 
     expect(showToast).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -484,7 +494,7 @@ describe("postProcessFinalizedTranscript", () => {
       },
     });
 
-    await postProcessFinalizedTranscript(input);
+    await runPipeline(input);
 
     expect(showToast).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -505,7 +515,7 @@ describe("postProcessFinalizedTranscript", () => {
       },
     });
 
-    await postProcessFinalizedTranscript(input);
+    await runPipeline(input);
 
     expect(showToast).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -527,7 +537,7 @@ describe("postProcessFinalizedTranscript", () => {
       },
     });
 
-    await postProcessFinalizedTranscript(input);
+    await runPipeline(input);
 
     expect(showToast).toHaveBeenCalledTimes(1);
     expect(showToast).toHaveBeenCalledWith({
@@ -539,13 +549,47 @@ describe("postProcessFinalizedTranscript", () => {
     });
   });
 
-  it("sends idle after handleTranscript and before storeTranscription", async () => {
+  it("resolves with persistence deferred until after the pill goes idle", async () => {
     const { input, order, handleTranscript, storeTranscriptionFn } =
       buildInput();
     const result = await postProcessFinalizedTranscript(input);
-    expect(result).toEqual({ shouldContinue: false });
+
+    // The stop path releases its gate here: the pill shows idle and storage
+    // has not begun.
+    expect(result.shouldContinue).toBe(false);
+    expect(typeof result.persist).toBe("function");
     expect(handleTranscript).toHaveBeenCalledTimes(1);
+    expect(storeTranscriptionFn).not.toHaveBeenCalled();
+    expect(order).toEqual(["handleTranscript", "idle"]);
+
+    await result.persist?.();
     expect(storeTranscriptionFn).toHaveBeenCalledTimes(1);
+    expect(order).toEqual(["handleTranscript", "idle", "store", "refresh"]);
+  });
+
+  it("does not hold the pipeline on a slow store", async () => {
+    // The race both reviewers flagged: storage kept the stop gate closed
+    // after the pill went idle, so dictation starts clicked during a slow
+    // save were dropped. The pipeline must resolve while the write is still
+    // in flight, leaving persistence to run after the gate opens.
+    const { input, order, storeTranscriptionFn, refreshMember } = buildInput();
+    let releaseStore: (() => void) | undefined;
+    storeTranscriptionFn.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          order.push("store");
+          releaseStore = () =>
+            resolve({ transcription: {} as Transcription, wordCount: 0 });
+        }),
+    );
+
+    const result = await postProcessFinalizedTranscript(input);
+    const persisting = result.persist?.();
+    expect(storeTranscriptionFn).toHaveBeenCalledTimes(1);
+    expect(refreshMember).not.toHaveBeenCalled();
+
+    releaseStore?.();
+    await persisting;
     expect(order).toEqual(["handleTranscript", "idle", "store", "refresh"]);
   });
 
@@ -569,7 +613,7 @@ describe("postProcessFinalizedTranscript", () => {
       ),
     };
 
-    await postProcessFinalizedTranscript(input);
+    await runPipeline(input);
 
     expect(storeTranscriptionFn).not.toHaveBeenCalled();
   });
@@ -595,7 +639,7 @@ describe("postProcessFinalizedTranscript", () => {
       ),
     };
 
-    await postProcessFinalizedTranscript(input);
+    await runPipeline(input);
 
     expect(storeTranscriptionFn).not.toHaveBeenCalled();
   });
@@ -619,7 +663,7 @@ describe("postProcessFinalizedTranscript", () => {
       ),
     };
 
-    await postProcessFinalizedTranscript(input);
+    await runPipeline(input);
 
     expect(storeTranscriptionFn).toHaveBeenCalledTimes(1);
   });
@@ -647,14 +691,14 @@ describe("postProcessFinalizedTranscript", () => {
     const { input, order, storeTranscriptionFn } = buildInput({
       store: false,
     });
-    await postProcessFinalizedTranscript(input);
+    await runPipeline(input);
     expect(storeTranscriptionFn).not.toHaveBeenCalled();
     expect(order).toEqual(["handleTranscript", "idle", "refresh"]);
   });
 
   it("sends idle up front in agent mode without skipping the post-routing idle", async () => {
     const { input, order } = buildInput({ agent: true });
-    await postProcessFinalizedTranscript(input);
+    await runPipeline(input);
     expect(order).toEqual([
       "idle",
       "handleTranscript",
