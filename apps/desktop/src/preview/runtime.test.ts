@@ -99,6 +99,23 @@ describe("browser preview transport", () => {
     );
   });
 
+  // The settings page drives stop_key_listener, stop_recording and
+  // clear_local_data, then reloads. Without a handler the wipe rejected and the
+  // dialog reported an error, so "Clear local data" could not be exercised in
+  // the preview at all.
+  it("empties the mock database when local data is cleared", async () => {
+    await invokePreviewCommand("clear_local_data");
+
+    expect(await invokePreviewCommand("term_list")).toEqual([]);
+    expect(await invokePreviewCommand("user_get_one")).toBeNull();
+    expect(
+      await invokePreviewCommand<Record<string, unknown>[]>(
+        "transcription_list",
+        { limit: 20, offset: 0 },
+      ),
+    ).toEqual([]);
+  });
+
   it("never retains a key pasted into the mock API-key form", async () => {
     await invokePreviewCommand("api_key_create", {
       apiKey: {

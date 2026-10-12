@@ -1,70 +1,165 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import enMessages from "../i18n/locales/en.json";
+import { SETTINGS_PAGE_COPY } from "../components/settings/settings-page-copy";
 import {
+  DEFAULT_SETTINGS_PAGE,
+  groupsForPage,
+  isSettingAvailable,
+  pageTitleOf,
+  searchResultsByPage,
   searchSettings,
   SETTING_ENTRIES,
-  SETTING_SECTIONS,
+  SETTING_GROUPS,
+  SETTINGS_PAGES,
+  settingEntryOf,
   settingTitleOf,
-  type SettingSectionId,
+  type SettingsPageId,
 } from "./settings-registry";
 
 const messages = enMessages as Record<string, string>;
-const sectionIds = new Set(SETTING_SECTIONS.map((section) => section.id));
-const pageSource = readFileSync(
-  new URL("../components/settings/SettingsPage.tsx", import.meta.url),
-  "utf8",
-);
+const pageIds = new Set(SETTINGS_PAGES.map((page) => page.id));
+
+const readSource = (relative: string) =>
+  readFileSync(new URL(relative, import.meta.url), "utf8");
 
 /**
- * The registry is the single source of truth for the settings page: it drives
- * search, it decides which sections exist, and the rail is built from it.
- *
- * Most of what follows is behavioural — it calls the exported functions and
- * asserts on what they return. That matters because the page and the rail read
- * this registry rather than restating it, so an assertion about the source text
- * of `SettingsPage.tsx` cannot see a section that exists in the registry and
- * nowhere else, or a title that resolves to a key instead of a label. The two
- * source-text assertions that remain are about the page's own anchors, which is
- * the one thing the rendered tests cannot reach.
+ * Every file that can carry a `settingKey` anchor. The three standalone
+ * components are here because they own rows their page renders, and leaving
+ * them out would make the anchor assertions below silently incomplete.
+ */
+const SETTINGS_SOURCES = [
+  ...SETTINGS_PAGES.map((page) => ({
+    page: page.id,
+    source: readSource(`../components/settings/pages/${pageFileOf(page.id)}`),
+  })),
+  {
+    page: "appearance" as SettingsPageId,
+    source: readSource("../components/settings/PillPlacementSetting.tsx"),
+  },
+  {
+    page: "system" as SettingsPageId,
+    source: readSource("../components/settings/UpdateSettingSection.tsx"),
+  },
+  {
+    page: "system" as SettingsPageId,
+    source: readSource("../components/settings/UpdateChannelSetting.tsx"),
+  },
+];
+
+function pageFileOf(page: SettingsPageId): string {
+  const pascal = page
+    .split("-")
+    .map((part) => part[0].toUpperCase() + part.slice(1))
+    .join("");
+  return `${pascal}SettingsPage.tsx`;
+}
+
+/**
+ * The registry is the single source of truth for the settings surface: it
+ * drives the rail, search, and which rows exist at all. The tests below are
+ * mostly behavioural, but two of them read the page source, because the one
+ * thing behaviour cannot see is whether a registry entry is wired to a row in
+ * the page that the entry names. A stale key there means a search hit for a
+ * row that does not exist, or a row with no way to reach it by search.
  */
 describe("settings registry", () => {
-  it("lists every category exactly once", () => {
-    const expected: SettingSectionId[] = [
-      "general",
-      "dictation",
-      "ai-processing",
-      "pill-appearance",
-      "shortcuts",
-      "privacy-data",
-      "updates",
-      "advanced",
-    ];
-    expect(SETTING_SECTIONS.map((section) => section.id)).toEqual(expected);
-  });
-
-  it("resolves every section title from the catalog", () => {
-    for (const section of SETTING_SECTIONS) {
+  it("lists the pages once each, in rail order, with catalog copy", () => {
+    const ids = SETTINGS_PAGES.map((page) => page.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids[0]).toBe(DEFAULT_SETTINGS_PAGE);
+    for (const page of SETTINGS_PAGES) {
       expect(
-        messages[section.titleKey],
-        `section ${section.id} title key ${section.titleKey}`,
+        messages[page.titleKey],
+        `page ${page.id} title key ${page.titleKey}`,
+      ).toBeTruthy();
+      expect(
+        messages[page.descriptionKey],
+        `page ${page.id} description key ${page.descriptionKey}`,
       ).toBeTruthy();
     }
   });
 
-  it("registers every setting exactly once against a catalog title", () => {
+  it("keeps each page's copy keys pointing at the literals the page renders", () => {
+    // The heading and intro are written as `FormattedMessage` literals in
+    // `settings-page-copy.tsx`, and the registry stores the catalog keys the
+    // rest of the surface reads (search, deep links). If the two drift, the
+    // rail and search name a page one way and its own heading names it another.
+    const defaultMessageOf = (node: unknown): string =>
+      (node as { props: { defaultMessage?: string } }).props.defaultMessage ??
+      "";
+    for (const page of SETTINGS_PAGES) {
+      const copy = SETTINGS_PAGE_COPY[page.id];
+      expect(
+        defaultMessageOf(copy.title),
+        `page ${page.id} title literal`,
+      ).toBe(messages[page.titleKey]);
+      expect(
+        defaultMessageOf(copy.description),
+        `page ${page.id} description literal`,
+      ).toBe(messages[page.descriptionKey]);
+    }
+  });
+
+  it("declares group headings once per page and ties them to a page", () => {
+    const seen = new Set<string>();
+    for (const group of SETTING_GROUPS) {
+      expect(pageIds.has(group.page), `group ${group.key} page`).toBe(true);
+      expect(seen.has(`${group.page}/${group.key}`)).toBe(false);
+      seen.add(`${group.page}/${group.key}`);
+      expect(messages[group.key], `group ${group.key}`).toBeTruthy();
+    }
+  });
+
+  it("registers every setting exactly once against a page and a group", () => {
     const keys = SETTING_ENTRIES.map((entry) => entry.key);
     expect(new Set(keys).size).toBe(keys.length);
     for (const entry of SETTING_ENTRIES) {
-      expect(sectionIds.has(entry.section)).toBe(true);
-      expect(messages[entry.key], `entry ${entry.key}`).toBeTruthy();
+      expect(pageIds.has(entry.page), `entry ${entry.key} page`).toBe(true);
+      expect(
+        SETTING_GROUPS.some(
+          (group) => group.page === entry.page && group.key === entry.group,
+        ),
+        `entry ${entry.key} group ${entry.group}`,
+      ).toBe(true);
+      expect(messages[entry.key], `entry title ${entry.key}`).toBeTruthy();
       for (const alias of entry.aliases) {
         expect(alias, `alias of ${entry.key}`).toBe(alias.toLowerCase());
       }
     }
   });
 
-  it("matches titles, sections, and aliases case-insensitively", () => {
+  it("wires every entry to exactly one row on the page it belongs to", () => {
+    for (const entry of SETTING_ENTRIES) {
+      const pageSource = SETTINGS_SOURCES.filter(
+        (candidate) => candidate.page === entry.page,
+      )
+        .map((candidate) => candidate.source)
+        .join("\n");
+      const occurrences =
+        pageSource.split(`settingKey="${entry.key}"`).length - 1;
+      expect(occurrences, `anchor for ${entry.key}`).toBe(1);
+    }
+  });
+
+  it("does not render a row that no registry entry backs", () => {
+    const registered = new Set(SETTING_ENTRIES.map((entry) => entry.key));
+    for (const { page, source } of SETTINGS_SOURCES) {
+      const anchors = Array.from(
+        source.matchAll(/settingKey="([a-z0-9_]+)"/g),
+        (match) => match[1],
+      );
+      for (const anchor of anchors) {
+        expect(registered.has(anchor), `${page} row ${anchor}`).toBe(true);
+        expect(
+          settingEntryOf(anchor)?.page,
+          `${page} row ${anchor} belongs to its page`,
+        ).toBe(page);
+      }
+    }
+  });
+
+  it("matches titles, page names, group names, and aliases case-insensitively", () => {
     expect(searchSettings("REVIEW").map((hit) => hit.entry.key)).toContain(
       "review_before_insert",
     );
@@ -75,41 +170,27 @@ describe("settings registry", () => {
       "dictation_pill_visibility",
     );
     expect(searchSettings("   ")).toEqual([]);
+    expect(
+      searchSettings("privacy and data").map((hit) => hit.entry.key),
+    ).toContain("incognito_mode");
   });
 
-  it("returns titles from the catalog", () => {
+  it("returns titles from the catalog and falls back to the key", () => {
     expect(settingTitleOf("review_before_insert")).toBe(
       messages["review_before_insert"],
     );
     expect(settingTitleOf("missing-key")).toBe("missing-key");
-  });
-
-  it("declares every registered setting anchor exactly once on the settings page", () => {
-    for (const entry of SETTING_ENTRIES) {
-      const occurrences =
-        pageSource.split(`settingKey="${entry.key}"`).length - 1;
-      expect(occurrences, `anchor for ${entry.key}`).toBe(1);
-    }
-  });
-
-  it("routes monitor labels and its accessible name through message descriptors", () => {
-    for (const message of [
-      "Current monitor",
-      "Cursor monitor",
-      "Reset pill position monitor",
-    ]) {
-      expect(pageSource).toContain(`defaultMessage: "${message}"`);
-    }
-    expect(pageSource).not.toContain('ariaLabel="Reset pill position monitor"');
+    expect(pageTitleOf("account")).toBe(messages["account"]);
   });
 
   it.each([
-    "dictation_limit_minutes",
+    "dictation_limit",
     "automatic_style_loading",
-    "styling_mode",
     "include_incognito_in_stats",
     "learn_from_corrections",
     "always_run_as_administrator",
+    "elevenlabs_keyterms",
+    "delete_account",
   ])("omits unavailable %s without removing other matches", (key) => {
     const query = settingTitleOf(key);
     expect(searchSettings(query).map((hit) => hit.entry.key)).toContain(key);
@@ -125,24 +206,82 @@ describe("settings registry", () => {
     ).toContain(key);
   });
 
-  it("searches and displays localized setting and section titles", () => {
-    const localized = { microphone: "Mikrofon", general: "Allgemein" };
-    expect(searchSettings("mikrofon", { messages: localized })).toContainEqual({
-      entry: SETTING_ENTRIES.find((entry) => entry.key === "microphone"),
-      title: "Mikrofon",
-      sectionTitle: "Allgemein",
-    });
+  it("treats a setting as available until something says otherwise", () => {
+    expect(isSettingAvailable("microphone")).toBe(true);
+    expect(isSettingAvailable("microphone", {})).toBe(true);
+    expect(isSettingAvailable("microphone", { microphone: true })).toBe(true);
+    expect(isSettingAvailable("microphone", { microphone: false })).toBe(false);
+  });
+
+  it("groups results by page in rail order", () => {
+    const grouped = searchResultsByPage(searchSettings("input"));
+    expect(grouped.map((group) => group.page.id)).toEqual(
+      SETTINGS_PAGES.filter((page) =>
+        grouped.some((group) => group.page.id === page.id),
+      ).map((page) => page.id),
+    );
+    for (const group of grouped) {
+      expect(group.hits.length).toBeGreaterThan(0);
+      for (const hit of group.hits) {
+        expect(hit.entry.page).toBe(group.page.id);
+      }
+    }
+  });
+
+  it("reports only groups whose rows survive the availability snapshot", () => {
+    expect(groupsForPage("privacy-data")).toEqual([
+      "what_leaves_your_device",
+      "history_and_storage",
+      "dictionary_learning",
+      "devices",
+    ]);
     expect(
-      searchSettings("allgemein", { messages: localized }).map(
-        (hit) => hit.entry.key,
-      ),
-    ).toContain("microphone");
+      groupsForPage("privacy-data", {
+        where_your_dictation_audio_goes: false,
+        elevenlabs_keyterms: false,
+      }),
+    ).not.toContain("what_leaves_your_device");
+    expect(
+      groupsForPage("dictation", {
+        microphone: false,
+        audio: false,
+      }),
+    ).not.toContain("microphone_and_feedback");
+    // Clearing local data is not gated on a session, so the row survives even
+    // when the account rows cannot act.
+    expect(groupsForPage("account", { delete_account: false })).toContain(
+      "danger_zone",
+    );
+  });
+
+  it("keeps clearing local data on the account page, not under privacy", () => {
+    expect(settingEntryOf("clear_local_data")?.page).toBe("account");
+    expect(groupsForPage("privacy-data")).not.toContain("danger_zone");
+    expect(searchSettings("wipe").map((hit) => hit.entry.key)).toContain(
+      "clear_local_data",
+    );
+  });
+
+  it("searches and displays localized titles", () => {
+    const localized = {
+      microphone: "Mikrofon",
+      dictation: "Diktat",
+      microphone_and_feedback: "Mikrofon und Rückmeldung",
+    };
+    const [hit] = searchSettings("mikrofon", { messages: localized });
+    expect(hit.entry.key).toBe("microphone");
+    expect(hit.title).toBe("Mikrofon");
     expect(
       searchSettings("input device", { messages: localized })[0].title,
     ).toBe("Mikrofon");
+    expect(
+      searchSettings("diktat", { messages: localized }).map(
+        (entry) => entry.entry.key,
+      ),
+    ).toContain("microphone");
   });
 
-  it("indexes the failure-audio and provider-specific keyterm controls", () => {
+  it("indexes the provider key rows and the per-provider keyterms control", () => {
     expect(searchSettings("snapshot").map((hit) => hit.entry.key)).toContain(
       "preserve_audio_on_failure",
     );
@@ -154,62 +293,5 @@ describe("settings registry", () => {
         availability: { elevenlabs_keyterms: false },
       }),
     ).toEqual([]);
-  });
-});
-
-/**
- * The page's section wrappers.
- *
- * These assert on the page source because the rendered assertion belongs to
- * `SettingsSectionScroll.test.tsx`, which mounts the page; what is checked here
- * is the narrower claim that each wrapper takes its id from `sectionAnchorId`
- * rather than restating the string. A hand-written `id="section-general"` can
- * drift from the helper the rail scrolls with and leave a button that scrolls
- * nowhere, and the rendered test cannot tell the two spellings apart because
- * both produce the same DOM.
- */
-describe("settings section anchors", () => {
-  it.each(SETTING_SECTIONS.map((entry) => [entry.id]))(
-    "derives the section-%s wrapper id from sectionAnchorId",
-    (id) => {
-      expect(pageSource).toContain(`id={sectionAnchorId("${id}")}`);
-    },
-  );
-
-  it("renders exactly one wrapper per registry section", () => {
-    const anchors =
-      pageSource.match(/id=\{sectionAnchorId\("[a-z-]+"\)\}/g) ?? [];
-    expect(anchors).toHaveLength(SETTING_SECTIONS.length);
-  });
-
-  it("renders the sections in registry order, so the rail order matches the page", () => {
-    const order = Array.from(
-      pageSource.matchAll(/id=\{sectionAnchorId\("([a-z-]+)"\)\}/g),
-    ).map((match) => match[1]);
-    expect(order).toEqual(SETTING_SECTIONS.map((entry) => entry.id));
-  });
-
-  it("does not hand-write a section id the helper already owns", () => {
-    // The literal form is what the drift looks like. Excluding the helper's own
-    // definition, a bare `id="section-..."` means the page and the rail can
-    // disagree about the id with no compile error.
-    const handWritten = Array.from(
-      pageSource.matchAll(/id="(section-[a-z-]+)"/g),
-    ).map((match) => match[1]);
-    expect(handWritten).toEqual([]);
-  });
-
-  it("mounts the navigation rail on the settings page", () => {
-    expect(pageSource).toContain("<SettingsSectionNav");
-  });
-
-  it("keeps the rail out of the search-results view", () => {
-    // The rail scrolls to sections the search view replaces, so showing both at
-    // once would leave a visible control that does nothing.
-    const conditional = pageSource.slice(
-      pageSource.indexOf("query.trim() ?"),
-      pageSource.indexOf("<SettingsSectionNav"),
-    );
-    expect(conditional).not.toContain("SettingsSectionNav");
   });
 });

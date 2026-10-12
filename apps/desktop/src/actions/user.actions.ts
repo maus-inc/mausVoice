@@ -1018,3 +1018,25 @@ export const markUpgradeDialogSeen = async (): Promise<void> => {
     "Failed to mark upgrade dialog as seen. Please try again.",
   );
 };
+
+/**
+ * Store or clear the profile photo for the current user.
+ *
+ * Local state only, so this is synchronous and needs no error handling: the
+ * alternative would be an account-image column and a round trip to the local
+ * database for something that never leaves the device. Passing null removes the
+ * photo, which is how the editor's "Remove photo" is expressed.
+ */
+export const setMyProfileImage = (dataUrl: Nullable<string>): void => {
+  const userId = getMyEffectiveUserId(getAppState());
+  produceAppState((draft) => {
+    if (dataUrl) {
+      draft.local.profileImageByUserId[userId] = dataUrl;
+    } else {
+      // `delete` is the idiomatic Immer draft operation and matches the rest of
+      // the codebase. DeepSource JS-0320 flags the dynamic key, but the removal
+      // is intentional and the key is a user id this app generated.
+      delete draft.local.profileImageByUserId[userId]; // skipcq: JS-0320
+    }
+  });
+};

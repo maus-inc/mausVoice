@@ -12,16 +12,8 @@ import { FormattedMessage } from "react-intl";
 import { produceAppState, useAppStore } from "../../store";
 import { getIsAssistantModeEnabled } from "../../utils/assistant-mode.utils";
 import { getEffectiveStylingMode } from "../../utils/feature.utils";
-import {
-  ADD_TO_DICTIONARY_HOTKEY,
-  AGENT_DICTATE_HOTKEY,
-  CANCEL_TRANSCRIPTION_HOTKEY,
-  DICTATE_HOTKEY,
-  OPEN_CHAT_HOTKEY,
-  SWITCH_WRITING_STYLE_BACKWARD_HOTKEY,
-  SWITCH_WRITING_STYLE_FORWARD_HOTKEY,
-} from "../../utils/keyboard.utils";
 import { HotkeySetting } from "./HotkeySetting";
+import { DIALOG_SHORTCUTS, SHORTCUT_COPY } from "./shortcut-copy";
 
 export const ShortcutsDialog = () => {
   const isAssistantModeEnabled = useAppStore(getIsAssistantModeEnabled);
@@ -53,62 +45,36 @@ export const ShortcutsDialog = () => {
       );
     }
 
+    // The one key here that is conditional on a mode rather than always
+    // present: with assistant mode off there is no agent session to dictate
+    // into, so the row would offer a key that does nothing.
+    const rows = DIALOG_SHORTCUTS.filter(
+      (row) =>
+        isAssistantModeEnabled ||
+        row.action !== SHORTCUT_COPY.assistantDictate.action,
+    );
+
     return (
       <Stack spacing={3}>
-        <HotkeySetting
-          title={<FormattedMessage defaultMessage="Hold to dictate" />}
-          description={
-            <FormattedMessage defaultMessage="Hold the key to record, release to transcribe your speech into text with AI." />
-          }
-          actionName={DICTATE_HOTKEY}
-        />
-        {isAssistantModeEnabled && (
+        {rows.map((row) => (
           <HotkeySetting
-            title={<FormattedMessage defaultMessage="Assistant mode" />}
-            description={
-              <FormattedMessage defaultMessage="Dictate commands for the AI to follow instead of just cleaning up text." />
-            }
-            actionName={AGENT_DICTATE_HOTKEY}
+            key={row.action}
+            title={row.title}
+            description={row.description}
+            actionName={row.action}
           />
-        )}
-        <HotkeySetting
-          title={<FormattedMessage defaultMessage="Cancel transcription" />}
-          description={
-            <FormattedMessage defaultMessage="Cancel the current dictation or agent session." />
-          }
-          actionName={CANCEL_TRANSCRIPTION_HOTKEY}
-        />
-        <HotkeySetting
-          title={<FormattedMessage defaultMessage="Open chat" />}
-          description={
-            <FormattedMessage defaultMessage="Open the current assistant conversation in the main window." />
-          }
-          actionName={OPEN_CHAT_HOTKEY}
-        />
-        <HotkeySetting
-          title={<FormattedMessage defaultMessage="Add to dictionary" />}
-          description={
-            <FormattedMessage defaultMessage="Add the currently selected text to your dictionary." />
-          }
-          actionName={ADD_TO_DICTIONARY_HOTKEY}
-        />
+        ))}
         {isManualStyling && (
           <>
             <HotkeySetting
-              title={<FormattedMessage defaultMessage="Next writing style" />}
-              description={
-                <FormattedMessage defaultMessage="Cycle forward through your active writing styles while dictating." />
-              }
-              actionName={SWITCH_WRITING_STYLE_FORWARD_HOTKEY}
+              title={SHORTCUT_COPY.nextStyle.title}
+              description={SHORTCUT_COPY.nextStyle.description}
+              actionName={SHORTCUT_COPY.nextStyle.action}
             />
             <HotkeySetting
-              title={
-                <FormattedMessage defaultMessage="Previous writing style" />
-              }
-              description={
-                <FormattedMessage defaultMessage="Cycle backward through your active writing styles while dictating." />
-              }
-              actionName={SWITCH_WRITING_STYLE_BACKWARD_HOTKEY}
+              title={SHORTCUT_COPY.previousStyle.title}
+              description={SHORTCUT_COPY.previousStyle.description}
+              actionName={SHORTCUT_COPY.previousStyle.action}
             />
           </>
         )}

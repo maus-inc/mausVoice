@@ -4,6 +4,7 @@ import { getAppState, setAppState } from "../store";
 import { LOCAL_USER_ID } from "../utils/user.utils";
 import { PreviewOperationError } from "./PreviewOperationError";
 import {
+  EMPTY_PREVIEW_DATA,
   createPreviewScenario,
   isPreviewScenarioId,
   scenarioForPath,
@@ -307,6 +308,14 @@ class PreviewRuntime {
     switch (command) {
       case "user_get_one":
         return clone(this.database.user);
+      // The desktop command wipes the SQLite database and the managed audio
+      // directory, and the settings dialog reloads the window straight after.
+      // Emptying the preview's tables keeps that call sequence drivable from
+      // the settings page; the reload then re-seeds the active scenario, which
+      // is how every other reload in the preview behaves.
+      case "clear_local_data":
+        this.database = toDatabase(EMPTY_PREVIEW_DATA);
+        return undefined;
       case "user_set_one":
         this.database.user = clone(asRecord(args.user));
         return clone(this.database.user);

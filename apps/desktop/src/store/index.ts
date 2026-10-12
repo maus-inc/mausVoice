@@ -4,14 +4,19 @@ import { persist } from "zustand/middleware";
 import { createWithEqualityFn } from "zustand/traditional";
 import { INITIAL_APP_STATE, type AppState } from "../state/app.state";
 import { INITIAL_LOCAL_STATE } from "../state/local.state";
+import {
+  LEGACY_LOCAL_STATE_STORAGE_KEY,
+  LOCAL_STATE_STORAGE_KEY,
+  PREVIEW_LOCAL_STATE_STORAGE_KEY,
+} from "../utils/local-storage.utils";
 
 // Preview state must never read or overwrite a user's desktop preferences.
 // Vite exposes VITE_PREVIEW only from the dedicated preview mode.
 const IS_BROWSER_PREVIEW = import.meta.env.VITE_PREVIEW === "true";
 const CURRENT_STORAGE_KEY = IS_BROWSER_PREVIEW
-  ? "mausvoice-browser-preview-local-state"
-  : "mausvoice-local-state";
-const LEGACY_STORAGE_KEY = "voquill-local-state";
+  ? PREVIEW_LOCAL_STATE_STORAGE_KEY
+  : LOCAL_STATE_STORAGE_KEY;
+const LEGACY_STORAGE_KEY = LEGACY_LOCAL_STATE_STORAGE_KEY;
 
 // The rebrand renamed the persisted Zustand key from "voquill-local-state" to
 // "mausvoice-local-state", which would normally reset every persisted local
@@ -70,3 +75,27 @@ export const getAppState = useAppStore.getState;
 export const produceAppState = (fn: (draft: AppState) => void) => {
   setAppState((state) => produce(state, fn));
 };
+
+/**
+ * Drop this window's copy of the local slice when another one wipes storage.
+ *
+ * The app runs more than one window (a floating composer, for instance) and
+ * they all share this key while each keeps its own slice in memory. When one
+ * of them wipes local data, the others would write their stale slice — the
+ * profile photo in it — straight back out on their next state change, undoing
+ * a wipe they were never told about. The browser delivers that news as a
+ * `storage` event with a null value for the removed key, and the answer is to
+ * forget the copy in memory so the next write persists what is actually left.
+ */
+if (typeof window !== "undefined") {
+  window.addEventListener("storage", (event) => {
+    // The event fires for sessionStorage too, and that one is a different
+    // store entirely: only the local key's removal is this window's business.
+    if (event.storageArea !== localStorage) {
+      return;
+    }
+    if (event.key === CURRENT_STORAGE_KEY && event.newValue === null) {
+      setAppState((state) => ({ ...state, local: INITIAL_LOCAL_STATE }));
+    }
+  });
+}

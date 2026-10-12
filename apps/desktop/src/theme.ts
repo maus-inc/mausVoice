@@ -6,6 +6,7 @@ import {
   highlight,
   ink,
   inkSolid,
+  onDark,
   surfaces,
   text,
 } from "./styles/palette";
@@ -22,13 +23,16 @@ import {
   easeOutCubic,
   easeOutQuint,
 } from "./styles/motion";
+import { THEME_MODE_STORAGE_KEY } from "./utils/local-storage.utils";
 
 const easeOut = cssEase(easeOutQuint);
 
 const uiFont = '"Satoshi", system-ui, -apple-system, sans-serif';
 /** TAN-PARADISO only via CSS var(--font-display) on logo + welcome/name. */
 
-export const THEME_MODE_STORAGE_KEY = "mui-mode";
+// Re-exported from the one module that names every key this app stores, so the
+// appearance preference cannot drift from the key a local-data wipe removes.
+export { THEME_MODE_STORAGE_KEY };
 export const THEME_COLOR_SCHEME_SELECTOR = "data-mui-color-scheme";
 export const THEME_PROVIDER_CONFIG = {
   defaultMode: "system",
@@ -504,6 +508,56 @@ export const theme = createTheme({
         }),
       },
       variants: [
+        // A destructive confirmation must not wear the primary CTA's fill. The
+        // `contained` style override paints every contained button ink (light)
+        // or chalk (dark) and was winning over MUI's own error colour, so
+        // "Clear local data" and "Delete account" rendered as the ordinary
+        // primary action at the moment they destroy something. Variants are
+        // emitted after style overrides, so this is what it takes to have the
+        // error fill stick. Same geometry and press as the primary CTA, so the
+        // two differ only in meaning.
+        {
+          props: { variant: "contained", color: "error" },
+          style: ({ theme }) => ({
+            // The scheme-specific values are repeated inside `applyStyles`
+            // rather than left to the base block. The `contained` override
+            // above carries a `[data-mui-color-scheme]` selector for dark,
+            // which outranks a base rule regardless of source order, so the
+            // dark fill has to be stated in its own scheme block to win.
+            color: surfaces.light.level1,
+            backgroundColor: theme.vars.palette.error.main,
+            boxShadow: premiumSurface.light.rest,
+            "&:hover": {
+              backgroundColor: theme.vars.palette.error.dark,
+              boxShadow: premiumSurface.light.hover,
+              transform: "translateY(-1px)",
+            },
+            "&:active": {
+              transform: "scale(0.98) translateY(0)",
+              boxShadow: premiumSurface.light.active,
+              backgroundColor: theme.vars.palette.error.dark,
+            },
+            ...theme.applyStyles("dark", {
+              color: onDark(1),
+              backgroundColor: theme.vars.palette.error.main,
+              boxShadow: premiumSurface.dark.rest,
+              "&:hover": {
+                backgroundColor: theme.vars.palette.error.dark,
+                boxShadow: premiumSurface.dark.hover,
+              },
+              // The fill is restated here for the same reason the light block
+              // states it: the `contained` override's own `&:active` paints
+              // chalk (a light fill) and outranks this variant for any property
+              // this block leaves out, which left the label unreadable on a
+              // light flash the moment the button was pressed.
+              "&:active": {
+                transform: "scale(0.98) translateY(0)",
+                boxShadow: premiumSurface.dark.active,
+                backgroundColor: theme.vars.palette.error.dark,
+              },
+            }),
+          }),
+        },
         {
           props: { variant: "flat" },
           style: ({ theme }) => {

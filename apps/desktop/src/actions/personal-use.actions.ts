@@ -11,26 +11,14 @@ import {
   PERSONAL_GROQ_API_KEY_NAME,
   PERSONAL_GROQ_POST_PROCESSING_MODEL,
   PERSONAL_GROQ_TRANSCRIPTION_MODEL,
+  buildPersonalGroqKeyUpdate,
+  findPersonalApiKey,
   isPersonalUseEnabled,
   resolvePersonalTranscriptionTarget,
 } from "../utils/personal-use.utils";
 
-const PREVIOUS_PERSONAL_GROQ_TRANSCRIPTION_MODEL = "whisper-large-v3";
-
-const getPersonalGroqApiKey = (): ApiKey | null => {
-  const state = getAppState();
-  return (
-    state.settings.apiKeys.find(
-      (apiKey) => apiKey.id === PERSONAL_GROQ_API_KEY_ID,
-    ) ??
-    state.settings.apiKeys.find(
-      (apiKey) =>
-        apiKey.provider === "groq" &&
-        apiKey.name.trim() === PERSONAL_GROQ_API_KEY_NAME,
-    ) ??
-    null
-  );
-};
+const getPersonalGroqApiKey = (): ApiKey | null =>
+  findPersonalApiKey(getAppState().settings.apiKeys, "groq");
 
 const upsertPersonalGroqApiKey = async (
   configuredKey: string,
@@ -53,25 +41,10 @@ const upsertPersonalGroqApiKey = async (
     });
   }
 
-  const updatePayload: Parameters<typeof updateApiKey>[0] = {
-    id: existing.id,
-  };
-  if (existing.name !== PERSONAL_GROQ_API_KEY_NAME) {
-    updatePayload.name = PERSONAL_GROQ_API_KEY_NAME;
-  }
-  if (existing.keyFull !== configuredKey) {
-    updatePayload.key = configuredKey;
-  }
-  if (
-    !existing.transcriptionModel ||
-    existing.transcriptionModel === PREVIOUS_PERSONAL_GROQ_TRANSCRIPTION_MODEL
-  ) {
-    updatePayload.transcriptionModel = PERSONAL_GROQ_TRANSCRIPTION_MODEL;
-  }
-  if (!existing.postProcessingModel) {
-    updatePayload.postProcessingModel = PERSONAL_GROQ_POST_PROCESSING_MODEL;
-  }
+  const updatePayload = buildPersonalGroqKeyUpdate(existing, configuredKey);
 
+  // Only the id came back, so the stored key already matches what was
+  // configured and there is nothing to write.
   if (Object.keys(updatePayload).length === 1) {
     return existing;
   }
@@ -79,20 +52,8 @@ const upsertPersonalGroqApiKey = async (
   return updateApiKey(updatePayload);
 };
 
-const getPersonalDeepgramApiKey = (): ApiKey | null => {
-  const state = getAppState();
-  return (
-    state.settings.apiKeys.find(
-      (apiKey) => apiKey.id === PERSONAL_DEEPGRAM_API_KEY_ID,
-    ) ??
-    state.settings.apiKeys.find(
-      (apiKey) =>
-        apiKey.provider === "deepgram" &&
-        apiKey.name.trim() === PERSONAL_DEEPGRAM_API_KEY_NAME,
-    ) ??
-    null
-  );
-};
+const getPersonalDeepgramApiKey = (): ApiKey | null =>
+  findPersonalApiKey(getAppState().settings.apiKeys, "deepgram");
 
 const upsertPersonalDeepgramApiKey = async (
   configuredKey: string,

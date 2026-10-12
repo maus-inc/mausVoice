@@ -118,7 +118,7 @@ State changes are written back into the Zustand store, and React re-renders. Rus
 
 ### 4.2 State management
 
-There is a single Zustand store (`src/store/index.ts`) created with `persist` (the `local` slice persists to `localStorage` under `mausvoice-local-state`). State is organized as slices in `src/state/` (`app.state.ts`, `onboarding.state.ts`, `agent.state.ts`, `settings.state.ts`, transcriptions, etc.). Mutations go through an Immer-style `produceAppState(draft => ...)` helper so updates stay immutable and ergonomic.
+There is a single Zustand store (`src/store/index.ts`) created with `persist` (the `local` slice persists to `localStorage` under `mausvoice-local-state`). State is organized as slices in `src/state/` (`app.state.ts`, `onboarding.state.ts`, `agent.state.ts`, `settings.state.ts`, transcriptions, etc.). Mutations go through an Immer-style `produceAppState(draft => ...)` helper so updates stay immutable and ergonomic. Removing this device's data is one seam (`src/utils/local-data.utils.ts`): stop the recorder and the key listener, run the native `clear_local_data`, reset the `local` slice *before* clearing storage so the persist middleware cannot write the old slice back out, then remove the app's `localStorage` keys. Both "Clear local data" and deleting the account call it, so neither can wipe half of what the other wipes. A step that fails does not stop the ones after it — the photo lives in `localStorage`, not in the database the native half drops — and the failure is rethrown once the rest has run, so an incomplete wipe is reported rather than assumed. Second windows share that key without sharing the slice, so the store resets its own copy when the browser reports the key removed, instead of writing a stale slice back out.
 
 ### 4.3 Actions (`src/actions/`)
 
@@ -248,6 +248,8 @@ The `debug-assist` Cargo feature in `src-tauri/Cargo.toml` compiles Tauri's `dev
 ### Top-level routing (`src/router.tsx` + Guard.tsx)
 
 Routing is modeled as a small directed graph of nodes (`welcome`, `onboarding`, `routing`, `dashboard`, `notFound`). Edges have conditions over app state. Dashboard sub-routes: home, settings, transcriptions, dictionary, styling, chats, apps.
+
+Settings is one route per page (`/dashboard/settings/<page>`: home, dictation, ai-models, shortcuts, appearance, privacy-data, system, account). `home` is the overview the rail lists first and the page a first-ever open lands on; the surface remembers the last page opened after that. `src/utils/settings-registry.ts` is the single source for the pages, their groups, and every row, and it drives the rail, search and availability. The overview's rows are summaries without registry keys (`components/settings/SettingSummaryRow.tsx`): they deep-link to the row that owns the setting instead of registering a second anchor for it. `SettingsLayout.tsx` renders the rail and resolves `?setting=` / `?section=` entry links. Availability (`components/settings/settings-availability.ts`) answers "would the page render this row right now", and both search and those links read it: a flag that reads the key list stays absent until the list has loaded, because an absent flag means unknown and unknown must not throw a deep link away, while `false` means the platform or the preferences have settled it and the row is genuinely not offered.
 
 ### Onboarding steps (`src/components/onboarding/`)
 

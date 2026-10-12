@@ -29,7 +29,10 @@ import {
   createOpenAICompatibleFetch,
   secureFetch,
 } from "../../utils/secure-fetch.utils";
-import { speachesTestIntegration } from "../../utils/speaches.utils";
+import {
+  SPEACHES_DEFAULT_URL,
+  speachesTestIntegration,
+} from "../../utils/speaches.utils";
 import type { ApiKeyListContext } from "./ApiKeyList";
 
 export type ProviderFieldDescriptor = {
@@ -240,12 +243,12 @@ function getOpenAICompatibleConfig(
 
 const SPEACHES_CONFIG: ProviderFormConfig = {
   displayName: "Speaches",
-  defaultBaseUrl: "http://localhost:8000",
+  defaultBaseUrl: SPEACHES_DEFAULT_URL,
   fields: [
     {
       key: "baseUrl",
       label: <FormattedMessage defaultMessage="Speaches URL" />,
-      placeholder: "http://localhost:8000",
+      placeholder: SPEACHES_DEFAULT_URL,
       helperText: (
         <FormattedMessage defaultMessage="URL of your local Speaches Docker instance" />
       ),
@@ -263,7 +266,7 @@ const SPEACHES_CONFIG: ProviderFormConfig = {
   ],
   testIntegration: (apiKey) =>
     speachesTestIntegration({
-      baseUrl: apiKey.baseUrl || "http://localhost:8000",
+      baseUrl: apiKey.baseUrl || SPEACHES_DEFAULT_URL,
     }),
 };
 
@@ -325,6 +328,88 @@ const AZURE_STT_CONFIG: ProviderFormConfig = {
       region: apiKey.azureRegion,
     });
   },
+};
+
+/**
+ * A provider's display name, or null when this build has no config for it.
+ *
+ * A persisted key can carry a provider string written by a newer build, and the
+ * surfaces that name a provider in running copy (the audio disclosure, the
+ * overview's model rows) must not crash over one. `getProviderFormConfig`
+ * throws for a provider it has no config for, which is why this wraps it rather
+ * than letting each caller decide.
+ */
+export const getProviderDisplayName = (
+  provider: ApiKeyProvider,
+  context: ApiKeyListContext,
+): string | null => {
+  try {
+    return getProviderFormConfig(provider, context).displayName;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Where a provider's work actually happens.
+ *
+ * A provider is not the same thing as a cloud service. Ollama, Speaches and an
+ * OpenAI-compatible server are all addressed by a base URL that defaults to
+ * loopback and may point anywhere, so a surface that writes "Cloud" beside them
+ * is making a claim it cannot support — wrong for the machine sitting on the
+ * person's desk, and wrong for the privacy story the app tells elsewhere.
+ *
+ * `unknown` is a real answer rather than a fallback to `cloud`: a base URL that
+ * cannot be read tells us nothing about where the bytes go, and the caller then
+ * reports no location instead of a wrong one.
+ */
+export type ProviderLocation = "local" | "cloud" | "unknown";
+
+/** Providers addressed by a base URL the person supplies. */
+const ENDPOINT_PROVIDERS: ReadonlySet<ApiKeyProvider> = new Set([
+  "ollama",
+  "speaches",
+  "openai-compatible",
+]);
+
+const LOOPBACK_HOST =
+  /^(?:localhost|127(?:\.\d{1,3}){3}|\[::1\]|::1|0\.0\.0\.0)$/i;
+
+/**
+ * The URL each endpoint provider falls back to, so "no base URL saved" is not
+ * mistaken for "no location known": the request path uses these same defaults.
+ *
+ * Note what "not loopback" means below: the address of an endpoint provider is
+ * whatever the person configured, so a server on the office network, a
+ * self-hosted box on a VPS and a hosted API all look alike from here. Only
+ * loopback is a fact this code can read.
+ */
+const DEFAULT_ENDPOINT_URLS: Partial<Record<ApiKeyProvider, string>> = {
+  ollama: OLLAMA_DEFAULT_URL,
+  speaches: SPEACHES_DEFAULT_URL,
+  "openai-compatible": OPENAI_COMPATIBLE_DEFAULT_URL,
+};
+
+export const getProviderLocation = (
+  provider: ApiKeyProvider,
+  baseUrl: string | null | undefined,
+): ProviderLocation => {
+  if (!ENDPOINT_PROVIDERS.has(provider)) {
+    return "cloud";
+  }
+  const url = baseUrl?.trim() || DEFAULT_ENDPOINT_URLS[provider];
+  if (!url) {
+    return "unknown";
+  }
+  try {
+    // Loopback is the only answer the URL gives away: anything else is an
+    // address this code cannot place — a machine on the same network, a
+    // self-hosted server, a hosted API — so it reports that it does not know
+    // rather than calling every non-loopback host "Cloud".
+    return LOOPBACK_HOST.test(new URL(url).hostname) ? "local" : "unknown";
+  } catch {
+    return "unknown";
+  }
 };
 
 export function getProviderFormConfig(

@@ -62,27 +62,48 @@ export const getSwitchToStyleToneId = (actionName: string): string | null => {
   return raw.length > 0 ? raw : null;
 };
 
+/**
+ * Every platform the app builds for, so a default cannot be added for one and
+ * forgotten for another.
+ *
+ * `linux` was missing from this type and from the table below, and the lookup
+ * had no branch for it either: on Linux every shortcut that ships with a
+ * default came up unbound, which is the one platform where the person is least
+ * likely to guess what the key should be. Listing the platforms exhaustively
+ * makes the next default a compile error until it is answered for all three.
+ *
+ * Not `Record<Platform, …>`: `Platform` includes `unknown`, which is the
+ * absence of an answer rather than a platform to answer for.
+ */
 type PlatformHotkeyCombos = {
   macos: string[][];
   windows: string[][];
+  linux: string[][];
 };
 
 export const DEFAULT_HOTKEY_COMBOS: Record<string, PlatformHotkeyCombos> = {
   [DICTATE_HOTKEY]: {
     macos: [["Function"]],
+    // Super+Ctrl reads as the record key on both desktops, and the Linux
+    // listener already emits these two labels — see `key_to_label` and the
+    // Wayland compositor's `classify_key`, which maps `MetaLeft` to super.
     windows: [["MetaLeft", "ControlLeft"]],
+    linux: [["MetaLeft", "ControlLeft"]],
   },
   [CANCEL_TRANSCRIPTION_HOTKEY]: {
     macos: [["Escape"]],
     windows: [["Escape"]],
+    linux: [["Escape"]],
   },
   [SWITCH_WRITING_STYLE_FORWARD_HOTKEY]: {
     macos: [["RightArrow"]],
     windows: [["RightArrow"]],
+    linux: [["RightArrow"]],
   },
   [SWITCH_WRITING_STYLE_BACKWARD_HOTKEY]: {
     macos: [["LeftArrow"]],
     windows: [["LeftArrow"]],
+    linux: [["LeftArrow"]],
   },
 };
 
@@ -94,15 +115,14 @@ export const getDefaultHotkeyCombosForAction = (
   actionName: string,
 ): string[][] => {
   const defaultCombos = DEFAULT_HOTKEY_COMBOS[actionName];
-  if (defaultCombos) {
-    if (getPlatform() === "macos") {
-      return defaultCombos.macos;
-    }
-    if (getPlatform() === "windows") {
-      return defaultCombos.windows;
-    }
+  if (!defaultCombos) {
+    return [];
   }
-  return [];
+
+  const platform = getPlatform();
+  // `unknown` is the absence of a platform, not a third case to guess at, so it
+  // is the one answer that stays empty.
+  return platform === "unknown" ? [] : defaultCombos[platform];
 };
 
 export const getHotkeyCombosForAction = (

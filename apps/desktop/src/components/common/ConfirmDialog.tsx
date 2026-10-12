@@ -1,16 +1,15 @@
 import {
   Button,
   ButtonProps,
-  CircularProgress,
   Dialog,
   DialogActions,
   DialogContent,
   DialogContentText,
   DialogTitle,
-  Stack,
 } from "@mui/material";
 import { ReactNode, useId } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
+import { BusyButtonLabel } from "./BusyButtonLabel";
 
 export type ConfirmDialogProps = {
   isOpen: boolean;
@@ -94,19 +93,9 @@ export const ConfirmDialog = ({
           aria-busy={busy || undefined}
         >
           {busy ? (
-            <Stack
-              direction="row"
-              spacing={1}
-              sx={{ alignItems: "center", justifyContent: "center" }}
-            >
-              <CircularProgress
-                size={16}
-                color="inherit"
-                role="progressbar"
-                aria-label={progressLabel}
-              />
-              <span>{confirmContent}</span>
-            </Stack>
+            <BusyButtonLabel label={progressLabel}>
+              {confirmContent}
+            </BusyButtonLabel>
           ) : (
             confirmContent
           )}

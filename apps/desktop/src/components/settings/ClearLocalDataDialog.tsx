@@ -1,35 +1,87 @@
-import { invoke } from "@tauri-apps/api/core";
 import {
   Alert,
-  AlertTitle,
   Button,
   Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
   Stack,
-  TextField,
   Typography,
 } from "@mui/material";
-import { useState } from "react";
-import { FormattedMessage } from "react-intl";
+import { useEffect, useRef, useState } from "react";
+import { FormattedMessage, useIntl, type IntlShape } from "react-intl";
 import { produceAppState, useAppStore } from "../../store";
+import { clearLocalData } from "../../utils/local-data.utils";
+import { StorageUnavailableError } from "../../utils/local-storage.utils";
+import { ConfirmationField } from "./ConfirmationField";
+import { ConsequenceList } from "./ConsequenceList";
+import { BusyButtonLabel } from "../common/BusyButtonLabel";
 
 const CONFIRMATION_PHRASE = "clear";
 
+/**
+ * What to tell someone whose clear failed.
+ *
+ * A blocked origin is the one failure whose own message means nothing to the
+ * person reading it, so it gets the sentence naming what to do instead.
+ * Everything else keeps its own message: those come from the native command and
+ * from this code, and paraphrasing them would drop whatever the person would
+ * have to act on.
+ */
+const describeClearFailure = (error: unknown, intl: IntlShape): string => {
+  if (error instanceof StorageUnavailableError) {
+    // Specific about which half happened: the native wipe has already removed
+    // the database and the audio by the time this throws, so saying nothing was
+    // removed would send someone looking for data that is already gone.
+    return intl.formatMessage({
+      defaultMessage:
+        "Your saved recordings and history were removed, but mausVoice could not reach this computer\u2019s storage, so some preferences may remain. Check that the app is allowed to store data, then try again.",
+    });
+  }
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return intl.formatMessage({
+    defaultMessage: "Failed to clear local data.",
+  });
+};
+
 export const ClearLocalDataDialog = () => {
+  const intl = useIntl();
   const open = useAppStore((state) => state.settings.clearLocalDataDialogOpen);
   const [confirmationValue, setConfirmationValue] = useState("");
   const [isClearing, setIsClearing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const confirmationRef = useRef<HTMLInputElement | null>(null);
 
-  const handleClose = () => {
+  // The field someone has to type into gets the focus, spelled out here rather
+  // than as an `autoFocus` attribute: the attribute fires as markup and cannot
+  // be deferred, so it races anything else that moves focus in the same commit.
+  // This mirrors ContextMenu's "focus after commit, not via autoFocus" rule.
+  useEffect(() => {
+    if (open) {
+      confirmationRef.current?.focus();
+    }
+  }, [open]);
+
+  /** Put the dialog away and forget everything typed into it. */
+  const close = () => {
     produceAppState((draft) => {
       draft.settings.clearLocalDataDialogOpen = false;
     });
     setConfirmationValue("");
     setIsClearing(false);
     setErrorMessage(null);
+  };
+
+  // Escape and a click on the backdrop both arrive here, so the dialog cannot
+  // be dismissed out from under a wipe that is already running: the button is
+  // disabled for the same reason, and a half-finished wipe with the dialog gone
+  // would leave nothing to report on.
+  const handleDismiss = () => {
+    if (!isClearing) {
+      close();
+    }
   };
 
   const confirmationMatches =
@@ -44,84 +96,81 @@ export const ClearLocalDataDialog = () => {
     setErrorMessage(null);
 
     try {
-      // Tear down long-running native subsystems BEFORE wiping the DB and
-      // reloading. If a recorder or global key listener is left running
-      // past `clear_local_data`, its in-flight callbacks will race the
-      // page reload against a now-empty / VACUUM'd database and emit
-      // errors into the fresh session. Best-effort: ignore per-command
-      // failures (there may not be an active recording/listener to stop).
-      try {
-        await invoke("stop_key_listener");
-      } catch {
-        /* no listener active */
+      // The wipe lives in one place because deleting the account has to remove
+      // the same things; see `clearLocalData` for what those are and why each
+      // step is there.
+      //
+      // The dialog is deliberately left open across this and the reload. Closing
+      // it updates the store, and the persist middleware rewrites its own key on
+      // every state change, so a close before the wipe would put a freshly
+      // serialized key back; and a wipe the browser refuses has to be able to
+      // say so to someone who is still looking at the dialog. The reload takes
+      // the dialog down with everything else.
+      const { storageFailedKeys: failedKeys } = await clearLocalData();
+      if (failedKeys.length > 0) {
+        // Reloading anyway would restore exactly the state the dialog just
+        // promised to remove, so the honest answer is to name the problem and
+        // keep the confirmation field on screen for a retry.
+        setErrorMessage(
+          intl.formatMessage({
+            defaultMessage:
+              "Some stored data could not be removed. Quit and reopen mausVoice, then try again.",
+          }),
+        );
+        setIsClearing(false);
+        return;
       }
-      try {
-        await invoke("stop_recording");
-      } catch {
-        /* no active recording */
-      }
-
-      await invoke("clear_local_data");
-      handleClose();
       // A hard reload is the simplest way to flush every in-memory store
       // (Zustand, React state, transcription sessions, subscription
       // handles) that may still hold references to wiped data.
       window.location.reload();
     } catch (error) {
-      console.error("Failed to clear local data", error);
-      const message =
-        error instanceof Error ? error.message : "Failed to clear local data.";
-      setErrorMessage(message);
+      setErrorMessage(describeClearFailure(error, intl));
       setIsClearing(false);
     }
   };
 
   return (
-    <Dialog open={open} onClose={handleClose} fullWidth maxWidth="sm">
+    <Dialog open={open} onClose={handleDismiss} fullWidth maxWidth="sm">
       <DialogTitle>
         <FormattedMessage defaultMessage="Clear local data" />
       </DialogTitle>
       <DialogContent>
-        <Stack spacing={2} sx={{ mt: 1 }}>
-          <Alert severity="warning" variant="outlined">
-            <AlertTitle>
-              <FormattedMessage defaultMessage="This action permanently removes local data" />
-            </AlertTitle>
-            <Typography variant="body2">
-              <FormattedMessage defaultMessage="This will delete all preferences, dictionary entries, and saved transcriptions from this device. The action cannot be undone." />
-            </Typography>
-          </Alert>
-          <Typography variant="body2">
-            <FormattedMessage
-              defaultMessage="To confirm, type {phrase} below and click Clear local data."
-              values={{
-                phrase: (
-                  <Typography
-                    component="span"
-                    variant="body2"
-                    sx={{
-                      fontWeight: "bold",
-                      fontFamily: "inherit",
-                    }}
-                  >
-                    {CONFIRMATION_PHRASE}
-                  </Typography>
-                ),
-              }}
-            />
+        <Stack spacing={2.5} sx={{ mt: 1 }}>
+          <ConsequenceList
+            label={<FormattedMessage defaultMessage="This removes" />}
+            items={[
+              <FormattedMessage
+                key="preferences"
+                defaultMessage="Preferences and settings"
+              />,
+              // The name and the photo are two stores — the name is a column
+              // on `user_profiles`, which the native wipe deletes, and the
+              // photo is this device's own file — but they are one thing to
+              // the person reading this list.
+              <FormattedMessage
+                key="profile"
+                defaultMessage="Your profile name and photo"
+              />,
+              <FormattedMessage
+                key="dictionary"
+                defaultMessage="Dictionary entries"
+              />,
+              <FormattedMessage
+                key="transcriptions"
+                defaultMessage="Saved transcriptions and audio"
+              />,
+            ]}
+          />
+          <Typography variant="body2" sx={{ color: "text.secondary" }}>
+            <FormattedMessage defaultMessage="This cannot be undone. Your account and sign-in stay as they are." />
           </Typography>
-          <TextField
-            autoFocus
-            fullWidth
-            label={<FormattedMessage defaultMessage="Confirmation phrase" />}
+          <ConfirmationField
+            phrase={CONFIRMATION_PHRASE}
             value={confirmationValue}
-            onChange={(event) => setConfirmationValue(event.target.value)}
+            onChange={setConfirmationValue}
             disabled={isClearing}
-            placeholder={CONFIRMATION_PHRASE}
-            autoComplete="off"
-            autoCapitalize="off"
-            autoCorrect="off"
-            spellCheck={false}
+            inputRef={confirmationRef}
           />
           {errorMessage && (
             <Alert severity="error" variant="outlined">
@@ -131,17 +180,22 @@ export const ClearLocalDataDialog = () => {
         </Stack>
       </DialogContent>
       <DialogActions>
-        <Button onClick={handleClose} disabled={isClearing}>
+        <Button onClick={close} disabled={isClearing}>
           <FormattedMessage defaultMessage="Cancel" />
         </Button>
         <Button
           color="error"
           variant="contained"
-          onClick={handleClear}
+          onClick={() => void handleClear()}
           disabled={!confirmationMatches || isClearing}
+          // The label stays while the button is busy, so the control never
+          // loses its name during the one action that empties the device.
+          aria-busy={isClearing || undefined}
         >
           {isClearing ? (
-            <FormattedMessage defaultMessage="Clearing..." />
+            <BusyButtonLabel>
+              <FormattedMessage defaultMessage="Clear local data" />
+            </BusyButtonLabel>
           ) : (
             <FormattedMessage defaultMessage="Clear local data" />
           )}
