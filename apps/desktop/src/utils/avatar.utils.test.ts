@@ -167,7 +167,58 @@ const installBitmap = (width = 1200, height = 800) => {
   return { close, decode };
 };
 
-const pngFile = () => new File(["x"], "photo.png", { type: "image/png" });
+/**
+ * A PNG with the size its header declares, which is what the pipeline reads
+ * before it decodes anything. The bytes after the signature are not a real
+ * image: the decoder is stubbed in these tests, and what matters here is the
+ * header the app decides on.
+ */
+const pngFile = (width = 1200, height = 800) => {
+  const bytes = new Uint8Array(24);
+  bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
+  const view = new DataView(bytes.buffer);
+  view.setUint32(16, width);
+  view.setUint32(20, height);
+  return new File([bytes], "photo.png", { type: "image/png" });
+};
+
+/**
+ * A JPEG whose frame header sits behind an APP1 segment of `padding` bytes,
+ * the way a phone photo's EXIF does. The segment is long enough to push the
+ * size past the first window the reader takes.
+ */
+const paddedJpegFile = ({
+  width,
+  height,
+  padding,
+}: {
+  width: number;
+  height: number;
+  padding: number;
+}) => {
+  const segmentLength = 2 + padding;
+  const bytes = [
+    0xff,
+    0xd8,
+    0xff,
+    0xe1,
+    segmentLength >> 8,
+    segmentLength & 0xff,
+    ...Array.from({ length: padding }, () => 0x00),
+    0xff,
+    0xc0,
+    0x00,
+    0x11,
+    0x08,
+    height >> 8,
+    height & 0xff,
+    width >> 8,
+    width & 0xff,
+  ];
+  return new File([new Uint8Array(bytes)], "photo.jpg", {
+    type: "image/jpeg",
+  });
+};
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -262,21 +313,11 @@ describe("readAvatarFile", () => {
     ]);
   });
 
-  /** A PNG whose IHDR declares a size, valid enough for the header reader. */
-  const pngHeaderFile = (width: number, height: number) => {
-    const bytes = new Uint8Array(24);
-    bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
-    const view = new DataView(bytes.buffer);
-    view.setUint32(16, width);
-    view.setUint32(20, height);
-    return new File([bytes], "photo.png", { type: "image/png" });
-  };
-
   it("refuses a header that declares more pixels than it can open, before decoding", async () => {
     const bitmap = installBitmap();
     installCanvas();
 
-    const result = await readAvatarFile(pngHeaderFile(30_000, 30_000));
+    const result = await readAvatarFile(pngFile(30_000, 30_000));
 
     // The point of reading the header first: a few kilobytes of file must not
     // turn into a multi-gigabyte allocation.
@@ -288,7 +329,7 @@ describe("readAvatarFile", () => {
     const bitmap = installBitmap();
     installCanvas();
 
-    const result = await readAvatarFile(pngHeaderFile(6_000, 4_000));
+    const result = await readAvatarFile(pngFile(6_000, 4_000));
 
     expect(result.ok).toBe(true);
     expect(bitmap.decode).toHaveBeenCalled();
@@ -299,26 +340,89 @@ describe("readAvatarFile", () => {
     installCanvas();
 
     // Start-of-image, a frame marker, a length, then nothing: the two
-    // dimension reads land past the end of the file.
+    // dimension reads would land past the end of the file.
     const truncated = new File(
       [new Uint8Array([0xff, 0xd8, 0xff, 0xc0, 0x00, 0x11, 0x08, 0x00])],
       "photo.jpg",
       { type: "image/jpeg" },
     );
 
+    // A truncated frame is a size this reader cannot state, so it is refused
+    // rather than read out of bounds.
     const result = await readAvatarFile(truncated);
+
+    expect(result).toEqual({ ok: false, error: "unreadable" });
+    expect(bitmap.decode).not.toHaveBeenCalled();
+  });
+
+  it("opens a tiny lossless WebP rather than refusing it for being short", async () => {
+    const bitmap = installBitmap();
+    installCanvas();
+
+    // 25 bytes: RIFF size, WEBP, a VP8L chunk, and the 14-bit dimensions that
+    // are the whole header. This is a real 1x1 image, and the only reason it
+    // exists here is that a size-based guard must not refuse it.
+    const bytes = new Uint8Array(25);
+    bytes.set(
+      [..."RIFF"].map((c) => c.charCodeAt(0)),
+      0,
+    );
+    bytes.set(
+      [..."WEBP"].map((c) => c.charCodeAt(0)),
+      8,
+    );
+    bytes.set(
+      [..."VP8L"].map((c) => c.charCodeAt(0)),
+      12,
+    );
+    const view = new DataView(bytes.buffer);
+    view.setUint32(16, 5, true);
+    bytes[20] = 0x2f;
+    view.setUint32(21, 0, true);
+
+    const result = await readAvatarFile(
+      new File([bytes], "photo.webp", { type: "image/webp" }),
+    );
 
     expect(result.ok).toBe(true);
     expect(bitmap.decode).toHaveBeenCalled();
   });
 
-  it("does not guess at a header it cannot read", async () => {
+  it("refuses a file whose header says nothing about its size", async () => {
     const bitmap = installBitmap();
     installCanvas();
 
-    // `pngFile()` is a one-byte file with a PNG type: no header this parser
-    // recognises, so the decode path decides, as it did before the guard.
-    const result = await readAvatarFile(pngFile());
+    // A file that claims to be a PNG but carries no header: the decoder would
+    // have to be trusted to size it, which is the allocation this guard
+    // exists to bound.
+    const result = await readAvatarFile(
+      new File(["x"], "photo.png", { type: "image/png" }),
+    );
+
+    expect(result).toEqual({ ok: false, error: "unreadable" });
+    expect(bitmap.decode).not.toHaveBeenCalled();
+  });
+
+  it("finds a JPEG's size behind a long EXIF segment", async () => {
+    installBitmap();
+    installCanvas();
+
+    // 6 KB of APP1 in front of the frame header: past the first window the
+    // reader takes, inside the one it falls back to.
+    const result = await readAvatarFile(
+      paddedJpegFile({ width: 30_000, height: 30_000, padding: 6_000 }),
+    );
+
+    expect(result).toEqual({ ok: false, error: "too-many-pixels" });
+  });
+
+  it("opens a padded JPEG whose size is within the budget", async () => {
+    const bitmap = installBitmap();
+    installCanvas();
+
+    const result = await readAvatarFile(
+      paddedJpegFile({ width: 1_200, height: 800, padding: 6_000 }),
+    );
 
     expect(result.ok).toBe(true);
     expect(bitmap.decode).toHaveBeenCalled();
