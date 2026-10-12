@@ -42,6 +42,10 @@ export type LocalDataWipe = {
   storageFailedKeys: string[];
 };
 
+/** What a refusal says on its own, for the caller's report. */
+const failureMessage = (failure: unknown): string =>
+  failure instanceof Error ? failure.message : String(failure);
+
 /** The native commands that stop work that could race the wipe. */
 const STOP_COMMANDS = ["stop_key_listener", "stop_recording"] as const;
 
@@ -102,11 +106,21 @@ export const clearLocalData = async (): Promise<LocalDataWipe> => {
   const storageFailedKeys = clearAppDataStorage();
 
   // Both failures mean the same thing to the caller — the wipe is not
-  // complete — and the native one happened first, so it is the one thrown.
-  if (nativeFailure) {
+  // complete — so neither is allowed to disappear on the way out. A refusal
+  // that happened first does not cancel one that happened after it: the
+  // native message names the step to retry, and a stop failure is why the
+  // retry is needed at all, because a recorder that is still running keeps
+  // writing audio the wipe has already emptied the database for. One throw
+  // carries both, so the caller's single report stays honest.
+  if (nativeFailure !== undefined) {
+    if (stopFailure !== null) {
+      throw new Error(
+        `${failureMessage(nativeFailure)}. ${failureMessage(stopFailure)}`,
+      );
+    }
     throw nativeFailure;
   }
-  if (stopFailure) {
+  if (stopFailure !== null) {
     throw stopFailure;
   }
   return { storageFailedKeys };

@@ -147,6 +147,39 @@ describe("clearLocalData", () => {
     expect(loggerMock.error).toHaveBeenCalled();
   });
 
+  it("reports both refusals when the native wipe and a stop command fail", async () => {
+    // Either refusal alone means the wipe is incomplete, and together they
+    // describe two different problems: the native message names the step to
+    // retry, and the stop failure says a recorder is still running and will
+    // keep writing audio into the freshly emptied database. A caller can only
+    // hear one throw, so both messages have to be inside it.
+    seedProfileImage();
+    window.localStorage.setItem(LOCAL_STATE_STORAGE_KEY, "{}");
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "clear_local_data") {
+        return Promise.reject(new Error("audio cleanup failed"));
+      }
+      if (command === "stop_recording") {
+        return Promise.reject(new Error("recorder stuck"));
+      }
+      return Promise.resolve(undefined);
+    });
+
+    const error = await clearLocalData().then(
+      () => null,
+      (thrown: unknown) => thrown,
+    );
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("audio cleanup failed");
+    expect((error as Error).message).toContain("recorder stuck");
+
+    // The rest of the wipe still ran: a refusal is a reason to report, not a
+    // reason to leave the photo behind.
+    expect(window.localStorage.getItem(LOCAL_STATE_STORAGE_KEY)).toBeNull();
+    expect(getAppState().local.profileImageByUserId).toEqual({});
+  });
+
   it("reports the keys a blocked browser would not remove", async () => {
     window.localStorage.setItem(LOCAL_STATE_STORAGE_KEY, "{}");
     const removeItem = vi
