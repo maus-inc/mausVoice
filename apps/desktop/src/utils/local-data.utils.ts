@@ -58,7 +58,7 @@ const STOP_COMMANDS = ["stop_key_listener", "stop_recording"] as const;
  * cannot be undone should not wait on the part that can be retried — but the
  * refusal is carried out of here and reported at the end.
  */
-const stopNativeSubsystems = async (): Promise<unknown | null> => {
+const stopNativeSubsystems = async (): Promise<Error | null> => {
   const outcomes = await Promise.all(
     STOP_COMMANDS.map(async (command) => {
       try {
@@ -68,7 +68,9 @@ const stopNativeSubsystems = async (): Promise<unknown | null> => {
         getLogger().error(
           `Failed to ${command} before clearing data: ${error}`,
         );
-        return error;
+        // Normalised, because this is thrown to a caller that reports it, and
+        // what gets caught in JavaScript is not always an Error.
+        return error instanceof Error ? error : new Error(String(error));
       }
     }),
   );
