@@ -45,9 +45,13 @@ describe("app store rehydration", () => {
   const deliverStorageEvent = (event: {
     key: string;
     newValue: string | null;
+    storageArea?: Storage;
   }) => {
     for (const listener of storageListeners) {
-      listener(event as StorageEvent);
+      listener({
+        storageArea: localStorage,
+        ...event,
+      } as unknown as StorageEvent);
     }
   };
 
@@ -124,6 +128,30 @@ describe("app store rehydration", () => {
     // Another window writing something else is not a wipe of this window's
     // data, and the photo it did not touch stays.
     deliverStorageEvent({ key: "mausvoice:onboarded-at", newValue: "1" });
+
+    expect(getAppState().local.profileImageByUserId).toEqual({
+      "user-1": "data:image/png;base64,AAAA",
+    });
+  });
+
+  it("ignores a removal that came from another storage area", async () => {
+    const { getAppState, setAppState } = await import("./index");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    setAppState((state) => ({
+      ...state,
+      local: {
+        ...state.local,
+        profileImageByUserId: { "user-1": "data:image/png;base64,AAAA" },
+      },
+    }));
+
+    // The same key can be removed from sessionStorage, which is a different
+    // store: that is not this window's data being wiped.
+    deliverStorageEvent({
+      key: STORAGE_KEY,
+      newValue: null,
+      storageArea: {} as Storage,
+    });
 
     expect(getAppState().local.profileImageByUserId).toEqual({
       "user-1": "data:image/png;base64,AAAA",

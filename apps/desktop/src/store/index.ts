@@ -89,6 +89,11 @@ export const produceAppState = (fn: (draft: AppState) => void) => {
  */
 if (typeof window !== "undefined") {
   window.addEventListener("storage", (event) => {
+    // The event fires for sessionStorage too, and that one is a different
+    // store entirely: only the local key's removal is this window's business.
+    if (event.storageArea !== localStorage) {
+      return;
+    }
     if (event.key === CURRENT_STORAGE_KEY && event.newValue === null) {
       setAppState((state) => ({ ...state, local: INITIAL_LOCAL_STATE }));
     }

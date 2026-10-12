@@ -188,6 +188,51 @@ describe("DictationSettingsPage", () => {
     expect(limitField()?.value).toBe("20");
   });
 
+  it("commits a value changed back while the first save is still in flight", async () => {
+    // 7 is what is saved, 10 is what was asked for, and 7 is asked for again
+    // before the 10 lands. The store still says 7 the whole time, so a skip
+    // test that reads the stored value refuses the reversion and leaves the
+    // field showing a number the preference does not have.
+    const { settleNext } = deferredWrite();
+    render();
+
+    const first = requireElement(limitField(), "the dictation limit field");
+    typeAndCommit(first, "10");
+
+    const second = requireElement(limitField(), "the dictation limit field");
+    typeAndCommit(second, String(SAVED_MINUTES));
+
+    expect(mocks.setDictationLimitMinutes).toHaveBeenCalledTimes(2);
+    expect(mocks.setDictationLimitMinutes).toHaveBeenLastCalledWith(
+      SAVED_MINUTES,
+    );
+
+    // The reversion landing last is what makes the stored preference the
+    // number on screen.
+    await act(async () => {
+      settleNext();
+    });
+    await act(async () => {
+      settleNext();
+    });
+
+    expect(limitField()?.value).toBe(String(SAVED_MINUTES));
+  });
+
+  it("allows the same number again after a save failed", async () => {
+    mocks.setDictationLimitMinutes.mockRejectedValue(new Error("offline"));
+    render();
+
+    const field = requireElement(limitField(), "the dictation limit field");
+    typeAndCommit(field, "10");
+    await act(async () => {
+      await Promise.resolve();
+    });
+    typeAndCommit(field, "10");
+
+    expect(mocks.setDictationLimitMinutes).toHaveBeenCalledTimes(2);
+  });
+
   it("keeps the newest value when two writes land oldest first", async () => {
     const { settleNext } = deferredWrite();
     render();

@@ -96,6 +96,8 @@ const selectDictationState = (state: AppState) => {
  * that changed somewhere else, including an older write landing after a newer
  * one.
  */
+const MAX_TRACKED_WRITES = 8;
+
 const useOwnWrites = () => {
   const writes = useRef<Set<number>>(new Set());
   return useMemo(
@@ -103,6 +105,18 @@ const useOwnWrites = () => {
       /** Records a value this page has sent to the store. */
       record: (value: number) => {
         writes.current.add(value);
+        // Only the values of writes that are still in flight — or whose save
+        // failed and may be retried — can still arrive, and a failed save adds
+        // one entry each time. The oldest are dropped so a long session cannot
+        // grow this without bound; more than a few writes in flight at once is
+        // already unusual.
+        while (writes.current.size > MAX_TRACKED_WRITES) {
+          const oldest = writes.current.values().next().value;
+          if (oldest === undefined) {
+            break;
+          }
+          writes.current.delete(oldest);
+        }
       },
       /**
        * Whether the value that just arrived is one this page wrote. The claim
@@ -161,14 +175,25 @@ export default function DictationSettingsPage() {
 
   const [limitInput, setLimitInput] = useState(String(dictationLimitMinutes));
   const [limitError, setLimitError] = useState<string | null>(null);
-  const lastCommittedLimit = useRef(dictationLimitMinutes);
+  /**
+   * The value this page last asked the store to save, or null when the last
+   * request failed and the same number has to be committable again.
+   *
+   * It is deliberately not the value in the store: the store still holds the
+   * old preference while a save is in flight, so someone who changes 7 to 10
+   * and then back to 7 before the first save lands is asking for 7 — reading
+   * the skip test off the store would refuse the reversion and leave the field
+   * showing a number the preference does not have.
+   */
+  const requestedLimit = useRef<number | null>(dictationLimitMinutes);
   const limitWrites = useOwnWrites();
 
   const [delayInput, setDelayInput] = useState(
     formatHandsFreeDelaySeconds(handsFreeDelayMs),
   );
   const [delayError, setDelayError] = useState<string | null>(null);
-  const lastCommittedDelay = useRef(handsFreeDelayMs);
+  /** The delay this page last asked the store to save, as above. */
+  const requestedDelay = useRef<number | null>(handsFreeDelayMs);
   const delayWrites = useOwnWrites();
 
   // Seeding a field is only ever right for a value from somewhere else. The
@@ -177,7 +202,6 @@ export default function DictationSettingsPage() {
   // silently lose the edit, which is the one thing a preferences field must
   // not do.
   useEffect(() => {
-    lastCommittedLimit.current = dictationLimitMinutes;
     if (!limitWrites.claim(dictationLimitMinutes)) {
       setLimitInput(String(dictationLimitMinutes));
       setLimitError(null);
@@ -185,7 +209,6 @@ export default function DictationSettingsPage() {
   }, [dictationLimitMinutes, limitWrites]);
 
   useEffect(() => {
-    lastCommittedDelay.current = handsFreeDelayMs;
     if (!delayWrites.claim(handsFreeDelayMs)) {
       setDelayInput(formatHandsFreeDelaySeconds(handsFreeDelayMs));
       setDelayError(null);
@@ -227,16 +250,21 @@ export default function DictationSettingsPage() {
 
     setLimitError(null);
     setLimitInput(String(minutes));
-    if (minutes === lastCommittedLimit.current) {
+    if (minutes === requestedLimit.current) {
       return;
     }
-    // Marked once the write lands, not before it: a write that fails shows its
-    // own snackbar and leaves the preference alone, and marking it here would
-    // make the same number look already-committed and silently refuse a retry.
     limitWrites.record(minutes);
+    requestedLimit.current = minutes;
     logOnRejection(
-      setDictationLimitMinutes(minutes).then(() => {
-        lastCommittedLimit.current = minutes;
+      setDictationLimitMinutes(minutes).catch((error: unknown) => {
+        // A failed save leaves the preference alone and shows its own snackbar,
+        // so the same number must be committable again: forget the request.
+        // Only this write's request is forgotten — a newer one may have
+        // replaced it while this was in flight.
+        if (requestedLimit.current === minutes) {
+          requestedLimit.current = null;
+        }
+        throw error;
       }),
       "settings page: setDictationLimitMinutes",
     );
@@ -251,14 +279,18 @@ export default function DictationSettingsPage() {
 
     setDelayError(null);
     setDelayInput(formatHandsFreeDelaySeconds(milliseconds));
-    if (milliseconds === lastCommittedDelay.current) {
+    if (milliseconds === requestedDelay.current) {
       return;
     }
-    // Marked once the write lands, for the same reason as the minutes field.
+    // Requested before the write, for the same reason as the minutes field.
     delayWrites.record(milliseconds);
+    requestedDelay.current = milliseconds;
     logOnRejection(
-      setHandsFreeDelayMs(milliseconds).then(() => {
-        lastCommittedDelay.current = milliseconds;
+      setHandsFreeDelayMs(milliseconds).catch((error: unknown) => {
+        if (requestedDelay.current === milliseconds) {
+          requestedDelay.current = null;
+        }
+        throw error;
       }),
       "settings page: setHandsFreeDelayMs",
     );
