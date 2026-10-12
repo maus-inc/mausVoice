@@ -7,7 +7,7 @@ import {
 } from "@mui/icons-material";
 import { Link, Stack, Typography } from "@mui/material";
 import type { ChangeEvent } from "react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { useNavigate } from "react-router-dom";
 import { produceAppState, useAppStore } from "../../../store";
@@ -86,6 +86,35 @@ const selectDictationState = (state: AppState) => {
   ] as const;
 };
 
+/**
+ * The values this page has written to the store and not yet seen come back.
+ *
+ * A number field here commits on blur, and the store only carries a written
+ * value once the repository call returns, so two writes can be in flight at
+ * once. Keeping every value in flight — not just the most recent — is what
+ * lets the sync effects tell the page's own writes apart from a preference
+ * that changed somewhere else, including an older write landing after a newer
+ * one.
+ */
+const useOwnWrites = () => {
+  const writes = useRef<Set<number>>(new Set());
+  return useMemo(
+    () => ({
+      /** Records a value this page has sent to the store. */
+      record: (value: number) => {
+        writes.current.add(value);
+      },
+      /**
+       * Whether the value that just arrived is one this page wrote. The claim
+       * is consumed, so the same value changing again later reads as a change
+       * from somewhere else.
+       */
+      claim: (value: number) => writes.current.delete(value),
+    }),
+    [],
+  );
+};
+
 export default function DictationSettingsPage() {
   const intl = useIntl();
   const navigate = useNavigate();
@@ -133,39 +162,35 @@ export default function DictationSettingsPage() {
   const [limitInput, setLimitInput] = useState(String(dictationLimitMinutes));
   const [limitError, setLimitError] = useState<string | null>(null);
   const lastCommittedLimit = useRef(dictationLimitMinutes);
-  // The write this page last started, so the value that lands from it can be
-  // told apart from a value that changed somewhere else.
-  const pendingLimit = useRef<number | null>(null);
+  const limitWrites = useOwnWrites();
 
   const [delayInput, setDelayInput] = useState(
     formatHandsFreeDelaySeconds(handsFreeDelayMs),
   );
   const [delayError, setDelayError] = useState<string | null>(null);
   const lastCommittedDelay = useRef(handsFreeDelayMs);
-  const pendingDelay = useRef<number | null>(null);
+  const delayWrites = useOwnWrites();
 
   // Seeding a field is only ever right for a value from somewhere else. The
-  // value this page just sent arrives here too, and by then someone may have
-  // typed the next draft into the field: writing the saved value back over it
-  // would silently lose the edit, which is the one thing a preferences field
-  // must not do. The pending ref is that difference.
+  // value this page sent arrives here too, and by then someone may have typed
+  // the next draft into the field: writing the saved value back over it would
+  // silently lose the edit, which is the one thing a preferences field must
+  // not do.
   useEffect(() => {
     lastCommittedLimit.current = dictationLimitMinutes;
-    if (dictationLimitMinutes !== pendingLimit.current) {
+    if (!limitWrites.claim(dictationLimitMinutes)) {
       setLimitInput(String(dictationLimitMinutes));
       setLimitError(null);
     }
-    pendingLimit.current = null;
-  }, [dictationLimitMinutes]);
+  }, [dictationLimitMinutes, limitWrites]);
 
   useEffect(() => {
     lastCommittedDelay.current = handsFreeDelayMs;
-    if (handsFreeDelayMs !== pendingDelay.current) {
+    if (!delayWrites.claim(handsFreeDelayMs)) {
       setDelayInput(formatHandsFreeDelaySeconds(handsFreeDelayMs));
       setDelayError(null);
     }
-    pendingDelay.current = null;
-  }, [handsFreeDelayMs]);
+  }, [handsFreeDelayMs, delayWrites]);
 
   const outOfRangeMessage = useCallback(
     (max: number) =>
@@ -208,7 +233,7 @@ export default function DictationSettingsPage() {
     // Marked once the write lands, not before it: a write that fails shows its
     // own snackbar and leaves the preference alone, and marking it here would
     // make the same number look already-committed and silently refuse a retry.
-    pendingLimit.current = minutes;
+    limitWrites.record(minutes);
     logOnRejection(
       setDictationLimitMinutes(minutes).then(() => {
         lastCommittedLimit.current = minutes;
@@ -230,7 +255,7 @@ export default function DictationSettingsPage() {
       return;
     }
     // Marked once the write lands, for the same reason as the minutes field.
-    pendingDelay.current = milliseconds;
+    delayWrites.record(milliseconds);
     logOnRejection(
       setHandsFreeDelayMs(milliseconds).then(() => {
         lastCommittedDelay.current = milliseconds;

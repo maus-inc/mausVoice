@@ -100,16 +100,16 @@ describe("DictationSettingsPage", () => {
   };
 
   /**
-   * A write that hangs until the test lets it land, the way a save on a slow
+   * Writes that hang until the test lets them land, the way a save on a slow
    * disk does. The real action updates the store only after the repository
-   * call returns, which is what makes the late arrival possible at all.
+   * call returns, which is what makes a late arrival possible at all.
    */
   const deferredWrite = () => {
-    let settle!: () => void;
+    const landings: Array<() => void> = [];
     mocks.setDictationLimitMinutes.mockImplementation(
       (minutes: number) =>
         new Promise<void>((resolve) => {
-          settle = () => {
+          landings.push(() => {
             setAppState((state) => ({
               ...state,
               userPrefs: {
@@ -118,12 +118,12 @@ describe("DictationSettingsPage", () => {
               } as typeof state.userPrefs,
             }));
             resolve();
-          };
+          });
         }),
     );
     // The mock's implementation only runs when the action is called, so the
-    // resolver has to be read then, not captured by value here.
-    return { settle: () => settle() };
+    // landings have to be read then, not captured by value here.
+    return { settleNext: () => landings.shift()?.() };
   };
 
   beforeEach(() => {
@@ -160,7 +160,7 @@ describe("DictationSettingsPage", () => {
   });
 
   it("keeps a draft typed while the previous value is still saving", async () => {
-    const { settle } = deferredWrite();
+    const { settleNext } = deferredWrite();
     render();
 
     const field = requireElement(limitField(), "the dictation limit field");
@@ -182,9 +182,34 @@ describe("DictationSettingsPage", () => {
 
     // The saved value arriving is the previous commit landing, not news.
     await act(async () => {
-      settle();
+      settleNext();
     });
 
+    expect(limitField()?.value).toBe("20");
+  });
+
+  it("keeps the newest value when two writes land oldest first", async () => {
+    const { settleNext } = deferredWrite();
+    render();
+
+    const first = requireElement(limitField(), "the dictation limit field");
+    typeAndCommit(first, "10");
+
+    // Committed again before the first write came back, which is what puts
+    // two writes in flight at once.
+    const second = requireElement(limitField(), "the dictation limit field");
+    typeAndCommit(second, "20");
+    expect(mocks.setDictationLimitMinutes).toHaveBeenCalledTimes(2);
+
+    // The earlier write landing is older than what is on screen.
+    await act(async () => {
+      settleNext();
+    });
+    expect(limitField()?.value).toBe("20");
+
+    await act(async () => {
+      settleNext();
+    });
     expect(limitField()?.value).toBe("20");
   });
 });
