@@ -166,6 +166,7 @@ describe("DictationSettingsPage", () => {
     const field = requireElement(limitField(), "the dictation limit field");
     expect(field.value).toBe(String(SAVED_MINUTES));
     typeAndCommit(field, "10");
+    expect(mocks.setDictationLimitMinutes).toHaveBeenCalledTimes(1);
     expect(mocks.setDictationLimitMinutes).toHaveBeenCalledWith(10);
 
     // The write has not landed and the person is already on the next value.
@@ -222,36 +223,45 @@ describe("DictationSettingsPage", () => {
   it("does not let a late write overwrite a draft after another save failed", async () => {
     // The set of writes this page is waiting on must not grow a cap: a value
     // dropped from it would arrive as a "change from elsewhere" and be written
-    // over the field. Ten commits in a row, each landing after the next, keep
-    // the newest value on screen.
+    // over the field. Nine commits, each landing after the next, keep the
+    // newest value on screen.
+    //
+    // Nine is more than the cap this test exists to keep out, and every one of
+    // them starts a write because the page skips a commit only when it equals
+    // the value it last asked for. The precondition is asserted rather than
+    // assumed: if a commit were ever skipped, the eight landings below would
+    // leave one arrival outstanding and the test would be measuring something
+    // else.
     const { settleNext } = deferredWrite();
     render();
 
-    for (const value of [
-      "10",
-      "11",
-      "12",
-      "13",
-      "14",
-      "15",
-      "16",
-      "17",
-      "18",
-    ]) {
+    const values: string[] = [];
+    for (let minutes = 10; minutes <= 18; minutes += 1) {
+      values.push(String(minutes));
+    }
+
+    for (const value of values) {
       const field = requireElement(limitField(), "the dictation limit field");
       typeAndCommit(field, value);
     }
-    expect(mocks.setDictationLimitMinutes).toHaveBeenCalledTimes(9);
+    expect(mocks.setDictationLimitMinutes).toHaveBeenCalledTimes(values.length);
 
-    // Every earlier write lands, oldest first, while the newest is on screen.
+    // The count and the values have to agree, or the landings below are not
+    // the ones this test thinks it is landing.
+    expect(mocks.setDictationLimitMinutes.mock.calls).toEqual(
+      values.map((value) => [Number(value)]),
+    );
+
+    // Every write but the last lands, oldest first, while the newest value is
+    // on screen: one arrival fewer than the commits, by construction.
     await act(async () => {
-      for (let landed = 0; landed < 8; landed += 1) {
+      for (let landed = 0; landed < values.length - 1; landed += 1) {
         settleNext();
         await Promise.resolve();
       }
     });
 
-    expect(limitField()?.value).toBe("18");
+    expect(limitField()?.value).toBe(values[values.length - 1]);
   });
 
   it("allows the same number again after a save failed", async () => {
