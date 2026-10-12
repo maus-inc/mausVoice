@@ -46,23 +46,45 @@ export type LocalDataWipe = {
 const STOP_COMMANDS = ["stop_key_listener", "stop_recording"] as const;
 
 const stopNativeSubsystems = async (): Promise<void> => {
-  for (const command of STOP_COMMANDS) {
-    try {
-      await invoke(command);
-    } catch {
-      // Best effort: there may be nothing running to stop. The command is
-      // absent on some platforms and errors when no session is live, and
-      // neither is a reason to abandon a wipe the person asked for.
-    }
-  }
+  await Promise.all(
+    STOP_COMMANDS.map(async (command) => {
+      try {
+        await invoke(command);
+      } catch {
+        // Best effort: there may be nothing running to stop. The command is
+        // absent on some platforms and errors when no session is live, and
+        // neither is a reason to abandon a wipe the person asked for.
+      }
+    }),
+  );
 };
 
 export const clearLocalData = async (): Promise<LocalDataWipe> => {
   getLogger().info("Clearing local data on this device");
   await stopNativeSubsystems();
-  await invoke("clear_local_data");
+
+  // The native wipe can fail part-way through — the audio cleanup is the
+  // usual way — and that failure must not stop the steps below. The profile
+  // photo lives in localStorage, not in the database the native side drops,
+  // so returning early is how a deletion the person asked for ends with a
+  // picture of their face still on disk. The failure is remembered, logged,
+  // and rethrown once everything else has run: the caller still reports that
+  // the wipe was not complete.
+  let nativeFailure: unknown;
+  try {
+    await invoke("clear_local_data");
+  } catch (error) {
+    nativeFailure = error;
+    getLogger().error(`Failed to clear native local data: ${error}`);
+  }
+
   produceAppState((draft) => {
     draft.local = INITIAL_LOCAL_STATE;
   });
-  return { storageFailedKeys: clearAppDataStorage() };
+  const storageFailedKeys = clearAppDataStorage();
+
+  if (nativeFailure) {
+    throw nativeFailure;
+  }
+  return { storageFailedKeys };
 };

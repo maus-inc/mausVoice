@@ -105,6 +105,26 @@ describe("clearLocalData", () => {
     expect(getAppState().local.profileImageByUserId).toEqual({});
   });
 
+  it("still clears the photo when the native wipe fails part-way", async () => {
+    // The native command drops the database and then the audio, so a failure
+    // part-way through means the database is already gone. Returning there
+    // would leave the profile photo — a picture of the person's face — in
+    // localStorage after a deletion that promised to erase it.
+    seedProfileImage();
+    window.localStorage.setItem(LOCAL_STATE_STORAGE_KEY, "{}");
+    invokeMock.mockImplementation((command: string) =>
+      command === "clear_local_data"
+        ? Promise.reject(new Error("audio cleanup failed"))
+        : Promise.resolve(undefined),
+    );
+
+    await expect(clearLocalData()).rejects.toThrow("audio cleanup failed");
+
+    expect(window.localStorage.getItem(LOCAL_STATE_STORAGE_KEY)).toBeNull();
+    expect(getAppState().local.profileImageByUserId).toEqual({});
+    expect(loggerMock.error).toHaveBeenCalled();
+  });
+
   it("reports the keys a blocked browser would not remove", async () => {
     window.localStorage.setItem(LOCAL_STATE_STORAGE_KEY, "{}");
     const removeItem = vi
