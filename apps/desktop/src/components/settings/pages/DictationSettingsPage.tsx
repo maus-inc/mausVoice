@@ -7,7 +7,7 @@ import {
 } from "@mui/icons-material";
 import { Link, Stack, Typography } from "@mui/material";
 import type { ChangeEvent } from "react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { useNavigate } from "react-router-dom";
 import { produceAppState, useAppStore } from "../../../store";
@@ -45,11 +45,12 @@ import {
   KEYBOARD_LAYOUT_LANGUAGE,
   WHISPER_LANGUAGES,
 } from "../../../utils/language.utils";
-import { logOnRejection } from "../../../utils/promise.utils";
 import { settingsPagePath, settingAnchorId } from "../settings-routes";
 import { SettingGroup, SettingRow, SettingToggleRow } from "../SettingRow";
 import { SettingNumberField, SettingSelect } from "../SettingRowControls";
+import { logOnRejection } from "../../../utils/promise.utils";
 import { useSettingsAvailability } from "../settings-availability";
+import { useSavedNumberField } from "../../../hooks/use-saved-number-field";
 
 const openDialog = (
   key:
@@ -84,48 +85,6 @@ const selectDictationState = (state: AppState) => {
     getEffectiveHandsFreeDelayMs(preferences),
     getGenerativePrefs(state).mode !== "none",
   ] as const;
-};
-
-/**
- * The values this page has written to the store and whose arrival has not been
- * seen yet.
- *
- * A number field here commits on blur, and the store only carries a written
- * value once the repository call returns, so two writes can be in flight at
- * once. Keeping every value in flight — not just the most recent — is what
- * lets the sync effects tell the page's own writes apart from a preference
- * that changed somewhere else, including an older write landing after a newer
- * one.
- *
- * The set holds exactly the writes that have not reported back. Each value
- * leaves it either by causing the arrival the effect claims it from, or by its
- * save failing, which leaves the store untouched and so means no arrival is
- * coming. That is what bounds it: the size is the number of writes in flight,
- * and nothing here can hold a value that is still on its way — which a cap
- * would, turning the arrival of an evicted value into a change from elsewhere
- * and writing it back over a newer draft.
- */
-const useOwnWrites = () => {
-  const writes = useRef<Set<number>>(new Set());
-  return useMemo(
-    () => ({
-      /** Records a value this page has sent to the store. */
-      record: (value: number) => {
-        writes.current.add(value);
-      },
-      /**
-       * Whether the value that just arrived is one this page wrote. The claim
-       * is consumed, so the same value changing again later reads as a change
-       * from somewhere else.
-       */
-      claim: (value: number) => writes.current.delete(value),
-      /** Drops a write whose save failed, because it will never arrive. */
-      abandon: (value: number) => {
-        writes.current.delete(value);
-      },
-    }),
-    [],
-  );
 };
 
 export default function DictationSettingsPage() {
@@ -172,48 +131,6 @@ export default function DictationSettingsPage() {
     );
   };
 
-  const [limitInput, setLimitInput] = useState(String(dictationLimitMinutes));
-  const [limitError, setLimitError] = useState<string | null>(null);
-  /**
-   * The value this page last asked the store to save, or null when the last
-   * request failed and the same number has to be committable again.
-   *
-   * It is deliberately not the value in the store: the store still holds the
-   * old preference while a save is in flight, so someone who changes 7 to 10
-   * and then back to 7 before the first save lands is asking for 7 — reading
-   * the skip test off the store would refuse the reversion and leave the field
-   * showing a number the preference does not have.
-   */
-  const requestedLimit = useRef<number | null>(dictationLimitMinutes);
-  const limitWrites = useOwnWrites();
-
-  const [delayInput, setDelayInput] = useState(
-    formatHandsFreeDelaySeconds(handsFreeDelayMs),
-  );
-  const [delayError, setDelayError] = useState<string | null>(null);
-  /** The delay this page last asked the store to save, as above. */
-  const requestedDelay = useRef<number | null>(handsFreeDelayMs);
-  const delayWrites = useOwnWrites();
-
-  // Seeding a field is only ever right for a value from somewhere else. The
-  // value this page sent arrives here too, and by then someone may have typed
-  // the next draft into the field: writing the saved value back over it would
-  // silently lose the edit, which is the one thing a preferences field must
-  // not do.
-  useEffect(() => {
-    if (!limitWrites.claim(dictationLimitMinutes)) {
-      setLimitInput(String(dictationLimitMinutes));
-      setLimitError(null);
-    }
-  }, [dictationLimitMinutes, limitWrites]);
-
-  useEffect(() => {
-    if (!delayWrites.claim(handsFreeDelayMs)) {
-      setDelayInput(formatHandsFreeDelaySeconds(handsFreeDelayMs));
-      setDelayError(null);
-    }
-  }, [handsFreeDelayMs, delayWrites]);
-
   const outOfRangeMessage = useCallback(
     (max: number) =>
       intl.formatMessage(
@@ -240,62 +157,23 @@ export default function DictationSettingsPage() {
     [intl],
   );
 
-  const commitLimit = () => {
-    const minutes = parseDictationLimitMinutes(limitInput);
-    if (minutes === null) {
-      setLimitError(wholeMinutesMessage(MAX_DICTATION_LIMIT_MINUTES));
-      return;
-    }
+  const limitField = useSavedNumberField({
+    saved: dictationLimitMinutes,
+    format: String,
+    parse: parseDictationLimitMinutes,
+    save: setDictationLimitMinutes,
+    invalidMessage: () => wholeMinutesMessage(MAX_DICTATION_LIMIT_MINUTES),
+    context: "settings page: setDictationLimitMinutes",
+  });
 
-    setLimitError(null);
-    setLimitInput(String(minutes));
-    if (minutes === requestedLimit.current) {
-      return;
-    }
-    limitWrites.record(minutes);
-    requestedLimit.current = minutes;
-    logOnRejection(
-      setDictationLimitMinutes(minutes).catch((error: unknown) => {
-        // A failed save leaves the preference alone and shows its own snackbar,
-        // so the same number must be committable again: forget the request.
-        // Only this write's request is forgotten — a newer one may have
-        // replaced it while this was in flight.
-        if (requestedLimit.current === minutes) {
-          requestedLimit.current = null;
-        }
-        limitWrites.abandon(minutes);
-        throw error;
-      }),
-      "settings page: setDictationLimitMinutes",
-    );
-  };
-
-  const commitDelay = () => {
-    const milliseconds = parseHandsFreeDelaySeconds(delayInput);
-    if (milliseconds === null) {
-      setDelayError(outOfRangeMessage(MAX_HANDS_FREE_DELAY_SECONDS));
-      return;
-    }
-
-    setDelayError(null);
-    setDelayInput(formatHandsFreeDelaySeconds(milliseconds));
-    if (milliseconds === requestedDelay.current) {
-      return;
-    }
-    // Requested before the write, for the same reason as the minutes field.
-    delayWrites.record(milliseconds);
-    requestedDelay.current = milliseconds;
-    logOnRejection(
-      setHandsFreeDelayMs(milliseconds).catch((error: unknown) => {
-        if (requestedDelay.current === milliseconds) {
-          requestedDelay.current = null;
-        }
-        delayWrites.abandon(milliseconds);
-        throw error;
-      }),
-      "settings page: setHandsFreeDelayMs",
-    );
-  };
+  const delayField = useSavedNumberField({
+    saved: handsFreeDelayMs,
+    format: formatHandsFreeDelaySeconds,
+    parse: parseHandsFreeDelaySeconds,
+    save: setHandsFreeDelayMs,
+    invalidMessage: () => outOfRangeMessage(MAX_HANDS_FREE_DELAY_SECONDS),
+    context: "settings page: setHandsFreeDelayMs",
+  });
 
   const togglePageSetting =
     (action: (enabled: boolean) => Promise<void> | void, label: string) =>
@@ -474,10 +352,10 @@ export default function DictationSettingsPage() {
             }
             control={
               <SettingNumberField
-                value={limitInput}
-                onChange={setLimitInput}
-                onCommit={commitLimit}
-                error={limitError}
+                value={limitField.input}
+                onChange={limitField.setInput}
+                onCommit={limitField.commit}
+                error={limitField.error}
                 unit={intl.formatMessage({ defaultMessage: "min" })}
                 min={0}
                 max={MAX_DICTATION_LIMIT_MINUTES}
@@ -493,10 +371,10 @@ export default function DictationSettingsPage() {
           }
           control={
             <SettingNumberField
-              value={delayInput}
-              onChange={setDelayInput}
-              onCommit={commitDelay}
-              error={delayError}
+              value={delayField.input}
+              onChange={delayField.setInput}
+              onCommit={delayField.commit}
+              error={delayField.error}
               unit={intl.formatMessage({ defaultMessage: "sec" })}
               min={0}
               max={MAX_HANDS_FREE_DELAY_SECONDS}
