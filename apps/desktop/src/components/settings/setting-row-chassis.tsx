@@ -74,6 +74,13 @@ export const controlColumnSx: SystemStyleObject<Theme> = {
 export const contentControlColumnSx: SystemStyleObject<Theme> = {
   ...controlColumnSx,
   width: "auto",
+  // The cap is the label's floor: a value that grows eats the label beside it,
+  // and the ellipsis on the value says so. A control is not a value — it is as
+  // wide as its options and no wider, because the text inside it cannot be
+  // shortened — so there the cap only ever cuts a control in half, which is the
+  // clipping this column exists to stop. The floor still matters where the row
+  // has nothing to spare, which is why the cap stays on the narrowest sizes.
+  maxWidth: { xs: "60%", sm: "none" },
 };
 
 export const labelColumnSx: SystemStyleObject<Theme> = {

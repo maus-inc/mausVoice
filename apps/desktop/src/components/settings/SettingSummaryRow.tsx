@@ -1,5 +1,6 @@
 import { ChevronRight, Info } from "lucide-react";
-import { Box, Tooltip, Typography } from "@mui/material";
+import { Box, Typography } from "@mui/material";
+import { ConditionalTooltip } from "../common/ConditionalTooltip";
 import type { ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { settingEntryOf } from "../../utils/settings-registry";
@@ -41,7 +42,7 @@ export type SettingSummaryRowProps = SettingSummaryTarget & {
   subtitle?: ReactNode;
   title: ReactNode;
   /**
-   * What the row means, on hover.
+   * What the row means, on hover or on focus.
    *
    * The row states what a key does in as few words as a label allows, and a
    * label cannot carry a sentence. Rather than hanging a second line under every
@@ -60,14 +61,13 @@ export type SettingSummaryRowProps = SettingSummaryTarget & {
 };
 
 /**
- * The row's title with its explanation, when it has one.
+ * The row's title, with the glyph that marks a row whose explanation waits
+ * behind a hover.
  *
- * The glyph is `aria-hidden` and the tooltip is attached to the *title text*
- * rather than to the glyph's own box: hovering the words works as well as
- * hovering the dot, and a screen reader hears the explanation as the row's
- * description instead of as a stray control named "info". MUI wires
- * `aria-describedby` from the tooltip to whatever it wraps, and the glyph is
- * inside that wrapper.
+ * The glyph is `aria-hidden`: it is the visual half of the affordance, not a
+ * control. The explanation itself is attached to the row — see the component
+ * below — so a screen reader hears it as the row's description instead of as a
+ * stray control named "info".
  */
 const RowTitle = ({
   title,
@@ -80,21 +80,19 @@ const RowTitle = ({
     return <>{title}</>;
   }
   return (
-    <Tooltip title={tooltip} placement="top" enterDelay={400}>
+    <Box
+      component="span"
+      sx={{ display: "inline-flex", alignItems: "center", gap: 0.75 }}
+    >
+      {title}
       <Box
+        aria-hidden
         component="span"
-        sx={{ display: "inline-flex", alignItems: "center", gap: 0.75 }}
+        sx={{ display: "inline-flex", color: "text.disabled" }}
       >
-        {title}
-        <Box
-          aria-hidden
-          component="span"
-          sx={{ display: "inline-flex", color: "text.disabled" }}
-        >
-          <Info size={15} strokeWidth={1.9} />
-        </Box>
+        <Info size={15} strokeWidth={1.9} />
       </Box>
-    </Tooltip>
+    </Box>
   );
 };
 
@@ -149,7 +147,7 @@ export const SettingSummaryRow = ({
     return null;
   }
 
-  return (
+  const row = (
     <Box
       component="button"
       type="button"
@@ -190,5 +188,22 @@ export const SettingSummaryRow = ({
         </TrailingGlyph>
       </Box>
     </Box>
+  );
+
+  // The tooltip wraps the row rather than the glyph beside its title, because
+  // the row is what can be focused: a keyboard user tabs to the button, and a
+  // tooltip listening on a span inside it would never hear that. `describeChild`
+  // keeps the explanation as a description of the row, so it is read out after
+  // the row's own name and the name itself is not replaced by a sentence.
+  return (
+    <ConditionalTooltip
+      enabled={tooltip != null}
+      title={tooltip}
+      placement="top"
+      enterDelay={400}
+      describeChild
+    >
+      {row}
+    </ConditionalTooltip>
   );
 };

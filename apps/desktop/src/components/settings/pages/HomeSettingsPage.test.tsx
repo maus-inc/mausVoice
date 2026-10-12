@@ -166,6 +166,36 @@ describe("HomeSettingsPage", () => {
     );
   });
 
+  it("attaches the explanation to the row, so keyboard focus finds it", () => {
+    // The glyph is the visual half of the affordance; the row is what can be
+    // focused. A tooltip listening on the glyph would never hear a keyboard,
+    // and one wrapped around the row describes the row instead of replacing
+    // its name.
+    vi.useFakeTimers();
+    try {
+      render();
+
+      const dictate = requireElement(
+        row("Hold to dictate"),
+        "the dictation row",
+      );
+      act(() => {
+        dictate.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+      });
+      act(() => {
+        vi.advanceTimersByTime(600);
+      });
+
+      const describedBy = dictate.getAttribute("aria-describedby");
+      expect(describedBy).toBeTruthy();
+      expect(
+        describedBy ? document.getElementById(describedBy)?.textContent : null,
+      ).toContain("release to transcribe");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("names the local model and where it runs", () => {
     render();
 
