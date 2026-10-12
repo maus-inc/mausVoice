@@ -61,14 +61,17 @@ export const controlColumnSx: SystemStyleObject<Theme> = {
 };
 
 /**
- * The control column of a summary row, which sizes to its content.
+ * The control column for a row whose control is wider than the shared width.
  *
- * The shared column's fixed 240px is right for a settings page, where values
- * line up down a long list. In a two-up quick-access card it would push the
- * label column past its own width, so this keeps the alignment rules and the
- * gap and lets the column be as wide as what it holds.
+ * The fixed 240px above is right for a settings page, where values line up down
+ * a long list, but it is a *column* width, not a budget for what a control may
+ * draw: a segmented control holds as many options as the setting has, in
+ * whatever language the person is reading, and one that does not fit is clipped
+ * mid-word rather than wrapped. So a control sizes to its content, and the label
+ * column — which can wrap — gives up the difference. Values and controls are
+ * both right aligned, so the edge they share still lines up either way.
  */
-export const summaryControlColumnSx: SystemStyleObject<Theme> = {
+export const contentControlColumnSx: SystemStyleObject<Theme> = {
   ...controlColumnSx,
   width: "auto",
 };
@@ -79,11 +82,23 @@ export const labelColumnSx: SystemStyleObject<Theme> = {
 };
 
 export const SettingRowText = ({
+  subtitle,
   title,
   description,
   titleId,
   descriptionId,
 }: {
+  /**
+   * What the row's subject is, above it: "AI transcription" over the model that
+   * answers it.
+   *
+   * A summary of a setting on another page has to say both which thing it is
+   * about and which one is chosen, and the thing it is about is not the row's
+   * value — it is the shape of the answer. The word goes above in small muted
+   * type so the eye lands on the answer first and reads the label only when it
+   * needs to, which is the opposite of what a row's title would do with it.
+   */
+  subtitle?: ReactNode;
   title: ReactNode;
   description?: ReactNode;
   /**
@@ -95,6 +110,15 @@ export const SettingRowText = ({
   descriptionId?: string;
 }) => (
   <Box sx={labelColumnSx}>
+    {subtitle && (
+      <Typography
+        variant="caption"
+        component="span"
+        sx={{ display: "block", color: "text.secondary" }}
+      >
+        {subtitle}
+      </Typography>
+    )}
     <Typography id={titleId} variant="body1" sx={{ fontWeight: 600 }}>
       {title}
     </Typography>
@@ -109,6 +133,39 @@ export const SettingRowText = ({
     )}
   </Box>
 );
+
+/**
+ * The tile a summary row's leading glyph sits in.
+ *
+ * Shared rather than declared per row kind: a settings summary draws a label
+ * with an icon beside it, and the models card draws two stacked lines beside
+ * the same tile — the tile is one object either way, and duplicating it is how
+ * two surfaces that are meant to look identical drift apart.
+ */
+export const summaryIconTileSx: SystemStyleObject<Theme> = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  flexShrink: 0,
+  width: 40,
+  height: 40,
+  border: 1,
+  borderColor: "divider",
+  borderRadius: 1,
+  bgcolor: "level2",
+  color: "text.secondary",
+};
+
+/**
+ * The tile of a row whose subject needs the person's attention: a provider with
+ * no key, a model that is not downloaded. The row's own text carries the state;
+ * the tint only agrees with it.
+ */
+export const attentionTileSx: SystemStyleObject<Theme> = {
+  color: "warning.main",
+  borderColor: (theme: Theme) =>
+    `rgb(${theme.vars?.palette?.warning.mainChannel} / 0.4)`,
+};
 
 /**
  * A trailing glyph, tinted by the row rather than by the icon library.

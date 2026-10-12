@@ -38,6 +38,13 @@ import { SettingsHighlightContext } from "./settings-highlight";
  * Rail entry for one page. Links, not buttons: each page is a route, the
  * browser owns back and forward, and `aria-current` marks where you are without
  * a scroll spy guessing.
+ *
+ * The highlight is the text itself and nothing else. A filled box around the
+ * current row made the rail look like a control standing beside the page rather
+ * than the list of pages it is — and at eight rows, eight boxes waiting to be
+ * filled is more furniture than navigation. Weight carries "you are here";
+ * colour carries "this is live", which is the one thing a hovered row and the
+ * current row share.
  */
 const SettingsRailLink = ({
   pageId,
@@ -51,18 +58,18 @@ const SettingsRailLink = ({
     to={settingsPagePath(pageId)}
     aria-current={selected ? "page" : undefined}
     sx={{
-      display: "block",
+      display: "flex",
+      alignItems: "center",
+      minHeight: 32,
       px: 1.5,
-      py: 0.75,
       borderRadius: 1,
       fontSize: "0.8125rem",
       fontWeight: selected ? 600 : 500,
       color: selected ? "text.primary" : "text.secondary",
       textDecoration: "none",
-      bgcolor: selected ? "action.selected" : "transparent",
       whiteSpace: "nowrap",
-      transition: "background-color 150ms ease, color 150ms ease",
-      "&:hover": { bgcolor: "action.hover", color: "text.primary" },
+      transition: "color 150ms ease",
+      "&:hover": { color: "text.primary" },
       "&:focus-visible": {
         outline: "2px solid",
         outlineColor: "primary.main",
@@ -292,7 +299,14 @@ export const SettingsLayout = () => {
       <Stack
         direction={{ xs: "column", md: "row" }}
         spacing={{ xs: 2, md: 4 }}
-        sx={{ alignItems: "flex-start" }}
+        sx={{
+          alignItems: "flex-start",
+          // The scroll box above this is a definite height, so the surface can
+          // claim the rest of it. A page is then free to use the leftover space
+          // — centring on the overview, which is otherwise a two-card answer
+          // pinned to the top of an empty window.
+          minHeight: "100%",
+        }}
       >
         <Stack
           spacing={2}
@@ -372,7 +386,19 @@ export const SettingsLayout = () => {
             ))}
           </Stack>
         </Stack>
-        <Box sx={{ flexGrow: 1, minWidth: 0, width: "100%" }}>
+        <Box
+          sx={{
+            flexGrow: 1,
+            minWidth: 0,
+            width: "100%",
+            // Stretched to the surface rather than to its own content, and a
+            // column, so a page that has space to spare can take it: see
+            // `minHeight` above.
+            alignSelf: "stretch",
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
           {searching ? (
             <SettingsSearchResults hits={hits} onSelect={openHit} />
           ) : (

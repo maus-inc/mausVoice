@@ -8,10 +8,6 @@ import { signOut } from "../../../actions/login.actions";
 import { useMyProfileImage } from "../../../hooks/user.hooks";
 import type { AppState } from "../../../state/app.state";
 import { produceAppState, useAppStore } from "../../../store";
-import {
-  getEffectivePlan,
-  planToDisplayName,
-} from "../../../utils/member.utils";
 import { logOnRejection } from "../../../utils/promise.utils";
 import { getMyUser } from "../../../utils/user.utils";
 import { UserAvatar } from "../../common/UserAvatar";
@@ -19,18 +15,13 @@ import { SettingGroup, SettingRow } from "../SettingRow";
 import { useSettingsAvailability } from "../settings-availability";
 
 /**
- * The identity the account rows report: what the profile row shows for a name,
- * the address the account is signed in with, and the plan it is on.
+ * The address the account is signed in with.
  *
- * The three are read together because they are one subject, and the store
- * compares selector results deeply, so a fresh object per call is the intended
- * shape. The email is null in the local build, where there is no session.
+ * One row reports it — the password reset announces where the link goes — and
+ * the local build has no session, so a null address is a state the page has to
+ * carry either way.
  */
-const selectAccountIdentity = (state: AppState) => ({
-  name: getMyUser(state)?.name ?? "",
-  email: state.auth?.email ?? null,
-  planName: planToDisplayName(getEffectivePlan(state)),
-});
+const selectAccountEmail = (state: AppState) => state.auth?.email ?? null;
 
 const openDialog = (
   key:
@@ -46,7 +37,8 @@ const openDialog = (
 
 export default function AccountSettingsPage() {
   const availability = useSettingsAvailability();
-  const { name, email, planName } = useAppStore(selectAccountIdentity);
+  const name = useAppStore((state) => getMyUser(state)?.name ?? "");
+  const email = useAppStore(selectAccountEmail);
   const profileImage = useMyProfileImage();
 
   return (
@@ -64,24 +56,6 @@ export default function AccountSettingsPage() {
           value={name || null}
           action={{ label: <FormattedMessage defaultMessage="Edit" /> }}
           onClick={() => openDialog("profileDialogOpen")}
-        />
-        {availability.signed_in_as && (
-          <SettingRow
-            settingKey="signed_in_as"
-            title={<FormattedMessage defaultMessage="Signed in as" />}
-            description={
-              <FormattedMessage defaultMessage="The account this copy of mausVoice is using." />
-            }
-            value={email}
-          />
-        )}
-        <SettingRow
-          settingKey="plan"
-          title={<FormattedMessage defaultMessage="Plan" />}
-          description={
-            <FormattedMessage defaultMessage="What your current plan includes. It is set on your account, not from inside the app." />
-          }
-          value={planName}
         />
       </SettingGroup>
 

@@ -1,6 +1,7 @@
 import { ArrowUpRight, ChevronRight } from "lucide-react";
 import {
   Box,
+  Link as MuiLink,
   Switch,
   Typography,
   useTheme,
@@ -8,9 +9,11 @@ import {
   type Theme,
 } from "@mui/material";
 import type { ChangeEvent, ReactNode } from "react";
+import { Link as RouterLink } from "react-router-dom";
 import { openExternalUrl } from "../../utils/open-url.utils";
 import { settingAnchorId } from "./settings-routes";
 import {
+  contentControlColumnSx,
   controlColumnSx,
   interactiveSx,
   rowSx,
@@ -114,8 +117,11 @@ const SettingRowControlColumn = ({
     );
   }
 
+  // A row that holds a control gives it the width it needs; a row that only
+  // reports a value keeps the fixed column, so values still line up down a
+  // page. See `contentControlColumnSx` for why the two are not one width.
   return (
-    <Box sx={controlColumnSx}>
+    <Box sx={control ? contentControlColumnSx : controlColumnSx}>
       {value != null && (
         <Typography
           variant="body2"
@@ -332,6 +338,14 @@ export type SettingGroupProps = {
   description?: ReactNode;
   /** Marks the group as destructive: the heading takes the error colour. */
   danger?: boolean;
+  /**
+   * A link out of the group, set on the heading's line.
+   *
+   * The card answers at a glance and the page behind it holds the rest, so the
+   * way out belongs on the heading rather than as one more row at the bottom —
+   * where it reads as another thing to check instead of a way to go deeper.
+   */
+  action?: ReactNode;
   children: ReactNode;
 };
 
@@ -389,19 +403,33 @@ export const SettingGroup = ({
   title,
   description,
   danger,
+  action,
   children,
 }: SettingGroupProps) => (
   <Box component="section" sx={{ mb: 4 }}>
-    <Typography
-      // A destructive group is presented as a label rather than as an equal of
-      // the section headings above it. Same words, different weight: the
-      // difference is the signal, and it costs the page no extra space.
-      variant={danger ? "caption" : "h6"}
-      component="h2"
-      sx={groupHeadingSx(Boolean(danger), Boolean(description))}
+    <Box
+      sx={{
+        display: "flex",
+        alignItems: "baseline",
+        // The link sits on the heading's line and takes the leftover width only
+        // when the heading is long, which is what keeps the two ends of a
+        // two-up card from having their headings wrap differently.
+        justifyContent: action ? "space-between" : "flex-start",
+        gap: 2,
+      }}
     >
-      {title}
-    </Typography>
+      <Typography
+        // A destructive group is presented as a label rather than as an equal
+        // of the section headings above it. Same words, different weight: the
+        // difference is the signal, and it costs the page no extra space.
+        variant={danger ? "caption" : "h6"}
+        component="h2"
+        sx={groupHeadingSx(Boolean(danger), Boolean(description))}
+      >
+        {title}
+      </Typography>
+      {action}
+    </Box>
     {description && (
       <Typography
         variant="body2"
@@ -414,4 +442,37 @@ export const SettingGroup = ({
       {children}
     </Box>
   </Box>
+);
+
+/**
+ * The link on a group's heading line, for the page that owns the whole group.
+ *
+ * A card on the overview is a set of rows summarized; the page behind it is
+ * where the rest lives, and that "rest" is the one thing a card cannot show. It
+ * sits on the heading rather than as a row at the bottom because the rows of a
+ * card are all settings, and a row that opens a page would be the one row that
+ * is not — the two kinds of thing read as the same thing when they share the
+ * same chassis.
+ */
+export const SettingGroupLink = ({
+  to,
+  children,
+}: {
+  to: string;
+  children: ReactNode;
+}) => (
+  <MuiLink
+    component={RouterLink}
+    to={to}
+    variant="body2"
+    underline="hover"
+    sx={{
+      color: "text.secondary",
+      fontWeight: 600,
+      whiteSpace: "nowrap",
+      "&:hover": { color: "text.primary" },
+    }}
+  >
+    {children}
+  </MuiLink>
 );

@@ -260,8 +260,6 @@ export const SETTING_ENTRIES: SettingEntry[] = [
 
   ...settingsForGroup("account", "profile", {
     name: ["profile", "username", "display name"],
-    signed_in_as: ["email", "signed in"],
-    plan: ["subscription", "billing", "pro", "free"],
   }),
   ...settingsForGroup("account", "security", {
     change_password: ["password", "reset"],

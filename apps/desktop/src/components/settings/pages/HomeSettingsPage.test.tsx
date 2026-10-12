@@ -81,6 +81,12 @@ describe("HomeSettingsPage", () => {
       button.textContent?.includes(title),
     );
 
+  // A card's rows are buttons; the link on its heading is an anchor.
+  const link = (title: string) =>
+    Array.from(container.querySelectorAll("a")).find((anchor) =>
+      anchor.textContent?.includes(title),
+    );
+
   const click = (element: Element) =>
     act(() => {
       (element as HTMLElement).click();
@@ -115,9 +121,27 @@ describe("HomeSettingsPage", () => {
     render();
 
     // Dictation runs on a platform default before any key is customised, so
-    // the row reports one; Open chat ships unbound, and an empty control would
-    // read as a broken row rather than an unset one.
+    // the row reports one; the dictionary key is bound to nothing on a fresh
+    // install, and an empty control would read as a broken row rather than an
+    // unset one.
     expect(row("Hold to dictate")?.textContent).toContain("Ctrl");
+    expect(row("Add to dictionary")?.textContent).toContain("Not set");
+  });
+
+  it("shows the chat key only while there is an assistant to open", () => {
+    render();
+
+    // No assistant mode, no chat window: a key that opens nothing is not a
+    // shortcut, it is a question the person then has to go and answer.
+    expect(row("Open chat")).toBeUndefined();
+
+    act(() => {
+      setAppState((state) => ({
+        ...state,
+        local: { ...state.local, assistantModeEnabled: true },
+      }));
+    });
+
     expect(row("Open chat")?.textContent).toContain("Not set");
   });
 
@@ -130,6 +154,16 @@ describe("HomeSettingsPage", () => {
     });
     expect(row("Previous writing style")).not.toBeUndefined();
     expect(row("Next writing style")).not.toBeUndefined();
+  });
+
+  it("keeps the explanation behind a hover rather than under the row", () => {
+    render();
+
+    // The card names the key and shows it. What the key does is a sentence, and
+    // a card of sentences is what "too many subtexts" looked like.
+    expect(row("Hold to dictate")?.textContent).not.toContain(
+      "release to transcribe",
+    );
   });
 
   it("names the local model and where it runs", () => {
@@ -273,13 +307,13 @@ describe("HomeSettingsPage", () => {
     );
   });
 
-  it("links the footer rows to the pages that own the detail", () => {
+  it("links each heading to the page that owns the whole group", () => {
     render();
 
-    click(requireElement(row("All shortcuts"), "the shortcuts link"));
+    click(requireElement(link("All shortcuts"), "the shortcuts link"));
     expect(location()).toBe("/dashboard/settings/shortcuts");
 
-    click(requireElement(row("Manage models"), "the models link"));
+    click(requireElement(link("Manage models"), "the models link"));
     expect(location()).toBe("/dashboard/settings/ai-models");
   });
 

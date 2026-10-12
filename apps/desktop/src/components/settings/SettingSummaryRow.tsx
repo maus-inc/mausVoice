@@ -1,43 +1,18 @@
-import { ChevronRight } from "lucide-react";
-import { Box, Typography, type Theme } from "@mui/material";
-import type { SystemStyleObject } from "@mui/system";
+import { ChevronRight, Info } from "lucide-react";
+import { Box, Tooltip, Typography } from "@mui/material";
 import type { ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { settingEntryOf } from "../../utils/settings-registry";
 import { settingAnchorId, settingsPagePath } from "./settings-routes";
 import {
+  attentionTileSx,
+  contentControlColumnSx,
   interactiveSx,
   rowSx,
-  summaryControlColumnSx,
+  summaryIconTileSx,
   SettingRowText,
   TrailingGlyph,
 } from "./setting-row-chassis";
-
-/** The tile a summary row's leading glyph sits in. */
-const summaryIconTileSx: SystemStyleObject<Theme> = {
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  flexShrink: 0,
-  width: 40,
-  height: 40,
-  border: 1,
-  borderColor: "divider",
-  borderRadius: 1,
-  bgcolor: "level2",
-  color: "text.secondary",
-};
-
-/**
- * The glyph tile of a row whose subject needs the person's attention: a
- * provider with no key, a model that is not downloaded. The row's own text
- * carries the state; the tint only agrees with it.
- */
-const attentionTileSx: SystemStyleObject<Theme> = {
-  color: "warning.main",
-  borderColor: (theme: Theme) =>
-    `rgb(${theme.vars?.palette?.warning.mainChannel} / 0.4)`,
-};
 
 /**
  * Where a summary row goes: to the setting it reports, or to the page that
@@ -62,8 +37,18 @@ type SettingSummaryTarget =
     };
 
 export type SettingSummaryRowProps = SettingSummaryTarget & {
+  /** What the row is about, above its answer: see `SettingRowText`. */
+  subtitle?: ReactNode;
   title: ReactNode;
-  description?: ReactNode;
+  /**
+   * What the row means, on hover.
+   *
+   * The row states what a key does in as few words as a label allows, and a
+   * label cannot carry a sentence. Rather than hanging a second line under every
+   * row — six of them turn a card into a page — the explanation waits behind an
+   * info glyph for the one person who wants it.
+   */
+  tooltip?: ReactNode;
   /** Leading glyph, drawn in a tile: these rows lead a scan. */
   icon?: ReactNode;
   /** Reported state, right aligned before the chevron. */
@@ -75,13 +60,44 @@ export type SettingSummaryRowProps = SettingSummaryTarget & {
 };
 
 /**
- * A row that reports a setting living on another page, and links to it.
+ * The row's title with its explanation, when it has one.
  *
- * It shares the row chassis with `SettingRow` — the same height, padding,
- * hover, press and focus treatment, and the same control column alignment — so
- * a summary cannot drift from the rows it summarizes. What it does not share is
- * the anchor: see `linksTo`.
+ * The glyph is `aria-hidden` and the tooltip is attached to the *title text*
+ * rather than to the glyph's own box: hovering the words works as well as
+ * hovering the dot, and a screen reader hears the explanation as the row's
+ * description instead of as a stray control named "info". MUI wires
+ * `aria-describedby` from the tooltip to whatever it wraps, and the glyph is
+ * inside that wrapper.
  */
+const RowTitle = ({
+  title,
+  tooltip,
+}: {
+  title: ReactNode;
+  tooltip?: ReactNode;
+}) => {
+  if (!tooltip) {
+    return <>{title}</>;
+  }
+  return (
+    <Tooltip title={tooltip} placement="top" enterDelay={400}>
+      <Box
+        component="span"
+        sx={{ display: "inline-flex", alignItems: "center", gap: 0.75 }}
+      >
+        {title}
+        <Box
+          aria-hidden
+          component="span"
+          sx={{ display: "inline-flex", color: "text.disabled" }}
+        >
+          <Info size={15} strokeWidth={1.9} />
+        </Box>
+      </Box>
+    </Tooltip>
+  );
+};
+
 /**
  * Where a summary row goes, or null when it has nowhere to go.
  *
@@ -105,11 +121,20 @@ const summaryTarget = (
   return path ?? null;
 };
 
+/**
+ * A row that reports a setting living on another page, and links to it.
+ *
+ * It shares the row chassis with `SettingRow` — the same height, padding,
+ * hover, press and focus treatment, and the same control column alignment — so
+ * a summary cannot drift from the rows it summarizes. What it does not share is
+ * the anchor: see `linksTo`.
+ */
 export const SettingSummaryRow = ({
   linksTo,
   path,
+  subtitle,
   title,
-  description,
+  tooltip,
   icon,
   value,
   control,
@@ -140,9 +165,12 @@ export const SettingSummaryRow = ({
         </Box>
       )}
       {/* No label ids: this row is its own control, so it is named by the
-          title, description and value it renders, in that order. */}
-      <SettingRowText title={title} description={description} />
-      <Box sx={summaryControlColumnSx}>
+          title, tooltip and value it renders, in that order. */}
+      <SettingRowText
+        subtitle={subtitle}
+        title={<RowTitle title={title} tooltip={tooltip} />}
+      />
+      <Box sx={contentControlColumnSx}>
         {value != null && (
           <Typography
             variant="body2"

@@ -43,7 +43,6 @@ export const useSettingsAvailability = (): SettingAvailability => {
       // `getAccountAvailability` returns: a fresh object every render is a new
       // reference to every memo that depends on this hook, and the tuple is
       // what the store's deep comparison is good at.
-      getIsLoggedIn(state),
       getIsLoggedIn(state) && getHasEmailProvider(state),
       getIsLoggedIn(state),
       getIsLoggedIn(state),
@@ -64,7 +63,6 @@ export const useSettingsAvailability = (): SettingAvailability => {
     supportsCorrectionWatch,
     isWindows,
     pillPlacementAvailable,
-    signedInAs,
     changePassword,
     signOut,
     deleteAccount,
@@ -95,7 +93,6 @@ export const useSettingsAvailability = (): SettingAvailability => {
       where_your_dictation_audio_goes: apiKeysKnown
         ? audioDisclosureVisible
         : undefined,
-      signed_in_as: signedInAs,
       change_password: changePassword,
       sign_out: signOut,
       delete_account: deleteAccount,
@@ -109,7 +106,6 @@ export const useSettingsAvailability = (): SettingAvailability => {
       pillPlacementAvailable,
       transcriptionProvider,
       audioDisclosureVisible,
-      signedInAs,
       changePassword,
       signOut,
       deleteAccount,
