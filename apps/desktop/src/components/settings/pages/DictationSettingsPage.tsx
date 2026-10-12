@@ -87,16 +87,6 @@ const selectDictationState = (state: AppState) => {
 };
 
 /**
- * The values this page has written to the store and not yet seen come back.
- *
- * A number field here commits on blur, and the store only carries a written
- * value once the repository call returns, so two writes can be in flight at
- * once. Keeping every value in flight — not just the most recent — is what
- * lets the sync effects tell the page's own writes apart from a preference
- * that changed somewhere else, including an older write landing after a newer
- * one.
- */
-/**
  * The values this page has written to the store and whose arrival has not been
  * seen yet.
  *

@@ -220,7 +220,7 @@ describe("DictationSettingsPage", () => {
     expect(limitField()?.value).toBe(String(SAVED_MINUTES));
   });
 
-  it("does not let a late write overwrite a draft after another save failed", async () => {
+  it("does not let a late write overwrite the newest draft", async () => {
     // The set of writes this page is waiting on must not grow a cap: a value
     // dropped from it would arrive as a "change from elsewhere" and be written
     // over the field. Nine commits, each landing after the next, keep the
