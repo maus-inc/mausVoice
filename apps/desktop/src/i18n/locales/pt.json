@@ -958,7 +958,7 @@
   "turn_a_rambling_dictation_into_a_concise_intent_preserving_p": "Transforme um ditado divagante num prompt conciso que preserva a intenção.",
   "turn_on_ai_post_processing_for_the_best_results_in_this_lang": "Ative o pós-processamento com IA para obter os melhores resultados neste idioma.",
   "turn_on_review_before_insert_to_edit_dictated_text_in_the_pi": "Ative Rever antes de inserir para editar texto ditado na pílula, use o modo de edição por voz para transformações e configure as ferramentas do modo de agente que podem ser executadas.",
-  "turns_phrases_like_new_line_comma_and_scratch_that_into_form": "Transforma frases como \"nova linha\", \"vírgula\" e \"apaga isso\" em formatação, mesmo em Literal. Requer um idioma de ditado em inglês, porque Auto não as aplica.",
+  "turns_phrases_like_new_line_comma_and_scratch_that_into_form": "Transforma frases como \"new line\", \"comma\" e \"scratch that\" em formatação, mesmo em Literal. Requer um idioma de ditado em inglês, porque Auto não as aplica.",
   "type_a_message": "Escreva uma mensagem…",
   "type_phrase_to_confirm": "Escreve {phrase} para confirmar.",
   "ultra_fast_english_dictation_zero_hallucination_loops": "Ditado em inglês ultrarrápido, sem loops de alucinação",

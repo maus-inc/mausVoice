@@ -958,7 +958,7 @@
   "turn_a_rambling_dictation_into_a_concise_intent_preserving_p": "Transformez une dictée décousue en un prompt concis qui conserve l'intention.",
   "turn_on_ai_post_processing_for_the_best_results_in_this_lang": "Activez le post-traitement IA pour de meilleurs résultats dans cette langue.",
   "turn_on_review_before_insert_to_edit_dictated_text_in_the_pi": "Activez Révision avant insertion pour modifier le texte dicté dans la pastille, utilisez le mode Édition vocale pour les transformations et configurez les outils du mode Agent qui peuvent s’exécuter.",
-  "turns_phrases_like_new_line_comma_and_scratch_that_into_form": "Transforme des phrases comme \"nouvelle ligne\", \"virgule\" et \"raye ça\" en mise en forme, même en Mot à mot. Nécessite une langue de dictée en anglais, car Auto ne les applique pas.",
+  "turns_phrases_like_new_line_comma_and_scratch_that_into_form": "Transforme des phrases comme \"new line\", \"comma\" et \"scratch that\" en mise en forme, même en Mot à mot. Nécessite une langue de dictée en anglais, car Auto ne les applique pas.",
   "type_a_message": "Tapez un message…",
   "type_phrase_to_confirm": "Saisissez {phrase} pour confirmer.",
   "ultra_fast_english_dictation_zero_hallucination_loops": "Dictée en anglais ultra-rapide, zéro boucle d'hallucination",

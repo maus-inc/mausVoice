@@ -2,43 +2,63 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { logOnRejection } from "../utils/promise.utils";
 
 /**
- * The values a field has written and whose arrival has not been seen yet.
+ * The writes a field has sent and whose arrival has not been seen yet, counted
+ * per value rather than listed.
  *
  * A field here commits on blur, and a preference only reaches the store once
  * the repository call returns, so two writes can be in flight at once. Keeping
- * every value in flight — not just the most recent — is what lets the sync
+ * every write in flight — not just the most recent — is what lets the sync
  * effect below tell the field's own writes apart from a preference that changed
  * somewhere else, including an older write landing after a newer one.
  *
- * The set holds exactly the writes that have not reported back. Each value
- * leaves it either by causing the arrival it is claimed from, or when its save
- * fails, which leaves the store untouched and so means no arrival is coming.
- * That is what bounds it: the size is the number of writes in flight, and
- * nothing here can hold a value that is still on its way — which a cap would,
- * turning the arrival of an evicted value into a change from elsewhere and
- * writing it back over a newer draft.
+ * Counted, not a set, because the same number can be sent twice: 7 to 10 to 20
+ * and back to 10 commits 10 once more while the first 10 is still on its way. A
+ * set collapses those into one entry, so the first 10 to land spends it, and
+ * the second arrives with nothing left to claim it — which reads as a change
+ * from somewhere else and writes 10 back over the newer draft. A count keeps
+ * each write separate, so every arrival is claimed by exactly one of them.
+ *
+ * The map holds exactly the writes that have not reported back. Each one leaves
+ * either by causing the arrival it is claimed from, or when its save fails,
+ * which leaves the store untouched and so means no arrival is coming. That is
+ * what bounds it: the entries total the writes in flight, and nothing here can
+ * hold a value that is still on its way — which a cap would, turning the
+ * arrival of an evicted value into a change from elsewhere and writing it back
+ * over a newer draft.
  */
 const useOwnWrites = () => {
-  const writes = useRef<Set<number>>(new Set());
-  return useMemo(
-    () => ({
+  const writes = useRef<Map<number, number>>(new Map());
+  return useMemo(() => {
+    /** One write leaving, whether it arrived or failed to. */
+    const drop = (value: number): boolean => {
+      const pending = writes.current.get(value);
+      if (pending === undefined) {
+        return false;
+      }
+      if (pending > 1) {
+        writes.current.set(value, pending - 1);
+        return true;
+      }
+      writes.current.delete(value);
+      return true;
+    };
+    return {
       /** Records a value this field has sent to the store. */
       record: (value: number) => {
-        writes.current.add(value);
+        writes.current.set(value, (writes.current.get(value) ?? 0) + 1);
       },
       /**
        * Whether the value that just arrived is one this field wrote. The claim
        * is consumed, so the same value changing again later reads as a change
        * from somewhere else.
        */
-      claim: (value: number) => writes.current.delete(value),
+      claim: (value: number) => drop(value),
       /** Drops a write whose save failed, because it will never arrive. */
       abandon: (value: number) => {
-        writes.current.delete(value);
+        drop(value);
       },
-    }),
-    [],
-  );
+    };
+  }, []);
 };
 
 export type SavedNumberField = {
@@ -116,6 +136,12 @@ export const useSavedNumberField = ({
   // on screen.
   useEffect(() => {
     if (!writes.claim(saved)) {
+      // A value that came from somewhere else is also the baseline a later
+      // commit has to differ from. Without this the baseline stays at whatever
+      // the store held when the field mounted, and someone who types that older
+      // number back in is told there is nothing to save while the store still
+      // holds the newer one.
+      requested.current = saved;
       setInput(formatRef.current(saved));
       setError(null);
     }

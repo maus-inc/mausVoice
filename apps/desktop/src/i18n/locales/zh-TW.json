@@ -958,7 +958,7 @@
   "turn_a_rambling_dictation_into_a_concise_intent_preserving_p": "把冗長的聽寫內容變成簡潔且保留意圖的提示詞。",
   "turn_on_ai_post_processing_for_the_best_results_in_this_lang": "開啟 AI 後處理，以在該語言獲得最佳效果。",
   "turn_on_review_before_insert_to_edit_dictated_text_in_the_pi": "開啟「插入前審閱」可在膠囊視窗中編輯聽寫文字，使用語音編輯模式進行轉換，並設定允許在代理模式下執行的工具。",
-  "turns_phrases_like_new_line_comma_and_scratch_that_into_form": "將「換行」、「逗號」和「刪掉那句」等詞句轉為格式，逐字模式下也適用。需要英文聽寫語言，因為自動模式不會套用。",
+  "turns_phrases_like_new_line_comma_and_scratch_that_into_form": "將「new line」、「comma」和「scratch that」等詞句轉為格式，逐字模式下也適用。需要英文聽寫語言，因為自動模式不會套用。",
   "type_a_message": "輸入訊息…",
   "type_phrase_to_confirm": "輸入 {phrase} 以確認。",
   "ultra_fast_english_dictation_zero_hallucination_loops": "超快速英語聽寫，零幻覺循環",

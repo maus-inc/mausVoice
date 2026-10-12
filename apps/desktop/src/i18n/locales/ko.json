@@ -958,7 +958,7 @@
   "turn_a_rambling_dictation_into_a_concise_intent_preserving_p": "이완된 받아쓰기를 의도를 유지하는 간결한 프롬프트로 바꾸세요.",
   "turn_on_ai_post_processing_for_the_best_results_in_this_lang": "이 언어에서 최상의 결과를 얻으려면 AI 후처리를 켜세요.",
   "turn_on_review_before_insert_to_edit_dictated_text_in_the_pi": "삽입 전 검토를 켜서 알약 창에서 받아쓴 텍스트를 수정하고, 음성 편집 모드로 변환하며, 실행할 수 있는 에이전트 모드 도구를 구성하세요.",
-  "turns_phrases_like_new_line_comma_and_scratch_that_into_form": "\"줄 바꿈\", \"쉼표\", \"방금 그거 지워\" 같은 문구를 서식으로 변환하며 그대로 모드에서도 작동합니다. 자동은 적용하지 않으므로 영어 받아쓰기 언어가 필요합니다.",
+  "turns_phrases_like_new_line_comma_and_scratch_that_into_form": "\"new line\", \"comma\", \"scratch that\" 같은 문구를 서식으로 변환하며 그대로 모드에서도 작동합니다. 자동은 적용하지 않으므로 영어 받아쓰기 언어가 필요합니다.",
   "type_a_message": "메시지를 입력하세요…",
   "type_phrase_to_confirm": "확인하려면 {phrase}을(를) 입력하세요.",
   "ultra_fast_english_dictation_zero_hallucination_loops": "초고속 영어 받아쓰기, 환각 현상 없음",

@@ -62,10 +62,19 @@ const jpegMarkerIsStandalone = (marker: number): boolean =>
   marker === 0x01 || (marker >= 0xd0 && marker <= 0xd8);
 
 /**
- * The size a frame header states, or null when the file ends inside it.
+ * The size a frame header states, or null when the file ends inside it or the
+ * size is not there to read.
  *
  * A file cut off mid-header would make the reads below throw, so a truncated
  * frame is treated like any other header this reader cannot make sense of.
+ *
+ * A zero dimension is the same answer for a different reason. A JPEG may state
+ * height 0 and supply the real one later in a DNL marker, which this walk does
+ * not follow; reporting the zero would hand a deliberately zero-area image to
+ * the caller's pixel limit, where `0 * 0` passes every ceiling and the file
+ * reaches the decoder with nothing bounding the allocation. Unresolved is
+ * refused instead, which is what the caller already does with a size it cannot
+ * read.
  */
 const readJpegFrameSize = (
   bytes: Uint8Array,
@@ -75,10 +84,12 @@ const readJpegFrameSize = (
   if (offset + JPEG_FRAME_HEADER_BYTES > bytes.length) {
     return null;
   }
-  return {
-    width: view.getUint16(offset + 7),
-    height: view.getUint16(offset + 5),
-  };
+  const width = view.getUint16(offset + 7);
+  const height = view.getUint16(offset + 5);
+  if (width === 0 || height === 0) {
+    return null;
+  }
+  return { width, height };
 };
 
 type JpegSegment = {

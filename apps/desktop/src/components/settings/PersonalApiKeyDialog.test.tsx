@@ -162,6 +162,18 @@ describe("PersonalApiKeyDialog", () => {
     expect(dialog()?.textContent).toContain("Groq refused the key");
   });
 
+  it("puts the cursor in the key field once the dialog has entered", async () => {
+    render("deepgram");
+
+    // The dialog's content is not mounted when the open effect runs, so the
+    // focus lands after the enter transition rather than at open.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    });
+
+    expect(document.activeElement).toBe(keyInput());
+  });
+
   it("will not save an empty key", async () => {
     render("deepgram");
     expect(saveButton()?.disabled).toBe(true);

@@ -14,8 +14,16 @@ describe("useSavedNumberField", () => {
   let container: HTMLDivElement;
   let root: Root;
 
-  const save = vi.fn(async () => {});
+  // Typed with its argument so the test can read back the values that were
+  // sent, in the order they went out.
+  const save = vi.fn<(value: number) => Promise<void>>(async () => {});
   const invalidMessage = () => "Not a number the preference accepts.";
+  /**
+   * The stored value, reachable from the test so a landing write can be played
+   * back in whatever order the store happens to deliver it in. Reassigned on
+   * every render by the harness below.
+   */
+  const stored = { set: (_value: number) => {} };
 
   /**
    * A one-field harness: the hook, a way to commit, and a way for the test to
@@ -23,6 +31,7 @@ describe("useSavedNumberField", () => {
    */
   const Field = ({ initial }: { initial: number }) => {
     const [saved, setSaved] = useState(initial);
+    stored.set = setSaved;
     const field = useSavedNumberField({
       saved,
       format: (value) => String(value),
@@ -143,6 +152,28 @@ describe("useSavedNumberField", () => {
     expect(input().value).toBe("13");
   });
 
+  it("keeps the draft when the same value is written twice and lands twice", () => {
+    // 7 -> 10 -> 20 -> 10 again: the second 10 is a fresh write, and it is in
+    // flight at the same time as the first. If the bookkeeping collapses the
+    // two into one entry, the first arrival spends it and the second reads as
+    // a change from elsewhere — which writes 10 back over a newer draft.
+    type("10");
+    click("commit");
+    type("20");
+    click("commit");
+    type("10");
+    click("commit");
+
+    // The two saves land in the order they were sent; the third lands last.
+    act(() => stored.set(10));
+    act(() => stored.set(20));
+    type("30");
+    act(() => stored.set(10));
+
+    expect(save.mock.calls.map(([value]) => value)).toEqual([10, 20, 10]);
+    expect(input().value).toBe("30");
+  });
+
   it("takes a value that changed outside the field", () => {
     type("12");
     expect(input().value).toBe("12");
@@ -152,5 +183,20 @@ describe("useSavedNumberField", () => {
     click("outside");
 
     expect(input().value).toBe("42");
+  });
+
+  it("saves a draft that repeats the value the store held before the outside change", () => {
+    // 7 was the stored value when the field mounted, then something else wrote
+    // 42. Someone who types 7 back in is asking for 7, and the baseline has to
+    // have moved with the store — comparing against the mount-time value would
+    // call this a no-op and leave 42 stored behind a field that shows 7.
+    click("outside");
+    expect(input().value).toBe("42");
+
+    type("7");
+    click("commit");
+
+    expect(save).toHaveBeenCalledWith(7);
+    expect(input().value).toBe("7");
   });
 });

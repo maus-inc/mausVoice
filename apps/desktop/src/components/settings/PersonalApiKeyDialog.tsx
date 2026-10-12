@@ -100,10 +100,6 @@ export const PersonalApiKeyDialog = ({
       setValue("");
       setErrorMessage(null);
       setSaving(false);
-      // The field is the dialog's whole purpose, so it takes the focus. Set
-      // here rather than as an `autoFocus` attribute, which fires as markup and
-      // cannot be deferred; this is the repo's established rule for dialogs.
-      keyRef.current?.focus();
     }
   }, [open, provider]);
 
@@ -142,7 +138,21 @@ export const PersonalApiKeyDialog = ({
   };
 
   return (
-    <Dialog open={open} onClose={close} maxWidth="xs" fullWidth>
+    <Dialog
+      open={open}
+      onClose={close}
+      maxWidth="xs"
+      fullWidth
+      slotProps={{
+        // The field is the dialog's whole purpose, so it takes the focus once
+        // the dialog has entered. Not from the open effect above: when that
+        // effect runs the dialog's content is not mounted yet — the ref is
+        // still null — and MUI's focus trap is left holding the paper. Not as
+        // `autoFocus` either, which fires as markup and cannot be deferred;
+        // this is the repo's established rule for dialogs.
+        transition: { onEntered: () => keyRef.current?.focus() },
+      }}
+    >
       <DialogTitle>{copy.title}</DialogTitle>
       <DialogContent dividers>
         <Stack spacing={2}>

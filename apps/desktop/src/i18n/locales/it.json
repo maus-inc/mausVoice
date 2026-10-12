@@ -958,7 +958,7 @@
   "turn_a_rambling_dictation_into_a_concise_intent_preserving_p": "Trasforma una dettatura dispersiva in un prompt conciso che ne conserva l'intento.",
   "turn_on_ai_post_processing_for_the_best_results_in_this_lang": "Attiva il post-elaborazione con IA per i migliori risultati in questa lingua.",
   "turn_on_review_before_insert_to_edit_dictated_text_in_the_pi": "Attiva Revisione prima dell'inserimento per modificare il testo dettato nella pillola, usa la modalità Modifica vocale per le trasformazioni e configura gli strumenti della modalità Agente che possono essere eseguiti.",
-  "turns_phrases_like_new_line_comma_and_scratch_that_into_form": "Trasforma frasi come \"nuova riga\", \"virgola\" e \"cancella quello\" in formattazione, anche in Letteralmente. Richiede una lingua di dettatura in inglese, perché Auto non le applica.",
+  "turns_phrases_like_new_line_comma_and_scratch_that_into_form": "Trasforma frasi come \"new line\", \"comma\" e \"scratch that\" in formattazione, anche in Letteralmente. Richiede una lingua di dettatura in inglese, perché Auto non le applica.",
   "type_a_message": "Scrivi un messaggio…",
   "type_phrase_to_confirm": "Digita {phrase} per confermare.",
   "ultra_fast_english_dictation_zero_hallucination_loops": "Dettatura in inglese ultraveloce, zero loop di allucinazioni",

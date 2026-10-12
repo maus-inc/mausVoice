@@ -214,6 +214,15 @@ describe("readDeclaredImageSize", () => {
     expect(await sizeOf(truncated)).toBeNull();
   });
 
+  it("refuses a frame whose height is left for a DNL marker", async () => {
+    // Height 0 means "the real one is in a later DNL", which this walk does not
+    // follow. Reading it as a size would put a zero-area image past the
+    // caller's pixel limit, because `0 * 0` is under every ceiling.
+    expect(
+      await sizeOf(paddedJpegFile({ width: 640, height: 0, padding: 8 })),
+    ).toBeNull();
+  });
+
   it("says nothing about a file with no header it recognises", async () => {
     expect(
       await sizeOf(new File(["x"], "photo.png", { type: "image/png" })),
