@@ -228,6 +228,17 @@ describe("classifyPostProcessErrorCategory", () => {
       classifyPostProcessErrorCategory("the request timed out and was aborted"),
     ).toBe(POST_PROCESS_ERROR_CATEGORY.timedOut);
   });
+
+  it("classifies a gateway timeout as a timeout, not a generic 5xx failure", () => {
+    // The explicit status map has to win over the 5xx fallback, or the 504
+    // entry is dead and the user is told the provider errored.
+    expect(classifyPostProcessErrorCategory({ status: 504 })).toBe(
+      POST_PROCESS_ERROR_CATEGORY.timedOut,
+    );
+    expect(classifyPostProcessErrorCategory({ status: 503 })).toBe(
+      POST_PROCESS_ERROR_CATEGORY.provider,
+    );
+  });
 });
 
 describe("postProcessErrorReason", () => {

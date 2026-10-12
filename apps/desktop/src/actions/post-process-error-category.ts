@@ -403,6 +403,17 @@ const STATUS_MESSAGE_CLASSIFIERS = new Map<
   [429, classifyRateLimitedStatus],
 ]);
 
+// An explicitly mapped status wins over the generic 5xx fallback: a 504 is a
+// gateway timeout, and "the request timed out" is the actionable message for
+// it, not "the provider returned an error".
+const classifyFallbackStatus = (
+  status: number,
+): PostProcessErrorCategory | undefined => {
+  const mapped = CATEGORY_BY_STATUS.get(status);
+  if (mapped) return mapped;
+  return status >= 500 ? POST_PROCESS_ERROR_CATEGORY.provider : undefined;
+};
+
 const classifyStatus = (
   status: number | undefined,
   message: string,
@@ -413,8 +424,7 @@ const classifyStatus = (
   }
   const classifier = STATUS_MESSAGE_CLASSIFIERS.get(status);
   if (classifier) return classifier(message);
-  if (status >= 500) return POST_PROCESS_ERROR_CATEGORY.provider;
-  return CATEGORY_BY_STATUS.get(status);
+  return classifyFallbackStatus(status);
 };
 
 // The prose cascade, run only when codes and status had nothing to say. The
