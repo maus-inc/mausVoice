@@ -73,14 +73,17 @@ export const useSettingsAvailability = (): SettingAvailability => {
 
   return useMemo(
     () => ({
-      // The three flags that read the key list stay absent until it loads. An
+      // The two flags that read the key list stay absent until it loads. An
       // absent key means "unknown", which `isSettingAvailable` reads as
       // available, so a `?setting=` deep link that arrives before the list does
       // still resolves: reading a not-yet-loaded source as `false` threw the
       // link away and landed the person on another page. The flags that read
       // the platform, the user record or the preferences are settled by the
-      // time any surface renders.
-      dictation_limit: apiKeysKnown ? dictationLimitEnabled : undefined,
+      // time any surface renders — including this one, which reads the
+      // transcription mode and nothing the key list has to say. Waiting for the
+      // list here would hide the limit whenever that request failed, which is a
+      // permanent hiding of a control that never depended on it.
+      dictation_limit: dictationLimitEnabled,
       automatic_style_loading: stylingMode === "manual",
       include_incognito_in_stats: incognitoModeEnabled,
       learn_from_corrections: supportsCorrectionWatch,

@@ -82,6 +82,15 @@ describe("settings availability", () => {
     ).toBe(KEY_LIST_SETTING);
   });
 
+  it("settles the dictation limit without waiting for the key list", () => {
+    render();
+
+    // The limit reads the transcription mode, which the settings already
+    // carry, so it is answered on the first render. Tying it to the key list
+    // would hide the row for good if that request failed.
+    expect(availability().dictation_limit).toBe(true);
+  });
+
   it("retires the row once the loaded key list says it does not apply", () => {
     produceAppState((draft) => {
       draft.settings.apiKeysStatus = "success";
