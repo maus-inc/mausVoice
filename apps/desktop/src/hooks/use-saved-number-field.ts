@@ -131,6 +131,14 @@ export const useSavedNumberField = ({
     formatRef.current = format;
   }, [format]);
 
+  // What the store currently reports, for the save continuations below: they
+  // decide whether the write that just finished can still produce an arrival,
+  // and that is a question about the stored value, not about the draft.
+  const savedRef = useRef(saved);
+  useEffect(() => {
+    savedRef.current = saved;
+  }, [saved]);
+
   // Seeding the field is only right for a value from somewhere else. The value
   // this field sent arrives here too, and by then it may be older than what is
   // on screen.
@@ -162,23 +170,45 @@ export const useSavedNumberField = ({
       return;
     }
 
+    // Whether this write asks for what the store already holds: if it does, and
+    // nothing newer is asked for afterwards, no arrival can come of it. Read
+    // here rather than when the save finishes, because by then the store may
+    // have moved on for reasons that say nothing about this write.
+    const storeAlreadyHeld = savedRef.current === value;
+
     writes.record(value);
     requested.current = value;
     logOnRejection(
-      // `error_` because the field's own message state is `error`: same
-      // convention as the rest of the app where a caught error has to live
-      // beside one.
-      save(value).catch((error_: unknown) => {
-        // A failed save shows its own snackbar and leaves the preference alone,
-        // so the same number has to be committable again. Only this write's
-        // request is forgotten — a newer one may have replaced it while this
-        // was in flight.
-        if (requested.current === value) {
-          requested.current = null;
-        }
-        writes.abandon(value);
-        throw error_;
-      }),
+      save(value)
+        .then(() => {
+          // A write that asks for what the store already holds produces no
+          // arrival: nothing changed, so no effect ran and nothing spent the
+          // claim. Left behind it is not idle — the next time anything moves
+          // that number, the claim reads the change as one of ours and the
+          // field keeps a draft the store no longer has. The count in
+          // `useOwnWrites` is what makes two writes of one number possible, so
+          // this is where one of them is retired. Should such a write land
+          // later anyway, on a store something else moved in the meantime, the
+          // arrival reads as a change from elsewhere and the field follows the
+          // store — the stored value is what it shows either way.
+          if (storeAlreadyHeld) {
+            writes.claim(value);
+          }
+        })
+        // `error_` because the field's own message state is `error`: same
+        // convention as the rest of the app where a caught error has to live
+        // beside one.
+        .catch((error_: unknown) => {
+          // A failed save shows its own snackbar and leaves the preference alone,
+          // so the same number has to be committable again. Only this write's
+          // request is forgotten — a newer one may have replaced it while this
+          // was in flight.
+          if (requested.current === value) {
+            requested.current = null;
+          }
+          writes.abandon(value);
+          throw error_;
+        }),
       context,
     );
   }, [input, parse, invalidMessage, format, save, context, writes]);

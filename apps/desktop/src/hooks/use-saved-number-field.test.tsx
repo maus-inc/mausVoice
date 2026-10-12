@@ -134,6 +134,31 @@ describe("useSavedNumberField", () => {
     expect(errorText()).toBe("");
   });
 
+  it("forgets a write the store already reflects, rather than swallowing a later change", async () => {
+    // 7 -> 10 -> 7 where the 7 lands on a store that already held 7: that write
+    // cannot produce an arrival, because nothing changed, so nothing spends its
+    // claim. Left behind, the claim reads the next change to 7 as one of ours —
+    // and the field keeps showing 42 while the store holds 7.
+    type("10");
+    click("commit");
+    type("7");
+    click("commit");
+    // Both writes resolve before the store reports anything, which is the
+    // order the app saves in.
+    await act(async () => {});
+
+    // The second write lands on the value the store already had.
+    act(() => stored.set(7));
+    // The first lands behind it, so the store ends at 10.
+    act(() => stored.set(10));
+
+    // Something outside the field writes 42, and then writes 7 back.
+    click("outside");
+    act(() => stored.set(7));
+
+    expect(input().value).toBe("7");
+  });
+
   it("does not save the same value twice", () => {
     click("commit");
     click("commit");
