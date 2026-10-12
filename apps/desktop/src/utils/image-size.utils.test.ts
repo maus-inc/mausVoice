@@ -63,6 +63,62 @@ const paddedJpegFile = ({
   });
 };
 
+/**
+ * An extended-format WebP. The chunk payload is flags (1 byte), three reserved
+ * bytes, then the canvas size minus one as two 24-bit little-endian values.
+ */
+const extendedWebpFile = (width: number, height: number) => {
+  const bytes = new Uint8Array(30);
+  const view = new DataView(bytes.buffer);
+  bytes.set(
+    [..."RIFF"].map((char) => char.charCodeAt(0)),
+    0,
+  );
+  bytes.set(
+    [..."WEBP"].map((char) => char.charCodeAt(0)),
+    8,
+  );
+  bytes.set(
+    [..."VP8X"].map((char) => char.charCodeAt(0)),
+    12,
+  );
+  view.setUint32(16, 10, true);
+  const writeUint24 = (offset: number, value: number) => {
+    bytes[offset] = value & 0xff;
+    bytes[offset + 1] = (value >> 8) & 0xff;
+    bytes[offset + 2] = (value >> 16) & 0xff;
+  };
+  writeUint24(24, width - 1);
+  writeUint24(27, height - 1);
+  return new File([bytes], "photo.webp", { type: "image/webp" });
+};
+
+/**
+ * A lossy WebP: the chunk payload is a three-byte frame tag, the three-byte
+ * start code, then width and height as 14-bit values in 16-bit fields.
+ */
+const lossyWebpFile = (width: number, height: number) => {
+  const bytes = new Uint8Array(30);
+  const view = new DataView(bytes.buffer);
+  bytes.set(
+    [..."RIFF"].map((char) => char.charCodeAt(0)),
+    0,
+  );
+  bytes.set(
+    [..."WEBP"].map((char) => char.charCodeAt(0)),
+    8,
+  );
+  bytes.set(
+    [..."VP8 "].map((char) => char.charCodeAt(0)),
+    12,
+  );
+  view.setUint32(16, 10, true);
+  bytes.set([0x9d, 0x01, 0x2a], 23);
+  view.setUint16(26, width, true);
+  view.setUint16(28, height, true);
+  return new File([bytes], "photo.webp", { type: "image/webp" });
+};
+
 /** A 25-byte lossless WebP: the smallest header the format allows. */
 const tinyWebpFile = () => {
   const bytes = new Uint8Array(25);
@@ -129,6 +185,23 @@ describe("readDeclaredImageSize", () => {
     // 25 bytes: RIFF size, WEBP, a VP8L chunk, and the dimensions. Refusing it
     // for being shorter than the extended-header case would refuse a real file.
     expect(await sizeOf(tinyWebpFile())).toEqual({ width: 1, height: 1 });
+  });
+
+  it("reads an extended WebP's canvas size", async () => {
+    // The canvas size sits after the flags byte and three reserved bytes;
+    // nothing else in the chunk states it.
+    expect(await sizeOf(extendedWebpFile(300, 200))).toEqual({
+      width: 300,
+      height: 200,
+    });
+  });
+
+  it("reads a lossy WebP's frame size", async () => {
+    // After the frame tag and the start code, not before them.
+    expect(await sizeOf(lossyWebpFile(640, 480))).toEqual({
+      width: 640,
+      height: 480,
+    });
   });
 
   it("says nothing rather than reading past a truncated frame header", async () => {

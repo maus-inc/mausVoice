@@ -99,15 +99,27 @@ export const useSavedNumberField = ({
   const requested = useRef<number | null>(saved);
   const writes = useOwnWrites();
 
+  // The seeding effect below is about the stored value changing, and nothing
+  // else. Reading the formatter through a ref keeps it that way: callers pass
+  // it inline as often as not, and an inlined `format` is a new function on
+  // every render, which would make the effect run on every render and write the
+  // stored value back over the draft after each keystroke — the failure this
+  // hook exists to prevent, arriving by another road. Declared first so it is
+  // current before the effect below reads it.
+  const formatRef = useRef(format);
+  useEffect(() => {
+    formatRef.current = format;
+  }, [format]);
+
   // Seeding the field is only right for a value from somewhere else. The value
   // this field sent arrives here too, and by then it may be older than what is
   // on screen.
   useEffect(() => {
     if (!writes.claim(saved)) {
-      setInput(format(saved));
+      setInput(formatRef.current(saved));
       setError(null);
     }
-  }, [saved, format, writes]);
+  }, [saved, writes]);
 
   const commit = useCallback(() => {
     const value = parse(input);
