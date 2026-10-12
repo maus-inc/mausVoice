@@ -64,14 +64,17 @@ describe("clearLocalData", () => {
     );
   });
 
-  it("wipes anyway when a stop command fails", async () => {
+  it("wipes anyway when a stop command fails, and says so", async () => {
     invokeMock.mockImplementation((command: string) =>
       command === "stop_recording"
         ? Promise.reject(new Error("no session"))
         : Promise.resolve(undefined),
     );
 
-    await expect(clearLocalData()).resolves.toEqual({ storageFailedKeys: [] });
+    // The wipe runs regardless — that is the point of trying to stop first —
+    // but a stop command that rejects is reported rather than swallowed, and
+    // the assertion above the next one is what keeps the two apart.
+    await expect(clearLocalData()).rejects.toThrow("no session");
 
     expect(invokeMock).toHaveBeenCalledWith("clear_local_data");
   });
@@ -102,6 +105,25 @@ describe("clearLocalData", () => {
     const persisted =
       window.localStorage.getItem(LOCAL_STATE_STORAGE_KEY) ?? "";
     expect(persisted).not.toContain("data:image/png");
+    expect(getAppState().local.profileImageByUserId).toEqual({});
+  });
+
+  it("reports a recorder that would not stop as an incomplete wipe", async () => {
+    // Both stop commands answer Ok when nothing is running, so a rejection is
+    // a recorder that is still live — a wipe that can be undone by the next
+    // chunk it writes. The wipe still runs, and the refusal is what the caller
+    // hears about at the end.
+    seedProfileImage();
+    window.localStorage.setItem(LOCAL_STATE_STORAGE_KEY, "{}");
+    invokeMock.mockImplementation((command: string) =>
+      command === "stop_recording"
+        ? Promise.reject(new Error("recorder stuck"))
+        : Promise.resolve(undefined),
+    );
+
+    await expect(clearLocalData()).rejects.toThrow("recorder stuck");
+
+    expect(window.localStorage.getItem(LOCAL_STATE_STORAGE_KEY)).toBeNull();
     expect(getAppState().local.profileImageByUserId).toEqual({});
   });
 

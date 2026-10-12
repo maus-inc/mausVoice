@@ -45,23 +45,39 @@ export type LocalDataWipe = {
 /** The native commands that stop work that could race the wipe. */
 const STOP_COMMANDS = ["stop_key_listener", "stop_recording"] as const;
 
-const stopNativeSubsystems = async (): Promise<void> => {
-  await Promise.all(
+/**
+ * Stop the native subsystems that could race the wipe, and report whether any
+ * refused.
+ *
+ * The commands are idempotent: `stop_recording` answers with an empty result
+ * when no recording is running and `stop_key_listener` returns Ok when there is
+ * no listener (`stop_key_listener_is_idempotent` in `platform/keyboard.rs`
+ * covers that), so "nothing was running" is a success, not an error. A
+ * rejection is therefore a recorder that is still live, and the person asking
+ * for a wipe needs to hear about it. The wipe still runs — the parts that
+ * cannot be undone should not wait on the part that can be retried — but the
+ * refusal is carried out of here and reported at the end.
+ */
+const stopNativeSubsystems = async (): Promise<unknown | null> => {
+  const outcomes = await Promise.all(
     STOP_COMMANDS.map(async (command) => {
       try {
         await invoke(command);
-      } catch {
-        // Best effort: there may be nothing running to stop. The command is
-        // absent on some platforms and errors when no session is live, and
-        // neither is a reason to abandon a wipe the person asked for.
+        return null;
+      } catch (error) {
+        getLogger().error(
+          `Failed to ${command} before clearing data: ${error}`,
+        );
+        return error;
       }
     }),
   );
+  return outcomes.find((outcome) => outcome !== null) ?? null;
 };
 
 export const clearLocalData = async (): Promise<LocalDataWipe> => {
   getLogger().info("Clearing local data on this device");
-  await stopNativeSubsystems();
+  const stopFailure = await stopNativeSubsystems();
 
   // The native wipe can fail part-way through — the audio cleanup is the
   // usual way — and that failure must not stop the steps below. The profile
@@ -83,8 +99,13 @@ export const clearLocalData = async (): Promise<LocalDataWipe> => {
   });
   const storageFailedKeys = clearAppDataStorage();
 
+  // Both failures mean the same thing to the caller — the wipe is not
+  // complete — and the native one happened first, so it is the one thrown.
   if (nativeFailure) {
     throw nativeFailure;
+  }
+  if (stopFailure) {
+    throw stopFailure;
   }
   return { storageFailedKeys };
 };
