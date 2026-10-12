@@ -109,7 +109,8 @@ type AvatarSourceSize = { width: number; height: number };
 
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
-const asciiAt = (bytes: Uint8Array, offset: number): string =>
+/** The four-character tag a container format writes at this offset. */
+const readTagAt = (bytes: Uint8Array, offset: number): string =>
   String.fromCodePoint(...bytes.subarray(offset, offset + 4));
 
 /** A PNG's size is fixed in IHDR, which is always the first chunk. */
@@ -183,7 +184,13 @@ const nextJpegSegment = (
     return { size: null, next: offset + 1 };
   }
   const marker = bytes[offset + 1];
-  if (marker === JPEG_MARKER_PREFIX || jpegMarkerIsStandalone(marker)) {
+  // A repeated prefix byte is a fill byte — one byte, not a marker pair — so
+  // the walk steps over it one byte at a time. Treating it as a pair would
+  // walk straight past the marker that follows an odd run of them.
+  if (marker === JPEG_MARKER_PREFIX) {
+    return { size: null, next: offset + 1 };
+  }
+  if (jpegMarkerIsStandalone(marker)) {
     return { size: null, next: offset + 2 };
   }
   if (JPEG_FRAME_MARKERS.has(marker)) {
@@ -230,12 +237,12 @@ const readWebpSize = (
 ): AvatarSourceSize | null => {
   if (
     bytes.length < 16 ||
-    asciiAt(bytes, 0) !== "RIFF" ||
-    asciiAt(bytes, 8) !== "WEBP"
+    readTagAt(bytes, 0) !== "RIFF" ||
+    readTagAt(bytes, 8) !== "WEBP"
   ) {
     return null;
   }
-  const format = asciiAt(bytes, 12);
+  const format = readTagAt(bytes, 12);
   // Each variant is read only as far as its own size field reaches: a 1x1
   // lossless WebP is 25 bytes, and refusing it for being shorter than the
   // extended-header case would be refusing a real file.

@@ -191,10 +191,12 @@ const paddedJpegFile = ({
   width,
   height,
   padding,
+  fillBytes = 0,
 }: {
   width: number;
   height: number;
   padding: number;
+  fillBytes?: number;
 }) => {
   const segmentLength = 2 + padding;
   const bytes = [
@@ -205,6 +207,10 @@ const paddedJpegFile = ({
     segmentLength >> 8,
     segmentLength & 0xff,
     ...Array.from({ length: padding }, () => 0x00),
+    // Legal in a JPEG: any number of 0xFF bytes may pad a marker. An odd run
+    // shifts the marker by one byte, which is the case a reader stepping over
+    // fill bytes in pairs gets wrong.
+    ...Array.from({ length: fillBytes }, () => 0xff),
     0xff,
     0xc0,
     0x00,
@@ -353,6 +359,25 @@ describe("readAvatarFile", () => {
 
     expect(result).toEqual({ ok: false, error: "unreadable" });
     expect(bitmap.decode).not.toHaveBeenCalled();
+  });
+
+  it("reads the frame header past an odd run of fill bytes", async () => {
+    installBitmap();
+    installCanvas();
+
+    // Three 0xFF fill bytes in front of the frame marker: the marker itself
+    // starts one byte later than a reader that treats fill bytes as pairs
+    // expects, so a wrong reader lands on a length field and walks off.
+    const result = await readAvatarFile(
+      paddedJpegFile({
+        width: 30_000,
+        height: 30_000,
+        padding: 16,
+        fillBytes: 3,
+      }),
+    );
+
+    expect(result).toEqual({ ok: false, error: "too-many-pixels" });
   });
 
   it("opens a tiny lossless WebP rather than refusing it for being short", async () => {
