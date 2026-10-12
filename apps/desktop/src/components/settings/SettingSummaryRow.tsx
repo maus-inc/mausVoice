@@ -12,6 +12,7 @@ import {
   rowSx,
   summaryIconTileSx,
   SettingRowText,
+  SettingRowValue,
   TrailingGlyph,
 } from "./setting-row-chassis";
 
@@ -169,19 +170,7 @@ export const SettingSummaryRow = ({
         title={<RowTitle title={title} tooltip={tooltip} />}
       />
       <Box sx={contentControlColumnSx}>
-        {value != null && (
-          <Typography
-            variant="body2"
-            sx={{
-              color: "text.secondary",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {value}
-          </Typography>
-        )}
+        <SettingRowValue value={value} />
         {control}
         <TrailingGlyph>
           <ChevronRight size={20} strokeWidth={1.9} />

@@ -4,6 +4,7 @@ import { getAppState, setAppState } from "../store";
 import { LOCAL_USER_ID } from "../utils/user.utils";
 import { PreviewOperationError } from "./PreviewOperationError";
 import {
+  EMPTY_PREVIEW_DATA,
   createPreviewScenario,
   isPreviewScenarioId,
   scenarioForPath,
@@ -207,22 +208,6 @@ const toDatabase = (data: PreviewData): PreviewDatabase => ({
   receiverEnabled: false,
 });
 
-/**
- * What is left of the preview database after a local-data wipe: nothing. The
- * desktop deletes the rows; the preview has no rows to keep.
- */
-const EMPTY_PREVIEW_DATA: PreviewData = {
-  user: null,
-  preferences: null,
-  terms: [],
-  apiKeys: [],
-  customTones: [],
-  hotkeys: [],
-  appTargets: [],
-  transcriptions: [],
-  conversations: [],
-  chatMessages: [],
-};
 
 const getList = (records: Map<string, WireRecord>): WireRecord[] =>
   [...records.values()].map(clone);

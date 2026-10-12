@@ -18,6 +18,7 @@ import {
   interactiveSx,
   rowSx,
   SettingRowText,
+  SettingRowValue,
   TrailingGlyph,
 } from "./setting-row-chassis";
 import { useSettingHighlight } from "./settings-highlight";
@@ -122,19 +123,7 @@ const SettingRowControlColumn = ({
   // page. See `contentControlColumnSx` for why the two are not one width.
   return (
     <Box sx={control ? contentControlColumnSx : controlColumnSx}>
-      {value != null && (
-        <Typography
-          variant="body2"
-          sx={{
-            color: "text.secondary",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          }}
-        >
-          {value}
-        </Typography>
-      )}
+      <SettingRowValue value={value} />
       {control}
       {action && (
         <Box

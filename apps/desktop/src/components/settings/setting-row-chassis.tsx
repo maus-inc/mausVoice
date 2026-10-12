@@ -189,3 +189,27 @@ export const TrailingGlyph = ({ children }: { children: ReactNode }) => (
     {children}
   </Box>
 );
+
+/**
+ * A row's reported value: one line, ellipsised, right aligned before whatever
+ * follows it.
+ *
+ * The row that owns a setting and the summary row that reports one from another
+ * page carried identical copies of this — same variant, same three truncation
+ * properties — so a change to how a value reads had to be made twice or it
+ * landed in one surface only.
+ */
+export const SettingRowValue = ({ value }: { value?: ReactNode }) =>
+  value == null ? null : (
+    <Typography
+      variant="body2"
+      sx={{
+        color: "text.secondary",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {value}
+    </Typography>
+  );

@@ -1,12 +1,10 @@
 import {
   Button,
-  CircularProgress,
   Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
   Stack,
-  TextField,
   Typography,
 } from "@mui/material";
 import { useState } from "react";
@@ -16,8 +14,9 @@ import { getAuthRepo } from "../../repos";
 import { produceAppState, useAppStore } from "../../store";
 import { clearLocalData } from "../../utils/local-data.utils";
 import { logOnRejection } from "../../utils/promise.utils";
-import { ConfirmationPhrase } from "./ConfirmationPhrase";
+import { ConfirmationField } from "./ConfirmationField";
 import { ConsequenceList } from "./ConsequenceList";
+import { BusyButtonLabel } from "../common/BusyButtonLabel";
 
 /**
  * The literal that has to be typed before the deletion runs, matching the
@@ -162,39 +161,11 @@ export const DeleteAccountDialog = () => {
               />,
             ]}
           />
-          <Stack spacing={1.5}>
-            <Typography variant="body2">
-              <FormattedMessage
-                defaultMessage="Type {phrase} to confirm."
-                values={{
-                  phrase: (
-                    <ConfirmationPhrase>
-                      {CONFIRMATION_PHRASE}
-                    </ConfirmationPhrase>
-                  ),
-                }}
-              />
-            </Typography>
-            <TextField
-              fullWidth
-              variant="outlined"
-              slotProps={{
-                htmlInput: {
-                  "aria-label": intl.formatMessage({
-                    defaultMessage: "Confirmation phrase",
-                  }),
-                },
-              }}
-              placeholder={CONFIRMATION_PHRASE}
-              value={confirmationValue}
-              onChange={handleConfirmationChange}
-              size="small"
-              autoComplete="off"
-              autoCapitalize="off"
-              autoCorrect="off"
-              spellCheck={false}
-            />
-          </Stack>
+          <ConfirmationField
+            phrase={CONFIRMATION_PHRASE}
+            value={confirmationValue}
+            onChange={setConfirmationValue}
+          />
         </Stack>
       </DialogContent>
       <DialogActions>
@@ -214,21 +185,9 @@ export const DeleteAccountDialog = () => {
           aria-busy={busy || undefined}
         >
           {busy ? (
-            <Stack
-              direction="row"
-              spacing={1}
-              sx={{ alignItems: "center", justifyContent: "center" }}
-            >
-              <CircularProgress
-                size={16}
-                color="inherit"
-                role="progressbar"
-                aria-label={intl.formatMessage({ defaultMessage: "Working" })}
-              />
-              <span>
-                <FormattedMessage defaultMessage="Delete account" />
-              </span>
-            </Stack>
+            <BusyButtonLabel>
+              <FormattedMessage defaultMessage="Delete account" />
+            </BusyButtonLabel>
           ) : (
             <FormattedMessage defaultMessage="Delete account" />
           )}

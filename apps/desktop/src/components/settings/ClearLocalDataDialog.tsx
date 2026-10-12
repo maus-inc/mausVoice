@@ -1,13 +1,11 @@
 import {
   Alert,
   Button,
-  CircularProgress,
   Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
   Stack,
-  TextField,
   Typography,
 } from "@mui/material";
 import { useEffect, useRef, useState } from "react";
@@ -15,8 +13,9 @@ import { FormattedMessage, useIntl, type IntlShape } from "react-intl";
 import { produceAppState, useAppStore } from "../../store";
 import { clearLocalData } from "../../utils/local-data.utils";
 import { StorageUnavailableError } from "../../utils/local-storage.utils";
-import { ConfirmationPhrase } from "./ConfirmationPhrase";
+import { ConfirmationField } from "./ConfirmationField";
 import { ConsequenceList } from "./ConsequenceList";
+import { BusyButtonLabel } from "../common/BusyButtonLabel";
 
 const CONFIRMATION_PHRASE = "clear";
 
@@ -166,42 +165,13 @@ export const ClearLocalDataDialog = () => {
           <Typography variant="body2" sx={{ color: "text.secondary" }}>
             <FormattedMessage defaultMessage="This cannot be undone. Your account and sign-in stay as they are." />
           </Typography>
-          <Stack spacing={1.5}>
-            <Typography variant="body2">
-              <FormattedMessage
-                defaultMessage="Type {phrase} to confirm."
-                values={{
-                  phrase: (
-                    <ConfirmationPhrase>
-                      {CONFIRMATION_PHRASE}
-                    </ConfirmationPhrase>
-                  ),
-                }}
-              />
-            </Typography>
-            <TextField
-              inputRef={confirmationRef}
-              fullWidth
-              // No visible label: the line above it already names the word to
-              // type, and repeating it in a floating label is one more element
-              // competing with the instruction. The accessible name stays.
-              slotProps={{
-                htmlInput: {
-                  "aria-label": intl.formatMessage({
-                    defaultMessage: "Confirmation phrase",
-                  }),
-                },
-              }}
-              value={confirmationValue}
-              onChange={(event) => setConfirmationValue(event.target.value)}
-              disabled={isClearing}
-              placeholder={CONFIRMATION_PHRASE}
-              autoComplete="off"
-              autoCapitalize="off"
-              autoCorrect="off"
-              spellCheck={false}
-            />
-          </Stack>
+          <ConfirmationField
+            phrase={CONFIRMATION_PHRASE}
+            value={confirmationValue}
+            onChange={setConfirmationValue}
+            disabled={isClearing}
+            inputRef={confirmationRef}
+          />
           {errorMessage && (
             <Alert severity="error" variant="outlined">
               {errorMessage}
@@ -223,21 +193,9 @@ export const ClearLocalDataDialog = () => {
           aria-busy={isClearing || undefined}
         >
           {isClearing ? (
-            <Stack
-              direction="row"
-              spacing={1}
-              sx={{ alignItems: "center", justifyContent: "center" }}
-            >
-              <CircularProgress
-                size={16}
-                color="inherit"
-                role="progressbar"
-                aria-label={intl.formatMessage({ defaultMessage: "Working" })}
-              />
-              <span>
-                <FormattedMessage defaultMessage="Clear local data" />
-              </span>
-            </Stack>
+            <BusyButtonLabel>
+              <FormattedMessage defaultMessage="Clear local data" />
+            </BusyButtonLabel>
           ) : (
             <FormattedMessage defaultMessage="Clear local data" />
           )}
