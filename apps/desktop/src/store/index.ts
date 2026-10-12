@@ -75,3 +75,22 @@ export const getAppState = useAppStore.getState;
 export const produceAppState = (fn: (draft: AppState) => void) => {
   setAppState((state) => produce(state, fn));
 };
+
+/**
+ * Drop this window's copy of the local slice when another one wipes storage.
+ *
+ * The app runs more than one window (a floating composer, for instance) and
+ * they all share this key while each keeps its own slice in memory. When one
+ * of them wipes local data, the others would write their stale slice — the
+ * profile photo in it — straight back out on their next state change, undoing
+ * a wipe they were never told about. The browser delivers that news as a
+ * `storage` event with a null value for the removed key, and the answer is to
+ * forget the copy in memory so the next write persists what is actually left.
+ */
+if (typeof window !== "undefined") {
+  window.addEventListener("storage", (event) => {
+    if (event.key === CURRENT_STORAGE_KEY && event.newValue === null) {
+      setAppState((state) => ({ ...state, local: INITIAL_LOCAL_STATE }));
+    }
+  });
+}

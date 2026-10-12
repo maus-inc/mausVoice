@@ -5,9 +5,21 @@ const STORAGE_KEY = "mausvoice-local-state";
 // The zustand persist middleware reads `window.localStorage`, so it stays
 // inert in the node test environment without a `window`. The app runs in a
 // webview where `window` always exists.
+/** Listeners the store registers, so a test can deliver the event itself. */
+const storageListeners: Array<(event: StorageEvent) => void> = [];
+
 Object.defineProperty(globalThis, "window", {
   configurable: true,
-  value: { localStorage },
+  value: {
+    localStorage,
+    // The store listens for another window's wipe; capture the registration
+    // so a test can hand it the event jsdom would deliver.
+    addEventListener: (type: string, listener: (event: unknown) => void) => {
+      if (type === "storage") {
+        storageListeners.push(listener as (event: StorageEvent) => void);
+      }
+    },
+  },
 });
 
 const seedPersistedLocal = (local: Record<string, unknown>) => {
@@ -26,8 +38,18 @@ const loadRehydratedLocal = async () => {
 describe("app store rehydration", () => {
   beforeEach(() => {
     localStorage.clear();
+    storageListeners.length = 0;
     vi.resetModules();
   });
+
+  const deliverStorageEvent = (event: {
+    key: string;
+    newValue: string | null;
+  }) => {
+    for (const listener of storageListeners) {
+      listener(event as StorageEvent);
+    }
+  };
 
   afterAll(() => {
     delete (globalThis as { window?: unknown }).window;
@@ -67,6 +89,45 @@ describe("app store rehydration", () => {
 
     expect(local.disablePillRewards).toBe(false);
     expect(local.assistantModeEnabled).toBe(false);
+  });
+
+  it("drops the local slice when another window wipes stored data", async () => {
+    const { getAppState, setAppState } = await import("./index");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    setAppState((state) => ({
+      ...state,
+      local: {
+        ...state.local,
+        profileImageByUserId: { "user-1": "data:image/png;base64,AAAA" },
+      },
+    }));
+
+    // A wipe in another window removes the key; the browser tells the other
+    // windows by handing them the event with a null value. Without this the
+    // window would write its stale slice — photo and all — straight back.
+    deliverStorageEvent({ key: STORAGE_KEY, newValue: null });
+
+    expect(getAppState().local.profileImageByUserId).toEqual({});
+  });
+
+  it("keeps the slice when a different key changes", async () => {
+    const { getAppState, setAppState } = await import("./index");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    setAppState((state) => ({
+      ...state,
+      local: {
+        ...state.local,
+        profileImageByUserId: { "user-1": "data:image/png;base64,AAAA" },
+      },
+    }));
+
+    // Another window writing something else is not a wipe of this window's
+    // data, and the photo it did not touch stays.
+    deliverStorageEvent({ key: "mausvoice:onboarded-at", newValue: "1" });
+
+    expect(getAppState().local.profileImageByUserId).toEqual({
+      "user-1": "data:image/png;base64,AAAA",
+    });
   });
 
   it("starts from the initial state when nothing is persisted", async () => {
