@@ -140,7 +140,7 @@ export default function AccountSettingsPage() {
             settingKey="delete_account"
             title={<FormattedMessage defaultMessage="Delete account" />}
             description={
-              <FormattedMessage defaultMessage="Deletes your account and everything stored with it. This cannot be undone." />
+              <FormattedMessage defaultMessage="Deletes your profile and everything mausVoice stores for you on this device. This cannot be undone." />
             }
             icon={<DeleteForeverOutlined color="error" />}
             action={{

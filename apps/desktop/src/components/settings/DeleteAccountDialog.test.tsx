@@ -43,21 +43,24 @@ import { DeleteAccountDialog } from "./DeleteAccountDialog";
 ensureUiHarness();
 
 const EMAIL = "morgan@example.com";
+const CONFIRMATION_PHRASE = "delete";
 const DELETION_FAILED =
   "An error occurred while attempting to delete your account. Please try again later.";
 const DELETED_BUT_LEFT_BEHIND =
-  "Your account has been deleted, but some stored data could not be removed. Quit and reopen mausVoice.";
-const DELETED = "Your account has been deleted";
+  "Your data was deleted from this device, but some of it could not be removed. Quit and reopen mausVoice.";
+const DELETED = "Your data has been deleted from this device";
 
 const snackbarMessages = () =>
   mocks.showSnackbar.mock.calls.map(([message]) => String(message));
 
 /**
- * Deleting the account is two promises: the account goes, and this device stops
+ * Deleting the account is two promises: the profile goes, and this device stops
  * holding what it kept for it. The dialog is where they meet, so these cover the
  * seam and the reporting around it — a wipe that cannot finish must not be told
- * as a deletion that failed, and the profile photo must not outlive the account
- * it belongs to.
+ * as a deletion that failed, and the profile photo must not outlive the profile
+ * it belongs to. What the dialog must not do is promise effects this build
+ * cannot deliver: the toast names what was deleted from this device, because
+ * there is no server-side account left for it to have deleted.
  */
 describe("DeleteAccountDialog", () => {
   let container: HTMLDivElement;
@@ -75,12 +78,12 @@ describe("DeleteAccountDialog", () => {
     });
   };
 
-  const typeEmail = (value: string) => {
+  const typeConfirmation = (value: string) => {
     // The dialog renders through a portal, so its fields are on the document
     // rather than inside the test's own container.
     const input = requireElement(
       document.querySelector("input"),
-      "the email field",
+      "the confirmation field",
     );
     const setter = Object.getOwnPropertyDescriptor(
       window.HTMLInputElement.prototype,
@@ -99,7 +102,7 @@ describe("DeleteAccountDialog", () => {
     );
 
   const submit = async () => {
-    typeEmail(EMAIL);
+    typeConfirmation(CONFIRMATION_PHRASE);
     await act(async () => {
       confirmButton()?.click();
     });

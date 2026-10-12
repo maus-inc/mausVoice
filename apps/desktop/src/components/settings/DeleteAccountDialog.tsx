@@ -19,20 +19,32 @@ import { logOnRejection } from "../../utils/promise.utils";
 import { ConfirmationPhrase } from "./ConfirmationPhrase";
 import { ConsequenceList } from "./ConsequenceList";
 
+/**
+ * The literal that has to be typed before the deletion runs, matching the
+ * sibling dialog that clears local data.
+ *
+ * It used to be the account's email address, which made sense while the account
+ * lived on a server and the address identified it. In this build the profile is
+ * the account and it is local — the address on it is a placeholder the app
+ * itself made up — so asking someone to retype it was a ritual with nothing
+ * behind it. The phrase is the destructive action's own name instead.
+ */
+const CONFIRMATION_PHRASE = "delete";
+
 export const DeleteAccountDialog = () => {
   const intl = useIntl();
   const open = useAppStore((state) => state.settings.deleteAccountDialog);
-  const userEmail = useAppStore((state) => state.auth?.email);
-  const [confirmationEmail, setConfirmationEmail] = useState("");
+  const [confirmationValue, setConfirmationValue] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const isDeleteEnabled = confirmationEmail === userEmail && userEmail;
+  const isDeleteEnabled =
+    confirmationValue.trim().toLowerCase() === CONFIRMATION_PHRASE;
 
   const handleClose = () => {
     produceAppState((state) => {
       state.settings.deleteAccountDialog = false;
     });
-    setConfirmationEmail("");
+    setConfirmationValue("");
   };
 
   const handleSubmit = async () => {
@@ -71,15 +83,19 @@ export const DeleteAccountDialog = () => {
       leftoverData = true;
     }
 
-    setConfirmationEmail("");
+    setConfirmationValue("");
+    // What was deleted is described as what it is: everything this device was
+    // holding. "Your account has been deleted" was a promise about a server
+    // account that no longer exists in this build, and the app is still on
+    // screen afterwards, so it read as a claim that did not come true.
     showSnackbar(
       leftoverData
         ? intl.formatMessage({
             defaultMessage:
-              "Your account has been deleted, but some stored data could not be removed. Quit and reopen mausVoice.",
+              "Your data was deleted from this device, but some of it could not be removed. Quit and reopen mausVoice.",
           })
         : intl.formatMessage({
-            defaultMessage: "Your account has been deleted",
+            defaultMessage: "Your data has been deleted from this device",
           }),
       { duration: 15000 },
     );
@@ -93,8 +109,10 @@ export const DeleteAccountDialog = () => {
     setBusy(false);
   };
 
-  const handleEmailChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    setConfirmationEmail(event.target.value);
+  const handleConfirmationChange = (
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    setConfirmationValue(event.target.value);
   };
 
   return (
@@ -121,24 +139,26 @@ export const DeleteAccountDialog = () => {
           {/* The consequences are the dialog, so they are a list rather than a
               sentence: the same one the local-data wipe uses, for the same
               reason. */}
+          {/* The consequences are the dialog, so they are a list rather than a
+              sentence: the same one the local-data wipe uses, for the same
+              reason. Every line is something this build actually does — the
+              subscriptions, premium access and sign-out that used to be listed
+              here belonged to a cloud account that 0.1.6 removed, and a dialog
+              that promises them is describing a different app. */}
           <ConsequenceList
             label={<FormattedMessage defaultMessage="This removes" />}
             items={[
               <FormattedMessage
                 key="data"
-                defaultMessage="Permanently delete all your data"
+                defaultMessage="All your data on this device, including history and audio"
               />,
               <FormattedMessage
-                key="subscriptions"
-                defaultMessage="Cancel any active subscriptions"
+                key="profile"
+                defaultMessage="Your profile name and photo"
               />,
               <FormattedMessage
-                key="premium"
-                defaultMessage="Remove access to all premium features"
-              />,
-              <FormattedMessage
-                key="signout"
-                defaultMessage="Sign you out immediately"
+                key="preferences"
+                defaultMessage="Your preferences and settings"
               />,
             ]}
           />
@@ -148,7 +168,9 @@ export const DeleteAccountDialog = () => {
                 defaultMessage="Type {phrase} to confirm."
                 values={{
                   phrase: (
-                    <ConfirmationPhrase>{userEmail ?? ""}</ConfirmationPhrase>
+                    <ConfirmationPhrase>
+                      {CONFIRMATION_PHRASE}
+                    </ConfirmationPhrase>
                   ),
                 }}
               />
@@ -159,13 +181,13 @@ export const DeleteAccountDialog = () => {
               slotProps={{
                 htmlInput: {
                   "aria-label": intl.formatMessage({
-                    defaultMessage: "Your email address",
+                    defaultMessage: "Confirmation phrase",
                   }),
                 },
               }}
-              placeholder={userEmail || ""}
-              value={confirmationEmail}
-              onChange={handleEmailChange}
+              placeholder={CONFIRMATION_PHRASE}
+              value={confirmationValue}
+              onChange={handleConfirmationChange}
               size="small"
               autoComplete="off"
               autoCapitalize="off"
