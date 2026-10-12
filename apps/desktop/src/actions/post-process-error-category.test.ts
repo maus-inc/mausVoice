@@ -209,6 +209,20 @@ describe("classifyPostProcessErrorCategory", () => {
     );
   });
 
+  it("classifies the browser fetch rejection wording as a network error", () => {
+    expect(
+      classifyPostProcessErrorCategory(new TypeError("Failed to fetch")),
+    ).toBe(POST_PROCESS_ERROR_CATEGORY.network);
+    // The SDK wraps the WebView rejection, so the wording arrives nested.
+    expect(
+      classifyPostProcessErrorCategory(
+        Object.assign(new Error("Connection error."), {
+          cause: new TypeError("Failed to fetch"),
+        }),
+      ),
+    ).toBe(POST_PROCESS_ERROR_CATEGORY.network);
+  });
+
   it("reads timeout before abort so a deadline is not reported as a cancel", () => {
     expect(
       classifyPostProcessErrorCategory("the request timed out and was aborted"),

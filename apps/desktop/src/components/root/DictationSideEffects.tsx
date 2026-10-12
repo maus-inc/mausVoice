@@ -373,7 +373,9 @@ export const postProcessFinalizedTranscript = async (
   input.refreshMember();
 
   // A fast-style result can report an unstyled tail. Show that feedback only
-  // after storage tells us whether History can recover the original text.
+  // after storage tells us whether History can recover the original text. The
+  // strategy result always carries the metadata object itself; only its
+  // individual fields are optional.
   const truncatedMessage = getFastStyleTruncationMessage(
     postProcessMetadata.fastStyleTruncatedChars,
     {

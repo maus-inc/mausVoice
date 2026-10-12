@@ -269,6 +269,9 @@ const NETWORK_MESSAGE_MARKERS = [
   "enotfound",
   "network",
   "fetch failed",
+  // Browser fetch rejects a failed request with this TypeError wording
+  // (Chromium: "Failed to fetch"), which carries no network keyword itself.
+  "failed to fetch",
 ] as const;
 
 type ClassificationRule = {
@@ -320,6 +323,10 @@ const STRUCTURED_CLASSIFICATION_RULES: readonly ClassificationRule[] = [
 // Match each structured field on its own instead of a joined string. Markers
 // with a space (the in-flight budget wording) would otherwise match across two
 // unrelated fields, and a provider code must stay one token to mean anything.
+// Within a field, matching is substring-based on purpose: provider codes are
+// compound strings ("rate_limit_exceeded", "billing_hard_limit_reached"), so
+// exact matching would have to enumerate every variant a provider can emit.
+// Rule order carries the tie-breaks: the more specific rules run first.
 const classifyStructuredDetails = (
   structuredFields: readonly string[],
 ): PostProcessErrorCategory | undefined =>
