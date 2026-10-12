@@ -294,6 +294,24 @@ describe("readAvatarFile", () => {
     expect(bitmap.decode).toHaveBeenCalled();
   });
 
+  it("survives a file cut off inside a JPEG frame header", async () => {
+    const bitmap = installBitmap();
+    installCanvas();
+
+    // Start-of-image, a frame marker, a length, then nothing: the two
+    // dimension reads land past the end of the file.
+    const truncated = new File(
+      [new Uint8Array([0xff, 0xd8, 0xff, 0xc0, 0x00, 0x11, 0x08, 0x00])],
+      "photo.jpg",
+      { type: "image/jpeg" },
+    );
+
+    const result = await readAvatarFile(truncated);
+
+    expect(result.ok).toBe(true);
+    expect(bitmap.decode).toHaveBeenCalled();
+  });
+
   it("does not guess at a header it cannot read", async () => {
     const bitmap = installBitmap();
     installCanvas();

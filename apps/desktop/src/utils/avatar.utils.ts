@@ -149,6 +149,12 @@ const readJpegSize = (
       continue;
     }
     if (JPEG_FRAME_MARKERS.has(marker)) {
+      // A file cut off inside the frame header would make the reads below
+      // throw, so a truncated frame is treated like any other header this
+      // reader cannot make sense of.
+      if (offset + 9 > bytes.length) {
+        return null;
+      }
       return {
         width: view.getUint16(offset + 7),
         height: view.getUint16(offset + 5),
@@ -291,12 +297,18 @@ export const readAvatarFile = async (file: File): Promise<AvatarReadResult> => {
     return { ok: false, error: invalid };
   }
 
-  const declared = await readDeclaredSize(file);
-  if (declared && declared.width * declared.height > MAX_AVATAR_SOURCE_PIXELS) {
-    return { ok: false, error: "too-many-pixels" };
-  }
-
   try {
+    // Reading the header is part of reading the file: a parse that throws is
+    // the same "cannot read this" as a decode that throws, not a new failure
+    // for the caller to handle.
+    const declared = await readDeclaredSize(file);
+    if (
+      declared &&
+      declared.width * declared.height > MAX_AVATAR_SOURCE_PIXELS
+    ) {
+      return { ok: false, error: "too-many-pixels" };
+    }
+
     const bitmap = await createImageBitmap(file, {
       imageOrientation: "from-image",
     });
