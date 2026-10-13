@@ -3,8 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import type { Transcription } from "@maus-inc/types";
+import { POST_PROCESS_ERROR_CATEGORY } from "../../actions/post-process-error-category";
+import { POST_PROCESS_TRUNCATED_WARNING } from "../../utils/prompt.utils";
 import { INITIAL_APP_STATE } from "../../state/app.state";
-import { produceAppState, setAppState } from "../../store";
+import { getAppState, produceAppState, setAppState } from "../../store";
 import { setMatchMedia } from "../../../test/helpers/jsdom-ui-harness";
 
 vi.mock("@tauri-apps/api/core", async (importOriginal) => {
@@ -140,5 +142,97 @@ describe("TranscriptionDetailsDialog post-processing model field", () => {
     expect(text).toContain("1.50s");
     expect(text).toContain("250ms");
     expect(text).toContain("openai/gpt-oss-20b");
+  });
+
+  it("renders failed provider categories as localized warning feedback", async () => {
+    seed({
+      warnings: [POST_PROCESS_ERROR_CATEGORY.providerLimit],
+      postProcessFailed: true,
+      postProcessFallback: false,
+      postProcessError: POST_PROCESS_ERROR_CATEGORY.providerLimit,
+    });
+    root = await render(container);
+
+    expect(bodyText()).toContain(
+      "Styling failed because the provider request or usage limit was reached.",
+    );
+    expect(bodyText()).not.toContain(POST_PROCESS_ERROR_CATEGORY.providerLimit);
+  });
+
+  it("does not describe a successful local fallback as a total failure", async () => {
+    seed({
+      warnings: [POST_PROCESS_ERROR_CATEGORY.providerLimit],
+      postProcessFailed: false,
+      postProcessFallback: true,
+      postProcessError: POST_PROCESS_ERROR_CATEGORY.providerLimit,
+    });
+    root = await render(container);
+
+    expect(bodyText()).toContain(
+      "Online styling failed because the provider request or usage limit was reached. Your local style was applied instead.",
+    );
+    expect(bodyText()).not.toContain("Styling failed because");
+  });
+
+  it("describes a raw unusable-response marker instead of showing it verbatim", async () => {
+    seed({
+      warnings: [POST_PROCESS_TRUNCATED_WARNING],
+      postProcessFailed: false,
+      postProcessFallback: true,
+      postProcessError: null,
+    });
+    root = await render(container);
+
+    expect(bodyText()).toContain(
+      "The incomplete styling reply was discarded at the model's output limit. The previous text was kept.",
+    );
+    expect(bodyText()).not.toContain(POST_PROCESS_TRUNCATED_WARNING);
+  });
+
+  it("keeps unrelated warnings verbatim on a fallback row", async () => {
+    const dictionaryWarning =
+      "Some dictionary entries were omitted from the post-processing glossary because the safe prompt budget was reached.";
+    seed({
+      warnings: [dictionaryWarning],
+      postProcessFailed: false,
+      postProcessFallback: true,
+      postProcessError: null,
+    });
+    root = await render(container);
+
+    expect(bodyText()).toContain(dictionaryWarning);
+    expect(bodyText()).not.toContain("styling reply was discarded");
+  });
+
+  it("refreshes warning feedback when outcome metadata changes but warnings do not", async () => {
+    const warnings = [POST_PROCESS_ERROR_CATEGORY.providerLimit];
+    seed({
+      warnings,
+      postProcessFailed: false,
+      postProcessFallback: true,
+      postProcessError: POST_PROCESS_ERROR_CATEGORY.providerLimit,
+    });
+    root = await render(container);
+
+    expect(bodyText()).toContain("Your local style was applied instead.");
+    const storedWarnings = getAppState().transcriptionById["t-1"]?.warnings;
+
+    act(() => {
+      produceAppState((draft) => {
+        const transcription = draft.transcriptionById["t-1"];
+        if (!transcription)
+          throw new Error("Transcription missing from test state");
+        transcription.postProcessFailed = true;
+        transcription.postProcessFallback = false;
+      });
+    });
+
+    expect(getAppState().transcriptionById["t-1"]?.warnings).toBe(
+      storedWarnings,
+    );
+    expect(bodyText()).toContain(
+      "Styling failed because the provider request or usage limit was reached.",
+    );
+    expect(bodyText()).not.toContain("Your local style was applied instead.");
   });
 });

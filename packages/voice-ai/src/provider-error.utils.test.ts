@@ -28,6 +28,26 @@ describe("readProviderStatus", () => {
     expect(providerErrorUtils.readProviderStatus({ status: 503 })).toBe(503);
   });
 
+  it("reads common statusCode and response wrappers", () => {
+    expect(providerErrorUtils.readProviderStatus({ statusCode: 402 })).toBe(
+      402,
+    );
+    expect(
+      providerErrorUtils.readProviderStatus({
+        status: "unknown",
+        statusCode: 402,
+      }),
+    ).toBe(402);
+    expect(
+      providerErrorUtils.readProviderStatus({ response: { status: 429 } }),
+    ).toBe(429);
+    expect(
+      providerErrorUtils.readProviderStatus({
+        response: { statusCode: 503 },
+      }),
+    ).toBe(503);
+  });
+
   it("returns undefined when there is no numeric status", () => {
     expect(providerErrorUtils.readProviderStatus(new Error("boom"))).toBe(
       undefined,

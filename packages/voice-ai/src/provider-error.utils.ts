@@ -29,13 +29,25 @@ const asRecord = (value: unknown): Record<string, unknown> | undefined =>
     ? (value as Record<string, unknown>)
     : undefined;
 
+const readNumericStatus = (
+  record: Record<string, unknown> | undefined,
+): number | undefined => {
+  const status = record?.status;
+  if (typeof status === "number") return status;
+  const statusCode = record?.statusCode;
+  return typeof statusCode === "number" ? statusCode : undefined;
+};
+
 /**
- * The HTTP status a provider rejection carries, or undefined for a network
- * failure, an abort, or a provider that reported no status.
+ * The HTTP status a provider rejection carries, including common response
+ * wrappers. Returns undefined for a network failure, an abort, or a provider
+ * that reported no numeric status.
  */
 export const readProviderStatus = (error: unknown): number | undefined => {
-  const status = asRecord(error)?.status;
-  return typeof status === "number" ? status : undefined;
+  const record = asRecord(error);
+  return (
+    readNumericStatus(record) ?? readNumericStatus(asRecord(record?.response))
+  );
 };
 
 /**
