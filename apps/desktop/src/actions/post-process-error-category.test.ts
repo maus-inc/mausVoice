@@ -238,6 +238,19 @@ describe("classifyPostProcessErrorCategory", () => {
     expect(classifyPostProcessErrorCategory({ status: 503 })).toBe(
       POST_PROCESS_ERROR_CATEGORY.provider,
     );
+    expect(classifyPostProcessErrorCategory({ status: 408 })).toBe(
+      POST_PROCESS_ERROR_CATEGORY.timedOut,
+    );
+    // The status walk reaches nested provider records at any depth, so an SDK
+    // shape that buries the gateway timeout under cause.response still reads
+    // it instead of falling through to the prose cascade.
+    expect(
+      classifyPostProcessErrorCategory(
+        Object.assign(new Error("upstream failure"), {
+          cause: { response: { status: 504 } },
+        }),
+      ),
+    ).toBe(POST_PROCESS_ERROR_CATEGORY.timedOut);
   });
 });
 
