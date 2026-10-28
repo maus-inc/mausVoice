@@ -2429,7 +2429,8 @@ pub async fn transcription_create(
         crate::db::local_data_write_gate::lock_local_data_write(Some(write_generation))
             .await
             .map_err(|err| err.to_string())?;
-    create_transcription_with_reservations(database.pool(), &transcription, &mut reservations).await
+    let pool = database.pool();
+    create_transcription_with_reservations(&pool, &transcription, &mut reservations).await
 }
 
 #[tauri::command]
