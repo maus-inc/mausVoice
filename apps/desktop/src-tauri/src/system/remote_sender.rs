@@ -1,11 +1,13 @@
-use std::time::Duration;
+use std::{future::Future, time::Duration};
 
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 
-use crate::state::RemoteReceiverState;
+use crate::{db::local_data_write_gate::LocalDataRemoteOperationGuard, state::RemoteReceiverState};
+
+const REMOTE_IO_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -70,47 +72,38 @@ pub async fn pair_with_receiver(
     receiver_address: &str,
     pairing_code: &str,
 ) -> Result<crate::domain::PairedRemoteDevice, String> {
-    let write_generation = crate::db::local_data_write_gate::current_write_generation()
-        .ok_or_else(|| "Local data is being cleared".to_string())?;
-    // Pairing changes state on both devices. Hold one native lease from before
-    // the handshake through the local upsert so clear cannot interrupt between
-    // the remote acknowledgement and local persistence when IPC bypasses the UI.
-    let write_guard =
-        crate::db::local_data_write_gate::lock_local_data_write(Some(write_generation))
-            .await
-            .map_err(|err| err.to_string())?;
+    let operation = crate::db::local_data_write_gate::begin_local_data_remote_operation()
+        .map_err(|err| err.to_string())?;
     let sender = sender_state.status();
     let request_id = generate_id("pair");
-    let stream = tokio::time::timeout(Duration::from_secs(5), TcpStream::connect(receiver_address))
-        .await
-        .map_err(|_| format!("Timed out connecting to remote receiver at {receiver_address}"))?
-        .map_err(|err| {
-            format!("Failed to connect to remote receiver at {receiver_address}: {err}")
-        })?;
+    let stream = await_remote_io(
+        &operation,
+        format!("Timed out connecting to remote receiver at {receiver_address}"),
+        async {
+            TcpStream::connect(receiver_address).await.map_err(|err| {
+                format!("Failed to connect to remote receiver at {receiver_address}: {err}")
+            })
+        },
+    )
+    .await?;
     let (reader, mut writer) = stream.into_split();
     let mut lines = BufReader::new(reader).lines();
 
-    ensure_write_generation_current(write_generation)?;
-    tokio::time::timeout(
-        Duration::from_secs(5),
-        write_message(
-            &mut writer,
-            &OutgoingEnvelope::PairingRequest {
-                request_id: request_id.clone(),
-                sender_device_id: sender.device_id.clone(),
-                sender_device_name: sender.device_name.clone(),
-                sender_platform: sender.device_platform.clone(),
-                pairing_code: pairing_code.to_string(),
-            },
-        ),
+    send_message(
+        &operation,
+        &mut writer,
+        &OutgoingEnvelope::PairingRequest {
+            request_id: request_id.clone(),
+            sender_device_id: sender.device_id.clone(),
+            sender_device_name: sender.device_name.clone(),
+            sender_platform: sender.device_platform.clone(),
+            pairing_code: pairing_code.to_string(),
+        },
+        "Timed out sending remote pairing request.",
     )
-    .await
-    .map_err(|_| "Timed out sending remote pairing request.".to_string())??;
-    ensure_write_generation_current(write_generation)?;
+    .await?;
 
-    let response = read_message(&mut lines).await?;
-    ensure_write_generation_current(write_generation)?;
-    match response {
+    match read_message(&operation, &mut lines).await? {
         IncomingEnvelope::PairingAccept {
             request_id: ack_request_id,
             receiver_device_id: ack_receiver_device_id,
@@ -148,7 +141,15 @@ pub async fn pair_with_receiver(
                 trusted: true,
             };
 
-            ensure_write_generation_current(write_generation)?;
+            // The remote handshake is complete. Only the local upsert takes the
+            // global database mutex, using the operation's original generation
+            // so a clear that started during the handshake invalidates it.
+            operation.ensure_current().map_err(|err| err.to_string())?;
+            let write_guard = crate::db::local_data_write_gate::lock_local_data_write(Some(
+                operation.generation(),
+            ))
+            .await
+            .map_err(|err| err.to_string())?;
             crate::db::paired_remote_device_queries::upsert_paired_remote_device_unlocked(
                 &write_guard,
                 pool,
@@ -180,23 +181,22 @@ pub async fn deliver_final_text(
         return Ok(());
     }
 
-    let write_generation = crate::db::local_data_write_gate::current_write_generation()
-        .ok_or_else(|| "Local data is being cleared".to_string())?;
-    // The frontend holds the same lease across this multi-step action. Keep a
-    // native lease too so direct IPC calls cannot bypass clear coordination.
-    let _write_guard =
-        crate::db::local_data_write_gate::lock_local_data_write(Some(write_generation))
+    let operation = crate::db::local_data_write_gate::begin_local_data_remote_operation()
+        .map_err(|err| err.to_string())?;
+    let target = await_remote_io(
+        &operation,
+        "Timed out loading the paired remote receiver.".to_string(),
+        async {
+            crate::db::paired_remote_device_queries::fetch_paired_remote_device_by_id(
+                pool,
+                target_device_id,
+            )
             .await
-            .map_err(|err| err.to_string())?;
-
-    let target = crate::db::paired_remote_device_queries::fetch_paired_remote_device_by_id(
-        pool,
-        target_device_id,
+            .map_err(|err| format!("Failed to load target device: {err}"))
+        },
     )
-    .await
-    .map_err(|err| format!("Failed to load target device: {err}"))?
+    .await?
     .ok_or_else(|| "Target device is not paired.".to_string())?;
-    ensure_write_generation_current(write_generation)?;
 
     if !target.trusted {
         return Err("Target device is not trusted.".to_string());
@@ -211,27 +211,32 @@ pub async fn deliver_final_text(
     let sender = sender_state.status();
     let session_id = generate_id("session");
     let event_id = generate_id("event");
-    let stream = tokio::time::timeout(Duration::from_secs(5), TcpStream::connect(address.as_str()))
-        .await
-        .map_err(|_| format!("Timed out connecting to remote receiver at {address}"))?
-        .map_err(|err| format!("Failed to connect to remote receiver at {address}: {err}"))?;
-    ensure_write_generation_current(write_generation)?;
+    let stream = await_remote_io(
+        &operation,
+        format!("Timed out connecting to remote receiver at {address}"),
+        async {
+            TcpStream::connect(address.as_str())
+                .await
+                .map_err(|err| format!("Failed to connect to remote receiver at {address}: {err}"))
+        },
+    )
+    .await?;
     let (reader, mut writer) = stream.into_split();
     let mut lines = BufReader::new(reader).lines();
 
-    write_message(
+    send_message(
+        &operation,
         &mut writer,
         &OutgoingEnvelope::SessionHello {
             session_id: session_id.clone(),
             sender_device_id: sender.device_id,
             auth_token: target.shared_secret.clone(),
         },
+        "Timed out sending remote session hello.",
     )
     .await?;
-    ensure_write_generation_current(write_generation)?;
 
-    let session_ack = read_message(&mut lines).await?;
-    ensure_write_generation_current(write_generation)?;
+    let session_ack = read_message(&operation, &mut lines).await?;
     match session_ack {
         IncomingEnvelope::SessionAck {
             session_id: ack_session_id,
@@ -255,26 +260,22 @@ pub async fn deliver_final_text(
         }
     }
 
-    ensure_write_generation_current(write_generation)?;
-    tokio::time::timeout(
-        Duration::from_secs(5),
-        write_message(
-            &mut writer,
-            &OutgoingEnvelope::FinalText {
-                session_id: session_id.clone(),
-                event_id: event_id.clone(),
-                sequence: 1,
-                text: text.to_string(),
-                mode: mode.to_string(),
-                created_at: chrono::Utc::now().to_rfc3339(),
-            },
-        ),
+    send_message(
+        &operation,
+        &mut writer,
+        &OutgoingEnvelope::FinalText {
+            session_id: session_id.clone(),
+            event_id: event_id.clone(),
+            sequence: 1,
+            text: text.to_string(),
+            mode: mode.to_string(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+        },
+        "Timed out sending remote transcript.",
     )
-    .await
-    .map_err(|_| "Timed out sending remote transcript.".to_string())??;
-    ensure_write_generation_current(write_generation)?;
+    .await?;
 
-    match read_message(&mut lines).await? {
+    match read_message(&operation, &mut lines).await? {
         IncomingEnvelope::DeliveryAck {
             session_id: ack_session_id,
             event_id: ack_event_id,
@@ -305,25 +306,66 @@ pub async fn deliver_final_text(
     }
 }
 
-fn ensure_write_generation_current(generation: u64) -> Result<(), String> {
-    if crate::db::local_data_write_gate::is_write_generation_current(generation) {
-        Ok(())
-    } else {
-        Err("Local data is being cleared".to_string())
+async fn await_remote_io<T>(
+    operation: &LocalDataRemoteOperationGuard,
+    timeout_message: String,
+    future: impl Future<Output = Result<T, String>>,
+) -> Result<T, String> {
+    tokio::select! {
+        biased;
+        _ = operation.cancelled() => Err("Local data is being cleared".to_string()),
+        result = tokio::time::timeout(REMOTE_IO_TIMEOUT, future) => {
+            match result {
+                Ok(Ok(value)) => {
+                    operation.ensure_current().map_err(|err| err.to_string())?;
+                    Ok(value)
+                }
+                Ok(Err(error)) => Err(error),
+                Err(_) => Err(timeout_message),
+            }
+        }
     }
 }
 
+async fn send_message(
+    operation: &LocalDataRemoteOperationGuard,
+    writer: &mut tokio::net::tcp::OwnedWriteHalf,
+    message: &OutgoingEnvelope,
+    timeout_message: &str,
+) -> Result<(), String> {
+    // Hold the clear handoff lock only for this bounded write, never for the
+    // connection, handshake response, or delivery acknowledgement.
+    let _handoff = operation
+        .lock_message_handoff()
+        .await
+        .map_err(|err| err.to_string())?;
+    await_remote_io(
+        operation,
+        timeout_message.to_string(),
+        write_message(writer, message),
+    )
+    .await
+}
+
 async fn read_message(
+    operation: &LocalDataRemoteOperationGuard,
     lines: &mut tokio::io::Lines<BufReader<tokio::net::tcp::OwnedReadHalf>>,
 ) -> Result<IncomingEnvelope, String> {
-    let line = tokio::time::timeout(Duration::from_secs(5), lines.next_line())
-        .await
-        .map_err(|_| "Timed out waiting for remote receiver response.".to_string())?
-        .map_err(|err| format!("Failed to read remote receiver response: {err}"))?
-        .ok_or_else(|| "Remote receiver closed the connection.".to_string())?;
+    await_remote_io(
+        operation,
+        "Timed out waiting for remote receiver response.".to_string(),
+        async {
+            let line = lines
+                .next_line()
+                .await
+                .map_err(|err| format!("Failed to read remote receiver response: {err}"))?
+                .ok_or_else(|| "Remote receiver closed the connection.".to_string())?;
 
-    serde_json::from_str(&line)
-        .map_err(|err| format!("Failed to parse remote receiver response: {err}"))
+            serde_json::from_str(&line)
+                .map_err(|err| format!("Failed to parse remote receiver response: {err}"))
+        },
+    )
+    .await
 }
 
 async fn write_message(

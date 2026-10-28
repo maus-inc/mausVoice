@@ -334,18 +334,25 @@ describe("storeTranscription audio retention", () => {
     expect(finishPurge).toBeDefined();
 
     let releaseClear: (() => void) | undefined;
+    let clearReady = false;
     const clearing = beginLocalDataClear().then((release) => {
       releaseClear = release;
+      clearReady = true;
+      return release;
     });
-    expect(releaseClear).toBeUndefined();
 
     try {
+      // Let an unblocked clear pass its asynchronous drain check before proving
+      // the detached purge still owns its lease.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(clearReady).toBe(false);
       finishPurge?.([]);
       await clearing;
-      expect(releaseClear).toBeDefined();
+      expect(clearReady).toBe(true);
     } finally {
       finishPurge?.([]);
-      if (releaseClear) releaseClearAfterRemovingMarker(releaseClear);
+      if (!releaseClear) releaseClear = await clearing;
+      releaseClearAfterRemovingMarker(releaseClear);
     }
   });
 

@@ -11,10 +11,9 @@ fn marker_path(config_dir: &Path) -> PathBuf {
     config_dir.join(MARKER_FILE_NAME)
 }
 
-pub(crate) fn app_marker_path(app: &AppHandle) -> io::Result<PathBuf> {
+fn app_config_dir(app: &AppHandle) -> io::Result<PathBuf> {
     app.path()
         .app_config_dir()
-        .map(|config_dir| marker_path(&config_dir))
         .map_err(|error| io::Error::other(error.to_string()))
 }
 
@@ -23,8 +22,12 @@ fn mark_pending_at(config_dir: &Path) -> io::Result<()> {
     fs::write(marker_path(config_dir), b"pending\n")
 }
 
-fn is_pending_at(config_dir: &Path) -> bool {
-    marker_path(config_dir).is_file()
+fn is_pending_at(config_dir: &Path) -> io::Result<bool> {
+    match fs::symlink_metadata(marker_path(config_dir)) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error),
+    }
 }
 
 fn clear_pending_at(config_dir: &Path) -> io::Result<()> {
@@ -36,25 +39,15 @@ fn clear_pending_at(config_dir: &Path) -> io::Result<()> {
 }
 
 pub(crate) fn mark_pending(app: &AppHandle) -> io::Result<()> {
-    let config_dir = app
-        .path()
-        .app_config_dir()
-        .map_err(|error| io::Error::other(error.to_string()))?;
-    mark_pending_at(&config_dir)
+    mark_pending_at(&app_config_dir(app)?)
 }
 
 pub(crate) fn is_pending(app: &AppHandle) -> io::Result<bool> {
-    let path = app_marker_path(app)?;
-    Ok(path.is_file())
+    is_pending_at(&app_config_dir(app)?)
 }
 
 pub(crate) fn clear_pending(app: &AppHandle) -> io::Result<()> {
-    let path = app_marker_path(app)?;
-    match fs::remove_file(path) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error),
-    }
+    clear_pending_at(&app_config_dir(app)?)
 }
 
 #[cfg(test)]
@@ -89,19 +82,28 @@ mod tests {
     }
 
     #[test]
+    fn marker_inspection_errors_are_not_treated_as_a_missing_marker() {
+        let config_dir = TestConfigDir::new();
+        let not_a_directory = config_dir.0.join("not-a-directory");
+        fs::write(&not_a_directory, b"file").expect("test file should be created");
+
+        assert!(is_pending_at(&not_a_directory).is_err());
+    }
+
+    #[test]
     fn marker_survives_restart_and_is_removed_only_after_completion() {
         let config_dir = TestConfigDir::new();
-        assert!(!is_pending_at(&config_dir.0));
+        assert!(!is_pending_at(&config_dir.0).expect("missing marker is inspectable"));
 
         mark_pending_at(&config_dir.0).expect("marker should be written");
-        assert!(is_pending_at(&config_dir.0));
+        assert!(is_pending_at(&config_dir.0).expect("marker should be inspectable"));
         assert!(
-            is_pending_at(&config_dir.0),
+            is_pending_at(&config_dir.0).expect("marker should be inspectable"),
             "a new process sees the same marker"
         );
 
         clear_pending_at(&config_dir.0).expect("completion should remove the marker");
-        assert!(!is_pending_at(&config_dir.0));
+        assert!(!is_pending_at(&config_dir.0).expect("removed marker is inspectable"));
         clear_pending_at(&config_dir.0).expect("completion should be idempotent");
     }
 }

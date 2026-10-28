@@ -135,6 +135,28 @@ describe("theme mode configuration", () => {
     expect(storage.get(THEME_MODE_STORAGE_KEY)).toBe("dark");
   });
 
+  it("keeps the in-memory theme usable when storage writes fail", () => {
+    let attempted = false;
+    const storageWindow = {
+      localStorage: {
+        getItem: () => null,
+        setItem: () => {
+          attempted = true;
+          throw new Error("storage quota exceeded");
+        },
+      },
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    } as unknown as Window;
+    const manager = guardedThemeStorageManager({
+      key: THEME_MODE_STORAGE_KEY,
+      storageWindow,
+    });
+
+    expect(() => manager.set("dark")).not.toThrow();
+    expect(attempted).toBe(true);
+  });
+
   it("lets selected lucide icons inherit list item color in both schemes", () => {
     const themeSource = readFileSync(
       new URL("./theme.ts", import.meta.url),

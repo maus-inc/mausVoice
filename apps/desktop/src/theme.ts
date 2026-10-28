@@ -69,7 +69,11 @@ export const guardedThemeStorageManager: StorageManager = ({
       const storage = getStorage();
       if (!storage) return;
       withLocalDataWriteSync(() => {
-        storage.setItem(key, String(value));
+        try {
+          storage.setItem(key, String(value));
+        } catch {
+          // Quota or private mode: keep the in-memory mode only.
+        }
       });
     },
     subscribe(handler) {

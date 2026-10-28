@@ -133,24 +133,25 @@ describe("pending transcription delete", () => {
     flushPendingTranscriptionDeletes();
     expect(deleteTranscription).toHaveBeenCalledWith("t1", expect.any(Object));
 
-    let clearReleased = false;
-    const clearing = beginLocalDataClear();
+    let clearReady = false;
+    let releaseClear: (() => void) | undefined;
+    const clearing = beginLocalDataClear().then((release) => {
+      releaseClear = release;
+      clearReady = true;
+      return release;
+    });
 
     try {
-      await Promise.resolve();
-      expect(clearReleased).toBe(false);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(clearReady).toBe(false);
       finishDelete?.();
-      const releaseClear = await clearing;
-      clearReleased = true;
-      window.localStorage.removeItem(LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY);
-      releaseClear();
+      await clearing;
+      expect(clearReady).toBe(true);
     } finally {
       finishDelete?.();
-      if (!clearReleased) {
-        const releaseClear = await clearing;
-        window.localStorage.removeItem(LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY);
-        releaseClear();
-      }
+      if (!releaseClear) releaseClear = await clearing;
+      window.localStorage.removeItem(LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY);
+      releaseClear();
     }
   });
 

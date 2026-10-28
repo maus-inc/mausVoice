@@ -38,6 +38,15 @@ type SessionHandle = {
 const isSessionGenerationCurrent = (generation: number): boolean =>
   !isLocalDataClearRequested() && getLocalDataClearGeneration() === generation;
 
+const clearPendingSession = (
+  pendingSessionRef: { current: DatabaseReference | null },
+  sessionRef: DatabaseReference,
+): void => {
+  if (pendingSessionRef.current === sessionRef) {
+    pendingSessionRef.current = null;
+  }
+};
+
 const runSessionWrite = async (
   operation: () => Promise<void>,
   failureMessage: string,
@@ -73,6 +82,16 @@ const runSessionWrite = async (
   }
 };
 
+const removeIncompleteSession = (
+  sessionRef: DatabaseReference,
+  clearGeneration: number,
+): Promise<boolean> =>
+  runSessionWrite(
+    () => remove(sessionRef),
+    "Failed to remove an incomplete Firebase session",
+    clearGeneration,
+  );
+
 const publishSession = async (
   sessionRef: DatabaseReference,
   sessionName: string,
@@ -88,30 +107,19 @@ const publishSession = async (
     clearGeneration,
   );
   if (!published) {
-    if (isSessionGenerationCurrent(clearGeneration)) {
-      await runSessionWrite(
-        () => remove(sessionRef),
-        "Failed to remove an incomplete Firebase session",
-        clearGeneration,
-      );
-    }
+    await removeIncompleteSession(sessionRef, clearGeneration);
     return false;
   }
 
-  if (!isSessionGenerationCurrent(clearGeneration)) return false;
   const disconnectRegistered = await runSessionWrite(
     () => onDisconnect(sessionRef).remove(),
     "Failed to register Firebase session cleanup",
     clearGeneration,
   );
-  if (!disconnectRegistered && isSessionGenerationCurrent(clearGeneration)) {
-    await runSessionWrite(
-      () => remove(sessionRef),
-      "Failed to remove an incomplete Firebase session",
-      clearGeneration,
-    );
+  if (!disconnectRegistered) {
+    await removeIncompleteSession(sessionRef, clearGeneration);
   }
-  return disconnectRegistered && isSessionGenerationCurrent(clearGeneration);
+  return disconnectRegistered;
 };
 
 export const SessionSideEffects = () => {
@@ -137,9 +145,7 @@ export const SessionSideEffects = () => {
           // failed removal so a destructive-clear retry can enqueue it again.
           remove(sessionRef)
             .then(() => {
-              if (pendingSessionRef.current === sessionRef) {
-                pendingSessionRef.current = null;
-              }
+              clearPendingSession(pendingSessionRef, sessionRef);
             })
             .catch((error: unknown) => {
               getLogger().warning(
@@ -181,16 +187,13 @@ export const SessionSideEffects = () => {
     const db = getDatabase();
     const sessionRef = ref(db, `session/${userId}/${sessionId}`);
     pendingSessionRef.current = sessionRef;
-    if (!(await publishSession(sessionRef, sessionName, clearGeneration))) {
-      if (pendingSessionRef.current === sessionRef) {
-        pendingSessionRef.current = null;
-      }
-      return;
-    }
-    if (!isSessionGenerationCurrent(clearGeneration)) {
-      if (pendingSessionRef.current === sessionRef) {
-        pendingSessionRef.current = null;
-      }
+    const published = await publishSession(
+      sessionRef,
+      sessionName,
+      clearGeneration,
+    );
+    if (!published || !isSessionGenerationCurrent(clearGeneration)) {
+      clearPendingSession(pendingSessionRef, sessionRef);
       return;
     }
 
@@ -272,7 +275,7 @@ export const SessionSideEffects = () => {
     });
 
     sessionHandleRef.current = handle;
-    pendingSessionRef.current = null;
+    clearPendingSession(pendingSessionRef, sessionRef);
     getLogger().info(`Session published: ${sessionId}`);
 
     return () => {

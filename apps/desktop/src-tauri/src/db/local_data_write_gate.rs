@@ -1,16 +1,20 @@
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::LazyLock;
 
 use sqlx::Error;
-use tokio::sync::{Mutex, MutexGuard};
+use tokio::sync::{Mutex, MutexGuard, Notify};
 
 static LOCAL_DATA_WRITE_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+static LOCAL_DATA_REMOTE_SEND_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+static LOCAL_DATA_REMOTE_OPERATION_COUNT: AtomicUsize = AtomicUsize::new(0);
+static LOCAL_DATA_REMOTE_OPERATION_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
 static LOCAL_DATA_CLEAR_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 static LOCAL_DATA_CLEAR_ACTIVE: AtomicBool = AtomicBool::new(false);
 static LOCAL_DATA_CLEAR_READY: AtomicBool = AtomicBool::new(false);
 static LOCAL_DATA_WRITE_GENERATION: AtomicU64 = AtomicU64::new(0);
 
 pub(crate) type LocalDataWriteGuard = MutexGuard<'static, ()>;
+pub(crate) type LocalDataRemoteSendGuard = MutexGuard<'static, ()>;
 
 fn gate_error() -> Error {
     Error::Protocol("Local data is being cleared".to_string())
@@ -38,8 +42,56 @@ pub(crate) fn current_write_generation() -> Option<u64> {
 }
 
 pub(crate) fn is_write_generation_current(generation: u64) -> bool {
-    !LOCAL_DATA_CLEAR_IN_PROGRESS.load(Ordering::Acquire)
+    if LOCAL_DATA_CLEAR_IN_PROGRESS.load(Ordering::Acquire) {
+        return false;
+    }
+
+    LOCAL_DATA_WRITE_GENERATION.load(Ordering::Acquire) == generation
+        && !LOCAL_DATA_CLEAR_IN_PROGRESS.load(Ordering::Acquire)
         && LOCAL_DATA_WRITE_GENERATION.load(Ordering::Acquire) == generation
+}
+
+fn is_remote_operation_current(generation: u64) -> bool {
+    !LOCAL_DATA_CLEAR_ACTIVE.load(Ordering::Acquire) && is_write_generation_current(generation)
+}
+
+/// Reserve an asynchronous remote operation without holding the global local
+/// write mutex across network I/O. A clear cancels these leases and drains them
+/// before deleting local data; short database mutations still take the ordinary
+/// write guard with the captured generation.
+pub(crate) fn begin_local_data_remote_operation() -> Result<LocalDataRemoteOperationGuard, Error> {
+    let generation = current_write_generation().ok_or_else(gate_error)?;
+    if LOCAL_DATA_CLEAR_ACTIVE.load(Ordering::Acquire) {
+        return Err(gate_error());
+    }
+
+    LOCAL_DATA_REMOTE_OPERATION_COUNT.fetch_add(1, Ordering::AcqRel);
+    if !is_remote_operation_current(generation) {
+        release_remote_operation();
+        return Err(gate_error());
+    }
+
+    Ok(LocalDataRemoteOperationGuard { generation })
+}
+
+fn release_remote_operation() {
+    let previous = LOCAL_DATA_REMOTE_OPERATION_COUNT.fetch_sub(1, Ordering::AcqRel);
+    debug_assert!(previous > 0, "remote operation lease count underflowed");
+    if previous == 1 {
+        LOCAL_DATA_REMOTE_OPERATION_NOTIFY.notify_waiters();
+    }
+}
+
+async fn wait_for_remote_operations_to_finish() {
+    loop {
+        let notified = LOCAL_DATA_REMOTE_OPERATION_NOTIFY.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+        if LOCAL_DATA_REMOTE_OPERATION_COUNT.load(Ordering::Acquire) == 0 {
+            return;
+        }
+        notified.await;
+    }
 }
 
 /// Restore the native write barrier before opening the database on startup
@@ -61,12 +113,12 @@ pub(crate) async fn lock_local_data_write(
     let generation = expected_generation
         .or_else(current_write_generation)
         .ok_or_else(gate_error)?;
-    if !is_write_generation_current(generation) {
+    if LOCAL_DATA_CLEAR_ACTIVE.load(Ordering::Acquire) || !is_write_generation_current(generation) {
         return Err(gate_error());
     }
 
     let guard = LOCAL_DATA_WRITE_LOCK.lock().await;
-    if !is_write_generation_current(generation) {
+    if LOCAL_DATA_CLEAR_ACTIVE.load(Ordering::Acquire) || !is_write_generation_current(generation) {
         return Err(gate_error());
     }
 
@@ -113,6 +165,10 @@ pub(crate) async fn begin_local_data_clear() -> Result<LocalDataClearGuard, Erro
     LOCAL_DATA_CLEAR_ACTIVE
         .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
         .map_err(|_| gate_error())?;
+    // Stop new remote operations immediately. Existing native writes and event
+    // handoffs still finish under the shared write mutex before the clear
+    // generation changes, preserving their atomic handoff contract.
+    LOCAL_DATA_REMOTE_OPERATION_NOTIFY.notify_waiters();
 
     let mut clear_guard = LocalDataClearGuard {
         lock: None,
@@ -120,6 +176,11 @@ pub(crate) async fn begin_local_data_clear() -> Result<LocalDataClearGuard, Erro
     };
     clear_guard.lock = Some(LOCAL_DATA_WRITE_LOCK.lock().await);
 
+    // The sender serializes only the brief socket write itself here, never the
+    // connect/handshake/acknowledgement waits. Taking this lock before the
+    // generation transition guarantees no new outgoing message can start after
+    // the native clear barrier closes.
+    let remote_send_guard = LOCAL_DATA_REMOTE_SEND_LOCK.lock().await;
     LOCAL_DATA_CLEAR_IN_PROGRESS.store(true, Ordering::Release);
     // Every attempt gets a fresh generation. In particular, a retry must also
     // invalidate work that captured a token during a failed completion window.
@@ -127,6 +188,13 @@ pub(crate) async fn begin_local_data_clear() -> Result<LocalDataClearGuard, Erro
     // A retry must complete the native clear again before the frontend can
     // release a readiness marker left by an earlier successful native pass.
     LOCAL_DATA_CLEAR_READY.store(false, Ordering::Release);
+    LOCAL_DATA_REMOTE_OPERATION_NOTIFY.notify_waiters();
+    drop(remote_send_guard);
+
+    // Remote operations hold a separate cancellation lease, not the global
+    // database mutex. Their in-flight socket waits are cancelled above, and the
+    // clear does not begin deleting data until every lease has drained.
+    wait_for_remote_operations_to_finish().await;
 
     Ok(clear_guard)
 }
@@ -178,6 +246,58 @@ pub(crate) async fn complete_local_data_clear_with(
     Ok(())
 }
 
+pub(crate) struct LocalDataRemoteOperationGuard {
+    generation: u64,
+}
+
+impl LocalDataRemoteOperationGuard {
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    pub(crate) fn ensure_current(&self) -> Result<(), Error> {
+        if is_remote_operation_current(self.generation) {
+            Ok(())
+        } else {
+            Err(gate_error())
+        }
+    }
+
+    /// Wait until a clear request invalidates this operation. `enable` registers
+    /// the waiter before checking the atomics so a concurrent notification
+    /// cannot be lost between the check and the await.
+    pub(crate) async fn cancelled(&self) {
+        loop {
+            let notified = LOCAL_DATA_REMOTE_OPERATION_NOTIFY.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if !is_remote_operation_current(self.generation) {
+                return;
+            }
+            notified.await;
+        }
+    }
+
+    /// Serialize one bounded outgoing socket write with the clear barrier. The
+    /// remote operation never holds this guard while connecting or waiting for
+    /// a response, so ordinary local database writers remain independent.
+    pub(crate) async fn lock_message_handoff(&self) -> Result<LocalDataRemoteSendGuard, Error> {
+        let guard = tokio::select! {
+            biased;
+            _ = self.cancelled() => return Err(gate_error()),
+            guard = LOCAL_DATA_REMOTE_SEND_LOCK.lock() => guard,
+        };
+        self.ensure_current()?;
+        Ok(guard)
+    }
+}
+
+impl Drop for LocalDataRemoteOperationGuard {
+    fn drop(&mut self) {
+        release_remote_operation();
+    }
+}
+
 pub(crate) struct LocalDataClearGuard {
     lock: Option<LocalDataWriteGuard>,
     active: bool,
@@ -208,9 +328,9 @@ impl Drop for LocalDataClearGuard {
 #[cfg(test)]
 mod tests {
     use super::{
-        begin_local_data_clear, complete_local_data_clear, complete_local_data_clear_with,
-        current_write_generation, is_write_generation_current, lock_local_data_write,
-        lock_startup_database_migration,
+        begin_local_data_clear, begin_local_data_remote_operation, complete_local_data_clear,
+        complete_local_data_clear_with, current_write_generation, is_write_generation_current,
+        lock_local_data_write, lock_startup_database_migration,
     };
     use std::sync::LazyLock;
     use std::time::Duration;
@@ -299,6 +419,48 @@ mod tests {
         assert_ne!(generation, next_generation);
         assert!(lock_local_data_write(Some(generation)).await.is_err());
         assert!(lock_local_data_write(Some(next_generation)).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn remote_operation_lease_does_not_hold_write_mutex_and_clear_drains_it() {
+        let _test_guard = TEST_LOCK.lock().await;
+        let generation = current_write_generation().expect("gate starts open");
+        let remote_operation = begin_local_data_remote_operation()
+            .expect("remote operation starts while writes are open");
+
+        // A remote handshake can remain in flight without blocking unrelated
+        // local mutations; only a short database mutation takes this mutex.
+        let local_write = lock_local_data_write(Some(generation))
+            .await
+            .expect("remote operation does not hold the native write mutex");
+        drop(local_write);
+
+        let clear = tokio::spawn(begin_local_data_clear());
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while is_write_generation_current(generation) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("clear invalidates the remote operation");
+        tokio::time::timeout(Duration::from_secs(1), remote_operation.cancelled())
+            .await
+            .expect("remote operation receives clear cancellation");
+        assert!(
+            !clear.is_finished(),
+            "clear waits until the active remote operation releases its lease"
+        );
+
+        drop(remote_operation);
+        let clear_guard = clear
+            .await
+            .expect("clear task does not panic")
+            .expect("clear drains the cancelled remote operation");
+        clear_guard.mark_ready_for_frontend_completion();
+        drop(clear_guard);
+        complete_local_data_clear()
+            .await
+            .expect("successful clear reopens writes after remote work drains");
     }
 
     #[tokio::test]

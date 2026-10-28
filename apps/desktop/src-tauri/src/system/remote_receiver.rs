@@ -233,16 +233,21 @@ async fn write_message_while_active(
     }
 }
 
+#[derive(Default)]
+struct RemoteReceiverEventDetails {
+    sender_device_id: Option<String>,
+    event_id: Option<String>,
+    target_class_name: Option<String>,
+    target_title: Option<String>,
+    target_editable: Option<bool>,
+}
+
 async fn record_error_while_active(
     state: &RemoteReceiverState,
     receiver_generation: u64,
     write_generation: u64,
-    sender_device_id: Option<String>,
-    event_id: Option<String>,
+    details: RemoteReceiverEventDetails,
     message: String,
-    target_class_name: Option<String>,
-    target_title: Option<String>,
-    target_editable: Option<bool>,
 ) -> bool {
     let Ok(_write_guard) =
         crate::db::local_data_write_gate::lock_local_data_write(Some(write_generation)).await
@@ -254,12 +259,12 @@ async fn record_error_while_active(
     }
     state.record_error_for_generation(
         receiver_generation,
-        sender_device_id,
-        event_id,
+        details.sender_device_id,
+        details.event_id,
         message,
-        target_class_name,
-        target_title,
-        target_editable,
+        details.target_class_name,
+        details.target_title,
+        details.target_editable,
     )
 }
 
@@ -267,12 +272,8 @@ async fn record_delivery_while_active(
     state: &RemoteReceiverState,
     receiver_generation: u64,
     write_generation: u64,
-    sender_device_id: Option<String>,
-    event_id: Option<String>,
+    details: RemoteReceiverEventDetails,
     delivered_at: Option<String>,
-    target_class_name: Option<String>,
-    target_title: Option<String>,
-    target_editable: Option<bool>,
 ) -> bool {
     let Ok(_write_guard) =
         crate::db::local_data_write_gate::lock_local_data_write(Some(write_generation)).await
@@ -284,12 +285,12 @@ async fn record_delivery_while_active(
     }
     state.record_delivery_for_generation(
         receiver_generation,
-        sender_device_id,
-        event_id,
+        details.sender_device_id,
+        details.event_id,
         delivered_at,
-        target_class_name,
-        target_title,
-        target_editable,
+        details.target_class_name,
+        details.target_title,
+        details.target_editable,
     )
 }
 
@@ -356,12 +357,11 @@ async fn handle_connection(
                         &state,
                         receiver_generation,
                         write_generation,
-                        Some(sender_device_id),
-                        None,
+                        RemoteReceiverEventDetails {
+                            sender_device_id: Some(sender_device_id),
+                            ..RemoteReceiverEventDetails::default()
+                        },
                         "Pairing code is invalid.".to_string(),
-                        None,
-                        None,
-                        None,
                     )
                     .await
                     {
@@ -470,12 +470,11 @@ async fn handle_connection(
                         &state,
                         receiver_generation,
                         write_generation,
-                        Some(sender_device_id),
-                        None,
+                        RemoteReceiverEventDetails {
+                            sender_device_id: Some(sender_device_id),
+                            ..RemoteReceiverEventDetails::default()
+                        },
                         "Sender is not paired.".to_string(),
-                        None,
-                        None,
-                        None,
                     )
                     .await
                     {
@@ -507,12 +506,11 @@ async fn handle_connection(
                         &state,
                         receiver_generation,
                         write_generation,
-                        Some(sender_device_id),
-                        None,
+                        RemoteReceiverEventDetails {
+                            sender_device_id: Some(sender_device_id),
+                            ..RemoteReceiverEventDetails::default()
+                        },
                         "Sender authentication failed.".to_string(),
-                        None,
-                        None,
-                        None,
                     )
                     .await
                     {
@@ -572,12 +570,11 @@ async fn handle_connection(
                         &state,
                         receiver_generation,
                         write_generation,
-                        None,
-                        Some(event_id.clone()),
+                        RemoteReceiverEventDetails {
+                            event_id: Some(event_id.clone()),
+                            ..RemoteReceiverEventDetails::default()
+                        },
                         "No authenticated sender session.".to_string(),
-                        None,
-                        None,
-                        None,
                     )
                     .await
                     {
@@ -610,12 +607,12 @@ async fn handle_connection(
                         &state,
                         receiver_generation,
                         write_generation,
-                        Some(sender_device_id),
-                        Some(event_id.clone()),
+                        RemoteReceiverEventDetails {
+                            sender_device_id: Some(sender_device_id),
+                            event_id: Some(event_id.clone()),
+                            ..RemoteReceiverEventDetails::default()
+                        },
                         Some(delivered_at.clone()),
-                        None,
-                        None,
-                        None,
                     )
                     .await
                     {
@@ -672,12 +669,14 @@ async fn handle_connection(
                             &state,
                             receiver_generation,
                             write_generation,
-                            Some(sender_device_id),
-                            Some(event_id.clone()),
+                            RemoteReceiverEventDetails {
+                                sender_device_id: Some(sender_device_id),
+                                event_id: Some(event_id.clone()),
+                                target_class_name: target_info.class_name.clone(),
+                                target_title: target_info.title.clone(),
+                                target_editable,
+                            },
                             Some(delivered_at.clone()),
-                            target_info.class_name.clone(),
-                            target_info.title.clone(),
-                            target_editable,
                         )
                         .await
                         {
@@ -707,12 +706,14 @@ async fn handle_connection(
                             &state,
                             receiver_generation,
                             write_generation,
-                            Some(sender_device_id),
-                            Some(event_id.clone()),
+                            RemoteReceiverEventDetails {
+                                sender_device_id: Some(sender_device_id),
+                                event_id: Some(event_id.clone()),
+                                target_class_name: target_info.class_name.clone(),
+                                target_title: target_info.title.clone(),
+                                target_editable,
+                            },
                             message.clone(),
-                            target_info.class_name.clone(),
-                            target_info.title.clone(),
-                            target_editable,
                         )
                         .await
                         {

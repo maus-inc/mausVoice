@@ -17,6 +17,8 @@ import {
 import { getAppState, produceAppState } from "../store";
 import {
   type LocalDataWriteLease,
+  getLocalDataClearGeneration,
+  isLocalDataClearRequested,
   withLocalDataWrite,
 } from "../utils/local-data-write-gate";
 import { sanitizeTranscriptText } from "../utils/sanitize-transcript.utils";
@@ -404,9 +406,18 @@ const syncRetranscribeFeedback = (event: "success" | "error" | "abandoned") => {
   dismissRetranscribeLoadingFeedback();
 };
 
+const assertRetranscribeClearGeneration = (generation: number): void => {
+  if (
+    isLocalDataClearRequested() ||
+    getLocalDataClearGeneration() !== generation
+  ) {
+    throw new Error("Local data was cleared during retranscription.");
+  }
+};
+
 const performRetranscribe = async (
   { transcriptionId, toneId, languageCode }: RetranscribeTranscriptionParams,
-  lease: LocalDataWriteLease,
+  clearGeneration: number,
 ): Promise<RetranscribeUpdate> => {
   const transcription = getRec(
     getAppState().transcriptionById,
@@ -414,26 +425,39 @@ const performRetranscribe = async (
   );
   if (!transcription) throw new Error("Transcription not found.");
 
-  const audioData = await getTranscriptionRepo().loadTranscriptionAudio(
-    transcriptionId,
-    lease,
-  );
+  const audioData = await withLocalDataWrite((lease) => {
+    assertRetranscribeClearGeneration(clearGeneration);
+    return getTranscriptionRepo().loadTranscriptionAudio(
+      transcriptionId,
+      lease,
+    );
+  });
+  assertRetranscribeClearGeneration(clearGeneration);
+
+  // Provider and styling calls can take much longer than local DB work. Do not
+  // keep a clear-drain lease while they run; the captured generation prevents
+  // their late result from being persisted after a clear or retry.
   const processed = await processAudio({
     samples: audioData.samples,
     sampleRate: audioData.sampleRate,
     toneId,
     languageCode,
   });
-  const updated = await updateStoredTranscription(
-    transcription,
-    processed,
-    lease,
-  );
+  assertRetranscribeClearGeneration(clearGeneration);
 
-  produceAppState((draft) => {
-    draft.transcriptionById[transcriptionId] = updated.transcription;
-  }, lease);
-  return updated;
+  return withLocalDataWrite(async (lease) => {
+    assertRetranscribeClearGeneration(clearGeneration);
+    const updated = await updateStoredTranscription(
+      transcription,
+      processed,
+      lease,
+    );
+
+    produceAppState((draft) => {
+      draft.transcriptionById[transcriptionId] = updated.transcription;
+    }, lease);
+    return updated;
+  });
 };
 
 /**
@@ -442,6 +466,21 @@ const performRetranscribe = async (
  * loading toast, and only once nothing is left running.
  */
 const abandonRetranscribeRun = (): void => {
+  syncRetranscribeFeedback("abandoned");
+};
+
+const cancelRetranscribeRunForClear = (
+  transcriptionId: string,
+  generation: number,
+): void => {
+  if (isCurrentRetranscribeGeneration(transcriptionId, generation)) {
+    // This is transient in-memory feedback, not persisted local data. The
+    // storage adapter rejects persistence while the clear gate is closed.
+    produceAppState((draft) => {
+      finishRetranscribe(draft.transcriptions, transcriptionId, false);
+    });
+    releaseRetranscribeGeneration(transcriptionId, generation);
+  }
   syncRetranscribeFeedback("abandoned");
 };
 
@@ -484,10 +523,14 @@ export const retranscribeTranscription = async (
   params: RetranscribeTranscriptionParams,
 ): Promise<void> => {
   const { transcriptionId } = params;
-  if (isRetranscribingId(getAppState().transcriptions, transcriptionId)) {
+  if (
+    isRetranscribingId(getAppState().transcriptions, transcriptionId) ||
+    isLocalDataClearRequested()
+  ) {
     return;
   }
 
+  const clearGeneration = getLocalDataClearGeneration();
   const generation = nextRetranscribeGeneration(transcriptionId);
   const wasAnyInFlight =
     getAppState().transcriptions.retranscribingIds.length > 0;
@@ -499,11 +542,16 @@ export const retranscribeTranscription = async (
   }
 
   try {
-    const update = await withLocalDataWrite((lease) =>
-      performRetranscribe(params, lease),
-    );
+    const update = await performRetranscribe(params, clearGeneration);
     if (!isCurrentRetranscribeGeneration(transcriptionId, generation)) {
       abandonRetranscribeRun();
+      return;
+    }
+    if (
+      isLocalDataClearRequested() ||
+      getLocalDataClearGeneration() !== clearGeneration
+    ) {
+      cancelRetranscribeRunForClear(transcriptionId, generation);
       return;
     }
     if (!update.styled) {
@@ -534,6 +582,13 @@ export const retranscribeTranscription = async (
   } catch (error) {
     if (!isCurrentRetranscribeGeneration(transcriptionId, generation)) {
       abandonRetranscribeRun();
+      return;
+    }
+    if (
+      isLocalDataClearRequested() ||
+      getLocalDataClearGeneration() !== clearGeneration
+    ) {
+      cancelRetranscribeRunForClear(transcriptionId, generation);
       return;
     }
     failRetranscribeRun({
