@@ -1,5 +1,6 @@
 import { config } from "dotenv";
 import { resolve } from "path";
+import { vi } from "vitest";
 
 config({ path: resolve(__dirname, ".env") });
 
@@ -22,4 +23,19 @@ Object.defineProperty(globalThis, "localStorage", {
       return store.size;
     },
   } satisfies Storage,
+});
+
+// Local-data writes are main-window-only. Vitest has no Tauri window metadata,
+// so make that identity explicit without manufacturing a browser `window`
+// object that would confuse DOM-dependent libraries in Node tests.
+vi.mock("@tauri-apps/api/window", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@tauri-apps/api/window")>();
+  return {
+    ...actual,
+    getCurrentWindow: () =>
+      ({
+        label: "main",
+      }) as ReturnType<typeof actual.getCurrentWindow>,
+  };
 });

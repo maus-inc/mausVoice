@@ -36,9 +36,11 @@ describe("HomeSideEffects daily activity refresh", () => {
   let container: HTMLDivElement;
   let root: Root;
 
-  const mount = async () => {
-    await act(async () => {
-      root.render(<HomeSideEffects />);
+  const today = new Date(2026, 9, 8, 12);
+
+  const mount = async (activityDate = today) => {
+    act(() => {
+      root.render(<HomeSideEffects today={activityDate} />);
     });
     await act(async () => {
       await Promise.resolve();
@@ -48,7 +50,7 @@ describe("HomeSideEffects daily activity refresh", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.refresh.mockResolvedValue(undefined);
+    mocks.refresh.mockResolvedValue();
     mocks.listTranscriptions.mockResolvedValue([]);
     mocks.listActivity.mockResolvedValue([
       { localDate: "2026-10-08", wordCount: 42 },
@@ -68,7 +70,7 @@ describe("HomeSideEffects daily activity refresh", () => {
   it("loads the visible local-date range and stores the returned totals", async () => {
     await mount();
 
-    const range = getActivityDateRange();
+    const range = getActivityDateRange(today);
     expect(mocks.listActivity).toHaveBeenCalledWith(
       range.startDate,
       range.endDate,
@@ -97,6 +99,25 @@ describe("HomeSideEffects daily activity refresh", () => {
       await Promise.resolve();
     });
     expect(mocks.listActivity).toHaveBeenCalledTimes(1);
+  });
+
+  it("loads the new local date range when midnight advances the date", async () => {
+    await mount();
+    mocks.listActivity.mockClear();
+    const nextDay = new Date(2026, 9, 9, 12);
+
+    await act(async () => {
+      root.render(<HomeSideEffects today={nextDay} />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const range = getActivityDateRange(nextDay);
+    expect(mocks.listActivity).toHaveBeenCalledTimes(1);
+    expect(mocks.listActivity).toHaveBeenCalledWith(
+      range.startDate,
+      range.endDate,
+    );
   });
 
   it("keeps a failed activity load visible without discarding the page", async () => {

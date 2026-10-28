@@ -105,17 +105,17 @@ fn audio_dir_path(app: &tauri::AppHandle) -> io::Result<PathBuf> {
     Ok(path)
 }
 
-fn reject_managed_audio_reparse_point() -> io::Error {
+fn reject_managed_data_reparse_point() -> io::Error {
     io::Error::new(
         io::ErrorKind::PermissionDenied,
-        "Refusing a linked or reparse-point directory on the managed audio path",
+        "Refusing a linked or reparse-point directory on the managed app-data path",
     )
 }
 
-fn invalid_managed_audio_path(reason: &str) -> io::Error {
+fn invalid_managed_data_path(reason: &str) -> io::Error {
     io::Error::new(
         io::ErrorKind::InvalidInput,
-        format!("Managed audio path cannot be used: {reason}"),
+        format!("Managed app-data path cannot be used: {reason}"),
     )
 }
 
@@ -165,7 +165,7 @@ fn into_proved_std_file(
     if metadata.file_type().is_symlink() || !right_kind {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
-            format!("Refusing to {operation} a linked or non-{node} managed audio node"),
+            format!("Refusing to {operation} a linked or non-{node} managed data node"),
         ));
     }
 
@@ -173,7 +173,7 @@ fn into_proved_std_file(
     if is_windows_reparse_point(&handle)? {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
-            format!("Refusing to {operation} a Windows reparse-point managed audio node"),
+            format!("Refusing to {operation} a Windows reparse-point managed data node"),
         ));
     }
 
@@ -198,7 +198,7 @@ fn open_dir_no_follow(parent: &Dir, name: impl AsRef<Path>) -> io::Result<Dir> {
     Ok(Dir::from_std_file(into_proved_std_file(
         child,
         true,
-        "open as a managed audio directory",
+        "open as a managed data directory",
     )?))
 }
 
@@ -265,7 +265,7 @@ fn open_dir_chain(path: &Path) -> io::Result<Dir> {
                     if cursor == path {
                         // The managed root itself. Refused whatever is missing
                         // below it.
-                        return Err(reject_managed_audio_reparse_point());
+                        return Err(reject_managed_data_reparse_point());
                     }
                     // Above the managed root, so it is resolved once and the
                     // walk restarts from the resolved name. Restarting matters:
@@ -283,7 +283,7 @@ fn open_dir_chain(path: &Path) -> io::Result<Dir> {
                     return open_dir_chain(&reanchored);
                 }
                 if !metadata.is_dir() {
-                    return Err(invalid_managed_audio_path(&format!(
+                    return Err(invalid_managed_data_path(&format!(
                         "{} is not a directory",
                         cursor.to_string_lossy()
                     )));
@@ -293,10 +293,10 @@ fn open_dir_chain(path: &Path) -> io::Result<Dir> {
             Err(err) if err.kind() == io::ErrorKind::NotFound => {
                 let name = cursor
                     .file_name()
-                    .ok_or_else(|| invalid_managed_audio_path("it has no name to create"))?;
+                    .ok_or_else(|| invalid_managed_data_path("it has no name to create"))?;
                 missing.push(name);
                 cursor = cursor.parent().ok_or_else(|| {
-                    invalid_managed_audio_path("it has no parent directory to create it under")
+                    invalid_managed_data_path("it has no parent directory to create it under")
                 })?;
             }
             Err(err) => return Err(err),
@@ -328,7 +328,7 @@ fn open_checked_component(existing: &Path) -> io::Result<Dir> {
         return Dir::open_ambient_dir(&fs::canonicalize(existing)?, cap_std::ambient_authority());
     };
     let Some(name) = existing.file_name() else {
-        return Err(invalid_managed_audio_path("it has no name to open"));
+        return Err(invalid_managed_data_path("it has no name to open"));
     };
     // `parent` of a one-component relative path is empty, which names the
     // working directory rather than nothing at all.
@@ -351,6 +351,19 @@ fn open_checked_component(existing: &Path) -> io::Result<Dir> {
 /// was checked even if another process replaces its name. `maybe_dir` also
 /// makes the Windows handle deny delete sharing, so Windows cannot rename or
 /// delete the held directory while a cleanup batch is running.
+pub(crate) fn open_app_data_dir(app: &tauri::AppHandle) -> io::Result<Dir> {
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|err| io::Error::other(err.to_string()))?;
+    open_dir_chain(&app_data_dir)
+}
+
+pub(crate) fn open_storage_dir(app: &tauri::AppHandle) -> io::Result<Dir> {
+    let app_data = open_app_data_dir(app)?;
+    create_or_open_dir_no_follow(&app_data, crate::system::paths::STORAGE_DIR_NAME)
+}
+
 fn open_managed_audio_dir_at(app_data_dir: &Path) -> io::Result<Dir> {
     let app_data = open_dir_chain(app_data_dir)?;
 
@@ -358,11 +371,8 @@ fn open_managed_audio_dir_at(app_data_dir: &Path) -> io::Result<Dir> {
 }
 
 pub(crate) fn open_managed_audio_dir(app: &tauri::AppHandle) -> io::Result<Dir> {
-    let app_data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|err| io::Error::other(err.to_string()))?;
-    open_managed_audio_dir_at(&app_data_dir)
+    let app_data = open_app_data_dir(app)?;
+    create_or_open_dir_no_follow(&app_data, AUDIO_DIR_NAME)
 }
 
 #[cfg(test)]

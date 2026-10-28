@@ -1,7 +1,8 @@
 import { Conversation } from "@maus-inc/types";
 import { invoke } from "@tauri-apps/api/core";
 import dayjs from "dayjs";
-import { BaseRepo } from "./base.repo";
+import type { LocalDataWriteLease } from "../utils/local-data-write-gate";
+import { BaseRepo, withLocalDataWrite } from "./base.repo";
 
 type LocalConversation = {
   id: string;
@@ -30,11 +31,16 @@ export abstract class BaseConversationRepo extends BaseRepo {
   abstract listConversations(): Promise<Conversation[]>;
   abstract createConversation(
     conversation: Conversation,
+    lease?: LocalDataWriteLease,
   ): Promise<Conversation>;
   abstract updateConversation(
     conversation: Conversation,
+    lease?: LocalDataWriteLease,
   ): Promise<Conversation>;
-  abstract deleteConversation(id: string): Promise<void>;
+  abstract deleteConversation(
+    id: string,
+    lease?: LocalDataWriteLease,
+  ): Promise<void>;
 }
 
 export class LocalConversationRepo extends BaseConversationRepo {
@@ -43,21 +49,34 @@ export class LocalConversationRepo extends BaseConversationRepo {
     return locals.map(fromLocalConversation);
   }
 
-  async createConversation(conversation: Conversation): Promise<Conversation> {
-    const created = await invoke<LocalConversation>("conversation_create", {
-      conversation: toLocalConversation(conversation),
-    });
-    return fromLocalConversation(created);
+  createConversation(
+    conversation: Conversation,
+    lease?: LocalDataWriteLease,
+  ): Promise<Conversation> {
+    return withLocalDataWrite(async () => {
+      const created = await invoke<LocalConversation>("conversation_create", {
+        conversation: toLocalConversation(conversation),
+      });
+      return fromLocalConversation(created);
+    }, lease);
   }
 
-  async updateConversation(conversation: Conversation): Promise<Conversation> {
-    const updated = await invoke<LocalConversation>("conversation_update", {
-      conversation: toLocalConversation(conversation),
-    });
-    return fromLocalConversation(updated);
+  updateConversation(
+    conversation: Conversation,
+    lease?: LocalDataWriteLease,
+  ): Promise<Conversation> {
+    return withLocalDataWrite(async () => {
+      const updated = await invoke<LocalConversation>("conversation_update", {
+        conversation: toLocalConversation(conversation),
+      });
+      return fromLocalConversation(updated);
+    }, lease);
   }
 
-  async deleteConversation(id: string): Promise<void> {
-    await invoke("conversation_delete", { id });
+  deleteConversation(id: string, lease?: LocalDataWriteLease): Promise<void> {
+    return withLocalDataWrite(
+      () => invoke<void>("conversation_delete", { id }),
+      lease,
+    );
   }
 }

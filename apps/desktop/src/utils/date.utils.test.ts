@@ -83,6 +83,17 @@ describe("local date keys", () => {
       expect(() => dateFromLocalDateKey(key)).toThrow(RangeError);
     },
   );
+
+  it.each(["0000-01-01", "0001-03-04", "0099-12-31"])(
+    "round-trips early calendar years without Date constructor remapping: %s",
+    (key) => {
+      expect(toLocalDateKey(dateFromLocalDateKey(key))).toBe(key);
+    },
+  );
+
+  it("rejects years that cannot fit the YYYY key format", () => {
+    expect(() => toLocalDateKey(new Date(10_000, 0, 1))).toThrow(RangeError);
+  });
 });
 
 describe("nowIso", () => {

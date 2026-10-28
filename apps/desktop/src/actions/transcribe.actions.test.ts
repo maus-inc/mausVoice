@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import type { UserPreferences } from "@maus-inc/types";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { INITIAL_APP_STATE } from "../state/app.state";
@@ -9,7 +10,15 @@ import {
 } from "./transcribe.actions";
 import { createDefaultPreferences } from "./user.actions";
 import { LocalTranscribeAudioRepo } from "../repos/transcribe-audio.repo";
-import { localDateKeyFromIso } from "../utils/date.utils";
+import {
+  beginLocalDataClear,
+  LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY,
+} from "../utils/local-data-write-gate";
+
+const releaseClearAfterRemovingMarker = (release: () => void): void => {
+  window.localStorage.removeItem(LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY);
+  release();
+};
 
 // One second of a low-amplitude tone. The energy-based silence gate
 // short-circuits all-zero (digital silence) samples before reaching the
@@ -22,20 +31,22 @@ const makeToneSamples = (sampleRate = 16000): Float32Array => {
   return samples;
 };
 
-const { loggerMock, invokeMock, recordUsageWordsMock } = vi.hoisted(() => ({
-  loggerMock: {
-    info: vi.fn(),
-    warning: vi.fn(),
-    error: vi.fn(),
-    verbose: vi.fn(),
-    stopwatch: vi.fn(async (_label: string, fn: () => Promise<unknown>) => {
-      const result = await fn();
-      return result;
-    }),
-  },
-  invokeMock: vi.fn(),
-  recordUsageWordsMock: vi.fn(),
-}));
+const { loggerMock, invokeMock, recordUsageWordsMock, refreshCurrentUserMock } =
+  vi.hoisted(() => ({
+    loggerMock: {
+      info: vi.fn(),
+      warning: vi.fn(),
+      error: vi.fn(),
+      verbose: vi.fn(),
+      stopwatch: vi.fn(async (_label: string, fn: () => Promise<unknown>) => {
+        const result = await fn();
+        return result;
+      }),
+    },
+    invokeMock: vi.fn(),
+    recordUsageWordsMock: vi.fn(),
+    refreshCurrentUserMock: vi.fn(),
+  }));
 
 vi.mock("../utils/log.utils", () => ({ getLogger: () => loggerMock }));
 // `utils/tauri-shell.utils.ts` constructs a `Channel` and assigns its
@@ -74,7 +85,11 @@ vi.mock("../repos", async (importOriginal) => {
 
 vi.mock("./user.actions", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./user.actions")>();
-  return { ...actual, recordUsageWords: recordUsageWordsMock };
+  return {
+    ...actual,
+    recordUsageWords: recordUsageWordsMock,
+    refreshCurrentUser: refreshCurrentUserMock,
+  };
 });
 
 const staleOllamaState = () => {
@@ -240,6 +255,10 @@ describe("storeTranscription audio retention", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     invokeMock.mockReset();
+    recordUsageWordsMock.mockReset();
+    recordUsageWordsMock.mockResolvedValue(undefined);
+    refreshCurrentUserMock.mockReset();
+    refreshCurrentUserMock.mockResolvedValue(undefined);
     createTranscriptionMock.mockReset();
     purgeStaleAudioMock.mockReset();
     purgeStaleAudioMock.mockResolvedValue([]);
@@ -251,25 +270,32 @@ describe("storeTranscription audio retention", () => {
     setAppState(structuredClone(INITIAL_APP_STATE), true);
   });
 
-  it("does not hold the stop path open on usage metering or the audio sweep", async () => {
+  it("does not hold the stop path open on profile refresh or the audio sweep", async () => {
     // The pill is told to go idle as soon as the transcript is inserted, so it
     // accepts clicks while the stop path is still unwinding. A click in that
     // gap is accepted natively and then dropped, so the save must not wait on
-    // housekeeping: a hung retention sweep or a profile write queued behind
-    // other work would otherwise hold the session locked for as long as they
-    // take. This fails on the previous code, which awaited both.
+    // housekeeping: a hung retention sweep or profile refresh would otherwise
+    // hold the session locked for as long as they take.
     setPrefs({});
     invokeMock.mockResolvedValue({
       filePath: "/tmp/audio.wav",
       durationMs: 100,
     });
-    // `once` so a hang cannot leak into a later block: nothing else resets
-    // `recordUsageWordsMock`, and a module mock stays pending for the rest of the file.
+    // Keep housekeeping under test control so its write lease is released after
+    // confirming that the stop path does not wait for it.
+    let finishPurge: ((ids: string[]) => void) | undefined;
     purgeStaleAudioMock.mockImplementationOnce(
-      () => new Promise<string[]>(() => undefined),
+      () =>
+        new Promise<string[]>((resolve) => {
+          finishPurge = resolve;
+        }),
     );
-    recordUsageWordsMock.mockImplementationOnce(
-      () => new Promise<void>(() => undefined),
+    let finishRefresh: (() => void) | undefined;
+    refreshCurrentUserMock.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishRefresh = resolve;
+        }),
     );
 
     const settled = await Promise.race([
@@ -280,6 +306,47 @@ describe("storeTranscription audio retention", () => {
     ]);
 
     expect(settled).toBe("settled");
+    expect(finishPurge).toBeDefined();
+    expect(finishRefresh).toBeDefined();
+    finishPurge?.([]);
+    finishRefresh?.();
+
+    // Detached writes must keep their lease until settled, then allow a clear.
+    const releaseClear = await beginLocalDataClear();
+    releaseClearAfterRemovingMarker(releaseClear);
+  });
+
+  it("holds local-data clearing until a detached audio sweep finishes", async () => {
+    setPrefs({});
+    invokeMock.mockResolvedValue({
+      filePath: "/tmp/audio.wav",
+      durationMs: 100,
+    });
+
+    let finishPurge: ((ids: string[]) => void) | undefined;
+    purgeStaleAudioMock.mockImplementationOnce(
+      () =>
+        new Promise<string[]>((resolve) => {
+          finishPurge = resolve;
+        }),
+    );
+    await storeTranscription(buildInput());
+    expect(finishPurge).toBeDefined();
+
+    let releaseClear: (() => void) | undefined;
+    const clearing = beginLocalDataClear().then((release) => {
+      releaseClear = release;
+    });
+    expect(releaseClear).toBeUndefined();
+
+    try {
+      finishPurge?.([]);
+      await clearing;
+      expect(releaseClear).toBeDefined();
+    } finally {
+      finishPurge?.([]);
+      if (releaseClear) releaseClearAfterRemovingMarker(releaseClear);
+    }
   });
 
   it.each([Infinity, -Infinity])(
@@ -378,6 +445,10 @@ describe("storeTranscription empty-audio retention (#418)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     invokeMock.mockReset();
+    recordUsageWordsMock.mockReset();
+    recordUsageWordsMock.mockResolvedValue(undefined);
+    refreshCurrentUserMock.mockReset();
+    refreshCurrentUserMock.mockResolvedValue(undefined);
     createTranscriptionMock.mockReset();
     purgeStaleAudioMock.mockReset();
     purgeStaleAudioMock.mockResolvedValue([]);
@@ -388,6 +459,51 @@ describe("storeTranscription empty-audio retention (#418)", () => {
   afterEach(() => {
     vi.clearAllMocks();
     setAppState(structuredClone(INITIAL_APP_STATE), true);
+  });
+
+  it("waits for an active text-only save before local data can be cleared", async () => {
+    let finishCreate: ((transcription: unknown) => void) | undefined;
+    createTranscriptionMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishCreate = resolve;
+        }),
+    );
+
+    const saving = storeTranscription(
+      buildInput({
+        audio: { samples: new Float32Array(0), sampleRate: 16000 },
+      }),
+    );
+    await vi.waitFor(() => {
+      expect(createTranscriptionMock).toHaveBeenCalledTimes(1);
+    });
+
+    let releaseClear: (() => void) | undefined;
+    let clearReady = false;
+    const clearing = beginLocalDataClear().then((release) => {
+      releaseClear = release;
+      clearReady = true;
+      return release;
+    });
+
+    try {
+      await expect(storeTranscription(buildInput())).resolves.toEqual({
+        transcription: null,
+        wordCount: 0,
+      });
+      expect(createTranscriptionMock).toHaveBeenCalledTimes(1);
+      expect(clearReady).toBe(false);
+
+      finishCreate?.(createTranscriptionMock.mock.calls[0][0]);
+      await saving;
+      await clearing;
+      expect(clearReady).toBe(true);
+    } finally {
+      finishCreate?.(createTranscriptionMock.mock.calls[0]?.[0]);
+      if (!releaseClear) releaseClear = await clearing;
+      releaseClearAfterRemovingMarker(releaseClear);
+    }
   });
 
   it("saves the text record when samples are empty but rawTranscript is non-empty", async () => {
@@ -409,11 +525,8 @@ describe("storeTranscription empty-audio retention (#418)", () => {
     expect(stored.transcript).toBe("hello world");
     expect(stored.rawTranscript).toBe("hello world");
     expect(result.transcription).not.toBeNull();
-    expect(recordUsageWordsMock).toHaveBeenCalledWith(
-      stored.id,
-      localDateKeyFromIso(stored.createdAt),
-      2,
-    );
+    expect(refreshCurrentUserMock).toHaveBeenCalledTimes(1);
+    expect(recordUsageWordsMock).not.toHaveBeenCalled();
   });
 
   it("does not meter a transcription received from another device", async () => {
@@ -424,6 +537,7 @@ describe("storeTranscription empty-audio retention (#418)", () => {
     );
 
     expect(result.transcription).not.toBeNull();
+    expect(refreshCurrentUserMock).not.toHaveBeenCalled();
     expect(recordUsageWordsMock).not.toHaveBeenCalled();
   });
 
@@ -448,6 +562,7 @@ describe("storeTranscription empty-audio retention (#418)", () => {
     expect(stored.transcript).toBe("[Transcription Failed]");
     expect(stored.warnings).toEqual(["provider failed: timeout"]);
     expect(result.transcription).not.toBeNull();
+    expect(refreshCurrentUserMock).not.toHaveBeenCalled();
     expect(recordUsageWordsMock).not.toHaveBeenCalled();
   });
 
@@ -472,6 +587,10 @@ describe("storeTranscription post-process model persistence", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     invokeMock.mockReset();
+    recordUsageWordsMock.mockReset();
+    recordUsageWordsMock.mockResolvedValue(undefined);
+    refreshCurrentUserMock.mockReset();
+    refreshCurrentUserMock.mockResolvedValue(undefined);
     createTranscriptionMock.mockReset();
     purgeStaleAudioMock.mockReset();
     purgeStaleAudioMock.mockResolvedValue([]);
@@ -556,6 +675,7 @@ describe("storeTranscription persistence suppression", () => {
       expect.any(String),
       expect.any(String),
       3,
+      expect.objectContaining({}),
     );
   });
 
@@ -593,6 +713,7 @@ describe("storeTranscription persistence suppression", () => {
       expect.any(String),
       expect.any(String),
       3,
+      expect.objectContaining({}),
     );
     await expect(pending).resolves.toMatchObject({ wordCount: 3 });
   });

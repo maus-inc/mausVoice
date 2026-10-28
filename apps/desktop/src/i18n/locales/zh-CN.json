@@ -11,6 +11,7 @@
   "a_full_week": "整整一周！ 🎉",
   "a_mausvoice_update": "mausVoice 更新",
   "a_more_powerful_mausvoice": "更强大的 mausVoice",
+  "a_previous_clear_was_interrupted_retry_to_finish_deleting_lo": "上次清除操作已中断。请重试以完成本地数据删除。",
   "accept": "接受",
   "access_granted": "访问已授权",
   "accessibility_is_authorized_but_the_keyboard_listener_isn_t": "辅助功能已授权，但键盘监听器未在运行。在重试之前，快捷键可能无法使用。",

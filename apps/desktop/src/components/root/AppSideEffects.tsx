@@ -107,6 +107,7 @@ import {
   LOCAL_USER_ID,
 } from "../../utils/user.utils";
 import { resumePendingTranscriptionDeletes } from "../../utils/pending-transcription-delete";
+import { isLocalDataClearRequested } from "../../utils/local-data-write-gate";
 import {
   consumeSurfaceWindowFlag,
   surfaceMainWindow,
@@ -572,7 +573,14 @@ export const AppSideEffects = () => {
         return;
       }
       await handleRemoteFinalTextReceived(payload);
-      await refreshRemoteReceiverStatus().catch(() => undefined);
+      if (isLocalDataClearRequested()) return;
+      await refreshRemoteReceiverStatus().catch((error: unknown) => {
+        if (!isLocalDataClearRequested()) {
+          getLogger().warning(
+            `Failed to refresh remote receiver after delivery: ${error}`,
+          );
+        }
+      });
     },
   );
 
@@ -680,22 +688,34 @@ export const AppSideEffects = () => {
   }, [authReady, elevationReady, authSessionNonce]);
 
   useAsyncEffect(async () => {
-    if (!canRunPostElevationInit(elevationReady, initReady)) {
+    if (
+      !canRunPostElevationInit(elevationReady, initReady) ||
+      isLocalDataClearRequested()
+    ) {
       return;
     }
-    await loadPairedRemoteDevices();
-    await refreshRemoteReceiverStatus();
-    const prefs = getMyUserPreferences(getAppState());
-    if (
-      prefs?.remoteTargetDeviceId &&
-      !getAppState().pairedRemoteDeviceById[prefs.remoteTargetDeviceId]
-    ) {
-      await setRemoteTargetDeviceId(null);
-      await setRemoteOutputEnabled(false);
-    }
-    const receiverStatus = getAppState().remoteReceiverStatus;
-    if (prefs?.remoteReceiverAutoStart && !receiverStatus?.enabled) {
-      await startRemoteReceiver(prefs.remoteReceiverPort ?? null);
+
+    try {
+      await loadPairedRemoteDevices();
+      await refreshRemoteReceiverStatus();
+      if (isLocalDataClearRequested()) return;
+
+      const prefs = getMyUserPreferences(getAppState());
+      if (
+        prefs?.remoteTargetDeviceId &&
+        !getAppState().pairedRemoteDeviceById[prefs.remoteTargetDeviceId]
+      ) {
+        await setRemoteTargetDeviceId(null);
+        await setRemoteOutputEnabled(false);
+      }
+      const receiverStatus = getAppState().remoteReceiverStatus;
+      if (prefs?.remoteReceiverAutoStart && !receiverStatus?.enabled) {
+        await startRemoteReceiver(prefs.remoteReceiverPort ?? null);
+      }
+    } catch (error) {
+      if (!isLocalDataClearRequested()) {
+        getLogger().warning(`Failed to initialize remote receiver: ${error}`);
+      }
     }
   }, [initReady, elevationReady]);
 

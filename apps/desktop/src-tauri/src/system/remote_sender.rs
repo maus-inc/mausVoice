@@ -70,6 +70,15 @@ pub async fn pair_with_receiver(
     receiver_address: &str,
     pairing_code: &str,
 ) -> Result<crate::domain::PairedRemoteDevice, String> {
+    let write_generation = crate::db::local_data_write_gate::current_write_generation()
+        .ok_or_else(|| "Local data is being cleared".to_string())?;
+    // Pairing changes state on both devices. Hold one native lease from before
+    // the handshake through the local upsert so clear cannot interrupt between
+    // the remote acknowledgement and local persistence when IPC bypasses the UI.
+    let write_guard =
+        crate::db::local_data_write_gate::lock_local_data_write(Some(write_generation))
+            .await
+            .map_err(|err| err.to_string())?;
     let sender = sender_state.status();
     let request_id = generate_id("pair");
     let stream = tokio::time::timeout(Duration::from_secs(5), TcpStream::connect(receiver_address))
@@ -81,19 +90,27 @@ pub async fn pair_with_receiver(
     let (reader, mut writer) = stream.into_split();
     let mut lines = BufReader::new(reader).lines();
 
-    write_message(
-        &mut writer,
-        &OutgoingEnvelope::PairingRequest {
-            request_id: request_id.clone(),
-            sender_device_id: sender.device_id.clone(),
-            sender_device_name: sender.device_name.clone(),
-            sender_platform: sender.device_platform.clone(),
-            pairing_code: pairing_code.to_string(),
-        },
+    ensure_write_generation_current(write_generation)?;
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        write_message(
+            &mut writer,
+            &OutgoingEnvelope::PairingRequest {
+                request_id: request_id.clone(),
+                sender_device_id: sender.device_id.clone(),
+                sender_device_name: sender.device_name.clone(),
+                sender_platform: sender.device_platform.clone(),
+                pairing_code: pairing_code.to_string(),
+            },
+        ),
     )
-    .await?;
+    .await
+    .map_err(|_| "Timed out sending remote pairing request.".to_string())??;
+    ensure_write_generation_current(write_generation)?;
 
-    match read_message(&mut lines).await? {
+    let response = read_message(&mut lines).await?;
+    ensure_write_generation_current(write_generation)?;
+    match response {
         IncomingEnvelope::PairingAccept {
             request_id: ack_request_id,
             receiver_device_id: ack_receiver_device_id,
@@ -131,9 +148,14 @@ pub async fn pair_with_receiver(
                 trusted: true,
             };
 
-            crate::db::paired_remote_device_queries::upsert_paired_remote_device(pool, &device)
-                .await
-                .map_err(|err| format!("Failed to save paired receiver: {err}"))?;
+            ensure_write_generation_current(write_generation)?;
+            crate::db::paired_remote_device_queries::upsert_paired_remote_device_unlocked(
+                &write_guard,
+                pool,
+                &device,
+            )
+            .await
+            .map_err(|err| format!("Failed to save paired receiver: {err}"))?;
 
             Ok(device)
         }
@@ -158,6 +180,15 @@ pub async fn deliver_final_text(
         return Ok(());
     }
 
+    let write_generation = crate::db::local_data_write_gate::current_write_generation()
+        .ok_or_else(|| "Local data is being cleared".to_string())?;
+    // The frontend holds the same lease across this multi-step action. Keep a
+    // native lease too so direct IPC calls cannot bypass clear coordination.
+    let _write_guard =
+        crate::db::local_data_write_gate::lock_local_data_write(Some(write_generation))
+            .await
+            .map_err(|err| err.to_string())?;
+
     let target = crate::db::paired_remote_device_queries::fetch_paired_remote_device_by_id(
         pool,
         target_device_id,
@@ -165,6 +196,7 @@ pub async fn deliver_final_text(
     .await
     .map_err(|err| format!("Failed to load target device: {err}"))?
     .ok_or_else(|| "Target device is not paired.".to_string())?;
+    ensure_write_generation_current(write_generation)?;
 
     if !target.trusted {
         return Err("Target device is not trusted.".to_string());
@@ -183,6 +215,7 @@ pub async fn deliver_final_text(
         .await
         .map_err(|_| format!("Timed out connecting to remote receiver at {address}"))?
         .map_err(|err| format!("Failed to connect to remote receiver at {address}: {err}"))?;
+    ensure_write_generation_current(write_generation)?;
     let (reader, mut writer) = stream.into_split();
     let mut lines = BufReader::new(reader).lines();
 
@@ -195,8 +228,11 @@ pub async fn deliver_final_text(
         },
     )
     .await?;
+    ensure_write_generation_current(write_generation)?;
 
-    match read_message(&mut lines).await? {
+    let session_ack = read_message(&mut lines).await?;
+    ensure_write_generation_current(write_generation)?;
+    match session_ack {
         IncomingEnvelope::SessionAck {
             session_id: ack_session_id,
             receiver_device_id,
@@ -219,18 +255,24 @@ pub async fn deliver_final_text(
         }
     }
 
-    write_message(
-        &mut writer,
-        &OutgoingEnvelope::FinalText {
-            session_id: session_id.clone(),
-            event_id: event_id.clone(),
-            sequence: 1,
-            text: text.to_string(),
-            mode: mode.to_string(),
-            created_at: chrono::Utc::now().to_rfc3339(),
-        },
+    ensure_write_generation_current(write_generation)?;
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        write_message(
+            &mut writer,
+            &OutgoingEnvelope::FinalText {
+                session_id: session_id.clone(),
+                event_id: event_id.clone(),
+                sequence: 1,
+                text: text.to_string(),
+                mode: mode.to_string(),
+                created_at: chrono::Utc::now().to_rfc3339(),
+            },
+        ),
     )
-    .await?;
+    .await
+    .map_err(|_| "Timed out sending remote transcript.".to_string())??;
+    ensure_write_generation_current(write_generation)?;
 
     match read_message(&mut lines).await? {
         IncomingEnvelope::DeliveryAck {
@@ -260,6 +302,14 @@ pub async fn deliver_final_text(
         IncomingEnvelope::PairingAccept { .. } => {
             Err("Remote receiver returned an unexpected pairing accept.".to_string())
         }
+    }
+}
+
+fn ensure_write_generation_current(generation: u64) -> Result<(), String> {
+    if crate::db::local_data_write_gate::is_write_generation_current(generation) {
+        Ok(())
+    } else {
+        Err("Local data is being cleared".to_string())
     }
 }
 

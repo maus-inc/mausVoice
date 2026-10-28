@@ -11,6 +11,7 @@
   "a_full_week": "Eine ganze Woche! 🎉",
   "a_mausvoice_update": "Ein mausVoice-Update",
   "a_more_powerful_mausvoice": "Ein leistungsstärkeres mausVoice",
+  "a_previous_clear_was_interrupted_retry_to_finish_deleting_lo": "Ein vorheriger Löschvorgang wurde unterbrochen. Versuche es erneut, um das Löschen der lokalen Daten abzuschließen.",
   "accept": "Akzeptieren",
   "access_granted": "Zugriff gewährt",
   "accessibility_is_authorized_but_the_keyboard_listener_isn_t": "Die Bedienungshilfe ist autorisiert, aber der Tastatur-Listener läuft nicht. Hotkeys funktionieren möglicherweise erst, wenn Sie es erneut versuchen.",

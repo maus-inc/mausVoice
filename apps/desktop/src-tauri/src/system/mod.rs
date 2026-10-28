@@ -5,6 +5,7 @@ pub mod capabilities;
 pub mod crypto;
 pub mod diagnostics;
 pub mod gpu;
+pub mod local_data_clear_marker;
 pub mod machine_id;
 pub mod models;
 pub mod paths;

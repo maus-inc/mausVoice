@@ -14,6 +14,7 @@ import { sendPillFlashMessage, sendPillStageText } from "./overlay.utils";
 import { markPipeline, type PipelineTrace } from "./pipeline-trace";
 import { sanitizeIndentation } from "./string.utils";
 import { getMyUserPreferences } from "./user.utils";
+import { withLocalDataWrite } from "./local-data-write-gate";
 
 let handsFreeSessionId = 0;
 
@@ -208,7 +209,9 @@ export const routeTranscriptOutput = async (
   }
   if (remotePrefs) {
     return deliverWithInsertionStage(args.isInterim, trace, () =>
-      deliverRemoteOutput({ ...args, text: outputText }, remotePrefs),
+      withLocalDataWrite(() =>
+        deliverRemoteOutput({ ...args, text: outputText }, remotePrefs),
+      ),
     );
   }
 

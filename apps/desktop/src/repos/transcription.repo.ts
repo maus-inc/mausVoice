@@ -4,7 +4,8 @@ import dayjs from "dayjs";
 import { orNull, orUndefined } from "../utils/nullable.utils";
 import { getAppState } from "../store";
 import { getMyEffectiveUserId } from "../utils/user.utils";
-import { BaseRepo } from "./base.repo";
+import type { LocalDataWriteLease } from "../utils/local-data-write-gate";
+import { BaseRepo, withLocalDataWrite } from "./base.repo";
 
 const mapAudioSnapshot = (
   audio: TranscriptionAudioSnapshot | null | undefined,
@@ -134,28 +135,39 @@ const fromLocalTranscription = (
 export abstract class BaseTranscriptionRepo extends BaseRepo {
   abstract createTranscription(
     transcription: Transcription,
+    lease?: LocalDataWriteLease,
   ): Promise<Transcription>;
   abstract listTranscriptions(
     params?: ListTranscriptionsParams,
   ): Promise<Transcription[]>;
-  abstract deleteTranscription(id: string): Promise<void>;
+  abstract deleteTranscription(
+    id: string,
+    lease?: LocalDataWriteLease,
+  ): Promise<void>;
   abstract updateTranscription(
     transcription: Transcription,
+    lease?: LocalDataWriteLease,
   ): Promise<Transcription>;
-  abstract loadTranscriptionAudio(id: string): Promise<TranscriptionAudioData>;
+  abstract loadTranscriptionAudio(
+    id: string,
+    lease?: LocalDataWriteLease,
+  ): Promise<TranscriptionAudioData>;
   abstract importAudioFile(): Promise<ImportedTranscriptionAudioData | null>;
-  abstract purgeStaleAudio(): Promise<string[]>;
+  abstract purgeStaleAudio(lease?: LocalDataWriteLease): Promise<string[]>;
 }
 
 export class LocalTranscriptionRepo extends BaseTranscriptionRepo {
-  async createTranscription(
+  createTranscription(
     transcription: Transcription,
+    lease?: LocalDataWriteLease,
   ): Promise<Transcription> {
-    const stored = await invoke<LocalTranscription>("transcription_create", {
-      transcription: toLocalTranscription(transcription),
-    });
+    return withLocalDataWrite(async () => {
+      const stored = await invoke<LocalTranscription>("transcription_create", {
+        transcription: toLocalTranscription(transcription),
+      });
 
-    return fromLocalTranscription(stored);
+      return fromLocalTranscription(stored);
+    }, lease);
   }
 
   async listTranscriptions(
@@ -172,21 +184,36 @@ export class LocalTranscriptionRepo extends BaseTranscriptionRepo {
     return transcriptions.map(fromLocalTranscription);
   }
 
-  async deleteTranscription(id: string): Promise<void> {
-    await invoke<void>("transcription_delete", { id });
+  deleteTranscription(id: string, lease?: LocalDataWriteLease): Promise<void> {
+    return withLocalDataWrite(
+      () => invoke<void>("transcription_delete", { id }),
+      lease,
+    );
   }
 
-  async updateTranscription(
+  updateTranscription(
     transcription: Transcription,
+    lease?: LocalDataWriteLease,
   ): Promise<Transcription> {
-    const stored = await invoke<LocalTranscription>("transcription_update", {
-      transcription: toLocalTranscription(transcription),
-    });
-    return fromLocalTranscription(stored);
+    return withLocalDataWrite(async () => {
+      const stored = await invoke<LocalTranscription>("transcription_update", {
+        transcription: toLocalTranscription(transcription),
+      });
+      return fromLocalTranscription(stored);
+    }, lease);
   }
 
-  async loadTranscriptionAudio(id: string): Promise<TranscriptionAudioData> {
-    return invoke<TranscriptionAudioData>("transcription_audio_load", { id });
+  loadTranscriptionAudio(
+    id: string,
+    lease?: LocalDataWriteLease,
+  ): Promise<TranscriptionAudioData> {
+    // The native read opens the managed audio directory with create-if-missing
+    // semantics. Count it against clear so the read and its possible mkdir
+    // cannot run past a local-data wipe.
+    return withLocalDataWrite(
+      () => invoke<TranscriptionAudioData>("transcription_audio_load", { id }),
+      lease,
+    );
   }
 
   async importAudioFile(): Promise<ImportedTranscriptionAudioData | null> {
@@ -203,10 +230,12 @@ export class LocalTranscriptionRepo extends BaseTranscriptionRepo {
     };
   }
 
-  async purgeStaleAudio(): Promise<string[]> {
-    const purged = await invoke<string[] | undefined>(
-      "purge_stale_transcription_audio",
-    );
-    return Array.isArray(purged) ? purged : [];
+  purgeStaleAudio(lease?: LocalDataWriteLease): Promise<string[]> {
+    return withLocalDataWrite(async () => {
+      const purged = await invoke<string[] | undefined>(
+        "purge_stale_transcription_audio",
+      );
+      return Array.isArray(purged) ? purged : [];
+    }, lease);
   }
 }

@@ -21,6 +21,52 @@ describe("browser preview transport", () => {
     expect(getActivePreviewScenario()).toBe("empty");
   });
 
+  it("preserves usage totals when a stale preview profile is saved", async () => {
+    const today = new Date();
+    const todayKey = toLocalDateKey(today);
+    const currentMonth = toLocalMonthKey(today);
+    const previousMonth = new Date(
+      today.getFullYear(),
+      today.getMonth(),
+      0,
+      12,
+    );
+    const previousMonthKey = toLocalMonthKey(previousMonth);
+    const stale =
+      await invokePreviewCommand<Record<string, unknown>>("user_get_one");
+
+    await invokePreviewCommand("user_record_usage", {
+      eventId: "preview-stale-profile-save",
+      localDate: todayKey,
+      wordCount: 5,
+    });
+    const current =
+      await invokePreviewCommand<Record<string, unknown>>("user_get_one");
+    const saved = await invokePreviewCommand<Record<string, unknown>>(
+      "user_set_one",
+      { user: { ...stale, wordsThisMonthMonth: currentMonth } },
+    );
+
+    expect(saved.wordsTotal).toBe(current.wordsTotal);
+    expect(saved.wordsThisMonth).toBe(current.wordsThisMonth);
+    expect(saved.wordsThisMonthMonth).toBe(currentMonth);
+
+    const olderSave = await invokePreviewCommand<Record<string, unknown>>(
+      "user_set_one",
+      {
+        user: {
+          ...stale,
+          wordsThisMonth: 1,
+          wordsThisMonthMonth: previousMonthKey,
+        },
+      },
+    );
+
+    expect(olderSave.wordsTotal).toBe(current.wordsTotal);
+    expect(olderSave.wordsThisMonth).toBe(current.wordsThisMonth);
+    expect(olderSave.wordsThisMonthMonth).toBe(currentMonth);
+  });
+
   it("compares flag snapshots and preserves flags across stale full-row saves", async () => {
     const old = await invokePreviewCommand<Record<string, unknown>>(
       "user_preferences_get",
@@ -87,6 +133,77 @@ describe("browser preview transport", () => {
         left.localDate.localeCompare(right.localDate),
       ),
     );
+  });
+
+  it("rejects non-string preview date arguments instead of coercing them", async () => {
+    const today = toLocalDateKey(new Date());
+
+    await expect(
+      invokePreviewCommand("daily_activity_list", {
+        startDate: { toString: () => today },
+        endDate: today,
+      }),
+    ).rejects.toThrow(TypeError);
+  });
+
+  it("meters a saved local transcription with the preview history insert", async () => {
+    applyPreviewScenario("empty");
+    const today = new Date();
+    today.setHours(12, 0, 0, 0);
+    const localDate = toLocalDateKey(today);
+    const before =
+      await invokePreviewCommand<Record<string, unknown>>("user_get_one");
+    const activityBefore = await invokePreviewCommand<
+      { localDate: string; wordCount: number }[]
+    >("daily_activity_list", { startDate: localDate, endDate: localDate });
+
+    const transcription = {
+      id: "preview-live-transcription",
+      transcript: "one two",
+      timestamp: today.valueOf(),
+      remoteStatus: null,
+    };
+    await invokePreviewCommand("transcription_create", { transcription });
+
+    const after =
+      await invokePreviewCommand<Record<string, unknown>>("user_get_one");
+    const activityAfter = await invokePreviewCommand<
+      { localDate: string; wordCount: number }[]
+    >("daily_activity_list", { startDate: localDate, endDate: localDate });
+
+    expect(Number(after.wordsTotal)).toBe(Number(before.wordsTotal) + 2);
+    expect(Number(after.wordsThisMonth)).toBe(
+      Number(before.wordsThisMonth) + 2,
+    );
+    expect(activityAfter[0]?.wordCount).toBe(
+      (activityBefore[0]?.wordCount ?? 0) + 2,
+    );
+    await expect(
+      invokePreviewCommand("transcription_create", { transcription }),
+    ).rejects.toThrow("Transcription already exists");
+    await expect(
+      invokePreviewCommand<Record<string, unknown>>("user_get_one"),
+    ).resolves.toMatchObject(after);
+  });
+
+  it("does not count malformed preview transcripts through object stringification", async () => {
+    applyPreviewScenario("empty");
+    const today = new Date();
+    const todayKey = toLocalDateKey(today);
+
+    await invokePreviewCommand("transcription_create", {
+      transcription: {
+        id: "preview-malformed-transcript",
+        transcript: { text: "one word" },
+        timestamp: today.setHours(12, 0, 0, 0),
+        remoteStatus: null,
+      },
+    });
+    const activity = await invokePreviewCommand<
+      { localDate: string; wordCount: number }[]
+    >("daily_activity_list", { startDate: todayKey, endDate: todayKey });
+
+    expect(activity).toEqual([]);
   });
 
   it("reconciles a live meter against its seeded transcription aggregate", async () => {
@@ -157,7 +274,7 @@ describe("browser preview transport", () => {
     const before =
       await invokePreviewCommand<Record<string, unknown>>("user_get_one");
 
-    await invokePreviewCommand("transcription_create", {
+    await invokePreviewCommand("transcription_update", {
       transcription: {
         id: "preview-edited-before-meter",
         transcript: "corrected transcript has many more words now",
@@ -210,7 +327,7 @@ describe("browser preview transport", () => {
     const userBefore =
       await invokePreviewCommand<Record<string, unknown>>("user_get_one");
 
-    await invokePreviewCommand("transcription_create", {
+    await invokePreviewCommand("transcription_update", {
       transcription: {
         id: "preview-moved-before-meter",
         transcript: "one two",

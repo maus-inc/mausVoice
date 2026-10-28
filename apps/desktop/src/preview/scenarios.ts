@@ -13,6 +13,7 @@ import type {
 import { countWords } from "@maus-inc/utilities";
 import type { DailyWordActivity } from "../types/home.types";
 import { toLocalDateKey, toLocalMonthKey } from "../utils/date.utils";
+import { CURRENT_FEATURE_DATE } from "../utils/feature.utils";
 import { INITIAL_APP_STATE, type AppState } from "../state/app.state";
 import { createDefaultPreferences } from "../actions/user.actions";
 import { getDefaultSystemTones } from "../utils/tone.utils";
@@ -439,6 +440,9 @@ const workspaceSnapshot = (
   const preferences = createPreviewPreferences();
   const state = clone(INITIAL_APP_STATE);
   state.initialized = true;
+  // Dashboard preview scenarios should show the dashboard, not the one-time
+  // desktop release dialog. A dedicated scenario can opt into that UI later.
+  state.local.featureSeenAt = CURRENT_FEATURE_DATE;
   state.auth = clone(PREVIEW_AUTH);
   state.userPrefs = clone(preferences);
   state.settings.elevationStartupPending = false;

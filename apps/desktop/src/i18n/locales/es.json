@@ -11,6 +11,7 @@
   "a_full_week": "¡Una semana completa! 🎉",
   "a_mausvoice_update": "Una actualización de mausVoice",
   "a_more_powerful_mausvoice": "Un mausVoice más potente",
+  "a_previous_clear_was_interrupted_retry_to_finish_deleting_lo": "Se interrumpió un borrado anterior. Vuelve a intentarlo para terminar de eliminar los datos locales.",
   "accept": "Aceptar",
   "access_granted": "Acceso concedido",
   "accessibility_is_authorized_but_the_keyboard_listener_isn_t": "La accesibilidad está autorizada, pero el listener del teclado no está en funcionamiento. Los atajos pueden no funcionar hasta que lo vuelvas a intentar.",

@@ -42,8 +42,8 @@ The two schemes have their own temperature rather than being inversions of each 
 
 ## Home analytics
 
-- The daily-word heatmap uses the neutral intensity ramps in `styles/palette.ts`; it is a compact, Sunday-first 53-week calendar in the Home flow, not a separate side panel. Its legend, per-day tooltips, aggregate summary, and screen-reader list expose the counts without relying on color alone. Empty and future days use distinct styling.
-- Home metrics share the same card treatment as the rest of the app. The dashboard widens its routed content to use the available canvas; it does not add a shell-side panel or a second hotkey card.
+- The daily-word heatmap uses warm ember intensity ramps in `styles/palette.ts`, matching the Home reference. Its cell and grid dimensions live in `styles/activity-heatmap.ts`. It is a compact, Monday-first 53-week calendar in the Home flow, not a separate side panel. Its legend, per-day tooltips, aggregate summary, and screen-reader list expose the counts without relying on color alone. Empty and future days use distinct styling. Dated cells get a 150ms transform-only scale and outline on hover-capable fine pointers; touch has no hover state, and reduced-motion users get no scale animation. Cells are informational rather than controls, so the metric cards and count changes do not gain decorative hover, focus, or entrance motion. This keeps the reference layout still at rest and avoids animating values changed by keyboard-driven dictation.
+- On wide desktop windows, the Home overview places the heatmap between two vertical metric stacks. Smaller windows put the metrics in two columns above the heatmap. The dashboard uses the available routed canvas without adding a shell-side panel or a duplicate hotkey card.
 
 ## Motion
 

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { IntlShape } from "react-intl";
 import type { Transcription } from "@maus-inc/types";
+import { sampleTranscription } from "../test/helpers/transcription-fixture";
 import { INITIAL_APP_STATE } from "../state/app.state";
 import { getAppState, setAppState } from "../store";
 import { createDefaultPreferences } from "./user.actions";
@@ -73,14 +74,6 @@ const rejectionOf = async (run: Promise<unknown>): Promise<Error> => {
   throw new Error("expected the call to reject");
 };
 
-const sampleTranscription = (id: string): Transcription =>
-  ({
-    id,
-    audioDataId: "audio",
-    transcript: "my wife's name is Sonia",
-    createdAt: new Date("2026-01-01T00:00:00Z").toISOString(),
-  }) as unknown as Transcription;
-
 const seed = ({
   incognito = false,
   ephemeral = false,
@@ -122,6 +115,7 @@ describe("saveCorrectedTranscript persistence gate", () => {
         id: "tx",
         transcript: "my wife's name is Soniya",
       }),
+      expect.any(Object),
     );
     expect(getAppState().transcriptionById["tx"]?.transcript).toBe(
       "my wife's name is Soniya",
@@ -158,9 +152,7 @@ describe("saveCorrectedTranscript persistence gate", () => {
       }),
     ).rejects.toThrow("write failed");
 
-    expect(getAppState().transcriptionById["tx"]?.transcript).toBe(
-      "my wife's name is Sonia",
-    );
+    expect(getAppState().transcriptionById["tx"]?.transcript).toBe("hello");
   });
 });
 
@@ -208,7 +200,9 @@ describe("saveCorrectedTranscript glossary gate", () => {
       correctedText: learnable,
     });
 
-    expect(createGlossaryTerms).toHaveBeenCalledWith(["Soniya"]);
+    const lease = updateTranscription.mock.calls[0]?.[1];
+    expect(lease).toBeDefined();
+    expect(createGlossaryTerms).toHaveBeenCalledWith(["Soniya"], lease);
     expect(result.learnedTerms).toEqual(["Soniya"]);
     expect(result.dictionarySuppressed).toBe(false);
   });

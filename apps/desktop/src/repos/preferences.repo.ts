@@ -17,7 +17,8 @@ import {
 import { PRIMARY_LANGUAGE_SENTINEL } from "../utils/language.utils";
 import { orFalse, orNull, orTrue, orValue } from "../utils/nullable.utils";
 import { getEffectivePillVisibility, LOCAL_USER_ID } from "../utils/user.utils";
-import { BaseRepo } from "./base.repo";
+import type { LocalDataWriteLease } from "../utils/local-data-write-gate";
+import { BaseRepo, withLocalDataWrite } from "./base.repo";
 
 type LocalUserPreferences = {
   userId: string;
@@ -340,24 +341,32 @@ export const toLocalPreferences = (
 export abstract class BaseUserPreferencesRepo extends BaseRepo {
   abstract setUserPreferences(
     preferences: UserPreferences,
+    lease?: LocalDataWriteLease,
   ): Promise<UserPreferences>;
   abstract getUserPreferences(): Promise<Nullable<UserPreferences>>;
-  abstract setExpansionFlags(flags: string): Promise<UserPreferences>;
+  abstract setExpansionFlags(
+    flags: string,
+    lease?: LocalDataWriteLease,
+  ): Promise<UserPreferences>;
   abstract compareAndSetExpansionFlags(
     expected: string,
     flags: string,
+    lease?: LocalDataWriteLease,
   ): Promise<Nullable<UserPreferences>>;
 }
 
 export class LocalUserPreferencesRepo extends BaseUserPreferencesRepo {
-  async setUserPreferences(
+  setUserPreferences(
     preferences: UserPreferences,
+    lease?: LocalDataWriteLease,
   ): Promise<UserPreferences> {
-    const saved = await invoke<LocalUserPreferences>("user_preferences_set", {
-      preferences: toLocalPreferences(preferences),
-    });
+    return withLocalDataWrite(async () => {
+      const saved = await invoke<LocalUserPreferences>("user_preferences_set", {
+        preferences: toLocalPreferences(preferences),
+      });
 
-    return fromLocalPreferences(saved);
+      return fromLocalPreferences(saved);
+    }, lease);
   }
 
   async getUserPreferences(): Promise<Nullable<UserPreferences>> {
@@ -371,25 +380,33 @@ export class LocalUserPreferencesRepo extends BaseUserPreferencesRepo {
     return result ? fromLocalPreferences(result) : null;
   }
 
-  async compareAndSetExpansionFlags(
+  compareAndSetExpansionFlags(
     expected: string,
     flags: string,
+    lease?: LocalDataWriteLease,
   ): Promise<Nullable<UserPreferences>> {
-    const saved = await invoke<Nullable<LocalUserPreferences>>(
-      "user_preferences_compare_set_expansion_flags",
-      { args: { expected, flags } },
-    );
-    return saved ? fromLocalPreferences(saved) : null;
+    return withLocalDataWrite(async () => {
+      const saved = await invoke<Nullable<LocalUserPreferences>>(
+        "user_preferences_compare_set_expansion_flags",
+        { args: { expected, flags } },
+      );
+      return saved ? fromLocalPreferences(saved) : null;
+    }, lease);
   }
 
-  async setExpansionFlags(flags: string): Promise<UserPreferences> {
-    const saved = await invoke<LocalUserPreferences>(
-      "user_preferences_set_expansion_flags",
-      {
-        args: { flags },
-      },
-    );
+  setExpansionFlags(
+    flags: string,
+    lease?: LocalDataWriteLease,
+  ): Promise<UserPreferences> {
+    return withLocalDataWrite(async () => {
+      const saved = await invoke<LocalUserPreferences>(
+        "user_preferences_set_expansion_flags",
+        {
+          args: { flags },
+        },
+      );
 
-    return fromLocalPreferences(saved);
+      return fromLocalPreferences(saved);
+    }, lease);
   }
 }

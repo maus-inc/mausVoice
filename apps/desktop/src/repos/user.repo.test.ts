@@ -4,6 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { INITIAL_APP_STATE } from "../state/app.state";
 import { setAppState } from "../store";
 import { LOCAL_USER_ID } from "../utils/user.utils";
+import {
+  beginLocalDataClear,
+  LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY,
+} from "../utils/local-data-write-gate";
 import { LocalUserRepo } from "./user.repo";
 
 /**
@@ -46,8 +50,23 @@ const seedState = () => {
 
 describe("user repo IPC boundary for interactionFeedbackVolume", () => {
   beforeEach(() => {
+    window.localStorage.removeItem(LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY);
     vi.clearAllMocks();
     seedState();
+  });
+
+  it("does not invoke a profile write while local data is being cleared", async () => {
+    const releaseClear = await beginLocalDataClear();
+
+    try {
+      await expect(new LocalUserRepo().setMyUser(minimalUser)).rejects.toThrow(
+        "Local data is being cleared.",
+      );
+      expect(capturedInvoke).not.toHaveBeenCalled();
+    } finally {
+      window.localStorage.removeItem(LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY);
+      releaseClear();
+    }
   });
 
   it("emits an explicit null when the TS user lacks the field (onboarding path)", async () => {

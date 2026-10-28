@@ -11,6 +11,7 @@ import { INITIAL_APP_STATE } from "../../state/app.state";
 import { getAppState, setAppState } from "../../store";
 import { LOCAL_USER_ID } from "../../utils/user.utils";
 import { toLocalMonthKey } from "../../utils/date.utils";
+import { sampleTranscription } from "../../test/helpers/transcription-fixture";
 
 vi.mock("./HomeSideEffects", () => ({ HomeSideEffects: () => null }));
 vi.mock("./GettingStartedList", () => ({ GettingStartedList: () => null }));
@@ -62,6 +63,13 @@ describe("HomePage analytics", () => {
     state.userById[LOCAL_USER_ID] = previewUser;
     state.home.dailyActivity = [{ localDate: "2026-10-08", wordCount: 324 }];
     state.home.dailyActivityStatus = "success";
+    state.transcriptionById["recent-one"] = {
+      ...sampleTranscription("recent-one"),
+      transcript: "one two",
+      createdAt: "2026-10-08T12:00:00.000Z",
+      createdByUserId: LOCAL_USER_ID,
+      audio: { filePath: "preview://recent-one", durationMs: 10_000 },
+    };
     state.transcriptions.transcriptionIds = ["recent-one", "recent-two"];
     setAppState(state, true);
 
@@ -76,8 +84,8 @@ describe("HomePage analytics", () => {
     setAppState(structuredClone(INITIAL_APP_STATE), true);
   });
 
-  it("renders a wide dashboard with current word metrics and the activity heatmap", async () => {
-    await act(async () => {
+  it("places the compact activity heatmap between the metric cards", () => {
+    act(() => {
       root.render(
         <IntlProvider locale="en" messages={en}>
           <MemoryRouter initialEntries={["/dashboard"]}>
@@ -92,6 +100,8 @@ describe("HomePage analytics", () => {
     expect(container.textContent).toContain("12,340");
     expect(container.textContent).toContain("Words total");
     expect(container.textContent).toContain("84,120");
+    expect(container.textContent).toContain("Dictation speed");
+    expect(container.textContent).toContain("WPM");
     expect(container.textContent).toContain("Daily activity");
     expect(container.textContent).toContain(
       "Words dictated over the past year",
@@ -99,6 +109,34 @@ describe("HomePage analytics", () => {
     expect(
       container.querySelector('[data-testid="home-activity-heatmap"]'),
     ).toBeTruthy();
+    expect(
+      Array.from(container.querySelectorAll("[data-home-grid-area]"), (item) =>
+        item.getAttribute("data-home-grid-area"),
+      ),
+    ).toEqual(["streak", "month", "total", "speed", "activity"]);
+
+    const analyticsGrid = container.querySelector<HTMLElement>(
+      '[data-testid="home-analytics-grid"]',
+    );
+    const gridClassName = analyticsGrid?.className
+      .split(" ")
+      .find((className) => className.startsWith("css-"));
+    const generatedStyles = Array.from(
+      document.querySelectorAll("style[data-emotion]"),
+      (style) => style.textContent ?? "",
+    )
+      .join("\n")
+      .replace(/\s+/g, "");
+
+    expect(gridClassName).toBeDefined();
+    expect(generatedStyles).toContain("@media(min-width:1100px)");
+    expect(generatedStyles).toContain(`.${gridClassName}{`);
+    expect(generatedStyles).toContain(
+      'grid-template-areas:"streakmonth""totalspeed""activityactivity"',
+    );
+    expect(generatedStyles).toContain(
+      'grid-template-areas:"streakactivitytotal""monthactivityspeed"',
+    );
     expect(
       container.querySelector(
         '[role="img"][aria-label*="Daily word activity"]',
@@ -114,7 +152,7 @@ describe("HomePage analytics", () => {
     ]);
   });
 
-  it("does not show a previous month's cached total as current usage", async () => {
+  it("does not show a previous month's cached total as current usage", () => {
     const previousMonth = new Date();
     previousMonth.setDate(1);
     previousMonth.setMonth(previousMonth.getMonth() - 1);
@@ -126,7 +164,7 @@ describe("HomePage analytics", () => {
     };
     setAppState(state, true);
 
-    await act(async () => {
+    act(() => {
       root.render(
         <IntlProvider locale="en" messages={en}>
           <MemoryRouter initialEntries={["/dashboard"]}>

@@ -20,6 +20,13 @@ describe("activityIntensity", () => {
   ] as const)("maps %i words to intensity %i", (words, expected) => {
     expect(activityIntensity(words)).toBe(expected);
   });
+
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
+    "treats non-finite word counts as empty activity (%s)",
+    (wordCount) => {
+      expect(activityIntensity(wordCount)).toBe(0);
+    },
+  );
 });
 
 describe("buildActivityGrid", () => {
@@ -33,10 +40,17 @@ describe("buildActivityGrid", () => {
     expect(grid.weeks).toHaveLength(53);
     expect(grid.weeks.every((week) => week.length === 7)).toBe(true);
     expect(first.getDay()).toBe(0);
+    expect(
+      grid.weeks[0].map((cell) =>
+        dateFromLocalDateKey(cell.localDate).getDay(),
+      ),
+    ).toEqual([0, 1, 2, 3, 4, 5, 6]);
     expect(allCells.filter((cell) => cell.isToday)).toHaveLength(1);
     expect(allCells.find((cell) => cell.isToday)?.localDate).toBe(todayKey);
     expect(allCells.at(-1)?.isFuture).toBe(true);
-    expect(allCells.filter((cell) => cell.isFuture).length).toBe(2);
+    expect(allCells.filter((cell) => cell.isFuture).length).toBe(
+      6 - today.getDay(),
+    );
   });
 
   it("places daily totals on their local date and derives intensity", () => {
@@ -73,6 +87,15 @@ describe("buildActivityGrid", () => {
       expected.setDate(expected.getDate() + 1);
       expect(toLocalDateKey(dates[index])).toBe(toLocalDateKey(expected));
     }
+  });
+
+  it("builds ranges before year 100 without remapping the calendar year", () => {
+    const today = dateFromLocalDateKey("0001-01-04");
+    const grid = buildActivityGrid([], today, 1);
+
+    expect(grid.endDate).toBe("0001-01-04");
+    expect(grid.weeks).toHaveLength(1);
+    expect(grid.weeks[0]).toHaveLength(7);
   });
 
   it("rejects a non-positive week count", () => {

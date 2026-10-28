@@ -9,6 +9,7 @@ import {
 } from "../utils/edit-watch.utils";
 import { getLogger } from "../utils/log.utils";
 import { getLocalStorage } from "../utils/local-storage.utils";
+import { withLocalDataWriteSync } from "../utils/local-data-write-gate";
 import { getMyUserPreferences } from "../utils/user.utils";
 import { createGlossaryTerms } from "./dictionary.actions";
 import { dismissToast, runToast, showToast } from "./toast.actions";
@@ -190,24 +191,32 @@ const readDeniedTerms = (): Set<string> => {
 
 const rememberDeniedTerm = (term: string): void => {
   const key = term.toLowerCase();
-  // Bounded the same way the durable copy is. `MAX_DENIED_TERMS` only trimmed
-  // what went to local storage, so this set grew for the life of the session
-  // even after the persisted list had rotated the entry out.
-  sessionDeniedTerms = new Set(
-    [...sessionDeniedTerms, key].slice(-MAX_DENIED_TERMS),
-  );
-  const storage = getLocalStorage();
-  if (!storage) {
-    return;
-  }
-  const trimmed = Array.from(new Set([...readDeniedTerms(), key])).slice(
-    -MAX_DENIED_TERMS,
-  );
-  try {
-    storage.setItem(DENIED_TERMS_KEY, JSON.stringify(trimmed));
-  } catch (error) {
-    getLogger().warning(`Failed to persist denied auto-learn terms: ${error}`);
-  }
+  withLocalDataWriteSync(() => {
+    // Bound the session copy to match the durable list, so terms rotated out of
+    // storage do not remain denied for the rest of the run.
+    sessionDeniedTerms = new Set(
+      [...sessionDeniedTerms, key].slice(-MAX_DENIED_TERMS),
+    );
+    const storage = getLocalStorage();
+    if (!storage) {
+      return;
+    }
+    const trimmed = Array.from(new Set([...readDeniedTerms(), key])).slice(
+      -MAX_DENIED_TERMS,
+    );
+    try {
+      storage.setItem(DENIED_TERMS_KEY, JSON.stringify(trimmed));
+    } catch (error) {
+      getLogger().warning(
+        `Failed to persist denied auto-learn terms: ${error}`,
+      );
+    }
+  });
+};
+
+export const resetAutoLearnSessionState = (): void => {
+  sessionDeniedTerms = new Set();
+  recentlyLapsedProposal = null;
 };
 
 export const clearAutoLearnProposal = (): void => {

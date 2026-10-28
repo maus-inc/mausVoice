@@ -12,17 +12,421 @@ import type {
   DailyActivityStatus,
   DailyWordActivity,
 } from "../../types/home.types";
-import { dateFromLocalDateKey } from "../../utils/date.utils";
-import { buildActivityGrid } from "../../utils/activity-grid.utils";
+import { dateFromLocalDateKey, toLocalDateKey } from "../../utils/date.utils";
+import {
+  buildActivityGrid,
+  type ActivityGrid,
+  type ActivityGridCell,
+} from "../../utils/activity-grid.utils";
 import { activityHeatmap } from "../../styles/palette";
+import { activityHeatmapGeometry } from "../../styles/activity-heatmap";
+import { cssEase, duration, easeOutQuint } from "../../styles/motion";
+import { useIsDarkMode } from "../../hooks/color-scheme.hooks";
 
-const CELL_SIZE = 11;
-const CELL_GAP = 3;
+type HeatmapColors = readonly string[];
+type CellDescription = (localDate: string, wordCount: number) => string;
+type WeekdayRow = {
+  localDate: string;
+  label: string;
+  gridRow: number;
+  visible: boolean;
+};
 
 export type ActivityHeatmapProps = {
   activity: DailyWordActivity[];
   status: DailyActivityStatus;
   today?: Date;
+};
+
+const makeWeekdayRows = (intl: ReturnType<typeof useIntl>): WeekdayRow[] =>
+  Array.from({ length: 7 }, (_, day) => {
+    const date = new Date(2024, 0, 7 + day, 12);
+    return {
+      localDate: toLocalDateKey(date),
+      label: intl.formatDate(date, { weekday: "short" }),
+      gridRow: day + 1,
+      visible: day % 2 === 1,
+    };
+  });
+
+const summarizeActivityGrid = (grid: ActivityGrid) => {
+  const visibleCells = grid.weeks.flat().filter((cell) => !cell.isFuture);
+  const activeDays = visibleCells.filter((cell) => cell.wordCount > 0).length;
+  const totalWords = visibleCells.reduce(
+    (total, cell) => total + cell.wordCount,
+    0,
+  );
+  return { visibleCells, activeDays, totalWords };
+};
+
+const ActivityHeatmapHeader = ({
+  status,
+  activeDaysLabel,
+}: {
+  status: DailyActivityStatus;
+  activeDaysLabel: string;
+}) => {
+  const theme = useTheme();
+  return (
+    <Stack
+      direction="row"
+      spacing={1}
+      sx={{
+        alignItems: "baseline",
+        justifyContent: "space-between",
+        mb: theme.spacing(1.5),
+      }}
+    >
+      <Box>
+        <Typography
+          id="home-activity-heading"
+          variant="h6"
+          sx={{ fontWeight: 600 }}
+        >
+          <FormattedMessage defaultMessage="Daily activity" />
+        </Typography>
+        <Typography variant="body2" sx={{ color: "text.secondary" }}>
+          <FormattedMessage defaultMessage="Words dictated over the past year" />
+        </Typography>
+      </Box>
+      {status === "success" ? (
+        <Typography
+          variant="caption"
+          sx={{ color: "text.secondary", whiteSpace: "nowrap" }}
+        >
+          {activeDaysLabel}
+        </Typography>
+      ) : null}
+    </Stack>
+  );
+};
+
+const ActivityHeatmapGrid = ({
+  grid,
+  colors,
+  accessibleSummary,
+  weekdayRows,
+  describeCell,
+}: {
+  grid: ActivityGrid;
+  colors: HeatmapColors;
+  accessibleSummary: string;
+  weekdayRows: WeekdayRow[];
+  describeCell: CellDescription;
+}) => {
+  const intl = useIntl();
+  const theme = useTheme();
+
+  return (
+    <Box sx={{ overflowX: "auto", pb: theme.spacing(0.5) }}>
+      <Box
+        sx={{
+          minWidth: activityHeatmapGeometry.minWidth,
+          width: "max-content",
+          mx: "auto",
+        }}
+      >
+        <Box
+          aria-hidden="true"
+          sx={{
+            display: "grid",
+            gridTemplateColumns: `${activityHeatmapGeometry.labelColumnWidth}px repeat(${grid.weeks.length}, ${activityHeatmapGeometry.cellSize}px)`,
+            columnGap: `${activityHeatmapGeometry.cellGap}px`,
+            mb: theme.spacing(0.5),
+            alignItems: "end",
+          }}
+        >
+          <Box />
+          {grid.weeks.map((week, weekIndex) => {
+            const weekDate = dateFromLocalDateKey(week[0].localDate);
+            const monthStart = week.find(
+              (cell) => dateFromLocalDateKey(cell.localDate).getDate() === 1,
+            );
+            const labelDate = monthStart
+              ? dateFromLocalDateKey(monthStart.localDate)
+              : weekDate;
+            const startsNewMonth = weekIndex === 0 || monthStart !== undefined;
+            return (
+              <Typography
+                key={week[0].localDate}
+                variant="caption"
+                sx={{
+                  gridColumn: weekIndex + 2,
+                  gridRow: 1,
+                  color: "text.secondary",
+                  whiteSpace: "nowrap",
+                  fontSize: 10,
+                  visibility: startsNewMonth ? "visible" : "hidden",
+                }}
+              >
+                {startsNewMonth
+                  ? intl.formatDate(labelDate, { month: "short" })
+                  : ""}
+              </Typography>
+            );
+          })}
+        </Box>
+
+        <Box
+          role="img"
+          aria-label={accessibleSummary}
+          sx={{
+            display: "grid",
+            gridTemplateColumns: `${activityHeatmapGeometry.labelColumnWidth}px repeat(${grid.weeks.length}, ${activityHeatmapGeometry.cellSize}px)`,
+            gridTemplateRows: `repeat(7, ${activityHeatmapGeometry.cellSize}px)`,
+            columnGap: `${activityHeatmapGeometry.cellGap}px`,
+            rowGap: `${activityHeatmapGeometry.cellGap}px`,
+            alignItems: "center",
+          }}
+        >
+          {weekdayRows.map(({ localDate, label, gridRow, visible }) => (
+            <Typography
+              key={localDate}
+              aria-hidden="true"
+              variant="caption"
+              sx={{
+                gridColumn: 1,
+                gridRow,
+                color: "text.secondary",
+                fontSize: 9,
+                lineHeight: `${activityHeatmapGeometry.cellSize}px`,
+                textAlign: "right",
+                pr: theme.spacing(0.5),
+                visibility: visible ? "visible" : "hidden",
+              }}
+            >
+              {label}
+            </Typography>
+          ))}
+          {grid.weeks.flatMap((week, weekIndex) =>
+            week.map((cell, dayIndex) => (
+              <Tooltip
+                key={cell.localDate}
+                title={
+                  cell.isFuture
+                    ? ""
+                    : describeCell(cell.localDate, cell.wordCount)
+                }
+                arrow
+                placement="top"
+                disableHoverListener={cell.isFuture}
+              >
+                <Box
+                  aria-hidden="true"
+                  data-date={cell.localDate}
+                  data-word-count={cell.wordCount}
+                  data-intensity={cell.intensity}
+                  data-testid="activity-day"
+                  sx={{
+                    gridColumn: weekIndex + 2,
+                    gridRow: dayIndex + 1,
+                    width: activityHeatmapGeometry.cellSize,
+                    height: activityHeatmapGeometry.cellSize,
+                    borderRadius: 0.15,
+                    bgcolor: cell.isFuture
+                      ? "transparent"
+                      : colors[cell.intensity],
+                    outline: cell.isToday
+                      ? `1px solid ${theme.palette.text.secondary}`
+                      : "none",
+                    outlineOffset: 1,
+                    pointerEvents: cell.isFuture ? "none" : "auto",
+                    transformOrigin: "center",
+                    transition: `transform ${duration.fast}s ${cssEase(easeOutQuint)}`,
+                    "@media (hover: hover) and (pointer: fine)": cell.isFuture
+                      ? {}
+                      : {
+                          "&:hover": {
+                            transform: "scale(1.35)",
+                            outline: `1px solid ${theme.palette.text.primary}`,
+                            zIndex: 1,
+                          },
+                        },
+                    "@media (prefers-reduced-motion: reduce)": {
+                      transition: "none",
+                      "&:hover": { transform: "none" },
+                    },
+                  }}
+                />
+              </Tooltip>
+            )),
+          )}
+        </Box>
+      </Box>
+    </Box>
+  );
+};
+
+const ActivityHeatmapStatus = ({
+  status,
+  grid,
+  colors,
+  accessibleSummary,
+  weekdayRows,
+  describeCell,
+}: {
+  status: DailyActivityStatus;
+  grid: ActivityGrid;
+  colors: HeatmapColors;
+  accessibleSummary: string;
+  weekdayRows: WeekdayRow[];
+  describeCell: CellDescription;
+}) => {
+  const intl = useIntl();
+  const theme = useTheme();
+
+  if (status === "loading" || status === "idle") {
+    return (
+      <LinearProgress
+        aria-label={intl.formatMessage({
+          defaultMessage: "Loading daily activity",
+        })}
+      />
+    );
+  }
+  if (status === "error") {
+    return (
+      <Typography
+        role="status"
+        variant="body2"
+        sx={{ color: "text.secondary", py: theme.spacing(2) }}
+      >
+        <FormattedMessage defaultMessage="Daily activity could not be loaded." />
+      </Typography>
+    );
+  }
+  return (
+    <ActivityHeatmapGrid
+      grid={grid}
+      colors={colors}
+      accessibleSummary={accessibleSummary}
+      weekdayRows={weekdayRows}
+      describeCell={describeCell}
+    />
+  );
+};
+
+const AccessibleActivityList = ({
+  cells,
+  describeCell,
+  intl,
+}: {
+  cells: ActivityGridCell[];
+  describeCell: CellDescription;
+  intl: ReturnType<typeof useIntl>;
+}) => (
+  <Box
+    component="ol"
+    aria-label={intl.formatMessage({ defaultMessage: "Daily word counts" })}
+    sx={{
+      position: "absolute",
+      width: "1px",
+      height: "1px",
+      p: 0,
+      m: "-1px",
+      overflow: "hidden",
+      clip: "rect(0, 0, 0, 0)",
+      whiteSpace: "nowrap",
+      border: 0,
+    }}
+  >
+    {cells.map((cell) => (
+      <li key={cell.localDate}>
+        {describeCell(cell.localDate, cell.wordCount)}
+      </li>
+    ))}
+  </Box>
+);
+
+const ActivityHeatmapResults = ({
+  status,
+  grid,
+  colors,
+  accessibleSummary,
+  weekdayRows,
+  describeCell,
+  visibleCells,
+  activeDays,
+}: {
+  status: DailyActivityStatus;
+  grid: ActivityGrid;
+  colors: HeatmapColors;
+  accessibleSummary: string;
+  weekdayRows: WeekdayRow[];
+  describeCell: CellDescription;
+  visibleCells: ActivityGridCell[];
+  activeDays: number;
+}) => {
+  const theme = useTheme();
+  const intl = useIntl();
+
+  return (
+    <>
+      <ActivityHeatmapStatus
+        status={status}
+        grid={grid}
+        colors={colors}
+        accessibleSummary={accessibleSummary}
+        weekdayRows={weekdayRows}
+        describeCell={describeCell}
+      />
+      {status === "success" ? (
+        <AccessibleActivityList
+          cells={visibleCells}
+          describeCell={describeCell}
+          intl={intl}
+        />
+      ) : null}
+      {status === "success" && activeDays === 0 ? (
+        <Typography
+          variant="body2"
+          sx={{ color: "text.secondary", mt: theme.spacing(1) }}
+        >
+          <FormattedMessage defaultMessage="Your dictation activity will appear here." />
+        </Typography>
+      ) : null}
+    </>
+  );
+};
+
+const ActivityHeatmapLegend = ({ colors }: { colors: HeatmapColors }) => {
+  const intl = useIntl();
+  const theme = useTheme();
+
+  return (
+    <Stack
+      role="group"
+      direction="row"
+      spacing={0.75}
+      sx={{
+        justifyContent: "flex-end",
+        alignItems: "center",
+        mt: theme.spacing(1),
+      }}
+      aria-label={intl.formatMessage({
+        defaultMessage: "Activity level legend",
+      })}
+    >
+      <Typography variant="caption" sx={{ color: "text.secondary" }}>
+        <FormattedMessage defaultMessage="Less" />
+      </Typography>
+      {colors.map((color) => (
+        <Box
+          key={color}
+          aria-hidden="true"
+          sx={{
+            width: activityHeatmapGeometry.cellSize,
+            height: activityHeatmapGeometry.cellSize,
+            borderRadius: 0.15,
+            bgcolor: color,
+          }}
+        />
+      ))}
+      <Typography variant="caption" sx={{ color: "text.secondary" }}>
+        <FormattedMessage defaultMessage="More" />
+      </Typography>
+    </Stack>
+  );
 };
 
 export const ActivityHeatmap = ({
@@ -31,20 +435,14 @@ export const ActivityHeatmap = ({
   today,
 }: ActivityHeatmapProps) => {
   const intl = useIntl();
-  const theme = useTheme();
   const grid = useMemo(
     () => buildActivityGrid(activity, today),
     [activity, today],
   );
-  const colors =
-    theme.palette.mode === "dark"
-      ? activityHeatmap.dark
-      : activityHeatmap.light;
-  const visibleCells = grid.weeks.flat().filter((cell) => !cell.isFuture);
-  const activeDays = visibleCells.filter((cell) => cell.wordCount > 0).length;
-  const totalWords = visibleCells.reduce(
-    (total, cell) => total + cell.wordCount,
-    0,
+  const colors = useIsDarkMode() ? activityHeatmap.dark : activityHeatmap.light;
+  const { visibleCells, activeDays, totalWords } = useMemo(
+    () => summarizeActivityGrid(grid),
+    [grid],
   );
   const activeDaysLabel = intl.formatMessage(
     {
@@ -60,7 +458,7 @@ export const ActivityHeatmap = ({
     },
     { activeDays, totalWords },
   );
-  const describeCell = (localDate: string, wordCount: number) =>
+  const describeCell: CellDescription = (localDate, wordCount) =>
     intl.formatMessage(
       {
         defaultMessage:
@@ -68,11 +466,7 @@ export const ActivityHeatmap = ({
       },
       { date: dateFromLocalDateKey(localDate), wordCount },
     );
-
-  const weekdayLabels = [0, 1, 2, 3, 4, 5, 6].map((day) => {
-    const sample = new Date(2024, 0, 7 + day, 12);
-    return intl.formatDate(sample, { weekday: "short" });
-  });
+  const weekdayRows = makeWeekdayRows(intl);
 
   return (
     <Box
@@ -81,232 +475,21 @@ export const ActivityHeatmap = ({
       data-testid="home-activity-heatmap"
       sx={{ minWidth: 0 }}
     >
-      <Stack
-        direction="row"
-        spacing={1}
-        sx={{
-          alignItems: "baseline",
-          justifyContent: "space-between",
-          mb: 1.5,
-        }}
-      >
-        <Box>
-          <Typography
-            id="home-activity-heading"
-            variant="h6"
-            sx={{ fontWeight: 600 }}
-          >
-            <FormattedMessage defaultMessage="Daily activity" />
-          </Typography>
-          <Typography variant="body2" sx={{ color: "text.secondary" }}>
-            <FormattedMessage defaultMessage="Words dictated over the past year" />
-          </Typography>
-        </Box>
-        {status === "success" ? (
-          <Typography
-            variant="caption"
-            sx={{ color: "text.secondary", whiteSpace: "nowrap" }}
-          >
-            {activeDaysLabel}
-          </Typography>
-        ) : null}
-      </Stack>
-
-      {status === "loading" || status === "idle" ? (
-        <LinearProgress
-          aria-label={intl.formatMessage({
-            defaultMessage: "Loading daily activity",
-          })}
-        />
-      ) : status === "error" ? (
-        <Typography
-          role="status"
-          variant="body2"
-          sx={{ color: "text.secondary", py: 2 }}
-        >
-          <FormattedMessage defaultMessage="Daily activity could not be loaded." />
-        </Typography>
-      ) : (
-        <Box sx={{ overflowX: "auto", pb: 0.5 }}>
-          <Box sx={{ minWidth: 760, width: "max-content" }}>
-            <Box
-              aria-hidden="true"
-              sx={{
-                display: "grid",
-                gridTemplateColumns: `24px repeat(${grid.weeks.length}, ${CELL_SIZE}px)`,
-                columnGap: `${CELL_GAP}px`,
-                mb: 0.5,
-                alignItems: "end",
-              }}
-            >
-              <Box />
-              {grid.weeks.map((week, index) => {
-                const weekDate = dateFromLocalDateKey(week[0].localDate);
-                const monthStart = week.find(
-                  (cell) =>
-                    dateFromLocalDateKey(cell.localDate).getDate() === 1,
-                );
-                const labelDate = monthStart
-                  ? dateFromLocalDateKey(monthStart.localDate)
-                  : weekDate;
-                const startsNewMonth = index === 0 || monthStart !== undefined;
-                return (
-                  <Typography
-                    key={week[0].localDate}
-                    variant="caption"
-                    sx={{
-                      gridColumn: index + 2,
-                      gridRow: 1,
-                      color: "text.secondary",
-                      whiteSpace: "nowrap",
-                      fontSize: 10,
-                      visibility: startsNewMonth ? "visible" : "hidden",
-                    }}
-                  >
-                    {startsNewMonth
-                      ? intl.formatDate(labelDate, { month: "short" })
-                      : ""}
-                  </Typography>
-                );
-              })}
-            </Box>
-
-            <Box
-              role="img"
-              aria-label={accessibleSummary}
-              sx={{
-                display: "grid",
-                gridTemplateColumns: `24px repeat(${grid.weeks.length}, ${CELL_SIZE}px)`,
-                gridTemplateRows: `repeat(7, ${CELL_SIZE}px)`,
-                columnGap: `${CELL_GAP}px`,
-                rowGap: `${CELL_GAP}px`,
-                alignItems: "center",
-              }}
-            >
-              {weekdayLabels.map((label, dayIndex) => (
-                <Typography
-                  key={`weekday-${dayIndex}`}
-                  aria-hidden="true"
-                  variant="caption"
-                  sx={{
-                    gridColumn: 1,
-                    gridRow: dayIndex + 1,
-                    color: "text.secondary",
-                    fontSize: 9,
-                    lineHeight: `${CELL_SIZE}px`,
-                    textAlign: "right",
-                    pr: 0.5,
-                    visibility: dayIndex % 2 === 0 ? "visible" : "hidden",
-                  }}
-                >
-                  {label}
-                </Typography>
-              ))}
-              {grid.weeks.flatMap((week, weekIndex) =>
-                week.map((cell, dayIndex) => {
-                  const description = describeCell(
-                    cell.localDate,
-                    cell.wordCount,
-                  );
-                  return (
-                    <Tooltip
-                      key={cell.localDate}
-                      title={cell.isFuture ? "" : description}
-                      arrow
-                      placement="top"
-                      disableHoverListener={cell.isFuture}
-                    >
-                      <Box
-                        aria-hidden="true"
-                        data-date={cell.localDate}
-                        data-word-count={cell.wordCount}
-                        data-intensity={cell.intensity}
-                        data-testid="activity-day"
-                        sx={{
-                          gridColumn: weekIndex + 2,
-                          gridRow: dayIndex + 1,
-                          width: CELL_SIZE,
-                          height: CELL_SIZE,
-                          borderRadius: 0.15,
-                          bgcolor: cell.isFuture
-                            ? "transparent"
-                            : colors[cell.intensity],
-                          outline: cell.isToday
-                            ? `1px solid ${theme.palette.text.secondary}`
-                            : "none",
-                          outlineOffset: 1,
-                          pointerEvents: cell.isFuture ? "none" : "auto",
-                        }}
-                      />
-                    </Tooltip>
-                  );
-                }),
-              )}
-            </Box>
-          </Box>
-        </Box>
-      )}
-
-      {status === "success" ? (
-        <Box
-          component="ol"
-          aria-label={intl.formatMessage({
-            defaultMessage: "Daily word counts",
-          })}
-          sx={{
-            position: "absolute",
-            width: "1px",
-            height: "1px",
-            p: 0,
-            m: "-1px",
-            overflow: "hidden",
-            clip: "rect(0, 0, 0, 0)",
-            whiteSpace: "nowrap",
-            border: 0,
-          }}
-        >
-          {visibleCells.map((cell) => (
-            <li key={`accessible-${cell.localDate}`}>
-              {describeCell(cell.localDate, cell.wordCount)}
-            </li>
-          ))}
-        </Box>
-      ) : null}
-
-      {status === "success" && activeDays === 0 ? (
-        <Typography variant="body2" sx={{ color: "text.secondary", mt: 1 }}>
-          <FormattedMessage defaultMessage="Your dictation activity will appear here." />
-        </Typography>
-      ) : null}
-
-      <Stack
-        role="group"
-        direction="row"
-        spacing={0.75}
-        sx={{ justifyContent: "flex-end", alignItems: "center", mt: 1 }}
-        aria-label={intl.formatMessage({
-          defaultMessage: "Activity level legend",
-        })}
-      >
-        <Typography variant="caption" sx={{ color: "text.secondary" }}>
-          <FormattedMessage defaultMessage="Less" />
-        </Typography>
-        {colors.map((color, index) => (
-          <Box
-            key={`legend-${index}`}
-            aria-hidden="true"
-            sx={{
-              width: CELL_SIZE,
-              height: CELL_SIZE,
-              borderRadius: 0.15,
-              bgcolor: color,
-            }}
-          />
-        ))}
-        <Typography variant="caption" sx={{ color: "text.secondary" }}>
-          <FormattedMessage defaultMessage="More" />
-        </Typography>
-      </Stack>
+      <ActivityHeatmapHeader
+        status={status}
+        activeDaysLabel={activeDaysLabel}
+      />
+      <ActivityHeatmapResults
+        status={status}
+        grid={grid}
+        colors={colors}
+        accessibleSummary={accessibleSummary}
+        weekdayRows={weekdayRows}
+        describeCell={describeCell}
+        visibleCells={visibleCells}
+        activeDays={activeDays}
+      />
+      <ActivityHeatmapLegend colors={colors} />
     </Box>
   );
 };

@@ -22,6 +22,7 @@ fn main() {
         check_for_channel_update,
         check_microphone_permission,
         clear_local_data,
+        complete_local_data_clear,
         composer_discard_text,
         composer_peek_text,
         composer_register_text,

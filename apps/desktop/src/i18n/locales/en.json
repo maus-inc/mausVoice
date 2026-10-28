@@ -11,6 +11,7 @@
   "a_full_week": "A full week! 🎉",
   "a_mausvoice_update": "A mausVoice update",
   "a_more_powerful_mausvoice": "A more powerful mausVoice",
+  "a_previous_clear_was_interrupted_retry_to_finish_deleting_lo": "A previous clear was interrupted. Retry to finish deleting local data.",
   "accept": "Accept",
   "access_granted": "Access granted",
   "accessibility_is_authorized_but_the_keyboard_listener_isn_t": "Accessibility is authorized but the keyboard listener isn't running. Hotkeys may not work until you retry.",

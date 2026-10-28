@@ -12,11 +12,22 @@ import {
   Typography,
 } from "@mui/material";
 import { invoke } from "@tauri-apps/api/core";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { showSnackbar } from "../../actions/app.actions";
+import { resetAutoLearnSessionState } from "../../actions/edit-watch.actions";
 import { getAuthRepo } from "../../repos";
 import { produceAppState, useAppStore } from "../../store";
+import {
+  clearAppLocalStorage,
+  removeLocalDataClearPendingMarker,
+} from "../../utils/local-data-storage.utils";
+import {
+  beginLocalDataClear,
+  hasPendingLocalDataClear,
+} from "../../utils/local-data-write-gate";
+import { resetPendingTranscriptionDeletes } from "../../utils/pending-transcription-delete";
+import { disableAnalyticsPersistenceForLocalDataClear } from "../../utils/analytics-persistence.utils";
 
 export const DeleteAccountDialog = () => {
   const intl = useIntl();
@@ -24,10 +35,15 @@ export const DeleteAccountDialog = () => {
   const userEmail = useAppStore((state) => state.auth?.email);
   const [confirmationEmail, setConfirmationEmail] = useState("");
   const [busy, setBusy] = useState(false);
+  const releaseClearRef = useRef<(() => void) | null>(null);
+  const clearMarkerWasPreexistingRef = useRef(false);
+  const accountDeletedRef = useRef(false);
 
   const isDeleteEnabled = confirmationEmail === userEmail && userEmail;
+  const clearInProgress = releaseClearRef.current !== null;
 
   const handleClose = () => {
+    if (busy || releaseClearRef.current || accountDeletedRef.current) return;
     produceAppState((state) => {
       state.settings.deleteAccountDialog = false;
     });
@@ -35,17 +51,26 @@ export const DeleteAccountDialog = () => {
   };
 
   const handleSubmit = async () => {
-    if (!isDeleteEnabled) {
+    if (!isDeleteEnabled || busy) {
       return;
     }
 
+    setBusy(true);
     try {
-      setBusy(true);
-      await getAuthRepo().deleteMyAccount();
+      // Close the renderer gate before account deletion; if deletion succeeds
+      // but a later local cleanup step fails, retry without reopening writes.
+      if (!releaseClearRef.current) {
+        clearMarkerWasPreexistingRef.current = hasPendingLocalDataClear();
+        releaseClearRef.current = await beginLocalDataClear();
+      }
+      if (!accountDeletedRef.current) {
+        await getAuthRepo().deleteMyAccount();
+        accountDeletedRef.current = true;
+        disableAnalyticsPersistenceForLocalDataClear();
+      }
 
       // Tear down long-running native subsystems before wiping data so
-      // in-flight callbacks don't race against the cleared DB. Same
-      // rationale as ClearLocalDataDialog.
+      // in-flight callbacks don't race against the cleared DB.
       try {
         await invoke("stop_key_listener");
       } catch {
@@ -58,16 +83,50 @@ export const DeleteAccountDialog = () => {
       }
 
       await invoke("clear_local_data");
+      resetPendingTranscriptionDeletes();
+      resetAutoLearnSessionState();
+      clearAppLocalStorage();
+      try {
+        await getAuthRepo().signOut();
+      } catch (error) {
+        console.error("Failed to sign out after account deletion", error);
+      }
+      await invoke("complete_local_data_clear");
+      removeLocalDataClearPendingMarker();
       setConfirmationEmail("");
-      showSnackbar("You account has been deleted", { duration: 15000 });
       produceAppState((state) => {
         state.settings.deleteAccountDialog = false;
       });
-      await getAuthRepo().signOut();
-    } catch {
+      // Keep the clear gate closed until reload. This prevents startup tasks
+      // already in flight from recreating local data after the reset.
+      window.location.reload();
+    } catch (error) {
+      console.error("Failed to finish account deletion cleanup", error);
       showSnackbar(
-        "An error occurred while attempting to delete your account. Please try again later.",
+        accountDeletedRef.current
+          ? "Your account was deleted, but local cleanup is incomplete. Retry to finish clearing this device."
+          : "An error occurred while attempting to delete your account. Please try again later.",
       );
+      // If the remote deletion failed, no local clear has begun. Otherwise
+      // retain the lease so a retry can finish cleanup without a write race.
+      if (!accountDeletedRef.current) {
+        try {
+          if (!clearMarkerWasPreexistingRef.current) {
+            removeLocalDataClearPendingMarker();
+          }
+          releaseClearRef.current?.();
+          releaseClearRef.current = null;
+          clearMarkerWasPreexistingRef.current = false;
+        } catch (cleanupError) {
+          // Keep writes blocked if the durable recovery marker cannot be
+          // removed. The dialog remains retryable rather than reopening a
+          // clear that the account-deletion operation did not complete.
+          console.error(
+            "Failed to release local-data clear after account deletion failed",
+            cleanupError,
+          );
+        }
+      }
     } finally {
       setBusy(false);
     }
@@ -80,7 +139,7 @@ export const DeleteAccountDialog = () => {
   return (
     <Dialog
       open={open}
-      onClose={busy ? undefined : handleClose}
+      onClose={busy || clearInProgress ? undefined : handleClose}
       fullWidth
       maxWidth="sm"
     >
@@ -144,7 +203,11 @@ export const DeleteAccountDialog = () => {
         />
       </DialogContent>
       <DialogActions>
-        <Button onClick={handleClose} variant="text" disabled={busy}>
+        <Button
+          onClick={handleClose}
+          variant="text"
+          disabled={busy || clearInProgress}
+        >
           <FormattedMessage defaultMessage="Cancel" />
         </Button>
         <Button

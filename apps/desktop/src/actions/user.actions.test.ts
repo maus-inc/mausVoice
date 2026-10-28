@@ -3,6 +3,10 @@ import { INITIAL_APP_STATE } from "../state/app.state";
 import { getAppState, setAppState } from "../store";
 import { LOCAL_USER_ID } from "../utils/user.utils";
 import {
+  assertLocalDataWriteLease,
+  type LocalDataWriteLease,
+} from "../utils/local-data-write-gate";
+import {
   createDefaultPreferences,
   recordUsageWords,
   refreshCurrentUser,
@@ -25,18 +29,23 @@ const { loggerMock, prefsRepoMock, userRepoMock } = vi.hoisted(() => {
     stopwatch: vi.fn((_label: string, fn: () => Promise<unknown>) => fn()),
   };
   const prefsRepoMock = {
-    setUserPreferences: vi.fn((preferences: unknown) =>
-      Promise.resolve(preferences),
-    ),
+    setUserPreferences: vi.fn<
+      (preferences: unknown, lease?: LocalDataWriteLease) => Promise<unknown>
+    >((preferences) => Promise.resolve(preferences)),
     getUserPreferences: vi.fn(() => Promise.resolve(null)),
   };
   const userRepoMock = {
-    setMyUser: vi.fn<(user: User) => Promise<User>>((user) =>
-      Promise.resolve(user),
-    ),
+    setMyUser: vi.fn<
+      (user: User, lease?: LocalDataWriteLease) => Promise<User>
+    >((user) => Promise.resolve(user)),
     getMyUser: vi.fn<() => Promise<User | null>>(() => Promise.resolve(null)),
     recordUsageWords: vi.fn<
-      (eventId: string, localDate: string, wordCount: number) => Promise<User>
+      (
+        eventId: string,
+        localDate: string,
+        wordCount: number,
+        lease?: LocalDataWriteLease,
+      ) => Promise<User>
     >((_eventId, _localDate, _wordCount) =>
       Promise.resolve({
         id: "local-user-id",
@@ -89,7 +98,13 @@ describe("recordUsageWords", () => {
       wordsThisMonthMonth: "2026-10",
       wordsTotal: 180,
     };
-    userRepoMock.recordUsageWords.mockResolvedValue(recordedUser);
+    userRepoMock.recordUsageWords.mockImplementation(
+      (_eventId, _localDate, _wordCount, lease) => {
+        if (!lease) throw new Error("expected a local-data write lease");
+        assertLocalDataWriteLease(lease);
+        return Promise.resolve(recordedUser);
+      },
+    );
 
     await recordUsageWords("transcription-1", "2026-10-08", 18);
 
@@ -97,6 +112,7 @@ describe("recordUsageWords", () => {
       "transcription-1",
       "2026-10-08",
       18,
+      expect.objectContaining({}),
     );
     expect(getAppState().userById[LOCAL_USER_ID]).toEqual(recordedUser);
   });
@@ -121,6 +137,7 @@ describe("setPillPlacement", () => {
 
     expect(prefsRepoMock.setUserPreferences).toHaveBeenCalledWith(
       expect.objectContaining({ pillPlacement: "top" }),
+      expect.objectContaining({}),
     );
     expect(invokeMock).toHaveBeenCalledWith("set_pill_placement", {
       placement: "top",
@@ -135,6 +152,7 @@ describe("setPillPlacement", () => {
     // The preference write is the source of truth and must survive.
     expect(prefsRepoMock.setUserPreferences).toHaveBeenCalledWith(
       expect.objectContaining({ pillPlacement: "bottom" }),
+      expect.objectContaining({}),
     );
     expect(loggerMock.warning).toHaveBeenCalledTimes(1);
     expect(loggerMock.warning.mock.calls[0][0]).toContain(
@@ -159,6 +177,7 @@ describe("setPreserveAudioOnFailure", () => {
     expect(getAppState().userPrefs?.preserveAudioOnFailure).toBe(false);
     expect(prefsRepoMock.setUserPreferences).toHaveBeenCalledWith(
       expect.objectContaining({ preserveAudioOnFailure: false }),
+      expect.objectContaining({}),
     );
   });
 });
@@ -346,6 +365,21 @@ describe("updateUser serialization", () => {
     expect(writes.at(-1)?.preferredLanguage).toBe("fr");
     expect(getAppState().userById[LOCAL_USER_ID]?.name).toBe("Renamed");
     expect(getAppState().userById[LOCAL_USER_ID]?.preferredLanguage).toBe("fr");
+  });
+
+  it("stores profile counters preserved by the native upsert", async () => {
+    const saved: User = {
+      ...baseUser,
+      name: "Renamed",
+      wordsThisMonth: 18,
+      wordsThisMonthMonth: "2026-10",
+      wordsTotal: 180,
+    };
+    userRepoMock.setMyUser.mockResolvedValue(saved);
+
+    await setUserName("Renamed");
+
+    expect(getAppState().userById[LOCAL_USER_ID]).toEqual(saved);
   });
 
   it("re-reads the row after a failed save instead of restoring a snapshot", async () => {

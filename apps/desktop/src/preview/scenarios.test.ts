@@ -4,6 +4,7 @@ import {
   scenarioForPath,
   type PreviewScenarioId,
 } from "./scenarios";
+import { CURRENT_FEATURE_DATE } from "../utils/feature.utils";
 import { LOCAL_USER_ID } from "../utils/user.utils";
 
 const workspaceScenarios: PreviewScenarioId[] = [
@@ -21,6 +22,7 @@ describe("browser preview scenarios", () => {
       expect(snapshot.state.initialized).toBe(true);
       expect(snapshot.state.auth?.email).toBe("preview@mausvoice.local");
       expect(snapshot.data.user?.onboarded).toBe(true);
+      expect(snapshot.state.local.featureSeenAt).toBe(CURRENT_FEATURE_DATE);
       expect(snapshot.state.settings.elevationStartupPending).toBe(false);
       expect(snapshot.data.preferences?.userId).toBe(LOCAL_USER_ID);
     },

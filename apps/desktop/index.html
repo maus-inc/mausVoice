@@ -45,11 +45,9 @@
       (function () {
         var stored;
         try {
-          // Keep MUI's established mode key as the source of truth. The first
-          // light-mode fix read "mode" during bootstrap but set
-          // colorSchemeStorageKey instead of modeStorageKey, so some installs
-          // can have only that fallback copy. Migrate it without deleting it,
-          // preserving compatibility with both upgrades and rollbacks.
+          // Read the legacy key as a fallback without migrating it here. The
+          // guarded MUI storage manager reads the same fallback after mount;
+          // writing during bootstrap would bypass the local-data clear gate.
           stored = localStorage.getItem("mui-mode");
           if (stored !== "light" && stored !== "dark" && stored !== "system") {
             var legacy = localStorage.getItem("mode");
@@ -58,14 +56,7 @@
               legacy === "dark" ||
               legacy === "system"
             ) {
-              // Assign before persisting so a failed write keeps the valid
-              // legacy preference instead of falling back to "system".
               stored = legacy;
-              try {
-                localStorage.setItem("mui-mode", legacy);
-              } catch {
-                // Best-effort migration; a persistence failure is non-fatal.
-              }
             }
           }
         } catch {

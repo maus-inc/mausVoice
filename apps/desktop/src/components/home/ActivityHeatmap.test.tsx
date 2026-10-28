@@ -4,6 +4,14 @@ import { createRoot, type Root } from "react-dom/client";
 import { ThemeProvider, createTheme } from "@mui/material";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { IntlProvider } from "react-intl";
+
+const { useIsDarkModeMock } = vi.hoisted(() => ({
+  useIsDarkModeMock: vi.fn(() => false),
+}));
+
+vi.mock("../../hooks/color-scheme.hooks", () => ({
+  useIsDarkMode: useIsDarkModeMock,
+}));
 import { ensureUiHarness } from "../../../test/helpers/jsdom-ui-harness";
 
 vi.mock("react-intl", async (importOriginal) => {
@@ -21,6 +29,7 @@ describe("ActivityHeatmap", () => {
   let root: Root;
 
   beforeEach(() => {
+    useIsDarkModeMock.mockReturnValue(false);
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
@@ -31,11 +40,13 @@ describe("ActivityHeatmap", () => {
     container.remove();
   });
 
-  const renderHeatmap = async (
+  const renderHeatmap = (
     wordCount: number,
     status: "success" | "loading" = "success",
+    dark = false,
   ) => {
-    await act(async () => {
+    useIsDarkModeMock.mockReturnValue(dark);
+    act(() => {
       root.render(
         <IntlProvider locale="en" messages={en}>
           <ThemeProvider theme={createTheme()}>
@@ -52,8 +63,8 @@ describe("ActivityHeatmap", () => {
     });
   };
 
-  it("uses the singular label and accessible summary for one active day", async () => {
-    await renderHeatmap(5);
+  it("uses the singular label and accessible summary for one active day", () => {
+    renderHeatmap(5);
 
     expect(container.textContent).toContain("1 active day");
     expect(
@@ -61,8 +72,53 @@ describe("ActivityHeatmap", () => {
     ).toBe("Daily word activity: 1 active day and 5 words in the past year.");
   });
 
-  it("does not report zero activity before the initial load completes", async () => {
-    await renderHeatmap(0, "loading");
+  it("uses Sunday-first rows with Monday, Wednesday, and Friday labels", () => {
+    renderHeatmap(5);
+
+    const weekdayLabels = Array.from(
+      container.querySelectorAll('[role="img"] [aria-hidden="true"]'),
+    )
+      .filter(
+        (element) => window.getComputedStyle(element).visibility !== "hidden",
+      )
+      .map((element) => element.textContent ?? "")
+      .filter(Boolean);
+
+    expect(weekdayLabels).toEqual(["Mon", "Wed", "Fri"]);
+  });
+
+  it("uses the dark activity ramp when the resolved scheme is dark", () => {
+    renderHeatmap(5, "success", true);
+
+    const styles = Array.from(
+      document.querySelectorAll("style[data-emotion]"),
+      (style) => style.textContent ?? "",
+    )
+      .join("\n")
+      .toLowerCase();
+
+    expect(styles).toContain("#2a2420");
+    expect(styles).toContain("#f18b49");
+  });
+
+  it("adds a brief pointer emphasis and disables scale motion when reduced motion is preferred", () => {
+    renderHeatmap(5);
+
+    const styles = Array.from(
+      document.querySelectorAll("style[data-emotion]"),
+      (style) => style.textContent ?? "",
+    )
+      .join("\n")
+      .replace(/\s+/g, "");
+
+    expect(styles).toContain("@media(hover:hover)and(pointer:fine)");
+    expect(styles).toContain("scale(1.35)");
+    expect(styles).toContain("@media(prefers-reduced-motion:reduce)");
+    expect(styles).toContain("transform:none");
+  });
+
+  it("does not report zero activity before the initial load completes", () => {
+    renderHeatmap(0, "loading");
 
     expect(container.textContent).not.toContain("0 active days");
     expect(
@@ -70,8 +126,8 @@ describe("ActivityHeatmap", () => {
     ).not.toBeNull();
   });
 
-  it("uses the plural label and accessible summary when there is no activity", async () => {
-    await renderHeatmap(0);
+  it("uses the plural label and accessible summary when there is no activity", () => {
+    renderHeatmap(0);
 
     expect(container.textContent).toContain("0 active days");
     expect(
@@ -81,7 +137,8 @@ describe("ActivityHeatmap", () => {
       '[aria-label="Daily word counts"]',
     );
     expect(accessibleList).not.toBeNull();
-    expect(window.getComputedStyle(accessibleList!).width).toBe("1px");
-    expect(window.getComputedStyle(accessibleList!).height).toBe("1px");
+    if (accessibleList === null) return;
+    expect(window.getComputedStyle(accessibleList).width).toBe("1px");
+    expect(window.getComputedStyle(accessibleList).height).toBe("1px");
   });
 });

@@ -3,12 +3,13 @@ use std::sync::LazyLock;
 use chrono::{Local, NaiveDate, TimeZone};
 use sqlx::{Row, Sqlite, SqlitePool, Transaction};
 
-use crate::domain::DailyWordActivity;
+use crate::domain::{DailyWordActivity, Transcription};
 
 const MAX_SAFE_JS_INTEGER: i64 = 9_007_199_254_740_991;
 const BACKFILL_BATCH_SIZE: i64 = 500;
 const UTC_RANGE_PADDING_MILLIS: i64 = 2 * 24 * 60 * 60 * 1000;
-const FAILED_TRANSCRIPTION_MARKER: &str = "[Transcription Failed]";
+pub(crate) const FAILED_TRANSCRIPTION_MARKER: &str = "[Transcription Failed]";
+pub(crate) const RECEIVED_REMOTE_STATUS: &str = "received";
 const BACKFILL_EVENT_SOURCE: &str = "backfill";
 
 /// Serializes each backfill batch, live meter, and local-data wipe inside the
@@ -40,7 +41,7 @@ fn parse_local_date(value: &str) -> Result<NaiveDate, sqlx::Error> {
 /// with the existing `countWords` helper.
 fn is_ecmascript_whitespace(character: char) -> bool {
     matches!(
-        character as u32,
+        u32::from(character),
         0x0009..=0x000D
             | 0x0020
             | 0x00A0
@@ -193,20 +194,21 @@ async fn backfill_missing_transcriptions(
                     OR (transcription.timestamp = ?1 AND transcription.id > ?2))
                AND transcription.timestamp >= ?3
                AND transcription.timestamp < ?4
-               AND COALESCE(transcription.remote_status, '') != 'received'
-               AND transcription.transcript != ?5
+               AND COALESCE(transcription.remote_status, '') != ?5
+               AND transcription.transcript != ?6
                AND NOT EXISTS (
                    SELECT 1
                    FROM daily_word_activity_events AS event
                    WHERE event.event_id = transcription.id
                )
              ORDER BY transcription.timestamp ASC, transcription.id ASC
-             LIMIT ?6",
+             LIMIT ?7",
         )
         .bind(cursor_timestamp)
         .bind(cursor_id)
         .bind(start_timestamp)
         .bind(end_timestamp)
+        .bind(RECEIVED_REMOTE_STATUS)
         .bind(FAILED_TRANSCRIPTION_MARKER)
         .bind(BACKFILL_BATCH_SIZE)
         .fetch_all(pool)
@@ -219,6 +221,9 @@ async fn backfill_missing_transcriptions(
         let mut transaction = pool.begin().await?;
         for row in &rows {
             let event_id: String = row.try_get("id")?;
+            if event_id.trim().is_empty() {
+                continue;
+            }
             let transcript: String = row.try_get("transcript")?;
             let timestamp: i64 = row.try_get("timestamp")?;
             let Some(local_date) = local_date_from_timestamp(timestamp) else {
@@ -263,16 +268,169 @@ async fn backfill_missing_transcriptions(
     Ok(())
 }
 
-/// Record a live dictation or opted-in incognito event exactly once, update the
-/// legacy monthly/lifetime profile totals in the same transaction, and return
-/// the stored profile. If backfill saw an edited transcript before the live
-/// meter arrived, promotion replaces that estimate with the original live count.
-pub async fn record_usage_words(
-    pool: SqlitePool,
+async fn promote_backfilled_event(
+    transaction: &mut Transaction<'_, Sqlite>,
     event_id: &str,
     local_date: &str,
     word_count: i64,
-) -> Result<crate::domain::User, sqlx::Error> {
+    existing_date: &str,
+    existing_word_count: i64,
+) -> Result<bool, sqlx::Error> {
+    let promoted = sqlx::query(
+        "UPDATE daily_word_activity_events
+         SET local_date = ?2, word_count = ?3, source = 'live'
+         WHERE event_id = ?1
+           AND source = 'backfill'
+           AND local_date = ?4
+           AND word_count = ?5",
+    )
+    .bind(event_id)
+    .bind(local_date)
+    .bind(word_count)
+    .bind(existing_date)
+    .bind(existing_word_count)
+    .execute(&mut **transaction)
+    .await?;
+    if promoted.rows_affected() != 1 {
+        return Ok(false);
+    }
+
+    if existing_date != local_date || existing_word_count != word_count {
+        // Backfill only estimates a legacy row from the text it sees at read
+        // time. The original live count is authoritative when its delayed meter
+        // arrives, so reconcile both affected dates.
+        remove_daily_words(transaction, existing_date, existing_word_count).await?;
+        add_daily_words(transaction, local_date, word_count).await?;
+    }
+    Ok(true)
+}
+
+async fn reconcile_existing_event(
+    transaction: &mut Transaction<'_, Sqlite>,
+    event_id: &str,
+    local_date: &str,
+    word_count: i64,
+) -> Result<bool, sqlx::Error> {
+    let existing = sqlx::query(
+        "SELECT local_date, word_count, source
+         FROM daily_word_activity_events
+         WHERE event_id = ?1",
+    )
+    .bind(event_id)
+    .fetch_one(&mut **transaction)
+    .await?;
+    let existing_date: String = existing.try_get("local_date")?;
+    let existing_word_count: i64 = existing.try_get("word_count")?;
+    let existing_source: String = existing.try_get("source")?;
+
+    if existing_source == BACKFILL_EVENT_SOURCE {
+        return promote_backfilled_event(
+            transaction,
+            event_id,
+            local_date,
+            word_count,
+            &existing_date,
+            existing_word_count,
+        )
+        .await;
+    }
+
+    if existing_date != local_date || existing_word_count != word_count {
+        return Err(protocol_error(
+            "Usage event id was already recorded with different data",
+        ));
+    }
+    Ok(false)
+}
+
+async fn insert_or_reconcile_live_event(
+    transaction: &mut Transaction<'_, Sqlite>,
+    event_id: &str,
+    local_date: &str,
+    word_count: i64,
+) -> Result<bool, sqlx::Error> {
+    let inserted = sqlx::query(
+        "INSERT INTO daily_word_activity_events
+             (event_id, local_date, word_count, source)
+         VALUES (?1, ?2, ?3, 'live')
+         ON CONFLICT(event_id) DO NOTHING",
+    )
+    .bind(event_id)
+    .bind(local_date)
+    .bind(word_count)
+    .execute(&mut **transaction)
+    .await?;
+
+    if inserted.rows_affected() == 1 {
+        add_daily_words(transaction, local_date, word_count).await?;
+        return Ok(true);
+    }
+    reconcile_existing_event(transaction, event_id, local_date, word_count).await
+}
+
+async fn update_profile_usage(
+    transaction: &mut Transaction<'_, Sqlite>,
+    month: &str,
+    word_count: i64,
+) -> Result<(), sqlx::Error> {
+    let updated = sqlx::query(
+        "UPDATE user_profiles
+         SET words_total = words_total + ?1,
+             words_this_month = CASE
+                 WHEN words_this_month_month = ?2
+                     THEN words_this_month + ?1
+                 WHEN words_this_month_month IS NULL
+                      OR words_this_month_month < ?2
+                     THEN ?1
+                 ELSE words_this_month
+             END,
+             words_this_month_month = CASE
+                 WHEN words_this_month_month IS NULL
+                      OR words_this_month_month < ?2
+                     THEN ?2
+                 ELSE words_this_month_month
+             END
+         WHERE id = (SELECT id FROM user_profiles LIMIT 1)
+           AND words_total >= 0
+           AND words_total <= ?3 - ?1
+           AND (
+               words_this_month_month IS NOT ?2
+               OR (
+                   words_this_month >= 0
+                   AND words_this_month <= ?3 - ?1
+               )
+           )
+         RETURNING id",
+    )
+    .bind(word_count)
+    .bind(month)
+    .bind(MAX_SAFE_JS_INTEGER)
+    .fetch_optional(&mut **transaction)
+    .await?;
+    if updated.is_some() {
+        return Ok(());
+    }
+
+    let profile_exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM user_profiles")
+        .fetch_one(&mut **transaction)
+        .await?;
+    if profile_exists == 0 {
+        return Err(sqlx::Error::RowNotFound);
+    }
+    Err(protocol_error(
+        "Usage totals exceed the JavaScript safe-integer range",
+    ))
+}
+
+/// Apply one validated usage event and its profile totals inside a caller-owned
+/// transaction. Transcription creation uses this to commit history and metering
+/// together; the standalone command uses the same helper for opted-in incognito.
+pub(crate) async fn record_usage_words_in_transaction(
+    transaction: &mut Transaction<'_, Sqlite>,
+    event_id: &str,
+    local_date: &str,
+    word_count: i64,
+) -> Result<(), sqlx::Error> {
     if event_id.trim().is_empty() {
         return Err(protocol_error("Usage event id must not be empty"));
     }
@@ -281,130 +439,62 @@ pub async fn record_usage_words(
     }
     let local_date = parse_local_date(local_date)?;
     let local_date = local_date.format("%Y-%m-%d").to_string();
-    let month = local_date[..7].to_string();
+    let month = &local_date[..7];
 
-    let _guard = lock_activity_writes().await;
-    let mut transaction = pool.begin().await?;
-    let inserted = sqlx::query(
-        "INSERT INTO daily_word_activity_events
-             (event_id, local_date, word_count, source)
-         VALUES (?1, ?2, ?3, 'live')
-         ON CONFLICT(event_id) DO NOTHING",
-    )
-    .bind(event_id)
-    .bind(&local_date)
-    .bind(word_count)
-    .execute(&mut *transaction)
-    .await?;
+    if insert_or_reconcile_live_event(transaction, event_id, &local_date, word_count).await? {
+        update_profile_usage(transaction, month, word_count).await?;
+    }
+    Ok(())
+}
 
-    let should_update_profile = if inserted.rows_affected() == 1 {
-        add_daily_words(&mut transaction, &local_date, word_count).await?;
-        true
-    } else {
-        let existing = sqlx::query(
-            "SELECT local_date, word_count, source
-             FROM daily_word_activity_events
-             WHERE event_id = ?1",
-        )
-        .bind(event_id)
-        .fetch_one(&mut *transaction)
-        .await?;
-        let existing_date: String = existing.try_get("local_date")?;
-        let existing_word_count: i64 = existing.try_get("word_count")?;
-        let existing_source: String = existing.try_get("source")?;
-
-        if existing_source == BACKFILL_EVENT_SOURCE {
-            let promoted = sqlx::query(
-                "UPDATE daily_word_activity_events
-                 SET local_date = ?2, word_count = ?3, source = 'live'
-                 WHERE event_id = ?1
-                   AND source = 'backfill'
-                   AND local_date = ?4
-                   AND word_count = ?5",
-            )
-            .bind(event_id)
-            .bind(&local_date)
-            .bind(word_count)
-            .bind(&existing_date)
-            .bind(existing_word_count)
-            .execute(&mut *transaction)
-            .await?;
-            if promoted.rows_affected() == 1 {
-                // Backfill can only estimate a legacy row from the text it sees
-                // at read time. The original live count is authoritative when
-                // its delayed meter arrives, so reconcile both affected dates.
-                if existing_date != local_date || existing_word_count != word_count {
-                    remove_daily_words(&mut transaction, &existing_date, existing_word_count)
-                        .await?;
-                    add_daily_words(&mut transaction, &local_date, word_count).await?;
-                }
-                true
-            } else {
-                // Another app process promoted this event after our SELECT.
-                // Only the process that changes backfill -> live owns the
-                // one profile increment.
-                false
-            }
-        } else {
-            if existing_date != local_date || existing_word_count != word_count {
-                return Err(protocol_error(
-                    "Usage event id was already recorded with different data",
-                ));
-            }
-            false
-        }
-    };
-
-    if should_update_profile {
-        let updated = sqlx::query(
-            "UPDATE user_profiles
-             SET words_total = words_total + ?1,
-                 words_this_month = CASE
-                     WHEN words_this_month_month = ?2
-                         THEN words_this_month + ?1
-                     WHEN words_this_month_month IS NULL
-                          OR words_this_month_month < ?2
-                         THEN ?1
-                     ELSE words_this_month
-                 END,
-                 words_this_month_month = CASE
-                     WHEN words_this_month_month IS NULL
-                          OR words_this_month_month < ?2
-                         THEN ?2
-                     ELSE words_this_month_month
-                 END
-             WHERE id = (SELECT id FROM user_profiles LIMIT 1)
-               AND words_total >= 0
-               AND words_total <= ?3 - ?1
-               AND (
-                   words_this_month_month IS NOT ?2
-                   OR (
-                       words_this_month >= 0
-                       AND words_this_month <= ?3 - ?1
-                   )
-               )
-             RETURNING id",
-        )
-        .bind(word_count)
-        .bind(&month)
-        .bind(MAX_SAFE_JS_INTEGER)
-        .fetch_optional(&mut *transaction)
-        .await?;
-        if updated.is_none() {
-            let profile_exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM user_profiles")
-                .fetch_one(&mut *transaction)
-                .await?;
-            if profile_exists == 0 {
-                return Err(sqlx::Error::RowNotFound);
-            }
-            return Err(protocol_error(
-                "Usage totals exceed the JavaScript safe-integer range",
-            ));
-        }
+/// Record eligible saved transcription usage in the transaction that inserts
+/// its history row. Remote receipts and failed markers never count.
+pub(crate) async fn record_transcription_usage(
+    transaction: &mut Transaction<'_, Sqlite>,
+    transcription: &Transcription,
+) -> Result<(), sqlx::Error> {
+    if transcription.id.trim().is_empty()
+        || transcription.remote_status.as_deref() == Some(RECEIVED_REMOTE_STATUS)
+        || transcription.transcript == FAILED_TRANSCRIPTION_MARKER
+    {
+        return Ok(());
     }
 
-    transaction.commit().await?;
-    drop(_guard);
+    let Some(local_date) = local_date_from_timestamp(transcription.timestamp) else {
+        return Ok(());
+    };
+    let word_count = count_words(&transcription.transcript)?;
+    if word_count == 0 {
+        return Ok(());
+    }
+
+    let profile_exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM user_profiles)")
+        .fetch_one(&mut **transaction)
+        .await?;
+    if !profile_exists {
+        return Ok(());
+    }
+
+    record_usage_words_in_transaction(transaction, &transcription.id, &local_date, word_count).await
+}
+
+/// Record a live dictation or opted-in incognito event exactly once, update the
+/// legacy monthly/lifetime profile totals in the same transaction, and return
+/// the stored profile. Backfill estimates are reconciled when a live count arrives.
+pub async fn record_usage_words(
+    pool: SqlitePool,
+    event_id: &str,
+    local_date: &str,
+    word_count: i64,
+) -> Result<crate::domain::User, sqlx::Error> {
+    {
+        let _guard = lock_activity_writes().await;
+        let mut transaction = pool.begin().await?;
+        record_usage_words_in_transaction(&mut transaction, event_id, local_date, word_count)
+            .await?;
+        transaction.commit().await?;
+    }
+
     crate::db::user_queries::fetch_user(pool)
         .await?
         .ok_or(sqlx::Error::RowNotFound)
@@ -629,6 +719,8 @@ mod tests {
             .timestamp_millis();
         insert_transcription(&pool, "local", "hello there", timestamp, None).await;
         insert_transcription(&pool, "remote", "remote words", timestamp, Some("received")).await;
+        insert_transcription(&pool, "", "empty id words", timestamp, None).await;
+        insert_transcription(&pool, " \t", "blank id words", timestamp, None).await;
         insert_transcription(&pool, "failed", "[Transcription Failed]", timestamp, None).await;
 
         for _ in 0..2 {
@@ -705,7 +797,6 @@ mod tests {
             .single()
             .expect("valid local timestamp")
             .timestamp_millis();
-        let outside_date = local_date_from_timestamp(outside_timestamp).expect("local date");
         let inside_date = local_date_from_timestamp(inside_timestamp).expect("local date");
         insert_transcription(&pool, "outside-range", "old words", outside_timestamp, None).await;
         insert_transcription(&pool, "inside-range", "chart words", inside_timestamp, None).await;

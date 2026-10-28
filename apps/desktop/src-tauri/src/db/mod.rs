@@ -5,6 +5,7 @@ mod consolidation;
 pub mod conversation_queries;
 pub mod daily_activity_queries;
 pub mod hotkey_queries;
+pub mod local_data_write_gate;
 pub mod open;
 pub mod paired_remote_device_queries;
 pub mod preferences_queries;

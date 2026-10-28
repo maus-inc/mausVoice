@@ -8,6 +8,10 @@ import { getLogger } from "../../utils/log.utils";
 import { subscribeToDailyActivityChanges } from "../../utils/daily-activity.events";
 import { registerTranscriptions } from "../../utils/app.utils";
 
+type HomeSideEffectsProps = {
+  today: Date;
+};
+
 const useRefreshCurrentUser = () => {
   const pendingRef = useRef(false);
 
@@ -22,13 +26,13 @@ const useRefreshCurrentUser = () => {
   }, []);
 };
 
-export const HomeSideEffects = () => {
+export const HomeSideEffects = ({ today }: HomeSideEffectsProps) => {
   const refresh = useRefreshCurrentUser();
   const activityRequestRef = useRef(0);
 
   const loadDailyActivity = useCallback(async () => {
     const requestId = ++activityRequestRef.current;
-    const range = getActivityDateRange();
+    const range = getActivityDateRange(today);
     produceAppState((draft) => {
       draft.home.dailyActivityStatus = "loading";
     });
@@ -49,7 +53,7 @@ export const HomeSideEffects = () => {
         draft.home.dailyActivityStatus = "error";
       });
     }
-  }, []);
+  }, [today]);
 
   useAsyncEffect(async () => {
     const transcriptionsPromise = getTranscriptionRepo()
@@ -58,28 +62,39 @@ export const HomeSideEffects = () => {
         getLogger().warning(`Failed to load recent transcriptions: ${error}`);
         return null;
       });
+    const refreshPromise = refresh().catch((error: unknown) => {
+      getLogger().warning(`Failed to refresh current user: ${error}`);
+    });
     const [, transcriptions] = await Promise.all([
-      refresh(),
+      refreshPromise,
       transcriptionsPromise,
-      loadDailyActivity(),
     ]);
     if (!transcriptions) return;
     produceAppState((draft) => {
       registerTranscriptions(draft, transcriptions);
       draft.transcriptions.transcriptionIds = transcriptions.map((t) => t.id);
     });
-  }, [refresh, loadDailyActivity]);
+  }, [refresh]);
+
+  useEffect(() => {
+    loadDailyActivity();
+    return () => {
+      activityRequestRef.current += 1;
+    };
+  }, [loadDailyActivity]);
 
   useEffect(() => {
     const handleRefresh = () => {
-      void refresh();
-      void loadDailyActivity();
+      refresh().catch((error: unknown) => {
+        getLogger().warning(`Failed to refresh current user: ${error}`);
+      });
+      loadDailyActivity();
     };
     const handleVisibility = () => {
       if (document.visibilityState === "visible") handleRefresh();
     };
     const unsubscribeActivity = subscribeToDailyActivityChanges(() => {
-      void loadDailyActivity();
+      loadDailyActivity();
     });
 
     window.addEventListener("focus", handleRefresh);

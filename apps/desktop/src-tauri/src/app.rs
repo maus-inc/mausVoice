@@ -229,6 +229,27 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
 
             log::info!("Starting application setup...");
 
+            // A clear can be interrupted after this process has deleted some
+            // local data. Restore the native barrier before opening the DB or
+            // accepting renderer commands; the clear dialog will retry and
+            // remove the marker only after both native and browser cleanup.
+            let clear_recovery_pending =
+                match crate::system::local_data_clear_marker::is_pending(app.handle()) {
+                    Ok(true) => {
+                        log::warn!("Recovering an interrupted local-data clear");
+                        crate::db::local_data_write_gate::recover_pending_local_data_clear();
+                        true
+                    }
+                    Ok(false) => false,
+                    Err(error) => {
+                        log::error!("Unable to inspect the local-data clear marker: {error}");
+                        crate::db::local_data_write_gate::recover_pending_local_data_clear();
+                        // A marker we cannot inspect must fail closed just like a
+                        // marker confirmed to be pending.
+                        true
+                    }
+                };
+
             // Preserve GGML files from the old app-data/models location before
             // the desktop sidecars start using app-data/transcription-models.
             if let Err(err) = crate::system::paths::migrate_legacy_models(app.handle()) {
@@ -256,6 +277,18 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             // Write startup diagnostics for debugging
             crate::system::diagnostics::write_startup_diagnostics(app.handle());
 
+            // `database_path` may copy a legacy database, and `open_app_database`
+            // runs data-moving SQL migrations. Hold the native write mutex across
+            // both. During clear recovery, this special startup lease does not open
+            // the gate: it only lets setup reach the retry dialog, while all normal
+            // renderer and remote writes remain rejected.
+            let _startup_database_write_guard = tauri::async_runtime::block_on(
+                crate::db::local_data_write_gate::lock_startup_database_migration(
+                    clear_recovery_pending,
+                ),
+            )
+            .map_err(|error| -> Box<dyn std::error::Error> { Box::new(error) })?;
+
             let db_path = {
                 let handle = app.handle();
                 crate::system::paths::database_path(handle)
@@ -275,6 +308,7 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
                     log::error!("{message}");
                     message.into()
                 })?;
+            drop(_startup_database_write_guard);
 
             app.manage(crate::state::OptionKeyDatabase::new(pool.clone()));
             app.manage(crate::state::OverlayState::new());
@@ -409,6 +443,7 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             crate::commands::tone_get,
             crate::commands::tone_delete,
             crate::commands::clear_local_data,
+            crate::commands::complete_local_data_clear,
             crate::commands::set_phase,
             crate::commands::set_pill_visibility,
             crate::commands::set_pill_placement,

@@ -1,7 +1,11 @@
 import type { DailyWordActivity } from "../types/home.types";
-import { toLocalDateKey } from "./date.utils";
+import { dateFromLocalDateKey, toLocalDateKey } from "./date.utils";
 
 export const ACTIVITY_HEATMAP_WEEKS = 53;
+
+const LOW_ACTIVITY_WORDS = 100;
+const MODERATE_ACTIVITY_WORDS = 500;
+const HIGH_ACTIVITY_WORDS = 1_500;
 
 export type ActivityGridCell = {
   localDate: string;
@@ -17,8 +21,11 @@ export type ActivityGrid = {
   endDate: string;
 };
 
-const atLocalNoon = (date: Date): Date =>
-  new Date(date.getFullYear(), date.getMonth(), date.getDate(), 12);
+const atLocalNoon = (date: Date): Date => {
+  const noon = new Date(date);
+  noon.setHours(12, 0, 0, 0);
+  return noon;
+};
 
 const startOfCurrentWeek = (date: Date): Date => {
   const start = atLocalNoon(date);
@@ -45,10 +52,10 @@ export const getActivityDateRange = (
 export const activityIntensity = (
   wordCount: number,
 ): ActivityGridCell["intensity"] => {
-  if (wordCount <= 0) return 0;
-  if (wordCount < 100) return 1;
-  if (wordCount < 500) return 2;
-  if (wordCount < 1_500) return 3;
+  if (!Number.isFinite(wordCount) || wordCount <= 0) return 0;
+  if (wordCount < LOW_ACTIVITY_WORDS) return 1;
+  if (wordCount < MODERATE_ACTIVITY_WORDS) return 2;
+  if (wordCount < HIGH_ACTIVITY_WORDS) return 3;
   return 4;
 };
 
@@ -73,8 +80,7 @@ export const buildActivityGrid = (
     );
   }
 
-  const [year, month, day] = range.startDate.split("-").map(Number);
-  const firstDay = new Date(year, month - 1, day, 12);
+  const firstDay = dateFromLocalDateKey(range.startDate);
   const weeks: ActivityGridCell[][] = [];
 
   for (let weekIndex = 0; weekIndex < weekCount; weekIndex += 1) {

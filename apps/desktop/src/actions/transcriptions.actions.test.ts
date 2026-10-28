@@ -6,6 +6,7 @@ import { RETRANSCRIPTION_SUCCESS_VISIBLE_MS } from "../state/transcriptions.stat
 import type { PostProcessMetadata } from "./transcribe.actions";
 import { createDefaultPreferences } from "./user.actions";
 import { getAppState, produceAppState, setAppState } from "../store";
+import { sampleTranscription } from "../test/helpers/transcription-fixture";
 
 const {
   loadTranscriptionAudio,
@@ -120,15 +121,6 @@ const neverSettles = () => new Promise<never>(() => undefined);
 const startIgnoredRun = (transcriptionId: string): void => {
   retranscribeTranscription({ transcriptionId }).catch(() => undefined);
 };
-
-const sampleTranscription = (id: string): Transcription => ({
-  id,
-  createdAt: "2026-08-01T00:00:00.000Z",
-  createdByUserId: "user-1",
-  transcript: "hello",
-  isDeleted: false,
-  audio: { filePath: `/tmp/${id}.wav`, durationMs: 1000 },
-});
 
 const seedTranscription = (id: string) => {
   produceAppState((draft) => {
@@ -386,6 +378,7 @@ describe("retranscribeTranscription feedback", () => {
         postprocessDurationMs: 45,
         postProcessModel: "openai/gpt-oss-20b",
       }),
+      expect.any(Object),
     );
   });
 
@@ -410,6 +403,7 @@ describe("retranscribeTranscription feedback", () => {
         postprocessDurationMs: null,
         postProcessModel: null,
       }),
+      expect.any(Object),
     );
   });
 
@@ -642,6 +636,7 @@ describe("retranscribeTranscription persistence gate", () => {
         id: "tx-gate",
         transcript: "retranscribed text",
       }),
+      expect.any(Object),
     );
     expect(getAppState().transcriptionById["tx-gate"]?.transcript).toBe(
       "retranscribed text",
@@ -751,6 +746,7 @@ describe("retranscribeTranscription unstyled post-processing", () => {
         warnings: [QUOTA_CATEGORY],
         postProcessFailed: true,
       }),
+      expect.any(Object),
     );
     expect(getAppState().transcriptionById["unstyled"]?.transcript).toBe(
       POLISHED,
@@ -795,6 +791,7 @@ describe("retranscribeTranscription unstyled post-processing", () => {
         // The provider answered, so the failure sentinel must stay false.
         postProcessFailed: false,
       }),
+      expect.any(Object),
     );
     // The stored warning stays English because it lives on the row, but the
     // toast resolves a localized sentence for it and logs the raw reason.
@@ -849,6 +846,7 @@ describe("retranscribeTranscription unstyled post-processing", () => {
         // The request came back, so the failure sentinel stays false.
         postProcessFailed: false,
       }),
+      expect.any(Object),
     );
     expect(getAppState().transcriptionById["unparseable"]?.transcript).toBe(
       POLISHED,
@@ -888,6 +886,7 @@ describe("retranscribeTranscription unstyled post-processing", () => {
         warnings: [VALIDATION_WARNING],
         postProcessFailed: false,
       }),
+      expect.any(Object),
     );
     // The recorded reason is not shown. The toast describes the outcome, and a
     // validation failure must not borrow the cut-off copy any more than the
@@ -981,6 +980,7 @@ describe("retranscribeTranscription unstyled post-processing", () => {
         transcript: "Freshly styled summary.",
         postProcessFailed: false,
       }),
+      expect.any(Object),
     );
     expect(getAppState().transcriptions.retranscriptionSuccessIds).toEqual([
       "styled",
@@ -1032,6 +1032,7 @@ describe("retranscribeTranscription unstyled post-processing", () => {
         postProcessFallback: true,
         postProcessFailed: false,
       }),
+      expect.any(Object),
     );
     expect(getAppState().transcriptionById["degraded"]?.transcript).toBe(
       degraded.transcript,
@@ -1060,6 +1061,7 @@ describe("retranscribeTranscription unstyled post-processing", () => {
         rawTranscript: RAW_ASR,
         postProcessFallback: true,
       }),
+      expect.any(Object),
     );
     expect(showErrorSnackbar).toHaveBeenCalledWith(UNREADABLE_COPY);
   });

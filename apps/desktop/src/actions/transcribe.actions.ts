@@ -66,8 +66,17 @@ import {
 } from "../utils/fast-style.utils";
 import { getIntl } from "../i18n/intl";
 import { showErrorSnackbar } from "./app.actions";
-import { recordUsageWords as recordUsageWordsAction } from "./user.actions";
-import { localDateKeyFromIso, toLocalDateKey } from "../utils/date.utils";
+import {
+  recordUsageWords as recordUsageWordsAction,
+  refreshCurrentUser,
+} from "./user.actions";
+import { notifyDailyActivityChanged } from "../utils/daily-activity.events";
+import { toLocalDateKey } from "../utils/date.utils";
+import {
+  type LocalDataWriteLease,
+  beginLocalDataWrite,
+  withLocalDataWrite,
+} from "../utils/local-data-write-gate";
 
 export type TranscribeAudioInput = {
   samples: AudioSamples;
@@ -845,34 +854,49 @@ const getSampleCount = (samples: StopRecordingResponse["samples"]): number =>
 const getWordsAdded = (transcript: string | null): number =>
   transcript ? countWords(transcript) : 0;
 
-const recordUsageWords = async (
+const recordIncognitoUsageWords = async (
   eventId: string,
   localDate: string,
   wordsAdded: number,
+  lease: LocalDataWriteLease,
 ): Promise<void> => {
   if (wordsAdded <= 0) {
     return;
   }
   try {
-    await recordUsageWordsAction(eventId, localDate, wordsAdded);
+    await recordUsageWordsAction(eventId, localDate, wordsAdded, lease);
   } catch (error) {
-    console.error("Failed to update usage metrics", error);
+    getLogger().error("Failed to update usage metrics", error);
   }
+};
+
+// The caller keeps the transcription's local-data lease until this detached
+// refresh settles. It reads profile state from SQLite and updates the in-memory
+// store, so it must not outlive a clear and apply a pre-clear snapshot afterward.
+const refreshUsageAfterSavedTranscription = async (): Promise<void> => {
+  try {
+    await refreshCurrentUser();
+  } catch (error) {
+    getLogger().warning(`Failed to refresh usage metrics: ${error}`);
+  }
+  notifyDailyActivityChanged();
 };
 
 const persistAudioSnapshot = async (
   transcriptionId: string,
   samples: number[] | Float32Array,
   sampleRate: number,
+  lease: LocalDataWriteLease,
 ): Promise<TranscriptionAudioSnapshot | undefined> => {
   try {
-    return await invoke<TranscriptionAudioSnapshot>(
-      "store_transcription_audio",
-      {
-        id: transcriptionId,
-        samples,
-        sampleRate,
-      },
+    return await withLocalDataWrite(
+      () =>
+        invoke<TranscriptionAudioSnapshot>("store_transcription_audio", {
+          id: transcriptionId,
+          samples,
+          sampleRate,
+        }),
+      lease,
     );
   } catch (error) {
     getLogger().error("Failed to persist audio snapshot", error);
@@ -934,28 +958,33 @@ const buildTranscriptionRecord = ({
 
 const persistTranscription = async (
   transcription: Transcription,
+  lease: LocalDataWriteLease,
 ): Promise<Transcription | null> => {
   try {
-    const stored =
-      await getTranscriptionRepo().createTranscription(transcription);
+    const stored = await getTranscriptionRepo().createTranscription(
+      transcription,
+      lease,
+    );
     produceAppState((draft) => {
       draft.transcriptionById[stored.id] = stored;
       const existingIds = draft.transcriptions.transcriptionIds.filter(
         (identifier) => identifier !== stored.id,
       );
       draft.transcriptions.transcriptionIds = [stored.id, ...existingIds];
-    });
+    }, lease);
     return stored;
   } catch (error) {
-    console.error("Failed to store transcription", error);
+    getLogger().error("Failed to store transcription", error);
     showErrorSnackbar("Unable to save transcription. Please try again.");
     return null;
   }
 };
 
-const purgeStaleAudioSnapshots = async (): Promise<void> => {
+const purgeStaleAudioSnapshots = async (
+  lease: LocalDataWriteLease,
+): Promise<void> => {
   try {
-    const purgedIds = await getTranscriptionRepo().purgeStaleAudio();
+    const purgedIds = await getTranscriptionRepo().purgeStaleAudio(lease);
     if (purgedIds.length === 0) {
       return;
     }
@@ -966,9 +995,9 @@ const purgeStaleAudioSnapshots = async (): Promise<void> => {
           delete purged.audio;
         }
       }
-    });
+    }, lease);
   } catch (error) {
-    console.error("Failed to purge stale audio snapshots", error);
+    getLogger().error("Failed to purge stale audio snapshots", error);
   }
 };
 
@@ -997,8 +1026,10 @@ const shouldStoreRecording = (
   return true;
 };
 
-export const storeTranscription = async (
+const storeTranscriptionWithWriteLease = async (
   input: StoreTranscriptionInput,
+  lease: LocalDataWriteLease,
+  deferWriteReleaseUntil: (write: Promise<void>) => void,
 ): Promise<StoreTranscriptionOutput> => {
   getLogger().verbose("Storing transcription record");
   const rate = input.audio.sampleRate;
@@ -1035,10 +1066,9 @@ export const storeTranscription = async (
     // Counting words is an incognito-only option. An ephemeral session never
     // opted into usage statistics.
     //
-    // The stop path holds the recording session until this function returns.
-    // Do not wait for the queued profile write here, or a new pill click can
-    // land in the gap and be dropped. The helper handles failures before the
-    // promise is discarded.
+    // Incognito has no saved row for a later backfill, so opted-in usage is
+    // best-effort. Keep the profile write detached from the stop path so the pill
+    // can accept another click, but hold its clear lease until it settles.
     if (
       wordsAdded > 0 &&
       !transcriptionFailed &&
@@ -1047,10 +1077,13 @@ export const storeTranscription = async (
       incognitoEnabled &&
       !isEphemeralSessionActive()
     ) {
-      void recordUsageWords(
-        transcriptionId,
-        toLocalDateKey(new Date()),
-        wordsAdded,
+      deferWriteReleaseUntil(
+        recordIncognitoUsageWords(
+          transcriptionId,
+          toLocalDateKey(new Date()),
+          wordsAdded,
+          lease,
+        ),
       );
     }
 
@@ -1068,7 +1101,7 @@ export const storeTranscription = async (
     ? input.audio.samples
     : Array.from(input.audio.samples ?? []);
   const audioSnapshot = shouldPersistAudio
-    ? await persistAudioSnapshot(transcriptionId, payloadSamples, rate)
+    ? await persistAudioSnapshot(transcriptionId, payloadSamples, rate, lease)
     : undefined;
 
   const transcription = buildTranscriptionRecord({
@@ -1080,7 +1113,7 @@ export const storeTranscription = async (
     createdByUserId: getMyEffectiveUserId(state),
   });
 
-  const storedTranscription = await persistTranscription(transcription);
+  const storedTranscription = await persistTranscription(transcription, lease);
   if (!storedTranscription) {
     if (audioSnapshot) {
       // Housekeeping, deliberately not awaited. The pill goes idle as soon as
@@ -1088,31 +1121,24 @@ export const storeTranscription = async (
       // still unwinding; a click in that gap is taken natively and then dropped.
       // A sweep that hangs would hold the session locked for as long as it
       // takes, so it runs on its own and the row is already durable.
-      void purgeStaleAudioSnapshots();
+      deferWriteReleaseUntil(purgeStaleAudioSnapshots(lease));
     }
     return { transcription: null, wordCount: 0 };
   }
 
-  // Usage metering and the audio retention sweep are housekeeping, not the save
-  // the user is waiting on. The pill is already told to go idle by the time we
-  // get here, so it looks clickable, but this session stays locked until the
-  // stop path returns. Awaiting two slow calls here held that lock across a
-  // queued profile write and a disk scan, so a click landing in that gap was
-  // accepted by the pill and then dropped by the app. Usage carries the saved
-  // row's stable id so a delayed live write and a dashboard repair cannot count
-  // one dictation twice; the sweep can safely run again on the next dictation.
+  // `transcription_create` commits this row, its live usage event, and the
+  // profile counters in one SQLite transaction. Refreshing frontend state and
+  // notifying the heatmap are presentation work only. Keep them detached while
+  // the stop path remains locked; the next dashboard refresh can read the
+  // durable profile and activity aggregate if this refresh fails or the app exits.
   if (
     wordsAdded > 0 &&
     !transcriptionFailed &&
     storedTranscription.remoteStatus !== "received"
   ) {
-    void recordUsageWords(
-      storedTranscription.id,
-      localDateKeyFromIso(storedTranscription.createdAt),
-      wordsAdded,
-    );
+    deferWriteReleaseUntil(refreshUsageAfterSavedTranscription());
   }
-  void purgeStaleAudioSnapshots();
+  deferWriteReleaseUntil(purgeStaleAudioSnapshots(lease));
 
   markPipeline(input.trace, "persisted");
   const summary = summarizePipeline(input.trace);
@@ -1128,8 +1154,50 @@ export const storeTranscription = async (
         draft.local.providerTiming[providerKey],
         summary,
       );
-    });
+    }, lease);
   }
 
   return { transcription: storedTranscription, wordCount: wordsAdded };
+};
+
+export const storeTranscription = async (
+  input: StoreTranscriptionInput,
+): Promise<StoreTranscriptionOutput> => {
+  const releaseWrite = beginLocalDataWrite();
+  if (!releaseWrite) return { transcription: null, wordCount: 0 };
+
+  let operationFinished = false;
+  let detachedWrites = 0;
+  let released = false;
+  const releaseWhenReady = (): void => {
+    if (operationFinished && detachedWrites === 0 && !released) {
+      released = true;
+      releaseWrite();
+    }
+  };
+  const deferWriteReleaseUntil = (write: Promise<void>): void => {
+    detachedWrites += 1;
+    write.then(
+      () => {
+        detachedWrites -= 1;
+        releaseWhenReady();
+      },
+      (error: unknown) => {
+        getLogger().error("Detached transcription write failed", error);
+        detachedWrites -= 1;
+        releaseWhenReady();
+      },
+    );
+  };
+
+  try {
+    return await storeTranscriptionWithWriteLease(
+      input,
+      releaseWrite.lease,
+      deferWriteReleaseUntil,
+    );
+  } finally {
+    operationFinished = true;
+    releaseWhenReady();
+  }
 };

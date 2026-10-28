@@ -166,6 +166,14 @@ async clearLocalData() : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async completeLocalDataClear() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("complete_local_data_clear") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async composerDiscardText(requestId: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("composer_discard_text", { requestId }) };

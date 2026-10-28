@@ -15,6 +15,10 @@ import {
   RETRANSCRIPTION_SUCCESS_VISIBLE_MS,
 } from "../state/transcriptions.state";
 import { getAppState, produceAppState } from "../store";
+import {
+  type LocalDataWriteLease,
+  withLocalDataWrite,
+} from "../utils/local-data-write-gate";
 import { sanitizeTranscriptText } from "../utils/sanitize-transcript.utils";
 import type { ReplacementRule } from "../utils/string.utils";
 import {
@@ -225,6 +229,7 @@ const isUnstyledPostProcess = (metadata: PostProcessMetadata): boolean =>
 const updateStoredTranscription = async (
   transcription: Transcription,
   processed: ProcessedAudio,
+  lease: LocalDataWriteLease,
 ): Promise<RetranscribeUpdate> => {
   const { transcribeResult, sanitizedTranscript, postProcessResult } =
     processed;
@@ -286,7 +291,7 @@ const updateStoredTranscription = async (
   // During an ephemeral session the update stays memory-only: build the fresh
   // payload for the caller but never write it through to the repository.
   const stored = isPersistenceAllowed()
-    ? await getTranscriptionRepo().updateTranscription(payload)
+    ? await getTranscriptionRepo().updateTranscription(payload, lease)
     : payload;
   return {
     styled: !unstyled,
@@ -399,30 +404,35 @@ const syncRetranscribeFeedback = (event: "success" | "error" | "abandoned") => {
   dismissRetranscribeLoadingFeedback();
 };
 
-const performRetranscribe = async ({
-  transcriptionId,
-  toneId,
-  languageCode,
-}: RetranscribeTranscriptionParams): Promise<RetranscribeUpdate> => {
+const performRetranscribe = async (
+  { transcriptionId, toneId, languageCode }: RetranscribeTranscriptionParams,
+  lease: LocalDataWriteLease,
+): Promise<RetranscribeUpdate> => {
   const transcription = getRec(
     getAppState().transcriptionById,
     transcriptionId,
   );
   if (!transcription) throw new Error("Transcription not found.");
 
-  const audioData =
-    await getTranscriptionRepo().loadTranscriptionAudio(transcriptionId);
+  const audioData = await getTranscriptionRepo().loadTranscriptionAudio(
+    transcriptionId,
+    lease,
+  );
   const processed = await processAudio({
     samples: audioData.samples,
     sampleRate: audioData.sampleRate,
     toneId,
     languageCode,
   });
-  const updated = await updateStoredTranscription(transcription, processed);
+  const updated = await updateStoredTranscription(
+    transcription,
+    processed,
+    lease,
+  );
 
   produceAppState((draft) => {
     draft.transcriptionById[transcriptionId] = updated.transcription;
-  });
+  }, lease);
   return updated;
 };
 
@@ -489,7 +499,9 @@ export const retranscribeTranscription = async (
   }
 
   try {
-    const update = await performRetranscribe(params);
+    const update = await withLocalDataWrite((lease) =>
+      performRetranscribe(params, lease),
+    );
     if (!isCurrentRetranscribeGeneration(transcriptionId, generation)) {
       abandonRetranscribeRun();
       return;

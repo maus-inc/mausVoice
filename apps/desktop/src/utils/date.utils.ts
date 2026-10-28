@@ -5,7 +5,11 @@ export const toLocalDateKey = (date: Date): string => {
   if (!Number.isFinite(date.valueOf())) {
     throw new RangeError("Cannot format an invalid date as a local date key");
   }
-  const year = date.getFullYear().toString().padStart(4, "0");
+  const yearValue = date.getFullYear();
+  if (yearValue < 0 || yearValue > 9999) {
+    throw new RangeError("Local date year must fit YYYY format");
+  }
+  const year = yearValue.toString().padStart(4, "0");
   const month = (date.getMonth() + 1).toString().padStart(2, "0");
   const day = date.getDate().toString().padStart(2, "0");
   return `${year}-${month}-${day}`;
@@ -19,12 +23,9 @@ export const localDateKeyFromIso = (isoDate: string): string =>
 export const dateFromLocalDateKey = (localDate: string): Date => {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(localDate);
   if (!match) throw new RangeError("Expected a YYYY-MM-DD local date key");
-  const date = new Date(
-    Number(match[1]),
-    Number(match[2]) - 1,
-    Number(match[3]),
-    12,
-  );
+  const date = new Date(0);
+  date.setFullYear(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  date.setHours(12, 0, 0, 0);
   if (toLocalDateKey(date) !== localDate) {
     throw new RangeError("Expected a valid local calendar date");
   }
@@ -32,10 +33,18 @@ export const dateFromLocalDateKey = (localDate: string): Date => {
 };
 
 /** Local year/month key used by profile word totals. */
-export const toLocalMonthKey = (date: Date): string =>
-  `${date.getFullYear().toString().padStart(4, "0")}-${(date.getMonth() + 1)
+export const toLocalMonthKey = (date: Date): string => {
+  if (!Number.isFinite(date.valueOf())) {
+    throw new RangeError("Cannot format an invalid date as a local month key");
+  }
+  const year = date.getFullYear();
+  if (year < 0 || year > 9999) {
+    throw new RangeError("Local month year must fit YYYY format");
+  }
+  return `${year.toString().padStart(4, "0")}-${(date.getMonth() + 1)
     .toString()
     .padStart(2, "0")}`;
+};
 
 export const nowIso = (): string => {
   return new Date().toISOString();
@@ -66,7 +75,8 @@ export const threadDayGroup = (
   now: Date = new Date(),
 ): ThreadDayGroup => {
   const date = new Date(isoDate);
-  const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const startToday = new Date(now);
+  startToday.setHours(0, 0, 0, 0);
   const startYesterday = new Date(startToday);
   startYesterday.setDate(startYesterday.getDate() - 1);
   if (date >= startToday) return "today";

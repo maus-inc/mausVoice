@@ -1,6 +1,6 @@
 import { Tone } from "@maus-inc/types";
 import { getIntl } from "../i18n/intl";
-import { getToneRepo, getUserPreferencesRepo } from "../repos";
+import { getToneRepo } from "../repos";
 import { ToneEditorMode } from "../state/tone-editor.state";
 import { getAppState, produceAppState } from "../store";
 import { registerTones } from "../utils/app.utils";
@@ -15,9 +15,18 @@ import {
   getToneById,
 } from "../utils/tone.utils";
 import { getMyUser } from "../utils/user.utils";
+import {
+  type LocalDataWriteLease,
+  beginLocalDataWrite,
+  withLocalDataWrite,
+} from "../utils/local-data-write-gate";
 import { showErrorSnackbar, showSnackbar } from "./app.actions";
 import { showToast } from "./toast.actions";
-import { activateAndSelectTone, setSelectedToneId } from "./user.actions";
+import {
+  activateAndSelectTone,
+  setSelectedToneId,
+  updateUserPreferences,
+} from "./user.actions";
 
 export const loadTones = async (): Promise<void> => {
   const tones = await getToneRepo().listTones();
@@ -29,97 +38,102 @@ export const loadTones = async (): Promise<void> => {
 export const upsertTone = async (
   tone: Tone,
   { activate = true }: { activate?: boolean } = {},
-): Promise<Tone> => {
-  try {
-    const saved = await getToneRepo().upsertTone(tone);
+): Promise<Tone> =>
+  withLocalDataWrite(async (lease) => {
+    try {
+      const saved = await getToneRepo().upsertTone(tone, lease);
 
-    produceAppState((draft) => {
-      registerTones(draft, [saved]);
-      if (activate) draft.tones.selectedToneId = saved.id;
-      draft.tones.isCreating = false;
-    });
+      produceAppState((draft) => {
+        registerTones(draft, [saved]);
+        if (activate) draft.tones.selectedToneId = saved.id;
+        draft.tones.isCreating = false;
+      }, lease);
 
-    if (activate) await activateAndSelectTone(saved.id);
+      if (activate) await activateAndSelectTone(saved.id, lease);
 
-    showSnackbar("Tone saved successfully", { mode: "success" });
-    return saved;
-  } catch (error) {
-    console.error("Failed to save tone", error);
-    showErrorSnackbar(
-      error instanceof Error ? error.message : "Failed to save tone.",
-    );
-    throw error;
-  }
-};
-
-export const deleteTone = async (id: string): Promise<void> => {
-  try {
-    await getToneRepo().deleteTone(id);
-
-    produceAppState((draft) => {
-      delete draft.toneById[id];
-      // Remove the record and its editor in one state transition, before any
-      // slower preference sync. Never close an editor for a different tone.
-      if (draft.toneEditor.mode === "edit" && draft.toneEditor.toneId === id) {
-        draft.toneEditor.open = false;
-      }
-
-      // Clear selection if deleting the currently selected tone
-      if (draft.tones.selectedToneId === id) {
-        draft.tones.selectedToneId = null;
-      }
-
-      // Clear active tone if deleting the currently active tone
-      const prefs = draft.userPrefs;
-      if (prefs?.activeToneId === id) {
-        prefs.activeToneId = null;
-      }
-    });
-
-    // Sync preferences if we cleared the active tone
-    const prefs = getAppState().userPrefs;
-    if (prefs && prefs.activeToneId === null) {
-      await getUserPreferencesRepo().setUserPreferences(prefs);
+      showSnackbar("Tone saved successfully", { mode: "success" });
+      return saved;
+    } catch (error) {
+      console.error("Failed to save tone", error);
+      showErrorSnackbar(
+        error instanceof Error ? error.message : "Failed to save tone.",
+      );
+      throw error;
     }
+  });
 
-    showSnackbar("Tone deleted successfully", { mode: "success" });
-  } catch (error) {
-    console.error("Failed to delete tone", error);
-    showErrorSnackbar(
-      error instanceof Error ? error.message : "Failed to delete tone.",
-    );
-    throw error;
-  }
-};
+export const deleteTone = async (id: string): Promise<void> =>
+  withLocalDataWrite(async (lease) => {
+    try {
+      const shouldClearActiveTone =
+        getAppState().userPrefs?.activeToneId === id;
+      await getToneRepo().deleteTone(id, lease);
 
-export const setActiveTone = async (toneId: string | null): Promise<void> => {
-  try {
-    const currentPrefs = getAppState().userPrefs;
-    if (!currentPrefs) {
-      throw new Error("User preferences not found");
+      produceAppState((draft) => {
+        delete draft.toneById[id];
+        // Remove the record and its editor in one state transition, before any
+        // slower preference sync. Never close an editor for a different tone.
+        if (
+          draft.toneEditor.mode === "edit" &&
+          draft.toneEditor.toneId === id
+        ) {
+          draft.toneEditor.open = false;
+        }
+
+        if (draft.tones.selectedToneId === id) {
+          draft.tones.selectedToneId = null;
+        }
+        if (draft.userPrefs?.activeToneId === id) {
+          draft.userPrefs.activeToneId = null;
+        }
+      }, lease);
+
+      if (shouldClearActiveTone) {
+        await updateUserPreferences(
+          (preferences) => {
+            preferences.activeToneId = null;
+          },
+          "Failed to clear the deleted tone preference. Please try again.",
+          lease,
+        );
+      }
+
+      showSnackbar("Tone deleted successfully", { mode: "success" });
+    } catch (error) {
+      console.error("Failed to delete tone", error);
+      showErrorSnackbar(
+        error instanceof Error ? error.message : "Failed to delete tone.",
+      );
+      throw error;
     }
+  });
 
-    const updatedPrefs = {
-      ...currentPrefs,
-      activeToneId: toneId,
-    };
+export const setActiveTone = async (toneId: string | null): Promise<void> =>
+  withLocalDataWrite(async (lease) => {
+    try {
+      if (!getAppState().userPrefs) {
+        throw new Error("User preferences not found");
+      }
 
-    await getUserPreferencesRepo().setUserPreferences(updatedPrefs);
-    produceAppState((draft) => {
-      draft.userPrefs = updatedPrefs;
-    });
+      await updateUserPreferences(
+        (preferences) => {
+          preferences.activeToneId = toneId;
+        },
+        "Failed to save active tone. Please try again.",
+        lease,
+      );
 
-    showSnackbar(toneId ? "Default tone set" : "Default tone cleared", {
-      mode: "success",
-    });
-  } catch (error) {
-    console.error("Failed to set active tone", error);
-    showErrorSnackbar(
-      error instanceof Error ? error.message : "Failed to set active tone.",
-    );
-    throw error;
-  }
-};
+      showSnackbar(toneId ? "Default tone set" : "Default tone cleared", {
+        mode: "success",
+      });
+    } catch (error) {
+      console.error("Failed to set active tone", error);
+      showErrorSnackbar(
+        error instanceof Error ? error.message : "Failed to set active tone.",
+      );
+      throw error;
+    }
+  });
 
 export const getActiveTone = (): Tone | null => {
   const state = getAppState();
@@ -157,7 +171,10 @@ export const openToneEditorDialog = (options: {
  *
  * Does not touch `updatedAt` — that stays owned by `setSelectedToneId`.
  */
-export const applyWritingStyleSelectionNow = (toneId: string): boolean => {
+export const applyWritingStyleSelectionNow = (
+  toneId: string,
+  lease?: LocalDataWriteLease,
+): boolean => {
   const existing = getMyUser(getAppState());
   if (!existing) {
     return false;
@@ -170,7 +187,7 @@ export const applyWritingStyleSelectionNow = (toneId: string): boolean => {
     if (user) {
       user.selectedToneId = toneId;
     }
-  });
+  }, lease);
   return true;
 };
 
@@ -185,18 +202,24 @@ let styleSwitchNonce = 0;
 const applyWritingStyleSelectionWithPersist = async (
   toneId: string,
 ): Promise<void> => {
+  const write = beginLocalDataWrite();
+  if (!write) return;
+
   const nonce = ++styleSwitchNonce;
-  if (!applyWritingStyleSelectionNow(toneId)) {
+  if (!applyWritingStyleSelectionNow(toneId, write.lease)) {
+    write();
     return;
   }
   try {
-    await setSelectedToneId(toneId);
+    await setSelectedToneId(toneId, write.lease);
   } catch (error) {
     if (nonce === styleSwitchNonce) {
       getLogger().error(
         `Style selection persist failed; in-memory selection remains: ${error}`,
       );
     }
+  } finally {
+    write();
   }
 };
 
