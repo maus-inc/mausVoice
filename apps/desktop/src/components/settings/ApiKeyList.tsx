@@ -55,6 +55,7 @@ type ApiKeyListProps = {
   selectedApiKeyId: string | null;
   onChange: (id: string | null) => void;
   context: ApiKeyListContext;
+  compactCards?: boolean;
 };
 
 const getAvailableProviders = (context: ApiKeyListContext): ApiKeyProvider[] =>
@@ -827,18 +828,21 @@ const ApiKeyCard = ({
             },
           }}
         >
-          <Stack spacing={0.25}>
+          <Stack spacing={0.25} sx={{ minWidth: 0 }}>
             <Stack
               direction="row"
               sx={{
                 alignItems: "center",
                 gap: 0.75,
+                minWidth: 0,
               }}
             >
               <Typography
                 variant="body1"
                 sx={{
                   fontWeight: 600,
+                  minWidth: 0,
+                  overflowWrap: "anywhere",
                 }}
               >
                 {apiKey.name}
@@ -858,6 +862,7 @@ const ApiKeyCard = ({
               variant="caption"
               sx={{
                 color: "text.secondary",
+                overflowWrap: "anywhere",
               }}
             >
               {config.displayName}
@@ -919,6 +924,16 @@ const ApiKeyCard = ({
   );
 };
 
+const supportsContext = (key: SettingsApiKey, context: ApiKeyListContext) => {
+  if (key.provider === "azure") {
+    return context === "transcription" ? !!key.azureRegion : !!key.baseUrl;
+  }
+  const repo = getModelProviderRepo(key.provider);
+  return context === "transcription"
+    ? repo.supportsTranscriptionModels()
+    : repo.supportsGenerativeTextModels();
+};
+
 const generateApiKeyId = () =>
   `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 
@@ -926,18 +941,11 @@ export const ApiKeyList = ({
   selectedApiKeyId,
   onChange,
   context,
+  compactCards = false,
 }: ApiKeyListProps) => {
   const allApiKeys = useAppStore((state) => state.settings.apiKeys);
 
-  const apiKeys = allApiKeys.filter((key) => {
-    if (key.provider === "azure") {
-      return context === "transcription" ? !!key.azureRegion : !!key.baseUrl;
-    }
-    const repo = getModelProviderRepo(key.provider);
-    return context === "transcription"
-      ? repo.supportsTranscriptionModels()
-      : repo.supportsGenerativeTextModels();
-  });
+  const apiKeys = allApiKeys.filter((key) => supportsContext(key, context));
 
   const status = useAppStore((state) => state.settings.apiKeysStatus);
   const [showAddCard, setShowAddCard] = useState(false);
@@ -1221,17 +1229,18 @@ export const ApiKeyList = ({
 
   return (
     <Stack spacing={1} sx={{ width: "100%" }}>
-      {shouldShowLoading ? (
-        loadingState
-      ) : shouldShowError ? (
-        errorState
-      ) : shouldShowEmpty ? (
-        emptyState
-      ) : (
-        <Stack
-          spacing={1.5}
+      {shouldShowLoading && loadingState}
+      {shouldShowError && errorState}
+      {shouldShowEmpty && emptyState}
+      {!shouldShowLoading && !shouldShowError && !shouldShowEmpty && (
+        <Box
           sx={{
-            alignItems: "stretch",
+            display: "grid",
+            gridTemplateColumns: compactCards
+              ? "repeat(auto-fit, minmax(min(100%, 340px), 1fr))"
+              : "1fr",
+            alignItems: "start",
+            gap: 1.5,
             width: "100%",
           }}
         >
@@ -1264,7 +1273,7 @@ export const ApiKeyList = ({
               />
             ),
           )}
-        </Stack>
+        </Box>
       )}
       {showAddCard ? (
         <AddApiKeyCard
