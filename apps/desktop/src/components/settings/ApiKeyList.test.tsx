@@ -221,6 +221,24 @@ describe("ApiKeyList", () => {
     }
   });
 
+  it.each([
+    ["loading", "Loading API keys…"],
+    ["error", "Failed to load API keys"],
+    ["success", "No API keys yet"],
+  ] as const)(
+    "renders the %s state when there are no keys",
+    async (status, message) => {
+      seedApiKeys([]);
+      produceAppState((draft) => {
+        draft.settings.apiKeysStatus = status;
+      });
+      await renderList("transcription", null);
+
+      expect(container.textContent).toContain(message);
+      expect(container.querySelector("[aria-pressed]")).toBeNull();
+    },
+  );
+
   it("allows long key names to wrap within the selection region", async () => {
     const longName = "long-key-name".repeat(20);
     seedApiKeys([{ ...groqKey, name: longName }]);

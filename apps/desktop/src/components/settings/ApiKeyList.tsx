@@ -1229,13 +1229,10 @@ export const ApiKeyList = ({
 
   return (
     <Stack spacing={1} sx={{ width: "100%" }}>
-      {shouldShowLoading ? (
-        loadingState
-      ) : shouldShowError ? (
-        errorState
-      ) : shouldShowEmpty ? (
-        emptyState
-      ) : (
+      {shouldShowLoading && loadingState}
+      {shouldShowError && errorState}
+      {shouldShowEmpty && emptyState}
+      {!shouldShowLoading && !shouldShowError && !shouldShowEmpty && (
         <Box
           sx={{
             display: "grid",
