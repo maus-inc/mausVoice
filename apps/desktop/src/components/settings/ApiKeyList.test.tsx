@@ -181,6 +181,7 @@ describe("ApiKeyList", () => {
   const renderList = async (
     context: "transcription" | "post-processing" = "post-processing",
     selectedApiKeyId: string | null = "key-groq",
+    compactCards = false,
   ) => {
     await act(async () => {
       root.render(
@@ -191,6 +192,7 @@ describe("ApiKeyList", () => {
             selectedApiKeyId,
             onChange: mocks.onChange,
             context,
+            compactCards,
           }),
         ),
       );
@@ -241,10 +243,14 @@ describe("ApiKeyList", () => {
 
   it("allows long key names to wrap within the selection region", async () => {
     const longName = "long-key-name".repeat(20);
-    seedApiKeys([{ ...groqKey, name: longName }]);
-    await renderList("transcription");
+    seedApiKeys([{ ...groqKey, name: longName }, openRouterKey]);
+    await renderList("transcription", "key-groq", true);
 
     const region = metaButton(longName);
+    const grid = region.closest(".MuiPaper-root")?.parentElement;
+    expect(grid).toBeDefined();
+    expect(getComputedStyle(grid!).display).toBe("grid");
+    expect(getComputedStyle(grid!).gridTemplateColumns).toContain("auto-fit");
     const name = [...region.querySelectorAll<HTMLElement>("p")].find(
       (element) => element.textContent === longName,
     );
