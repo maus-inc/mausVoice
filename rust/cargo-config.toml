@@ -1,0 +1,9 @@
+[source.crates-io]
+replace-with = "vendored-sources"
+
+[source."git+https://github.com/MichaelWGibson/ferrous-focus"]
+git = "https://github.com/MichaelWGibson/ferrous-focus"
+replace-with = "vendored-sources"
+
+[source.vendored-sources]
+directory = "/tmp/cargo-vendor"
