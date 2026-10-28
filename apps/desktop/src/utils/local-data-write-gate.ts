@@ -1,4 +1,5 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getLogger } from "./log.utils";
 
 const LOCAL_DATA_WRITE_LEASE = Symbol("local-data-write-lease");
 const LOCAL_DATA_CLEAR_ERROR = "Local data is being cleared.";
@@ -54,6 +55,7 @@ export const hasPendingLocalDataClear = (): boolean =>
 
 let activeWrites = 0;
 let activeClears = 0;
+let clearRequestGeneration = 0;
 let clearRequested = readPendingLocalDataClearMarker() !== false;
 let writesDrained: Promise<void> | null = null;
 let resolveWritesDrained: (() => void) | null = null;
@@ -61,6 +63,40 @@ let synchronousLease: LocalDataWriteLease | null = null;
 
 /** True from the start of a clear request until every clear owner releases it. */
 export const isLocalDataClearRequested = (): boolean => clearRequested;
+
+/** A monotonic token that invalidates remote work started before any clear. */
+export const getLocalDataClearGeneration = (): number => clearRequestGeneration;
+
+type LocalDataClearRequestedListener = () => void;
+const localDataClearRequestedListeners =
+  new Set<LocalDataClearRequestedListener>();
+
+const notifyLocalDataClearRequestedListener = (
+  listener: LocalDataClearRequestedListener,
+): void => {
+  try {
+    listener();
+  } catch (error) {
+    getLogger().warning("Local-data clear listener failed", error);
+  }
+};
+
+const notifyLocalDataClearRequested = (): void => {
+  for (const listener of Array.from(localDataClearRequestedListeners)) {
+    notifyLocalDataClearRequestedListener(listener);
+  }
+};
+
+/** Subscribe to the clear transition for side effects that need cancellation. */
+export const subscribeToLocalDataClearRequested = (
+  listener: LocalDataClearRequestedListener,
+): (() => void) => {
+  localDataClearRequestedListeners.add(listener);
+  if (clearRequested) notifyLocalDataClearRequestedListener(listener);
+  return () => {
+    localDataClearRequestedListeners.delete(listener);
+  };
+};
 
 export const isMainLocalDataWindow = (): boolean => {
   try {
@@ -232,6 +268,8 @@ export const beginLocalDataClear = async (): Promise<Release> => {
 
   clearRequested = true;
   activeClears += 1;
+  clearRequestGeneration += 1;
+  notifyLocalDataClearRequested();
 
   if (activeWrites > 0) {
     writesDrained ??= new Promise<void>((resolve) => {

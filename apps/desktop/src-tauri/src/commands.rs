@@ -2401,7 +2401,7 @@ pub async fn remote_sender_pair_with_receiver(
 }
 
 async fn create_transcription_with_reservations(
-    pool: &sqlx::SqlitePool,
+    pool: sqlx::SqlitePool,
     transcription: &crate::domain::Transcription,
     reservations: &mut AudioSnapshotReservations,
 ) -> Result<crate::domain::Transcription, String> {
@@ -2430,7 +2430,7 @@ pub async fn transcription_create(
             .await
             .map_err(|err| err.to_string())?;
     let pool = database.pool();
-    create_transcription_with_reservations(&pool, &transcription, &mut reservations).await
+    create_transcription_with_reservations(pool, &transcription, &mut reservations).await
 }
 
 #[tauri::command]
@@ -2558,24 +2558,6 @@ pub async fn export_transcription(
     id: String,
     database: State<'_, crate::state::OptionKeyDatabase>,
 ) -> Result<bool, String> {
-    let _write_guard = acquire_local_data_write_guard().await?;
-    let pool = database.pool();
-
-    let row = sqlx::query(
-        "SELECT transcript, raw_transcript, audio_path
-         FROM transcriptions
-         WHERE id = ?1",
-    )
-    .bind(&id)
-    .fetch_optional(&pool)
-    .await
-    .map_err(|err| err.to_string())?
-    .ok_or_else(|| "Transcription not found".to_string())?;
-
-    let transcript: String = row.get("transcript");
-    let raw_transcript: Option<String> = row.get("raw_transcript");
-    let audio_path: Option<String> = row.get("audio_path");
-
     // A character count, not a byte count. `id` arrives over IPC, so a non-ASCII
     // one would make a byte slice panic on a boundary it cannot land inside --
     // in a command handler, which is the worst place for that.
@@ -2590,6 +2572,25 @@ pub async fn export_transcription(
         Some(handle) => handle.path().to_path_buf(),
         None => return Ok(false),
     };
+
+    // Do not hold the global write lock while the user chooses a destination.
+    // Once selected, protect the row and audio read from a concurrent local clear.
+    let _write_guard = acquire_local_data_write_guard().await?;
+    let pool = database.pool();
+    let row = sqlx::query(
+        "SELECT transcript, raw_transcript, audio_path
+         FROM transcriptions
+         WHERE id = ?1",
+    )
+    .bind(&id)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|err| err.to_string())?
+    .ok_or_else(|| "Transcription not found".to_string())?;
+
+    let transcript: String = row.get("transcript");
+    let raw_transcript: Option<String> = row.get("raw_transcript");
+    let audio_path: Option<String> = row.get("audio_path");
 
     let audio_dir = crate::system::audio_store::open_managed_audio_dir(&app)
         .map_err(|err| format!("Unable to open the managed audio directory: {err}"))?;
@@ -8369,7 +8370,8 @@ mod tests {
             remote_device_id: None,
         };
         let create_result =
-            create_transcription_with_reservations(&pool, &transcription, &mut reservations).await;
+            create_transcription_with_reservations(pool.clone(), &transcription, &mut reservations)
+                .await;
         assert_eq!(
             create_result.expect_err("clear must reject the late transcription insert"),
             TRANSCRIPTION_CLEARED_DURING_SAVE

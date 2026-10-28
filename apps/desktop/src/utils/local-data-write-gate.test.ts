@@ -11,9 +11,11 @@ vi.mock("@tauri-apps/api/window", () => ({
 import {
   beginLocalDataClear,
   beginLocalDataWrite,
+  getLocalDataClearGeneration,
   hasPendingLocalDataClear,
   isLocalDataClearRequested,
   LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY,
+  subscribeToLocalDataClearRequested,
   withLocalDataWrite,
 } from "./local-data-write-gate";
 
@@ -128,6 +130,60 @@ describe("local data write gate", () => {
     }
 
     expect(isLocalDataClearRequested()).toBe(false);
+  });
+
+  it("notifies cancellation listeners before waiting for local writes to drain", async () => {
+    const releaseWrite = beginLocalDataWrite();
+    expect(releaseWrite).not.toBeNull();
+    if (!releaseWrite) throw new Error("expected an active write");
+
+    const listener = vi.fn();
+    const unsubscribe = subscribeToLocalDataClearRequested(listener);
+    const lateListener = vi.fn();
+    let unsubscribeLate: (() => void) | undefined;
+    let releaseClear: (() => void) | undefined;
+    const clearing = beginLocalDataClear().then((release) => {
+      releaseClear = release;
+      return release;
+    });
+
+    try {
+      expect(listener).toHaveBeenCalledTimes(1);
+      expect(isLocalDataClearRequested()).toBe(true);
+      expect(beginLocalDataWrite()).toBeNull();
+
+      unsubscribeLate = subscribeToLocalDataClearRequested(lateListener);
+      expect(lateListener).toHaveBeenCalledTimes(1);
+
+      releaseWrite();
+      releaseClear = await clearing;
+      expect(beginLocalDataWrite()).toBeNull();
+    } finally {
+      releaseWrite();
+      unsubscribe();
+      unsubscribeLate?.();
+      storageEntries.delete(LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY);
+      if (releaseClear) {
+        releaseClear();
+      } else {
+        (await clearing)();
+      }
+    }
+  });
+
+  it("invalidates remote work across every clear attempt, including retries", async () => {
+    const initialGeneration = getLocalDataClearGeneration();
+    const releaseFirstClear = await beginLocalDataClear();
+    expect(getLocalDataClearGeneration()).toBe(initialGeneration + 1);
+
+    storageEntries.delete(LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY);
+    releaseFirstClear();
+    expect(getLocalDataClearGeneration()).toBe(initialGeneration + 1);
+
+    const releaseRetry = await beginLocalDataClear();
+    expect(getLocalDataClearGeneration()).toBe(initialGeneration + 2);
+    storageEntries.delete(LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY);
+    releaseRetry();
   });
 
   it("preserves the value of a recovery marker that already exists", async () => {
