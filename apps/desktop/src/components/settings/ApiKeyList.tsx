@@ -828,18 +828,21 @@ const ApiKeyCard = ({
             },
           }}
         >
-          <Stack spacing={0.25}>
+          <Stack spacing={0.25} sx={{ minWidth: 0 }}>
             <Stack
               direction="row"
               sx={{
                 alignItems: "center",
                 gap: 0.75,
+                minWidth: 0,
               }}
             >
               <Typography
                 variant="body1"
                 sx={{
                   fontWeight: 600,
+                  minWidth: 0,
+                  overflowWrap: "anywhere",
                 }}
               >
                 {apiKey.name}
@@ -859,6 +862,7 @@ const ApiKeyCard = ({
               variant="caption"
               sx={{
                 color: "text.secondary",
+                overflowWrap: "anywhere",
               }}
             >
               {config.displayName}
@@ -920,6 +924,16 @@ const ApiKeyCard = ({
   );
 };
 
+const supportsContext = (key: SettingsApiKey, context: ApiKeyListContext) => {
+  if (key.provider === "azure") {
+    return context === "transcription" ? !!key.azureRegion : !!key.baseUrl;
+  }
+  const repo = getModelProviderRepo(key.provider);
+  return context === "transcription"
+    ? repo.supportsTranscriptionModels()
+    : repo.supportsGenerativeTextModels();
+};
+
 const generateApiKeyId = () =>
   `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 
@@ -931,15 +945,7 @@ export const ApiKeyList = ({
 }: ApiKeyListProps) => {
   const allApiKeys = useAppStore((state) => state.settings.apiKeys);
 
-  const apiKeys = allApiKeys.filter((key) => {
-    if (key.provider === "azure") {
-      return context === "transcription" ? !!key.azureRegion : !!key.baseUrl;
-    }
-    const repo = getModelProviderRepo(key.provider);
-    return context === "transcription"
-      ? repo.supportsTranscriptionModels()
-      : repo.supportsGenerativeTextModels();
-  });
+  const apiKeys = allApiKeys.filter((key) => supportsContext(key, context));
 
   const status = useAppStore((state) => state.settings.apiKeysStatus);
   const [showAddCard, setShowAddCard] = useState(false);

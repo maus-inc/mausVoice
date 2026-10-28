@@ -299,7 +299,7 @@ export const SignInForm = () => {
           }}
         >
           <FormattedMessage
-            defaultMessage="Welcome to Maus"
+            defaultMessage="Welcome"
             description="Welcome screen title after sign-in — greets the user"
           />
         </Typography>

@@ -221,6 +221,21 @@ describe("ApiKeyList", () => {
     }
   });
 
+  it("allows long key names to wrap within the selection region", async () => {
+    const longName = "long-key-name".repeat(20);
+    seedApiKeys([{ ...groqKey, name: longName }]);
+    await renderList("transcription");
+
+    const region = metaButton(longName);
+    const name = [...region.querySelectorAll<HTMLElement>("p")].find(
+      (element) => element.textContent === longName,
+    );
+    expect(name).toBeDefined();
+    expect(getComputedStyle(name!).overflowWrap).toBe("anywhere");
+    expect(getComputedStyle(name!).minWidth).toBe("0px");
+    expect(testButton().closest("[aria-pressed]")).toBeNull();
+  });
+
   it("exposes selection state on the selection region via aria-pressed", async () => {
     seedApiKeys([groqKey, openRouterKey]);
     await renderList("post-processing", "key-groq");
