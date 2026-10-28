@@ -55,6 +55,7 @@ type ApiKeyListProps = {
   selectedApiKeyId: string | null;
   onChange: (id: string | null) => void;
   context: ApiKeyListContext;
+  compactCards?: boolean;
 };
 
 const getAvailableProviders = (context: ApiKeyListContext): ApiKeyProvider[] =>
@@ -926,6 +927,7 @@ export const ApiKeyList = ({
   selectedApiKeyId,
   onChange,
   context,
+  compactCards = false,
 }: ApiKeyListProps) => {
   const allApiKeys = useAppStore((state) => state.settings.apiKeys);
 
@@ -1228,10 +1230,14 @@ export const ApiKeyList = ({
       ) : shouldShowEmpty ? (
         emptyState
       ) : (
-        <Stack
-          spacing={1.5}
+        <Box
           sx={{
-            alignItems: "stretch",
+            display: "grid",
+            gridTemplateColumns: compactCards
+              ? "repeat(auto-fit, minmax(min(100%, 340px), 1fr))"
+              : "1fr",
+            alignItems: "start",
+            gap: 1.5,
             width: "100%",
           }}
         >
@@ -1264,7 +1270,7 @@ export const ApiKeyList = ({
               />
             ),
           )}
-        </Stack>
+        </Box>
       )}
       {showAddCard ? (
         <AddApiKeyCard

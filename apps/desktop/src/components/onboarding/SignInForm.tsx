@@ -316,7 +316,13 @@ export const SignInForm = () => {
           />
         </Typography>
 
-        <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
+        <Box
+          sx={{
+            display: "grid",
+            gridTemplateColumns: { xs: "1fr", sm: "repeat(2, minmax(0, 1fr))" },
+            gap: 2,
+          }}
+        >
           <TextField
             variant="outlined"
             size="small"
@@ -343,7 +349,7 @@ export const SignInForm = () => {
               guarantees activation before the user moves onto the input
               itself. The field is never HTML-disabled. */}
           <Box
-            sx={{ flex: 1, position: "relative" }}
+            sx={{ minWidth: 0, position: "relative" }}
             onMouseEnter={handleLastNameActivate}
           >
             <TextField
@@ -390,7 +396,7 @@ export const SignInForm = () => {
               }}
             />
           </Box>
-        </Stack>
+        </Box>
       </Stack>
     </OnboardingFormLayout>
   );

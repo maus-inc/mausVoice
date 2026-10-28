@@ -4,12 +4,10 @@ import { goToOnboardingPage } from "../../actions/onboarding.actions";
 import { useAppStore } from "../../store";
 import { trackButtonClick } from "../../utils/analytics.utils";
 import { isMacOS } from "../../utils/env.utils";
-import remoteImage from "../../assets/2-remote.png";
 import { AITranscriptionConfiguration } from "../settings/AITranscriptionConfiguration";
 import { AudioTransmissionDisclosure } from "../settings/AudioTransmissionDisclosure";
 import {
   BackButton,
-  DualPaneLayout,
   OnboardingContinueButton,
   OnboardingFormHeader,
   OnboardingFormLayout,
@@ -44,21 +42,29 @@ export const ChooseTranscriptionForm = () => {
           }
         />
 
-        <AITranscriptionConfiguration />
+        <AITranscriptionConfiguration compactCards />
 
         <AudioTransmissionDisclosure />
       </Stack>
     </OnboardingFormLayout>
   );
 
-  const rightContent = (
+  return (
     <Box
-      component="img"
-      src={remoteImage}
-      alt="Illustration"
-      sx={{ maxWidth: 400, maxHeight: 400 }}
-    />
+      sx={{
+        height: "100%",
+        width: "100%",
+        maxWidth: 840,
+        mx: "auto",
+        px: { xs: 2, sm: 5 },
+        pt: 2,
+        pb: 5,
+        display: "flex",
+        flexDirection: "column",
+        minHeight: 0,
+      }}
+    >
+      {form}
+    </Box>
   );
-
-  return <DualPaneLayout left={form} right={rightContent} />;
 };
