@@ -6,6 +6,7 @@ import { getIntl } from "../i18n/intl";
 import { postProcessErrorReason } from "../actions/post-process-error-category";
 import { showToast } from "../actions/toast.actions";
 import {
+  appendTranscriptionWarnings,
   postProcessTranscript,
   type PostProcessMetadata,
 } from "../actions/transcribe.actions";
@@ -387,7 +388,23 @@ export class DictationStrategy extends BaseStrategy {
     let postProcessWarnings: string[] = [];
     let remoteStatus: "sent" | null = null;
     let historyOwner: HistoryOwner = "stop-path";
+    let pendingPersistence: HandleTranscriptResult["pendingPersistence"];
     const remoteDeviceId = this.getActiveRemoteTargetDeviceId();
+
+    // Records a late failure on the warning list and, when the row was already
+    // written concurrently with delivery, on the stored row itself. On the
+    // serial path the list rides on the store call that still lies ahead; the
+    // concurrent row needs the explicit append because its store already ran.
+    const recordFailureWarning = (errorMessage: string): void => {
+      postProcessWarnings.push(errorMessage);
+      if (pendingPersistence) {
+        void pendingPersistence.then(({ transcription }) => {
+          if (transcription) {
+            void appendTranscriptionWarnings(transcription.id, [errorMessage]);
+          }
+        });
+      }
+    };
 
     try {
       sanitizedTranscript = this.sanitizeTranscript(args.rawTranscript);
@@ -490,6 +507,38 @@ export class DictationStrategy extends BaseStrategy {
           action: "open_transcriptions",
         });
       } else if (transcript) {
+        // The History row's content is final here, but the row used to wait
+        // for delivery (hands-free delay, paste, or simulated typing, the last
+        // one O(text length)) before its write even started. Write it now,
+        // while delivery runs, when delivery cannot change what gets stored:
+        // review-before-insert can still edit the text, and a remote target
+        // records its delivery outcome on the row, so both keep the serial path.
+        //
+        // Both preference reads are fresh rather than the values captured
+        // before the post-processing await: a receiver paired or a review
+        // toggled during that wait must still select the serial path, because
+        // routing reads the live preferences in the same tick right after.
+        const concurrentPersistence =
+          args.persistTranscriptNow !== undefined &&
+          getMyUserPreferences(getAppState())?.reviewBeforeInsert !== true &&
+          this.getActiveRemoteTargetDeviceId() === null;
+        if (concurrentPersistence && args.persistTranscriptNow) {
+          pendingPersistence = args
+            .persistTranscriptNow({
+              transcript,
+              sanitizedTranscript,
+              postProcessMetadata,
+              postProcessWarnings,
+            })
+            .catch((error) => {
+              getLogger().error(
+                `Concurrent history persistence failed: ${error}`,
+              );
+              return { transcription: null, wordCount: 0 };
+            });
+          historyOwner = "concurrent";
+        }
+
         try {
           getLogger().verbose(
             `Routing transcript output (${transcript.length} chars, app=${args.currentApp?.id ?? "none"})`,
@@ -501,13 +550,21 @@ export class DictationStrategy extends BaseStrategy {
               text: textToPaste,
               mode: "dictation",
               currentAppId: args.currentApp?.id ?? null,
+              // The concurrent row already stores this exact text. Pinning the
+              // review off keeps a preference flipped mid-delivery from opening
+              // a review whose Save would write a second, edited row.
+              skipReview: concurrentPersistence ? true : undefined,
             },
             args.trace ?? null,
           );
           if (
             result.delivered &&
             result.deliveredText !== null &&
-            result.deliveredText !== textToPaste
+            result.deliveredText !== textToPaste &&
+            // A concurrent row already stores this utterance; adopting a review
+            // edit here would persist a second row. skipReview makes this
+            // unreachable today, and the guard keeps it impossible tomorrow.
+            !concurrentPersistence
           ) {
             // The review settled on an edited text. Adopt it for History and
             // persist now so the exact edit becomes durable as soon as it lands.
@@ -536,6 +593,12 @@ export class DictationStrategy extends BaseStrategy {
           getLogger().info("Transcript output routed successfully");
         } catch (error) {
           getLogger().error(`Failed to route transcription output: ${error}`);
+          // A delivery failure is a failure of this utterance, so it rides on
+          // the row the same way a post-processing failure does: on the serial
+          // path via the warning list, on the concurrent row via the append.
+          recordFailureWarning(
+            error instanceof Error ? error.message : "An error occurred.",
+          );
           showErrorSnackbar(
             error instanceof Error
               ? error.message
@@ -546,9 +609,9 @@ export class DictationStrategy extends BaseStrategy {
     } catch (error) {
       getLogger().error(`Failed to process transcription: ${error}`);
 
-      const errorMessage =
-        error instanceof Error ? error.message : "An error occurred.";
-      postProcessWarnings.push(errorMessage);
+      recordFailureWarning(
+        error instanceof Error ? error.message : "An error occurred.",
+      );
 
       await showToast({
         message: "Transcription failed",
@@ -565,6 +628,7 @@ export class DictationStrategy extends BaseStrategy {
       remoteStatus,
       remoteDeviceId: remoteStatus ? remoteDeviceId : null,
       historyOwner,
+      pendingPersistence,
     };
   }
 

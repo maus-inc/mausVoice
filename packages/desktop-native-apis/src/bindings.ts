@@ -902,14 +902,6 @@ async storageUploadData(args: StorageUploadArgs) : Promise<Result<null, string>>
     else return { status: "error", error: e  as any };
 }
 },
-async storeTranscriptionAudio(id: string, samples: number[], sampleRate: number) : Promise<Result<TranscriptionAudioSnapshot, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("store_transcription_audio", { id, samples, sampleRate }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 async supportsAppDetection() : Promise<boolean> {
     return await TAURI_INVOKE("supports_app_detection");
 },

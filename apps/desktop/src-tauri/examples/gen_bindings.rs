@@ -109,7 +109,6 @@ fn main() {
         stop_key_listener,
         storage_get_download_url,
         storage_upload_data,
-        store_transcription_audio,
         supports_app_detection,
         supports_paste_keybinds,
         surface_main_window,

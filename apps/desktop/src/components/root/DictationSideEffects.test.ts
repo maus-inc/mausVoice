@@ -476,6 +476,85 @@ describe("postProcessFinalizedTranscript", () => {
     expect(storeTranscriptionFn).toHaveBeenCalledTimes(1);
   });
 
+  it("awaits the strategy's concurrent write instead of storing again", async () => {
+    // The strategy persisted during delivery. The stop path must settle that
+    // write (keeping the session locked until the row is durable) without
+    // writing a second row.
+    const { input, order, storeTranscriptionFn } = buildInput();
+    let resolvePersistence:
+      ((value: { transcription: null; wordCount: number }) => void) | undefined;
+    const pendingPersistence = new Promise<{
+      transcription: null;
+      wordCount: number;
+    }>((resolve) => {
+      resolvePersistence = resolve;
+    });
+    input.strategy = {
+      ...input.strategy,
+      handleTranscript: vi.fn(() => {
+        order.push("handleTranscript");
+        return Promise.resolve({
+          shouldContinue: false,
+          transcript: "hello world",
+          sanitizedTranscript: "hello world",
+          postProcessMetadata: {},
+          postProcessWarnings: [],
+          remoteStatus: null,
+          remoteDeviceId: null,
+          historyOwner: "concurrent" as const,
+          pendingPersistence,
+        });
+      }),
+    };
+
+    let settled = false;
+    const done = postProcessFinalizedTranscript(input).then((result) => {
+      settled = true;
+      return result;
+    });
+    // The flow reaches the pending write (idle already sent) but must not
+    // settle before the concurrent write does.
+    await vi.waitFor(() => expect(order).toContain("idle"));
+    expect(settled).toBe(false);
+
+    resolvePersistence?.({ transcription: null, wordCount: 2 });
+    await done;
+
+    expect(settled).toBe(true);
+    expect(storeTranscriptionFn).not.toHaveBeenCalled();
+    expect(order).toEqual(["handleTranscript", "idle", "refresh"]);
+  });
+
+  it("promises History for a truncated dictation persisted concurrently", async () => {
+    // The concurrent owner is not `willStore`, but the row is written; the
+    // truncation toast must use the stored wording, not the incognito one.
+    const { input, showToast } = buildInput({ droppedChars: 42 });
+    input.strategy = {
+      ...input.strategy,
+      handleTranscript: vi.fn(() =>
+        Promise.resolve({
+          shouldContinue: false,
+          transcript: "hello world",
+          sanitizedTranscript: "hello world",
+          postProcessMetadata: { fastStyleTruncatedChars: 42 },
+          postProcessWarnings: [],
+          remoteStatus: null,
+          remoteDeviceId: null,
+          historyOwner: "concurrent" as const,
+          pendingPersistence: Promise.resolve({
+            transcription: null,
+            wordCount: 2,
+          }),
+        }),
+      ),
+    };
+
+    await postProcessFinalizedTranscript(input);
+
+    const call = asToastCall(showToast);
+    expect(call.message).toContain("History");
+  });
+
   it("propagates a post-processing failure without sending idle or persisting", async () => {
     const {
       input,

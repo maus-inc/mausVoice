@@ -4,6 +4,7 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
 import {
   decodeStopRecordingPayload,
+  encodeRecordedAudio,
   invokeStopRecording,
 } from "./recorded-audio.utils";
 
@@ -107,5 +108,37 @@ describe("invokeStopRecording", () => {
     const decoded = await invokeStopRecording(invokeFn);
     expect(invokeFn).toHaveBeenCalledWith("stop_recording");
     expect(Array.from(decoded.samples)).toEqual([0.5]);
+  });
+});
+
+describe("encodeRecordedAudio", () => {
+  it("round-trips through the decoder used by stop_recording", () => {
+    const decoded = decodeStopRecordingPayload(
+      encodeRecordedAudio(new Float32Array([0.5, -0.25, 1]), 48_000),
+    );
+    expect(decoded.sampleRate).toBe(48_000);
+    expect(Array.from(decoded.samples)).toEqual([0.5, -0.25, 1]);
+  });
+
+  it("accepts a plain number[] the store path can hold", () => {
+    const decoded = decodeStopRecordingPayload(
+      encodeRecordedAudio([0.125, -0.5], 16_000),
+    );
+    expect(decoded.sampleRate).toBe(16_000);
+    expect(Array.from(decoded.samples)).toEqual([0.125, -0.5]);
+  });
+
+  it("encodes an empty recording as the bare header", () => {
+    const bytes = encodeRecordedAudio(new Float32Array(0), 16_000);
+    expect(bytes.byteLength).toBe(4);
+    const decoded = decodeStopRecordingPayload(bytes);
+    expect(decoded.sampleRate).toBe(16_000);
+    expect(decoded.samples).toHaveLength(0);
+  });
+
+  it("does not write into the caller's samples", () => {
+    const samples = new Float32Array([0.5]);
+    encodeRecordedAudio(samples, 16_000);
+    expect(samples[0]).toBe(0.5);
   });
 });
