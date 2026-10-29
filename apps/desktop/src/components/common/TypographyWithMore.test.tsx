@@ -179,12 +179,29 @@ describe("TypographyWithMore disclosure toggle", () => {
     expect(button.bottom).toBe("var(--app-spacing)");
   });
 
-  it("moves the compact disclosure below text in narrow containers", async () => {
+  it("moves the compact disclosure below text and removes reserved insets in narrow containers", async () => {
     await render("56px", "12px");
     const styles = styleText().replace(/\s+/g, "");
     expect(styles).toContain("@containertypography-with-more(max-width:480px)");
     expect(styles).toContain("position:static");
-    expect(styles).toContain("padding-right:0");
+
+    const paragraphs = Array.from(
+      container.querySelectorAll("p.MuiTypography-root"),
+    );
+    expect(paragraphs).toHaveLength(2);
+    for (const paragraph of paragraphs) {
+      const emotionClass = Array.from(paragraph.classList).find((className) =>
+        className.startsWith("css-"),
+      );
+      if (!emotionClass) {
+        throw new Error("Responsive text has no Emotion-generated class");
+      }
+      const narrowRules = styles
+        .split("@containertypography-with-more(max-width:480px){")
+        .filter((rule) => rule.startsWith(`.${emotionClass}{`));
+      expect(narrowRules).toHaveLength(1);
+      expect(narrowRules[0]).toContain("padding-right:0");
+    }
   });
 
   it("renders collapsed with an inline 'Show more' whose hover is a link affordance, not a repaint of the fade", async () => {
