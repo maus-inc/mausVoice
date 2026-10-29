@@ -1835,6 +1835,22 @@ fn audio_path_has_file_path(audio_path: Option<&str>) -> bool {
     matches!(audio_path, Some(path) if !path.is_empty())
 }
 
+fn validate_export_audio_marker(
+    audio_path_before_dialog: Option<&str>,
+    audio_path_after_dialog: Option<&str>,
+) -> Result<(), String> {
+    if audio_path_has_file_path(audio_path_before_dialog)
+        && !audio_path_has_file_path(audio_path_after_dialog)
+    {
+        return Err(
+            "Recorded audio was removed while the export dialog was open. No archive was written; please try exporting again."
+                .to_string(),
+        );
+    }
+
+    Ok(())
+}
+
 /// How a batch of managed-audio deletions actually went.
 ///
 /// `cleared` and `retained` are kept apart because a caller may only treat a
@@ -2561,6 +2577,22 @@ pub async fn export_transcription(
     // A character count, not a byte count. `id` arrives over IPC, so a non-ASCII
     // one would make a byte slice panic on a boundary it cannot land inside --
     // in a command handler, which is the worst place for that.
+    let pool = database.pool();
+    // Capture whether this row currently claims an audio snapshot before the
+    // save dialog opens. A retention sweep may release that marker while the
+    // user chooses a destination; the second guarded read below must report
+    // that transition instead of silently exporting a text-only archive.
+    let audio_path_before_dialog = {
+        let _write_guard = acquire_local_data_write_guard().await?;
+        let row = sqlx::query("SELECT audio_path FROM transcriptions WHERE id = ?1")
+            .bind(&id)
+            .fetch_optional(&pool)
+            .await
+            .map_err(|err| err.to_string())?
+            .ok_or_else(|| "Transcription not found".to_string())?;
+        row.get::<Option<String>, _>("audio_path")
+    };
+
     let short_id = crate::utils::truncate_chars(&id, 8);
     let dialog = rfd::AsyncFileDialog::new()
         .set_file_name(format!("mausvoice-{short_id}.zip"))
@@ -2576,7 +2608,6 @@ pub async fn export_transcription(
     // Do not hold the global write lock while the user chooses a destination.
     // Once selected, protect the row and audio read from a concurrent local clear.
     let _write_guard = acquire_local_data_write_guard().await?;
-    let pool = database.pool();
     let row = sqlx::query(
         "SELECT transcript, raw_transcript, audio_path
          FROM transcriptions
@@ -2591,6 +2622,7 @@ pub async fn export_transcription(
     let transcript: String = row.get("transcript");
     let raw_transcript: Option<String> = row.get("raw_transcript");
     let audio_path: Option<String> = row.get("audio_path");
+    validate_export_audio_marker(audio_path_before_dialog.as_deref(), audio_path.as_deref())?;
 
     let audio_dir = crate::system::audio_store::open_managed_audio_dir(&app)
         .map_err(|err| format!("Unable to open the managed audio directory: {err}"))?;
@@ -7346,6 +7378,20 @@ mod tests {
         assert!(!audio_path_has_file_path(None));
         assert!(!audio_path_has_file_path(Some("")));
         assert!(audio_path_has_file_path(Some("managed/snapshot.wav")));
+    }
+
+    #[test]
+    fn export_refuses_audio_removed_while_save_dialog_was_open() {
+        let error = validate_export_audio_marker(Some("recorded.m4a"), None)
+            .expect_err("a snapshot removed during destination selection must be reported");
+        assert!(
+            error.contains("removed while the export dialog was open"),
+            "the error must explain why the archive was not written: {error}"
+        );
+        assert!(validate_export_audio_marker(Some("recorded.m4a"), Some("recorded.m4a")).is_ok());
+        assert!(validate_export_audio_marker(None, None).is_ok());
+        assert!(validate_export_audio_marker(None, Some("new-snapshot.m4a")).is_ok());
+        assert!(validate_export_audio_marker(Some(""), None).is_ok());
     }
 
     #[test]
