@@ -112,131 +112,166 @@ const ActivityHeatmapGrid = ({
   const viewportRef = useRef<HTMLDivElement>(null);
   const followsLatestWeek = useRef(true);
 
-  // Keep recent weeks visible on load without pulling readers back after they
-  // scroll into older history.
+  // Keep recent weeks visible on load and after responsive resizing, without
+  // pulling readers back after they scroll into older history.
   useLayoutEffect(() => {
     const viewport = viewportRef.current;
-    if (!viewport || !followsLatestWeek.current) return;
-    viewport.scrollLeft = Math.max(
-      0,
-      viewport.scrollWidth - viewport.clientWidth,
-    );
+    if (!viewport) return;
+
+    const keepLatestWeekVisible = () => {
+      if (!followsLatestWeek.current) return;
+      viewport.scrollLeft = Math.max(
+        0,
+        viewport.scrollWidth - viewport.clientWidth,
+      );
+    };
+
+    keepLatestWeekVisible();
+    if (typeof ResizeObserver === "undefined") return;
+
+    const resizeObserver = new ResizeObserver(keepLatestWeekVisible);
+    resizeObserver.observe(viewport);
+    return () => resizeObserver.disconnect();
   }, [grid.endDate]);
 
   return (
     <Box
-      ref={viewportRef}
-      role="region"
-      aria-labelledby="home-activity-heading"
-      tabIndex={0}
-      data-testid="activity-heatmap-viewport"
-      onScroll={(event) => {
-        const viewport = event.currentTarget;
-        followsLatestWeek.current =
-          viewport.scrollLeft + viewport.clientWidth >=
-          viewport.scrollWidth - 1;
+      data-testid="activity-heatmap-layout"
+      sx={{
+        display: "flex",
+        minWidth: 0,
+        columnGap: `${activityHeatmapGeometry.cellGap}px`,
       }}
-      sx={{ overflowX: "auto", pb: theme.spacing(0.5) }}
     >
       <Box
+        aria-hidden="true"
+        data-testid="activity-heatmap-labels"
         sx={{
-          minWidth: activityHeatmapGeometry.minWidth,
-          width: "max-content",
-          mx: "auto",
+          flex: `0 0 ${activityHeatmapGeometry.labelColumnWidth}px`,
+          display: "grid",
+          gridTemplateRows: `repeat(7, ${activityHeatmapGeometry.cellSize}px)`,
+          rowGap: `${activityHeatmapGeometry.cellGap}px`,
+          alignItems: "center",
+          "@container home-page (min-width: 560px)": {
+            flex: `0 0 ${activityHeatmapGeometry.desktopLabelColumnWidth}px`,
+          },
+        }}
+      >
+        {weekdayRows.map(({ localDate, label, gridRow, visible }) => (
+          <Typography
+            key={localDate}
+            aria-hidden="true"
+            variant="caption"
+            sx={{
+              gridRow,
+              color: "text.secondary",
+              fontFamily: "var(--font-data)",
+              fontSize: 9,
+              lineHeight: `${activityHeatmapGeometry.cellSize}px`,
+              textAlign: "right",
+              pr: theme.spacing(0.5),
+              visibility: visible ? "visible" : "hidden",
+            }}
+          >
+            {label}
+          </Typography>
+        ))}
+      </Box>
+      <Box
+        ref={viewportRef}
+        role="region"
+        aria-labelledby="home-activity-heading"
+        tabIndex={0}
+        data-testid="activity-heatmap-viewport"
+        onScroll={(event) => {
+          const viewport = event.currentTarget;
+          followsLatestWeek.current =
+            viewport.scrollLeft + viewport.clientWidth >=
+            viewport.scrollWidth - 1;
+        }}
+        sx={{
+          flex: "1 1 auto",
+          minWidth: 0,
+          overflowX: "auto",
+          pb: theme.spacing(0.5),
         }}
       >
         <Box
-          role="img"
-          aria-label={accessibleSummary}
           sx={{
-            display: "grid",
-            gridTemplateColumns: `${activityHeatmapGeometry.labelColumnWidth}px repeat(${grid.weeks.length}, ${activityHeatmapGeometry.cellSize}px)`,
-            gridTemplateRows: `repeat(7, ${activityHeatmapGeometry.cellSize}px)`,
-            columnGap: `${activityHeatmapGeometry.cellGap}px`,
-            rowGap: `${activityHeatmapGeometry.cellGap}px`,
-            alignItems: "center",
+            minWidth: activityHeatmapGeometry.dayGridWidth,
+            width: "max-content",
+            mx: "auto",
           }}
         >
-          {weekdayRows.map(({ localDate, label, gridRow, visible }) => (
-            <Typography
-              key={localDate}
-              aria-hidden="true"
-              variant="caption"
-              sx={{
-                gridColumn: 1,
-                gridRow,
-                color: "text.secondary",
-                fontFamily: "var(--font-data)",
-                fontSize: 9,
-                lineHeight: `${activityHeatmapGeometry.cellSize}px`,
-                position: "sticky",
-                left: 0,
-                zIndex: 1,
-                bgcolor: "background.default",
-                textAlign: "right",
-                pr: theme.spacing(0.5),
-                visibility: visible ? "visible" : "hidden",
-              }}
-            >
-              {label}
-            </Typography>
-          ))}
-          {grid.weeks.flatMap((week, weekIndex) =>
-            week.map((cell, dayIndex) => (
-              <Tooltip
-                key={cell.localDate}
-                title={
-                  cell.isFuture
-                    ? ""
-                    : describeCell(cell.localDate, cell.wordCount)
-                }
-                arrow
-                placement="top"
-                disableHoverListener={cell.isFuture}
-                slotProps={{
-                  tooltip: { sx: { fontFamily: "var(--font-data)" } },
-                }}
-              >
-                <Box
-                  aria-hidden="true"
-                  data-date={cell.localDate}
-                  data-word-count={cell.wordCount}
-                  data-intensity={cell.intensity}
-                  data-testid="activity-day"
-                  sx={{
-                    gridColumn: weekIndex + 2,
-                    gridRow: dayIndex + 1,
-                    width: activityHeatmapGeometry.cellSize,
-                    height: activityHeatmapGeometry.cellSize,
-                    borderRadius: 0.15,
-                    bgcolor: cell.isFuture
-                      ? "transparent"
-                      : colors[compactIntensity(cell.intensity)],
-                    outline: cell.isToday
-                      ? `1px solid ${theme.palette.text.secondary}`
-                      : "none",
-                    outlineOffset: 1,
-                    pointerEvents: cell.isFuture ? "none" : "auto",
-                    transformOrigin: "center",
-                    transition: `transform ${duration.fast}s ${cssEase(easeOutQuint)}`,
-                    "@media (hover: hover) and (pointer: fine)": cell.isFuture
-                      ? {}
-                      : {
-                          "&:hover": {
-                            transform: "scale(1.35)",
-                            outline: `1px solid ${theme.palette.text.primary}`,
-                            zIndex: 1,
-                          },
-                        },
-                    "@media (prefers-reduced-motion: reduce)": {
-                      transition: "none",
-                      "&:hover": { transform: "none" },
-                    },
+          <Box
+            role="img"
+            aria-label={accessibleSummary}
+            sx={{
+              display: "grid",
+              gridTemplateColumns: `repeat(${grid.weeks.length}, ${activityHeatmapGeometry.cellSize}px)`,
+              gridTemplateRows: `repeat(7, ${activityHeatmapGeometry.cellSize}px)`,
+              columnGap: `${activityHeatmapGeometry.cellGap}px`,
+              rowGap: `${activityHeatmapGeometry.cellGap}px`,
+              alignItems: "center",
+            }}
+          >
+            {grid.weeks.flatMap((week, weekIndex) =>
+              week.map((cell, dayIndex) => (
+                <Tooltip
+                  key={cell.localDate}
+                  title={
+                    cell.isFuture
+                      ? ""
+                      : describeCell(cell.localDate, cell.wordCount)
+                  }
+                  arrow
+                  placement="top"
+                  disableHoverListener={cell.isFuture}
+                  slotProps={{
+                    tooltip: { sx: { fontFamily: "var(--font-data)" } },
                   }}
-                />
-              </Tooltip>
-            )),
-          )}
+                >
+                  <Box
+                    aria-hidden="true"
+                    data-date={cell.localDate}
+                    data-word-count={cell.wordCount}
+                    data-intensity={cell.intensity}
+                    data-testid="activity-day"
+                    sx={{
+                      gridColumn: weekIndex + 1,
+                      gridRow: dayIndex + 1,
+                      width: activityHeatmapGeometry.cellSize,
+                      height: activityHeatmapGeometry.cellSize,
+                      borderRadius: 0.15,
+                      bgcolor: cell.isFuture
+                        ? "transparent"
+                        : colors[compactIntensity(cell.intensity)],
+                      outline: cell.isToday
+                        ? `1px solid ${theme.palette.text.secondary}`
+                        : "none",
+                      outlineOffset: 1,
+                      pointerEvents: cell.isFuture ? "none" : "auto",
+                      transformOrigin: "center",
+                      transition: `transform ${duration.fast}s ${cssEase(easeOutQuint)}`,
+                      "@media (hover: hover) and (pointer: fine)": cell.isFuture
+                        ? {}
+                        : {
+                            "&:hover": {
+                              transform: "scale(1.35)",
+                              outline: `1px solid ${theme.palette.text.primary}`,
+                              zIndex: 1,
+                            },
+                          },
+                      "@media (prefers-reduced-motion: reduce)": {
+                        transition: "none",
+                        "&:hover": { transform: "none" },
+                      },
+                    }}
+                  />
+                </Tooltip>
+              )),
+            )}
+          </Box>
         </Box>
       </Box>
     </Box>
@@ -483,6 +518,7 @@ export const ActivityHeatmap = ({
         pt: 0,
         "@container home-page (min-width: 560px)": {
           pt: `${activityHeatmapGeometry.desktopTopPadding}px`,
+          pr: `${activityHeatmapGeometry.desktopRightInset}px`,
         },
       }}
     >

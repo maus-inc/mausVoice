@@ -131,7 +131,7 @@ export const HomeAnalyticsGrid = ({
           maxWidth: activityHeatmapGeometry.viewportWidth,
           width: "100%",
           "@container home-page (min-width: 560px)": {
-            ml: -1.125,
+            // The heatmap owns its rail and plot gutters; keep its hitbox in this track.
             justifySelf: "start",
           },
         }}

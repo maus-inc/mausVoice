@@ -28,8 +28,10 @@ ensureUiHarness();
 describe("ActivityHeatmap", () => {
   let container: HTMLDivElement;
   let root: Root;
+  let rootUnmounted: boolean;
 
   beforeEach(() => {
+    rootUnmounted = false;
     useIsDarkModeMock.mockReturnValue(false);
     container = document.createElement("div");
     document.body.append(container);
@@ -37,7 +39,7 @@ describe("ActivityHeatmap", () => {
   });
 
   afterEach(() => {
-    act(() => root.unmount());
+    if (!rootUnmounted) act(() => root.unmount());
     container.remove();
   });
 
@@ -69,19 +71,25 @@ describe("ActivityHeatmap", () => {
       cellSize: 10,
       cellGap: 4,
       labelColumnWidth: 22,
+      desktopLabelColumnWidth: 13,
+      dayGridWidth: 738,
+      desktopRightInset: 9,
       desktopTopPadding: 30,
       viewportWidth: 274,
-      minWidth: 760,
     });
   });
 
   it("opens on the current weeks while keeping older activity scrollable", () => {
     const scrollWidth = vi
       .spyOn(HTMLElement.prototype, "scrollWidth", "get")
-      .mockReturnValue(764);
+      .mockReturnValue(activityHeatmapGeometry.dayGridWidth);
     const clientWidth = vi
       .spyOn(HTMLElement.prototype, "clientWidth", "get")
-      .mockReturnValue(274);
+      .mockReturnValue(
+        activityHeatmapGeometry.viewportWidth -
+          activityHeatmapGeometry.labelColumnWidth -
+          activityHeatmapGeometry.cellGap,
+      );
 
     try {
       renderHeatmap(5);
@@ -89,8 +97,11 @@ describe("ActivityHeatmap", () => {
       const viewport = container.querySelector<HTMLElement>(
         '[data-testid="activity-heatmap-viewport"]',
       );
-      const weekdayLabel = container.querySelector<HTMLElement>(
-        '[role="img"] [aria-hidden="true"]',
+      const weekdayRail = container.querySelector<HTMLElement>(
+        '[data-testid="activity-heatmap-labels"]',
+      );
+      const weekdayLabel = weekdayRail?.querySelector<HTMLElement>(
+        '[aria-hidden="true"]',
       );
 
       expect(viewport?.scrollLeft).toBe(490);
@@ -100,9 +111,73 @@ describe("ActivityHeatmap", () => {
       );
       expect(viewport?.tabIndex).toBe(0);
       expect(window.getComputedStyle(viewport!).overflowX).toBe("auto");
-      expect(window.getComputedStyle(weekdayLabel!).position).toBe("sticky");
-      expect(window.getComputedStyle(weekdayLabel!).left).toBe("0px");
+      expect(weekdayRail).not.toBeNull();
+      expect(viewport?.contains(weekdayRail)).toBe(false);
+      expect(weekdayRail?.nextElementSibling).toBe(viewport);
+      expect(
+        viewport?.querySelectorAll('[role="img"] [data-testid="activity-day"]'),
+      ).toHaveLength(371);
+      expect(window.getComputedStyle(weekdayLabel!).position).not.toBe(
+        "sticky",
+      );
     } finally {
+      scrollWidth.mockRestore();
+      clientWidth.mockRestore();
+    }
+  });
+
+  it("follows the latest week after resizing until the reader scrolls into history", () => {
+    let viewportWidth = 248;
+    let notifyResize: (() => void) | undefined;
+    let observedTarget: Element | undefined;
+    const disconnect = vi.fn();
+
+    class MockResizeObserver {
+      constructor(private readonly callback: ResizeObserverCallback) {}
+
+      observe = vi.fn((target: Element) => {
+        observedTarget = target;
+        notifyResize = () =>
+          this.callback([], this as unknown as ResizeObserver);
+      });
+      disconnect = disconnect;
+    }
+
+    vi.stubGlobal("ResizeObserver", MockResizeObserver);
+    const scrollWidth = vi
+      .spyOn(HTMLElement.prototype, "scrollWidth", "get")
+      .mockReturnValue(activityHeatmapGeometry.dayGridWidth);
+    const clientWidth = vi
+      .spyOn(HTMLElement.prototype, "clientWidth", "get")
+      .mockImplementation(() => viewportWidth);
+
+    try {
+      renderHeatmap(5);
+
+      const viewport = container.querySelector<HTMLElement>(
+        '[data-testid="activity-heatmap-viewport"]',
+      );
+      expect(observedTarget).toBe(viewport);
+      expect(notifyResize).toBeDefined();
+      expect(viewport?.scrollLeft).toBe(490);
+
+      viewportWidth = 226;
+      act(() => notifyResize?.());
+      expect(viewport?.scrollLeft).toBe(512);
+
+      act(() => {
+        viewport!.scrollLeft = 100;
+        viewport!.dispatchEvent(new Event("scroll", { bubbles: true }));
+      });
+      viewportWidth = 210;
+      act(() => notifyResize?.());
+      expect(viewport?.scrollLeft).toBe(100);
+
+      act(() => root.unmount());
+      rootUnmounted = true;
+      expect(disconnect).toHaveBeenCalledOnce();
+    } finally {
+      vi.unstubAllGlobals();
       scrollWidth.mockRestore();
       clientWidth.mockRestore();
     }
@@ -121,7 +196,9 @@ describe("ActivityHeatmap", () => {
     renderHeatmap(5);
 
     const weekdayLabels = Array.from(
-      container.querySelectorAll('[role="img"] [aria-hidden="true"]'),
+      container.querySelectorAll(
+        '[data-testid="activity-heatmap-labels"] [aria-hidden="true"]',
+      ),
     )
       .filter(
         (element) => window.getComputedStyle(element).visibility !== "hidden",
