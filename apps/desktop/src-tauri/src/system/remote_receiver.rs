@@ -8,7 +8,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::watch;
 
-use crate::state::{RemoteReceiverState, RemoteReceiverStatus};
+use crate::state::{RemoteReceiverEventDetails, RemoteReceiverState, RemoteReceiverStatus};
 
 pub const EVT_REMOTE_FINAL_TEXT_RECEIVED: &str = "remote_final_text_received";
 
@@ -233,15 +233,6 @@ async fn write_message_while_active(
     }
 }
 
-#[derive(Default)]
-struct RemoteReceiverEventDetails {
-    sender_device_id: Option<String>,
-    event_id: Option<String>,
-    target_class_name: Option<String>,
-    target_title: Option<String>,
-    target_editable: Option<bool>,
-}
-
 async fn record_error_while_active(
     state: &RemoteReceiverState,
     receiver_generation: u64,
@@ -257,15 +248,7 @@ async fn record_error_while_active(
     if !is_connection_current(state, receiver_generation, write_generation) {
         return false;
     }
-    state.record_error_for_generation(
-        receiver_generation,
-        details.sender_device_id,
-        details.event_id,
-        message,
-        details.target_class_name,
-        details.target_title,
-        details.target_editable,
-    )
+    state.record_error_for_generation(receiver_generation, details, message)
 }
 
 async fn record_delivery_while_active(
@@ -283,15 +266,7 @@ async fn record_delivery_while_active(
     if !is_connection_current(state, receiver_generation, write_generation) {
         return false;
     }
-    state.record_delivery_for_generation(
-        receiver_generation,
-        details.sender_device_id,
-        details.event_id,
-        delivered_at,
-        details.target_class_name,
-        details.target_title,
-        details.target_editable,
-    )
+    state.record_delivery_for_generation(receiver_generation, details, delivered_at)
 }
 
 async fn rotate_pairing_code_while_active(

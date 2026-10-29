@@ -25,6 +25,15 @@ pub struct RemoteReceiverStatus {
     pub device_platform: String,
 }
 
+#[derive(Default)]
+pub(crate) struct RemoteReceiverEventDetails {
+    pub(crate) sender_device_id: Option<String>,
+    pub(crate) event_id: Option<String>,
+    pub(crate) target_class_name: Option<String>,
+    pub(crate) target_title: Option<String>,
+    pub(crate) target_editable: Option<bool>,
+}
+
 struct RemoteReceiverStateInner {
     status: RemoteReceiverStatus,
     shutdown: Option<watch::Sender<bool>>,
@@ -127,53 +136,45 @@ impl RemoteReceiverState {
         true
     }
 
-    pub fn record_delivery_for_generation(
+    pub(crate) fn record_delivery_for_generation(
         &self,
         generation: u64,
-        sender_device_id: Option<String>,
-        event_id: Option<String>,
+        details: RemoteReceiverEventDetails,
         delivered_at: Option<String>,
-        target_class_name: Option<String>,
-        target_title: Option<String>,
-        target_editable: Option<bool>,
     ) -> bool {
         let mut inner = self.inner.lock().unwrap();
         if !inner.status.enabled || inner.generation != generation {
             return false;
         }
-        inner.status.last_sender_device_id = sender_device_id;
-        inner.status.last_event_id = event_id;
+        inner.status.last_sender_device_id = details.sender_device_id;
+        inner.status.last_event_id = details.event_id;
         inner.status.last_delivery_status = Some("delivered".to_string());
         inner.status.last_delivery_at = delivered_at;
         inner.status.last_error = None;
-        inner.status.last_target_class_name = target_class_name;
-        inner.status.last_target_title = target_title;
-        inner.status.last_target_editable = target_editable;
+        inner.status.last_target_class_name = details.target_class_name;
+        inner.status.last_target_title = details.target_title;
+        inner.status.last_target_editable = details.target_editable;
         true
     }
 
-    pub fn record_error_for_generation(
+    pub(crate) fn record_error_for_generation(
         &self,
         generation: u64,
-        sender_device_id: Option<String>,
-        event_id: Option<String>,
+        details: RemoteReceiverEventDetails,
         message: String,
-        target_class_name: Option<String>,
-        target_title: Option<String>,
-        target_editable: Option<bool>,
     ) -> bool {
         let mut inner = self.inner.lock().unwrap();
         if !inner.status.enabled || inner.generation != generation {
             return false;
         }
-        inner.status.last_sender_device_id = sender_device_id;
-        inner.status.last_event_id = event_id;
+        inner.status.last_sender_device_id = details.sender_device_id;
+        inner.status.last_event_id = details.event_id;
         inner.status.last_delivery_status = Some("failed".to_string());
         inner.status.last_error = Some(message);
         inner.status.last_delivery_at = Some(chrono::Utc::now().to_rfc3339());
-        inner.status.last_target_class_name = target_class_name;
-        inner.status.last_target_title = target_title;
-        inner.status.last_target_editable = target_editable;
+        inner.status.last_target_class_name = details.target_class_name;
+        inner.status.last_target_title = details.target_title;
+        inner.status.last_target_editable = details.target_editable;
         true
     }
 }
@@ -186,7 +187,7 @@ fn generate_pairing_code() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::RemoteReceiverState;
+    use super::{RemoteReceiverEventDetails, RemoteReceiverState};
 
     #[test]
     fn stopping_and_restarting_invalidates_accepted_connections() {
@@ -200,20 +201,19 @@ mod tests {
         assert!(!state.is_generation_active(first_generation));
         assert!(!state.record_error_for_generation(
             first_generation,
-            Some("stale-sender".to_string()),
-            None,
+            RemoteReceiverEventDetails {
+                sender_device_id: Some("stale-sender".to_string()),
+                ..RemoteReceiverEventDetails::default()
+            },
             "stale error".to_string(),
-            None,
-            None,
-            None,
         ));
         assert!(!state.record_delivery_for_generation(
             first_generation,
-            Some("stale-sender".to_string()),
-            Some("stale-event".to_string()),
-            None,
-            None,
-            None,
+            RemoteReceiverEventDetails {
+                sender_device_id: Some("stale-sender".to_string()),
+                event_id: Some("stale-event".to_string()),
+                ..RemoteReceiverEventDetails::default()
+            },
             None,
         ));
         assert!(!state.rotate_pairing_code_for_generation(first_generation));
