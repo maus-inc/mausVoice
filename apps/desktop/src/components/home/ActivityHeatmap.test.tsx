@@ -74,6 +74,39 @@ describe("ActivityHeatmap", () => {
     });
   });
 
+  it("opens on the current weeks while keeping older activity scrollable", () => {
+    const scrollWidth = vi
+      .spyOn(HTMLElement.prototype, "scrollWidth", "get")
+      .mockReturnValue(764);
+    const clientWidth = vi
+      .spyOn(HTMLElement.prototype, "clientWidth", "get")
+      .mockReturnValue(274);
+
+    try {
+      renderHeatmap(5);
+
+      const viewport = container.querySelector<HTMLElement>(
+        '[data-testid="activity-heatmap-viewport"]',
+      );
+      const weekdayLabel = container.querySelector<HTMLElement>(
+        '[role="img"] [aria-hidden="true"]',
+      );
+
+      expect(viewport?.scrollLeft).toBe(490);
+      expect(viewport?.getAttribute("role")).toBe("region");
+      expect(viewport?.getAttribute("aria-labelledby")).toBe(
+        "home-activity-heading",
+      );
+      expect(viewport?.tabIndex).toBe(0);
+      expect(window.getComputedStyle(viewport!).overflowX).toBe("auto");
+      expect(window.getComputedStyle(weekdayLabel!).position).toBe("sticky");
+      expect(window.getComputedStyle(weekdayLabel!).left).toBe("0px");
+    } finally {
+      scrollWidth.mockRestore();
+      clientWidth.mockRestore();
+    }
+  });
+
   it("uses the singular label and accessible summary for one active day", () => {
     renderHeatmap(5);
 

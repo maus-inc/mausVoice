@@ -105,6 +105,16 @@ describe("HomePage analytics", () => {
     expect(container.textContent).toContain(
       "Words dictated over the past year",
     );
+    const monthLabel = container.querySelector<HTMLElement>(
+      '[data-home-grid-area="month"] .MuiTypography-body2',
+    );
+    const speedDetail = container.querySelector<HTMLElement>(
+      '[data-home-grid-area="speed"] .MuiTypography-caption',
+    );
+    expect(monthLabel).not.toBeNull();
+    expect(speedDetail).not.toBeNull();
+    expect(window.getComputedStyle(monthLabel!).whiteSpace).toBe("normal");
+    expect(window.getComputedStyle(speedDetail!).whiteSpace).toBe("normal");
     expect(
       container.querySelector('[data-testid="home-activity-heatmap"]'),
     ).toBeTruthy();

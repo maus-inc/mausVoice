@@ -6,7 +6,7 @@ import {
   Typography,
   useTheme,
 } from "@mui/material";
-import { useMemo } from "react";
+import { useLayoutEffect, useMemo, useRef } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import type {
   DailyActivityStatus,
@@ -109,9 +109,35 @@ const ActivityHeatmapGrid = ({
   describeCell: CellDescription;
 }) => {
   const theme = useTheme();
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const followsLatestWeek = useRef(true);
+
+  // Keep recent weeks visible on load without pulling readers back after they
+  // scroll into older history.
+  useLayoutEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport || !followsLatestWeek.current) return;
+    viewport.scrollLeft = Math.max(
+      0,
+      viewport.scrollWidth - viewport.clientWidth,
+    );
+  }, [grid.endDate]);
 
   return (
-    <Box sx={{ overflowX: "auto", pb: theme.spacing(0.5) }}>
+    <Box
+      ref={viewportRef}
+      role="region"
+      aria-labelledby="home-activity-heading"
+      tabIndex={0}
+      data-testid="activity-heatmap-viewport"
+      onScroll={(event) => {
+        const viewport = event.currentTarget;
+        followsLatestWeek.current =
+          viewport.scrollLeft + viewport.clientWidth >=
+          viewport.scrollWidth - 1;
+      }}
+      sx={{ overflowX: "auto", pb: theme.spacing(0.5) }}
+    >
       <Box
         sx={{
           minWidth: activityHeatmapGeometry.minWidth,
@@ -142,6 +168,10 @@ const ActivityHeatmapGrid = ({
                 color: "text.secondary",
                 fontSize: 9,
                 lineHeight: `${activityHeatmapGeometry.cellSize}px`,
+                position: "sticky",
+                left: 0,
+                zIndex: 1,
+                bgcolor: "background.default",
                 textAlign: "right",
                 pr: theme.spacing(0.5),
                 visibility: visible ? "visible" : "hidden",

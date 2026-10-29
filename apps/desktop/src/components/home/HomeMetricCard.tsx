@@ -52,7 +52,7 @@ export const HomeMetricCard = ({
           <Typography
             variant="body2"
             align={align}
-            sx={{ color: "text.secondary", whiteSpace: "nowrap" }}
+            sx={{ color: "text.secondary", whiteSpace: "normal" }}
           >
             {label}
           </Typography>
@@ -65,7 +65,7 @@ export const HomeMetricCard = ({
               display: "block",
               color: "text.secondary",
               mt: label ? 0.75 : 0.5,
-              whiteSpace: "nowrap",
+              whiteSpace: "normal",
               fontSize: "0.72rem",
             }}
           >
