@@ -1223,6 +1223,9 @@ export type CreateFloatingWindowArgs = { url: string;
  */
 route: string | null; title: string | null; width: number | null; height: number | null; minWidth: number | null; minHeight: number | null; x: number | null; y: number | null; decorations: boolean | null; transparent: boolean | null; resizable: boolean | null; focused: boolean | null }
 export type CurrentAppInfoResponse = { appName: string; iconBase64: string }
+/**
+ * Per-local-calendar-day word usage, without any transcription content.
+ */
 export type DailyWordActivity = { localDate: string; wordCount: number }
 export type ElementFingerprint = { automationId: string | null; className: string | null; controlType: number; name: string | null; frameworkId: string | null; childIndex: number; 
 /**
