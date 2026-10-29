@@ -232,7 +232,8 @@ jobs:
           for crate in apps/desktop/src-tauri packages/rust_pill_shared; do
             echo "::group::$crate"
             (cd "$crate" && TAURI_CONFIG='{"bundle":{"externalBin":[]}}' \
-              cargo clippy --locked --all-targets -- -D warnings) || exit 1
+              bash "$GITHUB_WORKSPACE/scripts/ci/run-with-diagnostics.sh" rust-clippy \
+                cargo clippy --locked --all-targets -- -D warnings) || exit 1
             echo "::endgroup::"
           done
       - name: Check published package export contracts
@@ -318,7 +319,9 @@ jobs:
         env:
           TAURI_CONFIG: '{"bundle":{"externalBin":[]}}'
         shell: bash
-        run: cargo clippy --locked --all-targets -- -D warnings
+        run: |
+          bash "$GITHUB_WORKSPACE/scripts/ci/run-with-diagnostics.sh" windows-clippy \
+            cargo clippy --locked --all-targets -- -D warnings
       - name: Check Windows-gated formatting
         working-directory: apps/desktop/src-tauri
         shell: bash
