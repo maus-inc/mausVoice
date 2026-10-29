@@ -286,7 +286,6 @@
   "dictation_limit_minutes": "听写限制（分钟）",
   "dictation_paused": "听写已暂停",
   "dictation_pill_visibility": "悬浮条显示",
-  "dictation_speed": "听写速度",
   "dictation_was_longer_than_fast_styling_allows_droppedchars_c": "听写内容超出了快速排版的长度限制。末尾 {droppedChars} 个字符未经过排版。完整文本已保存在历史记录中。",
   "dictation_works_on_its_own_but_styles_and_cleanup_need_a_tex": "听写可独立使用，但风格和文本整理需要文本生成服务商。添加一个即可解锁润色、改写和助手功能。",
   "dictionary": "字典",

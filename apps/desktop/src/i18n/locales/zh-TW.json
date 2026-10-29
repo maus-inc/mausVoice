@@ -286,7 +286,6 @@
   "dictation_limit_minutes": "聽寫限制（分鐘）",
   "dictation_paused": "口述已暫停",
   "dictation_pill_visibility": "語音輸入圖示可見性",
-  "dictation_speed": "聽寫速度",
   "dictation_was_longer_than_fast_styling_allows_droppedchars_c": "聽寫內容超過快速排版的長度限制。結尾 {droppedChars} 個字元未經排版。完整文字已儲存在歷程記錄中。",
   "dictation_works_on_its_own_but_styles_and_cleanup_need_a_tex": "聽寫可獨立運作，但風格與清理需要文字生成提供者。新增一個即可解鎖潤飾、改寫與助理功能。",
   "dictionary": "字典",

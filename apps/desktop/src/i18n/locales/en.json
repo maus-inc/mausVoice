@@ -286,7 +286,6 @@
   "dictation_limit_minutes": "Dictation limit (minutes)",
   "dictation_paused": "Dictation paused",
   "dictation_pill_visibility": "Dictation pill visibility",
-  "dictation_speed": "Dictation speed",
   "dictation_was_longer_than_fast_styling_allows_droppedchars_c": "Dictation was longer than fast styling allows. {droppedChars} characters at the end were left unstyled. The full text is saved in History.",
   "dictation_works_on_its_own_but_styles_and_cleanup_need_a_tex": "Dictation works on its own, but styles and cleanup need a text-generation provider. Add one to unlock polishing, rewrites, and the assistant.",
   "dictionary": "Dictionary",

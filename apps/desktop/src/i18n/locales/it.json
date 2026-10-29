@@ -286,7 +286,6 @@
   "dictation_limit_minutes": "Limite di dettatura (minuti)",
   "dictation_paused": "Dettatura in pausa",
   "dictation_pill_visibility": "Visibilità pillola di dettatura",
-  "dictation_speed": "Velocità di dettatura",
   "dictation_was_longer_than_fast_styling_allows_droppedchars_c": "La dettatura era più lunga di quanto consentito dalla formattazione rapida. {droppedChars} caratteri alla fine non sono stati formattati. Il testo completo è salvato nella cronologia.",
   "dictation_works_on_its_own_but_styles_and_cleanup_need_a_tex": "La dettatura funziona da sola, ma stili e pulizia richiedono un provider di generazione del testo. Aggiungine uno per sbloccare rifinitura, riscritture e assistente.",
   "dictionary": "Dizionario",

@@ -286,7 +286,6 @@
   "dictation_limit_minutes": "Limite de dictée (minutes)",
   "dictation_paused": "Dictée en pause",
   "dictation_pill_visibility": "Visibilité du bouton de dictée",
-  "dictation_speed": "Vitesse de dictée",
   "dictation_was_longer_than_fast_styling_allows_droppedchars_c": "La dictée était plus longue que ce que la mise en forme rapide permet. {droppedChars} caractères à la fin n'ont pas été formatés. Le texte intégral est enregistré dans l'historique.",
   "dictation_works_on_its_own_but_styles_and_cleanup_need_a_tex": "La dictée fonctionne seule, mais les styles et le nettoyage nécessitent un fournisseur de génération de texte. Ajoutez-en un pour débloquer le polissage, les réécritures et l'assistant.",
   "dictionary": "Dictionnaire",
