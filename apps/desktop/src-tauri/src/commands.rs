@@ -8361,7 +8361,7 @@ mod tests {
         }
 
         let id = format!("in-flight-audio-{}", std::process::id());
-        let root = std::env::temp_dir().join(format!("mausvoice-audio-race-{}", id));
+        let root = std::env::temp_dir().join(format!("mausvoice-audio-race-{id}"));
         let app_data = root.join("app-data");
         let held_audio_dir = crate::system::audio_store::open_managed_audio_dir_for_test(&app_data)
             .expect("managed audio directory must be openable");
