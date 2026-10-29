@@ -1,4 +1,4 @@
-import { Box, Tooltip, useTheme } from "@mui/material";
+import { Box, Tooltip } from "@mui/material";
 import { Flame } from "lucide-react";
 import { FormattedMessage, useIntl } from "react-intl";
 import type {
@@ -30,7 +30,6 @@ export const HomeAnalyticsGrid = ({
   today,
 }: HomeAnalyticsGridProps) => {
   const intl = useIntl();
-  const theme = useTheme();
 
   return (
     <Box
@@ -42,11 +41,14 @@ export const HomeAnalyticsGrid = ({
         gridTemplateAreas: dictationSpeed
           ? '"streak month" "total speed" "activity activity"'
           : '"streak month" "total ." "activity activity"',
-        gap: theme.spacing(1.5),
+        gap: 1.5,
         alignItems: "stretch",
-        "@media (min-width: 1100px)": {
-          gridTemplateColumns: `minmax(128px, 1fr) minmax(${activityHeatmapGeometry.minWidth}px, 3.5fr) minmax(128px, 1fr)`,
-          gridTemplateRows: "repeat(2, minmax(0, 1fr))",
+        "@container home-page (min-width: 560px)": {
+          width: "calc(100% - 4px)",
+          gridTemplateColumns:
+            "minmax(140px, 0.97fr) minmax(0, 1.82fr) minmax(140px, 0.99fr)",
+          gridTemplateRows: "repeat(2, minmax(76px, auto))",
+          rowGap: 1.375,
           gridTemplateAreas: dictationSpeed
             ? '"streak activity total" "month activity speed"'
             : '"streak activity total" "month activity total"',
@@ -80,6 +82,7 @@ export const HomeAnalyticsGrid = ({
         <HomeMetricCard
           value={intl.formatNumber(wordsTotal)}
           label={<FormattedMessage defaultMessage="Words total" />}
+          align="right"
         />
       </Box>
       {dictationSpeed ? (
@@ -101,12 +104,9 @@ export const HomeAnalyticsGrid = ({
             <Box>
               <HomeMetricCard
                 value={intl.formatMessage(
-                  {
-                    defaultMessage: "{wpm} WPM",
-                  },
+                  { defaultMessage: "{wpm} WPM" },
                   { wpm: dictationSpeed.wpm },
                 )}
-                label={<FormattedMessage defaultMessage="Dictation speed" />}
                 detail={
                   <FormattedMessage
                     defaultMessage="{multiplier}x faster than typing"
@@ -115,6 +115,7 @@ export const HomeAnalyticsGrid = ({
                     }}
                   />
                 }
+                align="right"
               />
             </Box>
           </Tooltip>
@@ -122,7 +123,15 @@ export const HomeAnalyticsGrid = ({
       ) : null}
       <Box
         data-home-grid-area="activity"
-        sx={{ gridArea: "activity", minWidth: 0, alignSelf: "center" }}
+        sx={{
+          gridArea: "activity",
+          minWidth: 0,
+          alignSelf: "center",
+          justifySelf: "start",
+          maxWidth: activityHeatmapGeometry.viewportWidth,
+          width: "100%",
+          "@container home-page (min-width: 560px)": { ml: -1.125 },
+        }}
       >
         <ActivityHeatmap
           activity={activity}

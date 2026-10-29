@@ -8,7 +8,7 @@ import { createElement, StrictMode } from "react";
 import { act } from "react";
 import { setMatchMedia as stubMatchMedia } from "../../../test/helpers/jsdom-ui-harness";
 import { createRoot } from "react-dom/client";
-import type { Transcription } from "@maus-inc/types";
+import { sampleTranscription } from "../../test/helpers/transcription-fixture";
 import { INITIAL_APP_STATE } from "../../state/app.state";
 import { produceAppState, setAppState } from "../../store";
 import { ThemeProvider } from "@mui/material/styles";
@@ -62,32 +62,23 @@ import { TranscriptionRow } from "./TranscriptRow";
   globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
-const sampleTranscription: Transcription = {
-  id: "row-1",
-  createdAt: "2026-08-01T12:00:00.000Z",
-  createdByUserId: "user-1",
-  transcript: "hello world",
-  isDeleted: false,
-  audio: { filePath: "/tmp/row-1.wav", durationMs: 1500 },
-};
-
 const resetState = () => setAppState(structuredClone(INITIAL_APP_STATE), true);
 
 const seedRow = () => {
   produceAppState((draft) => {
-    draft.transcriptionById["row-1"] = sampleTranscription;
+    draft.transcriptionById["row-1"] = sampleTranscription("row-1");
     draft.transcriptions.transcriptionIds = ["row-1"];
   });
 };
 
-const renderRow = async (container: HTMLElement) => {
+const renderRow = async (container: HTMLElement, compactTranscript = false) => {
   const root = createRoot(container);
   await act(async () => {
     root.render(
       createElement(
         StrictMode,
         null,
-        createElement(TranscriptionRow, { id: "row-1" }),
+        createElement(TranscriptionRow, { id: "row-1", compactTranscript }),
       ),
     );
   });
@@ -182,6 +173,28 @@ describe("TranscriptionRow retranscribe button states", () => {
     expect(
       button?.querySelector('[data-testid="retranscribe-replay"]'),
     ).not.toBeNull();
+  });
+});
+
+describe("TranscriptionRow compact Home alignment", () => {
+  it("insets Home row actions without changing other transcription rows", async () => {
+    root = await renderRow(container, true);
+    const homeActions = container
+      .querySelector('[aria-label="View transcription details"]')
+      ?.closest(".MuiStack-root") as HTMLElement | null;
+
+    expect(homeActions?.style.marginRight).toBe("11px");
+
+    act(() => root?.unmount());
+    root = null;
+    container.replaceChildren();
+
+    root = await renderRow(container);
+    const regularActions = container
+      .querySelector('[aria-label="View transcription details"]')
+      ?.closest(".MuiStack-root") as HTMLElement | null;
+
+    expect(regularActions?.style.marginRight).toBe("");
   });
 });
 
@@ -290,7 +303,7 @@ describe("TranscriptionRow context menu", () => {
     });
 
     expect(mocks.scheduleTranscriptionDelete).toHaveBeenCalledWith(
-      sampleTranscription,
+      sampleTranscription("row-1"),
       5000,
     );
     expect(document.querySelector('[role="menu"]')).toBeNull();

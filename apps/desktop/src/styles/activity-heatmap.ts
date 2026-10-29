@@ -1,7 +1,17 @@
-/** Pixel geometry for the compact year-at-a-glance activity grid. */
+import { ACTIVITY_HEATMAP_WEEKS } from "../utils/activity-grid.utils";
+
+const cellSize = 10;
+const cellGap = 4;
+const labelColumnWidth = 22;
+
+/** Pixel geometry for the compact, horizontally scrolling year view. */
 export const activityHeatmapGeometry = {
-  cellSize: 7,
-  cellGap: 2,
-  labelColumnWidth: 18,
-  minWidth: 495,
+  cellSize,
+  cellGap,
+  labelColumnWidth,
+  viewportWidth: 274,
+  minWidth:
+    labelColumnWidth +
+    ACTIVITY_HEATMAP_WEEKS * cellSize +
+    (ACTIVITY_HEATMAP_WEEKS - 1) * cellGap,
 } as const;

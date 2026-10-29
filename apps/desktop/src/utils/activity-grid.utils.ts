@@ -29,7 +29,8 @@ const atLocalNoon = (date: Date): Date => {
 
 const startOfCurrentWeek = (date: Date): Date => {
   const start = atLocalNoon(date);
-  start.setDate(start.getDate() - start.getDay());
+  const daysSinceMonday = (start.getDay() + 6) % 7;
+  start.setDate(start.getDate() - daysSinceMonday);
   return start;
 };
 
@@ -60,7 +61,7 @@ export const activityIntensity = (
 };
 
 /**
- * Lay out a full year of local calendar days as Sunday-first week columns.
+ * Lay out a full year of local calendar days as Monday-first week columns.
  * Noon-based dates and calendar-day arithmetic keep the grid stable across
  * daylight-saving transitions, which can make midnight timestamps ambiguous.
  */

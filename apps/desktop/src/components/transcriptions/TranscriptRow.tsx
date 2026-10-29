@@ -51,6 +51,7 @@ import { AudioPlayerPill } from "./AudioPlayerPill";
 
 export type TranscriptionRowProps = {
   id: string;
+  compactTranscript?: boolean;
 };
 
 /**
@@ -80,7 +81,10 @@ const RowAction = ({
   </Tooltip>
 );
 
-export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
+export const TranscriptionRow = ({
+  id,
+  compactTranscript = false,
+}: TranscriptionRowProps) => {
   const intl = useIntl();
   const prefersReducedMotion = useMediaQuery(reducedMotionQuery);
   const transcription = useAppStore((state) =>
@@ -346,7 +350,11 @@ export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
               />
             )}
           </Stack>
-          <Stack direction="row" spacing={1}>
+          <Stack
+            direction="row"
+            spacing={1}
+            style={{ marginRight: compactTranscript ? 11 : undefined }}
+          >
             <RowAction
               label={intl.formatMessage({
                 defaultMessage: "View transcription details",
@@ -385,6 +393,7 @@ export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
           variant="body2"
           color="text.primary"
           maxLines={3}
+          clampPaddingRight={compactTranscript ? "56px" : undefined}
           sx={{ my: 1 }}
         >
           {transcription?.transcript}

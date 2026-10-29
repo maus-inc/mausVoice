@@ -50,55 +50,87 @@ export const DeleteAccountDialog = () => {
     setConfirmationEmail("");
   };
 
-  const handleSubmit = async () => {
-    if (!isDeleteEnabled || busy) {
-      return;
+  const ensureClearLease = async () => {
+    if (releaseClearRef.current) return;
+    // Keep writes closed across retries if account deletion succeeds but local
+    // cleanup later fails.
+    clearMarkerWasPreexistingRef.current = hasPendingLocalDataClear();
+    releaseClearRef.current = await beginLocalDataClear();
+  };
+
+  const deleteAccountOnce = async () => {
+    if (accountDeletedRef.current) return;
+    await getAuthRepo().deleteMyAccount();
+    accountDeletedRef.current = true;
+    disableAnalyticsPersistenceForLocalDataClear();
+  };
+
+  const stopNativeSubsystems = async () => {
+    // Stop callbacks before wiping data so they cannot race with the cleared DB.
+    try {
+      await invoke("stop_key_listener");
+    } catch {
+      /* no listener active */
     }
+    try {
+      await invoke("stop_recording");
+    } catch {
+      /* no active recording */
+    }
+  };
+
+  const signOutAfterAccountDeletion = async () => {
+    try {
+      await getAuthRepo().signOut();
+    } catch (error) {
+      console.error("Failed to sign out after account deletion", error);
+    }
+  };
+
+  const clearDeletedAccountData = async () => {
+    await invoke("clear_local_data");
+    resetPendingTranscriptionDeletes();
+    resetAutoLearnSessionState();
+    clearAppLocalStorage();
+    await signOutAfterAccountDeletion();
+    await invoke("complete_local_data_clear");
+    removeLocalDataClearPendingMarker();
+  };
+
+  const releaseClearAfterDeletionFailure = () => {
+    if (accountDeletedRef.current) return;
+    // If deletion failed, reopen only a clear marker created by this attempt.
+    try {
+      if (!clearMarkerWasPreexistingRef.current) {
+        removeLocalDataClearPendingMarker();
+      }
+      releaseClearRef.current?.();
+      releaseClearRef.current = null;
+      clearMarkerWasPreexistingRef.current = false;
+    } catch (cleanupError) {
+      // Keep writes blocked if the durable marker cannot be removed.
+      console.error(
+        "Failed to release local-data clear after account deletion failed",
+        cleanupError,
+      );
+    }
+  };
+
+  const handleSubmit = async () => {
+    if (!isDeleteEnabled || busy) return;
 
     setBusy(true);
     try {
-      // Close the renderer gate before account deletion; if deletion succeeds
-      // but a later local cleanup step fails, retry without reopening writes.
-      if (!releaseClearRef.current) {
-        clearMarkerWasPreexistingRef.current = hasPendingLocalDataClear();
-        releaseClearRef.current = await beginLocalDataClear();
-      }
-      if (!accountDeletedRef.current) {
-        await getAuthRepo().deleteMyAccount();
-        accountDeletedRef.current = true;
-        disableAnalyticsPersistenceForLocalDataClear();
-      }
-
-      // Tear down long-running native subsystems before wiping data so
-      // in-flight callbacks don't race against the cleared DB.
-      try {
-        await invoke("stop_key_listener");
-      } catch {
-        /* no listener active */
-      }
-      try {
-        await invoke("stop_recording");
-      } catch {
-        /* no active recording */
-      }
-
-      await invoke("clear_local_data");
-      resetPendingTranscriptionDeletes();
-      resetAutoLearnSessionState();
-      clearAppLocalStorage();
-      try {
-        await getAuthRepo().signOut();
-      } catch (error) {
-        console.error("Failed to sign out after account deletion", error);
-      }
-      await invoke("complete_local_data_clear");
-      removeLocalDataClearPendingMarker();
+      await ensureClearLease();
+      await deleteAccountOnce();
+      await stopNativeSubsystems();
+      await clearDeletedAccountData();
       setConfirmationEmail("");
       produceAppState((state) => {
         state.settings.deleteAccountDialog = false;
       });
-      // Keep the clear gate closed until reload. This prevents startup tasks
-      // already in flight from recreating local data after the reset.
+      // Keep the clear gate closed until reload so startup tasks cannot recreate
+      // local data after the reset.
       window.location.reload();
     } catch (error) {
       console.error("Failed to finish account deletion cleanup", error);
@@ -107,26 +139,7 @@ export const DeleteAccountDialog = () => {
           ? "Your account was deleted, but local cleanup is incomplete. Retry to finish clearing this device."
           : "An error occurred while attempting to delete your account. Please try again later.",
       );
-      // If the remote deletion failed, no local clear has begun. Otherwise
-      // retain the lease so a retry can finish cleanup without a write race.
-      if (!accountDeletedRef.current) {
-        try {
-          if (!clearMarkerWasPreexistingRef.current) {
-            removeLocalDataClearPendingMarker();
-          }
-          releaseClearRef.current?.();
-          releaseClearRef.current = null;
-          clearMarkerWasPreexistingRef.current = false;
-        } catch (cleanupError) {
-          // Keep writes blocked if the durable recovery marker cannot be
-          // removed. The dialog remains retryable rather than reopening a
-          // clear that the account-deletion operation did not complete.
-          console.error(
-            "Failed to release local-data clear after account deletion failed",
-            cleanupError,
-          );
-        }
-      }
+      releaseClearAfterDeletionFailure();
     } finally {
       setBusy(false);
     }

@@ -20,6 +20,7 @@ vi.mock("react-intl", async (importOriginal) => {
   return reactIntlWithIdsModule(importOriginal);
 });
 import en from "../../i18n/locales/en.json";
+import { activityHeatmapGeometry } from "../../styles/activity-heatmap";
 import { ActivityHeatmap } from "./ActivityHeatmap";
 
 ensureUiHarness();
@@ -63,6 +64,16 @@ describe("ActivityHeatmap", () => {
     });
   };
 
+  it("uses the compact reference geometry for its year grid", () => {
+    expect(activityHeatmapGeometry).toEqual({
+      cellSize: 10,
+      cellGap: 4,
+      labelColumnWidth: 22,
+      viewportWidth: 274,
+      minWidth: 760,
+    });
+  });
+
   it("uses the singular label and accessible summary for one active day", () => {
     renderHeatmap(5);
 
@@ -72,7 +83,7 @@ describe("ActivityHeatmap", () => {
     ).toBe("Daily word activity: 1 active day and 5 words in the past year.");
   });
 
-  it("uses Sunday-first rows with Monday, Wednesday, and Friday labels", () => {
+  it("uses the reference weekday labels and keeps them screen-reader friendly", () => {
     renderHeatmap(5);
 
     const weekdayLabels = Array.from(
@@ -84,7 +95,15 @@ describe("ActivityHeatmap", () => {
       .map((element) => element.textContent ?? "")
       .filter(Boolean);
 
-    expect(weekdayLabels).toEqual(["Mon", "Wed", "Fri"]);
+    expect(weekdayLabels).toEqual(["M", "W", "F", "S"]);
+    expect(
+      container.querySelectorAll('[data-testid="activity-day"]'),
+    ).toHaveLength(371);
+    expect(
+      container.querySelectorAll(
+        '[aria-label="Activity level legend"] [aria-hidden="true"]',
+      ),
+    ).toHaveLength(3);
   });
 
   it("uses the dark activity ramp when the resolved scheme is dark", () => {
@@ -98,7 +117,7 @@ describe("ActivityHeatmap", () => {
       .toLowerCase();
 
     expect(styles).toContain("#2a2420");
-    expect(styles).toContain("#f18b49");
+    expect(styles).toContain("#ef8f50");
   });
 
   it("adds a brief pointer emphasis and disables scale motion when reduced motion is preferred", () => {

@@ -16,13 +16,6 @@ import { HomeAnalyticsGrid } from "./HomeAnalyticsGrid";
 import { HomeRecentTranscriptions } from "./HomeRecentTranscriptions";
 import { HomeSideEffects } from "./HomeSideEffects";
 
-/**
- * Home dashboard: recent usage, daily activity, getting-started guidance, and
- * recent transcriptions, with the side effects that keep them fresh.
- *
- * The header left slot intentionally stays empty here — publishing a "Home"
- * label into the title bar was a regression, not a design requirement.
- */
 export default function HomePage() {
   const user = useAppStore(getMyUser);
   const userFirstName = useAppStore(getMyUserFirstName);
@@ -40,54 +33,60 @@ export default function HomePage() {
   return (
     <DashboardEntryLayout maxWidth="xl">
       <HomeSideEffects today={today} />
-      <Stack spacing={3} sx={{ minWidth: 0 }}>
-        <Box>
-          <Typography variant="h4" sx={{ fontWeight: 500, mb: 0.5 }}>
-            <FormattedMessage
-              defaultMessage="Welcome back, {name}"
-              values={{
-                name: (
-                  <span
-                    key="user-name"
-                    style={{
-                      fontFamily: "var(--font-display)",
-                      fontSize: "0.92em",
-                    }}
-                  >
-                    {userFirstName}
-                  </span>
-                ),
-              }}
-            />
-          </Typography>
-          <DictationInstruction />
-        </Box>
+      <Box
+        data-testid="home-page-frame"
+        sx={{
+          width: "100%",
+          maxWidth: 620,
+          minWidth: 0,
+          mx: "auto",
+          containerName: "home-page",
+          containerType: "inline-size",
+        }}
+      >
+        <Stack sx={{ minWidth: 0 }}>
+          <Box sx={{ px: 3.5, mb: 4.75 }}>
+            <Typography variant="h4" sx={{ fontWeight: 500, mb: 0.5 }}>
+              <FormattedMessage
+                defaultMessage="Welcome back, {name}"
+                values={{
+                  name: (
+                    <span
+                      key="user-name"
+                      style={{
+                        fontFamily: "var(--font-display)",
+                        fontSize: "0.92em",
+                      }}
+                    >
+                      {userFirstName}
+                    </span>
+                  ),
+                }}
+              />
+            </Typography>
+            <DictationInstruction />
+          </Box>
 
-        <HomeAnalyticsGrid
-          streak={streak}
-          wordsThisMonth={wordsThisMonth}
-          wordsTotal={wordsTotal}
-          dictationSpeed={dictationSpeed}
-          activity={activity}
-          activityStatus={activityStatus}
-          today={today}
-        />
+          <HomeAnalyticsGrid
+            streak={streak}
+            wordsThisMonth={wordsThisMonth}
+            wordsTotal={wordsTotal}
+            dictationSpeed={dictationSpeed}
+            activity={activity}
+            activityStatus={activityStatus}
+            today={today}
+          />
 
-        <Box
-          sx={{
-            display: "grid",
-            gridTemplateColumns: {
-              xs: "1fr",
-              lg: "minmax(0, 1fr) minmax(0, 1fr)",
-            },
-            gap: 3,
-            alignItems: "start",
-          }}
-        >
-          <GettingStartedList />
-          <HomeRecentTranscriptions />
-        </Box>
-      </Stack>
+          <Box sx={{ mt: 3.5 }}>
+            <Box sx={{ "&:empty": { display: "none" }, mb: 3 }}>
+              <GettingStartedList />
+            </Box>
+            <Box sx={{ px: 3.5 }}>
+              <HomeRecentTranscriptions />
+            </Box>
+          </Box>
+        </Stack>
+      </Box>
     </DashboardEntryLayout>
   );
 }

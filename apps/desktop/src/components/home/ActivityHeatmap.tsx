@@ -40,12 +40,12 @@ export type ActivityHeatmapProps = {
 
 const makeWeekdayRows = (intl: ReturnType<typeof useIntl>): WeekdayRow[] =>
   Array.from({ length: 7 }, (_, day) => {
-    const date = new Date(2024, 0, 7 + day, 12);
+    const date = new Date(2024, 0, 8 + day, 12);
     return {
       localDate: toLocalDateKey(date),
-      label: intl.formatDate(date, { weekday: "short" }),
+      label: intl.formatDate(date, { weekday: "narrow" }),
       gridRow: day + 1,
-      visible: day % 2 === 1,
+      visible: day % 2 === 0,
     };
   });
 
@@ -59,47 +59,41 @@ const summarizeActivityGrid = (grid: ActivityGrid) => {
   return { visibleCells, activeDays, totalWords };
 };
 
+const compactIntensity = (intensity: ActivityGridCell["intensity"]): number => {
+  if (intensity === 0) return 0;
+  if (intensity <= 2) return 1;
+  return 2;
+};
+
 const ActivityHeatmapHeader = ({
   status,
   activeDaysLabel,
 }: {
   status: DailyActivityStatus;
   activeDaysLabel: string;
-}) => {
-  const theme = useTheme();
-  return (
-    <Stack
-      direction="row"
-      spacing={1}
-      sx={{
-        alignItems: "baseline",
-        justifyContent: "space-between",
-        mb: theme.spacing(1.5),
-      }}
-    >
-      <Box>
-        <Typography
-          id="home-activity-heading"
-          variant="h6"
-          sx={{ fontWeight: 600 }}
-        >
-          <FormattedMessage defaultMessage="Daily activity" />
-        </Typography>
-        <Typography variant="body2" sx={{ color: "text.secondary" }}>
-          <FormattedMessage defaultMessage="Words dictated over the past year" />
-        </Typography>
-      </Box>
-      {status === "success" ? (
-        <Typography
-          variant="caption"
-          sx={{ color: "text.secondary", whiteSpace: "nowrap" }}
-        >
-          {activeDaysLabel}
-        </Typography>
-      ) : null}
-    </Stack>
-  );
-};
+}) => (
+  <Box
+    sx={{
+      position: "absolute",
+      width: "1px",
+      height: "1px",
+      p: 0,
+      m: "-1px",
+      overflow: "hidden",
+      clip: "rect(0, 0, 0, 0)",
+      whiteSpace: "nowrap",
+      border: 0,
+    }}
+  >
+    <Typography id="home-activity-heading">
+      <FormattedMessage defaultMessage="Daily activity" />
+    </Typography>
+    <Typography>
+      <FormattedMessage defaultMessage="Words dictated over the past year" />
+    </Typography>
+    {status === "success" ? <Typography>{activeDaysLabel}</Typography> : null}
+  </Box>
+);
 
 const ActivityHeatmapGrid = ({
   grid,
@@ -114,7 +108,6 @@ const ActivityHeatmapGrid = ({
   weekdayRows: WeekdayRow[];
   describeCell: CellDescription;
 }) => {
-  const intl = useIntl();
   const theme = useTheme();
 
   return (
@@ -126,47 +119,6 @@ const ActivityHeatmapGrid = ({
           mx: "auto",
         }}
       >
-        <Box
-          aria-hidden="true"
-          sx={{
-            display: "grid",
-            gridTemplateColumns: `${activityHeatmapGeometry.labelColumnWidth}px repeat(${grid.weeks.length}, ${activityHeatmapGeometry.cellSize}px)`,
-            columnGap: `${activityHeatmapGeometry.cellGap}px`,
-            mb: theme.spacing(0.5),
-            alignItems: "end",
-          }}
-        >
-          <Box />
-          {grid.weeks.map((week, weekIndex) => {
-            const weekDate = dateFromLocalDateKey(week[0].localDate);
-            const monthStart = week.find(
-              (cell) => dateFromLocalDateKey(cell.localDate).getDate() === 1,
-            );
-            const labelDate = monthStart
-              ? dateFromLocalDateKey(monthStart.localDate)
-              : weekDate;
-            const startsNewMonth = weekIndex === 0 || monthStart !== undefined;
-            return (
-              <Typography
-                key={week[0].localDate}
-                variant="caption"
-                sx={{
-                  gridColumn: weekIndex + 2,
-                  gridRow: 1,
-                  color: "text.secondary",
-                  whiteSpace: "nowrap",
-                  fontSize: 10,
-                  visibility: startsNewMonth ? "visible" : "hidden",
-                }}
-              >
-                {startsNewMonth
-                  ? intl.formatDate(labelDate, { month: "short" })
-                  : ""}
-              </Typography>
-            );
-          })}
-        </Box>
-
         <Box
           role="img"
           aria-label={accessibleSummary}
@@ -225,7 +177,7 @@ const ActivityHeatmapGrid = ({
                     borderRadius: 0.15,
                     bgcolor: cell.isFuture
                       ? "transparent"
-                      : colors[cell.intensity],
+                      : colors[compactIntensity(cell.intensity)],
                     outline: cell.isToday
                       ? `1px solid ${theme.palette.text.secondary}`
                       : "none",
@@ -401,13 +353,16 @@ const ActivityHeatmapLegend = ({ colors }: { colors: HeatmapColors }) => {
       sx={{
         justifyContent: "flex-end",
         alignItems: "center",
-        mt: theme.spacing(1),
+        mt: theme.spacing(2.25),
       }}
       aria-label={intl.formatMessage({
         defaultMessage: "Activity level legend",
       })}
     >
-      <Typography variant="caption" sx={{ color: "text.secondary" }}>
+      <Typography
+        variant="caption"
+        sx={{ color: "text.secondary", fontSize: 9, lineHeight: 1 }}
+      >
         <FormattedMessage defaultMessage="Less" />
       </Typography>
       {colors.map((color) => (
@@ -422,7 +377,10 @@ const ActivityHeatmapLegend = ({ colors }: { colors: HeatmapColors }) => {
           }}
         />
       ))}
-      <Typography variant="caption" sx={{ color: "text.secondary" }}>
+      <Typography
+        variant="caption"
+        sx={{ color: "text.secondary", fontSize: 9, lineHeight: 1 }}
+      >
         <FormattedMessage defaultMessage="More" />
       </Typography>
     </Stack>
@@ -439,7 +397,10 @@ export const ActivityHeatmap = ({
     () => buildActivityGrid(activity, today),
     [activity, today],
   );
-  const colors = useIsDarkMode() ? activityHeatmap.dark : activityHeatmap.light;
+  const palette = useIsDarkMode()
+    ? activityHeatmap.dark
+    : activityHeatmap.light;
+  const colors: HeatmapColors = [palette[0], palette[1], palette[4]];
   const { visibleCells, activeDays, totalWords } = useMemo(
     () => summarizeActivityGrid(grid),
     [grid],
@@ -473,7 +434,7 @@ export const ActivityHeatmap = ({
       component="section"
       aria-labelledby="home-activity-heading"
       data-testid="home-activity-heatmap"
-      sx={{ minWidth: 0 }}
+      sx={{ minWidth: 0, pt: 3.75 }}
     >
       <ActivityHeatmapHeader
         status={status}

@@ -30,7 +30,7 @@ export const HomeRecentTranscriptions = () => {
       {topIds.length > 0 ? (
         <>
           {topIds.map((id) => (
-            <TranscriptionRow key={id} id={id} />
+            <TranscriptionRow key={id} id={id} compactTranscript />
           ))}
           <Box sx={{ display: "flex", justifyContent: "center", mt: 1.5 }}>
             <Chip

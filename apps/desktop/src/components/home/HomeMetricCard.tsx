@@ -1,11 +1,12 @@
 import type { ReactNode } from "react";
-import { Card, CardContent, Stack, Typography, useTheme } from "@mui/material";
+import { Card, CardContent, Stack, Typography } from "@mui/material";
 
 type HomeMetricCardProps = {
-  label: ReactNode;
+  label?: ReactNode;
   value: string;
   icon?: ReactNode;
   detail?: ReactNode;
+  align?: "left" | "right";
 };
 
 export const HomeMetricCard = ({
@@ -13,41 +14,59 @@ export const HomeMetricCard = ({
   value,
   icon,
   detail,
+  align = "left",
 }: HomeMetricCardProps) => {
-  const theme = useTheme();
+  const rightAligned = align === "right";
 
   return (
     <Card sx={{ height: "100%" }}>
       <CardContent
         sx={{
-          py: theme.spacing(2),
-          px: theme.spacing(2.5),
-          "&:last-child": { pb: theme.spacing(2) },
+          py: 1.1875,
+          px: 2,
+          "&:last-child": { pb: 1.1875 },
         }}
       >
         <Stack
           direction="row"
           spacing={1}
-          sx={{ alignItems: "center", mb: theme.spacing(0.5) }}
+          sx={{
+            alignItems: "center",
+            justifyContent: rightAligned ? "flex-end" : "flex-start",
+            mb: label ? 0.5 : 0,
+          }}
         >
           {icon}
           <Typography
             variant="h5"
-            sx={{ fontWeight: 700, fontVariantNumeric: "tabular-nums" }}
+            sx={{
+              fontWeight: 700,
+              fontVariantNumeric: "tabular-nums",
+              whiteSpace: "nowrap",
+            }}
           >
             {value}
           </Typography>
         </Stack>
-        <Typography variant="body2" sx={{ color: "text.secondary" }}>
-          {label}
-        </Typography>
+        {label ? (
+          <Typography
+            variant="body2"
+            align={align}
+            sx={{ color: "text.secondary", whiteSpace: "nowrap" }}
+          >
+            {label}
+          </Typography>
+        ) : null}
         {detail ? (
           <Typography
             variant="caption"
+            align={align}
             sx={{
               display: "block",
               color: "text.secondary",
-              mt: theme.spacing(0.75),
+              mt: label ? 0.75 : 0.5,
+              whiteSpace: "nowrap",
+              fontSize: "0.72rem",
             }}
           >
             {detail}

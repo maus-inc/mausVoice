@@ -22,6 +22,12 @@ static PLAY_AUDIO_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 
 const TRANSCRIPTION_CLEARED_DURING_SAVE: &str =
     "Local data was cleared before this transcription could be saved";
+// Retain tombstones so delayed or retried creates cannot resurrect cleared
+// history, while bounding this process-global ledger. At capacity, audio
+// persistence fails closed; the text transcription can still be saved.
+const MAX_AUDIO_SNAPSHOT_RESERVATION_IDS: usize = 4_096;
+const AUDIO_SNAPSHOT_RESERVATION_LIMIT_REACHED: &str =
+    "Audio snapshot reservation capacity is exhausted";
 
 #[derive(Default)]
 struct AudioSnapshotReservations {
@@ -33,6 +39,14 @@ impl AudioSnapshotReservations {
     fn reserve(&mut self, id: &str) -> Result<(), String> {
         if self.cancelled.contains(id) {
             return Err(TRANSCRIPTION_CLEARED_DURING_SAVE.to_string());
+        }
+        if self.pending.contains(id) {
+            return Ok(());
+        }
+        if self.pending.len().saturating_add(self.cancelled.len())
+            >= MAX_AUDIO_SNAPSHOT_RESERVATION_IDS
+        {
+            return Err(AUDIO_SNAPSHOT_RESERVATION_LIMIT_REACHED.to_string());
         }
         self.pending.insert(id.to_string());
         Ok(())
@@ -8339,6 +8353,53 @@ mod tests {
         assert_eq!(history_count, 0);
         assert_eq!(event_count, 0);
         assert_eq!(activity_count, 0);
+    }
+
+    #[test]
+    fn audio_snapshot_reservation_ledger_is_bounded_and_keeps_cancelled_ids() {
+        let mut reservations = AudioSnapshotReservations::default();
+
+        for index in 0..MAX_AUDIO_SNAPSHOT_RESERVATION_IDS - 1 {
+            let id = format!("cleared-audio-{index}");
+            reservations
+                .reserve(&id)
+                .expect("ledger should accept an ID below its cap");
+            reservations.cancel_pending();
+        }
+
+        let pending_id = "last-audio-reservation";
+        reservations
+            .reserve(pending_id)
+            .expect("the final slot should remain available");
+        reservations
+            .reserve(pending_id)
+            .expect("reserving the same pending ID should be idempotent");
+        assert_eq!(
+            reservations.pending.len() + reservations.cancelled.len(),
+            MAX_AUDIO_SNAPSHOT_RESERVATION_IDS
+        );
+
+        assert_eq!(
+            reservations.reserve("over-capacity-audio"),
+            Err(AUDIO_SNAPSHOT_RESERVATION_LIMIT_REACHED.to_string())
+        );
+        reservations.cancel_pending();
+
+        assert!(reservations.pending.is_empty());
+        assert_eq!(
+            reservations.cancelled.len(),
+            MAX_AUDIO_SNAPSHOT_RESERVATION_IDS
+        );
+        assert!(reservations.is_cancelled("cleared-audio-0"));
+        assert!(reservations.is_cancelled(pending_id));
+        assert_eq!(
+            reservations.reserve("cleared-audio-0"),
+            Err(TRANSCRIPTION_CLEARED_DURING_SAVE.to_string())
+        );
+        assert_eq!(
+            reservations.reserve("over-capacity-audio"),
+            Err(AUDIO_SNAPSHOT_RESERVATION_LIMIT_REACHED.to_string())
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]

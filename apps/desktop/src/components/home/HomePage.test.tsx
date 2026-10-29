@@ -100,7 +100,6 @@ describe("HomePage analytics", () => {
     expect(container.textContent).toContain("12,340");
     expect(container.textContent).toContain("Words total");
     expect(container.textContent).toContain("84,120");
-    expect(container.textContent).toContain("Dictation speed");
     expect(container.textContent).toContain("WPM");
     expect(container.textContent).toContain("Daily activity");
     expect(container.textContent).toContain(
@@ -129,7 +128,7 @@ describe("HomePage analytics", () => {
       .replace(/\s+/g, "");
 
     expect(gridClassName).toBeDefined();
-    expect(generatedStyles).toContain("@media(min-width:1100px)");
+    expect(generatedStyles).toContain("@containerhome-page(min-width:560px)");
     expect(generatedStyles).toContain(`.${gridClassName}{`);
     expect(generatedStyles).toContain(
       'grid-template-areas:"streakmonth""totalspeed""activityactivity"',

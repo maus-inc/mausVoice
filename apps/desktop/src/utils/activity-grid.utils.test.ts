@@ -30,26 +30,27 @@ describe("activityIntensity", () => {
 });
 
 describe("buildActivityGrid", () => {
-  it("returns 53 Sunday-first weeks and marks only dates through today", () => {
+  it("returns 53 Monday-first weeks and marks only dates through today", () => {
     const today = new Date(2026, 9, 8, 18, 30);
     const grid = buildActivityGrid([], today);
     const allCells = grid.weeks.flat();
     const first = dateFromLocalDateKey(grid.startDate);
     const todayKey = toLocalDateKey(today);
+    const dayOfWeekFromMonday = (today.getDay() + 6) % 7;
 
     expect(grid.weeks).toHaveLength(53);
     expect(grid.weeks.every((week) => week.length === 7)).toBe(true);
-    expect(first.getDay()).toBe(0);
+    expect(first.getDay()).toBe(1);
     expect(
       grid.weeks[0].map((cell) =>
         dateFromLocalDateKey(cell.localDate).getDay(),
       ),
-    ).toEqual([0, 1, 2, 3, 4, 5, 6]);
+    ).toEqual([1, 2, 3, 4, 5, 6, 0]);
     expect(allCells.filter((cell) => cell.isToday)).toHaveLength(1);
     expect(allCells.find((cell) => cell.isToday)?.localDate).toBe(todayKey);
     expect(allCells.at(-1)?.isFuture).toBe(true);
     expect(allCells.filter((cell) => cell.isFuture).length).toBe(
-      6 - today.getDay(),
+      6 - dayOfWeekFromMonday,
     );
   });
 

@@ -10,6 +10,7 @@ type TypographyWithMoreProps = TypographyProps & {
   lessLabel?: React.ReactNode;
   fontSize?: number | string;
   lineHeight?: number | string;
+  clampPaddingRight?: number | string;
 };
 
 const defaultClampStyles = (maxLines: number) => ({
@@ -40,6 +41,7 @@ export function TypographyWithMore({
   sx,
   fontSize,
   lineHeight,
+  clampPaddingRight,
   ...typographyProps
 }: TypographyWithMoreProps) {
   const [expanded, setExpanded] = useState(initiallyExpanded);
@@ -113,7 +115,7 @@ export function TypographyWithMore({
       return normalized;
     }
 
-    const paddingAdjustment = { pr: 6 } as const;
+    const paddingAdjustment = { pr: clampPaddingRight ?? 6 } as const;
 
     if (Array.isArray(normalized)) {
       return [...normalized, paddingAdjustment];
@@ -124,20 +126,21 @@ export function TypographyWithMore({
     }
 
     return paddingAdjustment;
-  }, [clampStyles, shouldClamp, sx]);
+  }, [clampPaddingRight, clampStyles, shouldClamp, sx]);
   const hiddenTypographySx = useMemo(() => {
     const baseDisplay = { display: "block" } as const;
 
-    if (!sx) {
+    if (clampPaddingRight === undefined && !sx) {
       return baseDisplay;
     }
 
-    if (Array.isArray(sx)) {
-      return [baseDisplay, ...sx];
+    const styles = Array.isArray(sx) ? [...sx] : sx ? [sx] : [];
+    if (clampPaddingRight !== undefined) {
+      styles.push({ pr: clampPaddingRight });
     }
 
-    return [baseDisplay, sx];
-  }, [sx]);
+    return [baseDisplay, ...styles];
+  }, [clampPaddingRight, sx]);
 
   const renderToggleButton = (inline: boolean) => (
     <Button

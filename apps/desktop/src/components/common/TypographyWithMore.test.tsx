@@ -113,12 +113,16 @@ afterEach(() => {
   }
 });
 
-const render = async () => {
+const render = async (clampPaddingRight?: number | string) => {
   await act(async () => {
     root?.render(
       <StrictMode>
         <ThemeProvider theme={theme}>
-          <TypographyWithMore variant="body2" maxLines={3}>
+          <TypographyWithMore
+            variant="body2"
+            maxLines={3}
+            clampPaddingRight={clampPaddingRight}
+          >
             A long transcription that keeps going well past three lines so the
             clamp engages and the disclosure control appears.
           </TypographyWithMore>
@@ -150,6 +154,20 @@ const requireToggleButton = (): HTMLButtonElement => {
 };
 
 describe("TypographyWithMore disclosure toggle", () => {
+  it("uses custom clamp padding for both visible and measured text", async () => {
+    await render("12px");
+
+    const paragraphs = Array.from(
+      container.querySelectorAll("p.MuiTypography-root"),
+    );
+    expect(paragraphs).toHaveLength(2);
+    expect(
+      paragraphs.map(
+        (paragraph) => window.getComputedStyle(paragraph).paddingRight,
+      ),
+    ).toEqual(["12px", "12px"]);
+  });
+
   it("renders collapsed with an inline 'Show more' whose hover is a link affordance, not a repaint of the fade", async () => {
     await render();
     const button = toggleButton();
