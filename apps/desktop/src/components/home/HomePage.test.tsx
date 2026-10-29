@@ -141,7 +141,7 @@ describe("HomePage analytics", () => {
     expect(generatedStyles).toContain("@containerhome-page(min-width:560px)");
     expect(generatedStyles).toContain(`.${gridClassName}{`);
     expect(generatedStyles).toContain(
-      'grid-template-areas:"streakmonth""totalspeed""activityactivity"',
+      'grid-template-areas:"streaktotal""monthspeed""activityactivity"',
     );
     expect(generatedStyles).toContain(
       'grid-template-areas:"streakactivitytotal""monthactivityspeed"',
@@ -159,6 +159,38 @@ describe("HomePage analytics", () => {
     expect(getAppState().home.dailyActivity).toEqual([
       { localDate: "2026-10-08", wordCount: 324 },
     ]);
+  });
+
+  it("keeps the total metric in the right compact column without speed data", () => {
+    const state = structuredClone(getAppState());
+    state.transcriptions.transcriptionIds = [];
+    setAppState(state, true);
+
+    act(() => {
+      root.render(
+        <IntlProvider locale="en" messages={en}>
+          <MemoryRouter initialEntries={["/dashboard"]}>
+            <HomePage />
+          </MemoryRouter>
+        </IntlProvider>,
+      );
+    });
+
+    expect(container.querySelector('[data-home-grid-area="speed"]')).toBeNull();
+
+    const generatedStyles = Array.from(
+      document.querySelectorAll("style[data-emotion]"),
+      (style) => style.textContent ?? "",
+    )
+      .join("\n")
+      .replace(/\s+/g, "");
+
+    expect(generatedStyles).toContain(
+      'grid-template-areas:"streaktotal""month.""activityactivity"',
+    );
+    expect(generatedStyles).toContain(
+      'grid-template-areas:"streakactivitytotal""monthactivitytotal"',
+    );
   });
 
   it("does not show a previous month's cached total as current usage", () => {

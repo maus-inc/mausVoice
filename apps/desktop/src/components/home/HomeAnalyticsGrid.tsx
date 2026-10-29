@@ -38,9 +38,10 @@ export const HomeAnalyticsGrid = ({
         display: "grid",
         minWidth: 0,
         gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+        // Pair left- and right-aligned metrics in each compact row.
         gridTemplateAreas: dictationSpeed
-          ? '"streak month" "total speed" "activity activity"'
-          : '"streak month" "total ." "activity activity"',
+          ? '"streak total" "month speed" "activity activity"'
+          : '"streak total" "month ." "activity activity"',
         gap: 1.5,
         alignItems: "stretch",
         "@container home-page (min-width: 560px)": {
