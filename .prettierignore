@@ -15,6 +15,13 @@ docs/
 # Agent working notes for the PR reconciliation session; never committed.
 .recon/
 
+# Vendored agent skills are third-party content, byte for byte as published, and
+# skills-lock.json records a folder hash for each one. Reformatting them would break
+# every computedHash and fail scripts/ci/verify-skills.mjs, so Prettier must not touch
+# them. See engineering/design-skills.md for the provenance and the refresh procedure.
+.agents/
+.claude/
+
 # Build and dependency artifacts.
 **/dist
 **/target
