@@ -115,6 +115,186 @@ fn handle_run_event(app_handle: &tauri::AppHandle, event: RunEvent) {
     }
 }
 
+fn handle_window_event(window: &Window, event: &WindowEvent) {
+    match event {
+        WindowEvent::CloseRequested { api, .. } if window.label() == "main" => {
+            api.prevent_close();
+            let _ = window.app_handle().save_window_state(StateFlags::SIZE);
+            // Use the webview window for hide_main_window (which
+            // needs &WebviewWindow, not &Window from on_window_event).
+            if let Some(main_ww) = window.app_handle().get_webview_window("main") {
+                if let Err(err) = crate::platform::window::hide_main_window(&main_ww) {
+                    log::error!("Failed to hide main window: {err}");
+                }
+            }
+        }
+        // On Windows, WebView2 automatically freezes JS execution when the
+        // hosting window is occluded (fully covered by another window) or
+        // minimized. This breaks global hotkey detection via keys_held events.
+        // Counter this by re-asserting WebView visibility whenever focus is lost,
+        // and running a periodic keepalive to defeat ongoing occlusion detection.
+        WindowEvent::Moved(position) if window.label() == "main" => {
+            log_main_window_move(window, position);
+        }
+        #[cfg(target_os = "windows")]
+        WindowEvent::Focused(focused) => {
+            if window.label() == "main" && !focused {
+                crate::platform::window::keep_webview_active(window.app_handle(), "main");
+                crate::platform::window::set_webview_keepalive(true);
+            }
+            if window.label() == "main" && *focused {
+                crate::platform::window::set_webview_keepalive(false);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    // Chained rather than replaced. The previous hook wrote only to the log
+    // file, and a setup failure exits without a console on Windows and
+    // when launched from Finder or a desktop entry, so the reason was
+    // invisible everywhere except a log nothing points the user at.
+    let previous_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        log::error!("PANIC: {info}");
+        previous_hook(info);
+    }));
+
+    log::info!("Starting application setup...");
+
+    // A clear can be interrupted after this process has deleted some
+    // local data. Restore the native barrier before opening the DB or
+    // accepting renderer commands; the clear dialog will retry and
+    // remove the marker only after both native and browser cleanup.
+    let clear_recovery_pending =
+        match crate::system::local_data_clear_marker::is_pending(app.handle()) {
+            Ok(true) => {
+                log::warn!("Recovering an interrupted local-data clear");
+                crate::db::local_data_write_gate::recover_pending_local_data_clear();
+                true
+            }
+            Ok(false) => false,
+            Err(error) => {
+                log::error!("Unable to inspect the local-data clear marker: {error}");
+                crate::db::local_data_write_gate::recover_pending_local_data_clear();
+                // A marker we cannot inspect must fail closed just like a
+                // marker confirmed to be pending.
+                true
+            }
+        };
+
+    // Preserve GGML files from the old app-data/models location before
+    // the desktop sidecars start using app-data/transcription-models.
+    if let Err(err) = crate::system::paths::migrate_legacy_models(app.handle()) {
+        log::error!("Failed to migrate legacy transcription models: {err}");
+    }
+
+    // Record the Windows elevation state once. An unelevated low-level
+    // keyboard hook cannot observe input delivered to a higher-integrity
+    // window (UIPI), so this is the first thing to check when a user
+    // reports hotkeys failing over an elevated app.
+    //
+    // Spin up the OS-level sleep/wake and session-unlock watcher so
+    // the global keyboard hook can be re-armed after resume. Without
+    // this the hotkey stops firing after a laptop sleep or a fast
+    // user-switch unlock.
+    #[cfg(target_os = "windows")]
+    {
+        crate::platform::windows::permissions::log_elevation_state();
+        crate::platform::windows::lifecycle::start_watcher(app.handle());
+    }
+
+    // Purge old log files, keeping the latest 10
+    crate::system::diagnostics::purge_old_logs(app.handle());
+
+    // Write startup diagnostics for debugging
+    crate::system::diagnostics::write_startup_diagnostics(app.handle());
+
+    // `database_path` may copy a legacy database, and `open_app_database`
+    // runs data-moving SQL migrations. Hold the native write mutex across
+    // both. During clear recovery, this special startup lease does not open
+    // the gate: it only lets setup reach the retry dialog, while all normal
+    // renderer and remote writes remain rejected.
+    let _startup_database_write_guard = tauri::async_runtime::block_on(
+        crate::db::local_data_write_gate::lock_startup_database_migration(clear_recovery_pending),
+    )
+    .map_err(|error| -> Box<dyn std::error::Error> { Box::new(error) })?;
+
+    let db_path = {
+        let handle = app.handle();
+        crate::system::paths::database_path(handle)
+            .map_err(|err| -> Box<dyn std::error::Error> { Box::new(err) })?
+    };
+
+    // The path belongs in the failure. A database that cannot be opened leaves the
+    // app unable to start, so this error is the only account of what
+    // happened, and without the path neither the log nor a crash report
+    // says which file to look at.
+    let pool = tauri::async_runtime::block_on(crate::db::open::open_app_database(&db_path))
+        .map_err(|err| -> Box<dyn std::error::Error> {
+            let message = format!(
+                "could not open the database at {}: {err}",
+                db_path.display()
+            );
+            log::error!("{message}");
+            message.into()
+        })?;
+    drop(_startup_database_write_guard);
+
+    app.manage(crate::state::OptionKeyDatabase::new(pool.clone()));
+    app.manage(crate::state::OverlayState::new());
+    app.manage(crate::state::RemoteReceiverState::new());
+    app.manage(crate::state::FloatingWindowState::new());
+
+    #[cfg(desktop)]
+    {
+        if std::env::args().any(|arg| arg == AUTOSTART_HIDDEN_ARG) {
+            if let Some(main_window) = app.get_webview_window("main") {
+                if let Err(err) = crate::platform::window::hide_main_window(&main_window) {
+                    log::error!("Failed to hide main window on autostart: {err}");
+                }
+            }
+        }
+
+        #[cfg(target_os = "windows")]
+        crate::platform::window::start_webview_keepalive(app.handle());
+
+        crate::system::tray::setup_tray(app)
+            .map_err(|err| -> Box<dyn std::error::Error> { Box::new(err) })?;
+
+        let app_handle = app.handle();
+
+        let recorder = crate::platform::audio::new_recorder();
+
+        app.manage(recorder);
+
+        // Pre-warm audio output for instant chime playback
+        crate::system::audio_feedback::warm_audio_output();
+
+        crate::overlay::try_create_native_overlays(app_handle);
+    }
+
+    if crate::platform::get_hotkey_strategy() == "bridge" {
+        crate::platform::init::ensure_background_services();
+        crate::system::bridge_server::start(app.handle().clone());
+        crate::platform::compositor::deploy_trigger_script(app.handle());
+    }
+
+    // The capability itself is omitted from stable binaries. Keeping this
+    // behind the same compile-time feature makes the environment variable
+    // intentionally ineffective if it is set for a release build.
+    #[cfg(feature = "debug-assist")]
+    if std::env::var(DEVTOOLS_ENV_VAR).is_ok() {
+        log::info!("{DEVTOOLS_ENV_VAR} detected, opening dev tools...");
+        if let Some(main_window) = app.get_webview_window("main") {
+            main_window.open_devtools();
+        }
+    }
+
+    Ok(())
+}
+
 /// Builds the Tauri application: plugins (logging, single instance, autostart,
 /// updater, window state), the invoke handler, and window event wiring.
 pub fn build() -> tauri::Builder<tauri::Wry> {
@@ -182,186 +362,8 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
                 .with_state_flags(StateFlags::SIZE)
                 .build(),
         )
-        .on_window_event(|window, event| {
-            match event {
-                WindowEvent::CloseRequested { api, .. } if window.label() == "main" => {
-                    api.prevent_close();
-                    let _ = window.app_handle().save_window_state(StateFlags::SIZE);
-                    // Use the webview window for hide_main_window (which
-                    // needs &WebviewWindow, not &Window from on_window_event).
-                    if let Some(main_ww) = window.app_handle().get_webview_window("main") {
-                        if let Err(err) = crate::platform::window::hide_main_window(&main_ww) {
-                            log::error!("Failed to hide main window: {err}");
-                        }
-                    }
-                }
-                // On Windows, WebView2 automatically freezes JS execution when the
-                // hosting window is occluded (fully covered by another window) or
-                // minimized. This breaks global hotkey detection via keys_held events.
-                // Counter this by re-asserting WebView visibility whenever focus is lost,
-                // and running a periodic keepalive to defeat ongoing occlusion detection.
-                WindowEvent::Moved(position) if window.label() == "main" => {
-                    log_main_window_move(window, position);
-                }
-                #[cfg(target_os = "windows")]
-                WindowEvent::Focused(focused) => {
-                    if window.label() == "main" && !focused {
-                        crate::platform::window::keep_webview_active(window.app_handle(), "main");
-                        crate::platform::window::set_webview_keepalive(true);
-                    }
-                    if window.label() == "main" && *focused {
-                        crate::platform::window::set_webview_keepalive(false);
-                    }
-                }
-                _ => {}
-            }
-        })
-        .setup(|app| {
-            // Chained rather than replaced. The previous hook wrote only to the log
-            // file, and a setup failure exits without a console on Windows and
-            // when launched from Finder or a desktop entry, so the reason was
-            // invisible everywhere except a log nothing points the user at.
-            let previous_hook = std::panic::take_hook();
-            std::panic::set_hook(Box::new(move |info| {
-                log::error!("PANIC: {info}");
-                previous_hook(info);
-            }));
-
-            log::info!("Starting application setup...");
-
-            // A clear can be interrupted after this process has deleted some
-            // local data. Restore the native barrier before opening the DB or
-            // accepting renderer commands; the clear dialog will retry and
-            // remove the marker only after both native and browser cleanup.
-            let clear_recovery_pending =
-                match crate::system::local_data_clear_marker::is_pending(app.handle()) {
-                    Ok(true) => {
-                        log::warn!("Recovering an interrupted local-data clear");
-                        crate::db::local_data_write_gate::recover_pending_local_data_clear();
-                        true
-                    }
-                    Ok(false) => false,
-                    Err(error) => {
-                        log::error!("Unable to inspect the local-data clear marker: {error}");
-                        crate::db::local_data_write_gate::recover_pending_local_data_clear();
-                        // A marker we cannot inspect must fail closed just like a
-                        // marker confirmed to be pending.
-                        true
-                    }
-                };
-
-            // Preserve GGML files from the old app-data/models location before
-            // the desktop sidecars start using app-data/transcription-models.
-            if let Err(err) = crate::system::paths::migrate_legacy_models(app.handle()) {
-                log::error!("Failed to migrate legacy transcription models: {err}");
-            }
-
-            // Record the Windows elevation state once. An unelevated low-level
-            // keyboard hook cannot observe input delivered to a higher-integrity
-            // window (UIPI), so this is the first thing to check when a user
-            // reports hotkeys failing over an elevated app.
-            //
-            // Spin up the OS-level sleep/wake and session-unlock watcher so
-            // the global keyboard hook can be re-armed after resume. Without
-            // this the hotkey stops firing after a laptop sleep or a fast
-            // user-switch unlock.
-            #[cfg(target_os = "windows")]
-            {
-                crate::platform::windows::permissions::log_elevation_state();
-                crate::platform::windows::lifecycle::start_watcher(app.handle());
-            }
-
-            // Purge old log files, keeping the latest 10
-            crate::system::diagnostics::purge_old_logs(app.handle());
-
-            // Write startup diagnostics for debugging
-            crate::system::diagnostics::write_startup_diagnostics(app.handle());
-
-            // `database_path` may copy a legacy database, and `open_app_database`
-            // runs data-moving SQL migrations. Hold the native write mutex across
-            // both. During clear recovery, this special startup lease does not open
-            // the gate: it only lets setup reach the retry dialog, while all normal
-            // renderer and remote writes remain rejected.
-            let _startup_database_write_guard = tauri::async_runtime::block_on(
-                crate::db::local_data_write_gate::lock_startup_database_migration(
-                    clear_recovery_pending,
-                ),
-            )
-            .map_err(|error| -> Box<dyn std::error::Error> { Box::new(error) })?;
-
-            let db_path = {
-                let handle = app.handle();
-                crate::system::paths::database_path(handle)
-                    .map_err(|err| -> Box<dyn std::error::Error> { Box::new(err) })?
-            };
-
-            // The path belongs in the failure. A database that cannot be opened leaves the
-            // app unable to start, so this error is the only account of what
-            // happened, and without the path neither the log nor a crash report
-            // says which file to look at.
-            let pool = tauri::async_runtime::block_on(crate::db::open::open_app_database(&db_path))
-                .map_err(|err| -> Box<dyn std::error::Error> {
-                    let message = format!(
-                        "could not open the database at {}: {err}",
-                        db_path.display()
-                    );
-                    log::error!("{message}");
-                    message.into()
-                })?;
-            drop(_startup_database_write_guard);
-
-            app.manage(crate::state::OptionKeyDatabase::new(pool.clone()));
-            app.manage(crate::state::OverlayState::new());
-            app.manage(crate::state::RemoteReceiverState::new());
-            app.manage(crate::state::FloatingWindowState::new());
-
-            #[cfg(desktop)]
-            {
-                if std::env::args().any(|arg| arg == AUTOSTART_HIDDEN_ARG) {
-                    if let Some(main_window) = app.get_webview_window("main") {
-                        if let Err(err) = crate::platform::window::hide_main_window(&main_window) {
-                            log::error!("Failed to hide main window on autostart: {err}");
-                        }
-                    }
-                }
-
-                #[cfg(target_os = "windows")]
-                crate::platform::window::start_webview_keepalive(app.handle());
-
-                crate::system::tray::setup_tray(app)
-                    .map_err(|err| -> Box<dyn std::error::Error> { Box::new(err) })?;
-
-                let app_handle = app.handle();
-
-                let recorder = crate::platform::audio::new_recorder();
-
-                app.manage(recorder);
-
-                // Pre-warm audio output for instant chime playback
-                crate::system::audio_feedback::warm_audio_output();
-
-                crate::overlay::try_create_native_overlays(app_handle);
-            }
-
-            if crate::platform::get_hotkey_strategy() == "bridge" {
-                crate::platform::init::ensure_background_services();
-                crate::system::bridge_server::start(app.handle().clone());
-                crate::platform::compositor::deploy_trigger_script(app.handle());
-            }
-
-            // The capability itself is omitted from stable binaries. Keeping this
-            // behind the same compile-time feature makes the environment variable
-            // intentionally ineffective if it is set for a release build.
-            #[cfg(feature = "debug-assist")]
-            if std::env::var(DEVTOOLS_ENV_VAR).is_ok() {
-                log::info!("{DEVTOOLS_ENV_VAR} detected, opening dev tools...");
-                if let Some(main_window) = app.get_webview_window("main") {
-                    main_window.open_devtools();
-                }
-            }
-
-            Ok(())
-        })
+        .on_window_event(handle_window_event)
+        .setup(setup_app)
         .invoke_handler(tauri::generate_handler![
             crate::commands::user_get_one,
             crate::commands::user_record_usage,
