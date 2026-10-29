@@ -141,15 +141,13 @@ pub async fn pair_with_receiver(
                 trusted: true,
             };
 
-            // The remote handshake is complete. Only the local upsert takes the
-            // global database mutex, using the operation's original generation
-            // so a clear that started during the handshake invalidates it.
-            operation.ensure_current().map_err(|err| err.to_string())?;
-            let write_guard = crate::db::local_data_write_gate::lock_local_data_write(Some(
-                operation.generation(),
-            ))
-            .await
-            .map_err(|err| err.to_string())?;
+            // The remote handshake is complete. Take the native write mutex
+            // through the operation lease so clear cancellation can interrupt
+            // this wait instead of deadlocking while it drains remote work.
+            let write_guard = operation
+                .lock_local_data_write()
+                .await
+                .map_err(|err| err.to_string())?;
             crate::db::paired_remote_device_queries::upsert_paired_remote_device_unlocked(
                 &write_guard,
                 pool,

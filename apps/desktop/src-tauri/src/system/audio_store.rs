@@ -364,6 +364,7 @@ pub(crate) fn open_storage_dir(app: &tauri::AppHandle) -> io::Result<Dir> {
     create_or_open_dir_no_follow(&app_data, crate::system::paths::STORAGE_DIR_NAME)
 }
 
+#[cfg(test)]
 fn open_managed_audio_dir_at(app_data_dir: &Path) -> io::Result<Dir> {
     let app_data = open_dir_chain(app_data_dir)?;
 

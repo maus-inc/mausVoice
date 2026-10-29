@@ -202,6 +202,7 @@ pub(crate) async fn begin_local_data_clear() -> Result<LocalDataClearGuard, Erro
 /// Reopen native local-data writes after the frontend confirms that its
 /// app-owned browser storage was cleared. A prior native clear failure cannot
 /// call this because it never sets the ready marker.
+#[cfg(test)]
 pub(crate) async fn complete_local_data_clear() -> Result<(), Error> {
     complete_local_data_clear_with(|| Ok(())).await
 }
@@ -251,16 +252,27 @@ pub(crate) struct LocalDataRemoteOperationGuard {
 }
 
 impl LocalDataRemoteOperationGuard {
-    pub(crate) fn generation(&self) -> u64 {
-        self.generation
-    }
-
     pub(crate) fn ensure_current(&self) -> Result<(), Error> {
         if is_remote_operation_current(self.generation) {
             Ok(())
         } else {
             Err(gate_error())
         }
+    }
+
+    /// Take the native write mutex for a short remote-operation mutation.
+    /// Unlike the ordinary writer helper, this wait is cancellation-aware: a
+    /// clear can hold the mutex while draining remote leases without deadlocking
+    /// an operation that passed its generation check just before the clear.
+    pub(crate) async fn lock_local_data_write(&self) -> Result<LocalDataWriteGuard, Error> {
+        self.ensure_current()?;
+        let guard = tokio::select! {
+            biased;
+            _ = self.cancelled() => return Err(gate_error()),
+            guard = LOCAL_DATA_WRITE_LOCK.lock() => guard,
+        };
+        self.ensure_current()?;
+        Ok(guard)
     }
 
     /// Wait until a clear request invalidates this operation. `enable` registers
@@ -334,7 +346,7 @@ mod tests {
     };
     use std::sync::LazyLock;
     use std::time::Duration;
-    use tokio::sync::Mutex;
+    use tokio::sync::{oneshot, Mutex};
 
     static TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
@@ -461,6 +473,57 @@ mod tests {
         complete_local_data_clear()
             .await
             .expect("successful clear reopens writes after remote work drains");
+    }
+
+    #[tokio::test]
+    async fn clear_cancels_remote_operation_waiting_for_native_write_mutex() {
+        let _test_guard = TEST_LOCK.lock().await;
+        let generation = current_write_generation().expect("gate starts open");
+        let active_write = lock_local_data_write(Some(generation))
+            .await
+            .expect("hold the native write mutex");
+        let remote_operation = begin_local_data_remote_operation()
+            .expect("remote operation starts while writes are open");
+        let (started_tx, started_rx) = oneshot::channel();
+        let remote_write = tokio::spawn(async move {
+            started_tx
+                .send(())
+                .expect("test receiver remains available");
+            remote_operation.lock_local_data_write().await.is_err()
+        });
+        started_rx
+            .await
+            .expect("remote operation reached the write-lock wait");
+        tokio::task::yield_now().await;
+        assert!(!remote_write.is_finished());
+
+        let clear = tokio::spawn(begin_local_data_clear());
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !super::LOCAL_DATA_CLEAR_ACTIVE.load(std::sync::atomic::Ordering::Acquire) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("clear invalidates the pending remote write");
+        assert!(tokio::time::timeout(Duration::from_secs(1), remote_write)
+            .await
+            .expect("remote write wait is cancelled without releasing the mutex")
+            .expect("remote task does not panic"));
+        assert!(
+            !clear.is_finished(),
+            "clear still waits for the active native write, not the cancelled remote lease"
+        );
+
+        drop(active_write);
+        let clear_guard = clear
+            .await
+            .expect("clear task does not panic")
+            .expect("clear acquires the released native write mutex");
+        clear_guard.mark_ready_for_frontend_completion();
+        drop(clear_guard);
+        complete_local_data_clear()
+            .await
+            .expect("successful clear reopens writes after the remote lease drains");
     }
 
     #[tokio::test]
