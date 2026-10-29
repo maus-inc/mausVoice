@@ -394,6 +394,7 @@ export const TranscriptionRow = ({
           color="text.primary"
           maxLines={3}
           clampPaddingRight={compactTranscript ? "56px" : undefined}
+          inlineToggleRight={compactTranscript ? "12px" : undefined}
           sx={{ my: 1 }}
         >
           {transcription?.transcript}

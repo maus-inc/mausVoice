@@ -42,7 +42,7 @@ export const surfaces = {
 /** Warm, ember-toned intensity ramps for the daily-word heatmap. */
 export const activityHeatmap = {
   light: ["#ECE8E1", "#F0DAC5", "#E6B38D", "#D88454", "#B75C2B"],
-  dark: ["#2A2420", "#573822", "#92512F", "#CA6D39", "#EF8F50"],
+  dark: ["#281C14", "#573822", "#92512F", "#CA6D39", "#EF8F50"],
 } as const;
 
 const hexToRgb = (hex: string) => {

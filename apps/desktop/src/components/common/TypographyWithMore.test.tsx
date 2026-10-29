@@ -113,7 +113,10 @@ afterEach(() => {
   }
 });
 
-const render = async (clampPaddingRight?: number | string) => {
+const render = async (
+  clampPaddingRight?: number | string,
+  inlineToggleRight?: number | string,
+) => {
   await act(async () => {
     root?.render(
       <StrictMode>
@@ -122,6 +125,7 @@ const render = async (clampPaddingRight?: number | string) => {
             variant="body2"
             maxLines={3}
             clampPaddingRight={clampPaddingRight}
+            inlineToggleRight={inlineToggleRight}
           >
             A long transcription that keeps going well past three lines so the
             clamp engages and the disclosure control appears.
@@ -166,6 +170,21 @@ describe("TypographyWithMore disclosure toggle", () => {
         (paragraph) => window.getComputedStyle(paragraph).paddingRight,
       ),
     ).toEqual(["12px", "12px"]);
+  });
+
+  it("applies the explicit right inset for the inline disclosure control", async () => {
+    await render("56px", "12px");
+    const button = window.getComputedStyle(requireToggleButton());
+    expect(button.right).toBe("12px");
+    expect(button.bottom).toBe("var(--app-spacing)");
+  });
+
+  it("moves the compact disclosure below text in narrow containers", async () => {
+    await render("56px", "12px");
+    const styles = styleText().replace(/\s+/g, "");
+    expect(styles).toContain("@containertypography-with-more(max-width:480px)");
+    expect(styles).toContain("position:static");
+    expect(styles).toContain("padding-right:0");
   });
 
   it("renders collapsed with an inline 'Show more' whose hover is a link affordance, not a repaint of the fade", async () => {
@@ -226,14 +245,16 @@ describe("TypographyWithMore disclosure toggle", () => {
     );
   });
 
-  it("paints the affordance at rest where there is no hover to trigger it", async () => {
+  it("paints the affordance at rest for a coarse touch pointer", async () => {
     await render();
     const button = requireToggleButton();
 
-    // A touch device never fires :hover, so a hover-only underline left a
-    // truncated transcript with no affordance at all. The no-hover query
-    // carries the same revealed state.
-    const touch = stateRulesFor(button, "@media (hover: none)");
+    // A touch device never fires :hover, so its resting state must retain
+    // the inline link cue without leaking into no-pointer desktop screenshots.
+    const touch = stateRulesFor(
+      button,
+      "@media (hover: none) and (pointer: coarse)",
+    );
     expect(touch).toContain("text-decoration-color:currentColor");
   });
 

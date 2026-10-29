@@ -127,10 +127,13 @@ export const HomeAnalyticsGrid = ({
           gridArea: "activity",
           minWidth: 0,
           alignSelf: "center",
-          justifySelf: "start",
+          justifySelf: "center",
           maxWidth: activityHeatmapGeometry.viewportWidth,
           width: "100%",
-          "@container home-page (min-width: 560px)": { ml: -1.125 },
+          "@container home-page (min-width: 560px)": {
+            ml: -1.125,
+            justifySelf: "start",
+          },
         }}
       >
         <ActivityHeatmap

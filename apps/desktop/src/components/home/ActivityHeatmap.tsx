@@ -166,6 +166,7 @@ const ActivityHeatmapGrid = ({
                 gridColumn: 1,
                 gridRow,
                 color: "text.secondary",
+                fontFamily: "var(--font-data)",
                 fontSize: 9,
                 lineHeight: `${activityHeatmapGeometry.cellSize}px`,
                 position: "sticky",
@@ -192,6 +193,9 @@ const ActivityHeatmapGrid = ({
                 arrow
                 placement="top"
                 disableHoverListener={cell.isFuture}
+                slotProps={{
+                  tooltip: { sx: { fontFamily: "var(--font-data)" } },
+                }}
               >
                 <Box
                   aria-hidden="true"
@@ -391,7 +395,12 @@ const ActivityHeatmapLegend = ({ colors }: { colors: HeatmapColors }) => {
     >
       <Typography
         variant="caption"
-        sx={{ color: "text.secondary", fontSize: 9, lineHeight: 1 }}
+        sx={{
+          color: "text.secondary",
+          fontFamily: "var(--font-data)",
+          fontSize: 9,
+          lineHeight: 1,
+        }}
       >
         <FormattedMessage defaultMessage="Less" />
       </Typography>
@@ -409,7 +418,12 @@ const ActivityHeatmapLegend = ({ colors }: { colors: HeatmapColors }) => {
       ))}
       <Typography
         variant="caption"
-        sx={{ color: "text.secondary", fontSize: 9, lineHeight: 1 }}
+        sx={{
+          color: "text.secondary",
+          fontFamily: "var(--font-data)",
+          fontSize: 9,
+          lineHeight: 1,
+        }}
       >
         <FormattedMessage defaultMessage="More" />
       </Typography>
@@ -464,7 +478,13 @@ export const ActivityHeatmap = ({
       component="section"
       aria-labelledby="home-activity-heading"
       data-testid="home-activity-heatmap"
-      sx={{ minWidth: 0, pt: 3.75 }}
+      sx={{
+        minWidth: 0,
+        pt: 0,
+        "@container home-page (min-width: 560px)": {
+          pt: `${activityHeatmapGeometry.desktopTopPadding}px`,
+        },
+      }}
     >
       <ActivityHeatmapHeader
         status={status}

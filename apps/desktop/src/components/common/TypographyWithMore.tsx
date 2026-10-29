@@ -11,6 +11,7 @@ type TypographyWithMoreProps = TypographyProps & {
   fontSize?: number | string;
   lineHeight?: number | string;
   clampPaddingRight?: number | string;
+  inlineToggleRight?: number | string;
 };
 
 const defaultClampStyles = (maxLines: number) => ({
@@ -19,6 +20,10 @@ const defaultClampStyles = (maxLines: number) => ({
   WebkitBoxOrient: "vertical" as const,
   overflow: "hidden",
 });
+
+const coarseTouchQuery = "(hover: none) and (pointer: coarse)";
+const narrowInlineToggleQuery =
+  "@container typography-with-more (max-width: 480px)";
 
 const normalizeSxProp = (
   baseClampStyles: Record<string, unknown>,
@@ -42,6 +47,7 @@ export function TypographyWithMore({
   fontSize,
   lineHeight,
   clampPaddingRight,
+  inlineToggleRight,
   ...typographyProps
 }: TypographyWithMoreProps) {
   const [expanded, setExpanded] = useState(initiallyExpanded);
@@ -115,32 +121,47 @@ export function TypographyWithMore({
       return normalized;
     }
 
-    const paddingAdjustment = { pr: clampPaddingRight ?? 6 } as const;
+    const paddingAdjustments = [
+      { pr: clampPaddingRight ?? 6 },
+      ...(inlineToggleRight === undefined
+        ? []
+        : [{ [narrowInlineToggleQuery]: { pr: 0 } }]),
+    ];
 
     if (Array.isArray(normalized)) {
-      return [...normalized, paddingAdjustment];
+      return [...normalized, ...paddingAdjustments];
     }
 
     if (normalized) {
-      return [normalized, paddingAdjustment];
+      return [normalized, ...paddingAdjustments];
     }
 
-    return paddingAdjustment;
-  }, [clampPaddingRight, clampStyles, shouldClamp, sx]);
+    return paddingAdjustments;
+  }, [clampPaddingRight, clampStyles, inlineToggleRight, shouldClamp, sx]);
   const hiddenTypographySx = useMemo(() => {
     const baseDisplay = { display: "block" } as const;
 
-    if (clampPaddingRight === undefined && !sx) {
+    if (
+      clampPaddingRight === undefined &&
+      inlineToggleRight === undefined &&
+      !sx
+    ) {
       return baseDisplay;
     }
 
-    const styles = Array.isArray(sx) ? [...sx] : sx ? [sx] : [];
+    const styles = Array.isArray(sx) ? [...sx] : [];
+    if (sx && !Array.isArray(sx)) {
+      styles.push(sx);
+    }
     if (clampPaddingRight !== undefined) {
       styles.push({ pr: clampPaddingRight });
     }
+    if (inlineToggleRight !== undefined) {
+      styles.push({ [narrowInlineToggleQuery]: { pr: 0 } });
+    }
 
     return [baseDisplay, ...styles];
-  }, [clampPaddingRight, sx]);
+  }, [clampPaddingRight, inlineToggleRight, sx]);
 
   const renderToggleButton = (inline: boolean) => (
     <Button
@@ -164,8 +185,8 @@ export function TypographyWithMore({
           theme.vars?.palette.text.secondary ?? theme.palette.text.secondary;
 
         // The revealed state for the inline control, and for the out-of-flow
-        // chip. Declared once each and reused by :hover, :focus-visible and the
-        // no-hover media query, so a change to one reaches the others.
+        // chip. Declared once each and reused by hover, keyboard focus and
+        // touch states so their interaction affordances cannot drift apart.
         const inlineReveal = {
           color: textPrimary,
           textDecorationColor: "currentColor",
@@ -185,10 +206,9 @@ export function TypographyWithMore({
           lineHeight: lineHeightResolved,
           textTransform: "none",
           // De-emphasized at rest so the disclosure control never competes
-          // with the content. The affordance is revealed on hover, on
-          // keyboard focus, and at rest wherever there is no hover to trigger
-          // it. `reveal` below is the single definition of that state, so the
-          // three paths cannot drift apart.
+          // with the content. Inline links reveal their cue on hover/focus and
+          // at rest for coarse-touch pointers; chips reveal a surface cue on
+          // devices that cannot hover.
           fontWeight: theme.typography.fontWeightMedium,
           color: textSecondary,
           textDecoration: "underline",
@@ -198,8 +218,8 @@ export function TypographyWithMore({
           ...(inline
             ? {
                 position: "absolute" as const,
-                right: 0,
-                bottom: 0,
+                right: inlineToggleRight ?? 0,
+                bottom: inlineToggleRight === undefined ? 0 : theme.spacing(1),
                 mt: 0,
                 py: 0,
                 borderRadius: 999,
@@ -214,11 +234,26 @@ export function TypographyWithMore({
                 }`,
                 "&:hover": inlineReveal,
                 "&:focus-visible": inlineReveal,
-                // A pointer that cannot hover never fires :hover, so on touch
-                // the underline is the only thing telling the user this is a
-                // control. Paint it at rest there rather than leaving a
-                // truncated transcript with no affordance at all.
-                [`@media ${noHoverQuery}`]: inlineReveal,
+                // Touch devices have no hover state; the resting underline
+                // keeps the inline disclosure recognizable. A no-pointer
+                // environment can still reveal it on keyboard focus.
+                [`@media ${coarseTouchQuery}`]: inlineReveal,
+                ...(inlineToggleRight === undefined
+                  ? {}
+                  : {
+                      [narrowInlineToggleQuery]: {
+                        position: "static",
+                        right: "auto",
+                        bottom: "auto",
+                        display: "block",
+                        width: "fit-content",
+                        ml: "auto",
+                        mt: 0,
+                        backgroundColor: "transparent",
+                        boxShadow: "none",
+                        borderRadius: 0,
+                      },
+                    }),
               }
             : {
                 // Ghost chip for the out-of-flow toggle: comfortable padding
@@ -249,7 +284,14 @@ export function TypographyWithMore({
 
   return (
     <Box>
-      <Box ref={containerRef} sx={{ position: "relative" }}>
+      <Box
+        ref={containerRef}
+        sx={{
+          position: "relative",
+          containerName: "typography-with-more",
+          containerType: "inline-size",
+        }}
+      >
         <Typography {...typographyProps} sx={typographySx}>
           {children}
         </Typography>

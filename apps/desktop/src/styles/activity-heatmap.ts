@@ -9,6 +9,8 @@ export const activityHeatmapGeometry = {
   cellSize,
   cellGap,
   labelColumnWidth,
+  /** Keeps the chart centered beside the metrics in the desktop layout. */
+  desktopTopPadding: 30,
   viewportWidth: 274,
   minWidth:
     labelColumnWidth +

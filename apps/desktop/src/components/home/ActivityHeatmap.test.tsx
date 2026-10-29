@@ -69,6 +69,7 @@ describe("ActivityHeatmap", () => {
       cellSize: 10,
       cellGap: 4,
       labelColumnWidth: 22,
+      desktopTopPadding: 30,
       viewportWidth: 274,
       minWidth: 760,
     });
@@ -129,6 +130,13 @@ describe("ActivityHeatmap", () => {
       .filter(Boolean);
 
     expect(weekdayLabels).toEqual(["M", "W", "F", "S"]);
+    const styles = Array.from(
+      document.querySelectorAll("style[data-emotion]"),
+      (style) => style.textContent ?? "",
+    )
+      .join("\n")
+      .toLowerCase();
+    expect(styles).toContain("font-family:var(--font-data)");
     expect(
       container.querySelectorAll('[data-testid="activity-day"]'),
     ).toHaveLength(371);
@@ -149,7 +157,7 @@ describe("ActivityHeatmap", () => {
       .join("\n")
       .toLowerCase();
 
-    expect(styles).toContain("#2a2420");
+    expect(styles).toContain("#281c14");
     expect(styles).toContain("#ef8f50");
   });
 
