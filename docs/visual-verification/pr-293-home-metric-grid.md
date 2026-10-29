@@ -1,82 +1,95 @@
-# Home metric grid: manual visual verification record
+# Home metric grid visual verification record
 
-## Status
+## Result
 
-The compact-grid mapping change is covered by the HomePage regression tests. Fresh browser screenshots of the live base and the updated working tree are **not available** in this environment. This record deliberately does not present a design reference or an old PR render as a current-base or post-fix capture.
+Fresh screenshots are included for the live base and the updated PR code. They show the old Home cards on the base and the compact metric pairing on the updated head. The reference-sized updated capture keeps the heatmap between the two metric columns and shows the requested `Alt` and `X` keycaps.
 
-## Provenance and screenshot limitation
+The responsive captures cover 768×1000, 390×1000, and 320×1000 CSS-pixel viewports. The updated Home frame measured 464px, 342px, and 272px at those widths; it measured 620px at 1157×727. At every captured viewport, the document width matched the viewport width. Separate screenshots force the frame itself to 559px and 560px. The compact layout appears at 559px, and the wide layout appears at 560px. The empty-scenario capture confirms the compact layout with no speed sample.
 
-- Live target branch: `arena/0.1.6-consolidation` at `609f2a8724343bbbdbc7f980174d2dcbdbcadb2e`.
-- PR #293 head before this working-tree change: `c656daf4951678a2a03c7146513f14c3d0334320`.
-- The PR object reports base SHA `86dc7c3af663fcfc17c8662e437a190ea46f019f`; that commit is the merge base with the live target branch.
-- Live base `609f2a8` still has the legacy Home statistics-card implementation; it does not contain the PR's `HomeAnalyticsGrid`. A base render would therefore show a different Home composition, and it cannot be inferred from the PR renders below.
-- The repo-owned `maus-inc/mausVoice` vendor bundle has no browser payload. The current base guidance rejects adding a browser/Playwright harness. No fresh base or updated-head screenshot was captured, and no temporary browser payload or capture was used for this record.
-- The old `pr-293-home-*.png` files below are retained as historical PR evidence only. They are not captures from live base `609f2a8` or from the updated working tree.
+These are browser-preview captures, not screenshots of a native Tauri window. They cover the dark appearance used by the design reference; they do not claim a light-mode review.
 
-## Design reference
+## Source and capture method
 
-`docs/assets/image_253.png` is the requested 1157×727 reference, not an app capture. Its wide composition places streak and monthly words in the left column, total words and speed in the right column, with the heatmap between them. The visible `Alt` and `X` keycaps are part of the reference.
+- The live base before the change was `arena/0.1.6-consolidation` at `609f2a8724343bbbdbc7f980174d2dcbdbcadb2e`. This snapshot still uses the legacy Home statistics cards and does not contain `HomeAnalyticsGrid`.
+- The updated code after the change was PR head `e6105912e5d6c086b747b035fe77695f18212007`. The screenshot-and-documentation commit that follows it does not change application code.
+- The base and head previews were served from separate source snapshots. Both used the `populated` route, but the snapshots contain different preview fixture dates and streak values. The screenshots compare layout, not controlled metric values. The old `pr-293-home-*.png` files were not used as base or updated-head evidence.
+- The capture used one-off Chromium 153.0.8010.0 from `@sparticuz/chromium` 153.0.0 with Puppeteer Core 25.16.0. The temporary browser ran outside the repository, as explicitly authorized for these screenshots. No browser, automation package, or test harness was added to the repository.
+- Browser viewport sizes are CSS pixels at device scale factor 1. Dark color-scheme and reduced-motion preferences were emulated. The preview itself remained in its `system` theme mode, and the preview-only toolbar was hidden in the captured images.
+- The reference shows the literal `Alt` keycap, while the browser preview's temporary OS adapter defaults to macOS and renders `⌥`. For these captures only, the preview OS adapter was temporarily set to Windows, then restored; no production code or lasting preview code change was committed.
+- `PreviewRoot` does not mount `KeyPressSideEffects`, so the shortcut recorder opens but does not accept browser keypresses. Rather than alter the keycap text or claim the UI recorded it, the preview's exported `produceAppState` helper set the fixture's dictate hotkey to `Alt` + `KeyX`. The visible badge was checked as `Alt + X`. This was capture-only preview state, not persisted product data.
+- The live base displayed its one-time release announcement. It was dismissed by selecting **Next** twice, then **Got it!**. The **Getting started** checklist was skipped before capture. The base render also logged a missing-key React warning in its Home translation content; the route rendered and the warning did not obscure the screenshots.
 
-![Requested design reference, 1157×727; not a live app capture](../assets/image_253.png)
+## Reference-sized comparison
 
-## Historical compact renders
+The requested design reference is `docs/assets/image_253.png` and measures 1157×727. It is a reference, not an app capture.
 
-The following files are old PR renders. Their dimensions are included for inspection; neither image is labeled or used as a live-base “before” or current-head “after.” In the 390px and 768px examples, streak/month are the two left-anchored cards and total/speed are the two right-anchored cards, so a compact row contains two left anchors and the next row contains two right anchors. That is the mismatch the current CSS-area change addresses.
+| Live base, `609f2a8` | Updated code, `e610591` |
+| --- | --- |
+| ![Live base Home at 1157×727, populated scenario](../assets/pr-293-home-base-609f2a8-1157x727.png) | ![Updated Home at 1157×727, populated scenario](../assets/pr-293-home-head-e610591-1157x727.png) |
 
-![Historical PR render, 390×1000; not live-base or updated-head evidence](../assets/pr-293-home-mobile-after.png)
+The updated image has a 620px Home frame. Its wide grid areas are `"streak activity total" "month activity speed"`. The base image shows the actual older card layout from the live base, not a reconstructed or historical "before".
 
-![Historical PR render, 768×1000; not live-base or updated-head evidence](../assets/pr-293-home-tablet-768-after.png)
+## Responsive and edge-case screenshots
 
-## Expected layout in the updated tree
+The file names identify the source commit and viewport. The 559px and 560px images use a 1157×727 browser viewport while setting the **Home frame** to the named width; these are not 559px and 560px browser viewports.
 
-The frame in `HomePage.tsx` has `max-width: 620px`; the grid switches at a **560px container width**, not a 560px viewport width. The updated compact areas are:
+| Check | Live base | Updated code |
+| --- | --- | --- |
+| 768×1000 viewport | [Base PNG](../assets/pr-293-home-base-609f2a8-768x1000.png) | [Updated PNG](../assets/pr-293-home-head-e610591-768x1000.png) |
+| 390×1000 viewport | [Base PNG](../assets/pr-293-home-base-609f2a8-390x1000.png) | [Updated PNG](../assets/pr-293-home-head-e610591-390x1000.png) |
+| 320×1000 viewport | [Base PNG](../assets/pr-293-home-base-609f2a8-320x1000.png) | [Updated PNG](../assets/pr-293-home-head-e610591-320x1000.png) |
+| Updated frame at 559px | Not applicable to legacy layout | [Compact layout PNG](../assets/pr-293-home-head-e610591-frame-559px.png) |
+| Updated frame at 560px | Not applicable to legacy layout | [Wide layout PNG](../assets/pr-293-home-head-e610591-frame-560px.png) |
+| Updated empty scenario, 390×1000 | Not applicable to legacy layout | [No-speed PNG](../assets/pr-293-home-head-e610591-empty-390x1000.png) |
 
-```text
-With speed:  "streak total" "month speed" "activity activity"
-No speed:   "streak total" "month ."     "activity activity"
+The `empty` preview scenario has no transcription rows and no speed sample. Its fixture still seeds account totals, so nonzero streak or word totals are expected.
+
+The measured updated frame widths and grid areas were:
+
+| Capture | Frame width | Grid areas |
+| --- | ---: | --- |
+| 1157×727 viewport | 620px | `"streak activity total" "month activity speed"` |
+| 768×1000 viewport | 464px | `"streak total" "month speed" "activity activity"` |
+| 390×1000 viewport | 342px | `"streak total" "month speed" "activity activity"` |
+| 320×1000 viewport | 272px | `"streak total" "month speed" "activity activity"` |
+| 1157×727 viewport, frame forced to 559px | 559px | `"streak total" "month speed" "activity activity"` |
+| 1157×727 viewport, frame forced to 560px | 560px | `"streak activity total" "month activity speed"` |
+| Empty scenario, 390×1000 viewport | 342px | `"streak total" "month ." "activity activity"` |
+
+At 560px and wider, the speed-less wide map remains `"streak activity total" "month activity total"`; the total card occupies the named area across both rows. In the compact no-speed map, the second row has month on the left and an empty right cell, with the heatmap below.
+
+## Manual visual-check flow
+
+A person can inspect the linked PNGs above without running the app:
+
+1. Compare the reference image with the two 1157×727 captures. Check the location of the heatmap, the card pairings, and the visible `Alt` and `X` keycaps.
+2. Open each base/head pair at 768×1000, 390×1000, and 320×1000. Check that labels remain legible and the page does not require horizontal scrolling.
+3. Compare the 559px and 560px frame captures. The 559px frame uses the compact map; the 560px frame uses the wide map. The browser viewport stays the same in both images, so the change is tied to the measured frame width.
+4. Open the empty-scenario capture. Confirm that no speed card is shown, the total metric remains beside streak, the month row leaves its right cell empty, and the heatmap remains below.
+
+For a separate check in the attached browser preview, select **populated** or **empty** in its scenario toolbar and reset the scenario. Measure the frame and grid with DevTools rather than inferring the container state from the browser width:
+
+```js
+(() => {
+  const frame = document.querySelector('[data-testid="home-page-frame"]');
+  const grid = document.querySelector('[data-testid="home-analytics-grid"]');
+  return {
+    frameWidth: frame && Math.round(frame.getBoundingClientRect().width),
+    viewportWidth: window.innerWidth,
+    documentScrollWidth: document.documentElement.scrollWidth,
+    gridAreas: grid && getComputedStyle(grid).gridTemplateAreas,
+  };
+})()
 ```
 
-At 560px and wider, the existing wide arrangement remains unchanged:
+The browser-preview shortcut recorder is not wired to key events, so it cannot set `Alt+X` through the UI. The screenshot captures used the exported store helper described above; the screenshot does not claim otherwise. To test the boundary in the preview, use a viewport with enough room, temporarily set `home-page-frame` to `width: 559px; max-width: none`, record the grid areas, then change it to `560px` and compare. Remove the temporary inline styles afterward.
 
-```text
-With speed:  "streak activity total" "month activity speed"
-No speed:   "streak activity total" "month activity total"
-```
+## Historical renders
 
-The intended compact result is a left-aligned streak beside right-aligned total on row one, then left-aligned month beside right-aligned speed on row two. With no speed sample, the second row has month on the left and an empty right cell. The heatmap remains below the metric rows. Card styling, typography, and the wide reference composition are unchanged.
-
-## Manual verification flow
-
-Use the attached Arena preview for the updated working tree and open `/dashboard?scenario=populated`. The preview toolbar can select and reset the `populated` and `empty` scenarios. This flow is for a human with a browser; it has not been run in this environment.
-
-1. Select **populated**, reset the scenario, and use the top-left **Theme settings** control to inspect both Dark and Light modes.
-2. The preview fixture starts with `Alt+Space`. To match the reference, open the shortcut dialog from the visible dictate badge and set the shortcut to **Alt+X** before inspecting the 1157×727 view. Re-selecting a scenario resets its fixture data, so set the shortcut after selecting the scenario.
-3. Check these browser viewport sizes: 320×1000, 390×1000, 559×1000, 560×1000, 768×1000, 1157×727, and 1440×1024 CSS pixels. At each size, inspect the card text, heatmap placement, clipping, and horizontal scrolling.
-4. Measure the actual frame width; do not infer the container-query state from the viewport or assume the sidebar is the cause of a layout change. In DevTools, run:
-
-   ```js
-   (() => {
-     const frame = document.querySelector('[data-testid="home-page-frame"]');
-     const grid = document.querySelector('[data-testid="home-analytics-grid"]');
-     return {
-       frameWidth: frame && Math.round(frame.getBoundingClientRect().width),
-       viewportWidth: window.innerWidth,
-       documentScrollWidth: document.documentElement.scrollWidth,
-       gridAreas: grid && getComputedStyle(grid).gridTemplateAreas,
-     };
-   })()
-   ```
-
-5. To test the exact breakpoint independently of the side navigation, use 1440×1024 (or another viewport where the main content area is wider than 620px), select `home-page-frame` in DevTools, and temporarily set its inline `width` to `559px`, then `560px` (and `max-width: none`). Confirm the compact template below 560 and the wide template at 560; remove the temporary inline declarations afterward.
-6. Select **empty**, reset, and repeat the compact checks. Confirm there is no speed card, the total metric remains in the first row’s right cell, and the month metric remains in the second row’s left cell.
-7. At 320px and 390px, confirm `documentScrollWidth <= viewportWidth` and that labels and keycaps are not clipped. At 1157×727, compare the wide layout with the reference above and confirm the visible `Alt` and `X` keycaps.
-
-## Evidence still outstanding
-
-A human-inspectable audit is provided here, but the requested fresh live-base “before” and updated-head “after” screenshots remain outstanding. The attached preview is available for manual inspection; this record does not claim that the updated tree has passed screenshot-based visual verification. When a permitted browser is available, capture the base from live `609f2a8724343bbbdbc7f980174d2dcbdbcadb2e` and the updated head at the same viewport/theme/scenario settings, then add those captures with their actual provenance.
+`pr-293-home-mobile-after.png`, `pr-293-home-tablet-768-after.png`, and the other existing `pr-293-home-*.png` files are retained as historical PR artifacts. They are not captures from the live base or the updated head listed above, and they are not used as evidence in this record.
 
 ## Design guidance consulted
 
-- [Carbon Design System: Dashboards](https://carbondesignsystem.com/building-blocks/data-visualization/dashboards/) — consistent layout, clear hierarchy, and grouping related dashboard metrics.
-- [Android Developers: Adaptive Material guidance](https://developer.android.com/codelabs/adaptive-material-guidance) — adapt to available window size and group related content rather than assuming device identity.
-- [W3C WCAG 2.2: Reflow](https://www.w3.org/WAI/WCAG22/Understanding/reflow.html) — use the narrow-width check to confirm reflow without two-dimensional scrolling at 320 CSS pixels.
+- [Carbon Design System dashboard guidance](https://carbondesignsystem.com/building-blocks/data-visualization/dashboards/) recommends consistent layout, clear hierarchy, and grouping related metrics.
+- [Android Developers adaptive Material guidance](https://developer.android.com/codelabs/adaptive-material-guidance) recommends adapting to available window size and grouping related content.
+- [W3C WCAG 2.2 reflow guidance](https://www.w3.org/WAI/WCAG22/Understanding/reflow.html) supports narrow-width checks for two-dimensional scrolling at 320 CSS pixels.
