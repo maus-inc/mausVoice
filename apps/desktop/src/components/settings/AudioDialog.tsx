@@ -67,6 +67,7 @@ const ThockVolumeControl = ({
           min={0.05}
           max={0.5}
           step={0.05}
+          valueLabelFormat={(value) => `${Math.round(value * 100)}%`}
           disabled={!enabled}
           ariaLabel={intl.formatMessage({
             defaultMessage: "Pill click volume",
@@ -176,6 +177,7 @@ export const AudioDialog = () => {
               min={0}
               max={1}
               step={0.05}
+              valueLabelFormat={(value) => `${Math.round(value * 100)}%`}
               ariaLabel={intl.formatMessage({
                 defaultMessage: "Dictation audio dim level",
               })}

@@ -167,6 +167,7 @@ export const ElasticSlider = ({
         disabled={disabled}
         valueLabelDisplay={valueLabelDisplay}
         valueLabelFormat={valueLabelFormat}
+        getAriaValueText={valueLabelFormat}
         aria-label={ariaLabel}
         sx={buildElasticSliderSx(accentFill, rail)}
       />

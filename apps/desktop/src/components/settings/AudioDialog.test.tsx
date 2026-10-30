@@ -41,6 +41,16 @@ describe("AudioDialog", () => {
       const input = document.querySelector<HTMLInputElement>(
         '[role="dialog"] input[type="checkbox"]',
       );
+      expect(
+        document
+          .querySelector('[aria-label="Pill click volume"]')
+          ?.getAttribute("aria-valuetext"),
+      ).toBe("35%");
+      expect(
+        document
+          .querySelector('[aria-label="Dictation audio dim level"]')
+          ?.getAttribute("aria-valuetext"),
+      ).toBe("100%");
       expect(input).not.toBeNull();
       const content = document.querySelector<HTMLElement>(
         '[role="dialog"] .MuiDialogContent-root',
