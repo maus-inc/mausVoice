@@ -16,7 +16,7 @@ import { focusAfterDictionaryDelete } from "./dictionary-delete-focus";
 import {
   deleteDictionaryTerm,
   updateDictionaryTerm,
-} from "./term-mutation-queue";
+} from "../../utils/term-mutation-queue";
 import {
   isEditableTarget,
   useContextMenu,

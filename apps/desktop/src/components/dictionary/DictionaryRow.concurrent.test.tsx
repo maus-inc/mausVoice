@@ -16,12 +16,14 @@ const mocks = vi.hoisted(() => ({
   remove: vi.fn(),
   error: vi.fn(),
   list: vi.fn(),
+  create: vi.fn(),
 }));
 vi.mock("../../repos", () => ({
   getTermRepo: () => ({
     updateTerm: mocks.update,
     deleteTerm: mocks.remove,
     listTerms: mocks.list,
+    createTerm: mocks.create,
   }),
 }));
 vi.mock("../../actions/app.actions", () => ({
@@ -35,7 +37,10 @@ vi.mock("react-intl", async (importOriginal) => {
 import { IntlProvider } from "react-intl";
 import en from "../../i18n/locales/en.json";
 import { DictionaryRow } from "./DictionaryRow";
-import { loadDictionary } from "../../actions/dictionary.actions";
+import {
+  createGlossaryTerms,
+  loadDictionary,
+} from "../../actions/dictionary.actions";
 ensureUiHarness();
 const original = {
   id: "a",
@@ -70,6 +75,7 @@ beforeEach(() => {
   mocks.remove.mockReset();
   mocks.error.mockReset();
   mocks.list.mockReset();
+  mocks.create.mockReset();
   produceAppState((s) => {
     s.termById.a = original;
     s.dictionary.termIds = ["a"];
@@ -317,6 +323,38 @@ it("does not redisplay an entry if Dictionary reloads during its deletion", asyn
     expect(getAppState().dictionary.termIds).toEqual([]);
   } finally {
     removal.resolve();
+    close();
+  }
+});
+
+it("does not delete an optimistic glossary entry before its creation finishes", async () => {
+  const creation = deferred();
+  mocks.create.mockImplementation((term: Term) =>
+    creation.promise.then(() => term),
+  );
+  mocks.remove.mockResolvedValue(undefined);
+  const { host, close } = await mount();
+  try {
+    let adding!: ReturnType<typeof createGlossaryTerms>;
+    await act(async () => {
+      adding = createGlossaryTerms(["new word"]);
+      await Promise.resolve();
+    });
+    await act(async () =>
+      host
+        .querySelector<HTMLButtonElement>(
+          'button[aria-label="Delete dictionary item new word"]',
+        )!
+        .click(),
+    );
+    expect(mocks.remove).not.toHaveBeenCalled();
+    await act(async () => {
+      creation.resolve();
+      await adding;
+    });
+    expect(mocks.remove).toHaveBeenCalledTimes(1);
+  } finally {
+    creation.resolve();
     close();
   }
 });

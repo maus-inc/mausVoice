@@ -1,8 +1,8 @@
 import type { Term } from "@maus-inc/types";
-import { getTermRepo } from "../../repos";
-import { trackDictionaryMutation } from "../../utils/dictionary-mutations";
+import { getTermRepo } from "../repos";
+import { trackDictionaryMutation } from "./dictionary-mutations";
 
-type Lane = { saved: Term; tail: Promise<void> };
+type Lane = { saved: Term | null; tail: Promise<void> };
 const lanes = new Map<string, Lane>();
 
 // SQLite updates and deletes can otherwise complete out of order: updates
@@ -10,10 +10,11 @@ const lanes = new Map<string, Lane>();
 const enqueue = (
   baseline: Term,
   operation: (lane: Lane) => Promise<void>,
+  initialSaved: Term | null = baseline,
 ): Promise<void> => {
   let lane = lanes.get(baseline.id);
   if (!lane) {
-    lane = { saved: baseline, tail: Promise.resolve() };
+    lane = { saved: initialSaved, tail: Promise.resolve() };
     lanes.set(baseline.id, lane);
   }
   const current = lane;
@@ -37,6 +38,7 @@ export const updateDictionaryTerm = (
   onFailure: (saved: Term, error: unknown) => void,
 ): Promise<void> =>
   enqueue(baseline, async (lane) => {
+    if (!lane.saved) return;
     try {
       await getTermRepo().updateTerm(updated);
       lane.saved = updated;
@@ -50,9 +52,29 @@ export const deleteDictionaryTerm = (
   onFailure: (saved: Term, error: unknown) => void,
 ): Promise<void> =>
   enqueue(baseline, async (lane) => {
+    if (!lane.saved) return;
     try {
       await getTermRepo().deleteTerm(baseline.id);
     } catch (error) {
       onFailure(lane.saved, error);
     }
   });
+
+export const createDictionaryTerm = (
+  term: Term,
+  onSuccess: (created: Term) => void,
+  onFailure: (error: unknown) => void,
+): Promise<void> =>
+  enqueue(
+    term,
+    async (lane) => {
+      try {
+        const created = await getTermRepo().createTerm(term);
+        lane.saved = created;
+        onSuccess(created);
+      } catch (error) {
+        onFailure(error);
+      }
+    },
+    null,
+  );

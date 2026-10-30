@@ -2,12 +2,12 @@ import { Term } from "@maus-inc/types";
 import dayjs from "dayjs";
 import { setLocalStorageValue } from "./local-storage.actions";
 import { getTermRepo } from "../repos";
-import { produceAppState } from "../store";
+import { getAppState, produceAppState } from "../store";
 import { registerTerms } from "../utils/app.utils";
 import { createId } from "../utils/id.utils";
+import { createDictionaryTerm } from "../utils/term-mutation-queue";
 import {
   dictionaryMutationRevision,
-  trackDictionaryMutation,
   waitForDictionaryMutations,
 } from "../utils/dictionary-mutations";
 import { getLogger } from "../utils/log.utils";
@@ -61,18 +61,19 @@ const addGlossaryTerm = async (
     draft.dictionary.termIds = [newTerm.id, ...draft.dictionary.termIds];
   });
 
-  await trackDictionaryMutation(async () => {
-    try {
-      const persisted = await getTermRepo().createTerm(newTerm);
-      produceAppState((draft) => {
-        draft.termById[persisted.id] = persisted;
-      });
+  await createDictionaryTerm(
+    newTerm,
+    (persisted) => {
+      if (getAppState().termById[newTerm.id] === newTerm) {
+        produceAppState((draft) => {
+          draft.termById[persisted.id] = persisted;
+        });
+      }
       result.created.push(persisted);
-      // Every path that grows the dictionary satisfies the "add a word to
-      // your dictionary" onboarding item, whether it is auto-learn, an
-      // edit-watch proposal, the add-to-dictionary hotkey or this dialog.
+      // All glossary creation paths satisfy the onboarding checklist.
       setLocalStorageValue("mausvoice:checklist-dictionary", true);
-    } catch (error) {
+    },
+    (error) => {
       produceAppState((draft) => {
         delete draft.termById[newTerm.id];
         draft.dictionary.termIds = draft.dictionary.termIds.filter(
@@ -81,8 +82,8 @@ const addGlossaryTerm = async (
       });
       getLogger().warning(`Failed to create glossary term: ${error}`);
       result.failed += 1;
-    }
-  });
+    },
+  );
 };
 
 /**

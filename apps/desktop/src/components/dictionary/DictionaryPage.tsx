@@ -8,10 +8,9 @@ import { showErrorSnackbar } from "../../actions/app.actions";
 import { loadDictionary } from "../../actions/dictionary.actions";
 import { setLocalStorageValue } from "../../actions/local-storage.actions";
 import { useAsyncEffect } from "../../hooks/async.hooks";
-import { getTermRepo } from "../../repos";
-import { produceAppState, useAppStore } from "../../store";
+import { getAppState, produceAppState, useAppStore } from "../../store";
 import { createId } from "../../utils/id.utils";
-import { trackDictionaryMutation } from "../../utils/dictionary-mutations";
+import { createDictionaryTerm } from "../../utils/term-mutation-queue";
 import { ScrollListPage } from "../common/ScrollListPage";
 import { AddTermDialog } from "./AddTermDialog";
 import { DictionaryRow } from "./DictionaryRow";
@@ -43,14 +42,17 @@ export default function DictionaryPage() {
         draft.dictionary.termIds = [newTerm.id, ...draft.dictionary.termIds];
       });
 
-      await trackDictionaryMutation(async () => {
-        try {
-          const created = await getTermRepo().createTerm(newTerm);
-          produceAppState((draft) => {
-            draft.termById[created.id] = created;
-          });
+      await createDictionaryTerm(
+        newTerm,
+        (created) => {
+          if (getAppState().termById[newTerm.id] === newTerm) {
+            produceAppState((draft) => {
+              draft.termById[created.id] = created;
+            });
+          }
           setLocalStorageValue("mausvoice:checklist-dictionary", true);
-        } catch (error) {
+        },
+        (error) => {
           produceAppState((draft) => {
             delete draft.termById[newTerm.id];
             draft.dictionary.termIds = draft.dictionary.termIds.filter(
@@ -58,8 +60,8 @@ export default function DictionaryPage() {
             );
           });
           showErrorSnackbar(error);
-        }
-      });
+        },
+      );
     },
     [],
   );
