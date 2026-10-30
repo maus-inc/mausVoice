@@ -166,6 +166,18 @@ describe("ProfileDialog", () => {
     render();
   };
 
+  it("lets the content shrink inside the form while keeping actions in it", () => {
+    open();
+    const form = requireElement(
+      dialog()?.querySelector("form"),
+      "the profile form",
+    );
+    expect(getComputedStyle(form).display).toBe("flex");
+    expect(getComputedStyle(form).minHeight).toBe("0px");
+    expect(form.querySelector(".MuiDialogContent-root")).not.toBeNull();
+    expect(form.querySelector('button[type="submit"]')).not.toBeNull();
+  });
+
   it("says what the picture may be, and starts from the saved name", () => {
     open();
 

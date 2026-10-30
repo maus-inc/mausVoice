@@ -246,7 +246,24 @@ export const SettingRow = ({
   }
 
   return (
-    <Box id={anchorId} sx={[rowSx, ...(highlight ? [highlightSx] : [])]}>
+    <Box
+      id={anchorId}
+      sx={[
+        rowSx,
+        // Wide controls must not squeeze their explanation into a narrow
+        // column. Let them move below it when the card runs out of room.
+        ...(control && !icon
+          ? [
+              {
+                flexWrap: "wrap" as const,
+                "& > :first-of-type": { flexBasis: "min(200px, 100%)" },
+                "& > :last-child": { maxWidth: "100%", ml: "auto" },
+              },
+            ]
+          : []),
+        ...(highlight ? [highlightSx] : []),
+      ]}
+    >
       {body}
     </Box>
   );

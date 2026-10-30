@@ -52,6 +52,22 @@ describe("SettingRow", () => {
     container.remove();
   });
 
+  it("allows a control row to wrap when its label needs more room", () => {
+    render(
+      createElement(SettingRow, {
+        settingKey: "example",
+        title: "Example",
+        description: "A description beside a wide control.",
+        control: createElement("button", null, "Control"),
+      }),
+    );
+    const row = requireElement(
+      container.querySelector("#setting-example"),
+      "the control row",
+    );
+    expect(getComputedStyle(row).flexWrap).toBe("wrap");
+  });
+
   it("anchors the row and names its label and description", () => {
     render(
       createElement(SettingRow, {

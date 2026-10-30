@@ -420,6 +420,7 @@ export const ProfileDialog = () => {
           that behaviour for free. */}
       <Box
         component="form"
+        sx={{ display: "flex", flexDirection: "column", minHeight: 0 }}
         onSubmit={(event) => {
           event.preventDefault();
           void handleSave();
