@@ -1,5 +1,6 @@
 import type { Term } from "@maus-inc/types";
 import { getTermRepo } from "../../repos";
+import { trackDictionaryMutation } from "../../utils/dictionary-mutations";
 
 type Lane = { saved: Term; tail: Promise<void> };
 const lanes = new Map<string, Lane>();
@@ -16,7 +17,10 @@ const enqueue = (
     lanes.set(baseline.id, lane);
   }
   const current = lane;
-  const result = current.tail.then(() => operation(current));
+  const previous = current.tail;
+  const result = trackDictionaryMutation(() =>
+    previous.then(() => operation(current)),
+  );
   const tail = result.catch(() => {});
   current.tail = tail;
   void tail.then(() => {

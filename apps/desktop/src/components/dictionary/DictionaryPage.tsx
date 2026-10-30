@@ -11,6 +11,7 @@ import { useAsyncEffect } from "../../hooks/async.hooks";
 import { getTermRepo } from "../../repos";
 import { produceAppState, useAppStore } from "../../store";
 import { createId } from "../../utils/id.utils";
+import { trackDictionaryMutation } from "../../utils/dictionary-mutations";
 import { ScrollListPage } from "../common/ScrollListPage";
 import { AddTermDialog } from "./AddTermDialog";
 import { DictionaryRow } from "./DictionaryRow";
@@ -42,21 +43,23 @@ export default function DictionaryPage() {
         draft.dictionary.termIds = [newTerm.id, ...draft.dictionary.termIds];
       });
 
-      try {
-        const created = await getTermRepo().createTerm(newTerm);
-        produceAppState((draft) => {
-          draft.termById[created.id] = created;
-        });
-        setLocalStorageValue("mausvoice:checklist-dictionary", true);
-      } catch (error) {
-        produceAppState((draft) => {
-          delete draft.termById[newTerm.id];
-          draft.dictionary.termIds = draft.dictionary.termIds.filter(
-            (termId) => termId !== newTerm.id,
-          );
-        });
-        showErrorSnackbar(error);
-      }
+      await trackDictionaryMutation(async () => {
+        try {
+          const created = await getTermRepo().createTerm(newTerm);
+          produceAppState((draft) => {
+            draft.termById[created.id] = created;
+          });
+          setLocalStorageValue("mausvoice:checklist-dictionary", true);
+        } catch (error) {
+          produceAppState((draft) => {
+            delete draft.termById[newTerm.id];
+            draft.dictionary.termIds = draft.dictionary.termIds.filter(
+              (termId) => termId !== newTerm.id,
+            );
+          });
+          showErrorSnackbar(error);
+        }
+      });
     },
     [],
   );

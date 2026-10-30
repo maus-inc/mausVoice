@@ -15,9 +15,14 @@ const mocks = vi.hoisted(() => ({
   update: vi.fn(),
   remove: vi.fn(),
   error: vi.fn(),
+  list: vi.fn(),
 }));
 vi.mock("../../repos", () => ({
-  getTermRepo: () => ({ updateTerm: mocks.update, deleteTerm: mocks.remove }),
+  getTermRepo: () => ({
+    updateTerm: mocks.update,
+    deleteTerm: mocks.remove,
+    listTerms: mocks.list,
+  }),
 }));
 vi.mock("../../actions/app.actions", () => ({
   showErrorSnackbar: mocks.error,
@@ -30,6 +35,7 @@ vi.mock("react-intl", async (importOriginal) => {
 import { IntlProvider } from "react-intl";
 import en from "../../i18n/locales/en.json";
 import { DictionaryRow } from "./DictionaryRow";
+import { loadDictionary } from "../../actions/dictionary.actions";
 ensureUiHarness();
 const original = {
   id: "a",
@@ -63,6 +69,7 @@ beforeEach(() => {
   mocks.update.mockReset();
   mocks.remove.mockReset();
   mocks.error.mockReset();
+  mocks.list.mockReset();
   produceAppState((s) => {
     s.termById.a = original;
     s.dictionary.termIds = ["a"];
@@ -278,6 +285,38 @@ it("restores the successful pending edit if the following delete fails", async (
         .value,
     ).toBe("saved");
   } finally {
+    close();
+  }
+});
+
+it("does not redisplay an entry if Dictionary reloads during its deletion", async () => {
+  const removal = deferred();
+  let deleted = false;
+  mocks.remove.mockImplementation(async () => {
+    await removal.promise;
+    deleted = true;
+  });
+  mocks.list.mockImplementation(async () => (deleted ? [] : [original]));
+  const { host, close } = await mount();
+  try {
+    await act(async () =>
+      host
+        .querySelector<HTMLButtonElement>("[data-dictionary-delete]")!
+        .click(),
+    );
+    let loading!: Promise<void>;
+    await act(async () => {
+      loading = loadDictionary();
+      await Promise.resolve();
+    });
+    expect(getAppState().dictionary.termIds).toEqual([]);
+    await act(async () => {
+      removal.resolve();
+      await loading;
+    });
+    expect(getAppState().dictionary.termIds).toEqual([]);
+  } finally {
+    removal.resolve();
     close();
   }
 });
