@@ -222,8 +222,33 @@ describe("getStyleSwitchActionNamesForKey", () => {
 describe("default hotkeys", () => {
   it("binds the dictate key on Linux, and not only on macOS", () => {
     expect(getDefaultHotkeyCombosForAction(DICTATE_HOTKEY)).toEqual([
-      ["MetaLeft", "ControlLeft"],
+      ["ControlLeft", "AltLeft", "Space"],
     ]);
+  });
+
+  it("sends the default dictation binding to the Wayland compositor bridge", async () => {
+    invokeMock.mockReset();
+    invokeMock.mockResolvedValue(undefined);
+    setAppState(
+      {
+        ...structuredClone(INITIAL_APP_STATE),
+        hotkeyStrategy: "bridge",
+        onboarding: {
+          ...INITIAL_APP_STATE.onboarding,
+          dictationOverrideEnabled: true,
+        },
+      },
+      true,
+    );
+    await syncHotkeyCombosToNative();
+    expect(invokeMock).toHaveBeenCalledWith("sync_compositor_hotkeys", {
+      bindings: expect.arrayContaining([
+        {
+          actionName: DICTATE_HOTKEY,
+          keys: ["ControlLeft", "AltLeft", "Space"],
+        },
+      ]),
+    });
   });
 
   it("leaves an action with no default unbound", () => {

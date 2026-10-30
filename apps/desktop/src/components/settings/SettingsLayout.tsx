@@ -34,6 +34,7 @@ import {
 } from "./settings-routes";
 import { SettingsHighlightContext } from "./settings-highlight";
 import { revealCurrentSettingsPage } from "./settings-rail-scroll";
+import { useSettingsAnchor } from "./use-settings-anchor";
 
 /**
  * Rail entry for one page. Links, not buttons: each page is a route, the
@@ -202,8 +203,6 @@ export const SettingsLayout = () => {
     (page) => page.id === pageMatch?.params.page,
   );
   const [query, setQuery] = useState("");
-  const [highlight, setHighlight] = useState<string | null>(null);
-  const highlightTimer = useRef<number | null>(null);
   const searchInput = useRef<HTMLInputElement | null>(null);
   const rail = useRef<HTMLElement | null>(null);
   const availability = useSettingsAvailability();
@@ -212,51 +211,17 @@ export const SettingsLayout = () => {
     [query, availability, intl.messages],
   );
 
-  const focusSetting = useCallback((key: string) => {
-    setQuery("");
-    setHighlight(key);
-    if (highlightTimer.current !== null) {
-      window.clearTimeout(highlightTimer.current);
-    }
-    highlightTimer.current = window.setTimeout(() => setHighlight(null), 2400);
-    requestAnimationFrame(() => {
-      document
-        .getElementById(settingAnchorId(key))
-        ?.scrollIntoView({ behavior: "smooth", block: "center" });
-    });
-  }, []);
-
-  useEffect(
-    () => () => {
-      if (highlightTimer.current !== null) {
-        window.clearTimeout(highlightTimer.current);
-      }
-    },
-    [],
+  const clearQuery = useCallback(() => setQuery(""), []);
+  const { highlight, focusSetting } = useSettingsAnchor(
+    location.hash,
+    activePage?.id,
+    availability,
+    clearQuery,
   );
 
-  // Deep links land on the row they named: the redirect that routed here
-  // carries `#setting-<key>`, and this turns that hash into a highlight and a
-  // scroll, then clears the highlight so the outline is not permanent.
   useEffect(() => {
-    // Remembered before the hash is handled, not after: a deep link to a row
-    // still puts the person on that page, and `Cmd+,` has to reopen it rather
-    // than whichever page they happened to arrive from.
-    if (activePage) {
-      rememberLastSettingsPage(activePage.id);
-    }
-    const anchor = location.hash.startsWith("#")
-      ? location.hash.slice(1)
-      : location.hash;
-    const key = anchor.startsWith("setting-")
-      ? anchor.slice("setting-".length)
-      : null;
-    if (key) {
-      focusSetting(key);
-      return;
-    }
-    setHighlight(null);
-  }, [location.hash, activePage, focusSetting]);
+    if (activePage) rememberLastSettingsPage(activePage.id);
+  }, [activePage]);
 
   // The compact rail scrolls horizontally. Keep the selected page visible on
   // navigation and when a desktop window is narrowed into the compact layout.
@@ -324,8 +289,10 @@ export const SettingsLayout = () => {
           sx={{
             width: { xs: "100%", md: 232 },
             flexShrink: 0,
-            position: { md: "sticky" },
+            position: "sticky",
             top: 0,
+            zIndex: 1,
+            bgcolor: "background.default",
             alignSelf: "flex-start",
           }}
         >

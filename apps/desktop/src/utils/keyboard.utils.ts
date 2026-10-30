@@ -84,11 +84,10 @@ type PlatformHotkeyCombos = {
 export const DEFAULT_HOTKEY_COMBOS: Record<string, PlatformHotkeyCombos> = {
   [DICTATE_HOTKEY]: {
     macos: [["Function"]],
-    // Super+Ctrl reads as the record key on both desktops, and the Linux
-    // listener already emits these two labels — see `key_to_label` and the
-    // Wayland compositor's `classify_key`, which maps `MetaLeft` to super.
     windows: [["MetaLeft", "ControlLeft"]],
-    linux: [["MetaLeft", "ControlLeft"]],
+    // Compositor bridges cannot register a modifier-only shortcut. Include a
+    // regular key so the Linux default works on both Wayland and X11.
+    linux: [["ControlLeft", "AltLeft", "Space"]],
   },
   [CANCEL_TRANSCRIPTION_HOTKEY]: {
     macos: [["Escape"]],

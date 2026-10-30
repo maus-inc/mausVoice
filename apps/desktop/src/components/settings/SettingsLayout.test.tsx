@@ -245,6 +245,17 @@ describe("SettingsLayout", () => {
     }
   });
 
+  it("keeps compact navigation and search together in the sticky rail", async () => {
+    await render("/dashboard/settings/appearance");
+    const rail = requireElement(
+      container.querySelector('nav[aria-label="Settings sections"]'),
+      "the rail",
+    );
+    const column = requireElement(rail.parentElement, "the rail column");
+    expect(column.contains(searchInput())).toBe(true);
+    expect(getComputedStyle(column).position).toBe("sticky");
+  });
+
   it("keeps the heading with its page, so the two centre as one block", async () => {
     await render("/dashboard/settings/appearance");
 

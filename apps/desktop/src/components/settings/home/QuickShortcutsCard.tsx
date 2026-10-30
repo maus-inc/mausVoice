@@ -75,7 +75,7 @@ export const QuickShortcutsCard = () => {
         [SHORTCUT_COPY.previousStyle, SHORTCUT_COPY.nextStyle].map((row) => (
           <SettingSummaryRow
             key={row.action}
-            linksTo="style_hotkeys"
+            linksTo="hotkey_shortcuts"
             title={row.title}
             tooltip={row.description}
             control={<BoundHotkeys action={row.action} />}

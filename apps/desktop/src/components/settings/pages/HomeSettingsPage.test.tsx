@@ -156,6 +156,21 @@ describe("HomeSettingsPage", () => {
     expect(row("Next writing style")).not.toBeUndefined();
   });
 
+  it("opens the shortcut editor for the previous and next style keys", () => {
+    seedManualStyles("default");
+    render();
+    click(
+      requireElement(row("Previous writing style"), "the previous style row"),
+    );
+    expect(location()).toBe(
+      "/dashboard/settings/shortcuts#setting-hotkey_shortcuts",
+    );
+    click(requireElement(row("Next writing style"), "the next style row"));
+    expect(location()).toBe(
+      "/dashboard/settings/shortcuts#setting-hotkey_shortcuts",
+    );
+  });
+
   it("keeps the explanation behind a hover rather than under the row", () => {
     render();
 

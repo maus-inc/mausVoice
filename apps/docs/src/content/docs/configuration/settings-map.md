@@ -7,17 +7,22 @@ sidebar:
 
 Open **Settings** from the bottom of the left navigation rail. Most controls save as you change them. The exceptions are the API key forms for Deepgram and Groq, which open a dialog with explicit **Save** and **Cancel** buttons. The settings surface has a search field at the top that matches setting names, section names, and common synonyms, and every match jumps straight to its row.
 
-A rail on the left lists the seven sections and stays put while you read a page. Each section is its own page, so a long list never buries the section you want next:
+A rail on the left lists the eight sections and stays put while you read a page. Each section is its own page, so a long list never buries the section you want next:
 
-1. Dictation
-2. AI and models
-3. Shortcuts
-4. Appearance
-5. Privacy and data
-6. System
-7. Account
+1. Overview
+2. Dictation
+3. AI and models
+4. Shortcuts
+5. Appearance
+6. Privacy and data
+7. System
+8. Account
 
 Two sections carry a nested subsection: **Input permissions** sits inside System, and **Danger zone** sits inside Account.
+
+## Overview
+
+The overview brings frequently used shortcuts and the currently selected models together, with links to their full settings.
 
 ## Dictation
 
@@ -83,8 +88,6 @@ A credential can appear for more than one task only when its provider supports t
 ## Account
 
 - **Name** opens the profile dialog, which is where the picture and the name are edited together. A well at the top of the dialog holds the current picture with a camera badge, the format note (PNG, JPG, or WebP, up to 5 MB, cropped to a square), and the **Change photo** and **Remove photo** actions; **Remove photo** appears only once a picture exists. The name field, **Cancel**, and **Save** sit below, and Enter saves. Until a picture is set, the app shows your initials in place of one. The picture is stored on this computer only; the name is what mausVoice uses when it writes on your behalf.
-- **Signed in as** names the account this copy of mausVoice is using.
-- **Plan** describes what the current plan includes. Change it from the mausVoice website.
 - **Change password** sends a password reset link to the signed-in address.
 - **Sign out** ends this session on this computer. Your data stays where it is.
 - **Danger zone** holds the two destructive rows, **Clear local data** and **Delete account**, each naming its action (**Clear data**, **Delete**). Clearing local data empties eleven SQLite tables and the app's own stored state on this computer, including the profile picture, but it is not a full uninstall or filesystem wipe. Read the confirmation dialog and the [clear-local-data guide](./clear-local-data/) before using it. **Delete account** needs a connection and appears only while an account is signed in. Both confirmations list what the action removes before asking you to type the confirmation word, and their destructive buttons are red rather than the neutral primary fill.

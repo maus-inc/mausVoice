@@ -13,7 +13,7 @@ mausVoice is a desktop dictation app for macOS, Windows, and Linux. Hold a globa
 2. Complete onboarding. In particular, allow microphone access and any input or accessibility permission requested by your platform.
 3. Configure transcription. Choose **Local** and download a model, or choose **API** and select a configured transcription key.
 4. Place the caret in a text field in another application.
-5. Hold the dictation shortcut, speak, then release it. The default shortcut is **Fn** on macOS and **Left Meta + Left Control** on Windows. Your configured shortcut is shown under **Settings → Shortcuts → Hotkey shortcuts**.
+5. Hold the dictation shortcut, speak, then release it. The default shortcut is **Fn** on macOS **Left Meta + Left Control** on Windows, and **Left Control + Left Alt + Space** on Linux. Your configured shortcut is shown under **Settings → Shortcuts → Hotkey shortcuts**.
 
 The recording pill is a status indicator, not the destination for text. Keep the target application focused when a recording ends so insertion goes to the intended field.
 

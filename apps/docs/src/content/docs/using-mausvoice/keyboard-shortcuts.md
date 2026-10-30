@@ -21,12 +21,12 @@ Use **Add another** to assign more than one combination to the same action. The 
 
 ## Defaults and reset behavior
 
-| Action                 | macOS       | Windows                          |
-| ---------------------- | ----------- | -------------------------------- |
-| Hold to dictate        | `Fn`        | Left Windows/Meta + Left Control |
-| Cancel current session | `Escape`    | `Escape`                         |
-| Previous manual style  | Left Arrow  | Left Arrow                       |
-| Next manual style      | Right Arrow | Right Arrow                      |
+| Action                 | macOS       | Windows                          | Linux                   |
+| ---------------------- | ----------- | -------------------------------- | ----------------------- |
+| Hold to dictate        | `Fn`        | Left Windows/Meta + Left Control | Left Control + Left Alt + Space |
+| Cancel current session | `Escape`    | `Escape`                         | `Escape`                |
+| Previous manual style  | Left Arrow  | Left Arrow                       | Left Arrow              |
+| Next manual style      | Right Arrow | Right Arrow                      | Right Arrow             |
 
 The other actions have no built-in combination. A reset-arrow beside a changed built-in action restores its platform default. If no explicit nonempty binding exists for one of those four actions, the app resolves it to the built-in default; clearing a key box is therefore not a reliable way to disable a built-in action.
 
