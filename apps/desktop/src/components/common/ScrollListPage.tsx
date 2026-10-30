@@ -256,6 +256,13 @@ export function ScrollListPage<Item>({
           ref={scrollerRef}
           sx={{
             "--p": 0,
+            // A tall expanded header can cover every focused row in a short
+            // window. In that case, let it scroll away instead of shrinking
+            // and sticking over the list.
+            "@media (max-height: 420px)": {
+              "--p": "0 !important",
+              scrollPaddingBottom: "80px",
+            },
             flex: 1,
             overflowY: "auto",
             overflowX: "hidden",
@@ -274,6 +281,7 @@ export function ScrollListPage<Item>({
               backgroundColor:
                 theme.vars?.palette.level0 ?? theme.palette.background.default,
               position: "sticky",
+              "@media (max-height: 420px)": { position: "relative" },
               top: 0,
               zIndex: theme.zIndex.appBar,
               height: headerHeight,
