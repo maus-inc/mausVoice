@@ -49,6 +49,18 @@ describe("browser preview scenarios", () => {
     expect(snapshot.state.settings.apiKeys).toHaveLength(1);
   });
 
+  it("seeds app paste bindings using the values accepted by the settings selector", () => {
+    const targets = createPreviewScenario("populated").data.appTargets;
+    expect(targets.some((target) => target.pasteKeybind === "ctrl+v")).toBe(
+      true,
+    );
+    for (const target of targets) {
+      expect([null, "shift+insert", "ctrl+v", "ctrl+shift+v"]).toContain(
+        target.pasteKeybind,
+      );
+    }
+  });
+
   it("exposes an explicit denied-permission workspace", () => {
     const snapshot = createPreviewScenario("permission-denied");
 

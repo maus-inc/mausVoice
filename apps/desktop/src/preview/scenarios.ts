@@ -228,7 +228,7 @@ const previewAppTargets: AppTarget[] = [
     createdAt: "2026-08-22T09:00:00.000Z",
     toneId: "notes",
     iconPath: "preview://icons/notion",
-    pasteKeybind: "Ctrl+V",
+    pasteKeybind: "ctrl+v",
     insertionMethod: "paste",
     typingSpeedMs: null,
   },
