@@ -63,7 +63,6 @@ const openDialog = (
     draft.settings[key] = true;
   });
 };
-
 /**
  * The settings this page reads, in the order they are destructured below.
  *
@@ -346,7 +345,11 @@ export default function DictationSettingsPage() {
         {availability.dictation_limit && (
           <SettingRow
             settingKey="dictation_limit"
-            title={<FormattedMessage defaultMessage="Dictation limit" />}
+            title={
+              <label htmlFor={`${settingAnchorId("dictation_limit")}-input`}>
+                <FormattedMessage defaultMessage="Dictation limit" />
+              </label>
+            }
             description={
               <FormattedMessage defaultMessage="Stops a recording that runs too long. Use 0 for no limit." />
             }
@@ -366,7 +369,13 @@ export default function DictationSettingsPage() {
         )}
         <SettingRow
           settingKey="hands_free_output_delay"
-          title={<FormattedMessage defaultMessage="Hands-free output delay" />}
+          title={
+            <label
+              htmlFor={`${settingAnchorId("hands_free_output_delay")}-input`}
+            >
+              <FormattedMessage defaultMessage="Hands-free output delay" />
+            </label>
+          }
           description={
             <FormattedMessage defaultMessage="How long mausVoice waits after you stop speaking before it inserts the text, so you can keep talking. Use 0 to insert immediately." />
           }

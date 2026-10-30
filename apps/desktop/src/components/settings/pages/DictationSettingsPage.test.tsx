@@ -170,6 +170,8 @@ describe("DictationSettingsPage", () => {
         row.querySelector<HTMLInputElement>('input[type="number"]'),
         `${key} input`,
       );
+      expect(input.labels?.length).toBe(1);
+      expect(input.labels?.[0].textContent).toBeTruthy();
       expect(input.getAttribute("aria-labelledby")).toBe(
         `setting-${key}-label`,
       );

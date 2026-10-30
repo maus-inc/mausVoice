@@ -26,7 +26,7 @@ export default function DashboardPage() {
   const { pathname, hash } = useLocation();
   const isSettingsRoute = Boolean(useMatch("/dashboard/settings/*"));
   const reduceMotion = useReducedMotion();
-  const contentRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLElement>(null);
   const previousPath = useRef(pathname);
 
   useLayoutEffect(() => {
@@ -83,7 +83,7 @@ export default function DashboardPage() {
               Settings is one persistent shell with its own routed pages: keep
               the shell and its focused rail mounted across section changes. */}
           <Box
-            component={motion.div}
+            component={motion.main}
             ref={contentRef}
             key={isSettingsRoute ? "/dashboard/settings" : pathname}
             initial={reduceMotion ? false : { opacity: 0, x: 8 }}

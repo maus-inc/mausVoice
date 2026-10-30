@@ -138,6 +138,10 @@ describe("dashboard routing", () => {
       expect(container.textContent).toContain("Dictionary entry"),
     );
     expect(visiblePages()).toEqual(["Dictionary"]);
+    expect(container.querySelectorAll("main")).toHaveLength(1);
+    expect(container.querySelector("main")?.textContent).toContain(
+      "Dictionary entry",
+    );
 
     await clickTab("transcriptions");
     expect(visiblePages()).toEqual(["History"]);
