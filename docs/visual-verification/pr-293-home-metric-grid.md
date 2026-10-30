@@ -23,6 +23,8 @@ These are browser-preview captures, not screenshots of a native Tauri window. Th
 
 The requested design reference is `docs/assets/image_253.png` and measures 1157×727. It is a reference, not an app capture.
 
+![Requested design reference at 1157×727. This is not a live app capture.](../assets/image_253.png)
+
 | Live base, `609f2a8` | Updated code, `e610591` |
 | --- | --- |
 | ![Live base Home at 1157×727, populated scenario](../assets/pr-293-home-base-609f2a8-1157x727.png) | ![Updated Home at 1157×727, populated scenario](../assets/pr-293-home-head-e610591-1157x727.png) |
