@@ -33,6 +33,7 @@ import {
   SETTINGS_BASE_PATH,
 } from "./settings-routes";
 import { SettingsHighlightContext } from "./settings-highlight";
+import { revealCurrentSettingsPage } from "./settings-rail-scroll";
 
 /**
  * Rail entry for one page. Links, not buttons: each page is a route, the
@@ -204,6 +205,7 @@ export const SettingsLayout = () => {
   const [highlight, setHighlight] = useState<string | null>(null);
   const highlightTimer = useRef<number | null>(null);
   const searchInput = useRef<HTMLInputElement | null>(null);
+  const rail = useRef<HTMLElement | null>(null);
   const availability = useSettingsAvailability();
   const hits = useMemo(
     () => searchSettings(query, { availability, messages: intl.messages }),
@@ -255,6 +257,15 @@ export const SettingsLayout = () => {
     }
     setHighlight(null);
   }, [location.hash, activePage, focusSetting]);
+
+  // The compact rail scrolls horizontally. Keep the selected page visible on
+  // navigation and when a desktop window is narrowed into the compact layout.
+  useEffect(() => {
+    const reveal = () => revealCurrentSettingsPage(rail.current);
+    reveal();
+    window.addEventListener("resize", reveal);
+    return () => window.removeEventListener("resize", reveal);
+  }, [activePage]);
 
   // A query belongs to the page it was typed on. Without this, picking a page
   // from the rail while a search is open leaves the results panel standing in
@@ -367,6 +378,7 @@ export const SettingsLayout = () => {
           />
           <Stack
             component="nav"
+            ref={rail}
             aria-label={intl.formatMessage({
               defaultMessage: "Settings sections",
             })}
