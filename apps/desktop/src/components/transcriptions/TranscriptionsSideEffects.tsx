@@ -1,17 +1,16 @@
-import { useAsyncEffect } from "../../hooks/async.hooks";
+import { useEffect } from "react";
 import { useOnExit } from "../../hooks/helper.hooks";
-import { getTranscriptionRepo } from "../../repos";
 import { INITIAL_TRANSCRIPTIONS_STATE } from "../../state/transcriptions.state";
 import { produceAppState } from "../../store";
-import { registerTranscriptions } from "../../utils/app.utils";
+import { refreshVisibleTranscriptions } from "../../utils/visible-transcriptions";
 
 export const TranscriptionsSideEffects = () => {
-  useAsyncEffect(async () => {
-    const transcriptions = await getTranscriptionRepo().listTranscriptions();
-    produceAppState((draft) => {
-      registerTranscriptions(draft, transcriptions);
-      draft.transcriptions.transcriptionIds = transcriptions.map((t) => t.id);
-    });
+  useEffect(() => {
+    let current = true;
+    void refreshVisibleTranscriptions(() => current).catch(console.error);
+    return () => {
+      current = false;
+    };
   }, []);
 
   useOnExit(() => {
