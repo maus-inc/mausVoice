@@ -301,6 +301,17 @@ describe("SettingsLayout", () => {
     expect(block.children.length).toBeGreaterThan(1);
   });
 
+  it.each([{ isComposing: true }, { keyCode: 229 }])(
+    "leaves Escape to an active input method (%o)",
+    async (composition) => {
+      await render("/dashboard/settings/appearance");
+      setQuery("incognito");
+      press("Escape", composition);
+      expect(searchInput()?.value).toBe("incognito");
+      expect(railCurrent()).toBe("Appearance");
+    },
+  );
+
   it("clears the query on Escape without leaving the page", async () => {
     await render("/dashboard/settings/appearance");
 

@@ -221,10 +221,6 @@ export const SettingsLayout = () => {
               setQuery(event.target.value);
             }}
             onKeyDown={(event) => {
-              if (event.key === "Escape") {
-                setQuery("");
-                return;
-              }
               // A key pressed while an input method editor is composing belongs
               // to the IME, not to the search box: for Korean and Chinese that
               // is how a candidate list is confirmed, and for Japanese how a
@@ -233,6 +229,10 @@ export const SettingsLayout = () => {
               // on the event that ends the composition, so both are checked
               // before anything acts on the key.
               if (event.nativeEvent.isComposing || event.keyCode === 229) {
+                return;
+              }
+              if (event.key === "Escape") {
+                setQuery("");
                 return;
               }
               // Enter opens the first result, the way a search box behaves
