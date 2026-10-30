@@ -435,9 +435,74 @@ describe("ProfileDialog", () => {
       cancel.click();
     });
 
+    expect(getAppState().settings.profileDialogOpen).toBe(true);
+    const discard = requireElement(
+      [...document.querySelectorAll("button")].find(
+        (button) => button.textContent?.trim() === "Discard",
+      ),
+      "the Discard confirmation",
+    );
+    act(() => discard.click());
     expect(mocks.setUserName).not.toHaveBeenCalled();
-    // Asserted on the store rather than on the DOM: MUI keeps the dialog node
-    // mounted through its exit transition, which never finishes in jsdom.
+    // The editor closes after the confirmation's exit transition.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 350));
+    });
     expect(getAppState().settings.profileDialogOpen).toBe(false);
+  });
+  it("keeps a draft when Escape opens confirmation and it is cancelled", async () => {
+    open();
+    await type(requireElement(nameInput(), "the name field"), "Draft name");
+    act(() =>
+      requireElement(nameInput(), "the name field").dispatchEvent(
+        new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+      ),
+    );
+    const confirmation = [...document.querySelectorAll('[role="dialog"]')].find(
+      (element) => element.textContent?.includes("Discard changes?"),
+    );
+    expect(confirmation).toBeDefined();
+    const keep = requireElement(
+      [...confirmation!.querySelectorAll("button")].find(
+        (element) => element.textContent?.trim() === "Cancel",
+      ),
+      "keep editing",
+    );
+    act(() => keep.click());
+    expect(getAppState().settings.profileDialogOpen).toBe(true);
+    expect(nameInput()?.value).toBe("Draft name");
+  });
+
+  it("closes without confirmation when unchanged", () => {
+    open();
+    act(() => requireElement(button("Cancel"), "Cancel").click());
+    expect(getAppState().settings.profileDialogOpen).toBe(false);
+    expect(document.body.textContent).not.toContain("Discard changes?");
+  });
+
+  it("guards an in-flight photo and ignores its result after discard", async () => {
+    const pending = deferredDecode();
+    mocks.readAvatarFile.mockReturnValue(pending.promise);
+    open();
+    await pick(new File(["photo"], "photo.png", { type: "image/png" }));
+    act(() => requireElement(button("Cancel"), "Cancel").click());
+    expect(document.body.textContent).toContain("Discard changes?");
+    const discard = requireElement(
+      [...document.querySelectorAll("button")].find(
+        (element) => element.textContent?.trim() === "Discard",
+      ),
+      "Discard",
+    );
+    act(() => discard.click());
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 350));
+    });
+    expect(getAppState().settings.profileDialogOpen).toBe(false);
+    await act(async () => {
+      pending.settle({ ok: true, dataUrl: "data:image/png;base64,WA==" });
+      await pending.promise;
+    });
+    expect(getAppState().settings.profileDialogOpen).toBe(false);
+    expect(mocks.setMyProfileImage).not.toHaveBeenCalled();
   });
 });

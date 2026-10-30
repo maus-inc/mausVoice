@@ -23,6 +23,8 @@ export type ConfirmDialogProps = {
   cancelButtonProps?: ButtonProps;
   destructive?: boolean;
   busy?: boolean;
+  /** Called after the closing transition, when focus has returned. */
+  onExited?: () => void;
   /**
    * Names the progress indicator shown while `busy`. A string because it lands
    * in `aria-label`; `FormattedMessage` would render a node there.
@@ -43,6 +45,7 @@ export const ConfirmDialog = ({
   destructive,
   busy,
   busyLabel,
+  onExited,
 }: ConfirmDialogProps) => {
   const intl = useIntl();
   const confirmContent = confirmLabel ?? (
@@ -65,6 +68,7 @@ export const ConfirmDialog = ({
       fullWidth
       aria-labelledby={titleId}
       aria-describedby={contentId}
+      slotProps={{ transition: { onExited } }}
     >
       <DialogTitle id={titleId}>{title}</DialogTitle>
       <DialogContent dividers>
