@@ -4,7 +4,7 @@ use sqlx::SqlitePool;
 use std::net::UdpSocket;
 use tauri::async_runtime;
 use tauri::{AppHandle, Emitter};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::watch;
 
@@ -438,6 +438,47 @@ impl ConnectionMessageHandler<'_> {
         .await
     }
 
+    /// Turn away a sender that did not authenticate, recording the reason on
+    /// the receiver status and answering with the matching delivery error.
+    async fn reject_sender(
+        &mut self,
+        session_id: String,
+        sender_device_id: &str,
+        code: &str,
+        message: &str,
+    ) -> Result<bool, String> {
+        if !record_error_while_active(
+            self.state,
+            self.receiver_generation,
+            self.write_generation,
+            RemoteReceiverEventDetails {
+                sender_device_id: Some(sender_device_id.to_string()),
+                ..RemoteReceiverEventDetails::default()
+            },
+            message.to_string(),
+        )
+        .await
+        {
+            return Ok(false);
+        }
+
+        write_message_while_active(
+            self.writer,
+            &OutgoingEnvelope::DeliveryError {
+                session_id,
+                event_id: String::new(),
+                sequence: 0,
+                code: code.to_string(),
+                message: message.to_string(),
+            },
+            self.shutdown,
+            self.state,
+            self.receiver_generation,
+            self.write_generation,
+        )
+        .await
+    }
+
     async fn handle_session_hello(
         &mut self,
         session_id: String,
@@ -457,67 +498,25 @@ impl ConnectionMessageHandler<'_> {
             device_result.map_err(|error| format!("Failed to validate sender device: {error}"))?;
 
         let Some(device) = device else {
-            if !record_error_while_active(
-                self.state,
-                self.receiver_generation,
-                self.write_generation,
-                RemoteReceiverEventDetails {
-                    sender_device_id: Some(sender_device_id),
-                    ..RemoteReceiverEventDetails::default()
-                },
-                "Sender is not paired.".to_string(),
-            )
-            .await
-            {
-                return Ok(false);
-            }
-            return write_message_while_active(
-                self.writer,
-                &OutgoingEnvelope::DeliveryError {
+            return self
+                .reject_sender(
                     session_id,
-                    event_id: String::new(),
-                    sequence: 0,
-                    code: "unknown_sender".to_string(),
-                    message: "Sender is not paired.".to_string(),
-                },
-                self.shutdown,
-                self.state,
-                self.receiver_generation,
-                self.write_generation,
-            )
-            .await;
+                    &sender_device_id,
+                    "unknown_sender",
+                    "Sender is not paired.",
+                )
+                .await;
         };
 
         if !device.trusted || device.shared_secret != auth_token {
-            if !record_error_while_active(
-                self.state,
-                self.receiver_generation,
-                self.write_generation,
-                RemoteReceiverEventDetails {
-                    sender_device_id: Some(sender_device_id),
-                    ..RemoteReceiverEventDetails::default()
-                },
-                "Sender authentication failed.".to_string(),
-            )
-            .await
-            {
-                return Ok(false);
-            }
-            return write_message_while_active(
-                self.writer,
-                &OutgoingEnvelope::DeliveryError {
+            return self
+                .reject_sender(
                     session_id,
-                    event_id: String::new(),
-                    sequence: 0,
-                    code: "unauthorized".to_string(),
-                    message: "Sender authentication failed.".to_string(),
-                },
-                self.shutdown,
-                self.state,
-                self.receiver_generation,
-                self.write_generation,
-            )
-            .await;
+                    &sender_device_id,
+                    "unauthorized",
+                    "Sender authentication failed.",
+                )
+                .await;
         }
 
         if !is_connection_current(self.state, self.receiver_generation, self.write_generation) {
@@ -819,17 +818,7 @@ async fn write_message(
     writer: &mut tokio::net::tcp::OwnedWriteHalf,
     message: &OutgoingEnvelope,
 ) -> Result<(), String> {
-    let json = serde_json::to_string(message)
-        .map_err(|err| format!("Failed to serialize receiver message: {err}"))?;
-    writer
-        .write_all(json.as_bytes())
-        .await
-        .map_err(|err| format!("Failed to write receiver message: {err}"))?;
-    writer
-        .write_all(b"\n")
-        .await
-        .map_err(|err| format!("Failed to finalize receiver message: {err}"))?;
-    Ok(())
+    super::remote_channel::write_json_message(writer, message, "receiver").await
 }
 
 #[cfg(test)]

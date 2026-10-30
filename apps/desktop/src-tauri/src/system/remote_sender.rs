@@ -2,7 +2,7 @@ use std::{future::Future, time::Duration};
 
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::TcpStream;
 
 use crate::{db::local_data_write_gate::LocalDataRemoteOperationGuard, state::RemoteReceiverState};
@@ -370,17 +370,7 @@ async fn write_message(
     writer: &mut tokio::net::tcp::OwnedWriteHalf,
     message: &OutgoingEnvelope,
 ) -> Result<(), String> {
-    let json = serde_json::to_string(message)
-        .map_err(|err| format!("Failed to serialize remote sender message: {err}"))?;
-    writer
-        .write_all(json.as_bytes())
-        .await
-        .map_err(|err| format!("Failed to write remote sender message: {err}"))?;
-    writer
-        .write_all(b"\n")
-        .await
-        .map_err(|err| format!("Failed to finalize remote sender message: {err}"))?;
-    Ok(())
+    super::remote_channel::write_json_message(writer, message, "remote sender").await
 }
 
 fn generate_id(prefix: &str) -> String {
