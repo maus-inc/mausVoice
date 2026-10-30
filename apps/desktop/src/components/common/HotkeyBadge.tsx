@@ -18,12 +18,8 @@ export const HotkeyBadge = ({ keys, onClick, sx }: HotkeyBadgeProps) => {
     return { key, identity: `${key}:${occurrence}` };
   });
 
-  // Caps are always `span`, in both modes. `Keycap` is a `ButtonBase`, whose
-  // default element is a native `<button>`, so a read-only badge used to render
-  // each cap as a focusable control carrying no name of its own (`aria-hidden`,
-  // `tabIndex={-1}`) inside a `role="group"`. Hidden interactive controls are
-  // what the override was there to avoid in the clickable case, so it applies
-  // unconditionally.
+  // Keycaps are decorative spans; the enclosing badge supplies the name and,
+  // when clickable, the only interactive control.
   return (
     <Stack
       component={onClick ? "button" : "div"}
@@ -55,7 +51,7 @@ export const HotkeyBadge = ({ keys, onClick, sx }: HotkeyBadgeProps) => {
       ]}
     >
       {keycaps.map(({ key, identity }) => (
-        <Keycap key={identity} component="span" tabIndex={-1} aria-hidden>
+        <Keycap key={identity} aria-hidden>
           {getPrettyKeyName(key)}
         </Keycap>
       ))}
