@@ -114,6 +114,27 @@ const hasStyleField = (): boolean =>
     (label) => label.textContent?.trim() === "Style",
   );
 
+const expectSelectLabels = () => {
+  const controls = [
+    ...document.body.querySelectorAll<HTMLElement>(
+      '[role="dialog"] [role="combobox"]',
+    ),
+  ];
+  expect(controls).toHaveLength(2);
+  for (const [control, label] of controls.map(
+    (control, i) => [control, ["Style", "Language"][i]] as const,
+  )) {
+    const references = (control.getAttribute("aria-labelledby") ?? "").split(
+      " ",
+    );
+    expect(
+      references.some(
+        (id) => document.getElementById(id)?.textContent === label,
+      ),
+    ).toBe(true);
+  }
+};
+
 const settle = async () => {
   await act(async () => {
     await Promise.resolve();
@@ -167,6 +188,7 @@ describe("Import audio style availability", () => {
     await openImportDialog();
 
     expect(hasStyleField()).toBe(true);
+    expectSelectLabels();
   });
 
   it("shows styles when post-processing has a usable provider", async () => {
@@ -175,6 +197,7 @@ describe("Import audio style availability", () => {
     await openImportDialog();
 
     expect(hasStyleField()).toBe(true);
+    expectSelectLabels();
   });
 
   it("keeps styles and imports with style when post-processing is turned off (fast path)", async () => {
@@ -237,6 +260,7 @@ describe("Retranscribe style availability", () => {
     await renderDialog();
 
     expect(hasStyleField()).toBe(true);
+    expectSelectLabels();
   });
 
   it("keeps styles visible when post-processing is disabled (fast path)", async () => {

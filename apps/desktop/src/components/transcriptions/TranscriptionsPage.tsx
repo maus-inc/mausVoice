@@ -13,7 +13,7 @@ import {
 import type { Tone } from "@maus-inc/types";
 import { getRec } from "@maus-inc/utilities";
 import { Check, FileUp } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { showErrorSnackbar } from "../../actions/app.actions";
 import { importAudioFile } from "../../actions/transcriptions.actions";
@@ -53,6 +53,8 @@ const languageOptions = (
 
 export default function TranscriptionsPage() {
   const intl = useIntl();
+  const styleLabelId = useId();
+  const languageLabelId = useId();
   const transcriptionIds = useAppStore(
     (state) => state.transcriptions.transcriptionIds,
   );
@@ -243,10 +245,11 @@ export default function TranscriptionsPage() {
           <Stack spacing={2.5} sx={{ mt: 1 }}>
             {styleSelectionAvailable && (
               <FormControl fullWidth size="small">
-                <InputLabel>
+                <InputLabel id={styleLabelId}>
                   <FormattedMessage defaultMessage="Style" />
                 </InputLabel>
                 <Select
+                  labelId={styleLabelId}
                   label={intl.formatMessage({ defaultMessage: "Style" })}
                   value={selectedToneId ?? ""}
                   onChange={(event) =>
@@ -278,10 +281,11 @@ export default function TranscriptionsPage() {
               </FormControl>
             )}
             <FormControl fullWidth size="small">
-              <InputLabel>
+              <InputLabel id={languageLabelId}>
                 <FormattedMessage defaultMessage="Language" />
               </InputLabel>
               <Select
+                labelId={languageLabelId}
                 label={intl.formatMessage({ defaultMessage: "Language" })}
                 value={selectedLanguage}
                 onChange={(event) =>

@@ -172,5 +172,10 @@ describe("settings dialogs announce their title", () => {
     });
 
     expect(accessibleNameOf()).toBe("Import audio");
+    const dialog = document.body.querySelector('[role="dialog"]')!;
+    const labelledBy = dialog.getAttribute("aria-labelledby")!;
+    const label = document.getElementById(labelledBy)!;
+    expect(label.querySelector("button")).toBeNull();
+    expect(document.querySelectorAll(`[id="${labelledBy}"]`)).toHaveLength(1);
   });
 });

@@ -1,5 +1,5 @@
 import { X } from "lucide-react";
-import { DialogTitle, IconButton } from "@mui/material";
+import { Box, DialogTitle, IconButton } from "@mui/material";
 import type { ReactNode } from "react";
 import { useId } from "react";
 import { useIntl } from "react-intl";
@@ -28,12 +28,24 @@ export const DialogTitleWithClose = ({
 }: DialogTitleWithCloseProps) => {
   const intl = useIntl();
   const generatedId = useId();
+  const labelId = titleId ?? generatedId;
   return (
     <DialogTitle
-      id={titleId ?? generatedId}
+      id={`${labelId}-container`}
       sx={{ display: "flex", alignItems: "center", gap: 1 }}
     >
-      {children}
+      <Box
+        component="span"
+        id={labelId}
+        sx={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 1,
+          minWidth: 0,
+        }}
+      >
+        {children}
+      </Box>
       <IconButton
         onClick={onClose}
         size="small"
