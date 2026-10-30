@@ -138,12 +138,8 @@ export const SettingsLayout = () => {
   );
 
   const clearQuery = useCallback(() => setQuery(""), []);
-  const { highlight, focusSetting, cancelPendingFocus } = useSettingsAnchor(
-    location.hash,
-    activePage?.id,
-    availability,
-    clearQuery,
-  );
+  const { highlight, focusSetting, requestFocus, cancelPendingFocus } =
+    useSettingsAnchor(location.hash, activePage?.id, availability, clearQuery);
 
   useEffect(() => {
     if (activePage) rememberLastSettingsPage(activePage.id);
@@ -178,6 +174,7 @@ export const SettingsLayout = () => {
   }, []);
 
   const openHit = (hit: SettingHit) => {
+    requestFocus(hit.entry.key);
     setQuery("");
     const target = `${settingsPagePath(hit.entry.page)}#${settingAnchorId(
       hit.entry.key,
