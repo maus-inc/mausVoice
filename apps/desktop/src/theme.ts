@@ -332,7 +332,9 @@ export const theme = createTheme({
         }),
         switchBase: ({ theme }) => ({
           "&.Mui-checked:not(.Mui-disabled)": {
-            color: inkSolid.base,
+            // The thumb must contrast with the checked track so the on state
+            // retains a visible position indicator in both color schemes.
+            color: chalkSolid.base,
             "& + .MuiSwitch-track": {
               backgroundColor: inkSolid.base,
               opacity: 1,
@@ -340,7 +342,7 @@ export const theme = createTheme({
           },
           ...theme.applyStyles("dark", {
             "&.Mui-checked:not(.Mui-disabled)": {
-              color: chalkSolid.base,
+              color: inkSolid.base,
               "& + .MuiSwitch-track": {
                 backgroundColor: chalkSolid.base,
                 opacity: 1,
