@@ -12,6 +12,7 @@ import { FormattedMessage, useIntl } from "react-intl";
 import { showErrorSnackbar } from "../../actions/app.actions";
 import { getTermRepo } from "../../repos";
 import { getAppState, produceAppState, useAppStore } from "../../store";
+import { focusAfterDictionaryDelete } from "./dictionary-delete-focus";
 import {
   isEditableTarget,
   useContextMenu,
@@ -93,6 +94,7 @@ export const DictionaryRow = ({ id }: DictionaryRowProps) => {
 
     const previousTerm = term;
     const previousIds = [...getAppState().dictionary.termIds];
+    focusAfterDictionaryDelete(id);
 
     produceAppState((draft) => {
       delete draft.termById[id];
@@ -105,11 +107,27 @@ export const DictionaryRow = ({ id }: DictionaryRowProps) => {
       await getTermRepo().deleteTerm(id);
     } catch (error) {
       produceAppState((draft) => {
-        draft.termById[id] = previousTerm;
-        draft.dictionary.termIds = previousIds;
+        // Restore only this deletion, without reverting other edits or removals
+        // that completed while the request was pending.
+        draft.termById[id] ??= previousTerm;
+        const ids = draft.dictionary.termIds;
+        if (!ids.includes(id)) {
+          const oldIndex = previousIds.indexOf(id);
+          const next = previousIds
+            .slice(oldIndex + 1)
+            .find((candidate) => ids.includes(candidate));
+          const before = previousIds
+            .slice(0, oldIndex)
+            .reverse()
+            .find((candidate) => ids.includes(candidate));
+          const index = next
+            ? ids.indexOf(next)
+            : before
+              ? ids.indexOf(before) + 1
+              : Math.min(Math.max(oldIndex, 0), ids.length);
+          ids.splice(index, 0, id);
+        }
       });
-      setSourceValue(previousTerm.sourceValue);
-      setDestinationValue(previousTerm.destinationValue);
       showErrorSnackbar(error);
     }
   }, [id, term]);
@@ -142,6 +160,7 @@ export const DictionaryRow = ({ id }: DictionaryRowProps) => {
     <>
       {ctxMenu.renderMenu()}
       <Stack
+        data-dictionary-row={id}
         direction="row"
         spacing={2}
         onContextMenu={(e) => {
@@ -235,6 +254,7 @@ export const DictionaryRow = ({ id }: DictionaryRowProps) => {
           </Tooltip>
         ) : (
           <IconButton
+            data-dictionary-delete
             aria-label={intl.formatMessage(
               { defaultMessage: "Delete dictionary item {term}" },
               { term: term.sourceValue },

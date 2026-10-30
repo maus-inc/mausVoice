@@ -12,3 +12,5 @@ Open **Dictionary** from the left navigation. Its two mechanisms run at differen
 **Replacement rules** match recognized text and replace it before optional post-processing. They are useful for stable corrections and can expand a short spoken trigger into a longer snippet. Because replacement happens after recognition, the input side must resemble what the transcriber actually returns.
 
 Start narrowly. A common word used as a replacement trigger can alter legitimate sentences, and a huge glossary can add noise or hit provider-specific context limits. Review History to learn the exact recurring error, then add the smallest rule or hint that addresses it.
+
+Use a row's Delete button to remove an entry. After keyboard deletion, focus moves to the next removable entry, the previous one, or **Add** when none remain. If a deletion fails, the entry is restored and an error is shown.

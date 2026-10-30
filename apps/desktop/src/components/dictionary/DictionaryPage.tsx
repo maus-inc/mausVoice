@@ -86,6 +86,7 @@ export default function DictionaryPage() {
         }
         action={
           <Button
+            data-dictionary-add
             variant="text"
             startIcon={<Plus size={16} strokeWidth={2} />}
             onClick={() => setIsAddDialogOpen(true)}
