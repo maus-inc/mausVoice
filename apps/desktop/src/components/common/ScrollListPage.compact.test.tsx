@@ -36,7 +36,7 @@ it("emits the short-window scroll and header rules", () => {
       innerRules.some(
         (rule) =>
           /--p:\s*0\s*!important/.test(rule) &&
-          /scroll-padding-bottom:\s*80px/.test(rule),
+          /scroll-padding-bottom:\s*min\(80px,\s*50%\)/.test(rule),
       ),
     ).toBe(true);
     expect(innerRules.some((rule) => /position:\s*relative/.test(rule))).toBe(

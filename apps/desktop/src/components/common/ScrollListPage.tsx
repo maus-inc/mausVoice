@@ -261,7 +261,8 @@ export function ScrollListPage<Item>({
             // and sticking over the list.
             "@media (max-height: 420px)": {
               "--p": "0 !important",
-              scrollPaddingBottom: "80px",
+              // A fixed inset can exceed the scrollport when a tip is shown.
+              scrollPaddingBottom: "min(80px, 50%)",
             },
             flex: 1,
             overflowY: "auto",

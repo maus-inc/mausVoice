@@ -5,6 +5,7 @@ import { springPop } from "../../styles/motion";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useIntl } from "react-intl";
 import { MetalChrome } from "../common/MetalChrome";
+import { AudioWaveformBars } from "./AudioWaveformBars";
 import { showErrorSnackbar } from "../../actions/app.actions";
 import { getTranscriptionRepo } from "../../repos";
 import {
@@ -38,7 +39,6 @@ export const AudioPlayerPill = ({
 }: AudioPlayerPillProps) => {
   const intl = useIntl();
   const reduceMotion = useReducedMotion();
-
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackProgress, setPlaybackProgress] = useState(0);
   const [waveformWidth, setWaveformWidth] = useState(0);
@@ -50,19 +50,15 @@ export const AudioPlayerPill = ({
   const transcriptionIdRef = useRef(transcriptionId);
   const isDraggingRef = useRef(false);
   const progressAtDragStartRef = useRef(0);
-
   useEffect(() => {
     isPlayingRef.current = isPlaying;
   }, [isPlaying]);
-
   useEffect(() => {
     playbackProgressRef.current = playbackProgress;
   }, [playbackProgress]);
-
   useEffect(() => {
     transcriptionIdRef.current = transcriptionId;
   }, [transcriptionId]);
-
   const desiredWaveformBarCount = useMemo(() => {
     if (waveformWidth <= 0) {
       return DEFAULT_WAVEFORM_BAR_COUNT;
@@ -79,7 +75,6 @@ export const AudioPlayerPill = ({
       Math.min(MAX_COMPUTED_BAR_COUNT, approximateCount),
     );
   }, [waveformWidth]);
-
   const waveformValues = useMemo(
     () =>
       buildWaveformOutline(
@@ -89,7 +84,6 @@ export const AudioPlayerPill = ({
       ),
     [durationMs, desiredWaveformBarCount, transcriptionId],
   );
-
   const waveformBars = useMemo(() => {
     if (!waveformValues.length) {
       return Array.from(
@@ -100,7 +94,6 @@ export const AudioPlayerPill = ({
 
     return waveformValues;
   }, [desiredWaveformBarCount, waveformValues]);
-
   const computedBarWidth = useMemo(() => {
     if (waveformWidth <= 0 || waveformBars.length === 0) {
       return WAVEFORM_BAR_MIN_WIDTH;
@@ -115,9 +108,7 @@ export const AudioPlayerPill = ({
       Math.min(WAVEFORM_BAR_MAX_WIDTH, widthPerBar),
     );
   }, [waveformBars.length, waveformWidth]);
-
   const progressPercent = Math.min(Math.max(playbackProgress, 0), 1) * 100;
-
   useEffect(() => {
     return () => {
       pointerCleanupRef.current?.();
@@ -127,7 +118,6 @@ export const AudioPlayerPill = ({
       }
     };
   }, []);
-
   useEffect(() => {
     const element = waveformContainerRef.current;
     if (!element) {
@@ -158,7 +148,6 @@ export const AudioPlayerPill = ({
     observer.observe(element);
     return () => observer.disconnect();
   }, [transcriptionId]);
-
   const handlePlaybackToggle = useCallback(async () => {
     const currentNonce = playbackNonceRef.current + 1;
     playbackNonceRef.current = currentNonce;
@@ -208,7 +197,6 @@ export const AudioPlayerPill = ({
       );
     }
   }, [transcriptionId, intl]);
-
   const durationLabel = formatDuration(durationMs);
 
   /** Scrub mapping from client X (same idea as elevenlabs-ui scrub-bar). Bars are a seeded silhouette, not live PCM. */
@@ -220,18 +208,17 @@ export const AudioPlayerPill = ({
     const ratio = (clientX - rect.left) / rect.width;
     return Math.min(Math.max(ratio, 0), 1);
   }, []);
-
   const previewSeek = useCallback((ratio: number) => {
+    playbackProgressRef.current = ratio;
     setPlaybackProgress(ratio);
   }, []);
-
   const commitSeek = useCallback((ratio: number) => {
+    playbackProgressRef.current = ratio;
     setPlaybackProgress(ratio);
     if (isPlayingRef.current) {
       seekPlayback(ratio);
     }
   }, []);
-
   const handlePointerDown = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
       if (disabled) return;
@@ -265,6 +252,7 @@ export const AudioPlayerPill = ({
         window.removeEventListener("pointercancel", handleCancel);
         pointerCleanupRef.current = null;
         isDraggingRef.current = false;
+        playbackProgressRef.current = progressAtDragStartRef.current;
         setPlaybackProgress(progressAtDragStartRef.current);
       };
       pointerCleanupRef.current?.();
@@ -351,6 +339,7 @@ export const AudioPlayerPill = ({
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={Math.round(progressPercent)}
+        aria-disabled={disabled || undefined}
         aria-label={intl.formatMessage({ defaultMessage: "Playback position" })}
         onPointerDown={handlePointerDown}
         onKeyDown={(event) => {
@@ -358,12 +347,15 @@ export const AudioPlayerPill = ({
           if (event.key === " ") {
             event.preventDefault();
             void handlePlaybackToggle();
-          } else if (event.key === "ArrowRight") {
+          } else if (event.key === "ArrowRight" || event.key === "ArrowUp") {
             event.preventDefault();
             commitSeek(Math.min(1, playbackProgressRef.current + 0.05));
-          } else if (event.key === "ArrowLeft") {
+          } else if (event.key === "ArrowLeft" || event.key === "ArrowDown") {
             event.preventDefault();
             commitSeek(Math.max(0, playbackProgressRef.current - 0.05));
+          } else if (event.key === "Home" || event.key === "End") {
+            event.preventDefault();
+            commitSeek(event.key === "Home" ? 0 : 1);
           }
         }}
         sx={{
@@ -378,43 +370,19 @@ export const AudioPlayerPill = ({
           cursor: "pointer",
           touchAction: "none",
           userSelect: "none",
+          borderRadius: 0.5,
+          "&:focus-visible": {
+            outline: "2px solid",
+            outlineColor: "primary.main",
+            outlineOffset: 2,
+          },
         }}
       >
-        <Box
-          sx={{
-            position: "absolute",
-            inset: 0,
-            pointerEvents: "none",
-          }}
-        >
-          <Box
-            sx={(theme) => ({
-              position: "absolute",
-              top: 0,
-              bottom: 0,
-              left: 0,
-              right: 0,
-              backgroundColor:
-                theme.vars?.palette.level1 ?? theme.palette.background.paper,
-              opacity: 0.5,
-              transform: `translateX(${progressPercent}%)`,
-              transition: "transform 140ms linear",
-            })}
-          />
-        </Box>
-        {waveformBars.map((value, index) => (
-          <Box
-            key={`wave-bar-${index}`}
-            sx={(theme) => ({
-              flex: "0 0 auto",
-              width: `${computedBarWidth}px`,
-              borderRadius: theme.spacing(0.25),
-              backgroundColor: theme.vars?.palette.primary.main,
-              height: `${Math.round(35 + value * 55)}%`,
-              transition: "opacity 140ms ease",
-            })}
-          />
-        ))}
+        <AudioWaveformBars
+          values={waveformBars}
+          barWidth={computedBarWidth}
+          progressPercent={progressPercent}
+        />
       </Box>
       {actions}
     </Box>

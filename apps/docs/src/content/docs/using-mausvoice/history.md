@@ -13,7 +13,7 @@ History exists only when the current privacy settings permit it. **Incognito** p
 
 Open the information action for the full pipeline record. Depending on what was captured, the dialog separates **Raw transcription**, **After replacements**, and **Final transcription**. It can also show warnings, transcription and post-processing durations, local model/device or API-key labels, operating modes, and the prompts used. A deleted key is reported as unknown rather than exposing an old secret.
 
-A row with saved audio includes playback plus **Retranscribe** and **Export** actions. Retranscription runs the stored clip through the _currently selected_ transcription and post-processing configuration; you choose a language and one of the available styles, and the existing row is updated. It is not a read-only comparison, so export first if the old result matters.
+A row with saved audio includes playback plus **Retranscribe** and **Export** actions. Focus the playback waveform and use the arrow keys to seek in 5% steps, Home or End to jump to the beginning or end, and Space to play or pause. Retranscription runs the stored clip through the _currently selected_ transcription and post-processing configuration; you choose a language and one of the available styles, and the existing row is updated. It is not a read-only comparison, so export first if the old result matters.
 
 Export opens a file picker and writes a ZIP named from the record ID. It contains `processed.txt`, includes `raw.txt` when raw text is present, and includes the managed clip as `audio.wav`. Treat that archive as sensitive.
 
