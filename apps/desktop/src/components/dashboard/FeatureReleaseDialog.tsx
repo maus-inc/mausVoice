@@ -300,6 +300,7 @@ const ProcessorPage = () => {
 };
 
 export const FeatureReleaseDialog = () => {
+  const intl = useIntl();
   const featureSeenAt = useAppStore((state) => state.local.featureSeenAt);
   const userCreatedAt = useAppStore((state) => getMyUser(state)?.createdAt);
   const isOnboarded = useAppStore((state) => getIsOnboarded(state));
@@ -352,7 +353,18 @@ export const FeatureReleaseDialog = () => {
   };
 
   return (
-    <Dialog open={open} fullWidth maxWidth="sm">
+    <Dialog
+      open={open}
+      fullWidth
+      maxWidth="sm"
+      slotProps={{
+        paper: {
+          "aria-label": intl.formatMessage({
+            defaultMessage: "A more powerful mausVoice",
+          }),
+        },
+      }}
+    >
       <DialogContent sx={{ px: 2, py: 1 }}>{getPageContent()}</DialogContent>
       <DialogActions sx={{ justifyContent: "space-between", px: 2, pb: 2 }}>
         {canBack ? (
