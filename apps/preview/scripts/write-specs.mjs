@@ -499,30 +499,35 @@ MUI tooltips expose via aria on focus/hover. Bouncy is presentational (no role i
 ## Live-spec mapping
 Tooltip radius live. Bouncy choreography patch-only → TutorialForm.
 `],
-["snackbar", `# Snackbar emitter visual (\`snackbar\`)
+["snackbar", `# Snackbar emitter with Sonner (\`snackbar\`)
 
-- Status: **recreated** — \`SnackbarEmitter\` reads snackbar* fields from the zustand store. Recreation copies the MUI Snackbar config verbatim.
-- Source of truth: \`${D}/components/root/SnackbarEmitter.tsx\`, \`${D}/utils/app.utils.ts\` (setSnackbar).
-- Used in: global — any setSnackbar/showErrorSnackbar call site.
+- Status: **recreated**. \`SnackbarEmitter\` routes store events through Sonner. \`SonnerToaster\` supplies the shared position and styling.
+- Source of truth: \`${D}/components/root/SnackbarEmitter.tsx\`, \`${D}/components/root/snackbar-emit.ts\`, \`${D}/components/root/SonnerToaster.tsx\`, \`${D}/actions/app.actions.ts\`, \`${D}/utils/app.utils.ts\`.
+- The emitter handles every \`showSnackbar\` and \`showErrorSnackbar\` call site; direct Sonner calls share the root toaster.
 
 ## Purpose
-Bottom-center transient messages (info/error/success).
+
+Bottom-right transient app messages (info/success/error).
 
 ## Visual tokens
-key=counter (re-mount per message) · #fff message span · small close IconButton (#fff icon, aria “close”) · content style backgroundColor = error/success/primary by mode · anchor bottom-center.
+
+A neutral level1 card with a hairline, premium hover shadow, and theme radius. A status icon and tone-on-tone close button keep status clear. All toast types share one surface at the bottom-right.
 
 ## Motion
-MUI snackbar transition (transitionDuration passthrough); auto-hide 3000ms default; clickaway ignored.
+
+The toaster fallback duration is 4000ms. \`showSnackbar\` sends 5000ms by default, or 10000ms for messages over 100 characters. The close button is enabled.
 
 ## States
-info / error / success / dismissed / queued (counter remount).
+
+Info, success, or error, then dismissed. The emitter sends each new snackbar counter once.
 
 ## Accessibility
-Close is labelled; message is plain text. UNKNOWN: no explicit aria-live/role in source — MUI Snackbar defaults apply (verify).
+
+The close button is enabled. The app emitter does not move focus; Sonner owns toast announcement semantics.
 
 ## Live-spec mapping
-Docs-only recreation. Persist: edit \`SnackbarEmitter.tsx\` / \`app.utils.ts\` → global.
-`],
+
+The preview recreation mirrors production. Persist: edit \`${D}/components/root/SonnerToaster.tsx\` for shared position and styling; edit \`${D}/components/root/SnackbarEmitter.tsx\` / \`${D}/components/root/snackbar-emit.ts\` and \`${D}/actions/app.actions.ts\` / \`${D}/utils/app.utils.ts\` for message behavior.`],
 ["feedback", `# Progress · loading · empty states (\`feedback\`)
 
 - Status: **reused** — real \`AppCircularProgress\`, \`CenterLoading\`, \`CenterMessage\`.
