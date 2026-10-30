@@ -1,3 +1,4 @@
+import { latestVisibleTranscription } from "../../utils/latest-visible-transcription";
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -45,12 +46,7 @@ import { useTauriListen } from "../../hooks/tauri.hooks";
 import { useToastAction } from "../../hooks/toast.hooks";
 import { detectLocale } from "../../i18n";
 import { getEffectiveStylingMode } from "../../utils/feature.utils";
-import {
-  getAuthRepo,
-  getMemberRepo,
-  getTranscriptionRepo,
-  getUserRepo,
-} from "../../repos";
+import { getAuthRepo, getMemberRepo, getUserRepo } from "../../repos";
 import {
   AppState,
   HotkeyStrategy,
@@ -930,9 +926,7 @@ export const AppSideEffects = () => {
 
   useTauriListen<void>("tray-copy-last-transcript", async () => {
     if (!isMainWindow) return;
-    const [latest] = await getTranscriptionRepo().listTranscriptions({
-      limit: 1,
-    });
+    const latest = await latestVisibleTranscription();
     if (latest?.transcript) {
       await invoke("copy_to_clipboard", { text: latest.transcript });
     }
