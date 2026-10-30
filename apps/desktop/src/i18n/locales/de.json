@@ -522,7 +522,7 @@
   "model_downloads": "Modell-Downloads",
   "model_name": "Modellname",
   "model_size": "Modellgröße",
-  "more_options": "Weitere Optionen",
+  "more_options_for_title": "Weitere Optionen für {title}",
   "more_private_no_data_collection": "Privater, keine Datenerfassung",
   "multi_device": "Mehrgeräte",
   "multilingual_local_asr_with_strong_silence_handling_no_punct": "Mehrsprachige lokale Spracherkennung mit zuverlässiger Stillebehandlung (keine Zeichensetzung)",

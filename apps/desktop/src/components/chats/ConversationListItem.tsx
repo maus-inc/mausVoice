@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { useIntl } from "react-intl";
 import { Conversation } from "@maus-inc/types";
 import { formatShortDate, formatShortTime } from "../../utils/date.utils";
+import { surfaces, text } from "../../styles/palette";
 import {
   MenuPopoverBuilder,
   type MenuPopoverItem,
@@ -98,6 +99,9 @@ export const ConversationListItem = ({
   return (
     <Box
       component="div"
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      sx={{ position: "relative" }}
       onContextMenu={(e) => {
         // Yield right-clicks on editable text to the provider's clipboard menu.
         if (isEditableTarget(e.target)) return;
@@ -109,14 +113,12 @@ export const ConversationListItem = ({
         aria-current={selected ? "true" : undefined}
         data-active={selected ? "true" : undefined}
         onClick={onSelect}
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
         sx={{
           borderRadius: 1.5,
           py: 0.75,
           px: 1,
           minHeight: 36,
-          pr: 0.5,
+          pr: 4.25,
           "&:hover": {
             bgcolor: "action.hover",
           },
@@ -156,42 +158,55 @@ export const ConversationListItem = ({
           }}
           sx={{ my: 0 }}
         />
-        <MenuPopoverBuilder
-          items={menuItems}
-          anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
-          transformOrigin={{ vertical: "top", horizontal: "right" }}
-        >
-          {({ ref, open }) => (
-            <IconButton
-              ref={ref}
-              size="small"
-              aria-label={intl.formatMessage({
-                defaultMessage: "More options",
-              })}
-              onClick={(e) => {
-                e.stopPropagation();
-                open();
-              }}
-              sx={{
-                ml: 0.5,
-                flexShrink: 0,
-                opacity: hovered || selected ? 1 : 0,
-                pointerEvents: hovered || selected ? "auto" : "none",
-                "&:focus-within, &:focus-visible": {
-                  opacity: 1,
-                  pointerEvents: "auto",
-                },
-                transition: "opacity 150ms cubic-bezier(0.23, 1, 0.32, 1)",
-                "@media (prefers-reduced-motion: reduce)": {
-                  transition: "none",
-                },
-              }}
-            >
-              <Ellipsis size={16} strokeWidth={1.9} />
-            </IconButton>
-          )}
-        </MenuPopoverBuilder>
       </ListItemButton>
+      <MenuPopoverBuilder
+        items={menuItems}
+        anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+        transformOrigin={{ vertical: "top", horizontal: "right" }}
+      >
+        {({ ref, open, isOpen }) => (
+          <IconButton
+            ref={ref}
+            size="small"
+            aria-label={intl.formatMessage(
+              { defaultMessage: "More options for {title}" },
+              {
+                title:
+                  conversation.title.trim() ||
+                  intl.formatMessage({ defaultMessage: "New conversation" }),
+              },
+            )}
+            aria-haspopup="menu"
+            aria-expanded={isOpen}
+            onClick={(e) => {
+              e.stopPropagation();
+              open();
+            }}
+            sx={(theme) => ({
+              position: "absolute",
+              right: 4,
+              top: "50%",
+              transform: "translateY(-50%)",
+              color: selected ? surfaces.light.level1 : undefined,
+              ...theme.applyStyles("dark", {
+                color: selected ? text.dark.primary : undefined,
+              }),
+              opacity: hovered || selected ? 1 : 0,
+              pointerEvents: hovered || selected ? "auto" : "none",
+              "&:focus-within, &:focus-visible": {
+                opacity: 1,
+                pointerEvents: "auto",
+              },
+              transition: "opacity 150ms cubic-bezier(0.23, 1, 0.32, 1)",
+              "@media (prefers-reduced-motion: reduce)": {
+                transition: "none",
+              },
+            })}
+          >
+            <Ellipsis size={16} strokeWidth={1.9} />
+          </IconButton>
+        )}
+      </MenuPopoverBuilder>
       {ctxMenu.renderMenu()}
     </Box>
   );

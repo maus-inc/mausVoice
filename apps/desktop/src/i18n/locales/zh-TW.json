@@ -522,7 +522,7 @@
   "model_downloads": "模型下載",
   "model_name": "模型名稱",
   "model_size": "模型大小",
-  "more_options": "更多選項",
+  "more_options_for_title": "{title}的更多選項",
   "more_private_no_data_collection": "更私密，無資料收集",
   "multi_device": "多裝置",
   "multilingual_local_asr_with_strong_silence_handling_no_punct": "支援多語系的本地語音識別，靜音處理優異（無標點）",

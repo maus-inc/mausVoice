@@ -522,7 +522,7 @@
   "model_downloads": "Descargas de modelos",
   "model_name": "Nome do modelo",
   "model_size": "Tamanho do modelo",
-  "more_options": "Mais opções",
+  "more_options_for_title": "Mais opções para {title}",
   "more_private_no_data_collection": "Mais privado, sem coleta de dados",
   "multi_device": "Multidispositivo",
   "multilingual_local_asr_with_strong_silence_handling_no_punct": "ASR local multilíngue com tratamento robusto de silêncios (sem pontuação)",

@@ -522,7 +522,7 @@
   "model_downloads": "Téléchargements de modèles",
   "model_name": "Nom du modèle",
   "model_size": "Taille du modèle",
-  "more_options": "Plus d'options",
+  "more_options_for_title": "Plus d’options pour {title}",
   "more_private_no_data_collection": "Plus privé, aucune collecte de données",
   "multi_device": "Multi‑appareil",
   "multilingual_local_asr_with_strong_silence_handling_no_punct": "Reconnaissance vocale locale multilingue avec une gestion robuste des silences (sans ponctuation)",

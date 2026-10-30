@@ -522,7 +522,7 @@
   "model_downloads": "모델 다운로드",
   "model_name": "모델 이름",
   "model_size": "모델 크기",
-  "more_options": "추가 옵션",
+  "more_options_for_title": "{title}의 추가 옵션",
   "more_private_no_data_collection": "더 비공개, 데이터 수집 없음",
   "multi_device": "멀티 디바이스",
   "multilingual_local_asr_with_strong_silence_handling_no_punct": "침묵 처리가 강력한 다국어 로컬 ASR(구두점 없음)",
