@@ -1,3 +1,4 @@
+import { stopComposingEscape } from "../common/ime-keyboard";
 import { CameraAltOutlined, DeleteOutlineOutlined } from "@mui/icons-material";
 import {
   Alert,
@@ -442,6 +443,7 @@ export const ProfileDialog = () => {
             />
             <TextField
               label={<FormattedMessage defaultMessage="Name" />}
+              onKeyDown={stopComposingEscape}
               value={name}
               onChange={(event) => setName(event.target.value)}
               disabled={!user || saving}
