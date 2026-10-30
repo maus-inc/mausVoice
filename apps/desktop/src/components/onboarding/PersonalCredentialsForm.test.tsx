@@ -43,10 +43,13 @@ vi.mock("react-intl", async (importOriginal) => {
   };
 });
 
-vi.mock("./OnboardingCommon", async () => {
+vi.mock("./OnboardingCommon", async (importOriginal) => {
   const { createElement: create } = await import("react");
 
+  const actual = await importOriginal<typeof import("./OnboardingCommon")>();
+
   return {
+    OnboardingFormHeader: actual.OnboardingFormHeader,
     BackButton: () => null,
     DualPaneLayout: ({
       left,
@@ -133,6 +136,9 @@ describe("PersonalCredentialsForm API key skip confirmation", () => {
   it("describes where to get each provider key", async () => {
     await renderForm();
 
+    expect(container.querySelector("h1")?.textContent).toBe(
+      "Connect your API keys",
+    );
     expect(findButton("Grab your Deepgram API key")).toBeDefined();
     expect(findButton("Grab your Groq API key")).toBeDefined();
   });

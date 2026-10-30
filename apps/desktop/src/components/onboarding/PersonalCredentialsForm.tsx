@@ -1,14 +1,6 @@
 import { ArrowForward, OpenInNew } from "@mui/icons-material";
 import { LoadingButton } from "@mui/lab";
-import {
-  Alert,
-  Box,
-  Button,
-  Link,
-  Stack,
-  TextField,
-  Typography,
-} from "@mui/material";
+import { Alert, Box, Button, Link, Stack, TextField } from "@mui/material";
 import { openExternalUrl } from "../../utils/open-url.utils";
 import { useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
@@ -23,6 +15,7 @@ import { ConfirmDialog } from "../common/ConfirmDialog";
 import {
   BackButton,
   DualPaneLayout,
+  OnboardingFormHeader,
   OnboardingFormLayout,
 } from "./OnboardingCommon";
 
@@ -131,25 +124,12 @@ export const PersonalCredentialsForm = () => {
       }
     >
       <Stack spacing={2}>
-        <Box>
-          <Typography
-            variant="h4"
-            sx={{
-              fontWeight: 600,
-              pb: 1,
-            }}
-          >
-            <FormattedMessage defaultMessage="Connect your API keys" />
-          </Typography>
-          <Typography
-            variant="body1"
-            sx={{
-              color: "text.secondary",
-            }}
-          >
+        <OnboardingFormHeader
+          title={<FormattedMessage defaultMessage="Connect your API keys" />}
+          subtitle={
             <FormattedMessage defaultMessage="Add your Deepgram key for fast streaming transcription and your Groq key for AI post-processing. Keys are encrypted and stored locally, and you can change them any time in Settings." />
-          </Typography>
-        </Box>
+          }
+        />
 
         <Stack spacing={1.5}>
           {error && <Alert severity="error">{error}</Alert>}
