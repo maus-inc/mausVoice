@@ -12,7 +12,7 @@ import {
   Typography,
 } from "@mui/material";
 import type { Hotkey } from "@maus-inc/types";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { showErrorSnackbar } from "../../actions/app.actions";
 import { getHotkeyRepo } from "../../repos";
@@ -39,6 +39,8 @@ type StyleHotkeyRow = {
 
 /** Assign one optional global shortcut to each writing style. */
 export const StyleHotkeysDialog = () => {
+  const titleId = useId();
+  const descriptionId = useId();
   const open = useAppStore((state) => state.settings.styleHotkeysDialogOpen);
   const toneById = useAppStore((state) => state.toneById);
   const tones = useMemo(
@@ -153,12 +155,21 @@ export const StyleHotkeysDialog = () => {
       onClose={isSaving ? undefined : close}
       maxWidth="sm"
       fullWidth
+      aria-labelledby={titleId}
+      aria-describedby={descriptionId}
     >
-      <DialogTitle>
+      <DialogTitle id={`${titleId}-wrapper`}>
         <Box sx={{ display: "flex", alignItems: "flex-start" }}>
           <Box sx={{ flex: 1 }}>
-            <FormattedMessage defaultMessage="Style hotkeys" />
-            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+            <span id={titleId}>
+              <FormattedMessage defaultMessage="Style hotkeys" />
+            </span>
+            <Typography
+              id={descriptionId}
+              variant="body2"
+              color="text.secondary"
+              sx={{ mt: 0.5 }}
+            >
               <FormattedMessage defaultMessage="Assign a shortcut to select a style directly. Leave a row empty to disable its shortcut." />
             </Typography>
           </Box>

@@ -13,7 +13,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { appLogDir } from "@tauri-apps/api/path";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { showErrorSnackbar, showSnackbar } from "../../actions/app.actions";
 import { useAsyncData } from "../../hooks/async.hooks";
@@ -159,6 +159,7 @@ const SectionTitle = ({ children }: { children: React.ReactNode }) => (
 );
 
 export const DiagnosticsDialog = () => {
+  const titleId = useId();
   const open = useAppStore((state) => state.settings.diagnosticsDialogOpen);
   const data = useDiagnosticsData();
   const intl = useIntl();
@@ -194,15 +195,24 @@ export const DiagnosticsDialog = () => {
   const version = data.version.state === "success" ? data.version.data : "...";
 
   return (
-    <Dialog open={open} onClose={handleClose} fullWidth maxWidth="xs">
+    <Dialog
+      open={open}
+      onClose={handleClose}
+      fullWidth
+      maxWidth="xs"
+      aria-labelledby={titleId}
+    >
       <DialogTitle
+        id={`${titleId}-wrapper`}
         sx={{
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
         }}
       >
-        <FormattedMessage defaultMessage="Diagnostics" />
+        <span id={titleId}>
+          <FormattedMessage defaultMessage="Diagnostics" />
+        </span>
         <Link
           component="button"
           variant="body2"

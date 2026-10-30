@@ -15,7 +15,7 @@ import {
   Typography,
 } from "@mui/material";
 import type { Hotkey } from "@maus-inc/types";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { FormattedMessage } from "react-intl";
 import { showErrorSnackbar } from "../../actions/app.actions";
 import { loadTones } from "../../actions/tone.actions";
@@ -110,6 +110,8 @@ type LanguageRow = {
 };
 
 export const DictationLanguageDialog = () => {
+  const titleId = useId();
+  const descriptionId = useId();
   const open = useAppStore(
     (state) => state.settings.dictationLanguageDialogOpen,
   );
@@ -268,10 +270,15 @@ export const DictationLanguageDialog = () => {
       open={open}
       onClose={handleClose}
       slotProps={{ paper: { sx: { width: 480 } } }}
+      aria-labelledby={titleId}
+      aria-describedby={descriptionId}
     >
-      <DialogTitle>
-        <FormattedMessage defaultMessage="Dictation language" />
+      <DialogTitle id={`${titleId}-wrapper`}>
+        <span id={titleId}>
+          <FormattedMessage defaultMessage="Dictation language" />
+        </span>
         <Typography
+          id={descriptionId}
           variant="body2"
           sx={{
             color: "text.secondary",
