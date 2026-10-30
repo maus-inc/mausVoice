@@ -36,3 +36,13 @@ The local visual check uses a browser preview, not a native macOS/Windows/Linux 
 - Exercise languages and long translations, text scaling/zoom, empty/loading/error states, provider combinations, focus order, high contrast and reduced motion, and other changed components outside settings.
 - Repeat before/after capture and review at the final commit, including native desktop rendering where possible; investigate every regression rather than assuming the theme or layout is correct.
 - Address outstanding PR review findings separately; visual review does not resolve functional review comments.
+
+## Localized and long-name pass
+
+A subsequent browser run captured 160 page states (ten supported locales × eight routes × 1280×720 and 800×600) and 100 issue-derived states (the profile, clear-data, delete-account and shortcuts dialogs plus the segmented control, in those locales and sizes). The themes alternated between locales rather than covering both themes for every locale. These are reproducible combinations, not 260 distinct defects or 100 separate outside reports. All 260 captures completed without an uncaught page error; measured visible segmented options and dialog boundaries remained inside their containers. Individual screenshots have not all been manually reviewed.
+
+The initial Korean and Chinese screenshots rendered missing-glyph boxes because the sandbox lacked CJK system fonts. The three CJK locales were re-captured after provisioning a CJK fallback font; 78 additional captures completed without page errors. This still does not establish what fonts a user's operating system supplies or how every translated label behaves under scaling.
+
+An additional real browser test saved a single 100-character name. Before the fix, the header button extended from x=28 to x=946 in an 800px window and pushed its name off-screen; the name value also crowded the Account description. The header now bounds and ellipsises its visual name while retaining the full accessible text, and the value/action column leaves room for the description at compact widths. Afterward the button measured x=452 to x=772. Short names and wide-window states need continued regression coverage.
+
+Further issue inspiration: [Tauon #2348](https://github.com/Taiko2k/Tauon/issues/2348) documents localized settings text clipping, [R-Instat #10589](https://github.com/IDEMSInternational/R-Instat/issues/10589) describes longer translated dialog controls, and [jvid #310](https://github.com/jarradbanks/jvid/issues/310) proposes pseudo-localization for longer labels. The capture matrix above checks related conditions; it does not replace a pseudo-locale or actual assistive-technology testing.

@@ -122,7 +122,14 @@ const SettingRowControlColumn = ({
   // reports a value keeps the fixed column, so values still line up down a
   // page. See `contentControlColumnSx` for why the two are not one width.
   return (
-    <Box sx={control ? contentControlColumnSx : controlColumnSx}>
+    <Box
+      sx={[
+        control ? contentControlColumnSx : controlColumnSx,
+        // A long reported value beside a named action must not consume the
+        // space the row's label and description need at compact widths.
+        ...(value && action ? [{ maxWidth: { xs: "45%", md: "60%" } }] : []),
+      ]}
+    >
       <SettingRowValue value={value} />
       {control}
       {action && (

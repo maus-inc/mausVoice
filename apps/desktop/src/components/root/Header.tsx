@@ -130,7 +130,9 @@ export const AppHeader = () => {
               onClick={open}
               sx={{
                 display: { xs: "none", sm: "flex" },
-                flexShrink: 0,
+                flexShrink: 1,
+                minWidth: 0,
+                maxWidth: "min(320px, 40vw)",
                 flexDirection: "row",
                 alignItems: "center",
                 gap: 1.5,
@@ -141,9 +143,11 @@ export const AppHeader = () => {
                 spacing={0.5}
                 sx={{
                   textAlign: "left",
+                  minWidth: 0,
                 }}
               >
                 <Typography
+                  noWrap
                   variant="subtitle1"
                   sx={{
                     fontWeight: 500,
