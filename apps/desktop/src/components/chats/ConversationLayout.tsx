@@ -15,6 +15,7 @@ import { ToolPermissionCard } from "./ToolPermissionCard";
 
 type ConversationLayoutProps = {
   conversationId: string;
+  compact?: boolean;
 };
 
 const AUTO_SCROLL_THRESHOLD_PX = 32;
@@ -25,6 +26,7 @@ const isNearBottom = (node: HTMLDivElement) =>
 
 export const ConversationLayout = ({
   conversationId,
+  compact = false,
 }: ConversationLayoutProps) => {
   const intl = useIntl();
   const messageIds = useAppStore(
@@ -124,13 +126,16 @@ export const ConversationLayout = ({
       sx={{
         flexGrow: 1,
         minWidth: 0,
+        minHeight: 0,
         height: "100%",
         overflow: "hidden",
       }}
     >
-      <Box sx={{ px: 2, pt: 2 }}>
-        <TipCard id="assistant-mode" />
-      </Box>
+      {!compact && (
+        <Box sx={{ px: 2, pt: 2 }}>
+          <TipCard id="assistant-mode" />
+        </Box>
+      )}
       <AgentLiveAnnouncer
         agentRunning={agentRunning}
         latestMessageId={messageIds.at(-1) ?? null}
@@ -140,12 +145,17 @@ export const ConversationLayout = ({
         fadeHeight={32}
         viewportRef={scrollViewportRef}
         onScroll={handleScroll}
-        sx={{ pt: 5, pb: 5, px: 2 }}
+        sx={{ pt: compact ? 1 : 5, pb: compact ? 1 : 5, px: 2 }}
       >
         <Stack
           ref={contentRef}
           sx={{ minHeight: "100%", justifyContent: "flex-end" }}
         >
+          {compact && (
+            <Box sx={{ pb: 2 }}>
+              <TipCard id="assistant-mode" />
+            </Box>
+          )}
           {messageIds.length === 0 ? (
             <Box
               sx={{

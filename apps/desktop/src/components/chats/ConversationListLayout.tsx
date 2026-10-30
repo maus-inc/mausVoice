@@ -17,6 +17,7 @@ import { ConversationListItem } from "./ConversationListItem";
 
 type ConversationListLayoutProps = {
   selectedId: string | null;
+  fullWidth?: boolean;
   onSelect: (id: string) => void;
   onNewChat: () => void;
   onDelete: (id: string) => void;
@@ -42,6 +43,7 @@ const EmptyListMessage = ({ message }: { message: ReactNode }) => (
 
 export const ConversationListLayout = ({
   selectedId,
+  fullWidth = false,
   onSelect,
   onNewChat,
   onDelete,
@@ -167,9 +169,10 @@ export const ConversationListLayout = ({
   return (
     <Box
       sx={{
-        width: 240,
-        maxWidth: 240,
-        minWidth: 240,
+        width: fullWidth ? "100%" : 240,
+        maxWidth: fullWidth ? "none" : 240,
+        minWidth: fullWidth ? 0 : 240,
+        minHeight: 0,
         display: "flex",
         flexDirection: "column",
         gap: 1,
