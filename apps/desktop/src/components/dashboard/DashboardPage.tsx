@@ -1,7 +1,8 @@
 import { Box, Stack, Typography } from "@mui/material";
 import { getVersion } from "@tauri-apps/api/app";
 import { motion, useReducedMotion } from "framer-motion";
-import { Outlet, useLocation } from "react-router-dom";
+import { useLayoutEffect, useRef } from "react";
+import { Outlet, useLocation, useMatch } from "react-router-dom";
 import { useAsyncData } from "../../hooks/async.hooks";
 import { easeOutQuint } from "../../styles/motion";
 import { TranscriptionDetailsDialog } from "../transcriptions/TranscriptionDetailsDialog";
@@ -22,8 +23,26 @@ import { PermissionsDialog } from "./PermissionsDialog";
  */
 export default function DashboardPage() {
   const data = useAsyncData(getVersion, []);
-  const { pathname } = useLocation();
+  const { pathname, hash } = useLocation();
+  const isSettingsRoute = Boolean(useMatch("/dashboard/settings/*"));
   const reduceMotion = useReducedMotion();
+  const contentRef = useRef<HTMLDivElement>(null);
+  const previousPath = useRef(pathname);
+
+  useLayoutEffect(() => {
+    // Previously a route change remounted this scrolling element, putting a
+    // new settings page at the top. Retaining the settings shell must preserve
+    // that behavior without interrupting a deep link's own anchor scroll.
+    if (
+      isSettingsRoute &&
+      previousPath.current !== pathname &&
+      !hash &&
+      contentRef.current
+    ) {
+      contentRef.current.scrollTop = 0;
+    }
+    previousPath.current = pathname;
+  }, [pathname, hash, isSettingsRoute]);
 
   return (
     <>
@@ -60,10 +79,13 @@ export default function DashboardPage() {
         >
           {/* Enter only: retaining an outgoing Outlet during an exit animation
               makes it follow the new route and run cleanup on the incoming page.
-              Key by pathname so query-only navigation keeps the page mounted. */}
+              Key by pathname so query-only navigation keeps the page mounted.
+              Settings is one persistent shell with its own routed pages: keep
+              the shell and its focused rail mounted across section changes. */}
           <Box
             component={motion.div}
-            key={pathname}
+            ref={contentRef}
+            key={isSettingsRoute ? "/dashboard/settings" : pathname}
             initial={reduceMotion ? false : { opacity: 0, x: 8 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{

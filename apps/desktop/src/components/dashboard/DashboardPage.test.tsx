@@ -2,7 +2,7 @@
 import { act, useEffect, useState } from "react";
 import type { Transcription } from "@maus-inc/types";
 import { createRoot, type Root } from "react-dom/client";
-import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
+import { Link, MemoryRouter, Outlet, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ensureUiHarness,
@@ -154,6 +154,58 @@ describe("dashboard routing", () => {
     );
     expect(visiblePages()).toEqual(["Dictionary"]);
     expect(container.textContent).not.toContain("History entry");
+  });
+
+  it("keeps the settings shell and its focused rail link mounted across sections", async () => {
+    const SettingsShell = () => (
+      <section>
+        <nav>
+          <Link to="/dashboard/settings/dictation">Dictation</Link>
+          <Link to="/dashboard/settings/account">Account</Link>
+          <Link to="/dashboard/settings/dictation#setting-test">Deep link</Link>
+        </nav>
+        <Outlet />
+      </section>
+    );
+    await act(async () =>
+      root.render(
+        <MemoryRouter initialEntries={["/dashboard/settings/dictation"]}>
+          <Routes>
+            <Route path="/dashboard" element={<DashboardPage />}>
+              <Route path="settings" element={<SettingsShell />}>
+                <Route path="dictation" element={<p>Dictation page</p>} />
+                <Route path="account" element={<p>Account page</p>} />
+              </Route>
+            </Route>
+          </Routes>
+        </MemoryRouter>,
+      ),
+    );
+    const account = container.querySelector<HTMLAnchorElement>(
+      'a[href="/dashboard/settings/account"]',
+    );
+    if (!account) throw new Error("Missing Account link");
+    const scrollBox = account.closest("section")?.parentElement;
+    if (!scrollBox) throw new Error("Missing scroll container");
+    scrollBox.scrollTop = 500;
+    act(() => account.focus());
+    await act(async () => account.click());
+    expect(container.textContent).toContain("Account page");
+    expect(
+      container.querySelector('a[href="/dashboard/settings/account"]'),
+    ).toBe(account);
+    expect(document.activeElement).toBe(account);
+    expect(scrollBox.scrollTop).toBe(0);
+
+    // Deep links own their scroll destination; resetting on their route change
+    // would compete with a delayed row anchor.
+    scrollBox.scrollTop = 500;
+    const deepLink = container.querySelector<HTMLAnchorElement>(
+      'a[href="/dashboard/settings/dictation#setting-test"]',
+    );
+    if (!deepLink) throw new Error("Missing deep link");
+    await act(async () => deepLink.click());
+    expect(scrollBox.scrollTop).toBe(500);
   });
 
   it("does not let an outgoing History page clear the incoming list", async () => {
