@@ -151,3 +151,38 @@ it("does not replace a newer copy of the same term when deletion fails", async (
     host.remove();
   }
 });
+
+it("does not delete the next row on the second click of a double-click", async () => {
+  mocks.deleteTerm.mockResolvedValue(undefined);
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  try {
+    await act(async () =>
+      root.render(
+        <IntlProvider locale="en" messages={en}>
+          <List />
+        </IntlProvider>,
+      ),
+    );
+    await act(async () =>
+      host
+        .querySelector<HTMLButtonElement>(
+          'button[aria-label="Delete dictionary item a"]',
+        )!
+        .dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 })),
+    );
+    await act(async () =>
+      host
+        .querySelector<HTMLButtonElement>(
+          'button[aria-label="Delete dictionary item b"]',
+        )!
+        .dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 2 })),
+    );
+    expect(getAppState().dictionary.termIds).toEqual(["b", "c"]);
+    expect(mocks.deleteTerm).toHaveBeenCalledTimes(1);
+  } finally {
+    act(() => root.unmount());
+    host.remove();
+  }
+});

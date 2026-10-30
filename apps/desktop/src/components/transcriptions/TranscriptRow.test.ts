@@ -296,3 +296,19 @@ describe("TranscriptionRow context menu", () => {
     expect(document.querySelector('[role="menu"]')).toBeNull();
   });
 });
+
+it("ignores the second pointer click on a shifted delete action but allows keyboard activation", async () => {
+  mocks.scheduleTranscriptionDelete.mockClear();
+  root = await renderRow(container);
+  const button = container.querySelector<HTMLButtonElement>(
+    'button[aria-label="Delete transcript"]',
+  )!;
+  await act(async () =>
+    button.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 2 })),
+  );
+  expect(mocks.scheduleTranscriptionDelete).not.toHaveBeenCalled();
+  await act(async () =>
+    button.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 0 })),
+  );
+  expect(mocks.scheduleTranscriptionDelete).toHaveBeenCalledTimes(1);
+});

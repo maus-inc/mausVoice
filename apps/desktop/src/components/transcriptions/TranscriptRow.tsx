@@ -1,22 +1,11 @@
-import {
-  CheckCircle,
-  Copy,
-  Download,
-  Hourglass,
-  Info,
-  RotateCcw,
-  Send,
-  Trash2,
-} from "lucide-react";
+import { HistoryRowHeader } from "./HistoryRowHeader";
+import { CheckCircle, Download, Hourglass, RotateCcw } from "lucide-react";
 import {
   Box,
-  Chip,
   CircularProgress,
   Divider,
   IconButton,
-  Stack,
   Tooltip,
-  Typography,
   useMediaQuery,
 } from "@mui/material";
 import { getRec } from "@maus-inc/utilities";
@@ -53,33 +42,6 @@ import { captureHistoryDeleteFocus } from "./history-delete-focus";
 export type TranscriptionRowProps = {
   id: string;
 };
-
-/**
- * One icon button in the row's action cluster, with its tooltip.
- *
- * Extracted so the four row actions read as one line each instead of a
- * Tooltip>IconButton pair nested four JSX levels deep inside the row's
- * Box>Box>Stack>Stack. `label` is passed already formatted by the caller, so
- * every `defaultMessage` literal stays in this module where the extractor can
- * read it, and `title`/`aria-label` stay the same string as before.
- */
-const RowAction = ({
-  label,
-  onClick,
-  icon,
-  color,
-}: {
-  label: string;
-  onClick: () => void;
-  icon: React.ReactNode;
-  color?: "primary" | "default";
-}) => (
-  <Tooltip title={label} placement="top">
-    <IconButton aria-label={label} onClick={onClick} size="small" color={color}>
-      {icon}
-    </IconButton>
-  </Tooltip>
-);
 
 export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
   const intl = useIntl();
@@ -311,86 +273,17 @@ export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
           },
         }}
       >
-        <Stack
-          direction="row"
-          spacing={1}
-          sx={{
-            justifyContent: "space-between",
-            alignItems: "center",
-          }}
-        >
-          <Stack
-            direction="row"
-            spacing={1}
-            sx={{
-              alignItems: "center",
-              flexWrap: "wrap",
-            }}
-          >
-            <Typography
-              variant="subtitle2"
-              component="span"
-              sx={{
-                color: "text.secondary",
-              }}
-            >
-              {transcription?.createdAt
-                ? new Intl.DateTimeFormat(undefined, {
-                    dateStyle: "medium",
-                    timeStyle: "short",
-                  }).format(new Date(transcription.createdAt))
-                : ""}
-            </Typography>
-            {isRemoteTranscript && (
-              <Chip
-                size="small"
-                variant="outlined"
-                label={intl.formatMessage({ defaultMessage: "Remote" })}
-              />
-            )}
-            {isSentToRemote && (
-              <Chip
-                size="small"
-                variant="outlined"
-                label={intl.formatMessage({ defaultMessage: "Sent" })}
-              />
-            )}
-          </Stack>
-          <Stack direction="row" spacing={1}>
-            <RowAction
-              label={intl.formatMessage({
-                defaultMessage: "View transcription details",
-              })}
-              onClick={handleDetailsOpen}
-              icon={<Info size={16} strokeWidth={1.9} />}
-              color={hasMetadata ? "primary" : "default"}
-            />
-            <RowAction
-              label={intl.formatMessage({ defaultMessage: "Copy transcript" })}
-              onClick={() =>
-                handleCopyTranscript(transcription?.transcript || "")
-              }
-              icon={<Copy size={16} strokeWidth={1.9} />}
-            />
-            <RowAction
-              label={intl.formatMessage({
-                defaultMessage: "Delete transcript",
-              })}
-              onClick={() => handleDeleteTranscript(id)}
-              icon={<Trash2 size={16} strokeWidth={1.9} />}
-            />
-            {!isRemoteTranscript && activeRemoteTarget && (
-              <RowAction
-                label={intl.formatMessage(
-                  { defaultMessage: "Send to {name}" },
-                  { name: activeRemoteTarget.name },
-                )}
-                onClick={handleSendToReceiver}
-                icon={<Send size={16} strokeWidth={1.9} />}
-              />
-            )}
-          </Stack>
-        </Stack>
+        <HistoryRowHeader
+          createdAt={transcription?.createdAt}
+          isRemote={isRemoteTranscript}
+          isSent={isSentToRemote}
+          receiverName={activeRemoteTarget?.name}
+          hasMetadata={hasMetadata}
+          onDetails={handleDetailsOpen}
+          onCopy={() => handleCopyTranscript(transcription?.transcript || "")}
+          onDelete={() => handleDeleteTranscript(id)}
+          onSend={handleSendToReceiver}
+        />
         <TypographyWithMore
           variant="body2"
           color="text.primary"
