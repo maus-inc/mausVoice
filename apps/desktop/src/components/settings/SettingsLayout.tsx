@@ -125,7 +125,7 @@ export const SettingsLayout = () => {
   );
 
   const clearQuery = useCallback(() => setQuery(""), []);
-  const { highlight, focusSetting } = useSettingsAnchor(
+  const { highlight, focusSetting, cancelPendingFocus } = useSettingsAnchor(
     location.hash,
     activePage?.id,
     availability,
@@ -216,7 +216,10 @@ export const SettingsLayout = () => {
             fullWidth
             size="small"
             value={query}
-            onChange={(event) => setQuery(event.target.value)}
+            onChange={(event) => {
+              cancelPendingFocus();
+              setQuery(event.target.value);
+            }}
             onKeyDown={(event) => {
               if (event.key === "Escape") {
                 setQuery("");

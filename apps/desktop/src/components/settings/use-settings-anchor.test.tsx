@@ -8,7 +8,7 @@ import { useSettingsAnchor } from "./use-settings-anchor";
 ensureUiHarness();
 const clearQuery = () => {};
 const Probe = ({ available, hash }: { available: boolean; hash: string }) => {
-  const { highlight } = useSettingsAnchor(
+  const { highlight, cancelPendingFocus } = useSettingsAnchor(
     hash,
     "privacy-data",
     available,
@@ -18,6 +18,7 @@ const Probe = ({ available, hash }: { available: boolean; hash: string }) => {
     "div",
     null,
     createElement("output", null, highlight),
+    createElement("button", { onClick: cancelPendingFocus }, "Start search"),
     available && createElement("div", { id: "setting-elevenlabs_keyterms" }),
   );
 };
@@ -61,6 +62,55 @@ describe("settings anchors", () => {
       await render(false);
       await render(true);
       expect(scroll).toHaveBeenCalledTimes(1);
+    } finally {
+      act(() => root.unmount());
+      container.remove();
+    }
+  });
+
+  it("does not interrupt a search started while a linked row is loading", async () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const scroll = vi.fn();
+    const clear = vi.fn();
+    HTMLElement.prototype.scrollIntoView = scroll;
+    const SearchProbe = ({ available }: { available: boolean }) => {
+      const { cancelPendingFocus } = useSettingsAnchor(
+        "#setting-elevenlabs_keyterms",
+        "privacy-data",
+        available,
+        clear,
+      );
+      return createElement(
+        "div",
+        null,
+        createElement(
+          "button",
+          { onClick: cancelPendingFocus },
+          "Start search",
+        ),
+        available &&
+          createElement("div", { id: "setting-elevenlabs_keyterms" }),
+      );
+    };
+    try {
+      await act(async () =>
+        root.render(createElement(SearchProbe, { available: false })),
+      );
+      await act(async () => {
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+      });
+      clear.mockClear();
+      act(() => container.querySelector("button")?.click());
+      await act(async () =>
+        root.render(createElement(SearchProbe, { available: true })),
+      );
+      await act(async () => {
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+      });
+      expect(clear).not.toHaveBeenCalled();
+      expect(scroll).not.toHaveBeenCalled();
     } finally {
       act(() => root.unmount());
       container.remove();

@@ -38,6 +38,12 @@ export const useSettingsAnchor = (
     [clearQuery],
   );
 
+  const cancelPendingFocus = useCallback(() => {
+    pending.current = null;
+    if (frame.current !== null) cancelAnimationFrame(frame.current);
+    frame.current = null;
+  }, []);
+
   useEffect(() => {
     pending.current = null;
     if (frame.current !== null) cancelAnimationFrame(frame.current);
@@ -61,5 +67,5 @@ export const useSettingsAnchor = (
     [],
   );
 
-  return { highlight, focusSetting };
+  return { highlight, focusSetting, cancelPendingFocus };
 };
