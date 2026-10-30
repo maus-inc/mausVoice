@@ -169,11 +169,17 @@ export const createDefaultPreferences = (): UserPreferences => ({
 // the latest committed preferences when it actually runs.
 const { enqueue: enqueuePrefsMutation } = createMutationQueue();
 
+type UpdateUserPreferencesOptions = {
+  /** Set false when the caller presents the failure inline. */
+  showErrorToast?: boolean;
+};
+
 export const updateUserPreferences = (
   updateCallback: (preferences: UserPreferences) => void,
   saveErrorMessage = getIntl().formatMessage({
     defaultMessage: "Failed to save AI preferences. Please try again.",
   }),
+  options: UpdateUserPreferencesOptions = {},
 ): Promise<void> =>
   enqueuePrefsMutation(async () => {
     const state = getAppState();
@@ -187,7 +193,9 @@ export const updateUserPreferences = (
         getLogger().error(
           `Failed to load existing preferences before update: ${error}`,
         );
-        showErrorSnackbar(saveErrorMessage);
+        if (options.showErrorToast !== false) {
+          showErrorSnackbar(saveErrorMessage);
+        }
         throw error;
       }
     }
@@ -207,7 +215,9 @@ export const updateUserPreferences = (
       getLogger().verbose("User preferences saved successfully");
     } catch (error) {
       getLogger().error(`Failed to update user preferences: ${error}`);
-      showErrorSnackbar(saveErrorMessage);
+      if (options.showErrorToast !== false) {
+        showErrorSnackbar(saveErrorMessage);
+      }
       throw error;
     }
   });
@@ -432,9 +442,13 @@ export const setPreferredMicrophone = async (
   const trimmed = preferredMicrophone?.trim() ?? null;
   const normalized = trimmed && trimmed.length > 0 ? trimmed : null;
 
-  await updateUserPreferences((preferences) => {
-    preferences.preferredMicrophone = normalized;
-  }, "Failed to save microphone preference. Please try again.");
+  await updateUserPreferences(
+    (preferences) => {
+      preferences.preferredMicrophone = normalized;
+    },
+    "Failed to save microphone preference. Please try again.",
+    { showErrorToast: false },
+  );
 };
 
 export const migratePreferredMicrophoneToPreferences =

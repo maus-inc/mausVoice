@@ -502,8 +502,8 @@ Tooltip radius live. Bouncy choreography patch-only → TutorialForm.
 ["snackbar", `# Snackbar emitter with Sonner (\`snackbar\`)
 
 - Status: **recreated**. \`SnackbarEmitter\` routes store events through Sonner. \`SonnerToaster\` supplies the shared position and styling.
-- Source of truth: \`${D}/components/root/SnackbarEmitter.tsx\`, \`${D}/components/root/SonnerToaster.tsx\`, \`${D}/actions/app.actions.ts\`, \`${D}/utils/app.utils.ts\`.
-- Used by every \`showSnackbar\` and \`showErrorSnackbar\` call site.
+- Source of truth: \`${D}/components/root/SnackbarEmitter.tsx\`, \`${D}/components/root/snackbar-emit.ts\`, \`${D}/components/root/SonnerToaster.tsx\`, \`${D}/actions/app.actions.ts\`, \`${D}/utils/app.utils.ts\`.
+- The emitter handles every \`showSnackbar\` and \`showErrorSnackbar\` call site; direct Sonner calls share the root toaster.
 
 ## Purpose
 
@@ -527,7 +527,7 @@ The close button is enabled. The app emitter does not move focus; Sonner owns to
 
 ## Live-spec mapping
 
-The preview recreation mirrors production. Persist: edit \`${D}/components/root/SonnerToaster.tsx\` for shared position and styling; edit \`${D}/actions/app.actions.ts\` / \`${D}/utils/app.utils.ts\` for message behavior.`],
+The preview recreation mirrors production. Persist: edit \`${D}/components/root/SonnerToaster.tsx\` for shared position and styling; edit \`${D}/components/root/SnackbarEmitter.tsx\` / \`${D}/components/root/snackbar-emit.ts\` and \`${D}/actions/app.actions.ts\` / \`${D}/utils/app.utils.ts\` for message behavior.`],
 ["feedback", `# Progress · loading · empty states (\`feedback\`)
 
 - Status: **reused** — real \`AppCircularProgress\`, \`CenterLoading\`, \`CenterMessage\`.

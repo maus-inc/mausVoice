@@ -11,8 +11,8 @@ import {
 } from "@mui/material";
 import { Nullable } from "@maus-inc/types";
 import { useCallback, useEffect, useState } from "react";
+import { toast } from "sonner";
 import { FormattedMessage, useIntl } from "react-intl";
-import { showSnackbar } from "../../actions/app.actions";
 import { setPreferredMicrophone } from "../../actions/user.actions";
 import { useMyPreferredMicrophone } from "../../hooks/user.hooks";
 import { produceAppState, useAppStore } from "../../store";
@@ -29,6 +29,7 @@ export const MicrophoneDialog = () => {
   const [hasChanges, setHasChanges] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [saveAnnouncement, setSaveAnnouncement] = useState("");
 
   useEffect(() => {
     if (!open) {
@@ -37,6 +38,7 @@ export const MicrophoneDialog = () => {
     setSelected(savedPreference);
     setHasChanges(false);
     setSaveError(null);
+    setSaveAnnouncement("");
   }, [open, savedPreference]);
 
   const handleSelectionChange = useCallback(
@@ -44,6 +46,7 @@ export const MicrophoneDialog = () => {
       setSelected(next ?? null);
       setHasChanges((next ?? null) !== (savedPreference ?? null));
       setSaveError(null);
+      setSaveAnnouncement("");
     },
     [savedPreference],
   );
@@ -55,6 +58,7 @@ export const MicrophoneDialog = () => {
 
     setSaving(true);
     setSaveError(null);
+    setSaveAnnouncement("");
 
     try {
       await setPreferredMicrophone(selected ?? null);
@@ -65,10 +69,13 @@ export const MicrophoneDialog = () => {
       setSaving(false);
     }
 
-    setHasChanges(false);
-    showSnackbar(intl.formatMessage({ defaultMessage: "Preference saved." }), {
-      mode: "success",
+    const successMessage = intl.formatMessage({
+      defaultMessage: "Preference saved.",
     });
+    setHasChanges(false);
+    setSaveAnnouncement(successMessage);
+    // Avoid the state-backed snackbar bridge coalescing this confirmation.
+    toast.success(successMessage, { duration: 5000 });
   }, [hasChanges, intl, saving, selected]);
 
   const handleClose = useCallback(() => {
@@ -98,6 +105,26 @@ export const MicrophoneDialog = () => {
               disabled={saving}
             />
             {saveError && <Alert severity="error">{saveError}</Alert>}
+            {/* MUI hides the app root from assistive tech while this dialog is open,
+                so announce success here without a second visible alert. */}
+            <div
+              role="status"
+              aria-live="polite"
+              aria-atomic="true"
+              style={{
+                border: 0,
+                clip: "rect(0 0 0 0)",
+                height: 1,
+                margin: -1,
+                overflow: "hidden",
+                padding: 0,
+                position: "absolute",
+                whiteSpace: "nowrap",
+                width: 1,
+              }}
+            >
+              {saveAnnouncement}
+            </div>
           </Stack>
 
           <Divider />
