@@ -491,18 +491,23 @@ const workspaceSnapshot = (
   return { state, data: fullData };
 };
 
+const populatedWorkspaceData = (): Omit<
+  PreviewData,
+  "user" | "preferences"
+> => ({
+  terms: clone(previewTerms),
+  apiKeys: clone(previewApiKeys),
+  customTones: clone(previewCustomTones),
+  hotkeys: clone(previewHotkeys),
+  appTargets: clone(previewAppTargets),
+  transcriptions: clone(previewTranscriptions),
+  dailyActivity: createPreviewDailyActivity(),
+  conversations: clone(previewConversations),
+  chatMessages: clone(previewChatMessages),
+});
+
 const populatedSnapshot = (): PreviewScenarioSnapshot =>
-  workspaceSnapshot({
-    terms: clone(previewTerms),
-    apiKeys: clone(previewApiKeys),
-    customTones: clone(previewCustomTones),
-    hotkeys: clone(previewHotkeys),
-    appTargets: clone(previewAppTargets),
-    transcriptions: clone(previewTranscriptions),
-    dailyActivity: createPreviewDailyActivity(),
-    conversations: clone(previewConversations),
-    chatMessages: clone(previewChatMessages),
-  });
+  workspaceSnapshot(populatedWorkspaceData());
 
 const emptySnapshot = (): PreviewScenarioSnapshot =>
   workspaceSnapshot({
@@ -585,20 +590,9 @@ export const createPreviewScenario = (
     case "onboarding":
       return onboardingSnapshot();
     case "permission-denied":
-      return workspaceSnapshot(
-        {
-          terms: clone(previewTerms),
-          apiKeys: clone(previewApiKeys),
-          customTones: clone(previewCustomTones),
-          hotkeys: clone(previewHotkeys),
-          appTargets: clone(previewAppTargets),
-          transcriptions: clone(previewTranscriptions),
-          dailyActivity: createPreviewDailyActivity(),
-          conversations: clone(previewConversations),
-          chatMessages: clone(previewChatMessages),
-        },
-        { permissionsDenied: true },
-      );
+      return workspaceSnapshot(populatedWorkspaceData(), {
+        permissionsDenied: true,
+      });
     case "populated":
     default:
       return populatedSnapshot();

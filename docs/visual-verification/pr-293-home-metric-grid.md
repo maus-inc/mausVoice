@@ -2,7 +2,7 @@
 
 ## Result
 
-Fresh screenshots are included for the live base and the updated PR code. They show the old Home cards on the base and the compact metric pairing on the updated head. The reference-sized updated capture keeps the heatmap between the two metric columns and shows the requested `Alt` and `X` keycaps.
+Fresh, renderer-matched screenshots compare the requested visual baseline with the updated application code. The before capture uses the old Home cards; the head capture uses the compact metric pairing. The reference-sized updated capture keeps the heatmap between the two metric columns and shows the requested `Alt` and `X` keycaps. The reference-sized sidebar crops match pixel-for-pixel. GitHub's current PR base is different from the screenshot baseline; both commits are labeled below.
 
 The responsive captures cover 768×1000, 390×1000, and 320×1000 CSS-pixel viewports. The updated Home frame measured 464px, 342px, and 272px at those widths; it measured 620px at 1157×727. At every captured viewport, the document width matched the viewport width. Separate screenshots force the frame itself to 559px and 560px. The compact layout appears at 559px, and the wide layout appears at 560px. The empty-scenario capture confirms the compact layout with no speed sample.
 
@@ -10,14 +10,21 @@ These are browser-preview captures, not screenshots of a native Tauri window. Th
 
 ## Source and capture method
 
-- The live base before the change was `arena/0.1.6-consolidation` at `609f2a8724343bbbdbc7f980174d2dcbdbcadb2e`. This snapshot still uses the legacy Home statistics cards and does not contain `HomeAnalyticsGrid`.
-- The updated code after the change was PR head `e6105912e5d6c086b747b035fe77695f18212007`. The screenshot-and-documentation commit that follows it does not change application code.
-- The base and head previews were served from separate source snapshots. Both used the `populated` route, but the snapshots contain different preview fixture dates and streak values. The screenshots compare layout, not controlled metric values. The old `pr-293-home-*.png` files were not used as base or updated-head evidence.
-- The capture used one-off Chromium 153.0.8010.0 from `@sparticuz/chromium` 153.0.0 with Puppeteer Core 25.16.0. The temporary browser ran outside the repository, as explicitly authorized for these screenshots. No browser, automation package, or test harness was added to the repository.
+- The requested screenshot baseline is `arena/0.1.6-consolidation` at `609f2a8724343bbbdbc7f980174d2dcbdbcadb2e`. It still uses the legacy Home statistics cards and does not contain `HomeAnalyticsGrid`. It is the visual before snapshot, not GitHub's current PR base.
+- GitHub reports `86dc7c3af663fcfc17c8662e437a190ea46f019f` as the live PR base. PR-diff and new-code checks use that commit; the screenshots intentionally use `609f2a8724343bbbdbc7f980174d2dcbdbcadb2e` as requested.
+- The Home UI source was PR code commit `e6105912e5d6c086b747b035fe77695f18212007`. The later screenshot, guide, and preview-fixture commits do not change the Home dashboard UI.
+- The screenshot-baseline and updated-code previews were served from separate source snapshots. Both used the `populated` route, but the snapshots contain different preview fixture dates and streak values. The screenshots compare layout, not controlled metric values. These PNGs were freshly captured together; earlier comparison captures were replaced rather than reused.
+- The capture used one-off Chromium 153.0.8010.0 from `@sparticuz/chromium` 153.0.0 with Puppeteer Core 25.16.0 and the Chromium graphics stack enabled for every image. The temporary browser ran outside the repository, as explicitly authorized for these screenshots. No browser, automation package, or test harness was added to the repository.
 - Browser viewport sizes are CSS pixels at device scale factor 1. Dark color-scheme and reduced-motion preferences were emulated. The preview itself remained in its `system` theme mode, and the preview-only toolbar was hidden in the captured images.
 - The reference shows the literal `Alt` keycap, while the browser preview's temporary OS adapter defaults to macOS and renders `⌥`. For these captures only, the preview OS adapter was temporarily set to Windows, then restored; no production code or lasting preview code change was committed.
 - `PreviewRoot` does not mount `KeyPressSideEffects`, so the shortcut recorder opens but does not accept browser keypresses. Rather than alter the keycap text or claim the UI recorded it, the preview's exported `produceAppState` helper set the fixture's dictate hotkey to `Alt` + `KeyX`. The visible badge was checked as `Alt + X`. This was capture-only preview state, not persisted product data.
-- The live base displayed its one-time release announcement. It was dismissed by selecting **Next** twice, then **Got it!**. The **Getting started** checklist was skipped before capture. The base render also logged a missing-key React warning in its Home translation content; the route rendered and the warning did not obscure the screenshots.
+- The screenshot-baseline preview displayed its one-time release announcement. It was dismissed by selecting **Next** twice, then **Got it!**. The **Getting started** checklist was skipped before capture. The render also logged a missing-key React warning in its Home translation content; the route rendered and the warning did not obscure the screenshots.
+
+## Sidebar capture parity
+
+The earlier reference-sized screenshot pair showed a darker sidebar in the before image. Dismissing the screenshot-baseline release dialog did not change that, and source review found no sidebar-style change. I rendered the same head page twice at the same viewport. I kept the dark scheme, reduced-motion setting, and page state constant. I changed only Chromium's graphics mode. The gradient, sidebar bounds, and body background stayed the same. The bounds were `x=0`, `y=98.03`, `width=232`, and `height=628.97`. The body background stayed `rgb(12, 12, 13)`. The transparent sidebar pixels changed with graphics mode. At `x=10`, `y=350`, the RGB values were `18, 18, 19` with graphics off and `25, 25, 25` with graphics on. At `x=10`, `y=550`, they were `14, 14, 16` with graphics off and `24, 24, 27` with graphics on. The earlier screenshot-baseline crop matched graphics-off more closely. The earlier head crop matched graphics-on more closely.
+
+I recaptured every comparison image with the same Chromium build and graphics mode on. The sidebar crops in the fresh 1157×727 screenshot-baseline and head images match pixel for pixel. Each crop covers `x=0` through `x=231` and `y=98` through `y=726`. Both images show the same sidebar gradient and no open dialog or backdrop. I dismissed the screenshot-baseline release announcement and waited for its confetti to finish. The mismatch came from the browser capture settings, not a product styling change or a remaining dialog overlay.
 
 ## Reference-sized comparison
 
@@ -25,17 +32,17 @@ The requested design reference is `docs/assets/image_253.png` and measures 1157�
 
 ![Requested design reference at 1157×727. This is not a live app capture.](../assets/image_253.png)
 
-| Live base, `609f2a8` | Updated code, `e610591` |
+| Screenshot baseline, `609f2a8` | Updated code, `e610591` |
 | --- | --- |
-| ![Live base Home at 1157×727, populated scenario](../assets/pr-293-home-base-609f2a8-1157x727.png) | ![Updated Home at 1157×727, populated scenario](../assets/pr-293-home-head-e610591-1157x727.png) |
+| ![Screenshot-baseline Home at 1157×727, populated scenario](../assets/pr-293-home-base-609f2a8-1157x727.png) | ![Updated Home at 1157×727, populated scenario](../assets/pr-293-home-head-e610591-1157x727.png) |
 
-The updated image has a 620px Home frame. Its wide grid areas are `"streak activity total" "month activity speed"`. The base image shows the actual older card layout from the live base, not a reconstructed or historical "before".
+The updated image has a 620px Home frame. Its wide grid areas are `"streak activity total" "month activity speed"`. The before image shows the actual older card layout from the requested screenshot baseline, not a reconstructed or historical "before".
 
 ## Responsive and edge-case screenshots
 
 The file names identify the source commit and viewport. The 559px and 560px images use a 1157×727 browser viewport while setting the **Home frame** to the named width; these are not 559px and 560px browser viewports.
 
-| Check | Live base | Updated code |
+| Check | Screenshot baseline | Updated code |
 | --- | --- | --- |
 | 768×1000 viewport | [Base PNG](../assets/pr-293-home-base-609f2a8-768x1000.png) | [Updated PNG](../assets/pr-293-home-head-e610591-768x1000.png) |
 | 390×1000 viewport | [Base PNG](../assets/pr-293-home-base-609f2a8-390x1000.png) | [Updated PNG](../assets/pr-293-home-head-e610591-390x1000.png) |
@@ -64,7 +71,7 @@ At 560px and wider, the speed-less wide map remains `"streak activity total" "mo
 
 A person can inspect the linked PNGs above without running the app:
 
-1. Compare the reference image with the two 1157×727 captures. Check the location of the heatmap, the card pairings, and the visible `Alt` and `X` keycaps.
+1. Compare the reference image with the two 1157×727 captures. Check the location of the heatmap, the card pairings, and the visible `Alt` and `X` keycaps. The sidebar tone is consistent across the base/head pair; the visual change is in the Home content.
 2. Open each base/head pair at 768×1000, 390×1000, and 320×1000. Check that labels remain legible and the page does not require horizontal scrolling.
 3. Compare the 559px and 560px frame captures. The 559px frame uses the compact map; the 560px frame uses the wide map. The browser viewport stays the same in both images, so the change is tied to the measured frame width.
 4. Open the empty-scenario capture. Confirm that no speed card is shown, the total metric remains beside streak, the month row leaves its right cell empty, and the heatmap remains below.
@@ -88,7 +95,7 @@ The browser-preview shortcut recorder is not wired to key events, so it cannot s
 
 ## Historical renders
 
-`pr-293-home-mobile-after.png`, `pr-293-home-tablet-768-after.png`, and the other existing `pr-293-home-*.png` files are retained as historical PR artifacts. They are not captures from the live base or the updated head listed above, and they are not used as evidence in this record.
+`pr-293-home-mobile-after.png`, `pr-293-home-tablet-768-after.png`, and the other existing `pr-293-home-*.png` files are retained as historical PR artifacts. They are not captures from the requested screenshot baseline or updated head listed above, and they are not used as evidence in this record.
 
 ## Design guidance consulted
 

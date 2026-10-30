@@ -52,6 +52,22 @@ describe("browser preview scenarios", () => {
     expect(snapshot.state.settings.apiKeys).toHaveLength(1);
   });
 
+  it("reuses populated data without sharing mutable values across scenarios", () => {
+    const populated = createPreviewScenario("populated");
+    const permissionDenied = createPreviewScenario("permission-denied");
+
+    expect(permissionDenied.data).toEqual(populated.data);
+    expect(permissionDenied.data.transcriptions).not.toBe(
+      populated.data.transcriptions,
+    );
+    expect(permissionDenied.data.transcriptions[0]).not.toBe(
+      populated.data.transcriptions[0],
+    );
+    expect(permissionDenied.data.dailyActivity).not.toBe(
+      populated.data.dailyActivity,
+    );
+  });
+
   it("exposes an explicit denied-permission workspace", () => {
     const snapshot = createPreviewScenario("permission-denied");
 
