@@ -352,6 +352,7 @@ export default function DictationSettingsPage() {
             }
             control={
               <SettingNumberField
+                rowKey="dictation_limit"
                 value={limitField.input}
                 onChange={limitField.setInput}
                 onCommit={limitField.commit}
@@ -371,6 +372,7 @@ export default function DictationSettingsPage() {
           }
           control={
             <SettingNumberField
+              rowKey="hands_free_output_delay"
               value={delayField.input}
               onChange={delayField.setInput}
               onCommit={delayField.commit}

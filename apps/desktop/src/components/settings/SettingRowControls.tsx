@@ -5,6 +5,8 @@ import {
   TextField,
   type SelectChangeEvent,
 } from "@mui/material";
+import { useEffect, useRef } from "react";
+import { settingAnchorId } from "./settings-routes";
 
 /**
  * The two controls the settings rows share.
@@ -49,6 +51,8 @@ export const SettingSelect = <Value extends string>({
 );
 
 export type SettingNumberFieldProps = {
+  /** The owning row supplies the visible label and description. */
+  rowKey: string;
   value: string;
   onChange: (value: string) => void;
   /** Committed on blur and on Enter, never on each keystroke. */
@@ -64,6 +68,7 @@ export type SettingNumberFieldProps = {
 };
 
 export const SettingNumberField = ({
+  rowKey,
   value,
   onChange,
   onCommit,
@@ -73,38 +78,63 @@ export const SettingNumberField = ({
   max,
   step = 1,
   disabled,
-}: SettingNumberFieldProps) => (
-  <TextField
-    size="small"
-    fullWidth
-    type="number"
-    value={value}
-    disabled={disabled}
-    error={Boolean(error)}
-    helperText={error ?? undefined}
-    onChange={(event) => onChange(event.target.value)}
-    onBlur={onCommit}
-    onKeyDown={(event) => {
-      if (event.key === "Enter") {
-        onCommit();
-      }
-    }}
-    slotProps={{
-      htmlInput: { min, max, step, inputMode: "numeric" },
-      input: unit
-        ? {
-            endAdornment: (
-              <InputAdornment position="end">{unit}</InputAdornment>
-            ),
-          }
-        : undefined,
-      formHelperText: error ? { role: "alert" } : undefined,
-    }}
-    sx={{
-      "& .MuiFormHelperText-root": {
-        marginLeft: 0,
-        textAlign: "right",
-      },
-    }}
-  />
-);
+}: SettingNumberFieldProps) => {
+  const rowId = settingAnchorId(rowKey);
+  const inputId = `${rowId}-input`;
+  const inputRef = useRef<HTMLInputElement>(null);
+  const errorRef = useRef<HTMLParagraphElement>(null);
+
+  // An error can extend below a short viewport after Enter. Reveal it only
+  // while this field still has focus; a blur must not pull the page away from
+  // whatever the person clicked next.
+  useEffect(() => {
+    if (error && document.activeElement === inputRef.current) {
+      errorRef.current?.scrollIntoView?.({ block: "nearest" });
+    }
+  }, [error]);
+
+  return (
+    <TextField
+      id={inputId}
+      inputRef={inputRef}
+      size="small"
+      fullWidth
+      type="number"
+      value={value}
+      disabled={disabled}
+      error={Boolean(error)}
+      helperText={error ?? undefined}
+      onChange={(event) => onChange(event.target.value)}
+      onBlur={onCommit}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") {
+          onCommit();
+        }
+      }}
+      slotProps={{
+        htmlInput: {
+          min,
+          max,
+          step,
+          inputMode: "numeric",
+          "aria-labelledby": `${rowId}-label`,
+          "aria-describedby": `${rowId}-description${error ? ` ${inputId}-helper-text` : ""}`,
+        },
+        input: unit
+          ? {
+              endAdornment: (
+                <InputAdornment position="end">{unit}</InputAdornment>
+              ),
+            }
+          : undefined,
+        formHelperText: error ? { role: "alert", ref: errorRef } : undefined,
+      }}
+      sx={{
+        "& .MuiFormHelperText-root": {
+          marginLeft: 0,
+          textAlign: "right",
+        },
+      }}
+    />
+  );
+};

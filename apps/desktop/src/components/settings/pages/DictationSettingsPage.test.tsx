@@ -159,6 +159,64 @@ describe("DictationSettingsPage", () => {
     container.remove();
   });
 
+  it("associates each number field with its visible label, description, and validation error", () => {
+    render();
+    for (const key of ["dictation_limit", "hands_free_output_delay"]) {
+      const row = requireElement(
+        document.getElementById(`setting-${key}`),
+        key,
+      );
+      const input = requireElement(
+        row.querySelector<HTMLInputElement>('input[type="number"]'),
+        `${key} input`,
+      );
+      expect(input.getAttribute("aria-labelledby")).toBe(
+        `setting-${key}-label`,
+      );
+      expect(
+        document.getElementById(input.getAttribute("aria-labelledby")!)
+          ?.textContent,
+      ).toBeTruthy();
+      expect(input.getAttribute("aria-describedby")).toBe(
+        `setting-${key}-description`,
+      );
+      expect(
+        document.getElementById(input.getAttribute("aria-describedby")!)
+          ?.textContent,
+      ).toBeTruthy();
+      typeAndCommit(input, "-1");
+      const ids = input.getAttribute("aria-describedby")?.split(" ") ?? [];
+      expect(ids).toEqual([
+        `setting-${key}-description`,
+        `setting-${key}-input-helper-text`,
+      ]);
+      expect(document.getElementById(ids[1])?.getAttribute("role")).toBe(
+        "alert",
+      );
+    }
+  });
+
+  it("reveals a validation message submitted from the focused field", () => {
+    const scroll = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: scroll,
+    });
+    try {
+      render();
+      const field = requireElement(limitField(), "the dictation limit field");
+      typeAndCommit(field, "-1");
+      expect(scroll).not.toHaveBeenCalled();
+      typeAndCommit(field, String(SAVED_MINUTES));
+      act(() => field.focus());
+      typeAndCommit(field, "-1");
+      expect(scroll).toHaveBeenCalledWith({ block: "nearest" });
+    } finally {
+      delete (HTMLElement.prototype as { scrollIntoView?: unknown })
+        .scrollIntoView;
+    }
+  });
+
   it("keeps a draft typed while the previous value is still saving", async () => {
     const { settleNext } = deferredWrite();
     render();
