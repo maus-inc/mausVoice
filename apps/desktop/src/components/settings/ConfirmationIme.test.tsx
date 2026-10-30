@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
-import { Dialog, TextField } from "@mui/material";
+import { Dialog, DialogContent, TextField, ThemeProvider } from "@mui/material";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { IntlProvider } from "react-intl";
 import { expect, it, vi } from "vitest";
 import { ensureUiHarness } from "../../../test/helpers/jsdom-ui-harness";
 import en from "../../i18n/locales/en.json";
-import { stopComposingEscape } from "../common/ime-keyboard";
+import { theme } from "../../theme";
 import { ConfirmationField } from "./ConfirmationField";
 
 vi.mock("react-intl", async (importOriginal) => {
@@ -27,17 +27,21 @@ it.each(["profile", "confirmation"])(
       act(() =>
         root.render(
           <IntlProvider locale="en" messages={en}>
-            <Dialog open onClose={onClose}>
-              {kind === "profile" ? (
-                <TextField label="Name" onKeyDown={stopComposingEscape} />
-              ) : (
-                <ConfirmationField
-                  phrase="clear"
-                  value=""
-                  onChange={() => {}}
-                />
-              )}
-            </Dialog>
+            <ThemeProvider theme={theme}>
+              <Dialog open onClose={onClose}>
+                <DialogContent>
+                  {kind === "profile" ? (
+                    <TextField label="Name" />
+                  ) : (
+                    <ConfirmationField
+                      phrase="clear"
+                      value=""
+                      onChange={() => {}}
+                    />
+                  )}
+                </DialogContent>
+              </Dialog>
+            </ThemeProvider>
           </IntlProvider>,
         ),
       );

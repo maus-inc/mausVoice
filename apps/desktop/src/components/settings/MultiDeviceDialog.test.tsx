@@ -2,6 +2,8 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { IntlProvider } from "react-intl";
+import { ThemeProvider } from "@mui/material";
+import { theme } from "../../theme";
 import { expect, it, vi } from "vitest";
 import { ensureUiHarness } from "../../../test/helpers/jsdom-ui-harness";
 import en from "../../i18n/locales/en.json";
@@ -33,7 +35,9 @@ it("names switches, bounds its width and preserves composing device names", asyn
     await act(async () =>
       root.render(
         <IntlProvider locale="en" messages={en}>
-          <MultiDeviceDialog />
+          <ThemeProvider theme={theme}>
+            <MultiDeviceDialog />
+          </ThemeProvider>
         </IntlProvider>,
       ),
     );

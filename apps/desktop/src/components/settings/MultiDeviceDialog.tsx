@@ -50,7 +50,6 @@ import { produceAppState, useAppStore } from "../../store";
 import { logOnRejection } from "../../utils/promise.utils";
 import { getMyUserPreferences } from "../../utils/user.utils";
 import { SettingSection } from "../common/SettingSection";
-import { stopComposingEscape } from "../common/ime-keyboard";
 
 const ReceiverStatusDetails = ({
   receiverStatus,
@@ -274,7 +273,7 @@ const PairDeviceDialog = ({
           <FormattedMessage defaultMessage="Add trusted device" />
         )}
       </DialogTitle>
-      <DialogContent dividers onKeyDown={stopComposingEscape}>
+      <DialogContent dividers>
         <Stack spacing={2} sx={{ pt: 0.5 }}>
           <TextField
             label={intl.formatMessage({ defaultMessage: "Device name" })}
@@ -385,7 +384,7 @@ const ImportInviteDialog = ({
       <DialogTitle>
         <FormattedMessage defaultMessage="Import pairing invite" />
       </DialogTitle>
-      <DialogContent dividers onKeyDown={stopComposingEscape}>
+      <DialogContent dividers>
         <Stack spacing={2} sx={{ pt: 0.5 }}>
           <Typography
             variant="body2"
@@ -1276,11 +1275,7 @@ export const MultiDeviceDialog = () => {
         <DialogTitle>
           <FormattedMessage defaultMessage="Multi-device" />
         </DialogTitle>
-        <DialogContent
-          dividers
-          onKeyDown={stopComposingEscape}
-          sx={{ minWidth: "min(360px, 100%)" }}
-        >
+        <DialogContent dividers sx={{ minWidth: "min(360px, 100%)" }}>
           <Stack spacing={3}>
             <ReceiverSettingsSection
               receiverStatus={receiverStatus}

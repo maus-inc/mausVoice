@@ -2,7 +2,6 @@ import { Stack, TextField, Typography } from "@mui/material";
 import { useId, type Ref } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { ConfirmationPhrase } from "./ConfirmationPhrase";
-import { stopComposingEscape } from "../common/ime-keyboard";
 
 export type ConfirmationFieldProps = {
   /** The literal the person has to reproduce, exactly. */
@@ -59,7 +58,6 @@ export const ConfirmationField = ({
         }}
         placeholder={phrase}
         value={value}
-        onKeyDown={stopComposingEscape}
         onChange={(event) => onChange(event.target.value)}
         disabled={disabled}
         autoComplete="off"

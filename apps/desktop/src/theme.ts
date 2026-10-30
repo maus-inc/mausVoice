@@ -1,4 +1,5 @@
 import { createTheme, type Shadows } from "@mui/material/styles";
+import { stopComposingEscape } from "./components/common/ime-keyboard";
 import {
   accent,
   chalkSolid,
@@ -261,6 +262,13 @@ export const theme = createTheme({
           }),
         }),
       },
+    },
+
+    // A composing Escape belongs to the input method, not the enclosing modal.
+    // MUI's modal only checks the legacy 229 key code, so guard dialog content
+    // without cancelling the key's default input-method behavior.
+    MuiDialogContent: {
+      defaultProps: { onKeyDown: stopComposingEscape },
     },
 
     MuiDialogActions: {
