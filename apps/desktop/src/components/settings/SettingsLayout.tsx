@@ -91,11 +91,24 @@ const SettingsRailLink = ({
  * inside a field has to reach that field, so both are left alone.
  */
 const isSearchShortcut = (event: KeyboardEvent): boolean => {
-  if (event.key !== "/" || event.metaKey || event.ctrlKey) {
+  if (
+    event.key !== "/" ||
+    event.metaKey ||
+    event.ctrlKey ||
+    event.altKey ||
+    event.isComposing ||
+    event.keyCode === 229 ||
+    event.defaultPrevented
+  ) {
     return false;
   }
   const target = event.target as HTMLElement | null;
-  return !target || !/^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName);
+  return (
+    !target ||
+    (!/^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName) &&
+      !target.isContentEditable &&
+      !target.closest?.('[role="dialog"], [role="alertdialog"]'))
+  );
 };
 
 /**

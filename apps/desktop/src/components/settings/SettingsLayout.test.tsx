@@ -148,6 +148,60 @@ describe("SettingsLayout", () => {
     );
   });
 
+  it("does not steal the slash key from a dialog", async () => {
+    await render("/dashboard/settings/shortcuts");
+    const dialog = document.createElement("div");
+    dialog.setAttribute("role", "dialog");
+    const recorder = document.createElement("div");
+    recorder.tabIndex = 0;
+    dialog.appendChild(recorder);
+    document.body.appendChild(dialog);
+    try {
+      recorder.focus();
+      const event = new KeyboardEvent("keydown", {
+        key: "/",
+        bubbles: true,
+        cancelable: true,
+      });
+      act(() => recorder.dispatchEvent(event));
+      expect(document.activeElement).toBe(recorder);
+      expect(event.defaultPrevented).toBe(false);
+    } finally {
+      dialog.remove();
+    }
+  });
+
+  it.each([
+    { altKey: true },
+    { ctrlKey: true },
+    { metaKey: true },
+    { isComposing: true },
+    { keyCode: 229 },
+  ])("leaves a modified or composing slash alone (%o)", async (init) => {
+    await render("/dashboard/settings/shortcuts");
+    const event = new KeyboardEvent("keydown", {
+      key: "/",
+      bubbles: true,
+      cancelable: true,
+      ...init,
+    });
+    act(() => container.dispatchEvent(event));
+    expect(document.activeElement).not.toBe(searchInput());
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  it("focuses search on bare slash outside a field", async () => {
+    await render("/dashboard/settings/shortcuts");
+    const event = new KeyboardEvent("keydown", {
+      key: "/",
+      bubbles: true,
+      cancelable: true,
+    });
+    act(() => container.dispatchEvent(event));
+    expect(document.activeElement).toBe(searchInput());
+    expect(event.defaultPrevented).toBe(true);
+  });
+
   it("opens the first result when Enter is pressed", async () => {
     await render("/dashboard/settings/account");
 

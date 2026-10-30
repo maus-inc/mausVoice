@@ -26,7 +26,9 @@ import { useSettingHighlight } from "./settings-highlight";
 const highlightSx: SxProps<Theme> = {
   outline: "2px solid",
   outlineColor: "primary.main",
-  outlineOffset: -2,
+  // Keep the temporary search marker inside the group's clipped corners.
+  outlineOffset: -4,
+  borderRadius: 1,
 };
 
 /** Read a theme length that may be a number or a CSS length. */

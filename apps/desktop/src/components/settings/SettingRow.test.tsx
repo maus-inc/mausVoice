@@ -14,6 +14,7 @@ vi.mock("react-intl", async (importOriginal) => {
 
 import { IntlProvider } from "react-intl";
 import { SettingGroup, SettingRow, SettingToggleRow } from "./SettingRow";
+import { SettingsHighlightContext } from "./settings-highlight";
 
 ensureUiHarness();
 
@@ -66,6 +67,24 @@ describe("SettingRow", () => {
       "the control row",
     );
     expect(getComputedStyle(row).flexWrap).toBe("wrap");
+  });
+
+  it("insets and rounds a highlighted search target inside its group", () => {
+    render(
+      <SettingsHighlightContext.Provider value="microphone">
+        <SettingGroup title="Audio">
+          <SettingRow settingKey="microphone" title="Microphone" />
+        </SettingGroup>
+      </SettingsHighlightContext.Provider>,
+    );
+    const row = requireElement(
+      container.querySelector("#setting-microphone"),
+      "target row",
+    );
+    expect(getComputedStyle(row).outlineOffset).toBe("-4px");
+    expect(
+      Number.parseFloat(getComputedStyle(row).borderRadius),
+    ).toBeGreaterThan(0);
   });
 
   it("anchors the row and names its label and description", () => {
