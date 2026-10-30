@@ -18,7 +18,7 @@ export type ElasticSliderProps = {
    */
   value: number;
   /** Called once when the drag commits (release / keyboard change). */
-  onCommit: (value: number) => void;
+  onCommit: (value: number) => void | Promise<void>;
   min?: number;
   max?: number;
   step?: number;
@@ -119,20 +119,28 @@ export const ElasticSlider = ({
   const theme = useTheme();
   const reduceMotion = useReducedMotion();
   const [dragValue, setDragValue] = useState(value);
+  const [settled, setSettled] = useState(0);
   const draggingRef = useRef(false);
+  // Keep the latest saved value available to asynchronous failure handlers.
+  const savedValueRef = useRef(value);
+  const interactionRef = useRef(0);
+  const pendingCommitsRef = useRef(0);
+  savedValueRef.current = value;
 
   const accentFill = elasticSliderAccent(theme);
   const rail = theme.vars?.palette.level3 ?? theme.palette.level3;
 
   useEffect(() => {
-    if (!draggingRef.current) {
+    if (!draggingRef.current && pendingCommitsRef.current === 0) {
       setDragValue(value);
+      onChangeDisplay?.(value);
     }
-  }, [value]);
+  }, [value, settled, onChangeDisplay]);
 
   const handleChange: SliderProps["onChange"] = (_event, next) => {
     const nextValue = typeof next === "number" ? next : (next[0] ?? value);
     draggingRef.current = true;
+    interactionRef.current += 1;
     setDragValue(nextValue);
     onChangeDisplay?.(nextValue);
   };
@@ -141,8 +149,29 @@ export const ElasticSlider = ({
     const nextValue = typeof next === "number" ? next : (next[0] ?? value);
     draggingRef.current = false;
     setDragValue(nextValue);
-    if (nextValue !== value) {
-      onCommit(nextValue);
+    // A return to the old value still needs saving if an earlier change is
+    // in flight; otherwise that earlier change would win after it completes.
+    if (nextValue === value && pendingCommitsRef.current === 0) return;
+    const interaction = interactionRef.current;
+    pendingCommitsRef.current += 1;
+    // An older failure must not overwrite a newer interaction.
+    const rollback = () => {
+      if (interaction !== interactionRef.current || draggingRef.current) return;
+      const saved = savedValueRef.current;
+      setDragValue(saved);
+      onChangeDisplay?.(saved);
+    };
+    try {
+      Promise.resolve(onCommit(nextValue))
+        .catch(rollback)
+        .finally(() => {
+          pendingCommitsRef.current -= 1;
+          setSettled((count) => count + 1);
+        });
+    } catch {
+      pendingCommitsRef.current -= 1;
+      rollback();
+      setSettled((count) => count + 1);
     }
   };
 

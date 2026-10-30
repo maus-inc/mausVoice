@@ -23,7 +23,7 @@ import { SettingSection } from "../common/SettingSection";
 type ThockVolumeControlProps = {
   enabled: boolean;
   volume: number;
-  onCommit: (v: number) => void;
+  onCommit: (v: number) => void | Promise<void>;
 };
 
 /**
@@ -150,9 +150,7 @@ export const AudioDialog = () => {
         <ThockVolumeControl
           enabled={playInteractionChime}
           volume={interactionFeedbackVolume}
-          onCommit={(v) => {
-            setInteractionFeedbackVolume(v).catch(() => undefined);
-          }}
+          onCommit={setInteractionFeedbackVolume}
         />
         <Box sx={{ mt: 3 }}>
           <Typography variant="body1" sx={{ fontWeight: 600 }}>
@@ -170,9 +168,7 @@ export const AudioDialog = () => {
           <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
             <ElasticSlider
               value={dictationAudioDim}
-              onCommit={(v) => {
-                void setDictationAudioDim(v);
-              }}
+              onCommit={setDictationAudioDim}
               onChangeDisplay={setDisplayDim}
               min={0}
               max={1}

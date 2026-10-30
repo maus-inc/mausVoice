@@ -70,11 +70,10 @@ export const AppKeybindingsDialog = () => {
     });
   };
 
-  const handleDefaultTypingSpeedCommit = (num: number) => {
-    void updateUserPreferences((prefs) => {
+  const handleDefaultTypingSpeedCommit = (num: number) =>
+    updateUserPreferences((prefs) => {
       prefs.typingSpeedMs = num;
     });
-  };
 
   return (
     <Dialog open={open} onClose={handleClose} maxWidth="sm" fullWidth>
@@ -318,9 +317,8 @@ const AppKeybindingRow = ({
     );
   };
 
-  const handleTypingSpeedCommit = (num: number) => {
-    void setAppTargetTypingSpeed(target.id, num);
-  };
+  const handleTypingSpeedCommit = (num: number) =>
+    setAppTargetTypingSpeed(target.id, num);
 
   const handleUseDefaultTypingSpeedChange = (
     event: ChangeEvent<HTMLInputElement>,
