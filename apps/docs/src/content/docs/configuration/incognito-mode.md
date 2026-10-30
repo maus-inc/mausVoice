@@ -9,13 +9,13 @@ sidebar:
 
 Incognito mode suppresses new transcription history and managed audio snapshots so dictated text does not appear in **History** and is not paired with an audio file. It also suppresses glossary writes: correcting a transcript updates it in memory only, and the proper nouns the correction would have taught the dictionary are not stored. Enabling it is prospective: existing rows and snapshots stay until you remove them separately (per-row delete in **History**, or **Settings → Privacy and data → Danger zone → Clear local data** for a broader reset).
 
-Usage statistics have their own toggle, **Include incognito in stats**. With it on, words dictated in Incognito still count toward your personal totals; with it off, they do not. The two settings are independent.
+Usage statistics have their own toggle, **Include incognito in stats**. With it on, eligible words dictated in Incognito count toward your personal totals. mausVoice stores a random event ID, local date, word count, and source label, but no transcript or audio. With it off, mausVoice stores no incognito usage event. The two settings are independent.
 
 Incognito only controls mausVoice's local persistence. It does not stop API processing at the provider, suppress target-app or clipboard retention, or clear operating-system diagnostics. Use local transcription and post-processing Off when the goal is also to avoid provider transmission.
 
 ## Audio retention on failed transcriptions
 
-Incognito never writes the audio snapshot. The transcription result is also not added to your history. If the transcription later fails, the audio is gone too, so there is no on-disk recovery path for an Incognito recording. This is the privacy trade-off: with **Include incognito in stats** off, nothing about the recording is persisted locally; with it on, the word count still counts toward your personal totals. Either way the audio itself is unrecoverable, so a failed Incognito dictation cannot be recovered from disk.
+Incognito never writes the audio snapshot. The transcription result is also not added to your history. If the transcription later fails, the audio is gone too, so there is no on-disk recovery path for an Incognito recording. This is the privacy trade-off: with **Include incognito in stats** off, nothing about the recording is persisted locally; with it on, only usage-event metadata is stored. Either way the audio itself is unrecoverable, so a failed Incognito dictation cannot be recovered from disk.
 
 The behavior at a glance:
 

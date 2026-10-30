@@ -170,6 +170,9 @@ describe("MicrophoneDialog save feedback", () => {
 
     expect(setUserPreferences).toHaveBeenCalledWith(
       expect.objectContaining({ preferredMicrophone: "test-device" }),
+      // Preference writes run under a local-data write lease, so the second
+      // argument is that lease rather than part of the payload.
+      expect.objectContaining({}),
     );
     expect(document.querySelector("[data-sonner-toast]")).toBeNull();
 

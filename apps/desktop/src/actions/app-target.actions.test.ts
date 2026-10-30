@@ -3,19 +3,23 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { INITIAL_APP_STATE } from "../state/app.state";
 import { getAppState, setAppState } from "../store";
 import { LOCAL_USER_ID } from "../utils/user.utils";
+import type { LocalDataWriteLease } from "../utils/local-data-write-gate";
 import { saveManualStyleForApp, setAppTargetTone } from "./app-target.actions";
 
 const { upsertAppTargetMock, getLoggerMock } = vi.hoisted(() => ({
   upsertAppTargetMock: vi.fn(
-    (params: {
-      id: string;
-      name: string;
-      toneId: string | null;
-      iconPath: string | null;
-      pasteKeybind: string | null;
-      insertionMethod: string | null;
-      typingSpeedMs: number | null;
-    }) => {
+    (
+      params: {
+        id: string;
+        name: string;
+        toneId: string | null;
+        iconPath: string | null;
+        pasteKeybind: string | null;
+        insertionMethod: string | null;
+        typingSpeedMs: number | null;
+      },
+      _lease?: LocalDataWriteLease,
+    ) => {
       return {
         id: params.id,
         name: params.name,
@@ -123,8 +127,11 @@ describe("saveManualStyleForApp", () => {
     await saveManualStyleForApp(appTarget);
 
     expect(upsertAppTargetMock).toHaveBeenCalledTimes(1);
-    expect(upsertAppTargetMock).toHaveBeenCalledWith(
+    expect(upsertAppTargetMock.mock.calls[0]?.[0]).toEqual(
       expect.objectContaining({ id: "app-1", toneId: "email" }),
+    );
+    expect(upsertAppTargetMock.mock.calls[0]?.[1]).toEqual(
+      expect.objectContaining({}),
     );
     expect(getAppState().userById[LOCAL_USER_ID]?.selectedToneId).toBe("email");
   });

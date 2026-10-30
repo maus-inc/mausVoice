@@ -1,5 +1,6 @@
 import { Nullable } from "@maus-inc/types";
 import { invoke } from "@tauri-apps/api/core";
+import { withLocalDataWriteSync } from "./local-data-write-gate";
 
 const SURFACE_WINDOW_FLAG_KEY = "mausvoice:surface-main-window-on-launch";
 
@@ -49,11 +50,13 @@ export const markSurfaceWindowForNextLaunch = (): void => {
     return;
   }
 
-  try {
-    storage.setItem(SURFACE_WINDOW_FLAG_KEY, "1");
-  } catch (error) {
-    console.error("Failed to mark surface window flag", error);
-  }
+  withLocalDataWriteSync(() => {
+    try {
+      storage.setItem(SURFACE_WINDOW_FLAG_KEY, "1");
+    } catch (error) {
+      console.error("Failed to mark surface window flag", error);
+    }
+  });
 };
 
 export const consumeSurfaceWindowFlag = (): boolean => {
@@ -62,12 +65,18 @@ export const consumeSurfaceWindowFlag = (): boolean => {
     return false;
   }
 
-  try {
-    const value = storage.getItem(SURFACE_WINDOW_FLAG_KEY);
-    storage.removeItem(SURFACE_WINDOW_FLAG_KEY);
-    return value === "1";
-  } catch (error) {
-    console.error("Failed to read surface window flag", error);
-    return false;
-  }
+  return (
+    withLocalDataWriteSync(() => {
+      try {
+        const value = storage.getItem(SURFACE_WINDOW_FLAG_KEY);
+        if (value != null) {
+          storage.removeItem(SURFACE_WINDOW_FLAG_KEY);
+        }
+        return value === "1";
+      } catch (error) {
+        console.error("Failed to read surface window flag", error);
+        return false;
+      }
+    }) ?? false
+  );
 };

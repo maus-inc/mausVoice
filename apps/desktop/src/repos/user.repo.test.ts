@@ -4,6 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { INITIAL_APP_STATE } from "../state/app.state";
 import { setAppState } from "../store";
 import { LOCAL_USER_ID } from "../utils/user.utils";
+import {
+  beginLocalDataClear,
+  LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY,
+} from "../utils/local-data-write-gate";
 import { LocalUserRepo } from "./user.repo";
 
 /**
@@ -46,8 +50,23 @@ const seedState = () => {
 
 describe("user repo IPC boundary for interactionFeedbackVolume", () => {
   beforeEach(() => {
+    window.localStorage.removeItem(LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY);
     vi.clearAllMocks();
     seedState();
+  });
+
+  it("does not invoke a profile write while local data is being cleared", async () => {
+    const releaseClear = await beginLocalDataClear();
+
+    try {
+      await expect(new LocalUserRepo().setMyUser(minimalUser)).rejects.toThrow(
+        "Local data is being cleared.",
+      );
+      expect(capturedInvoke).not.toHaveBeenCalled();
+    } finally {
+      window.localStorage.removeItem(LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY);
+      releaseClear();
+    }
   });
 
   it("emits an explicit null when the TS user lacks the field (onboarding path)", async () => {
@@ -102,6 +121,43 @@ describe("user repo IPC boundary for interactionFeedbackVolume", () => {
  * tenured account as brand new. The clock is pinned here so any dependence on
  * "now" is a hard failure rather than a flake.
  */
+describe("LocalUserRepo.recordUsageWords", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("sends the stable event identity and maps the returned profile", async () => {
+    capturedInvoke.mockResolvedValue({
+      id: LOCAL_USER_ID,
+      name: "Test",
+      bio: "",
+      onboarded: true,
+      preferredMicrophone: null,
+      preferredLanguage: null,
+      wordsThisMonth: 25,
+      wordsThisMonthMonth: "2026-10",
+      wordsTotal: 125,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      onboardedAt: null,
+    });
+
+    const result = await new LocalUserRepo().recordUsageWords(
+      "transcription-1",
+      "2026-10-08",
+      25,
+    );
+
+    expect(capturedInvoke).toHaveBeenCalledWith("user_record_usage", {
+      eventId: "transcription-1",
+      localDate: "2026-10-08",
+      wordCount: 25,
+    });
+    expect(result.wordsThisMonth).toBe(25);
+    expect(result.wordsTotal).toBe(125);
+    expect(result.updatedAt).toBeTypeOf("string");
+  });
+});
+
 describe("user repo profile timestamps", () => {
   const ACCOUNT_CREATED_AT_KEY = "mausvoice:account-created-at";
   const ONBOARDED_AT_KEY = "mausvoice:onboarded-at";

@@ -8,7 +8,7 @@ use super::models::WhisperModelSize;
 
 const MODELS_DIR_NAME: &str = "transcription-models";
 const LEGACY_MODELS_DIR_NAME: &str = "models";
-const STORAGE_DIR_NAME: &str = "storage";
+pub(crate) const STORAGE_DIR_NAME: &str = "storage";
 
 // Pre-rebrand values: the app identifier and database filename changed when
 // the product was renamed from Voquill to mausVoice. Tauri derives the config
@@ -34,12 +34,18 @@ pub fn database_path(app: &tauri::AppHandle) -> io::Result<PathBuf> {
     Ok(path)
 }
 
+fn legacy_database_dir(app: &tauri::AppHandle) -> io::Result<Option<PathBuf>> {
+    let current_config_dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|error| io::Error::other(error.to_string()))?;
+    Ok(current_config_dir
+        .parent()
+        .map(|base| base.join(LEGACY_CONFIG_DIR_NAME)))
+}
+
 fn migrate_legacy_database(app: &tauri::AppHandle, current_path: &Path) -> io::Result<()> {
-    let legacy_dir = match app.path().app_config_dir() {
-        Ok(dir) => dir.parent().map(|base| base.join(LEGACY_CONFIG_DIR_NAME)),
-        Err(_) => None,
-    };
-    let Some(legacy_dir) = legacy_dir else {
+    let Some(legacy_dir) = legacy_database_dir(app)? else {
         return Ok(());
     };
     if !legacy_dir.is_dir() {
@@ -68,6 +74,30 @@ fn migrate_legacy_database(app: &tauri::AppHandle, current_path: &Path) -> io::R
     log::info!("Migrated legacy database from {legacy_db:?} to {current_path:?}");
 
     Ok(())
+}
+
+/// Delete the previous-brand database and SQLite sidecars during an explicit
+/// local-data clear. The startup migration copies these files so users can
+/// recover their old data; leaving that source behind would make the clear
+/// appear successful while the same user data remained on disk.
+pub fn delete_legacy_database(app: &tauri::AppHandle) -> io::Result<usize> {
+    let Some(legacy_dir) = legacy_database_dir(app)? else {
+        return Ok(0);
+    };
+    delete_legacy_database_files_in(&legacy_dir)
+}
+
+fn delete_legacy_database_files_in(legacy_dir: &Path) -> io::Result<usize> {
+    let mut deleted = 0;
+    for suffix in ["-journal", "-wal", "-shm", ""] {
+        let path = legacy_dir.join(format!("{LEGACY_DB_FILENAME}{suffix}"));
+        match fs::remove_file(path) {
+            Ok(()) => deleted += 1,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(deleted)
 }
 
 fn resolved_app_data_dir(app: &tauri::AppHandle) -> io::Result<PathBuf> {
@@ -149,12 +179,12 @@ fn migrate_model_files(legacy_dir: &Path, current_dir: &Path) -> io::Result<usiz
 }
 
 pub fn storage_dir(app: &tauri::AppHandle) -> io::Result<PathBuf> {
+    let _storage = crate::system::audio_store::open_storage_dir(app)?;
     let mut path = app
         .path()
         .app_data_dir()
         .map_err(|err| io::Error::other(err.to_string()))?;
     path.push(STORAGE_DIR_NAME);
-    fs::create_dir_all(&path)?;
     Ok(path)
 }
 
@@ -175,9 +205,35 @@ pub fn startup_diagnostics_path(app: &tauri::AppHandle) -> io::Result<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::migrate_model_files;
+    use super::{delete_legacy_database_files_in, migrate_model_files};
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn deleting_legacy_database_removes_only_its_sqlite_files() {
+        let root = std::env::temp_dir().join(format!(
+            "mausvoice-legacy-db-clear-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock must be after the Unix epoch")
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).expect("failed to create test directory");
+        for suffix in ["", "-journal", "-wal", "-shm"] {
+            fs::write(root.join(format!("voquill.db{suffix}")), b"legacy database")
+                .expect("failed to write legacy database fixture");
+        }
+        fs::write(root.join("keep.txt"), b"unrelated data")
+            .expect("failed to write unrelated fixture");
+
+        assert_eq!(delete_legacy_database_files_in(&root).unwrap(), 4);
+        for suffix in ["", "-journal", "-wal", "-shm"] {
+            assert!(!root.join(format!("voquill.db{suffix}")).exists());
+        }
+        assert_eq!(fs::read(root.join("keep.txt")).unwrap(), b"unrelated data");
+        let _ = fs::remove_dir_all(root);
+    }
 
     #[test]
     fn migrates_legacy_files_without_overwriting_current_files() {

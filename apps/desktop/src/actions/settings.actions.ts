@@ -1,5 +1,6 @@
 import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { produceAppState, getAppState } from "../store";
+import type { LocalDataWriteLease } from "../utils/local-data-write-gate";
 import { showErrorSnackbar } from "./app.actions";
 
 const isTauriEnvironment = (): boolean => {
@@ -42,12 +43,15 @@ export const syncAutoLaunchSetting = async (): Promise<void> => {
   }
 };
 
-export const setAutoLaunchEnabled = async (enabled: boolean): Promise<void> => {
+export const setAutoLaunchEnabled = async (
+  enabled: boolean,
+  lease?: LocalDataWriteLease,
+): Promise<void> => {
   if (!isTauriEnvironment()) {
     produceAppState((draft) => {
       draft.settings.autoLaunchEnabled = enabled;
       draft.settings.autoLaunchStatus = "success";
-    });
+    }, lease);
     return;
   }
 
@@ -61,7 +65,7 @@ export const setAutoLaunchEnabled = async (enabled: boolean): Promise<void> => {
   produceAppState((draft) => {
     draft.settings.autoLaunchEnabled = enabled;
     draft.settings.autoLaunchStatus = "loading";
-  });
+  }, lease);
 
   try {
     if (enabled) {
@@ -72,13 +76,13 @@ export const setAutoLaunchEnabled = async (enabled: boolean): Promise<void> => {
 
     produceAppState((draft) => {
       draft.settings.autoLaunchStatus = "success";
-    });
+    }, lease);
   } catch (error) {
     console.error("Failed to update auto-start preference", error);
     produceAppState((draft) => {
       draft.settings.autoLaunchEnabled = previous;
       draft.settings.autoLaunchStatus = "error";
-    });
+    }, lease);
     showErrorSnackbar(
       "Unable to update auto start preference. Please try again.",
     );

@@ -4,40 +4,53 @@ import type { PairedRemoteDeviceUpsertParams } from "../repos/paired-remote-devi
 import { getAppState, produceAppState } from "../store";
 import { registerPairedRemoteDevices } from "../utils/app.utils";
 import { getMyUserPreferences } from "../utils/user.utils";
+import {
+  type LocalDataWriteLease,
+  withLocalDataWrite,
+} from "../utils/local-data-write-gate";
 import { setRemoteTargetDeviceId } from "./user.actions";
 
-export const loadPairedRemoteDevices = async (): Promise<void> => {
-  const devices = await getPairedRemoteDeviceRepo().listPairedRemoteDevices();
+export const loadPairedRemoteDevices = async (): Promise<void> =>
+  withLocalDataWrite(async (lease) => {
+    const devices = await getPairedRemoteDeviceRepo().listPairedRemoteDevices();
 
-  produceAppState((draft) => {
-    registerPairedRemoteDevices(draft, devices);
+    produceAppState((draft) => {
+      registerPairedRemoteDevices(draft, devices);
+    }, lease);
   });
-};
 
 export const upsertPairedRemoteDevice = async (
   params: PairedRemoteDeviceUpsertParams,
-): Promise<PairedRemoteDevice> => {
-  const device =
-    await getPairedRemoteDeviceRepo().upsertPairedRemoteDevice(params);
+  existingLease?: LocalDataWriteLease,
+): Promise<PairedRemoteDevice> =>
+  withLocalDataWrite(async (lease) => {
+    const device = await getPairedRemoteDeviceRepo().upsertPairedRemoteDevice(
+      params,
+      lease,
+    );
 
-  produceAppState((draft) => {
-    registerPairedRemoteDevices(draft, [device]);
-  });
+    produceAppState((draft) => {
+      registerPairedRemoteDevices(draft, [device]);
+    }, lease);
 
-  return device;
-};
+    return device;
+  }, existingLease);
 
-export const deletePairedRemoteDevice = async (id: string): Promise<void> => {
-  const remoteTargetDeviceId =
-    getMyUserPreferences(getAppState())?.remoteTargetDeviceId ?? null;
+export const deletePairedRemoteDevice = async (
+  id: string,
+  existingLease?: LocalDataWriteLease,
+): Promise<void> =>
+  withLocalDataWrite(async (lease) => {
+    const remoteTargetDeviceId =
+      getMyUserPreferences(getAppState())?.remoteTargetDeviceId ?? null;
 
-  await getPairedRemoteDeviceRepo().deletePairedRemoteDevice(id);
+    await getPairedRemoteDeviceRepo().deletePairedRemoteDevice(id, lease);
 
-  produceAppState((draft) => {
-    delete draft.pairedRemoteDeviceById[id];
-  });
+    produceAppState((draft) => {
+      delete draft.pairedRemoteDeviceById[id];
+    }, lease);
 
-  if (remoteTargetDeviceId === id) {
-    await setRemoteTargetDeviceId(null);
-  }
-};
+    if (remoteTargetDeviceId === id) {
+      await setRemoteTargetDeviceId(null, lease);
+    }
+  }, existingLease);

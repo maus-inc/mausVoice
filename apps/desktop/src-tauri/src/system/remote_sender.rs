@@ -1,65 +1,13 @@
-use std::time::Duration;
+use std::{future::Future, time::Duration};
 
-use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::TcpStream;
 
-use crate::state::RemoteReceiverState;
+use super::remote_channel::{ReceiverMessage, SenderMessage};
+use crate::{db::local_data_write_gate::LocalDataRemoteOperationGuard, state::RemoteReceiverState};
 
-#[derive(Debug, Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-enum OutgoingEnvelope {
-    PairingRequest {
-        request_id: String,
-        sender_device_id: String,
-        sender_device_name: String,
-        sender_platform: String,
-        pairing_code: String,
-    },
-    SessionHello {
-        session_id: String,
-        sender_device_id: String,
-        auth_token: String,
-    },
-    FinalText {
-        session_id: String,
-        event_id: String,
-        sequence: u64,
-        text: String,
-        mode: String,
-        created_at: String,
-    },
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-enum IncomingEnvelope {
-    PairingAccept {
-        request_id: String,
-        receiver_device_id: String,
-        receiver_device_name: String,
-        receiver_platform: String,
-        shared_secret: String,
-    },
-    SessionAck {
-        session_id: String,
-        receiver_device_id: String,
-    },
-    DeliveryAck {
-        session_id: String,
-        event_id: String,
-        sequence: u64,
-        delivered_at: String,
-    },
-    DeliveryError {
-        session_id: String,
-        event_id: String,
-        sequence: u64,
-        code: String,
-        message: String,
-    },
-}
+const REMOTE_IO_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub async fn pair_with_receiver(
     pool: SqlitePool,
@@ -70,31 +18,39 @@ pub async fn pair_with_receiver(
     receiver_address: &str,
     pairing_code: &str,
 ) -> Result<crate::domain::PairedRemoteDevice, String> {
+    let operation = crate::db::local_data_write_gate::begin_local_data_remote_operation()
+        .map_err(|err| err.to_string())?;
     let sender = sender_state.status();
     let request_id = generate_id("pair");
-    let stream = tokio::time::timeout(Duration::from_secs(5), TcpStream::connect(receiver_address))
-        .await
-        .map_err(|_| format!("Timed out connecting to remote receiver at {receiver_address}"))?
-        .map_err(|err| {
-            format!("Failed to connect to remote receiver at {receiver_address}: {err}")
-        })?;
+    let stream = await_remote_io(
+        &operation,
+        format!("Timed out connecting to remote receiver at {receiver_address}"),
+        async {
+            TcpStream::connect(receiver_address).await.map_err(|err| {
+                format!("Failed to connect to remote receiver at {receiver_address}: {err}")
+            })
+        },
+    )
+    .await?;
     let (reader, mut writer) = stream.into_split();
     let mut lines = BufReader::new(reader).lines();
 
-    write_message(
+    send_message(
+        &operation,
         &mut writer,
-        &OutgoingEnvelope::PairingRequest {
+        &SenderMessage::PairingRequest {
             request_id: request_id.clone(),
             sender_device_id: sender.device_id.clone(),
             sender_device_name: sender.device_name.clone(),
             sender_platform: sender.device_platform.clone(),
             pairing_code: pairing_code.to_string(),
         },
+        "Timed out sending remote pairing request.",
     )
     .await?;
 
-    match read_message(&mut lines).await? {
-        IncomingEnvelope::PairingAccept {
+    match read_message(&operation, &mut lines).await? {
+        ReceiverMessage::PairingAccept {
             request_id: ack_request_id,
             receiver_device_id: ack_receiver_device_id,
             receiver_device_name: ack_receiver_device_name,
@@ -131,17 +87,28 @@ pub async fn pair_with_receiver(
                 trusted: true,
             };
 
-            crate::db::paired_remote_device_queries::upsert_paired_remote_device(pool, &device)
+            // The remote handshake is complete. Take the native write mutex
+            // through the operation lease so clear cancellation can interrupt
+            // this wait instead of deadlocking while it drains remote work.
+            let write_guard = operation
+                .lock_local_data_write()
                 .await
-                .map_err(|err| format!("Failed to save paired receiver: {err}"))?;
+                .map_err(|err| err.to_string())?;
+            crate::db::paired_remote_device_queries::upsert_paired_remote_device_unlocked(
+                &write_guard,
+                pool,
+                &device,
+            )
+            .await
+            .map_err(|err| format!("Failed to save paired receiver: {err}"))?;
 
             Ok(device)
         }
-        IncomingEnvelope::DeliveryError { message, .. } => Err(message),
-        IncomingEnvelope::SessionAck { .. } => {
+        ReceiverMessage::DeliveryError { message, .. } => Err(message),
+        ReceiverMessage::SessionAck { .. } => {
             Err("Remote receiver returned an unexpected session ack.".to_string())
         }
-        IncomingEnvelope::DeliveryAck { .. } => {
+        ReceiverMessage::DeliveryAck { .. } => {
             Err("Remote receiver returned an unexpected delivery ack.".to_string())
         }
     }
@@ -158,12 +125,21 @@ pub async fn deliver_final_text(
         return Ok(());
     }
 
-    let target = crate::db::paired_remote_device_queries::fetch_paired_remote_device_by_id(
-        pool,
-        target_device_id,
+    let operation = crate::db::local_data_write_gate::begin_local_data_remote_operation()
+        .map_err(|err| err.to_string())?;
+    let target = await_remote_io(
+        &operation,
+        "Timed out loading the paired remote receiver.".to_string(),
+        async {
+            crate::db::paired_remote_device_queries::fetch_paired_remote_device_by_id(
+                pool,
+                target_device_id,
+            )
+            .await
+            .map_err(|err| format!("Failed to load target device: {err}"))
+        },
     )
-    .await
-    .map_err(|err| format!("Failed to load target device: {err}"))?
+    .await?
     .ok_or_else(|| "Target device is not paired.".to_string())?;
 
     if !target.trusted {
@@ -179,25 +155,34 @@ pub async fn deliver_final_text(
     let sender = sender_state.status();
     let session_id = generate_id("session");
     let event_id = generate_id("event");
-    let stream = tokio::time::timeout(Duration::from_secs(5), TcpStream::connect(address.as_str()))
-        .await
-        .map_err(|_| format!("Timed out connecting to remote receiver at {address}"))?
-        .map_err(|err| format!("Failed to connect to remote receiver at {address}: {err}"))?;
+    let stream = await_remote_io(
+        &operation,
+        format!("Timed out connecting to remote receiver at {address}"),
+        async {
+            TcpStream::connect(address.as_str())
+                .await
+                .map_err(|err| format!("Failed to connect to remote receiver at {address}: {err}"))
+        },
+    )
+    .await?;
     let (reader, mut writer) = stream.into_split();
     let mut lines = BufReader::new(reader).lines();
 
-    write_message(
+    send_message(
+        &operation,
         &mut writer,
-        &OutgoingEnvelope::SessionHello {
+        &SenderMessage::SessionHello {
             session_id: session_id.clone(),
             sender_device_id: sender.device_id,
             auth_token: target.shared_secret.clone(),
         },
+        "Timed out sending remote session hello.",
     )
     .await?;
 
-    match read_message(&mut lines).await? {
-        IncomingEnvelope::SessionAck {
+    let session_ack = read_message(&operation, &mut lines).await?;
+    match session_ack {
+        ReceiverMessage::SessionAck {
             session_id: ack_session_id,
             receiver_device_id,
         } => {
@@ -208,20 +193,21 @@ pub async fn deliver_final_text(
                 return Err("Connected receiver does not match the selected device.".to_string());
             }
         }
-        IncomingEnvelope::DeliveryError { message, .. } => {
+        ReceiverMessage::DeliveryError { message, .. } => {
             return Err(message);
         }
-        IncomingEnvelope::DeliveryAck { .. } => {
+        ReceiverMessage::DeliveryAck { .. } => {
             return Err("Remote receiver returned an unexpected delivery ack.".to_string());
         }
-        IncomingEnvelope::PairingAccept { .. } => {
+        ReceiverMessage::PairingAccept { .. } => {
             return Err("Remote receiver returned an unexpected pairing accept.".to_string());
         }
     }
 
-    write_message(
+    send_message(
+        &operation,
         &mut writer,
-        &OutgoingEnvelope::FinalText {
+        &SenderMessage::FinalText {
             session_id: session_id.clone(),
             event_id: event_id.clone(),
             sequence: 1,
@@ -229,11 +215,12 @@ pub async fn deliver_final_text(
             mode: mode.to_string(),
             created_at: chrono::Utc::now().to_rfc3339(),
         },
+        "Timed out sending remote transcript.",
     )
     .await?;
 
-    match read_message(&mut lines).await? {
-        IncomingEnvelope::DeliveryAck {
+    match read_message(&operation, &mut lines).await? {
+        ReceiverMessage::DeliveryAck {
             session_id: ack_session_id,
             event_id: ack_event_id,
             sequence,
@@ -245,7 +232,7 @@ pub async fn deliver_final_text(
             log::info!("Remote final text delivered at {delivered_at}");
             Ok(())
         }
-        IncomingEnvelope::DeliveryError {
+        ReceiverMessage::DeliveryError {
             session_id,
             event_id,
             sequence,
@@ -254,43 +241,82 @@ pub async fn deliver_final_text(
         } => Err(format!(
             "Remote delivery failed ({code}) for session {session_id}, event {event_id}, sequence {sequence}: {message}"
         )),
-        IncomingEnvelope::SessionAck { .. } => {
+        ReceiverMessage::SessionAck { .. } => {
             Err("Remote receiver returned an unexpected session ack.".to_string())
         }
-        IncomingEnvelope::PairingAccept { .. } => {
+        ReceiverMessage::PairingAccept { .. } => {
             Err("Remote receiver returned an unexpected pairing accept.".to_string())
         }
     }
 }
 
-async fn read_message(
-    lines: &mut tokio::io::Lines<BufReader<tokio::net::tcp::OwnedReadHalf>>,
-) -> Result<IncomingEnvelope, String> {
-    let line = tokio::time::timeout(Duration::from_secs(5), lines.next_line())
-        .await
-        .map_err(|_| "Timed out waiting for remote receiver response.".to_string())?
-        .map_err(|err| format!("Failed to read remote receiver response: {err}"))?
-        .ok_or_else(|| "Remote receiver closed the connection.".to_string())?;
+async fn await_remote_io<T>(
+    operation: &LocalDataRemoteOperationGuard,
+    timeout_message: String,
+    future: impl Future<Output = Result<T, String>>,
+) -> Result<T, String> {
+    tokio::select! {
+        biased;
+        _ = operation.cancelled() => Err("Local data is being cleared".to_string()),
+        result = tokio::time::timeout(REMOTE_IO_TIMEOUT, future) => {
+            match result {
+                Ok(Ok(value)) => {
+                    operation.ensure_current().map_err(|err| err.to_string())?;
+                    Ok(value)
+                }
+                Ok(Err(error)) => Err(error),
+                Err(_) => Err(timeout_message),
+            }
+        }
+    }
+}
 
-    serde_json::from_str(&line)
-        .map_err(|err| format!("Failed to parse remote receiver response: {err}"))
+async fn send_message(
+    operation: &LocalDataRemoteOperationGuard,
+    writer: &mut tokio::net::tcp::OwnedWriteHalf,
+    message: &SenderMessage,
+    timeout_message: &str,
+) -> Result<(), String> {
+    // Hold the clear handoff lock only for this bounded write, never for the
+    // connection, handshake response, or delivery acknowledgement.
+    let _handoff = operation
+        .lock_message_handoff()
+        .await
+        .map_err(|err| err.to_string())?;
+    await_remote_io(
+        operation,
+        timeout_message.to_string(),
+        write_message(writer, message),
+    )
+    .await
+}
+
+async fn read_message(
+    operation: &LocalDataRemoteOperationGuard,
+    lines: &mut tokio::io::Lines<BufReader<tokio::net::tcp::OwnedReadHalf>>,
+) -> Result<ReceiverMessage, String> {
+    await_remote_io(
+        operation,
+        "Timed out waiting for remote receiver response.".to_string(),
+        async {
+            let line = lines
+                .next_line()
+                .await
+                .map_err(|err| format!("Failed to read remote receiver response: {err}"))?
+                .ok_or_else(|| "Remote receiver closed the connection.".to_string())?;
+
+            serde_json::from_str(&line)
+                .map_err(|err| format!("Failed to parse remote receiver response: {err}"))
+        },
+    )
+    .await
 }
 
 async fn write_message(
     writer: &mut tokio::net::tcp::OwnedWriteHalf,
-    message: &OutgoingEnvelope,
+    message: &SenderMessage,
 ) -> Result<(), String> {
-    let json = serde_json::to_string(message)
-        .map_err(|err| format!("Failed to serialize remote sender message: {err}"))?;
-    writer
-        .write_all(json.as_bytes())
-        .await
-        .map_err(|err| format!("Failed to write remote sender message: {err}"))?;
-    writer
-        .write_all(b"\n")
-        .await
-        .map_err(|err| format!("Failed to finalize remote sender message: {err}"))?;
-    Ok(())
+    super::remote_channel::write_json_message(writer, message, "remote sender").await
 }
 
 fn generate_id(prefix: &str) -> String {
