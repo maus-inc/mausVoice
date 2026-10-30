@@ -49,6 +49,7 @@ import { produceAppState, useAppStore } from "../../store";
 import { logOnRejection } from "../../utils/promise.utils";
 import { getMyUserPreferences } from "../../utils/user.utils";
 import { SettingSection } from "../common/SettingSection";
+import { stopComposingEscape } from "../common/ime-keyboard";
 
 const ReceiverStatusDetails = ({
   receiverStatus,
@@ -265,7 +266,7 @@ const PairDeviceDialog = ({
           <FormattedMessage defaultMessage="Add trusted device" />
         )}
       </DialogTitle>
-      <DialogContent dividers>
+      <DialogContent dividers onKeyDown={stopComposingEscape}>
         <Stack spacing={2} sx={{ pt: 0.5 }}>
           <TextField
             label={intl.formatMessage({ defaultMessage: "Device name" })}
@@ -367,7 +368,7 @@ const ImportInviteDialog = ({
       <DialogTitle>
         <FormattedMessage defaultMessage="Import pairing invite" />
       </DialogTitle>
-      <DialogContent dividers>
+      <DialogContent dividers onKeyDown={stopComposingEscape}>
         <Stack spacing={2} sx={{ pt: 0.5 }}>
           <Typography
             variant="body2"
@@ -383,6 +384,7 @@ const ImportInviteDialog = ({
             onChange={(event) => onChangeInviteCode(event.target.value)}
             multiline
             minRows={3}
+            maxRows={8}
             fullWidth
           />
         </Stack>
@@ -957,6 +959,13 @@ const ReceiverSettingsSection = ({
           <Switch
             edge="end"
             checked={receiverStatus?.enabled ?? false}
+            slotProps={{
+              input: {
+                "aria-label": intl.formatMessage({
+                  defaultMessage: "Receive transcript from another device",
+                }),
+              },
+            }}
             disabled={receiverBusy}
             onChange={onToggleReceiver}
           />
@@ -1001,6 +1010,13 @@ const ReceiverSettingsSection = ({
           <Switch
             edge="end"
             checked={remoteReceiverAutoStart}
+            slotProps={{
+              input: {
+                "aria-label": intl.formatMessage({
+                  defaultMessage: "Start receiver automatically",
+                }),
+              },
+            }}
             onChange={onAutoStartChange}
           />
         }
@@ -1085,6 +1101,13 @@ const SenderSettingsSection = ({
           <Switch
             edge="end"
             checked={remoteOutputEnabled}
+            slotProps={{
+              input: {
+                "aria-label": intl.formatMessage({
+                  defaultMessage: "Send transcript to another device",
+                }),
+              },
+            }}
             onChange={onToggleOutput}
           />
         }
@@ -1234,7 +1257,11 @@ export const MultiDeviceDialog = () => {
         <DialogTitle>
           <FormattedMessage defaultMessage="Multi-device" />
         </DialogTitle>
-        <DialogContent dividers sx={{ minWidth: 360 }}>
+        <DialogContent
+          dividers
+          onKeyDown={stopComposingEscape}
+          sx={{ minWidth: "min(360px, 100%)" }}
+        >
           <Stack spacing={3}>
             <ReceiverSettingsSection
               receiverStatus={receiverStatus}
