@@ -721,6 +721,7 @@
   "replaces_only_the_path_after_the_base_url_for_open_webui_ent": "Sostituisce solo il percorso dopo l'URL di base. Per Open WebUI, inserisci /v1/audio/transcriptions e disattiva Includi percorso /v1; altrimenti lascia vuoto.",
   "request_aborted": "Richiesta annullata",
   "requests_accessibility_and_microphone_access_so_the_pill_can": "Richiede l'accesso ad Accessibilità e al Microfono così la pillola può digitare per te. Ti verrà chiesto in Impostazioni di sistema.",
+  "required_changes_not_saved": "Obbligatorio. Modifiche non salvate.",
   "resend": "Invia di nuovo",
   "reset_data": "Reimposta dati",
   "reset_link_will_be_sent_to_email": "Il link di reset verrà inviato a: {email}",

@@ -721,6 +721,7 @@
   "replaces_only_the_path_after_the_base_url_for_open_webui_ent": "Remplace uniquement le chemin après l'URL de base. Pour Open WebUI, saisissez /v1/audio/transcriptions et désactivez Include /v1 path ; sinon, laissez vide.",
   "request_aborted": "Requête annulée",
   "requests_accessibility_and_microphone_access_so_the_pill_can": "Demande l'accès à l'accessibilité et au microphone pour que la pilule puisse taper à votre place. Vous serez invité dans les réglages système.",
+  "required_changes_not_saved": "Obligatoire. Modifications non enregistrées.",
   "resend": "Renvoyer",
   "reset_data": "Réinitialiser les données",
   "reset_link_will_be_sent_to_email": "Le lien de réinitialisation sera envoyé à : {email}",

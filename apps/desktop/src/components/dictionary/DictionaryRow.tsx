@@ -48,7 +48,11 @@ export const DictionaryRow = ({ id }: DictionaryRowProps) => {
     };
 
   const handleCommit = useCallback(async () => {
-    if (!term) {
+    if (
+      !term ||
+      !sourceValue.trim() ||
+      (isReplacement && !destinationValue.trim())
+    ) {
       return;
     }
 
@@ -80,7 +84,7 @@ export const DictionaryRow = ({ id }: DictionaryRowProps) => {
       setDestinationValue(previousTerm.destinationValue);
       showErrorSnackbar(error);
     }
-  }, [destinationValue, id, sourceValue, term]);
+  }, [destinationValue, id, isReplacement, sourceValue, term]);
 
   const handleDelete = useCallback(async () => {
     if (!term) {
@@ -150,8 +154,11 @@ export const DictionaryRow = ({ id }: DictionaryRowProps) => {
           ctxMenu.handleContextMenu(e.nativeEvent, contextMenuItems);
         }}
         sx={{
-          alignItems: "center",
+          alignItems: "flex-start",
           py: 1,
+          // Keep both fields aligned when one displays a validation message.
+          "& > svg": { mt: "12px" },
+          "& > .MuiIconButton-root, & > span": { mt: "4px" },
         }}
       >
         <TextField
@@ -168,6 +175,18 @@ export const DictionaryRow = ({ id }: DictionaryRowProps) => {
           disabled={isGlobal}
           sx={{ flex: 1 }}
           error={!isGlobal && sourceValue.trim() === ""}
+          helperText={
+            !isGlobal && !sourceValue.trim() ? (
+              <FormattedMessage defaultMessage="Required. Changes not saved." />
+            ) : undefined
+          }
+          slotProps={{
+            htmlInput: {
+              "aria-label": isReplacement
+                ? intl.formatMessage({ defaultMessage: "Original" })
+                : intl.formatMessage({ defaultMessage: "Glossary term" }),
+            },
+          }}
         />
         {isReplacement ? (
           <>
@@ -186,6 +205,18 @@ export const DictionaryRow = ({ id }: DictionaryRowProps) => {
               minRows={1}
               sx={{ flex: 1, "& textarea": { lineHeight: 1.5 } }}
               error={!isGlobal && destinationValue.trim() === ""}
+              helperText={
+                !isGlobal && !destinationValue.trim() ? (
+                  <FormattedMessage defaultMessage="Required. Changes not saved." />
+                ) : undefined
+              }
+              slotProps={{
+                htmlInput: {
+                  "aria-label": intl.formatMessage({
+                    defaultMessage: "Replacement",
+                  }),
+                },
+              }}
             />
           </>
         ) : null}

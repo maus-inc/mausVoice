@@ -721,6 +721,7 @@
   "replaces_only_the_path_after_the_base_url_for_open_webui_ent": "Replaces only the path after the base URL. For Open WebUI, enter /v1/audio/transcriptions and turn off Include /v1 path; otherwise leave empty.",
   "request_aborted": "Request aborted",
   "requests_accessibility_and_microphone_access_so_the_pill_can": "Requests Accessibility and Microphone access so the pill can type for you. You will be prompted in System Settings.",
+  "required_changes_not_saved": "Required. Changes not saved.",
   "resend": "Resend",
   "reset_data": "Reset data",
   "reset_link_will_be_sent_to_email": "Reset link will be sent to: {email}",

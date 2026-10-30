@@ -721,6 +721,7 @@
   "replaces_only_the_path_after_the_base_url_for_open_webui_ent": "Reemplaza solo la ruta posterior a la URL base. Para Open WebUI, introduzca /v1/audio/transcriptions y desactive Incluir ruta /v1; de lo contrario, déjelo vacío.",
   "request_aborted": "Solicitud cancelada",
   "requests_accessibility_and_microphone_access_so_the_pill_can": "Solicita acceso de Accesibilidad y Micrófono para que la píldora pueda capturar y escribir entrada globalmente. Se te pedirá en Configuración del sistema.",
+  "required_changes_not_saved": "Obligatorio. Cambios sin guardar.",
   "resend": "Reenviar",
   "reset_data": "Restablecer datos",
   "reset_link_will_be_sent_to_email": "El enlace de restablecimiento se enviará a: {email}",
