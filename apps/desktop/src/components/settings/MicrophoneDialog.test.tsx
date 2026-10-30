@@ -49,7 +49,11 @@ vi.mock("../microphone/MicrophoneSelector", () => ({
     ),
 }));
 vi.mock("../microphone/MicrophoneTester", () => ({
-  MicrophoneTester: () => createElement("div", { "data-testid": "tester" }),
+  MicrophoneTester: ({ disabled = false }: { disabled?: boolean }) =>
+    createElement("div", {
+      "data-testid": "tester",
+      "data-disabled": String(disabled),
+    }),
 }));
 vi.mock("react-intl", async (importOriginal) => {
   const { reactIntlWithIdsModule } =
@@ -232,6 +236,11 @@ describe("MicrophoneDialog save feedback", () => {
     const backdrop =
       document.body.querySelector<HTMLElement>(".MuiBackdrop-root");
     expect(closeButton?.disabled).toBe(true);
+    expect(
+      dialogWhileSaving
+        ?.querySelector('[data-testid="tester"]')
+        ?.getAttribute("data-disabled"),
+    ).toBe("false");
     expect(modalRoot).not.toBeNull();
     expect(backdrop).not.toBeNull();
 

@@ -139,10 +139,7 @@ export const MicrophoneDialog = () => {
                 <FormattedMessage defaultMessage="Start a short test to see live audio levels and play back what was recorded." />
               }
             />
-            <MicrophoneTester
-              preferredMicrophone={selected ?? null}
-              disabled={saving}
-            />
+            <MicrophoneTester preferredMicrophone={selected ?? null} />
           </Stack>
         </Stack>
       </DialogContent>
