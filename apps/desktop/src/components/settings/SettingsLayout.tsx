@@ -204,7 +204,9 @@ export const SettingsLayout = () => {
             flexShrink: 0,
             position: "sticky",
             top: 0,
-            zIndex: 1,
+            // Selected segmented buttons can have their own stacking order;
+            // the sticky rail must remain above the scrolled page controls.
+            zIndex: 10,
             bgcolor: "background.default",
             alignSelf: "flex-start",
           }}

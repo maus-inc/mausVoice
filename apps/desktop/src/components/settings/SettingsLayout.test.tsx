@@ -254,6 +254,7 @@ describe("SettingsLayout", () => {
     const column = requireElement(rail.parentElement, "the rail column");
     expect(column.contains(searchInput())).toBe(true);
     expect(getComputedStyle(column).position).toBe("sticky");
+    expect(getComputedStyle(column).zIndex).toBe("10");
   });
 
   it("keeps the heading with its page, so the two centre as one block", async () => {
