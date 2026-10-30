@@ -172,7 +172,7 @@ export type DualPaneLayoutProps = {
   left?: React.ReactNode;
   right?: React.ReactNode;
   rightSx?: SxProps;
-  flex?: [number, number];
+  flex?: [number | { xs: number; md: number }, number];
 };
 
 export const DualPaneLayout = ({

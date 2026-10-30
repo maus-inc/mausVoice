@@ -130,7 +130,7 @@ export const PersonalCredentialsForm = () => {
         </Stack>
       }
     >
-      <Stack spacing={3}>
+      <Stack spacing={2}>
         <Box>
           <Typography
             variant="h4"
@@ -151,7 +151,7 @@ export const PersonalCredentialsForm = () => {
           </Typography>
         </Box>
 
-        <Stack spacing={2}>
+        <Stack spacing={1.5}>
           {error && <Alert severity="error">{error}</Alert>}
 
           <TextField
@@ -221,7 +221,11 @@ export const PersonalCredentialsForm = () => {
         confirmLabel={<FormattedMessage defaultMessage="Skip for now" />}
         cancelButtonProps={{ autoFocus: true }}
       />
-      <DualPaneLayout left={form} right={rightContent} />
+      <DualPaneLayout
+        left={form}
+        right={rightContent}
+        flex={[{ xs: 1.5, md: 1 }, 1]}
+      />
     </>
   );
 };
