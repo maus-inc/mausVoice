@@ -1,15 +1,11 @@
-import { Box, IconButton, Typography } from "@mui/material";
-import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
-import { Pause, Play } from "lucide-react";
-import { springPop } from "../../styles/motion";
+import { Box, Typography } from "@mui/material";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useIntl } from "react-intl";
-import { MetalChrome } from "../common/MetalChrome";
+import { AudioPlaybackButton } from "./AudioPlaybackButton";
 import { AudioWaveformBars } from "./AudioWaveformBars";
 import { showErrorSnackbar } from "../../actions/app.actions";
 import { getTranscriptionRepo } from "../../repos";
 import {
-  activePlayback,
   buildWaveformOutline,
   DEFAULT_WAVEFORM_BAR_COUNT,
   formatDuration,
@@ -23,6 +19,10 @@ import {
   WAVEFORM_BAR_MAX_WIDTH,
   WAVEFORM_BAR_MIN_WIDTH,
 } from "../../utils/audio-playback.utils";
+
+// A request owns playback from the moment a row is chosen, including while its
+// audio is loading and before the Web Audio context becomes active.
+let playbackOwner: symbol | null = null;
 
 export type AudioPlayerPillProps = {
   transcriptionId: string;
@@ -38,13 +38,13 @@ export const AudioPlayerPill = ({
   actions,
 }: AudioPlayerPillProps) => {
   const intl = useIntl();
-  const reduceMotion = useReducedMotion();
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackProgress, setPlaybackProgress] = useState(0);
   const [waveformWidth, setWaveformWidth] = useState(0);
   const waveformContainerRef = useRef<HTMLDivElement | null>(null);
   const pointerCleanupRef = useRef<(() => void) | null>(null);
   const playbackNonceRef = useRef(0);
+  const ownerRef = useRef<symbol | null>(null);
   const isPlayingRef = useRef(false);
   const playbackProgressRef = useRef(0);
   const transcriptionIdRef = useRef(transcriptionId);
@@ -113,11 +113,24 @@ export const AudioPlayerPill = ({
     return () => {
       pointerCleanupRef.current?.();
       pointerCleanupRef.current = null;
-      if (activePlayback?.transcriptionId === transcriptionIdRef.current) {
+      playbackNonceRef.current += 1;
+      if (ownerRef.current && playbackOwner === ownerRef.current) {
+        playbackOwner = null;
         stopActivePlayback("stopped");
       }
+      ownerRef.current = null;
     };
-  }, []);
+  }, [transcriptionId]);
+  useEffect(() => {
+    if (!disabled || !ownerRef.current || playbackOwner !== ownerRef.current)
+      return;
+    playbackNonceRef.current += 1;
+    playbackOwner = null;
+    ownerRef.current = null;
+    stopActivePlayback("stopped");
+    isPlayingRef.current = false;
+    setIsPlaying(false);
+  }, [disabled]);
   useEffect(() => {
     const element = waveformContainerRef.current;
     if (!element) {
@@ -154,17 +167,32 @@ export const AudioPlayerPill = ({
 
     try {
       if (isPlayingRef.current) {
-        stopActivePlayback("stopped");
+        if (playbackOwner === ownerRef.current) {
+          playbackOwner = null;
+          stopActivePlayback("stopped");
+        }
+        ownerRef.current = null;
+        isPlayingRef.current = false;
+        setIsPlaying(false);
         return;
       }
 
+      const owner = Symbol();
+      ownerRef.current = owner;
+      playbackOwner = owner;
+      // Supersede both active audio and any Web Audio setup already in flight.
+      stopActivePlayback("replaced");
       const audioData =
         await getTranscriptionRepo().loadTranscriptionAudio(transcriptionId);
 
-      if (playbackNonceRef.current !== currentNonce) {
+      if (
+        playbackNonceRef.current !== currentNonce ||
+        playbackOwner !== owner
+      ) {
         return;
       }
 
+      isPlayingRef.current = true;
       setIsPlaying(true);
       await playWebAudio(
         transcriptionId,
@@ -172,15 +200,22 @@ export const AudioPlayerPill = ({
         (progress) => {
           if (
             transcriptionIdRef.current === transcriptionId &&
+            playbackNonceRef.current === currentNonce &&
             !isDraggingRef.current
           ) {
             setPlaybackProgress(progress);
           }
         },
         (reason) => {
-          if (transcriptionIdRef.current !== transcriptionId) {
+          if (
+            transcriptionIdRef.current !== transcriptionId ||
+            playbackNonceRef.current !== currentNonce
+          ) {
             return;
           }
+          if (playbackOwner === owner) playbackOwner = null;
+          ownerRef.current = null;
+          isPlayingRef.current = false;
           setIsPlaying(false);
           if (reason === "ended") {
             setPlaybackProgress(0);
@@ -189,6 +224,15 @@ export const AudioPlayerPill = ({
         playbackProgressRef.current,
       );
     } catch (error) {
+      if (
+        playbackNonceRef.current !== currentNonce ||
+        playbackOwner !== ownerRef.current ||
+        !ownerRef.current
+      )
+        return;
+      playbackOwner = null;
+      ownerRef.current = null;
+      isPlayingRef.current = false;
       console.error("Failed to toggle audio playback", error);
       setIsPlaying(false);
       setPlaybackProgress(0);
@@ -267,7 +311,6 @@ export const AudioPlayerPill = ({
     },
     [disabled, getProgressFromClientX, previewSeek, commitSeek],
   );
-
   return (
     <Box
       sx={{
@@ -284,44 +327,11 @@ export const AudioPlayerPill = ({
         alignSelf: "flex-start",
       }}
     >
-      <MetalChrome variant="circle">
-        <IconButton
-          aria-label={
-            isPlaying
-              ? intl.formatMessage({ defaultMessage: "Pause audio" })
-              : intl.formatMessage({ defaultMessage: "Play audio" })
-          }
-          size="small"
-          onClick={handlePlaybackToggle}
-          disabled={disabled}
-          sx={{ p: 0.5 }}
-        >
-          <AnimatePresence mode="popLayout" initial={false}>
-            <motion.span
-              key={isPlaying ? "pause" : "play"}
-              initial={
-                reduceMotion
-                  ? false
-                  : { opacity: 0, scale: 0.25, filter: "blur(4px)" }
-              }
-              animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
-              exit={
-                reduceMotion
-                  ? undefined
-                  : { opacity: 0, scale: 0.25, filter: "blur(4px)" }
-              }
-              transition={springPop}
-              style={{ display: "inline-flex" }}
-            >
-              {isPlaying ? (
-                <Pause size={16} strokeWidth={1.9} />
-              ) : (
-                <Play size={16} strokeWidth={1.9} />
-              )}
-            </motion.span>
-          </AnimatePresence>
-        </IconButton>
-      </MetalChrome>
+      <AudioPlaybackButton
+        isPlaying={isPlaying}
+        disabled={disabled}
+        onClick={handlePlaybackToggle}
+      />
       <Typography
         variant="body2"
         sx={{
