@@ -196,6 +196,35 @@ describe("HomeSettingsPage", () => {
     }
   });
 
+  it("points the tooltip at the info glyph while keeping the row interactive", async () => {
+    vi.useFakeTimers();
+    try {
+      render();
+      const dictate = requireElement(
+        row("Hold to dictate"),
+        "the dictation row",
+      );
+      const glyph = requireElement(
+        dictate.querySelector(".lucide-info")?.parentElement,
+        "the info glyph",
+      );
+      const measureGlyph = vi.spyOn(glyph, "getBoundingClientRect");
+
+      await act(async () => {
+        dictate.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+        vi.advanceTimersByTime(600);
+      });
+
+      expect(
+        document.querySelector('[role="tooltip"] .MuiTooltip-arrow'),
+      ).not.toBeNull();
+      expect(measureGlyph).toHaveBeenCalled();
+      expect(dictate.getAttribute("aria-describedby")).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("names the local model and where it runs", () => {
     render();
 

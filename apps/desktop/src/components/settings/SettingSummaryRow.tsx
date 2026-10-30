@@ -1,7 +1,8 @@
 import { ChevronRight, Info } from "lucide-react";
 import { Box } from "@mui/material";
 import { ConditionalTooltip } from "../common/ConditionalTooltip";
-import type { ReactNode } from "react";
+import { useRef } from "react";
+import type { ReactNode, RefObject } from "react";
 import { useNavigate } from "react-router-dom";
 import { settingEntryOf } from "../../utils/settings-registry";
 import { settingAnchorId, settingsPagePath } from "./settings-routes";
@@ -73,9 +74,11 @@ export type SettingSummaryRowProps = SettingSummaryTarget & {
 const RowTitle = ({
   title,
   tooltip,
+  infoRef,
 }: {
   title: ReactNode;
   tooltip?: ReactNode;
+  infoRef: RefObject<HTMLSpanElement | null>;
 }) => {
   if (!tooltip) {
     return <>{title}</>;
@@ -89,6 +92,7 @@ const RowTitle = ({
       <Box
         aria-hidden
         component="span"
+        ref={infoRef}
         sx={{ display: "inline-flex", color: "text.disabled" }}
       >
         <Info size={15} strokeWidth={1.9} />
@@ -140,6 +144,7 @@ export const SettingSummaryRow = ({
   attention,
 }: SettingSummaryRowProps) => {
   const navigate = useNavigate();
+  const infoRef = useRef<HTMLSpanElement>(null);
   const to = summaryTarget(linksTo, path);
 
   // A summary whose setting no longer exists would link nowhere, so it renders
@@ -167,7 +172,7 @@ export const SettingSummaryRow = ({
           title, tooltip and value it renders, in that order. */}
       <SettingRowText
         subtitle={subtitle}
-        title={<RowTitle title={title} tooltip={tooltip} />}
+        title={<RowTitle title={title} tooltip={tooltip} infoRef={infoRef} />}
       />
       <Box sx={contentControlColumnSx}>
         <SettingRowValue value={value} />
@@ -183,12 +188,15 @@ export const SettingSummaryRow = ({
   // the row is what can be focused: a keyboard user tabs to the button, and a
   // tooltip listening on a span inside it would never hear that. `describeChild`
   // keeps the explanation as a description of the row, so it is read out after
-  // the row's own name and the name itself is not replaced by a sentence.
+  // the row's own name and the name itself is not replaced by a sentence. The
+  // popper is anchored to the glyph so its arrow points to the info icon.
   return (
     <ConditionalTooltip
       enabled={tooltip != null}
       title={tooltip}
       placement="top"
+      arrow
+      slotProps={{ popper: { anchorEl: () => infoRef.current! } }}
       enterDelay={400}
       describeChild
     >
