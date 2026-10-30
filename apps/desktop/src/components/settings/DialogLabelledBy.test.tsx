@@ -39,6 +39,7 @@ vi.mock("react-intl", async (importOriginal) => {
   };
 });
 
+import { ShortcutsDialog } from "./ShortcutsDialog";
 import { AIAgentModeDialog } from "./AIAgentModeDialog";
 import { AIPostProcessingDialog } from "./AIPostProcessingDialog";
 import TranscriptionsPage from "../transcriptions/TranscriptionsPage";
@@ -87,6 +88,21 @@ const render = async (node: ReactNode) => {
 };
 
 describe("settings dialogs announce their title", () => {
+  it("names the shortcuts dialog without folding its explanation into the title", async () => {
+    produceAppState((draft) => {
+      draft.settings.shortcutsDialogOpen = true;
+    });
+    await render(createElement(ShortcutsDialog));
+    expect(accessibleNameOf()).toBe("Keyboard shortcuts");
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
+    expect(
+      document.getElementById(dialog?.getAttribute("aria-describedby") ?? "")
+        ?.textContent,
+    ).toBe(
+      "Customize your keyboard shortcuts. Keyboard shortcuts can be triggered from within any app.",
+    );
+  });
+
   it("names the AI post-processing dialog", async () => {
     produceAppState((draft) => {
       draft.settings.aiPostProcessingDialogOpen = true;

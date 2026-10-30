@@ -8,6 +8,7 @@ import {
   Stack,
   Typography,
 } from "@mui/material";
+import { useId } from "react";
 import { FormattedMessage } from "react-intl";
 import { produceAppState, useAppStore } from "../../store";
 import { getIsAssistantModeEnabled } from "../../utils/assistant-mode.utils";
@@ -16,6 +17,8 @@ import { HotkeySetting } from "./HotkeySetting";
 import { DIALOG_SHORTCUTS, SHORTCUT_COPY } from "./shortcut-copy";
 
 export const ShortcutsDialog = () => {
+  const titleId = useId();
+  const descriptionId = useId();
   const isAssistantModeEnabled = useAppStore(getIsAssistantModeEnabled);
   const { open, hotkeysStatus, isManualStyling } = useAppStore((state) => ({
     open: state.settings.shortcutsDialogOpen,
@@ -83,13 +86,20 @@ export const ShortcutsDialog = () => {
   };
 
   return (
-    <Dialog open={open} onClose={handleClose} fullWidth maxWidth="sm">
-      <DialogTitle>
+    <Dialog
+      open={open}
+      onClose={handleClose}
+      fullWidth
+      maxWidth="sm"
+      aria-labelledby={titleId}
+      aria-describedby={descriptionId}
+    >
+      <DialogTitle id={`${titleId}-wrapper`}>
         <Stack spacing={1}>
-          <Typography variant="h6">
+          <Typography id={titleId} variant="h6">
             <FormattedMessage defaultMessage="Keyboard shortcuts" />
           </Typography>
-          <Typography variant="body2" color="textSecondary">
+          <Typography id={descriptionId} variant="body2" color="textSecondary">
             <FormattedMessage defaultMessage="Customize your keyboard shortcuts. Keyboard shortcuts can be triggered from within any app." />
           </Typography>
         </Stack>
