@@ -67,12 +67,14 @@ export const useTip = (id: OnboardingTipId): boolean =>
 export const TipCardFrame = ({
   title,
   body,
+  headingLevel,
   actions,
   onDismiss,
   sx,
 }: {
   title: ReactNode;
   body: ReactNode;
+  headingLevel?: "h2" | "h3";
   actions?: ReactNode;
   onDismiss?: () => void;
   sx?: SxProps;
@@ -96,7 +98,9 @@ export const TipCardFrame = ({
           direction="row"
           sx={{ alignItems: "center", justifyContent: "space-between" }}
         >
-          <Typography variant="subtitle2">{title}</Typography>
+          <Typography variant="subtitle2" component={headingLevel ?? "h6"}>
+            {title}
+          </Typography>
           {onDismiss && (
             <IconButton
               size="small"
@@ -119,9 +123,11 @@ export const TipCardFrame = ({
 export const TipCard = ({
   id,
   href,
+  headingLevel,
 }: {
   id: OnboardingTipId;
   href?: string;
+  headingLevel?: "h2" | "h3";
 }) => {
   const navigate = useNavigate();
   const visible = useTip(id);
@@ -132,6 +138,7 @@ export const TipCard = ({
     <TipCardFrame
       title={copy.title}
       body={copy.body}
+      headingLevel={headingLevel}
       onDismiss={() => dismissTip(id)}
       actions={
         href ? (

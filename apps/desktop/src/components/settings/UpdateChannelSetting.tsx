@@ -58,7 +58,7 @@ export const UpdateChannelSetting = () => {
           where they actually make the choice. Without a contextual anchor the
           `update-channel` tip was listed in Help and nowhere else, so the only
           way to discover it was to go looking for it. */}
-      <TipCard id="update-channel" />
+      <TipCard id="update-channel" headingLevel="h3" />
       <SettingRow
         settingKey="update_channel"
         title={<FormattedMessage defaultMessage="Update channel" />}

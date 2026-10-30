@@ -72,7 +72,7 @@ export default function AiModelsSettingsPage() {
 
   return (
     <>
-      <TipCard id="generative-provider" />
+      <TipCard id="generative-provider" headingLevel="h2" />
 
       <SettingGroup title={<FormattedMessage defaultMessage="Transcription" />}>
         <SettingRow
