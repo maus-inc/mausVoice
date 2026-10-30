@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 
-import { BaseRepo } from "./base.repo";
+import type { LocalDataWriteLease } from "../utils/local-data-write-gate";
+import { BaseRepo, withLocalDataWrite } from "./base.repo";
 
 export type StorageUploadData = Uint8Array | ArrayBuffer | number[];
 
@@ -21,21 +22,37 @@ const normalizeData = (data: StorageUploadData): number[] => {
 };
 
 export abstract class BaseStorageRepo extends BaseRepo {
-  abstract uploadData(args: StorageUploadInput): Promise<void>;
-  abstract getDownloadUrl(path: string): Promise<string>;
+  abstract uploadData(
+    args: StorageUploadInput,
+    lease?: LocalDataWriteLease,
+  ): Promise<void>;
+  abstract getDownloadUrl(
+    path: string,
+    lease?: LocalDataWriteLease,
+  ): Promise<string>;
 }
 
 export class LocalStorageRepo extends BaseStorageRepo {
-  async uploadData({ path, data }: StorageUploadInput): Promise<void> {
-    await invoke<void>("storage_upload_data", {
-      args: {
-        path,
-        data: normalizeData(data),
-      },
-    });
+  uploadData(
+    { path, data }: StorageUploadInput,
+    lease?: LocalDataWriteLease,
+  ): Promise<void> {
+    return withLocalDataWrite(
+      () =>
+        invoke<void>("storage_upload_data", {
+          args: {
+            path,
+            data: normalizeData(data),
+          },
+        }),
+      lease,
+    );
   }
 
-  async getDownloadUrl(path: string): Promise<string> {
-    return invoke<string>("storage_get_download_url", { path });
+  getDownloadUrl(path: string, lease?: LocalDataWriteLease): Promise<string> {
+    return withLocalDataWrite(
+      () => invoke<string>("storage_get_download_url", { path }),
+      lease,
+    );
   }
 }

@@ -7,6 +7,18 @@ sidebar:
 
 The frontend under `apps/desktop/src/` uses React 19, TypeScript, Vite, MUI/Emotion, React Router 6, Zustand with Immer, RxJS, Zod, and `react-intl`.
 
+```mermaid
+flowchart TD
+    UserEvent[User or native event] --> UI[React component]
+    UI --> Actions[src/actions]
+    Actions --> State[Zustand + Immer]
+    Actions --> Repos[src/repos]
+    Repos --> Rust[Tauri / SQLite / providers]
+    State --> UI
+```
+
+Prefer `useAppStore((s) => …)` for reads and named actions for writes. Repos convert at the FFI boundary with `toLocalXxx()` / `fromLocalXxx()`.
+
 `router.tsx` guards Welcome, Login, Onboarding, and Dashboard stages. Dashboard nests Home, Settings, History (`transcriptions`), Dictionary, Styles (`styling`), Chats, and the unfinished Apps placeholder. `components/root/` is more than layout: `DictationSideEffects.tsx` owns much of the event-driven recorder/session bridge, so check it before adding a second global listener.
 
 Use the existing layers:

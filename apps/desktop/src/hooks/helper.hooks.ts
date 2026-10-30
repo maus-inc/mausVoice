@@ -7,6 +7,41 @@ import {
   useState,
 } from "react";
 
+import { getLogger } from "../utils/log.utils";
+
+// Canonical lowercase tokens for key names, mapping synonyms ("esc"/"escape",
+// "return"/"enter", "up"/"arrowup", ...) onto a single representation.
+export const KEY_ALIASES: Record<string, string> = {
+  " ": "space",
+  space: "space",
+  esc: "escape",
+  escape: "escape",
+  return: "enter",
+  enter: "enter",
+  del: "delete",
+  delete: "delete",
+  arrowup: "arrowup",
+  up: "arrowup",
+  arrowdown: "arrowdown",
+  down: "arrowdown",
+  arrowleft: "arrowleft",
+  left: "arrowleft",
+  arrowright: "arrowright",
+  right: "arrowright",
+};
+
+/**
+ * Canonicalizes a key token to a stable lowercase representation. The raw
+ * (untrimmed) key is queried first so KeyboardEvent.key values like " "
+ * (Space) resolve through the alias table; the trimmed form is the fallback
+ * for padded input.
+ */
+export const canonicalizeKey = (k: string): string => {
+  const raw = k.toLowerCase();
+  const trimmed = raw.trim();
+  return KEY_ALIASES[raw] ?? KEY_ALIASES[trimmed] ?? trimmed;
+};
+
 export function usePrevious<T>(value: T): T | undefined;
 export function usePrevious<T>(value: T, initialValue: T): T;
 export function usePrevious<T>(value: T, initialValue?: T): T | undefined {
@@ -116,19 +151,10 @@ export const useKeyCombo = (args: UseKeyComboArgs = {}): boolean => {
   const [active, setActive] = useState(false);
   const pressedRef = useRef<Set<string>>(new Set());
 
-  // Canonicalize to stable lowercase tokens
-  const canon = (k: string): string => {
-    const s = k.trim().toLowerCase();
-    if (s === " " || s === "space") return "space";
-    if (s === "esc" || s === "escape") return "escape";
-    if (s === "return" || s === "enter") return "enter";
-    if (s === "del" || s === "delete") return "delete";
-    if (s === "arrowup" || s === "up") return "arrowup";
-    if (s === "arrowdown" || s === "down") return "arrowdown";
-    if (s === "arrowleft" || s === "left") return "arrowleft";
-    if (s === "arrowright" || s === "right") return "arrowright";
-    return s;
-  };
+  // Canonicalize to stable lowercase tokens. The raw (untrimmed) key is
+  // queried first so KeyboardEvent.key values like " " (Space) resolve through
+  // the alias table; the trimmed form is the fallback for padded input.
+  const canon = canonicalizeKey;
 
   const isModifierKey = (k: string) =>
     k === "shift" || k === "control" || k === "alt" || k === "meta";
@@ -257,6 +283,22 @@ export const useInterval = (
   }, [delay, ...dependencies]);
 };
 
+/**
+ * Run an async callback on an interval, never overlapping runs.
+ *
+ * A rejection is caught and logged here rather than left to escape. `tick` is
+ * invoked synchronously on mount and again from `setInterval`, and neither
+ * awaits, so a rejecting callback produced an unhandled rejection: on mount, and
+ * then once per interval for the life of the component. That is not theoretical
+ * for the session heartbeat, whose callback awaits a Firebase write that rejects
+ * when the backend refuses or is unreachable -- so an offline machine produced a
+ * periodic unhandled rejection, while the very similar write a few lines above it
+ * in the same file already had a `.catch`.
+ *
+ * Catching centrally is what makes that class safe for every caller rather than
+ * something each one has to remember; swallowing silently is not the
+ * alternative, hence the log.
+ */
 export const useIntervalAsync = (
   delay: number,
   callback: () => Promise<void>,
@@ -270,6 +312,8 @@ export const useIntervalAsync = (
       running.current = true;
       try {
         await callback();
+      } catch (error) {
+        getLogger().warning(`useIntervalAsync callback failed: ${error}`);
       } finally {
         running.current = false;
       }

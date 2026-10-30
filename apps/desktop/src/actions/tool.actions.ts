@@ -6,6 +6,7 @@ import type {
 import { getToolRepo } from "../repos";
 import { getAppState, produceAppState } from "../store";
 import { createTool } from "../tools";
+import type { ToolExecutionContext } from "../tools/base.tool";
 import { registerToolInfos, registerToolPermission } from "../utils/app.utils";
 
 export const loadTools = async (): Promise<void> => {
@@ -19,6 +20,7 @@ export const requestToolPermission = (
   toolId: string,
   params: Record<string, unknown>,
   conversationId: string,
+  toolCallId?: string,
 ): string => {
   const permission: ToolPermission = {
     id: crypto.randomUUID(),
@@ -26,6 +28,7 @@ export const requestToolPermission = (
     params,
     status: "pending",
     conversationId,
+    ...(toolCallId ? { toolCallId } : {}),
     createdAt: Date.now(),
   };
   produceAppState((draft) => {
@@ -48,7 +51,7 @@ export const resolveToolPermission = (
   });
 };
 
-const PERMISSION_TIMEOUT_MS = 60_000;
+const DEFAULT_PERMISSION_TIMEOUT_MS = 60_000;
 
 export const getToolPermissionStatus = (
   permissionId: string,
@@ -59,7 +62,9 @@ export const getToolPermissionStatus = (
 
   if (
     permission.status === "pending" &&
-    Date.now() - permission.createdAt >= PERMISSION_TIMEOUT_MS
+    Date.now() - permission.createdAt >=
+      (state.userPrefs?.agentPermissionTimeoutMs ??
+        DEFAULT_PERMISSION_TIMEOUT_MS)
   ) {
     resolveToolPermission(permissionId, "denied");
     return { status: "denied" };
@@ -88,6 +93,7 @@ export const consumeToolToken = (
 export const executeTool = async (
   toolId: string,
   params: Record<string, unknown>,
+  context?: ToolExecutionContext,
 ): Promise<Record<string, unknown>> => {
   const state = getAppState();
   const toolInfo = state.toolInfoById[toolId];
@@ -95,17 +101,18 @@ export const executeTool = async (
     throw new Error(`Unknown tool: ${toolId}`);
   }
   const tool = createTool(toolInfo);
-  return await tool.execute(params);
+  return await tool.execute(params, context);
 };
 
 export const setToolAlwaysAllow = (opts: {
   toolId: string;
   params: Record<string, unknown>;
   allowed: boolean;
+  scope?: string;
 }): void => {
   const state = getAppState();
   const toolInfo = state.toolInfoById[opts.toolId];
   if (!toolInfo) return;
   const tool = createTool(toolInfo);
-  tool.setAlwaysAllow(opts.params, opts.allowed);
+  tool.setAlwaysAllow(opts.params, opts.allowed, opts.scope);
 };

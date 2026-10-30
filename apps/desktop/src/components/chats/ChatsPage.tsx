@@ -1,4 +1,4 @@
-import { AddRounded } from "@mui/icons-material";
+import { Plus } from "lucide-react";
 import { Box, Chip, Divider, Stack, Typography } from "@mui/material";
 import { useEffect } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
@@ -19,14 +19,18 @@ export default function ChatsPage() {
   const selectedId = searchParams.get("id");
   const conversationIds = useAppStore((s) => s.chat.conversationIds);
 
+  // URL sync only. Writing the param re-renders and hands the new id to the
+  // effect below, so loading here as well would read every conversation twice
+  // on each cold open.
   useEffect(() => {
     if (!selectedId && conversationIds.length > 0) {
-      const firstId = conversationIds[0];
-      setSearchParams({ id: firstId }, { replace: true });
-      void loadChatMessages(firstId);
+      setSearchParams({ id: conversationIds[0] }, { replace: true });
     }
   }, [selectedId, conversationIds, setSearchParams]);
 
+  // Every load funnels through here. Deep links, back/forward and chat
+  // switches all arrive as a new `selectedId`, so the id alone is enough to
+  // decide that a read is due.
   useEffect(() => {
     if (selectedId) {
       void loadChatMessages(selectedId);
@@ -89,22 +93,39 @@ export default function ChatsPage() {
               alignItems: "center",
               justifyContent: "center",
               gap: 1.5,
+              px: 3,
             }}
           >
+            <Typography
+              variant="h6"
+              // The empty state's title is the only heading on this route and
+              // the shell renders no `h1`, so `component` supplies the level
+              // while `variant` keeps the display size.
+              component="h1"
+              sx={{
+                fontFamily: "var(--font-display)",
+                fontWeight: 500,
+                textAlign: "center",
+                textWrap: "balance",
+              }}
+            >
+              <FormattedMessage defaultMessage="How can I help you today?" />
+            </Typography>
             <Typography
               variant="body2"
               sx={{
                 color: "text.secondary",
+                textAlign: "center",
               }}
             >
               <FormattedMessage defaultMessage="Start a conversation to get things going" />
             </Typography>
             <Chip
-              icon={<AddRounded />}
+              icon={<Plus size={16} strokeWidth={2} />}
               label={<FormattedMessage defaultMessage="Create new chat" />}
               variant="outlined"
               onClick={handleNewChat}
-              sx={{ mt: 1 }}
+              sx={{ mt: 1, borderRadius: 999 }}
             />
           </Stack>
         )}

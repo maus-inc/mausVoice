@@ -5,7 +5,7 @@ sidebar:
   order: 5
 ---
 
-Open **Settings → Processing → AI post processing**. The mode selector offers **API** and **Off**.
+Open **Settings → AI and processing → AI post processing**. The mode selector offers **API** and **Off**.
 
 With **API**, select a generative provider key and model where that provider supports model choice. mausVoice sends the raw transcript plus applicable style instructions and context to that endpoint and uses the returned text as the processed result.
 

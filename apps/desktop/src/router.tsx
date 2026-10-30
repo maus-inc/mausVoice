@@ -1,15 +1,17 @@
+import type { ReactNode } from "react";
 import { createBrowserRouter, Outlet, RouterProvider } from "react-router-dom";
 import AppsPage from "./components/apps/AppsPage.tsx";
 import ChatsPage from "./components/chats/ChatsPage.tsx";
+import { ComposerPage } from "./components/composer/ComposerPage.tsx";
 import { PageLayout } from "./components/common/PageLayout.tsx";
 import DashboardPage from "./components/dashboard/DashboardPage.tsx";
 import DictionaryPage from "./components/dictionary/DictionaryPage.tsx";
+import HelpPage from "./components/help/HelpPage.tsx";
 import HomePage from "./components/home/HomePage.tsx";
 import LoginPage from "./components/login/LoginPage.tsx";
 import OnboardingPage from "./components/onboarding/OnboardingPage.tsx";
 import ErrorBoundary from "./components/root/ErrorBoundary.tsx";
 import { AppHeader } from "./components/root/Header.tsx";
-import { HeaderPortalProvider } from "./components/root/HeaderPortalContext.tsx";
 import Root from "./components/root/Root.tsx";
 import { Guard } from "./components/routing/Guard.tsx";
 import { Redirect } from "./components/routing/Redirectors.tsx";
@@ -26,15 +28,19 @@ const AppWrapper = () => {
   );
 };
 
-export const browserRouter = createBrowserRouter([
+const appRoutes = (root: ReactNode) => [
   {
     path: "/",
-    element: <Root />,
+    element: root,
     errorElement: <ErrorBoundary />,
     children: [
       {
         index: true,
         element: <Redirect to="/dashboard" />,
+      },
+      {
+        path: "composer",
+        element: <ComposerPage />,
       },
       {
         element: (
@@ -114,18 +120,27 @@ export const browserRouter = createBrowserRouter([
                 path: "apps",
                 element: <AppsPage />,
               },
+              {
+                path: "help",
+                element: <HelpPage />,
+              },
             ],
           },
         ],
       },
     ],
   },
-]);
+];
+
+export const createAppRouter = (root: ReactNode = <Root />) =>
+  createBrowserRouter(appRoutes(root));
+
+// Shared deliberately with native Tauri navigation handlers, even if they
+// fire before Router mounts. Do not make this eager: the browser preview also
+// imports this route factory and must not create an unused history listener.
+let desktopRouter: ReturnType<typeof createAppRouter> | undefined;
+export const getBrowserRouter = () => (desktopRouter ??= createAppRouter());
 
 export default function Router() {
-  return (
-    <HeaderPortalProvider>
-      <RouterProvider router={browserRouter} />
-    </HeaderPortalProvider>
-  );
+  return <RouterProvider router={getBrowserRouter()} />;
 }

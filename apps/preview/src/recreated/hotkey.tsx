@@ -1,0 +1,199 @@
+/**
+ * HotkeyBadge + DictationInstruction + HotKey — recreated.
+ *
+ * Why recreated: HotkeyBadge imports getPrettyKeyName from
+ * utils/keyboard.utils, which pulls the zustand store + tauri invoke +
+ * platform utils; HotKey and DictationInstruction read the store directly
+ * (keysHeld, hotkeyStrategy, combos). None of that runs in a plain browser.
+ *
+ * Fidelity: the recorder shares its styles with the real HotKey.
+ * Badge and instruction styles follow
+ *  - components/common/HotkeyBadge.tsx
+ *  - components/common/DictationInstruction.tsx
+ * Key-name mapping copies getPrettyKeyName rules (keyboard.utils.ts:168-200):
+ * KeyX→X, Meta→⌘/⊞, Control→⌃/Ctrl, Shift→⇧/Shift, Alt→⌥/Alt, arrows→glyphs.
+ * Platform here is derived from navigator (preview-only shim; the app uses
+ * getPlatform() from the window manager).
+ */
+import { hotkeyRecorderStyles } from "@desktop/components/common/hotkey-recorder.styles";
+import { Box, Typography } from "@mui/material";
+import type { SxProps, Theme } from "@mui/material/styles";
+import { Stack } from "@mui/system";
+import { useEffect, useRef, useState } from "react";
+import { useSpecValue } from "../lib/spec-store";
+
+const isMac =
+  typeof navigator !== "undefined" &&
+  (/Mac/i.test(navigator.platform) ||
+    (
+      navigator as Navigator & { userAgentData?: { platform: string } }
+    ).userAgentData?.platform
+      ?.toLowerCase()
+      .includes("mac"));
+
+const MODIFIER_PRETTY: ReadonlyArray<
+  [prefix: string, mac: string, other: string]
+> = [
+  ["meta", "⌘", "⊞"],
+  ["control", "⌃", "Ctrl"],
+  ["shift", "⇧", "Shift"],
+];
+
+const ARROW_KEYS: Readonly<Record<string, string>> = {
+  LeftArrow: "←",
+  RightArrow: "→",
+  UpArrow: "↑",
+  DownArrow: "↓",
+};
+
+/** Copy of getPrettyKeyName's mapping rules (side-label suffix omitted:
+ *  appendSideLabel only disambiguates Left/Right variants). */
+export const prettyKeyName = (key: string): string => {
+  const lower = key.toLowerCase();
+  if (lower.startsWith("key")) return key.slice(3).toUpperCase();
+  for (const [prefix, mac, other] of MODIFIER_PRETTY) {
+    if (lower.startsWith(prefix)) return isMac ? mac : other;
+  }
+  if (lower.startsWith("alt") || lower.startsWith("option"))
+    return isMac ? "⌥" : "Alt";
+  if (lower.startsWith("function")) return "Fn";
+  return ARROW_KEYS[key] ?? key;
+};
+
+export const HotkeyBadgePreview = ({
+  keys,
+  onClick,
+  sx,
+}: {
+  keys: string[];
+  onClick?: () => void;
+  sx?: SxProps<Theme>;
+}) => {
+  const radius = useSpecValue("hotkey-badge", "radius", 4);
+  const label = keys.map(prettyKeyName).join(" + ");
+  return (
+    <Box
+      onClick={onClick}
+      sx={{
+        display: "inline-flex",
+        alignItems: "center",
+        border: "1px solid",
+        borderColor: "divider",
+        borderRadius: `${radius}px`,
+        px: 1,
+        py: 0.25,
+        fontWeight: 600,
+        bgcolor: (theme) => theme.vars?.palette.level1,
+        ...(onClick && {
+          cursor: "pointer",
+          "&:hover": { bgcolor: "action.hover" },
+        }),
+        ...sx,
+      }}
+    >
+      {label}
+    </Box>
+  );
+};
+
+export const DictationInstructionPreview = ({
+  combo = ["ControlLeft", "ShiftLeft", "KeyD"],
+}: {
+  combo?: string[] | null;
+}) => {
+  if (!combo) return null;
+  return (
+    <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
+      <Typography
+        variant="body2"
+        component="div"
+        sx={{ color: "text.secondary" }}
+      >
+        Press your hotkey to dictate anywhere
+      </Typography>
+      <HotkeyBadgePreview
+        keys={combo}
+        onClick={() => {}}
+        sx={{ flexShrink: 0 }}
+      />
+    </Stack>
+  );
+};
+
+/** HotKey with a local key-capture shim standing in for the store's keysHeld. */
+export const HotKeyPreview = ({
+  value: controlled,
+  onChange,
+}: {
+  value?: string[];
+  onChange?: (value: string[]) => void;
+}) => {
+  const width = useSpecValue("hotkey-recorder", "width", 200);
+  const boxRef = useRef<HTMLDivElement | null>(null);
+  const [focused, setFocused] = useState(false);
+  const [hasInteracted, setHasInteracted] = useState(false);
+  const [inner, setInner] = useState<string[]>(controlled ?? []);
+  const value = controlled ?? inner;
+
+  useEffect(() => {
+    if (controlled) setInner(controlled);
+  }, [controlled]);
+
+  useEffect(() => {
+    if (!focused) return;
+    const held = new Set<string>();
+    const down = (e: KeyboardEvent) => {
+      e.preventDefault();
+      if (e.key === "Escape") {
+        boxRef.current?.blur();
+        return;
+      }
+      held.add(e.code);
+      setHasInteracted(true);
+      const next = [...held];
+      setInner(next);
+      onChange?.(next);
+    };
+    const up = () => {
+      if (held.size > 0) {
+        held.clear();
+        boxRef.current?.blur();
+      }
+    };
+    window.addEventListener("keydown", down);
+    window.addEventListener("keyup", up);
+    return () => {
+      window.removeEventListener("keydown", down);
+      window.removeEventListener("keyup", up);
+    };
+  }, [focused, onChange]);
+
+  const recording = focused && !hasInteracted;
+  const empty = recording || value.length === 0;
+  let label =
+    value.length > 0 ? value.map(prettyKeyName).join(" + ") : "Set hotkey";
+  if (recording) label = "Recording keys...";
+
+  return (
+    <Box
+      ref={boxRef}
+      tabIndex={0}
+      role="button"
+      aria-label={`Hotkey recorder. ${label}`}
+      onClick={() => boxRef.current?.focus()}
+      onFocus={() => setFocused(true)}
+      onBlur={() => {
+        setFocused(false);
+        setHasInteracted(false);
+      }}
+      sx={hotkeyRecorderStyles(focused, width)}
+    >
+      <Typography
+        variant="body2"
+        color={empty ? "text.secondary" : "text.primary"}
+      >
+        {label}
+      </Typography>
+    </Box>
+  );
+};

@@ -4,12 +4,13 @@
 extern crate objc;
 
 mod app;
-mod font;
 mod constants;
 mod draw;
+mod font;
 mod gfx;
 mod input;
 mod ipc;
+mod nsstring;
 mod state;
 
 fn main() {

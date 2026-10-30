@@ -1,0 +1,43 @@
+version = 1
+
+# The repo's Node tooling (apps/desktop/scripts/*.mjs, scripts/*.mjs) is
+# written as ES modules. Without this declaration DeepSource parses .mjs
+# files as classic scripts and reports bogus "'import' and 'export' may
+# appear only with sourceType: module" errors on every one of them.
+[[analyzers]]
+name = "javascript"
+enabled = true
+
+  [analyzers.meta]
+  module_system = "es-modules"
+
+# Minified vendor bundles are third-party code checked into the marketing site:
+# three of them, tens of thousands of characters each, none of them written here.
+# An analyzer that reads them reports line lengths, nested ternaries and missing
+# semicolons in code no one in this repository can change, and a gate that counts
+# those is a gate nobody reads. The JavaScript analyzer is switched off for those
+# paths rather than for the repository, so first-party JS is still analysed.
+[[overrides]]
+paths = ["marketing/assets/vendor/**"]
+
+  [[overrides.analyzers]]
+  name = "javascript"
+  enabled = false
+
+# The vendored agent skills are the same trade for a different reason. `.agents/skills`
+# holds 56 third-party skill trees, byte for byte as published, and `skills-lock.json`
+# records a folder hash for each one. Sixteen of their files are `.js`, `.cjs` or
+# `.mjs`, including a minified UMD bundle of 29 KB on 14 lines and a 547 KB
+# hand-written one. None of it is written here and none of it may be edited: a single
+# reformat changes the folder hash and fails `scripts/ci/verify-skills.mjs`, which is
+# the guard that keeps the set honest. An analyzer reading them would report style
+# findings in code this repository is not allowed to change, which is exactly the
+# noisy gate the override above exists to prevent. `.claude/**` is listed because
+# `.claude/skills` is a symlink onto the same tree, so a checkout that follows
+# symlinks would otherwise analyse it twice.
+[[overrides]]
+paths = [".agents/**", ".claude/**"]
+
+  [[overrides.analyzers]]
+  name = "javascript"
+  enabled = false

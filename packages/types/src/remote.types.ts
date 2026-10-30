@@ -54,11 +54,32 @@ export type RouteTranscriptOutputArgs = {
   text: string;
   mode: "dictation";
   currentAppId: Nullable<string>;
+  /**
+   * Realtime interim segments must bypass the hands-free output delay:
+   * the documented contract applies the wait "when you stop recording",
+   * i.e. to final delivery only. Applying it per interim segment would
+   * queue each behind the full delay and destroy realtime behavior.
+   */
+  isInterim?: boolean;
+  /**
+   * When true, the text is delivered without routing through the
+   * review-before-insert composer. Used for streaming interim segments, which
+   * must never spawn a blocking review popout on every token.
+   */
+  skipReview?: boolean;
+  /**
+   * Called only for the review pill's Open action. It must return true only
+   * after the edited text is durable, so the pill can safely settle and route
+   * the user to History without losing an edit.
+   */
+  onReviewOpen?: (editedText: string) => Promise<boolean>;
 };
 
 export type RouteTranscriptOutputResult = {
   delivered: boolean;
   remote: boolean;
+  /** Text actually delivered to the local or paired target, if any. */
+  deliveredText: Nullable<string>;
 };
 
 export type PairingRequest = {

@@ -13,10 +13,16 @@ import { PermissionsDialog } from "./PermissionsDialog";
  * Authenticated app shell: sidebar navigation, routed content area, and the
  * global dialogs (feature release, permissions, trial ended, transcription
  * details). Also reports the app version into the layout.
+ *
+ * The content area is deliberately flat. It carries no fill, border, radius or
+ * cast of its own, so the routed page reads as the window's canvas rather than
+ * as a card sitting on it. A panel treatment here cuts the window into
+ * compartments and turns a navigation change into a frame change. Chrome that
+ * does need its own material, such as the rail, paints it on the rail.
  */
 export default function DashboardPage() {
   const data = useAsyncData(getVersion, []);
-  const location = useLocation();
+  const { pathname } = useLocation();
   const reduceMotion = useReducedMotion();
 
   return (
@@ -36,7 +42,6 @@ export default function DashboardPage() {
             minWidth: 232,
             maxWidth: 232,
             overflowY: "auto",
-            py: 0.5,
           }}
         >
           <DashboardMenu />
@@ -53,17 +58,18 @@ export default function DashboardPage() {
             pt: { xs: 0.5, sm: 1 },
           }}
         >
+          {/* Enter only: retaining an outgoing Outlet during an exit animation
+              makes it follow the new route and run cleanup on the incoming page.
+              Key by pathname so query-only navigation keeps the page mounted. */}
           <Box
             component={motion.div}
-            key={location.pathname}
-            initial={
-              reduceMotion ? false : { opacity: 0, y: 8, filter: "blur(2px)" }
-            }
-            animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
-            transition={{ duration: 0.22, ease: easeOutQuint }}
-            // Flat: the route content owns its own surfaces (cards, rows), so
-            // wrapping it in a second bordered panel stacked two tiers of
-            // elevation for one plane and boxed the page inside the page.
+            key={pathname}
+            initial={reduceMotion ? false : { opacity: 0, x: 8 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{
+              duration: reduceMotion ? 0 : 0.24,
+              ease: easeOutQuint,
+            }}
             sx={{
               flexGrow: 1,
               minHeight: 0,

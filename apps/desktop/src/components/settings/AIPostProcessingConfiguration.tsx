@@ -57,7 +57,13 @@ export const AIPostProcessingConfiguration = () => {
               color: "text.secondary",
             }}
           >
-            <FormattedMessage defaultMessage="No AI post-processing will run on new transcripts." />
+            {/* Scoped to the built-in styles on purpose. `canApplyFastStyle`
+                only knows the eight built-in tone ids, because a custom tone
+                carries a free-form prompt that no local transform can honour;
+                those take the raw transcript with post-processing off. Promising
+                every selected style would be applied locally sent a custom-tone
+                user a promise the app does not keep. */}
+            <FormattedMessage defaultMessage="LLM post-processing is off. Built-in writing styles with fast local transforms are still applied instantly, with no network call. Custom styles need LLM post-processing." />
           </Typography>
         )}
 

@@ -1,101 +1,91 @@
 # Windows Installer Bootstrapper
 
-A modern, sleek installer UI for mausVoice on Windows. This bootstrapper wraps the NSIS installer with a beautiful custom interface.
+Tauri wrapper around the desktop NSIS setup. It extracts the bundled `mausVoice_Setup.exe` and runs it silently (`/S`), then can launch `mausVoice.exe`.
 
-## How It Works
+Authoritative notes: [Repository overview](https://maus-inc.github.io/mausVoice/docs/development/repository-overview/) and `apps/windows-installer/`.
 
-1. User downloads and runs `mausVoice-Installer.exe` (the bootstrapper)
-2. Bootstrapper shows a modern UI with the mausVoice logo and progress bar
-3. It extracts and runs the bundled NSIS installer silently (`/S` flag)
-4. Once complete, user can launch mausVoice directly from the installer
+## Prerequisites
 
-## Build Process
+- Node from repo `.nvmrc` (v24); `engines.node` `>=20`
+- **pnpm 10.34.5** (workspace package `@maus-inc/windows-installer`, currently `0.1.6`)
+- Rust **MSVC** toolchain and the Microsoft C++ Build Tools, on the host. Neither comes from the
+  workspace: `pnpm --filter @maus-inc/windows-installer` supplies the JavaScript Tauri CLI only, and
+  a native Windows build additionally needs a linker and the Windows SDK.
+- Tauri CLI via the workspace (`pnpm --filter @maus-inc/windows-installer`, not a global npm CLI)
 
-### Prerequisites
+## Build
 
-- Node.js 18+
-- Rust toolchain
-- Tauri CLI (`npm install -g @tauri-apps/cli`)
+The commands below are **bash**. On a native Windows host that means Git Bash (or WSL), not
+PowerShell — PowerShell has no `\` line continuation, so the multi-line `cp` below will not run
+there as written. A PowerShell equivalent is given alongside step 2.
 
-### Step 1: Build the Main Desktop App
-
-First, build the main mausVoice NSIS installer:
-
-```bash
-cd apps/desktop
-npm run tauri build -- --target x86_64-pc-windows-msvc
-```
-
-This produces `mausVoice_0.1.0_x64-setup.exe` in `src-tauri/target/release/bundle/nsis/`.
-
-### Step 2: Bundle the NSIS Installer
-
-Copy the NSIS installer to the bootstrapper's resources:
+1. Build the main desktop NSIS installer from the repo root (sidecars first):
 
 ```bash
-cp apps/desktop/src-tauri/target/release/bundle/nsis/mausVoice_*-setup.exe \
-   apps/windows-installer/src-tauri/installer/mausVoice_Setup.exe
+pnpm --filter desktop tauri -- build
 ```
 
-### Step 3: Build the Bootstrapper
+A native Windows host writes `mausVoice_*-setup.exe` under
+`apps/desktop/src-tauri/target/release/bundle/nsis/`. Two things move that path:
+
+- `CARGO_TARGET_DIR` replaces `apps/desktop/src-tauri/target` **entirely** — CI sets it (on
+  Windows: `D:\cargo`), so the literal path below matches nothing there.
+- `--target x86_64-pc-windows-msvc` inserts the target triple _before_ `release`.
+
+The copy step reads both from the environment so it stays correct under either.
+
+The setup's welcome/finish sidebar art comes from `branding/mausvoice-sidebar-installerimg.png` and is converted to the NSIS bitmap automatically by `scripts/generate-windows-installer-sidebar.mjs` (see `branding/README.md`); there is nothing to copy manually.
+
+2. Copy it into the bootstrapper:
 
 ```bash
-cd apps/windows-installer
-npm install
-npm run tauri build
+# Set TARGET_TRIPLE only if you passed --target, e.g. TARGET_TRIPLE=x86_64-pc-windows-msvc
+TARGET_TRIPLE="${TARGET_TRIPLE:-}"
+TARGET_DIR="${CARGO_TARGET_DIR:-apps/desktop/src-tauri/target}"
+nsis="$TARGET_DIR/$TARGET_TRIPLE/release/bundle/nsis"
+
+# The glob also matches installers left by earlier builds, and `cp` with more than one
+# source needs a *directory* destination -- so it would fail instead of embedding the
+# installer you just built. Take the most recent one explicitly.
+setup="$(ls -1t "$nsis"/mausVoice_*-setup.exe 2>/dev/null | head -n 1)"
+[ -n "$setup" ] || { echo "no mausVoice_*-setup.exe under $nsis" >&2; exit 1; }
+cp "$setup" apps/windows-installer/src-tauri/installer/mausVoice_Setup.exe
 ```
 
-This produces `mausVoice Installer_0.1.0_x64-setup.exe` - the final distributable.
+The same step in PowerShell, which uses backtick continuation:
 
-## CI Integration
-
-Add these steps to your GitHub Actions workflow:
-
-```yaml
-# After building the main desktop app...
-- name: Build Windows Bootstrapper
-  if: matrix.platform == 'windows-latest'
-  run: |
-    # Copy NSIS installer to bootstrapper resources
-    cp apps/desktop/src-tauri/target/release/bundle/nsis/mausVoice_*-setup.exe \
-       apps/windows-installer/src-tauri/installer/mausVoice_Setup.exe
-
-    # Build bootstrapper
-    cd apps/windows-installer
-    npm install
-    npm run tauri build
-
-    # The final installer is at:
-    # apps/windows-installer/src-tauri/target/release/bundle/nsis/
+```powershell
+$TargetTriple = if ($env:TARGET_TRIPLE) { "$env:TARGET_TRIPLE/" } else { "" }
+$TargetDir = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { "apps/desktop/src-tauri/target" }
+# Same hazard as the bash step above: the glob also matches installers left by
+# earlier builds, and Copy-Item with more than one source needs a *directory*
+# destination. Resolve it to the most recent one, and refuse to continue when
+# there is none rather than embedding a stale installer.
+$nsis = "$TargetDir/$TargetTriple/release/bundle/nsis"
+$setup = Get-ChildItem "$nsis/mausVoice_*-setup.exe" |
+         Sort-Object LastWriteTime -Descending | Select-Object -First 1
+if (-not $setup) { throw "no mausVoice_*-setup.exe under $nsis" }
+Copy-Item $setup.FullName apps/windows-installer/src-tauri/installer/mausVoice_Setup.exe
 ```
 
-## Customization
+3. Build the bootstrapper:
 
-### UI Theming
-
-Edit `src/styles.css` to customize colors:
-
-```css
-:root {
-  --bg-primary: #0a0a0f; /* Main background */
-  --accent: #6366f1; /* Progress bar, buttons */
-  --success: #22c55e; /* Completion state */
-}
+```bash
+pnpm --filter @maus-inc/windows-installer tauri:build
 ```
 
-### Window Size
+Window is 480×320, non-resizable, always-on-top, undecorated (`src-tauri/tauri.conf.json`).
 
-Edit `src-tauri/tauri.conf.json`:
+## CI
 
-```json
-"windows": [{
-  "width": 480,
-  "height": 320
-}]
-```
+Use **pnpm** with the frozen lockfile, same as the rest of the monorepo. Do not `npm install` inside `apps/windows-installer`.
 
 ## Notes
 
-- The bootstrapper is ~5-8MB (Tauri + WebView2)
-- WebView2 is bundled as an offline installer for reliability
-- Updates still work normally via Tauri's updater (the bootstrapper is only for first install)
+- WebView2 uses Tauri's embedded bootstrapper.
+- First-install UX only. This installer has no updater to check at all, and not because a
+  field was left blank: its `src-tauri/tauri.conf.json` declares no `plugins` block, so
+  there is no endpoint and no pubkey. The signed `latest.json` that `release.yml` publishes
+  is the desktop app's manifest, gated fail-closed on the updater signing secrets, and it
+  says nothing about this installer. Upgrading means installing a newer installer over the
+  top.

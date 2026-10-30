@@ -2,6 +2,7 @@
 pub enum OverlayAnchor {
     #[default]
     BottomCenter,
+    TopCenter,
     TopRight,
     TopLeft,
 }

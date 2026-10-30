@@ -1,17 +1,73 @@
-import { delayed } from "@maus-inc/utilities";
+import { delayed, parseRetryAfterMs } from "@maus-inc/utilities";
+import type { CustomFetch } from "./types";
+
+export const ASSEMBLYAI_TRANSCRIPTION_MODELS = [
+  "universal-3-5-pro",
+  "universal-2",
+] as const;
+export type AssemblyAITranscriptionModel =
+  (typeof ASSEMBLYAI_TRANSCRIPTION_MODELS)[number];
+
+const ASSEMBLYAI_TRANSCRIPTION_MODEL_SET = new Set<string>(
+  ASSEMBLYAI_TRANSCRIPTION_MODELS,
+);
+
+// Legacy "tier" names from the deprecated singular `speech_model` parameter are
+// migrated to their current successors so a previously stored value keeps
+// working instead of hard-failing before any request.
+const LEGACY_MODEL_ALIASES: Record<string, AssemblyAITranscriptionModel> = {
+  best: "universal-3-5-pro",
+  nano: "universal-2",
+};
+
+export const normalizeAssemblyAISpeechModel = (
+  model: string | null | undefined,
+): AssemblyAITranscriptionModel | undefined => {
+  if (!model) return undefined;
+  const normalized = LEGACY_MODEL_ALIASES[model] ?? model;
+  if (!ASSEMBLYAI_TRANSCRIPTION_MODEL_SET.has(normalized)) {
+    throw new Error(
+      `Unknown AssemblyAI speech model "${model}". Supported models: ${ASSEMBLYAI_TRANSCRIPTION_MODELS.join(", ")}.`,
+    );
+  }
+  return normalized as AssemblyAITranscriptionModel;
+};
+
+// Pinning the flagship alone drops Universal-2 for the 81 languages it doesn't
+// cover, so send the provider-recommended fallback pair — mirroring the default
+// applied when the parameter is omitted.
+const speechModelsFor = (
+  model: string | null | undefined,
+): AssemblyAITranscriptionModel[] | undefined => {
+  const normalized = normalizeAssemblyAISpeechModel(model);
+  if (!normalized) return undefined;
+  return normalized === "universal-3-5-pro"
+    ? ["universal-3-5-pro", "universal-2"]
+    : [normalized];
+};
 
 export type AssemblyAITestIntegrationArgs = {
   apiKey: string;
+  model?: string | null;
+  customFetch?: CustomFetch;
 };
 
 export const assemblyaiTestIntegration = async ({
   apiKey,
+  model,
+  customFetch = fetch,
 }: AssemblyAITestIntegrationArgs): Promise<boolean> => {
+  // Validate (and migrate legacy values) before the key check so a bad model
+  // surfaces as a clear error instead of a passing key test.
+  normalizeAssemblyAISpeechModel(model);
   try {
-    const response = await fetch("https://api.assemblyai.com/v2/transcript", {
-      method: "GET",
-      headers: { Authorization: apiKey },
-    });
+    const response = await customFetch(
+      "https://api.assemblyai.com/v2/transcript",
+      {
+        method: "GET",
+        headers: { Authorization: apiKey },
+      },
+    );
     return response.ok || response.status === 404;
   } catch {
     return false;
@@ -22,10 +78,18 @@ export type AssemblyAITranscriptionArgs = {
   apiKey: string;
   blob: ArrayBuffer | Buffer;
   language?: string;
+  /** Speech model to transcribe with. Omitted => AssemblyAI default. */
+  model?: string | null;
+  /**
+   * Word boosting biases recognition toward these terms (up to 1,000 words
+   * per the AssemblyAI API).
+   */
+  wordBoost?: string[];
   /** Total time budget for the transcript to reach "completed" (default 180 s). */
   timeoutMs?: number;
   /** Delay between status polls (default 3 s). */
   pollIntervalMs?: number;
+  customFetch?: CustomFetch;
 };
 
 export type AssemblyAITranscribeAudioOutput = {
@@ -77,20 +141,19 @@ const getResponseRetryDelayMs = (
   response: Response,
   attempt: number,
 ): number => {
-  const retryAfter = response.headers.get("retry-after");
-  if (retryAfter) {
-    // RFC 7231 allows either delta-seconds ("120") or an HTTP-date
-    // ("Wed, 21 Oct 2015 07:28:00 GMT"); honor both forms.
-    const seconds = Number(retryAfter);
-    if (Number.isFinite(seconds) && seconds >= 0) {
-      return seconds * 1000;
-    }
-    const retryDateMs = Date.parse(retryAfter);
-    if (Number.isFinite(retryDateMs)) {
-      return Math.max(0, retryDateMs - Date.now());
-    }
-  }
-  return getBackoffMs(attempt);
+  // RFC 9110 allows either delta-seconds ("120") or an HTTP-date
+  // ("Wed, 21 Oct 2015 07:28:00 GMT"); the shared parser honours both, and
+  // returns null for a missing, malformed, or already-elapsed hint so the
+  // exponential backoff below applies instead of a zero-millisecond retry.
+  //
+  // The shared parser also caps a hint at MAX_RETRY_AFTER_MS (30s), so this
+  // provider honours a longer hint only up to that ceiling. It keeps the one
+  // shared parser rather than a local copy, and a dictation is an interactive
+  // session, so stalling it for a full hour on a hostile or misconfigured hint
+  // is the worse failure. The remaining budget is also bounded by the
+  // transcription deadline below.
+  const retryAfterMs = parseRetryAfterMs(response.headers.get("retry-after"));
+  return retryAfterMs === null ? getBackoffMs(attempt) : retryAfterMs;
 };
 
 const getBoundedRetryDelayMs = (
@@ -128,6 +191,7 @@ type RequestWithRetryOptions = {
   /** When set, the request is aborted once this absolute deadline passes. */
   signal?: AbortSignal;
   deadline?: number;
+  customFetch?: CustomFetch;
 };
 
 // Handle a fetch-level failure (network error or abort). Throws when the
@@ -161,13 +225,14 @@ const requestWithRetry = async ({
   maxRetries = 3,
   signal,
   deadline,
+  customFetch = fetch,
 }: RequestWithRetryOptions): Promise<Response> => {
   for (let attempt = 0; ; attempt++) {
     assertBeforeDeadline(deadline, errorLabel);
 
     let response: Response;
     try {
-      response = await fetch(url, {
+      response = await customFetch(url, {
         method,
         headers: { ...assemblyaiHeaders(apiKey), ...headers },
         body,
@@ -208,12 +273,21 @@ const ASSEMBLYAI_UPLOAD_ERROR = "AssemblyAI upload failed";
 const ASSEMBLYAI_CREATE_ERROR = "AssemblyAI transcript request failed";
 const ASSEMBLYAI_STATUS_ERROR = "AssemblyAI transcript status failed";
 
-const uploadAudio = async (
-  apiKey: string,
-  arrayBuffer: ArrayBuffer,
-  signal: AbortSignal,
-  deadline: number,
-): Promise<string> => {
+type UploadAudioArgs = {
+  apiKey: string;
+  arrayBuffer: ArrayBuffer;
+  signal: AbortSignal;
+  deadline: number;
+  customFetch: CustomFetch;
+};
+
+const uploadAudio = async ({
+  apiKey,
+  arrayBuffer,
+  signal,
+  deadline,
+  customFetch,
+}: UploadAudioArgs): Promise<string> => {
   const response = await requestWithRetry({
     apiKey,
     url: `${ASSEMBLYAI_API_URL}/upload`,
@@ -223,6 +297,7 @@ const uploadAudio = async (
     errorLabel: ASSEMBLYAI_UPLOAD_ERROR,
     signal,
     deadline,
+    customFetch,
   });
 
   const { upload_url: uploadUrl } =
@@ -238,14 +313,34 @@ const uploadAudio = async (
   return uploadUrl;
 };
 
-const createTranscriptRequest = async (
-  apiKey: string,
-  uploadUrl: string,
-  language: string | undefined,
-  signal: AbortSignal,
-  deadline: number,
-): Promise<string> => {
+type CreateTranscriptRequestArgs = {
+  apiKey: string;
+  uploadUrl: string;
+  language: string | undefined;
+  speechModels: AssemblyAITranscriptionModel[] | undefined;
+  wordBoost: string[] | undefined;
+  signal: AbortSignal;
+  deadline: number;
+  customFetch: CustomFetch;
+};
+
+const createTranscriptRequest = async ({
+  apiKey,
+  uploadUrl,
+  language,
+  speechModels,
+  wordBoost,
+  signal,
+  deadline,
+  customFetch,
+}: CreateTranscriptRequestArgs): Promise<string> => {
   const transcriptPayload: Record<string, unknown> = { audio_url: uploadUrl };
+  if (speechModels) {
+    transcriptPayload.speech_models = speechModels;
+  }
+  if (wordBoost && wordBoost.length > 0) {
+    transcriptPayload.word_boost = wordBoost;
+  }
   if (!language || language === "auto") {
     transcriptPayload.language_detection = true;
   } else {
@@ -261,6 +356,7 @@ const createTranscriptRequest = async (
     errorLabel: ASSEMBLYAI_CREATE_ERROR,
     signal,
     deadline,
+    customFetch,
   });
 
   const created = await parseJsonResponse<AssemblyAITranscriptResponse>(
@@ -283,13 +379,23 @@ const validatePositiveDuration = (value: number, name: string): void => {
   }
 };
 
-const waitForTranscript = async (
-  apiKey: string,
-  transcriptId: string,
-  signal: AbortSignal,
-  deadline: number,
-  pollIntervalMs: number,
-): Promise<string> => {
+type WaitForTranscriptArgs = {
+  apiKey: string;
+  transcriptId: string;
+  signal: AbortSignal;
+  deadline: number;
+  pollIntervalMs: number;
+  customFetch: CustomFetch;
+};
+
+const waitForTranscript = async ({
+  apiKey,
+  transcriptId,
+  signal,
+  deadline,
+  pollIntervalMs,
+  customFetch,
+}: WaitForTranscriptArgs): Promise<string> => {
   for (;;) {
     if (Date.now() >= deadline) {
       throw new Error("AssemblyAI transcription timed out");
@@ -302,6 +408,7 @@ const waitForTranscript = async (
       errorLabel: ASSEMBLYAI_STATUS_ERROR,
       signal,
       deadline,
+      customFetch,
     });
     const status = await parseJsonResponse<AssemblyAITranscriptResponse>(
       response,
@@ -336,11 +443,15 @@ export const assemblyaiTranscribeAudio = async ({
   apiKey,
   blob,
   language,
+  model,
+  wordBoost,
   timeoutMs = 180_000,
   pollIntervalMs = 3000,
+  customFetch = fetch,
 }: AssemblyAITranscriptionArgs): Promise<AssemblyAITranscribeAudioOutput> => {
   validatePositiveDuration(timeoutMs, "timeout");
   validatePositiveDuration(pollIntervalMs, "poll interval");
+  const speechModels = speechModelsFor(model);
 
   const arrayBuffer =
     blob instanceof ArrayBuffer ? blob : new Uint8Array(blob).buffer;
@@ -355,26 +466,31 @@ export const assemblyaiTranscribeAudio = async ({
   const abortTimer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const uploadUrl = await uploadAudio(
+    const uploadUrl = await uploadAudio({
       apiKey,
       arrayBuffer,
-      controller.signal,
+      signal: controller.signal,
       deadline,
-    );
-    const transcriptId = await createTranscriptRequest(
+      customFetch,
+    });
+    const transcriptId = await createTranscriptRequest({
       apiKey,
       uploadUrl,
       language,
-      controller.signal,
+      speechModels,
+      wordBoost: wordBoost?.map((term) => term.trim()).filter(Boolean),
+      signal: controller.signal,
       deadline,
-    );
-    const text = await waitForTranscript(
+      customFetch,
+    });
+    const text = await waitForTranscript({
       apiKey,
       transcriptId,
-      controller.signal,
+      signal: controller.signal,
       deadline,
       pollIntervalMs,
-    );
+      customFetch,
+    });
 
     return { text };
   } finally {
@@ -382,19 +498,4 @@ export const assemblyaiTranscribeAudio = async ({
   }
 };
 
-export const convertFloat32ToPCM16 = (
-  float32Array: Float32Array | number[],
-): ArrayBuffer => {
-  const samples = Array.isArray(float32Array)
-    ? float32Array
-    : Array.from(float32Array);
-  const buffer = new ArrayBuffer(samples.length * 2);
-  const view = new DataView(buffer);
-
-  for (let i = 0; i < samples.length; i++) {
-    const s = Math.max(-1, Math.min(1, samples[i]));
-    view.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
-  }
-
-  return buffer;
-};
+export { convertFloat32ToPCM16 } from "./audio-convert.utils";

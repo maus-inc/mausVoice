@@ -14,6 +14,11 @@ import {
   getManuallySelectedToneId,
 } from "../utils/tone.utils";
 import { getMyUserPreferences } from "../utils/user.utils";
+import {
+  type LocalDataWriteLease,
+  beginLocalDataWrite,
+  withLocalDataWrite,
+} from "../utils/local-data-write-gate";
 import { showErrorSnackbar } from "./app.actions";
 import { setSelectedToneId } from "./user.actions";
 
@@ -25,26 +30,28 @@ export const loadAppTargets = async (): Promise<void> => {
   });
 };
 
-export const upsertAppTarget = async (
+export const upsertAppTarget = (
   params: AppTargetUpsertParams,
-): Promise<AppTarget> => {
-  const target = await getAppTargetRepo().upsertAppTarget(params);
+  lease?: LocalDataWriteLease,
+): Promise<AppTarget> =>
+  withLocalDataWrite(async (writeLease) => {
+    const target = await getAppTargetRepo().upsertAppTarget(params, writeLease);
 
-  produceAppState((draft) => {
-    registerAppTargets(draft, [target]);
-  });
+    produceAppState((draft) => {
+      registerAppTargets(draft, [target]);
+    }, writeLease);
 
-  return target;
-};
+    return target;
+  }, lease);
 
 export const setAppTargetTone = async (
   id: string,
   toneId: string | null,
-): Promise<void> => {
+): Promise<boolean> => {
   const existing = getAppState().appTargetById[id];
   if (!existing) {
     showErrorSnackbar("App target is not registered.");
-    return;
+    return false;
   }
 
   try {
@@ -57,6 +64,7 @@ export const setAppTargetTone = async (
       insertionMethod: existing.insertionMethod ?? null,
       typingSpeedMs: existing.typingSpeedMs ?? null,
     });
+    return true;
   } catch (error) {
     console.error("Failed to update app target tone", error);
     showErrorSnackbar(
@@ -64,6 +72,7 @@ export const setAppTargetTone = async (
         ? error.message
         : "Failed to update app target tone.",
     );
+    return false;
   }
 };
 
@@ -183,38 +192,51 @@ export const tryRegisterCurrentAppTarget = async (): Promise<
 
   const shouldRegisterAppTarget = !existingApp || !existingApp.iconPath;
   if (shouldRegisterAppTarget) {
-    let iconPath: string | undefined;
-    if (appInfo.iconBase64) {
-      const targetPath = buildAppIconPath(getAppState(), appTargetId);
+    const releaseWrite = beginLocalDataWrite();
+    if (releaseWrite) {
       try {
-        await getLogger().stopwatch("upload_app_icon", async () => {
-          await getStorageRepo().uploadData({
-            path: targetPath,
-            data: decodeBase64Icon(appInfo.iconBase64),
-          });
-        });
-        iconPath = targetPath;
-      } catch (uploadError) {
-        console.error("Failed to upload app icon", uploadError);
-      }
-    }
+        let iconPath: string | undefined;
+        if (appInfo.iconBase64) {
+          const targetPath = buildAppIconPath(getAppState(), appTargetId);
+          try {
+            await getLogger().stopwatch("upload_app_icon", async () => {
+              await getStorageRepo().uploadData(
+                {
+                  path: targetPath,
+                  data: decodeBase64Icon(appInfo.iconBase64),
+                },
+                releaseWrite.lease,
+              );
+            });
+            iconPath = targetPath;
+          } catch (uploadError) {
+            console.error("Failed to upload app icon", uploadError);
+          }
+        }
 
-    try {
-      const defaultPasteKeybind =
-        getMyUserPreferences(getAppState())?.pasteKeybind ?? null;
-      await getLogger().stopwatch("upsert_app_target", async () => {
-        await upsertAppTarget({
-          id: appTargetId,
-          name: appName,
-          toneId: existingApp?.toneId ?? null,
-          iconPath: iconPath ?? existingApp?.iconPath ?? null,
-          pasteKeybind: existingApp?.pasteKeybind ?? defaultPasteKeybind,
-          insertionMethod: existingApp?.insertionMethod ?? null,
-          typingSpeedMs: existingApp?.typingSpeedMs ?? null,
-        });
-      });
-    } catch (error) {
-      console.error("Failed to upsert app target", error);
+        try {
+          const defaultPasteKeybind =
+            getMyUserPreferences(getAppState())?.pasteKeybind ?? null;
+          await getLogger().stopwatch("upsert_app_target", async () => {
+            await upsertAppTarget(
+              {
+                id: appTargetId,
+                name: appName,
+                toneId: existingApp?.toneId ?? null,
+                iconPath: iconPath ?? existingApp?.iconPath ?? null,
+                pasteKeybind: existingApp?.pasteKeybind ?? defaultPasteKeybind,
+                insertionMethod: existingApp?.insertionMethod ?? null,
+                typingSpeedMs: existingApp?.typingSpeedMs ?? null,
+              },
+              releaseWrite.lease,
+            );
+          });
+        } catch (error) {
+          console.error("Failed to upsert app target", error);
+        }
+      } finally {
+        releaseWrite();
+      }
     }
   }
 
@@ -239,13 +261,34 @@ export const loadManualStyleForCurrentApp = async (): Promise<void> => {
   }
 };
 
-export const saveManualStyleForApp = (appTarget: AppTarget): void => {
-  if (getEffectiveStylingMode(getAppState()) !== "manual") return;
+/**
+ * Persist the live manual selection as the per-app tone at finalize.
+ *
+ * Source-of-truth contract:
+ * - `getManuallySelectedToneId` reads the LIVE `user.selectedToneId`, which
+ *   `applyWritingStyleSelection` updates on every switch channel. A switch
+ *   made mid-dictation therefore reaches the live selection before stop
+ *   fires, and `saveManualStyleForApp` writes that new tone to the app
+ *   target — the start-time tone is the post-processing input for the
+ *   ACTIVE utterance, not the saved default.
+ * - Never read from any start-time snapshot here. Doing so would silently
+ *   revert the user's mid-recording switch.
+ *
+ * Returns the persistence promise (already error-logged, never rejects)
+ * so callers can await it; fire-and-forget callers are unaffected.
+ */
+export const saveManualStyleForApp = async (
+  appTarget: AppTarget,
+): Promise<void> => {
+  if (getEffectiveStylingMode(getAppState()) !== "manual") {
+    return;
+  }
 
   const manualToneId = getManuallySelectedToneId(getAppState());
-  if (manualToneId !== (appTarget.toneId ?? null)) {
-    setAppTargetTone(appTarget.id, manualToneId).catch((error) =>
-      getLogger().verbose(`Failed to save app style: ${error}`),
-    );
+  if (manualToneId === (appTarget.toneId ?? null)) {
+    return;
   }
+  await setAppTargetTone(appTarget.id, manualToneId).catch((error) => {
+    getLogger().verbose(`Failed to save app style: ${error}`);
+  });
 };

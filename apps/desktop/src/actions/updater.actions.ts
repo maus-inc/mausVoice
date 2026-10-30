@@ -1,4 +1,5 @@
 import {
+  checkForChannelUpdate,
   checkForUpdate,
   closeAvailableUpdate,
   downloadAndOpenMacInstaller,
@@ -7,7 +8,12 @@ import {
   isReadOnlyFilesystemInstallError,
   relaunchApp,
 } from "@maus-inc/desktop-utils";
+import { invoke } from "@tauri-apps/api/core";
 import { getIntl } from "../i18n/intl";
+import {
+  INITIAL_UPDATER_STATE,
+  type UpdaterState,
+} from "../state/updater.state";
 import { getAppState, produceAppState } from "../store";
 import { getPlatform } from "../utils/env.utils";
 import { daysToMilliseconds } from "../utils/time.utils";
@@ -17,18 +23,64 @@ import { showErrorSnackbar } from "./app.actions";
 import { showToast } from "./toast.actions";
 
 let checkingPromise: Promise<boolean> | null = null;
+let checkGeneration = 0;
+const preferredChannel = () =>
+  getMyUserPreferences(getAppState())?.updateChannel === "beta"
+    ? "beta"
+    : "stable";
+// Coalesces user-initiated intent across concurrent callers: a manual check
+// that joins an in-flight background check must still open the dialog and
+// report its result, rather than being treated as another background check.
+let checkingUserInitiated = false;
 let installingPromise: Promise<void> | null = null;
+
+/**
+ * Keeps the tray badge in step with the check result. Owned by the action
+ * rather than the caller so a manual check updates the badge too, instead of
+ * leaving it stale until the next background poll.
+ */
+const syncMenuIcon = (updateAvailable: boolean): void => {
+  invoke("set_menu_icon", {
+    variant: updateAvailable ? "update" : "default",
+  }).catch((error: unknown) => {
+    console.error("Failed to update the tray icon", error);
+  });
+};
+
+const clearedCheckState = (updater: UpdaterState): UpdaterState => ({
+  ...INITIAL_UPDATER_STATE,
+  dismissedUntil: updater.dismissedUntil,
+  lastCheckedAt: Date.now(),
+});
 
 const isBusy = () => {
   const { status } = getAppState().updater;
   return status === "downloading" || status === "installing";
 };
 
-export const checkForAppUpdates = async (): Promise<boolean> => {
-  if (checkingPromise || isBusy()) {
-    return checkingPromise ?? Promise.resolve(false);
+/**
+ * Checks the updater endpoint. Pass `{ userInitiated: true }` for a check the
+ * user asked for: it reports an explicit "up to date" result and bypasses the
+ * dismissal window, so the dialog opens even inside a snooze.
+ */
+export const checkForAppUpdates = async (
+  options: { userInitiated?: boolean } = {},
+): Promise<boolean> => {
+  const { userInitiated = false } = options;
+
+  if (isBusy()) {
+    return false;
   }
 
+  if (checkingPromise) {
+    // Accumulate manual intent so a user click that joins an in-flight
+    // background check still opens the dialog and reports the result.
+    checkingUserInitiated = checkingUserInitiated || userInitiated;
+    return checkingPromise;
+  }
+
+  checkingUserInitiated = checkingUserInitiated || userInitiated;
+  const generation = checkGeneration;
   const platform = getPlatform();
 
   const run = async (): Promise<boolean> => {
@@ -36,39 +88,42 @@ export const checkForAppUpdates = async (): Promise<boolean> => {
       draft.updater.status = "checking";
       draft.updater.errorMessage = null;
       draft.updater.manualInstallerUrl = null;
+      draft.updater.manualInstallerSignatureUrl = null;
       draft.updater.downloadProgress = null;
       draft.updater.downloadedBytes = null;
       draft.updater.totalBytes = null;
+      draft.updater.upToDateConfirmed = false;
     });
 
     let update: Awaited<ReturnType<typeof checkForUpdate>>;
+    const updateChannel = preferredChannel();
     try {
-      update = await checkForUpdate(platform);
+      update = await checkForChannelUpdate(platform, updateChannel);
     } catch (error) {
+      if (generation !== checkGeneration) return false;
       console.error("Failed to check for updates", error);
       produceAppState((draft) => {
-        draft.updater.status = "error";
-        draft.updater.errorMessage = String(error);
-        draft.updater.manualInstallerUrl = null;
+        draft.updater = {
+          ...clearedCheckState(draft.updater),
+          status: "error",
+          errorMessage: String(error),
+        };
       });
+      syncMenuIcon(false);
+      await closeAvailableUpdate();
       return false;
     }
 
+    if (generation !== checkGeneration) return false;
+
     if (!update) {
       produceAppState((draft) => {
-        draft.updater.status = "idle";
-        draft.updater.dialogOpen = false;
-        draft.updater.availableVersion = null;
-        draft.updater.currentVersion = null;
-        draft.updater.releaseDate = null;
-        draft.updater.releaseNotes = null;
-        draft.updater.manualInstallerUrl = null;
-        draft.updater.requiresManualInstall = false;
-        draft.updater.errorMessage = null;
-        draft.updater.downloadProgress = null;
-        draft.updater.downloadedBytes = null;
-        draft.updater.totalBytes = null;
+        draft.updater = {
+          ...clearedCheckState(draft.updater),
+          upToDateConfirmed: checkingUserInitiated,
+        };
       });
+      syncMenuIcon(false);
       return false;
     }
 
@@ -76,10 +131,13 @@ export const checkForAppUpdates = async (): Promise<boolean> => {
     const { dialogOpen, dismissedUntil } = state.updater;
     const ignoreUpdateDialog =
       getMyUserPreferences(state)?.ignoreUpdateDialog ?? false;
+    // A user-initiated check is itself the request to see the dialog, so it
+    // ignores both the snooze window and the auto-show preference.
     const shouldAutoShowDialog =
-      !ignoreUpdateDialog &&
       !dialogOpen &&
-      (!dismissedUntil || Date.now() >= dismissedUntil);
+      (checkingUserInitiated ||
+        (!ignoreUpdateDialog &&
+          (!dismissedUntil || Date.now() >= dismissedUntil)));
 
     produceAppState((draft) => {
       draft.updater.status = "ready";
@@ -88,21 +146,32 @@ export const checkForAppUpdates = async (): Promise<boolean> => {
       draft.updater.releaseDate = update.releaseDate;
       draft.updater.releaseNotes = update.releaseNotes;
       draft.updater.manualInstallerUrl = update.manualInstallerUrl;
+      draft.updater.manualInstallerSignatureUrl =
+        update.manualInstallerSignatureUrl;
       draft.updater.requiresManualInstall = update.requiresManualInstall;
       draft.updater.errorMessage = null;
       draft.updater.downloadProgress = null;
       draft.updater.downloadedBytes = null;
       draft.updater.totalBytes = null;
+      draft.updater.lastCheckedAt = Date.now();
+      draft.updater.upToDateConfirmed = false;
+      draft.updater.offeredChannel = updateChannel;
       if (shouldAutoShowDialog) {
         draft.updater.dialogOpen = true;
       }
     });
 
+    syncMenuIcon(true);
+
     // It's hard to see the update menu icon on Windows, so show a
     // toast notification when an update is available. On macOS, the menu icon
     // is more visible and users are more accustomed to checking there for
     // updates, so we can skip the toast.
-    if (shouldAutoShowDialog && platform !== "darwin") {
+    if (
+      shouldAutoShowDialog &&
+      !checkingUserInitiated &&
+      platform !== "darwin"
+    ) {
       const intl = getIntl();
       await showToast({
         message: intl.formatMessage(
@@ -126,11 +195,36 @@ export const checkForAppUpdates = async (): Promise<boolean> => {
     return await checkingPromise;
   } finally {
     checkingPromise = null;
+    // Carry a manual request across an invalidated check into its replacement.
+    if (generation === checkGeneration) checkingUserInitiated = false;
   }
 };
 
+/** Invalidate the UI immediately, then retire the old channel's resource before rechecking. */
+export const refreshUpdatesForChannelChange = async (): Promise<void> => {
+  // An installation already owns its handle; changing a preference must not
+  // close it halfway through download/install. Settings disables this case.
+  if (isBusy()) return;
+  const generation = ++checkGeneration;
+  const previousCheck = checkingPromise;
+  produceAppState((draft) => {
+    draft.updater = clearedCheckState(draft.updater);
+  });
+  syncMenuIcon(false);
+  // Serializing retirement with the old check prevents a late native result
+  // from repopulating the resource slot after we have closed it.
+  if (previousCheck) await previousCheck;
+  if (generation !== checkGeneration) return;
+  await closeAvailableUpdate();
+  if (generation !== checkGeneration) return;
+  await checkForAppUpdates();
+};
+
+const offerMatchesChannel = () =>
+  getAppState().updater.offeredChannel === preferredChannel();
+
 export const openUpdateDialog = async (): Promise<void> => {
-  if (hasAvailableUpdate()) {
+  if (!checkingPromise && offerMatchesChannel() && hasAvailableUpdate()) {
     produceAppState((draft) => {
       draft.updater.dialogOpen = true;
       draft.updater.errorMessage = null;
@@ -138,7 +232,7 @@ export const openUpdateDialog = async (): Promise<void> => {
     return;
   }
 
-  await checkForAppUpdates();
+  await checkForAppUpdates({ userInitiated: true });
 };
 
 const THREE_DAYS_MS = daysToMilliseconds(3);
@@ -150,9 +244,10 @@ export const dismissUpdateDialog = (duration = THREE_DAYS_MS): void => {
   });
 };
 
-const installViaPkgInstaller = async (): Promise<boolean> => {
-  const { manualInstallerUrl } = getAppState().updater;
-  if (!manualInstallerUrl) {
+const installViaManualMacInstaller = async (): Promise<boolean> => {
+  const { manualInstallerUrl, manualInstallerSignatureUrl } =
+    getAppState().updater;
+  if (!manualInstallerUrl || !manualInstallerSignatureUrl) {
     showErrorSnackbar("No installer package available for this version.");
     return false;
   }
@@ -167,9 +262,15 @@ const installViaPkgInstaller = async (): Promise<boolean> => {
   });
 
   try {
-    await downloadAndOpenMacInstaller(manualInstallerUrl);
+    await downloadAndOpenMacInstaller(
+      manualInstallerUrl,
+      manualInstallerSignatureUrl,
+    );
   } catch (error) {
-    console.error("Failed to download or open pkg installer", error);
+    console.error(
+      "Failed to download or open the manual macOS installer",
+      error,
+    );
     produceAppState((draft) => {
       draft.updater.status = "error";
       draft.updater.errorMessage = String(error);
@@ -242,7 +343,7 @@ const installViaBuiltInUpdater = async (): Promise<boolean> => {
       produceAppState((draft) => {
         draft.updater.requiresManualInstall = true;
       });
-      return installViaPkgInstaller();
+      return installViaManualMacInstaller();
     }
 
     produceAppState((draft) => {
@@ -269,14 +370,19 @@ export const installAvailableUpdate = async (): Promise<void> => {
     return installingPromise;
   }
 
-  if (!hasAvailableUpdate()) {
+  if (checkingPromise || !hasAvailableUpdate()) {
     return;
+  }
+
+  if (!offerMatchesChannel()) {
+    await refreshUpdatesForChannelChange();
+    return; // A new offer needs a new explicit install decision.
   }
 
   const { requiresManualInstall } = getAppState().updater;
 
   const run = requiresManualInstall
-    ? installViaPkgInstaller
+    ? installViaManualMacInstaller
     : installViaBuiltInUpdater;
 
   installingPromise = run()
@@ -286,8 +392,8 @@ export const installAvailableUpdate = async (): Promise<void> => {
       }
 
       if (requiresManualInstall) {
-        // The .pkg installer will replace the app externally; no relaunch
-        // needed from here. Just release the stored update handle.
+        // The manual macOS installer replaces the app externally; no relaunch
+        // is needed here. Just release the stored update handle.
         await closeAvailableUpdate();
         return;
       }

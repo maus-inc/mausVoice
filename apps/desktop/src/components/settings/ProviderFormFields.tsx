@@ -1,4 +1,12 @@
-import { Box, Switch, TextField, Typography } from "@mui/material";
+import HelpOutlineRoundedIcon from "@mui/icons-material/HelpOutlineRounded";
+import {
+  Box,
+  IconButton,
+  Switch,
+  TextField,
+  Tooltip,
+  Typography,
+} from "@mui/material";
 import { FormattedMessage } from "react-intl";
 import type { ProviderFormConfig } from "./api-key-provider-config";
 
@@ -52,6 +60,20 @@ export const ProviderFormFields = ({
           <Typography variant="body2">
             <FormattedMessage defaultMessage="Include /v1 path" />
           </Typography>
+          <Tooltip
+            arrow
+            title={
+              <FormattedMessage defaultMessage="When enabled, mausVoice appends /v1 to the Base URL unless it already ends in /v1. Disable it for servers that expose /models and /chat/completions directly at the entered Base URL." />
+            }
+          >
+            <IconButton
+              size="small"
+              aria-label="About the /v1 path setting"
+              sx={{ p: 0.25, color: "text.secondary" }}
+            >
+              <HelpOutlineRoundedIcon sx={{ fontSize: 17 }} />
+            </IconButton>
+          </Tooltip>
           <Switch
             checked={includeV1Path ?? true}
             onChange={(e) => onIncludeV1PathChange?.(e.target.checked)}

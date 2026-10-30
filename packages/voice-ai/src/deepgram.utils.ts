@@ -1,4 +1,6 @@
-import { countWords, retry } from "@maus-inc/utilities";
+import { HttpError, countWords, retry } from "@maus-inc/utilities";
+import { appendQueryParamValues } from "./query-params.utils";
+import type { CustomFetch } from "./types";
 
 export type DeepgramTestIntegrationArgs = {
   apiKey: string;
@@ -33,11 +35,18 @@ export const deepgramTestIntegration = ({
       resolve(false);
     };
 
-    ws.onclose = (event) => {
+    // Every close resolves, not only the three codes that used to be listed.
+    //
+    // The 5s timeout is cleared here, so a close whose code is not 1008/4001/4003 left the
+    // promise pending forever: the card's pending state never cleared and the caller waited
+    // on a socket that had already gone. 1000 (a normal close), 1006 (abnormal, no status)
+    // and 1011 (server error) are all reachable without `open` or `error` firing first.
+    //
+    // Resolving unconditionally is safe because a promise settles once: after `onopen` has
+    // resolved `true`, a later close resolving `false` changes nothing.
+    ws.onclose = () => {
       clearTimeout(timeout);
-      if (event.code === 1008 || event.code === 4001 || event.code === 4003) {
-        resolve(false);
-      }
+      resolve(false);
     };
   });
 };
@@ -48,6 +57,13 @@ export type DeepgramTranscriptionArgs = {
   blob: ArrayBuffer | Buffer;
   ext: string;
   language?: string;
+  /**
+   * Keyterm prompting biases recognition toward these terms. nova-3 supports
+   * plain terms only (no legacy `keywords` intensifiers), passed by repeating
+   * the `keyterm` query parameter.
+   */
+  keyterms?: string[];
+  customFetch?: CustomFetch;
 };
 
 export type DeepgramTranscribeAudioOutput = {
@@ -55,12 +71,14 @@ export type DeepgramTranscribeAudioOutput = {
   wordsUsed: number;
 };
 
-export const deepgramTranscribeAudio = async ({
+export const deepgramTranscribeAudio = ({
   apiKey,
   model = "nova-3",
   blob,
   ext,
   language,
+  keyterms,
+  customFetch = fetch,
 }: DeepgramTranscriptionArgs): Promise<DeepgramTranscribeAudioOutput> => {
   return retry({
     retries: 3,
@@ -77,7 +95,12 @@ export const deepgramTranscribeAudio = async ({
         params.set("detect_language", "true");
       }
 
-      const response = await fetch(
+      // Keyterm prompting (nova-3): repeat the parameter per term. Weights
+      // from the legacy `keywords` feature are silently ignored here, so only
+      // plain terms are ever sent.
+      appendQueryParamValues(params, "keyterm", keyterms);
+
+      const response = await customFetch(
         `${DEEPGRAM_LISTEN_URL}?${params.toString()}`,
         {
           method: "POST",
@@ -92,8 +115,10 @@ export const deepgramTranscribeAudio = async ({
 
       if (!response.ok) {
         const errorText = await response.text().catch(() => "Unknown error");
-        throw new Error(
+        throw new HttpError(
+          response.status,
           `Deepgram transcription request failed with status ${response.status}: ${errorText}`,
+          { retryAfter: response.headers.get("retry-after") },
         );
       }
 

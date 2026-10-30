@@ -1,13 +1,15 @@
 pub mod audio_feedback;
-pub mod capabilities;
 pub mod audio_store;
 pub mod bridge_server;
+pub mod capabilities;
 pub mod crypto;
 pub mod diagnostics;
 pub mod gpu;
+pub mod local_data_clear_marker;
 pub mod machine_id;
 pub mod models;
 pub mod paths;
+pub(crate) mod remote_channel;
 pub mod remote_receiver;
 pub mod remote_sender;
 pub mod storage_repo;

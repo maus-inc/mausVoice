@@ -7,6 +7,7 @@ import type {
 } from "../repos/api-key.repo";
 import { getAppState, produceAppState } from "../store";
 import { registerApiKeys } from "../utils/app.utils";
+import { withLocalDataWrite } from "../utils/local-data-write-gate";
 import { showErrorSnackbar } from "./app.actions";
 import { updateUserPreferences } from "./user.actions";
 
@@ -57,89 +58,96 @@ export const loadApiKeys = async (): Promise<void> => {
 
 export const createApiKey = async (
   payload: CreateApiKeyPayload,
-): Promise<ApiKey> => {
-  try {
-    const created = await getApiKeyRepo().createApiKey(payload);
+): Promise<ApiKey> =>
+  withLocalDataWrite(async (lease) => {
+    try {
+      const created = await getApiKeyRepo().createApiKey(payload, lease);
 
-    produceAppState((draft) => {
-      registerApiKeys(draft, [created]);
-      const merged = draft.settings.apiKeys.filter(
-        (apiKey) => apiKey.id !== created.id,
+      produceAppState((draft) => {
+        registerApiKeys(draft, [created]);
+        const merged = draft.settings.apiKeys.filter(
+          (apiKey) => apiKey.id !== created.id,
+        );
+        merged.unshift(created);
+        draft.settings.apiKeys = sortApiKeys(merged);
+        draft.settings.apiKeysStatus = "success";
+      }, lease);
+
+      return created;
+    } catch (error) {
+      console.error("Failed to create API key", error);
+      showErrorSnackbar(
+        error instanceof Error ? error.message : "Failed to save API key.",
       );
-      merged.unshift(created);
-      draft.settings.apiKeys = sortApiKeys(merged);
-      draft.settings.apiKeysStatus = "success";
-    });
+      throw error;
+    }
+  });
 
-    return created;
-  } catch (error) {
-    console.error("Failed to create API key", error);
-    showErrorSnackbar(
-      error instanceof Error ? error.message : "Failed to save API key.",
-    );
-    throw error;
-  }
-};
+export const deleteApiKey = async (id: string): Promise<void> =>
+  withLocalDataWrite(async (lease) => {
+    try {
+      await getApiKeyRepo().deleteApiKey(id, lease);
 
-export const deleteApiKey = async (id: string): Promise<void> => {
-  try {
-    await getApiKeyRepo().deleteApiKey(id);
+      produceAppState((draft) => {
+        delete draft.apiKeyById[id];
+        draft.settings.apiKeys = draft.settings.apiKeys.filter(
+          (apiKey) => apiKey.id !== id,
+        );
+        if (draft.settings.aiTranscription.selectedApiKeyId === id) {
+          draft.settings.aiTranscription.selectedApiKeyId = null;
+          draft.settings.aiTranscription.mode = null;
+        }
+        if (draft.settings.aiPostProcessing.selectedApiKeyId === id) {
+          draft.settings.aiPostProcessing.selectedApiKeyId = null;
+          draft.settings.aiPostProcessing.mode = null;
+        }
+      }, lease);
 
-    produceAppState((draft) => {
-      delete draft.apiKeyById[id];
-      draft.settings.apiKeys = draft.settings.apiKeys.filter(
-        (apiKey) => apiKey.id !== id,
+      const state = getAppState();
+      await updateUserPreferences(
+        (preferences) => {
+          preferences.transcriptionMode = state.settings.aiTranscription.mode;
+          preferences.transcriptionApiKeyId =
+            state.settings.aiTranscription.selectedApiKeyId ?? null;
+          preferences.postProcessingMode = state.settings.aiPostProcessing.mode;
+          preferences.postProcessingApiKeyId =
+            state.settings.aiPostProcessing.selectedApiKeyId ?? null;
+        },
+        undefined,
+        { existingLease: lease },
       );
-      if (draft.settings.aiTranscription.selectedApiKeyId === id) {
-        draft.settings.aiTranscription.selectedApiKeyId = null;
-        draft.settings.aiTranscription.mode = null;
-      }
-      if (draft.settings.aiPostProcessing.selectedApiKeyId === id) {
-        draft.settings.aiPostProcessing.selectedApiKeyId = null;
-        draft.settings.aiPostProcessing.mode = null;
-      }
-    });
-
-    const state = getAppState();
-    await updateUserPreferences((preferences) => {
-      preferences.transcriptionMode = state.settings.aiTranscription.mode;
-      preferences.transcriptionApiKeyId =
-        state.settings.aiTranscription.selectedApiKeyId ?? null;
-      preferences.postProcessingMode = state.settings.aiPostProcessing.mode;
-      preferences.postProcessingApiKeyId =
-        state.settings.aiPostProcessing.selectedApiKeyId ?? null;
-    });
-  } catch (error) {
-    console.error("Failed to delete API key", error);
-    showErrorSnackbar(
-      error instanceof Error ? error.message : "Failed to delete API key.",
-    );
-    throw error;
-  }
-};
+    } catch (error) {
+      console.error("Failed to delete API key", error);
+      showErrorSnackbar(
+        error instanceof Error ? error.message : "Failed to delete API key.",
+      );
+      throw error;
+    }
+  });
 
 export const updateApiKey = async (
   payload: UpdateApiKeyPayload,
-): Promise<ApiKey> => {
-  try {
-    const updated = await getApiKeyRepo().updateApiKey(payload);
+): Promise<ApiKey> =>
+  withLocalDataWrite(async (lease) => {
+    try {
+      const updated = await getApiKeyRepo().updateApiKey(payload, lease);
 
-    produceAppState((draft) => {
-      draft.apiKeyById[updated.id] = updated;
-      const index = draft.settings.apiKeys.findIndex(
-        (k) => k.id === updated.id,
+      produceAppState((draft) => {
+        draft.apiKeyById[updated.id] = updated;
+        const index = draft.settings.apiKeys.findIndex(
+          (key) => key.id === updated.id,
+        );
+        if (index !== -1) {
+          draft.settings.apiKeys[index] = updated;
+        }
+      }, lease);
+
+      return updated;
+    } catch (error) {
+      console.error("Failed to update API key", error);
+      showErrorSnackbar(
+        error instanceof Error ? error.message : "Failed to update API key.",
       );
-      if (index !== -1) {
-        draft.settings.apiKeys[index] = updated;
-      }
-    });
-
-    return updated;
-  } catch (error) {
-    console.error("Failed to update API key", error);
-    showErrorSnackbar(
-      error instanceof Error ? error.message : "Failed to update API key.",
-    );
-    throw error;
-  }
-};
+      throw error;
+    }
+  });

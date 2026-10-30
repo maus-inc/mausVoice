@@ -1,8 +1,9 @@
 import { Tone } from "@maus-inc/types";
 import { invoke } from "@tauri-apps/api/core";
+import type { LocalDataWriteLease } from "../utils/local-data-write-gate";
 import { getLogger } from "../utils/log.utils";
 import { getDefaultSystemTones } from "../utils/tone.utils";
-import { BaseRepo } from "./base.repo";
+import { BaseRepo, withLocalDataWrite } from "./base.repo";
 
 type LocalTone = {
   id: string;
@@ -10,6 +11,9 @@ type LocalTone = {
   promptTemplate: string;
   createdAt: number;
   sortOrder: number;
+  category?: string | null;
+  outputLength?: string | null;
+  exampleInputOutput?: string | null;
 };
 
 const fromLocalTone = (tone: LocalTone): Tone => ({
@@ -19,6 +23,9 @@ const fromLocalTone = (tone: LocalTone): Tone => ({
   isSystem: false,
   createdAt: tone.createdAt,
   sortOrder: tone.sortOrder,
+  category: tone.category ?? undefined,
+  outputLength: tone.outputLength ?? undefined,
+  exampleInputOutput: tone.exampleInputOutput ?? undefined,
 });
 
 const toLocalTone = (tone: Tone): LocalTone => ({
@@ -27,6 +34,9 @@ const toLocalTone = (tone: Tone): LocalTone => ({
   promptTemplate: tone.promptTemplate,
   createdAt: tone.createdAt,
   sortOrder: tone.sortOrder,
+  category: tone.category ?? null,
+  outputLength: tone.outputLength ?? null,
+  exampleInputOutput: tone.exampleInputOutput ?? null,
 });
 
 const getSystemToneById = (id: string): Tone | undefined =>
@@ -41,8 +51,14 @@ const mergeSystemTones = (userTones: Tone[]): Tone[] => {
 export abstract class BaseToneRepo extends BaseRepo {
   protected abstract listTonesInternal(): Promise<Tone[]>;
   protected abstract getToneInternal(id: string): Promise<Tone | null>;
-  protected abstract upsertToneInternal(tone: Tone): Promise<Tone>;
-  protected abstract deleteToneInternal(id: string): Promise<void>;
+  protected abstract upsertToneInternal(
+    tone: Tone,
+    lease?: LocalDataWriteLease,
+  ): Promise<Tone>;
+  protected abstract deleteToneInternal(
+    id: string,
+    lease?: LocalDataWriteLease,
+  ): Promise<void>;
 
   async listTones(): Promise<Tone[]> {
     // The remote tone-overrides fetch (a mausVoice Cloud feature) was removed
@@ -65,18 +81,18 @@ export abstract class BaseToneRepo extends BaseRepo {
     return this.getToneInternal(id);
   }
 
-  async upsertTone(tone: Tone): Promise<Tone> {
+  async upsertTone(tone: Tone, lease?: LocalDataWriteLease): Promise<Tone> {
     if (tone.isSystem) {
       throw new Error("System tones cannot be modified.");
     }
-    return this.upsertToneInternal(tone);
+    return this.upsertToneInternal(tone, lease);
   }
 
-  async deleteTone(id: string): Promise<void> {
+  async deleteTone(id: string, lease?: LocalDataWriteLease): Promise<void> {
     if (getSystemToneById(id)) {
       throw new Error("System tones cannot be deleted.");
     }
-    return this.deleteToneInternal(id);
+    return this.deleteToneInternal(id, lease);
   }
 }
 
@@ -91,14 +107,22 @@ export class LocalToneRepo extends BaseToneRepo {
     return tone ? fromLocalTone(tone) : null;
   }
 
-  protected async upsertToneInternal(tone: Tone): Promise<Tone> {
-    const upserted = await invoke<LocalTone>("tone_upsert", {
-      tone: toLocalTone(tone),
-    });
-    return fromLocalTone(upserted);
+  protected upsertToneInternal(
+    tone: Tone,
+    lease?: LocalDataWriteLease,
+  ): Promise<Tone> {
+    return withLocalDataWrite(async () => {
+      const upserted = await invoke<LocalTone>("tone_upsert", {
+        tone: toLocalTone(tone),
+      });
+      return fromLocalTone(upserted);
+    }, lease);
   }
 
-  protected async deleteToneInternal(id: string): Promise<void> {
-    await invoke("tone_delete", { id });
+  protected deleteToneInternal(
+    id: string,
+    lease?: LocalDataWriteLease,
+  ): Promise<void> {
+    return withLocalDataWrite(() => invoke<void>("tone_delete", { id }), lease);
   }
 }

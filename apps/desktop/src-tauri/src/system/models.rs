@@ -137,9 +137,8 @@ fn resolve_model_url(size: WhisperModelSize) -> io::Result<String> {
     Err(io::Error::new(
         io::ErrorKind::NotFound,
         format!(
-            "Whisper model download URL not configured for size '{}'. \
-             Set {} or update the default URL mapping.",
-            size, specific_env
+            "Whisper model download URL not configured for size '{size}'. \
+             Set {specific_env} or update the default URL mapping."
         ),
     ))
 }

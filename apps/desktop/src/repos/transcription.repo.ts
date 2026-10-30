@@ -1,43 +1,67 @@
-import {
-  PostProcessingMode,
-  Transcription,
-  TranscriptionAudioSnapshot,
-  TranscriptionMode,
-} from "@maus-inc/types";
+import { Transcription, TranscriptionAudioSnapshot } from "@maus-inc/types";
 import { invoke } from "@tauri-apps/api/core";
 import dayjs from "dayjs";
+import { orNull, orUndefined } from "../utils/nullable.utils";
 import { getAppState } from "../store";
 import { getMyEffectiveUserId } from "../utils/user.utils";
-import { BaseRepo } from "./base.repo";
+import type { LocalDataWriteLease } from "../utils/local-data-write-gate";
+import { BaseRepo, withLocalDataWrite } from "./base.repo";
+
+const mapAudioSnapshot = (
+  audio: TranscriptionAudioSnapshot | null | undefined,
+): LocalTranscriptionAudio | undefined =>
+  audio
+    ? {
+        filePath: audio.filePath,
+        durationMs: audio.durationMs,
+      }
+    : undefined;
 
 type LocalTranscriptionAudio = TranscriptionAudioSnapshot;
 
-type LocalTranscription = {
-  id: string;
-  transcript: string;
+type LocalTranscription = Omit<
+  Transcription,
+  "createdAt" | "createdByUserId" | "isDeleted"
+> & {
   timestamp: number;
-  audio?: LocalTranscriptionAudio | null;
-  modelSize?: string | null;
-  inferenceDevice?: string | null;
-  rawTranscript?: string | null;
-  sanitizedTranscript?: string | null;
-  transcriptionPrompt?: string | null;
-  postProcessPrompt?: string | null;
-  transcriptionApiKeyId?: string | null;
-  postProcessApiKeyId?: string | null;
-  transcriptionMode?: TranscriptionMode | null;
-  postProcessMode?: PostProcessingMode | null;
-  postProcessDevice?: string | null;
-  transcriptionDurationMs?: number | null;
-  postprocessDurationMs?: number | null;
-  warnings?: string[] | null;
-  remoteStatus?: string | null;
-  remoteDeviceId?: string | null;
 };
 
 export type TranscriptionAudioData = {
   samples: number[];
   sampleRate: number;
+};
+
+type NativeImportedAudioData = {
+  pcm16Le: number[] | Uint8Array | ArrayBuffer;
+  sampleRate: number;
+};
+
+export type ImportedTranscriptionAudioData = {
+  samples: Float32Array;
+  sampleRate: number;
+};
+
+const decodePcm16Le = (
+  payload: number[] | Uint8Array | ArrayBuffer,
+): Float32Array => {
+  let bytes: Uint8Array;
+  if (payload instanceof ArrayBuffer) {
+    bytes = new Uint8Array(payload);
+  } else if (payload instanceof Uint8Array) {
+    bytes = payload;
+  } else {
+    bytes = Uint8Array.from(payload);
+  }
+  if (bytes.byteLength % 2 !== 0) {
+    throw new Error("Imported audio returned an invalid PCM payload.");
+  }
+
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const samples = new Float32Array(bytes.byteLength / 2);
+  for (let index = 0; index < samples.length; index += 1) {
+    samples[index] = view.getInt16(index * 2, true) / 0x8000;
+  }
+  return samples;
 };
 
 export type ListTranscriptionsParams = {
@@ -51,28 +75,28 @@ const toLocalTranscription = (
   id: transcription.id,
   transcript: transcription.transcript,
   timestamp: dayjs(transcription.createdAt).valueOf(),
-  audio: transcription.audio
-    ? {
-        filePath: transcription.audio.filePath,
-        durationMs: transcription.audio.durationMs,
-      }
-    : undefined,
-  modelSize: transcription.modelSize ?? null,
-  inferenceDevice: transcription.inferenceDevice ?? null,
-  rawTranscript: transcription.rawTranscript ?? null,
-  sanitizedTranscript: transcription.sanitizedTranscript ?? null,
-  transcriptionPrompt: transcription.transcriptionPrompt ?? null,
-  postProcessPrompt: transcription.postProcessPrompt ?? null,
-  transcriptionApiKeyId: transcription.transcriptionApiKeyId ?? null,
-  postProcessApiKeyId: transcription.postProcessApiKeyId ?? null,
-  transcriptionMode: transcription.transcriptionMode ?? null,
-  postProcessMode: transcription.postProcessMode ?? null,
-  postProcessDevice: transcription.postProcessDevice ?? null,
-  transcriptionDurationMs: transcription.transcriptionDurationMs ?? null,
-  postprocessDurationMs: transcription.postprocessDurationMs ?? null,
-  warnings: transcription.warnings ?? null,
-  remoteStatus: transcription.remoteStatus ?? null,
-  remoteDeviceId: transcription.remoteDeviceId ?? null,
+  audio: mapAudioSnapshot(transcription.audio),
+  modelSize: orNull(transcription.modelSize),
+  inferenceDevice: orNull(transcription.inferenceDevice),
+  rawTranscript: orNull(transcription.rawTranscript),
+  sanitizedTranscript: orNull(transcription.sanitizedTranscript),
+  transcriptionPrompt: orNull(transcription.transcriptionPrompt),
+  postProcessPrompt: orNull(transcription.postProcessPrompt),
+  transcriptionApiKeyId: orNull(transcription.transcriptionApiKeyId),
+  postProcessApiKeyId: orNull(transcription.postProcessApiKeyId),
+  transcriptionMode: orNull(transcription.transcriptionMode),
+  postProcessMode: orNull(transcription.postProcessMode),
+  postProcessDevice: orNull(transcription.postProcessDevice),
+  postProcessModel: orNull(transcription.postProcessModel),
+  postProcessProvider: orNull(transcription.postProcessProvider),
+  postProcessFailed: transcription.postProcessFailed ?? null,
+  postProcessFallback: transcription.postProcessFallback ?? null,
+  postProcessError: orNull(transcription.postProcessError),
+  transcriptionDurationMs: orNull(transcription.transcriptionDurationMs),
+  postprocessDurationMs: orNull(transcription.postprocessDurationMs),
+  warnings: orNull(transcription.warnings),
+  remoteStatus: orNull(transcription.remoteStatus),
+  remoteDeviceId: orNull(transcription.remoteDeviceId),
 });
 
 const fromLocalTranscription = (
@@ -83,55 +107,67 @@ const fromLocalTranscription = (
   createdAt: dayjs(transcription.timestamp).toISOString(),
   createdByUserId: getMyEffectiveUserId(getAppState()),
   isDeleted: false,
-  audio: transcription.audio
-    ? {
-        filePath: transcription.audio.filePath,
-        durationMs: transcription.audio.durationMs,
-      }
-    : undefined,
-  modelSize: transcription.modelSize ?? undefined,
-  inferenceDevice: transcription.inferenceDevice ?? undefined,
-  rawTranscript: transcription.rawTranscript ?? undefined,
-  sanitizedTranscript: transcription.sanitizedTranscript ?? undefined,
-  transcriptionPrompt: transcription.transcriptionPrompt ?? undefined,
-  postProcessPrompt: transcription.postProcessPrompt ?? undefined,
-  transcriptionApiKeyId: transcription.transcriptionApiKeyId ?? undefined,
-  postProcessApiKeyId: transcription.postProcessApiKeyId ?? undefined,
-  transcriptionMode: transcription.transcriptionMode ?? undefined,
-  postProcessMode: transcription.postProcessMode ?? undefined,
-  postProcessDevice: transcription.postProcessDevice ?? undefined,
-  transcriptionDurationMs: transcription.transcriptionDurationMs ?? undefined,
-  postprocessDurationMs: transcription.postprocessDurationMs ?? undefined,
-  warnings: transcription.warnings ?? undefined,
+  audio: mapAudioSnapshot(transcription.audio),
+  modelSize: orUndefined(transcription.modelSize),
+  inferenceDevice: orUndefined(transcription.inferenceDevice),
+  rawTranscript: orUndefined(transcription.rawTranscript),
+  sanitizedTranscript: orUndefined(transcription.sanitizedTranscript),
+  transcriptionPrompt: orUndefined(transcription.transcriptionPrompt),
+  postProcessPrompt: orUndefined(transcription.postProcessPrompt),
+  transcriptionApiKeyId: orUndefined(transcription.transcriptionApiKeyId),
+  postProcessApiKeyId: orUndefined(transcription.postProcessApiKeyId),
+  transcriptionMode: orUndefined(transcription.transcriptionMode),
+  postProcessMode: orUndefined(transcription.postProcessMode),
+  postProcessDevice: orUndefined(transcription.postProcessDevice),
+  postProcessModel: orUndefined(transcription.postProcessModel),
+  postProcessProvider: orUndefined(transcription.postProcessProvider),
+  postProcessFailed: transcription.postProcessFailed ?? undefined,
+  postProcessFallback: transcription.postProcessFallback ?? undefined,
+  postProcessError: orUndefined(transcription.postProcessError),
+  transcriptionDurationMs: orUndefined(transcription.transcriptionDurationMs),
+  postprocessDurationMs: orUndefined(transcription.postprocessDurationMs),
+  warnings: orUndefined(transcription.warnings),
   remoteStatus:
     (transcription.remoteStatus as "sent" | "received") ?? undefined,
-  remoteDeviceId: transcription.remoteDeviceId ?? undefined,
+  remoteDeviceId: orUndefined(transcription.remoteDeviceId),
 });
 
 export abstract class BaseTranscriptionRepo extends BaseRepo {
   abstract createTranscription(
     transcription: Transcription,
+    lease?: LocalDataWriteLease,
   ): Promise<Transcription>;
   abstract listTranscriptions(
     params?: ListTranscriptionsParams,
   ): Promise<Transcription[]>;
-  abstract deleteTranscription(id: string): Promise<void>;
+  abstract deleteTranscription(
+    id: string,
+    lease?: LocalDataWriteLease,
+  ): Promise<void>;
   abstract updateTranscription(
     transcription: Transcription,
+    lease?: LocalDataWriteLease,
   ): Promise<Transcription>;
-  abstract loadTranscriptionAudio(id: string): Promise<TranscriptionAudioData>;
-  abstract purgeStaleAudio(): Promise<string[]>;
+  abstract loadTranscriptionAudio(
+    id: string,
+    lease?: LocalDataWriteLease,
+  ): Promise<TranscriptionAudioData>;
+  abstract importAudioFile(): Promise<ImportedTranscriptionAudioData | null>;
+  abstract purgeStaleAudio(lease?: LocalDataWriteLease): Promise<string[]>;
 }
 
 export class LocalTranscriptionRepo extends BaseTranscriptionRepo {
-  async createTranscription(
+  createTranscription(
     transcription: Transcription,
+    lease?: LocalDataWriteLease,
   ): Promise<Transcription> {
-    const stored = await invoke<LocalTranscription>("transcription_create", {
-      transcription: toLocalTranscription(transcription),
-    });
+    return withLocalDataWrite(async () => {
+      const stored = await invoke<LocalTranscription>("transcription_create", {
+        transcription: toLocalTranscription(transcription),
+      });
 
-    return fromLocalTranscription(stored);
+      return fromLocalTranscription(stored);
+    }, lease);
   }
 
   async listTranscriptions(
@@ -148,27 +184,58 @@ export class LocalTranscriptionRepo extends BaseTranscriptionRepo {
     return transcriptions.map(fromLocalTranscription);
   }
 
-  async deleteTranscription(id: string): Promise<void> {
-    await invoke<void>("transcription_delete", { id });
-  }
-
-  async updateTranscription(
-    transcription: Transcription,
-  ): Promise<Transcription> {
-    const stored = await invoke<LocalTranscription>("transcription_update", {
-      transcription: toLocalTranscription(transcription),
-    });
-    return fromLocalTranscription(stored);
-  }
-
-  async loadTranscriptionAudio(id: string): Promise<TranscriptionAudioData> {
-    return invoke<TranscriptionAudioData>("transcription_audio_load", { id });
-  }
-
-  async purgeStaleAudio(): Promise<string[]> {
-    const purged = await invoke<string[] | undefined>(
-      "purge_stale_transcription_audio",
+  deleteTranscription(id: string, lease?: LocalDataWriteLease): Promise<void> {
+    return withLocalDataWrite(
+      () => invoke<void>("transcription_delete", { id }),
+      lease,
     );
-    return Array.isArray(purged) ? purged : [];
+  }
+
+  updateTranscription(
+    transcription: Transcription,
+    lease?: LocalDataWriteLease,
+  ): Promise<Transcription> {
+    return withLocalDataWrite(async () => {
+      const stored = await invoke<LocalTranscription>("transcription_update", {
+        transcription: toLocalTranscription(transcription),
+      });
+      return fromLocalTranscription(stored);
+    }, lease);
+  }
+
+  loadTranscriptionAudio(
+    id: string,
+    lease?: LocalDataWriteLease,
+  ): Promise<TranscriptionAudioData> {
+    // The native read opens the managed audio directory with create-if-missing
+    // semantics. Count it against clear so the read and its possible mkdir
+    // cannot run past a local-data wipe.
+    return withLocalDataWrite(
+      () => invoke<TranscriptionAudioData>("transcription_audio_load", { id }),
+      lease,
+    );
+  }
+
+  async importAudioFile(): Promise<ImportedTranscriptionAudioData | null> {
+    // The native command owns the OS picker. Accepting a renderer-provided path
+    // here would turn IPC into a reusable reader for every file under the
+    // allowed roots instead of a one-shot, user-authorized selection.
+    const payload = await invoke<NativeImportedAudioData | null>(
+      "transcription_import_audio",
+    );
+    if (!payload) return null;
+    return {
+      samples: decodePcm16Le(payload.pcm16Le),
+      sampleRate: payload.sampleRate,
+    };
+  }
+
+  purgeStaleAudio(lease?: LocalDataWriteLease): Promise<string[]> {
+    return withLocalDataWrite(async () => {
+      const purged = await invoke<string[] | undefined>(
+        "purge_stale_transcription_audio",
+      );
+      return Array.isArray(purged) ? purged : [];
+    }, lease);
   }
 }

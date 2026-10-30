@@ -145,7 +145,7 @@ fn enumerate_gpus_in_child_process() -> Vec<GpuAdapterInfo> {
     match child.wait() {
         Ok(status) => {
             if !status.success() {
-                log::warn!("GPU enumerator process exited with status: {}", status);
+                log::warn!("GPU enumerator process exited with status: {status}");
                 return Vec::new();
             }
         }
@@ -188,7 +188,7 @@ pub fn run_gpu_enumerator_process() -> Result<(), String> {
     let json = serde_json::to_string(&gpus)
         .map_err(|err| format!("Failed to serialize GPU list: {err}"))?;
 
-    println!("{}", json);
+    println!("{json}");
 
     eprintln!("[gpu-enumerator] GPU enumeration complete");
     Ok(())

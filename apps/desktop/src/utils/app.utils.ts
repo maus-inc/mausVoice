@@ -19,6 +19,7 @@ export type ShowSnackbarOpts = {
   duration?: number;
   transitionDuration?: number;
   mode?: SnackbarMode;
+  action?: { label: string; onClick: () => void };
 };
 
 export const setSnackbar = (
@@ -31,6 +32,7 @@ export const setSnackbar = (
   draft.snackbarMode = opts?.mode ?? "info";
   draft.snackbarDuration = opts?.duration ?? 3000;
   draft.snackbarTransitionDuration = opts?.transitionDuration;
+  draft.snackbarAction = opts?.action;
 };
 
 export const registerUsers = (draft: AppState, users: User[]): void => {
@@ -47,6 +49,19 @@ export const registerTranscriptions = (
     draft.transcriptionById[transcription.id] = transcription;
   }
 };
+
+/**
+ * Every written value in the user's dictionary: each source plus each
+ * replacement destination. Glossary terms carry an empty destination, so
+ * they contribute only their source. Consumers use this to dedupe against
+ * existing dictionary values.
+ */
+export const collectTermValues = (state: AppState): string[] =>
+  Object.values(state.termById).flatMap((term) =>
+    term.destinationValue
+      ? [term.sourceValue, term.destinationValue]
+      : [term.sourceValue],
+  );
 
 export const registerTerms = (draft: AppState, terms: Term[]): void => {
   for (const term of terms) {

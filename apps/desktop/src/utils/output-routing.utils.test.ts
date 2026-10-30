@@ -1,11 +1,233 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { insertLocalTranscriptOutputViaTyping } from "./output-routing.utils";
+import {
+  insertLocalTranscriptOutputViaTyping,
+  routeTranscriptOutput,
+} from "./output-routing.utils";
 
-const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }));
+const { invokeMock, reviewTranscriptBeforeInsertMock } = vi.hoisted(() => ({
+  invokeMock: vi.fn(),
+  reviewTranscriptBeforeInsertMock: vi.fn(),
+}));
 
 vi.mock("@tauri-apps/api/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@tauri-apps/api/core")>();
   return { ...actual, invoke: invokeMock };
+});
+
+const { getAppStateMock, getPrefsMock, produceAppStateMock } = vi.hoisted(
+  () => ({
+    getAppStateMock: vi.fn(),
+    getPrefsMock: vi.fn(),
+    produceAppStateMock: vi.fn(),
+  }),
+);
+vi.mock("../store", () => ({
+  getAppState: getAppStateMock,
+  // beginEditWatch clears any pending auto-learn proposal through the store.
+  produceAppState: produceAppStateMock,
+}));
+vi.mock("./user.utils", () => ({
+  getMyUserPreferences: getPrefsMock,
+}));
+
+vi.mock("./log.utils", () => ({
+  getLogger: () => ({
+    info: vi.fn(),
+    warning: vi.fn(),
+    error: vi.fn(),
+    verbose: vi.fn(),
+  }),
+}));
+
+vi.mock("./overlay.utils", () => ({
+  sendPillFlashMessage: vi.fn(),
+  sendPillStageText: vi.fn(),
+}));
+vi.mock("../actions/pill-review.actions", () => ({
+  reviewTranscriptBeforeInsert: reviewTranscriptBeforeInsertMock,
+}));
+
+vi.mock("../i18n/intl", () => ({
+  getIntl: () => ({
+    formatMessage: (descriptor: { defaultMessage: string }) =>
+      descriptor.defaultMessage,
+  }),
+}));
+
+describe("routeTranscriptOutput hands-free delay", () => {
+  const baseState = {
+    appTargetById: {},
+    supportsPasteKeybinds: "none",
+  };
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    invokeMock.mockReset();
+    reviewTranscriptBeforeInsertMock.mockReset();
+    invokeMock.mockResolvedValue("pasted");
+    getAppStateMock.mockReturnValue(baseState);
+    getPrefsMock.mockReturnValue({
+      insertionMethod: "paste",
+      typingSpeedMs: 5,
+      handsFreeDelayMs: 3000,
+    });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("waits for the configured delay before pasting a final transcript", async () => {
+    const routing = routeTranscriptOutput({
+      text: "final words",
+      mode: "dictation",
+      currentAppId: null,
+    });
+
+    await vi.advanceTimersByTimeAsync(2999);
+    expect(invokeMock).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1);
+    await routing;
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+    expect(invokeMock.mock.calls[0][0]).toBe("paste");
+    expect(invokeMock.mock.calls[0][1]).toMatchObject({
+      text: expect.stringContaining("final words"),
+      keybind: null,
+    });
+  });
+
+  it("pastes realtime interim segments immediately, bypassing the delay", async () => {
+    const routing = routeTranscriptOutput({
+      text: "interim ",
+      mode: "dictation",
+      currentAppId: null,
+      isInterim: true,
+    });
+
+    // Not a single timer tick is needed: interim delivery must not wait.
+    await routing;
+    expect(vi.getTimerCount()).toBe(0);
+    expect(invokeMock).toHaveBeenCalledWith("paste", {
+      text: "interim ",
+      keybind: null,
+    });
+  });
+
+  it("delivers nothing when the review is cancelled", async () => {
+    getPrefsMock.mockReturnValue({
+      insertionMethod: "paste",
+      reviewBeforeInsert: true,
+    });
+    reviewTranscriptBeforeInsertMock.mockResolvedValue(null);
+
+    await expect(
+      routeTranscriptOutput({
+        text: "post-processed transcript ",
+        mode: "dictation",
+        currentAppId: null,
+      }),
+    ).resolves.toEqual({
+      delivered: false,
+      remote: false,
+      deliveredText: null,
+    });
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it("returns the edited review text after it reaches the target", async () => {
+    getPrefsMock.mockReturnValue({
+      insertionMethod: "paste",
+      reviewBeforeInsert: true,
+    });
+    reviewTranscriptBeforeInsertMock.mockResolvedValue("edited transcript");
+
+    await expect(
+      routeTranscriptOutput({
+        text: "post-processed transcript ",
+        mode: "dictation",
+        currentAppId: null,
+      }),
+    ).resolves.toEqual({
+      delivered: true,
+      remote: false,
+      deliveredText: "edited transcript",
+    });
+    expect(invokeMock).toHaveBeenCalledWith("paste", {
+      text: "edited transcript",
+      keybind: null,
+    });
+  });
+
+  it("drops an older delayed transcript when a newer transcript completes", async () => {
+    const olderRouting = routeTranscriptOutput({
+      text: "older words",
+      mode: "dictation",
+      currentAppId: null,
+    });
+    const newerRouting = routeTranscriptOutput({
+      text: "newer words",
+      mode: "dictation",
+      currentAppId: null,
+    });
+
+    await vi.advanceTimersByTimeAsync(3000);
+
+    await expect(olderRouting).resolves.toEqual({
+      delivered: false,
+      remote: false,
+      deliveredText: null,
+    });
+    await expect(newerRouting).resolves.toEqual({
+      delivered: true,
+      remote: false,
+      deliveredText: "newer words",
+    });
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+    expect(invokeMock).toHaveBeenCalledWith("paste", {
+      text: "newer words",
+      keybind: null,
+    });
+  });
+
+  it("lets a newer remote delivery cancel an older delayed local transcript", async () => {
+    const olderRouting = routeTranscriptOutput({
+      text: "older local words",
+      mode: "dictation",
+      currentAppId: null,
+    });
+
+    getPrefsMock.mockReturnValue({
+      remoteOutputEnabled: true,
+      remoteTargetDeviceId: "remote-device",
+    });
+    const newerRouting = routeTranscriptOutput({
+      text: "newer remote words",
+      mode: "dictation",
+      currentAppId: null,
+    });
+
+    await newerRouting;
+    await vi.advanceTimersByTimeAsync(3000);
+
+    await expect(olderRouting).resolves.toEqual({
+      delivered: false,
+      remote: false,
+      deliveredText: null,
+    });
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+    expect(invokeMock).toHaveBeenCalledWith(
+      "remote_sender_deliver_final_text",
+      {
+        args: {
+          targetDeviceId: "remote-device",
+          text: "newer remote words",
+          mode: "dictation",
+        },
+      },
+    );
+  });
 });
 
 type Listener = (event?: { key?: string }) => void;
@@ -91,5 +313,126 @@ describe("insertLocalTranscriptOutputViaTyping", () => {
     expect(invokeMock).toHaveBeenCalledWith("cancel_typing");
     resolveType!();
     await typing;
+  });
+});
+
+describe("final insertion stage", () => {
+  it.each([false, true])(
+    "announces before delivery and marks completion (remote=%s)",
+    async (remote) => {
+      const { sendPillStageText } = await import("./overlay.utils");
+      const { startPipelineTrace } = await import("./pipeline-trace");
+      vi.mocked(sendPillStageText).mockClear();
+      getAppStateMock.mockReturnValue({
+        appTargetById: {},
+        supportsPasteKeybinds: "none",
+      });
+      getPrefsMock.mockReturnValue({
+        remoteOutputEnabled: remote,
+        remoteTargetDeviceId: "target",
+        handsFreeDelayMs: 0,
+      });
+      const trace = startPipelineTrace();
+      invokeMock.mockImplementation(() => {
+        expect(sendPillStageText).toHaveBeenCalledWith("Inserting");
+        expect(trace.marks.inserted).toBeUndefined();
+        return Promise.resolve("pasted");
+      });
+      const result = await routeTranscriptOutput(
+        { text: "final", mode: "dictation", currentAppId: null },
+        trace,
+      );
+      expect(result.delivered).toBe(true);
+      expect(trace.marks.inserted).toEqual(expect.any(Number));
+    },
+  );
+  it.each([false, true])(
+    "does not announce/mark interim output or mark a failed delivery (remote=%s)",
+    async (remote) => {
+      const { sendPillStageText } = await import("./overlay.utils");
+      const { startPipelineTrace } = await import("./pipeline-trace");
+      vi.mocked(sendPillStageText).mockClear();
+      getAppStateMock.mockReturnValue({
+        appTargetById: {},
+        supportsPasteKeybinds: "none",
+      });
+      getPrefsMock.mockReturnValue({
+        remoteOutputEnabled: remote,
+        remoteTargetDeviceId: "target",
+        handsFreeDelayMs: 0,
+      });
+      invokeMock.mockResolvedValue("pasted");
+      const trace = startPipelineTrace();
+      await routeTranscriptOutput(
+        {
+          text: "interim",
+          mode: "dictation",
+          currentAppId: null,
+          isInterim: true,
+        },
+        trace,
+      );
+      expect(sendPillStageText).not.toHaveBeenCalled();
+      expect(trace.marks.inserted).toBeUndefined();
+      invokeMock.mockRejectedValueOnce(new Error("delivery failed"));
+      await expect(
+        routeTranscriptOutput(
+          { text: "final", mode: "dictation", currentAppId: null },
+          trace,
+        ),
+      ).rejects.toThrow("delivery failed");
+      expect(sendPillStageText).toHaveBeenCalledWith("Inserting");
+      expect(trace.marks.inserted).toBeUndefined();
+    },
+  );
+
+  it("announces Inserting before the hands-free delay and skips marking inserted if superseded", async () => {
+    vi.useFakeTimers();
+    try {
+      const { sendPillStageText } = await import("./overlay.utils");
+      const { startPipelineTrace } = await import("./pipeline-trace");
+      vi.mocked(sendPillStageText).mockClear();
+      getAppStateMock.mockReturnValue({
+        appTargetById: {},
+        supportsPasteKeybinds: "none",
+      });
+      getPrefsMock.mockReturnValue({
+        remoteOutputEnabled: false,
+        remoteTargetDeviceId: null,
+        handsFreeDelayMs: 500,
+      });
+      invokeMock.mockResolvedValue("pasted");
+
+      const firstTrace = startPipelineTrace();
+      const firstPromise = routeTranscriptOutput(
+        { text: "first", mode: "dictation", currentAppId: null },
+        firstTrace,
+      );
+
+      // "Inserting" must already be on the pill while the hands-free delay is counting down.
+      await vi.advanceTimersByTimeAsync(100);
+      expect(sendPillStageText).toHaveBeenCalledWith("Inserting");
+      expect(firstTrace.marks.inserted).toBeUndefined();
+
+      // Supersede the first session with a second one before the delay finishes.
+      const secondTrace = startPipelineTrace();
+      const secondPromise = routeTranscriptOutput(
+        { text: "second", mode: "dictation", currentAppId: null },
+        secondTrace,
+      );
+
+      await vi.advanceTimersByTimeAsync(600);
+      const [firstResult, secondResult] = await Promise.all([
+        firstPromise,
+        secondPromise,
+      ]);
+
+      expect(firstResult.delivered).toBe(false);
+      expect(firstTrace.marks.inserted).toBeUndefined();
+      expect(secondResult.delivered).toBe(true);
+      expect(secondTrace.marks.inserted).toEqual(expect.any(Number));
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

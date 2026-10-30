@@ -5,6 +5,7 @@ import {
   THEME_COLOR_SCHEME_SELECTOR,
   THEME_MODE_STORAGE_KEY,
   THEME_PROVIDER_CONFIG,
+  guardedThemeStorageManager,
   theme,
 } from "./theme";
 
@@ -18,12 +19,10 @@ const runBootstrap = ({
   storedMode,
   fallbackMode,
   systemDark,
-  setItemThrowsKey,
 }: {
   storedMode?: string;
   fallbackMode?: string;
   systemDark: boolean;
-  setItemThrowsKey?: string;
 }) => {
   const storage = new Map<string, string>();
   const dataset: Record<string, string> = {};
@@ -33,12 +32,7 @@ const runBootstrap = ({
   runInNewContext(bootstrapScript ?? "", {
     localStorage: {
       getItem: (key: string) => storage.get(key) ?? null,
-      setItem: (key: string, value: string) => {
-        if (setItemThrowsKey && key === setItemThrowsKey) {
-          throw new Error("quota exceeded");
-        }
-        storage.set(key, value);
-      },
+      setItem: (key: string, value: string) => storage.set(key, value),
       removeItem: (key: string) => storage.delete(key),
     },
     window: {
@@ -68,6 +62,8 @@ describe("theme mode configuration", () => {
     expect(THEME_PROVIDER_CONFIG).toEqual({
       defaultMode: "system",
       modeStorageKey: THEME_MODE_STORAGE_KEY,
+      storageManager: guardedThemeStorageManager,
+      disableTransitionOnChange: true,
     });
     expect(indexHtml).toContain(
       `localStorage.getItem("${THEME_MODE_STORAGE_KEY}")`,
@@ -96,25 +92,36 @@ describe("theme mode configuration", () => {
     ).toBe("light");
   });
 
-  it("migrates the fallback key without breaking rollback compatibility", () => {
+  it("reads the legacy fallback without writing it back at startup", () => {
     const { appliedScheme, storage } = runBootstrap({
       fallbackMode: "light",
       systemDark: true,
     });
 
     expect(appliedScheme).toBe("light");
-    expect(storage.get(THEME_MODE_STORAGE_KEY)).toBe("light");
+    expect(storage.has(THEME_MODE_STORAGE_KEY)).toBe(false);
     expect(storage.get("mode")).toBe("light");
   });
 
-  it("keeps the legacy mode when the migration write fails", () => {
-    const { appliedScheme } = runBootstrap({
-      fallbackMode: "light",
-      systemDark: true,
-      setItemThrowsKey: THEME_MODE_STORAGE_KEY,
+  it("reads an existing legacy value through MUI without migrating it", () => {
+    const values = new Map([["mode", "light"]]);
+    const storageWindow = {
+      localStorage: {
+        getItem: (key: string) => values.get(key) ?? null,
+        setItem: (key: string, value: string) => values.set(key, value),
+        removeItem: (key: string) => values.delete(key),
+      },
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    } as unknown as Window;
+
+    const manager = guardedThemeStorageManager({
+      key: THEME_MODE_STORAGE_KEY,
+      storageWindow,
     });
 
-    expect(appliedScheme).toBe("light");
+    expect(manager.get("system")).toBe("light");
+    expect(values.has(THEME_MODE_STORAGE_KEY)).toBe(false);
   });
 
   it("keeps the current MUI mode when both storage keys exist", () => {
@@ -126,5 +133,62 @@ describe("theme mode configuration", () => {
 
     expect(appliedScheme).toBe("dark");
     expect(storage.get(THEME_MODE_STORAGE_KEY)).toBe("dark");
+  });
+
+  it("keeps the in-memory theme usable when storage writes fail", () => {
+    let attempted = false;
+    const storageWindow = {
+      localStorage: {
+        getItem: () => null,
+        setItem: () => {
+          attempted = true;
+          throw new Error("storage quota exceeded");
+        },
+      },
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    } as unknown as Window;
+    const manager = guardedThemeStorageManager({
+      key: THEME_MODE_STORAGE_KEY,
+      storageWindow,
+    });
+
+    expect(() => manager.set("dark")).not.toThrow();
+    expect(attempted).toBe(true);
+  });
+
+  it("lets selected lucide icons inherit list item color in both schemes", () => {
+    const themeSource = readFileSync(
+      new URL("./theme.ts", import.meta.url),
+      "utf8",
+    );
+    const listItemButtonBlock = themeSource.slice(
+      themeSource.indexOf("MuiListItemButton:"),
+      themeSource.indexOf("MuiListItemIcon:"),
+    );
+    const darkStyleStart = listItemButtonBlock.indexOf('applyStyles("dark"');
+    const lightStyleBlock = listItemButtonBlock.slice(0, darkStyleStart);
+    const darkStyleBlock = listItemButtonBlock.slice(darkStyleStart);
+    const lucideInheritanceRule = /"& svg\.lucide": \{\s*color: "inherit"/g;
+
+    expect(darkStyleBlock).toContain('applyStyles("dark"');
+    expect(lightStyleBlock.match(lucideInheritanceRule) ?? []).toHaveLength(1);
+    expect(darkStyleBlock.match(lucideInheritanceRule) ?? []).toHaveLength(1);
+  });
+});
+
+describe("palette variable consumers", () => {
+  it.each([
+    "./components/common/CopyableCommand.tsx",
+    "./components/home/GettingStartedList.tsx",
+    "./styles/dotmatrix.css",
+  ])("references variables emitted by the theme in %s", (path) => {
+    const source = readFileSync(new URL(path, import.meta.url), "utf8");
+    const styles = JSON.stringify(theme.generateStyleSheets());
+    for (const [, variable] of source.matchAll(
+      /var\((--(?:app|mui)-palette-[\w-]+)/g,
+    )) {
+      expect(styles, variable).toContain(`"${variable}":`);
+    }
   });
 });

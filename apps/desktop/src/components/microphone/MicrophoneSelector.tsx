@@ -14,9 +14,10 @@ import {
   Typography,
 } from "@mui/material";
 import { Nullable } from "@maus-inc/types";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FormattedMessage } from "react-intl";
 import { commands } from "@maus-inc/desktop-native-apis";
+import { subscribeDeviceChange } from "../../utils/device-change.utils";
 
 const AUTO_OPTION_VALUE = "__microphone_auto__";
 
@@ -43,40 +44,53 @@ export const MicrophoneSelector = ({
 }: MicrophoneSelectorProps) => {
   const [devices, setDevices] = useState<MicrophoneOption[]>([]);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (microphones) {
-      setDevices(microphones);
-    }
-  }, [microphones]);
+  const [error, setError] = useState(false);
+  const requestGeneration = useRef(0);
 
   const loadDevices = useCallback(async () => {
+    const generation = ++requestGeneration.current;
     setLoading(true);
-    setError(null);
+    setError(false);
     try {
-      // The backend disambiguates devices that report the same name, so `label`
-      // doubles as the stable key the preference is stored under.
+      // The backend disambiguates names; labels are persisted preference keys.
       const result = await commands.listMicrophones();
-      const mapped: MicrophoneOption[] = result.map((device) => ({
-        value: device.label,
-        label: device.label,
-        isDefault: device.isDefault,
-        caution: device.caution,
-      }));
-      setDevices(mapped);
-    } catch (err) {
-      console.error("Failed to load microphones", err);
-      setError("Unable to fetch microphones. Please try again.");
+      if (generation !== requestGeneration.current) return;
+      setDevices(
+        result.map((device) => ({
+          value: device.label,
+          label: device.label,
+          isDefault: device.isDefault,
+          caution: device.caution,
+        })),
+      );
+    } catch {
+      if (generation !== requestGeneration.current) return;
+      // Native errors may contain device names or local user paths.
+      setError(true);
     } finally {
-      setLoading(false);
+      if (generation === requestGeneration.current) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    if (!microphones) {
+    let unsubscribe: (() => void) | undefined;
+    if (microphones !== undefined) {
+      setDevices(microphones);
+      setLoading(false);
+      setError(false);
+    } else {
       void loadDevices();
+      if (typeof navigator !== "undefined") {
+        unsubscribe = subscribeDeviceChange(navigator.mediaDevices, () => {
+          void loadDevices();
+        });
+      }
     }
+    return () => {
+      // Invalidate native requests on unmount, mode changes and StrictMode replay.
+      ++requestGeneration.current;
+      unsubscribe?.();
+    };
   }, [loadDevices, microphones]);
 
   const selectValue = value ?? AUTO_OPTION_VALUE;
@@ -86,7 +100,7 @@ export const MicrophoneSelector = ({
     if (value && !base.some((device) => device.value === value)) {
       base.push({
         value,
-        label: `${value} (unavailable)`,
+        label: value,
         caution: true,
         unavailable: true,
       });
@@ -104,10 +118,10 @@ export const MicrophoneSelector = ({
   );
 
   const handleRefresh = useCallback(() => {
-    if (!loading) {
+    if (!loading && !disabled && microphones === undefined) {
       void loadDevices();
     }
-  }, [loadDevices, loading]);
+  }, [loadDevices, loading, disabled, microphones]);
 
   return (
     <Stack spacing={1.5}>
@@ -158,8 +172,17 @@ export const MicrophoneSelector = ({
                     flexDirection: "column",
                   }}
                 >
-                  <Typography>{option.label}</Typography>
-                  {option.unavailable ? (
+                  <Typography>
+                    {option.unavailable ? (
+                      <FormattedMessage
+                        defaultMessage="{microphone} (unavailable)"
+                        values={{ microphone: option.label }}
+                      />
+                    ) : (
+                      option.label
+                    )}
+                  </Typography>
+                  {option.unavailable && (
                     <Typography
                       variant="caption"
                       sx={{
@@ -168,7 +191,8 @@ export const MicrophoneSelector = ({
                     >
                       <FormattedMessage defaultMessage="Currently unavailable" />
                     </Typography>
-                  ) : option.caution ? (
+                  )}
+                  {option.caution && !option.unavailable && (
                     <Typography
                       variant="caption"
                       sx={{
@@ -177,7 +201,7 @@ export const MicrophoneSelector = ({
                     >
                       <FormattedMessage defaultMessage="May provide lower audio quality" />
                     </Typography>
-                  ) : null}
+                  )}
                 </Box>
                 <Stack
                   direction="row"
@@ -220,14 +244,18 @@ export const MicrophoneSelector = ({
           variant="text"
           onClick={handleRefresh}
           size="small"
-          disabled={loading}
+          disabled={disabled || loading || microphones !== undefined}
         >
           <FormattedMessage defaultMessage="Refresh devices" />
         </Button>
         {loading && <CircularProgress size={18} />}
       </Stack>
 
-      {error && <Alert severity="error">{error}</Alert>}
+      {error && (
+        <Alert severity="error">
+          <FormattedMessage defaultMessage="Unable to fetch microphones. Please try again." />
+        </Alert>
+      )}
     </Stack>
   );
 };

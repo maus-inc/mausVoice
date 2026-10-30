@@ -1,4 +1,5 @@
 import {
+  ASSEMBLYAI_TRANSCRIPTION_MODELS,
   AZURE_OPENAI_MODELS,
   CEREBRAS_MODELS,
   CLAUDE_MODELS,
@@ -6,10 +7,24 @@ import {
   DEEPSEEK_MODELS,
   GEMINI_GENERATE_TEXT_MODELS,
   GEMINI_TRANSCRIPTION_MODELS,
-  XAI_TRANSCRIPTION_MODELS,
+  GLADIA_TRANSCRIPTION_MODELS,
+  GENERATE_TEXT_MODELS,
+  isGeminiTranscribeModel as isGeminiTranscribeModelFromVoiceAI,
+  OPENAI_GENERATE_TEXT_MODELS,
+  OPENAI_TRANSCRIPTION_MODELS,
+  TRANSCRIPTION_MODELS,
+  isGroqGenerativeModelId,
 } from "@maus-inc/voice-ai";
-import { fetch } from "@tauri-apps/plugin-http";
+import {
+  createOpenAICompatibleFetch,
+  secureFetch as fetch,
+} from "../utils/secure-fetch.utils";
+import { getLogger } from "../utils/log.utils";
 import { getOllamaHeaders } from "../utils/ollama.utils";
+import {
+  appendOpenAICompatiblePath,
+  buildOpenAICompatibleUrl,
+} from "../utils/openai-compatible.utils";
 import { BaseRepo } from "./base.repo";
 
 type OpenAIListResponse = {
@@ -17,12 +32,17 @@ type OpenAIListResponse = {
 };
 
 type GeminiListResponse = {
-  models?: Array<{ name?: string }>;
+  models?: Array<{
+    name?: string;
+    supportedGenerationMethods?: string[];
+  }>;
 };
 
 export type FetchModelsOptions = {
   apiKey?: string;
+  apiKeyId?: string;
   baseUrl?: string;
+  includeV1Path?: boolean | null;
 };
 
 export abstract class BaseModelProviderRepo extends BaseRepo {
@@ -36,19 +56,68 @@ export abstract class BaseModelProviderRepo extends BaseRepo {
   ): Promise<string[]>;
 }
 
-async function fetchOpenAICompatibleModels(
-  url: string,
-  apiKey: string,
-): Promise<string[]> {
-  const response = await fetch(url, {
-    headers: { Authorization: `Bearer ${apiKey}` },
-  });
-  if (!response.ok) return [];
+/**
+ * A provider that offers no model of a kind resolves with an empty list rather
+ * than rejecting, so every caller's fetch path is the same for every provider.
+ * Discovery is async because the providers that talk to a /models endpoint
+ * declare that shape; these keep it without an async function that never
+ * awaits, which would turn a synchronous failure into a synchronous throw that
+ * a `.catch()` upstream never sees.
+ */
+const noModels = (): Promise<string[]> => Promise.resolve([]);
+
+/** The same shape for a provider whose catalogue is fixed at build time. */
+const staticModels = (models: readonly string[]): Promise<string[]> =>
+  Promise.resolve([...models]);
+
+const logModelDiscoveryFailure = (provider: string, reason: string): void => {
+  // Do not log request URLs or caught errors: some providers put credentials
+  // in the query string, and native transport errors may echo those URLs.
+  getLogger().verbose(`${provider} model discovery failed (${reason})`);
+};
+
+const logModelDiscoveryResponseFailure = (
+  provider: string,
+  response: Response,
+): void => {
+  const statusText = response.statusText.trim();
+  const reason = [`HTTP ${response.status}`, statusText]
+    .filter(Boolean)
+    .join(" ");
+  logModelDiscoveryFailure(provider, reason);
+};
+
+// Shared tail of every OpenAI-shaped /models fetch: log a non-OK response,
+// otherwise map the `data` array to sorted model ids.
+const readModelListResponse = async (
+  provider: string,
+  response: Response,
+): Promise<string[]> => {
+  if (!response.ok) {
+    logModelDiscoveryResponseFailure(provider, response);
+    return [];
+  }
   const payload = (await response.json()) as OpenAIListResponse;
   return (payload.data ?? [])
     .map((m) => (m.id ?? "").trim())
     .filter(Boolean)
-    .sort();
+    .sort((a, b) => a.localeCompare(b));
+};
+
+async function fetchOpenAICompatibleModels(
+  provider: string,
+  url: string,
+  apiKey: string,
+): Promise<string[]> {
+  try {
+    const response = await fetch(url, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+    return await readModelListResponse(provider, response);
+  } catch {
+    logModelDiscoveryFailure(provider, "request or response parsing failed");
+    return [];
+  }
 }
 
 function isWhisperModel(modelId: string): boolean {
@@ -56,17 +125,66 @@ function isWhisperModel(modelId: string): boolean {
 }
 
 function isOpenAITranscriptionModel(modelId: string): boolean {
-  return isWhisperModel(modelId) || modelId.includes("transcribe");
+  return (
+    modelId === "whisper-1" ||
+    modelId.startsWith("gpt-4o-transcribe") ||
+    modelId.startsWith("gpt-4o-mini-transcribe")
+  );
 }
 
-function filterFetchedModels(
-  fetched: string[],
-  allowList: readonly string[],
-): string[] {
-  if (fetched.length === 0) return [...allowList];
-  const allowed = new Set<string>(allowList);
-  const filtered = fetched.filter((m) => allowed.has(m));
-  return filtered.length > 0 ? filtered : [...allowList];
+function isOpenAIGenerativeModel(modelId: string): boolean {
+  if (!/^(gpt-|o\d)/.test(modelId)) return false;
+  return ![
+    "audio",
+    "embedding",
+    "image",
+    "live",
+    "moderation",
+    "realtime",
+    "transcribe",
+    "tts",
+    "whisper",
+  ].some((marker) => modelId.includes(marker));
+}
+
+const GEMINI_EXCLUDED_MODALITY_MARKERS = [
+  "-audio",
+  "-computer-use",
+  "-embedding",
+  "-image",
+  "-live",
+  "-native-audio",
+  "-omni-",
+  "-robotics",
+  "-tts",
+] as const;
+
+const GEMINI_REASONING_MARKERS = ["-thinking", "-search"] as const;
+
+function isGeneralGeminiModel(modelId: string): boolean {
+  // fetchModels returns union of transcription + generative; narrowing only
+  // happens in getGenerativeTextModels. Keep marker list shared with
+  // isGeminiTranscriptionModel to avoid drift.
+  if (!modelId.startsWith("gemini-")) return false;
+  return ![...GEMINI_EXCLUDED_MODALITY_MARKERS, "-transcribe"].some((marker) =>
+    modelId.includes(marker),
+  );
+}
+
+function isGeminiTranscriptionModel(modelId: string): boolean {
+  if (!modelId.startsWith("gemini-")) return false;
+  if (
+    GEMINI_EXCLUDED_MODALITY_MARKERS.some((marker) => modelId.includes(marker))
+  ) {
+    return false;
+  }
+  // Use shared predicate for dedicated "-transcribe" detection (single source of truth).
+  if (isGeminiTranscribeModelFromVoiceAI(modelId)) {
+    return true;
+  }
+  // General Gemini models with audio input are also transcription-capable.
+  // Exclude reasoning/search-augmented variants not served via audio path.
+  return !GEMINI_REASONING_MARKERS.some((marker) => modelId.includes(marker));
 }
 
 export class GroqModelProviderRepo extends BaseModelProviderRepo {
@@ -78,9 +196,10 @@ export class GroqModelProviderRepo extends BaseModelProviderRepo {
     return true;
   }
 
-  private async fetchModels(options: FetchModelsOptions): Promise<string[]> {
-    if (!options.apiKey) return [];
+  private fetchModels(options: FetchModelsOptions): Promise<string[]> {
+    if (!options.apiKey) return noModels();
     return fetchOpenAICompatibleModels(
+      "Groq",
       "https://api.groq.com/openai/v1/models",
       options.apiKey,
     );
@@ -90,12 +209,14 @@ export class GroqModelProviderRepo extends BaseModelProviderRepo {
     options: FetchModelsOptions,
   ): Promise<string[]> {
     const fetched = await this.fetchModels(options);
-    return fetched.filter((m) => !isWhisperModel(m));
+    const models = fetched.filter(isGroqGenerativeModelId);
+    return models.length > 0 ? models : [...GENERATE_TEXT_MODELS];
   }
 
   async getTranscriptionModels(options: FetchModelsOptions): Promise<string[]> {
     const fetched = await this.fetchModels(options);
-    return fetched.filter(isWhisperModel);
+    const models = fetched.filter(isWhisperModel);
+    return models.length > 0 ? models : [...TRANSCRIPTION_MODELS];
   }
 }
 
@@ -108,9 +229,10 @@ export class OpenAIModelProviderRepo extends BaseModelProviderRepo {
     return true;
   }
 
-  private async fetchModels(options: FetchModelsOptions): Promise<string[]> {
-    if (!options.apiKey) return [];
+  private fetchModels(options: FetchModelsOptions): Promise<string[]> {
+    if (!options.apiKey) return noModels();
     return fetchOpenAICompatibleModels(
+      "OpenAI",
       "https://api.openai.com/v1/models",
       options.apiKey,
     );
@@ -119,13 +241,17 @@ export class OpenAIModelProviderRepo extends BaseModelProviderRepo {
   async getGenerativeTextModels(
     options: FetchModelsOptions,
   ): Promise<string[]> {
-    const fetched = await this.fetchModels(options);
-    return fetched.filter((m) => !isOpenAITranscriptionModel(m));
+    const models = (await this.fetchModels(options)).filter(
+      isOpenAIGenerativeModel,
+    );
+    return models.length > 0 ? models : [...OPENAI_GENERATE_TEXT_MODELS];
   }
 
   async getTranscriptionModels(options: FetchModelsOptions): Promise<string[]> {
-    const fetched = await this.fetchModels(options);
-    return fetched.filter(isOpenAITranscriptionModel);
+    const models = (await this.fetchModels(options)).filter(
+      isOpenAITranscriptionModel,
+    );
+    return models.length > 0 ? models : [...OPENAI_TRANSCRIPTION_MODELS];
   }
 }
 
@@ -140,21 +266,21 @@ export class ClaudeModelProviderRepo extends BaseModelProviderRepo {
 
   private async fetchModels(options: FetchModelsOptions): Promise<string[]> {
     if (!options.apiKey) return [];
-    const response = await fetch(
-      "https://api.anthropic.com/v1/models?limit=100",
-      {
-        headers: {
-          "x-api-key": options.apiKey,
-          "anthropic-version": "2023-06-01",
+    try {
+      const response = await fetch(
+        "https://api.anthropic.com/v1/models?limit=100",
+        {
+          headers: {
+            "x-api-key": options.apiKey,
+            "anthropic-version": "2023-06-01",
+          },
         },
-      },
-    );
-    if (!response.ok) return [];
-    const payload = (await response.json()) as OpenAIListResponse;
-    return (payload.data ?? [])
-      .map((m) => (m.id ?? "").trim())
-      .filter(Boolean)
-      .sort();
+      );
+      return await readModelListResponse("Claude", response);
+    } catch {
+      logModelDiscoveryFailure("Claude", "request or response parsing failed");
+      return [];
+    }
   }
 
   async getGenerativeTextModels(
@@ -164,8 +290,8 @@ export class ClaudeModelProviderRepo extends BaseModelProviderRepo {
     return fetched.length > 0 ? fetched : [...CLAUDE_MODELS];
   }
 
-  async getTranscriptionModels(): Promise<string[]> {
-    return [];
+  getTranscriptionModels(): Promise<string[]> {
+    return noModels();
   }
 }
 
@@ -178,9 +304,10 @@ export class CerebrasModelProviderRepo extends BaseModelProviderRepo {
     return false;
   }
 
-  private async fetchModels(options: FetchModelsOptions): Promise<string[]> {
-    if (!options.apiKey) return [];
+  private fetchModels(options: FetchModelsOptions): Promise<string[]> {
+    if (!options.apiKey) return noModels();
     return fetchOpenAICompatibleModels(
+      "Cerebras",
       "https://api.cerebras.ai/v1/models",
       options.apiKey,
     );
@@ -193,8 +320,8 @@ export class CerebrasModelProviderRepo extends BaseModelProviderRepo {
     return fetched.length > 0 ? fetched : [...CEREBRAS_MODELS];
   }
 
-  async getTranscriptionModels(): Promise<string[]> {
-    return [];
+  getTranscriptionModels(): Promise<string[]> {
+    return noModels();
   }
 }
 
@@ -207,9 +334,10 @@ export class DeepSeekModelProviderRepo extends BaseModelProviderRepo {
     return false;
   }
 
-  private async fetchModels(options: FetchModelsOptions): Promise<string[]> {
-    if (!options.apiKey) return [];
+  private fetchModels(options: FetchModelsOptions): Promise<string[]> {
+    if (!options.apiKey) return noModels();
     return fetchOpenAICompatibleModels(
+      "DeepSeek",
       "https://api.deepseek.com/models",
       options.apiKey,
     );
@@ -222,8 +350,8 @@ export class DeepSeekModelProviderRepo extends BaseModelProviderRepo {
     return fetched.length > 0 ? fetched : [...DEEPSEEK_MODELS];
   }
 
-  async getTranscriptionModels(): Promise<string[]> {
-    return [];
+  getTranscriptionModels(): Promise<string[]> {
+    return noModels();
   }
 }
 
@@ -239,26 +367,60 @@ export class GeminiModelProviderRepo extends BaseModelProviderRepo {
   async getGenerativeTextModels(
     options: FetchModelsOptions,
   ): Promise<string[]> {
-    const fetched = await this.fetchModels(options);
-    return filterFetchedModels(fetched, GEMINI_GENERATE_TEXT_MODELS);
+    const fetched = (await this.fetchModels(options)).filter(
+      isGeneralGeminiModel,
+    );
+    return fetched.length > 0 ? fetched : [...GEMINI_GENERATE_TEXT_MODELS];
   }
 
   async getTranscriptionModels(options: FetchModelsOptions): Promise<string[]> {
-    const fetched = await this.fetchModels(options);
-    return filterFetchedModels(fetched, GEMINI_TRANSCRIPTION_MODELS);
+    const fetched = (await this.fetchModels(options)).filter(
+      isGeminiTranscriptionModel,
+    );
+    return fetched.length > 0 ? fetched : [...GEMINI_TRANSCRIPTION_MODELS];
   }
 
   private async fetchModels(options: FetchModelsOptions): Promise<string[]> {
+    // Returns union of transcription + generative; narrowing happens in
+    // getGenerativeTextModels / getTranscriptionModels callers (finding 15).
     if (!options.apiKey) return [];
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(options.apiKey)}&pageSize=1000`,
-    );
-    if (!response.ok) return [];
-    const payload = (await response.json()) as GeminiListResponse;
-    return (payload.models ?? [])
-      .map((m) => (m.name ?? "").replace(/^models\//, "").trim())
-      .filter(Boolean)
-      .sort();
+    try {
+      const response = await fetch(
+        "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000",
+        { headers: { "x-goog-api-key": options.apiKey } },
+      );
+      if (!response.ok) {
+        logModelDiscoveryResponseFailure("Gemini", response);
+        return [];
+      }
+      const payload = (await response.json()) as GeminiListResponse;
+      if (!payload.models || payload.models.length === 0) {
+        getLogger().verbose(
+          "Gemini model discovery returned empty models array",
+        );
+        return [];
+      }
+      // `payload.models` is proven non-empty by the guard above, so the `?? []`
+      // fallback here is dead.
+      const filtered = payload.models
+        .filter((m) =>
+          (m.supportedGenerationMethods ?? []).includes("generateContent"),
+        )
+        .map((m) => (m.name ?? "").replace(/^models\//, "").trim())
+        .filter(
+          (id) => isGeneralGeminiModel(id) || isGeminiTranscriptionModel(id),
+        )
+        .sort((a, b) => a.localeCompare(b));
+      if (filtered.length === 0) {
+        getLogger().verbose(
+          "Gemini model discovery filtered to 0 after marker checks",
+        );
+      }
+      return filtered;
+    } catch {
+      logModelDiscoveryFailure("Gemini", "request or response parsing failed");
+      return [];
+    }
   }
 }
 
@@ -278,8 +440,8 @@ export class AzureModelProviderRepo extends BaseModelProviderRepo {
     return fetched.length > 0 ? fetched : [...AZURE_OPENAI_MODELS];
   }
 
-  async getTranscriptionModels(): Promise<string[]> {
-    return [];
+  getTranscriptionModels(): Promise<string[]> {
+    return noModels();
   }
 
   private async fetchModels(options: FetchModelsOptions): Promise<string[]> {
@@ -291,12 +453,7 @@ export class AzureModelProviderRepo extends BaseModelProviderRepo {
         headers: { "api-key": options.apiKey },
       },
     );
-    if (!response.ok) return [];
-    const payload = (await response.json()) as OpenAIListResponse;
-    return (payload.data ?? [])
-      .map((m) => (m.id ?? "").trim())
-      .filter(Boolean)
-      .sort();
+    return readModelListResponse("Azure OpenAI", response);
   }
 }
 
@@ -315,14 +472,12 @@ export class OllamaModelProviderRepo extends BaseModelProviderRepo {
     return false;
   }
 
-  async getGenerativeTextModels(
-    options: FetchModelsOptions,
-  ): Promise<string[]> {
+  getGenerativeTextModels(options: FetchModelsOptions): Promise<string[]> {
     return this.fetchModels(options);
   }
 
-  async getTranscriptionModels(): Promise<string[]> {
-    return [];
+  getTranscriptionModels(): Promise<string[]> {
+    return noModels();
   }
 
   private async fetchModels(options: FetchModelsOptions): Promise<string[]> {
@@ -330,7 +485,10 @@ export class OllamaModelProviderRepo extends BaseModelProviderRepo {
     const response = await fetch(new URL("/api/tags", options.baseUrl).href, {
       headers: getOllamaHeaders(options.apiKey),
     });
-    if (!response.ok) return [];
+    if (!response.ok) {
+      logModelDiscoveryResponseFailure("Ollama", response);
+      return [];
+    }
     const payload = (await response.json()) as {
       models?: Array<{ name?: string }>;
     };
@@ -349,27 +507,26 @@ export class OpenAICompatibleModelProviderRepo extends BaseModelProviderRepo {
     return true;
   }
 
-  async getGenerativeTextModels(
-    options: FetchModelsOptions,
-  ): Promise<string[]> {
+  getGenerativeTextModels(options: FetchModelsOptions): Promise<string[]> {
     return this.fetchModels(options);
   }
 
-  async getTranscriptionModels(options: FetchModelsOptions): Promise<string[]> {
+  getTranscriptionModels(options: FetchModelsOptions): Promise<string[]> {
     return this.fetchModels(options);
   }
 
   private async fetchModels(options: FetchModelsOptions): Promise<string[]> {
-    if (!options.baseUrl) return [];
-    const response = await fetch(new URL("/v1/models", options.baseUrl).href, {
-      headers: getOllamaHeaders(options.apiKey),
-    });
-    if (!response.ok) return [];
-    const payload = (await response.json()) as OpenAIListResponse;
-    return (payload.data ?? [])
-      .map((m) => (m.id ?? "").trim())
-      .filter(Boolean)
-      .sort();
+    if (!options.baseUrl || !options.apiKeyId) return [];
+    const apiBaseUrl = buildOpenAICompatibleUrl(
+      options.baseUrl,
+      options.includeV1Path,
+    );
+    const customFetch = createOpenAICompatibleFetch(options.apiKeyId);
+    const response = await customFetch(
+      appendOpenAICompatiblePath(apiBaseUrl, "models"),
+      { headers: getOllamaHeaders(options.apiKey) },
+    );
+    return readModelListResponse("OpenAI-compatible", response);
   }
 }
 
@@ -382,19 +539,14 @@ export class SpeachesModelProviderRepo extends BaseModelProviderRepo {
     return true;
   }
 
-  async getGenerativeTextModels(): Promise<string[]> {
-    return [];
+  getGenerativeTextModels(): Promise<string[]> {
+    return noModels();
   }
 
   async getTranscriptionModels(options: FetchModelsOptions): Promise<string[]> {
     if (!options.baseUrl) return [];
     const response = await fetch(new URL("/v1/models", options.baseUrl).href);
-    if (!response.ok) return [];
-    const payload = (await response.json()) as OpenAIListResponse;
-    return (payload.data ?? [])
-      .map((m) => (m.id ?? "").trim())
-      .filter(Boolean)
-      .sort();
+    return readModelListResponse("Speaches", response);
   }
 }
 
@@ -404,21 +556,28 @@ export class OpenRouterModelProviderRepo extends BaseModelProviderRepo {
   }
 
   supportsTranscriptionModels(): boolean {
-    return false;
+    return true;
   }
 
-  async getGenerativeTextModels(
-    options: FetchModelsOptions,
-  ): Promise<string[]> {
-    if (!options.apiKey) return [];
+  getGenerativeTextModels(options: FetchModelsOptions): Promise<string[]> {
+    if (!options.apiKey) return noModels();
     return fetchOpenAICompatibleModels(
+      "OpenRouter",
       "https://openrouter.ai/api/v1/models",
       options.apiKey,
     );
   }
 
-  async getTranscriptionModels(): Promise<string[]> {
-    return [];
+  getTranscriptionModels(options: FetchModelsOptions): Promise<string[]> {
+    if (!options.apiKey) return noModels();
+    // OpenRouter deliberately omits STT models from its default text-model
+    // catalog. Request its transcription modality explicitly so a provider
+    // advertised in the transcription selector has a usable model picker.
+    return fetchOpenAICompatibleModels(
+      "OpenRouter",
+      "https://openrouter.ai/api/v1/models?output_modalities=transcription",
+      options.apiKey,
+    );
   }
 }
 
@@ -431,12 +590,12 @@ export class AldeaModelProviderRepo extends BaseModelProviderRepo {
     return true;
   }
 
-  async getGenerativeTextModels(): Promise<string[]> {
-    return [];
+  getGenerativeTextModels(): Promise<string[]> {
+    return noModels();
   }
 
-  async getTranscriptionModels(): Promise<string[]> {
-    return [];
+  getTranscriptionModels(): Promise<string[]> {
+    return noModels();
   }
 }
 
@@ -449,12 +608,12 @@ export class AssemblyAIModelProviderRepo extends BaseModelProviderRepo {
     return true;
   }
 
-  async getGenerativeTextModels(): Promise<string[]> {
-    return [];
+  getGenerativeTextModels(): Promise<string[]> {
+    return noModels();
   }
 
-  async getTranscriptionModels(): Promise<string[]> {
-    return [];
+  getTranscriptionModels(): Promise<string[]> {
+    return staticModels(ASSEMBLYAI_TRANSCRIPTION_MODELS);
   }
 }
 
@@ -467,12 +626,30 @@ export class ElevenLabsModelProviderRepo extends BaseModelProviderRepo {
     return true;
   }
 
-  async getGenerativeTextModels(): Promise<string[]> {
-    return [];
+  getGenerativeTextModels(): Promise<string[]> {
+    return noModels();
   }
 
-  async getTranscriptionModels(): Promise<string[]> {
-    return [];
+  getTranscriptionModels(): Promise<string[]> {
+    return noModels();
+  }
+}
+
+export class GladiaModelProviderRepo extends BaseModelProviderRepo {
+  supportsGenerativeTextModels(): boolean {
+    return false;
+  }
+
+  supportsTranscriptionModels(): boolean {
+    return true;
+  }
+
+  getGenerativeTextModels(): Promise<string[]> {
+    return noModels();
+  }
+
+  getTranscriptionModels(): Promise<string[]> {
+    return staticModels(GLADIA_TRANSCRIPTION_MODELS);
   }
 }
 
@@ -485,12 +662,13 @@ export class XaiModelProviderRepo extends BaseModelProviderRepo {
     return true;
   }
 
-  async getGenerativeTextModels(): Promise<string[]> {
-    return [];
+  getGenerativeTextModels(): Promise<string[]> {
+    return noModels();
   }
 
-  async getTranscriptionModels(): Promise<string[]> {
-    return [...XAI_TRANSCRIPTION_MODELS];
+  getTranscriptionModels(): Promise<string[]> {
+    // xAI's dedicated /v1/stt API does not accept a model parameter.
+    return noModels();
   }
 }
 
@@ -503,11 +681,11 @@ export class DeepgramModelProviderRepo extends BaseModelProviderRepo {
     return true;
   }
 
-  async getGenerativeTextModels(): Promise<string[]> {
-    return [];
+  getGenerativeTextModels(): Promise<string[]> {
+    return noModels();
   }
 
-  async getTranscriptionModels(): Promise<string[]> {
-    return [...DEEPGRAM_TRANSCRIPTION_MODELS];
+  getTranscriptionModels(): Promise<string[]> {
+    return staticModels(DEEPGRAM_TRANSCRIPTION_MODELS);
   }
 }

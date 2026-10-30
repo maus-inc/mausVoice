@@ -1,6 +1,6 @@
 mod constants;
-mod font;
 mod draw;
+mod font;
 mod input;
 mod ipc;
 mod pill;
@@ -21,7 +21,9 @@ fn main() {
     // The host app exports GDK_BACKEND=wayland to its children, so only our
     // own "x11" value is treated as the already-re-executed marker (this
     // also prevents an exec loop).
-    let already_x11 = std::env::var("GDK_BACKEND").map(|v| v == "x11").unwrap_or(false);
+    let already_x11 = std::env::var("GDK_BACKEND")
+        .map(|v| v == "x11")
+        .unwrap_or(false);
     if !already_x11 && !gtk_layer_shell::is_supported() {
         use gtk::prelude::*;
         let is_x11_display = gtk::gdk::Display::default()

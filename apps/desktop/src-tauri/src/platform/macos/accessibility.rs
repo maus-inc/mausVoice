@@ -446,7 +446,7 @@ unsafe fn extract_text_from_element(
         if let Some(ph) = get_string_attribute(element, ax_placeholder) {
             let t = ph.trim();
             if !t.is_empty() {
-                texts.push(format!("[placeholder: {}]", t));
+                texts.push(format!("[placeholder: {t}]"));
             }
         }
     }
@@ -677,7 +677,7 @@ unsafe fn gather_context_outward(focused_element: CFTypeRef) -> String {
                 if let Some(title) = get_string_attribute(parent, ax_title.as_concrete_TypeRef()) {
                     let t = title.trim();
                     if !t.is_empty() {
-                        texts.push(format!("[Window: {}]", t));
+                        texts.push(format!("[Window: {t}]"));
                     }
                 }
                 CFRelease(parent);
@@ -1271,12 +1271,9 @@ unsafe fn format_element_line(element: CFTypeRef, depth: usize, child_index: usi
 
 fn truncate_for_dump(s: &str) -> String {
     let cleaned: String = s.replace('\n', "\\n").replace('\r', "\\r");
-    let truncated: String = cleaned.chars().take(DUMP_MAX_VALUE_CHARS).collect();
-    if truncated.len() < cleaned.len() {
-        format!("{truncated}…")
-    } else {
-        truncated
-    }
+    // One boundary-safe implementation, shared with the log paths that used to slice
+    // bytes at a fixed offset and panic on any non-ASCII title or description.
+    crate::utils::truncate_display(&cleaned, DUMP_MAX_VALUE_CHARS, "…")
 }
 
 fn process_name_for_pid(pid: i32) -> Option<String> {
@@ -1783,10 +1780,7 @@ unsafe fn focus_accessibility_field_impl(
     );
     if focus_result != AX_ERROR_SUCCESS {
         CFRelease(element);
-        return Err(format!(
-            "Failed to focus element: AX error {}",
-            focus_result
-        ));
+        return Err(format!("Failed to focus element: AX error {focus_result}"));
     }
 
     let text_len = get_string_attribute(element, ax_value.as_concrete_TypeRef())
@@ -2049,11 +2043,7 @@ unsafe fn describe_children(arr: core_foundation::array::CFArrayRef, count: usiz
         parts.push(s);
     }
     let joined = parts.join(", ");
-    if joined.len() > 800 {
-        format!("{}... ({count} children total)", &joined[..800])
-    } else {
-        joined
-    }
+    crate::utils::truncate_display(&joined, 800, &format!("... ({count} children total)"))
 }
 
 unsafe fn write_accessibility_fields_impl(
@@ -2108,8 +2098,7 @@ unsafe fn write_accessibility_fields_impl(
                 wrote = true;
             } else {
                 ax_set_error = Some(format!(
-                    "AXUIElementSetAttributeValue failed with {}",
-                    set_result
+                    "AXUIElementSetAttributeValue failed with {set_result}"
                 ));
             }
         }

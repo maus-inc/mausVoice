@@ -1,8 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getAppState } from "../store";
-import { AudioSamples } from "../types/audio.types";
 import { isMacOS, isWindows11 } from "./env.utils";
 import { getMyUser } from "./user.utils";
+import {
+  downsampleForSpeech,
+  SPEECH_SAMPLE_RATE,
+} from "./speech-resample.utils";
 
 const writeString = (view: DataView, offset: number, text: string) => {
   for (let index = 0; index < text.length; index += 1) {
@@ -53,8 +56,19 @@ export const buildWaveFile = (
   return buffer;
 };
 
-export const normalizeSamples = (samples: AudioSamples): number[] =>
-  Array.isArray(samples) ? samples : Array.from(samples ?? []);
+/**
+ * WAV body for cloud transcription uploads: 16 kHz mono PCM16, a third of the
+ * bytes of a 48 kHz capture. History playback keeps the native-rate audio.
+ */
+export const buildSpeechUploadWav = (
+  samples: Float32Array,
+  sampleRate: number,
+): ArrayBuffer => {
+  const downsampled = downsampleForSpeech(samples, sampleRate);
+  return downsampled
+    ? buildWaveFile(downsampled, SPEECH_SAMPLE_RATE)
+    : buildWaveFile(samples, sampleRate);
+};
 
 export type AudioClip =
   | "start_recording_clip"

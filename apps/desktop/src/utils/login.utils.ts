@@ -29,13 +29,13 @@ export const validateConfirmPassword = (state: AppState): string | null => {
   const confirmPassword = state.login.confirmPassword;
   const password = state.login.password;
 
-  if (confirmPassword !== password) {
-    return getIntl().formatMessage({
-      defaultMessage: "Password does not match",
-    });
+  if (confirmPassword.length === 0 || confirmPassword === password) {
+    return null;
   }
 
-  return null;
+  return getIntl().formatMessage({
+    defaultMessage: "Password does not match",
+  });
 };
 
 export const getSignUpEmailValidation = (state: AppState): string | null => {
@@ -57,7 +57,12 @@ export const getSignUpPasswordValidation = (state: AppState): string | null => {
 export const getSignUpConfirmPasswordValidation = (
   state: AppState,
 ): string | null => {
-  if (!state.login.hasSubmittedRegistration) {
+  const { password, confirmPassword } = state.login;
+
+  if (
+    !state.login.hasSubmittedRegistration &&
+    (password.length === 0 || confirmPassword.length === 0)
+  ) {
     return null;
   }
 

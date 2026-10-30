@@ -54,15 +54,9 @@ pub(crate) fn request_microphone_permission() -> Result<PermissionStatus, String
             let class = class!(AVCaptureDevice);
             let initial_status: i64 =
                 msg_send![class, authorizationStatusForMediaType: AVMediaTypeAudio];
-            log::debug!(
-                "request_microphone_permission initial_status={}",
-                initial_status
-            );
+            log::debug!("request_microphone_permission initial_status={initial_status}");
             let prompt_shown = initial_status == AUTH_STATUS_NOT_DETERMINED;
-            log::debug!(
-                "request_microphone_permission prompt_shown={}",
-                prompt_shown
-            );
+            log::debug!("request_microphone_permission prompt_shown={prompt_shown}");
 
             let mut prompt_result = prompt_shown;
 
@@ -82,7 +76,7 @@ pub(crate) fn request_microphone_permission() -> Result<PermissionStatus, String
                 let state_pair_clone = Arc::clone(&state_pair);
 
                 let handler = ConcreteBlock::new(move |granted: bool| {
-                    log::debug!("Microphone permission callback invoked granted={}", granted);
+                    log::debug!("Microphone permission callback invoked granted={granted}");
                     let (lock, cvar) = &*state_pair_clone;
                     if let Ok(mut slot) = lock.lock() {
                         *slot = Some(granted);
@@ -108,17 +102,14 @@ pub(crate) fn request_microphone_permission() -> Result<PermissionStatus, String
                         .map_err(|_| "Microphone request mutex poisoned".to_string())?;
                 }
                 let granted_value = result.as_ref().copied().unwrap_or(false);
-                log::debug!("Microphone prompt resolved granted={}", granted_value);
+                log::debug!("Microphone prompt resolved granted={granted_value}");
             }
 
             let final_status: i64 =
                 msg_send![class, authorizationStatusForMediaType: AVMediaTypeAudio];
-            log::debug!(
-                "request_microphone_permission final_status={}",
-                final_status
-            );
+            log::debug!("request_microphone_permission final_status={final_status}");
             let state = permission_state_from_authorization(final_status)?;
-            log::debug!("request_microphone_permission resolved_state={:?}", state);
+            log::debug!("request_microphone_permission resolved_state={state:?}");
 
             Ok(PermissionStatus {
                 kind: PermissionKind::Microphone,
@@ -138,8 +129,8 @@ fn permission_state_from_authorization(status: i64) -> Result<PermissionState, S
         AUTH_STATUS_RESTRICTED => Ok(PermissionState::Restricted),
         AUTH_STATUS_NOT_DETERMINED => Ok(PermissionState::NotDetermined),
         other => {
-            log::error!("Unexpected microphone authorization status={}", other);
-            Err(format!("Unknown authorization status: {}", other))
+            log::error!("Unexpected microphone authorization status={other}");
+            Err(format!("Unknown authorization status: {other}"))
         }
     }
 }
@@ -206,10 +197,7 @@ pub(crate) fn request_accessibility_permission() -> Result<PermissionStatus, Str
     unsafe {
         log::debug!("request_accessibility_permission invoked");
         let initial_trusted = AXIsProcessTrusted();
-        log::debug!(
-            "request_accessibility_permission initial_trusted={}",
-            initial_trusted
-        );
+        log::debug!("request_accessibility_permission initial_trusted={initial_trusted}");
 
         let mut prompt_shown = false;
         if !initial_trusted {
@@ -219,29 +207,19 @@ pub(crate) fn request_accessibility_permission() -> Result<PermissionStatus, Str
             let options: CFDictionary<CFString, CFBoolean> =
                 CFDictionary::from_CFType_pairs(&[(key, prompt_value)]);
             let request_result = AXIsProcessTrustedWithOptions(options.as_concrete_TypeRef());
-            log::debug!(
-                "request_accessibility_permission request_result={}",
-                request_result
-            );
+            log::debug!("request_accessibility_permission request_result={request_result}");
         }
 
         let mut final_trusted = AXIsProcessTrusted();
-        log::debug!(
-            "request_accessibility_permission final_trusted={}",
-            final_trusted
-        );
+        log::debug!("request_accessibility_permission final_trusted={final_trusted}");
 
         if !final_trusted {
             let settings_opened = open_accessibility_privacy_settings();
-            log::debug!(
-                "Accessibility settings opened via helper={}",
-                settings_opened
-            );
+            log::debug!("Accessibility settings opened via helper={settings_opened}");
             if settings_opened {
                 final_trusted = AXIsProcessTrusted();
                 log::debug!(
-                    "request_accessibility_permission final_trusted_after_settings={}",
-                    final_trusted
+                    "request_accessibility_permission final_trusted_after_settings={final_trusted}"
                 );
             }
             prompt_shown |= settings_opened;

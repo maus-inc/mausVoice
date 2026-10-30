@@ -11,14 +11,18 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime};
-use tauri::{AppHandle, Emitter, EventTarget};
+use tauri::{AppHandle, Emitter};
 
 use serde::{Deserialize, Serialize};
 use strum::IntoEnumIterator;
 
+static MAUSVOICE_KEYBOARD_PORT: &str = "MAUSVOICE_KEYBOARD_PORT";
+
 /// Helper to acquire a mutex lock, always returning a guard by recovering from poison errors.
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 #[cfg(target_os = "linux")]
@@ -84,7 +88,13 @@ impl KeyEventEmitter {
     }
 
     fn emit(&self, payload: KeysHeldPayload) {
-        if let Err(err) = self.app.emit_to(EventTarget::any(), EVT_KEYS_HELD, payload) {
+        // Scope the broadcast to the main window only. The composer popout is a
+        // separate webview that loads the same SPA; if it received `keys_held`
+        // it would run its own dictation/style-switch pipeline in parallel with
+        // the main window, producing duplicate dictation. The main window is
+        // the only surface that owns dictation input. A raw label string is the
+        // canonical `EventTarget::Window` form (see `emit_to("main", ...)`).
+        if let Err(err) = self.app.emit_to("main", EVT_KEYS_HELD, payload) {
             log::error!("Failed to emit keys-held event: {err}");
         }
     }
@@ -332,10 +342,19 @@ fn child_stdin_store() -> &'static Mutex<Option<ChildStdin>> {
 }
 
 pub fn sync_combos(combos: Vec<Vec<String>>) {
-    {
-        let mut guard = lock(combo_store());
-        *guard = combos.clone();
-    }
+    // The combo lock is held across the write, not released before it. Both
+    // writers of the child's stdin -- this and the initial send in the spawn
+    // path -- must read the store and write the child as one step, or a spawn
+    // that snapshotted older combos can write them after this call has already
+    // sent newer ones, leaving the child holding a configuration the store says
+    // was superseded.
+    //
+    // The order is combo_store then child_stdin_store, which is the order this
+    // function already used across its two acquisitions and the order the spawn
+    // path uses below, so holding both at once introduces no inversion. Nothing
+    // in this file takes them in the reverse order.
+    let mut combos_guard = lock(combo_store());
+    combos_guard.clone_from(&combos);
 
     let mut guard = lock(child_stdin_store());
     if let Some(stdin) = guard.as_mut() {
@@ -356,41 +375,49 @@ pub fn reset_pressed_keys() {
     }
 }
 
-/// Serializes the whole stop/start sequence. Without this, two overlapping `start_key_listener`
-/// calls could each see "nothing to stop", both spawn, and the later store would orphan the
-/// first thread + child. Held across the entire stop→spawn→store operation.
 fn lifecycle_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
-pub fn start_key_listener(app: &AppHandle) -> Result<(), String> {
+/// Serializes the whole stop/start sequence. Without this, two overlapping `start_key_listener`
+/// calls could each see "nothing to stop", both spawn, and the later store would orphan the
+/// first thread + child. Held across the entire stop→spawn→store operation.
+///
+/// Every entry point goes through here rather than locking at each call
+/// site, so the guarantee is a property of the one function below instead of
+/// something each caller has to remember to do.
+fn with_lifecycle_lock<R>(transition: impl FnOnce() -> R) -> R {
     let _lifecycle = lock(lifecycle_lock());
+    transition()
+}
 
-    stop_listener_locked();
+pub fn start_key_listener(app: &AppHandle) -> Result<(), String> {
+    with_lifecycle_lock(|| {
+        stop_listener_locked();
 
-    {
-        let mut app_guard = lock(listener_app());
-        *app_guard = Some(app.clone());
-    }
+        {
+            let mut app_guard = lock(listener_app());
+            *app_guard = Some(app.clone());
+        }
 
-    let mut state = lock(listener_state());
+        let mut state = lock(listener_state());
 
-    log::info!("Starting keyboard listener");
-    let emitter = Arc::new(KeyEventEmitter::new(app));
-    let (join_handle, running) = start_external_listener(emitter.clone())?;
-    *state = Some(ListenerHandle {
-        join_handle,
-        running,
-        emitter,
-    });
+        log::info!("Starting keyboard listener");
+        let emitter = Arc::new(KeyEventEmitter::new(app));
+        let (join_handle, running) = start_external_listener(emitter.clone())?;
+        *state = Some(ListenerHandle {
+            join_handle,
+            running,
+            emitter,
+        });
 
-    Ok(())
+        Ok(())
+    })
 }
 
 pub fn stop_key_listener() -> Result<(), String> {
-    let _lifecycle = lock(lifecycle_lock());
-    stop_listener_locked();
+    with_lifecycle_lock(stop_listener_locked);
     Ok(())
 }
 
@@ -453,9 +480,126 @@ pub(crate) fn debug_keys_enabled() -> bool {
     *DEBUG.get_or_init(|| matches!(env::var("MAUSVOICE_DEBUG_KEYS"), Ok(value) if value == "1"))
 }
 
+/// The whole lock graph of this file, in one place.
+///
+/// Six mutexes, and one of them sits above all the others:
+///
+///     lifecycle_lock                     a ROOT -- see below
+///        │
+///        ├──> listener_app               its own block in `start_key_listener`
+///        ├──> listener_state             held across `start_external_listener`
+///        ├──> child_stdin_store          via `stop_listener_locked` -> `stop_listener_child`
+///        └──> child_store                ditto
+///
+///     combo_store   ─┐
+///                    ├──> child_stdin_store        (a leaf: nothing is acquired while
+///     child_store  ─┘                                    it is held)
+///     listener_state  and  listener_app  never overlap: `start_key_listener` releases the
+///                                           app guard before taking the state guard.
+///
+/// `lifecycle_lock` is a root because `with_lifecycle_lock` takes it before the closure
+/// runs and nothing anywhere acquires it while holding another mutex. That single fact is
+/// what makes the four edges above safe no matter what order the two lower ones acquire
+/// in, and it is why `listener_state -> child_store` is NOT an edge, which an earlier
+/// version of this comment claimed: `stop_listener_locked` takes the handle out in its own
+/// block and drops the guard before it calls `stop_listener_child`, and
+/// `run_listener_thread` -- which does reach `child_store` -- is a separate thread, which
+/// inherits no guards.
+///
+/// Three rules, and they are the whole of it:
+///
+///   1. Never acquire anything while holding `child_stdin_store`. It is the shared leaf
+///      that both lower edges point at, so anything leading out of it can close a cycle
+///      with either of them.
+///   2. Never hold `combo_store` and `child_store` together. They are siblings with no
+///      order between them, and neither is under `lifecycle_lock` -- `sync_combos` and
+///      `ensure_listener_child` are reached from a Tauri command and a spawned thread
+///      respectively -- so any nesting of the two is an inversion waiting for a second
+///      thread.
+///   3. Never acquire `lifecycle_lock` while holding any of the other five, or the root
+///      stops being a root and the first two rules stop being sufficient on their own.
+///
+/// `stop_listener_child` satisfies rule 1 by SCOPING rather than ordering: it takes the
+/// stdin guard in its own block, drops it, and only then takes `child_store`. Sequential,
+/// not nested -- which is why it needs no place in the graph.
+///
+/// What is pinned and what is not, so this paragraph does not read as more than it is:
+///
+///   * `overlapping_writers_take_the_stores_in_one_order` drives `publish_child_stdin` and
+///     fails if the `combo_store` edge is reversed. That pair is covered by a test.
+///   * `overlapping_listener_transitions_are_serialized` covers that `lifecycle_lock`
+///     serialises. It does NOT cover rule 3: a thread that took `child_stdin_store` and
+///     then asked for `lifecycle_lock` would serialise perfectly well and still deadlock.
+///   * The `child_store` edge, in the discard branch of `ensure_listener_child`, is NOT
+///     covered. Reaching it needs a real spawned child, which a unit test should not own,
+///     and the decision above it is already extracted and tested as a pure function. So
+///     that edge rests on this comment alone -- as does rule 3. Nesting `child_stdin_store`
+///     around a `child_store` acquisition, or taking `lifecycle_lock` under any store,
+///     would deadlock with nothing failing first, which is the cost of those gaps, stated
+///     so they are known gaps.
 fn child_store() -> &'static Mutex<Option<Child>> {
     static CHILD: OnceLock<Mutex<Option<Child>>> = OnceLock::new();
     CHILD.get_or_init(|| Mutex::new(None))
+}
+
+/// Send the current combos to a freshly spawned child's stdin and publish the handle.
+///
+/// Exists as one function because two properties have to hold together and neither is
+/// visible in the caller:
+///
+///   * `combo_store` is held across the write, so a concurrent `sync_combos` cannot
+///     deliver newer combos between this snapshot and this write and then be overwritten
+///     by the stale snapshot.
+///   * `child_stdin_store` is held across BOTH the write and the publish, so a
+///     `stop_listener_child` cannot take the slot to `None` in between and leave the new
+///     child with an empty combo set and no way to be sent them again.
+///
+/// This function holds the `combo_store` -> `child_stdin_store` edge of the graph
+/// documented at the store definitions, and takes it in that order, which is the order
+/// `sync_combos` already uses -- so holding both introduces no inversion.
+/// `overlapping_writers_take_the_stores_in_one_order` is the test that fails if that edge
+/// is ever reversed.
+///
+/// An earlier version of this comment stated the order as a fact about this function alone
+/// ("the lock order is `combo_store` then `child_stdin_store`"), which read as though it
+/// covered the file. It did not: the discard branch in `ensure_listener_child` nests
+/// `child_store` inside the same slot, so the graph has three nodes and this comment named
+/// two. A partial statement of an invariant is worse than none, because it is the one a
+/// later edit checks against.
+fn publish_child_stdin(mut stdin: Option<ChildStdin>) {
+    let combos_guard = lock(combo_store());
+    let combos = combos_guard.clone();
+    let mut stdin_guard = lock(child_stdin_store());
+    if !combos.is_empty() {
+        if let Some(handle) = stdin.as_mut() {
+            if let Ok(json) = serde_json::to_string(&combos) {
+                if let Err(err) = writeln!(handle, "{json}") {
+                    log::error!("Failed to send initial combos to child: {err}");
+                }
+                let _ = handle.flush();
+            }
+        }
+    }
+    *stdin_guard = stdin;
+    drop(stdin_guard);
+    drop(combos_guard);
+}
+
+/// Bumped by every `stop_listener_child`, read either side of a spawn.
+///
+/// A stop is a request about a child that may not be in `child_store` yet. `stop_listener_child`
+/// clears the stdin slot, then takes and kills whatever `child_store` holds. A spawn in
+/// flight holds its `Child` in a local, so a stop landing in that window finds nothing to
+/// kill and the spawn then stores a process that nothing owns: no one signals it, and its
+/// stdin slot is `None`, so `sync_combos` cannot reach it either. It runs until the machine
+/// reboots.
+///
+/// The counter makes that window visible. The spawn records the value before it starts and
+/// compares after it stores; if a stop happened in between, this child is one the caller
+/// has already asked to be rid of, so the spawn kills it rather than publishing it.
+fn stop_epoch() -> &'static AtomicU64 {
+    static EPOCH: AtomicU64 = AtomicU64::new(0);
+    &EPOCH
 }
 
 fn start_external_listener(
@@ -665,36 +809,112 @@ fn ensure_listener_child(port: u16) -> Result<(), String> {
         return Ok(());
     }
 
+    // Read before spawning, compare after storing. See `stop_epoch`.
+    let epoch = stop_epoch().load(Ordering::SeqCst);
+
     let mut child = spawn_listener_child(port)?;
 
-    let stdin = child.stdin.take();
+    // Send the initial combos and PUBLISH the handle as one step, under both locks.
+    //
+    // Both locks, for the reason given on `sync_combos`: releasing the combo lock between
+    // the snapshot and the write lets a concurrent `sync_combos` deliver newer combos
+    // first and have this call overwrite them with the stale snapshot.
+    //
+    // One hold of the stdin lock across BOTH the write and the install, because an earlier
+    // version released it in between. A `stop_listener_child` landing in that window took
+    // the slot to `None`, so `if let Some(stdin) = ...` was false and the initial send was
+    // skipped with no log line -- the handle had already been moved into the store and was
+    // dropped by the stop. The new child then sat in `child_store` with an empty combo set,
+    // and `ensure_listener_child` returns early whenever the child is alive, so nothing ever
+    // resent them. macOS and Windows self-heal, because the child's reader thread takes the
+    // EOF branch and exits, and the respawn loop tries again. Linux does not self-heal at
+    // all: its reader thread is cfg-gated off, so nothing notices.
+    publish_child_stdin(child.stdin.take());
+
+    let id = child.id();
     {
-        let mut stdin_guard = lock(child_stdin_store());
-        *stdin_guard = stdin;
+        let mut guard = lock(child_store());
+        *guard = Some(child);
     }
 
-    {
-        let combos = lock(combo_store())
-            .clone();
-        if !combos.is_empty() {
-            let mut guard = lock(child_stdin_store());
-            if let Some(stdin) = guard.as_mut() {
-                if let Ok(json) = serde_json::to_string(&combos) {
-                    if let Err(err) = writeln!(stdin, "{json}") {
-                        log::error!("Failed to send initial combos to child: {err}");
-                    }
-                    let _ = stdin.flush();
-                }
+    // A stop that landed while this child was being spawned found nothing to kill. Honour
+    // it, rather than leaving a process behind that nothing owns.
+    //
+    // Two details that are easy to get wrong and are therefore a named function with a
+    // test rather than an inline block:
+    //
+    //   * the stdin slot is cleared in the same breath. `publish_child_stdin` installed
+    //     a handle a few lines above; killing the child without clearing it leaves
+    //     `Some(ChildStdin)` pointing at a dead process, so every `sync_combos` until the
+    //     next spawn or stop writes to it and logs an error. On the disconnect path that
+    //     is a real window, because `stop_listener_child` runs only after
+    //     `wait_for_connection` returns.
+    //   * the kill is scoped to THIS child by id. If another spawn won the race and
+    //     published its own, this must not kill that one.
+    //
+    // And it returns `Err`, not `Ok`: reporting success hands `run_listener_thread` a
+    // listener that is not there, which parks it in `wait_for_connection` for the full
+    // CONNECT_TIMEOUT before retrying. The error path is the one that counts the failure
+    // and backs off.
+    if should_discard_spawned_child(
+        epoch,
+        stop_epoch().load(Ordering::SeqCst),
+        published_child_id(),
+        id,
+    ) {
+        // Both halves of this branch are scoped to THIS child, and they have to be
+        // scoped together. An earlier version cleared the stdin slot unconditionally and
+        // then guarded only the kill, so a spawn that lost the race dropped the winner's
+        // `ChildStdin` while leaving the winner's child in place -- and nothing pairs a
+        // handle with the child it belongs to, so `sync_combos` could not reach that child
+        // again until the next spawn. `run_listener_thread` is the only caller of
+        // `ensure_listener_child` today, so the window does not open in practice; the
+        // comment above this branch argues from the case where another spawn wins, so it
+        // is written as though that can happen.
+        let mut guard = lock(child_store());
+        if guard.as_ref().map(|c| c.id()) == Some(id) {
+            {
+                let mut stdin_guard = lock(child_stdin_store());
+                *stdin_guard = None;
             }
+            if let Some(mut child) = guard.take() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+            return Err("a stop raced this spawn, so the child was discarded".to_string());
         }
     }
-
-    let mut guard = lock(child_store());
-    *guard = Some(child);
     Ok(())
 }
 
+/// The id of whatever child `child_store` currently holds, or `None`.
+///
+/// Separate from `should_discard_spawned_child` so that call stays a pure decision and can
+/// be tested without a process, which is the point: the id comparison inside it is exactly
+/// the part a later edit could get wrong with nothing else failing.
+fn published_child_id() -> Option<u32> {
+    lock(child_store()).as_ref().map(|c| c.id())
+}
+
+/// Whether a spawn that recorded `epoch_at_spawn` should throw away the child it just
+/// published.
+///
+/// True when a stop happened during the spawn (`epoch_now` moved) AND the child in the
+/// store is still this one. Both halves matter. Without the first, every spawn would
+/// discard itself. Without the second, a spawn that lost the race would kill the winner.
+fn should_discard_spawned_child(
+    epoch_at_spawn: u64,
+    epoch_now: u64,
+    published: Option<u32>,
+    mine: u32,
+) -> bool {
+    epoch_now != epoch_at_spawn && published == Some(mine)
+}
+
 fn stop_listener_child() {
+    // First, so a spawn that is between "read the epoch" and "stored the child" sees it.
+    stop_epoch().fetch_add(1, Ordering::SeqCst);
+
     {
         let mut stdin_guard = lock(child_stdin_store());
         *stdin_guard = None;
@@ -887,6 +1107,25 @@ pub(crate) fn matches_any_combo(pressed: &HashSet<String>, combos: &[Vec<String>
     false
 }
 
+/// Whether this key is a member of any configured combo.
+///
+/// `matches_any_combo` asks whether the pressed SET is a combo; this asks whether
+/// the key is PART OF one, which is a different question and is what decides
+/// whether a press should stay swallowed after the combo has fired. Normalized
+/// the same way, so a combo spelled `KeyZ` matches a press spelled `keyz`.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn key_in_any_combo(key_label: &str, combos: &[Vec<String>]) -> bool {
+    let normalized = key_label.to_ascii_lowercase();
+    combos
+        .iter()
+        .filter(|combo| !combo.is_empty())
+        .any(|combo| {
+            combo
+                .iter()
+                .any(|key| key.to_ascii_lowercase() == normalized)
+        })
+}
+
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 fn is_modifier_like_key_label(key_label: &str) -> bool {
     let normalized = key_label.to_ascii_lowercase();
@@ -967,8 +1206,23 @@ pub(crate) fn update_grab_hotkey_state(
                 }
                 return GrabDecision::PassThrough;
             }
-            state.suppressed_keys.insert(key_label.to_string());
-            return GrabDecision::Suppress;
+            // The combo has already fired, so the keys that make it up stay
+            // swallowed -- but nothing else does.
+            //
+            // This used to suppress every press unconditionally once
+            // `suppressed_keys` was non-empty, so a key in no combo was swallowed
+            // too, and swallowed *inconsistently*: holding a modifier and
+            // pressing an unrelated key passed through when `suppressed_keys`
+            // happened to be empty, and was suppressed once any suppressed key
+            // was still held. The same keystroke gave different answers
+            // depending on unrelated state, which is not a policy, it is a
+            // fallthrough. An exhaustive search over the reachable states found
+            // eleven distinct swallowed presses from one combo.
+            if key_in_any_combo(key_label, combos) {
+                state.suppressed_keys.insert(key_label.to_string());
+                return GrabDecision::Suppress;
+            }
+            return GrabDecision::PassThrough;
         }
 
         return GrabDecision::PassThrough;
@@ -993,7 +1247,7 @@ pub(crate) struct ListenerContext {
 }
 
 pub(crate) fn setup_listener_process() -> Result<ListenerContext, String> {
-    let port = env::var("MAUSVOICE_KEYBOARD_PORT")
+    let port = env::var(MAUSVOICE_KEYBOARD_PORT)
         .map_err(|_| "MAUSVOICE_KEYBOARD_PORT env var missing".to_string())?
         .parse::<u16>()
         .map_err(|err| format!("invalid MAUSVOICE_KEYBOARD_PORT: {err}"))?;
@@ -1084,10 +1338,10 @@ pub(crate) fn run_listen_loop(
 #[cfg(all(test, any(target_os = "macos", target_os = "windows")))]
 mod tests {
     use super::{
-        connection_proved_alive, failure_capped, matches_any_combo, retry_backoff,
-        should_promote, update_grab_hotkey_state, ControlState, GrabDecision, GrabHotkeyState,
-        HealthState, KeyboardEventPayload, WireEventKind, WireMessage, BACKOFF_CEILING,
-        FAILURE_CAP, HEALTHY_GRAB_GRACE, SLOW_RETRY_INTERVAL,
+        connection_proved_alive, failure_capped, matches_any_combo, retry_backoff, should_promote,
+        update_grab_hotkey_state, ControlState, GrabDecision, GrabHotkeyState, HealthState,
+        KeyboardEventPayload, WireEventKind, WireMessage, BACKOFF_CEILING, FAILURE_CAP,
+        HEALTHY_GRAB_GRACE, SLOW_RETRY_INTERVAL,
     };
     use std::collections::HashSet;
     use std::time::Duration;
@@ -1339,5 +1593,258 @@ mod tests {
         // Once capped, switch to the slow-retry auto-recovery interval.
         assert_eq!(retry_backoff(FAILURE_CAP), SLOW_RETRY_INTERVAL);
         assert_eq!(retry_backoff(FAILURE_CAP + 5), SLOW_RETRY_INTERVAL);
+    }
+}
+
+/// The lifecycle serialization is platform-agnostic, and these live outside
+/// the `macos`/`windows`-gated module above so the Linux unit-test job is
+/// what runs them. They were in the gated module, where neither the CI
+/// desktop unit-test job (ubuntu) nor the Windows clippy job ever executed
+/// them.
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::{
+        child_stdin_store, combo_store, lock, publish_child_stdin, stop_epoch, stop_listener_child,
+    };
+    use std::sync::atomic::Ordering;
+    use std::sync::{Mutex, MutexGuard};
+
+    /// Serialises every test in this module that touches `combo_store` or
+    /// `child_stdin_store`.
+    ///
+    /// Both are process-global `OnceLock<Mutex<..>>`, and `cargo test` runs these tests
+    /// concurrently in one process, so without this they interfere in both directions and
+    /// neither failure has anything to do with the code under test:
+    ///
+    ///   * `a_stop_is_visible_to_a_spawn_in_flight` calls `stop_listener_child`, whose
+    ///     first action after the epoch bump is to set the stdin slot to `None`. That
+    ///     landing between the publishing test's call returning and its assertion failed it
+    ///     for an unrelated reason.
+    ///
+    ///     An earlier version of this bullet also named
+    ///     `stop_key_listener_is_idempotent`, which cannot interfere: it reaches
+    ///     `stop_listener_child` only through `stop_listener_locked`, and that calls it
+    ///     inside `if let Some(handle)` where the handle comes from
+    ///     `listener_state().take()`. No unit test starts a listener -- `start_key_listener`
+    ///     needs an `AppHandle` -- so the slot is always `None` and the call is unreachable
+    ///     from there. It correctly does not take this lock either. Naming a racer that
+    ///     cannot race is how a justification stops being checkable.
+    ///   * the reverse, and worse: any sibling holding `combo_store` makes the ordering
+    ///     test's `try_lock` fail, so `saw_combo_held` becomes true without the publisher
+    ///     thread holding anything, and a test that cannot fail reports success.
+    ///
+    /// `with_lifecycle_lock` would only cover the one caller that takes it, so this is its
+    /// own lock. It is taken by the test body only, never by a thread the test spawns: the
+    /// ordering test holds the stdin store while its publisher waits for it, so a publisher
+    /// that also wanted this lock would deadlock.
+    static STORE_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    fn serialise_stores() -> MutexGuard<'static, ()> {
+        lock(&STORE_TEST_LOCK)
+    }
+
+    /// The two locks must be taken in ONE order, and it is `combo_store` first.
+    ///
+    /// This is a property of `publish_child_stdin`, so the test drives that function
+    /// rather than asserting anything about the source text. It discriminates: if the
+    /// order were reversed, the publishing thread would block on `child_stdin_store`
+    /// while holding nothing, and the `try_lock` below would succeed.
+    ///
+    /// It covers the ORDER and nothing else. It passes `None`, and `None` publishes
+    /// `None`, so it says nothing about a handle arriving in the store -- which is what
+    /// `a_real_handle_survives_into_the_store` is for, twelve lines below.
+    ///
+    /// It used to also claim the publishing half, which contradicted that test's own doc.
+    #[test]
+    fn overlapping_writers_take_the_stores_in_one_order() {
+        let _serialised = serialise_stores();
+        // Hold the stdin store so the publishing thread cannot get past it.
+        let held = lock(child_stdin_store());
+
+        let publisher = std::thread::spawn(|| publish_child_stdin(None));
+
+        // The publisher must be blocked on the stdin store AND holding the combo store,
+        // because that is the only order that makes the snapshot-and-write atomic.
+        //
+        // A deadline rather than a spin count: 200 `yield_now` calls can complete before
+        // the other thread is ever scheduled on a loaded runner, which turns this into a
+        // false failure. Two seconds is far longer than scheduling one thread needs, and
+        // a real ordering inversion never satisfies the condition at all.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        let mut saw_combo_held = false;
+        while std::time::Instant::now() < deadline {
+            if combo_store().try_lock().is_err() {
+                saw_combo_held = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        assert!(
+            saw_combo_held,
+            "the publishing thread does not hold combo_store while waiting for \
+             child_stdin_store, so the stores are being taken in more than one order and \
+             a same-order acquisition is exactly what would deadlock"
+        );
+
+        drop(held);
+        publisher.join().expect("publisher thread");
+    }
+
+    /// A real handle must survive into the store.
+    ///
+    /// The ordering test cannot reach this: it passes `None`, and `None` publishes `None`,
+    /// so a presence check cannot tell the two apart. A real `ChildStdin` is needed for
+    /// that reason -- `cat` on unix and `cmd` on Windows, both present on a runner, neither
+    /// talked to, and neither gated, which matters because the point of this module is
+    /// that it is not behind a `cfg`.
+    ///
+    /// What this does NOT assert, and what the doc used to claim, is that the handle
+    /// arrives under the same hold that wrote to it. That half has no test: the version
+    /// this replaced installed the handle in one critical section and wrote in another,
+    /// and it would satisfy every assertion here just as well, because by the time this
+    /// runs both versions have returned. Observing the hold needs a pipe this test can read
+    /// and a way to catch the write mid-flight, which is timing rather than a property.
+    /// So the property is stated in the code that has it -- `publish_child_stdin`'s own
+    /// doc comment -- and not claimed to be covered here.
+    #[test]
+    fn a_real_handle_survives_into_the_store() {
+        let _serialised = serialise_stores();
+        let mut helper = std::process::Command::new(if cfg!(windows) { "cmd" } else { "cat" })
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+            .expect("spawn a helper process to obtain a ChildStdin");
+        let handle = helper.stdin.take().expect("piped stdin");
+
+        // Put something in the store so the write is not skipped by an empty combo set.
+        {
+            let mut combos = lock(combo_store());
+            combos.push(vec!["ctrl".to_string(), "shift".to_string()]);
+        }
+
+        publish_child_stdin(Some(handle));
+
+        assert!(
+            lock(child_stdin_store()).is_some(),
+            "publish_child_stdin did not leave the handle in the store, so a stop could \
+             take it away and the child would never be sent its combos"
+        );
+
+        // Leave the process-global state as the rest of the suite expects it.
+        {
+            let mut stdin_guard = lock(child_stdin_store());
+            *stdin_guard = None;
+        }
+        {
+            let mut combos = lock(combo_store());
+            combos.clear();
+        }
+        let _ = helper.kill();
+        let _ = helper.wait();
+    }
+
+    /// The decision the epoch exists to drive, tested directly.
+    ///
+    /// Driving it through `ensure_listener_child` needs a real spawned child, which a unit
+    /// test should not own. The decision itself is pure, so it is extracted and tested
+    /// here -- including the id comparison, which is the half a later edit could invert.
+    #[test]
+    fn a_spawn_is_discarded_only_when_a_stop_ran_and_the_child_is_still_ours() {
+        // A stop during the spawn, and our child is the one published.
+        assert!(super::should_discard_spawned_child(7, 8, Some(4242), 4242));
+
+        // No stop during the spawn: never discard, however the ids line up.
+        assert!(!super::should_discard_spawned_child(7, 7, Some(4242), 4242));
+
+        // A stop ran, but another spawn's child is published: this one must not kill it.
+        assert!(!super::should_discard_spawned_child(7, 8, Some(9999), 4242));
+
+        // A stop ran and nothing is published at all: nothing to discard.
+        assert!(!super::should_discard_spawned_child(7, 8, None, 4242));
+
+        // The id comparison is the part that must not be written as a presence check.
+        assert!(!super::should_discard_spawned_child(7, 8, Some(4243), 4242));
+    }
+
+    /// A stop must be visible to a spawn that is in flight.
+    ///
+    /// `stop_listener_child` clears the stdin slot and then takes and kills whatever
+    /// `child_store` holds. A spawn keeps its `Child` in a local until it stores it, so a
+    /// stop landing in that window finds nothing to kill -- and the spawn then publishes a
+    /// process that nothing owns and that `sync_combos` cannot reach. The epoch is what
+    /// makes that window visible; without it the counter is the whole mechanism and this
+    /// is the only thing testing it.
+    #[test]
+    fn a_stop_is_visible_to_a_spawn_in_flight() {
+        let _serialised = serialise_stores();
+        let before = stop_epoch().load(Ordering::SeqCst);
+        // With no child running this is a no-op beyond the bump, so it is safe to call
+        // directly rather than through a spawn.
+        stop_listener_child();
+        assert_ne!(
+            stop_epoch().load(Ordering::SeqCst),
+            before,
+            "stop_listener_child must bump the epoch, or a spawn that is between \
+             reading it and storing its child cannot tell that it was asked to stop"
+        );
+    }
+
+    /// Regression test for issue #488: the Windows resume path calls
+    /// `restart_key_listener` (which is `start_key_listener` under the
+    /// hood) after sleep/wake or session unlock, and may receive a second
+    /// `desktop_resume` event while the first restart is still in flight.
+    /// The platform-agnostic entry point must therefore be safe to call
+    /// twice in quick succession.
+    ///
+    /// The start half needs an `AppHandle` and spawns a child process, so
+    /// what is under test here is the serialization both halves run inside:
+    /// every entry point goes through `with_lifecycle_lock`, and that is
+    /// what stops two overlapping transitions from each seeing "nothing to
+    /// stop" and both spawning. The test drives that same function
+    /// concurrently and fails if the critical section is not exclusive.
+    #[test]
+    fn overlapping_listener_transitions_are_serialized() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+
+        let inside = Arc::new(AtomicBool::new(false));
+        let overlapped = Arc::new(AtomicBool::new(false));
+
+        let mut threads = Vec::new();
+        for _ in 0..8 {
+            let inside = inside.clone();
+            let overlapped = overlapped.clone();
+            threads.push(std::thread::spawn(move || {
+                for _ in 0..500 {
+                    super::with_lifecycle_lock(|| {
+                        if inside.swap(true, Ordering::SeqCst) {
+                            overlapped.store(true, Ordering::SeqCst);
+                        }
+                        // Hold the section long enough that an unguarded
+                        // transition is certain to be found inside it.
+                        std::thread::sleep(std::time::Duration::from_micros(50));
+                        inside.store(false, Ordering::SeqCst);
+                    });
+                }
+            }));
+        }
+        for thread in threads {
+            thread.join().expect("lifecycle thread panicked");
+        }
+
+        assert!(
+            !overlapped.load(Ordering::SeqCst),
+            "two listener transitions ran inside the lifecycle section at once, so a \
+             restart could observe an empty slot and orphan the running listener"
+        );
+    }
+
+    /// A stop with nothing running must stay harmless, which is the state a
+    /// duplicate `desktop_resume` finds when the first restart has already
+    /// finished.
+    #[test]
+    fn stop_key_listener_is_idempotent() {
+        assert!(super::stop_key_listener().is_ok());
+        assert!(super::stop_key_listener().is_ok());
+        assert!(super::stop_key_listener().is_ok());
     }
 }

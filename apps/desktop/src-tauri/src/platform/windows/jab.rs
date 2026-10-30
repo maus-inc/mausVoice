@@ -88,8 +88,17 @@ fn find_jab_dll() -> Option<std::path::PathBuf> {
         }
     }
 
-    // 2. `where java` on PATH
-    if let Ok(output) = std::process::Command::new("where").arg("java").output() {
+    // 2. `where java` on PATH. This binary is GUI-subsystem in release, so it
+    // owns no console and a console-subsystem child started without
+    // CREATE_NO_WINDOW is given a new one, which flashes on screen.
+    let mut where_cmd = std::process::Command::new("where");
+    where_cmd.arg("java");
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        where_cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    if let Ok(output) = where_cmd.output() {
         if let Ok(path_str) = String::from_utf8(output.stdout) {
             if let Some(line) = path_str.lines().next() {
                 if let Some(bin_dir) = std::path::Path::new(line.trim()).parent() {
@@ -241,10 +250,7 @@ fn get_jab_api(hint_pid: Option<u32>) -> Option<&'static JabApi> {
     // non-standard cache directories.
     if let Some(pid) = hint_pid {
         let pid_based = JAB_API_PID_BASED.get_or_init(|| {
-            log::info!(
-                "Standard JAB search failed, trying PID-based discovery for PID {}",
-                pid
-            );
+            log::info!("Standard JAB search failed, trying PID-based discovery for PID {pid}");
             find_jab_dll_for_pid(pid).and_then(|p| load_jab_from_path(&p))
         });
         if pid_based.is_some() {
@@ -350,8 +356,7 @@ unsafe fn navigate_to_element(
                 (api.release_object)(vm_id, ac);
             }
             return Err(format!(
-                "JAB: getAccessibleChildFromContext failed at depth {} index {}",
-                depth, index
+                "JAB: getAccessibleChildFromContext failed at depth {depth} index {index}"
             ));
         }
         intermediates.push(child);
@@ -581,15 +586,11 @@ unsafe fn dump_jab_element(
 
     let indent = "  ".repeat(depth);
     let role_display = if role.is_empty() { "unknown" } else { &role };
-    let mut line = format!("{}[{}] \"{}\"", indent, role_display, name);
+    let mut line = format!("{indent}[{role_display}] \"{name}\"");
 
     if !description.is_empty() {
-        let d = if description.len() > 100 {
-            format!("{}...", &description[..100])
-        } else {
-            description
-        };
-        line.push_str(&format!(" desc=\"{}\"", d));
+        let d = crate::utils::truncate_display(&description, 100, "...");
+        line.push_str(&format!(" desc=\"{d}\""));
     }
 
     if info.accessible_text != 0 {
@@ -604,7 +605,7 @@ unsafe fn dump_jab_element(
         annotations.push("action".to_string());
     }
     if !states.is_empty() {
-        annotations.push(format!("states={}", states));
+        annotations.push(format!("states={states}"));
     }
 
     if !annotations.is_empty() {
@@ -633,12 +634,8 @@ unsafe fn extract_text_append(api: &JabApi, vm_id: i32, ac: JOBJECT64, line: &mu
         if (api.get_text_range)(vm_id, ac, 0, len - 1, buf.as_mut_ptr(), buf.len() as i16) != 0 {
             let text = wchar_to_string(&buf);
             if !text.is_empty() {
-                let display = if text.len() > 100 {
-                    format!("{}...", &text[..100])
-                } else {
-                    text
-                };
-                line.push_str(&format!(" text=\"{}\"", display));
+                let display = crate::utils::truncate_display(&text, 100, "...");
+                line.push_str(&format!(" text=\"{display}\""));
             }
         }
     }

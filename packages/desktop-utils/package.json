@@ -1,6 +1,7 @@
 {
   "name": "@maus-inc/desktop-utils",
   "version": "0.3.25",
+  "type": "module",
   "description": "Shared React hooks and logic for mausVoice desktop-style clients.",
   "repository": {
     "type": "git",
@@ -9,6 +10,20 @@
   },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "development": "./src/index.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./react": {
+      "types": "./dist/react.d.ts",
+      "development": "./src/react.ts",
+      "import": "./dist/react.js",
+      "default": "./dist/react.js"
+    }
+  },
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
@@ -29,6 +44,18 @@
     "dist"
   ],
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js",
+        "default": "./dist/index.js"
+      },
+      "./react": {
+        "types": "./dist/react.d.ts",
+        "import": "./dist/react.js",
+        "default": "./dist/react.js"
+      }
+    }
   }
 }

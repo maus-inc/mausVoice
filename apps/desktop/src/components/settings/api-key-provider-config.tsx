@@ -11,6 +11,7 @@ import {
   deepseekTestIntegration,
   elevenlabsTestIntegration,
   geminiTestIntegration,
+  gladiaTestIntegration,
   groqTestIntegration,
   openaiCompatibleTestIntegration,
   openaiTestIntegration,
@@ -24,6 +25,10 @@ import {
   ollamaTestIntegration,
 } from "../../utils/ollama.utils";
 import { OPENAI_COMPATIBLE_DEFAULT_URL } from "../../utils/openai-compatible.utils";
+import {
+  createOpenAICompatibleFetch,
+  secureFetch,
+} from "../../utils/secure-fetch.utils";
 import { speachesTestIntegration } from "../../utils/speaches.utils";
 import type { ApiKeyListContext } from "./ApiKeyList";
 
@@ -73,24 +78,45 @@ function requireApiKey(apiKey: SettingsApiKey): string {
 }
 
 function standardTestConfig(
-  testFn: (args: { apiKey: string }) => Promise<boolean>,
+  testFn: (args: {
+    apiKey: string;
+    customFetch?: typeof globalThis.fetch;
+  }) => Promise<boolean>,
 ): ProviderFormConfig["testIntegration"] {
-  return (apiKey) => testFn({ apiKey: requireApiKey(apiKey) });
+  return (apiKey) =>
+    testFn({ apiKey: requireApiKey(apiKey), customFetch: secureFetch });
 }
 
+/**
+ * Providers that `getProviderFormConfig` routes to a dedicated config instead
+ * of the shared API-key-only form. Every other `ApiKeyProvider` value must
+ * have a `STANDARD_PROVIDERS` entry, which the `Record` type below enforces at
+ * compile time: adding a provider to `API_KEY_PROVIDERS` without a form config
+ * fails `check-types` instead of throwing
+ * "Cannot read properties of undefined (reading 'displayName')" when the AI
+ * Transcription settings page renders the provider list.
+ */
+type DedicatedConfigProvider =
+  "azure" | "ollama" | "assemblyai" | "openai-compatible" | "speaches";
+
+type StandardProvider = Exclude<ApiKeyProvider, DedicatedConfigProvider>;
+
 const STANDARD_PROVIDERS: Record<
-  string,
+  StandardProvider,
   {
     displayName: string;
-    testFn: (args: { apiKey: string }) => Promise<boolean>;
+    testFn: (args: {
+      apiKey: string;
+      customFetch?: typeof globalThis.fetch;
+    }) => Promise<boolean>;
   }
 > = {
   groq: { displayName: "Groq", testFn: groqTestIntegration },
   openai: { displayName: "OpenAI", testFn: openaiTestIntegration },
   openrouter: { displayName: "OpenRouter", testFn: openrouterTestIntegration },
   aldea: { displayName: "Aldea", testFn: aldeaTestIntegration },
-  assemblyai: { displayName: "AssemblyAI", testFn: assemblyaiTestIntegration },
   deepgram: { displayName: "Deepgram", testFn: deepgramTestIntegration },
+  gladia: { displayName: "Gladia", testFn: gladiaTestIntegration },
   elevenlabs: { displayName: "ElevenLabs", testFn: elevenlabsTestIntegration },
   deepseek: { displayName: "DeepSeek", testFn: deepseekTestIntegration },
   gemini: { displayName: "Gemini", testFn: geminiTestIntegration },
@@ -99,14 +125,45 @@ const STANDARD_PROVIDERS: Record<
   xai: { displayName: "xAI Grok", testFn: xaiTestIntegration },
 };
 
-function buildStandardConfig(provider: string): ProviderFormConfig {
-  const entry = STANDARD_PROVIDERS[provider]!;
+function buildStandardConfig(provider: ApiKeyProvider): ProviderFormConfig {
+  const entry = STANDARD_PROVIDERS[provider as StandardProvider];
+  // A persisted key can carry a provider string this build does not know
+  // (a downgrade, or a row written by a newer version). The type-level
+  // `Record<StandardProvider, ...>` already blocks the in-repo case, so this
+  // guard only covers foreign data — and it names the provider instead of
+  // failing later on `undefined.displayName`.
+  if (!entry) {
+    throw new Error(
+      `Unsupported API key provider "${provider}": no form configuration is registered for it.`,
+    );
+  }
   return {
     displayName: entry.displayName,
     fields: [API_KEY_FIELD],
     testIntegration: standardTestConfig(entry.testFn),
   };
 }
+
+const ASSEMBLYAI_MODEL_FIELD: ProviderFieldDescriptor = {
+  key: "transcriptionModel",
+  label: <FormattedMessage defaultMessage="Model" />,
+  placeholder: "universal-3-5-pro",
+  helperText: (
+    <FormattedMessage defaultMessage="AssemblyAI speech model. Universal-3.5 Pro keeps Universal-2 as a fallback; leave empty to use the AssemblyAI default." />
+  ),
+  required: false,
+};
+
+const ASSEMBLYAI_CONFIG: ProviderFormConfig = {
+  displayName: "AssemblyAI",
+  fields: [API_KEY_FIELD, ASSEMBLYAI_MODEL_FIELD],
+  testIntegration: (apiKey) =>
+    assemblyaiTestIntegration({
+      apiKey: requireApiKey(apiKey),
+      model: apiKey.transcriptionModel ?? null,
+      customFetch: secureFetch,
+    }),
+};
 
 const OLLAMA_CONFIG: ProviderFormConfig = {
   displayName: "Ollama",
@@ -133,7 +190,7 @@ const OLLAMA_CONFIG: ProviderFormConfig = {
 function getOpenAICompatibleConfig(
   context: ApiKeyListContext,
 ): ProviderFormConfig {
-  const fields: ProviderFieldDescriptor[] = [
+  let fields: ProviderFieldDescriptor[] = [
     {
       key: "baseUrl",
       label: <FormattedMessage defaultMessage="Base URL" />,
@@ -146,15 +203,26 @@ function getOpenAICompatibleConfig(
     OPTIONAL_API_KEY_FIELD,
   ];
   if (context === "transcription") {
-    fields.push({
-      key: "transcriptionModel",
-      label: <FormattedMessage defaultMessage="Model" />,
-      placeholder: "whisper-1",
-      helperText: (
-        <FormattedMessage defaultMessage="Transcription model name (e.g. whisper-1, gpt-4o-transcribe)" />
-      ),
-      required: false,
-    });
+    fields = fields.concat([
+      {
+        key: "transcriptionModel",
+        label: <FormattedMessage defaultMessage="Model" />,
+        placeholder: "whisper-1",
+        helperText: (
+          <FormattedMessage defaultMessage="Transcription model name (e.g. whisper-1, gpt-4o-transcribe)" />
+        ),
+        required: false,
+      },
+      {
+        key: "transcriptionPath",
+        label: <FormattedMessage defaultMessage="Transcription path" />,
+        placeholder: "/audio/transcriptions",
+        helperText: (
+          <FormattedMessage defaultMessage="Replaces only the path after the base URL. For Open WebUI, enter /v1/audio/transcriptions and turn off Include /v1 path; otherwise leave empty." />
+        ),
+        required: false,
+      },
+    ]);
   }
   return {
     displayName: "OpenAI Compatible",
@@ -165,6 +233,7 @@ function getOpenAICompatibleConfig(
       openaiCompatibleTestIntegration({
         baseUrl: apiKey.baseUrl || OPENAI_COMPATIBLE_DEFAULT_URL,
         apiKey: apiKey.keyFull || undefined,
+        customFetch: createOpenAICompatibleFetch(apiKey.id),
       }),
   };
 }
@@ -223,6 +292,7 @@ const AZURE_OPENAI_CONFIG: ProviderFormConfig = {
     return azureOpenAITestIntegration({
       apiKey: key,
       endpoint: apiKey.baseUrl,
+      customFetch: secureFetch,
     });
   },
 };
@@ -265,6 +335,7 @@ export function getProviderFormConfig(
     return context === "transcription" ? AZURE_STT_CONFIG : AZURE_OPENAI_CONFIG;
   }
   if (provider === "ollama") return OLLAMA_CONFIG;
+  if (provider === "assemblyai") return ASSEMBLYAI_CONFIG;
   if (provider === "openai-compatible")
     return getOpenAICompatibleConfig(context);
   if (provider === "speaches") return SPEACHES_CONFIG;

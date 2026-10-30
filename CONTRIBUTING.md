@@ -7,7 +7,6 @@ We are not actively accepting contributions right now.
 You can still open an issue or PR, but please do so knowing there is a high chance we close it, defer it forever, or never look at it.
 
 If that sounds annoying, that is because it is. This project is still early and we are trying to keep scope, quality, and direction under control.
- 
 
 ## What We Are Most Likely To Accept
 

@@ -5,7 +5,7 @@ sidebar:
   order: 5
 ---
 
-Open **Settings → General → Hotkey shortcuts**. Click a key box, press the complete combination, then release it. Changes are written immediately; closing the dialog is not a separate save step. Pressing `Escape` before entering a combination leaves key capture.
+Open **Settings → Shortcuts → Hotkey shortcuts**. Click a key box, press the complete combination, then release it. Changes are written immediately; closing the dialog is not a separate save step. Pressing `Escape` before entering a combination leaves key capture.
 
 ## Available actions
 

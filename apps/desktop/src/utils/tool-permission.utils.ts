@@ -1,19 +1,47 @@
+import { withLocalDataWriteSync } from "./local-data-write-gate";
 import { getLocalStorage } from "./local-storage.utils";
 
 const TOOL_ALWAYS_ALLOW_PREFIX = "tool_always_allow:";
 
-export const getToolAlwaysAllow = (toolId: string): boolean => {
+/**
+ * Always-allow decisions are scoped rather than one global switch. Existing
+ * keys remain valid as the global scope for backwards compatibility.
+ */
+export const getToolAlwaysAllow = (
+  toolId: string,
+  scope = "global",
+): boolean => {
   const storage = getLocalStorage();
   if (!storage) return false;
-  return storage.getItem(`${TOOL_ALWAYS_ALLOW_PREFIX}${toolId}`) === "true";
+  const scopedKey = `${TOOL_ALWAYS_ALLOW_PREFIX}${scope}:${toolId}`;
+  return (
+    storage.getItem(scopedKey) === "true" ||
+    storage.getItem(`${TOOL_ALWAYS_ALLOW_PREFIX}global:${toolId}`) === "true" ||
+    storage.getItem(`${TOOL_ALWAYS_ALLOW_PREFIX}${toolId}`) === "true"
+  );
 };
 
-export const setToolAlwaysAllow = (toolId: string, allowed: boolean): void => {
+export const setToolAlwaysAllow = (
+  toolId: string,
+  allowed: boolean,
+  scope = "global",
+): void => {
   const storage = getLocalStorage();
   if (!storage) return;
-  if (allowed) {
-    storage.setItem(`${TOOL_ALWAYS_ALLOW_PREFIX}${toolId}`, "true");
-  } else {
-    storage.removeItem(`${TOOL_ALWAYS_ALLOW_PREFIX}${toolId}`);
-  }
+  const key = `${TOOL_ALWAYS_ALLOW_PREFIX}${scope}:${toolId}`;
+  withLocalDataWriteSync(() => {
+    try {
+      if (allowed) {
+        storage.setItem(key, "true");
+      } else {
+        storage.removeItem(key);
+        // Legacy unscoped keys predate per-conversation grants. Always drop
+        // them on revoke so a leftover `tool_always_allow:<id>` cannot keep
+        // auto-executing after the new scoped path says no.
+        storage.removeItem(`${TOOL_ALWAYS_ALLOW_PREFIX}${toolId}`);
+      }
+    } catch (error) {
+      console.error("Unable to update tool permission in localStorage:", error);
+    }
+  });
 };

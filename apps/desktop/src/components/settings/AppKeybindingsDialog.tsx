@@ -79,7 +79,7 @@ export const AppKeybindingsDialog = () => {
   return (
     <Dialog open={open} onClose={handleClose} maxWidth="sm" fullWidth>
       <DialogTitle>
-        <FormattedMessage defaultMessage="Text Insertion Options" />
+        <FormattedMessage defaultMessage="Text insertion options" />
       </DialogTitle>
       <DialogContent>
         <Typography

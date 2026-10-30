@@ -11,9 +11,21 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { FormattedMessage } from "react-intl";
 import { produceAppState, useAppStore } from "../../store";
+import { resetAutoLearnSessionState } from "../../actions/edit-watch.actions";
+import {
+  clearAppLocalStorage,
+  removeLocalDataClearPendingMarker,
+} from "../../utils/local-data-storage.utils";
+import {
+  beginLocalDataClear,
+  hasPendingLocalDataClear,
+} from "../../utils/local-data-write-gate";
+import { getLogger } from "../../utils/log.utils";
+import { disableAnalyticsPersistenceForLocalDataClear } from "../../utils/analytics-persistence.utils";
+import { resetPendingTranscriptionDeletes } from "../../utils/pending-transcription-delete";
 
 const CONFIRMATION_PHRASE = "clear";
 
@@ -21,9 +33,25 @@ export const ClearLocalDataDialog = () => {
   const open = useAppStore((state) => state.settings.clearLocalDataDialogOpen);
   const [confirmationValue, setConfirmationValue] = useState("");
   const [isClearing, setIsClearing] = useState(false);
+  const [clearStarted, setClearStarted] = useState(false);
+  const [recoveryRequired, setRecoveryRequired] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const clearStartedRef = useRef(false);
+  const releaseClearRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => {
+    if (!hasPendingLocalDataClear()) return;
+
+    clearStartedRef.current = true;
+    setClearStarted(true);
+    setRecoveryRequired(true);
+    produceAppState((draft) => {
+      draft.settings.clearLocalDataDialogOpen = true;
+    });
+  }, []);
 
   const handleClose = () => {
+    if (clearStartedRef.current) return;
     produceAppState((draft) => {
       draft.settings.clearLocalDataDialogOpen = false;
     });
@@ -41,15 +69,19 @@ export const ClearLocalDataDialog = () => {
     }
 
     setIsClearing(true);
+    setRecoveryRequired(false);
     setErrorMessage(null);
-
     try {
-      // Tear down long-running native subsystems BEFORE wiping the DB and
-      // reloading. If a recorder or global key listener is left running
-      // past `clear_local_data`, its in-flight callbacks will race the
-      // page reload against a now-empty / VACUUM'd database and emit
-      // errors into the fresh session. Best-effort: ignore per-command
-      // failures (there may not be an active recording/listener to stop).
+      if (!releaseClearRef.current) {
+        releaseClearRef.current = await beginLocalDataClear();
+        disableAnalyticsPersistenceForLocalDataClear();
+        clearStartedRef.current = true;
+        setClearStarted(true);
+      }
+
+      // Tear down long-running native subsystems before wiping the DB. Native
+      // clear also stops remote pairing and drains its in-flight writes.
+      // Best-effort: these commands fail when nothing is active.
       try {
         await invoke("stop_key_listener");
       } catch {
@@ -62,13 +94,15 @@ export const ClearLocalDataDialog = () => {
       }
 
       await invoke("clear_local_data");
-      handleClose();
-      // A hard reload is the simplest way to flush every in-memory store
-      // (Zustand, React state, transcription sessions, subscription
-      // handles) that may still hold references to wiped data.
+      resetPendingTranscriptionDeletes();
+      resetAutoLearnSessionState();
+      clearAppLocalStorage();
+      await invoke("complete_local_data_clear");
+      removeLocalDataClearPendingMarker();
+      // Keep the browser-side gate closed until this reload resets the stores.
       window.location.reload();
     } catch (error) {
-      console.error("Failed to clear local data", error);
+      getLogger().error("Failed to clear local data", error);
       const message =
         error instanceof Error ? error.message : "Failed to clear local data.";
       setErrorMessage(message);
@@ -77,7 +111,12 @@ export const ClearLocalDataDialog = () => {
   };
 
   return (
-    <Dialog open={open} onClose={handleClose} fullWidth maxWidth="sm">
+    <Dialog
+      open={open}
+      onClose={isClearing || clearStarted ? undefined : handleClose}
+      fullWidth
+      maxWidth="sm"
+    >
       <DialogTitle>
         <FormattedMessage defaultMessage="Clear local data" />
       </DialogTitle>
@@ -123,6 +162,11 @@ export const ClearLocalDataDialog = () => {
             autoCorrect="off"
             spellCheck={false}
           />
+          {recoveryRequired && !errorMessage && (
+            <Alert severity="warning" variant="outlined">
+              <FormattedMessage defaultMessage="A previous clear was interrupted. Retry to finish deleting local data." />
+            </Alert>
+          )}
           {errorMessage && (
             <Alert severity="error" variant="outlined">
               {errorMessage}
@@ -131,7 +175,7 @@ export const ClearLocalDataDialog = () => {
         </Stack>
       </DialogContent>
       <DialogActions>
-        <Button onClick={handleClose} disabled={isClearing}>
+        <Button onClick={handleClose} disabled={isClearing || clearStarted}>
           <FormattedMessage defaultMessage="Cancel" />
         </Button>
         <Button

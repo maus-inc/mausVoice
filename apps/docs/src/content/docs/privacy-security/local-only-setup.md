@@ -5,7 +5,7 @@ sidebar:
   order: 2
 ---
 
-For ordinary dictation, choose **Settings → Processing → AI transcription → Local**, download and select a validated model, then set **AI post processing → Off**. Keep Assistant mode disabled and multi-device output disconnected. After the model download, that core audio-to-final-text path does not require a hosted AI provider.
+For ordinary dictation, choose **Settings → AI and processing → AI transcription → Local**, download and select a validated model, then set **AI post processing → Off**. Keep Assistant mode disabled and multi-device output disconnected. After the model download, that core audio-to-final-text path does not require a hosted AI provider.
 
 "Local" still has boundaries:
 

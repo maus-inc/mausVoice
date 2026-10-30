@@ -1,15 +1,40 @@
+import { mockAssemblyAITranscription } from "../../test/helpers/assemblyai-fetch-mock";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { INITIAL_APP_STATE } from "../state/app.state";
+import * as voiceAi from "@maus-inc/voice-ai";
+import { INITIAL_APP_STATE, type AppState } from "../state/app.state";
 import { setAppState } from "../store";
 import { getModelProviderRepo, getTranscribeAudioRepo } from ".";
+
+const transcribeUtilMock = vi.hoisted(() => vi.fn());
+vi.mock("../utils/openai-compatible-transcribe.utils", () => ({
+  openaiCompatibleTranscribeAudio: (...args: unknown[]) =>
+    transcribeUtilMock(...args),
+}));
 import {
   AssemblyAITranscribeAudioRepo,
   BaseTranscribeAudioRepo,
   DeepgramTranscribeAudioRepo,
+  ElevenLabsTranscribeAudioRepo,
+  GladiaTranscribeAudioRepo,
+  GroqTranscribeAudioRepo,
   LocalTranscribeAudioRepo,
+  OpenAICompatibleTranscribeAudioRepo,
+  OpenAITranscribeAudioRepo,
+  OpenRouterTranscribeAudioRepo,
   TranscribeAudioOutput,
   TranscribeSegmentInput,
 } from "./transcribe-audio.repo";
+import { type TranscriptionSegment } from "../utils/hallucination.utils";
+import { createDefaultPreferences } from "../actions/user.actions";
+
+vi.mock("../utils/log.utils", () => ({
+  getLogger: () => ({
+    info: vi.fn(),
+    warning: vi.fn(),
+    error: vi.fn(),
+    verbose: vi.fn(),
+  }),
+}));
 
 /**
  * Mock implementation that tracks calls and returns predictable text
@@ -28,6 +53,10 @@ class MockTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       input: TranscribeSegmentInput,
       index: number,
     ) => string,
+    private segmentGenerator?: (
+      input: TranscribeSegmentInput,
+      index: number,
+    ) => TranscriptionSegment[] | undefined,
   ) {
     super();
   }
@@ -66,8 +95,13 @@ class MockTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       ? this.transcriptGenerator(input, index)
       : `segment ${index}`;
 
+    const segments = this.segmentGenerator
+      ? this.segmentGenerator(input, index)
+      : undefined;
+
     return {
       text,
+      segments,
       metadata: {
         inferenceDevice: "Mock Device",
         modelSize: "mock",
@@ -77,9 +111,20 @@ class MockTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   }
 }
 
-// Helper to create samples of a specific duration
-const createSamples = (durationSec: number, sampleRate: number): Float32Array =>
-  new Float32Array(Math.floor(durationSec * sampleRate));
+// Helper to create samples of a specific duration. Fill with a low-amplitude
+// tone so the energy-based silence gate treats the audio as speech (all-zero
+// samples are correctly classified as silence and short-circuit the network
+// call, which the splitting/batching tests below do not expect).
+const createSamples = (
+  durationSec: number,
+  sampleRate: number,
+): Float32Array => {
+  const samples = new Float32Array(Math.floor(durationSec * sampleRate));
+  for (let i = 0; i < samples.length; i++) {
+    samples[i] = 0.1 * Math.sin((2 * Math.PI * 220 * i) / sampleRate);
+  }
+  return samples;
+};
 
 const resetStore = () => {
   setAppState(structuredClone(INITIAL_APP_STATE), true);
@@ -168,6 +213,102 @@ describe("BaseTranscribeAudioRepo", () => {
 
       expect(result.text).toBe("Hello world Goodbye moon See you later");
     });
+
+    it("applies probability-gated silence handling to each chunk before merging long audio", async () => {
+      // Each chunk returns one real segment plus a near-certain-silence
+      // segment (no_speech_prob >= 0.9). The repo must drop the silent segment
+      // per-chunk (not just for single-segment audio) before overlap-merging,
+      // so long recordings still get the probability gate.
+      const chunkTexts = [
+        "The cat sat still.",
+        "A dog ran home.",
+        "Birds flew away.",
+      ];
+      const repo = new MockTranscribeAudioRepo(
+        10,
+        2,
+        3,
+        (_input, index) => chunkTexts[index] ?? "",
+        (_input, index) => [
+          { text: chunkTexts[index] ?? "", noSpeechProb: 0.1 },
+          { text: "[BLANK_AUDIO]", noSpeechProb: 0.99 },
+        ],
+      );
+      const sampleRate = 16000;
+      const samples = createSamples(25, sampleRate);
+
+      const result = await repo.transcribeAudio({ samples, sampleRate });
+
+      expect(result.text).not.toContain("[BLANK_AUDIO]");
+      expect(result.text).toBe(
+        "The cat sat still. A dog ran home. Birds flew away.",
+      );
+    });
+
+    it("keeps confidently decoded chunks whose window reports a high no_speech_prob", async () => {
+      const chunkTexts = [
+        "The cat sat still.",
+        "A dog ran home.",
+        "Birds flew away.",
+      ];
+      const repo = new MockTranscribeAudioRepo(
+        10,
+        2,
+        3,
+        (_input, index) => chunkTexts[index] ?? "",
+        (_input, index) => [
+          {
+            text: chunkTexts[index] ?? "",
+            noSpeechProb: 0.97,
+            avgLogprob: -0.3,
+          },
+        ],
+      );
+      const sampleRate = 16000;
+
+      const result = await repo.transcribeAudio({
+        samples: createSamples(25, sampleRate),
+        sampleRate,
+      });
+
+      expect(result.text).toBe(
+        "The cat sat still. A dog ran home. Birds flew away.",
+      );
+    });
+
+    it("preserves each chunk's raw text when hallucination filtering is disabled on long audio", async () => {
+      // Mirrors the enabled-path test above but with the off switch on: every
+      // chunk still has a near-certain-silence segment, but the repo must merge
+      // raw chunk text unchanged so the off switch works for multi-chunk audio.
+      const chunkTexts = [
+        "The cat sat still.",
+        "A dog ran home.",
+        "Birds flew away.",
+      ];
+      const repo = new MockTranscribeAudioRepo(
+        10,
+        2,
+        3,
+        (_input, index) => `${chunkTexts[index] ?? ""} [BLANK_AUDIO]`,
+        (_input, index) => [
+          { text: chunkTexts[index] ?? "", noSpeechProb: 0.1 },
+          { text: "[BLANK_AUDIO]", noSpeechProb: 0.99 },
+        ],
+      );
+      const sampleRate = 16000;
+      const samples = createSamples(25, sampleRate);
+
+      const result = await repo.transcribeAudio({
+        samples,
+        sampleRate,
+        hallucinationFilterEnabled: false,
+      });
+
+      expect(result.text).toContain("[BLANK_AUDIO]");
+      expect(result.text).toBe(
+        "The cat sat still. [BLANK_AUDIO] A dog ran home. [BLANK_AUDIO] Birds flew away. [BLANK_AUDIO]",
+      );
+    });
   });
 
   describe("batching behavior", () => {
@@ -254,6 +395,31 @@ describe("BaseTranscribeAudioRepo", () => {
       }
     });
 
+    it("passes the abort signal to every segment and skips segments after an abort", async () => {
+      const controller = new AbortController();
+      // Batch size 2 over 3 segments: the abort lands while the first batch
+      // is in flight, so the second batch must never start and nothing may
+      // reject unobserved.
+      const repo = new MockTranscribeAudioRepo(10, 2, 2, (_input, index) => {
+        if (index === 0) controller.abort();
+        return `segment ${index}`;
+      });
+      const sampleRate = 16000;
+
+      await expect(
+        repo.transcribeAudio({
+          samples: createSamples(25, sampleRate),
+          sampleRate,
+          signal: controller.signal,
+        }),
+      ).rejects.toThrow();
+
+      expect(repo.segmentCalls).toHaveLength(2);
+      for (const call of repo.segmentCalls) {
+        expect(call.signal).toBe(controller.signal);
+      }
+    });
+
     it("should return metadata from first segment", async () => {
       const repo = new MockTranscribeAudioRepo(10, 2, 2);
       const sampleRate = 16000;
@@ -314,7 +480,11 @@ describe("DeepgramTranscribeAudioRepo", () => {
         { status: 200 },
       ),
     );
-    const repo = new DeepgramTranscribeAudioRepo("dg-key", null);
+    const repo = new DeepgramTranscribeAudioRepo(
+      "dg-key",
+      null,
+      globalThis.fetch,
+    );
 
     const result = await repo.transcribeAudio({
       samples: createSamples(1, 16000),
@@ -355,6 +525,121 @@ describe("DeepgramTranscribeAudioRepo", () => {
   });
 });
 
+describe("getTranscribeAudioRepo Gemini vocabulary gate", () => {
+  const geminiState = (model: string | undefined) => {
+    const state = structuredClone(INITIAL_APP_STATE);
+    state.settings.aiTranscription.mode = "api";
+    state.settings.aiTranscription.selectedApiKeyId = "gemini-key";
+    state.apiKeyById["gemini-key"] = {
+      id: "gemini-key",
+      name: "Gemini",
+      provider: "gemini",
+      createdAt: "2026-06-03T00:00:00.000Z",
+      keyFull: "gem-key",
+      transcriptionModel: model,
+    };
+    return state;
+  };
+
+  it("says so when the chosen general model cannot take the dictionary", () => {
+    // `getTranscriptionModels` offers general Gemini models as valid choices,
+    // and only a dedicated `-transcribe` model accepts `customVocabulary`. The
+    // gate used to disagree with the picker, so picking a general model sent no
+    // vocabulary and said nothing about it.
+    setAppState(geminiState("gemini-3.8-flash"), true);
+    const { warnings } = getTranscribeAudioRepo();
+    expect(warnings.join(" ")).toContain("dictionary");
+    expect(warnings.join(" ")).toContain("gemini-3.8-flash");
+  });
+
+  it("stays quiet for a dedicated transcribe model", () => {
+    setAppState(geminiState("gemini-3.5-transcribe"), true);
+    const { warnings } = getTranscribeAudioRepo();
+    expect(warnings.join(" ")).not.toContain("does not accept dictionary");
+  });
+
+  it("stays quiet when no model is pinned, since the default is a transcribe model", () => {
+    setAppState(geminiState(undefined), true);
+    const { warnings } = getTranscribeAudioRepo();
+    expect(warnings.join(" ")).not.toContain("does not accept dictionary");
+  });
+});
+
+describe("GladiaTranscribeAudioRepo", () => {
+  it("is selected with Gladia's supported model", () => {
+    const state = structuredClone(INITIAL_APP_STATE);
+    state.settings.aiTranscription.mode = "api";
+    state.settings.aiTranscription.selectedApiKeyId = "gladia-key";
+    state.apiKeyById["gladia-key"] = {
+      id: "gladia-key",
+      name: "Gladia",
+      provider: "gladia",
+      createdAt: "2026-08-19T00:00:00.000Z",
+      keyFull: "gladia-secret",
+      transcriptionModel: "solaria-1",
+    };
+    setAppState(state, true);
+
+    const { repo, apiKeyId } = getTranscribeAudioRepo();
+
+    expect(repo).toBeInstanceOf(GladiaTranscribeAudioRepo);
+    expect(apiKeyId).toBe("gladia-key");
+    expect(getModelProviderRepo("gladia").supportsTranscriptionModels()).toBe(
+      true,
+    );
+  });
+
+  it("uses 10-minute chunks, five-second overlap, and concurrency one", () => {
+    class InspectableGladiaRepo extends GladiaTranscribeAudioRepo {
+      getChunkingConfiguration() {
+        return {
+          duration: this.getSegmentDurationSec(),
+          overlap: this.getOverlapDurationSec(),
+          concurrency: this.getBatchChunkCount(),
+        };
+      }
+    }
+
+    const repo = new InspectableGladiaRepo("key", "solaria-1", {
+      vocabulary: [],
+      spellingDictionary: {},
+    });
+    expect(repo.getChunkingConfiguration()).toEqual({
+      duration: 600,
+      overlap: 5,
+      concurrency: 1,
+    });
+  });
+
+  it("records the normalized model rather than an unsupported persisted value", async () => {
+    const transcribe = vi
+      .spyOn(voiceAi, "gladiaTranscribeAudio")
+      .mockResolvedValue({
+        text: "recognized speech",
+        warnings: [
+          "Unsupported Gladia model “retired-model” was replaced with solaria-1.",
+        ],
+      });
+    const repo = new GladiaTranscribeAudioRepo("key", "retired-model", {
+      vocabulary: [],
+      spellingDictionary: {},
+    });
+
+    const result = await repo.transcribeAudio({
+      samples: createSamples(1, 16000),
+      sampleRate: 16000,
+    });
+
+    expect(transcribe).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "retired-model" }),
+    );
+    expect(result.metadata?.modelSize).toBe("solaria-1");
+    expect(result.warnings).toContain(
+      "Unsupported Gladia model “retired-model” was replaced with solaria-1.",
+    );
+  });
+});
+
 describe("AssemblyAITranscribeAudioRepo", () => {
   it("is selected for AssemblyAI API transcription preferences", () => {
     const state = structuredClone(INITIAL_APP_STATE);
@@ -377,43 +662,13 @@ describe("AssemblyAITranscribeAudioRepo", () => {
   });
 
   it("uploads audio, creates a transcript, and polls until completed", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation(
-      async (input: string | URL | Request, init?: RequestInit) => {
-        const url = String(input);
-        const method = init?.method ?? "GET";
+    mockAssemblyAITranscription("hello from assemblyai");
 
-        if (url.endsWith("/v2/upload")) {
-          return new Response(
-            JSON.stringify({
-              upload_url: "https://cdn.assemblyai.com/upload/abc123",
-            }),
-            { status: 200 },
-          );
-        }
-
-        if (url.endsWith("/v2/transcript") && method === "POST") {
-          return new Response(
-            JSON.stringify({ id: "transcript-1", status: "queued" }),
-            { status: 200 },
-          );
-        }
-
-        if (url.includes("/v2/transcript/")) {
-          return new Response(
-            JSON.stringify({
-              id: "transcript-1",
-              status: "completed",
-              text: "hello from assemblyai",
-            }),
-            { status: 200 },
-          );
-        }
-
-        return new Response("{}", { status: 404 });
-      },
+    const repo = new AssemblyAITranscribeAudioRepo(
+      "aa-key",
+      null,
+      globalThis.fetch,
     );
-
-    const repo = new AssemblyAITranscribeAudioRepo("aa-key");
     const result = await repo.transcribeAudio({
       samples: createSamples(1, 16000),
       sampleRate: 16000,
@@ -423,6 +678,50 @@ describe("AssemblyAITranscribeAudioRepo", () => {
     expect(result.text).toBe("hello from assemblyai");
     expect(result.metadata).toMatchObject({
       inferenceDevice: "API • AssemblyAI",
+      transcriptionMode: "api",
+    });
+  });
+
+  it("passes the configured speech model through and reports it in metadata", async () => {
+    const requests = mockAssemblyAITranscription("model aware transcript");
+
+    const repo = new AssemblyAITranscribeAudioRepo(
+      "aa-key",
+      "universal-2",
+      globalThis.fetch,
+    );
+    const result = await repo.transcribeAudio({
+      samples: createSamples(1, 16000),
+      sampleRate: 16000,
+    });
+
+    expect(requests.createBody).toMatchObject({
+      speech_models: ["universal-2"],
+      language_detection: true,
+    });
+    expect(result.metadata).toMatchObject({
+      inferenceDevice: "API • AssemblyAI",
+      modelSize: "universal-2",
+      transcriptionMode: "api",
+    });
+  });
+
+  it("reports the migrated successor of a legacy model in metadata", async () => {
+    mockAssemblyAITranscription("legacy migrated");
+
+    const repo = new AssemblyAITranscribeAudioRepo(
+      "aa-key",
+      "best",
+      globalThis.fetch,
+    );
+    const result = await repo.transcribeAudio({
+      samples: createSamples(1, 16000),
+      sampleRate: 16000,
+    });
+
+    expect(result.metadata).toMatchObject({
+      inferenceDevice: "API • AssemblyAI",
+      modelSize: "universal-3-5-pro",
       transcriptionMode: "api",
     });
   });
@@ -480,5 +779,768 @@ describe("provider capability and transcription dispatch agreement", () => {
         warning.includes("No transcription-capable API key selected"),
       ),
     ).toBe(true);
+  });
+});
+
+describe("OpenRouter transcription support", () => {
+  it("advertises OpenRouter as transcription-capable", () => {
+    expect(
+      getModelProviderRepo("openrouter").supportsTranscriptionModels(),
+    ).toBe(true);
+  });
+
+  it("dispatches an OpenRouter-selected key to OpenRouterTranscribeAudioRepo", () => {
+    const state = structuredClone(INITIAL_APP_STATE);
+    state.settings.aiTranscription.mode = "api";
+    state.settings.aiTranscription.selectedApiKeyId = "openrouter-key";
+    state.apiKeyById["openrouter-key"] = {
+      id: "openrouter-key",
+      name: "OpenRouter",
+      provider: "openrouter",
+      createdAt: "2026-06-03T00:00:00.000Z",
+      keyFull: "or-key",
+      transcriptionModel: "openai/whisper-1",
+    };
+    setAppState(state, true);
+
+    const { repo, apiKeyId, warnings } = getTranscribeAudioRepo();
+
+    expect(repo).toBeInstanceOf(OpenRouterTranscribeAudioRepo);
+    expect(apiKeyId).toBe("openrouter-key");
+    expect(warnings).toHaveLength(0);
+  });
+
+  it("warns when an OpenRouter key is selected without a transcription model", () => {
+    const state = structuredClone(INITIAL_APP_STATE);
+    state.settings.aiTranscription.mode = "api";
+    state.settings.aiTranscription.selectedApiKeyId = "openrouter-key";
+    state.apiKeyById["openrouter-key"] = {
+      id: "openrouter-key",
+      name: "OpenRouter",
+      provider: "openrouter",
+      createdAt: "2026-06-03T00:00:00.000Z",
+      keyFull: "or-key",
+      transcriptionModel: null,
+    };
+    setAppState(state, true);
+
+    const { warnings } = getTranscribeAudioRepo();
+
+    expect(
+      warnings.some((warning) => warning.includes("OpenRouter transcription")),
+    ).toBe(true);
+  });
+});
+
+describe("OpenAI-compatible transcription path override", () => {
+  it("dispatches an openai-compatible key to OpenAICompatibleTranscribeAudioRepo", () => {
+    const state = structuredClone(INITIAL_APP_STATE);
+    state.settings.aiTranscription.mode = "api";
+    state.settings.aiTranscription.selectedApiKeyId = "compat-key";
+    state.apiKeyById["compat-key"] = {
+      id: "compat-key",
+      name: "Compat",
+      provider: "openai-compatible",
+      createdAt: "2026-06-03T00:00:00.000Z",
+      keyFull: "ck",
+      baseUrl: "http://localhost:8080",
+      transcriptionModel: "whisper-1",
+    };
+    setAppState(state, true);
+
+    const { repo } = getTranscribeAudioRepo();
+
+    expect(repo).toBeInstanceOf(OpenAICompatibleTranscribeAudioRepo);
+  });
+
+  it("plumbs the saved transcription path into the segment request", async () => {
+    const state = structuredClone(INITIAL_APP_STATE);
+    state.settings.aiTranscription.mode = "api";
+    state.settings.aiTranscription.selectedApiKeyId = "compat-key";
+    state.apiKeyById["compat-key"] = {
+      id: "compat-key",
+      name: "Compat",
+      provider: "openai-compatible",
+      createdAt: "2026-06-03T00:00:00.000Z",
+      keyFull: "ck",
+      baseUrl: "http://localhost:8080",
+      transcriptionModel: "whisper-1",
+      transcriptionPath: "/custom/transcriptions",
+    };
+    setAppState(state, true);
+
+    const { repo } = getTranscribeAudioRepo();
+    expect(repo).toBeInstanceOf(OpenAICompatibleTranscribeAudioRepo);
+    transcribeUtilMock.mockResolvedValue({ text: "hello", segments: [] });
+
+    // The previous wiring read the field but never passed it on, so a custom
+    // path saved in the key dialog silently resolved to the default
+    // /v1/audio/transcriptions suffix.
+    const output = await (
+      repo as OpenAICompatibleTranscribeAudioRepo
+    ).transcribeAudio({
+      // Loud enough to pass the near-silence gate so the segment request
+      // actually reaches the mocked transport.
+      samples: new Float32Array(1600).fill(0.5),
+      sampleRate: 16000,
+      language: "en",
+    });
+
+    expect(output.text).toBe("hello");
+    expect(transcribeUtilMock).toHaveBeenCalledTimes(1);
+    expect(transcribeUtilMock.mock.calls[0]?.[0]).toMatchObject({
+      transcriptionPath: "/custom/transcriptions",
+    });
+  });
+});
+
+import {
+  filterLocalTranscriptionSegments,
+  NO_SPEECH_PROB_THRESHOLD,
+  type LocalTranscriptionSegment,
+} from "./transcribe-audio.repo";
+
+describe("filterLocalTranscriptionSegments", () => {
+  it("drops high-noSpeechProb hallucination fragments", () => {
+    expect(NO_SPEECH_PROB_THRESHOLD).toBe(0.6);
+    const segments: LocalTranscriptionSegment[] = [
+      { text: "Hello there", noSpeechProb: 0.1 },
+      { text: "you", noSpeechProb: 0.95 },
+      { text: "thank you", noSpeechProb: 0.95 },
+      { text: "", noSpeechProb: 0.95 },
+    ];
+    expect(filterLocalTranscriptionSegments(segments)).toBe("Hello there");
+  });
+
+  // Regression test for the review finding: short real words ("no", "ok",
+  // "hi", a name) can carry an elevated noSpeechProb on quiet recordings.
+  // Length alone must not decide the drop — only known hallucination
+  // fragments or pure noise should be removed.
+  it("keeps short real words even when noSpeechProb is elevated", () => {
+    const segments: LocalTranscriptionSegment[] = [
+      { text: "yes", noSpeechProb: 0.7 },
+      { text: "no", noSpeechProb: 0.75 },
+      { text: "ok", noSpeechProb: 0.65 },
+      { text: "hi", noSpeechProb: 0.7 },
+    ];
+    expect(filterLocalTranscriptionSegments(segments)).toBe("yes no ok hi");
+  });
+
+  it("keeps high-noSpeechProb segments when text is a real sentence", () => {
+    const long = "this is a real sentence that whisper is confident about";
+    const segments: LocalTranscriptionSegment[] = [
+      { text: long, noSpeechProb: 0.95 },
+    ];
+    expect(filterLocalTranscriptionSegments(segments)).toBe(long);
+  });
+
+  it("keeps all segments when noSpeechProb is below the threshold", () => {
+    const segments: LocalTranscriptionSegment[] = [
+      { text: "short", noSpeechProb: 0.5 },
+      { text: "another short one", noSpeechProb: 0.3 },
+    ];
+    expect(filterLocalTranscriptionSegments(segments)).toBe(
+      "short another short one",
+    );
+  });
+
+  it("returns an empty string for an empty input", () => {
+    expect(filterLocalTranscriptionSegments([])).toBe("");
+  });
+
+  it("strips pure-punctuation noise segments", () => {
+    const segments: LocalTranscriptionSegment[] = [
+      { text: "Hi", noSpeechProb: 0.1 },
+      { text: ".", noSpeechProb: 0.9 },
+      { text: "  ", noSpeechProb: 0.9 },
+      { text: "there", noSpeechProb: 0.1 },
+    ];
+    expect(filterLocalTranscriptionSegments(segments)).toBe("Hi there");
+  });
+
+  it("is a building block the local repo composes with a narrow output.text fallback for ONNX models", () => {
+    // The Rust ONNX branch returns `segments: Vec::new()` and populates
+    // `text` directly, so the repo layer must fall back to `output.text`
+    // in that case. But when the sidecar DID emit segments and the
+    // filter dropped them all, the empty result must win over
+    // `output.text` so the silence-hallucination filter still removes
+    // stray "thank you" / "you" fragments.
+    const resolveText = (
+      segments: LocalTranscriptionSegment[],
+      outputText: string,
+    ) =>
+      segments.length === 0
+        ? (outputText ?? "")
+        : filterLocalTranscriptionSegments(segments);
+
+    // ONNX: empty segments, text populated → use output.text
+    expect(resolveText([], "this is the onnx output")).toBe(
+      "this is the onnx output",
+    );
+
+    // Whisper with valid segments → filter wins, even if raw text contains
+    // a known hallucination fragment.
+    const segments: LocalTranscriptionSegment[] = [
+      { text: "thank you", noSpeechProb: 0.95 },
+      { text: "you", noSpeechProb: 0.95 },
+    ];
+    expect(resolveText(segments, "thank you you")).toBe("");
+
+    // Whisper with at least one good segment → keep that segment.
+    const mixed: LocalTranscriptionSegment[] = [
+      { text: "thank you", noSpeechProb: 0.95 },
+      { text: "hello world", noSpeechProb: 0.1 },
+    ];
+    expect(resolveText(mixed, "thank you hello world")).toBe("hello world");
+  });
+});
+
+describe("per-segment silence gate (mixed recordings)", () => {
+  it("skips a silent chunk but transcribes a loud chunk in the same recording", async () => {
+    // Two 10s segments: first is a tone (speech-level energy), second
+    // is digital silence. The per-chunk gate must skip the second while
+    // the first is still sent to the provider.
+    const sampleRate = 16000;
+    const samples = new Float32Array(sampleRate * 20);
+    for (let i = 0; i < sampleRate * 10; i++) {
+      samples[i] = 0.1 * Math.sin((2 * Math.PI * 220 * i) / sampleRate);
+    }
+    // indices sampleRate*10 .. end stay 0 (silent)
+
+    // overlapDuration = 0 so the split is exactly [0,10) tone and
+    // [10,20) silence (no mixing of the two regions).
+    const repo = new MockTranscribeAudioRepo(10, 0, 1);
+    const result = await repo.transcribeAudio({
+      samples,
+      sampleRate,
+      prompt: "glossary",
+      language: "en",
+    });
+
+    // Only the first, loud segment reached transcribeSegment.
+    expect(repo.segmentCalls).toHaveLength(1);
+    expect(repo.segmentCalls[0]?.samples.length).toBe(sampleRate * 10);
+    // The result comes from the loud segment only (silent one is "").
+    expect(result.text).toContain("segment 0");
+    expect(result.text).not.toContain("segment 1");
+  });
+
+  it("still sends every chunk when the hallucination filter is disabled", async () => {
+    const sampleRate = 16000;
+    const samples = new Float32Array(sampleRate * 20); // fully silent
+
+    const repo = new MockTranscribeAudioRepo(10, 0, 1);
+    await repo.transcribeAudio({
+      samples,
+      sampleRate,
+      hallucinationFilterEnabled: false,
+    });
+
+    // With overlap 0 a 20s clip splits into two segments, and the filter
+    // being off means even the silent one is sent to the provider.
+    expect(repo.segmentCalls).toHaveLength(2);
+  });
+
+  it("preserves provider metadata from subsequent chunks when leading chunk is silent", async () => {
+    const sampleRate = 16000;
+    const samples = new Float32Array(sampleRate * 20);
+    // Silent for first 10 seconds, audible for next 10 seconds
+    for (let i = sampleRate * 10; i < sampleRate * 20; i++) {
+      samples[i] = 0.1 * Math.sin((2 * Math.PI * 220 * i) / sampleRate);
+    }
+
+    const repo = new MockTranscribeAudioRepo(
+      10,
+      0,
+      1,
+      (_input, _index) => "loud speech",
+    );
+
+    const result = await repo.transcribeAudio({
+      samples,
+      sampleRate,
+    });
+
+    expect(result.text).toBe("loud speech");
+    expect(result.metadata).toEqual({
+      inferenceDevice: "Mock Device",
+      modelSize: "mock",
+      transcriptionMode: "local",
+    });
+  });
+
+  it("labels whole-clip silence with the repo's specific transcriptionMode", async () => {
+    const sampleRate = 16000;
+    const silentSamples = new Float32Array(sampleRate); // 1 second of zeros
+
+    const localRepo = new LocalTranscribeAudioRepo();
+    const result = await localRepo.transcribeAudio({
+      samples: silentSamples,
+      sampleRate,
+    });
+
+    expect(result.text).toBe("");
+    expect(result.metadata?.transcriptionMode).toBe("local");
+  });
+});
+
+describe("ElevenLabs keyterms gating", () => {
+  const buildElevenLabsState = (): AppState => {
+    const state = structuredClone(INITIAL_APP_STATE);
+    state.settings.aiTranscription.mode = "api";
+    state.settings.aiTranscription.selectedApiKeyId = "elevenlabs-key";
+    state.apiKeyById["elevenlabs-key"] = {
+      id: "elevenlabs-key",
+      name: "ElevenLabs",
+      provider: "elevenlabs",
+      createdAt: "2026-08-19T00:00:00.000Z",
+      keyFull: "el-key",
+      transcriptionModel: null,
+    };
+    state.termById["t1"] = {
+      id: "t1",
+      createdAt: "2026-08-19T00:00:00.000Z",
+      sourceValue: "Soniya",
+      destinationValue: "",
+      isReplacement: false,
+    };
+    state.dictionary.termIds = ["t1"];
+    return state;
+  };
+
+  const keytermsOf = (repo: unknown): string[] =>
+    (repo as { keyterms: string[] }).keyterms;
+
+  it("sends no keyterms when the opt-in is off, even with a non-empty dictionary", () => {
+    // userPrefs stays null (the INITIAL_APP_STATE default), so the preference
+    // reads as false and ElevenLabs is never billed the 20% surcharge.
+    setAppState(buildElevenLabsState(), true);
+
+    const { repo } = getTranscribeAudioRepo();
+
+    expect(repo).toBeInstanceOf(ElevenLabsTranscribeAudioRepo);
+    expect(keytermsOf(repo)).toEqual([]);
+  });
+
+  it("sends the dictionary as keyterms once the user opts in", () => {
+    const state = buildElevenLabsState();
+    state.userPrefs = {
+      ...createDefaultPreferences(),
+      elevenLabsKeytermsEnabled: true,
+    };
+    setAppState(state, true);
+
+    const { repo } = getTranscribeAudioRepo();
+
+    expect(repo).toBeInstanceOf(ElevenLabsTranscribeAudioRepo);
+    expect(keytermsOf(repo)).toContain("Soniya");
+  });
+});
+
+describe("every transcription provider goes through the app's fetch", () => {
+  // The providers that take an injected fetch only get the redaction and the
+  // certificate checks the app relies on when the production factory hands one
+  // over. OpenRouter's repository took no fetch at all, so the SDK used its own
+  // transport in production while its unit tests were the ones running through
+  // the secure wrapper -- the same green suite, a different runtime.
+  it("the OpenRouter repository built by the factory still binds a caller fetch", async () => {
+    const seen: unknown[] = [];
+    vi.spyOn(voiceAi, "openrouterTranscribeAudio").mockImplementation(
+      (args) => {
+        seen.push(args.customFetch);
+        return Promise.resolve({ text: "hello", wordsUsed: 1 });
+      },
+    );
+    const state = structuredClone(INITIAL_APP_STATE);
+    state.settings.aiTranscription.mode = "api";
+    state.settings.aiTranscription.selectedApiKeyId = "openrouter-key";
+    state.apiKeyById["openrouter-key"] = {
+      id: "openrouter-key",
+      name: "OpenRouter",
+      provider: "openrouter",
+      createdAt: "2026-06-03T00:00:00.000Z",
+      keyFull: "or-key",
+      transcriptionModel: "openai/whisper-1",
+    };
+    setAppState(state, true);
+
+    const { repo } = getTranscribeAudioRepo();
+    expect(repo).toBeInstanceOf(OpenRouterTranscribeAudioRepo);
+
+    await repo.transcribeAudio({
+      samples: createSamples(1, 16000),
+      sampleRate: 16000,
+    });
+
+    // The repository's own fetch, not a default the SDK invented for itself.
+    // `undefined` here is the bug: the SDK falls back to its own transport,
+    // which is not the app's, so nothing downstream sees this request at all.
+    expect(seen[0]).toBeTypeOf("function");
+  });
+});
+
+describe("provider requests honor the abort signal", () => {
+  it("binds the caller's signal into every provider fetch", async () => {
+    const baseFetch = vi.fn<typeof fetch>(() =>
+      Promise.resolve(new Response("{}")),
+    );
+    vi.spyOn(voiceAi, "groqTranscribeAudio").mockImplementation(
+      async ({ customFetch }) => {
+        await customFetch?.("https://api.groq.com/test", { method: "POST" });
+        return { text: "hello", wordsUsed: 1 };
+      },
+    );
+    const controller = new AbortController();
+    const repo = new GroqTranscribeAudioRepo("key", null, baseFetch);
+
+    await repo.transcribeAudio({
+      samples: createSamples(1, 16000),
+      sampleRate: 16000,
+      signal: controller.signal,
+    });
+
+    const init = baseFetch.mock.calls[0][1];
+    expect(init?.method).toBe("POST");
+    expect(init?.signal?.aborted).toBe(false);
+    controller.abort();
+    expect(init?.signal?.aborted).toBe(true);
+  });
+});
+
+describe("Gemini is handed the abort signal, not just a wrapped fetch", () => {
+  // Every sibling provider that takes a signal passes it -- Aldea, Azure, Speaches,
+  // OpenRouter (signal: lines :485, :728, :870, :963). Gemini passed only
+  // `customFetch: withAbortSignal(secureFetch, input.signal)`, which binds the
+  // abort to the HTTP requests and to nothing else. `GeminiTranscriptionArgs`
+  // declares `signal` for exactly this, documented as "Aborts the request and
+  // stops any retry loop when cancelled", and it was never passed.
+  //
+  // The cost is a long tail after the user cancels: the poll loop in
+  // `gemini.utils.ts` sleeps between attempts with `delay(filePollInterval(attempt),
+  // signal)`, and that signal is `withDeadlineSignal(signal)` -- which folds in the
+  // caller's signal only if one was given. With none, a cancel left the loop running
+  // to its own FILE_POLL_DEADLINE_MS. Measured against the real module: 31,150ms and
+  // 19 polls after an abort at 300ms, against 302ms and 2 polls once the signal is
+  // passed.
+  it("passes input.signal to geminiTranscribeAudio", async () => {
+    const { GeminiTranscribeAudioRepo } =
+      await import("./transcribe-audio.repo");
+    const geminiMock = vi
+      .spyOn(voiceAi, "geminiTranscribeAudio")
+      .mockImplementation(() => Promise.resolve({ text: "ok", wordsUsed: 1 }));
+
+    const controller = new AbortController();
+    const repo = new GeminiTranscribeAudioRepo(
+      "key",
+      "gemini-3.5-transcribe",
+      [],
+    );
+    await repo.transcribeAudio({
+      samples: createSamples(1, 16000),
+      sampleRate: 16000,
+      signal: controller.signal,
+    });
+
+    const args = geminiMock.mock.calls[0]?.[0];
+    expect(args?.signal).toBe(controller.signal);
+    // The wrapped fetch is still there and still separate: it is what binds the
+    // abort to the SDK-style fetches inside the util, so removing it would regress
+    // those even with the signal threaded through.
+    expect(typeof args?.customFetch).toBe("function");
+  });
+});
+
+describe("GeminiTranscribeAudioRepo fallback", () => {
+  it("falls back to first non-transcribe model on 403/404", async () => {
+    const { GeminiTranscribeAudioRepo } =
+      await import("./transcribe-audio.repo");
+    const geminiMock = vi.spyOn(voiceAi, "geminiTranscribeAudio");
+    // First call: transcribe model fails with 403
+    geminiMock.mockImplementationOnce(() => {
+      const err = new Error("forbidden") as Error & { status?: number };
+      err.status = 403;
+      return Promise.reject(err);
+    });
+    // Second call: fallback succeeds
+    geminiMock.mockImplementationOnce(() =>
+      Promise.resolve({ text: "fallback ok", wordsUsed: 2 }),
+    );
+
+    const repo = new GeminiTranscribeAudioRepo(
+      "key",
+      "gemini-3.5-transcribe",
+      [],
+    );
+    const result = await repo.transcribeAudio({
+      samples: createSamples(1, 16000),
+      sampleRate: 16000,
+    });
+    expect(result.text).toBe("fallback ok");
+    expect(result.metadata?.modelSize).not.toBe("gemini-3.5-transcribe");
+    expect(geminiMock).toHaveBeenCalledTimes(2);
+    // Second call should use non-transcribe model
+    const secondModel = geminiMock.mock.calls[1]?.[0]?.model;
+    expect(secondModel).not.toContain("-transcribe");
+  });
+
+  it("warns that the 403 fallback dropped the dictionary", async () => {
+    // `GEMINI_TRANSCRIPTION_MODELS` holds exactly one dedicated `-transcribe`
+    // id, so the fallback find always lands on a general model, and
+    // `transcribeWithGeneralModel` accepts neither `customVocabulary` nor
+    // `transcriptionMode`. The user's dictionary was dropped for the rest of
+    // the recording with no entry in `warnings` and so nothing on the history
+    // row. There is no second transcribe model to fall back to, so the
+    // fallback stays and has to report itself.
+    const { GeminiTranscribeAudioRepo } =
+      await import("./transcribe-audio.repo");
+    const geminiMock = vi.spyOn(voiceAi, "geminiTranscribeAudio");
+    geminiMock.mockImplementationOnce(() => {
+      const err = new Error("forbidden") as Error & { status?: number };
+      err.status = 403;
+      return Promise.reject(err);
+    });
+    geminiMock.mockImplementationOnce(() =>
+      Promise.resolve({ text: "fallback ok", wordsUsed: 2 }),
+    );
+
+    const repo = new GeminiTranscribeAudioRepo("key", "gemini-3.5-transcribe", [
+      "mausvoice",
+    ]);
+    const result = await repo.transcribeAudio({
+      samples: createSamples(1, 16000),
+      sampleRate: 16000,
+    });
+
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings?.[0]).toContain("dictionary");
+    expect(result.warnings?.[0]).toContain("gemini-3.5-transcribe");
+    // The dictionary really was configured, so this is a loss and not a no-op.
+    expect(geminiMock.mock.calls[0]?.[0]?.customVocabulary).toEqual([
+      "mausvoice",
+    ]);
+  });
+
+  it("returns no warnings when the model did not change", async () => {
+    const { GeminiTranscribeAudioRepo } =
+      await import("./transcribe-audio.repo");
+    const geminiMock = vi
+      .spyOn(voiceAi, "geminiTranscribeAudio")
+      .mockImplementation(() => Promise.resolve({ text: "ok", wordsUsed: 1 }));
+
+    const repo = new GeminiTranscribeAudioRepo("key", "gemini-3.5-transcribe", [
+      "mausvoice",
+    ]);
+    const result = await repo.transcribeAudio({
+      samples: createSamples(1, 16000),
+      sampleRate: 16000,
+    });
+
+    expect(geminiMock).toHaveBeenCalledTimes(1);
+    expect(result.warnings).toBeUndefined();
+  });
+
+  it("caches fallback model and does not re-probe on next segment", async () => {
+    const { GeminiTranscribeAudioRepo } =
+      await import("./transcribe-audio.repo");
+    const geminiMock = vi.spyOn(voiceAi, "geminiTranscribeAudio");
+    geminiMock.mockImplementationOnce(() => {
+      const err = new Error("not found") as Error & { status?: number };
+      err.status = 404;
+      return Promise.reject(err);
+    });
+    geminiMock.mockImplementation(() =>
+      Promise.resolve({ text: "ok", wordsUsed: 1 }),
+    );
+
+    const repo = new GeminiTranscribeAudioRepo(
+      "key",
+      "gemini-3.5-transcribe",
+      [],
+    );
+    // First call triggers fallback and caches
+    await repo.transcribeAudio({
+      samples: createSamples(1, 16000),
+      sampleRate: 16000,
+    });
+    expect(geminiMock).toHaveBeenCalledTimes(2);
+    geminiMock.mockClear();
+    // Second call should directly use cached fallback, not try transcribe model again
+    await repo.transcribeAudio({
+      samples: createSamples(1, 16000),
+      sampleRate: 16000,
+    });
+    expect(geminiMock).toHaveBeenCalledTimes(1);
+    const model = geminiMock.mock.calls[0]?.[0]?.model;
+    expect(model).not.toContain("-transcribe");
+  });
+
+  it("does not fallback for non-transcribe model 404", async () => {
+    const { GeminiTranscribeAudioRepo } =
+      await import("./transcribe-audio.repo");
+    const geminiMock = vi
+      .spyOn(voiceAi, "geminiTranscribeAudio")
+      .mockImplementation(() => {
+        const err = new Error("not found") as Error & { status?: number };
+        err.status = 404;
+        return Promise.reject(err);
+      });
+    const repo = new GeminiTranscribeAudioRepo("key", "gemini-3.8-flash", []);
+    await expect(
+      repo.transcribeAudio({
+        samples: createSamples(1, 16000),
+        sampleRate: 16000,
+      }),
+    ).rejects.toThrow();
+    expect(geminiMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not fallback for status-less error (network failure)", async () => {
+    const { GeminiTranscribeAudioRepo } =
+      await import("./transcribe-audio.repo");
+    const geminiMock = vi
+      .spyOn(voiceAi, "geminiTranscribeAudio")
+      .mockImplementation(() => {
+        return Promise.reject(new Error("network down"));
+      });
+    const repo = new GeminiTranscribeAudioRepo(
+      "key",
+      "gemini-3.5-transcribe",
+      [],
+    );
+    await expect(
+      repo.transcribeAudio({
+        samples: createSamples(1, 16000),
+        sampleRate: 16000,
+      }),
+    ).rejects.toThrow("network down");
+    expect(geminiMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("segment audio energy in the repo", () => {
+  const rate = 16_000;
+  // Quiet speech for the first 2 s, then room tone.
+  const samples = new Float32Array(rate * 5).map((_, i) =>
+    i < rate * 2 ? 0.05 * Math.sin((2 * Math.PI * 180 * i) / rate) : 0.0005,
+  );
+  const segments = [
+    {
+      text: "Call me back.",
+      noSpeechProb: 0.1,
+      avgLogprob: -0.2,
+      start: 0,
+      end: 2,
+    },
+    {
+      text: " Thanks.",
+      noSpeechProb: 0.95,
+      avgLogprob: -0.3,
+      start: 3,
+      end: 4.5,
+    },
+  ];
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("marks a confident segment over room tone using the chunk's audio", async () => {
+    vi.spyOn(voiceAi, "groqTranscribeAudio").mockResolvedValue({
+      text: "Call me back. Thanks.",
+      segments,
+    } as never);
+
+    const output = await new GroqTranscribeAudioRepo("k", null).transcribeAudio(
+      { samples, sampleRate: rate },
+    );
+
+    expect(output.segments?.map((segment) => segment.audioSilent)).toEqual([
+      undefined,
+      true,
+    ]);
+  });
+
+  it("leaves segments unmeasured when the filter is off", async () => {
+    vi.spyOn(voiceAi, "groqTranscribeAudio").mockResolvedValue({
+      text: "Call me back. Thanks.",
+      segments,
+    } as never);
+
+    const output = await new GroqTranscribeAudioRepo("k", null).transcribeAudio(
+      { samples, sampleRate: rate, hallucinationFilterEnabled: false },
+    );
+
+    expect(output.segments?.some((segment) => "audioSilent" in segment)).toBe(
+      false,
+    );
+  });
+});
+
+describe("provider segment hand-off to the silence gate", () => {
+  const providerSegments = [
+    {
+      text: "hello",
+      noSpeechProb: 0.2,
+      avgLogprob: -0.3,
+      tokens: [1, 2, 3],
+    },
+    { text: " there", noSpeechProb: "0.99", avgLogprob: null },
+  ];
+  const expected = [
+    { text: "hello", noSpeechProb: 0.2, avgLogprob: -0.3 },
+    { text: " there", noSpeechProb: undefined, avgLogprob: undefined },
+  ];
+  const input = {
+    samples: new Float32Array(1600).fill(0.5),
+    sampleRate: 16000,
+    hallucinationFilterEnabled: false,
+  };
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("Groq keeps avg_logprob and drops malformed or extra fields", async () => {
+    vi.spyOn(voiceAi, "groqTranscribeAudio").mockResolvedValue({
+      text: "hello there",
+      segments: providerSegments,
+    } as never);
+
+    const output = await new GroqTranscribeAudioRepo("k", null).transcribeAudio(
+      input,
+    );
+
+    expect(output.segments).toEqual(expected);
+  });
+
+  it("OpenAI keeps avg_logprob and drops malformed or extra fields", async () => {
+    vi.spyOn(voiceAi, "openaiTranscribeAudio").mockResolvedValue({
+      text: "hello there",
+      segments: providerSegments,
+    } as never);
+
+    const output = await new OpenAITranscribeAudioRepo(
+      "k",
+      null,
+    ).transcribeAudio(input);
+
+    expect(output.segments).toEqual(expected);
+  });
+
+  it("OpenAI-compatible passes the parser's segments through with avg_logprob", async () => {
+    // openaiCompatibleTranscribeAudio already validates segments (see its
+    // tests), so the repo must hand them on without dropping avgLogprob.
+    transcribeUtilMock.mockResolvedValue({
+      text: "hello there",
+      segments: expected,
+    });
+
+    const output = await new OpenAICompatibleTranscribeAudioRepo(
+      "key-id",
+      "https://example.com/v1",
+      "whisper-1",
+    ).transcribeAudio(input);
+
+    expect(output.segments).toEqual(expected);
   });
 });

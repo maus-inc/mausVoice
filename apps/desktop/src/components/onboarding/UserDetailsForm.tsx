@@ -1,5 +1,4 @@
-import { ArrowForward } from "@mui/icons-material";
-import { Box, Button, Stack, TextField, Typography } from "@mui/material";
+import { Box, Stack, TextField, Typography } from "@mui/material";
 import { FormattedMessage, useIntl } from "react-intl";
 import rocketImage from "../../assets/4-rocket.png";
 import { goToOnboardingPage } from "../../actions/onboarding.actions";
@@ -8,6 +7,8 @@ import { trackButtonClick } from "../../utils/analytics.utils";
 import {
   BackButton,
   DualPaneLayout,
+  OnboardingContinueButton,
+  OnboardingFormHeader,
   OnboardingFormLayout,
 } from "./OnboardingCommon";
 
@@ -65,36 +66,19 @@ export const UserDetailsForm = () => {
     <OnboardingFormLayout
       back={<BackButton />}
       actions={
-        <Button
-          variant="contained"
-          endIcon={<ArrowForward />}
+        <OnboardingContinueButton
           onClick={handleContinue}
           disabled={!canContinue}
-        >
-          <FormattedMessage defaultMessage="Continue" />
-        </Button>
+        />
       }
     >
       <Stack spacing={3}>
-        <Box>
-          <Typography
-            variant="h4"
-            sx={{
-              fontWeight: 600,
-              pb: 1,
-            }}
-          >
-            <FormattedMessage defaultMessage="Tell us about yourself" />
-          </Typography>
-          <Typography
-            variant="body1"
-            sx={{
-              color: "text.secondary",
-            }}
-          >
+        <OnboardingFormHeader
+          title={<FormattedMessage defaultMessage="Tell us about yourself" />}
+          subtitle={
             <FormattedMessage defaultMessage="This information helps personalize your experience." />
-          </Typography>
-        </Box>
+          }
+        />
 
         <Stack spacing={2}>
           <TextField

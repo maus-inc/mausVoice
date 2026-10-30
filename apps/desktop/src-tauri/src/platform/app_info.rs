@@ -400,4 +400,3 @@ mod prettify_app_name_tests {
         assert_eq!(prettify_app_name("___"), "___");
     }
 }
-
