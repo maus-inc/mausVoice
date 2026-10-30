@@ -210,31 +210,63 @@ describe("MicrophoneDialog save feedback", () => {
     expect(showErrorSnackbar).not.toHaveBeenCalled();
   });
 
-  it("keeps save failures inline without a global error toast", async () => {
-    setUserPreferences.mockRejectedValueOnce(new Error("storage unavailable"));
+  it("keeps save failures inline without dismissing during save or a global error toast", async () => {
+    let rejectSave: ((error: Error) => void) | undefined;
+    const save = new Promise<unknown>((_resolve, reject) => {
+      rejectSave = reject;
+    });
+    setUserPreferences.mockImplementation(() => save);
 
     openDialog();
     await renderDialog();
     await clickButton('[data-testid="select-test-microphone"]');
     await clickSave();
 
+    const dialogWhileSaving =
+      document.body.querySelector<HTMLElement>('[role="dialog"]');
+    const closeButton = Array.from(
+      dialogWhileSaving?.querySelectorAll("button") ?? [],
+    ).find((button) => button.textContent?.includes("Close"));
+    const modalRoot =
+      document.body.querySelector<HTMLElement>(".MuiModal-root");
+    const backdrop =
+      document.body.querySelector<HTMLElement>(".MuiBackdrop-root");
+    expect(closeButton?.disabled).toBe(true);
+    expect(modalRoot).not.toBeNull();
+    expect(backdrop).not.toBeNull();
+
     await act(async () => {
-      await expect
-        .poll(() =>
-          document.body
-            .querySelector('[role="dialog"]')
-            ?.textContent?.includes(
-              "Failed to save microphone preference. Please try again.",
-            ),
-        )
-        .toBe(true);
+      modalRoot?.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+      );
+      backdrop?.click();
     });
+    expect(document.body.querySelector('[role="dialog"]')).not.toBeNull();
+
+    await act(async () => {
+      rejectSave?.(new Error("storage unavailable"));
+      await save.catch(() => undefined);
+    });
+    await expect
+      .poll(() =>
+        document.body
+          .querySelector('[role="dialog"]')
+          ?.textContent?.includes(
+            "Failed to save microphone preference. Please try again.",
+          ),
+      )
+      .toBe(true);
 
     const dialog = document.body.querySelector('[role="dialog"]');
     expect(dialog?.textContent).toContain(
       "Failed to save microphone preference. Please try again.",
     );
     expect(dialog?.querySelector('[role="status"]')?.textContent).toBe("");
+    expect(
+      Array.from(dialog?.querySelectorAll("button") ?? []).find((button) =>
+        button.textContent?.includes("Close"),
+      )?.disabled,
+    ).toBe(false);
     expect(showErrorSnackbar).not.toHaveBeenCalled();
     expect(document.querySelector("[data-sonner-toast]")).toBeNull();
   });

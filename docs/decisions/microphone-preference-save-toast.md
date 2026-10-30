@@ -35,6 +35,8 @@ and failed outcomes are distinct reachable states. The success wording follows
 - On success, clear the dirty state, update the dialog's hidden polite status region,
   and call `toast.success` directly with the same localized message. Keep the dialog
   open; the root Sonner toaster renders the only visible success surface.
+- While persistence is pending, disable the dialog's Close button and ignore Escape
+  or backdrop close requests so an inline-only failure cannot be hidden by dismissal.
 - On failure, retain the selected value, show the existing inline error, suppress
   the preference action's global error toast, and return without success feedback.
   Do not show raw exception text.
@@ -50,7 +52,7 @@ behavior where each source applies.
 | Behavior | Evidence | Finding |
 | --- | --- | --- |
 | Success follows persisted state and cannot be coalesced | `apps/desktop/src/actions/user.actions.ts` awaits `updateUserPreferences`; `MicrophoneDialog.tsx` emits only after the await. Its test blocks the actual mocked preferences-repository save, verifies no early toast, then dispatches a competing store-backed snackbar before resolving persistence and verifies both messages survive. The direct Sonner call avoids the single-message app-state bridge. Product state coverage follows `rule/cover-reachable-states`; success wording follows `rule/success-state-specific` in `.agents/skills/product-design/references/rules.md`. | The acknowledgement cannot claim success while persistence is pending or be overwritten by an unrelated pending snackbar event. |
-| Failure stays inline without a duplicate global error | `setPreferredMicrophone` passes `{ showErrorToast: false }` to `updateUserPreferences`; the helper retains its default global error behavior for other callers. The dialog test rejects the actual repository save path, verifies the inline recovery copy, and asserts `showErrorSnackbar` and the Sonner toast are not called. `.agents/skills/product-design/references/rules.md` owns `rule/error-states-recovery`: explain the failure, provide recovery when known, and never expose raw exception text. | The user sees one contextual error and can retry in the same dialog. |
+| Failure stays inline without a duplicate global error | `setPreferredMicrophone` passes `{ showErrorToast: false }` to `updateUserPreferences`; the helper retains its default global error behavior for other callers. The dialog test holds the actual repository save pending, verifies Close is disabled and Escape/backdrop cannot dismiss the dialog, then rejects the save and asserts the inline recovery copy while `showErrorSnackbar` and Sonner remain unused. `.agents/skills/product-design/references/rules.md` owns `rule/error-states-recovery`: explain the failure, provide recovery when known, and never expose raw exception text. | A pending failure remains recoverable in context and the user sees one contextual error without raw exception text. |
 | Visible toast is global and bottom-right | `apps/desktop/DESIGN.md:96-100` records Sonner at bottom-right; `apps/desktop/src/main.tsx` mounts the shared `SnackbarEmitter` at the app root; `SonnerToaster.tsx` mounts one `<Toaster position="bottom-right">`; `SonnerToaster.test.tsx` asserts right and bottom position attributes. The dialog test verifies the global success toast is not contained by the dialog. Sonner's public API uses the shared toast store when called directly. | The success toast remains screen-level; it is not nested in the microphone popup. |
 | Screen-reader success announcement remains available in the modal | MUI `ModalManager` sets `aria-hidden="true"` on body siblings of an active modal. The dialog test verifies the app root containing Sonner is hidden while a `role="status"`, `aria-live="polite"` region inside the dialog contains the success copy. The live region uses the repo's visually-hidden treatment and does not create a second visible message. | Sighted users get the global toast; assistive technology can hear the success while the dialog remains active. |
 | Copy remains localized | The previous inline success used the same `defaultMessage`; the new call uses `useIntl().formatMessage` with that descriptor; FormatJS documents `useIntl` and `formatMessage`; `i18n:extract` reported no changes in `en.json`. | No translation key or user-facing wording changed. |
@@ -90,13 +92,17 @@ from the repository's design system, not from a library default.
 - Send failure through the global toast as well as the inline error: duplicates the
   failure and moves recovery away from the dialog; only this preference action
   suppresses the generic error toast.
+- Allow dismissal while saving: if the save then fails, the inline error is hidden
+  and the global error is intentionally suppressed; Close, Escape, and backdrop
+  dismissal therefore stay blocked until persistence settles.
 - Change the copy or close the dialog after saving: neither was requested; the dialog
   remains visible, and its existing localized message is retained.
 
 ## Verification
 
 - Focused tests cover the real preference-action error path, deferred persistence,
-  the concurrent toast case, the accessible in-dialog status, and global placement.
+  dismissal attempts while saving, the concurrent toast case, the accessible
+  in-dialog status, and global placement.
 - `SonnerToaster.test.tsx` verifies the shared toaster and bottom-right position.
 - Desktop unit tests passed after the review fixes: 230 files, 3,045 Vitest tests,
   plus 4 Node tests.

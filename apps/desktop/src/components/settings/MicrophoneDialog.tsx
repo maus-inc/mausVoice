@@ -79,10 +79,13 @@ export const MicrophoneDialog = () => {
   }, [hasChanges, intl, saving, selected]);
 
   const handleClose = useCallback(() => {
+    if (saving) {
+      return;
+    }
     produceAppState((draft) => {
       draft.settings.microphoneDialogOpen = false;
     });
-  }, []);
+  }, [saving]);
 
   return (
     <Dialog open={open} onClose={handleClose} fullWidth maxWidth="sm">
@@ -144,7 +147,7 @@ export const MicrophoneDialog = () => {
         </Stack>
       </DialogContent>
       <DialogActions>
-        <Button onClick={handleClose}>
+        <Button onClick={handleClose} disabled={saving}>
           <FormattedMessage defaultMessage="Close" />
         </Button>
         <LoadingButton
