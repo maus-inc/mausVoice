@@ -120,7 +120,7 @@ export const AudioDialog = () => {
       <DialogTitle>
         <FormattedMessage defaultMessage="Audio" />
       </DialogTitle>
-      <DialogContent sx={{ minWidth: 360 }}>
+      <DialogContent sx={{ minWidth: "min(360px, 100%)" }}>
         <SettingSection
           title={
             <span id={feedbackId}>

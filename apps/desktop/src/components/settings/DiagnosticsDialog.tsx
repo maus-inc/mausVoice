@@ -135,6 +135,8 @@ const InfoRow = ({ label, value }: InfoRowProps) => (
       variant="body2"
       sx={{
         fontWeight: 500,
+        minWidth: 0,
+        overflowWrap: "anywhere",
         textAlign: "right",
       }}
     >
@@ -215,7 +217,7 @@ export const DiagnosticsDialog = () => {
           <ArrowOutwardRounded sx={{ fontSize: 14 }} />
         </Link>
       </DialogTitle>
-      <DialogContent sx={{ minWidth: 400 }}>
+      <DialogContent sx={{ minWidth: "min(400px, 100%)" }}>
         <Stack spacing={0.5}>
           <SectionTitle>
             <FormattedMessage defaultMessage="Version" />

@@ -64,13 +64,15 @@ const DictationLanguageRow = ({
     <Stack
       direction="row"
       spacing={1}
+      useFlexGap
       sx={{
         alignItems: "center",
+        flexWrap: "wrap",
         width: "100%",
       }}
     >
       <HotKey value={hotkeyKeys} onChange={onHotkeyChange} />
-      <Box sx={{ flex: 1, minWidth: 0 }}>
+      <Box sx={{ flex: 1, minWidth: 120 }}>
         <Select
           value={language}
           onChange={handleLanguageChange}
@@ -262,7 +264,11 @@ export const DictationLanguageDialog = () => {
   const canDelete = rows.length > 1;
 
   return (
-    <Dialog open={open} onClose={handleClose}>
+    <Dialog
+      open={open}
+      onClose={handleClose}
+      slotProps={{ paper: { sx: { width: 480 } } }}
+    >
       <DialogTitle>
         <FormattedMessage defaultMessage="Dictation language" />
         <Typography
@@ -274,7 +280,7 @@ export const DictationLanguageDialog = () => {
           <FormattedMessage defaultMessage="Configure multiple dictation languages with hotkeys." />
         </Typography>
       </DialogTitle>
-      <DialogContent dividers sx={{ width: 480 }}>
+      <DialogContent dividers>
         <Stack spacing={1}>
           {hasHotkeyConflict && (
             <Alert severity="warning" variant="outlined">

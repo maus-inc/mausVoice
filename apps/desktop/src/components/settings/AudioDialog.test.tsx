@@ -42,6 +42,12 @@ describe("AudioDialog", () => {
         '[role="dialog"] input[type="checkbox"]',
       );
       expect(input).not.toBeNull();
+      const content = document.querySelector<HTMLElement>(
+        '[role="dialog"] .MuiDialogContent-root',
+      );
+      expect(content && getComputedStyle(content).minWidth).toBe(
+        "min(360px, 100%)",
+      );
       expect(
         document.getElementById(input?.getAttribute("aria-labelledby") ?? "")
           ?.textContent,
