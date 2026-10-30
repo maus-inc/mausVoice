@@ -531,6 +531,8 @@
   "multiplier_x_faster_than_typing": "{multiplier}x schneller als tippen",
   "my_profile": "Mein Profil",
   "name": "Name",
+  "name_device_id_and_shared_secret_are_required": "Name, Geräte-ID und gemeinsames Geheimnis sind erforderlich.",
+  "name_device_id_receiver_address_and_shared_secret_are_requir": "Name, Geräte-ID, Empfängeradresse und gemeinsames Geheimnis sind erforderlich.",
   "name_the_voice_first_then_the_rules_one_sentence_of_example": "Benennen Sie zuerst die Stimme, dann die Regeln. Ein Satz Beispielausgabe sagt mehr als ein Absatz Adjektive. Erwähnen Sie nur, was zu vermeiden ist, wenn das Modell es immer wieder tut.",
   "natural_well_written_text_that_preserves_your_voice_and_word": "Natürlicher, gut geschriebener Text, der Ihre Stimme und Wortwahl bewahrt.",
   "network_error": "Netzwerkfehler",

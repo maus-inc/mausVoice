@@ -531,6 +531,8 @@
   "multiplier_x_faster_than_typing": "{multiplier}x più veloce della digitazione",
   "my_profile": "Il mio profilo",
   "name": "Nome",
+  "name_device_id_and_shared_secret_are_required": "Nome, ID dispositivo e segreto condiviso sono obbligatori.",
+  "name_device_id_receiver_address_and_shared_secret_are_requir": "Nome, ID dispositivo, indirizzo del ricevitore e segreto condiviso sono obbligatori.",
   "name_the_voice_first_then_the_rules_one_sentence_of_example": "Dai prima un nome alla voce, poi definisci le regole. Una frase di esempio di output vale più di un paragrafo di aggettivi. Indica cosa evitare solo quando il modello continua a farlo.",
   "natural_well_written_text_that_preserves_your_voice_and_word": "Testo naturale e ben scritto che preserva la tua voce e le tue scelte di parole.",
   "network_error": "Errore di rete",

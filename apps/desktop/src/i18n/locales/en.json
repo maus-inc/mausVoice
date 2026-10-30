@@ -531,6 +531,8 @@
   "multiplier_x_faster_than_typing": "{multiplier}x faster than typing",
   "my_profile": "My profile",
   "name": "Name",
+  "name_device_id_and_shared_secret_are_required": "Name, device ID, and shared secret are required.",
+  "name_device_id_receiver_address_and_shared_secret_are_requir": "Name, device ID, receiver address, and shared secret are required.",
   "name_the_voice_first_then_the_rules_one_sentence_of_example": "Name the voice first, then the rules. One sentence of example output beats a paragraph of adjectives. Mention what to avoid only when the model keeps doing it.",
   "natural_well_written_text_that_preserves_your_voice_and_word": "Natural, well-written text that preserves your voice and word choices.",
   "network_error": "Network error",

@@ -531,6 +531,8 @@
   "multiplier_x_faster_than_typing": "타이핑보다 {multiplier}배 빠름",
   "my_profile": "내 프로필",
   "name": "이름",
+  "name_device_id_and_shared_secret_are_required": "이름, 기기 ID, 공유 비밀이 필요합니다.",
+  "name_device_id_receiver_address_and_shared_secret_are_requir": "이름, 기기 ID, 수신기 주소, 공유 비밀이 필요합니다.",
   "name_the_voice_first_then_the_rules_one_sentence_of_example": "먼저 음성의 이름을 정한 뒤 규칙을 작성하세요. 형용사를 늘어놓는 것보다 예시 출력 한 문장이 더 낫습니다. 모델이 같은 행동을 반복할 때만 피해야 할 점을 언급하세요.",
   "natural_well_written_text_that_preserves_your_voice_and_word": "자연스럽고 잘 쓰여진 텍스트로, 당신의 목소리와 단어 선택을 보존합니다.",
   "network_error": "네트워크 오류",

@@ -57,6 +57,13 @@ it("names switches, bounds its width and preserves composing device names", asyn
     act(() => add.click());
     const dialogs = document.querySelectorAll<HTMLElement>('[role="dialog"]');
     const pair = dialogs[dialogs.length - 1];
+    const save = [...pair.querySelectorAll("button")].find(
+      (button) => button.textContent?.trim() === "Save",
+    )!;
+    await act(async () => save.click());
+    expect(pair.querySelector('[role="alert"]')?.textContent).toBe(
+      "Name, device ID, receiver address, and shared secret are required.",
+    );
     const field = pair.querySelector<HTMLInputElement>("input")!;
     const event = new KeyboardEvent("keydown", {
       key: "Escape",

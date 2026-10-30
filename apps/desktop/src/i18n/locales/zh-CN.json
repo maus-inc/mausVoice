@@ -531,6 +531,8 @@
   "multiplier_x_faster_than_typing": "比输入快 {multiplier}x",
   "my_profile": "我的个人资料",
   "name": "名称",
+  "name_device_id_and_shared_secret_are_required": "名称、设备 ID 和共享密钥为必填项。",
+  "name_device_id_receiver_address_and_shared_secret_are_requir": "名称、设备 ID、接收设备地址和共享密钥为必填项。",
   "name_the_voice_first_then_the_rules_one_sentence_of_example": "先为声音命名，再写规则。一句示例输出胜过一段形容词堆砌。只有当模型反复出现某个问题时，才说明要避免什么。",
   "natural_well_written_text_that_preserves_your_voice_and_word": "自然、写得好的文本，保留您的声音和用词选择。",
   "network_error": "网络错误",

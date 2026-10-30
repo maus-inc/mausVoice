@@ -531,6 +531,8 @@
   "multiplier_x_faster_than_typing": "{multiplier}x 比打字更快",
   "my_profile": "我的個人資料",
   "name": "名稱",
+  "name_device_id_and_shared_secret_are_required": "名稱、裝置 ID 和共用密鑰為必填項。",
+  "name_device_id_receiver_address_and_shared_secret_are_requir": "名稱、裝置 ID、接收裝置位址和共用密鑰為必填項。",
   "name_the_voice_first_then_the_rules_one_sentence_of_example": "先為語氣命名，再寫規則。一句範例輸出勝過整段形容詞。只有當模型一再犯同樣錯誤時，才需要說明要避免什麼。",
   "natural_well_written_text_that_preserves_your_voice_and_word": "自然、寫得好的文字，保留您的語氣與用詞選擇。",
   "network_error": "網路錯誤",
