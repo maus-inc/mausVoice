@@ -1,5 +1,5 @@
 use rand::{rngs::OsRng, RngCore};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use sqlx::SqlitePool;
 use std::net::UdpSocket;
 use tauri::async_runtime;
@@ -8,67 +8,10 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::watch;
 
+use super::remote_channel::{ReceiverMessage, SenderMessage};
 use crate::state::{RemoteReceiverEventDetails, RemoteReceiverState, RemoteReceiverStatus};
 
 pub const EVT_REMOTE_FINAL_TEXT_RECEIVED: &str = "remote_final_text_received";
-
-#[derive(Debug, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-enum IncomingEnvelope {
-    PairingRequest {
-        request_id: String,
-        sender_device_id: String,
-        sender_device_name: String,
-        sender_platform: String,
-        pairing_code: String,
-    },
-    SessionHello {
-        session_id: String,
-        sender_device_id: String,
-        auth_token: String,
-    },
-    FinalText {
-        session_id: String,
-        event_id: String,
-        sequence: u64,
-        text: String,
-        mode: String,
-        created_at: String,
-    },
-    Heartbeat {
-        session_id: String,
-        sent_at: String,
-    },
-}
-
-#[derive(Debug, Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-enum OutgoingEnvelope {
-    PairingAccept {
-        request_id: String,
-        receiver_device_id: String,
-        receiver_device_name: String,
-        receiver_platform: String,
-        shared_secret: String,
-    },
-    SessionAck {
-        session_id: String,
-        receiver_device_id: String,
-    },
-    DeliveryAck {
-        session_id: String,
-        event_id: String,
-        sequence: u64,
-        delivered_at: String,
-    },
-    DeliveryError {
-        session_id: String,
-        event_id: String,
-        sequence: u64,
-        code: String,
-        message: String,
-    },
-}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -214,7 +157,7 @@ async fn wait_for_shutdown(shutdown: &mut watch::Receiver<bool>) {
 
 async fn write_message_while_active(
     writer: &mut tokio::net::tcp::OwnedWriteHalf,
-    message: &OutgoingEnvelope,
+    message: &ReceiverMessage,
     shutdown: &mut watch::Receiver<bool>,
     state: &RemoteReceiverState,
     receiver_generation: u64,
@@ -283,6 +226,44 @@ async fn rotate_pairing_code_while_active(
         && state.rotate_pairing_code_for_generation(receiver_generation)
 }
 
+/// Why a sender was turned away.
+///
+/// The code and message travel to the companion app, which shows them to the
+/// person holding the phone, so they are part of the wire contract rather than
+/// free-form logging text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SenderRejection {
+    NotPaired,
+    Unauthorized,
+}
+
+impl SenderRejection {
+    fn code(self) -> &'static str {
+        match self {
+            Self::NotPaired => "unknown_sender",
+            Self::Unauthorized => "unauthorized",
+        }
+    }
+
+    fn message(self) -> &'static str {
+        match self {
+            Self::NotPaired => "Sender is not paired.",
+            Self::Unauthorized => "Sender authentication failed.",
+        }
+    }
+}
+
+/// Build the delivery error a rejected sender receives.
+fn rejection_message(session_id: String, rejection: SenderRejection) -> ReceiverMessage {
+    ReceiverMessage::DeliveryError {
+        session_id,
+        event_id: String::new(),
+        sequence: 0,
+        code: rejection.code().to_string(),
+        message: rejection.message().to_string(),
+    }
+}
+
 struct ConnectionMessageHandler<'a> {
     pool: &'a SqlitePool,
     state: &'a RemoteReceiverState,
@@ -295,9 +276,9 @@ struct ConnectionMessageHandler<'a> {
 }
 
 impl ConnectionMessageHandler<'_> {
-    async fn handle(&mut self, envelope: IncomingEnvelope) -> Result<bool, String> {
+    async fn handle(&mut self, envelope: SenderMessage) -> Result<bool, String> {
         match envelope {
-            IncomingEnvelope::PairingRequest {
+            SenderMessage::PairingRequest {
                 request_id,
                 sender_device_id,
                 sender_device_name,
@@ -313,7 +294,7 @@ impl ConnectionMessageHandler<'_> {
                 )
                 .await
             }
-            IncomingEnvelope::SessionHello {
+            SenderMessage::SessionHello {
                 session_id,
                 sender_device_id,
                 auth_token,
@@ -321,7 +302,7 @@ impl ConnectionMessageHandler<'_> {
                 self.handle_session_hello(session_id, sender_device_id, auth_token)
                     .await
             }
-            IncomingEnvelope::FinalText {
+            SenderMessage::FinalText {
                 session_id,
                 event_id,
                 sequence,
@@ -332,7 +313,7 @@ impl ConnectionMessageHandler<'_> {
                 self.handle_final_text(session_id, event_id, sequence, text, mode, created_at)
                     .await
             }
-            IncomingEnvelope::Heartbeat {
+            SenderMessage::Heartbeat {
                 session_id,
                 sent_at,
             } => self.handle_heartbeat(session_id, sent_at).await,
@@ -365,7 +346,7 @@ impl ConnectionMessageHandler<'_> {
             }
             return write_message_while_active(
                 self.writer,
-                &OutgoingEnvelope::DeliveryError {
+                &ReceiverMessage::DeliveryError {
                     session_id: String::new(),
                     event_id: String::new(),
                     sequence: 0,
@@ -423,7 +404,7 @@ impl ConnectionMessageHandler<'_> {
         let receiver_status = self.state.status();
         write_message_while_active(
             self.writer,
-            &OutgoingEnvelope::PairingAccept {
+            &ReceiverMessage::PairingAccept {
                 request_id,
                 receiver_device_id: receiver_status.device_id,
                 receiver_device_name: receiver_status.device_name,
@@ -444,8 +425,7 @@ impl ConnectionMessageHandler<'_> {
         &mut self,
         session_id: String,
         sender_device_id: &str,
-        code: &str,
-        message: &str,
+        rejection: SenderRejection,
     ) -> Result<bool, String> {
         if !record_error_while_active(
             self.state,
@@ -455,7 +435,7 @@ impl ConnectionMessageHandler<'_> {
                 sender_device_id: Some(sender_device_id.to_string()),
                 ..RemoteReceiverEventDetails::default()
             },
-            message.to_string(),
+            rejection.message().to_string(),
         )
         .await
         {
@@ -464,13 +444,7 @@ impl ConnectionMessageHandler<'_> {
 
         write_message_while_active(
             self.writer,
-            &OutgoingEnvelope::DeliveryError {
-                session_id,
-                event_id: String::new(),
-                sequence: 0,
-                code: code.to_string(),
-                message: message.to_string(),
-            },
+            &rejection_message(session_id, rejection),
             self.shutdown,
             self.state,
             self.receiver_generation,
@@ -497,27 +471,19 @@ impl ConnectionMessageHandler<'_> {
         let device =
             device_result.map_err(|error| format!("Failed to validate sender device: {error}"))?;
 
-        let Some(device) = device else {
-            return self
-                .reject_sender(
-                    session_id,
-                    &sender_device_id,
-                    "unknown_sender",
-                    "Sender is not paired.",
-                )
-                .await;
+        let device = match device {
+            Some(device) if device.trusted && device.shared_secret == auth_token => device,
+            Some(_) => {
+                return self
+                    .reject_sender(session_id, &sender_device_id, SenderRejection::Unauthorized)
+                    .await
+            }
+            None => {
+                return self
+                    .reject_sender(session_id, &sender_device_id, SenderRejection::NotPaired)
+                    .await
+            }
         };
-
-        if !device.trusted || device.shared_secret != auth_token {
-            return self
-                .reject_sender(
-                    session_id,
-                    &sender_device_id,
-                    "unauthorized",
-                    "Sender authentication failed.",
-                )
-                .await;
-        }
 
         if !is_connection_current(self.state, self.receiver_generation, self.write_generation) {
             return Ok(false);
@@ -525,7 +491,7 @@ impl ConnectionMessageHandler<'_> {
         *self.authenticated_sender = Some(sender_device_id);
         write_message_while_active(
             self.writer,
-            &OutgoingEnvelope::SessionAck {
+            &ReceiverMessage::SessionAck {
                 session_id,
                 receiver_device_id: self.state.status().device_id,
             },
@@ -563,7 +529,7 @@ impl ConnectionMessageHandler<'_> {
             }
             return write_message_while_active(
                 self.writer,
-                &OutgoingEnvelope::DeliveryError {
+                &ReceiverMessage::DeliveryError {
                     session_id,
                     event_id,
                     sequence,
@@ -597,7 +563,7 @@ impl ConnectionMessageHandler<'_> {
             }
             return write_message_while_active(
                 self.writer,
-                &OutgoingEnvelope::DeliveryAck {
+                &ReceiverMessage::DeliveryAck {
                     session_id,
                     event_id,
                     sequence,
@@ -657,7 +623,7 @@ impl ConnectionMessageHandler<'_> {
                 }
                 write_message_while_active(
                     self.writer,
-                    &OutgoingEnvelope::DeliveryAck {
+                    &ReceiverMessage::DeliveryAck {
                         session_id,
                         event_id,
                         sequence,
@@ -691,7 +657,7 @@ impl ConnectionMessageHandler<'_> {
                 }
                 write_message_while_active(
                     self.writer,
-                    &OutgoingEnvelope::DeliveryError {
+                    &ReceiverMessage::DeliveryError {
                         session_id,
                         event_id,
                         sequence,
@@ -715,7 +681,7 @@ impl ConnectionMessageHandler<'_> {
     ) -> Result<bool, String> {
         write_message_while_active(
             self.writer,
-            &OutgoingEnvelope::SessionAck {
+            &ReceiverMessage::SessionAck {
                 session_id,
                 receiver_device_id: self.state.status().device_id,
             },
@@ -758,7 +724,7 @@ async fn handle_connection(
         if !is_connection_current(&state, receiver_generation, write_generation) {
             return Ok(());
         }
-        let envelope: IncomingEnvelope = serde_json::from_str(&line)
+        let envelope: SenderMessage = serde_json::from_str(&line)
             .map_err(|err| format!("Failed to parse receiver message: {err}"))?;
         if !is_connection_current(&state, receiver_generation, write_generation) {
             return Ok(());
@@ -816,15 +782,44 @@ struct FallbackWindowTargetInfo {
 
 async fn write_message(
     writer: &mut tokio::net::tcp::OwnedWriteHalf,
-    message: &OutgoingEnvelope,
+    message: &ReceiverMessage,
 ) -> Result<(), String> {
     super::remote_channel::write_json_message(writer, message, "receiver").await
 }
 
 #[cfg(test)]
 mod tests {
-    use super::wait_for_shutdown;
+    use super::{rejection_message, wait_for_shutdown, SenderRejection};
+    use crate::system::remote_channel::ReceiverMessage;
     use std::time::Duration;
+
+    #[test]
+    fn rejected_senders_get_the_code_and_text_the_companion_app_shows() {
+        assert_eq!(SenderRejection::NotPaired.code(), "unknown_sender");
+        assert_eq!(
+            SenderRejection::NotPaired.message(),
+            "Sender is not paired."
+        );
+        assert_eq!(SenderRejection::Unauthorized.code(), "unauthorized");
+        assert_eq!(
+            SenderRejection::Unauthorized.message(),
+            "Sender authentication failed."
+        );
+    }
+
+    #[test]
+    fn a_rejection_carries_no_event_identity_so_the_sender_can_retry() {
+        assert_eq!(
+            rejection_message("session-1".to_string(), SenderRejection::Unauthorized),
+            ReceiverMessage::DeliveryError {
+                session_id: "session-1".to_string(),
+                event_id: String::new(),
+                sequence: 0,
+                code: "unauthorized".to_string(),
+                message: "Sender authentication failed.".to_string(),
+            }
+        );
+    }
 
     #[tokio::test]
     async fn shutdown_signal_releases_a_waiting_connection_task() {

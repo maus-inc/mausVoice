@@ -1,67 +1,13 @@
 use std::{future::Future, time::Duration};
 
-use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::TcpStream;
 
+use super::remote_channel::{ReceiverMessage, SenderMessage};
 use crate::{db::local_data_write_gate::LocalDataRemoteOperationGuard, state::RemoteReceiverState};
 
 const REMOTE_IO_TIMEOUT: Duration = Duration::from_secs(5);
-
-#[derive(Debug, Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-enum OutgoingEnvelope {
-    PairingRequest {
-        request_id: String,
-        sender_device_id: String,
-        sender_device_name: String,
-        sender_platform: String,
-        pairing_code: String,
-    },
-    SessionHello {
-        session_id: String,
-        sender_device_id: String,
-        auth_token: String,
-    },
-    FinalText {
-        session_id: String,
-        event_id: String,
-        sequence: u64,
-        text: String,
-        mode: String,
-        created_at: String,
-    },
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-enum IncomingEnvelope {
-    PairingAccept {
-        request_id: String,
-        receiver_device_id: String,
-        receiver_device_name: String,
-        receiver_platform: String,
-        shared_secret: String,
-    },
-    SessionAck {
-        session_id: String,
-        receiver_device_id: String,
-    },
-    DeliveryAck {
-        session_id: String,
-        event_id: String,
-        sequence: u64,
-        delivered_at: String,
-    },
-    DeliveryError {
-        session_id: String,
-        event_id: String,
-        sequence: u64,
-        code: String,
-        message: String,
-    },
-}
 
 pub async fn pair_with_receiver(
     pool: SqlitePool,
@@ -92,7 +38,7 @@ pub async fn pair_with_receiver(
     send_message(
         &operation,
         &mut writer,
-        &OutgoingEnvelope::PairingRequest {
+        &SenderMessage::PairingRequest {
             request_id: request_id.clone(),
             sender_device_id: sender.device_id.clone(),
             sender_device_name: sender.device_name.clone(),
@@ -104,7 +50,7 @@ pub async fn pair_with_receiver(
     .await?;
 
     match read_message(&operation, &mut lines).await? {
-        IncomingEnvelope::PairingAccept {
+        ReceiverMessage::PairingAccept {
             request_id: ack_request_id,
             receiver_device_id: ack_receiver_device_id,
             receiver_device_name: ack_receiver_device_name,
@@ -158,11 +104,11 @@ pub async fn pair_with_receiver(
 
             Ok(device)
         }
-        IncomingEnvelope::DeliveryError { message, .. } => Err(message),
-        IncomingEnvelope::SessionAck { .. } => {
+        ReceiverMessage::DeliveryError { message, .. } => Err(message),
+        ReceiverMessage::SessionAck { .. } => {
             Err("Remote receiver returned an unexpected session ack.".to_string())
         }
-        IncomingEnvelope::DeliveryAck { .. } => {
+        ReceiverMessage::DeliveryAck { .. } => {
             Err("Remote receiver returned an unexpected delivery ack.".to_string())
         }
     }
@@ -225,7 +171,7 @@ pub async fn deliver_final_text(
     send_message(
         &operation,
         &mut writer,
-        &OutgoingEnvelope::SessionHello {
+        &SenderMessage::SessionHello {
             session_id: session_id.clone(),
             sender_device_id: sender.device_id,
             auth_token: target.shared_secret.clone(),
@@ -236,7 +182,7 @@ pub async fn deliver_final_text(
 
     let session_ack = read_message(&operation, &mut lines).await?;
     match session_ack {
-        IncomingEnvelope::SessionAck {
+        ReceiverMessage::SessionAck {
             session_id: ack_session_id,
             receiver_device_id,
         } => {
@@ -247,13 +193,13 @@ pub async fn deliver_final_text(
                 return Err("Connected receiver does not match the selected device.".to_string());
             }
         }
-        IncomingEnvelope::DeliveryError { message, .. } => {
+        ReceiverMessage::DeliveryError { message, .. } => {
             return Err(message);
         }
-        IncomingEnvelope::DeliveryAck { .. } => {
+        ReceiverMessage::DeliveryAck { .. } => {
             return Err("Remote receiver returned an unexpected delivery ack.".to_string());
         }
-        IncomingEnvelope::PairingAccept { .. } => {
+        ReceiverMessage::PairingAccept { .. } => {
             return Err("Remote receiver returned an unexpected pairing accept.".to_string());
         }
     }
@@ -261,7 +207,7 @@ pub async fn deliver_final_text(
     send_message(
         &operation,
         &mut writer,
-        &OutgoingEnvelope::FinalText {
+        &SenderMessage::FinalText {
             session_id: session_id.clone(),
             event_id: event_id.clone(),
             sequence: 1,
@@ -274,7 +220,7 @@ pub async fn deliver_final_text(
     .await?;
 
     match read_message(&operation, &mut lines).await? {
-        IncomingEnvelope::DeliveryAck {
+        ReceiverMessage::DeliveryAck {
             session_id: ack_session_id,
             event_id: ack_event_id,
             sequence,
@@ -286,7 +232,7 @@ pub async fn deliver_final_text(
             log::info!("Remote final text delivered at {delivered_at}");
             Ok(())
         }
-        IncomingEnvelope::DeliveryError {
+        ReceiverMessage::DeliveryError {
             session_id,
             event_id,
             sequence,
@@ -295,10 +241,10 @@ pub async fn deliver_final_text(
         } => Err(format!(
             "Remote delivery failed ({code}) for session {session_id}, event {event_id}, sequence {sequence}: {message}"
         )),
-        IncomingEnvelope::SessionAck { .. } => {
+        ReceiverMessage::SessionAck { .. } => {
             Err("Remote receiver returned an unexpected session ack.".to_string())
         }
-        IncomingEnvelope::PairingAccept { .. } => {
+        ReceiverMessage::PairingAccept { .. } => {
             Err("Remote receiver returned an unexpected pairing accept.".to_string())
         }
     }
@@ -328,7 +274,7 @@ async fn await_remote_io<T>(
 async fn send_message(
     operation: &LocalDataRemoteOperationGuard,
     writer: &mut tokio::net::tcp::OwnedWriteHalf,
-    message: &OutgoingEnvelope,
+    message: &SenderMessage,
     timeout_message: &str,
 ) -> Result<(), String> {
     // Hold the clear handoff lock only for this bounded write, never for the
@@ -348,7 +294,7 @@ async fn send_message(
 async fn read_message(
     operation: &LocalDataRemoteOperationGuard,
     lines: &mut tokio::io::Lines<BufReader<tokio::net::tcp::OwnedReadHalf>>,
-) -> Result<IncomingEnvelope, String> {
+) -> Result<ReceiverMessage, String> {
     await_remote_io(
         operation,
         "Timed out waiting for remote receiver response.".to_string(),
@@ -368,7 +314,7 @@ async fn read_message(
 
 async fn write_message(
     writer: &mut tokio::net::tcp::OwnedWriteHalf,
-    message: &OutgoingEnvelope,
+    message: &SenderMessage,
 ) -> Result<(), String> {
     super::remote_channel::write_json_message(writer, message, "remote sender").await
 }
