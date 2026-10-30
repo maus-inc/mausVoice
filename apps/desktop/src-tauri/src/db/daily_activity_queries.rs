@@ -606,6 +606,18 @@ mod tests {
         .expect("insert test transcription");
     }
 
+    /// Local noon on a day in January 2026, in epoch millis.
+    ///
+    /// The tests pin their fixtures to one fixed local hour so the local-date
+    /// keys do not drift with the machine's timezone or with daylight saving.
+    fn january_local_noon(day: u32) -> i64 {
+        Local
+            .with_ymd_and_hms(2026, 1, day, 12, 0, 0)
+            .single()
+            .expect("valid local timestamp")
+            .timestamp_millis()
+    }
+
     #[test]
     fn word_count_matches_javascript_whitespace_and_utf16_length() {
         assert_eq!(count_words("").unwrap(), 0);
@@ -670,11 +682,7 @@ mod tests {
     #[tokio::test]
     async fn backfill_paginates_same_timestamp_rows_without_skipping_tie_breaker_ids() {
         let pool = migrated_pool().await;
-        let timestamp = Local
-            .with_ymd_and_hms(2026, 1, 2, 12, 0, 0)
-            .single()
-            .expect("valid local timestamp")
-            .timestamp_millis();
+        let timestamp = january_local_noon(2);
         sqlx::query(
             "WITH RECURSIVE sequence(n) AS (
                  SELECT 1
@@ -712,11 +720,7 @@ mod tests {
     async fn backfill_skips_remote_and_failed_rows_and_does_not_repeat_totals() {
         let pool = migrated_pool().await;
         seed_user(&pool, Some("2025-12"), 0, 0).await;
-        let timestamp = Local
-            .with_ymd_and_hms(2026, 1, 2, 12, 0, 0)
-            .single()
-            .expect("valid local timestamp")
-            .timestamp_millis();
+        let timestamp = january_local_noon(2);
         insert_transcription(&pool, "local", "hello there", timestamp, None).await;
         insert_transcription(&pool, "remote", "remote words", timestamp, Some("received")).await;
         insert_transcription(&pool, "", "empty id words", timestamp, None).await;
@@ -750,11 +754,7 @@ mod tests {
     #[tokio::test]
     async fn later_transcript_edits_do_not_rewrite_backfilled_usage() {
         let pool = migrated_pool().await;
-        let timestamp = Local
-            .with_ymd_and_hms(2026, 1, 2, 12, 0, 0)
-            .single()
-            .expect("valid local timestamp")
-            .timestamp_millis();
+        let timestamp = january_local_noon(2);
         let date = local_date_from_timestamp(timestamp).expect("local date");
         insert_transcription(
             &pool,
@@ -787,16 +787,8 @@ mod tests {
     async fn backfill_only_counts_rows_in_the_requested_local_date_range() {
         let pool = migrated_pool().await;
         seed_user(&pool, Some("2026-01"), 0, 0).await;
-        let outside_timestamp = Local
-            .with_ymd_and_hms(2026, 1, 1, 12, 0, 0)
-            .single()
-            .expect("valid local timestamp")
-            .timestamp_millis();
-        let inside_timestamp = Local
-            .with_ymd_and_hms(2026, 1, 2, 12, 0, 0)
-            .single()
-            .expect("valid local timestamp")
-            .timestamp_millis();
+        let outside_timestamp = january_local_noon(1);
+        let inside_timestamp = january_local_noon(2);
         let inside_date = local_date_from_timestamp(inside_timestamp).expect("local date");
         insert_transcription(&pool, "outside-range", "old words", outside_timestamp, None).await;
         insert_transcription(&pool, "inside-range", "chart words", inside_timestamp, None).await;
@@ -821,11 +813,7 @@ mod tests {
     async fn live_meter_promotes_a_backfilled_event_without_double_counting_activity() {
         let pool = migrated_pool().await;
         seed_user(&pool, Some("2026-01"), 0, 0).await;
-        let timestamp = Local
-            .with_ymd_and_hms(2026, 1, 2, 12, 0, 0)
-            .single()
-            .expect("valid local timestamp")
-            .timestamp_millis();
+        let timestamp = january_local_noon(2);
         insert_transcription(&pool, "new-transcription", "hello world", timestamp, None).await;
 
         let date = local_date_from_timestamp(timestamp).expect("local date");
@@ -854,11 +842,7 @@ mod tests {
     async fn live_meter_reconciles_a_backfill_estimate_after_a_transcript_edit() {
         let pool = migrated_pool().await;
         seed_user(&pool, Some("2026-01"), 0, 0).await;
-        let timestamp = Local
-            .with_ymd_and_hms(2026, 1, 2, 12, 0, 0)
-            .single()
-            .expect("valid local timestamp")
-            .timestamp_millis();
+        let timestamp = january_local_noon(2);
         let date = local_date_from_timestamp(timestamp).expect("local date");
         insert_transcription(&pool, "edited-before-meter", "one two", timestamp, None).await;
 
@@ -900,11 +884,7 @@ mod tests {
     async fn live_meter_moves_a_backfilled_event_to_the_authoritative_date() {
         let pool = migrated_pool().await;
         seed_user(&pool, Some("2026-01"), 0, 0).await;
-        let original_timestamp = Local
-            .with_ymd_and_hms(2026, 1, 2, 12, 0, 0)
-            .single()
-            .expect("valid original local timestamp")
-            .timestamp_millis();
+        let original_timestamp = january_local_noon(2);
         let original_date = local_date_from_timestamp(original_timestamp).expect("local date");
         let authoritative_date = Local
             .with_ymd_and_hms(2026, 1, 3, 12, 0, 0)
@@ -959,11 +939,7 @@ mod tests {
     async fn repaired_live_event_is_found_after_a_missing_initial_meter_call() {
         let pool = migrated_pool().await;
         seed_user(&pool, Some("2026-01"), 0, 0).await;
-        let timestamp = Local
-            .with_ymd_and_hms(2026, 1, 2, 12, 0, 0)
-            .single()
-            .expect("valid local timestamp")
-            .timestamp_millis();
+        let timestamp = january_local_noon(2);
         insert_transcription(&pool, "missed-live-call", "recover this", timestamp, None).await;
         let date = local_date_from_timestamp(timestamp).expect("local date");
 

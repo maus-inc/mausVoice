@@ -2581,6 +2581,19 @@ pub async fn transcription_audio_load(
     })
 }
 
+/// Ask the user where to save a ZIP export.
+///
+/// `None` means they closed the dialog, which every caller reports as "nothing
+/// exported" rather than as a failure.
+async fn choose_zip_destination(file_name: String) -> Option<PathBuf> {
+    rfd::AsyncFileDialog::new()
+        .set_file_name(file_name)
+        .add_filter("ZIP Archive", &["zip"])
+        .save_file()
+        .await
+        .map(|handle| handle.path().to_path_buf())
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn export_transcription(
@@ -2608,15 +2621,8 @@ pub async fn export_transcription(
     };
 
     let short_id = crate::utils::truncate_chars(&id, 8);
-    let dialog = rfd::AsyncFileDialog::new()
-        .set_file_name(format!("mausvoice-{short_id}.zip"))
-        .add_filter("ZIP Archive", &["zip"])
-        .save_file()
-        .await;
-
-    let save_path = match dialog {
-        Some(handle) => handle.path().to_path_buf(),
-        None => return Ok(false),
+    let Some(save_path) = choose_zip_destination(format!("mausvoice-{short_id}.zip")).await else {
+        return Ok(false);
     };
 
     // Do not hold the global write lock while the user chooses a destination.
@@ -2739,15 +2745,9 @@ fn build_transcription_export(
 #[tauri::command]
 #[specta::specta]
 pub async fn export_diagnostics(app: AppHandle, diagnostics_info: String) -> Result<bool, String> {
-    let dialog = rfd::AsyncFileDialog::new()
-        .set_file_name("mausvoice-diagnostics.zip")
-        .add_filter("ZIP Archive", &["zip"])
-        .save_file()
-        .await;
-
-    let save_path = match dialog {
-        Some(handle) => handle.path().to_path_buf(),
-        None => return Ok(false),
+    let Some(save_path) = choose_zip_destination("mausvoice-diagnostics.zip".to_string()).await
+    else {
+        return Ok(false);
     };
 
     let logs_dir = crate::system::paths::logs_dir(&app).map_err(|err| err.to_string())?;

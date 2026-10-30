@@ -146,14 +146,10 @@ impl RemoteReceiverState {
         if !inner.status.enabled || inner.generation != generation {
             return false;
         }
-        inner.status.last_sender_device_id = details.sender_device_id;
-        inner.status.last_event_id = details.event_id;
+        apply_event_details(&mut inner.status, details);
         inner.status.last_delivery_status = Some("delivered".to_string());
         inner.status.last_delivery_at = delivered_at;
         inner.status.last_error = None;
-        inner.status.last_target_class_name = details.target_class_name;
-        inner.status.last_target_title = details.target_title;
-        inner.status.last_target_editable = details.target_editable;
         true
     }
 
@@ -167,16 +163,22 @@ impl RemoteReceiverState {
         if !inner.status.enabled || inner.generation != generation {
             return false;
         }
-        inner.status.last_sender_device_id = details.sender_device_id;
-        inner.status.last_event_id = details.event_id;
+        apply_event_details(&mut inner.status, details);
         inner.status.last_delivery_status = Some("failed".to_string());
         inner.status.last_error = Some(message);
         inner.status.last_delivery_at = Some(chrono::Utc::now().to_rfc3339());
-        inner.status.last_target_class_name = details.target_class_name;
-        inner.status.last_target_title = details.target_title;
-        inner.status.last_target_editable = details.target_editable;
         true
     }
+}
+
+/// Copy the event identity and target details shared by delivered and failed
+/// deliveries, leaving the outcome fields to the caller.
+fn apply_event_details(status: &mut RemoteReceiverStatus, details: RemoteReceiverEventDetails) {
+    status.last_sender_device_id = details.sender_device_id;
+    status.last_event_id = details.event_id;
+    status.last_target_class_name = details.target_class_name;
+    status.last_target_title = details.target_title;
+    status.last_target_editable = details.target_editable;
 }
 
 fn generate_pairing_code() -> String {
