@@ -98,7 +98,7 @@ export const TipCardFrame = ({
           direction="row"
           sx={{ alignItems: "center", justifyContent: "space-between" }}
         >
-          <Typography variant="subtitle2" component={headingLevel ?? "h6"}>
+          <Typography variant="subtitle2" component={headingLevel ?? "p"}>
             {title}
           </Typography>
           {onDismiss && (

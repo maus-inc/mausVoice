@@ -181,7 +181,11 @@ export default function TranscriptionsPage() {
           }
           emptyState={
             <Stack spacing={1} sx={{ alignItems: "center", px: 2 }}>
-              <Typography variant="h6" sx={{ textAlign: "center" }}>
+              <Typography
+                variant="h6"
+                component="h2"
+                sx={{ textAlign: "center" }}
+              >
                 <FormattedMessage defaultMessage="No transcriptions yet." />
               </Typography>
               <Typography

@@ -320,6 +320,7 @@ export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
           >
             <Typography
               variant="subtitle2"
+              component="span"
               sx={{
                 color: "text.secondary",
               }}

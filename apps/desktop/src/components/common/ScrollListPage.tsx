@@ -189,6 +189,7 @@ export function ScrollListPage<Item>({
                 >
                   <Typography
                     variant="h4"
+                    component="h1"
                     sx={{
                       fontWeight: 700,
                     }}
@@ -200,6 +201,7 @@ export function ScrollListPage<Item>({
                 {subtitle ? (
                   <Typography
                     variant="subtitle1"
+                    component="div"
                     sx={{
                       color: "text.secondary",
                     }}
@@ -229,6 +231,7 @@ export function ScrollListPage<Item>({
                 >
                   <Typography
                     variant="h6"
+                    component="h2"
                     sx={{
                       color: "text.secondary",
                     }}
@@ -290,7 +293,7 @@ export function ScrollListPage<Item>({
                 >
                   <Box sx={{ height: titleHeight, flex: 1, minWidth: 0 }}>
                     <Typography
-                      component="span"
+                      component="h1"
                       variant="h5"
                       data-scroll-list-collapse-anim=""
                       sx={{
@@ -308,6 +311,7 @@ export function ScrollListPage<Item>({
                 {subtitle ? (
                   <Typography
                     variant="subtitle1"
+                    component="div"
                     data-scroll-list-collapse-anim=""
                     sx={{
                       color: "text.secondary",
@@ -401,6 +405,7 @@ export function ScrollListPage<Item>({
               {subtitle ? (
                 <Typography
                   variant="subtitle1"
+                  component="div"
                   sx={{
                     color: "text.secondary",
                   }}
