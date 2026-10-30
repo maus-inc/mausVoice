@@ -77,6 +77,11 @@ export const SonnerToaster = () => {
             "&:hover": {
               background: `${theme.vars.palette.level3} !important`,
             },
+            "&:focus-visible": {
+              outline: `2px solid ${theme.vars.palette.text.primary} !important`,
+              outlineOffset: 2,
+              boxShadow: "none !important",
+            },
             ...theme.applyStyles("dark", {
               border: `${hairline.dark(0.06)} !important`,
             }),

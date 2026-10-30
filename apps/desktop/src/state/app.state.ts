@@ -44,6 +44,14 @@ import {
 import { INITIAL_UPDATER_STATE, UpdaterState } from "./updater.state";
 
 export type SnackbarMode = "info" | "success" | "error";
+export type SnackbarAction = {
+  label: string;
+  onClick: () => void;
+  /** Optional deadline and focus handling for time-limited undo actions. */
+  expiresAt?: number;
+  focusOnShow?: boolean;
+  onFocusReturn?: (undone: boolean) => void;
+};
 export type HotkeyStrategy = "listener" | "bridge";
 export type PasteKeybindSupport = "disabled" | "per-app" | "global";
 
@@ -136,7 +144,7 @@ export type AppState = {
   snackbarMode: SnackbarMode;
   snackbarDuration: number;
   snackbarTransitionDuration?: number;
-  snackbarAction?: { label: string; onClick: () => void };
+  snackbarAction?: SnackbarAction;
 
   /** Accumulated dictation segments while no editable target was focused.
    *  Drained on the first editable-focus event or on transcription completion.

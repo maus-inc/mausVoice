@@ -38,7 +38,18 @@ const restoreInStore = (snapshot: Transcription): void => {
   produceAppState((draft) => {
     draft.transcriptionById[snapshot.id] = snapshot;
     if (!draft.transcriptions.transcriptionIds.includes(snapshot.id)) {
-      draft.transcriptions.transcriptionIds.unshift(snapshot.id);
+      // The repository lists newest first. Undo and failed deletes must not
+      // move an older recording to the top of History.
+      const created = Date.parse(snapshot.createdAt);
+      const index = Number.isFinite(created)
+        ? draft.transcriptions.transcriptionIds.findIndex((id) => {
+            const other = draft.transcriptionById[id];
+            return other && Date.parse(other.createdAt) < created;
+          })
+        : 0;
+      const insertAt =
+        index < 0 ? draft.transcriptions.transcriptionIds.length : index;
+      draft.transcriptions.transcriptionIds.splice(insertAt, 0, snapshot.id);
     }
   });
 };

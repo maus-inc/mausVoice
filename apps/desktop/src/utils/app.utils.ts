@@ -13,13 +13,17 @@ import {
   Transcription,
   User,
 } from "@maus-inc/types";
-import type { AppState, SnackbarMode } from "../state/app.state";
+import type {
+  AppState,
+  SnackbarAction,
+  SnackbarMode,
+} from "../state/app.state";
 
 export type ShowSnackbarOpts = {
   duration?: number;
   transitionDuration?: number;
   mode?: SnackbarMode;
-  action?: { label: string; onClick: () => void };
+  action?: SnackbarAction;
 };
 
 export const setSnackbar = (

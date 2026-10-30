@@ -1,5 +1,7 @@
 import { toast } from "sonner";
-import type { SnackbarMode } from "../../state/app.state";
+import { createElement } from "react";
+import type { SnackbarAction, SnackbarMode } from "../../state/app.state";
+import { TimedSnackbarAction } from "./TimedSnackbarAction";
 
 /** Survives StrictMode remount; instance refs reset to 0 and would re-fire. */
 let lastEmittedSnackbarCounter = 0;
@@ -13,7 +15,7 @@ export type SnackbarEmitPayload = {
   snackbarMessage?: string;
   snackbarDuration?: number;
   snackbarMode?: SnackbarMode;
-  snackbarAction?: { label: string; onClick: () => void };
+  snackbarAction?: SnackbarAction;
 };
 
 export const emitSnackbarIfNew = (payload: SnackbarEmitPayload): boolean => {
@@ -31,14 +33,28 @@ export const emitSnackbarIfNew = (payload: SnackbarEmitPayload): boolean => {
 
   lastEmittedSnackbarCounter = snackbarCounter;
 
+  const action = payload.snackbarAction;
+  const toastId = `snackbar-${snackbarCounter}`;
+  let actionElement: HTMLButtonElement | null = null;
   const opts = {
+    id: toastId,
     duration: payload.snackbarDuration,
-    action: payload.snackbarAction
-      ? {
-          label: payload.snackbarAction.label,
-          onClick: payload.snackbarAction.onClick,
-        }
-      : undefined,
+    onDismiss: () => {
+      const toastElement = actionElement?.closest("[data-sonner-toast]");
+      if (toastElement?.contains(document.activeElement))
+        action?.onFocusReturn?.(false);
+    },
+    action: action?.expiresAt
+      ? createElement(TimedSnackbarAction, {
+          action,
+          toastId,
+          onMount: (element: HTMLButtonElement | null) => {
+            actionElement = element;
+          },
+        })
+      : action
+        ? { label: action.label, onClick: action.onClick }
+        : undefined,
   };
 
   if (payload.snackbarMode === "error") {

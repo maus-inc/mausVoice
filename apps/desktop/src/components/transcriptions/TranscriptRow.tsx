@@ -48,6 +48,7 @@ import {
 import { getActiveRemoteTarget } from "../../utils/device.utils";
 import { TypographyWithMore } from "../common/TypographyWithMore";
 import { AudioPlayerPill } from "./AudioPlayerPill";
+import { captureHistoryDeleteFocus } from "./history-delete-focus";
 
 export type TranscriptionRowProps = {
   id: string;
@@ -167,6 +168,8 @@ export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
         return;
       }
       const undoWindowMs = 5000;
+      const expiresAt = Date.now() + undoWindowMs;
+      const focus = captureHistoryDeleteFocus(targetId);
       try {
         scheduleTranscriptionDelete(snapshot, undoWindowMs);
       } catch {
@@ -178,12 +181,17 @@ export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
         return;
       }
       showSnackbar(
-        intl.formatMessage({ defaultMessage: "Delete successful" }),
+        intl.formatMessage({
+          defaultMessage: "Transcript removed. Undo available for 5 seconds.",
+        }),
         {
           mode: "success",
           duration: undoWindowMs,
           action: {
             label: intl.formatMessage({ defaultMessage: "Undo" }),
+            expiresAt,
+            focusOnShow: focus.focusOnShow,
+            onFocusReturn: focus.returnFocus,
             onClick: () => {
               if (!undoTranscriptionDelete(targetId)) {
                 showErrorSnackbar(
@@ -279,6 +287,7 @@ export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
   return (
     <Box
       component="div"
+      data-transcription-row={id}
       onContextMenu={(e) => {
         // Yield right-clicks on editable text to the provider's clipboard menu.
         if (isEditableTarget(e.target)) return;
