@@ -215,6 +215,7 @@
   "could_not_save_your_profile_please_try_again": "Impossibile salvare il profilo. Riprova.",
   "count_count_plural_one_transcription_other_transcriptions": "{count} {count, plural, one {trascrizione} other {trascrizioni}}",
   "count_incognito_dictation_in_streaks_and_word_counts_without": "Conta la dettatura in incognito nelle serie e nei conteggi delle parole, senza salvare il testo.",
+  "count_plural_0_no_settings_found_one_setting_found_other_set": "{count, plural, =0 {Nessuna impostazione trovata.} one {# impostazione trovata.} other {# impostazioni trovate.}}",
   "count_plural_one_word_other_words": "{count, plural, one {# parola} other {# parole}}",
   "cpu": "CPU",
   "create": "Crea",

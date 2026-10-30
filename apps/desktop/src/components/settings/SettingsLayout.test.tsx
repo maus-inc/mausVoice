@@ -202,6 +202,21 @@ describe("SettingsLayout", () => {
     expect(event.defaultPrevented).toBe(true);
   });
 
+  it("announces search results and clears the status when search ends", async () => {
+    await render("/dashboard/settings/account");
+    const status = requireElement(
+      container.querySelector('[role="status"]'),
+      "search status",
+    );
+    expect(status.textContent).toBe("");
+    setQuery("incognito");
+    expect(status.textContent).toMatch(/\d+ settings? found\./);
+    setQuery("no-matching-setting-xyz");
+    expect(status.textContent).toBe("No settings found.");
+    press("Escape");
+    expect(status.textContent).toBe("");
+  });
+
   it("opens the first result when Enter is pressed", async () => {
     await render("/dashboard/settings/account");
 

@@ -6,7 +6,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import { useIntl } from "react-intl";
+import { FormattedMessage, useIntl } from "react-intl";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Link,
@@ -293,6 +293,25 @@ export const SettingsLayout = () => {
             ))}
           </Stack>
         </Stack>
+        <Box
+          component="span"
+          role="status"
+          sx={{
+            position: "absolute",
+            width: "1px",
+            height: "1px",
+            overflow: "hidden",
+            clipPath: "inset(50%)",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {searching && (
+            <FormattedMessage
+              defaultMessage="{count, plural, =0 {No settings found.} one {# setting found.} other {# settings found.}}"
+              values={{ count: hits.length }}
+            />
+          )}
+        </Box>
         <Box
           sx={{
             flexGrow: 1,
