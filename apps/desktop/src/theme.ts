@@ -462,6 +462,10 @@ export const theme = createTheme({
           fontSize: theme.typography.pxToRem(15),
           padding: theme.spacing(1, 2),
           transition: `transform 120ms ${easeOut}, background-color 180ms ${easeOut}, box-shadow 200ms ${easeOut}, color 180ms ${easeOut}`,
+          "&.Mui-focusVisible": {
+            outline: `2px solid ${theme.vars.palette.text.primary}`,
+            outlineOffset: 2,
+          },
           "& .MuiSvgIcon-root": {
             fontSize: 22,
           },
@@ -668,6 +672,10 @@ export const theme = createTheme({
           color: theme.vars.palette.text.primary,
           borderRadius: 12,
           transition: `transform 120ms ${easeOut}, background-color 180ms ${easeOut}`,
+          "&.Mui-focusVisible": {
+            outline: `2px solid ${theme.vars.palette.text.primary}`,
+            outlineOffset: 2,
+          },
           "&:hover": {
             backgroundColor: theme.vars.palette.level2,
           },
