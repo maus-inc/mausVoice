@@ -473,7 +473,11 @@ const ModelDownloadActionButtons = ({
   );
 };
 
-export const AITranscriptionConfiguration = () => {
+export const AITranscriptionConfiguration = ({
+  compactCards = false,
+}: {
+  compactCards?: boolean;
+}) => {
   const intl = useIntl();
   const transcription = useAppStore((state) => state.settings.aiTranscription);
   const effectiveMode = useAppStore(getEffectiveTranscriptionMode);
@@ -985,6 +989,7 @@ export const AITranscriptionConfiguration = () => {
             selectedApiKeyId={transcription.selectedApiKeyId}
             onChange={handleApiKeyChange}
             context="transcription"
+            compactCards={compactCards}
           />
         )}
       </AnimateSwitch>

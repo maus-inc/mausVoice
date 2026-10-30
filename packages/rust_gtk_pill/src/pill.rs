@@ -562,10 +562,23 @@ pub fn run(receiver: Receiver<InMessage>) {
                     if phase == Phase::Recording && matches!(prev, Phase::Idle | Phase::Loading) {
                         clear_flash(&state_tick);
                     }
+                    if rust_pill_shared::should_clear_stage_text_on_phase(
+                        prev == Phase::Loading,
+                        phase == Phase::Idle,
+                        phase == Phase::Loading,
+                    ) {
+                        *state_tick.stage_text.borrow_mut() = None;
+                    }
+                    if phase == Phase::Loading && prev != Phase::Loading {
+                        let offset = if reduced_motion() { 0.5 } else { 0.0 };
+                        state_tick.loading_offset.set(offset);
+                    }
                     if phase == Phase::Idle && prev != Phase::Idle {
+                        state_tick.pending_levels.borrow_mut().clear();
                         state_tick.target_level.set(0.0);
                         state_tick.current_level.set(0.0);
                         state_tick.wave_phase.set(0.0);
+                        state_tick.loading_offset.set(0.0);
                     }
                 }
                 InMessage::Levels { levels } => {
@@ -639,7 +652,8 @@ pub fn run(receiver: Receiver<InMessage>) {
                     state_tick.transcript_has_message.set(true);
                 }
                 InMessage::StageText { text } => {
-                    *state_tick.stage_text.borrow_mut() = text;
+                    let stage = rust_pill_shared::active_stage_text(text.as_deref());
+                    *state_tick.stage_text.borrow_mut() = stage.map(str::to_owned);
                 }
                 InMessage::Visibility { visibility } => {
                     state_tick.visibility.set(visibility);
@@ -1423,9 +1437,13 @@ fn tick(state: &PillState, dt: f64) {
 
     // Loading offset
     if is_loading {
-        state
-            .loading_offset
-            .set((state.loading_offset.get() + LOADING_SPEED) % 1.0);
+        let next_offset = rust_pill_shared::advance_loading_offset(
+            state.loading_offset.get(),
+            LOADING_SPEED,
+            dt,
+            reduced_motion(),
+        );
+        state.loading_offset.set(next_offset);
     }
 
     // Tooltip animation (spring)

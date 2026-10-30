@@ -8,7 +8,8 @@ node_modules
 .pnpm-store
 .pnp.js
 .ignore
-.claude
+.claude/*
+!.claude/skills
 .venv
 .worktrees/
 

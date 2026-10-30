@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createDefaultPreferences } from "../actions/user.actions";
 import { POST_PROCESS_ERROR_CATEGORY } from "../actions/post-process-error-category";
 import { INITIAL_APP_STATE } from "../state/app.state";
-import { getAppState, setAppState } from "../store";
+import { getAppState, produceAppState, setAppState } from "../store";
 import type { HandleTranscriptParams } from "../types/strategy.types";
 import { LOCAL_USER_ID } from "../utils/user.utils";
 import { DictationStrategy } from "./dictation.strategy";
@@ -789,5 +789,115 @@ describe("DictationStrategy backlog lifecycle", () => {
     // Must NOT have called routeTranscriptOutput or appendToDictationBacklog
     expect(routeTranscriptOutputMock).not.toHaveBeenCalled();
     expect(appendToDictationBacklogMock).not.toHaveBeenCalled();
+  });
+
+  it("announces Polishing only when a post-processing path actually runs", async () => {
+    const { postProcessTranscript } =
+      await import("../actions/transcribe.actions");
+    const { sendPillStageText } = await import("../utils/overlay.utils");
+
+    vi.mocked(sendPillStageText).mockClear();
+    vi.mocked(postProcessTranscript).mockImplementationOnce((input) => {
+      input.onPolishStart?.();
+      return Promise.resolve({
+        transcript: "polished output",
+        warnings: [],
+        metadata: { postProcessMode: "api" },
+      });
+    });
+
+    const baseArgs: HandleTranscriptParams = {
+      rawTranscript: "raw input",
+      toneId: "default",
+      a11yInfo: null,
+      currentApp: null,
+      loadingToken: null,
+      audio: { samples: [], sampleRate: 16000 },
+      transcriptionMetadata: {},
+      transcriptionWarnings: [],
+    };
+    const strategy = new DictationStrategy();
+    await strategy.handleTranscript(baseArgs);
+    expect(sendPillStageText).toHaveBeenCalledWith("Polishing");
+
+    // When the tone disables post-processing (Verbatim), Polishing must not be announced.
+    produceAppState((draft) => {
+      draft.toneById.verbatim = {
+        ...draft.toneById.verbatim,
+        shouldDisablePostProcessing: true,
+      };
+    });
+    vi.mocked(sendPillStageText).mockClear();
+    vi.mocked(postProcessTranscript).mockImplementationOnce((input) => {
+      input.onPolishStart?.();
+      return Promise.resolve({
+        transcript: "raw input",
+        warnings: [],
+        metadata: { postProcessMode: "none" },
+      });
+    });
+
+    await strategy.handleTranscript({
+      ...baseArgs,
+      toneId: "verbatim",
+    });
+    expect(sendPillStageText).not.toHaveBeenCalledWith("Polishing");
+
+    // When no generation repository exists and applyFastLocalStyle returns null
+    // (mode "none"), postProcessTranscript must not invoke onPolishStart.
+    const actualTranscribeActions = await vi.importActual<
+      typeof import("../actions/transcribe.actions")
+    >("../actions/transcribe.actions");
+    const repos = await import("../repos");
+    const repoSpy = vi.spyOn(repos, "getGenerateTextRepo").mockReturnValueOnce({
+      repo: null,
+      apiKeyId: null,
+      provider: null,
+      warnings: [],
+    } as unknown as ReturnType<typeof repos.getGenerateTextRepo>);
+    vi.mocked(sendPillStageText).mockClear();
+    vi.mocked(postProcessTranscript).mockImplementationOnce((input) =>
+      actualTranscribeActions.postProcessTranscript(input),
+    );
+
+    await strategy.handleTranscript({
+      ...baseArgs,
+      // Filler-only input causes applyFastLocalStyle to return null when no LLM repo exists.
+      rawTranscript: "um uh er",
+      toneId: "default",
+    });
+    repoSpy.mockRestore();
+    expect(sendPillStageText).not.toHaveBeenCalledWith("Polishing");
+  });
+
+  it("announces Inserting when draining streaming backlog on finalize", async () => {
+    const { sendPillStageText } = await import("../utils/overlay.utils");
+    vi.mocked(sendPillStageText).mockClear();
+
+    const strategy = new DictationStrategy();
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "check_focused_paste_target") {
+        return Promise.resolve("not_editable");
+      }
+      return Promise.resolve();
+    });
+    hasDictationBacklogMock.mockReturnValue(true);
+
+    strategy.handleInterimSegment("first chunk");
+    await new Promise((r) => setTimeout(r, 10));
+
+    await strategy.handleTranscript({
+      rawTranscript: "first chunk",
+      toneId: "verbatim",
+      a11yInfo: null,
+      currentApp: null,
+      loadingToken: null,
+      audio: { samples: [], sampleRate: 16000 },
+      transcriptionMetadata: {},
+      transcriptionWarnings: [],
+    });
+
+    expect(sendPillStageText).toHaveBeenCalledWith("Inserting");
+    expect(drainDictationBacklogMock).toHaveBeenCalled();
   });
 });

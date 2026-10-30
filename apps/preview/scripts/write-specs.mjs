@@ -499,30 +499,35 @@ MUI tooltips expose via aria on focus/hover. Bouncy is presentational (no role i
 ## Live-spec mapping
 Tooltip radius live. Bouncy choreography patch-only → TutorialForm.
 `],
-["snackbar", `# Snackbar emitter visual (\`snackbar\`)
+["snackbar", `# Snackbar emitter with Sonner (\`snackbar\`)
 
-- Status: **recreated** — \`SnackbarEmitter\` reads snackbar* fields from the zustand store. Recreation copies the MUI Snackbar config verbatim.
-- Source of truth: \`${D}/components/root/SnackbarEmitter.tsx\`, \`${D}/utils/app.utils.ts\` (setSnackbar).
-- Used in: global — any setSnackbar/showErrorSnackbar call site.
+- Status: **recreated**. \`SnackbarEmitter\` routes store events through Sonner. \`SonnerToaster\` supplies the shared position and styling.
+- Source of truth: \`${D}/components/root/SnackbarEmitter.tsx\`, \`${D}/components/root/snackbar-emit.ts\`, \`${D}/components/root/SonnerToaster.tsx\`, \`${D}/actions/app.actions.ts\`, \`${D}/utils/app.utils.ts\`.
+- The emitter handles every \`showSnackbar\` and \`showErrorSnackbar\` call site; direct Sonner calls share the root toaster.
 
 ## Purpose
-Bottom-center transient messages (info/error/success).
+
+Bottom-right transient app messages (info/success/error).
 
 ## Visual tokens
-key=counter (re-mount per message) · #fff message span · small close IconButton (#fff icon, aria “close”) · content style backgroundColor = error/success/primary by mode · anchor bottom-center.
+
+A neutral level1 card with a hairline, premium hover shadow, and theme radius. A status icon and tone-on-tone close button keep status clear. All toast types share one surface at the bottom-right.
 
 ## Motion
-MUI snackbar transition (transitionDuration passthrough); auto-hide 3000ms default; clickaway ignored.
+
+The toaster fallback duration is 4000ms. \`showSnackbar\` sends 5000ms by default, or 10000ms for messages over 100 characters. The close button is enabled.
 
 ## States
-info / error / success / dismissed / queued (counter remount).
+
+Info, success, or error, then dismissed. The emitter sends each new snackbar counter once.
 
 ## Accessibility
-Close is labelled; message is plain text. UNKNOWN: no explicit aria-live/role in source — MUI Snackbar defaults apply (verify).
+
+The close button is enabled. The app emitter does not move focus; Sonner owns toast announcement semantics.
 
 ## Live-spec mapping
-Docs-only recreation. Persist: edit \`SnackbarEmitter.tsx\` / \`app.utils.ts\` → global.
-`],
+
+The preview recreation mirrors production. Persist: edit \`${D}/components/root/SonnerToaster.tsx\` for shared position and styling; edit \`${D}/components/root/SnackbarEmitter.tsx\` / \`${D}/components/root/snackbar-emit.ts\` and \`${D}/actions/app.actions.ts\` / \`${D}/utils/app.utils.ts\` for message behavior.`],
 ["feedback", `# Progress · loading · empty states (\`feedback\`)
 
 - Status: **reused** — real \`AppCircularProgress\`, \`CenterLoading\`, \`CenterMessage\`.
@@ -845,13 +850,13 @@ Docs-only (chrome geometry + Tauri wiring). Persist: edit \`TitleBar.tsx\` (+ ca
 Always-on-top state surface: movement/size conveys state, not choreography.
 
 ## Visual tokens
-Window 200×86 · pill area 48 · min 48×6 → expanded 120×32 · radius = min(w,h)/2 capped 16 (true capsule; cap scales with drag inflate) · bg black lerp(.6→.92, expand_t) · border white .3 inset .5px 1px. Waveform: 3 white waves (freq .8/1/1.25, mult 1.6/1.35/1.05, offsets 0/.85/1.7, opacity 1/.78/.56), stroke 1.6 round, amplitude pill_h×.75×clamp(level×mult,.03,1.3), pad pill_h×.1, alpha ×expand_t. Loading: 2px track white .15, indicator 40% white .7 (MUI-linear-progress port). Paused: centered 40% bar white .45 on track white .1. Idle hover: Satoshi 12 white “Click to dictate” (drag label “Drag To Move”). Edge gradients black .9×expand_t (left 18%, right 15%). Tooltip 172×32 r12 gap 6; flash 32 r12 gap 6 dur 2.5s; transcript 28 r10 font 12 fade 3s+6/s rise 12; long-press ring (0.92,0.95,1.0) 0.45s hold 0.12s delay; drag inflate ×1.18 (stiffness 280); cancel button 18.
+Window 200×86 · pill area 48 · min 48×6 → expanded 120×32 · radius = min(w,h)/2 capped 16 (true capsule; cap scales with drag inflate) · bg black lerp(.6→.92, expand_t) · border white .3 inset .5px 1px. Waveform: 3 white waves (freq .8/1/1.25, mult 1.6/1.35/1.05, offsets 0/.85/1.7, opacity 1/.78/.56), stroke 1.6 round, amplitude pill_h×.75×clamp(level×mult,.03,1.3), pad pill_h×.1, alpha ×expand_t. Loading: 2px track white .15, indicator 40% white .7 (MUI-linear-progress port); with stage_text (Satoshi 12 white .9): dimmed behind text to track white .08, indicator white .22. Paused: centered 40% bar white .45 on track white .1. Idle hover: Satoshi 12 white “Click to dictate” (drag label “Drag To Move”). Edge gradients black .9×expand_t (left 18%, right 15%). Tooltip 172×32 r12 gap 6; flash 32 r12 gap 6 dur 2.5s; transcript 28 r10 font 12 fade 3s+6/s rise 12; long-press ring (0.92,0.95,1.0) 0.45s hold 0.12s delay; drag inflate ×1.18 (stiffness 280); cancel button 18.
 
 ## Motion
 Expand spring stiffness 200. Wave phase 0.11 + 0.32×level/frame; level smoothing 0.18, decay 0.985/frame; loading 0.015/frame. UNKNOWN: expand damping ratio (not in constants) — recreation uses critical damping per “no spring-bounce on tools”; confirm against the native feel before changing.
 
 ## States
-idle collapsed / idle hover label / recording wave / loading bar / paused bar / tooltip / flash / transcript / long-press ring / drag inflate.
+idle collapsed / idle hover label / recording wave / loading bar / loading bar + stage text / paused bar / tooltip / flash / transcript / long-press ring / drag inflate.
 
 ## Accessibility
 UNKNOWN: native surface — no ARIA/keyboard contract visible from the webview (verify with platform owners).

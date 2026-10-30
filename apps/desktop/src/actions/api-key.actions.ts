@@ -114,7 +114,7 @@ export const deleteApiKey = async (id: string): Promise<void> =>
             state.settings.aiPostProcessing.selectedApiKeyId ?? null;
         },
         undefined,
-        lease,
+        { existingLease: lease },
       );
     } catch (error) {
       console.error("Failed to delete API key", error);

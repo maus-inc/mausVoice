@@ -89,6 +89,16 @@ jobs:
         run: pnpm exec turbo run build --filter=desktop^... --verbosity=2 --continue
       - name: Run desktop unit tests
         run: pnpm --filter desktop run test:unit
+      - name: Typecheck preview
+        # `apps/preview` is a workspace package with a `check-types` script, but
+        # no workflow ran it, so it drifted to two real `TS2769` errors on a
+        # `variant="blue"` Button that the theme no longer defines while every
+        # gate stayed green. The dependency build above is what makes this
+        # resolvable: the preview tsconfig reaches into `apps/desktop/src`, which
+        # imports the built `@maus-inc/*` packages.
+        run: pnpm --filter @maus-inc/preview run check-types
+      - name: Lint preview
+        run: pnpm --filter @maus-inc/preview run lint
       - name: Run preview unit tests
         run: pnpm --filter @maus-inc/preview test
 

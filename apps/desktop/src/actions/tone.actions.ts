@@ -94,7 +94,7 @@ export const deleteTone = async (id: string): Promise<void> =>
             preferences.activeToneId = null;
           },
           "Failed to clear the deleted tone preference. Please try again.",
-          lease,
+          { existingLease: lease },
         );
       }
 
@@ -120,7 +120,7 @@ export const setActiveTone = async (toneId: string | null): Promise<void> =>
           preferences.activeToneId = toneId;
         },
         "Failed to save active tone. Please try again.",
-        lease,
+        { existingLease: lease },
       );
 
       showSnackbar(toneId ? "Default tone set" : "Default tone cleared", {

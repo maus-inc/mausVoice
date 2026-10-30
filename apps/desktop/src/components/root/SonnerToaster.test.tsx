@@ -75,6 +75,8 @@ describe("SonnerToaster", () => {
     const toaster = document.querySelector("[data-sonner-toaster]");
     expect(toaster).not.toBeNull();
     expect(toaster!.getAttribute("data-rich-colors")).not.toBe("true");
+    expect(toaster!.getAttribute("data-x-position")).toBe("right");
+    expect(toaster!.getAttribute("data-y-position")).toBe("bottom");
     const toastEl = document.querySelector(
       "[data-sonner-toast][data-type='success']",
     );
