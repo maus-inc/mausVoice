@@ -471,8 +471,8 @@ impl ConnectionMessageHandler<'_> {
         let device =
             device_result.map_err(|error| format!("Failed to validate sender device: {error}"))?;
 
-        let device = match device {
-            Some(device) if device.trusted && device.shared_secret == auth_token => device,
+        match device {
+            Some(device) if device.trusted && device.shared_secret == auth_token => {}
             Some(_) => {
                 return self
                     .reject_sender(session_id, &sender_device_id, SenderRejection::Unauthorized)
