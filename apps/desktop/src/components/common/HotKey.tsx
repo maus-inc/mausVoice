@@ -10,6 +10,9 @@ import {
   isModifierOnlyCombo,
 } from "../../utils/keyboard.utils";
 
+// Only the recorder that owns focus may release the global shortcut guard.
+let activeRecorder: symbol | null = null;
+
 type HotKeyProps = {
   value?: string[];
   onChange?: (value: string[]) => void;
@@ -26,6 +29,7 @@ export const HotKey = ({
   const intl = useIntl();
   const valueId = useId();
   const boxRef = useRef<HTMLDivElement | null>(null);
+  const recorderId = useRef(Symbol("hotkey recorder"));
   const [focused, setFocused] = useState(false);
   const [hasInteracted, setHasInteracted] = useState(false);
   const keysHeld = useAppStore((s) => s.keysHeld);
@@ -39,10 +43,15 @@ export const HotKey = ({
   }, [value]);
 
   useEffect(() => {
-    produceAppState((draft) => {
-      draft.isRecordingHotkey = focused;
-    });
-  }, [focused]);
+    const owner = recorderId.current;
+    return () => {
+      if (activeRecorder !== owner) return;
+      activeRecorder = null;
+      produceAppState((draft) => {
+        draft.isRecordingHotkey = false;
+      });
+    };
+  }, []);
 
   useEffect(() => {
     if (disabled) boxRef.current?.blur();
@@ -151,12 +160,28 @@ export const HotKey = ({
       onClick={() => {
         if (!disabled) boxRef.current?.focus();
       }}
+      onKeyDown={(event) => {
+        if (event.key !== "Escape" || event.nativeEvent.isComposing) return;
+        event.preventDefault();
+        event.stopPropagation();
+        boxRef.current?.blur();
+      }}
       onFocus={() => {
         if (disabled) return;
+        activeRecorder = recorderId.current;
+        produceAppState((draft) => {
+          draft.isRecordingHotkey = true;
+        });
         valueBeforeRecordingRef.current = value;
         setFocused(true);
       }}
       onBlur={() => {
+        if (activeRecorder === recorderId.current) {
+          activeRecorder = null;
+          produceAppState((draft) => {
+            draft.isRecordingHotkey = false;
+          });
+        }
         setFocused(false);
         setHasInteracted(false);
       }}

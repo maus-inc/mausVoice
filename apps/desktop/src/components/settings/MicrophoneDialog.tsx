@@ -42,6 +42,9 @@ export const MicrophoneDialog = () => {
     const content = contentRef.current;
     const feedback = feedbackRef.current;
     if ((!saveError && !saveSuccess) || !content || !feedback) return;
+    // Do not move the viewport away from a tester the user has started using
+    // while this save was pending. The alert still announces itself.
+    if (content.contains(document.activeElement)) return;
     const containerRect = content.getBoundingClientRect();
     const errorRect = feedback.getBoundingClientRect();
     if (

@@ -112,9 +112,29 @@ it("locks a pending preference write against duplicate saves and dismissal, then
     expect(document.body.textContent).toContain(
       "Failed to save microphone preference",
     );
+    let resolve!: () => void;
+    mocks.save.mockImplementationOnce(
+      () =>
+        new Promise<void>((done) => {
+          resolve = done;
+        }),
+    );
+    act(() => button("Save changes").click());
+    act(() => button("Finish test").focus());
+    content.scrollTop = 10;
+    const movedBounds = vi
+      .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+      .mockImplementation(function (this: HTMLElement) {
+        return this.getAttribute("role") === "alert"
+          ? rect(230, 270)
+          : rect(0, 0);
+      });
     await act(async () => {
-      button("Save changes").click();
+      resolve();
     });
+    expect(content.scrollTop).toBe(10);
+    expect(document.activeElement).toBe(button("Finish test"));
+    movedBounds.mockRestore();
     expect(mocks.save).toHaveBeenCalledTimes(2);
     expect(document.body.textContent).toContain("Preference saved.");
   } finally {
