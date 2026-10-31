@@ -28,6 +28,7 @@ export const ToneEditConfirmations = ({
       onCancel={onCancelDelete}
       onConfirm={onDelete}
       busy={isBusy}
+      cancelButtonProps={{ autoFocus: true }}
       confirmLabel={<FormattedMessage defaultMessage="Delete" />}
       confirmButtonProps={{ color: "error", disabled: isBusy }}
     />
@@ -40,6 +41,7 @@ export const ToneEditConfirmations = ({
       busy={isBusy}
       onCancel={onCancelDiscard}
       onConfirm={onDiscard}
+      cancelButtonProps={{ autoFocus: true }}
       confirmLabel={<FormattedMessage defaultMessage="Discard" />}
       confirmButtonProps={{ color: "warning", disabled: isBusy }}
     />

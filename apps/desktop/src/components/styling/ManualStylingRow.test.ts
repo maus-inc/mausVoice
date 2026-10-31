@@ -141,6 +141,47 @@ describe("ManualStylingRow destructive delete", () => {
     expect(deleteToneMock).not.toHaveBeenCalled();
   });
 
+  it("focuses Cancel and locks dismissal and duplicate deletes while pending", async () => {
+    let reject!: (reason: Error) => void;
+    deleteToneMock.mockReturnValueOnce(
+      new Promise((_resolve, fail) => {
+        reject = fail;
+      }),
+    );
+    act(() => root.render(createElement(ManualStylingRow, { id: "tone1" })));
+    openRowContextMenu();
+    const item = Array.from(
+      document.querySelectorAll('[role="menuitem"]'),
+    ).find((el) => el.textContent?.includes("Delete")) as HTMLElement;
+    await act(async () => item.click());
+    const dialog = document.querySelector('[role="dialog"]')!;
+    const buttons = Array.from(dialog.querySelectorAll("button"));
+    const cancel = buttons.find((el) => el.textContent?.trim() === "Cancel")!;
+    const confirm = buttons.find((el) => el.textContent?.trim() === "Delete")!;
+    expect(document.activeElement).toBe(cancel);
+    act(() => {
+      confirm.click();
+      confirm.click();
+    });
+    expect(deleteToneMock).toHaveBeenCalledTimes(1);
+    expect(cancel.disabled).toBe(true);
+    expect(confirm.disabled).toBe(true);
+    await act(async () => {
+      dialog.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+      );
+    });
+    expect(document.body.textContent).toContain(
+      "Are you sure you want to delete this style?",
+    );
+    await act(async () => reject(new Error("unavailable")));
+    expect(document.body.textContent).toContain(
+      "Are you sure you want to delete this style?",
+    );
+    expect(cancel.disabled).toBe(false);
+    expect(confirm.disabled).toBe(false);
+  });
+
   it("keeps the dialog open and swallows the rejection when delete fails", async () => {
     deleteToneMock.mockRejectedValueOnce(new Error("db unavailable"));
     act(() => {
