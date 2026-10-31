@@ -165,9 +165,19 @@ export const AppStylingRow = ({ id }: AppStylingRowProps) => {
       </PostProcessingDisabledTooltip>
       {!isMacOS() && (
         <MenuPopoverBuilder items={pasteKeybindMenuItems}>
-          {({ ref, open }) => (
+          {({ ref, open, isOpen }) => (
             <IconButton
               ref={ref}
+              aria-label={intl.formatMessage(
+                { defaultMessage: "More options for {title}" },
+                {
+                  title:
+                    target?.name?.trim() ||
+                    intl.formatMessage({ defaultMessage: "Paste Keybind" }),
+                },
+              )}
+              aria-haspopup="menu"
+              aria-expanded={isOpen}
               onClick={open}
               disabled={!target}
               size="small"

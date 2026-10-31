@@ -124,9 +124,11 @@ export const AppHeader = () => {
           transformOrigin={{ vertical: "top", horizontal: "right" }}
           items={sharedRightMenuItems}
         >
-          {({ ref, open }) => (
+          {({ ref, open, isOpen }) => (
             <Button
               ref={ref}
+              aria-haspopup="menu"
+              aria-expanded={isOpen}
               onClick={open}
               sx={{
                 display: { xs: "none", sm: "flex" },

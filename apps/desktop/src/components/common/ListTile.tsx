@@ -90,6 +90,9 @@ export type ListTileProps<C extends ListTileComponent = "div"> = {
   onClick?: (event: React.MouseEvent<HTMLDivElement>) => void;
   selected?: boolean;
   ariaCurrent?: React.AriaAttributes["aria-current"];
+  /** Optional role for the interactive tile, such as an action menu item. */
+  itemRole?: React.AriaRole;
+  ariaChecked?: React.AriaAttributes["aria-checked"];
   /**
    * Render as a list item when this tile is a child of a List. The generic
    * parameter is what makes the forwarded ref honest: a `li` tile hands back an
@@ -125,6 +128,8 @@ export const ListTile = forwardRef(function ListTile<
     onClick,
     selected = false,
     ariaCurrent,
+    itemRole,
+    ariaChecked,
     component = "div" as C,
     sx,
     href,
@@ -181,6 +186,9 @@ export const ListTile = forwardRef(function ListTile<
       {indicator}
       <ListItemButton
         selected={selected}
+        role={itemRole}
+        tabIndex={itemRole?.startsWith("menuitem") ? -1 : undefined}
+        aria-checked={ariaChecked}
         aria-current={ariaCurrent}
         onClick={handleClick}
         disabled={disabled}

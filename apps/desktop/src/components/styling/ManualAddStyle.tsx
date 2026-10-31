@@ -2,10 +2,10 @@ import { Edit, PublicOutlined } from "@mui/icons-material";
 import Add from "@mui/icons-material/Add";
 import CheckBoxIcon from "@mui/icons-material/CheckBox";
 import CheckBoxOutlineBlankIcon from "@mui/icons-material/CheckBoxOutlineBlank";
-import { Button, IconButton, Stack, Tooltip, Typography } from "@mui/material";
+import { Button, IconButton, Tooltip, Typography } from "@mui/material";
 import type { Tone } from "@maus-inc/types";
 import { useCallback, useMemo } from "react";
-import { FormattedMessage } from "react-intl";
+import { FormattedMessage, useIntl } from "react-intl";
 import { openToneEditorDialog } from "../../actions/tone.actions";
 import { setActiveToneIds } from "../../actions/user.actions";
 import { useAppStore } from "../../store";
@@ -42,6 +42,7 @@ const StyleSelectionIcon = ({
 };
 
 export function ManualAddStyle() {
+  const intl = useIntl();
   const toneById = useAppStore((state) => state.toneById);
   const sortedToneIds = useAppStore((state) => getSortedToneIds(state));
   const activeToneIds = useAppStore((state) => getActiveManualToneIds(state));
@@ -106,42 +107,35 @@ export function ManualAddStyle() {
               {tone.name}
             </Typography>
           ),
-          trailing: (
-            <Stack
-              direction="row"
-              spacing={0.5}
-              sx={{
-                alignItems: "center",
-                mr: -1,
+          checked: isActive,
+          trailing: isGlobal ? (
+            <Tooltip
+              disableInteractive
+              title={
+                <FormattedMessage defaultMessage="This style is managed by your organization." />
+              }
+            >
+              <span>
+                <IconButton size="small" disabled>
+                  <PublicOutlined fontSize="small" />
+                </IconButton>
+              </span>
+            </Tooltip>
+          ) : undefined,
+          endAction: canEdit ? (
+            <IconButton
+              role="menuitem"
+              tabIndex={-1}
+              aria-label={`${intl.formatMessage({ defaultMessage: "Edit style" })}: ${tone.name}`}
+              size="small"
+              onClick={(e) => {
+                e.stopPropagation();
+                openToneEditorDialog({ mode: "edit", toneId: tone.id });
               }}
             >
-              {isGlobal && (
-                <Tooltip
-                  disableInteractive
-                  title={
-                    <FormattedMessage defaultMessage="This style is managed by your organization." />
-                  }
-                >
-                  <span>
-                    <IconButton size="small" disabled>
-                      <PublicOutlined fontSize="small" />
-                    </IconButton>
-                  </span>
-                </Tooltip>
-              )}
-              {canEdit && (
-                <IconButton
-                  size="small"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    openToneEditorDialog({ mode: "edit", toneId: tone.id });
-                  }}
-                >
-                  <Edit fontSize="small" />
-                </IconButton>
-              )}
-            </Stack>
-          ),
+              <Edit fontSize="small" />
+            </IconButton>
+          ) : undefined,
           onClick: () => {
             if (!isActive || canDeselect) {
               handleToggle(tone.id);
@@ -152,13 +146,15 @@ export function ManualAddStyle() {
     );
 
     return items;
-  }, [allTones, activeSet, handleToggle]);
+  }, [allTones, activeSet, handleToggle, intl]);
 
   return (
     <MenuPopoverBuilder items={menuItems}>
-      {({ ref, open }) => (
+      {({ ref, open, isOpen }) => (
         <Button
           ref={ref}
+          aria-haspopup="menu"
+          aria-expanded={isOpen}
           onClick={open}
           variant="contained"
           startIcon={<Add />}

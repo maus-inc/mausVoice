@@ -10,7 +10,7 @@ Anchor menu of ListTile rows + dividers + hover submenus + generic builders.
 
 ## Visual tokens
 
-Popover paper: level1, radius 14, hairline, premiumSurface.hover. Anchor bottom-center → transform top-center; mousedown stops propagation. Submenu: fixed box at parent rect right, zIndex 1300, paper fill, overflow hidden, shape radius; items role=menuitem.
+Popover paper uses the shared chrome-menu radius, hairline, rest shadow and background; it scrolls vertically when needed. The default anchor is bottom-center → top-center, and mousedown stops propagation. A submenu anchors to the right of its parent and uses the same paper styling.
 
 ## Motion
 
@@ -22,7 +22,7 @@ open / closed / submenu open / item activation (closes via injected close).
 
 ## Accessibility
 
-role=menuitem wrappers; ListTile rows are buttons. UNKNOWN: arrow-key traversal across submenu tiers is not implemented in source (hover-driven) — flag as a11y gap.
+Action rows expose the menuitem role on the focusable control itself; checked style rows expose menuitemcheckbox and their current state. A separate edit action is a sibling, not a nested control. Opening focuses the first action. Up/Down wrap between actions; Home/End move to the ends, Enter/Space activate, Tab closes, and Escape restores the trigger through MUI Popover. A keyboard-opened submenu focuses its first action; ArrowLeft closes it. Generic builder content retains its own semantics. Native screen-reader behavior has not been verified.
 
 ## Live-spec mapping
 

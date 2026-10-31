@@ -233,9 +233,19 @@ export const ManualStylingRow = ({ id }: ManualStylingRowProps) => {
         </Tooltip>
       )}
       <MenuPopoverBuilder items={menuItems}>
-        {({ ref, open }) => (
+        {({ ref, open, isOpen }) => (
           <IconButton
             ref={ref}
+            aria-label={intl.formatMessage(
+              { defaultMessage: "More options for {title}" },
+              {
+                title:
+                  tone?.name?.trim() ||
+                  intl.formatMessage({ defaultMessage: "Style" }),
+              },
+            )}
+            aria-haspopup="menu"
+            aria-expanded={isOpen}
             onClick={(e) => {
               e.stopPropagation();
               open();
