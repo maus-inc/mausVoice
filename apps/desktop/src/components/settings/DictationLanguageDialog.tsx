@@ -267,6 +267,7 @@ export const DictationLanguageDialog = () => {
           variant="body2"
           sx={{
             color: "text.secondary",
+            "@media (max-height: 400px)": { display: "none" },
           }}
         >
           <FormattedMessage defaultMessage="Configure multiple dictation languages with hotkeys." />
@@ -274,6 +275,17 @@ export const DictationLanguageDialog = () => {
       </DialogTitle>
       <DialogContent dividers>
         <Stack spacing={1}>
+          <Typography
+            aria-hidden
+            variant="body2"
+            color="text.secondary"
+            sx={{
+              display: "none",
+              "@media (max-height: 400px)": { display: "block" },
+            }}
+          >
+            <FormattedMessage defaultMessage="Configure multiple dictation languages with hotkeys." />
+          </Typography>
           {hasHotkeyConflict && (
             <Alert severity="warning" variant="outlined">
               <FormattedMessage defaultMessage="Some hotkeys share overlapping keys, which may cause conflicts." />
