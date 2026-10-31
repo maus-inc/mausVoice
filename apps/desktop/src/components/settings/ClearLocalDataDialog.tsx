@@ -51,6 +51,7 @@ export const ClearLocalDataDialog = () => {
   const open = useAppStore((state) => state.settings.clearLocalDataDialogOpen);
   const [confirmationValue, setConfirmationValue] = useState("");
   const [isClearing, setIsClearing] = useState(false);
+  const clearInFlight = useRef(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const confirmationRef = useRef<HTMLInputElement | null>(null);
 
@@ -66,6 +67,7 @@ export const ClearLocalDataDialog = () => {
 
   /** Put the dialog away and forget everything typed into it. */
   const close = () => {
+    if (clearInFlight.current) return;
     produceAppState((draft) => {
       draft.settings.clearLocalDataDialogOpen = false;
     });
@@ -79,7 +81,7 @@ export const ClearLocalDataDialog = () => {
   // disabled for the same reason, and a half-finished wipe with the dialog gone
   // would leave nothing to report on.
   const handleDismiss = () => {
-    if (!isClearing) {
+    if (!isClearing && !clearInFlight.current) {
       close();
     }
   };
@@ -88,10 +90,11 @@ export const ClearLocalDataDialog = () => {
     confirmationValue.trim().toLowerCase() === CONFIRMATION_PHRASE;
 
   const handleClear = async () => {
-    if (!confirmationMatches || isClearing) {
+    if (!confirmationMatches || isClearing || clearInFlight.current) {
       return;
     }
 
+    clearInFlight.current = true;
     setIsClearing(true);
     setErrorMessage(null);
 
@@ -117,6 +120,7 @@ export const ClearLocalDataDialog = () => {
               "Some stored data could not be removed. Quit and reopen mausVoice, then try again.",
           }),
         );
+        clearInFlight.current = false;
         setIsClearing(false);
         return;
       }
@@ -126,6 +130,7 @@ export const ClearLocalDataDialog = () => {
       window.location.reload();
     } catch (error) {
       setErrorMessage(describeClearFailure(error, intl));
+      clearInFlight.current = false;
       setIsClearing(false);
     }
   };

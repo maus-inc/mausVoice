@@ -92,6 +92,7 @@ export const PersonalApiKeyDialog = ({
   );
   const [value, setValue] = useState("");
   const [saving, setSaving] = useState(false);
+  const saveInFlight = useRef(false);
   const keyRef = useRef<HTMLInputElement | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -104,17 +105,18 @@ export const PersonalApiKeyDialog = ({
   }, [open, provider]);
 
   const close = () => {
-    if (!saving) {
+    if (!saving && !saveInFlight.current) {
       onClose();
     }
   };
 
   const save = async () => {
     const trimmed = value.trim();
-    if (!trimmed || saving) {
+    if (!trimmed || saving || saveInFlight.current) {
       return;
     }
 
+    saveInFlight.current = true;
     setSaving(true);
     setErrorMessage(null);
     try {
@@ -133,6 +135,7 @@ export const PersonalApiKeyDialog = ({
       setErrorMessage(message);
       showErrorSnackbar(error);
     } finally {
+      saveInFlight.current = false;
       setSaving(false);
     }
   };
@@ -150,7 +153,21 @@ export const PersonalApiKeyDialog = ({
         // still null — and MUI's focus trap is left holding the paper. Not as
         // `autoFocus` either, which fires as markup and cannot be deferred;
         // this is the repo's established rule for dialogs.
-        transition: { onEntered: () => keyRef.current?.focus() },
+        transition: {
+          onEntered: () => {
+            const input = keyRef.current;
+            input?.focus({ preventScroll: true });
+            const content = input?.closest<HTMLElement>(
+              ".MuiDialogContent-root",
+            );
+            if (input && content) {
+              const overflow =
+                input.getBoundingClientRect().bottom -
+                content.getBoundingClientRect().bottom;
+              if (overflow > 0) content.scrollTop += overflow + 8;
+            }
+          },
+        },
       }}
     >
       <DialogTitle>{copy.title}</DialogTitle>
@@ -205,6 +222,7 @@ export const PersonalApiKeyDialog = ({
           variant="contained"
           onClick={() => void save()}
           disabled={!value.trim() || saving}
+          aria-busy={saving || undefined}
         >
           {saving ? (
             <FormattedMessage defaultMessage="Saving..." />

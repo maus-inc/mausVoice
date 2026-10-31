@@ -139,6 +139,31 @@ describe("DeleteAccountDialog", () => {
     container.remove();
   });
 
+  it("starts only one deletion for two activations and permits retry after failure", async () => {
+    let reject!: (error: Error) => void;
+    mocks.deleteMyAccount.mockImplementationOnce(
+      () =>
+        new Promise((_, fail) => {
+          reject = fail;
+        }),
+    );
+    render();
+    typeConfirmation(CONFIRMATION_PHRASE);
+    act(() => {
+      confirmButton()?.click();
+      confirmButton()?.click();
+    });
+    expect(mocks.deleteMyAccount).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      reject(new Error("failed"));
+    });
+    expect(confirmButton()?.hasAttribute("disabled")).toBe(false);
+    await act(async () => {
+      confirmButton()?.click();
+    });
+    expect(mocks.deleteMyAccount).toHaveBeenCalledTimes(2);
+  });
+
   it("removes this device's copy of the profile photo with the account", async () => {
     render();
     await submit();

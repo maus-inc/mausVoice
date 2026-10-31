@@ -105,6 +105,36 @@ describe("ClearLocalDataDialog", () => {
     container.remove();
   });
 
+  it("starts only one wipe for two activations before rendering busy state", async () => {
+    let reject!: (error: Error) => void;
+    mocks.invoke.mockImplementationOnce(
+      () =>
+        new Promise((_, fail) => {
+          reject = fail;
+        }),
+    );
+    openDialog();
+    render();
+    typeConfirmation("clear");
+    act(() => {
+      confirmButton()?.click();
+      confirmButton()?.click();
+      [...document.querySelectorAll("button")]
+        .find((button) => button.textContent?.trim() === "Cancel")
+        ?.click();
+    });
+    expect(getAppState().settings.clearLocalDataDialogOpen).toBe(true);
+    expect(
+      mocks.invoke.mock.calls.filter(
+        ([command]) => command === "stop_key_listener",
+      ),
+    ).toHaveLength(1);
+    await act(async () => {
+      reject(new Error("failed"));
+    });
+    expect(confirmButton()?.hasAttribute("disabled")).toBe(false);
+  });
+
   it("asks for the phrase, so a stray click cannot wipe the device", () => {
     openDialog();
     render();

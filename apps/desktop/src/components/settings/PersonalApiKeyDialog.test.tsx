@@ -124,6 +124,39 @@ describe("PersonalApiKeyDialog", () => {
     container.remove();
   });
 
+  it.each(["groq", "deepgram"] as const)(
+    "guards repeated %s saves and allows retry",
+    async (provider) => {
+      let reject!: (error: Error) => void;
+      const save = provider === "groq" ? mocks.saveGroq : mocks.saveDeepgram;
+      save.mockImplementationOnce(
+        () =>
+          new Promise((_, fail) => {
+            reject = fail;
+          }),
+      );
+      render(provider);
+      type("test-key");
+      const button = saveButton();
+      act(() => {
+        button?.click();
+        button?.click();
+        const cancel = [...(dialog()?.querySelectorAll("button") ?? [])].find(
+          (element) => element.textContent?.trim() === "Abbrechen",
+        );
+        cancel?.click();
+      });
+      expect(save).toHaveBeenCalledTimes(1);
+      expect(onClose).not.toHaveBeenCalled();
+      await act(async () => {
+        reject(new Error("failed"));
+      });
+      await click(saveButton());
+      expect(save).toHaveBeenCalledTimes(2);
+      expect(onClose).toHaveBeenCalledTimes(1);
+    },
+  );
+
   it("says a saved Deepgram key in the person's locale", async () => {
     render("deepgram");
     type("  dg_key_123  ");
@@ -160,6 +193,26 @@ describe("PersonalApiKeyDialog", () => {
     expect(mocks.showErrorSnackbar).toHaveBeenCalledWith(failure);
     expect(onClose).not.toHaveBeenCalled();
     expect(dialog()?.textContent).toContain("Groq refused the key");
+  });
+
+  it("reveals the focused field within a short dialog without scrolling the page", async () => {
+    render("groq");
+    const input = keyInput()!;
+    const content = input.closest<HTMLElement>(".MuiDialogContent-root")!;
+    const rectangle = (top: number, bottom: number) =>
+      ({ top, bottom }) as DOMRect;
+    vi.spyOn(input, "getBoundingClientRect").mockReturnValue(
+      rectangle(140, 205),
+    );
+    vi.spyOn(content, "getBoundingClientRect").mockReturnValue(
+      rectangle(95, 190),
+    );
+    const scroll = window.scrollY;
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    });
+    expect(content.scrollTop).toBe(23);
+    expect(window.scrollY).toBe(scroll);
   });
 
   it("puts the cursor in the key field once the dialog has entered", async () => {

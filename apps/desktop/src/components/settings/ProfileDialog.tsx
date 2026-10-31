@@ -42,6 +42,7 @@ export const ProfileDialog = () => {
   const [imageStatus, setImageStatus] = useState("");
   const [saveFailed, setSaveFailed] = useState(false);
   const [saving, setSaving] = useState(false);
+  const saveInFlight = useRef(false);
   const [discardOpen, setDiscardOpen] = useState(false);
   // A pick is decoding, and there is nothing to save until it lands.
   const [preparing, setPreparing] = useState(false);
@@ -144,7 +145,7 @@ export const ProfileDialog = () => {
   }, [user, saving, preparing, trimmed, initialName, image, initialImage]);
 
   const requestClose = () => {
-    if (saving || discardAfterExit.current) return;
+    if (saveInFlight.current || saving || discardAfterExit.current) return;
     if (name !== initialName || image !== initialImage || preparing) {
       setDiscardOpen(true);
     } else {
@@ -153,9 +154,10 @@ export const ProfileDialog = () => {
   };
 
   const handleSave = useCallback(async () => {
-    if (!canSave || discardAfterExit.current) {
+    if (!canSave || saveInFlight.current || discardAfterExit.current) {
       return;
     }
+    saveInFlight.current = true;
     setSaving(true);
     setSaveFailed(false);
     try {
@@ -169,6 +171,8 @@ export const ProfileDialog = () => {
     } catch {
       setSaveFailed(true);
       setSaving(false);
+    } finally {
+      saveInFlight.current = false;
     }
   }, [canSave, trimmed, initialName, image, initialImage, close]);
 

@@ -7,7 +7,7 @@ import {
   Stack,
   Typography,
 } from "@mui/material";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { showSnackbar } from "../../actions/app.actions";
 import { getAuthRepo } from "../../repos";
@@ -35,11 +35,13 @@ export const DeleteAccountDialog = () => {
   const open = useAppStore((state) => state.settings.deleteAccountDialog);
   const [confirmationValue, setConfirmationValue] = useState("");
   const [busy, setBusy] = useState(false);
+  const deleteInFlight = useRef(false);
 
   const isDeleteEnabled =
     confirmationValue.trim().toLowerCase() === CONFIRMATION_PHRASE;
 
   const handleClose = () => {
+    if (deleteInFlight.current) return;
     produceAppState((state) => {
       state.settings.deleteAccountDialog = false;
     });
@@ -47,10 +49,11 @@ export const DeleteAccountDialog = () => {
   };
 
   const handleSubmit = async () => {
-    if (!isDeleteEnabled) {
+    if (!isDeleteEnabled || deleteInFlight.current) {
       return;
     }
 
+    deleteInFlight.current = true;
     setBusy(true);
     try {
       await getAuthRepo().deleteMyAccount();
@@ -63,6 +66,7 @@ export const DeleteAccountDialog = () => {
       showSnackbar(
         "An error occurred while attempting to delete your account. Please try again later.",
       );
+      deleteInFlight.current = false;
       setBusy(false);
       return;
     }
@@ -105,6 +109,7 @@ export const DeleteAccountDialog = () => {
     // above has already told the person what happened, and a failing sign-out
     // cannot make a deleted account undeleted.
     logOnRejection(getAuthRepo().signOut(), "account deletion: signOut");
+    deleteInFlight.current = false;
     setBusy(false);
   };
 
@@ -129,9 +134,6 @@ export const DeleteAccountDialog = () => {
       </DialogTitle>
       <DialogContent>
         <Stack spacing={2.5}>
-          {/* The consequences are the dialog, so they are a list rather than a
-              sentence: the same one the local-data wipe uses, for the same
-              reason. */}
           {/* The consequences are the dialog, so they are a list rather than a
               sentence: the same one the local-data wipe uses, for the same
               reason. Every line is something this build actually does — the
@@ -159,6 +161,7 @@ export const DeleteAccountDialog = () => {
             phrase={CONFIRMATION_PHRASE}
             value={confirmationValue}
             onChange={setConfirmationValue}
+            disabled={busy}
           />
         </Stack>
       </DialogContent>
