@@ -11,12 +11,16 @@ import { produceAppState, setAppState } from "../../store";
 const mocks = vi.hoisted(() => ({
   deleteConversation: vi.fn(),
   createConversation: vi.fn(),
+  showErrorSnackbar: vi.fn(),
 }));
 vi.mock("react-intl", async (original) => {
   const { reactIntlMockModule } =
     await import("../../../test/helpers/react-intl-mock");
   return reactIntlMockModule(original);
 });
+vi.mock("../../actions/app.actions", () => ({
+  showErrorSnackbar: mocks.showErrorSnackbar,
+}));
 vi.mock("../../actions/chat.actions", () => ({
   createConversation: mocks.createConversation,
   deleteConversation: mocks.deleteConversation,
@@ -169,3 +173,39 @@ it.each(["delete", "create"])(
     }
   },
 );
+
+it("reports a failed delete without changing the selected thread", async () => {
+  setAppState(structuredClone(INITIAL_APP_STATE), true);
+  produceAppState((s) => {
+    s.chat.conversationIds = ["one"];
+    s.conversationById.one = { id: "one", title: "one" } as Conversation;
+  });
+  const failure = new Error("delete failed");
+  mocks.deleteConversation.mockRejectedValueOnce(failure);
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  try {
+    await act(async () =>
+      root.render(
+        <MemoryRouter initialEntries={["/dashboard/chats?id=one"]}>
+          <ChatsPage />
+          <Location />
+        </MemoryRouter>,
+      ),
+    );
+    await act(async () =>
+      [...host.querySelectorAll("button")]
+        .find((b) => b.textContent === "Delete one")!
+        .click(),
+    );
+    expect(mocks.showErrorSnackbar).toHaveBeenCalledWith(failure);
+    expect(host.querySelector("output")!.textContent).toBe("?id=one");
+  } finally {
+    act(() => root.unmount());
+    host.remove();
+    mocks.deleteConversation.mockReset();
+    mocks.showErrorSnackbar.mockReset();
+    setAppState(structuredClone(INITIAL_APP_STATE), true);
+  }
+});
