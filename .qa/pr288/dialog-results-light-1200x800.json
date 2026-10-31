@@ -1,0 +1,107 @@
+[
+  {
+    "name": "profile",
+    "url": "/dashboard/settings/account",
+    "button": "Edit",
+    "opened": false,
+    "error": "TimeoutError: locator.waitFor: Timeout 10000ms exceeded.\nCall log:\n  - waiting for getByRole('button', { name: 'Edit', exact: true }).first() to be visible\n",
+    "errors": []
+  },
+  {
+    "name": "clear-data",
+    "url": "/dashboard/settings/account",
+    "button": "Clear data",
+    "opened": false,
+    "error": "TimeoutError: locator.waitFor: Timeout 10000ms exceeded.\nCall log:\n  - waiting for getByRole('button', { name: 'Clear data', exact: true }).first() to be visible\n",
+    "errors": []
+  },
+  {
+    "name": "delete-account",
+    "url": "/dashboard/settings/account",
+    "button": "Delete",
+    "opened": false,
+    "error": "TimeoutError: locator.waitFor: Timeout 10000ms exceeded.\nCall log:\n  - waiting for getByRole('button', { name: 'Delete', exact: true }).first() to be visible\n",
+    "errors": []
+  },
+  {
+    "name": "microphone",
+    "url": "/dashboard/settings/dictation",
+    "button": "Microphone",
+    "opened": true,
+    "file": "dialog-microphone-light-1200x800.jpg",
+    "text": "Microphone settings\n\nPreferred microphone\n\nChoose which microphone mausVoice should use when recording. Automatic picks the best available device each time.\n\nMicrophone\n\nPreview microphone\n\nDefault\nMicrophone\nRefresh devices\n\nTest your microphone\n\nStart a short test to see live audio levels and play back what was recorded.\n\nRecord\nPlay\nClose\nSave changes",
+    "errors": []
+  },
+  {
+    "name": "audio",
+    "url": "/dashboard/settings/dictation",
+    "button": "Audio",
+    "opened": true,
+    "file": "dialog-audio-light-1200x800.jpg",
+    "text": "Audio\n\nInteraction feedback\n\nPlay a short haptic-style click when you press the pill or start and stop recording. No sound plays while a recording is processing.\n\nPill click volume\n\nLower the volume of the click the pill makes when you press it, or turn the click off entirely.\n35%\n\n35%\n\nDim audio while dictating\n\nLower system volume while recording, then restore it when done.\n\n100%\n\n100%\n\nClose",
+    "errors": []
+  },
+  {
+    "name": "multiple-languages",
+    "url": "/dashboard/settings/dictation",
+    "button": "Multiple languages",
+    "opened": true,
+    "file": "dialog-multiple-languages-light-1200x800.jpg",
+    "text": "Dictation language\n\nConfigure multiple dictation languages with hotkeys.\n\n⌥ + Space\n\nEnglish\n​\n\nAdd language\n\nCancel\nSave",
+    "errors": []
+  },
+  {
+    "name": "hotkeys",
+    "url": "/dashboard/settings/shortcuts",
+    "button": "Hotkey shortcuts",
+    "opened": true,
+    "file": "dialog-hotkeys-light-1200x800.jpg",
+    "text": "Keyboard shortcuts\n\nCustomize your keyboard shortcuts. Keyboard shortcuts can be triggered from within any app.\n\nHold to dictate\n\nHold the key to record, release to transcribe your speech into text with AI.\n\n⌥ + Space\n\nAdd another\n\nCancel transcription\n\nCancel the current dictation or agent session.\n\nEscape\n\nAdd another\n\nOpen chat\n\nOpen the current assistant conversation in the main window.\n\nSet hotkey\n\nAdd to dictionary\n\nAdd the currently selected text to your dictionary.\n\nSet hotkey\n\nNext writing style\n\nCycle forward through your active writing styles while dictating.\n\n→\n\nAdd another\n\nPrevious writing style\n\nCycle backward through your active writing styles while dictating.\n\n←\n\nAdd another\n\nClose",
+    "errors": []
+  },
+  {
+    "name": "style-hotkeys",
+    "url": "/dashboard/settings/shortcuts",
+    "button": "Style hotkeys",
+    "opened": true,
+    "file": "dialog-style-hotkeys-light-1200x800.jpg",
+    "text": "Style hotkeys\n\nAssign a shortcut to select a style directly. Leave a row empty to disable its shortcut.\n\nSet hotkey\n\nPolished\n\nSet hotkey\n\nVerbatim\n\nSet hotkey\n\nEmail\n\nSet hotkey\n\nChat\n\nSet hotkey\n\nPrompt\n\nSet hotkey\n\nBullets\n\nSet hotkey\n\nConcise\n\nSet hotkey\n\nNotes\n\nSet hotkey\n\nMeeting notes\n\nCancel\nSave",
+    "errors": []
+  },
+  {
+    "name": "ai-transcription",
+    "url": "/dashboard/settings/ai-models",
+    "button": "AI transcription",
+    "opened": true,
+    "file": "dialog-ai-transcription-light-1200x800.jpg",
+    "text": "AI transcription\n\nDecide how mausVoice should transcribe your recordings, locally on your machine or through a connected provider.\n\nAPI\nLocal\nProcessing device\nNo devices available\nProcessing device\nTranscription model\nWhisper Small (488 MB)\nTranscription model\nModel downloads\n\nNVIDIA Parakeet CTC 0.6B (613 MB)\n\nUltra-fast English dictation, zero hallucination loops\nDownload\n\nNVIDIA Parakeet TDT 0.6B (670 MB)\n\nState-of-the-art English dictation speed & accuracy\nDownload\n\nNVIDIA Canary 1B (1.03 GB)\n\nMultilingual STT + automatic punctuation & casing\nDownload\n\nSenseVoice (226 MB)\n\nMultilingual local ASR with strong silence handling (no punctuation)\nDownload\n\nWhisper Tiny (77 MB)\n\nFastest, lowest accuracy\nDownload\n\nWhisper Base (148 MB)\n\nGreat balance of speed and accuracy\nDownload\n\nWhisper Small (488 MB)\n\nRecommended with GPU acceleration\nDownload\n\nWhisper Medium (1.53 GB)\n\nBalanced quality and speed\nDownload\n\nWhisper Large v3 Turbo (1.6 GB)\n\nFast large model, great accuracy\nDownload\n\nWhi",
+    "errors": []
+  },
+  {
+    "name": "post-processing",
+    "url": "/dashboard/settings/ai-models",
+    "button": "AI post processing",
+    "opened": true,
+    "file": "dialog-post-processing-light-1200x800.jpg",
+    "text": "AI post processing\n\nTell mausVoice how to enhance your transcripts after they are created.\n\nAPI\nOff\n\nLLM post-processing is off. Built-in writing styles with fast local transforms are still applied instantly, with no network call. Custom styles need LLM post-processing.\n\nDone",
+    "errors": []
+  },
+  {
+    "name": "assistant",
+    "url": "/dashboard/settings/ai-models",
+    "button": "Assistant mode",
+    "opened": true,
+    "file": "dialog-assistant-light-1200x800.jpg",
+    "text": "Assistant mode\nBeta\n\nAssistant mode follows commands you dictate instead of just cleaning up text.\n\nAPI\nOff\n\nAssistant mode is disabled.\n\nAssistant hotkey\n\nPress this key combination to start assistant mode.\n\nSet hotkey\n\nAssistant mode\n\nAssistant mode is disabled by default. This is a new experimental feature.\n\nPower mode\n\nAllow the assistant to run terminal commands on your behalf. This is a temporary guardrail that will be removed in a future update. Restart mausVoice to apply changes.\n\nDone",
+    "errors": []
+  },
+  {
+    "name": "add-dictionary",
+    "url": "/dashboard/dictionary",
+    "button": "Add",
+    "opened": true,
+    "file": "dialog-add-dictionary-light-1200x800.jpg",
+    "text": "Add term\n\nReplacement\n\n​\n\nAdd multiple terms at once by putting each on a new line.\n\nCancel\nAdd",
+    "errors": []
+  }
+]
