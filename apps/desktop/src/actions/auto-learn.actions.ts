@@ -7,6 +7,10 @@ import { collectTermValues } from "../utils/app.utils";
 import { isPersistenceAllowed } from "../utils/incognito.utils";
 import { getLogger } from "../utils/log.utils";
 import { getMyUserPreferences } from "../utils/user.utils";
+import {
+  type LocalDataWriteLease,
+  withLocalDataWrite,
+} from "../utils/local-data-write-gate";
 import { createGlossaryTerms } from "./dictionary.actions";
 
 export type SaveCorrectedTranscriptResult = {
@@ -26,6 +30,7 @@ export type SaveCorrectedTranscriptResult = {
 const learnTermsFromCorrection = async (
   original: string,
   corrected: string,
+  lease: LocalDataWriteLease,
 ): Promise<{ learnedTerms: string[]; failedTerms: number }> => {
   const state = getAppState();
   const existingTerms = collectTermValues(state);
@@ -43,7 +48,7 @@ const learnTermsFromCorrection = async (
   // createGlossaryTerms absorbs per-term persistence errors (it logs and
   // continues) and reports them through `failed`, so a glossary failure is
   // surfaced as partial success rather than thrown here.
-  const { created, failed } = await createGlossaryTerms(learnedTerms);
+  const { created, failed } = await createGlossaryTerms(learnedTerms, lease);
   return {
     learnedTerms: created.map((term) => term.sourceValue),
     failedTerms: failed,
@@ -62,17 +67,6 @@ export const saveCorrectedTranscript = async ({
   transcriptionId: string;
   correctedText: string;
 }): Promise<SaveCorrectedTranscriptResult> => {
-  const state = getAppState();
-  const transcription = getRec(state.transcriptionById, transcriptionId);
-  if (!transcription) {
-    // The details dialog hands a thrown `Error` straight to the error snackbar,
-    // so the sentence has to come from the intl layer rather than being written
-    // out here.
-    throw new Error(
-      getIntl().formatMessage({ defaultMessage: "Transcription not found." }),
-    );
-  }
-
   const normalized = correctedText.trim();
   if (!normalized) {
     throw new Error(
@@ -82,63 +76,67 @@ export const saveCorrectedTranscript = async ({
     );
   }
 
-  const previous = transcription;
-  const updated = { ...transcription, transcript: normalized };
-
-  produceAppState((draft) => {
-    draft.transcriptionById[transcriptionId] = updated;
-  });
-
-  let learnedTerms: string[] = [];
-  let failedTerms = 0;
-  let dictionarySuppressed = false;
-  try {
-    // One decision, read once, for both writes below: the history row and the
-    // glossary. Read separately they could disagree if the mode changed while an
-    // await was in flight. It is the first statement inside the `try` rather than
-    // above it so that every path after the optimistic update at line 81 rolls
-    // back through the `catch` -- resting that on statement order is exactly the
-    // kind of invariant that a later edit moves.
-    const persistenceAllowed = isPersistenceAllowed();
-
-    // Editing a transcript is a write to the history row like any other, so it
-    // answers the same privacy gate. Under incognito mode or an ephemeral
-    // session the correction stays in memory only: writing it out would put
-    // back exactly the transcript the mode promised to leave unsaved.
-    const persisted = persistenceAllowed
-      ? await getTranscriptionRepo().updateTranscription(updated)
-      : updated;
-    produceAppState((draft) => {
-      draft.transcriptionById[transcriptionId] = persisted;
-    });
-
-    const autoLearnEnabled =
-      getMyUserPreferences(getAppState())?.autoLearnDictionaryEnabled ?? true;
-    // The glossary answers the same gate as the transcript write, and for a
-    // sharper reason: the learned terms are proper nouns lifted verbatim out of
-    // the corrected text, so persisting them would leave the sensitive content
-    // behind in a table the mode never promised to touch. Gating only the
-    // transcript write left the dictionary as the surviving copy.
-    if (autoLearnEnabled && persistenceAllowed) {
-      const result = await learnTermsFromCorrection(
-        previous.transcript,
-        normalized,
+  return withLocalDataWrite(async (lease) => {
+    const transcription = getRec(
+      getAppState().transcriptionById,
+      transcriptionId,
+    );
+    if (!transcription) {
+      // The details dialog hands a thrown `Error` straight to the error snackbar,
+      // so the sentence has to come from the intl layer rather than being written
+      // out here.
+      throw new Error(
+        getIntl().formatMessage({ defaultMessage: "Transcription not found." }),
       );
-      learnedTerms = result.learnedTerms;
-      failedTerms = result.failedTerms;
-    } else if (autoLearnEnabled) {
-      // Wanted, and refused. Recorded rather than left as an empty list so the
-      // caller can tell the user why, instead of reporting a correction that
-      // appears to have taught the dictionary nothing.
-      dictionarySuppressed = true;
     }
-  } catch (error) {
-    produceAppState((draft) => {
-      draft.transcriptionById[transcriptionId] = previous;
-    });
-    getLogger().error(`Failed to save corrected transcript: ${error}`);
-    throw error;
-  }
 
-  return { learnedTerms, failedTerms, dictionarySuppressed };
+    const previous = transcription;
+    const updated = { ...transcription, transcript: normalized };
+
+    produceAppState((draft) => {
+      draft.transcriptionById[transcriptionId] = updated;
+    }, lease);
+
+    let learnedTerms: string[] = [];
+    let failedTerms = 0;
+    let dictionarySuppressed = false;
+    try {
+      // Use one privacy decision for both writes. Reading it after an await could
+      // let the transcript and glossary disagree if the mode changed in between.
+      const persistenceAllowed = isPersistenceAllowed();
+
+      // Under incognito mode or an ephemeral session the correction stays in
+      // memory only, so the history row is not written back to disk.
+      const persisted = persistenceAllowed
+        ? await getTranscriptionRepo().updateTranscription(updated, lease)
+        : updated;
+      produceAppState((draft) => {
+        draft.transcriptionById[transcriptionId] = persisted;
+      }, lease);
+
+      const autoLearnEnabled =
+        getMyUserPreferences(getAppState())?.autoLearnDictionaryEnabled ?? true;
+      // Learned proper nouns contain text from the correction itself, so the
+      // glossary follows the same persistence decision as the history row.
+      if (autoLearnEnabled && persistenceAllowed) {
+        const result = await learnTermsFromCorrection(
+          previous.transcript,
+          normalized,
+          lease,
+        );
+        learnedTerms = result.learnedTerms;
+        failedTerms = result.failedTerms;
+      } else if (autoLearnEnabled) {
+        dictionarySuppressed = true;
+      }
+    } catch (error) {
+      produceAppState((draft) => {
+        draft.transcriptionById[transcriptionId] = previous;
+      }, lease);
+      getLogger().error(`Failed to save corrected transcript: ${error}`);
+      throw error;
+    }
+
+    return { learnedTerms, failedTerms, dictionarySuppressed };
+  });
 };

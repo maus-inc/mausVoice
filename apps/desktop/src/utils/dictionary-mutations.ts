@@ -17,6 +17,7 @@ export const trackDictionaryMutation = <T>(
   return tracked;
 };
 
-export const waitForDictionaryMutations = async (): Promise<void> => {
-  while (pending.size) await Promise.allSettled(pending);
+export const waitForDictionaryMutations = (): Promise<void> => {
+  if (!pending.size) return Promise.resolve();
+  return Promise.allSettled([...pending]).then(waitForDictionaryMutations);
 };

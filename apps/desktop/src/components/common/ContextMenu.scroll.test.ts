@@ -12,8 +12,7 @@ vi.mock("react-intl", async (importOriginal) => {
   };
 });
 import {
-  container,
-  root,
+  fixture,
   nativeContextMenu,
   browserRightClick,
   queryRequired,
@@ -28,16 +27,18 @@ describe("useContextMenu", () => {
     // then the only place the user can be put back. Opening the menu from the
     // keyboard sends no mousedown, so nothing unfocused it.
     act(() => {
-      root.render(createElement(BareHarness));
+      fixture.root.render(createElement(BareHarness));
     });
 
-    const input = container.querySelector(
+    const input = fixture.container.querySelector(
       '[data-testid="search"]',
     ) as HTMLInputElement;
     act(() => input.focus());
     expect(document.activeElement).toBe(input);
 
-    nativeContextMenu(queryRequired(container, '[data-testid="bare-text"]'));
+    nativeContextMenu(
+      queryRequired(fixture.container, '[data-testid="bare-text"]'),
+    );
     act(() => {
       document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
     });
@@ -55,16 +56,18 @@ describe("useContextMenu", () => {
     // reading the live one lands the user on the body, from where the next Tab
     // restarts at the top of the document.
     act(() => {
-      root.render(createElement(BareHarness));
+      fixture.root.render(createElement(BareHarness));
     });
 
-    const input = container.querySelector(
+    const input = fixture.container.querySelector(
       '[data-testid="search"]',
     ) as HTMLInputElement;
     act(() => input.focus());
     expect(document.activeElement).toBe(input);
 
-    browserRightClick(queryRequired(container, '[data-testid="bare-text"]'));
+    browserRightClick(
+      queryRequired(fixture.container, '[data-testid="bare-text"]'),
+    );
     expect(document.activeElement).toBe(
       document.body.querySelector('[role="menu"]'),
     );
@@ -80,9 +83,9 @@ describe("useContextMenu", () => {
 
   it("closes on Shift+Tab without swallowing the key either", () => {
     act(() => {
-      root.render(createElement(Harness));
+      fixture.root.render(createElement(Harness));
     });
-    const button = queryRequired(container, "button");
+    const button = queryRequired(fixture.container, "button");
     nativeContextMenu(button);
     expect(document.querySelector('[role="menu"]')).not.toBeNull();
 
@@ -102,16 +105,16 @@ describe("useContextMenu", () => {
 
   it("renders the menu into document.body, outside transformed ancestors", () => {
     act(() => {
-      root.render(createElement(Harness));
+      fixture.root.render(createElement(Harness));
     });
-    const button = queryRequired(container, "button");
+    const button = queryRequired(fixture.container, "button");
     nativeContextMenu(button, 200, 150);
 
     const menu = document.body.querySelector('[role="menu"]');
     expect(menu).not.toBeNull();
     // The portal must lift the menu out of the render container so no
     // ancestor's `filter`/`transform` can re-anchor or clip it.
-    expect(container.contains(menu)).toBe(false);
+    expect(fixture.container.contains(menu)).toBe(false);
     // Its positioned wrapper lives directly under <body>.
     const positioned = menu?.parentElement;
     expect(positioned).not.toBeNull();
@@ -123,9 +126,9 @@ describe("useContextMenu", () => {
     document.addEventListener("keydown", dialogKeydownSpy);
     try {
       act(() => {
-        root.render(createElement(Harness));
+        fixture.root.render(createElement(Harness));
       });
-      nativeContextMenu(queryRequired(container, "button"));
+      nativeContextMenu(queryRequired(fixture.container, "button"));
 
       const event = new KeyboardEvent("keydown", {
         key: "Escape",
@@ -147,9 +150,9 @@ describe("useContextMenu", () => {
 
   it("moves keyboard focus into the menu so arrow navigation works", () => {
     act(() => {
-      root.render(createElement(Harness));
+      fixture.root.render(createElement(Harness));
     });
-    nativeContextMenu(queryRequired(container, "button"));
+    nativeContextMenu(queryRequired(fixture.container, "button"));
 
     const menu = document.body.querySelector('[role="menu"]');
     expect(document.activeElement).toBe(menu);
@@ -157,9 +160,9 @@ describe("useContextMenu", () => {
 
   it("runs the item action and closes on click", () => {
     act(() => {
-      root.render(createElement(Harness));
+      fixture.root.render(createElement(Harness));
     });
-    const button = queryRequired(container, "button");
+    const button = queryRequired(fixture.container, "button");
     nativeContextMenu(button);
 
     const item = Array.from(
@@ -170,15 +173,15 @@ describe("useContextMenu", () => {
     act(() => {
       item.click();
     });
-    expect(queryRequired(container, '[data-testid="result"]').textContent).toBe(
-      "thing",
-    );
+    expect(
+      queryRequired(fixture.container, '[data-testid="result"]').textContent,
+    ).toBe("thing");
     expect(document.querySelector('[role="menu"]')).toBeNull();
   });
 
   it("ignores a scroll already queued when the menu opened, but dismisses on a later scroll", async () => {
-    act(() => root.render(createElement(Harness)));
-    nativeContextMenu(queryRequired(container, "button"));
+    act(() => fixture.root.render(createElement(Harness)));
+    nativeContextMenu(queryRequired(fixture.container, "button"));
     act(() =>
       document.body.dispatchEvent(new Event("scroll", { bubbles: true })),
     );
@@ -194,9 +197,9 @@ describe("useContextMenu", () => {
 
   it("keeps the menu open when scrolling inside the menu itself", () => {
     act(() => {
-      root.render(createElement(Harness));
+      fixture.root.render(createElement(Harness));
     });
-    const button = queryRequired(container, "button");
+    const button = queryRequired(fixture.container, "button");
     nativeContextMenu(button);
     const menu = queryRequired(document, '[role="menu"]');
     expect(menu).not.toBeNull();
@@ -213,9 +216,9 @@ describe("useContextMenu", () => {
 
   it("closes the menu when an external element scrolls", async () => {
     act(() => {
-      root.render(createElement(Harness));
+      fixture.root.render(createElement(Harness));
     });
-    const button = queryRequired(container, "button");
+    const button = queryRequired(fixture.container, "button");
     nativeContextMenu(button);
     expect(document.querySelector('[role="menu"]')).not.toBeNull();
 
@@ -235,9 +238,9 @@ describe("useContextMenu", () => {
   // dispatches on `document.body`, which is an Element, so it passed regardless.
   it("closes the menu when the document itself scrolls, without throwing", async () => {
     act(() => {
-      root.render(createElement(Harness));
+      fixture.root.render(createElement(Harness));
     });
-    const button = queryRequired(container, "button");
+    const button = queryRequired(fixture.container, "button");
     nativeContextMenu(button);
     expect(document.querySelector('[role="menu"]')).not.toBeNull();
 

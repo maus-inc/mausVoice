@@ -17,8 +17,7 @@ import {
   useContextMenu,
 } from "./ContextMenu";
 import {
-  container,
-  root,
+  fixture,
   nativeContextMenu,
   queryRequired,
 } from "./context-menu-test-utils";
@@ -26,7 +25,7 @@ import {
 describe("ContextMenuProvider", () => {
   it("shows the clipboard menu on input right-click without throwing", () => {
     act(() => {
-      root.render(
+      fixture.root.render(
         createElement(
           ContextMenuProvider,
           null,
@@ -35,7 +34,7 @@ describe("ContextMenuProvider", () => {
       );
     });
 
-    const input = queryRequired(container, "input");
+    const input = queryRequired(fixture.container, "input");
     // Regression: the provider passes a NATIVE MouseEvent to handleContextMenu,
     // which previously dereferenced the React-only `nativeEvent` property and
     // threw a TypeError (suppressing the menu after preventDefault()).
@@ -56,7 +55,7 @@ describe("ContextMenuProvider", () => {
   it("enables Copy only when the input actually has a selection", () => {
     const render = (select: boolean) => {
       act(() => {
-        root.render(
+        fixture.root.render(
           createElement(
             ContextMenuProvider,
             null,
@@ -64,7 +63,7 @@ describe("ContextMenuProvider", () => {
           ),
         );
       });
-      const input = queryRequired<HTMLInputElement>(container, "input");
+      const input = queryRequired<HTMLInputElement>(fixture.container, "input");
       if (select) {
         // window.getSelection() does NOT reflect <input> selection — the menu
         // must read selectionStart/selectionEnd instead (regression: Copy was
@@ -83,7 +82,7 @@ describe("ContextMenuProvider", () => {
 
   it("leaves non-input surfaces to the default webview menu", () => {
     act(() => {
-      root.render(
+      fixture.root.render(
         createElement(
           ContextMenuProvider,
           null,
@@ -92,7 +91,7 @@ describe("ContextMenuProvider", () => {
       );
     });
 
-    const surface = queryRequired(container, "div");
+    const surface = queryRequired(fixture.container, "div");
     const event = new MouseEvent("contextmenu", {
       bubbles: true,
       cancelable: true,
@@ -158,12 +157,12 @@ describe("surface yields editable right-clicks to the provider", () => {
     };
 
     act(() => {
-      root.render(
+      fixture.root.render(
         createElement(ContextMenuProvider, null, createElement(SurfaceHarness)),
       );
     });
 
-    const input = queryRequired(container, "input");
+    const input = queryRequired(fixture.container, "input");
     nativeContextMenu(input);
 
     const menu = queryRequired(document, '[role="menu"]');

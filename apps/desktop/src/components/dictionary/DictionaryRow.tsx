@@ -12,6 +12,7 @@ import {
 import { FormattedMessage, useIntl } from "react-intl";
 import { showErrorSnackbar } from "../../actions/app.actions";
 import { getAppState, produceAppState, useAppStore } from "../../store";
+import { beginLocalDataWrite } from "../../utils/local-data-write-gate";
 import { focusAfterDictionaryDelete } from "./dictionary-delete-focus";
 import {
   deleteDictionaryTerm,
@@ -80,25 +81,36 @@ export const DictionaryRow = ({ id }: DictionaryRowProps) => {
       return;
     }
 
-    const previousTerm = term;
-    const updatedTerm = {
-      ...term,
-      sourceValue,
-      destinationValue,
-    };
+    const write = beginLocalDataWrite();
+    if (!write) return;
+    try {
+      const previousTerm = term;
+      const updatedTerm = {
+        ...term,
+        sourceValue,
+        destinationValue,
+      };
 
-    produceAppState((draft) => {
-      draft.termById[id] = updatedTerm;
-    });
+      produceAppState((draft) => {
+        draft.termById[id] = updatedTerm;
+      }, write.lease);
 
-    await updateDictionaryTerm(previousTerm, updatedTerm, (saved, error) => {
-      if (getAppState().termById[id] === updatedTerm) {
-        produceAppState((draft) => {
-          draft.termById[id] = saved;
-        });
-      }
-      showErrorSnackbar(error);
-    });
+      await updateDictionaryTerm(
+        previousTerm,
+        updatedTerm,
+        (saved, error) => {
+          if (getAppState().termById[id] === updatedTerm) {
+            produceAppState((draft) => {
+              draft.termById[id] = saved;
+            }, write.lease);
+          }
+          showErrorSnackbar(error);
+        },
+        write.lease,
+      );
+    } finally {
+      write();
+    }
   }, [destinationValue, id, isReplacement, sourceValue, term]);
 
   const handleDelete = useCallback(async () => {
@@ -106,42 +118,50 @@ export const DictionaryRow = ({ id }: DictionaryRowProps) => {
       return;
     }
 
-    const previousTerm = term;
-    const previousIds = [...getAppState().dictionary.termIds];
-    focusAfterDictionaryDelete(id);
+    const write = beginLocalDataWrite();
+    if (!write) return;
+    try {
+      const previousTerm = term;
+      const previousIds = [...getAppState().dictionary.termIds];
+      focusAfterDictionaryDelete(id);
 
-    produceAppState((draft) => {
-      delete draft.termById[id];
-      draft.dictionary.termIds = draft.dictionary.termIds.filter(
-        (termId) => termId !== id,
-      );
-    });
-
-    await deleteDictionaryTerm(previousTerm, (saved, error) => {
       produceAppState((draft) => {
-        // Restore only this deletion, without reverting other edits or removals
-        // that completed while the request was pending.
-        draft.termById[id] ??= saved;
-        const ids = draft.dictionary.termIds;
-        if (!ids.includes(id)) {
-          const oldIndex = previousIds.indexOf(id);
-          const next = previousIds
-            .slice(oldIndex + 1)
-            .find((candidate) => ids.includes(candidate));
-          const before = previousIds
-            .slice(0, oldIndex)
-            .reverse()
-            .find((candidate) => ids.includes(candidate));
-          const index = next
-            ? ids.indexOf(next)
-            : before
-              ? ids.indexOf(before) + 1
-              : Math.min(Math.max(oldIndex, 0), ids.length);
-          ids.splice(index, 0, id);
-        }
-      });
-      showErrorSnackbar(error);
-    });
+        delete draft.termById[id];
+        draft.dictionary.termIds = draft.dictionary.termIds.filter(
+          (termId) => termId !== id,
+        );
+      }, write.lease);
+
+      await deleteDictionaryTerm(
+        previousTerm,
+        (saved, error) => {
+          produceAppState((draft) => {
+            // Restore only this deletion, without reverting other edits or removals
+            // that completed while the request was pending.
+            draft.termById[id] ??= saved;
+            const ids = draft.dictionary.termIds;
+            if (!ids.includes(id)) {
+              const oldIndex = previousIds.indexOf(id);
+              const next = previousIds
+                .slice(oldIndex + 1)
+                .find((candidate) => ids.includes(candidate));
+              const before = previousIds
+                .slice(0, oldIndex)
+                .reverse()
+                .find((candidate) => ids.includes(candidate));
+              let index = Math.min(Math.max(oldIndex, 0), ids.length);
+              if (next) index = ids.indexOf(next);
+              else if (before) index = ids.indexOf(before) + 1;
+              ids.splice(index, 0, id);
+            }
+          }, write.lease);
+          showErrorSnackbar(error);
+        },
+        write.lease,
+      );
+    } finally {
+      write();
+    }
   }, [id, term]);
 
   const ctxMenu = useContextMenu();

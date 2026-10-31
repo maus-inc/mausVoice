@@ -124,11 +124,13 @@ describe("ClearLocalDataDialog", () => {
         ?.click();
     });
     expect(getAppState().settings.clearLocalDataDialogOpen).toBe(true);
-    expect(
-      mocks.invoke.mock.calls.filter(
-        ([command]) => command === "stop_key_listener",
-      ),
-    ).toHaveLength(1);
+    await vi.waitFor(() => {
+      expect(
+        mocks.invoke.mock.calls.filter(
+          ([command]) => command === "stop_key_listener",
+        ),
+      ).toHaveLength(1);
+    });
     await act(async () => {
       reject(new Error("failed"));
     });
@@ -230,7 +232,7 @@ describe("ClearLocalDataDialog", () => {
 
     await vi.waitFor(() => {
       expect(document.body.textContent).toContain(
-        "Some stored data could not be removed",
+        "Unable to clear app-owned browser storage keys",
       );
     });
     // Reloading would restore the state the dialog just promised to remove.
@@ -311,7 +313,7 @@ describe("ClearLocalDataDialog", () => {
 
       await vi.waitFor(() => {
         expect(document.body.textContent).toContain(
-          "could not reach this computer",
+          "Browser storage is unavailable",
         );
       });
       expect(reload).not.toHaveBeenCalled();

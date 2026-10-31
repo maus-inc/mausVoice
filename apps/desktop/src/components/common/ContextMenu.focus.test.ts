@@ -13,8 +13,7 @@ vi.mock("react-intl", async (importOriginal) => {
 });
 import { useContextMenu } from "./ContextMenu";
 import {
-  container,
-  root,
+  fixture,
   nativeContextMenu,
   queryRequired,
   Harness,
@@ -40,9 +39,9 @@ describe("useContextMenu", () => {
       );
     };
     act(() => {
-      root.render(createElement(EmptyHarness));
+      fixture.root.render(createElement(EmptyHarness));
     });
-    const button = queryRequired(container, '[data-testid="empty"]');
+    const button = queryRequired(fixture.container, '[data-testid="empty"]');
     const event = new MouseEvent("contextmenu", {
       bubbles: true,
       cancelable: true,
@@ -60,9 +59,9 @@ describe("useContextMenu", () => {
 
   it("closes on Escape", () => {
     act(() => {
-      root.render(createElement(Harness));
+      fixture.root.render(createElement(Harness));
     });
-    const button = queryRequired(container, "button");
+    const button = queryRequired(fixture.container, "button");
     nativeContextMenu(button);
     expect(document.querySelector('[role="menu"]')).not.toBeNull();
 
@@ -76,9 +75,9 @@ describe("useContextMenu", () => {
 
   it("closes on Tab without swallowing the key, so focus is not trapped", () => {
     act(() => {
-      root.render(createElement(Harness));
+      fixture.root.render(createElement(Harness));
     });
-    const button = queryRequired(container, "button");
+    const button = queryRequired(fixture.container, "button");
     nativeContextMenu(button);
     expect(document.querySelector('[role="menu"]')).not.toBeNull();
 
@@ -100,9 +99,9 @@ describe("useContextMenu", () => {
 
   it("returns focus to the surface on Tab instead of dropping it on the body", () => {
     act(() => {
-      root.render(createElement(Harness));
+      fixture.root.render(createElement(Harness));
     });
-    const button = queryRequired(container, "button");
+    const button = queryRequired(fixture.container, "button");
     nativeContextMenu(button);
     expect(document.activeElement).toBe(
       document.body.querySelector('[role="menu"]'),
@@ -156,11 +155,14 @@ describe("useContextMenu", () => {
       );
     };
     act(() => {
-      root.render(createElement(RowHarness));
+      fixture.root.render(createElement(RowHarness));
     });
 
-    const text = queryRequired(container, '[data-testid="row-text"]');
-    const rowButton = queryRequired(container, '[data-testid="row-button"]');
+    const text = queryRequired(fixture.container, '[data-testid="row-text"]');
+    const rowButton = queryRequired(
+      fixture.container,
+      '[data-testid="row-button"]',
+    );
     nativeContextMenu(text);
     expect(document.activeElement).toBe(
       document.body.querySelector('[role="menu"]'),

@@ -21,17 +21,21 @@ import { useAppStore } from "../../store";
 import { REGISTER_CURRENT_APP_EVENT } from "../../types/app-target.types";
 import { getLogger } from "../../utils/log.utils";
 import { minutesToMilliseconds } from "../../utils/time.utils";
+import { isMainLocalDataWindow } from "../../utils/local-data-write-gate";
 
 export const RootSideEffects = () => {
   const userId = useAppStore((state) => state.auth?.uid);
+  const isMainWindow = isMainLocalDataWindow();
 
   useAsyncEffect(async () => {
     getLogger().info(`Loading user data (userId=${userId ?? "none"})`);
     await Promise.allSettled([refreshMember(), refreshCurrentUser()]);
     await loadApiKeys();
-    await configurePersonalDefaults().catch((error) => {
-      getLogger().error(`Failed to configure personal defaults: ${error}`);
-    });
+    if (isMainWindow) {
+      await configurePersonalDefaults().catch((error) => {
+        getLogger().error(`Failed to configure personal defaults: ${error}`);
+      });
+    }
 
     getLogger().verbose(
       "Loading hotkeys, API keys, dictionary, tones, app targets",
@@ -42,11 +46,13 @@ export const RootSideEffects = () => {
       loadTones(),
       loadAppTargets(),
       loadTools(),
-      migratePreferredMicrophoneToPreferences(),
     ];
+    if (isMainWindow) {
+      loaders.push(migratePreferredMicrophoneToPreferences());
+    }
     await Promise.allSettled(loaders);
     getLogger().info("Initial data load complete");
-  }, [userId]);
+  }, [isMainWindow, userId]);
 
   useIntervalAsync(
     minutesToMilliseconds(15),

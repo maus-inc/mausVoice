@@ -118,7 +118,12 @@ export const SettingNumberField = ({
           step,
           inputMode: "numeric",
           "aria-labelledby": `${rowId}-label`,
-          "aria-describedby": `${rowId}-description${error ? ` ${inputId}-helper-text` : ""}`,
+          "aria-describedby": [
+            `${rowId}-description`,
+            error && `${inputId}-helper-text`,
+          ]
+            .filter(Boolean)
+            .join(" "),
         },
         input: unit
           ? {

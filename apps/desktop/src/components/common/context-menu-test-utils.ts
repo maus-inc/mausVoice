@@ -7,8 +7,16 @@ import { useContextMenu } from "./useContextMenu";
   globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
-export let container: HTMLDivElement;
-export let root: Root;
+let container: HTMLDivElement;
+let root: Root;
+export const fixture = {
+  get container() {
+    return container;
+  },
+  get root() {
+    return root;
+  },
+};
 
 beforeEach(() => {
   container = document.createElement("div");

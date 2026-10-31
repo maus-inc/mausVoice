@@ -16,7 +16,8 @@ import {
   useRef,
   useState,
 } from "react";
-import { FormattedMessage } from "react-intl";
+import { FormattedMessage, useIntl } from "react-intl";
+import { toast } from "sonner";
 import { setPreferredMicrophone } from "../../actions/user.actions";
 import { useMyPreferredMicrophone } from "../../hooks/user.hooks";
 import { produceAppState, useAppStore } from "../../store";
@@ -28,6 +29,7 @@ import { MicrophoneTester } from "../microphone/MicrophoneTester";
 export const MicrophoneDialog = () => {
   const open = useAppStore((state) => state.settings.microphoneDialogOpen);
   const savedPreference = useMyPreferredMicrophone();
+  const intl = useIntl();
 
   const [selected, setSelected] = useState<Nullable<string>>(savedPreference);
   const [hasChanges, setHasChanges] = useState(false);
@@ -91,13 +93,17 @@ export const MicrophoneDialog = () => {
       await setPreferredMicrophone(selected ?? null);
       setHasChanges(false);
       setSaveSuccess(true);
+      toast.success(
+        intl.formatMessage({ defaultMessage: "Preference saved." }),
+        { duration: 5000 },
+      );
     } catch {
       setSaveError(true);
     } finally {
       saveInFlight.current = false;
       setSaving(false);
     }
-  }, [hasChanges, saving, selected]);
+  }, [hasChanges, intl, saving, selected]);
 
   const handleClose = useCallback(() => {
     if (saveInFlight.current) return;
@@ -131,11 +137,26 @@ export const MicrophoneDialog = () => {
                 <FormattedMessage defaultMessage="Failed to save microphone preference. Please try again." />
               </Alert>
             )}
-            {saveSuccess && (
-              <Alert ref={feedbackRef} severity="success">
+            <span
+              role="status"
+              aria-live="polite"
+              aria-atomic="true"
+              style={{
+                position: "absolute",
+                width: 1,
+                height: 1,
+                padding: 0,
+                margin: -1,
+                overflow: "hidden",
+                clip: "rect(0, 0, 0, 0)",
+                whiteSpace: "nowrap",
+                border: 0,
+              }}
+            >
+              {saveSuccess && (
                 <FormattedMessage defaultMessage="Preference saved." />
-              </Alert>
-            )}
+              )}
+            </span>
           </Stack>
 
           <Divider />

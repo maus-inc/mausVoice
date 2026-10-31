@@ -35,18 +35,20 @@ export const AudioWaveformBars = ({
         })}
       />
     </Box>
-    {values.map((value, index) => (
-      <Box
-        key={`wave-bar-${index}`}
-        sx={(theme) => ({
-          flex: "0 0 auto",
-          width: `${barWidth}px`,
-          borderRadius: theme.spacing(0.25),
-          backgroundColor: theme.vars?.palette.primary.main,
-          height: `${Math.round(35 + value * 55)}%`,
-          transition: "opacity 140ms ease",
-        })}
-      />
-    ))}
+    {values
+      .map((value, position) => ({ value, id: `wave-bar-${position}` }))
+      .map(({ value, id }) => (
+        <Box
+          key={id}
+          sx={(theme) => ({
+            flex: "0 0 auto",
+            width: `${barWidth}px`,
+            borderRadius: theme.spacing(0.25),
+            backgroundColor: theme.vars?.palette.primary.main,
+            height: `${Math.round(35 + value * 55)}%`,
+            transition: "opacity 140ms ease",
+          })}
+        />
+      ))}
   </>
 );

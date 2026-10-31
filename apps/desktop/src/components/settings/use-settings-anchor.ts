@@ -1,6 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { settingAnchorId } from "./settings-routes";
 
+const focusSettingRow = (row: HTMLElement, key: string): void => {
+  const target = row.matches("button:not(:disabled)")
+    ? row
+    : row.querySelector<HTMLElement>(
+        'input:not([type="hidden"]):not(:disabled), button:not(:disabled), [role="combobox"]:not([aria-disabled="true"]), [tabindex="0"]',
+      );
+  if (target) {
+    target.focus({ preventScroll: true });
+    return;
+  }
+  row.setAttribute("tabindex", "-1");
+  const label = document.getElementById(`${settingAnchorId(key)}-label`);
+  if (label) row.setAttribute("aria-labelledby", label.id);
+  row.focus({ preventScroll: true });
+};
+
 /** Scroll and highlight only once the requested row has actually mounted. */
 export const useSettingsAnchor = (
   hash: string,
@@ -36,21 +52,7 @@ export const useSettingsAnchor = (
             active === document.body ||
             active === document.documentElement
           ) {
-            const target = row.matches("button:not(:disabled)")
-              ? row
-              : row.querySelector<HTMLElement>(
-                  'input:not([type="hidden"]):not(:disabled), button:not(:disabled), [role="combobox"]:not([aria-disabled="true"]), [tabindex="0"]',
-                );
-            if (target) {
-              target.focus({ preventScroll: true });
-            } else {
-              row.setAttribute("tabindex", "-1");
-              const label = document.getElementById(
-                `${settingAnchorId(key)}-label`,
-              );
-              if (label) row.setAttribute("aria-labelledby", label.id);
-              row.focus({ preventScroll: true });
-            }
+            focusSettingRow(row, key);
           }
         }
         const reduceMotion = window.matchMedia?.(

@@ -181,6 +181,7 @@ describe("ApiKeyList", () => {
   const renderList = async (
     context: "transcription" | "post-processing" = "post-processing",
     selectedApiKeyId: string | null = "key-groq",
+    compactCards = false,
   ) => {
     await act(async () => {
       root.render(
@@ -191,6 +192,7 @@ describe("ApiKeyList", () => {
             selectedApiKeyId,
             onChange: mocks.onChange,
             context,
+            compactCards,
           }),
         ),
       );
@@ -219,6 +221,43 @@ describe("ApiKeyList", () => {
         region.querySelector("button, input, select, textarea, a, [role]"),
       ).toBeNull();
     }
+  });
+
+  it.each([
+    ["loading", "Loading API keys…"],
+    ["error", "Failed to load API keys"],
+    ["success", "No API keys yet"],
+  ] as const)(
+    "renders the %s state when there are no keys",
+    async (status, message) => {
+      seedApiKeys([]);
+      produceAppState((draft) => {
+        draft.settings.apiKeysStatus = status;
+      });
+      await renderList("transcription", null);
+
+      expect(container.textContent).toContain(message);
+      expect(container.querySelector("[aria-pressed]")).toBeNull();
+    },
+  );
+
+  it("allows long key names to wrap within the selection region", async () => {
+    const longName = "long-key-name".repeat(20);
+    seedApiKeys([{ ...groqKey, name: longName }, openRouterKey]);
+    await renderList("transcription", "key-groq", true);
+
+    const region = metaButton(longName);
+    const grid = region.closest(".MuiPaper-root")?.parentElement;
+    expect(grid).toBeDefined();
+    expect(getComputedStyle(grid!).display).toBe("grid");
+    expect(getComputedStyle(grid!).gridTemplateColumns).toContain("auto-fit");
+    const name = [...region.querySelectorAll<HTMLElement>("p")].find(
+      (element) => element.textContent === longName,
+    );
+    expect(name).toBeDefined();
+    expect(getComputedStyle(name!).overflowWrap).toBe("anywhere");
+    expect(getComputedStyle(name!).minWidth).toBe("0px");
+    expect(testButton().closest("[aria-pressed]")).toBeNull();
   });
 
   it("exposes selection state on the selection region via aria-pressed", async () => {

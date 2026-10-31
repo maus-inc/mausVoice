@@ -10,6 +10,7 @@
     "check-types": "turbo run check-types",
     "test": "turbo run test",
     "test:secret-scan": "node scripts/ci/test-secret-history-scan.mjs",
+    "skills:verify": "node scripts/ci/verify-skills.mjs",
     "gen:bindings": "pnpm --filter @maus-inc/desktop-native-apis gen:bindings"
   },
   "devDependencies": {

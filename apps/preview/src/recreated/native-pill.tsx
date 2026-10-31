@@ -48,6 +48,11 @@ const MAX_AMP = 1.3;
 const STROKE = 1.6;
 const LOAD_FRAC = 0.4;
 const LOAD_SPEED = 0.015;
+const LOAD_TRACK_ALPHA = 0.15;
+const LOAD_IND_ALPHA = 0.7;
+const LOAD_DIM_TRACK_ALPHA = 0.08;
+const LOAD_DIM_IND_ALPHA = 0.22;
+const STAGE_TEXT_ALPHA = 0.9;
 
 const WAVES = [
   { frequency: 0.8, multiplier: 1.6, phaseOffset: 0, opacity: 1 },
@@ -75,6 +80,85 @@ const roundedRect = (
   ctx.closePath();
 };
 
+const truncateToBudget = (
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  maxW: number,
+): string => {
+  const chars = Array.from(text);
+  for (let i = chars.length - 1; i >= 1; i--) {
+    const candidate = `${chars.slice(0, i).join("").trimEnd()}…`;
+    if (ctx.measureText(candidate).width <= maxW) {
+      return candidate;
+    }
+  }
+  return ctx.measureText("…").width <= maxW ? "…" : "";
+};
+
+const elideTextToWidth = (
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  maxW: number,
+): string => {
+  if (maxW <= 0) return "";
+  if (ctx.measureText(text).width <= maxW) return text;
+  return truncateToBudget(ctx, text, maxW);
+};
+
+const paintLoadingBar = (
+  ctx: CanvasRenderingContext2D,
+  opts: {
+    rx: number;
+    ry: number;
+    pillW: number;
+    pillH: number;
+    loadOffset: number;
+    reduceMotion: boolean;
+    trackAlpha: number;
+    indicatorAlpha: number;
+  },
+) => {
+  const barH = 2;
+  const barY = opts.ry + (opts.pillH - barH) / 2;
+  const pad = opts.pillH * 0.1;
+  const tx = opts.rx + pad;
+  const tw = Math.max(opts.pillW - pad * 2, 0);
+  if (tw <= 0) return;
+
+  ctx.fillStyle = `rgba(255,255,255,${opts.trackAlpha.toFixed(3)})`;
+  ctx.fillRect(tx, barY, tw, barH);
+  const iw = tw * LOAD_FRAC;
+  const effectiveOffset = opts.reduceMotion ? 0.5 : opts.loadOffset;
+  const ix = tx + (tw + iw) * effectiveOffset - iw;
+  const dl = Math.max(ix, tx);
+  const dr = Math.min(ix + iw, tx + tw);
+  if (dr > dl) {
+    ctx.fillStyle = `rgba(255,255,255,${opts.indicatorAlpha.toFixed(3)})`;
+    ctx.fillRect(dl, barY, dr - dl, barH);
+  }
+};
+
+const paintStageLabel = (
+  ctx: CanvasRenderingContext2D,
+  stage: string,
+  opts: {
+    rx: number;
+    ry: number;
+    pillW: number;
+    pillH: number;
+    expand: number;
+  },
+) => {
+  ctx.font = "12px Satoshi, system-ui, sans-serif";
+  const maxW = Math.max(opts.pillW - 16, 0);
+  const label = elideTextToWidth(ctx, stage, maxW);
+  if (!label) return;
+  ctx.fillStyle = `rgba(255,255,255,${(STAGE_TEXT_ALPHA * opts.expand).toFixed(3)})`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(label, opts.rx + opts.pillW / 2, opts.ry + opts.pillH / 2 + 0.5);
+};
+
 const nextTargetLevel = (
   phase: PillPhase,
   reduceMotion: boolean | null,
@@ -92,11 +176,13 @@ const nextTargetLevel = (
 export const NativePillCanvas = ({
   phase,
   hovered = false,
+  stageText,
   label,
   width = WW,
 }: {
   phase: PillPhase;
   hovered?: boolean;
+  stageText?: string | null;
   label?: string;
   width?: number;
 }) => {
@@ -110,6 +196,7 @@ export const NativePillCanvas = ({
   const stateRef = useRef({
     phase,
     hovered,
+    stageText,
     expandedW,
     expandedH,
     radiusCap,
@@ -119,6 +206,7 @@ export const NativePillCanvas = ({
   stateRef.current = {
     phase,
     hovered,
+    stageText,
     expandedW,
     expandedH,
     radiusCap,
@@ -227,28 +315,22 @@ export const NativePillCanvas = ({
 
       if (expand > 0.1 && s.phase === "loading") {
         drawClipped(() => {
-          const barH = 2;
-          const cy = ry + pillH / 2;
-          const pad = pillH * 0.1;
-          const tx = rx + pad;
-          const tw = pillW - pad * 2;
-          ctx.lineCap = "round";
-          ctx.lineWidth = barH;
-          ctx.strokeStyle = `rgba(255,255,255,${(0.15 * expand).toFixed(3)})`;
-          ctx.beginPath();
-          ctx.moveTo(tx, cy);
-          ctx.lineTo(tx + tw, cy);
-          ctx.stroke();
-          const iw = tw * LOAD_FRAC;
-          const ix = tx + (tw + iw) * loadOffset - iw;
-          const dl = Math.max(ix, tx);
-          const dr = Math.min(ix + iw, tx + tw);
-          if (dr > dl) {
-            ctx.strokeStyle = `rgba(255,255,255,${(0.7 * expand).toFixed(3)})`;
-            ctx.beginPath();
-            ctx.moveTo(dl, cy);
-            ctx.lineTo(dr, cy);
-            ctx.stroke();
+          const stage = (s.stageText ?? "").trim();
+          const [baseTrack, baseInd] = stage
+            ? [LOAD_DIM_TRACK_ALPHA, LOAD_DIM_IND_ALPHA]
+            : [LOAD_TRACK_ALPHA, LOAD_IND_ALPHA];
+          paintLoadingBar(ctx, {
+            rx,
+            ry,
+            pillW,
+            pillH,
+            loadOffset,
+            reduceMotion: Boolean(s.reduceMotion),
+            trackAlpha: baseTrack * expand,
+            indicatorAlpha: baseInd * expand,
+          });
+          if (stage) {
+            paintStageLabel(ctx, stage, { rx, ry, pillW, pillH, expand });
           }
         });
       }

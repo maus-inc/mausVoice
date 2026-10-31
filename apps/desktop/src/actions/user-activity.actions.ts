@@ -1,4 +1,10 @@
+import {
+  type LocalDataWriteLease,
+  withLocalDataWrite,
+} from "../utils/local-data-write-gate";
+import { notifyDailyActivityChanged } from "../utils/daily-activity.events";
 import dayjs from "dayjs";
+import { showErrorSnackbar } from "./app.actions";
 import { getIntl } from "../i18n";
 import { getUserPreferencesRepo, getUserRepo } from "../repos";
 import { getAppState, produceAppState } from "../store";
@@ -11,13 +17,6 @@ import {
 } from "../utils/user.utils";
 
 import { enqueueUserMutation, updateUser } from "./user-actions-core";
-
-const getCurrentUsageMonth = (): string => {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = `${now.getMonth() + 1}`.padStart(2, "0");
-  return `${year}-${month}`;
-};
 
 const getCurrentDateString = (): string => dayjs().format("YYYY-MM-DD");
 
@@ -152,28 +151,42 @@ export const recordStreak = async (): Promise<void> => {
   }
 };
 
-export const addWordsToCurrentUser = async (
+// The transcription-storage owner holds the local-data lease while this queued
+// profile mutation runs. Keep the lease there so it also covers audio and history.
+export const recordUsageWords = (
+  eventId: string,
+  localDate: string,
   wordCount: number,
-): Promise<void> => {
-  if (wordCount <= 0) {
-    return;
-  }
+  lease?: LocalDataWriteLease,
+): Promise<void> =>
+  enqueueUserMutation(async () => {
+    if (!Number.isSafeInteger(wordCount) || wordCount <= 0) {
+      return;
+    }
 
-  await updateUser(
-    (user) => {
-      const currentMonth = getCurrentUsageMonth();
-      if (user.wordsThisMonthMonth !== currentMonth) {
-        user.wordsThisMonth = 0;
-        user.wordsThisMonthMonth = currentMonth;
-      }
-
-      user.wordsThisMonth += wordCount;
-      user.wordsTotal += wordCount;
-    },
-    "Unable to update usage. User not found.",
-    "Failed to update usage metrics. Please try again.",
-  );
-};
+    try {
+      await withLocalDataWrite(async (writeLease) => {
+        const user = await getUserRepo().recordUsageWords(
+          eventId,
+          localDate,
+          wordCount,
+          writeLease,
+        );
+        produceAppState((draft) => {
+          setCurrentUser(draft, user);
+        }, writeLease);
+        notifyDailyActivityChanged();
+      }, lease);
+    } catch (error) {
+      getLogger().error(`Failed to record usage metrics: ${error}`);
+      showErrorSnackbar(
+        getIntl().formatMessage({
+          defaultMessage: "Failed to update usage metrics. Please try again.",
+        }),
+      );
+      throw error;
+    }
+  });
 
 // Runs on the same chain as `updateUser` so a refresh never reads a row that a
 // queued save is halfway through writing. It must never be called from inside

@@ -158,6 +158,8 @@ pub async fn insert_transcription(
     pool: SqlitePool,
     transcription: &Transcription,
 ) -> Result<Transcription, sqlx::Error> {
+    let _activity_write_guard = crate::db::daily_activity_queries::lock_activity_writes().await;
+    let mut transaction = pool.begin().await?;
     bind_transcription_fields(
         sqlx::query(&format!(
             "INSERT INTO transcriptions ({})
@@ -167,8 +169,12 @@ pub async fn insert_transcription(
         )),
         transcription,
     )
-    .execute(&pool)
+    .execute(&mut *transaction)
     .await?;
+
+    crate::db::daily_activity_queries::record_transcription_usage(&mut transaction, transcription)
+        .await?;
+    transaction.commit().await?;
 
     Ok(transcription.clone())
 }
@@ -229,6 +235,10 @@ pub async fn update_transcription(
     pool: SqlitePool,
     transcription: &Transcription,
 ) -> Result<Transcription, sqlx::Error> {
+    // Backfill snapshots the transcript and records its usage under the same
+    // lock. Serialize edits too, so an edit cannot commit between that read and
+    // event insert and leave a stale count that future backfills cannot repair.
+    let _activity_write_guard = crate::db::daily_activity_queries::lock_activity_writes().await;
     let sql = transcription_update_sql();
     let row = bind_transcription_fields(sqlx::query(&sql), transcription)
         .fetch_optional(&pool)
@@ -239,6 +249,10 @@ pub async fn update_transcription(
 }
 
 pub async fn delete_transcription(pool: SqlitePool, id: &str) -> Result<(), sqlx::Error> {
+    // Keep deletion ordered with backfill's read-and-insert window. A completed
+    // deletion before backfill starts stays uncounted; a backfill that wins the
+    // lock records the real activity before history is removed.
+    let _activity_write_guard = crate::db::daily_activity_queries::lock_activity_writes().await;
     sqlx::query(
         "DELETE FROM transcriptions
          WHERE id = ?1",
@@ -252,10 +266,28 @@ pub async fn delete_transcription(pool: SqlitePool, id: &str) -> Result<(), sqlx
 
 #[cfg(test)]
 mod tests {
-    use super::{delete_transcription, fetch_transcriptions, update_transcription};
-    use crate::domain::Transcription;
+    use super::{
+        delete_transcription, fetch_transcriptions, insert_transcription, update_transcription,
+    };
+    use crate::db::daily_activity_queries::fetch_daily_activity;
+    use crate::db::user_queries::{fetch_user, upsert_user};
+    use crate::domain::{Transcription, User};
+    use chrono::TimeZone;
     use sqlx::sqlite::SqlitePoolOptions;
     use sqlx::{Row, SqlitePool};
+
+    fn user(month: &str) -> User {
+        serde_json::from_value(serde_json::json!({
+            "id": "local-user-id",
+            "name": "Test",
+            "bio": "",
+            "onboarded": true,
+            "wordsThisMonth": 0,
+            "wordsThisMonthMonth": month,
+            "wordsTotal": 0,
+        }))
+        .expect("deserialize test user")
+    }
 
     fn transcription(id: &str, transcript: &str) -> Transcription {
         Transcription {
@@ -335,6 +367,84 @@ mod tests {
                 });
         }
         pool
+    }
+
+    #[tokio::test]
+    async fn insert_commits_usage_with_local_history_but_skips_remote_and_failed_rows() {
+        let pool = transcription_pool("insert-usage").await;
+        let saved = transcription("live-local", "hello world");
+        let local_date = chrono::Local
+            .timestamp_millis_opt(saved.timestamp)
+            .single()
+            .expect("valid local timestamp")
+            .format("%Y-%m-%d")
+            .to_string();
+        upsert_user(pool.clone(), &user(&local_date[..7]))
+            .await
+            .expect("seed profile");
+
+        insert_transcription(pool.clone(), &saved)
+            .await
+            .expect("insert local transcription and meter");
+        let mut remote = transcription("remote-copy", "remote words");
+        remote.remote_status = Some("received".to_string());
+        insert_transcription(pool.clone(), &remote)
+            .await
+            .expect("insert remote transcription without metering");
+        let failed = transcription("failed-local", "[Transcription Failed]");
+        insert_transcription(pool.clone(), &failed)
+            .await
+            .expect("insert failed marker without metering");
+
+        let usage: (String, i64, String) = sqlx::query_as(
+            "SELECT local_date, word_count, source FROM daily_word_activity_events
+             WHERE event_id = 'live-local'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("read the live usage event");
+        assert_eq!(usage, (local_date.clone(), 2, "live".to_string()));
+
+        let event_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM daily_word_activity_events")
+                .fetch_one(&pool)
+                .await
+                .expect("count usage events");
+        assert_eq!(event_count, 1);
+
+        let activity = fetch_daily_activity(pool.clone(), &local_date, &local_date)
+            .await
+            .expect("read daily activity");
+        assert_eq!(activity.len(), 1);
+        assert_eq!(activity[0].word_count, 2);
+        let profile = fetch_user(pool)
+            .await
+            .expect("read profile")
+            .expect("profile exists");
+        assert_eq!(profile.words_total, 2);
+        assert_eq!(profile.words_this_month, 2);
+    }
+
+    #[tokio::test]
+    async fn insert_without_a_profile_still_saves_history_for_later_backfill() {
+        let pool = transcription_pool("insert-without-profile").await;
+        let transcription = transcription("no-profile", "saved words");
+
+        insert_transcription(pool.clone(), &transcription)
+            .await
+            .expect("history must not depend on a profile row");
+
+        let saved: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM transcriptions WHERE id = 'no-profile'")
+                .fetch_one(&pool)
+                .await
+                .expect("read saved history count");
+        let events: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM daily_word_activity_events")
+            .fetch_one(&pool)
+            .await
+            .expect("read event count");
+        assert_eq!(saved, 1);
+        assert_eq!(events, 0);
     }
 
     /// The returned row must be the row *this* call wrote.

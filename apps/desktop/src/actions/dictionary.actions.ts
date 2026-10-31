@@ -11,6 +11,10 @@ import {
   waitForDictionaryMutations,
 } from "../utils/dictionary-mutations";
 import { getLogger } from "../utils/log.utils";
+import {
+  type LocalDataWriteLease,
+  withLocalDataWrite,
+} from "../utils/local-data-write-gate";
 
 export const loadDictionary = async (): Promise<void> => {
   while (true) {
@@ -42,6 +46,7 @@ type GlossaryResult = { created: Term[]; failed: number };
 const addGlossaryTerm = async (
   sourceValue: string,
   result: GlossaryResult,
+  lease: LocalDataWriteLease,
 ): Promise<void> => {
   const normalized = sourceValue.trim();
   if (!normalized) {
@@ -59,7 +64,7 @@ const addGlossaryTerm = async (
   produceAppState((draft) => {
     draft.termById[newTerm.id] = newTerm;
     draft.dictionary.termIds = [newTerm.id, ...draft.dictionary.termIds];
-  });
+  }, lease);
 
   await createDictionaryTerm(
     newTerm,
@@ -67,11 +72,11 @@ const addGlossaryTerm = async (
       if (getAppState().termById[newTerm.id] === newTerm) {
         produceAppState((draft) => {
           draft.termById[persisted.id] = persisted;
-        });
+        }, lease);
       }
       result.created.push(persisted);
       // All glossary creation paths satisfy the onboarding checklist.
-      setLocalStorageValue("mausvoice:checklist-dictionary", true);
+      setLocalStorageValue("mausvoice:checklist-dictionary", true, lease);
     },
     (error) => {
       produceAppState((draft) => {
@@ -79,10 +84,11 @@ const addGlossaryTerm = async (
         draft.dictionary.termIds = draft.dictionary.termIds.filter(
           (id) => id !== newTerm.id,
         );
-      });
+      }, lease);
       getLogger().warning(`Failed to create glossary term: ${error}`);
       result.failed += 1;
     },
+    lease,
   );
 };
 
@@ -93,19 +99,21 @@ const addGlossaryTerm = async (
  */
 export const createGlossaryTerms = async (
   sourceValues: string[],
-): Promise<GlossaryResult> => {
-  const result: GlossaryResult = { created: [], failed: 0 };
+  existingLease?: LocalDataWriteLease,
+): Promise<GlossaryResult> =>
+  withLocalDataWrite(async (lease) => {
+    const result: GlossaryResult = { created: [], failed: 0 };
 
-  // One value at a time, in the order given. Each step prepends its own id to
-  // the dictionary's ordered list, so the list a caller ends up with is the
-  // reverse of the input and only a sequential run produces that. Chaining the
-  // promises rather than awaiting inside a loop states the requirement in the
-  // shape of the code instead of leaving it to look accidental.
-  await sourceValues.reduce(
-    (chain, sourceValue) =>
-      chain.then(() => addGlossaryTerm(sourceValue, result)),
-    Promise.resolve(),
-  );
+    // One value at a time, in the order given. Each step prepends its own id to
+    // the dictionary's ordered list, so the list a caller ends up with is the
+    // reverse of the input and only a sequential run produces that. Chaining the
+    // promises rather than awaiting inside a loop states the requirement in the
+    // shape of the code instead of leaving it to look accidental.
+    await sourceValues.reduce(
+      (chain, sourceValue) =>
+        chain.then(() => addGlossaryTerm(sourceValue, result, lease)),
+      Promise.resolve(),
+    );
 
-  return result;
-};
+    return result;
+  }, existingLease);

@@ -67,13 +67,13 @@ export const useMenuNavigation = (
     if (index < 0 || !items.length) return;
     event.preventDefault();
     setKeyboardNavigation(true);
-    const next =
-      event.key === "Home"
-        ? 0
-        : event.key === "End"
-          ? items.length - 1
-          : (index + (event.key === "ArrowDown" ? 1 : -1) + items.length) %
-            items.length;
+    let next = index;
+    if (event.key === "Home") next = 0;
+    else if (event.key === "End") next = items.length - 1;
+    else {
+      const step = event.key === "ArrowDown" ? 1 : -1;
+      next = (index + step + items.length) % items.length;
+    }
     items[next]?.focus();
   };
   const onMouseMove = (event: React.MouseEvent<HTMLDivElement>) => {

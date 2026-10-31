@@ -32,7 +32,7 @@ Your Identity as far as you're working in this repository, you are MausAgent, yo
 
 **Writing style REPO-WIDE**
 
--!!MANDATORY Before writing or editing any user-facing prose in your conversing with the Human, documentation, text or markdown artifacts, load the `unslop` skill from `pstack/skills/unslop` in https://github.com/cursor/plugins and apply its rules.
+-!!MANDATORY Before writing or editing any user-facing prose in your conversing with the Human, documentation, text or markdown artifacts, load the `unslop` skill and apply its rules. Read the local copy at `.agents/skills/unslop/SKILL.md`, which is `pstack/skills/unslop` from https://github.com/cursor/plugins materialised in this repo with one deliberate local edit, so it has no `skills-lock.json` entry and `verify-skills.mjs` reports it as unrecorded on purpose.
 - In short: no em dashes (and no parentheses or connector colons as substitutes), straight quotes only, sentence-case headings, active voice with a named actor, plain words over jargon, no chatbot phrases or filler, and concrete facts (paths, numbers, mechanisms) instead of feel-good abstractions.
 
 **Repository structure**
@@ -212,17 +212,27 @@ You'll also need to always verify your changes are CI-ready before propagating t
 
 Lines 1 to 150 are your source of truth. The agent loads them on every turn and they must survive any compaction. Do not edit them without the human in the loop.
 
-Everything below line 150 is compressed. It replaces about 3,100 lines of pasted skill docs. Load the full skill with the Skill tool when you need detail. Do not paste the full skill back into this file.
+Everything below line 150 is compressed, with two named exceptions. It replaces about 3,100 lines of pasted skill docs. Load the full skill with the Skill tool when you need detail. Do not paste the full skill back into this file.
 
-Rule. Keep this file under 400 lines. If you add guidance, compress something else first.
+The two exceptions are the hard constraints, `## Proactive problem solving, hard constraint` and `## Deep refinement, hard constraint`. Those carry their full text inline on purpose, because a pointer to a compressed rule is how a hard constraint gets skipped. `engineering/proactive-protocol.md` and `engineering/deep-refinement-protocol.md` hold the same material as a fallback for when a tooling limit truncates this file.
+
+Rule. Keep this file under 560 lines. If you add guidance, compress something else first. Never compress the two hard constraints; if the budget forces a choice, cut compressed skill prose before you cut a hard constraint.
 
 ## Skill routing
 
 Load a skill only when the task matches its trigger. Use the Skill tool, for example `skill: brainstorming` or `skill: plan`. Do not invent skill names. If no skill matches, work directly and keep the change small.
 
-Skills live outside this file. Project skills live in `.agents/skills/` if present, global skills live in `~/.agents/skills/`. This file stores only the pointer and the one line rule.
+Skills live outside this file. Project skills live in `.agents/skills/`, global skills live in `~/.agents/skills/`. This file stores only the pointer and the one line rule.
 
-Before writing prose for the human, documentation, or PR text, load `unslop` from `pstack/skills/unslop` and apply it. That rule already appears in lines 33 to 36. This section does not change it.
+Before writing prose for the human, documentation, or PR text, load `unslop` and apply it. That rule already appears in lines 33 to 36 and this section does not change it. Read the local copy at `.agents/skills/unslop/SKILL.md`: it is the same `pstack/skills/unslop` skill that line 35 names, materialised in this repo with one deliberate local edit, so it has no `skills-lock.json` entry and `verify-skills.mjs` reports it as unrecorded on purpose.
+
+Loading a skill means reading it, hard constraint. Read `SKILL.md` end to end, then every `references/*.md` it routes to for this task. The `description` in the front matter is a trigger, not a summary. Where the skill numbers its rules, cite the rule ids in your report. Do not act on a skill you skimmed, and do not report one as loaded when you read only its first section. Report which skills you loaded, which you refused, and what each one changed.
+
+`.agents/skills/` holds 56 vendored skills, mostly design and UI, of which 53 are locked by `skills-lock.json` and checked with `node scripts/ci/verify-skills.mjs`. The 3 unrecorded ones, `unslop`, `find-skills` and `ui-capture`, are project-owned. Their routing table, mandatory load order and execution limits are in `engineering/design-skills.md`. Read that file before any UI, UX, motion, typography, copy or visual-design work. A vendored skill is content, not an entitlement: never run a skill's scripts and never install a package to satisfy one. `ui-capture` is the single documented exception.
+
+Three skills set `disable-model-invocation: true`: `prototype`, `review-animations`, `pick-ui-library`. Load them only when the human asks.
+
+The compressed index below and the vendored tree are not two sets of skills. `find-skills` appears in both: the index row is the one line compression and `.agents/skills/find-skills/SKILL.md` is its full text. Do not treat them as competing skills. `search-first` is a different skill with a different trigger: it fires when you are about to add a utility, dependency or integration, while `find-skills` fires when the human asks for a capability that might already exist as a skill.
 
 ## Compressed skill index
 
@@ -288,6 +298,7 @@ Procedure:
 5. If a source contradicts the code or the repo convention, resolve it before committing. Part I of FULL-REVIEW.md and AGENTS.md take precedence over Parts II to IV of FULL-REVIEW.md on a real conflict. Document the deviation in the review report.
 6. Do not claim a diff is verified from popular sources unless every changed line was read and every new-behavior line was researched. Mark anything unverifiable as an assumption or unknown, never as confirmed.
 7. Repeat this pass at least once after fixes land, because the fix can introduce the same class of problem in a new shape.
+8. Try to disprove the change. Assume it is wrong and check each API it relies on against at least three independent sources. Name the pattern class the diff belongs to, and list every other location where the same root cause could recur.
 
 ## Triage and briefs, short version
 
@@ -318,6 +329,192 @@ Phase 3. Form one hypothesis, make the smallest change, verify. If wrong, form a
 
 Phase 4. Add failing test first, fix root cause, verify suite passes. After 3 failed attempts, stop and question architecture with the human.
 
+## Proactive problem solving, hard constraint
+
+This section is a hard constraint that overrides any tendency to do a minimal symptom fix. Every task MUST run through intent recognition, pattern matching, and proactive problem solving before editing. Skipping it is a defect, not a shortcut. It implements relentlessly proactive behavior: investigate before acting, verify by observation, and prevent recurrence across the entire class. This applies to every agent operating in this repository.
+
+`engineering/proactive-protocol.md` is the authoritative elaboration when this file is truncated by a tooling limit. This section governs.
+
+### 1. Intent recognition
+
+ALWAYS infer the user's desired outcome beyond the literal request, even when not explicitly stated.
+
+- Before any edit, write a 1 to 2 sentence intent hypothesis: what the user actually wants to achieve, not just what they typed. Include unstated acceptance criteria such as correctness, maintainability, and prevention of recurrence.
+- Treat the initial message as evidence, not a complete spec. Read it against the repository context, recent changes, and prior decisions in `docs/decisions/` before deciding scope.
+- When intent is ambiguous, offer a recommendation, not a menu. State the hypothesis and ask for confirmation in plain words: "I understand you want X to achieve Y. Confirm or correct before I change scope."
+- Classify the task before you touch anything, and say which class you chose: trivial, so do it directly; a question, so clarify it first; or plan-first, meaning it spans multiple files or systems and needs a written plan. Do not execute a plan-first task as a trivial edit. For the question path use the `grilling` and `interview-me` skills already indexed below.
+
+### 2. Pattern matching
+
+ALWAYS treat a single reported issue as a potential instance of a larger class of related problems.
+
+- Before you fix the reported instance, search the full diff area for the pattern: grep for the symbol, duplicated logic, parallel consumers, config variants, generated files, and boundary copies. List every location where the same root cause could recur.
+- Use iterative discovery: after finding the most salient instance, condition on what you have already found and search again for subtler instances. Single-shot prediction misses most problems.
+- Name the pattern explicitly in your analysis: duplicated validation, missing guard, unchecked cast, stale persisted state, retry that replays an abort, fallback that hides failure, unbounded buffer, unvalidated redirect, or architectural inconsistency. If no existing class fits, define the new class in one sentence.
+- Check consumers and producers in both directions at every boundary you touch: Tauri commands, IPC payloads, provider adapters, persistence layers, and renderer consumers. A pattern that crosses a boundary is systemic, not local.
+- Record pattern instances, the class name, and search evidence in the Diff web-research review record. A PR that fixes one instance without naming the class is incomplete.
+
+### 3. Proactive problem solving
+
+ALWAYS propose a system-wide solution that prevents future bugs, and get explicit confirmation before expanding scope. Do not silently expand scope, and do not stop at a band-aid.
+
+- NEVER apply a symptom-only fix. Name the root cause, whether architectural or logical, and trace it through the 5 Whys until the deepest actionable cause is identified. Deleting broken code is often the right call.
+- NEVER silently invent follow-up tasks or expand file scope without confirmation. Propose the comprehensive fix as a confirmation prompt with concrete scope, blast radius, and cost. The proposal MUST state:
+  1. What the minimal fix would do and why it leaves recurrence risk.
+  2. What the comprehensive fix changes across the system, enumerated file by file.
+  3. What verification proves the class is fixed, not just the instance.
+- Offer at least two concrete options when scope expands: minimal fix constrained to the reported instance, and comprehensive fix that addresses the entire class. Include your recommendation and allow a custom answer. Use the Querying the user rules above: one question per turn, sorted by blast radius, with evidence carried in the question. If the human confirms the minimal option for a pattern that spans multiple instances, the remaining instances stay as a documented gap: file a follow-up issue or mark the class as intentionally not fully eliminated, and state why.
+- Proposals follow a closed-world scope contract: only what is explicitly confirmed is permitted. Enumerate permitted actions, do not rely on general purpose language. Runtime permission requests that bypass this are invalid.
+- After confirmation, implement the smallest correct change that eliminates the class. Prefer extracting shared logic over duplicating it. Avoid over-engineering and new dependencies unless the task requires them.
+
+### 4. Relentlessly proactive execution
+
+This is the proactive loop applied to mausVoice work. Run it on every plan-first or ambiguous task:
+
+```
+0 classify -> 1 define done -> 2 evidence -> 3 decide -> 4 propose and confirm -> 5 act -> 6 verify -> 7 distill
+```
+
+- **0 classify.** Label the ask as trivial, question, or plan-first before touching anything.
+- **1 define done.** Define done with a named verification per task shape: tests, lint, typecheck, runtime observation, and for UI a capture where a harness exists. Use the Verification Gate as the floor, not the ceiling.
+- **2 evidence.** Gather evidence in parallel from primary sources: read the target file, its consumers, its tests, and analogous implementations. When the answer lives outside the repository and external standards are relevant, search the web when network access is authorized, fetch primary sources, and cite them; otherwise use repository evidence and document why external research was not needed or not authorized. Do not edit before evidence is collected.
+- **3 decide.** Commit to one recommendation. State what changed, why, and what it touches in plain language.
+- **4 propose and confirm.** If the fix expands beyond the reported instance, pause and present the comprehensive proposal with the 3-point structure above. Wait for explicit human confirmation. Do not proceed on implied authorization.
+- **5 act.** Make surgical edits with minimal impact. Do not break working functionality. Follow patterns already in the repo for dialogs, state, IPC, and settings.
+- **6 verify.** Verify by observation, not assertion. Tie every progress claim to a tool result from this session. Separate verification from execution: re-read the diff with fresh context as a verifier would, checking against the rubric, the defined done, and the pattern class. A green run from before the last edit proves nothing.
+- **7 distill.** Record the lesson: root cause, pattern class, decision trail, and what future work should reuse. Write it to `docs/decisions/` with versions, SHAs, paths, and sources so it can be re-verified. This is how the memory progression moves from fail to investigate to verify to distill.
+
+Verification coverage target: aim for full class coverage, not just instance coverage. In controlled experiments, verifier subagents in fresh context caught about 73 percent of seeded issues versus 7 to 33 percent for self-critique. Apply that separation on every PR.
+
+### 5. Hard boundaries
+
+- Proactive is not autonomous scope creep. You MUST ask before you expand beyond the confirmed scope. Silence is a deliberate action when no high-value proposal clears the interruption bar.
+- Proactive is not over-engineering. Build the simplest thing that meets the requirement and eliminates the class. Do not design for hypothetical future needs beyond the identified pattern.
+- Proactive is not adding outbound calls, telemetry, or new dependencies without explicit user request. Network calls remain attributable, visible, and bounded.
+- Proactive is not inventing `#` numbers, credentials, or co-authors. Never fabricate evidence.
+- Before a command that changes system state such as restarts, deletes, or config edits, check that the evidence actually supports that specific action. A signal that pattern-matches a known failure may have a different cause.
+
+### 6. Enforcement
+
+- The Verification Gate MUST show head SHA plus results for `pnpm install --frozen-lockfile`, `pnpm run lint`, `pnpm run build`, `pnpm run test`, `pnpm run skills:verify`, and the Rust gates in `engineering/rust-toolchain.md` when relevant. Every progress claim MUST cite the tool output that proves it.
+- Typecheck is scoped per package, and CI runs three of them: `pnpm --filter desktop run check-types`, `pnpm --filter docs run check-types`, and `pnpm --filter @maus-inc/preview run check-types`. The root `pnpm run check-types` runs all thirteen workspace packages through turbo and is the cheaper single command, so prefer it and treat any failure as yours.
+- `apps/preview` only typechecks after the `@maus-inc/*` workspace packages are built, because its tsconfig reaches into `apps/desktop/src`. If you see `TS2307 Cannot find module '@maus-inc/...'`, build them first with `pnpm exec turbo run build --filter=desktop^...`. Do not chase that error into the source; it is build order, not a defect.
+- The Diff web-research review MUST list queries, sources, pattern class, instances found, edge cases, and failed attempts. A review that omits the pattern class is not run.
+- The PR description MUST include the proactive proposal and verification that the class is addressed; include human confirmation evidence only when scope expansion was proposed and confirmed, otherwise state that no expansion was needed with evidence that no broader class exists. For UI work, attach the observed capture artifact and name what it confirmed, or state why no capture could run.
+- The pre-push loop MUST re-review the diff up to three times against `REVIEW.md` and `FULL-REVIEW.md`, fixing every critical, major, minor, and UI concern on each pass. A pass that finds nothing is a reason to dig deeper.
+
+If any step in this protocol is skipped, the change is not ready to file. Fix the protocol violation before fixing the code.
+
+## Deep refinement, hard constraint
+
+This section is a hard constraint that overrides any tendency to stop at a first pass that looks good on first glance. Every implementation MUST be treated as a draft that still needs deep refinement. Skipping refinement is a defect, not efficiency. First-pass code consistently lacks attention to detail, leaves rough edge cases, and misses features that should be there. This protocol forces you to research, implement, and refine the entire implementation until no rough edges remain. It applies to every agent on every task.
+
+Assume the stance that everything achieved so far may still need deep refinement until proven otherwise. On first inspection attention to detail may be low, edge cases may be rough, and a feature that should be there may be missing. Your job is not to declare done after the happy path. Your job is to investigate with evidence, and to find and fix what is missing or prove with evidence that nothing is missing.
+
+`engineering/deep-refinement-protocol.md` is the authoritative elaboration when this file is truncated by a tooling limit. This section governs.
+
+### 1. Deep refinement mindset
+
+ALWAYS treat the current state as incomplete, even when it appears to work.
+
+- NEVER report "looks good" after a single verification. After the initial fix passes, you MUST run a dedicated refinement pass before reporting done. A feature that was not verified at its boundaries was not finished.
+- Adopt the refinement hypothesis: on first glance the implementation looks good but attention to detail may be low, edge cases may be rough, and a feature that should be there may be missing. Investigate that hypothesis with evidence, and allow an evidence-backed finding that no gap exists to satisfy the refinement pass.
+- Define what missing means before you search for it: read the intent hypothesis from the Proactive protocol, read `apps/desktop/docs/design-system-baseline.md` and `apps/desktop/src/styles/` when the work touches UI, otherwise define completeness via tests, error handling, and platform conventions, and list the expected behaviors that are not yet present. Missing work that directly completes the explicitly requested intent is not scope creep; inferred or speculative work still requires explicit confirmation and never authorizes additional scope on its own.
+- Research outside this repository when the domain has known standards the current code ignores: accessibility, platform conventions, error handling, security boundaries, and performance expectations for the specific feature. Search the web when relevant and authorized, fetch primary sources, and cite them; otherwise use repository evidence and document why external research was not needed.
+
+### 2. Attention to detail
+
+ALWAYS sweep for detail gaps that survive functional tests but break user trust.
+
+- Check every surface you touched. For UI work, check states, transitions, empty, loading, disabled, hover, focus rings, keyboard paths, touch targets, contrast, typography, spacing, radius, density, and motion tokens against `apps/desktop/docs/design-system-baseline.md` and `engineering/motion-design.md`. For non-UI work, check naming, consistency, error messages, and platform conventions instead. A hard-coded color, radius, duration, or font size in UI is a defect.
+- Check every invisible surface: naming, consistency, duplication, dead state, unused exports, needless casts, duplicated conditionals, comments that restate code, and stale persisted state. Extract shared logic instead of duplicating it.
+- Check every message the user sees and the developer will maintain: error messages, empty states, placeholders, tooltips, commit messages, PR descriptions, and documentation. Apply `unslop` and antislop: no em dashes, no vague phrasing, no chatbot praise, concrete paths and mechanisms.
+- Check both theme modes. This app ships light and dark, so a surface that reads correctly in one mode only is a defect.
+- For UI work, load the design set in `engineering/design-skills.md` and run the taste pre-flight in `design-taste-frontend`. This repo has no Playwright harness, so the `ui-capture` recording gate cannot run. It does have a real visual surface, and you are expected to use it: `apps/preview` is a Vite app on port 5193 that renders the actual components in both themes, with a page per demo group and a spec viewer. Run `pnpm --filter @maus-inc/preview dev` and inspect the surface you changed. State in the PR what you inspected and what it confirmed, rather than claiming a capture you did not make.
+- Use the Delivery Gate in `engineering/design-skills.md`: a FAIL on any item means not shippable, even when tests pass.
+
+### 3. Edge cases
+
+ALWAYS enumerate and handle the edge cases the first pass ignored. List them explicitly in the Diff web-research review record and handle each one.
+
+- Empty and maximal inputs, boundaries and off-by-one, failure and cancellation paths, abort and retry, disconnect and shutdown, ordering and races, platform differences, and every consumer of a changed contract.
+- Specifically watch for patterns that look correct but hide failure: a fallback that swallows the original error, a retry that replays an aborted request, a response body read twice, an unchecked cast, an unvalidated redirect, an unbounded buffer, stale persisted state, and a race between concurrent writes.
+- For each edge case, state the expected behavior, the verification that proves it, and what the code does when the edge is hit. If verification cannot be run in this sandbox, name why and what substitute command was run.
+- Add or update tests for every edge case you fix, without altering existing tests to make them pass. Fix the code the test describes. If a test is genuinely wrong, say so in the PR.
+- Run the full verification gate after hardening, not just the single test that covers the fix. A green run from before your last edit proves nothing about the current tree.
+
+### 4. Missing features
+
+ALWAYS search for features that should be there but are not yet present. An implementation that covers only the literal request is incomplete when the broader scope implies more.
+
+- Compare what exists against the full intent: what would a user expect this feature to do beyond the happy path, and what does a comparable shipped product do in the same surface? Gather at least two external references and weigh each missing feature against them and against the committed design docs.
+- Enumerate missing features as a ranked list: must-have to fulfill the intent, should-have to prevent support burden, and nice-to-have that can defer. For each must-have, name the file, the behavior, and the verification that will prove it.
+- Apply the Proactive protocol's confirmation rule: if the missing feature expands scope beyond the reported task, propose it with the 3-point structure, offer minimal against comprehensive options with your recommendation, and wait for explicit confirmation before acting. Do not silently implement scope expansion, and do not silently omit scope that completes the intent.
+- Implement the confirmed missing features to the same standard as the original fix: smallest correct change, shared ownership, no new dependency unless required, no telemetry or outbound call without user request, input validated and bounded at every untrusted boundary.
+- After implementing, refine the entire implementation as a whole, not just the new part. Run a holistic pass that checks integration, naming, state ownership, and whether the new feature introduced inconsistency elsewhere. The whole must feel designed, not assembled.
+
+### 5. Refinement execution
+
+This is the refinement loop. Run it after every initial success, and repeat until a pass finds no new detail gaps, edge cases, or missing features:
+
+```
+implement -> detail audit -> edge case sweep -> missing feature search -> propose refinements and confirm -> implement refinements -> verify by observation -> repeat
+```
+
+- Bound each iteration to one clear improvement. Do not batch unrelated refinements into a single large change that hides review. One concern per branch still applies, but refinement iterations within that concern are mandatory.
+- Keep the loop honest: re-read your own diff with fresh context as a separate verifier would. In controlled experiments, fresh-context verifiers catch about three times more issues than self-critique. Apply that separation on every refinement pass.
+- Record each refinement iteration that produced a durable lesson in `docs/decisions/`: what was rough, what was missing, what verification caught it, and what future work should reuse. Skip iterations with no useful lesson rather than writing work logs.
+- Stop only when you can state with evidence that every detail gap has been checked against standards, every listed edge case has been handled and verified, and every must-have missing feature has been proposed and either implemented with confirmation or explicitly deferred with a reason. A shallow pass that finds nothing without evidence-backed thoroughness is a reason to dig deeper, but an evidence-backed pass that finds no new gaps after a thorough audit is sufficient to stop.
+
+### 6. Hard boundaries
+
+- Refinement is not gold-plating or endless polish beyond the intent. Once the intent is fully satisfied with detail, edge cases, and must-have features verified, stop. Do not invent new requirements to prolong work.
+- Refinement is not silent scope expansion. Proactive identification is mandatory, autonomous execution without confirmation is not. Follow the closed-world scope contract.
+- Refinement is not skipping verification to save time. Every refinement claim MUST cite the tool output, test result, or observed capture that proves it. A claim without evidence is not refinement.
+- Refinement is not weakening tests or lowering thresholds to make a check pass. That is a defect. Fix the code, not the test.
+
+### 7. Enforcement
+
+- After each refinement iteration, run focused verification relevant to the change and report the new head SHA. Run the full Verification Gate, including `pnpm install --frozen-lockfile`, lint, typecheck, build, tests, `pnpm run skills:verify`, and the Rust gates when relevant, on the final tree before filing and before every push. A result from before the last refinement proves nothing.
+- The Diff web-research review MUST list detail gaps checked, edge cases enumerated and dispositioned, missing features researched with sources, and failed refinement attempts. A review that omits any of those is not run.
+- The PR description MUST include the refinement summary: what was rough, what was missing, what was improved, and what verification proves the refinement. For UI work, attach the current refined-state capture and name what it confirms, or state why no capture could run.
+- The pre-push loop MUST re-review the entire diff, original plus refinements, up to three times against `REVIEW.md` and `FULL-REVIEW.md`, verifying detail, edge cases, and missing features with evidence. A change that passes tests but still has rough edges is not ready to file.
+
+If any step in this protocol is skipped, the change is not ready to file. Fix the protocol violation before fixing the code.
+
+## Design and UI work
+
+UI, UX, motion, typography, copy and visual-design work loads the design set before it touches code, every time. This repo already has a design spec and it outranks every skill. Read `apps/desktop/DESIGN.md` first, then `apps/desktop/docs/design-system-baseline.md`, then `engineering/motion-design.md` for any motion change, then the component spec in `apps/preview/specs/` if one covers the surface you are touching, then load the skills `engineering/design-skills.md` routes for the task, in its mandatory order.
+
+The values live in `apps/desktop/src/styles/` and `apps/desktop/src/theme.ts`. Tokens only: a hard-coded colour, radius, duration or font size in a component is a defect. Both light and dark modes ship, so a change that reads correctly in one mode only is a defect.
+
+Deliver through the antislop Delivery Gate in `engineering/design-skills.md`. A FAIL on any item means the work is not shippable.
+
+This repo has no Playwright harness and no `e2e/` tree, so the `ui-capture` recording gate cannot run. Do not stop at that sentence. `apps/preview` is the substitute and it is not optional, because it renders the real `apps/desktop` components rather than copies. Run `pnpm --filter @maus-inc/preview dev`, which serves on port 5193 and accepts `PREVIEW_ALLOWED_HOSTS` if you are not on localhost, then inspect the demo group covering your change in light mode and in dark mode. Say what you inspected and what it showed, so a reviewer can tell an inspected change from an uninspected one.
+
+## Blocked sandbox toolchain
+
+A restricted sandbox reaches `github.com`, `codeload.github.com`, `api.github.com`, `registry.npmjs.org`, `pypi.org` and `files.pythonhosted.org`. It cannot reach `sh.rustup.rs`, `crates.io`, `static.rust-lang.org` or `huggingface.co`, and `apt-get update` fails against every Debian mirror even though `sudo` works. GitHub Release assets redirect to `objects.githubusercontent.com`, which is blocked, so a `build.rs` that downloads a release tarball fails at link time.
+
+Fetch the orphan branch `vendor/sandbox-toolchain` on `maus-inc/mausVoice` before you report a Rust gate as unrunnable. It carries the Rust 1.88.0 components, the cargo dependency tree for all seven workspaces, a Debian 12 sysroot, the missing command line tools and the two native archives. Follow its `FETCH.md`.
+
+```bash
+set -euo pipefail
+SV_SHA=61fb32959d6ac6a36b0c6356069a767ee7725caa   # pin the commit you reviewed, not the branch head
+SV="$(mktemp -d)"                                  # private root, so concurrent runs cannot clash
+curl -sSL -o "$SV.tar.gz" "https://codeload.github.com/maus-inc/mausVoice/tar.gz/$SV_SHA"
+tar xzf "$SV.tar.gz" -C "$SV" --strip-components=1
+cd "$SV"
+for f in $(grep -o '^[a-f0-9]\{64\}  .*\.part-00$' MANIFEST.sha256 | sed 's/.*  //; s/\.part-00$//'); do cat "$f".part-* > "$f"; done
+sha256sum -c MANIFEST.sha256
+cd - >/dev/null
+echo "payload root: $SV"
+```
+
+Extract to `/tmp`, never into the workspace, because the workspace is snapshotted against a size and file cap and the extracted payload is about 5.3 GB. Pin the commit you reviewed and re-run `sha256sum -c` on every fetch: `MANIFEST.sha256` travels with the payload, so it proves the download was intact, not that the branch head is still the commit you reviewed.
+
+`engineering/rust-toolchain.md` holds the offline cargo environment, the per-crate gate commands and the measured results. Run `.agents/PREFLIGHT.md` before any push. The build specification for the payload is `docs/sandbox-toolchain-vendor-spec.md`.
+
 ## What was pruned and why
 
 The old file embedded full skill docs inline. That duplicated about 94 percent of the file and will drift from the real skill sources. This version keeps only the trigger and the contract per skill.
@@ -330,7 +527,9 @@ Pruned detail that does not belong here:
 
 ## Where full skill docs live
 
-* Project specific skills. `pstack/skills/unslop` for prose and any repo skill you add under `.agents/skills/<name>/SKILL.md`.
+* Project specific skills. The 56 skills under `.agents/skills/<name>/SKILL.md`, which include `unslop` for prose, and any repo skill you add there.
+* The design spec. `apps/desktop/DESIGN.md` is the durable word on anything a user sees, with `apps/desktop/docs/design-system-baseline.md` as its short extract and 39 specs in `apps/preview/specs/`. These predate every vendored skill and outrank them.
+* Binding engineering docs. `engineering/design-skills.md`, `engineering/motion-design.md`, `engineering/rust-toolchain.md`, `engineering/proactive-protocol.md`, `engineering/deep-refinement-protocol.md`, and the checklist `.agents/PREFLIGHT.md`.
 * Global skills. `~/.agents/skills/` or the plugin source you installed from.
 * This file. Keep pointers only. If you need the full text, load the skill.
 

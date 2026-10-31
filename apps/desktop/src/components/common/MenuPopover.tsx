@@ -203,9 +203,7 @@ function MenuPopoverItemRend({
         leading={item.leading}
         title={item.title}
         trailing={item.trailing}
-        onClick={(e) =>
-          item.onClick && item.onClick({ close, closeThen, event: e })
-        }
+        onClick={(e) => item.onClick?.({ close, closeThen, event: e })}
         sx={
           item.endAction ? { flex: 1, minWidth: 0, width: "auto" } : undefined
         }

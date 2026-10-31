@@ -6,6 +6,11 @@ import { DEFAULT_DICTATION_LIMIT_MINUTES } from "../utils/dictation-limit.utils"
 import { DEFAULT_HANDS_FREE_DELAY_MS } from "../utils/hands-free-delay.utils";
 import { PRIMARY_LANGUAGE_SENTINEL } from "../utils/language.utils";
 import { getLogger } from "../utils/log.utils";
+import {
+  type LocalDataWriteLease,
+  beginLocalDataWrite,
+  withLocalDataWrite,
+} from "../utils/local-data-write-gate";
 import { createMutationQueue } from "../utils/mutation-queue";
 import {
   getMyEffectiveUserId,
@@ -28,52 +33,71 @@ export const updateUser = (
   updateCallback: (user: User) => void,
   errorMessage: string,
   saveErrorMessage: string,
+  existingLease?: LocalDataWriteLease,
 ): Promise<void> =>
   enqueueUserMutation(async () => {
-    const state = getAppState();
-    const existing = getMyUser(state);
-    if (!existing) {
-      getLogger().warning(`updateUser: user not found (${errorMessage})`);
-      showErrorSnackbar(errorMessage);
+    const saveUser = async (lease: LocalDataWriteLease): Promise<void> => {
+      const state = getAppState();
+      const existing = getMyUser(state);
+      if (!existing) {
+        getLogger().warning(`updateUser: user not found (${errorMessage})`);
+        showErrorSnackbar(errorMessage);
+        return;
+      }
+
+      const repo = getUserRepo();
+      const payload: User = {
+        ...existing,
+        updatedAt: new Date().toISOString(),
+      };
+
+      updateCallback(payload);
+      produceAppState((draft) => {
+        setCurrentUser(draft, payload);
+      }, lease);
+
+      try {
+        getLogger().verbose(`Saving user (id=${payload.id})`);
+        const saved = await repo.setMyUser(payload, lease);
+        produceAppState((draft) => {
+          setCurrentUser(draft, saved);
+        }, lease);
+        getLogger().verbose("User saved successfully");
+      } catch (error) {
+        getLogger().error(`Failed to update user: ${error}`);
+        // Re-read instead of restoring the pre-call snapshot. Another task may
+        // have committed a change after this one started, and writing the
+        // snapshot back would erase it. If the re-read also fails the optimistic
+        // value stays and the error surfaces, which is the honest outcome.
+        const reloaded = await getUserRepo()
+          .getMyUser()
+          .catch((reloadError: unknown) => {
+            getLogger().error(
+              `Failed to re-read user after a failed save: ${reloadError}`,
+            );
+            return null;
+          });
+        produceAppState((draft) => {
+          if (reloaded) {
+            setCurrentUser(draft, reloaded);
+          }
+        }, lease);
+        showErrorSnackbar(saveErrorMessage);
+        throw error;
+      }
+    };
+
+    if (existingLease) {
+      await withLocalDataWrite(saveUser, existingLease);
       return;
     }
 
-    const repo = getUserRepo();
-    const payload: User = {
-      ...existing,
-      updatedAt: new Date().toISOString(),
-    };
-
-    updateCallback(payload);
-    produceAppState((draft) => {
-      setCurrentUser(draft, payload);
-    });
-
+    const releaseWrite = beginLocalDataWrite();
+    if (!releaseWrite) return;
     try {
-      getLogger().verbose(`Saving user (id=${payload.id})`);
-      await repo.setMyUser(payload);
-      getLogger().verbose("User saved successfully");
-    } catch (error) {
-      getLogger().error(`Failed to update user: ${error}`);
-      // Re-read instead of restoring the pre-call snapshot. Another task may
-      // have committed a change after this one started, and writing the
-      // snapshot back would erase it. If the re-read also fails the optimistic
-      // value stays and the error surfaces, which is the honest outcome.
-      const reloaded = await getUserRepo()
-        .getMyUser()
-        .catch((reloadError: unknown) => {
-          getLogger().error(
-            `Failed to re-read user after a failed save: ${reloadError}`,
-          );
-          return null;
-        });
-      produceAppState((draft) => {
-        if (reloaded) {
-          setCurrentUser(draft, reloaded);
-        }
-      });
-      showErrorSnackbar(saveErrorMessage);
-      throw error;
+      await saveUser(releaseWrite.lease);
+    } finally {
+      releaseWrite();
     }
   });
 
@@ -137,47 +161,77 @@ export const createDefaultPreferences = (): UserPreferences => ({
 // the latest committed preferences when it actually runs.
 const { enqueue: enqueuePrefsMutation } = createMutationQueue();
 
+type UpdateUserPreferencesOptions = {
+  /** Set false when the caller presents the failure inline. */
+  showErrorToast?: boolean;
+  /** Reuse a write lease the caller already holds instead of taking one. */
+  existingLease?: LocalDataWriteLease;
+};
+
 export const updateUserPreferences = (
-  updateCallback: (preferences: UserPreferences) => void,
+  updateCallback: (preferences: UserPreferences) => void | false,
   saveErrorMessage = getIntl().formatMessage({
     defaultMessage: "Failed to save AI preferences. Please try again.",
   }),
-  options: { showErrorToast?: boolean } = {},
+  options: UpdateUserPreferencesOptions = {},
 ): Promise<void> =>
   enqueuePrefsMutation(async () => {
-    const state = getAppState();
-    const myUserId = getMyEffectiveUserId(state);
+    const savePreferences = async (
+      lease: LocalDataWriteLease,
+    ): Promise<void> => {
+      const state = getAppState();
+      const myUserId = getMyEffectiveUserId(state);
 
-    let existing = getMyUserPreferences(state);
-    if (!existing) {
+      let existing = getMyUserPreferences(state);
+      if (!existing) {
+        try {
+          existing = await getUserPreferencesRepo().getUserPreferences();
+        } catch (error) {
+          getLogger().error(
+            `Failed to load existing preferences before update: ${error}`,
+          );
+          if (options.showErrorToast !== false) {
+            showErrorSnackbar(saveErrorMessage);
+          }
+          throw error;
+        }
+      }
+
+      const safeExisting = existing ?? createDefaultPreferences();
+      // The mutation runs when this task reaches the front of the queue, so it
+      // always derives from the most recently committed preferences.
+      const payload: UserPreferences = { ...safeExisting, userId: myUserId };
+      if (updateCallback(payload) === false) return;
+
       try {
-        existing = await getUserPreferencesRepo().getUserPreferences();
-      } catch (error) {
-        getLogger().error(
-          `Failed to load existing preferences before update: ${error}`,
+        getLogger().verbose(`Saving user preferences (userId=${myUserId})`);
+        const saved = await getUserPreferencesRepo().setUserPreferences(
+          payload,
+          lease,
         );
-        if (options.showErrorToast !== false)
+        produceAppState((draft) => {
+          setUserPreferences(draft, saved);
+        }, lease);
+        getLogger().verbose("User preferences saved successfully");
+      } catch (error) {
+        getLogger().error(`Failed to update user preferences: ${error}`);
+        if (options.showErrorToast !== false) {
           showErrorSnackbar(saveErrorMessage);
+        }
         throw error;
       }
+    };
+
+    if (options.existingLease) {
+      await withLocalDataWrite(savePreferences, options.existingLease);
+      return;
     }
 
-    const safeExisting = existing ?? createDefaultPreferences();
-    // The mutation runs when this task reaches the front of the queue, so it
-    // always derives from the most recently committed preferences.
-    const payload: UserPreferences = { ...safeExisting, userId: myUserId };
-    updateCallback(payload);
-
+    const releaseWrite = beginLocalDataWrite();
+    if (!releaseWrite) return;
     try {
-      getLogger().verbose(`Saving user preferences (userId=${myUserId})`);
-      const saved = await getUserPreferencesRepo().setUserPreferences(payload);
-      produceAppState((draft) => {
-        setUserPreferences(draft, saved);
-      });
-      getLogger().verbose("User preferences saved successfully");
-    } catch (error) {
-      getLogger().error(`Failed to update user preferences: ${error}`);
-      if (options.showErrorToast !== false) showErrorSnackbar(saveErrorMessage);
-      throw error;
+      await savePreferences(releaseWrite.lease);
+    } finally {
+      releaseWrite();
     }
   });

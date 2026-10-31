@@ -36,6 +36,21 @@ export const emitSnackbarIfNew = (payload: SnackbarEmitPayload): boolean => {
   const action = payload.snackbarAction;
   const toastId = `snackbar-${snackbarCounter}`;
   let actionElement: HTMLButtonElement | null = null;
+  let actionContent:
+    | ReturnType<typeof createElement>
+    | { label: string; onClick: () => void }
+    | undefined;
+  if (action?.expiresAt) {
+    actionContent = createElement(TimedSnackbarAction, {
+      action,
+      toastId,
+      onMount: (element: HTMLButtonElement | null) => {
+        actionElement = element;
+      },
+    });
+  } else if (action) {
+    actionContent = { label: action.label, onClick: action.onClick };
+  }
   const opts = {
     id: toastId,
     duration: payload.snackbarDuration,
@@ -44,17 +59,7 @@ export const emitSnackbarIfNew = (payload: SnackbarEmitPayload): boolean => {
       if (toastElement?.contains(document.activeElement))
         action?.onFocusReturn?.(false);
     },
-    action: action?.expiresAt
-      ? createElement(TimedSnackbarAction, {
-          action,
-          toastId,
-          onMount: (element: HTMLButtonElement | null) => {
-            actionElement = element;
-          },
-        })
-      : action
-        ? { label: action.label, onClick: action.onClick }
-        : undefined,
+    action: actionContent,
   };
 
   if (payload.snackbarMode === "error") {

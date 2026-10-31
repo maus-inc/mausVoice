@@ -47,8 +47,7 @@ const CONFIRMATION_PHRASE = "delete";
 const DELETION_FAILED =
   "An error occurred while attempting to delete your account. Please try again later.";
 const DELETED_BUT_LEFT_BEHIND =
-  "Your data was deleted from this device, but some of it could not be removed. Quit and reopen mausVoice.";
-const DELETED = "Your data has been deleted from this device";
+  "Your account was deleted, but local cleanup is incomplete. Retry to finish clearing this device.";
 
 const snackbarMessages = () =>
   mocks.showSnackbar.mock.calls.map(([message]) => String(message));
@@ -153,7 +152,9 @@ describe("DeleteAccountDialog", () => {
       confirmButton()?.click();
       confirmButton()?.click();
     });
-    expect(mocks.deleteMyAccount).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() =>
+      expect(mocks.deleteMyAccount).toHaveBeenCalledTimes(1),
+    );
     await act(async () => {
       reject(new Error("failed"));
     });
@@ -173,7 +174,7 @@ describe("DeleteAccountDialog", () => {
     expect(
       window.localStorage.getItem("mausvoice-local-state") ?? "",
     ).not.toContain("data:image/png");
-    expect(snackbarMessages()).toEqual([DELETED]);
+    expect(snackbarMessages()).toEqual([]);
     expect(getAppState().settings.deleteAccountDialog).toBe(false);
   });
 
@@ -190,9 +191,9 @@ describe("DeleteAccountDialog", () => {
     expect(mocks.deleteMyAccount).toHaveBeenCalled();
     expect(snackbarMessages()).toEqual([DELETED_BUT_LEFT_BEHIND]);
     expect(snackbarMessages()).not.toContain(DELETION_FAILED);
-    // The account is gone even though the wipe is not finished, so the sign-out
-    // still has to happen.
-    expect(mocks.signOut).toHaveBeenCalled();
+    // The clear gate stays closed and the dialog permits retry before sign-out.
+    expect(mocks.signOut).not.toHaveBeenCalled();
+    expect(getAppState().settings.deleteAccountDialog).toBe(true);
   });
 
   it("says the deletion failed when the deletion is what failed", async () => {

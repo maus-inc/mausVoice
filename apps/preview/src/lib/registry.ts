@@ -526,7 +526,7 @@ export const REGISTRY: RegistryEntry[] = [
   // ─── Buttons ────────────────────────────────────────────────────
   {
     id: "button",
-    name: "Button (contained · text · flat · blue)",
+    name: "Button (contained · text · flat · chrome)",
     category: "buttons",
     status: "reused",
     sources: [`${D}theme.ts (MuiButton)`],

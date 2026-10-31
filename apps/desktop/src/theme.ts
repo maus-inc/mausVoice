@@ -1,5 +1,7 @@
 import { createTheme, type Shadows } from "@mui/material/styles";
 import { stopComposingEscape } from "./components/common/ime-keyboard";
+import type { StorageManager } from "@mui/system/cssVars";
+import { withLocalDataWriteSync } from "./utils/local-data-write-gate";
 import {
   accent,
   chalkSolid,
@@ -35,9 +37,65 @@ const uiFont = '"Satoshi", system-ui, -apple-system, sans-serif';
 // appearance preference cannot drift from the key a local-data wipe removes.
 export { THEME_MODE_STORAGE_KEY };
 export const THEME_COLOR_SCHEME_SELECTOR = "data-mui-color-scheme";
+
+const legacyModeStorageKey = "mode";
+
+export const guardedThemeStorageManager: StorageManager = ({
+  key,
+  storageWindow,
+}) => {
+  const targetWindow =
+    storageWindow ?? (typeof window === "undefined" ? null : window);
+  const getStorage = (): Storage | null => {
+    if (!targetWindow) return null;
+    try {
+      return targetWindow.localStorage;
+    } catch {
+      return null;
+    }
+  };
+
+  return {
+    get(defaultValue) {
+      const storage = getStorage();
+      if (!storage) return defaultValue;
+      try {
+        const value = storage.getItem(key);
+        if (value != null) return value;
+        if (key === THEME_MODE_STORAGE_KEY) {
+          return storage.getItem(legacyModeStorageKey) ?? defaultValue;
+        }
+        return defaultValue;
+      } catch {
+        return defaultValue;
+      }
+    },
+    set(value) {
+      const storage = getStorage();
+      if (!storage) return;
+      withLocalDataWriteSync(() => {
+        try {
+          storage.setItem(key, String(value));
+        } catch {
+          // Quota or private mode: keep the in-memory mode only.
+        }
+      });
+    },
+    subscribe(handler) {
+      if (!targetWindow) return () => {};
+      const listener = (event: StorageEvent): void => {
+        if (event.key === key) handler(event.newValue);
+      };
+      targetWindow.addEventListener("storage", listener);
+      return () => targetWindow.removeEventListener("storage", listener);
+    },
+  };
+};
+
 export const THEME_PROVIDER_CONFIG = {
   defaultMode: "system",
   modeStorageKey: THEME_MODE_STORAGE_KEY,
+  storageManager: guardedThemeStorageManager,
   disableTransitionOnChange: true,
 } as const;
 

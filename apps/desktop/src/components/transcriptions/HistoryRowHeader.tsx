@@ -22,6 +22,7 @@ const RowAction = ({
 );
 
 type Props = {
+  compactTranscript?: boolean;
   createdAt?: string;
   isRemote: boolean;
   isSent: boolean;
@@ -34,6 +35,7 @@ type Props = {
 };
 
 export const HistoryRowHeader = ({
+  compactTranscript,
   createdAt,
   isRemote,
   isSent,
@@ -83,7 +85,11 @@ export const HistoryRowHeader = ({
           />
         )}
       </Stack>
-      <Stack direction="row" spacing={1}>
+      <Stack
+        direction="row"
+        spacing={1}
+        style={{ marginRight: compactTranscript ? 11 : undefined }}
+      >
         <RowAction
           label={intl.formatMessage({
             defaultMessage: "View transcription details",

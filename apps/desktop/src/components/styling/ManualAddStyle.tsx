@@ -59,6 +59,15 @@ export function ManualAddStyle() {
     logOnRejection(toggleActiveTone(toneId), "toggle active style");
   }, []);
 
+  const openEditorAfterMenu = useCallback(
+    (toneId: string, closeThen: (action: () => void) => void) =>
+      (event: React.MouseEvent) => {
+        event.stopPropagation();
+        closeThen(() => openToneEditorDialog({ mode: "edit", toneId }));
+      },
+    [],
+  );
+
   const menuItems = useMemo((): MenuPopoverItem[] => {
     const items: MenuPopoverItem[] = [];
 
@@ -114,12 +123,7 @@ export function ManualAddStyle() {
                   tabIndex={-1}
                   aria-label={`${intl.formatMessage({ defaultMessage: "Edit style" })}: ${tone.name}`}
                   size="small"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    closeThen(() =>
-                      openToneEditorDialog({ mode: "edit", toneId: tone.id }),
-                    );
-                  }}
+                  onClick={openEditorAfterMenu(tone.id, closeThen)}
                 >
                   <Edit fontSize="small" />
                 </IconButton>
@@ -133,7 +137,7 @@ export function ManualAddStyle() {
     );
 
     return items;
-  }, [allTones, activeSet, handleToggle, intl]);
+  }, [allTones, activeSet, handleToggle, intl, openEditorAfterMenu]);
 
   return (
     <MenuPopoverBuilder items={menuItems}>

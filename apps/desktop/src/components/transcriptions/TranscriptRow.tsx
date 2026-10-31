@@ -41,9 +41,13 @@ import { captureHistoryDeleteFocus } from "./history-delete-focus";
 
 export type TranscriptionRowProps = {
   id: string;
+  compactTranscript?: boolean;
 };
 
-export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
+export const TranscriptionRow = ({
+  id,
+  compactTranscript = false,
+}: TranscriptionRowProps) => {
   const intl = useIntl();
   const prefersReducedMotion = useMediaQuery(reducedMotionQuery);
   const transcription = useAppStore((state) =>
@@ -274,6 +278,7 @@ export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
         }}
       >
         <HistoryRowHeader
+          compactTranscript={compactTranscript}
           createdAt={transcription?.createdAt}
           isRemote={isRemoteTranscript}
           isSent={isSentToRemote}
@@ -288,6 +293,8 @@ export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
           variant="body2"
           color="text.primary"
           maxLines={3}
+          clampPaddingRight={compactTranscript ? "56px" : undefined}
+          inlineToggleRight={compactTranscript ? "12px" : undefined}
           sx={{ my: 1 }}
         >
           {transcription?.transcript}

@@ -1,10 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { createIntl } from "react-intl";
 import {
+  dateFromLocalDateKey,
   formatShortDate,
   formatShortTime,
+  localDateKeyFromIso,
   nowIso,
   threadDayGroup,
+  toLocalDateKey,
+  toLocalMonthKey,
 } from "./date.utils";
 
 const intl = createIntl({ locale: "en" });
@@ -58,6 +62,37 @@ describe("threadDayGroup", () => {
     expect(threadDayGroup(new Date(2026, 8, 6, 12, 0).toISOString(), now)).toBe(
       "earlier",
     );
+  });
+});
+
+describe("local date keys", () => {
+  it("round-trips local dates without shifting them through UTC", () => {
+    const localDate = new Date(2024, 1, 29, 23, 45);
+    const key = toLocalDateKey(localDate);
+
+    expect(key).toBe("2024-02-29");
+    expect(dateFromLocalDateKey(key).getHours()).toBe(12);
+    expect(toLocalDateKey(dateFromLocalDateKey(key))).toBe(key);
+    expect(localDateKeyFromIso(localDate.toISOString())).toBe(key);
+    expect(toLocalMonthKey(localDate)).toBe("2024-02");
+  });
+
+  it.each(["2024-2-09", "2023-02-29", "2024-04-31", "nope"])(
+    "rejects an invalid local date key: %s",
+    (key) => {
+      expect(() => dateFromLocalDateKey(key)).toThrow(RangeError);
+    },
+  );
+
+  it.each(["0000-01-01", "0001-03-04", "0099-12-31"])(
+    "round-trips early calendar years without Date constructor remapping: %s",
+    (key) => {
+      expect(toLocalDateKey(dateFromLocalDateKey(key))).toBe(key);
+    },
+  );
+
+  it("rejects years that cannot fit the YYYY key format", () => {
+    expect(() => toLocalDateKey(new Date(10_000, 0, 1))).toThrow(RangeError);
   });
 });
 

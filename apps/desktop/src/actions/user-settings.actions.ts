@@ -1,3 +1,4 @@
+import type { LocalDataWriteLease } from "../utils/local-data-write-gate";
 import { Nullable, UpdateChannel } from "@maus-inc/types";
 import { getIntl } from "../i18n";
 import { getAppState } from "../store";
@@ -96,19 +97,29 @@ export const setRealtimeOutputEnabled = async (
 
 export const setRemoteOutputEnabled = async (
   enabled: boolean,
+  lease?: LocalDataWriteLease,
 ): Promise<void> => {
-  await updateUserPreferences((preferences) => {
-    preferences.remoteOutputEnabled = enabled;
-  }, "Failed to save multi-device sender preference. Please try again.");
+  await updateUserPreferences(
+    (preferences) => {
+      preferences.remoteOutputEnabled = enabled;
+    },
+    "Failed to save multi-device sender preference. Please try again.",
+    { existingLease: lease },
+  );
 };
 
 export const setRemoteTargetDeviceId = async (
   deviceId: Nullable<string>,
+  lease?: LocalDataWriteLease,
 ): Promise<void> => {
-  await updateUserPreferences((preferences) => {
-    preferences.remoteTargetDeviceId = deviceId;
-    preferences.remoteOutputEnabled = Boolean(deviceId);
-  }, "Failed to save paired receiver selection. Please try again.");
+  await updateUserPreferences(
+    (preferences) => {
+      preferences.remoteTargetDeviceId = deviceId;
+      preferences.remoteOutputEnabled = Boolean(deviceId);
+    },
+    "Failed to save paired receiver selection. Please try again.",
+    { existingLease: lease },
+  );
 };
 
 export const setRemoteReceiverPort = async (

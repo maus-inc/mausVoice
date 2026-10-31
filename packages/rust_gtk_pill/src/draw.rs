@@ -583,13 +583,42 @@ fn draw_loading(
     rounded_rect(cr, rx, ry, pill_w, pill_h, radius);
     cr.clip();
 
-    if let Some(stage) = state.stage_text.borrow().as_deref() {
+    let stage_ref = state.stage_text.borrow();
+    let stage = rust_pill_shared::active_stage_text(stage_ref.as_deref());
+    let bar = rust_pill_shared::loading_bar_layout(
+        rx,
+        ry,
+        pill_w,
+        pill_h,
+        state.loading_offset.get(),
+        expand_t,
+        stage.is_some(),
+    );
+
+    // Paint the loading bar first so it sits dimly behind any stage text.
+    if bar.track_w > 0.0 {
+        cr.set_source_rgba(1.0, 1.0, 1.0, bar.track_alpha);
+        cr.rectangle(bar.track_x, bar.bar_y, bar.track_w, bar.bar_h);
+        let _ = cr.fill();
+
+        if let Some((draw_left, draw_right)) = bar.indicator_span {
+            cr.set_source_rgba(1.0, 1.0, 1.0, bar.indicator_alpha);
+            cr.rectangle(draw_left, bar.bar_y, draw_right - draw_left, bar.bar_h);
+            let _ = cr.fill();
+        }
+    }
+
+    if let Some(stage) = stage {
         cr.select_font_face(
             "Satoshi",
             cairo::FontSlant::Normal,
             cairo::FontWeight::Normal,
         );
         cr.set_font_size(12.0);
+        let max_w = rust_pill_shared::loading_stage_text_budget(pill_w, EXPANDED_PILL_WIDTH);
+        let stage = rust_pill_shared::text_fit::elide_to_width(stage, max_w, "…", |s| {
+            cr.text_extents(s).map(|ext| ext.width()).unwrap_or(0.0)
+        });
         // Cairo only fails to measure when the font backend is already in an
         // error state, so there is no origin worth falling back to: the Ok arm
         // below hands move_to a left edge and a baseline, not a centre point,
@@ -598,42 +627,15 @@ fn draw_loading(
         // also keeps the failure inside the drawing area's draw callback, where
         // unwinding out of the signal trampoline aborts the process rather than
         // just skipping the frame.
-        if let Ok(ext) = cr.text_extents(stage) {
-            cr.set_source_rgba(1.0, 1.0, 1.0, 0.9 * expand_t);
+        if let Ok(ext) = cr.text_extents(&stage) {
+            let text_alpha = rust_pill_shared::loading_stage_text_alpha(expand_t);
+            cr.set_source_rgba(1.0, 1.0, 1.0, text_alpha);
             cr.move_to(
                 rx + (pill_w - ext.width()) / 2.0 - ext.x_bearing(),
                 ry + (pill_h - ext.height()) / 2.0 - ext.y_bearing(),
             );
-            let _ = cr.show_text(stage);
+            let _ = cr.show_text(&stage);
         }
-        cr.restore().ok();
-
-        draw_edge_gradient(cr, rx, ry, pill_w, pill_h, radius, expand_t);
-        return;
-    }
-
-    let bar_h = 2.0;
-    let bar_y = ry + (pill_h - bar_h) / 2.0;
-    let pad = pill_h * 0.1;
-    let track_x = rx + pad;
-    let track_w = pill_w - pad * 2.0;
-
-    // Track line
-    cr.set_source_rgba(1.0, 1.0, 1.0, 0.15 * expand_t);
-    cr.rectangle(track_x, bar_y, track_w, bar_h);
-    let _ = cr.fill();
-
-    // Moving indicator
-    let indicator_w = track_w * LOADING_BAR_WIDTH_FRAC;
-    let offset = state.loading_offset.get();
-    let ind_x = track_x + (track_w + indicator_w) * offset - indicator_w;
-
-    let draw_left = ind_x.max(track_x);
-    let draw_right = (ind_x + indicator_w).min(track_x + track_w);
-    if draw_right > draw_left {
-        cr.set_source_rgba(1.0, 1.0, 1.0, 0.7 * expand_t);
-        cr.rectangle(draw_left, bar_y, draw_right - draw_left, bar_h);
-        let _ = cr.fill();
     }
 
     cr.restore().ok();

@@ -186,3 +186,36 @@ it("does not delete the next row on the second click of a double-click", async (
     host.remove();
   }
 });
+
+it("does not remove a row while local-data clearing blocks writes", async () => {
+  const { beginLocalDataClear, LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY } =
+    await import("../../utils/local-data-write-gate");
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  let release: (() => void) | undefined;
+  try {
+    await act(async () =>
+      root.render(
+        <IntlProvider locale="en" messages={en}>
+          <List />
+        </IntlProvider>,
+      ),
+    );
+    release = await beginLocalDataClear();
+    await act(async () => {
+      const button = host.querySelector<HTMLButtonElement>(
+        'button[aria-label="Delete dictionary item a"]',
+      );
+      if (!button) throw new Error("Missing delete control");
+      button.click();
+    });
+    expect(getAppState().dictionary.termIds).toEqual(["a", "b", "c"]);
+    expect(mocks.deleteTerm).not.toHaveBeenCalled();
+  } finally {
+    window.localStorage.removeItem(LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY);
+    release?.();
+    act(() => root.unmount());
+    host.remove();
+  }
+});

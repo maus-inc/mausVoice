@@ -13,6 +13,7 @@ import type {
 import { getIsAssistantModeEnabled } from "../utils/assistant-mode.utils";
 import { createId } from "../utils/id.utils";
 import { getLogger } from "../utils/log.utils";
+import { sendPillStageText } from "../utils/overlay.utils";
 import { filterKnownSilenceHallucinations } from "../utils/string.utils";
 import { getMyDictationLanguage } from "../utils/user.utils";
 import { BaseStrategy } from "./base.strategy";
@@ -102,6 +103,7 @@ export class AgentStrategy extends BaseStrategy {
       getLogger().info(
         `Sending chat message (${sanitizedTranscript.length} chars)`,
       );
+      sendPillStageText(null);
       await sendChatMessage(this.conversationId, sanitizedTranscript);
 
       return {

@@ -1,3 +1,4 @@
+import { isComposingKey } from "../common/ime-keyboard";
 import { SearchRounded } from "@mui/icons-material";
 import {
   Box,
@@ -96,8 +97,7 @@ const isSearchShortcut = (event: KeyboardEvent): boolean => {
     event.metaKey ||
     event.ctrlKey ||
     event.altKey ||
-    event.isComposing ||
-    event.keyCode === 229 ||
+    isComposingKey(event) ||
     event.defaultPrevented
   ) {
     return false;
@@ -238,7 +238,7 @@ export const SettingsLayout = () => {
               // code 229 with an empty `key`, and the composing flag stays true
               // on the event that ends the composition, so both are checked
               // before anything acts on the key.
-              if (event.nativeEvent.isComposing || event.keyCode === 229) {
+              if (isComposingKey(event.nativeEvent)) {
                 return;
               }
               if (event.key === "Escape") {

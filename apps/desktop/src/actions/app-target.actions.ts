@@ -14,6 +14,11 @@ import {
   getManuallySelectedToneId,
 } from "../utils/tone.utils";
 import { getMyUserPreferences } from "../utils/user.utils";
+import {
+  type LocalDataWriteLease,
+  beginLocalDataWrite,
+  withLocalDataWrite,
+} from "../utils/local-data-write-gate";
 import { showErrorSnackbar } from "./app.actions";
 import { setSelectedToneId } from "./user.actions";
 
@@ -25,17 +30,19 @@ export const loadAppTargets = async (): Promise<void> => {
   });
 };
 
-export const upsertAppTarget = async (
+export const upsertAppTarget = (
   params: AppTargetUpsertParams,
-): Promise<AppTarget> => {
-  const target = await getAppTargetRepo().upsertAppTarget(params);
+  lease?: LocalDataWriteLease,
+): Promise<AppTarget> =>
+  withLocalDataWrite(async (writeLease) => {
+    const target = await getAppTargetRepo().upsertAppTarget(params, writeLease);
 
-  produceAppState((draft) => {
-    registerAppTargets(draft, [target]);
-  });
+    produceAppState((draft) => {
+      registerAppTargets(draft, [target]);
+    }, writeLease);
 
-  return target;
-};
+    return target;
+  }, lease);
 
 export const setAppTargetTone = async (
   id: string,
@@ -185,38 +192,51 @@ export const tryRegisterCurrentAppTarget = async (): Promise<
 
   const shouldRegisterAppTarget = !existingApp || !existingApp.iconPath;
   if (shouldRegisterAppTarget) {
-    let iconPath: string | undefined;
-    if (appInfo.iconBase64) {
-      const targetPath = buildAppIconPath(getAppState(), appTargetId);
+    const releaseWrite = beginLocalDataWrite();
+    if (releaseWrite) {
       try {
-        await getLogger().stopwatch("upload_app_icon", async () => {
-          await getStorageRepo().uploadData({
-            path: targetPath,
-            data: decodeBase64Icon(appInfo.iconBase64),
-          });
-        });
-        iconPath = targetPath;
-      } catch (uploadError) {
-        console.error("Failed to upload app icon", uploadError);
-      }
-    }
+        let iconPath: string | undefined;
+        if (appInfo.iconBase64) {
+          const targetPath = buildAppIconPath(getAppState(), appTargetId);
+          try {
+            await getLogger().stopwatch("upload_app_icon", async () => {
+              await getStorageRepo().uploadData(
+                {
+                  path: targetPath,
+                  data: decodeBase64Icon(appInfo.iconBase64),
+                },
+                releaseWrite.lease,
+              );
+            });
+            iconPath = targetPath;
+          } catch (uploadError) {
+            console.error("Failed to upload app icon", uploadError);
+          }
+        }
 
-    try {
-      const defaultPasteKeybind =
-        getMyUserPreferences(getAppState())?.pasteKeybind ?? null;
-      await getLogger().stopwatch("upsert_app_target", async () => {
-        await upsertAppTarget({
-          id: appTargetId,
-          name: appName,
-          toneId: existingApp?.toneId ?? null,
-          iconPath: iconPath ?? existingApp?.iconPath ?? null,
-          pasteKeybind: existingApp?.pasteKeybind ?? defaultPasteKeybind,
-          insertionMethod: existingApp?.insertionMethod ?? null,
-          typingSpeedMs: existingApp?.typingSpeedMs ?? null,
-        });
-      });
-    } catch (error) {
-      console.error("Failed to upsert app target", error);
+        try {
+          const defaultPasteKeybind =
+            getMyUserPreferences(getAppState())?.pasteKeybind ?? null;
+          await getLogger().stopwatch("upsert_app_target", async () => {
+            await upsertAppTarget(
+              {
+                id: appTargetId,
+                name: appName,
+                toneId: existingApp?.toneId ?? null,
+                iconPath: iconPath ?? existingApp?.iconPath ?? null,
+                pasteKeybind: existingApp?.pasteKeybind ?? defaultPasteKeybind,
+                insertionMethod: existingApp?.insertionMethod ?? null,
+                typingSpeedMs: existingApp?.typingSpeedMs ?? null,
+              },
+              releaseWrite.lease,
+            );
+          });
+        } catch (error) {
+          console.error("Failed to upsert app target", error);
+        }
+      } finally {
+        releaseWrite();
+      }
     }
   }
 

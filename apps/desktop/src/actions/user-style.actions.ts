@@ -1,3 +1,4 @@
+import type { LocalDataWriteLease } from "../utils/local-data-write-gate";
 import { Nullable, StylingMode } from "@maus-inc/types";
 import { getAppState, produceAppState } from "../store";
 import { getMyEffectiveUserId } from "../utils/user.utils";
@@ -49,18 +50,25 @@ export const toggleActiveTone = (toneId: string): Promise<void> =>
     "Failed to update active styles. Please try again.",
   );
 
-export const setSelectedToneId = async (toneId: string): Promise<void> => {
+export const setSelectedToneId = async (
+  toneId: string | null,
+  lease?: LocalDataWriteLease,
+): Promise<void> => {
   await updateUser(
     (user) => {
       user.selectedToneId = toneId;
     },
     "Unable to select style. User not found.",
     "Failed to select style. Please try again.",
+    lease,
   );
-  setLocalStorageValue("mausvoice:checklist-writing-style", true);
+  setLocalStorageValue("mausvoice:checklist-writing-style", true, lease);
 };
 
-export const activateAndSelectTone = async (toneId: string): Promise<void> => {
+export const activateAndSelectTone = async (
+  toneId: string,
+  lease?: LocalDataWriteLease,
+): Promise<void> => {
   await updateUser(
     (user) => {
       const currentIds = user.activeToneIds ?? [];
@@ -71,10 +79,14 @@ export const activateAndSelectTone = async (toneId: string): Promise<void> => {
     },
     "Unable to activate style. User not found.",
     "Failed to activate style. Please try again.",
+    lease,
   );
 };
 
-export const deselectActiveTone = async (toneId: string): Promise<void> => {
+export const deselectActiveTone = async (
+  toneId: string,
+  lease?: LocalDataWriteLease,
+): Promise<void> => {
   await updateUser(
     (user) => {
       const current = user.activeToneIds ?? [];
@@ -82,6 +94,7 @@ export const deselectActiveTone = async (toneId: string): Promise<void> => {
     },
     "Unable to deselect style. User not found.",
     "Failed to deselect style. Please try again.",
+    lease,
   );
 };
 

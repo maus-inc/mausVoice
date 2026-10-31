@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getAppState, produceAppState, setAppState } from "../store";
 import { INITIAL_APP_STATE } from "../state/app.state";
 import { LOCAL_USER_ID } from "../utils/user.utils";
+import type { LocalDataWriteLease } from "../utils/local-data-write-gate";
 import {
   applyInDictationStyleSwitch,
   applyWritingStyleSelection,
@@ -15,15 +16,17 @@ import { seedManualStyles } from "../../test/helpers/tone-test.utils";
 
 const { setSelectedToneIdMock, setPreferencesMock } = vi.hoisted(() => ({
   setPreferencesMock: vi.fn((prefs: unknown) => Promise.resolve(prefs)),
-  setSelectedToneIdMock: vi.fn((toneId: string) => {
-    produceAppState((draft) => {
-      const user = draft.userById[LOCAL_USER_ID];
-      if (user) {
-        user.selectedToneId = toneId;
-      }
-    });
-    return Promise.resolve();
-  }),
+  setSelectedToneIdMock: vi.fn(
+    (toneId: string, lease?: LocalDataWriteLease) => {
+      produceAppState((draft) => {
+        const user = draft.userById[LOCAL_USER_ID];
+        if (user) {
+          user.selectedToneId = toneId;
+        }
+      }, lease);
+      return Promise.resolve();
+    },
+  ),
 }));
 
 vi.mock("../repos", () => ({
@@ -58,7 +61,8 @@ vi.mock("../utils/log.utils", () => ({
 
 vi.mock("./user.actions", () => ({
   activateAndSelectTone: vi.fn(),
-  setSelectedToneId: (toneId: string) => setSelectedToneIdMock(toneId),
+  setSelectedToneId: (toneId: string, lease?: LocalDataWriteLease) =>
+    setSelectedToneIdMock(toneId, lease),
 }));
 
 import { activateAndSelectTone } from "./user.actions";
@@ -95,7 +99,10 @@ describe("writing style switch channels share one state transition", () => {
         expect(selectedToneId()).toBe("default");
         expect(getAppState().tones.selectedToneId).toBe("default");
       } else {
-        expect(activateAndSelectTone).toHaveBeenCalledWith(tone.id);
+        expect(activateAndSelectTone).toHaveBeenCalledWith(
+          tone.id,
+          expect.any(Object),
+        );
         expect(getAppState().tones.selectedToneId).toBe(tone.id);
       }
     },
@@ -145,6 +152,7 @@ describe("writing style switch channels share one state transition", () => {
     expect(setPreferencesMock).toHaveBeenCalledOnce();
     expect(setPreferencesMock).toHaveBeenCalledWith(
       expect.objectContaining({ activeToneId: null }),
+      expect.any(Object),
     );
   });
 
@@ -174,7 +182,10 @@ describe("writing style switch channels share one state transition", () => {
   it("applyWritingStyleSelection writes selectedToneId", async () => {
     await applyWritingStyleSelection("email");
     expect(selectedToneId()).toBe("email");
-    expect(setSelectedToneIdMock).toHaveBeenCalledWith("email");
+    expect(setSelectedToneIdMock).toHaveBeenCalledWith(
+      "email",
+      expect.any(Object),
+    );
   });
 
   it("pill forward, arrow forward, and cycle-hotkey forward all land on the next style", async () => {
