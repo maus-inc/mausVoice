@@ -70,6 +70,7 @@ export const migratePreferredMicrophoneToPreferences =
 export const setPreferredLanguage = async (
   language: Nullable<string>,
   lease?: LocalDataWriteLease,
+  options: { showErrorToast?: boolean } = {},
 ): Promise<void> => {
   await updateUser(
     (user) => {
@@ -78,6 +79,7 @@ export const setPreferredLanguage = async (
     "Unable to update preferred language. User not found.",
     "Failed to save preferred language. Please try again.",
     lease,
+    { requireUser: true, showErrorToast: options.showErrorToast },
   );
 };
 

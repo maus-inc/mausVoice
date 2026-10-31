@@ -29,19 +29,38 @@ import { showErrorSnackbar } from "./app.actions";
 // previous task's result rather than on a snapshot taken at call time.
 export const { enqueue: enqueueUserMutation } = createMutationQueue();
 
+// A rejected repository call can have committed before its response failed.
+// Do not base the next whole-row update on an unverified profile in that case.
+let userNeedsReconciliation = false;
+
 export const updateUser = (
   updateCallback: (user: User) => void,
   errorMessage: string,
   saveErrorMessage: string,
   existingLease?: LocalDataWriteLease,
+  options: { requireUser?: boolean; showErrorToast?: boolean } = {},
 ): Promise<void> =>
   enqueueUserMutation(async () => {
     const saveUser = async (lease: LocalDataWriteLease): Promise<void> => {
+      if (userNeedsReconciliation) {
+        try {
+          const latest = await getUserRepo().getMyUser();
+          if (!latest) throw new Error("Unable to reload the user profile.");
+          produceAppState((draft) => setCurrentUser(draft, latest), lease);
+          userNeedsReconciliation = false;
+        } catch (error) {
+          getLogger().error(`Failed to reconcile user before update: ${error}`);
+          if (options.showErrorToast !== false)
+            showErrorSnackbar(saveErrorMessage);
+          throw error;
+        }
+      }
       const state = getAppState();
       const existing = getMyUser(state);
       if (!existing) {
         getLogger().warning(`updateUser: user not found (${errorMessage})`);
-        showErrorSnackbar(errorMessage);
+        if (options.showErrorToast !== false) showErrorSnackbar(errorMessage);
+        if (options.requireUser) throw new Error(errorMessage);
         return;
       }
 
@@ -52,9 +71,7 @@ export const updateUser = (
       };
 
       updateCallback(payload);
-      produceAppState((draft) => {
-        setCurrentUser(draft, payload);
-      }, lease);
+      produceAppState((draft) => setCurrentUser(draft, payload), lease);
 
       try {
         getLogger().verbose(`Saving user (id=${payload.id})`);
@@ -65,10 +82,9 @@ export const updateUser = (
         getLogger().verbose("User saved successfully");
       } catch (error) {
         getLogger().error(`Failed to update user: ${error}`);
-        // Re-read instead of restoring the pre-call snapshot. Another task may
-        // have committed a change after this one started, and writing the
-        // snapshot back would erase it. If the re-read also fails the optimistic
-        // value stays and the error surfaces, which is the honest outcome.
+        // A rejected write can have an uncertain outcome. Re-read if possible.
+        // If that fails, withdraw our optimistic value only if it is still the
+        // current object, and require a fresh read before the next profile edit.
         const reloaded = await getUserRepo()
           .getMyUser()
           .catch((reloadError: unknown) => {
@@ -77,12 +93,16 @@ export const updateUser = (
             );
             return null;
           });
-        produceAppState((draft) => {
-          if (reloaded) {
-            setCurrentUser(draft, reloaded);
+        if (reloaded) {
+          produceAppState((draft) => setCurrentUser(draft, reloaded), lease);
+        } else {
+          userNeedsReconciliation = true;
+          if (getMyUser(getAppState()) === payload) {
+            produceAppState((draft) => setCurrentUser(draft, existing), lease);
           }
-        }, lease);
-        showErrorSnackbar(saveErrorMessage);
+        }
+        if (options.showErrorToast !== false)
+          showErrorSnackbar(saveErrorMessage);
         throw error;
       }
     };

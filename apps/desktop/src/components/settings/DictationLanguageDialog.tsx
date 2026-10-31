@@ -16,7 +16,6 @@ import {
 } from "@mui/material";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
-import { showErrorSnackbar } from "../../actions/app.actions";
 import { produceAppState, useAppStore } from "../../store";
 import { createId } from "../../utils/id.utils";
 import {
@@ -228,9 +227,9 @@ export const DictationLanguageDialog = () => {
         draft.settings.dictationLanguageDialogOpen = false;
       });
     } catch (error) {
+      console.error("Failed to save dictation language settings", error);
       setSaveFailed(true);
       if (contentRef.current) contentRef.current.scrollTop = 0;
-      showErrorSnackbar(error);
     } finally {
       saveInFlight.current = false;
       setIsSaving(false);

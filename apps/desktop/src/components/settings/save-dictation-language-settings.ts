@@ -28,7 +28,9 @@ export const saveDictationLanguageSettings = async (
 
   await withLocalDataWrite(async (lease) => {
     if (primary.language !== currentLanguage) {
-      await setPreferredLanguage(primary.language, lease);
+      await setPreferredLanguage(primary.language, lease, {
+        showErrorToast: false,
+      });
     }
     // A previous attempt may have saved the language before tone loading or a
     // later step failed. Retrying must refresh tones even if the store now

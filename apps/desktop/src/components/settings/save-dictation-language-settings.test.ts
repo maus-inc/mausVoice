@@ -86,7 +86,9 @@ it("retries tone loading after the preferred language was already saved", async 
   await expect(saveDictationLanguageSettings(rows, "fr", "fr")).rejects.toThrow(
     "tones unavailable",
   );
-  expect(mocks.language).toHaveBeenCalledWith("en", undefined);
+  expect(mocks.language).toHaveBeenCalledWith("en", undefined, {
+    showErrorToast: false,
+  });
   expect(mocks.save).not.toHaveBeenCalled();
   mocks.tones.mockResolvedValueOnce(undefined);
   await saveDictationLanguageSettings(rows, "en", "fr");

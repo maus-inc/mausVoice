@@ -301,7 +301,10 @@ export const getAdditionalLanguageEntries = (
       return {
         actionName: hotkey.actionName,
         language,
-        hotkeyCombos: getHotkeyCombosForAction(state, hotkey.actionName),
+        // Rows represent individual bindings, even when several use the same
+        // language. Looking up all combos by action would give each row the
+        // first binding and silently overwrite the others on the next save.
+        hotkeyCombos: hotkey.keys.length > 0 ? [hotkey.keys] : [],
       };
     })
     .filter((entry): entry is AdditionalLanguageEntry => Boolean(entry));

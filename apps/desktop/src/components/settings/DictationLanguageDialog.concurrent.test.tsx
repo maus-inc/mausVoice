@@ -3,12 +3,9 @@ import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ save: vi.fn(), error: vi.fn() }));
+const mocks = vi.hoisted(() => ({ save: vi.fn() }));
 vi.mock("./save-dictation-language-settings", () => ({
   saveDictationLanguageSettings: mocks.save,
-}));
-vi.mock("../../actions/app.actions", () => ({
-  showErrorSnackbar: mocks.error,
 }));
 vi.mock("@tauri-apps/plugin-os", () => ({ platform: () => "macos" }));
 vi.mock("react-intl", async (importOriginal) => {
@@ -34,7 +31,6 @@ it("blocks duplicate saves, edits and dismissal while pending and permits retry"
       }),
   );
   mocks.save.mockResolvedValue(undefined);
-  mocks.error.mockReset();
   setAppState(structuredClone(INITIAL_APP_STATE), true);
   produceAppState((draft) => {
     draft.settings.dictationLanguageDialogOpen = true;
@@ -76,7 +72,6 @@ it("blocks duplicate saves, edits and dismissal while pending and permits retry"
     await act(async () => {
       reject(new Error("failed"));
     });
-    expect(mocks.error).toHaveBeenCalledTimes(1);
     expect(getAppState().settings.dictationLanguageDialogOpen).toBe(true);
     expect(document.querySelector('[role="alert"]')?.textContent).toContain(
       "Some changes may be saved",
@@ -84,6 +79,62 @@ it("blocks duplicate saves, edits and dismissal while pending and permits retry"
     await act(async () => button("Save").click());
     expect(mocks.save).toHaveBeenCalledTimes(2);
     expect(getAppState().settings.dictationLanguageDialogOpen).toBe(false);
+  } finally {
+    act(() => root.unmount());
+    host.remove();
+  }
+});
+
+it("keeps distinct shortcuts for duplicate language rows in its save draft", async () => {
+  mocks.save.mockReset().mockResolvedValue(undefined);
+  setAppState(structuredClone(INITIAL_APP_STATE), true);
+  produceAppState((draft) => {
+    draft.settings.dictationLanguageDialogOpen = true;
+    draft.hotkeyById.a = {
+      id: "a",
+      actionName: "additional-language:fr",
+      keys: ["KeyA"],
+    };
+    draft.hotkeyById.b = {
+      id: "b",
+      actionName: "additional-language:fr",
+      keys: ["KeyB"],
+    };
+  });
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  try {
+    act(() =>
+      root.render(
+        createElement(
+          IntlProvider,
+          { locale: "en", messages: en },
+          createElement(DictationLanguageDialog),
+        ),
+      ),
+    );
+    const second = requireElement(
+      document.querySelector('[aria-label="Hotkey for language 2"]'),
+      "second shortcut",
+    );
+    const third = requireElement(
+      document.querySelector('[aria-label="Hotkey for language 3"]'),
+      "third shortcut",
+    );
+    expect(second.textContent).toContain("A");
+    expect(third.textContent).toContain("B");
+    const save = requireElement(
+      [...document.querySelectorAll("button")].find(
+        (element) => element.textContent?.trim() === "Save",
+      ),
+      "Save",
+    );
+    await act(async () => save.click());
+    const rows = mocks.save.mock.calls[0][0];
+    expect(
+      rows.slice(1).map((row: { hotkeyKeys: string[] }) => row.hotkeyKeys),
+    ).toEqual([["KeyA"], ["KeyB"]]);
   } finally {
     act(() => root.unmount());
     host.remove();
