@@ -18,6 +18,7 @@ import {
   supportsGpuTranscriptionDevice,
 } from "../utils/local-transcription.utils";
 import { getLogger } from "../utils/log.utils";
+import type { LocalDataWriteLease } from "../utils/local-data-write-gate";
 import { getMyUser } from "../utils/user.utils";
 import { pushPillPlacementToNative } from "./windows-sync.actions";
 
@@ -68,6 +69,7 @@ export const migratePreferredMicrophoneToPreferences =
 
 export const setPreferredLanguage = async (
   language: Nullable<string>,
+  lease?: LocalDataWriteLease,
 ): Promise<void> => {
   await updateUser(
     (user) => {
@@ -75,6 +77,7 @@ export const setPreferredLanguage = async (
     },
     "Unable to update preferred language. User not found.",
     "Failed to save preferred language. Please try again.",
+    lease,
   );
 };
 
