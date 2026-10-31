@@ -152,11 +152,14 @@ export const DictationLanguageDialog = () => {
 
   const [rows, setRows] = useState<LanguageRow[]>([]);
   const [isSaving, setIsSaving] = useState(false);
+  const [saveFailed, setSaveFailed] = useState(false);
+  const contentRef = useRef<HTMLDivElement>(null);
   const saveInFlight = useRef(false);
   const initialLanguage = useRef(storePrimaryLanguage);
 
   useEffect(() => {
     if (!open) return;
+    setSaveFailed(false);
     initialLanguage.current = storePrimaryLanguage;
     setRows([
       {
@@ -225,6 +228,8 @@ export const DictationLanguageDialog = () => {
         draft.settings.dictationLanguageDialogOpen = false;
       });
     } catch (error) {
+      setSaveFailed(true);
+      if (contentRef.current) contentRef.current.scrollTop = 0;
       showErrorSnackbar(error);
     } finally {
       saveInFlight.current = false;
@@ -273,8 +278,24 @@ export const DictationLanguageDialog = () => {
           <FormattedMessage defaultMessage="Configure multiple dictation languages with hotkeys." />
         </Typography>
       </DialogTitle>
-      <DialogContent dividers>
+      <DialogContent
+        ref={contentRef}
+        dividers
+        sx={
+          saveFailed ? { "@media (max-height: 400px)": { pt: 1 } } : undefined
+        }
+      >
         <Stack spacing={1}>
+          {saveFailed && (
+            <Alert
+              severity="error"
+              variant="outlined"
+              icon={false}
+              sx={{ "@media (max-height: 400px)": { py: 0.5 } }}
+            >
+              <FormattedMessage defaultMessage="Save incomplete. Some changes may be saved. Retry or check settings after closing." />
+            </Alert>
+          )}
           <Typography
             aria-hidden
             variant="body2"

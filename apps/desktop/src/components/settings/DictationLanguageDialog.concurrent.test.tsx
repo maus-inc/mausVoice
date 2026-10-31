@@ -78,6 +78,9 @@ it("blocks duplicate saves, edits and dismissal while pending and permits retry"
     });
     expect(mocks.error).toHaveBeenCalledTimes(1);
     expect(getAppState().settings.dictationLanguageDialogOpen).toBe(true);
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain(
+      "Some changes may be saved",
+    );
     await act(async () => button("Save").click());
     expect(mocks.save).toHaveBeenCalledTimes(2);
     expect(getAppState().settings.dictationLanguageDialogOpen).toBe(false);

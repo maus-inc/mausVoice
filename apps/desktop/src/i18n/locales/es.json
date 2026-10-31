@@ -769,6 +769,7 @@
   "save": "Guardar",
   "save_and_continue": "Guardar y continuar",
   "save_changes": "Guardar cambios",
+  "save_incomplete_some_changes_may_be_saved_retry_or_check_set": "Guardado incompleto. Algunos cambios pueden haberse guardado. Reintenta o revisa los ajustes al cerrar.",
   "saved_transcriptions_and_audio": "Transcripciones y audio guardados",
   "saving": "Guardando...",
   "say_something_and_watch_the_waves_respond_to_your_voice": "Di algo y observa cómo las olas responden a tu voz.",

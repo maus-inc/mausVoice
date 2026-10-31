@@ -769,6 +769,7 @@
   "save": "Salva",
   "save_and_continue": "Salva e continua",
   "save_changes": "Salva modifiche",
+  "save_incomplete_some_changes_may_be_saved_retry_or_check_set": "Salvataggio incompleto. Alcune modifiche potrebbero essere state salvate. Riprova o controlla le impostazioni dopo la chiusura.",
   "saved_transcriptions_and_audio": "Trascrizioni e audio salvati",
   "saving": "Salvataggio...",
   "say_something_and_watch_the_waves_respond_to_your_voice": "Dì qualcosa e guarda le onde rispondere alla tua voce.",

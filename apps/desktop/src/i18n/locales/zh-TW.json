@@ -769,6 +769,7 @@
   "save": "儲存",
   "save_and_continue": "儲存並繼續",
   "save_changes": "儲存變更",
+  "save_incomplete_some_changes_may_be_saved_retry_or_check_set": "儲存未完成。部分變更可能已儲存。請重試，或關閉後檢查設定。",
   "saved_transcriptions_and_audio": "已儲存的轉錄文字與音訊",
   "saving": "儲存中...",
   "say_something_and_watch_the_waves_respond_to_your_voice": "說點什麼，觀察海浪對你的聲音作出回應。",

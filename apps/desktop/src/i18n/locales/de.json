@@ -769,6 +769,7 @@
   "save": "Speichern",
   "save_and_continue": "Speichern und weiter",
   "save_changes": "Änderungen speichern",
+  "save_incomplete_some_changes_may_be_saved_retry_or_check_set": "Speichern unvollständig. Einige Änderungen sind möglicherweise gespeichert. Erneut versuchen oder Einstellungen nach dem Schließen prüfen.",
   "saved_transcriptions_and_audio": "Gespeicherte Transkriptionen und Audiodateien",
   "saving": "Speichern...",
   "say_something_and_watch_the_waves_respond_to_your_voice": "Sag etwas und sieh zu, wie die Wellen auf deine Stimme reagieren.",

@@ -769,6 +769,7 @@
   "save": "Enregistrer",
   "save_and_continue": "Enregistrer et continuer",
   "save_changes": "Enregistrer les modifications",
+  "save_incomplete_some_changes_may_be_saved_retry_or_check_set": "Enregistrement incomplet. Certaines modifications ont peut-être été enregistrées. Réessayez ou vérifiez les paramètres après fermeture.",
   "saved_transcriptions_and_audio": "Transcriptions et audio enregistrés",
   "saving": "Enregistrement...",
   "say_something_and_watch_the_waves_respond_to_your_voice": "Dites quelque chose et regardez les vagues répondre à votre voix.",
