@@ -27,6 +27,8 @@ import { prepareChatDeleteFocus } from "./chat-delete-focus";
 export default function ChatsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedId = searchParams.get("id");
+  const selectedIdRef = useRef(selectedId);
+  selectedIdRef.current = selectedId;
   const conversationIds = useAppStore((s) => s.chat.conversationIds);
   const title = useAppStore((s) =>
     selectedId ? s.conversationById[selectedId]?.title : undefined,
@@ -114,6 +116,7 @@ export default function ChatsPage() {
       createdAt: now,
       updatedAt: now,
     });
+    if (!pageRef.current) return;
     setSearchParams({ id: saved.id }, { replace: true });
     setShowList(false);
     if (keyboard) focusIfUnmoved(focused, () => backRef.current);
@@ -123,7 +126,9 @@ export default function ChatsPage() {
     const restoreFocus = prepareChatDeleteFocus(listRef.current, id);
     try {
       await deleteConversation(id);
-      if (selectedId === id) setSearchParams({}, { replace: true });
+      if (!pageRef.current) return;
+      // The user may have selected another thread while storage was pending.
+      if (selectedIdRef.current === id) setSearchParams({}, { replace: true });
       restoreFocus();
     } catch (error) {
       showErrorSnackbar(error);
