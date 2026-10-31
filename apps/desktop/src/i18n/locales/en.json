@@ -841,6 +841,7 @@
   "streak_days_incredible": "{streak} days! Incredible! 🌟",
   "streams_dictation_text_as_you_speak_instead_of_pasting_it_al": "Streams dictation text as you speak instead of pasting it all when you stop. Applies to Verbatim mode on supported providers.",
   "style": "Style",
+  "style_deleted_but_its_default_setting_could_not_be_saved_cho": "Style deleted, but its default setting could not be saved. Choose a default style again.",
   "style_hotkeys": "Style hotkeys",
   "styles": "Styles",
   "styles_reshape_your_dictation_into_your_voice_emails_notes_c": "Styles reshape your dictation into your voice: emails, notes, code comments. Create one from a sample and it applies on every insert.",

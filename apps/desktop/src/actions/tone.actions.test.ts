@@ -148,6 +148,29 @@ describe("writing style switch channels share one state transition", () => {
     );
   });
 
+  it("reports partial success if clearing the deleted default cannot be persisted", async () => {
+    produceAppState((draft) => {
+      draft.userPrefs = { activeToneId: "email" } as NonNullable<
+        typeof draft.userPrefs
+      >;
+    });
+    setPreferencesMock.mockRejectedValueOnce(new Error("disk unavailable"));
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    try {
+      await expect(deleteTone("email")).resolves.toBeUndefined();
+      expect(getAppState().toneById.email).toBeUndefined();
+      expect(getAppState().userPrefs?.activeToneId).toBeNull();
+      expect(getAppState().snackbarMode).toBe("error");
+      expect(getAppState().snackbarMessage).toContain(
+        "Style deleted, but its default setting could not be saved",
+      );
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
   it("applyWritingStyleSelection writes selectedToneId", async () => {
     await applyWritingStyleSelection("email");
     expect(selectedToneId()).toBe("email");

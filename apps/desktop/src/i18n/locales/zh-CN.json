@@ -841,6 +841,7 @@
   "streak_days_incredible": "{streak} 天！太棒了！ 🌟",
   "streams_dictation_text_as_you_speak_instead_of_pasting_it_al": "边说边流式输出听写文本，而不是停止时一次性粘贴。适用于受支持提供商的原文模式。",
   "style": "样式",
+  "style_deleted_but_its_default_setting_could_not_be_saved_cho": "样式已删除，但无法保存默认设置。请重新选择默认样式。",
   "style_hotkeys": "风格快捷键",
   "styles": "风格",
   "styles_reshape_your_dictation_into_your_voice_emails_notes_c": "风格可将您的听写内容转换为您的表达方式：邮件、笔记、代码注释。从示例创建一个风格，每次插入时都会自动应用。",

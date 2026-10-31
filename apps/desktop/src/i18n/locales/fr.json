@@ -841,6 +841,7 @@
   "streak_days_incredible": "{streak} jours! Incroyable! 🌟",
   "streams_dictation_text_as_you_speak_instead_of_pasting_it_al": "Diffuse le texte dicté au fur et à mesure au lieu de tout coller à l'arrêt. S'applique au mode Mot à mot sur les fournisseurs pris en charge.",
   "style": "Style",
+  "style_deleted_but_its_default_setting_could_not_be_saved_cho": "Style supprimé, mais le réglage par défaut n’a pas pu être enregistré. Choisissez à nouveau un style par défaut.",
   "style_hotkeys": "Raccourcis des styles",
   "styles": "Styles",
   "styles_reshape_your_dictation_into_your_voice_emails_notes_c": "Les styles adaptent votre dictée à votre voix : e-mails, notes, commentaires de code. Créez-en un à partir d'un exemple et il s'applique à chaque insertion.",

@@ -841,6 +841,7 @@
   "streak_days_incredible": "{streak}일! 대단해요! 🌟",
   "streams_dictation_text_as_you_speak_instead_of_pasting_it_al": "말하는 동안 받아쓴 텍스트를 실시간으로 전송하고, 멈출 때 한꺼번에 붙여넣지 않습니다. 지원되는 제공자의 그대로 모드에 적용됩니다.",
   "style": "스타일",
+  "style_deleted_but_its_default_setting_could_not_be_saved_cho": "스타일은 삭제되었지만 기본 설정을 저장하지 못했습니다. 기본 스타일을 다시 선택하세요.",
   "style_hotkeys": "스타일 단축키",
   "styles": "스타일",
   "styles_reshape_your_dictation_into_your_voice_emails_notes_c": "스타일은 받아쓰기를 이메일, 메모, 코드 주석 등 나만의 문체로 바꿔줍니다. 샘플로 만들면 매번 삽입할 때 적용됩니다.",

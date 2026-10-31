@@ -81,7 +81,18 @@ export const deleteTone = async (id: string): Promise<void> => {
     // Sync preferences if we cleared the active tone
     const prefs = getAppState().userPrefs;
     if (clearedActiveTone && prefs && prefs.activeToneId === null) {
-      await getUserPreferencesRepo().setUserPreferences(prefs);
+      try {
+        await getUserPreferencesRepo().setUserPreferences(prefs);
+      } catch (error) {
+        console.error("Style deleted, but default style update failed", error);
+        showErrorSnackbar(
+          getIntl().formatMessage({
+            defaultMessage:
+              "Style deleted, but its default setting could not be saved. Choose a default style again.",
+          }),
+        );
+        return;
+      }
     }
 
     showSnackbar("Tone deleted successfully", { mode: "success" });

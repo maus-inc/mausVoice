@@ -841,6 +841,7 @@
   "streak_days_incredible": "{streak} dias! Incrível! 🌟",
   "streams_dictation_text_as_you_speak_instead_of_pasting_it_al": "Transmite o texto ditado enquanto você fala, em vez de colar tudo ao parar. Aplica-se ao modo Literalmente em provedores compatíveis.",
   "style": "Estilo",
+  "style_deleted_but_its_default_setting_could_not_be_saved_cho": "O estilo foi excluído, mas não foi possível salvar a configuração padrão. Escolha um estilo padrão novamente.",
   "style_hotkeys": "Atalhos de estilos",
   "styles": "Estilos",
   "styles_reshape_your_dictation_into_your_voice_emails_notes_c": "Estilos moldam seu ditado na sua voz: e-mails, notas, comentários de código. Crie um a partir de um exemplo e ele será aplicado a cada inserção.",
