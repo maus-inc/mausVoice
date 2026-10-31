@@ -99,6 +99,7 @@ export const ConversationListItem = ({
   return (
     <Box
       component="div"
+      data-conversation-row={conversation.id}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       sx={{ position: "relative" }}
@@ -110,6 +111,7 @@ export const ConversationListItem = ({
     >
       <ListItemButton
         selected={selected}
+        data-conversation-select
         aria-current={selected ? "true" : undefined}
         data-active={selected ? "true" : undefined}
         onClick={onSelect}

@@ -16,11 +16,13 @@ import {
   deleteConversation,
   loadChatMessages,
 } from "../../actions/chat.actions";
+import { showErrorSnackbar } from "../../actions/app.actions";
 import { useAppStore } from "../../store";
 import { createId } from "../../utils/id.utils";
 import { ChatsSideEffects } from "./ChatsSideEffects";
 import { ConversationLayout } from "./ConversationLayout";
 import { ConversationListLayout } from "./ConversationListLayout";
+import { prepareChatDeleteFocus } from "./chat-delete-focus";
 
 export default function ChatsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -118,9 +120,13 @@ export default function ChatsPage() {
   };
 
   const handleDelete = async (id: string) => {
-    await deleteConversation(id);
-    if (selectedId === id) {
-      setSearchParams({}, { replace: true });
+    const restoreFocus = prepareChatDeleteFocus(listRef.current, id);
+    try {
+      await deleteConversation(id);
+      if (selectedId === id) setSearchParams({}, { replace: true });
+      restoreFocus();
+    } catch (error) {
+      showErrorSnackbar(error);
     }
   };
 

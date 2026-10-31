@@ -183,6 +183,7 @@ export const ConversationListLayout = ({
       <MetalChrome>
         <Button
           onClick={onNewChat}
+          data-conversation-new
           data-active={selectedId == null ? "true" : undefined}
           startIcon={<Plus size={16} strokeWidth={2} />}
           sx={{
