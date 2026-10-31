@@ -29,9 +29,13 @@ export const setPreferredMicrophone = async (
   const trimmed = preferredMicrophone?.trim() ?? null;
   const normalized = trimmed && trimmed.length > 0 ? trimmed : null;
 
-  await updateUserPreferences((preferences) => {
-    preferences.preferredMicrophone = normalized;
-  }, "Failed to save microphone preference. Please try again.");
+  await updateUserPreferences(
+    (preferences) => {
+      preferences.preferredMicrophone = normalized;
+    },
+    "Failed to save microphone preference. Please try again.",
+    { showErrorToast: false },
+  );
 };
 
 export const migratePreferredMicrophoneToPreferences =

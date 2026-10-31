@@ -142,6 +142,7 @@ export const updateUserPreferences = (
   saveErrorMessage = getIntl().formatMessage({
     defaultMessage: "Failed to save AI preferences. Please try again.",
   }),
+  options: { showErrorToast?: boolean } = {},
 ): Promise<void> =>
   enqueuePrefsMutation(async () => {
     const state = getAppState();
@@ -155,7 +156,8 @@ export const updateUserPreferences = (
         getLogger().error(
           `Failed to load existing preferences before update: ${error}`,
         );
-        showErrorSnackbar(saveErrorMessage);
+        if (options.showErrorToast !== false)
+          showErrorSnackbar(saveErrorMessage);
         throw error;
       }
     }
@@ -175,7 +177,7 @@ export const updateUserPreferences = (
       getLogger().verbose("User preferences saved successfully");
     } catch (error) {
       getLogger().error(`Failed to update user preferences: ${error}`);
-      showErrorSnackbar(saveErrorMessage);
+      if (options.showErrorToast !== false) showErrorSnackbar(saveErrorMessage);
       throw error;
     }
   });

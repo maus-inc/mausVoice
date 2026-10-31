@@ -1,4 +1,3 @@
-import { LoadingButton } from "@mui/lab";
 import {
   Alert,
   Button,
@@ -10,12 +9,19 @@ import {
   Stack,
 } from "@mui/material";
 import { Nullable } from "@maus-inc/types";
-import { useCallback, useEffect, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { FormattedMessage } from "react-intl";
 import { setPreferredMicrophone } from "../../actions/user.actions";
 import { useMyPreferredMicrophone } from "../../hooks/user.hooks";
 import { produceAppState, useAppStore } from "../../store";
 import { SettingSection } from "../common/SettingSection";
+import { BusyButtonLabel } from "../common/BusyButtonLabel";
 import { MicrophoneSelector } from "../microphone/MicrophoneSelector";
 import { MicrophoneTester } from "../microphone/MicrophoneTester";
 
@@ -26,8 +32,27 @@ export const MicrophoneDialog = () => {
   const [selected, setSelected] = useState<Nullable<string>>(savedPreference);
   const [hasChanges, setHasChanges] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
+  const saveInFlight = useRef(false);
+  const [saveError, setSaveError] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const feedbackRef = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    const content = contentRef.current;
+    const feedback = feedbackRef.current;
+    if ((!saveError && !saveSuccess) || !content || !feedback) return;
+    const containerRect = content.getBoundingClientRect();
+    const errorRect = feedback.getBoundingClientRect();
+    if (
+      errorRect.top < containerRect.top ||
+      errorRect.height > containerRect.height
+    ) {
+      content.scrollTop += errorRect.top - containerRect.top;
+    } else if (errorRect.bottom > containerRect.bottom) {
+      content.scrollTop += errorRect.bottom - containerRect.bottom + 8;
+    }
+  }, [saveError, saveSuccess]);
 
   useEffect(() => {
     if (!open) {
@@ -35,7 +60,7 @@ export const MicrophoneDialog = () => {
     }
     setSelected(savedPreference);
     setHasChanges(false);
-    setSaveError(null);
+    setSaveError(false);
     setSaveSuccess(false);
   }, [open, savedPreference]);
 
@@ -43,19 +68,20 @@ export const MicrophoneDialog = () => {
     (next: Nullable<string>) => {
       setSelected(next ?? null);
       setHasChanges((next ?? null) !== (savedPreference ?? null));
-      setSaveError(null);
+      setSaveError(false);
       setSaveSuccess(false);
     },
     [savedPreference],
   );
 
   const handleSave = useCallback(async () => {
-    if (!hasChanges || saving) {
+    if (!hasChanges || saving || saveInFlight.current) {
       return;
     }
 
+    saveInFlight.current = true;
     setSaving(true);
-    setSaveError(null);
+    setSaveError(false);
     setSaveSuccess(false);
 
     try {
@@ -63,13 +89,15 @@ export const MicrophoneDialog = () => {
       setHasChanges(false);
       setSaveSuccess(true);
     } catch {
-      setSaveError("Failed to save microphone preference. Please try again.");
+      setSaveError(true);
     } finally {
+      saveInFlight.current = false;
       setSaving(false);
     }
   }, [hasChanges, saving, selected]);
 
   const handleClose = useCallback(() => {
+    if (saveInFlight.current) return;
     produceAppState((draft) => {
       draft.settings.microphoneDialogOpen = false;
     });
@@ -80,7 +108,7 @@ export const MicrophoneDialog = () => {
       <DialogTitle>
         <FormattedMessage defaultMessage="Microphone settings" />
       </DialogTitle>
-      <DialogContent dividers>
+      <DialogContent dividers ref={contentRef}>
         <Stack spacing={3} sx={{ paddingTop: 0.5 }}>
           <Stack spacing={1.5}>
             <SettingSection
@@ -95,9 +123,13 @@ export const MicrophoneDialog = () => {
               onChange={handleSelectionChange}
               disabled={saving}
             />
-            {saveError && <Alert severity="error">{saveError}</Alert>}
+            {saveError && (
+              <Alert ref={feedbackRef} severity="error">
+                <FormattedMessage defaultMessage="Failed to save microphone preference. Please try again." />
+              </Alert>
+            )}
             {saveSuccess && (
-              <Alert severity="success">
+              <Alert ref={feedbackRef} severity="success">
                 <FormattedMessage defaultMessage="Preference saved." />
               </Alert>
             )}
@@ -112,25 +144,28 @@ export const MicrophoneDialog = () => {
                 <FormattedMessage defaultMessage="Start a short test to see live audio levels and play back what was recorded." />
               }
             />
-            <MicrophoneTester
-              preferredMicrophone={selected ?? null}
-              disabled={saving}
-            />
+            <MicrophoneTester preferredMicrophone={selected ?? null} />
           </Stack>
         </Stack>
       </DialogContent>
       <DialogActions>
-        <Button onClick={handleClose}>
+        <Button onClick={handleClose} disabled={saving}>
           <FormattedMessage defaultMessage="Close" />
         </Button>
-        <LoadingButton
+        <Button
           onClick={handleSave}
-          loading={saving}
           disabled={!hasChanges || saving}
+          aria-busy={saving || undefined}
           variant="contained"
         >
-          <FormattedMessage defaultMessage="Save changes" />
-        </LoadingButton>
+          {saving ? (
+            <BusyButtonLabel>
+              <FormattedMessage defaultMessage="Save changes" />
+            </BusyButtonLabel>
+          ) : (
+            <FormattedMessage defaultMessage="Save changes" />
+          )}
+        </Button>
       </DialogActions>
     </Dialog>
   );

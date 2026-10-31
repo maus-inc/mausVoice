@@ -16,7 +16,7 @@ import {
 } from "@mui/material";
 import type { Hotkey } from "@maus-inc/types";
 import { useEffect, useId, useMemo, useState } from "react";
-import { FormattedMessage } from "react-intl";
+import { FormattedMessage, useIntl } from "react-intl";
 import { showErrorSnackbar } from "../../actions/app.actions";
 import { loadTones } from "../../actions/tone.actions";
 import { setPreferredLanguage } from "../../actions/user.actions";
@@ -46,6 +46,7 @@ type DictationLanguageRowProps = {
   onHotkeyChange: (keys: string[]) => void;
   onDelete?: () => void;
   canDelete: boolean;
+  index: number;
 };
 
 const DictationLanguageRow = ({
@@ -55,7 +56,9 @@ const DictationLanguageRow = ({
   onHotkeyChange,
   onDelete,
   canDelete,
+  index,
 }: DictationLanguageRowProps) => {
+  const intl = useIntl();
   const handleLanguageChange = (event: SelectChangeEvent<string>) => {
     onLanguageChange(event.target.value);
   };
@@ -71,11 +74,24 @@ const DictationLanguageRow = ({
         width: "100%",
       }}
     >
-      <HotKey value={hotkeyKeys} onChange={onHotkeyChange} />
+      <HotKey
+        value={hotkeyKeys}
+        onChange={onHotkeyChange}
+        ariaLabel={intl.formatMessage(
+          { defaultMessage: "Hotkey for language {number}" },
+          { number: index + 1 },
+        )}
+      />
       <Box sx={{ flex: 1, minWidth: 120 }}>
         <Select
           value={language}
           onChange={handleLanguageChange}
+          inputProps={{
+            "aria-label": intl.formatMessage(
+              { defaultMessage: "Language {number}" },
+              { number: index + 1 },
+            ),
+          }}
           size="small"
           variant="outlined"
           fullWidth
@@ -95,7 +111,14 @@ const DictationLanguageRow = ({
         </Select>
       </Box>
       {canDelete && (
-        <IconButton size="small" onClick={onDelete}>
+        <IconButton
+          size="small"
+          onClick={onDelete}
+          aria-label={intl.formatMessage(
+            { defaultMessage: "Remove language {number}" },
+            { number: index + 1 },
+          )}
+        >
           <X size={16} strokeWidth={1.9} />
         </IconButton>
       )}
@@ -294,9 +317,10 @@ export const DictationLanguageDialog = () => {
               <FormattedMessage defaultMessage="Some hotkeys share overlapping keys, which may cause conflicts." />
             </Alert>
           )}
-          {rows.map((row) => (
+          {rows.map((row, index) => (
             <DictationLanguageRow
               key={row.rowId}
+              index={index}
               language={row.language}
               hotkeyKeys={row.hotkeyKeys}
               onLanguageChange={(lang) => handleLanguageChange(row.rowId, lang)}

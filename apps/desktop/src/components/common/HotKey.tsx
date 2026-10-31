@@ -1,7 +1,7 @@
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
 import { hotkeyRecorderStyles } from "./hotkey-recorder.styles";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useIntl } from "react-intl";
 import { produceAppState, useAppStore } from "../../store";
 import { setSnackbar } from "../../utils/app.utils";
@@ -13,10 +13,18 @@ import {
 type HotKeyProps = {
   value?: string[];
   onChange?: (value: string[]) => void;
+  disabled?: boolean;
+  ariaLabel?: string;
 };
 
-export const HotKey = ({ value, onChange }: HotKeyProps) => {
+export const HotKey = ({
+  value,
+  onChange,
+  disabled = false,
+  ariaLabel,
+}: HotKeyProps) => {
   const intl = useIntl();
+  const valueId = useId();
   const boxRef = useRef<HTMLDivElement | null>(null);
   const [focused, setFocused] = useState(false);
   const [hasInteracted, setHasInteracted] = useState(false);
@@ -35,6 +43,10 @@ export const HotKey = ({ value, onChange }: HotKeyProps) => {
       draft.isRecordingHotkey = focused;
     });
   }, [focused]);
+
+  useEffect(() => {
+    if (disabled) boxRef.current?.blur();
+  }, [disabled]);
 
   const previousKeysHeldRef = useRef<string[]>([]);
 
@@ -131,9 +143,16 @@ export const HotKey = ({ value, onChange }: HotKeyProps) => {
   return (
     <Box
       ref={boxRef}
-      tabIndex={0}
-      onClick={() => boxRef.current?.focus()}
+      tabIndex={disabled ? -1 : 0}
+      role={ariaLabel ? "group" : undefined}
+      aria-label={ariaLabel}
+      aria-describedby={ariaLabel ? valueId : undefined}
+      aria-disabled={disabled || undefined}
+      onClick={() => {
+        if (!disabled) boxRef.current?.focus();
+      }}
       onFocus={() => {
+        if (disabled) return;
         valueBeforeRecordingRef.current = value;
         setFocused(true);
       }}
@@ -141,9 +160,10 @@ export const HotKey = ({ value, onChange }: HotKeyProps) => {
         setFocused(false);
         setHasInteracted(false);
       }}
-      sx={hotkeyRecorderStyles(focused)}
+      sx={hotkeyRecorderStyles(focused, 200, disabled)}
     >
       <Typography
+        id={ariaLabel ? valueId : undefined}
         variant="body2"
         color={empty ? "text.secondary" : "text.primary"}
       >
