@@ -22,7 +22,7 @@ open / closed / submenu open / item activation (closes via injected close).
 
 ## Accessibility
 
-Action rows expose the menuitem role on the focusable control itself; checked style rows expose menuitemcheckbox and their current state. A separate edit action is a sibling, not a nested control. Opening focuses the first action. Up/Down wrap between actions; Home/End move to the ends, Enter/Space activate, Tab closes, and Escape restores the trigger through MUI Popover. A keyboard-opened submenu focuses its first action; ArrowLeft closes it. After keyboard navigation, a stationary pointer does not add a second hover highlight; moving the pointer restores hover feedback. Generic builder content retains its own semantics. Native screen-reader behavior has not been verified.
+Action rows expose the menuitem role on the focusable control itself; checked style rows expose menuitemcheckbox and their current state. A separate edit action is a sibling, not a nested control. Actions that open a dialog can wait for the menu's exit and trigger-focus restoration before opening it; New style and Edit style use this handoff. Opening focuses the first action. Up/Down wrap between actions; Home/End move to the ends, Enter/Space activate, Tab closes, and Escape restores the trigger through MUI Popover. A keyboard-opened submenu focuses its first action; ArrowLeft closes it. After keyboard navigation, a stationary pointer does not add a second hover highlight; moving the pointer restores hover feedback. Generic builder content retains its own semantics. Native screen-reader behavior has not been verified.
 
 ## Live-spec mapping
 

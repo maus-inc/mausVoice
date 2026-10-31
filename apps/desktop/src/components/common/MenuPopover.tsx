@@ -18,6 +18,7 @@ import { keyboardMenuSx, useMenuNavigation } from "./use-menu-navigation";
 
 export type MenuPopoverCallbackArgs = {
   close: () => void;
+  closeThen: (action: () => void) => void;
   event: React.MouseEvent<HTMLElement>;
 };
 
@@ -28,7 +29,9 @@ export type MenuPopoverListItem = {
   leading?: React.ReactNode;
   trailing?: React.ReactNode;
   /** A separate focusable action alongside the primary menu item. */
-  endAction?: React.ReactNode;
+  endAction?:
+    | React.ReactNode
+    | ((args: { closeThen: (action: () => void) => void }) => React.ReactNode);
   checked?: boolean;
   onClick?: (args: MenuPopoverCallbackArgs) => void;
 };
@@ -62,16 +65,19 @@ export type MenuPopoverItem =
 type MenuPopoverItemRendProps = {
   item: MenuPopoverItem;
   close: () => void;
+  closeThen: (action: () => void) => void;
 };
 
 type MenuPopoverSubMenuItemProps = {
   item: MenuPopoverSubMenu;
   close: () => void;
+  closeThen: (action: () => void) => void;
 };
 
 function MenuPopoverSubMenuItem({
   item,
   close,
+  closeThen,
 }: Readonly<MenuPopoverSubMenuItemProps>) {
   const [submenuOpen, setSubmenuOpen] = useState(false);
   const [keyboardOpen, setKeyboardOpen] = useState(false);
@@ -171,7 +177,11 @@ function MenuPopoverSubMenuItem({
         >
           {item.children.map((child) => (
             <Box key={child.id}>
-              <MenuPopoverItemRend item={child} close={close} />
+              <MenuPopoverItemRend
+                item={child}
+                close={close}
+                closeThen={closeThen}
+              />
             </Box>
           ))}
         </Stack>
@@ -183,6 +193,7 @@ function MenuPopoverSubMenuItem({
 function MenuPopoverItemRend({
   item,
   close,
+  closeThen,
 }: Readonly<MenuPopoverItemRendProps>): React.ReactNode {
   if (item.kind === "listItem") {
     const tile = (
@@ -192,7 +203,9 @@ function MenuPopoverItemRend({
         leading={item.leading}
         title={item.title}
         trailing={item.trailing}
-        onClick={(e) => item.onClick && item.onClick({ close, event: e })}
+        onClick={(e) =>
+          item.onClick && item.onClick({ close, closeThen, event: e })
+        }
         sx={
           item.endAction ? { flex: 1, minWidth: 0, width: "auto" } : undefined
         }
@@ -201,7 +214,9 @@ function MenuPopoverItemRend({
     return item.endAction ? (
       <Stack direction="row" sx={{ alignItems: "center" }}>
         {tile}
-        {item.endAction}
+        {typeof item.endAction === "function"
+          ? item.endAction({ closeThen })
+          : item.endAction}
       </Stack>
     ) : (
       tile
@@ -217,7 +232,9 @@ function MenuPopoverItemRend({
   }
 
   if (item.kind === "subMenu") {
-    return <MenuPopoverSubMenuItem item={item} close={close} />;
+    return (
+      <MenuPopoverSubMenuItem item={item} close={close} closeThen={closeThen} />
+    );
   }
 
   return null;
@@ -248,6 +265,14 @@ export const MenuPopover = ({
   ...rest
 }: MenuPopoverProps) => {
   const menuNavigation = useMenuNavigation(open, onClose);
+  const afterClose = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    if (open) afterClose.current = null;
+  }, [open]);
+  const closeThen = (action: () => void) => {
+    afterClose.current = action;
+    onClose();
+  };
   const handleClose = (event: React.MouseEvent<HTMLElement>): void => {
     event.stopPropagation();
     onClose?.();
@@ -277,6 +302,13 @@ export const MenuPopover = ({
       }
       slotProps={{
         paper: { sx: chromeMenuPaperSx },
+        transition: {
+          onExited: () => {
+            const action = afterClose.current;
+            afterClose.current = null;
+            action?.();
+          },
+        },
       }}
       {...rest}
     >
@@ -290,7 +322,11 @@ export const MenuPopover = ({
       >
         {items.map((item) => (
           <Box key={item.id}>
-            <MenuPopoverItemRend item={item} close={onClose} />
+            <MenuPopoverItemRend
+              item={item}
+              close={onClose}
+              closeThen={closeThen}
+            />
           </Box>
         ))}
       </Stack>

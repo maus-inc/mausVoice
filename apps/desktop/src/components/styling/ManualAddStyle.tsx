@@ -81,9 +81,8 @@ export function ManualAddStyle() {
       kind: "listItem",
       leading: <Add fontSize="small" />,
       title: <FormattedMessage defaultMessage="New style" />,
-      onClick: ({ close }) => {
-        close();
-        openToneEditorDialog({ mode: "create" });
+      onClick: ({ closeThen }) => {
+        closeThen(() => openToneEditorDialog({ mode: "create" }));
       },
     });
     items.push(
@@ -122,20 +121,24 @@ export function ManualAddStyle() {
               </span>
             </Tooltip>
           ) : undefined,
-          endAction: canEdit ? (
-            <IconButton
-              role="menuitem"
-              tabIndex={-1}
-              aria-label={`${intl.formatMessage({ defaultMessage: "Edit style" })}: ${tone.name}`}
-              size="small"
-              onClick={(e) => {
-                e.stopPropagation();
-                openToneEditorDialog({ mode: "edit", toneId: tone.id });
-              }}
-            >
-              <Edit fontSize="small" />
-            </IconButton>
-          ) : undefined,
+          endAction: canEdit
+            ? ({ closeThen }) => (
+                <IconButton
+                  role="menuitem"
+                  tabIndex={-1}
+                  aria-label={`${intl.formatMessage({ defaultMessage: "Edit style" })}: ${tone.name}`}
+                  size="small"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    closeThen(() =>
+                      openToneEditorDialog({ mode: "edit", toneId: tone.id }),
+                    );
+                  }}
+                >
+                  <Edit fontSize="small" />
+                </IconButton>
+              )
+            : undefined,
           onClick: () => {
             if (!isActive || canDeselect) {
               handleToggle(tone.id);
