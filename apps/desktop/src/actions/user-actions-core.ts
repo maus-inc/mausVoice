@@ -33,6 +33,34 @@ export const { enqueue: enqueueUserMutation } = createMutationQueue();
 // Do not base the next whole-row update on an unverified profile in that case.
 let userNeedsReconciliation = false;
 
+const reconcileUser = async (lease: LocalDataWriteLease): Promise<void> => {
+  const latest = await getUserRepo().getMyUser();
+  if (!latest) throw new Error("Unable to reload the user profile.");
+  produceAppState((draft) => setCurrentUser(draft, latest), lease);
+  userNeedsReconciliation = false;
+};
+
+const recoverUserAfterFailedWrite = async (
+  existing: User,
+  payload: User,
+  lease: LocalDataWriteLease,
+): Promise<void> => {
+  const reloaded = await getUserRepo()
+    .getMyUser()
+    .catch((error: unknown) => {
+      getLogger().error(`Failed to re-read user after a failed save: ${error}`);
+      return null;
+    });
+  if (reloaded) {
+    produceAppState((draft) => setCurrentUser(draft, reloaded), lease);
+    return;
+  }
+  userNeedsReconciliation = true;
+  if (getMyUser(getAppState()) === payload) {
+    produceAppState((draft) => setCurrentUser(draft, existing), lease);
+  }
+};
+
 export const updateUser = (
   updateCallback: (user: User) => void,
   errorMessage: string,
@@ -44,10 +72,7 @@ export const updateUser = (
     const saveUser = async (lease: LocalDataWriteLease): Promise<void> => {
       if (userNeedsReconciliation) {
         try {
-          const latest = await getUserRepo().getMyUser();
-          if (!latest) throw new Error("Unable to reload the user profile.");
-          produceAppState((draft) => setCurrentUser(draft, latest), lease);
-          userNeedsReconciliation = false;
+          await reconcileUser(lease);
         } catch (error) {
           getLogger().error(`Failed to reconcile user before update: ${error}`);
           if (options.showErrorToast !== false)
@@ -85,22 +110,7 @@ export const updateUser = (
         // A rejected write can have an uncertain outcome. Re-read if possible.
         // If that fails, withdraw our optimistic value only if it is still the
         // current object, and require a fresh read before the next profile edit.
-        const reloaded = await getUserRepo()
-          .getMyUser()
-          .catch((reloadError: unknown) => {
-            getLogger().error(
-              `Failed to re-read user after a failed save: ${reloadError}`,
-            );
-            return null;
-          });
-        if (reloaded) {
-          produceAppState((draft) => setCurrentUser(draft, reloaded), lease);
-        } else {
-          userNeedsReconciliation = true;
-          if (getMyUser(getAppState()) === payload) {
-            produceAppState((draft) => setCurrentUser(draft, existing), lease);
-          }
-        }
+        await recoverUserAfterFailedWrite(existing, payload, lease);
         if (options.showErrorToast !== false)
           showErrorSnackbar(saveErrorMessage);
         throw error;
