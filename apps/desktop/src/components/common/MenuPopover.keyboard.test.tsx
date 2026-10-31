@@ -98,6 +98,14 @@ it("focuses the first actual menu item and navigates without nested interactive 
     expect(document.activeElement).toBe(actions[0]);
     await key("End");
     expect(document.activeElement).toBe(actions[2]);
+    const menu = document.querySelector<HTMLElement>('[role="menu"]')!;
+    expect(menu.dataset.keyboardNavigation).toBe("true");
+    await act(async () => {
+      const move = new MouseEvent("mousemove", { bubbles: true });
+      Object.defineProperty(move, "movementX", { value: 3 });
+      actions[2].dispatchEvent(move);
+    });
+    expect(menu.dataset.keyboardNavigation).toBe("false");
     await key("Home");
     expect(document.activeElement).toBe(actions[0]);
     await key("ArrowDown");

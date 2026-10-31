@@ -14,7 +14,7 @@ import {
 import { useEffect, useRef, useState } from "react";
 import { chromeMenuPaperSx } from "./chromeMenu";
 import { ListTile } from "./ListTile";
-import { useMenuNavigation } from "./use-menu-navigation";
+import { keyboardMenuSx, useMenuNavigation } from "./use-menu-navigation";
 
 export type MenuPopoverCallbackArgs = {
   close: () => void;
@@ -164,7 +164,10 @@ function MenuPopoverSubMenuItem({
         <Stack
           role="menu"
           ref={menuNavigation.ref}
+          data-keyboard-navigation={menuNavigation.keyboardNavigation}
           onKeyDown={menuNavigation.onKeyDown}
+          onMouseMove={menuNavigation.onMouseMove}
+          sx={keyboardMenuSx}
         >
           {item.children.map((child) => (
             <Box key={child.id}>
@@ -278,10 +281,12 @@ export const MenuPopover = ({
       {...rest}
     >
       <Stack
-        sx={sx}
+        sx={[...(Array.isArray(sx) ? sx : [sx ?? {}]), keyboardMenuSx]}
         role="menu"
         ref={menuNavigation.ref}
+        data-keyboard-navigation={menuNavigation.keyboardNavigation}
         onKeyDown={menuNavigation.onKeyDown}
+        onMouseMove={menuNavigation.onMouseMove}
       >
         {items.map((item) => (
           <Box key={item.id}>

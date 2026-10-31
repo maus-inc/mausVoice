@@ -1,4 +1,11 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+
+export const keyboardMenuSx = {
+  '&[data-keyboard-navigation="true"] [role="menuitem"]:hover:not(:focus-visible):not(.Mui-focusVisible), &[data-keyboard-navigation="true"] [role="menuitemcheckbox"]:hover:not(:focus-visible):not(.Mui-focusVisible)':
+    {
+      backgroundColor: "transparent",
+    },
+} as const;
 
 const MENU_ITEMS = '[role="menuitem"], [role="menuitemcheckbox"]';
 
@@ -10,6 +17,7 @@ export const useMenuNavigation = (
   back?: () => void,
 ) => {
   const ref = useRef<HTMLDivElement>(null);
+  const [keyboardNavigation, setKeyboardNavigation] = useState(false);
   useEffect(() => {
     if (!open || !focusOnOpen) return;
     const frame = requestAnimationFrame(() => {
@@ -22,9 +30,11 @@ export const useMenuNavigation = (
         active === menu.parentElement ||
         active === menu
       ) {
-        [...menu.querySelectorAll<HTMLElement>(MENU_ITEMS)]
-          .find((item) => item.getAttribute("aria-disabled") !== "true")
-          ?.focus();
+        const first = [...menu.querySelectorAll<HTMLElement>(MENU_ITEMS)].find(
+          (item) => item.getAttribute("aria-disabled") !== "true",
+        );
+        first?.focus();
+        setKeyboardNavigation(Boolean(first?.matches(":focus-visible")));
       }
     });
     return () => cancelAnimationFrame(frame);
@@ -56,6 +66,7 @@ export const useMenuNavigation = (
     const index = items.indexOf(active);
     if (index < 0 || !items.length) return;
     event.preventDefault();
+    setKeyboardNavigation(true);
     const next =
       event.key === "Home"
         ? 0
@@ -65,5 +76,8 @@ export const useMenuNavigation = (
             items.length;
     items[next]?.focus();
   };
-  return { ref, onKeyDown };
+  const onMouseMove = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (event.movementX || event.movementY) setKeyboardNavigation(false);
+  };
+  return { ref, onKeyDown, onMouseMove, keyboardNavigation };
 };
