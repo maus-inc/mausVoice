@@ -1,7 +1,7 @@
 # ContextMenu · useContextMenu (`context-menu`)
 
-- Status: **reused** — real component/hook/provider from `apps/desktop/src/components/common/ContextMenu.tsx`.
-- Source of truth: `apps/desktop/src/components/common/ContextMenu.tsx`.
+- Status: **reused** — real component/hook/provider from `apps/desktop/src/components/common/`.
+- Source of truth: `ContextMenu.tsx` (provider), `ContextMenuSurface.tsx` (surface), `useContextMenu.tsx` (hook), and `context-menu.constants.ts`.
 - Used in: ChatMessageBubble, ConversationListItem, DictionaryRow, Root (provider), ManualStylingRow, TranscriptRow.
 
 ## Purpose
@@ -10,7 +10,7 @@ Right-click menus with viewport clamping, clipboard menu on editables (provider)
 
 ## Visual tokens
 
-Constants in source (MENU_OFFSET, PADDING, MENU_MIN_WIDTH, MENU_MAX_HEIGHT, ITEM_HEIGHT — read exact numbers in file). Items: label + optional icon + accelerator; danger = error.main; disabled dimmed. Portal to body at zIndex 1400.
+Constants in `context-menu.constants.ts` (MENU_OFFSET, PADDING, MENU_MIN_WIDTH, MENU_MAX_HEIGHT, ITEM_HEIGHT). The surface is capped to the viewport and positioned using its measured dimensions. Items: label + optional icon + accelerator; danger = error.main; disabled dimmed. Portal to body at zIndex 1400.
 
 ## Motion
 
@@ -22,8 +22,8 @@ default / empty list (falls through to native menu) / danger / disabled / divide
 
 ## Accessibility
 
-Menu auto-focuses; arrows/Enter navigate (actionable indices skip dividers); Esc captured + focus restored only when the dismissal keeps focus in-page (click-away/scroll do NOT steal focus back); outgoing focus target prefers the right-clicked element.
+Menu auto-focuses without scrolling the page; arrows/Enter navigate (actionable indices skip dividers); Esc captured + focus restored only when the dismissal keeps focus in-page (click-away/scroll do NOT steal focus back); outgoing focus target prefers the right-clicked element. Keyboard navigation reveals the active item within a scrolling menu. Scroll dismissal starts after the opening frame, so a previously queued scroll does not close the menu as it opens.
 
 ## Live-spec mapping
 
-Patch-only (constants + handlers in source). Persist: edit `ContextMenu.tsx` → six call sites.
+Patch-only (constants + handlers in source). Changes apply to all call sites.
