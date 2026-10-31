@@ -53,6 +53,7 @@ const iconColor = (item: ContextMenuItem): string => {
 
 export const ContextMenu = ({ items, sx }: ContextMenuProps) => {
   const [activeIndex, setActiveIndex] = useState<number>(-1);
+  const [keyboardNavigation, setKeyboardNavigation] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const revealKeyboardItem = useRef(false);
 
@@ -94,6 +95,7 @@ export const ContextMenu = ({ items, sx }: ContextMenuProps) => {
 
       if (["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) {
         revealKeyboardItem.current = true;
+        setKeyboardNavigation(true);
       }
       switch (e.key) {
         case "ArrowDown": {
@@ -150,6 +152,7 @@ export const ContextMenu = ({ items, sx }: ContextMenuProps) => {
     <Paper
       ref={menuRef}
       role="menu"
+      data-keyboard-navigation={keyboardNavigation}
       tabIndex={-1}
       aria-activedescendant={
         activeIndex >= 0 ? `context-menu-item-${activeIndex}` : undefined
@@ -169,6 +172,10 @@ export const ContextMenu = ({ items, sx }: ContextMenuProps) => {
           border: hairline.light(),
           backgroundColor: "background.paper",
           outline: "none",
+          '&[data-keyboard-navigation="true"] [role="menuitem"]:hover:not(.Mui-selected)':
+            {
+              backgroundColor: "transparent",
+            },
           "&:focus-visible": {
             outline: "2px solid",
             outlineColor: "primary.main",
@@ -221,7 +228,15 @@ export const ContextMenu = ({ items, sx }: ContextMenuProps) => {
               }
             }}
             onMouseEnter={() => {
+              if (!keyboardNavigation) {
+                revealKeyboardItem.current = false;
+                setActiveIndex(index);
+              }
+            }}
+            onMouseMove={(event) => {
+              if (!event.movementX && !event.movementY) return;
               revealKeyboardItem.current = false;
+              setKeyboardNavigation(false);
               setActiveIndex(index);
             }}
             sx={{

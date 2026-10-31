@@ -22,7 +22,7 @@ default / empty list (falls through to native menu) / danger / disabled / divide
 
 ## Accessibility
 
-Menu auto-focuses without scrolling the page; arrows/Enter navigate (actionable indices skip dividers); Esc captured + focus restored only when the dismissal keeps focus in-page (click-away/scroll do NOT steal focus back); outgoing focus target prefers the right-clicked element. Keyboard navigation reveals the active item within a scrolling menu. Scroll dismissal starts after the opening frame, so a previously queued scroll does not close the menu as it opens.
+Menu auto-focuses without scrolling the page; arrows/Enter navigate (actionable indices skip dividers); Esc captured + focus restored only when the dismissal keeps focus in-page (click-away/scroll do NOT steal focus back); outgoing focus target prefers the right-clicked element. Keyboard navigation reveals the active item within a scrolling menu and suppresses a stale hover highlight until the pointer moves. Scroll dismissal starts after the opening frame, so a previously queued scroll does not close the menu as it opens.
 
 ## Live-spec mapping
 
