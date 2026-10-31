@@ -155,6 +155,7 @@ export function ManualAddStyle() {
           ref={ref}
           aria-haspopup="menu"
           aria-expanded={isOpen}
+          data-manual-style-add=""
           onClick={open}
           variant="contained"
           startIcon={<Add />}

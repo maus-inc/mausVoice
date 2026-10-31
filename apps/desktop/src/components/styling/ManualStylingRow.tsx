@@ -34,6 +34,7 @@ import {
 } from "../../utils/tone.utils";
 import { ConfirmDialog } from "../common/ConfirmDialog";
 import { ListTile } from "../common/ListTile";
+import { prepareStyleDeleteFocus } from "./style-delete-focus";
 import {
   MenuPopoverBuilder,
   type MenuPopoverItem,
@@ -104,10 +105,12 @@ export const ManualStylingRow = ({ id }: ManualStylingRowProps) => {
   const handleDeleteConfirm = useCallback(async () => {
     if (deletePending.current) return;
     deletePending.current = true;
+    const restoreFocus = prepareStyleDeleteFocus(id);
     setIsDeleting(true);
     try {
       await deleteTone(id);
       setDeleteConfirmOpen(false);
+      restoreFocus();
     } catch {
       // deleteTone already logged and surfaced the snackbar; keep the dialog
       // open so the user can retry or cancel.
@@ -249,6 +252,7 @@ export const ManualStylingRow = ({ id }: ManualStylingRowProps) => {
             )}
             aria-haspopup="menu"
             aria-expanded={isOpen}
+            data-manual-style-more=""
             onClick={(e) => {
               e.stopPropagation();
               open();
@@ -265,6 +269,7 @@ export const ManualStylingRow = ({ id }: ManualStylingRowProps) => {
   return (
     <Box
       component="div"
+      data-manual-style-row={id}
       onContextMenu={(e) => {
         // Yield right-clicks on editable text to the provider's clipboard menu.
         if (isEditableTarget(e.target)) return;
