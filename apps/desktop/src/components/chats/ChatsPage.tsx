@@ -36,6 +36,7 @@ export default function ChatsPage() {
   const compact = useMediaQuery("(max-width: 839px)");
   const [showList, setShowList] = useState(false);
   const pageRef = useRef<HTMLDivElement>(null);
+  const navigationIntent = useRef(0);
   const lastFocused = useRef<HTMLElement | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const backRef = useRef<HTMLButtonElement>(null);
@@ -91,6 +92,7 @@ export default function ChatsPage() {
   }, [selectedId]);
 
   const handleSelect = (id: string) => {
+    navigationIntent.current++;
     const focused = document.activeElement;
     const keyboard =
       compact &&
@@ -109,17 +111,29 @@ export default function ChatsPage() {
       compact &&
       focused instanceof HTMLElement &&
       focused.matches(":focus-visible");
+    const intent = ++navigationIntent.current;
+    const selectionAtStart = selectedIdRef.current;
     const now = new Date().toISOString();
-    const saved = await createConversation({
-      id: createId(),
-      title: intl.formatMessage({ defaultMessage: "New conversation" }),
-      createdAt: now,
-      updatedAt: now,
-    });
-    if (!pageRef.current) return;
-    setSearchParams({ id: saved.id }, { replace: true });
-    setShowList(false);
-    if (keyboard) focusIfUnmoved(focused, () => backRef.current);
+    try {
+      const saved = await createConversation({
+        id: createId(),
+        title: intl.formatMessage({ defaultMessage: "New conversation" }),
+        createdAt: now,
+        updatedAt: now,
+      });
+      if (
+        !pageRef.current ||
+        navigationIntent.current !== intent ||
+        (selectedIdRef.current !== selectionAtStart &&
+          selectedIdRef.current !== saved.id)
+      )
+        return;
+      setSearchParams({ id: saved.id }, { replace: true });
+      setShowList(false);
+      if (keyboard) focusIfUnmoved(focused, () => backRef.current);
+    } catch (error) {
+      showErrorSnackbar(error);
+    }
   };
 
   const handleDelete = async (id: string) => {
@@ -200,6 +214,7 @@ export default function ChatsPage() {
                 size="small"
                 startIcon={<ArrowLeft size={16} />}
                 onClick={(event) => {
+                  navigationIntent.current++;
                   const focused = document.activeElement;
                   setShowList(true);
                   if (event.detail === 0)

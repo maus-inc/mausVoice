@@ -11,7 +11,7 @@ sidebar:
 
 Choose **Chats**, then use **New Thread** (`+`) to create a conversation. Type in the composer and press Enter or choose the send button; use Shift+Enter for a line break. A voice-assistant session also creates a conversation, and the **Open chat** shortcut opens the current pill conversation in this view.
 
-A conversation stays listed as **New conversation** until you send its first message. The sidebar then names it from that message and orders the list by latest activity. Each row shows the conversation date and switches to the time when you hover over it or open it. In a narrow window, choose **Chats** above the conversation to return to the thread list; selecting a thread opens it again.
+A conversation stays listed as **New conversation** until you send its first message. The sidebar then names it from that message and orders the list by latest activity. Each row shows the conversation date and switches to the time when you hover over it or open it. In a narrow window, choose **Chats** above the conversation to return to the thread list; selecting a thread opens it again. If you switch threads while a new thread is being created, it remains available in the list without replacing your newer selection.
 
 The response streams into the conversation. Tool activity appears alongside model output, and a tool that needs access pauses for a permission card. Review its parameters and reason, then choose **Deny**, **Allow**, or **Always allow**. Denial returns a failed tool result to the assistant; it does not undo an action that was already approved and completed.
 

@@ -209,3 +209,132 @@ it("reports a failed delete without changing the selected thread", async () => {
     setAppState(structuredClone(INITIAL_APP_STATE), true);
   }
 });
+
+it("does not replace a newer selection when a new thread finishes creating", async () => {
+  setAppState(structuredClone(INITIAL_APP_STATE), true);
+  produceAppState((s) => {
+    s.chat.conversationIds = ["one", "three"];
+    for (const id of s.chat.conversationIds)
+      s.conversationById[id] = { id, title: id } as Conversation;
+  });
+  let finish!: () => void;
+  mocks.createConversation.mockImplementation(
+    (conversation: Conversation) =>
+      new Promise<Conversation>((resolve) => {
+        finish = () => resolve(conversation);
+      }),
+  );
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  try {
+    await act(async () =>
+      root.render(
+        <MemoryRouter initialEntries={["/dashboard/chats?id=one"]}>
+          <ChatsPage />
+          <Location />
+        </MemoryRouter>,
+      ),
+    );
+    const click = async (label: string) =>
+      act(async () =>
+        [...host.querySelectorAll("button")]
+          .find((b) => b.textContent === label)!
+          .click(),
+      );
+    await click("New");
+    await click("Select three");
+    await act(async () => finish());
+    expect(host.querySelector("output")!.textContent).toBe("?id=three");
+  } finally {
+    act(() => root.unmount());
+    host.remove();
+    mocks.createConversation.mockReset();
+    setAppState(structuredClone(INITIAL_APP_STATE), true);
+  }
+});
+
+it("keeps the most recent new-thread request selected when creations finish out of order", async () => {
+  setAppState(structuredClone(INITIAL_APP_STATE), true);
+  produceAppState((s) => {
+    s.chat.conversationIds = ["one"];
+    s.conversationById.one = { id: "one", title: "one" } as Conversation;
+  });
+  const pending: Array<{ id: string; finish: () => void }> = [];
+  mocks.createConversation.mockImplementation(
+    (conversation: Conversation) =>
+      new Promise<Conversation>((resolve) => {
+        pending.push({
+          id: conversation.id,
+          finish: () => resolve(conversation),
+        });
+      }),
+  );
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  try {
+    await act(async () =>
+      root.render(
+        <MemoryRouter initialEntries={["/dashboard/chats?id=one"]}>
+          <ChatsPage />
+          <Location />
+        </MemoryRouter>,
+      ),
+    );
+    const button = [...host.querySelectorAll("button")].find(
+      (b) => b.textContent === "New",
+    )!;
+    await act(async () => button.click());
+    await act(async () => button.click());
+    await act(async () => pending[1].finish());
+    expect(host.querySelector("output")!.textContent).toBe(
+      `?id=${pending[1].id}`,
+    );
+    await act(async () => pending[0].finish());
+    expect(host.querySelector("output")!.textContent).toBe(
+      `?id=${pending[1].id}`,
+    );
+  } finally {
+    act(() => root.unmount());
+    host.remove();
+    mocks.createConversation.mockReset();
+    setAppState(structuredClone(INITIAL_APP_STATE), true);
+  }
+});
+
+it("reports a failed new-thread request without changing the selection", async () => {
+  setAppState(structuredClone(INITIAL_APP_STATE), true);
+  produceAppState((s) => {
+    s.chat.conversationIds = ["one"];
+    s.conversationById.one = { id: "one", title: "one" } as Conversation;
+  });
+  const failure = new Error("create failed");
+  mocks.createConversation.mockRejectedValueOnce(failure);
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  try {
+    await act(async () =>
+      root.render(
+        <MemoryRouter initialEntries={["/dashboard/chats?id=one"]}>
+          <ChatsPage />
+          <Location />
+        </MemoryRouter>,
+      ),
+    );
+    await act(async () =>
+      [...host.querySelectorAll("button")]
+        .find((b) => b.textContent === "New")!
+        .click(),
+    );
+    expect(mocks.showErrorSnackbar).toHaveBeenCalledWith(failure);
+    expect(host.querySelector("output")!.textContent).toBe("?id=one");
+  } finally {
+    act(() => root.unmount());
+    host.remove();
+    mocks.createConversation.mockReset();
+    mocks.showErrorSnackbar.mockReset();
+    setAppState(structuredClone(INITIAL_APP_STATE), true);
+  }
+});
