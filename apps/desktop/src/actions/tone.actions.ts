@@ -56,6 +56,7 @@ export const deleteTone = async (id: string): Promise<void> => {
   try {
     await getToneRepo().deleteTone(id);
 
+    let clearedActiveTone = false;
     produceAppState((draft) => {
       delete draft.toneById[id];
       // Remove the record and its editor in one state transition, before any
@@ -73,12 +74,13 @@ export const deleteTone = async (id: string): Promise<void> => {
       const prefs = draft.userPrefs;
       if (prefs?.activeToneId === id) {
         prefs.activeToneId = null;
+        clearedActiveTone = true;
       }
     });
 
     // Sync preferences if we cleared the active tone
     const prefs = getAppState().userPrefs;
-    if (prefs && prefs.activeToneId === null) {
+    if (clearedActiveTone && prefs && prefs.activeToneId === null) {
       await getUserPreferencesRepo().setUserPreferences(prefs);
     }
 

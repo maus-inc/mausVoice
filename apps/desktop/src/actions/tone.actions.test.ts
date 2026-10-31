@@ -13,7 +13,8 @@ import {
 } from "./tone.actions";
 import { seedManualStyles } from "../../test/helpers/tone-test.utils";
 
-const { setSelectedToneIdMock } = vi.hoisted(() => ({
+const { setSelectedToneIdMock, setPreferencesMock } = vi.hoisted(() => ({
+  setPreferencesMock: vi.fn((prefs: unknown) => Promise.resolve(prefs)),
   setSelectedToneIdMock: vi.fn((toneId: string) => {
     produceAppState((draft) => {
       const user = draft.userById[LOCAL_USER_ID];
@@ -32,7 +33,7 @@ vi.mock("../repos", () => ({
     deleteTone: vi.fn(),
   }),
   getUserPreferencesRepo: () => ({
-    setUserPreferences: vi.fn((prefs: unknown) => Promise.resolve(prefs)),
+    setUserPreferences: setPreferencesMock,
     getUserPreferences: vi.fn(() => Promise.resolve(null)),
   }),
   getUserRepo: () => ({
@@ -118,6 +119,34 @@ describe("writing style switch channels share one state transition", () => {
       expect(getAppState().toneEditor.toneId).toBe(editingId);
     },
   );
+
+  it.each([null, "chat"])(
+    "does not rewrite preferences when deleting an unrelated style with active tone %s",
+    async (activeToneId) => {
+      produceAppState((draft) => {
+        draft.userPrefs = { activeToneId } as NonNullable<
+          typeof draft.userPrefs
+        >;
+      });
+      await deleteTone("email");
+      expect(setPreferencesMock).not.toHaveBeenCalled();
+      expect(getAppState().userPrefs?.activeToneId).toBe(activeToneId);
+    },
+  );
+
+  it("persists the cleared default when deleting the active style", async () => {
+    produceAppState((draft) => {
+      draft.userPrefs = { activeToneId: "email" } as NonNullable<
+        typeof draft.userPrefs
+      >;
+    });
+    await deleteTone("email");
+    expect(getAppState().userPrefs?.activeToneId).toBeNull();
+    expect(setPreferencesMock).toHaveBeenCalledOnce();
+    expect(setPreferencesMock).toHaveBeenCalledWith(
+      expect.objectContaining({ activeToneId: null }),
+    );
+  });
 
   it("applyWritingStyleSelection writes selectedToneId", async () => {
     await applyWritingStyleSelection("email");
