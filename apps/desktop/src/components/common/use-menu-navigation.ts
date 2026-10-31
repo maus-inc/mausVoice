@@ -67,7 +67,7 @@ export const useMenuNavigation = (
     if (index < 0 || !items.length) return;
     event.preventDefault();
     setKeyboardNavigation(true);
-    let next = index;
+    let next: number;
     if (event.key === "Home") next = 0;
     else if (event.key === "End") next = items.length - 1;
     else {

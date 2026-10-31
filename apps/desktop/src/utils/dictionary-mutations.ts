@@ -19,5 +19,5 @@ export const trackDictionaryMutation = <T>(
 
 export const waitForDictionaryMutations = (): Promise<void> => {
   if (!pending.size) return Promise.resolve();
-  return Promise.allSettled([...pending]).then(waitForDictionaryMutations);
+  return Promise.allSettled(pending).then(waitForDictionaryMutations);
 };
