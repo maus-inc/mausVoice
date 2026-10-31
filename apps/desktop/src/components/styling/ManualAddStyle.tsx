@@ -7,7 +7,8 @@ import type { Tone } from "@maus-inc/types";
 import { useCallback, useMemo } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { openToneEditorDialog } from "../../actions/tone.actions";
-import { setActiveToneIds } from "../../actions/user.actions";
+import { toggleActiveTone } from "../../actions/user.actions";
+import { logOnRejection } from "../../utils/promise.utils";
 import { useAppStore } from "../../store";
 import {
   getActiveManualToneIds,
@@ -54,24 +55,9 @@ export function ManualAddStyle() {
 
   const activeSet = useMemo(() => new Set(activeToneIds), [activeToneIds]);
 
-  const handleToggle = useCallback(
-    (toneId: string) => {
-      const isActive = activeSet.has(toneId);
-      if (isActive) {
-        if (activeSet.size <= 1) return;
-        const next = allTones
-          .filter((t) => activeSet.has(t.id) && t.id !== toneId)
-          .map((t) => t.id);
-        setActiveToneIds(next);
-      } else {
-        const next = allTones
-          .filter((t) => activeSet.has(t.id) || t.id === toneId)
-          .map((t) => t.id);
-        setActiveToneIds(next);
-      }
-    },
-    [activeSet, allTones],
-  );
+  const handleToggle = useCallback((toneId: string) => {
+    logOnRejection(toggleActiveTone(toneId), "toggle active style");
+  }, []);
 
   const menuItems = useMemo((): MenuPopoverItem[] => {
     const items: MenuPopoverItem[] = [];
@@ -140,9 +126,7 @@ export function ManualAddStyle() {
               )
             : undefined,
           onClick: () => {
-            if (!isActive || canDeselect) {
-              handleToggle(tone.id);
-            }
+            if (!isActive || canDeselect) handleToggle(tone.id);
           },
         };
       }),
