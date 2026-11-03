@@ -72,6 +72,7 @@ const AvatarCameraBadge = () => (
     aria-hidden
     sx={{
       position: "absolute",
+      pointerEvents: "none",
       right: 0,
       bottom: 0,
       width: 28,

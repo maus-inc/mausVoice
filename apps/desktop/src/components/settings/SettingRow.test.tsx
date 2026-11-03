@@ -18,6 +18,7 @@ import { theme } from "../../theme";
 import { premiumSurface } from "../../styles/shadows";
 import { SettingGroup, SettingRow, SettingToggleRow } from "./SettingRow";
 import { SettingsHighlightContext } from "./settings-highlight";
+import { SettingRowText } from "./setting-row-chassis";
 
 ensureUiHarness();
 
@@ -54,6 +55,21 @@ describe("SettingRow", () => {
   afterEach(() => {
     act(() => root.unmount());
     container.remove();
+  });
+
+  it("uses phrasing content for text inside interactive rows", () => {
+    render(
+      <button>
+        <SettingRowText
+          title="Example"
+          description="Details"
+          subtitle="Group"
+        />
+      </button>,
+    );
+    const button = requireElement(container.querySelector("button"), "row");
+    expect(button.querySelector("div, p")).toBeNull();
+    expect(button.textContent).toBe("GroupExampleDetails");
   });
 
   it("allows a control row to wrap when its label needs more room", () => {

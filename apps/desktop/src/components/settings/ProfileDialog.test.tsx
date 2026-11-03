@@ -178,6 +178,16 @@ describe("ProfileDialog", () => {
     expect(mocks.setMyProfileImage).not.toHaveBeenCalled();
   });
 
+  it("lets the decorative camera badge pass pointer events to the photo button", () => {
+    open();
+    const button = requireElement(
+      document.querySelector('[aria-label="Change profile photo"]'),
+      "photo button",
+    );
+    const badge = requireElement(button.nextElementSibling, "camera badge");
+    expect(getComputedStyle(badge).pointerEvents).toBe("none");
+  });
+
   it("lets the content shrink inside the form while keeping actions in it", () => {
     open();
     const form = requireElement(

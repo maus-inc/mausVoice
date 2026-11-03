@@ -11,6 +11,7 @@ import {
   getConfiguredDictationLanguageCodes,
   getDictationSpeed,
   getMyDictationLanguage,
+  getMyProfileImage,
   getTranscriptionPrefs,
   LOCAL_USER_ID,
   setUserPreferences,
@@ -51,6 +52,12 @@ const makeState = (args: {
     hotkeyById,
   };
 };
+
+it("treats a missing persisted profile image map as no image", () => {
+  const state = makeState({});
+  state.local = { ...state.local, profileImageByUserId: undefined as never };
+  expect(getMyProfileImage(state)).toBeNull();
+});
 
 describe("getConfiguredDictationLanguageCodes", () => {
   it("always includes auto", () => {

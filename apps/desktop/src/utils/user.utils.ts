@@ -84,7 +84,9 @@ export const getMyUser = (state: AppState): Nullable<User> => {
  * is this device's copy and is not synced.
  */
 export const getMyProfileImage = (state: AppState): Nullable<string> => {
-  return state.local.profileImageByUserId[getMyEffectiveUserId(state)] ?? null;
+  return (
+    state.local.profileImageByUserId?.[getMyEffectiveUserId(state)] ?? null
+  );
 };
 
 export const getMyPreferredLocale = (state: AppState): Locale => {

@@ -116,7 +116,7 @@ export const SettingRowText = ({
   titleId?: string;
   descriptionId?: string;
 }) => (
-  <Box sx={labelColumnSx}>
+  <Box component="span" sx={{ ...labelColumnSx, display: "block" }}>
     {subtitle && (
       <Typography
         variant="caption"
@@ -126,14 +126,20 @@ export const SettingRowText = ({
         {subtitle}
       </Typography>
     )}
-    <Typography id={titleId} variant="body1" sx={{ fontWeight: 600 }}>
+    <Typography
+      id={titleId}
+      component="span"
+      variant="body1"
+      sx={{ display: "block", fontWeight: 600 }}
+    >
       {title}
     </Typography>
     {description && (
       <Typography
         id={descriptionId}
+        component="span"
         variant="body2"
-        sx={{ color: "text.secondary", mt: 0.25 }}
+        sx={{ display: "block", color: "text.secondary", mt: 0.25 }}
       >
         {description}
       </Typography>
