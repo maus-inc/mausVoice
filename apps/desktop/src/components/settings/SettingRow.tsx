@@ -10,6 +10,7 @@ import {
 } from "@mui/material";
 import type { ChangeEvent, ReactNode } from "react";
 import { Link as RouterLink } from "react-router-dom";
+import { premiumSurface } from "../../styles/shadows";
 import { openExternalUrl } from "../../utils/open-url.utils";
 import { settingAnchorId } from "./settings-routes";
 import {
@@ -389,13 +390,15 @@ const groupHeadingSx = (
  * and a settings card sitting at a dialog's radius read softer than the world
  * it lives in.
  */
-const groupCardSx: SxProps<Theme> = {
+const groupCardSx: SxProps<Theme> = (theme) => ({
   border: 1,
   borderRadius: 1,
   bgcolor: "level1",
+  boxShadow: premiumSurface.light.rest,
+  ...theme.applyStyles("dark", { boxShadow: premiumSurface.dark.rest }),
   overflow: "hidden",
   "& > * + *": { borderTop: 1, borderColor: "divider" },
-};
+});
 
 /**
  * The card treatment for a dangerous group: the error colour at a low alpha,

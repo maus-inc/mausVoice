@@ -52,3 +52,19 @@ Each route was checked for identifying text and uncaught page errors (see `resul
 - The AI transcription dialog displays expected browser-preview errors because native `plugin:shell|spawn` is unavailable; these captures do not validate model downloads or devices. Native WebView, microphone/audio, real IME, global shortcuts, cross-window synchronization and platform-specific behavior were not visually verified here.
 - The initial `dialog-results-*.json` shows three failed account selectors; the account actions are whole-row buttons. Corrected selectors and successful captures are recorded in `account-dialog-results-*.json`.
 - The requested 140+ individually verified edge cases and 100 distinct issue-derived cases are not established by these captures.
+
+## Settings surface refinement on 2026-11-03
+
+The following captures show the later settings-group depth change, not the
+revision named above. The original captures remain for comparison. Chromium
+used the populated browser preview and reduced motion.
+
+- Overview in [light](depth-overview-light-1200x800.jpg) and [dark](depth-overview-dark-1200x800.jpg)
+- Account in [light](depth-account-light-1200x800.jpg) and [dark](depth-account-dark-1200x800.jpg)
+- Dictation in [light](depth-dictation-light-1200x800.jpg) and [dark](depth-dictation-dark-1200x800.jpg)
+- [Compact account focus](depth-account-focus-dark-400x300.jpg), scrolled to the profile row
+
+The browser check switched from light to dark without a reload and confirmed
+that the profile card's computed shadow changed. At 800×600 and 400×300 the
+profile action opened and closed with Escape, with no uncaught page errors.
+This does not verify native WebView rendering.

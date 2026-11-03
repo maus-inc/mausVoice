@@ -13,6 +13,9 @@ vi.mock("react-intl", async (importOriginal) => {
 });
 
 import { IntlProvider } from "react-intl";
+import { ThemeProvider } from "@mui/material/styles";
+import { theme } from "../../theme";
+import { premiumSurface } from "../../styles/shadows";
 import { SettingGroup, SettingRow, SettingToggleRow } from "./SettingRow";
 import { SettingsHighlightContext } from "./settings-highlight";
 
@@ -67,6 +70,28 @@ describe("SettingRow", () => {
       "the control row",
     );
     expect(getComputedStyle(row).flexWrap).toBe("wrap");
+  });
+
+  it("uses the app's resting surface for regular and destructive groups", () => {
+    render(
+      <ThemeProvider theme={theme}>
+        <SettingGroup title="Regular">
+          <SettingRow settingKey="normal" title="Normal" />
+        </SettingGroup>
+        <SettingGroup title="Danger" danger>
+          <SettingRow settingKey="danger" title="Dangerous" />
+        </SettingGroup>
+      </ThemeProvider>,
+    );
+    for (const key of ["normal", "danger"]) {
+      const card = requireElement(
+        container.querySelector(`#setting-${key}`)?.parentElement,
+        `${key} group card`,
+      );
+      expect(getComputedStyle(card).boxShadow.replace(/\s+/g, "")).toBe(
+        premiumSurface.light.rest.replace(/\s+/g, ""),
+      );
+    }
   });
 
   it("insets and rounds a highlighted search target inside its group", () => {
