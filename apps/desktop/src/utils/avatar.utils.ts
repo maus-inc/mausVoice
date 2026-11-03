@@ -89,10 +89,10 @@ export const validateAvatarFile = (file: {
  * can declare a 30000x30000 canvas, and the decoder allocates the whole decoded
  * bitmap before any crop happens. The size is read from the file's header
  * (`readDeclaredImageSize`) before the decode, which only runs for an image
- * that fits here. 40 MP is beyond any camera this app will meet and small
- * enough that the allocation cannot take the window down.
+ * that fits here. A 16 MP limit bounds the nominal RGBA buffer to about 64 MB;
+ * decoders can use additional memory, so it is not a guarantee against OOM.
  */
-export const MAX_AVATAR_SOURCE_PIXELS = 40_000_000;
+export const MAX_AVATAR_SOURCE_PIXELS = 16_000_000;
 
 /**
  * Whether the drawn image uses transparency anywhere.
@@ -127,7 +127,7 @@ const usesTransparency = (
 const encodeSquare = (
   canvas: HTMLCanvasElement,
   context: CanvasRenderingContext2D,
-): string => {
+): string | null => {
   if (usesTransparency(context, AVATAR_IMAGE_SIZE)) {
     const png = canvas.toDataURL("image/png");
     if (png.length <= MAX_STORED_AVATAR_CHARS) {
@@ -141,7 +141,11 @@ const encodeSquare = (
     context.globalCompositeOperation = "source-over";
   }
 
-  return canvas.toDataURL("image/jpeg", AVATAR_JPEG_QUALITY);
+  for (const quality of [AVATAR_JPEG_QUALITY, 0.75, 0.6, 0.45]) {
+    const jpeg = canvas.toDataURL("image/jpeg", quality);
+    if (jpeg.length <= MAX_STORED_AVATAR_CHARS) return jpeg;
+  }
+  return null;
 };
 
 /**
@@ -200,7 +204,8 @@ export const readAvatarFile = async (file: File): Promise<AvatarReadResult> => {
     );
     bitmap.close();
 
-    return { ok: true, dataUrl: encodeSquare(canvas, context) };
+    const dataUrl = encodeSquare(canvas, context);
+    return dataUrl ? { ok: true, dataUrl } : { ok: false, error: "unreadable" };
   } catch {
     // A file that declares an accepted type can still fail to decode, which is
     // the one path here that is not the person's fault and must not surface as

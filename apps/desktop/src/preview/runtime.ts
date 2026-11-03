@@ -504,6 +504,8 @@ class PreviewRuntime {
       case "clear_local_data":
         this.database = toDatabase(EMPTY_PREVIEW_DATA);
         return undefined;
+      case "complete_local_data_clear":
+        return undefined;
       case "user_set_one":
         return this.upsertUser(clone(asRecord(args.user)));
       case "user_record_usage":

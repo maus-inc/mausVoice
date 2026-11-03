@@ -112,7 +112,12 @@ const PNG_DATA_URL_PREFIX = "data:image/png;base64,";
 const installCanvas = ({
   transparent = false,
   pngLength = 1_000,
-}: { transparent?: boolean; pngLength?: number } = {}): CanvasStub => {
+  jpegLength,
+}: {
+  transparent?: boolean;
+  pngLength?: number;
+  jpegLength?: (quality: number | undefined) => number;
+} = {}): CanvasStub => {
   const calls: CanvasStub["calls"] = {
     drawImage: [],
     toDataUrl: [],
@@ -146,7 +151,9 @@ const installCanvas = ({
       calls.toDataUrl.push({ type, quality });
       return type === "image/png"
         ? `${PNG_DATA_URL_PREFIX}${"A".repeat(pngLength)}`
-        : "data:image/jpeg;base64,JPEG";
+        : jpegLength
+          ? `data:image/jpeg;base64,${"A".repeat(jpegLength(quality))}`
+          : "data:image/jpeg;base64,JPEG";
     },
   } as unknown as HTMLCanvasElement;
 
@@ -273,6 +280,39 @@ describe("readAvatarFile", () => {
       { type: "image/png" },
       { type: "image/jpeg", quality: AVATAR_JPEG_QUALITY },
     ]);
+  });
+
+  it("rejects an oversized declared bitmap before decoding", async () => {
+    const bitmap = installBitmap();
+    expect(await readAvatarFile(pngFile(4001, 4000))).toEqual({
+      ok: false,
+      error: "too-many-pixels",
+    });
+    expect(bitmap.decode).not.toHaveBeenCalled();
+  });
+
+  it("reduces JPEG quality until the stored image fits", async () => {
+    const canvas = installCanvas({
+      jpegLength: (quality) =>
+        quality === AVATAR_JPEG_QUALITY ? MAX_STORED_AVATAR_CHARS : 100,
+    });
+    installBitmap();
+    const result = await readAvatarFile(pngFile());
+    expect(result.ok && result.dataUrl.length <= MAX_STORED_AVATAR_CHARS).toBe(
+      true,
+    );
+    expect(canvas.calls.toDataUrl.map((call) => call.quality)).toEqual([
+      0.9, 0.75,
+    ]);
+  });
+
+  it("refuses a JPEG that exceeds the budget at every quality", async () => {
+    installCanvas({ jpegLength: () => MAX_STORED_AVATAR_CHARS });
+    installBitmap();
+    expect(await readAvatarFile(pngFile())).toEqual({
+      ok: false,
+      error: "unreadable",
+    });
   });
 
   it("reports a file it cannot decode instead of rejecting", async () => {

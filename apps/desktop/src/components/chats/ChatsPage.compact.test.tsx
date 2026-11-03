@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useNavigate } from "react-router-dom";
 import type { Conversation } from "@maus-inc/types";
 import { expect, it, vi } from "vitest";
 import { ensureUiHarness } from "../../../test/helpers/jsdom-ui-harness";
@@ -74,6 +74,47 @@ it("keeps the draft when switching between the compact list and selected convers
     expect(getComputedStyle(draft.parentElement!).display).not.toBe("none");
     expect(host.querySelector('input[aria-label="Draft"]')).toBe(draft);
     expect(draft.value).toBe("unfinished");
+  } finally {
+    act(() => root.unmount());
+    host.remove();
+    setAppState(structuredClone(INITIAL_APP_STATE), true);
+  }
+});
+
+it("shows a new URL-selected conversation after opening the compact list", async () => {
+  setAppState(structuredClone(INITIAL_APP_STATE), true);
+  const Navigate = () => {
+    const navigate = useNavigate();
+    return <button onClick={() => navigate("?id=other")}>Open other</button>;
+  };
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  try {
+    await act(async () =>
+      root.render(
+        <MemoryRouter initialEntries={["/dashboard/chats?id=one"]}>
+          <Navigate />
+          <ChatsPage />
+        </MemoryRouter>,
+      ),
+    );
+    const button = (text: string) =>
+      [...host.querySelectorAll("button")].find(
+        (item) => item.textContent === text,
+      )!;
+    await act(async () => button("Chats").click());
+    const draft = host.querySelector<HTMLInputElement>(
+      'input[aria-label="Draft"]',
+    )!;
+    expect(getComputedStyle(draft.parentElement!).display).toBe("none");
+    await act(async () => button("Open other").click());
+    const otherDraft = host.querySelector<HTMLInputElement>(
+      'input[aria-label="Draft"]',
+    )!;
+    expect(getComputedStyle(otherDraft.parentElement!).display).not.toBe(
+      "none",
+    );
   } finally {
     act(() => root.unmount());
     host.remove();

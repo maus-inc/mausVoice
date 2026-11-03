@@ -213,6 +213,19 @@ describe("settings registry", () => {
     expect(isSettingAvailable("microphone", { microphone: false })).toBe(false);
   });
 
+  it("does not offer provider-dependent rows while availability is unknown", () => {
+    const availability = { elevenlabs_keyterms: undefined };
+    expect(searchSettings("keyterms", { availability })).toEqual([]);
+    expect(searchSettings("keyterms").map((hit) => hit.entry.key)).toContain(
+      "elevenlabs_keyterms",
+    );
+    expect(
+      searchSettings("keyterms", {
+        availability: { elevenlabs_keyterms: true },
+      }).map((hit) => hit.entry.key),
+    ).toContain("elevenlabs_keyterms");
+  });
+
   it("groups results by page in rail order", () => {
     const grouped = searchResultsByPage(searchSettings("input"));
     expect(grouped.map((group) => group.page.id)).toEqual(

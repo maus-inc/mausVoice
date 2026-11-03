@@ -209,4 +209,18 @@ describe("DeleteAccountDialog", () => {
     });
     expect(mocks.signOut).not.toHaveBeenCalled();
   });
+  it("keeps cleanup pending if the recorder cannot stop", async () => {
+    mocks.invoke.mockImplementation((command: unknown) =>
+      command === "stop_recording"
+        ? Promise.reject(new Error("recorder still active"))
+        : Promise.resolve(),
+    );
+    render();
+    await submit();
+    expect(mocks.invoke).toHaveBeenCalledWith("stop_key_listener");
+    expect(mocks.invoke).toHaveBeenCalledWith("stop_recording");
+    expect(mocks.invoke).not.toHaveBeenCalledWith("clear_local_data");
+    expect(snackbarMessages()).toEqual([DELETED_BUT_LEFT_BEHIND]);
+    expect(getAppState().settings.deleteAccountDialog).toBe(true);
+  });
 });

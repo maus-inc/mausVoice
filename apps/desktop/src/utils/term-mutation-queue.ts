@@ -67,11 +67,13 @@ export const deleteDictionaryTerm = (
   enqueue(
     baseline,
     async (lane, lease) => {
-      if (!lane.saved) return;
+      const saved = lane.saved;
+      if (!saved) return;
       try {
         await getTermRepo().deleteTerm(baseline.id, lease);
+        lane.saved = null;
       } catch (error) {
-        onFailure(lane.saved, error);
+        onFailure(saved, error);
       }
     },
     baseline,

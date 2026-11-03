@@ -63,6 +63,21 @@ it("orders edits and deletion after creation for the same term", async () => {
   await Promise.all([add, update, remove]);
   expect(order).toEqual(["create", "update", "delete"]);
 });
+it("does not run queued edits after a successful deletion", async () => {
+  const pending = deferred();
+  mocks.remove.mockReturnValue(pending.promise);
+  const deletion = deleteDictionaryTerm(term, () => {});
+  const edit = updateDictionaryTerm(
+    term,
+    { ...term, sourceValue: "late" },
+    () => {},
+  );
+  await vi.waitFor(() => expect(mocks.remove).toHaveBeenCalledTimes(1));
+  pending.resolve(term);
+  await Promise.all([deletion, edit]);
+  expect(mocks.update).not.toHaveBeenCalled();
+});
+
 it("does not update, delete, or restore an entry whose creation failed", async () => {
   const waiting = deferred();
   const failure = vi.fn(),

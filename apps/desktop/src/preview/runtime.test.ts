@@ -15,6 +15,15 @@ describe("browser preview transport", () => {
     applyPreviewScenario("populated");
   });
 
+  it("completes the clear-data command sequence", async () => {
+    await expect(
+      invokePreviewCommand("clear_local_data"),
+    ).resolves.toBeUndefined();
+    await expect(
+      invokePreviewCommand("complete_local_data_clear"),
+    ).resolves.toBeUndefined();
+  });
+
   it("retains the selected scenario when a route omits its query parameter", () => {
     applyPreviewScenario("empty");
 

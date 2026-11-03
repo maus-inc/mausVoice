@@ -24,21 +24,25 @@ vi.mock("../actions/app.actions", () => ({
 
 const snapshot = sampleTranscription("t1");
 const memory = new Map<string, string>();
+let storageAvailable = true;
 
 vi.mock("../utils/local-storage.utils", () => ({
-  getLocalStorage: () => ({
-    getItem: (key: string) => memory.get(key) ?? null,
-    setItem: (key: string, value: string) => {
-      memory.set(key, value);
-    },
-    removeItem: (key: string) => {
-      memory.delete(key);
-    },
-    get length() {
-      return memory.size;
-    },
-    key: (index: number) => [...memory.keys()][index] ?? null,
-  }),
+  getLocalStorage: () =>
+    storageAvailable
+      ? {
+          getItem: (key: string) => memory.get(key) ?? null,
+          setItem: (key: string, value: string) => {
+            memory.set(key, value);
+          },
+          removeItem: (key: string) => {
+            memory.delete(key);
+          },
+          get length() {
+            return memory.size;
+          },
+          key: (index: number) => [...memory.keys()][index] ?? null,
+        }
+      : null,
 }));
 
 describe("pending transcription delete", () => {
@@ -47,6 +51,7 @@ describe("pending transcription delete", () => {
     vi.resetModules();
     deleteTranscription.mockReset().mockResolvedValue(undefined);
     memory.clear();
+    storageAvailable = true;
   });
 
   afterEach(() => {
@@ -54,6 +59,19 @@ describe("pending transcription delete", () => {
     produceCalls.length = 0;
     deleteTranscription.mockClear();
     vi.useRealTimers();
+  });
+
+  it("retries hydration after browser storage becomes available", async () => {
+    memory.set(
+      "mausvoice.pending-transcription-deletes",
+      JSON.stringify(["t1"]),
+    );
+    storageAvailable = false;
+    const { isTranscriptionPendingDelete } =
+      await import("./pending-transcription-delete");
+    expect(isTranscriptionPendingDelete("t1")).toBe(false);
+    storageAvailable = true;
+    expect(isTranscriptionPendingDelete("t1")).toBe(true);
   });
 
   it("does not call native delete until the undo window elapses", async () => {

@@ -38,6 +38,7 @@ export const ProfileDialog = () => {
 
   const [name, setName] = useState(initialName);
   const [image, setImage] = useState<string | null>(initialImage);
+  const [imageEdited, setImageEdited] = useState(false);
   const [imageError, setImageError] = useState<AvatarReadError | null>(null);
   const [imageStatus, setImageStatus] = useState("");
   const [saveFailed, setSaveFailed] = useState(false);
@@ -62,6 +63,7 @@ export const ProfileDialog = () => {
       pickTicket.current += 1;
       setName(initialName);
       setImage(initialImage);
+      setImageEdited(false);
       setImageError(null);
       setImageStatus("");
       setSaveFailed(false);
@@ -72,6 +74,10 @@ export const ProfileDialog = () => {
     }
     wasOpen.current = open;
   }, [open, initialName, initialImage]);
+
+  useEffect(() => {
+    if (open && !imageEdited && !preparing) setImage(initialImage);
+  }, [open, imageEdited, preparing, initialImage]);
 
   const close = useCallback(() => {
     produceAppState((draft) => {
@@ -106,6 +112,7 @@ export const ProfileDialog = () => {
       setPreparing(false);
       if (result.ok) {
         setImage(result.dataUrl);
+        setImageEdited(true);
         setImageStatus(
           intl.formatMessage({
             defaultMessage: "New photo ready to save.",
@@ -126,6 +133,7 @@ export const ProfileDialog = () => {
     pickTicket.current += 1;
     setPreparing(false);
     setImage(null);
+    setImageEdited(true);
     setImageError(null);
     setImageStatus(
       intl.formatMessage({ defaultMessage: "Photo will be removed on save." }),
@@ -141,12 +149,27 @@ export const ProfileDialog = () => {
     if (!user || saving || preparing || trimmed.length === 0) {
       return false;
     }
-    return trimmed !== initialName.trim() || image !== initialImage;
-  }, [user, saving, preparing, trimmed, initialName, image, initialImage]);
+    return (
+      trimmed !== initialName.trim() || (imageEdited && image !== initialImage)
+    );
+  }, [
+    user,
+    saving,
+    preparing,
+    trimmed,
+    initialName,
+    image,
+    imageEdited,
+    initialImage,
+  ]);
 
   const requestClose = () => {
     if (saveInFlight.current || saving || discardAfterExit.current) return;
-    if (name !== initialName || image !== initialImage || preparing) {
+    if (
+      name !== initialName ||
+      (imageEdited && image !== initialImage) ||
+      preparing
+    ) {
       setDiscardOpen(true);
     } else {
       close();
@@ -164,7 +187,7 @@ export const ProfileDialog = () => {
       if (trimmed !== initialName.trim()) {
         await setUserName(trimmed);
       }
-      if (image !== initialImage) {
+      if (imageEdited && image !== initialImage) {
         setMyProfileImage(image);
       }
       close();
@@ -174,7 +197,7 @@ export const ProfileDialog = () => {
     } finally {
       saveInFlight.current = false;
     }
-  }, [canSave, trimmed, initialName, image, initialImage, close]);
+  }, [canSave, trimmed, initialName, image, imageEdited, initialImage, close]);
 
   return (
     <>

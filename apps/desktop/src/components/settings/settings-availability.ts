@@ -20,10 +20,9 @@ import type { SettingAvailability } from "../../utils/settings-registry";
  * One snapshot of which rows the current platform, provider and preferences
  * make renderable.
  *
- * Rendering, search and deep links all read this, so a control the page does
- * not show cannot be found by search or reached by a `?setting=` link. It lives
- * here rather than inside a page because the pages are separate routes now and
- * there is no single component left that owns the whole surface.
+ * Rendering and search exclude unknown rows. Deep links retain an unknown
+ * target while its provider data loads, then focus it if it becomes available.
+ * This snapshot is shared across the separate settings routes.
  */
 export const useSettingsAvailability = (): SettingAvailability => {
   const platform = getPlatform();

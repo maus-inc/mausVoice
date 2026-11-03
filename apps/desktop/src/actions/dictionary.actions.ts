@@ -18,8 +18,10 @@ import {
 
 export const loadDictionary = async (): Promise<void> => {
   while (true) {
+    const beforeWait = dictionaryMutationRevision();
     await waitForDictionaryMutations();
     const revision = dictionaryMutationRevision();
+    if (beforeWait !== revision) continue;
     const terms = await getTermRepo().listTerms();
     if (revision !== dictionaryMutationRevision()) continue;
     const activeTerms = terms.sort(

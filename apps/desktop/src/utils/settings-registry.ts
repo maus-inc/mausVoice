@@ -342,8 +342,8 @@ export const isSettingAvailable = (
 
 /**
  * Match available controls using localized titles and shared search aliases.
- * Availability is consulted here as well as on the pages, so search can never
- * offer a row the current platform does not render.
+ * Explicitly unknown availability is excluded until a row can render. Deep
+ * links can still retain an unknown target while its data loads.
  */
 export const searchSettings = (
   query: string,
@@ -352,7 +352,9 @@ export const searchSettings = (
   const needle = query.trim().toLowerCase();
   if (!needle) return [];
   return SETTING_ENTRIES.filter((entry) =>
-    isSettingAvailable(entry.key, availability),
+    availability && Object.hasOwn(availability, entry.key)
+      ? availability[entry.key] === true
+      : isSettingAvailable(entry.key, availability),
   )
     .map((entry) => ({
       entry,

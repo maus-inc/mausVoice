@@ -29,11 +29,13 @@ let deletionRevision = 0;
 // Read the persisted queue before a list load can expose a pending deletion,
 // even if the startup resume effect has not run yet.
 const hydrateQueuedIds = (): void => {
-  if (hydrated || typeof localStorage === "undefined") return;
+  if (hydrated) return;
+  const storage = getLocalStorage();
+  if (!storage) return;
   hydrated = true;
   try {
     const parsed: unknown = JSON.parse(
-      localStorage.getItem(PENDING_DELETE_STORAGE_KEY) ?? "[]",
+      storage.getItem(PENDING_DELETE_STORAGE_KEY) ?? "[]",
     );
     if (!Array.isArray(parsed)) return;
     for (const id of parsed) {

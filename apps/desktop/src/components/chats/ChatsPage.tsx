@@ -43,6 +43,10 @@ export default function ChatsPage() {
   const listVisible = compact && (showList || !selectedId);
 
   useLayoutEffect(() => {
+    setShowList(false);
+  }, [selectedId]);
+
+  useLayoutEffect(() => {
     const prior = lastFocused.current;
     // A focused pane can disappear at the breakpoint. Restore only if focus
     // actually belonged to that pane and has not moved elsewhere.

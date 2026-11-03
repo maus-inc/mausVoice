@@ -166,6 +166,18 @@ describe("ProfileDialog", () => {
     render();
   };
 
+  it("does not restore an externally cleared photo when saving a name", async () => {
+    mocks.useMyProfileImage.mockReturnValue("data:image/png;base64,old");
+    open();
+    await type(requireElement(nameInput(), "name input"), "New name");
+    mocks.useMyProfileImage.mockReturnValue(null);
+    render();
+    expect(previewImage()).toBeNull();
+    await act(async () => button("Save")?.click());
+    expect(mocks.setUserName).toHaveBeenCalledWith("New name");
+    expect(mocks.setMyProfileImage).not.toHaveBeenCalled();
+  });
+
   it("lets the content shrink inside the form while keeping actions in it", () => {
     open();
     const form = requireElement(

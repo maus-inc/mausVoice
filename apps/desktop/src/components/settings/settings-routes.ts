@@ -59,9 +59,10 @@ export const resolveSettingsTarget = (
     return { page: entry.page, setting: entry };
   }
 
-  const legacyPage = params.section
-    ? LEGACY_SECTION_PAGES[params.section]
-    : undefined;
+  const legacyPage =
+    params.section && Object.hasOwn(LEGACY_SECTION_PAGES, params.section)
+      ? LEGACY_SECTION_PAGES[params.section]
+      : undefined;
   return {
     page: legacyPage ?? getLastSettingsPage() ?? DEFAULT_SETTINGS_PAGE,
     setting: null,

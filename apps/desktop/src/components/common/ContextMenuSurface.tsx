@@ -109,8 +109,10 @@ export const ContextMenu = ({ items, sx }: ContextMenuProps) => {
           e.preventDefault();
           const currentPos = actionableIndices.indexOf(activeIndex);
           const prevPos =
-            (currentPos - 1 + actionableIndices.length) %
-            actionableIndices.length;
+            currentPos < 0
+              ? actionableIndices.length - 1
+              : (currentPos - 1 + actionableIndices.length) %
+                actionableIndices.length;
           setActiveIndex(actionableIndices[prevPos]);
           break;
         }

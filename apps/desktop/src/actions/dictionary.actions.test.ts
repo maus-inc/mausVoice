@@ -38,6 +38,7 @@ vi.mock("../utils/id.utils", () => ({
 }));
 
 import { createGlossaryTerms, loadDictionary } from "./dictionary.actions";
+import { trackDictionaryMutation } from "../utils/dictionary-mutations";
 
 const persistAs = (term: Term): Promise<Term> => Promise.resolve(term);
 
@@ -155,6 +156,26 @@ describe("dictionary list reads during writes", () => {
     await creation;
     await loading;
     expect(sources()).toEqual(["new word"]);
+  });
+
+  it("waits for a write scheduled between an empty wait and the read", async () => {
+    let release!: () => void;
+    let write!: Promise<void>;
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    queueMicrotask(() => {
+      write = trackDictionaryMutation(() => pending);
+    });
+    termMocks.listTerms.mockResolvedValue([]);
+    const loading = loadDictionary();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(termMocks.listTerms).not.toHaveBeenCalled();
+    release();
+    await write;
+    await loading;
+    expect(termMocks.listTerms).toHaveBeenCalledTimes(1);
   });
 
   it("retries an older in-flight list after a new term is saved", async () => {

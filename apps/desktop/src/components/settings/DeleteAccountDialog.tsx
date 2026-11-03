@@ -83,17 +83,12 @@ export const DeleteAccountDialog = () => {
   };
 
   const stopNativeSubsystems = async () => {
-    // Stop callbacks before wiping data so they cannot race with the cleared DB.
-    try {
-      await invoke("stop_key_listener");
-    } catch {
-      /* no listener active */
-    }
-    try {
-      await invoke("stop_recording");
-    } catch {
-      /* no active recording */
-    }
+    const outcomes = await Promise.allSettled([
+      invoke("stop_key_listener"),
+      invoke("stop_recording"),
+    ]);
+    const failure = outcomes.find((outcome) => outcome.status === "rejected");
+    if (failure?.status === "rejected") throw failure.reason;
   };
 
   const signOutAfterAccountDeletion = async () => {

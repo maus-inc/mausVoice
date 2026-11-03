@@ -407,7 +407,7 @@ Dialog radius live (MuiDialog paper slot → every dialog).
 
 - Status: **reused** — real component from \`${D}/components/common/ConfirmDialog.tsx\`.
 - Source of truth: \`${D}/components/common/ConfirmDialog.tsx\`.
-- Used in: SignInForm, SettingsPage, ManualStylingRow, ToneEditorDialog.
+- Used in: SignInForm, PrivacyDataSettingsPage, UpdateChannelSetting, SystemSettingsPage, ManualStylingRow, ToneEditorDialog.
 
 ## Purpose
 Two-action confirmation (Cancel text + Confirm contained).
@@ -580,7 +580,7 @@ Card radius live. Hover/ ramp patch-only (\`theme.ts\` MuiCard/MuiPaper → glob
 
 - Status: **reused** — real component + MuiListItemButton/MuiListItemText theme.
 - Source of truth: \`${D}/theme.ts\` (MuiListItemButton, MuiListItemText), \`${D}/components/common/ListTile.tsx\`, \`OverflowTypography.tsx\`.
-- Used in: MenuPopover, DashboardMenu, UpdateListTile, SettingsPage, AppStylingRow, ManualStylingRow.
+- Used in: MenuPopover, DashboardMenu, UpdateListTile, AppStylingRow, ManualStylingRow.
 
 ## Purpose
 Universal row: leading/trailing with hover swap, title/subtitle, selected state, href/cmd-click, motion indicator slot.

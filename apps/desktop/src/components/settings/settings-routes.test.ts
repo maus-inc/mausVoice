@@ -71,6 +71,14 @@ describe("settings routes", () => {
     ).toBe("appearance");
   });
 
+  it("does not treat inherited object properties as legacy sections", () => {
+    for (const section of ["constructor", "toString", "__proto__"]) {
+      expect(resolveSettingsTarget({ setting: null, section }, {}).page).toBe(
+        DEFAULT_SETTINGS_PAGE,
+      );
+    }
+  });
+
   it("reopens the last page visited, and the default page when there is none", () => {
     // Named through the registry rather than spelled out: which page a first
     // visit lands on is an information-architecture decision, and this test is

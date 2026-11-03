@@ -10,6 +10,7 @@ import { setLocalStorageValue } from "../../actions/local-storage.actions";
 import { useAsyncEffect } from "../../hooks/async.hooks";
 import { getAppState, produceAppState, useAppStore } from "../../store";
 import { createId } from "../../utils/id.utils";
+import { withLocalDataWrite } from "../../utils/local-data-write-gate";
 import { createDictionaryTerm } from "../../utils/term-mutation-queue";
 import { ScrollListPage } from "../common/ScrollListPage";
 import { AddTermDialog } from "./AddTermDialog";
@@ -37,31 +38,45 @@ export default function DictionaryPage() {
         isReplacement: replacement,
       };
 
-      produceAppState((draft) => {
-        draft.termById[newTerm.id] = newTerm;
-        draft.dictionary.termIds = [newTerm.id, ...draft.dictionary.termIds];
-      });
-
-      await createDictionaryTerm(
-        newTerm,
-        (created) => {
-          if (getAppState().termById[newTerm.id] === newTerm) {
-            produceAppState((draft) => {
-              draft.termById[created.id] = created;
-            });
-          }
-          setLocalStorageValue("mausvoice:checklist-dictionary", true);
-        },
-        (error) => {
+      try {
+        await withLocalDataWrite(async (lease) => {
           produceAppState((draft) => {
-            delete draft.termById[newTerm.id];
-            draft.dictionary.termIds = draft.dictionary.termIds.filter(
-              (termId) => termId !== newTerm.id,
-            );
-          });
-          showErrorSnackbar(error);
-        },
-      );
+            draft.termById[newTerm.id] = newTerm;
+            draft.dictionary.termIds = [
+              newTerm.id,
+              ...draft.dictionary.termIds,
+            ];
+          }, lease);
+
+          await createDictionaryTerm(
+            newTerm,
+            (created) => {
+              if (getAppState().termById[newTerm.id] === newTerm) {
+                produceAppState((draft) => {
+                  draft.termById[created.id] = created;
+                }, lease);
+              }
+              setLocalStorageValue(
+                "mausvoice:checklist-dictionary",
+                true,
+                lease,
+              );
+            },
+            (error) => {
+              produceAppState((draft) => {
+                delete draft.termById[newTerm.id];
+                draft.dictionary.termIds = draft.dictionary.termIds.filter(
+                  (termId) => termId !== newTerm.id,
+                );
+              }, lease);
+              showErrorSnackbar(error);
+            },
+            lease,
+          );
+        });
+      } catch (error) {
+        showErrorSnackbar(error);
+      }
     },
     [],
   );
