@@ -846,7 +846,7 @@
   "the_provider_rate_limit_was_reached": "è stato raggiunto il limite di richieste del provider",
   "the_provider_rejected_authentication_or_access": "il provider ha rifiutato l’autenticazione o l’accesso",
   "the_provider_reply_was_unusable_so_the_previous_transcript_w": "La risposta del provider non era utilizzabile, quindi è stato mantenuto il testo precedente.",
-  "the_provider_reply_was_unusable_so_the_raw_transcript_was_sa": "La risposta del provider non era utilizzabile, quindi è stata salvata la trascrizione originale.",
+  "the_provider_reply_was_unusable_so_the_raw_transcript_was_sa": "La risposta del provider non era utilizzabile, quindi è stata salvata la trascrizione grezza.",
   "the_provider_reply_was_unusable_the_raw_transcript_is_availa": "La risposta del provider non era utilizzabile. La trascrizione grezza è disponibile in questa sessione, ma non è stata salvata nella Cronologia.",
   "the_provider_reported_a_quota_or_billing_issue": "il provider ha segnalato un problema di quota o fatturazione",
   "the_provider_request_or_usage_limit_was_reached": "è stato raggiunto il limite di richieste o di utilizzo del provider",

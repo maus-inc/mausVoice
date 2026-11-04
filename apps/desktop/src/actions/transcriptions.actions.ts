@@ -40,7 +40,10 @@ import {
   getMyUserPreferences,
 } from "../utils/user.utils";
 import { showErrorSnackbar, showSnackbar } from "./app.actions";
-import { openPostProcessingSettings } from "./settings.actions";
+import {
+  openPostProcessingSettings,
+  openTranscriptionsHistory,
+} from "./settings.actions";
 import {
   dismissToast,
   getToastActionLabel,
@@ -206,18 +209,8 @@ const describeUnstyledRun = (
   return { message: feedback?.message ?? "", reason, feedback };
 };
 
-const openTranscriptionsHistory = (): void => {
-  import("../router")
-    .then(({ getBrowserRouter }) =>
-      getBrowserRouter().navigate("/dashboard/transcriptions"),
-    )
-    .catch((error: unknown) => {
-      console.error("Failed to open transcription history", error);
-    });
-};
-
 const getFeedbackSnackbarAction = (
-  feedback: PostProcessFeedback,
+  feedback: Pick<PostProcessFeedback, "action">,
 ): { label: string; onClick: () => void } | undefined => {
   if (!feedback.action) return undefined;
   return {
@@ -431,7 +424,12 @@ const mergeRetranscribeBatchFeedback = (
 ): RetranscribeSuccessFeedback => {
   if (!existing) return incoming;
   return {
-    message: [existing.message, incoming.message].join(" "),
+    // Rows that finished with the same outcome carry the same sentence; once
+    // the merged message already contains it, appending repeats it once per
+    // row in a single toast.
+    message: existing.message.includes(incoming.message)
+      ? existing.message
+      : [existing.message, incoming.message].join(" "),
     severity: incoming.severity === "error" ? "error" : existing.severity,
     action: existing.action ?? incoming.action,
     duration: 8_000,
@@ -443,20 +441,17 @@ const showRetranscribeSuccessFeedback = (
 ) => {
   const { complete } = retranscribeFeedbackCopy();
   const message = feedback?.message ?? complete;
+  const action = feedback ? getFeedbackSnackbarAction(feedback) : undefined;
+  // The native completion toast carries the raw action token while the
+  // snackbar carries the mapped label and click handler; both come from the
+  // same feedback outcome.
   const toastAction =
     feedback?.action === "fix"
       ? getPostProcessFeedbackToastAction(feedback.action)
       : undefined;
   showSnackbar(message, {
     mode: feedback ? feedback.severity : "success",
-    ...(toastAction
-      ? {
-          action: {
-            label: getToastActionLabel(toastAction),
-            onClick: openPostProcessingSettings,
-          },
-        }
-      : {}),
+    ...(action ? { action } : {}),
   });
   // The completion toast carries its own short duration, so the long-lived
   // loading toast is no longer ours once it is replaced.

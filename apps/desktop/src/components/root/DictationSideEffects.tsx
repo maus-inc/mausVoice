@@ -21,6 +21,7 @@ import {
   getPostProcessFeedback,
   getPostProcessFeedbackToastAction,
 } from "../../actions/post-process-feedback";
+import type { PostProcessFeedback } from "../../actions/post-process-feedback";
 import { dismissToast, runToast, showToast } from "../../actions/toast.actions";
 import { applyInDictationStyleSwitch } from "../../actions/tone.actions";
 import {
@@ -46,7 +47,10 @@ import { BaseStrategy } from "../../strategies/base.strategy";
 import { DictationStrategy } from "../../strategies/dictation.strategy";
 import { TextFieldInfo } from "../../types/accessibility.types";
 import type { ToastAction } from "../../types/toast.types";
-import type { ReviewedTranscriptPersistenceInput } from "../../types/strategy.types";
+import type {
+  HistoryOwner,
+  ReviewedTranscriptPersistenceInput,
+} from "../../types/strategy.types";
 import {
   attachSessionAudioIntake,
   createCurrentSegmentGuard,
@@ -303,12 +307,7 @@ export type PostTranscriptInput = {
   storeTranscriptionFn: typeof storeTranscription;
   refreshMember: () => void;
   /** Informational surface for warnings the user has to know about mid-flow. */
-  showToast: (options: {
-    message: string;
-    toastType: "info" | "error";
-    duration?: number;
-    action?: ToastAction;
-  }) => Promise<void> | void;
+  showToast: (options: PostProcessToastOptions) => Promise<void> | void;
   /** Review-before-insert persistence hook; forwarded to the strategy. */
   persistReviewedTranscript?: (
     input: ReviewedTranscriptPersistenceInput,
@@ -316,6 +315,60 @@ export type PostTranscriptInput = {
   /** Pipeline timing marks threaded through to History storage. */
   trace?: PipelineTrace | null;
 };
+
+/** The pill toast shape the post-processing feedback is surfaced with. */
+type PostProcessToastOptions = {
+  message: string;
+  toastType: "info" | "error";
+  duration?: number;
+  action?: ToastAction;
+};
+
+const getPostProcessToastSeverity = (
+  feedback: PostProcessFeedback | null | undefined,
+): "info" | "error" => feedback?.severity ?? "info";
+
+const getPostProcessToastDuration = (
+  feedback: PostProcessFeedback | null | undefined,
+  truncatedMessage: string | null | undefined,
+): number => (feedback?.kind === "failed" || truncatedMessage ? 8_000 : 5_000);
+
+const getPostProcessToastAction = (
+  feedback: PostProcessFeedback | null | undefined,
+): ToastAction | undefined =>
+  feedback?.action
+    ? getPostProcessFeedbackToastAction(feedback.action)
+    : undefined;
+
+// The native pill displays one toast at a time, so keep both outcomes and the
+// Fix action when fast-style metadata reports an unstyled tail.
+const getPostProcessToastOptions = (
+  feedback: PostProcessFeedback | null | undefined,
+  truncatedMessage: string | null | undefined,
+): PostProcessToastOptions | undefined => {
+  const message = [feedback?.message, truncatedMessage]
+    .filter((part): part is string => Boolean(part))
+    .join(" ");
+  if (!message) return undefined;
+  return {
+    message,
+    toastType: getPostProcessToastSeverity(feedback),
+    duration: getPostProcessToastDuration(feedback, truncatedMessage),
+    action: getPostProcessToastAction(feedback),
+  };
+};
+
+// "stop-path" is the default: a strategy that never went through review
+// persisted nothing, so the stop path is the only place the row gets written.
+// A review that reported an owner already wrote it, or is holding it on the
+// pill after a failure it told the user to retry from. Writing here in that
+// last case would contradict the toast and duplicate the row on the retry.
+const shouldStoreOnStopPath = (
+  strategy: Pick<BaseStrategy, "shouldStoreTranscript">,
+  historyOwner: HistoryOwner | undefined,
+): boolean =>
+  strategy.shouldStoreTranscript() &&
+  (historyOwner ?? "stop-path") === "stop-path";
 
 export const postProcessFinalizedTranscript = async (
   input: PostTranscriptInput,
@@ -351,14 +404,7 @@ export const postProcessFinalizedTranscript = async (
     `Post-processing complete: transcript=${transcript ? `${transcript.length} chars` : "empty"}, warnings=${postProcessWarnings.length}`,
   );
   await input.sendIdle();
-  // "stop-path" is the default: a strategy that never went through review
-  // persisted nothing, so this is the only place the row gets written. A
-  // review that reported an owner already wrote it, or is holding it on the
-  // pill after a failure it told the user to retry from. Writing here in that
-  // last case would contradict the toast and duplicate the row on the retry.
-  const willStore =
-    strategy.shouldStoreTranscript() &&
-    (result.historyOwner ?? "stop-path") === "stop-path";
+  const willStore = shouldStoreOnStopPath(strategy, result.historyOwner);
   const reviewOwnedHistory = result.historyOwner === "review";
 
   // Persistence is handed back instead of awaited. The pill has shown idle
@@ -398,30 +444,17 @@ export const postProcessFinalizedTranscript = async (
         context: "dictation",
       },
     );
-
     const postProcessFeedback = getPostProcessFeedback(
       postProcessMetadata,
       "dictation",
       { canRecoverFromHistory: historyEntryAvailable },
     );
-    if (postProcessFeedback || truncatedMessage) {
-      const feedbackMessages = [
-        postProcessFeedback?.message,
-        truncatedMessage,
-      ].filter((message): message is string => Boolean(message));
-      // The native pill displays one toast at a time, so keep both outcomes and
-      // the Fix action when fast-style metadata reports an unstyled tail.
-      await input.showToast({
-        message: feedbackMessages.join(" "),
-        toastType: postProcessFeedback?.severity ?? "info",
-        duration:
-          postProcessFeedback?.kind === "failed" || truncatedMessage
-            ? 8_000
-            : 5_000,
-        action: postProcessFeedback?.action
-          ? getPostProcessFeedbackToastAction(postProcessFeedback.action)
-          : undefined,
-      });
+    const toast = getPostProcessToastOptions(
+      postProcessFeedback,
+      truncatedMessage,
+    );
+    if (toast) {
+      await input.showToast(toast);
     }
   };
 

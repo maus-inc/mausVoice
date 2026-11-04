@@ -309,6 +309,40 @@ describe("retranscribeTranscription feedback", () => {
     expect(mergedCall?.[1]).toBe(8_000);
   });
 
+  it("shows one sentence when every row in a batch reports the same outcome", async () => {
+    seedTranscription("a");
+    seedTranscription("b");
+    const sameFallback = {
+      transcript: "Styled transcript",
+      warnings: [],
+      metadata: {
+        postProcessFailed: false,
+        postProcessFallback: true,
+        postProcessError: POST_PROCESS_ERROR_CATEGORY.quotaOrPayment,
+      },
+    };
+    postProcessTranscript
+      .mockResolvedValueOnce(sameFallback)
+      .mockResolvedValueOnce(sameFallback);
+
+    await Promise.all([
+      retranscribeTranscription({ transcriptionId: "a" }),
+      retranscribeTranscription({ transcriptionId: "b" }),
+    ]);
+
+    const sentence =
+      "Online styling failed because the provider reported a quota or billing issue. Your local style was applied instead.";
+    const completionCalls = showCompletionToast.mock
+      .calls as unknown as readonly [string, number?, string?][];
+    const mergedCall = completionCalls.find(([message]) =>
+      message.includes(sentence),
+    );
+    // The identical sentence appears exactly once: a ten-row batch with one
+    // shared outcome must not repeat it ten times in a single toast.
+    expect(mergedCall?.[0]).toBe(sentence);
+    expect(mergedCall?.[1]).toBe(8_000);
+  });
+
   it("recovers cleanly on error so the row is enabled again", async () => {
     seedTranscription("a");
     loadTranscriptionAudio.mockRejectedValue(new Error("no audio"));

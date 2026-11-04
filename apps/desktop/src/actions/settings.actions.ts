@@ -1,5 +1,6 @@
 import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { produceAppState, getAppState } from "../store";
+import { getLogger } from "../utils/log.utils";
 import type { LocalDataWriteLease } from "../utils/local-data-write-gate";
 import { showErrorSnackbar } from "./app.actions";
 
@@ -7,6 +8,26 @@ export const openPostProcessingSettings = (): void => {
   produceAppState((draft) => {
     draft.settings.aiPostProcessingDialogOpen = true;
   });
+};
+
+/**
+ * Opens the transcriptions History list. The router is imported lazily so the
+ * action modules never form an import cycle with it, and a synchronous throw
+ * from building the router rejects the same promise chain as a failed
+ * navigation. Both the pill toast action handler and the retranscription
+ * snackbar use this one copy, so the navigation and its failure logging stay
+ * identical everywhere.
+ */
+export const openTranscriptionsHistory = (): void => {
+  import("../router")
+    .then(({ getBrowserRouter }) =>
+      getBrowserRouter().navigate("/dashboard/transcriptions"),
+    )
+    .catch((error: unknown) => {
+      getLogger().warning(
+        `Failed to open transcription history: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    });
 };
 
 const isTauriEnvironment = (): boolean => {

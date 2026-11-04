@@ -19,7 +19,10 @@ import {
   runStartupElevationPreflight,
 } from "../../actions/elevation.actions";
 import { loadPairedRemoteDevices } from "../../actions/paired-remote-device.actions";
-import { openPostProcessingSettings } from "../../actions/settings.actions";
+import {
+  openPostProcessingSettings,
+  openTranscriptionsHistory,
+} from "../../actions/settings.actions";
 import {
   refreshRemoteReceiverStatus,
   startRemoteReceiver,
@@ -77,7 +80,6 @@ import {
   ensurePillGeometry,
   setPillGeometry,
 } from "../../utils/composer.utils";
-import { getBrowserRouter } from "../../router";
 import { getIsDevMode, isWindows } from "../../utils/env.utils";
 import {
   ADD_TO_DICTIONARY_HOTKEY,
@@ -914,26 +916,20 @@ export const AppSideEffects = () => {
       });
       openPostProcessingSettings();
     } else if (payload.action === "surface_window") {
-      void surfaceMainWindow();
+      // Same posture as the settings branch above: surfacing logs its own
+      // failures, and the catch keeps the intentionally ignored promise
+      // explicit for the linters.
+      surfaceMainWindow().catch(() => {
+        // surfaceMainWindow reports its own errors
+      });
     } else if (payload.action === "open_transcriptions") {
-      // `getBrowserRouter()` lazily builds the router and is documented as safe
-      // before Router mounts, so navigating does not depend on the window being
-      // up. `navigate` returns a promise that a synchronous try/catch cannot
-      // catch, so the rejection is handled on the promise itself.
-      void surfaceMainWindow();
-      try {
-        void getBrowserRouter()
-          .navigate("/dashboard/transcriptions")
-          .catch((error: unknown) => {
-            getLogger().warning(
-              `Failed to navigate to transcriptions: ${error instanceof Error ? error.message : String(error)}`,
-            );
-          });
-      } catch (error) {
-        getLogger().warning(
-          `Failed to build the router: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
+      surfaceMainWindow().catch(() => {
+        // surfaceMainWindow reports its own errors
+      });
+      // The shared action lazily imports the router and logs navigation
+      // failures, so it works before Router mounts and stays identical to the
+      // retranscription snackbar's History action.
+      openTranscriptionsHistory();
     }
   });
 
