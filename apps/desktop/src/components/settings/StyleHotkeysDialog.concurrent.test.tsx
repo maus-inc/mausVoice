@@ -81,6 +81,12 @@ it("locks style shortcut edits and dismissals while replacing, then allows a fai
       ),
       "hotkey",
     );
+    expect(hotkey.getAttribute("role")).toBe("textbox");
+    expect(hotkey.getAttribute("aria-label")).toBe("Shortcut for Concise");
+    expect(
+      document.getElementById(hotkey.getAttribute("aria-describedby") ?? "")
+        ?.textContent,
+    ).toBeTruthy();
     act(() => hotkey.focus());
     expect(getAppState().isRecordingHotkey).toBe(true);
     act(() => {

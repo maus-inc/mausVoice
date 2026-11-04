@@ -222,6 +222,10 @@ export const StyleHotkeysDialog = () => {
             >
               {styleSelectionAvailable ? (
                 <HotKey
+                  ariaLabel={intl.formatMessage(
+                    { defaultMessage: "Shortcut for {style}" },
+                    { style: row.toneName },
+                  )}
                   value={row.keys}
                   disabled={isSaving}
                   onChange={(keys) =>

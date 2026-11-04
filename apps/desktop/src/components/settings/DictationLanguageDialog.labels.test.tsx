@@ -51,7 +51,7 @@ it("names each language selector, shortcut recorder, and remove action", () => {
       ).not.toBeNull();
       const hotkey = requireElement(
         document.querySelector(
-          `[role="group"][aria-label="Hotkey for language ${number}"]`,
+          `[role="textbox"][aria-label="Hotkey for language ${number}"]`,
         ),
         "named shortcut",
       );

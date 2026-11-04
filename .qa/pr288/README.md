@@ -114,3 +114,12 @@ See [loading](provider-link-loading-1200x800.png), [failure with retry](provider
 and [unavailable](provider-link-unavailable-400x600.png); the other viewport
 captures are beside them. No uncaught page errors were observed. These checks
 simulate the store state and do not verify native provider or WebView behavior.
+
+## Shortcut recorder names
+
+In Chromium's populated preview, the shortcut dialog exposed a focusable
+textbox named “Hold to dictate Primary shortcut”; focusing it showed the
+recording state ([capture](hotkey-accessibility-light-1200x800.png)). The style
+dialog exposed nine textboxes named for their styles ([capture](style-hotkey-accessibility-light-1200x800.png)).
+The preview toolbar was hidden and no uncaught page errors occurred. These
+checks do not establish screen-reader speech or native shortcut capture.

@@ -374,7 +374,7 @@ pulseBorder keyframes (blue 50% ↔ blue) 2s ease-in-out infinite while focused.
 empty / valued / recording (focused) / hover / blur-commit; Escape cancels; bridge strategy rejects modifier-only combos with an error snackbar (store path — not simulated).
 
 ## Accessibility
-tabIndex 0 div with click-to-focus; outline none (pulse replaces it). UNKNOWN: no aria-label/role in source (flag as a11y gap); preview adds both.
+Focusable textbox captures shortcuts on focus; each settings recorder has a localized name and describes its current value. Disabled recorders leave the tab order. The pulse indicates focus; native key capture and screen-reader behavior require platform verification.
 
 ## Live-spec mapping
 Width live (recreated). Pulse + commit logic patch-only: edit \`HotKey.tsx\` → the three settings dialogs.

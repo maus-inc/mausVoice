@@ -18,6 +18,7 @@ type HotKeyProps = {
   onChange?: (value: string[]) => void;
   disabled?: boolean;
   ariaLabel?: string;
+  ariaLabelledBy?: string;
 };
 
 export const HotKey = ({
@@ -25,6 +26,7 @@ export const HotKey = ({
   onChange,
   disabled = false,
   ariaLabel,
+  ariaLabelledBy,
 }: HotKeyProps) => {
   const intl = useIntl();
   const valueId = useId();
@@ -153,9 +155,10 @@ export const HotKey = ({
     <Box
       ref={boxRef}
       tabIndex={disabled ? -1 : 0}
-      role={ariaLabel ? "group" : undefined}
+      role={ariaLabel || ariaLabelledBy ? "textbox" : undefined}
       aria-label={ariaLabel}
-      aria-describedby={ariaLabel ? valueId : undefined}
+      aria-labelledby={ariaLabelledBy}
+      aria-describedby={ariaLabel || ariaLabelledBy ? valueId : undefined}
       aria-disabled={disabled || undefined}
       onClick={() => {
         if (!disabled) boxRef.current?.focus();
@@ -188,7 +191,7 @@ export const HotKey = ({
       sx={hotkeyRecorderStyles(focused, 200, disabled)}
     >
       <Typography
-        id={ariaLabel ? valueId : undefined}
+        id={ariaLabel || ariaLabelledBy ? valueId : undefined}
         variant="body2"
         color={empty ? "text.secondary" : "text.primary"}
       >
