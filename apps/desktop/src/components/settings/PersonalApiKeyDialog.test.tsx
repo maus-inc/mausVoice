@@ -149,8 +149,13 @@ describe("PersonalApiKeyDialog", () => {
       expect(save).toHaveBeenCalledTimes(1);
       expect(onClose).not.toHaveBeenCalled();
       await act(async () => {
-        reject(new Error("failed"));
+        reject(new Error("sensitive backend detail"));
       });
+      expect(dialog()?.querySelector('[role="alert"]')?.textContent).toContain(
+        de.could_not_save_the_api_key,
+      );
+      expect(dialog()?.textContent).not.toContain("sensitive backend detail");
+      expect(mocks.showErrorSnackbar).not.toHaveBeenCalled();
       await click(saveButton());
       expect(save).toHaveBeenCalledTimes(2);
       expect(onClose).toHaveBeenCalledTimes(1);
@@ -182,7 +187,7 @@ describe("PersonalApiKeyDialog", () => {
     );
   });
 
-  it("keeps the dialog open, and shows what went wrong", async () => {
+  it("keeps the dialog open and shows a localized save failure", async () => {
     const failure = new Error("Groq refused the key");
     mocks.saveGroq.mockRejectedValue(failure);
     render("groq");
@@ -190,9 +195,10 @@ describe("PersonalApiKeyDialog", () => {
     await click(saveButton());
 
     expect(mocks.showSnackbar).not.toHaveBeenCalled();
-    expect(mocks.showErrorSnackbar).toHaveBeenCalledWith(failure);
+    expect(mocks.showErrorSnackbar).not.toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();
-    expect(dialog()?.textContent).toContain("Groq refused the key");
+    expect(dialog()?.textContent).toContain(de.could_not_save_the_api_key);
+    expect(dialog()?.textContent).not.toContain("Groq refused the key");
   });
 
   it("reveals the focused field within a short dialog without scrolling the page", async () => {

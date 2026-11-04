@@ -18,7 +18,7 @@ import {
   type MessageDescriptor,
 } from "react-intl";
 import { openExternalUrl } from "../../utils/open-url.utils";
-import { showErrorSnackbar, showSnackbar } from "../../actions/app.actions";
+import { showSnackbar } from "../../actions/app.actions";
 import {
   savePersonalDeepgramApiKey,
   savePersonalGroqApiKey,
@@ -125,15 +125,10 @@ export const PersonalApiKeyDialog = ({
         mode: "success",
       });
       onClose();
-    } catch (error) {
-      const message =
-        error instanceof Error
-          ? error.message
-          : intl.formatMessage({
-              defaultMessage: "Could not save the API key.",
-            });
-      setErrorMessage(message);
-      showErrorSnackbar(error);
+    } catch {
+      setErrorMessage(
+        intl.formatMessage({ defaultMessage: "Could not save the API key." }),
+      );
     } finally {
       saveInFlight.current = false;
       setSaving(false);

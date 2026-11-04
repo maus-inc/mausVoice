@@ -108,7 +108,15 @@ it("shows a new URL-selected conversation after opening the compact list", async
       'input[aria-label="Draft"]',
     )!;
     expect(getComputedStyle(draft.parentElement!).display).toBe("none");
+    const list = host.querySelector<HTMLElement>('[aria-current="true"]')!;
+    act(() => list.focus());
+    expect(document.activeElement).toBe(list);
     await act(async () => button("Open other").click());
+    await act(
+      async () =>
+        new Promise<void>((resolve) => requestAnimationFrame(() => resolve())),
+    );
+    expect(document.activeElement).toBe(button("Chats"));
     const otherDraft = host.querySelector<HTMLInputElement>(
       'input[aria-label="Draft"]',
     )!;

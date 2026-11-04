@@ -407,7 +407,7 @@ Dialog radius live (MuiDialog paper slot → every dialog).
 
 - Status: **reused** — real component from \`${D}/components/common/ConfirmDialog.tsx\`.
 - Source of truth: \`${D}/components/common/ConfirmDialog.tsx\`.
-- Used in: SignInForm, PrivacyDataSettingsPage, UpdateChannelSetting, SystemSettingsPage, ManualStylingRow, ToneEditorDialog.
+- Used in: SignInForm, PersonalCredentialsForm, PrivacyDataSettingsPage, UpdateChannelSetting, SystemSettingsPage, ProfileDialog, ManualStylingRow, ToneCreateDiscard, ToneEditConfirmations.
 
 ## Purpose
 Two-action confirmation (Cancel text + Confirm contained).
@@ -425,7 +425,7 @@ open / closed; custom labels; confirmButtonProps/cancelButtonProps passthrough.
 Inherits dialog semantics; actions are real buttons with localized labels.
 
 ## Live-spec mapping
-Patch-only. Persist: edit \`ConfirmDialog.tsx\` → four call sites. Radii follow the dialog + button specs (live).
+Patch-only. Persist: edit \`ConfirmDialog.tsx\` → all direct call sites. Radii follow the dialog + button specs (live).
 `],
 ["popover-menu", `# MenuPopover · MenuPopoverBuilder (\`popover-menu\`)
 

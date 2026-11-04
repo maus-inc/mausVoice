@@ -194,6 +194,7 @@ export const AudioPlayerPill = ({
 
       isPlayingRef.current = true;
       setIsPlaying(true);
+      let setupPending = true;
       await playWebAudio(
         transcriptionId,
         audioData,
@@ -213,8 +214,16 @@ export const AudioPlayerPill = ({
           ) {
             return;
           }
-          if (playbackOwner === owner) playbackOwner = null;
-          ownerRef.current = null;
+          // A setup failure stops the just-published source before rejecting.
+          // Keep ownership until the catch reports that failure.
+          if (!(
+            setupPending &&
+            reason === "stopped" &&
+            playbackOwner === owner
+          )) {
+            if (playbackOwner === owner) playbackOwner = null;
+            ownerRef.current = null;
+          }
           isPlayingRef.current = false;
           setIsPlaying(false);
           if (reason === "ended") {
@@ -223,6 +232,7 @@ export const AudioPlayerPill = ({
         },
         playbackProgressRef.current,
       );
+      setupPending = false;
     } catch (error) {
       if (
         playbackNonceRef.current !== currentNonce ||

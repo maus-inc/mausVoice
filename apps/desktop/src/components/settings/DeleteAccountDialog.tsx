@@ -22,6 +22,7 @@ import {
   hasPendingLocalDataClear,
 } from "../../utils/local-data-write-gate";
 import { resetPendingTranscriptionDeletes } from "../../utils/pending-transcription-delete";
+import { stopLocalDataSubsystems } from "../../utils/stop-local-data-subsystems";
 import { disableAnalyticsPersistenceForLocalDataClear } from "../../utils/analytics-persistence.utils";
 
 import { invoke } from "@tauri-apps/api/core";
@@ -82,15 +83,6 @@ export const DeleteAccountDialog = () => {
     disableAnalyticsPersistenceForLocalDataClear();
   };
 
-  const stopNativeSubsystems = async () => {
-    const outcomes = await Promise.allSettled([
-      invoke("stop_key_listener"),
-      invoke("stop_recording"),
-    ]);
-    const failure = outcomes.find((outcome) => outcome.status === "rejected");
-    if (failure?.status === "rejected") throw failure.reason;
-  };
-
   const signOutAfterAccountDeletion = async () => {
     try {
       await getAuthRepo().signOut();
@@ -136,7 +128,7 @@ export const DeleteAccountDialog = () => {
     try {
       await ensureClearLease();
       await deleteAccountOnce();
-      await stopNativeSubsystems();
+      await stopLocalDataSubsystems();
       await clearDeletedAccountData();
       setConfirmationValue("");
       produceAppState((state) => {

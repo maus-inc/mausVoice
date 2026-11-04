@@ -28,6 +28,7 @@ import {
 import { getLogger } from "../../utils/log.utils";
 import { disableAnalyticsPersistenceForLocalDataClear } from "../../utils/analytics-persistence.utils";
 import { resetPendingTranscriptionDeletes } from "../../utils/pending-transcription-delete";
+import { stopLocalDataSubsystems } from "../../utils/stop-local-data-subsystems";
 
 const CONFIRMATION_PHRASE = "clear";
 
@@ -133,14 +134,7 @@ export const ClearLocalDataDialog = () => {
         setClearStarted(true);
       }
 
-      // Both native commands are idempotent. A rejection means the subsystem
-      // may still be running, so do not report a completed clear.
-      const stops = await Promise.allSettled([
-        invoke("stop_key_listener"),
-        invoke("stop_recording"),
-      ]);
-      const failedStop = stops.find((result) => result.status === "rejected");
-      if (failedStop?.status === "rejected") throw failedStop.reason;
+      await stopLocalDataSubsystems();
 
       await invoke("clear_local_data");
       resetPendingTranscriptionDeletes();

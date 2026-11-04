@@ -39,6 +39,7 @@ describe("useContextMenu", () => {
     nativeContextMenu(
       queryRequired(fixture.container, '[data-testid="bare-text"]'),
     );
+    expect(document.querySelector('[role="menu"]')).not.toBeNull();
     act(() => {
       document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
     });
@@ -195,7 +196,7 @@ describe("useContextMenu", () => {
     expect(document.querySelector('[role="menu"]')).toBeNull();
   });
 
-  it("keeps the menu open when scrolling inside the menu itself", () => {
+  it("keeps the menu open when scrolling inside the menu itself", async () => {
     act(() => {
       fixture.root.render(createElement(Harness));
     });
@@ -208,6 +209,9 @@ describe("useContextMenu", () => {
     // must NOT dismiss the menu. The window scroll listener is registered in
     // the capture phase, so a scroll event dispatched on the menu element
     // reaches it with the menu as target.
+    await act(async () => {
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+    });
     act(() => {
       menu.dispatchEvent(new Event("scroll", { bubbles: true }));
     });

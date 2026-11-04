@@ -245,3 +245,30 @@ it("cancels a pending audio load when the row becomes disabled", async () => {
     cleanup();
   }
 });
+
+it("reports a setup failure after the audio source stops itself", async () => {
+  const { host, root, cleanup } = setup();
+  mocks.load.mockResolvedValue(audio);
+  mocks.play.mockImplementation(async (_id, _audio, _progress, onStop) => {
+    onStop("stopped");
+    throw new Error("source failed to start");
+  });
+  const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    render(root, ["one"]);
+    await act(async () => {
+      host
+        .querySelector<HTMLButtonElement>('button[aria-label="Play audio"]')!
+        .click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(mocks.error).toHaveBeenCalledWith("Unable to play audio snippet.");
+    expect(
+      host.querySelector('button[aria-label="Play audio"]'),
+    ).not.toBeNull();
+  } finally {
+    consoleError.mockRestore();
+    cleanup();
+  }
+});

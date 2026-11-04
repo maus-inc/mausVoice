@@ -43,7 +43,20 @@ export default function ChatsPage() {
   const listVisible = compact && (showList || !selectedId);
 
   useLayoutEffect(() => {
+    const focused = document.activeElement;
+    const restoreFocus =
+      compact && selectedId && focused && listRef.current?.contains(focused);
     setShowList(false);
+    if (restoreFocus) {
+      requestAnimationFrame(() => {
+        if (
+          document.activeElement === focused ||
+          document.activeElement === document.body
+        ) {
+          backRef.current?.focus();
+        }
+      });
+    }
   }, [selectedId]);
 
   useLayoutEffect(() => {

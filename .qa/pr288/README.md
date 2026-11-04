@@ -68,3 +68,15 @@ The browser check switched from light to dark without a reload and confirmed
 that the profile card's computed shadow changed. At 800×600 and 400×300 the
 profile action opened and closed with Escape, with no uncaught page errors.
 This does not verify native WebView rendering.
+
+## Review follow-up on 2026-11-04
+
+Chromium used the populated browser preview at 400×600 with reduced motion.
+The compact chat list had keyboard focus before a URL change. Focus moved to
+Chats and the selected release-notes conversation appeared in both
+[light](review-chat-url-focus-light-400x600.jpg) and
+[dark](review-chat-url-focus-dark-400x600.jpg). No uncaught page errors were
+observed. The profile editor also opened in [light](review-profile-dialog-light-400x600.jpg)
+and [dark](review-profile-dialog-dark-400x600.jpg). The browser preview toolbar
+covers the bottom of the dialog in these captures, so they do not verify its
+footer. They do not verify native keyboard, recording, or WebView behavior.

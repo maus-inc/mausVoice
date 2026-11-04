@@ -307,12 +307,18 @@ describe("readAvatarFile", () => {
   });
 
   it("refuses a JPEG that exceeds the budget at every quality", async () => {
-    installCanvas({ jpegLength: () => MAX_STORED_AVATAR_CHARS });
+    const canvas = installCanvas({ jpegLength: () => MAX_STORED_AVATAR_CHARS });
     installBitmap();
     expect(await readAvatarFile(pngFile())).toEqual({
       ok: false,
       error: "unreadable",
     });
+    expect(canvas.calls.toDataUrl.map((call) => call.quality)).toEqual([
+      AVATAR_JPEG_QUALITY,
+      0.75,
+      0.6,
+      0.45,
+    ]);
   });
 
   it("reports a file it cannot decode instead of rejecting", async () => {
