@@ -202,6 +202,17 @@ describe("SettingsLayout", () => {
     expect(event.defaultPrevented).toBe(true);
   });
 
+  it("keeps a page heading for search results, including an empty search", async () => {
+    await render("/dashboard/settings/account");
+    setQuery("microphone");
+    expect(container.querySelectorAll("h1")).toHaveLength(1);
+    expect(container.querySelector("h1")?.textContent).toBe("Search settings");
+    setQuery("no-such-setting-xyz");
+    expect(container.querySelector("h1")?.textContent).toBe("Search settings");
+    setQuery("");
+    expect(container.querySelector("h1")?.textContent).toBe("Account");
+  });
+
   it("announces search results and clears the status when search ends", async () => {
     await render("/dashboard/settings/account");
     const status = requireElement(

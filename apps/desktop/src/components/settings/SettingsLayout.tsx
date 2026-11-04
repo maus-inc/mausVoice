@@ -91,6 +91,15 @@ const SettingsRailLink = ({
  * search box. A modified `/` belongs to the browser or the app, and a `/` typed
  * inside a field has to reach that field, so both are left alone.
  */
+const visuallyHidden = {
+  position: "absolute",
+  width: "1px",
+  height: "1px",
+  overflow: "hidden",
+  clipPath: "inset(50%)",
+  whiteSpace: "nowrap",
+} as const;
+
 const isSearchShortcut = (event: KeyboardEvent): boolean => {
   if (
     event.key !== "/" ||
@@ -293,18 +302,7 @@ export const SettingsLayout = () => {
             ))}
           </Stack>
         </Stack>
-        <Box
-          component="span"
-          role="status"
-          sx={{
-            position: "absolute",
-            width: "1px",
-            height: "1px",
-            overflow: "hidden",
-            clipPath: "inset(50%)",
-            whiteSpace: "nowrap",
-          }}
-        >
+        <Box component="span" role="status" sx={visuallyHidden}>
           {searching && (
             <FormattedMessage
               defaultMessage="{count, plural, =0 {No settings found.} one {# setting found.} other {# settings found.}}"
@@ -326,7 +324,12 @@ export const SettingsLayout = () => {
           }}
         >
           {searching ? (
-            <SettingsSearchResults hits={hits} onSelect={openHit} />
+            <>
+              <Box component="h1" sx={visuallyHidden}>
+                <FormattedMessage defaultMessage="Search settings" />
+              </Box>
+              <SettingsSearchResults hits={hits} onSelect={openHit} />
+            </>
           ) : (
             // The heading travels with the page it names. Centring the page
             // alone left the heading stranded at the top of the surface with

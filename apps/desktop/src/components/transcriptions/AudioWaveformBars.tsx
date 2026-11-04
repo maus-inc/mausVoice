@@ -1,4 +1,5 @@
 import { Box } from "@mui/material";
+import { duration, reducedMotionQuery } from "../../styles/motion";
 
 type AudioWaveformBarsProps = {
   values: number[];
@@ -31,7 +32,8 @@ export const AudioWaveformBars = ({
             theme.vars?.palette.level1 ?? theme.palette.background.paper,
           opacity: 0.5,
           transform: `translateX(${progressPercent}%)`,
-          transition: "transform 140ms linear",
+          transition: `transform ${duration.fast}s linear`,
+          [`@media ${reducedMotionQuery}`]: { transition: "none" },
         })}
       />
     </Box>
@@ -46,7 +48,6 @@ export const AudioWaveformBars = ({
             borderRadius: theme.spacing(0.25),
             backgroundColor: theme.vars?.palette.primary.main,
             height: `${Math.round(35 + value * 55)}%`,
-            transition: "opacity 140ms ease",
           })}
         />
       ))}
