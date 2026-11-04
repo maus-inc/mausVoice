@@ -20,6 +20,7 @@ import { BaseStrategy } from "./base.strategy";
 
 export class AgentStrategy extends BaseStrategy {
   private conversationId: string | null = null;
+  private generation = 0;
 
   shouldStoreTranscript(): boolean {
     return false;
@@ -47,6 +48,7 @@ export class AgentStrategy extends BaseStrategy {
 
   async onBeforeStart(): Promise<void> {
     if (!this.conversationId) {
+      const generation = this.generation;
       const now = new Date().toISOString();
       const conversation = await createConversation({
         id: createId(),
@@ -56,6 +58,7 @@ export class AgentStrategy extends BaseStrategy {
         createdAt: now,
         updatedAt: now,
       });
+      if (generation !== this.generation) return;
       this.conversationId = conversation.id;
       produceAppState((draft) => {
         draft.pillConversationId = conversation.id;
@@ -133,6 +136,7 @@ export class AgentStrategy extends BaseStrategy {
 
   async cleanup(): Promise<void> {
     getLogger().verbose("Cleaning up agent strategy");
+    this.generation += 1;
     this.conversationId = null;
     produceAppState((draft) => {
       draft.pillConversationId = null;
