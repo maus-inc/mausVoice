@@ -50,19 +50,24 @@ export class AgentStrategy extends BaseStrategy {
     if (!this.conversationId) {
       const generation = this.generation;
       const now = new Date().toISOString();
-      const conversation = await createConversation({
-        id: createId(),
-        title: getIntl().formatMessage({
-          defaultMessage: "New conversation",
-        }),
-        createdAt: now,
-        updatedAt: now,
-      });
-      if (generation !== this.generation) return;
-      this.conversationId = conversation.id;
-      produceAppState((draft) => {
-        draft.pillConversationId = conversation.id;
-      });
+      await createConversation(
+        {
+          id: createId(),
+          title: getIntl().formatMessage({
+            defaultMessage: "New conversation",
+          }),
+          createdAt: now,
+          updatedAt: now,
+        },
+        undefined,
+        {
+          isCurrent: () => generation === this.generation,
+          onRegister: (draft, conversation) => {
+            this.conversationId = conversation.id;
+            draft.pillConversationId = conversation.id;
+          },
+        },
+      );
     }
   }
 

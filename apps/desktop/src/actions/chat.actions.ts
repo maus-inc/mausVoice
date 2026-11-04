@@ -2,6 +2,7 @@ import type { ChatMessage, Conversation } from "@maus-inc/types";
 import { abortAgentLoop, CHAT_AGENT_CONFIG, runAgent } from "../agents";
 import { getChatMessageRepo, getConversationRepo } from "../repos";
 import { getAppState, produceAppState } from "../store";
+import type { AppState } from "../state/app.state";
 import {
   registerChatMessages,
   registerConversations,
@@ -211,23 +212,50 @@ export const loadConversations = async (): Promise<void> => {
   }
 };
 
-export const createConversation = (
+type ConditionalConversationCreation = {
+  isCurrent: () => boolean;
+  onRegister: (draft: AppState, saved: Conversation) => void;
+};
+
+export function createConversation(
   conversation: Conversation,
   existingLease?: LocalDataWriteLease,
-): Promise<Conversation> =>
-  withLocalDataWrite(async (lease) => {
-    const saved = await getConversationRepo().createConversation(
-      conversation,
-      lease,
-    );
+): Promise<Conversation>;
+export function createConversation(
+  conversation: Conversation,
+  existingLease: LocalDataWriteLease | undefined,
+  condition: ConditionalConversationCreation,
+): Promise<Conversation | null>;
+export function createConversation(
+  conversation: Conversation,
+  existingLease?: LocalDataWriteLease,
+  condition?: ConditionalConversationCreation,
+): Promise<Conversation | null> {
+  return withLocalDataWrite(async (lease) => {
+    const repo = getConversationRepo();
+    const saved = await repo.createConversation(conversation, lease);
+    if (condition && !condition.isCurrent()) {
+      try {
+        await repo.deleteConversation(saved.id, lease);
+      } catch (error) {
+        getLogger().error(
+          "Failed to remove cancelled agent conversation",
+          error,
+        );
+        throw error;
+      }
+      return null;
+    }
 
     produceAppState((draft) => {
       registerConversations(draft, [saved]);
       draft.chat.conversationIds.unshift(saved.id);
+      condition?.onRegister(draft, saved);
     }, lease);
 
     return saved;
   }, existingLease);
+}
 
 export const updateConversation = (
   conversation: Conversation,
