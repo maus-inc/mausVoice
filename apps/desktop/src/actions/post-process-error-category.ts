@@ -340,11 +340,15 @@ const CATEGORY_BY_STATUS: ReadonlyMap<number, PostProcessErrorCategory> =
     [504, POST_PROCESS_ERROR_CATEGORY.timedOut],
   ]);
 
-// A billing failure can arrive as a 401 or 403 with quota wording in the body,
-// so the prose checks run ahead of the authentication verdict: a user with an
-// exhausted balance belongs on the billing screen, and sending them to replace
-// a key that works is the more expensive of the two mistakes.
-const AUTHENTICATION_STATUS_RULES: readonly ClassificationRule[] = [
+// The limit and billing markers share one priority everywhere they run: an
+// OpenRouter in-flight budget error is a request limit, quota or billing
+// wording outranks generic rate-limit text, and both outrank the default
+// verdict of the statuses that carry them. A billing failure can arrive as a
+// 401 or 403 with quota wording in the body, and a limit failure as a 429
+// with budget wording, so the same three rules head the authentication
+// classifier, the rate-limit classifier, and the prose cascade. One array
+// keeps the three orderings from drifting apart.
+const PROVIDER_LIMIT_PRIORITY_RULES: readonly ClassificationRule[] = [
   {
     markers: OPENROUTER_IN_FLIGHT_BUDGET_MARKERS,
     category: POST_PROCESS_ERROR_CATEGORY.providerLimit,
@@ -362,7 +366,7 @@ const AUTHENTICATION_STATUS_RULES: readonly ClassificationRule[] = [
 const classifyAuthenticationStatus = (
   message: string,
 ): PostProcessErrorCategory =>
-  matchClassificationRules(message, AUTHENTICATION_STATUS_RULES) ??
+  matchClassificationRules(message, PROVIDER_LIMIT_PRIORITY_RULES) ??
   POST_PROCESS_ERROR_CATEGORY.authentication;
 
 const classifyPaymentRequiredStatus = (
@@ -372,23 +376,8 @@ const classifyPaymentRequiredStatus = (
     ? POST_PROCESS_ERROR_CATEGORY.providerLimit
     : POST_PROCESS_ERROR_CATEGORY.quotaOrPayment;
 
-const RATE_LIMITED_STATUS_RULES: readonly ClassificationRule[] = [
-  {
-    markers: OPENROUTER_IN_FLIGHT_BUDGET_MARKERS,
-    category: POST_PROCESS_ERROR_CATEGORY.providerLimit,
-  },
-  {
-    markers: QUOTA_OR_BILLING_MESSAGE_MARKERS,
-    category: POST_PROCESS_ERROR_CATEGORY.quotaOrPayment,
-  },
-  {
-    markers: RATE_LIMIT_MESSAGE_MARKERS,
-    category: POST_PROCESS_ERROR_CATEGORY.rateLimit,
-  },
-];
-
 const classifyRateLimitedStatus = (message: string): PostProcessErrorCategory =>
-  matchClassificationRules(message, RATE_LIMITED_STATUS_RULES) ??
+  matchClassificationRules(message, PROVIDER_LIMIT_PRIORITY_RULES) ??
   POST_PROCESS_ERROR_CATEGORY.providerLimit;
 
 // Statuses that only narrow further once the message is read. 401 and 403 stay
@@ -428,22 +417,12 @@ const classifyStatus = (
 };
 
 // The prose cascade, run only when codes and status had nothing to say. The
-// quota test runs ahead of the 401 wording on purpose: a billing failure can
-// arrive as a 401 with `insufficient_quota` in the body. Timeout runs ahead
-// of abort because a timed-out request is also an aborted one.
+// shared limit and billing rules run first: the quota test runs ahead of the
+// 401 wording on purpose, because a billing failure can arrive as a 401 with
+// `insufficient_quota` in the body. Timeout runs ahead of abort because a
+// timed-out request is also an aborted one.
 const MESSAGE_CLASSIFICATION_RULES: readonly ClassificationRule[] = [
-  {
-    markers: OPENROUTER_IN_FLIGHT_BUDGET_MARKERS,
-    category: POST_PROCESS_ERROR_CATEGORY.providerLimit,
-  },
-  {
-    markers: QUOTA_OR_BILLING_MESSAGE_MARKERS,
-    category: POST_PROCESS_ERROR_CATEGORY.quotaOrPayment,
-  },
-  {
-    markers: RATE_LIMIT_MESSAGE_MARKERS,
-    category: POST_PROCESS_ERROR_CATEGORY.rateLimit,
-  },
+  ...PROVIDER_LIMIT_PRIORITY_RULES,
   {
     markers: AUTHENTICATION_MESSAGE_MARKERS,
     category: POST_PROCESS_ERROR_CATEGORY.authentication,

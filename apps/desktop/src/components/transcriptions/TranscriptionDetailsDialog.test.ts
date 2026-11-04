@@ -189,6 +189,40 @@ describe("TranscriptionDetailsDialog post-processing model field", () => {
     expect(bodyText()).not.toContain(POST_PROCESS_TRUNCATED_WARNING);
   });
 
+  it("says the raw transcript was saved when the row kept no previous text", async () => {
+    seed({
+      warnings: [POST_PROCESS_TRUNCATED_WARNING],
+      postProcessFailed: false,
+      postProcessFallback: true,
+      postProcessError: null,
+      // Displayed text equal to the sanitized column means this run saved the
+      // raw ASR instead of keeping an older transcript.
+      sanitizedTranscript: "hello world",
+    });
+    root = await render(container);
+
+    expect(bodyText()).toContain(
+      "The truncated styling reply was discarded at the model's output limit. The raw transcript was saved instead.",
+    );
+    expect(bodyText()).not.toContain("The previous text was kept.");
+  });
+
+  it("says the previous text was kept when the row differs from its sanitized column", async () => {
+    seed({
+      warnings: [POST_PROCESS_TRUNCATED_WARNING],
+      postProcessFailed: false,
+      postProcessFallback: true,
+      postProcessError: null,
+      sanitizedTranscript: "an older kept transcript",
+    });
+    root = await render(container);
+
+    expect(bodyText()).toContain(
+      "The incomplete styling reply was discarded at the model's output limit. The previous text was kept.",
+    );
+    expect(bodyText()).not.toContain("raw transcript was saved instead");
+  });
+
   it("keeps unrelated warnings verbatim on a fallback row", async () => {
     const dictionaryWarning =
       "Some dictionary entries were omitted from the post-processing glossary because the safe prompt budget was reached.";

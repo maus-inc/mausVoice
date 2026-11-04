@@ -803,7 +803,7 @@
   "style_hotkeys": "Atajos de estilos",
   "styles": "Estilos",
   "styles_reshape_your_dictation_into_your_voice_emails_notes_c": "Los estilos adaptan tu dictado a tu voz: correos, notas, comentarios de código. Crea uno a partir de una muestra y se aplicará en cada inserción.",
-  "styling_failed_because_reason": "El formato falló porque {reason}.",
+  "styling_failed_because_reason": "El estilo falló porque {reason}.",
   "styling_failed_because_reason_the_app_did_not_insert_the_tra": "El estilo falló porque {reason}. La aplicación no insertó la transcripción ni la guardó en el historial.",
   "styling_failed_because_reason_the_raw_transcript_is_availabl": "El estilo falló porque {reason}. La transcripción sin procesar está disponible en esta sesión, pero no se guardó en el Historial.",
   "styling_failed_because_reason_the_raw_transcript_is_saved_in": "El estilo falló porque {reason}. La transcripción sin procesar se guardó en el Historial.",

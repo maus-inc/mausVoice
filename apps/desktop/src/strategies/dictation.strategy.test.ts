@@ -639,13 +639,14 @@ describe("DictationStrategy backlog lifecycle", () => {
     } as never);
 
     expect(showToast).not.toHaveBeenCalled();
+    // The stored category is the constant itself. That no raw provider prose
+    // (a retired model id, say) can become the persisted string is pinned
+    // against the real classifier in post-process-error-category.test.ts;
+    // this suite only sees the mocked constant.
     expect(result.postProcessMetadata).toMatchObject({
       postProcessFailed: true,
       postProcessError: POST_PROCESS_ERROR_CATEGORY.provider,
     });
-    expect(result.postProcessMetadata.postProcessError).not.toContain(
-      "gpt-oss",
-    );
   });
 
   it("preserves a missing category for the shared feedback fallback", async () => {

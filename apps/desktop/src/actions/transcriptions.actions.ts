@@ -34,6 +34,7 @@ import {
 } from "../utils/local-data-write-gate";
 import { sanitizeTranscriptText } from "../utils/sanitize-transcript.utils";
 import type { ReplacementRule } from "../utils/string.utils";
+import type { ToastAction } from "../types/toast.types";
 import {
   getMyDictationLanguage,
   getMyEffectiveUserId,
@@ -436,23 +437,34 @@ const mergeRetranscribeBatchFeedback = (
   };
 };
 
+const buildRetranscribeSnackbarOptions = (
+  feedback: RetranscribeSuccessFeedback | null,
+): {
+  mode: "success" | RetranscribeSuccessFeedback["severity"];
+  action?: { label: string; onClick: () => void };
+} => {
+  const action = feedback ? getFeedbackSnackbarAction(feedback) : undefined;
+  return {
+    mode: feedback ? feedback.severity : "success",
+    ...(action ? { action } : {}),
+  };
+};
+
+// The native completion toast carries the raw action token while the snackbar
+// carries the mapped label and click handler; both come from the same outcome.
+const getRetranscribeCompletionToastAction = (
+  feedback: RetranscribeSuccessFeedback | null,
+): ToastAction | undefined =>
+  feedback?.action === "fix"
+    ? getPostProcessFeedbackToastAction(feedback.action)
+    : undefined;
+
 const showRetranscribeSuccessFeedback = (
   feedback: RetranscribeSuccessFeedback | null = null,
 ) => {
   const { complete } = retranscribeFeedbackCopy();
   const message = feedback?.message ?? complete;
-  const action = feedback ? getFeedbackSnackbarAction(feedback) : undefined;
-  // The native completion toast carries the raw action token while the
-  // snackbar carries the mapped label and click handler; both come from the
-  // same feedback outcome.
-  const toastAction =
-    feedback?.action === "fix"
-      ? getPostProcessFeedbackToastAction(feedback.action)
-      : undefined;
-  showSnackbar(message, {
-    mode: feedback ? feedback.severity : "success",
-    ...(action ? { action } : {}),
-  });
+  showSnackbar(message, buildRetranscribeSnackbarOptions(feedback));
   // The completion toast carries its own short duration, so the long-lived
   // loading toast is no longer ours once it is replaced.
   ownsRetranscribeNativeToast = false;
@@ -464,6 +476,7 @@ const showRetranscribeSuccessFeedback = (
     if (generation !== retranscribeFeedbackGeneration) {
       return undefined;
     }
+    const toastAction = getRetranscribeCompletionToastAction(feedback);
     if (toastAction) {
       return showCompletionToast(
         message,

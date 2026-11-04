@@ -114,6 +114,7 @@ import { isLocalDataClearRequested } from "../../utils/local-data-write-gate";
 import {
   consumeSurfaceWindowFlag,
   surfaceMainWindow,
+  surfaceMainWindowDetached,
 } from "../../utils/window.utils";
 
 type StreamRet = Nullable<[Nullable<Member>, Nullable<User>]>;
@@ -901,31 +902,19 @@ export const AppSideEffects = () => {
 
   useToastAction((payload) => {
     if (payload.action === "open_agent_settings") {
-      // `surfaceMainWindow` swallows its own errors and coalesces concurrent
-      // calls, so there is nothing to await or recover from here: surfacing is a
-      // side effect, and the dialog state below must not wait on the IPC.
-      void surfaceMainWindow();
+      // Surfacing is a side effect: it swallows its own errors and coalesces
+      // concurrent calls, and the dialog state below must not wait on the IPC.
+      surfaceMainWindowDetached();
       produceAppState((draft) => {
         draft.settings.agentModeDialogOpen = true;
       });
     } else if (payload.action === "open_post_processing_settings") {
-      // No `void` here: surfacing already logs its own failures, and the catch
-      // keeps the intentionally ignored promise explicit for the linters.
-      surfaceMainWindow().catch(() => {
-        // surfaceMainWindow reports its own errors
-      });
+      surfaceMainWindowDetached();
       openPostProcessingSettings();
     } else if (payload.action === "surface_window") {
-      // Same posture as the settings branch above: surfacing logs its own
-      // failures, and the catch keeps the intentionally ignored promise
-      // explicit for the linters.
-      surfaceMainWindow().catch(() => {
-        // surfaceMainWindow reports its own errors
-      });
+      surfaceMainWindowDetached();
     } else if (payload.action === "open_transcriptions") {
-      surfaceMainWindow().catch(() => {
-        // surfaceMainWindow reports its own errors
-      });
+      surfaceMainWindowDetached();
       // The shared action lazily imports the router and logs navigation
       // failures, so it works before Router mounts and stays identical to the
       // retranscription snackbar's History action.
@@ -943,7 +932,7 @@ export const AppSideEffects = () => {
     // Fire-and-forget: the listener body is not async, so it never receives the
     // promise. The `.catch` is what keeps a failed check from becoming an
     // unhandled rejection.
-    void surfaceMainWindow();
+    surfaceMainWindowDetached();
     void openUpdateDialog().catch((error: unknown) => {
       getLogger().error(`Failed to open the update dialog: ${error}`);
     });

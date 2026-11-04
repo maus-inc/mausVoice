@@ -187,6 +187,22 @@ const mockSuccessfulPipeline = () => {
 
 const resetState = () => setAppState(structuredClone(INITIAL_APP_STATE), true);
 
+/**
+ * Localized sentences the feedback module produces for the shared outcomes.
+ * Hoisted so every assertion quotes one source instead of retyping copy; a
+ * rewording then updates the constant alone.
+ */
+const ONLINE_QUOTA_FALLBACK_COPY =
+  "Online styling failed because the provider reported a quota or billing issue. Your local style was applied instead.";
+const PROVIDER_LIMIT_SAVED_COPY =
+  "Styling failed because the provider request or usage limit was reached. The raw transcript is saved in History.";
+const PROVIDER_LIMIT_SESSION_COPY =
+  "Styling failed because the provider request or usage limit was reached. The raw transcript is available in this session, but was not saved in History.";
+const FAST_STYLE_AUDIO_TAIL_COPY =
+  "Fast styling left the last 42 characters of the audio unstyled. The unstyled ending is in History.";
+const FAST_STYLE_NO_HISTORY_COPY =
+  "Fast styling left the last 42 characters unstyled. The app did not save them in History.";
+
 describe("retranscribeTranscription feedback", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -251,8 +267,7 @@ describe("retranscribeTranscription feedback", () => {
       transcriptionId: "truncated-fast-style",
     });
 
-    const message =
-      "Online styling failed because the provider reported a quota or billing issue. Your local style was applied instead. Fast styling left the last 42 characters of the audio unstyled. The unstyled ending is in History.";
+    const message = `${ONLINE_QUOTA_FALLBACK_COPY} ${FAST_STYLE_AUDIO_TAIL_COPY}`;
     expect(showSnackbar).toHaveBeenCalledWith(
       message,
       expect.objectContaining({
@@ -295,8 +310,7 @@ describe("retranscribeTranscription feedback", () => {
       retranscribeTranscription({ transcriptionId: "b" }),
     ]);
 
-    const firstMessage =
-      "Online styling failed because the provider reported a quota or billing issue. Your local style was applied instead.";
+    const firstMessage = ONLINE_QUOTA_FALLBACK_COPY;
     const secondMessage =
       "Online styling failed because the provider rate limit was reached. Your local style was applied instead.";
     const completionCalls = showCompletionToast.mock
@@ -330,8 +344,7 @@ describe("retranscribeTranscription feedback", () => {
       retranscribeTranscription({ transcriptionId: "b" }),
     ]);
 
-    const sentence =
-      "Online styling failed because the provider reported a quota or billing issue. Your local style was applied instead.";
+    const sentence = ONLINE_QUOTA_FALLBACK_COPY;
     const completionCalls = showCompletionToast.mock
       .calls as unknown as readonly [string, number?, string?][];
     const mergedCall = completionCalls.find(([message]) =>
@@ -837,8 +850,7 @@ describe("retranscribeTranscription persistence gate", () => {
 
     await retranscribeTranscription({ transcriptionId: "tx-gate" });
 
-    const message =
-      "Fast styling left the last 42 characters unstyled. The app did not save them in History.";
+    const message = FAST_STYLE_NO_HISTORY_COPY;
     expect(updateTranscription).not.toHaveBeenCalled();
     expect(showSnackbar).toHaveBeenCalledWith(
       message,
@@ -863,7 +875,7 @@ describe("retranscribeTranscription persistence gate", () => {
 
     expect(updateTranscription).not.toHaveBeenCalled();
     expect(showSnackbar).toHaveBeenCalledWith(
-      "Styling failed because the provider request or usage limit was reached. The raw transcript is available in this session, but was not saved in History.",
+      PROVIDER_LIMIT_SESSION_COPY,
       expect.objectContaining({ mode: "error", action: undefined }),
     );
   });
@@ -1067,7 +1079,7 @@ describe("retranscribeTranscription unstyled post-processing", () => {
     await retranscribeTranscription({ transcriptionId: "failed-truncated" });
 
     expect(showSnackbar).toHaveBeenCalledWith(
-      "Styling failed because the provider request or usage limit was reached. The raw transcript is saved in History. Fast styling left the last 42 characters of the audio unstyled. The unstyled ending is in History.",
+      `${PROVIDER_LIMIT_SAVED_COPY} ${FAST_STYLE_AUDIO_TAIL_COPY}`,
       expect.objectContaining({
         mode: "error",
         action: expect.objectContaining({ label: "Open history" }),
@@ -1370,8 +1382,7 @@ describe("retranscribeTranscription unstyled post-processing", () => {
       degraded.transcript,
     );
     expect(showErrorSnackbar).not.toHaveBeenCalled();
-    const fallbackMessage =
-      "Online styling failed because the provider reported a quota or billing issue. Your local style was applied instead.";
+    const fallbackMessage = ONLINE_QUOTA_FALLBACK_COPY;
     expect(showSnackbar).toHaveBeenCalledWith(
       fallbackMessage,
       expect.objectContaining({
@@ -1456,7 +1467,7 @@ describe("importAudioFile post-processing feedback", () => {
     await expect(runImportAudioFile({ toneId: "default" })).resolves.toBe(true);
 
     expect(showSnackbar).toHaveBeenCalledWith(
-      "Online styling failed because the provider reported a quota or billing issue. Your local style was applied instead.",
+      ONLINE_QUOTA_FALLBACK_COPY,
       expect.objectContaining({
         mode: "info",
         action: expect.objectContaining({ label: "Fix" }),
@@ -1475,7 +1486,7 @@ describe("importAudioFile post-processing feedback", () => {
     await expect(runImportAudioFile({ toneId: "default" })).resolves.toBe(true);
 
     expect(showSnackbar).toHaveBeenCalledWith(
-      "Online styling failed because the provider reported a quota or billing issue. Your local style was applied instead. Fast styling left the last 42 characters of the audio unstyled. The unstyled ending is in History.",
+      `${ONLINE_QUOTA_FALLBACK_COPY} ${FAST_STYLE_AUDIO_TAIL_COPY}`,
       expect.objectContaining({
         mode: "info",
         action: expect.objectContaining({ label: "Fix" }),
@@ -1494,7 +1505,7 @@ describe("importAudioFile post-processing feedback", () => {
     await runImportAudioFile({ toneId: "default" });
 
     expect(showSnackbar).toHaveBeenCalledWith(
-      "Styling failed because the provider request or usage limit was reached. The raw transcript is saved in History. Fast styling left the last 42 characters of the audio unstyled. The unstyled ending is in History.",
+      `${PROVIDER_LIMIT_SAVED_COPY} ${FAST_STYLE_AUDIO_TAIL_COPY}`,
       expect.objectContaining({
         mode: "error",
         action: expect.objectContaining({ label: "Open history" }),
@@ -1508,7 +1519,7 @@ describe("importAudioFile post-processing feedback", () => {
     await expect(runImportAudioFile({ toneId: "default" })).resolves.toBe(true);
 
     expect(showSnackbar).toHaveBeenCalledWith(
-      "Fast styling left the last 42 characters of the audio unstyled. The unstyled ending is in History.",
+      FAST_STYLE_AUDIO_TAIL_COPY,
       expect.objectContaining({ mode: "info", action: undefined }),
     );
   });
@@ -1523,7 +1534,7 @@ describe("importAudioFile post-processing feedback", () => {
     await runImportAudioFile({ toneId: "default" });
 
     expect(showSnackbar).toHaveBeenCalledWith(
-      "Styling failed because the provider request or usage limit was reached. The raw transcript is saved in History.",
+      PROVIDER_LIMIT_SAVED_COPY,
       expect.objectContaining({
         mode: "error",
         action: expect.objectContaining({ label: "Open history" }),
@@ -1542,7 +1553,7 @@ describe("importAudioFile post-processing feedback", () => {
     await runImportAudioFile({ toneId: "default" });
 
     expect(showSnackbar).toHaveBeenCalledWith(
-      "Styling failed because the provider request or usage limit was reached. The raw transcript is available in this session, but was not saved in History.",
+      PROVIDER_LIMIT_SESSION_COPY,
       expect.objectContaining({ mode: "error", action: undefined }),
     );
   });
@@ -1558,7 +1569,7 @@ describe("importAudioFile post-processing feedback", () => {
     await expect(runImportAudioFile({ toneId: "default" })).resolves.toBe(true);
 
     expect(showSnackbar).toHaveBeenCalledWith(
-      "Fast styling left the last 42 characters unstyled. The app did not save them in History.",
+      FAST_STYLE_NO_HISTORY_COPY,
       expect.objectContaining({ mode: "info", action: undefined }),
     );
   });

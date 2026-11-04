@@ -256,11 +256,6 @@ type FastStyleTruncationOptions = {
   context: "dictation" | "audio";
 };
 
-/**
- * Describe a fast-style result that reports an unstyled tail. Source-specific
- * wording stays accurate for dictation and saved audio, while the no-History
- * variant avoids promising a durable recovery path.
- */
 const hasDroppedTail = (
   droppedChars: number | null | undefined,
 ): droppedChars is number =>
@@ -279,6 +274,11 @@ const getFastStyleTruncationDescriptor = (
     : FAST_STYLE_TRUNCATION_AUDIO_MESSAGE;
 };
 
+/**
+ * Describe a fast-style result that reports an unstyled tail. Source-specific
+ * wording stays accurate for dictation and saved audio, while the no-History
+ * variant avoids promising a durable recovery path.
+ */
 export const getFastStyleTruncationMessage = (
   droppedChars: number | null | undefined,
   options: FastStyleTruncationOptions,

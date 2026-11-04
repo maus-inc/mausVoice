@@ -42,6 +42,22 @@ describe("classifyPostProcessErrorCategory", () => {
     );
 
     expect([...returned].sort()).toEqual(Object.keys(BRANCH_ERRORS).sort());
+    // Set equality alone would pass if two representatives swapped categories;
+    // check each keyed input against its own category too.
+    for (const [category, error] of Object.entries(BRANCH_ERRORS)) {
+      expect(classifyPostProcessErrorCategory(error)).toBe(category);
+    }
+  });
+
+  it("keeps a retired-model provider message out of the stored category", () => {
+    // The strategy test can only see the mocked constant, so the guarantee
+    // that raw provider prose (a model id, here) never becomes the persisted
+    // category string is pinned where the real classifier runs.
+    const category = classifyPostProcessErrorCategory(
+      "The model 'gpt-oss-120b' has been retired and can no longer serve requests.",
+    );
+    expect(category).toBe(POST_PROCESS_ERROR_CATEGORY.provider);
+    expect(category).not.toContain("gpt-oss");
   });
 
   it("has a descriptor for every stored category", () => {

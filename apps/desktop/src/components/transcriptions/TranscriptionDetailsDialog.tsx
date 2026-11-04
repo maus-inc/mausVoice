@@ -54,10 +54,28 @@ const resolveCategoryWarning = (
   return feedback?.message ?? formatReason(postProcessErrorReason(warning));
 };
 
+// A run that saved the raw ASR leaves the row's displayed text equal to its
+// sanitized transcript column; a run that kept the previous text leaves the
+// two different. Rows recorded without the column cannot say which happened,
+// and the feedback module's default wording applies to them.
+const getUnusableRowHadPreviousText = (row: {
+  transcript: string;
+  sanitizedTranscript?: string | null;
+}): boolean | undefined => {
+  const sanitized = row.sanitizedTranscript;
+  if (sanitized === null || sanitized === undefined) {
+    return undefined;
+  }
+  return row.transcript !== sanitized;
+};
+
 // Rows that fell back after an unusable reply keep the raw marker as their
 // warning, which means nothing to the user. Show the same explanation the
 // retranscribe toast used instead.
-const resolveUnusableWarning = (warning: string): string => {
+const resolveUnusableWarning = (
+  warning: string,
+  hasPreviousTranscript: boolean | undefined,
+): string => {
   const feedback = getPostProcessFeedback(
     {
       postProcessFailed: false,
@@ -65,7 +83,10 @@ const resolveUnusableWarning = (warning: string): string => {
       postProcessError: null,
     },
     "history-details",
-    { unusableResponseType: getUnusableResponseType(warning) },
+    {
+      unusableResponseType: getUnusableResponseType(warning),
+      hasPreviousTranscript,
+    },
   );
   return feedback?.message ?? warning;
 };
@@ -309,7 +330,10 @@ export const TranscriptionDetailsDialog = () => {
           transcription.postProcessFallback &&
           isUnusableResponseWarning(warning)
         ) {
-          return resolveUnusableWarning(warning);
+          return resolveUnusableWarning(
+            warning,
+            getUnusableRowHadPreviousText(transcription),
+          );
         }
         return warning;
       });
@@ -318,6 +342,8 @@ export const TranscriptionDetailsDialog = () => {
     transcription?.postProcessFailed,
     transcription?.postProcessFallback,
     transcription?.warnings,
+    transcription?.transcript,
+    transcription?.sanitizedTranscript,
   ]);
 
   const startEditingFinal = () => {
