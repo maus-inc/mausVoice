@@ -246,7 +246,10 @@ export const TipToastCard = ({ id, onAction, onDismiss }: TipToastProps) => {
  * Shows (or replaces) the corner toast for a tip. Built on sonner's own
  * `toast.custom`, so a tip toast inherits the exact slide/fade motion,
  * stacking, and bottom-right position every other toast in the app already
- * uses, documented in `DESIGN.md` under Toasts.
+ * uses, documented in `DESIGN.md` under Toasts. That inheritance also
+ * covers reduced motion for free. Sonner's own stylesheet drops its
+ * enter/exit transition under `prefers-reduced-motion`, so a tip toast
+ * needs no media query of its own to honour it.
  *
  * `duration: Infinity` keeps it on screen until the user acts. A feature
  * nudge that auto-expires before it's read defeats its own purpose.
