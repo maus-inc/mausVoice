@@ -254,9 +254,15 @@ describe("classifyPostProcessErrorCategory", () => {
     expect(
       classifyPostProcessErrorCategory("request req_a4013b timed out"),
     ).toBe(POST_PROCESS_ERROR_CATEGORY.timedOut);
-    expect(
-      classifyPostProcessErrorCategory("4031 rows rejected, forbidden"),
-    ).toBe(POST_PROCESS_ERROR_CATEGORY.authentication);
+    // A digit run containing 403 falls through to the generic provider
+    // verdict; substring matching would have misread it as authentication.
+    expect(classifyPostProcessErrorCategory("4031 rows rejected")).toBe(
+      POST_PROCESS_ERROR_CATEGORY.provider,
+    );
+    // Textual markers keep substring matching.
+    expect(classifyPostProcessErrorCategory("access forbidden by policy")).toBe(
+      POST_PROCESS_ERROR_CATEGORY.authentication,
+    );
   });
 
   it("classifies a gateway timeout as a timeout, not a generic 5xx failure", () => {
