@@ -10,11 +10,13 @@ import {
 const mocks = vi.hoisted(() => ({
   create: vi.fn(),
   remove: vi.fn(),
+  list: vi.fn(),
 }));
 vi.mock("../repos", () => ({
   getConversationRepo: () => ({
     createConversation: mocks.create,
     deleteConversation: mocks.remove,
+    listConversations: mocks.list,
   }),
 }));
 vi.mock("../agents", () => ({
@@ -32,6 +34,7 @@ vi.mock("../utils/log.utils", () => ({
   getLogger: () => ({ verbose: vi.fn(), warning: vi.fn(), error: vi.fn() }),
 }));
 import { AgentStrategy } from "./agent.strategy";
+import { loadConversations } from "../actions/chat.actions";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -40,6 +43,7 @@ beforeEach(() => {
     .mockReset()
     .mockImplementation(async (value: Conversation) => value);
   mocks.remove.mockReset().mockResolvedValue(undefined);
+  mocks.list.mockReset().mockResolvedValue([]);
 });
 
 it("registers an active agent conversation and selects it on the pill", async () => {
@@ -70,6 +74,10 @@ it("removes a conversation cancelled during creation before a clear can proceed"
   );
   const strategy = new AgentStrategy();
   const starting = strategy.onBeforeStart();
+  await vi.waitFor(() => expect(mocks.create).toHaveBeenCalledOnce());
+  const loading = loadConversations();
+  await Promise.resolve();
+  expect(mocks.list).not.toHaveBeenCalled();
   await strategy.cleanup();
   let clearReady = false;
   const clearing = beginLocalDataClear().then((release) => {
@@ -86,6 +94,9 @@ it("removes a conversation cancelled during creation before a clear can proceed"
   expect(getAppState().conversationById[created.id]).toBeUndefined();
   finishRemoval();
   await starting;
+  await loading;
+  expect(mocks.list).toHaveBeenCalledOnce();
+  expect(getAppState().chat.conversationIds).not.toContain(created.id);
   const release = await clearing;
   localStorage.removeItem(LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY);
   release();
@@ -103,8 +114,30 @@ it("propagates failure to remove a cancelled conversation", async () => {
   mocks.remove.mockRejectedValueOnce(new Error("delete failed"));
   const strategy = new AgentStrategy();
   const starting = strategy.onBeforeStart();
+  await vi.waitFor(() => expect(mocks.create).toHaveBeenCalledOnce());
   await strategy.cleanup();
   finish(created);
   await expect(starting).rejects.toThrow("delete failed");
   expect(getAppState().chat.conversationIds).not.toContain(created.id);
+});
+
+it("retries an older list when a conversation was created during the read", async () => {
+  let finishList!: (rows: Conversation[]) => void;
+  mocks.list.mockImplementationOnce(
+    () =>
+      new Promise<Conversation[]>((resolve) => {
+        finishList = resolve;
+      }),
+  );
+  const loading = loadConversations();
+  await vi.waitFor(() => expect(mocks.list).toHaveBeenCalledOnce());
+  const strategy = new AgentStrategy();
+  await strategy.onBeforeStart();
+  const id = getAppState().pillConversationId!;
+  const saved = getAppState().conversationById[id]!;
+  mocks.list.mockResolvedValueOnce([saved]);
+  finishList([]);
+  await loading;
+  expect(mocks.list).toHaveBeenCalledTimes(2);
+  expect(getAppState().chat.conversationIds).toEqual([id]);
 });

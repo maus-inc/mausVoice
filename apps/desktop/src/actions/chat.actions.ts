@@ -11,11 +11,13 @@ import { nextConversationTitle } from "../utils/chat.utils";
 import { nowIso } from "../utils/date.utils";
 import { getIsDevMode } from "../utils/env.utils";
 import { getLogger } from "../utils/log.utils";
+import { createAsyncMutationTracker } from "../utils/async-mutation-tracker";
 import {
   type LocalDataWriteLease,
   withLocalDataWrite,
 } from "../utils/local-data-write-gate";
 
+const conversationCreations = createAsyncMutationTracker();
 const sendQueuesByConversationId = new Map<string, Promise<void>>();
 // Retry and edit share a reservation because both replace conversation history.
 // Agent status alone cannot guard the asynchronous persistence/preparation gap.
@@ -197,12 +199,20 @@ export const loadConversations = async (): Promise<void> => {
   });
 
   try {
-    const conversations = await getConversationRepo().listConversations();
-    produceAppState((draft) => {
-      registerConversations(draft, conversations);
-      draft.chat.conversationIds = conversations.map((c) => c.id);
-      draft.chat.status = "success";
-    });
+    while (true) {
+      const beforeWait = conversationCreations.revision();
+      await conversationCreations.wait();
+      const revision = conversationCreations.revision();
+      if (beforeWait !== revision) continue;
+      const conversations = await getConversationRepo().listConversations();
+      if (revision !== conversationCreations.revision()) continue;
+      produceAppState((draft) => {
+        registerConversations(draft, conversations);
+        draft.chat.conversationIds = conversations.map((c) => c.id);
+        draft.chat.status = "success";
+      });
+      break;
+    }
   } catch (error) {
     getLogger().error("Failed to load conversations", error);
     produceAppState((draft) => {
@@ -231,30 +241,35 @@ export function createConversation(
   existingLease?: LocalDataWriteLease,
   condition?: ConditionalConversationCreation,
 ): Promise<Conversation | null> {
-  return withLocalDataWrite(async (lease) => {
-    const repo = getConversationRepo();
-    const saved = await repo.createConversation(conversation, lease);
-    if (condition && !condition.isCurrent()) {
-      try {
-        await repo.deleteConversation(saved.id, lease);
-      } catch (error) {
-        getLogger().error(
-          "Failed to remove cancelled agent conversation",
-          error,
-        );
-        throw error;
-      }
-      return null;
-    }
+  return withLocalDataWrite(
+    (lease) =>
+      conversationCreations.track(async () => {
+        const repo = getConversationRepo();
+        if (condition && !condition.isCurrent()) return null;
+        const saved = await repo.createConversation(conversation, lease);
+        if (condition && !condition.isCurrent()) {
+          try {
+            await repo.deleteConversation(saved.id, lease);
+          } catch (error) {
+            getLogger().error(
+              "Failed to remove cancelled agent conversation",
+              error,
+            );
+            throw error;
+          }
+          return null;
+        }
 
-    produceAppState((draft) => {
-      registerConversations(draft, [saved]);
-      draft.chat.conversationIds.unshift(saved.id);
-      condition?.onRegister(draft, saved);
-    }, lease);
+        produceAppState((draft) => {
+          registerConversations(draft, [saved]);
+          draft.chat.conversationIds.unshift(saved.id);
+          condition?.onRegister(draft, saved);
+        }, lease);
 
-    return saved;
-  }, existingLease);
+        return saved;
+      }),
+    existingLease,
+  );
 }
 
 export const updateConversation = (
