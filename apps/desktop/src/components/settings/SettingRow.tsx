@@ -266,7 +266,7 @@ export const SettingRow = ({
           ? [
               {
                 flexWrap: "wrap" as const,
-                "& > :first-of-type": { flexBasis: "min(200px, 100%)" },
+                "& > span:first-of-type": { flexBasis: "min(200px, 100%)" },
                 "& > :last-child": { maxWidth: "100%", ml: "auto" },
               },
             ]

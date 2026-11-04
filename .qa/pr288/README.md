@@ -123,3 +123,9 @@ recording state ([capture](hotkey-accessibility-light-1200x800.png)). The style
 dialog exposed nine textboxes named for their styles ([capture](style-hotkey-accessibility-light-1200x800.png)).
 The preview toolbar was hidden and no uncaught page errors occurred. These
 checks do not establish screen-reader speech or native shortcut capture.
+
+## Appearance control sizing and heading follow-up
+
+Chromium preview checks after the row-sizing fix measured all tab bounds in
+English, German, French and Brazilian Portuguese at 400×600, and German at
+320×800; no tab extended beyond its scroller. The [desktop light capture](pill-placement-heading-light-1200x800.png) and [German compact capture](appearance-de-400.png) show the updated controls. The Windows-only placement row was enabled by intercepting the preview platform check; this is not a native Windows test. Chromium also found the placement heading at level 3 and its named tablist. Screen-reader output and native behavior were not tested.

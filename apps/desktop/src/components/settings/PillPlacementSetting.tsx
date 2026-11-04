@@ -43,7 +43,11 @@ export const PillPlacementSetting = () => {
   return (
     <SettingRow
       settingKey="pill_placement"
-      title={<FormattedMessage defaultMessage="Pill placement" />}
+      title={
+        <span role="heading" aria-level={3}>
+          <FormattedMessage defaultMessage="Pill placement" />
+        </span>
+      }
       description={
         <FormattedMessage defaultMessage="Whether the dictation pill anchors to the top or the bottom of the screen." />
       }

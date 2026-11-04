@@ -19,6 +19,7 @@ import { premiumSurface } from "../../styles/shadows";
 import { SettingGroup, SettingRow, SettingToggleRow } from "./SettingRow";
 import { SettingsHighlightContext } from "./settings-highlight";
 import { SettingRowText } from "./setting-row-chassis";
+import { SegmentedControl } from "../common/SegmentedControl";
 
 ensureUiHarness();
 
@@ -86,6 +87,33 @@ describe("SettingRow", () => {
       "the control row",
     );
     expect(getComputedStyle(row).flexWrap).toBe("wrap");
+    const label = requireElement(row.firstElementChild, "the row text");
+    const control = requireElement(row.lastElementChild, "the control column");
+    expect(getComputedStyle(label).flexBasis).toBe("min(200px, 100%)");
+    expect(getComputedStyle(control).flexBasis).not.toBe("min(200px, 100%)");
+  });
+
+  it("lets segmented options shrink and wrap in a constrained control column", () => {
+    render(
+      <SettingRow
+        settingKey="example"
+        title="Example"
+        control={
+          <SegmentedControl
+            value="first"
+            onChange={() => undefined}
+            options={[
+              { value: "first", label: "Current monitor" },
+              { value: "second", label: "Monitor des Mauszeigers" },
+            ]}
+          />
+        }
+      />,
+    );
+    for (const tab of container.querySelectorAll('[role="tab"]')) {
+      expect(getComputedStyle(tab).flexShrink).toBe("1");
+      expect(getComputedStyle(tab).overflowWrap).toBe("anywhere");
+    }
   });
 
   it("uses the app's resting surface for regular and destructive groups", () => {
