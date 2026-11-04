@@ -212,9 +212,11 @@ describe("generative-provider tip action", () => {
   it("keeps both tip toasts mounted while the Settings search box has a query", async () => {
     // Both TipToastTrigger calls live outside the search-results branch in
     // SettingsPage for exactly this reason. Before that, a trigger inside a
-    // section the search hid would unmount, its cleanup would clear the
-    // toast, and clearing the search would remount it and show it again, so
-    // typing in an unrelated field made a tip flicker.
+    // section the search hid would unmount, and its cleanup called
+    // hideTipToast, which schedules sonner's own dismiss through a single
+    // requestAnimationFrame rather than removing the toast synchronously.
+    // Clearing the search then remounted the trigger and showed the toast
+    // again, so typing in an unrelated field made a tip flicker.
     await renderPage();
 
     const toastsBefore = Array.from(
@@ -231,9 +233,21 @@ describe("generative-provider tip action", () => {
         HTMLInputElement.prototype,
         "value",
       )?.set;
-      setter?.call(searchField, "groq");
+      // A query no real setting matches, so the only way the search-results
+      // branch can render its "no match" copy is if SettingsPage actually
+      // swapped to that branch, which is the state change this test needs.
+      setter?.call(searchField, "zzz-no-such-setting-zzz");
       searchField.dispatchEvent(new Event("input", { bubbles: true }));
     });
+    // A regression's hideTipToast call would only land once the
+    // requestAnimationFrame sonner's dismiss schedules actually runs, not
+    // within the synchronous input event above, so it must be drained
+    // before checking either toast.
+    await drainFrames();
+
+    expect(document.body.textContent).toContain(
+      "No settings match that search.",
+    );
 
     const toastsDuringSearch = Array.from(
       document.querySelectorAll('[data-tip-toast="true"]'),
@@ -243,5 +257,13 @@ describe("generative-provider tip action", () => {
     // remount cycle during the search would fail this.
     expect(toastsDuringSearch[0]).toBe(toastsBefore[0]);
     expect(toastsDuringSearch[1]).toBe(toastsBefore[1]);
+    // The node-identity check above would still pass if sonner marked the
+    // toast for removal without React ever unmounting its wrapper, so the
+    // dismiss signal itself has to be checked too.
+    for (const toastEl of toastsDuringSearch) {
+      const sonnerToast = toastEl.closest("[data-sonner-toast]");
+      expect(sonnerToast).not.toBeNull();
+      expect(sonnerToast?.getAttribute("data-removed")).toBe("false");
+    }
   });
 });
