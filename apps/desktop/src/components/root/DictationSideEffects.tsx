@@ -52,6 +52,11 @@ import {
   stopOwnedNativeStart,
 } from "./dictation-recording-intake";
 import { createSystemVolumeDim } from "./dictation-volume-dim";
+import { invokeGuardedRecordingStart } from "./recording-start-gate";
+import {
+  getLocalDataClearGeneration,
+  isLocalDataClearRequested,
+} from "../../utils/local-data-write-gate";
 import type {
   OverlayPhase,
   OverlayResolvePermissionPayload,
@@ -1343,6 +1348,8 @@ export const DictationSideEffects = () => {
 
   const startRecording = useCallback(
     async (args: { mode: RecordingMode; language?: string | null }) => {
+      if (isLocalDataClearRequested()) return;
+      const clearGeneration = getLocalDataClearGeneration();
       const attempt = ++recordingOperationRef.current;
       const state = getAppState();
       const mode = args.mode;
@@ -1394,6 +1401,8 @@ export const DictationSideEffects = () => {
 
         let audioForwardingReady = false;
         const isCurrentStart = () =>
+          !isLocalDataClearRequested() &&
+          clearGeneration === getLocalDataClearGeneration() &&
           isRecordingStartCurrent(
             operationId,
             recordingOperationRef.current,
@@ -1471,9 +1480,9 @@ export const DictationSideEffects = () => {
         }
         const [, startRecordingResult] = await Promise.all([
           strategy.setPhase("recording"),
-          invoke<StartRecordingResponse>("start_recording", {
-            args: { preferredMicrophone },
-          }).then((result) => {
+          invokeGuardedRecordingStart<StartRecordingResponse>(
+            preferredMicrophone,
+          ).then((result) => {
             // The phase update can outlive microphone startup. Anchor provider
             // wall-clock limits at the instant native capture succeeds rather
             // than waiting for the other Promise.all branch.
