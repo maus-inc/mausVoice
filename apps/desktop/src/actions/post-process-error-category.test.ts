@@ -245,6 +245,20 @@ describe("classifyPostProcessErrorCategory", () => {
     ).toBe(POST_PROCESS_ERROR_CATEGORY.timedOut);
   });
 
+  it("matches 401 and 403 in prose only as whole status codes", () => {
+    expect(classifyPostProcessErrorCategory("unexpected status 401")).toBe(
+      POST_PROCESS_ERROR_CATEGORY.authentication,
+    );
+    // A request ID or longer digit run must not outrank the real marker:
+    // this is a timeout, not an authentication failure.
+    expect(
+      classifyPostProcessErrorCategory("request req_a4013b timed out"),
+    ).toBe(POST_PROCESS_ERROR_CATEGORY.timedOut);
+    expect(
+      classifyPostProcessErrorCategory("4031 rows rejected, forbidden"),
+    ).toBe(POST_PROCESS_ERROR_CATEGORY.authentication);
+  });
+
   it("classifies a gateway timeout as a timeout, not a generic 5xx failure", () => {
     // The explicit status map has to win over the 5xx fallback, or the 504
     // entry is dead and the user is told the provider errored.

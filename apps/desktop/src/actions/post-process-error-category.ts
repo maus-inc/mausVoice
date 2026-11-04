@@ -253,9 +253,12 @@ const STRUCTURED_NETWORK_CODES = [
   "eai_again",
   "network_error",
 ] as const;
+// Matched only as whole words, the same way the 429 and 402 prose fallbacks
+// match: a request ID like "req_a4013b" or a longer digit run like "4010"
+// must not read as an authentication status and outrank a timeout or network
+// marker later in the cascade.
+const AUTHENTICATION_STATUS_CODES = ["401", "403"] as const;
 const AUTHENTICATION_MESSAGE_MARKERS = [
-  "401",
-  "403",
   "unauthorized",
   "forbidden",
   "authentication",
@@ -276,6 +279,8 @@ const NETWORK_MESSAGE_MARKERS = [
 
 type ClassificationRule = {
   markers: readonly string[];
+  /** Numeric codes matched only as whole words, never inside longer digit runs. */
+  statusCodes?: readonly string[];
   category: PostProcessErrorCategory;
 };
 
@@ -284,7 +289,11 @@ const matchClassificationRules = (
   value: string,
   rules: readonly ClassificationRule[],
 ): PostProcessErrorCategory | undefined =>
-  rules.find((rule) => includesAny(value, rule.markers))?.category;
+  rules.find(
+    (rule) =>
+      includesAny(value, rule.markers) ||
+      rule.statusCodes?.some((code) => new RegExp(`\\b${code}\\b`).test(value)),
+  )?.category;
 
 // The structured cascade: provider codes and shape names beat prose. The
 // in-flight budget check runs first everywhere it can appear, because a
@@ -425,6 +434,7 @@ const MESSAGE_CLASSIFICATION_RULES: readonly ClassificationRule[] = [
   ...PROVIDER_LIMIT_PRIORITY_RULES,
   {
     markers: AUTHENTICATION_MESSAGE_MARKERS,
+    statusCodes: AUTHENTICATION_STATUS_CODES,
     category: POST_PROCESS_ERROR_CATEGORY.authentication,
   },
   {
