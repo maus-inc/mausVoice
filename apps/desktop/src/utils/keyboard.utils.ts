@@ -128,15 +128,16 @@ export const getHotkeyCombosForAction = (
   state: AppState,
   actionName: string,
 ): string[][] => {
-  const combos = Object.values(state.hotkeyById)
-    .filter((h) => h.actionName === actionName && h.keys.length > 0)
-    .map((h) => h.keys);
-
-  if (combos.length > 0) {
-    return combos;
-  }
-
-  return getDefaultHotkeyCombosForAction(actionName);
+  const configured = Object.values(state.hotkeyById).filter(
+    (hotkey) => hotkey.actionName === actionName,
+  );
+  // An explicit empty binding is a cleared shortcut, not a missing record.
+  // Only a genuinely unconfigured action inherits the platform default.
+  return configured.length > 0
+    ? configured
+        .filter((hotkey) => hotkey.keys.length > 0)
+        .map((hotkey) => hotkey.keys)
+    : getDefaultHotkeyCombosForAction(actionName);
 };
 
 export type SwitchToStyleEntry = {

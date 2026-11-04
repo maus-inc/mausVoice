@@ -208,6 +208,7 @@
   "could_not_check_for_updates_check_your_connection_and_try_ag": "无法检查更新。请检查网络连接后重试。",
   "could_not_close_mausvoice_try_again_or_force_quit_it": "无法关闭 mausVoice。请重试或强制退出。",
   "could_not_copy_the_transcript_it_is_saved_in_your_history": "无法复制转录内容。它已保存在你的历史记录中。",
+  "could_not_load_shortcuts": "无法加载快捷键",
   "could_not_load_the_changelog": "无法加载更新日志。",
   "could_not_open_the_review_window_your_transcript_was_saved_t": "无法打开审阅窗口。你的转录文本已保存到历史记录。",
   "could_not_reach_the_release_history": "无法访问版本历史。",

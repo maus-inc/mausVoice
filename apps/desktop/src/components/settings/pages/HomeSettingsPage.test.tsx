@@ -100,7 +100,9 @@ describe("HomeSettingsPage", () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
-    setAppState(structuredClone(INITIAL_APP_STATE), true);
+    const state = structuredClone(INITIAL_APP_STATE);
+    state.settings.hotkeysStatus = "success";
+    setAppState(state, true);
   });
 
   afterEach(() => {
@@ -151,6 +153,10 @@ describe("HomeSettingsPage", () => {
 
     act(() => {
       seedManualStyles("default");
+      setAppState((state) => ({
+        ...state,
+        settings: { ...state.settings, hotkeysStatus: "success" },
+      }));
     });
     expect(row("Previous writing style")).not.toBeUndefined();
     expect(row("Next writing style")).not.toBeUndefined();
@@ -158,6 +164,10 @@ describe("HomeSettingsPage", () => {
 
   it("opens the shortcut editor for the previous and next style keys", () => {
     seedManualStyles("default");
+    setAppState((state) => ({
+      ...state,
+      settings: { ...state.settings, hotkeysStatus: "success" },
+    }));
     render();
     click(
       requireElement(row("Previous writing style"), "the previous style row"),

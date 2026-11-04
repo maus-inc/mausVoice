@@ -3,6 +3,7 @@ import { INITIAL_APP_STATE } from "../state/app.state";
 import { setAppState } from "../store";
 import {
   getDefaultHotkeyCombosForAction,
+  getHotkeyCombosForAction,
   getPrettyKeyName,
   getStyleSwitchActionNamesForKey,
   DICTATE_HOTKEY,
@@ -220,6 +221,33 @@ describe("getStyleSwitchActionNamesForKey", () => {
  * used to answer with nothing at all.
  */
 describe("default hotkeys", () => {
+  it("does not restore a platform default after an explicit clear", async () => {
+    const state = structuredClone(INITIAL_APP_STATE);
+    state.onboarding.dictationOverrideEnabled = true;
+    state.hotkeyStrategy = "bridge";
+    state.hotkeyById.cleared = {
+      id: "cleared",
+      actionName: DICTATE_HOTKEY,
+      keys: [],
+    };
+    state.settings.hotkeyIds = ["cleared"];
+    expect(getHotkeyCombosForAction(state, DICTATE_HOTKEY)).toEqual([]);
+    setAppState(state, true);
+    invokeMock.mockReset().mockResolvedValue(undefined);
+    await syncHotkeyCombosToNative();
+    expect(invokeMock).toHaveBeenCalledWith("sync_compositor_hotkeys", {
+      bindings: [],
+    });
+  });
+
+  it("keeps additional configured shortcuts when the primary is cleared", () => {
+    const state = structuredClone(INITIAL_APP_STATE);
+    state.hotkeyById = {
+      primary: { id: "primary", actionName: DICTATE_HOTKEY, keys: [] },
+      extra: { id: "extra", actionName: DICTATE_HOTKEY, keys: ["KeyA"] },
+    };
+    expect(getHotkeyCombosForAction(state, DICTATE_HOTKEY)).toEqual([["KeyA"]]);
+  });
   it("binds the dictate key on Linux, and not only on macOS", () => {
     expect(getDefaultHotkeyCombosForAction(DICTATE_HOTKEY)).toEqual([
       ["ControlLeft", "AltLeft", "Space"],

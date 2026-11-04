@@ -22,7 +22,7 @@ Two sections carry a nested subsection: **Input permissions** sits inside System
 
 ## Overview
 
-The overview brings frequently used shortcuts and the currently selected models together, with links to their full settings.
+The overview brings frequently used shortcuts and the currently selected models together, with links to their full settings. Shortcut summaries wait for saved bindings to load and offer a retry if loading fails. They show the primary binding, including an explicitly cleared one.
 
 ## Dictation
 

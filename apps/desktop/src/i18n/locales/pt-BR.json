@@ -208,6 +208,7 @@
   "could_not_check_for_updates_check_your_connection_and_try_ag": "Não foi possível verificar atualizações. Verifique sua conexão e tente novamente.",
   "could_not_close_mausvoice_try_again_or_force_quit_it": "Não foi possível fechar o mausVoice. Tente novamente ou force a saída.",
   "could_not_copy_the_transcript_it_is_saved_in_your_history": "Não foi possível copiar a transcrição. Ela foi salva no seu histórico.",
+  "could_not_load_shortcuts": "Não foi possível carregar os atalhos",
   "could_not_load_the_changelog": "Não foi possível carregar o registro de alterações.",
   "could_not_open_the_review_window_your_transcript_was_saved_t": "Não foi possível abrir a janela de revisão. Sua transcrição foi salva no histórico.",
   "could_not_reach_the_release_history": "Não foi possível acessar o histórico de versões.",

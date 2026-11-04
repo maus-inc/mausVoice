@@ -208,6 +208,7 @@
   "could_not_check_for_updates_check_your_connection_and_try_ag": "Impossible de vérifier les mises à jour. Vérifiez votre connexion et réessayez.",
   "could_not_close_mausvoice_try_again_or_force_quit_it": "Impossible de fermer mausVoice. Réessayez ou forcez sa fermeture.",
   "could_not_copy_the_transcript_it_is_saved_in_your_history": "Impossible de copier la transcription. Elle est enregistrée dans votre historique.",
+  "could_not_load_shortcuts": "Impossible de charger les raccourcis",
   "could_not_load_the_changelog": "Impossible de charger le journal des modifications.",
   "could_not_open_the_review_window_your_transcript_was_saved_t": "Impossible d'ouvrir la fenêtre de révision. Votre transcription a été enregistrée dans l'historique.",
   "could_not_reach_the_release_history": "Impossible d’accéder à l’historique des versions.",

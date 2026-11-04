@@ -208,6 +208,7 @@
   "could_not_check_for_updates_check_your_connection_and_try_ag": "Updates konnten nicht geprüft werden. Prüfen Sie Ihre Verbindung und versuchen Sie es erneut.",
   "could_not_close_mausvoice_try_again_or_force_quit_it": "mausVoice konnte nicht geschlossen werden. Versuche es erneut oder beende es zwangsweise.",
   "could_not_copy_the_transcript_it_is_saved_in_your_history": "Der Transkript konnte nicht kopiert werden. Er ist in deinem Verlauf gespeichert.",
+  "could_not_load_shortcuts": "Tastenkürzel konnten nicht geladen werden",
   "could_not_load_the_changelog": "Das Änderungsprotokoll konnte nicht geladen werden.",
   "could_not_open_the_review_window_your_transcript_was_saved_t": "Das Überprüfungsfenster konnte nicht geöffnet werden. Dein Transkript wurde im Verlauf gespeichert.",
   "could_not_reach_the_release_history": "Der Veröffentlichungsverlauf konnte nicht erreicht werden.",

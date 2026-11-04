@@ -93,3 +93,15 @@ and [compact](setup-failure-400x600.png), and [stop failure at desktop](clear-st
 and [compact](clear-stop-failure-400x600.png). The compact dialog scrolls the
 error into view without moving focus. No uncaught page errors were observed.
 These injected states do not exercise native stopping, elevation or WebView.
+
+## Shortcut loading and cleared binding follow-up
+
+Chromium's populated preview was seeded with a loading status, a load failure,
+and an explicitly empty primary dictation binding. The preview toolbar was
+hidden. Captures show [loading at desktop](shortcuts-loading-1200x800.png) and
+[compact](shortcuts-loading-400x600.png), [failure at desktop](shortcuts-error-1200x800.png)
+and [compact](shortcuts-error-400x600.png), and [cleared binding at desktop](shortcuts-empty-1200x800.png)
+and [compact](shortcuts-empty-400x600.png). The failure card provides a retry;
+its behavior is covered by the component test. No uncaught page errors were
+observed in these injected states. Native key registration and WebView were not
+visually verified.
