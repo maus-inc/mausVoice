@@ -42,18 +42,27 @@ export const setSpokenCommandsEnabled = async (
 export const setDictationLimitMinutes = async (
   minutes: number,
 ): Promise<void> => {
-  await updateUserPreferences((preferences) => {
-    preferences.dictationLimitMinutes = normalizeDictationLimitMinutes(minutes);
-  }, "Failed to save dictation limit preference. Please try again.");
+  await updateUserPreferences(
+    (preferences) => {
+      preferences.dictationLimitMinutes =
+        normalizeDictationLimitMinutes(minutes);
+    },
+    "Failed to save dictation limit preference. Please try again.",
+    { requireWrite: true },
+  );
 };
 
 export const setHandsFreeDelayMs = async (
   delayMs: Nullable<number>,
 ): Promise<void> => {
-  await updateUserPreferences((preferences) => {
-    preferences.handsFreeDelayMs =
-      delayMs == null ? null : normalizeHandsFreeDelayMs(delayMs);
-  }, "Failed to save hands-free delay preference. Please try again.");
+  await updateUserPreferences(
+    (preferences) => {
+      preferences.handsFreeDelayMs =
+        delayMs == null ? null : normalizeHandsFreeDelayMs(delayMs);
+    },
+    "Failed to save hands-free delay preference. Please try again.",
+    { requireWrite: true },
+  );
 };
 
 export const setAutoLearnDictionaryEnabled = async (

@@ -159,6 +159,19 @@ describe("useSavedNumberField", () => {
     expect(input().value).toBe("7");
   });
 
+  it("retires a rejected save before a later external update to the same value", async () => {
+    save.mockRejectedValueOnce(new Error("write blocked"));
+    type("10");
+    await act(async () => {
+      click("commit");
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    type("20");
+    act(() => stored.set(10));
+    expect(input().value).toBe("10");
+  });
+
   it("does not save the same value twice", () => {
     click("commit");
     click("commit");

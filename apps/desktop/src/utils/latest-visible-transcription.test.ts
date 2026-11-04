@@ -65,31 +65,30 @@ it("restarts from the first page if a creation shifts offsets between pages", as
 });
 it("waits for a creation already in flight before reading", async () => {
   let finish!: () => void;
-  const creation = trackTranscriptionCreation(
-    () =>
-      new Promise<void>((resolve) => {
-        finish = resolve;
-      }),
-  );
+  const pending = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  const creation = trackTranscriptionCreation(() => pending);
   mocks.list.mockResolvedValue([row("new")]);
   const latest = latestVisibleTranscription();
-  await Promise.resolve();
-  expect(mocks.list).not.toHaveBeenCalled();
-  finish();
-  await creation;
+  try {
+    await Promise.resolve();
+    expect(mocks.list).not.toHaveBeenCalled();
+  } finally {
+    finish();
+    await creation;
+  }
   expect((await latest)?.id).toBe("new");
 });
 it("waits for a creation that begins during a page read before accepting it", async () => {
   let finish!: () => void;
-  let creation!: Promise<void>;
+  const pending = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  let creation: Promise<void> | undefined;
   mocks.list
     .mockImplementationOnce(async () => {
-      creation = trackTranscriptionCreation(
-        () =>
-          new Promise<void>((resolve) => {
-            finish = resolve;
-          }),
-      );
+      creation = trackTranscriptionCreation(() => pending);
       return [row("old")];
     })
     .mockResolvedValueOnce([row("new")]);
@@ -97,10 +96,12 @@ it("waits for a creation that begins during a page read before accepting it", as
   const read = latestVisibleTranscription().then((value) => {
     result = value;
   });
-  await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
-  expect(result).toBeUndefined();
-  finish();
-  await creation;
-  await read;
+  try {
+    await vi.waitFor(() => expect(creation).toBeDefined());
+    expect(result).toBeUndefined();
+  } finally {
+    finish();
+    await read;
+  }
   expect(result?.id).toBe("new");
 });

@@ -207,6 +207,8 @@ type UpdateUserPreferencesOptions = {
   showErrorToast?: boolean;
   /** Reuse a write lease the caller already holds instead of taking one. */
   existingLease?: LocalDataWriteLease;
+  /** Reject a blocked write when the caller must distinguish it from a save. */
+  requireWrite?: boolean;
 };
 
 export const updateUserPreferences = (
@@ -289,7 +291,10 @@ export const updateUserPreferences = (
     }
 
     const releaseWrite = beginLocalDataWrite();
-    if (!releaseWrite) return;
+    if (!releaseWrite) {
+      if (options.requireWrite) throw new Error("Local data write is blocked.");
+      return;
+    }
     try {
       await savePreferences(releaseWrite.lease);
     } finally {
