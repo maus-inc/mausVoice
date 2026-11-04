@@ -190,6 +190,17 @@ export const createDefaultPreferences = (): UserPreferences => ({
 // cannot read a stale snapshot and clobber each other's change. Each task reads
 // the latest committed preferences when it actually runs.
 const { enqueue: enqueuePrefsMutation } = createMutationQueue();
+let preferencesNeedReconciliation = false;
+
+const reconcilePreferences = async (
+  lease: LocalDataWriteLease,
+): Promise<void> => {
+  const latest = await getUserPreferencesRepo().getUserPreferences();
+  produceAppState((draft) => {
+    setUserPreferences(draft, latest ?? createDefaultPreferences());
+  }, lease);
+  preferencesNeedReconciliation = false;
+};
 
 type UpdateUserPreferencesOptions = {
   /** Set false when the caller presents the failure inline. */
@@ -209,6 +220,18 @@ export const updateUserPreferences = (
     const savePreferences = async (
       lease: LocalDataWriteLease,
     ): Promise<void> => {
+      if (preferencesNeedReconciliation) {
+        try {
+          await reconcilePreferences(lease);
+        } catch (error) {
+          getLogger().error(
+            `Failed to reconcile preferences before update: ${error}`,
+          );
+          if (options.showErrorToast !== false)
+            showErrorSnackbar(saveErrorMessage);
+          throw error;
+        }
+      }
       const state = getAppState();
       const myUserId = getMyEffectiveUserId(state);
 
@@ -245,6 +268,14 @@ export const updateUserPreferences = (
         getLogger().verbose("User preferences saved successfully");
       } catch (error) {
         getLogger().error(`Failed to update user preferences: ${error}`);
+        preferencesNeedReconciliation = true;
+        try {
+          await reconcilePreferences(lease);
+        } catch (recoveryError) {
+          getLogger().error(
+            `Failed to re-read preferences after a failed save: ${recoveryError}`,
+          );
+        }
         if (options.showErrorToast !== false) {
           showErrorSnackbar(saveErrorMessage);
         }

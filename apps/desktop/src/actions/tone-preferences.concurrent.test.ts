@@ -4,6 +4,7 @@ import { getAppState, produceAppState } from "../store";
 
 const mocks = vi.hoisted(() => ({
   set: vi.fn(),
+  get: vi.fn(),
   delete: vi.fn(),
   logger: {
     error: vi.fn(),
@@ -16,7 +17,7 @@ vi.mock("../repos", () => ({
   getToneRepo: () => ({ deleteTone: mocks.delete }),
   getUserPreferencesRepo: () => ({
     setUserPreferences: mocks.set,
-    getUserPreferences: vi.fn().mockResolvedValue(null),
+    getUserPreferences: mocks.get,
   }),
 }));
 vi.mock("../utils/log.utils", () => ({ getLogger: () => mocks.logger }));
@@ -33,6 +34,11 @@ beforeEach(() => {
       activeToneId: "email",
       preferredMicrophone: null,
     };
+  });
+  mocks.get.mockReset().mockResolvedValue({
+    ...createDefaultPreferences(),
+    activeToneId: "email",
+    preferredMicrophone: null,
   });
   mocks.set.mockReset().mockImplementation(async (value: unknown) => value);
   mocks.delete.mockReset().mockResolvedValue(undefined);
