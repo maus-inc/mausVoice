@@ -12,6 +12,34 @@ import { ElasticSlider } from "./ElasticSlider";
 ensureUiHarness();
 setMatchMedia(true);
 
+it("synchronizes the display callback on mount and saved-value changes", () => {
+  const onDisplay = vi.fn();
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  const render = (value: number) =>
+    act(() =>
+      root.render(
+        <ThemeProvider theme={theme}>
+          <ElasticSlider
+            value={value}
+            onCommit={() => {}}
+            onChangeDisplay={onDisplay}
+          />
+        </ThemeProvider>,
+      ),
+    );
+  try {
+    render(35);
+    expect(onDisplay).toHaveBeenLastCalledWith(35);
+    render(45);
+    expect(onDisplay).toHaveBeenLastCalledWith(45);
+  } finally {
+    act(() => root.unmount());
+    host.remove();
+  }
+});
+
 it("restores the saved value and live readout when a commit fails", async () => {
   const onCommit = vi.fn().mockRejectedValue(new Error("save failed"));
   const onDisplay = vi.fn();

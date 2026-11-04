@@ -26,7 +26,10 @@ export type ElasticSliderProps = {
   valueLabelFormat?: (value: number) => string;
   ariaLabel?: string;
   disabled?: boolean;
-  /** Optional live display callback, fired during the drag only. */
+  /**
+   * Mirrors the displayed value during interaction and when it synchronizes
+   * with persisted state, including after a failed commit or on mount.
+   */
   onChangeDisplay?: (value: number) => void;
   sx?: SliderProps["sx"];
 };

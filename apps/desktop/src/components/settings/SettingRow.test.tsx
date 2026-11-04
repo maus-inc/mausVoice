@@ -110,7 +110,9 @@ describe("SettingRow", () => {
         }
       />,
     );
-    for (const tab of container.querySelectorAll('[role="tab"]')) {
+    const tabs = container.querySelectorAll('[role="tab"]');
+    expect(tabs).toHaveLength(2);
+    for (const tab of tabs) {
       expect(getComputedStyle(tab).flexShrink).toBe("1");
       expect(getComputedStyle(tab).overflowWrap).toBe("anywhere");
     }
