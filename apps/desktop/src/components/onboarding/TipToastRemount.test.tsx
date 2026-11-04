@@ -34,19 +34,19 @@ setMatchMedia(false);
 let container: HTMLDivElement;
 let root: Root;
 /** jsdom does not run rAF; sonner's own dismiss debounce is driven explicitly. */
-let frames: Array<FrameRequestCallback>;
+let pendingFrames: Array<FrameRequestCallback>;
 
 beforeEach(() => {
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
-  frames = [];
+  pendingFrames = [];
   vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
-    frames.push(cb);
-    return frames.length;
+    pendingFrames.push(cb);
+    return pendingFrames.length;
   });
   vi.stubGlobal("cancelAnimationFrame", (handle: number) => {
-    frames[handle - 1] = () => undefined;
+    pendingFrames[handle - 1] = () => undefined;
   });
 });
 
@@ -54,9 +54,9 @@ afterEach(async () => {
   await act(() => root.unmount());
   // Drain while the stub is still installed, same reasoning as the
   // Settings test. Sonner's store is module-level and outlives this test.
-  for (let round = 0; round < 5 && frames.length > 0; round += 1) {
+  for (let round = 0; round < 5 && pendingFrames.length > 0; round += 1) {
     await act(() => {
-      for (const frame of frames.splice(0)) frame(0);
+      for (const frame of pendingFrames.splice(0)) frame(0);
     });
   }
   container.remove();
@@ -66,7 +66,7 @@ afterEach(async () => {
 
 const drainFrames = async () => {
   await act(() => {
-    for (const frame of frames.splice(0)) frame(0);
+    for (const frame of pendingFrames.splice(0)) frame(0);
   });
 };
 

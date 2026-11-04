@@ -328,7 +328,9 @@ export const TipToastTrigger = ({
   useEffect(() => {
     if (!visible) return;
     showTipToast(id, () => onActionRef.current?.());
-    return () => hideTipToast(id);
+    return () => {
+      hideTipToast(id);
+    };
   }, [id, visible]);
 
   return null;
