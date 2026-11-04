@@ -21,15 +21,20 @@ it("disables progress motion when reduced motion is requested", () => {
       progressPercent: 25,
     }),
   );
-  const progressStyle = styles[1] as (
-    theme: unknown,
-  ) => Record<string, unknown>;
-  const result = progressStyle({
-    vars: { palette: { level1: "white" } },
+  const theme = {
+    vars: { palette: { level1: "white", primary: { main: "blue" } } },
     palette: { background: { paper: "white" } },
-  });
-  expect(result.transition).toBe(`transform ${duration.fast}s linear`);
-  expect(result[`@media ${reducedMotionQuery}`]).toEqual({
+    spacing: (value: number) => `${value}px`,
+  };
+  const result = styles
+    .filter(
+      (sx): sx is (input: typeof theme) => Record<string, unknown> =>
+        typeof sx === "function",
+    )
+    .map((sx) => sx(theme))
+    .find((sx) => sx.transform === "translateX(25%)");
+  expect(result?.transition).toBe(`transform ${duration.fast}s linear`);
+  expect(result?.[`@media ${reducedMotionQuery}`]).toEqual({
     transition: "none",
   });
 });

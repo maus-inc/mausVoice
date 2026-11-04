@@ -84,13 +84,6 @@ const SettingsRailLink = ({
   </Box>
 );
 
-/**
- * Whether a keydown should move focus to the search box.
- *
- * A bare `/` from anywhere on the surface is the shortcut people expect from a
- * search box. A modified `/` belongs to the browser or the app, and a `/` typed
- * inside a field has to reach that field, so both are left alone.
- */
 const visuallyHidden = {
   position: "absolute",
   width: "1px",
@@ -100,6 +93,13 @@ const visuallyHidden = {
   whiteSpace: "nowrap",
 } as const;
 
+/**
+ * Whether a keydown should move focus to the search box.
+ *
+ * A bare `/` from anywhere on the surface is the shortcut people expect from a
+ * search box. A modified `/` belongs to the browser or the app, and a `/` typed
+ * inside a field has to reach that field, so both are left alone.
+ */
 const isSearchShortcut = (event: KeyboardEvent): boolean => {
   if (
     event.key !== "/" ||
