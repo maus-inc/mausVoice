@@ -201,10 +201,11 @@ export const TipToastCard = ({ id, onAction, onDismiss }: TipToastProps) => {
           gap: 1,
           p: 2,
           cursor: "pointer",
-          // Default, hover, and active/press feedback: `:focus-visible` is
-          // already covered by the global chrome-tinted ring in `theme.ts`.
-          // The same wash and scale `TranscriptRow`'s clickable row and
-          // `MuiIconButton` already use, not a one-off invented here.
+          // Hover and active/press feedback live here. `:focus-visible`
+          // needs no rule of its own, since the global chrome-tinted ring in
+          // `theme.ts` already covers it. The same wash and scale
+          // `TranscriptRow`'s clickable row and `MuiIconButton` already use,
+          // not a one-off invented here.
           transition: `background-color ${duration.fast * 1000}ms ${cssEase(easeOutQuint)}, transform 120ms ${cssEase(easeOutQuint)}`,
           "&:hover": { bgcolor: "action.hover" },
           "&:active": { transform: `scale(${pressScale})` },
@@ -303,9 +304,14 @@ export const TipToastTrigger = ({
 }): null => {
   // The effect below only needs the latest callback when it actually shows
   // the toast; it must not re-run (and so re-show the toast) just because
-  // the caller passed a new closure identity on every render.
+  // the caller passed a new closure identity on every render. The ref write
+  // itself lives in its own effect, not inline in the render body, because
+  // React can replay or discard a render without committing it, and a ref
+  // mutation during render would leak from that discarded work.
   const onActionRef = useRef(onAction);
-  onActionRef.current = onAction;
+  useEffect(() => {
+    onActionRef.current = onAction;
+  }, [onAction]);
 
   useEffect(() => {
     if (!visible) return;

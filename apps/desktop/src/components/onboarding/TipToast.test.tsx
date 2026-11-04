@@ -123,6 +123,18 @@ describe("TipToastCard", () => {
       );
     });
     expect(onAction).toHaveBeenCalledTimes(1);
+
+    // Activation is one-shot per card instance, so Space needs its own
+    // fresh card rather than a second key on the one Enter already fired.
+    act(() => root.unmount());
+    root = createRoot(container);
+    await renderCard({ id: "assistant-mode", onAction });
+    act(() => {
+      bodyRegion().dispatchEvent(
+        new KeyboardEvent("keydown", { key: " ", bubbles: true }),
+      );
+    });
+    expect(onAction).toHaveBeenCalledTimes(2);
   });
 
   it("ignores a keydown that bubbled up from the dismiss button", async () => {

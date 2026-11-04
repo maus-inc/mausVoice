@@ -1793,6 +1793,17 @@ export default function SettingsPage() {
             openGroqDialog();
           }}
         />
+        {/* Anchored here rather than only in Help, and kept outside the
+            search results branch below for the same reason as the trigger
+            above, so a user reaches it where they actually make the choice
+            (`UpdateChannelSetting` further down) without the toast flickering
+            while they search. Without a contextual anchor the update-channel
+            tip was listed in Help and nowhere else, so the only way to
+            discover it was to go looking for it. */}
+        <TipToastTrigger
+          id="update-channel"
+          visible={useTip("update-channel")}
+        />
         <TextField
           fullWidth
           size="small"

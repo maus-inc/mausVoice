@@ -7,8 +7,6 @@ import { getMyUserPreferences } from "../../utils/user.utils";
 import { ConfirmDialog } from "../common/ConfirmDialog";
 import { SegmentedControl } from "../common/SegmentedControl";
 import { SettingSection } from "../common/SettingSection";
-import { useTip } from "../onboarding/TipCard";
-import { TipToastTrigger } from "../onboarding/TipToast";
 
 export const UpdateChannelSetting = () => {
   const intl = useIntl();
@@ -55,11 +53,10 @@ export const UpdateChannelSetting = () => {
 
   return (
     <>
-      {/* The tip is anchored here rather than only in Help, so a user reaches it
-          where they actually make the choice. Without a contextual anchor the
-          `update-channel` tip was listed in Help and nowhere else, so the only
-          way to discover it was to go looking for it. */}
-      <TipToastTrigger id="update-channel" visible={useTip("update-channel")} />
+      {/* The update-channel tip is anchored in SettingsPage, next to the
+          generative-provider trigger, not here. This section unmounts
+          while the Settings search box has a query, and a trigger living
+          here would hide and re-show the toast on every keystroke. */}
       <SettingSection
         title={<FormattedMessage defaultMessage="Update channel" />}
         description={

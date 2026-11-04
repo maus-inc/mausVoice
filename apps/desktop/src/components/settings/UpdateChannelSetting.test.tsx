@@ -15,18 +15,6 @@ vi.mock("react-intl", async (importOriginal) => {
   return reactIntlWithIdsModule(importOriginal);
 });
 
-// The live tip now renders into sonner's toast layer, not this component's
-// own DOM, so there is nothing here to assert on directly. Both are stubbed
-// to a marker div carrying the id, so the anchor (which id is wired up at
-// this call site) is still asserted on without a Router or a Toaster.
-vi.mock("../onboarding/TipCard", () => ({
-  useTip: () => true,
-}));
-vi.mock("../onboarding/TipToast", () => ({
-  TipToastTrigger: ({ id }: { id: string }) =>
-    createElement("div", { "data-tip": id }),
-}));
-
 vi.mock("../../actions/user.actions", async (importOriginal) => {
   const actual =
     await importOriginal<typeof import("../../actions/user.actions")>();
@@ -105,17 +93,6 @@ describe("UpdateChannelSetting", () => {
     const beta = tabByName("Beta") as HTMLElement | undefined;
     expect(stable?.getAttribute("aria-selected")).toBe("true");
     expect(beta?.getAttribute("aria-selected")).toBe("false");
-  });
-
-  it("anchors the update-channel tip where the choice is made", () => {
-    // The tip used to be listed in Help and nowhere else, so the only way to
-    // discover it was to go looking for it. It is anchored on the control it
-    // describes.
-    seedChannel("stable");
-    renderSetting();
-    expect(
-      document.querySelector('[data-tip="update-channel"]'),
-    ).not.toBeNull();
   });
 
   it("asks for confirmation before joining beta", async () => {

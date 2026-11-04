@@ -208,4 +208,40 @@ describe("generative-provider tip action", () => {
       ),
     ).toBe(true);
   });
+
+  it("keeps both tip toasts mounted while the Settings search box has a query", async () => {
+    // Both TipToastTrigger calls live outside the search-results branch in
+    // SettingsPage for exactly this reason. Before that, a trigger inside a
+    // section the search hid would unmount, its cleanup would clear the
+    // toast, and clearing the search would remount it and show it again, so
+    // typing in an unrelated field made a tip flicker.
+    await renderPage();
+
+    const toastsBefore = Array.from(
+      document.querySelectorAll('[data-tip-toast="true"]'),
+    );
+    expect(toastsBefore).toHaveLength(2);
+
+    const searchField = Array.from(
+      document.querySelectorAll<HTMLInputElement>("input"),
+    ).find((input) => input.getAttribute("aria-label") === "Search settings");
+    if (!searchField) throw new Error("settings search field must be rendered");
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )?.set;
+      setter?.call(searchField, "groq");
+      searchField.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    const toastsDuringSearch = Array.from(
+      document.querySelectorAll('[data-tip-toast="true"]'),
+    );
+    expect(toastsDuringSearch).toHaveLength(2);
+    // Same DOM nodes, not merely the same count, so a full unmount and
+    // remount cycle during the search would fail this.
+    expect(toastsDuringSearch[0]).toBe(toastsBefore[0]);
+    expect(toastsDuringSearch[1]).toBe(toastsBefore[1]);
+  });
 });
