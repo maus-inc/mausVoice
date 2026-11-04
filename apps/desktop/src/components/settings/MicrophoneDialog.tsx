@@ -11,7 +11,8 @@ import {
 } from "@mui/material";
 import { Nullable } from "@maus-inc/types";
 import { useCallback, useEffect, useState } from "react";
-import { FormattedMessage } from "react-intl";
+import { toast } from "sonner";
+import { FormattedMessage, useIntl } from "react-intl";
 import { setPreferredMicrophone } from "../../actions/user.actions";
 import { useMyPreferredMicrophone } from "../../hooks/user.hooks";
 import { produceAppState, useAppStore } from "../../store";
@@ -22,12 +23,13 @@ import { MicrophoneTester } from "../microphone/MicrophoneTester";
 export const MicrophoneDialog = () => {
   const open = useAppStore((state) => state.settings.microphoneDialogOpen);
   const savedPreference = useMyPreferredMicrophone();
+  const intl = useIntl();
 
   const [selected, setSelected] = useState<Nullable<string>>(savedPreference);
   const [hasChanges, setHasChanges] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [saveSuccess, setSaveSuccess] = useState(false);
+  const [saveAnnouncement, setSaveAnnouncement] = useState("");
 
   useEffect(() => {
     if (!open) {
@@ -36,7 +38,7 @@ export const MicrophoneDialog = () => {
     setSelected(savedPreference);
     setHasChanges(false);
     setSaveError(null);
-    setSaveSuccess(false);
+    setSaveAnnouncement("");
   }, [open, savedPreference]);
 
   const handleSelectionChange = useCallback(
@@ -44,7 +46,7 @@ export const MicrophoneDialog = () => {
       setSelected(next ?? null);
       setHasChanges((next ?? null) !== (savedPreference ?? null));
       setSaveError(null);
-      setSaveSuccess(false);
+      setSaveAnnouncement("");
     },
     [savedPreference],
   );
@@ -56,24 +58,34 @@ export const MicrophoneDialog = () => {
 
     setSaving(true);
     setSaveError(null);
-    setSaveSuccess(false);
+    setSaveAnnouncement("");
 
     try {
       await setPreferredMicrophone(selected ?? null);
-      setHasChanges(false);
-      setSaveSuccess(true);
     } catch {
       setSaveError("Failed to save microphone preference. Please try again.");
+      return;
     } finally {
       setSaving(false);
     }
-  }, [hasChanges, saving, selected]);
+
+    const successMessage = intl.formatMessage({
+      defaultMessage: "Preference saved.",
+    });
+    setHasChanges(false);
+    setSaveAnnouncement(successMessage);
+    // Avoid the state-backed snackbar bridge coalescing this confirmation.
+    toast.success(successMessage, { duration: 5000 });
+  }, [hasChanges, intl, saving, selected]);
 
   const handleClose = useCallback(() => {
+    if (saving) {
+      return;
+    }
     produceAppState((draft) => {
       draft.settings.microphoneDialogOpen = false;
     });
-  }, []);
+  }, [saving]);
 
   return (
     <Dialog open={open} onClose={handleClose} fullWidth maxWidth="sm">
@@ -96,11 +108,26 @@ export const MicrophoneDialog = () => {
               disabled={saving}
             />
             {saveError && <Alert severity="error">{saveError}</Alert>}
-            {saveSuccess && (
-              <Alert severity="success">
-                <FormattedMessage defaultMessage="Preference saved." />
-              </Alert>
-            )}
+            {/* MUI hides the app root from assistive tech while this dialog is open,
+                so announce success here without a second visible alert. */}
+            <div
+              role="status"
+              aria-live="polite"
+              aria-atomic="true"
+              style={{
+                border: 0,
+                clip: "rect(0 0 0 0)",
+                height: 1,
+                margin: -1,
+                overflow: "hidden",
+                padding: 0,
+                position: "absolute",
+                whiteSpace: "nowrap",
+                width: 1,
+              }}
+            >
+              {saveAnnouncement}
+            </div>
           </Stack>
 
           <Divider />
@@ -112,15 +139,12 @@ export const MicrophoneDialog = () => {
                 <FormattedMessage defaultMessage="Start a short test to see live audio levels and play back what was recorded." />
               }
             />
-            <MicrophoneTester
-              preferredMicrophone={selected ?? null}
-              disabled={saving}
-            />
+            <MicrophoneTester preferredMicrophone={selected ?? null} />
           </Stack>
         </Stack>
       </DialogContent>
       <DialogActions>
-        <Button onClick={handleClose}>
+        <Button onClick={handleClose} disabled={saving}>
           <FormattedMessage defaultMessage="Close" />
         </Button>
         <LoadingButton

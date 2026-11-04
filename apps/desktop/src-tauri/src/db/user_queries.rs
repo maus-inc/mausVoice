@@ -47,7 +47,31 @@ fn user_profile_conflict_assignments() -> String {
     USER_PROFILE_COLUMNS
         .iter()
         .filter(|column| **column != CONFLICT_KEY)
-        .map(|column| format!("{column} = excluded.{column}"))
+        .map(|column| match *column {
+            // Usage is incremented in its own transaction. A profile edit may
+            // carry an older in-memory snapshot, so never let it erase counts
+            // that committed while that edit was in flight.
+            "words_total" => {
+                "words_total = MAX(user_profiles.words_total, excluded.words_total)".to_string()
+            }
+            "words_this_month" => "words_this_month = CASE
+                WHEN user_profiles.words_this_month_month IS NULL
+                     OR excluded.words_this_month_month > user_profiles.words_this_month_month
+                    THEN excluded.words_this_month
+                WHEN excluded.words_this_month_month = user_profiles.words_this_month_month
+                    THEN MAX(user_profiles.words_this_month, excluded.words_this_month)
+                ELSE user_profiles.words_this_month
+            END"
+            .to_string(),
+            "words_this_month_month" => "words_this_month_month = CASE
+                WHEN user_profiles.words_this_month_month IS NULL
+                     OR excluded.words_this_month_month > user_profiles.words_this_month_month
+                    THEN excluded.words_this_month_month
+                ELSE user_profiles.words_this_month_month
+            END"
+            .to_string(),
+            _ => format!("{column} = excluded.{column}"),
+        })
         .collect::<Vec<_>>()
         .join(",\n        ")
 }
@@ -286,6 +310,37 @@ mod tests {
             saved.interaction_feedback_volume,
             Some(crate::domain::user::DEFAULT_INTERACTION_FEEDBACK_VOLUME)
         );
+    }
+
+    #[tokio::test]
+    async fn stale_profile_upsert_preserves_committed_usage_totals() {
+        let pool = migrated_pool().await;
+        let mut stale = user(Some(0.2));
+        stale.words_this_month = 5;
+        stale.words_this_month_month = Some("2026-01".to_string());
+        stale.words_total = 10;
+        upsert_user(pool.clone(), &stale)
+            .await
+            .expect("insert the starting profile");
+
+        crate::db::daily_activity_queries::record_usage_words(
+            pool.clone(),
+            "profile-race",
+            "2026-01-02",
+            7,
+        )
+        .await
+        .expect("commit a live usage increment");
+        stale.name = "Renamed while usage was recorded".to_string();
+
+        let saved = upsert_user(pool, &stale)
+            .await
+            .expect("save an older profile snapshot");
+
+        assert_eq!(saved.name, "Renamed while usage was recorded");
+        assert_eq!(saved.words_total, 17);
+        assert_eq!(saved.words_this_month, 12);
+        assert_eq!(saved.words_this_month_month.as_deref(), Some("2026-01"));
     }
 
     #[tokio::test]

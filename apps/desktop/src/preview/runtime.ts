@@ -1,3 +1,6 @@
+import { countWords } from "@maus-inc/utilities";
+import type { DailyWordActivity } from "../types/home.types";
+import { dateFromLocalDateKey, toLocalDateKey } from "../utils/date.utils";
 import { toLocalUser } from "../repos/user.repo";
 import { toLocalPreferences } from "../repos/preferences.repo";
 import { getAppState, setAppState } from "../store";
@@ -70,6 +73,21 @@ const SYSTEM_NO_OP_COMMANDS = new Set([
 ]);
 
 type WireRecord = Record<string, unknown>;
+type PreviewUsageEvent = {
+  localDate: string;
+  wordCount: number;
+  source: "live" | "backfill";
+};
+type UsageEventInput = {
+  eventId: string;
+  localDate: string;
+  wordCount: number;
+};
+type ActivityCorrection = {
+  oldDate: string;
+  oldTotal: number;
+  newDateTotal: number;
+};
 type PreviewDatabase = {
   user: WireRecord | null;
   preferences: WireRecord | null;
@@ -79,6 +97,8 @@ type PreviewDatabase = {
   hotkeys: Map<string, WireRecord>;
   appTargets: Map<string, WireRecord>;
   transcriptions: Map<string, WireRecord>;
+  dailyActivity: Map<string, number>;
+  dailyActivityEvents: Map<string, PreviewUsageEvent>;
   conversations: Map<string, WireRecord>;
   chatMessages: Map<string, WireRecord>;
   receiverEnabled: boolean;
@@ -86,6 +106,101 @@ type PreviewDatabase = {
 
 const clone = <T>(value: T): T => structuredClone(value);
 const asRecord = (value: unknown): WireRecord => value as WireRecord;
+const isValidLocalDateKey = (value: string): boolean => {
+  try {
+    dateFromLocalDateKey(value);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const parseUsageEventInput = (args: WireRecord): UsageEventInput => {
+  const { eventId, localDate, wordCount } = args;
+  if (
+    typeof eventId !== "string" ||
+    eventId.trim() === "" ||
+    typeof localDate !== "string" ||
+    !isValidLocalDateKey(localDate) ||
+    typeof wordCount !== "number" ||
+    !Number.isSafeInteger(wordCount) ||
+    wordCount <= 0
+  ) {
+    throw new TypeError("Invalid usage event");
+  }
+  return { eventId, localDate, wordCount };
+};
+
+const getActivityCorrection = (
+  existing: PreviewUsageEvent | undefined,
+  event: UsageEventInput,
+  dailyActivity: Map<string, number>,
+): ActivityCorrection | undefined => {
+  if (
+    !existing ||
+    (existing.localDate === event.localDate &&
+      existing.wordCount === event.wordCount)
+  ) {
+    return undefined;
+  }
+
+  const oldTotal =
+    (dailyActivity.get(existing.localDate) ?? 0) - existing.wordCount;
+  const targetBase =
+    existing.localDate === event.localDate
+      ? oldTotal
+      : (dailyActivity.get(event.localDate) ?? 0);
+  const newDateTotal = targetBase + event.wordCount;
+  if (
+    !Number.isSafeInteger(oldTotal) ||
+    oldTotal < 0 ||
+    !Number.isSafeInteger(newDateTotal)
+  ) {
+    throw new RangeError("Daily activity aggregate is inconsistent");
+  }
+
+  return { oldDate: existing.localDate, oldTotal, newDateTotal };
+};
+
+const getUpdatedUsageTotals = (
+  user: WireRecord,
+  event: UsageEventInput,
+): Pick<
+  WireRecord,
+  "wordsTotal" | "wordsThisMonth" | "wordsThisMonthMonth"
+> => {
+  const month = event.localDate.slice(0, 7);
+  const monthValue = user.wordsThisMonthMonth;
+  if (
+    monthValue !== null &&
+    monthValue !== undefined &&
+    typeof monthValue !== "string"
+  ) {
+    throw new TypeError("Expected a string profile month");
+  }
+  const profileMonth = typeof monthValue === "string" ? monthValue : "";
+  const olderMonthEvent = profileMonth > month;
+  const wordsTotal = Number(user.wordsTotal ?? 0) + event.wordCount;
+  let wordsThisMonth = Number(user.wordsThisMonth ?? 0);
+  if (!olderMonthEvent) {
+    wordsThisMonth =
+      profileMonth === month
+        ? wordsThisMonth + event.wordCount
+        : event.wordCount;
+  }
+  if (
+    !Number.isSafeInteger(wordsTotal) ||
+    !Number.isSafeInteger(wordsThisMonth)
+  ) {
+    throw new RangeError("Usage totals exceed the safe-integer range");
+  }
+
+  return {
+    wordsTotal,
+    wordsThisMonth,
+    wordsThisMonthMonth: olderMonthEvent ? profileMonth : month,
+  };
+};
 
 const toLocalTerm = (term: PreviewData["terms"][number]): WireRecord => ({
   id: term.id,
@@ -172,6 +287,31 @@ const toLocalChatMessage = (
   metadata: message.metadata ? JSON.stringify(message.metadata) : null,
 });
 
+const createDailyActivityEvents = (
+  data: PreviewData,
+): Map<string, PreviewUsageEvent> => {
+  // Scenario aggregates already include their saved history. Pre-populate the
+  // ledger for those rows so the first dashboard load does not add them again;
+  // a later live meter can still replace an estimated count in the aggregate.
+  const events = new Map<string, PreviewUsageEvent>();
+  for (const transcription of data.transcriptions) {
+    if (
+      transcription.remoteStatus === "received" ||
+      transcription.transcript === "[Transcription Failed]"
+    ) {
+      continue;
+    }
+    const createdAt = new Date(transcription.createdAt);
+    if (!Number.isFinite(createdAt.valueOf())) continue;
+    events.set(transcription.id, {
+      localDate: toLocalDateKey(createdAt),
+      wordCount: countWords(transcription.transcript),
+      source: "backfill",
+    });
+  }
+  return events;
+};
+
 const toDatabase = (data: PreviewData): PreviewDatabase => ({
   user: data.user ? toLocalUser(data.user) : null,
   preferences: data.preferences
@@ -192,6 +332,10 @@ const toDatabase = (data: PreviewData): PreviewDatabase => ({
       toLocalTranscription(transcription),
     ]),
   ),
+  dailyActivity: new Map(
+    data.dailyActivity.map((entry) => [entry.localDate, entry.wordCount]),
+  ),
+  dailyActivityEvents: createDailyActivityEvents(data),
   conversations: new Map(
     data.conversations.map((conversation) => [
       conversation.id,
@@ -303,13 +447,60 @@ class PreviewRuntime {
     return Promise.resolve().then(() => this.dispatch(command, args));
   }
 
+  private upsertUser(user: WireRecord): WireRecord {
+    const existing = this.database.user;
+    if (!existing) {
+      this.database.user = user;
+      return clone(user);
+    }
+
+    const existingMonth =
+      typeof existing.wordsThisMonthMonth === "string"
+        ? existing.wordsThisMonthMonth
+        : null;
+    const incomingMonth =
+      typeof user.wordsThisMonthMonth === "string"
+        ? user.wordsThisMonthMonth
+        : null;
+    const next: WireRecord = {
+      ...user,
+      wordsTotal: Math.max(
+        Number(existing.wordsTotal ?? 0),
+        Number(user.wordsTotal ?? 0),
+      ),
+    };
+
+    if (
+      existingMonth === null ||
+      (incomingMonth !== null && incomingMonth > existingMonth)
+    ) {
+      next.wordsThisMonth = Number(user.wordsThisMonth ?? 0);
+      next.wordsThisMonthMonth = incomingMonth;
+    } else if (incomingMonth === existingMonth) {
+      next.wordsThisMonth = Math.max(
+        Number(existing.wordsThisMonth ?? 0),
+        Number(user.wordsThisMonth ?? 0),
+      );
+      next.wordsThisMonthMonth = existingMonth;
+    } else {
+      next.wordsThisMonth = existing.wordsThisMonth;
+      next.wordsThisMonthMonth = existingMonth;
+    }
+
+    this.database.user = next;
+    return clone(next);
+  }
+
   private dispatch(command: string, args: WireRecord): unknown {
     switch (command) {
       case "user_get_one":
         return clone(this.database.user);
       case "user_set_one":
-        this.database.user = clone(asRecord(args.user));
-        return clone(this.database.user);
+        return this.upsertUser(clone(asRecord(args.user)));
+      case "user_record_usage":
+        return this.recordUsageWords(args);
+      case "daily_activity_list":
+        return this.listDailyActivity(args);
       case "user_preferences_get":
         return clone(this.database.preferences);
       case "user_preferences_set": {
@@ -407,6 +598,177 @@ class PreviewRuntime {
     }
   }
 
+  private backfillMissingActivity(startDate: string, endDate: string): void {
+    for (const [id, transcription] of this.database.transcriptions) {
+      const transcript = transcription.transcript;
+      if (
+        id.trim() === "" ||
+        this.database.dailyActivityEvents.has(id) ||
+        transcription.remoteStatus === "received" ||
+        transcript === "[Transcription Failed]" ||
+        typeof transcript !== "string"
+      ) {
+        continue;
+      }
+      const timestamp = transcription.timestamp;
+      if (typeof timestamp !== "number" || !Number.isSafeInteger(timestamp)) {
+        continue;
+      }
+      const date = new Date(timestamp);
+      if (!Number.isFinite(date.valueOf())) continue;
+      const localDate = toLocalDateKey(date);
+      if (localDate < startDate || localDate > endDate) continue;
+      const wordCount = countWords(transcript);
+      const dailyTotal =
+        (this.database.dailyActivity.get(localDate) ?? 0) + wordCount;
+      if (
+        !Number.isSafeInteger(wordCount) ||
+        !Number.isSafeInteger(dailyTotal)
+      ) {
+        throw new RangeError(
+          "Daily activity total exceeds the safe-integer range",
+        );
+      }
+      this.database.dailyActivityEvents.set(id, {
+        localDate,
+        wordCount,
+        source: "backfill",
+      });
+      if (wordCount > 0) {
+        this.database.dailyActivity.set(localDate, dailyTotal);
+      }
+    }
+  }
+
+  private listDailyActivity(args: WireRecord): DailyWordActivity[] {
+    const startDate = args.startDate;
+    const endDate = args.endDate;
+    if (
+      typeof startDate !== "string" ||
+      typeof endDate !== "string" ||
+      !isValidLocalDateKey(startDate) ||
+      !isValidLocalDateKey(endDate) ||
+      startDate > endDate
+    ) {
+      throw new TypeError("Expected an ordered YYYY-MM-DD activity range");
+    }
+    this.backfillMissingActivity(startDate, endDate);
+    return [...this.database.dailyActivity.entries()]
+      .filter(([localDate]) => localDate >= startDate && localDate <= endDate)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([localDate, wordCount]) => ({ localDate, wordCount }));
+  }
+
+  private applyUsageEvent(
+    event: UsageEventInput,
+    existing: PreviewUsageEvent | undefined,
+    correction: ActivityCorrection | undefined,
+    dailyTotal: number,
+  ): void {
+    if (existing) {
+      if (correction) {
+        if (correction.oldTotal === 0) {
+          this.database.dailyActivity.delete(correction.oldDate);
+        } else {
+          this.database.dailyActivity.set(
+            correction.oldDate,
+            correction.oldTotal,
+          );
+        }
+        this.database.dailyActivity.set(
+          event.localDate,
+          correction.newDateTotal,
+        );
+      }
+      existing.localDate = event.localDate;
+      existing.wordCount = event.wordCount;
+      existing.source = "live";
+      return;
+    }
+
+    this.database.dailyActivityEvents.set(event.eventId, {
+      localDate: event.localDate,
+      wordCount: event.wordCount,
+      source: "live",
+    });
+    this.database.dailyActivity.set(event.localDate, dailyTotal);
+  }
+
+  private recordTranscriptionUsage(transcription: WireRecord): void {
+    const { id, transcript, timestamp, remoteStatus } = transcription;
+    if (
+      !this.database.user ||
+      typeof id !== "string" ||
+      id.trim() === "" ||
+      typeof transcript !== "string" ||
+      transcript === "[Transcription Failed]" ||
+      remoteStatus === "received" ||
+      typeof timestamp !== "number" ||
+      !Number.isSafeInteger(timestamp)
+    ) {
+      return;
+    }
+
+    const date = new Date(timestamp);
+    if (!Number.isFinite(date.valueOf())) return;
+    const wordCount = countWords(transcript);
+    if (wordCount === 0) return;
+
+    this.recordUsageWords({
+      eventId: id,
+      localDate: toLocalDateKey(date),
+      wordCount,
+    });
+  }
+
+  private insertTranscription(transcription: WireRecord): WireRecord {
+    const id = String(transcription.id);
+    if (this.database.transcriptions.has(id)) {
+      throw new Error("Transcription already exists");
+    }
+
+    // Usage and history are committed together in the native transaction. The
+    // preview performs validation and metering before its infallible Map insert.
+    this.recordTranscriptionUsage(transcription);
+    this.database.transcriptions.set(id, transcription);
+    return clone(transcription);
+  }
+
+  private recordUsageWords(args: WireRecord): WireRecord {
+    const event = parseUsageEventInput(args);
+    const user = this.database.user;
+    if (!user) throw new Error("User not found");
+
+    const existing = this.database.dailyActivityEvents.get(event.eventId);
+    if (existing?.source === "live") {
+      if (
+        existing.localDate !== event.localDate ||
+        existing.wordCount !== event.wordCount
+      ) {
+        throw new Error(
+          "Usage event id was already recorded with different data",
+        );
+      }
+      return clone(user);
+    }
+
+    const correction = getActivityCorrection(
+      existing,
+      event,
+      this.database.dailyActivity,
+    );
+    const updatedTotals = getUpdatedUsageTotals(user, event);
+    const dailyTotal =
+      (this.database.dailyActivity.get(event.localDate) ?? 0) + event.wordCount;
+    if (!existing && !Number.isSafeInteger(dailyTotal)) {
+      throw new RangeError("Usage totals exceed the safe-integer range");
+    }
+
+    this.applyUsageEvent(event, existing, correction, dailyTotal);
+    this.database.user = { ...user, ...updatedTotals };
+    return clone(this.database.user);
+  }
+
   private updateExpansionFlags(
     args: WireRecord,
     compare: boolean,
@@ -462,6 +824,7 @@ class PreviewRuntime {
           .slice(offset, offset + limit);
       }
       case "transcription_create":
+        return this.insertTranscription(clone(asRecord(args.transcription)));
       case "transcription_update": {
         const transcription = clone(asRecord(args.transcription));
         this.database.transcriptions.set(

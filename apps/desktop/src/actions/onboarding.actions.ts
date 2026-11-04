@@ -42,6 +42,10 @@ import {
 } from "../utils/analytics.utils";
 import { isMacOS } from "../utils/env.utils";
 import { isPermissionAuthorized } from "../utils/permission.utils";
+import {
+  beginLocalDataWrite,
+  type LocalDataWriteLease,
+} from "../utils/local-data-write-gate";
 
 export const CURRENT_ONBOARDING_FLOW_VERSION = 3;
 
@@ -401,10 +405,10 @@ const createOnboardingPreferences = (
  * clear a newer session's own in-flight submission. That trade is already made by the guard this
  * replaces, and leaving the flag stuck is the certain failure while the race is a narrow one.
  */
-const bailOnStaleSession = (): null => {
+const bailOnStaleSession = (lease?: LocalDataWriteLease): null => {
   produceAppState((draft) => {
     draft.onboarding.submitting = false;
-  });
+  }, lease);
   return null;
 };
 
@@ -434,17 +438,21 @@ export const submitOnboarding = async () => {
     return null;
   }
 
-  produceAppState((draft) => {
-    draft.onboarding.submitting = true;
-    draft.onboarding.name = trimmedName;
-    draft.local.onboardingNameDraft = trimmedName;
-    if (draft.auth?.uid) {
-      draft.local.onboardingNameDraftUserId = draft.auth.uid;
-      draft.local.onboardingSessionUserId = draft.auth.uid;
-    }
-  });
+  const write = beginLocalDataWrite();
+  if (!write) return null;
+  const { lease } = write;
 
   try {
+    produceAppState((draft) => {
+      draft.onboarding.submitting = true;
+      draft.onboarding.name = trimmedName;
+      draft.local.onboardingNameDraft = trimmedName;
+      if (draft.auth?.uid) {
+        draft.local.onboardingNameDraftUserId = draft.auth.uid;
+        draft.local.onboardingSessionUserId = draft.auth.uid;
+      }
+    }, lease);
+
     const repo = getUserRepo();
     const preferencesRepo = getUserPreferencesRepo();
     const now = new Date().toISOString();
@@ -454,7 +462,7 @@ export const submitOnboarding = async () => {
     // handoff — even one that cycles A→B→A. userId and the User/Preferences
     // payloads are derived from live state, not the entry snapshot.
     if (getAppState().authSessionNonce !== initiatingAuthSessionNonce) {
-      return bailOnStaleSession();
+      return bailOnStaleSession(lease);
     }
     const currentState = getAppState();
     const userId = getMyEffectiveUserId(currentState);
@@ -507,14 +515,14 @@ export const submitOnboarding = async () => {
     // between building the payload and issuing the write. It cannot close the remainder --
     // a handoff during the write itself is not observable from here.
     if (getAppState().authSessionNonce !== initiatingAuthSessionNonce) {
-      return bailOnStaleSession();
+      return bailOnStaleSession(lease);
     }
     const [savedUser, savedPreferences] = await Promise.all([
-      repo.setMyUser(user),
-      preferencesRepo.setUserPreferences(preferences),
+      repo.setMyUser(user, lease),
+      preferencesRepo.setUserPreferences(preferences, lease),
     ]);
     if (getAppState().authSessionNonce !== initiatingAuthSessionNonce) {
-      return bailOnStaleSession();
+      return bailOnStaleSession(lease);
     }
     produceAppState((draft) => {
       setCurrentUser(draft, savedUser);
@@ -526,9 +534,9 @@ export const submitOnboarding = async () => {
         draft.local.onboardingNameDraftUserId = draft.auth.uid;
         draft.local.onboardingSessionUserId = draft.auth.uid;
       }
-    });
+    }, lease);
 
-    await refreshMember();
+    await refreshMember(lease);
     if (getAppState().authSessionNonce !== initiatingAuthSessionNonce) {
       // No `bailOnStaleSession()` here, unlike the four guards above: the success
       // path at 522 has already cleared `submitting`, so there is no flag to strand.
@@ -537,13 +545,15 @@ export const submitOnboarding = async () => {
     return savedUser;
   } catch (err) {
     if (getAppState().authSessionNonce !== initiatingAuthSessionNonce) {
-      return bailOnStaleSession();
+      return bailOnStaleSession(lease);
     }
     produceAppState((draft) => {
       draft.onboarding.submitting = false;
-    });
+    }, lease);
     showErrorSnackbar(err);
     return null;
+  } finally {
+    write();
   }
 };
 
@@ -559,11 +569,15 @@ export const finishOnboarding = async () => {
     return null;
   }
 
-  clearLocalStorageValue("mausvoice:checklist-writing-style");
-  clearLocalStorageValue("mausvoice:checklist-dictionary");
-  clearLocalStorageValue("mausvoice:checklist-dismissed");
+  const write = beginLocalDataWrite();
+  if (!write) return null;
+  const { lease } = write;
 
   try {
+    clearLocalStorageValue("mausvoice:checklist-writing-style", lease);
+    clearLocalStorageValue("mausvoice:checklist-dictionary", lease);
+    clearLocalStorageValue("mausvoice:checklist-dismissed", lease);
+
     const repo = getUserRepo();
     const now = new Date().toISOString();
 
@@ -583,7 +597,7 @@ export const finishOnboarding = async () => {
       hasFinishedTutorial: true,
     };
 
-    const savedUser = await repo.setMyUser(updatedUser);
+    const savedUser = await repo.setMyUser(updatedUser, lease);
     if (getAppState().authSessionNonce !== initiatingAuthSessionNonce) {
       return null;
     }
@@ -594,9 +608,9 @@ export const finishOnboarding = async () => {
       draft.local.onboardingNameDraftUserId = null;
       draft.local.onboardingSessionUserId = null;
       draft.local.onboardingFlowVersion = CURRENT_ONBOARDING_FLOW_VERSION;
-    });
+    }, lease);
 
-    await setAutoLaunchEnabled(true);
+    await setAutoLaunchEnabled(true, lease);
     if (getAppState().authSessionNonce !== initiatingAuthSessionNonce) {
       return null;
     }
@@ -608,5 +622,7 @@ export const finishOnboarding = async () => {
     }
     showErrorSnackbar(err);
     return null;
+  } finally {
+    write();
   }
 };

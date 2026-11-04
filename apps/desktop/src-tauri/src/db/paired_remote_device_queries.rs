@@ -2,7 +2,18 @@ use sqlx::{Row, SqlitePool};
 
 use crate::domain::PairedRemoteDevice;
 
-pub async fn upsert_paired_remote_device(
+pub(crate) async fn upsert_paired_remote_device_for_generation(
+    pool: SqlitePool,
+    device: &PairedRemoteDevice,
+    generation: u64,
+) -> Result<PairedRemoteDevice, sqlx::Error> {
+    let write_guard =
+        crate::db::local_data_write_gate::lock_local_data_write(Some(generation)).await?;
+    upsert_paired_remote_device_unlocked(&write_guard, pool, device).await
+}
+
+pub(crate) async fn upsert_paired_remote_device_unlocked(
+    _write_guard: &crate::db::local_data_write_gate::LocalDataWriteGuard,
     pool: SqlitePool,
     device: &PairedRemoteDevice,
 ) -> Result<PairedRemoteDevice, sqlx::Error> {
@@ -132,7 +143,11 @@ pub async fn fetch_paired_remote_device_by_id(
     }))
 }
 
-pub async fn delete_paired_remote_device(pool: SqlitePool, id: &str) -> Result<(), sqlx::Error> {
+pub(crate) async fn delete_paired_remote_device_unlocked(
+    _write_guard: &crate::db::local_data_write_gate::LocalDataWriteGuard,
+    pool: SqlitePool,
+    id: &str,
+) -> Result<(), sqlx::Error> {
     sqlx::query("DELETE FROM paired_remote_devices WHERE id = ?1")
         .bind(id)
         .execute(&pool)

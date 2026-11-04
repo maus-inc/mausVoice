@@ -494,6 +494,7 @@ export const getDictationSpeed = (state: AppState): DictationSpeed | null => {
     const t = getRec(state.transcriptionById, id);
     if (
       !t ||
+      t.transcript === "[Transcription Failed]" ||
       !t.audio?.durationMs ||
       t.audio.durationMs <= 0 ||
       !t.transcript

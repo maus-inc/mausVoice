@@ -39,6 +39,11 @@ import {
   LocalConversationRepo,
 } from "./conversation.repo";
 import {
+  BaseDailyActivityRepo,
+  LocalDailyActivityRepo,
+} from "./daily-activity.repo";
+export type { DailyWordActivity } from "./daily-activity.repo";
+import {
   AzureOpenAIGenerateTextRepo,
   BaseGenerateTextRepo,
   CerebrasGenerateTextRepo,
@@ -144,6 +149,10 @@ export const getRemoteReceiverRepo = (): BaseRemoteReceiverRepo => {
 
 export const getTranscriptionRepo = (): BaseTranscriptionRepo => {
   return new LocalTranscriptionRepo();
+};
+
+export const getDailyActivityRepo = (): BaseDailyActivityRepo => {
+  return new LocalDailyActivityRepo();
 };
 
 export const getAppTargetRepo = (): BaseAppTargetRepo => {

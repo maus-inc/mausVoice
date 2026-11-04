@@ -11,9 +11,20 @@ const commandsSource = readFileSync(
   "utf8",
 );
 
-const setupStart = appSource.indexOf(".setup(|app|");
-const invokeHandlerStart = appSource.indexOf(".invoke_handler(", setupStart);
-const setupSource = appSource.slice(setupStart, invokeHandlerStart);
+const setupFunctionStart = appSource.indexOf("fn setup_app(");
+const buildFunctionStart = appSource.indexOf(
+  "pub fn build()",
+  setupFunctionStart,
+);
+const setupRegistrationStart = appSource.indexOf(
+  ".setup(setup_app)",
+  buildFunctionStart,
+);
+const invokeHandlerStart = appSource.indexOf(
+  ".invoke_handler(",
+  setupRegistrationStart,
+);
+const setupSource = appSource.slice(setupFunctionStart, buildFunctionStart);
 
 const closeHandlerStart = appSource.indexOf("WindowEvent::CloseRequested");
 const closeHandlerEnd = appSource.indexOf(
@@ -24,8 +35,10 @@ const closeHandlerSource = appSource.slice(closeHandlerStart, closeHandlerEnd);
 
 describe("Windows startup elevation", () => {
   it("never starts the UAC relaunch while Tauri is still in setup", () => {
-    expect(setupStart).toBeGreaterThanOrEqual(0);
-    expect(invokeHandlerStart).toBeGreaterThan(setupStart);
+    expect(setupFunctionStart).toBeGreaterThanOrEqual(0);
+    expect(buildFunctionStart).toBeGreaterThan(setupFunctionStart);
+    expect(setupRegistrationStart).toBeGreaterThan(buildFunctionStart);
+    expect(invokeHandlerStart).toBeGreaterThan(setupRegistrationStart);
     expect(setupSource).not.toContain("request_elevation_relaunch");
     expect(setupSource).not.toContain("request_admin_relaunch");
   });

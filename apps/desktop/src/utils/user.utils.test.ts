@@ -1,9 +1,15 @@
-import type { Hotkey, User, UserPreferences } from "@maus-inc/types";
+import type {
+  Hotkey,
+  Transcription,
+  User,
+  UserPreferences,
+} from "@maus-inc/types";
 import { describe, expect, it } from "vitest";
 import { AppState, INITIAL_APP_STATE } from "../state/app.state";
 import {
   getActiveDictationLanguage,
   getConfiguredDictationLanguageCodes,
+  getDictationSpeed,
   getMyDictationLanguage,
   getTranscriptionPrefs,
   LOCAL_USER_ID,
@@ -239,6 +245,37 @@ describe("getTranscriptionPrefs stale-selection guard", () => {
       expect(prefs.provider).toBe("speaches");
       expect(prefs.apiKeyValue).toBe("");
     }
+  });
+});
+
+describe("getDictationSpeed", () => {
+  it("ignores failed transcription markers even when failed audio was retained", () => {
+    const state = structuredClone(INITIAL_APP_STATE);
+    const transcription = (
+      id: string,
+      transcript: string,
+      durationMs: number,
+    ): Transcription => ({
+      id,
+      transcript,
+      createdAt: "2026-10-08T12:00:00.000Z",
+      createdByUserId: LOCAL_USER_ID,
+      isDeleted: false,
+      audio: { filePath: `preview://${id}`, durationMs },
+    });
+    state.transcriptionById.failed = transcription(
+      "failed",
+      "[Transcription Failed]",
+      60_000,
+    );
+    state.transcriptionById.successful = transcription(
+      "successful",
+      "one two",
+      10_000,
+    );
+    state.transcriptions.transcriptionIds = ["failed", "successful"];
+
+    expect(getDictationSpeed(state)).toEqual({ wpm: 14, sampleCount: 1 });
   });
 });
 
