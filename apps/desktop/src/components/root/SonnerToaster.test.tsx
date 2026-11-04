@@ -50,6 +50,14 @@ describe("SonnerToaster", () => {
     expect(css).toContain("[data-sonner-toast][data-styled='true']");
     expect(css).toContain("--normal-bg");
 
+    // A toast.custom tip toast (TipToast.tsx) ships data-styled false and
+    // supplies its own chrome, but still needs the stack's own width or it
+    // shrinks to fit its content next to toasts that do get the width rule
+    // above.
+    expect(css).toContain(
+      "[data-sonner-toast]:not([data-styled='true']){width:var(--width)!important;box-sizing:border-box!important;}",
+    );
+
     // Status is carried by the icon per type…
     expect(css).toContain(
       "[data-sonner-toast][data-type='success'] [data-icon]",

@@ -58,11 +58,14 @@ export const TIP_COPY: Record<
 };
 
 /**
- * One bare glyph per tip, from the app's lucide set (stroke 1.9, the
- * sanctioned icon family), 16px, the app's standard quiet-glyph size.
- * `TipCardFrame` renders them at `text.secondary` with no tile behind them,
- * and `TipToastCard` reuses the same glyphs next to the same titles, so the
- * icon for a given tip never drifts between its toast and its Help row.
+ * One glyph per tip, from the app's lucide set (stroke 1.9, the sanctioned
+ * icon family), 16px, the app's standard quiet-glyph size. `TipToastCard`
+ * renders it bare at `text.secondary` next to the title it names. The
+ * Help list wraps the same glyph in `HelpPage.tsx`'s `TipThumbnail`, a
+ * scrim badge over a crop of the toast's own pattern art, so a Help row
+ * previews what the live toast for that tip actually looks like instead of
+ * a disconnected generic icon. Either way the glyph itself is single-sourced
+ * here, so it never drifts between a tip's toast and its Help row.
  */
 export const TIP_ICONS: Record<OnboardingTipId, ReactNode> = {
   "generative-provider": <Sparkles size={16} strokeWidth={1.9} aria-hidden />,

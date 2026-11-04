@@ -252,6 +252,15 @@ export const TipToastCard = ({ id, onAction, onDismiss }: TipToastProps) => {
  * nudge that auto-expires before it's read defeats its own purpose.
  * Passing the tip id as sonner's id makes repeated calls (StrictMode, a
  * remount) replace the existing toast instead of stacking a duplicate.
+ * This also covers `ChatsPage` keying `ConversationLayout` by
+ * `conversationId`. Switching conversations unmounts the old
+ * `TipToastTrigger` and mounts a new one under the same `assistant-mode` id
+ * in one commit, so the old mount's `hideTipToast` call and the new mount's
+ * `showTipToast` call land back to back in the same tick, both well before
+ * the `requestAnimationFrame` sonner defers the dismiss to ever runs.
+ * Sonner's own `create()` cancels a same-tick pending dismissal for an id
+ * it is about to reuse, so that deferred dismiss never reaches the toast
+ * this call just (re)created. See `TipToastRemount.test.tsx`.
  *
  * `dismissible: false` turns off sonner's own pointer-driven swipe-to-dismiss
  * gesture, the one removal path this card does not render its own control

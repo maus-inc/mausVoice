@@ -228,7 +228,7 @@ describe("generative-provider tip action", () => {
       document.querySelectorAll<HTMLInputElement>("input"),
     ).find((input) => input.getAttribute("aria-label") === "Search settings");
     if (!searchField) throw new Error("settings search field must be rendered");
-    await act(async () => {
+    await act(() => {
       const setter = Object.getOwnPropertyDescriptor(
         HTMLInputElement.prototype,
         "value",

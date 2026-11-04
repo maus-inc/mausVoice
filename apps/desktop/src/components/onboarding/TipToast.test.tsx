@@ -137,14 +137,20 @@ describe("TipToastCard", () => {
     expect(onAction).toHaveBeenCalledTimes(2);
   });
 
-  it("ignores a keydown that bubbled up from the dismiss button", async () => {
+  it("ignores a keydown that bubbled up from inside the body region", async () => {
     const onAction = vi.fn();
     await renderCard({ id: "assistant-mode", onAction });
 
-    // The dismiss button sits in a sibling section, not inside the body
-    // region, so this only guards against a future refactor nesting it.
+    // The icon span and the title and body text are real descendants of
+    // the body region today, not a hypothetical future nesting. Dispatching
+    // from one of them is what actually exercises handleBodyKeyDown's own
+    // event.target !== event.currentTarget guard, since the dismiss button
+    // is a sibling section the event could never reach in the first place.
+    const descendant = bodyRegion().querySelector("span");
+    if (!descendant)
+      throw new Error("expected a descendant inside the body region");
     act(() => {
-      dismissButton().dispatchEvent(
+      descendant.dispatchEvent(
         new KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
       );
     });
