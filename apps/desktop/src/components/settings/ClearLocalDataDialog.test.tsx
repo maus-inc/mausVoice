@@ -137,6 +137,28 @@ describe("ClearLocalDataDialog", () => {
     expect(confirmButton()?.hasAttribute("disabled")).toBe(false);
   });
 
+  it("explains a stop failure without exposing native error details", async () => {
+    mocks.invoke.mockImplementation((command: string) =>
+      command === "stop_key_listener"
+        ? Promise.reject(new Error("private native diagnostic"))
+        : Promise.resolve(),
+    );
+    openDialog();
+    render();
+    typeConfirmation("clear");
+    act(() => confirmButton()?.click());
+    await vi.waitFor(() => {
+      expect(document.body.textContent).toContain(
+        "Local data was not cleared in this attempt.",
+      );
+    });
+    expect(document.body.textContent).not.toContain(
+      "private native diagnostic",
+    );
+    expect(mocks.invoke).not.toHaveBeenCalledWith("clear_local_data");
+    expect(mocks.invoke).toHaveBeenCalledWith("stop_recording");
+  });
+
   it("asks for the phrase, so a stray click cannot wipe the device", () => {
     openDialog();
     render();
@@ -320,6 +342,47 @@ describe("ClearLocalDataDialog", () => {
     } finally {
       if (original) {
         Object.defineProperty(window, "localStorage", original);
+      }
+    }
+  });
+
+  it("brings the error into view without moving focus", async () => {
+    const scroll = vi.fn();
+    const previous = Object.getOwnPropertyDescriptor(
+      HTMLElement.prototype,
+      "scrollIntoView",
+    );
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: scroll,
+    });
+    try {
+      mocks.invoke.mockImplementation((command: string) =>
+        command === "stop_key_listener"
+          ? Promise.reject(new Error("stop failed"))
+          : Promise.resolve(),
+      );
+      openDialog();
+      render();
+      typeConfirmation("clear");
+      act(() => {
+        confirmButton()?.focus();
+        confirmButton()?.click();
+      });
+      await vi.waitFor(() =>
+        expect(scroll).toHaveBeenCalledWith({ block: "nearest" }),
+      );
+      expect(document.activeElement).toBe(confirmButton());
+    } finally {
+      if (previous) {
+        Object.defineProperty(
+          HTMLElement.prototype,
+          "scrollIntoView",
+          previous,
+        );
+      } else {
+        delete (HTMLElement.prototype as { scrollIntoView?: unknown })
+          .scrollIntoView;
       }
     }
   });

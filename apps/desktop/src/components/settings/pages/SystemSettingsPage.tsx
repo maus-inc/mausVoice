@@ -5,11 +5,7 @@ import {
 } from "@mui/icons-material";
 import type { ChangeEvent } from "react";
 import { useState } from "react";
-import { FormattedMessage } from "react-intl";
-import {
-  commands,
-  type NativeSetupResult,
-} from "@maus-inc/desktop-native-apis";
+import { FormattedMessage, useIntl } from "react-intl";
 import { showErrorSnackbar, showSnackbar } from "../../../actions/app.actions";
 import { setAutoLaunchEnabled } from "../../../actions/settings.actions";
 import {
@@ -18,6 +14,7 @@ import {
 } from "../../../actions/user.actions";
 import { produceAppState, useAppStore } from "../../../store";
 import { getPlatform } from "../../../utils/platform.utils";
+import { getLogger } from "../../../utils/log.utils";
 import { logOnRejection } from "../../../utils/promise.utils";
 import { getMyUserPreferences } from "../../../utils/user.utils";
 import { ConfirmDialog } from "../../common/ConfirmDialog";
@@ -25,10 +22,15 @@ import { SettingGroup, SettingRow, SettingToggleRow } from "../SettingRow";
 import { UpdateChannelSetting } from "../UpdateChannelSetting";
 import { UpdateSettingSection } from "../UpdateSettingSection";
 import { useSettingsAvailability } from "../settings-availability";
+import {
+  runInputPermissionSetup,
+  useInputPermissionSetupRunning,
+} from "./input-permission-setup";
 
 const LICENCE_URL = "https://github.com/maus-inc/mausVoice/blob/main/LICENCE";
 
 export default function SystemSettingsPage() {
+  const intl = useIntl();
   const availability = useSettingsAvailability();
   const platform = getPlatform();
   const [autoLaunchEnabled, autoLaunchStatus] = useAppStore((state) => [
@@ -41,7 +43,7 @@ export default function SystemSettingsPage() {
   ]);
 
   const [setupConfirmOpen, setSetupConfirmOpen] = useState(false);
-  const [setupRunning, setSetupRunning] = useState(false);
+  const setupRunning = useInputPermissionSetupRunning();
 
   const inputPermissionsDescription = (() => {
     switch (platform) {
@@ -80,25 +82,36 @@ export default function SystemSettingsPage() {
   })();
 
   const runNativeSetup = async () => {
+    const failureMessage = () =>
+      intl.formatMessage({
+        defaultMessage: "Failed to configure input permissions.",
+      });
     setSetupConfirmOpen(false);
-    setSetupRunning(true);
     try {
-      const result: NativeSetupResult = await commands.runNativeSetup();
+      const result = await runInputPermissionSetup();
+      if (result === null || result === "cancelled") return;
       if (result === "success") {
-        showSnackbar("Input permissions configured.");
+        showSnackbar(
+          intl.formatMessage({
+            defaultMessage: "Input permissions configured.",
+          }),
+        );
       } else if (result === "require-restart") {
         showSnackbar(
-          "Setup complete. Please restart the app to apply input permissions.",
+          intl.formatMessage({
+            defaultMessage:
+              "Setup complete. Please restart the app to apply input permissions.",
+          }),
         );
-      } else if (result === "cancelled") {
-        // User dismissed the elevation prompt; stay quiet.
       } else {
-        showErrorSnackbar("Failed to configure input permissions.");
+        showErrorSnackbar(failureMessage());
       }
     } catch (error) {
-      showErrorSnackbar(error);
-    } finally {
-      setSetupRunning(false);
+      getLogger().warning(
+        "Failed to configure input permissions",
+        typeof error === "string" ? new Error(error) : error,
+      );
+      showErrorSnackbar(failureMessage());
     }
   };
 

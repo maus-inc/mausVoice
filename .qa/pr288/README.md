@@ -80,3 +80,16 @@ observed. The profile editor also opened in [light](review-profile-dialog-light-
 and [dark](review-profile-dialog-dark-400x600.jpg). The browser preview toolbar
 covers the bottom of the dialog in these captures, so they do not verify its
 footer. They do not verify native keyboard, recording, or WebView behavior.
+
+## Setup and clear failure follow-up
+
+Chromium's populated browser preview was exercised at 1200×800 and 400×600
+with reduced motion. The preview runtime was intercepted to reject setup and
+listener-stop commands with a fake private diagnostic; the preview window label
+was overridden to simulate the main window for the clear flow. The preview-only
+scenario toolbar was hidden in compact captures because it otherwise covers the
+dialog. The captures show [setup failure at desktop](setup-failure-1200x800.png)
+and [compact](setup-failure-400x600.png), and [stop failure at desktop](clear-stop-failure-1200x800.png)
+and [compact](clear-stop-failure-400x600.png). The compact dialog scrolls the
+error into view without moving focus. No uncaught page errors were observed.
+These injected states do not exercise native stopping, elevation or WebView.

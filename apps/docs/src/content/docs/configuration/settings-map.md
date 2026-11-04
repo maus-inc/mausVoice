@@ -78,7 +78,7 @@ A credential can appear for more than one task only when its provider supports t
 - **Start on system startup** toggles operating-system auto-launch.
 - **Always run as administrator** on Windows makes the app ask for elevation at the next launch. If you decline, a dialog offers to continue without elevation or to close the app.
 - **Input permissions** runs a platform-specific helper: uinput or udev setup on Linux, administrator-assisted input capture on Windows, and Accessibility plus Microphone requests on macOS.
-- **Configure input permissions** re-runs that helper and then restarts the app for you.
+- **Configure input permissions** re-runs that helper. The app may ask you to restart, or Windows may relaunch it after elevation. Only one setup prompt runs at a time, even if you leave and return to System.
 - **Diagnostics** shows platform paths and exports a support bundle.
 - **Automatically show updates** controls whether the update window opens when a newer version is detected.
 - **Software update** shows the running version, when the app last checked, and a **Check now** button.

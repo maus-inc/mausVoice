@@ -80,8 +80,13 @@ export const ClearLocalDataDialog = () => {
   const [clearStarted, setClearStarted] = useState(false);
   const [recoveryRequired, setRecoveryRequired] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const errorRef = useRef<HTMLDivElement | null>(null);
   const clearStartedRef = useRef(false);
   const releaseClearRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => {
+    if (errorMessage) errorRef.current?.scrollIntoView?.({ block: "nearest" });
+  }, [errorMessage]);
 
   useEffect(() => {
     if (!hasPendingLocalDataClear()) return;
@@ -126,6 +131,7 @@ export const ClearLocalDataDialog = () => {
     setIsClearing(true);
     setRecoveryRequired(false);
     setErrorMessage(null);
+    let stoppingSubsystems = false;
     try {
       if (!releaseClearRef.current) {
         releaseClearRef.current = await beginLocalDataClear();
@@ -134,7 +140,9 @@ export const ClearLocalDataDialog = () => {
         setClearStarted(true);
       }
 
+      stoppingSubsystems = true;
       await stopLocalDataSubsystems();
+      stoppingSubsystems = false;
 
       await invoke("clear_local_data");
       resetPendingTranscriptionDeletes();
@@ -145,10 +153,20 @@ export const ClearLocalDataDialog = () => {
       // Keep the browser-side gate closed until this reload resets the stores.
       window.location.reload();
     } catch (error) {
-      getLogger().error("Failed to clear local data", error);
+      getLogger().error(
+        "Failed to clear local data",
+        typeof error === "string" ? new Error(error) : error,
+      );
       const message =
         error instanceof Error ? error.message : "Failed to clear local data.";
-      setErrorMessage(describeClearFailure(error, intl) || message);
+      setErrorMessage(
+        stoppingSubsystems
+          ? intl.formatMessage({
+              defaultMessage:
+                "mausVoice could not stop recording or keyboard monitoring. Local data was not cleared in this attempt. Try again.",
+            })
+          : describeClearFailure(error, intl) || message,
+      );
       clearInFlight.current = false;
       setIsClearing(false);
     }
@@ -202,7 +220,7 @@ export const ClearLocalDataDialog = () => {
             </Alert>
           )}
           {errorMessage && (
-            <Alert severity="error" variant="outlined">
+            <Alert ref={errorRef} severity="error" variant="outlined">
               {errorMessage}
             </Alert>
           )}
