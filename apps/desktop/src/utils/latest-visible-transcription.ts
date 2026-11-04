@@ -4,6 +4,10 @@ import {
   getTranscriptionDeletionRevision,
   isTranscriptionPendingDelete,
 } from "./pending-transcription-delete";
+import {
+  transcriptionCreationRevision,
+  waitForTranscriptionCreations,
+} from "./transcription-creation-tracker";
 
 /** Find the newest non-deleted row, even while delayed deletes are in flight. */
 export const latestVisibleTranscription = async (): Promise<
@@ -11,6 +15,8 @@ export const latestVisibleTranscription = async (): Promise<
 > => {
   const limit = 20;
   while (true) {
+    await waitForTranscriptionCreations();
+    const creationRevision = transcriptionCreationRevision();
     const revision = getTranscriptionDeletionRevision();
     let offset = 0;
     while (true) {
@@ -18,7 +24,12 @@ export const latestVisibleTranscription = async (): Promise<
         limit,
         offset,
       });
-      if (revision !== getTranscriptionDeletionRevision()) break;
+      await waitForTranscriptionCreations();
+      if (
+        revision !== getTranscriptionDeletionRevision() ||
+        creationRevision !== transcriptionCreationRevision()
+      )
+        break;
       const visible = rows.find((row) => !isTranscriptionPendingDelete(row.id));
       if (visible || rows.length < limit) return visible;
       offset += rows.length;
