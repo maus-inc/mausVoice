@@ -59,7 +59,9 @@ export const HomeSideEffects = ({ today }: HomeSideEffectsProps) => {
     void Promise.all([
       refresh(),
       refreshVisibleTranscriptions(() => current),
-    ]).catch(console.error);
+    ]).catch((error: unknown) => {
+      getLogger().warning("Failed to refresh home data", error);
+    });
     return () => {
       current = false;
     };

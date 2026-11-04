@@ -65,12 +65,14 @@ it("aborts an active recording as soon as clear is requested, even before native
 
 it("does not abort an idle recording and unregisters the clear listener", async () => {
   const abort = vi.fn(async () => {});
-  const unsubscribe = subscribeRecordingAbortForClear(() => false, abort);
+  let active = false;
+  const unsubscribe = subscribeRecordingAbortForClear(() => active, abort);
   const release = await beginLocalDataClear();
   expect(abort).not.toHaveBeenCalled();
   unsubscribe();
   localStorage.removeItem(LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY);
   release();
+  active = true;
   const releaseAgain = await beginLocalDataClear();
   expect(abort).not.toHaveBeenCalled();
   localStorage.removeItem(LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY);

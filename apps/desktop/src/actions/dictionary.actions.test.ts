@@ -137,6 +137,7 @@ describe("dictionary list reads during writes", () => {
   it("keeps an optimistic new term while its creation is pending", async () => {
     let release!: (value: Term) => void;
     let created!: Term;
+    let persisted: Term | null = null;
     termMocks.createTerm.mockImplementation((term: Term) => {
       created = term;
       return new Promise<Term>((resolve) => {
@@ -144,7 +145,7 @@ describe("dictionary list reads during writes", () => {
       });
     });
     termMocks.listTerms.mockImplementation(async () =>
-      created ? [created] : [],
+      persisted ? [persisted] : [],
     );
     const creation = createGlossaryTerms(["new word"]);
     await vi.waitFor(() => expect(termMocks.createTerm).toHaveBeenCalled());
@@ -152,6 +153,8 @@ describe("dictionary list reads during writes", () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(sources()).toEqual(["new word"]);
+    expect(termMocks.listTerms).not.toHaveBeenCalled();
+    persisted = created;
     release(created);
     await creation;
     await loading;
