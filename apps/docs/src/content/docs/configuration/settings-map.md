@@ -5,7 +5,7 @@ sidebar:
   order: 1
 ---
 
-Open **Settings** from the bottom of the left navigation rail. Most controls save as you change them. Some dialogs, including the profile editor, language shortcuts, and API key forms, use explicit **Save** and **Cancel** buttons. The settings surface has a search field at the top that matches setting names, section names, and common synonyms, and every match jumps straight to its row.
+Open **Settings** from the bottom of the left navigation rail. Most controls save as you change them. Some dialogs, including the profile editor, language shortcuts, and API key forms, use explicit **Save** and **Cancel** buttons. The settings surface has a search field at the top that matches setting names, section names, and common synonyms, and every match jumps straight to its row. Provider-dependent results appear once their API keys have loaded. A provider-dependent deep link that is still resolving after navigation shows its loading, retry, or unavailable state when the row cannot be shown.
 
 A rail on the left lists the eight sections and stays put while you read a page. Each section is its own page, so a long list never buries the section you want next:
 

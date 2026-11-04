@@ -105,3 +105,12 @@ and [compact](shortcuts-empty-400x600.png). The failure card provides a retry;
 its behavior is covered by the component test. No uncaught page errors were
 observed in these injected states. Native key registration and WebView were not
 visually verified.
+
+## Provider-dependent deep-link follow-up
+
+Chromium's populated preview used a direct provider-setting hash and injected
+API-key load states at 1200×800 and 400×600, with the preview toolbar hidden.
+See [loading](provider-link-loading-1200x800.png), [failure with retry](provider-link-error-400x600.png),
+and [unavailable](provider-link-unavailable-400x600.png); the other viewport
+captures are beside them. No uncaught page errors were observed. These checks
+simulate the store state and do not verify native provider or WebView behavior.

@@ -16,6 +16,7 @@ import { logOnRejection } from "../../../utils/promise.utils";
 import { getMyUserPreferences } from "../../../utils/user.utils";
 import { ConfirmDialog } from "../../common/ConfirmDialog";
 import { AudioTransmissionDisclosure } from "../AudioTransmissionDisclosure";
+import { ProviderSettingLinkStatus } from "../ProviderSettingLinkStatus";
 import { SettingGroup, SettingRow, SettingToggleRow } from "../SettingRow";
 import { useSettingsAvailability } from "../settings-availability";
 
@@ -86,6 +87,7 @@ export default function PrivacyDataSettingsPage() {
 
   return (
     <>
+      <ProviderSettingLinkStatus availability={availability} />
       {showsLeavingDevice && (
         <SettingGroup
           title={<FormattedMessage defaultMessage="What leaves your device" />}
