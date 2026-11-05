@@ -1,6 +1,6 @@
 # What the sandbox still lacks, beyond this repository's gates
 
-Scope. This file describes one environment: the Arena agent sandbox that runs this repository's agent, measured on 2026-11-05, with `vendor/sandbox-toolchain` at `c43df0ec` fetched. It is not a property of the repository, of CI, or of your machine. On a host with normal internet, none of this applies: install the tool and move on. Probe before you repeat a line here, because a limit that does not hold where you run is not a limit.
+Scope. This file describes one environment: the Arena agent sandbox that runs this repository's agent, measured on 2026-11-05, with `vendor/sandbox-toolchain` at `065f527b` fetched. It is not a property of the repository, of CI, or of your machine. On a host with normal internet, none of this applies: install the tool and move on. Probe before you repeat a line here, because a limit that does not hold where you run is not a limit.
 
 Purpose. `engineering/sandbox-coverage-gaps.md` covers the gaps that block this repository's own gates (G9 to G15). This file covers everything else a development cycle needs, in this repository and in any other, so a builder on an unrestricted machine knows what to add to the payload and what can never be added.
 
@@ -12,7 +12,7 @@ Machine: 2 vCPU, 3,939 MB of RAM, 21 GB free disk, no Docker daemon, no GPU, no 
 
 Base image has: `git`, `gh`, node 22 with npm, pnpm and yarn, python 3.11 with pip, gcc and g++ 12, make, binutils, `curl`, `wget`, `jq`, `openssl`, `perl`, `tar`, `xz`, `zip`, `unzip`, `nc`, `socat`, `ssh`, `scp`, `ps`, `top`, `free`, `convert`, `ldd`.
 
-The payload at `c43df0ec` adds the Rust 1.88 toolchain and vendored crate tree, a Debian 12 development sysroot of 634 packages, `system/tools/bin` with cmake, file, patchelf, pkgconf, ffmpeg, ffprobe, gifsicle and gitleaks, the WebDriver drivers, the model set, and the cross-target standard libraries.
+The payload at `065f527b` adds the Rust 1.88 toolchain and vendored crate tree, a Debian 12 development sysroot of 634 packages, `system/tools/bin` with cmake, file, patchelf, pkgconf, ffmpeg, ffprobe, gifsicle and gitleaks, the WebDriver drivers, the model set, and the cross-target standard libraries.
 
 ## Tier 0: already in the payload, not wired up
 
