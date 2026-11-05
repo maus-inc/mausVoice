@@ -156,6 +156,25 @@ describe("check-pr-body", () => {
     assert.match(out, /## Verification gate/);
   });
 
+  it("tolerates a bold heading that a review bot wraps the body in", () => {
+    const body = [
+      "## **User description**",
+      "",
+      "## Summary",
+      "Text.",
+      "",
+      "## Verification gate",
+      "Head SHA: `abc1234`",
+      "",
+      "## Checklist",
+      "- [x] one",
+      "",
+      footer,
+    ].join("\n");
+    const { code, out } = run(body);
+    assert.equal(code, 0, out);
+  });
+
   it("fails a visible heading outside the template sections", () => {
     const body = [
       "## Summary",

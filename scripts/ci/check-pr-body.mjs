@@ -23,7 +23,9 @@
  *       research record. Those sections are folded, so the heading becomes the `<summary>`
  *   R4  the unfolded part of the body stays within the line budget
  *   R5  the footer line appears exactly once, outside any fold
- *   R6  every visible level-2 heading is one of the four the template keeps unfolded
+ *   R6  every visible level-2 heading is one of the four the template keeps unfolded. Tool
+ *       wrappers, a level-2 heading written entirely in bold, are tolerated because review
+ *       bots rewrite bodies with them and the author does not control that
  *   R7  all four of those sections are present, so the gate and the checklist cannot be dropped
  */
 
@@ -36,6 +38,8 @@ const FOLDABLE_HEADING =
 // The template keeps four sections unfolded. Anything else visible is a record that belongs in a fold.
 const VISIBLE_HEADING =
   /^##\s+(Summary|Verification gate|Checklist|Footer)\s*$/;
+// "## **User description**" is what a review bot wraps a body in. It is not a section.
+const TOOL_WRAPPER = /^##\s+\*\*[^*]+\*\*\s*$/;
 const REQUIRED_SECTIONS = [
   "Summary",
   "Verification gate",
@@ -136,7 +140,11 @@ function check(body, maxOpen) {
       if (section && VISIBLE_HEADING.test(scan)) {
         seenSections.add(section[1]);
       }
-      if (/^## /.test(scan) && !VISIBLE_HEADING.test(scan)) {
+      if (
+        /^## /.test(scan) &&
+        !VISIBLE_HEADING.test(scan) &&
+        !TOOL_WRAPPER.test(scan)
+      ) {
         violations.push(
           `R6 line ${lineNo}: visible heading "${quote(scan, 60)}" is not one of Summary, Verification gate, Checklist or Footer. Fold it and use the title as the <summary>.`,
         );
