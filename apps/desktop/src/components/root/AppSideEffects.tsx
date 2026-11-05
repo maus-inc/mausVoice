@@ -328,10 +328,9 @@ export const AppSideEffects = () => {
   // setting with its fallback defaults.
   useEffect(() => {
     if (!isMainWindow) return;
-    syncInteractionChime(playInteractionChime).catch(() => {
-      // Best-effort mirror of the persisted preference; the store value
-      // remains the source of truth and is re-sent on the next change.
-    });
+    // Best effort: the store value remains authoritative and will be re-sent
+    // on the next change. The synchronizer logs failures.
+    void syncInteractionChime(playInteractionChime);
   }, [isMainWindow, playInteractionChime]);
 
   // Mirror the user-chosen thock gain into Rust so the warm path AND the
@@ -339,10 +338,7 @@ export const AppSideEffects = () => {
   // process-global reason as the chime gate above.
   useEffect(() => {
     if (!isMainWindow) return;
-    syncInteractionFeedbackVolume(interactionFeedbackVolume).catch(() => {
-      // Best-effort mirror of the persisted preference; the store value
-      // remains the source of truth and is re-sent on the next change.
-    });
+    void syncInteractionFeedbackVolume(interactionFeedbackVolume);
   }, [isMainWindow, interactionFeedbackVolume]);
 
   // The native Windows pill starts bottom-anchored in its static cell, so the

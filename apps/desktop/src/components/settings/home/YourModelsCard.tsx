@@ -1,3 +1,4 @@
+import { getRec } from "@maus-inc/utilities";
 import { AudioLines, Bot, WandSparkles } from "lucide-react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { useAppStore } from "../../../store";
@@ -34,8 +35,7 @@ import { settingsPagePath } from "../settings-routes";
 const apiKeyOf = (
   state: AppState,
   keyId: string | null,
-): SettingsApiKey | null =>
-  (keyId ? state.apiKeyById[keyId] : undefined) ?? null;
+): SettingsApiKey | null => getRec(state.apiKeyById, keyId) ?? null;
 
 /**
  * One model row's state, resolved to the words the row shows.

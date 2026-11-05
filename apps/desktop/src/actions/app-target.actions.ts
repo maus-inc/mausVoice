@@ -116,7 +116,7 @@ const updateAppTarget = (
 ): Promise<boolean> =>
   enqueueAppTargetWrite(async (lease) => {
     await reconcileAppTarget(id, lease);
-    const existing = getAppState().appTargetById[id];
+    const existing = getRec(getAppState().appTargetById, id);
     if (!existing) {
       showErrorSnackbar(
         getIntl().formatMessage({
@@ -289,7 +289,7 @@ export const loadManualStyleForCurrentApp = async (): Promise<void> => {
   try {
     const appInfo = await invoke<{ appName: string }>("get_current_app_info");
     const appTargetId = normalizeAppTargetId(appInfo.appName?.trim() ?? "");
-    const appTarget = getAppState().appTargetById[appTargetId];
+    const appTarget = getRec(getAppState().appTargetById, appTargetId);
     if (appTarget?.toneId) {
       const activeIds = getActiveManualToneIds(getAppState());
       if (activeIds.includes(appTarget.toneId)) {

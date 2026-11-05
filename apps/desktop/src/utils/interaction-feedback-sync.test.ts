@@ -4,8 +4,12 @@ import {
   syncInteractionFeedbackVolume,
 } from "./interaction-feedback-sync";
 
-const invoke = vi.hoisted(() => vi.fn());
+const { invoke, warning } = vi.hoisted(() => ({
+  invoke: vi.fn(),
+  warning: vi.fn(),
+}));
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
+vi.mock("./log.utils", () => ({ getLogger: () => ({ warning }) }));
 
 describe("interaction feedback native synchronization", () => {
   it("waits for the earlier volume write before sending the latest value", async () => {
@@ -39,16 +43,29 @@ describe("interaction feedback native synchronization", () => {
     }
   });
 
+  it("logs a failed volume mirror without rejecting", async () => {
+    invoke.mockReset().mockRejectedValueOnce(new Error("volume failed"));
+    warning.mockClear();
+    await expect(syncInteractionFeedbackVolume(0.3)).resolves.toBeUndefined();
+    expect(warning).toHaveBeenCalledWith(
+      "Failed to sync interaction volume to native audio",
+      expect.objectContaining({ message: "volume failed" }),
+    );
+  });
+
   it("continues after a rejected chime write", async () => {
     invoke
       .mockReset()
       .mockRejectedValueOnce(new Error("bridge unavailable"))
       .mockResolvedValue(undefined);
+    warning.mockClear();
     const first = syncInteractionChime(false);
-    const firstResult = expect(first).rejects.toThrow("bridge unavailable");
     const second = syncInteractionChime(true);
-    await firstResult;
-    await second;
+    await Promise.all([first, second]);
+    expect(warning).toHaveBeenCalledWith(
+      "Failed to sync interaction chime to native audio",
+      expect.objectContaining({ message: "bridge unavailable" }),
+    );
     expect(invoke).toHaveBeenNthCalledWith(1, "set_interaction_chime_enabled", {
       enabled: false,
     });
