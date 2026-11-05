@@ -34,8 +34,9 @@ Per-package gates, when the change touches that package:
 Rust gates, when the change touches any of the seven Cargo workspaces:
 
 - `cargo fmt --check` in the six gated crates: <passed, failed, or not run with reason>
-- `cargo clippy --locked -- -D warnings` in `apps/desktop/src-tauri`: <status>
-- `CARGO_BUILD_JOBS=1 cargo test --locked --lib` in `apps/desktop/src-tauri`, and the equivalent in `packages/rust_transcription`, `packages/rust_pill_shared`, and `packages/rust_gtk_pill` under `xvfb-run -a`: <one combined status or one line each>
+- `cargo clippy --locked -- -D warnings` in `apps/desktop/src-tauri`, and `--all-targets` in `packages/rust_pill_shared`: <status>
+- `CARGO_BUILD_JOBS=1 cargo test --locked --lib` in `apps/desktop/src-tauri` and `packages/rust_transcription`, `cargo test --locked` in `packages/rust_pill_shared`, and `xvfb-run -a cargo test --locked` in `packages/rust_gtk_pill`: <one line each>
+- `packages/rust_transcription/tests/sidecar_integration.rs`: <the seven that run, and the four `#[ignore]` ones named with their gap number>
 
 Every `not run` entry needs its own reason and the substitute command that ran instead. A sandbox that cannot reach the network is not a reason on its own. Follow `engineering/sandbox-vendored-toolchain.md` first, then report what still cannot run.
 

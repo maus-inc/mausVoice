@@ -3,8 +3,9 @@
 Use this when the vendor payload has to be rebuilt. The build cannot happen inside the
 Arena agent sandbox described in `engineering/sandbox-vendored-toolchain.md`, because
 it needs `static.rust-lang.org`, `crates.io`, Debian mirrors and GitHub Release assets.
-Hand it to an agent on a host that reaches all four, and confirm the handoff by having
-that agent print one `200` per host before it starts.
+Hand it to an agent on a host that reaches all four, and confirm the handoff before it
+starts: fetch one pinned release asset with `curl -sSIL -o /dev/null -w '%{http_code}'`
+and print the final code, because a host probe says nothing about where a redirect lands.
 
 The exhaustive specification is `docs/sandbox-toolchain-vendor-spec.md`. It is the
 document to hand over. This file is the short prompt that wraps it, plus the
@@ -120,14 +121,17 @@ For a second delivery, add these checks.
 - G9. Each media binary runs under `env -i` with a version banner. `ffmpeg -f lavfi -i
 testsrc=duration=1:size=320x240:rate=30 -f gif -` writes bytes, which proves the encoder
   is present and not only the demuxer.
-- G10. Each model digest matches `MODELS.txt`, and the smallest whisper file loads in a
-  scratch process. A model that loads is not a transcript that is correct, so record only
-  loading.
-- G12. `rustc --print target-list` from the payload lists both targets, `cargo check
---target x86_64-pc-windows-msvc` reaches the code instead of failing on `core`, and the
-  component digests match `channel-rust-1.88.0.toml`.
-- G13. `gitleaks detect --config gitleaks.toml` on a known clean tree reports the same
-  finding count as the last CI run on the same commit.
+- G10. Each model digest matches `MODELS.txt`, and every delivered file loads through the
+  loader that will consume it, the sidecar for the ONNX bundles and whisper for the GGML
+  weights. A model that loads is not a transcript that is correct, so record only loading.
+- G12. `rustc --print target-list` proves nothing, because it lists targets without their
+  standard libraries. Check `lib/rustlib/<target>/lib/libstd-*.rlib` exists for both
+  `x86_64-pc-windows-msvc` and `aarch64-apple-darwin`, run `cargo check --target` for each
+  and confirm it reaches the code instead of failing on `core`, and match the component
+  digests against `channel-rust-1.88.0.toml`.
+- G13. `gitleaks detect --log-opts="<base>..<head>" --config <base>:gitleaks.toml` reports
+  the same finding count as the last CI run on the same commit. A bare `--source .` scans a
+  different commit set and cannot be compared.
 - G11. `WebKitWebDriver` exists in the extracted sysroot at the recorded path, and
   `tauri-driver --version` runs.
 

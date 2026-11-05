@@ -96,6 +96,11 @@ function stripNoise(raw, state) {
   return line.replace(/`[^`]*`/g, "");
 }
 
+// Job logs are public and permanent. Quote enough of the offending line to find it, not the line.
+function quote(line, limit = 100) {
+  return line.length > limit ? `${line.slice(0, limit)}...` : line;
+}
+
 function check(body, maxOpen) {
   const lines = body.split("\n");
   const violations = [];
@@ -121,12 +126,12 @@ function check(body, maxOpen) {
       openLines += 1;
       if (/^## /.test(scan) && !VISIBLE_HEADING.test(scan)) {
         violations.push(
-          `R6 line ${lineNo}: visible heading "${scan}" is not one of Summary, Verification gate, Checklist or Footer. Fold it and use the title as the <summary>.`,
+          `R6 line ${lineNo}: visible heading "${quote(scan, 60)}" is not one of Summary, Verification gate, Checklist or Footer. Fold it and use the title as the <summary>.`,
         );
       }
       if (/^#{1,6} /.test(scan) && FOLDABLE_HEADING.test(scan)) {
         violations.push(
-          `R3 line ${lineNo}: unfolded heading "${scan}" records a review, log or research round. Fold the section and use the title as the <summary>.`,
+          `R3 line ${lineNo}: unfolded heading "${quote(scan, 60)}" records a review, log or research round. Fold the section and use the title as the <summary>.`,
         );
       }
       if (scan.startsWith("MausAgent | Filed by ")) {
@@ -146,7 +151,7 @@ function check(body, maxOpen) {
       awaitingSummary = false;
       if (!hasSummary) {
         violations.push(
-          `R1 line ${lineNo}: a <details> block starts with "${scan}" instead of a <summary>.`,
+          `R1 line ${lineNo}: a <details> block starts with "${quote(scan)}" instead of a <summary>.`,
         );
       }
     }
