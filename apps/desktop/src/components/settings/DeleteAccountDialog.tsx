@@ -8,7 +8,7 @@ import {
   Typography,
 } from "@mui/material";
 import { useRef, useState } from "react";
-import { FormattedMessage } from "react-intl";
+import { FormattedMessage, useIntl } from "react-intl";
 import { showSnackbar } from "../../actions/app.actions";
 import { resetAutoLearnSessionState } from "../../actions/edit-watch.actions";
 import { getAuthRepo } from "../../repos";
@@ -43,6 +43,7 @@ import { BusyButtonLabel } from "../common/BusyButtonLabel";
 const CONFIRMATION_PHRASE = "delete";
 
 export const DeleteAccountDialog = () => {
+  const intl = useIntl();
   const open = useAppStore((state) => state.settings.deleteAccountDialog);
   const [confirmationValue, setConfirmationValue] = useState("");
   const [busy, setBusy] = useState(false);
@@ -141,8 +142,14 @@ export const DeleteAccountDialog = () => {
       console.error("Failed to finish account deletion cleanup", error);
       showSnackbar(
         accountDeletedRef.current
-          ? "Your account was deleted, but local cleanup is incomplete. Retry to finish clearing this device."
-          : "An error occurred while attempting to delete your account. Please try again later.",
+          ? intl.formatMessage({
+              defaultMessage:
+                "Your account was deleted, but local cleanup is incomplete. Retry to finish clearing this device.",
+            })
+          : intl.formatMessage({
+              defaultMessage:
+                "An error occurred while attempting to delete your account. Please try again later.",
+            }),
       );
       releaseClearAfterDeletionFailure();
     } finally {

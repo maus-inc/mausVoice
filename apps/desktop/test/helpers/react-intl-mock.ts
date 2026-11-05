@@ -56,7 +56,7 @@ export const reactIntlWithIdsModule = async (
   const withId = (descriptor: MessageDescriptor): MessageDescriptor => ({
     ...descriptor,
     id: formatjsOverrideIdFn(
-      descriptor.id,
+      descriptor.id === descriptor.defaultMessage ? undefined : descriptor.id,
       typeof descriptor.defaultMessage === "string"
         ? descriptor.defaultMessage
         : undefined,
@@ -66,6 +66,18 @@ export const reactIntlWithIdsModule = async (
     ...actual,
     FormattedMessage: (props) =>
       createElement(actual.FormattedMessage, { ...props, ...withId(props) }),
+    createIntl: (config, cache) => {
+      const intl = actual.createIntl(config, cache);
+      const formatMessage = ((
+        ...args: Parameters<IntlShape["formatMessage"]>
+      ) =>
+        intl.formatMessage(
+          withId(args[0]),
+          args[1],
+          args[2],
+        )) as IntlShape["formatMessage"];
+      return { ...intl, formatMessage };
+    },
     useIntl: () => {
       const intl = actual.useIntl();
       const formatMessage = ((

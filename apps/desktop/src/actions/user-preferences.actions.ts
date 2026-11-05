@@ -1,27 +1,18 @@
 import {
-  type AgentMode,
   DictationPillVisibility,
   Nullable,
   PillPlacement,
   PillResetMonitorStrategy,
 } from "@maus-inc/types";
+import { getIntl } from "../i18n";
 import { getAppState, produceAppState } from "../store";
-import {
-  type PostProcessingMode,
-  type TranscriptionMode,
-} from "../types/ai.types";
-import {
-  isGpuPreferredTranscriptionDevice,
-  normalizeLocalWhisperModel,
-  normalizeTranscriptionDevice,
-  supportsGpuTranscriptionDevice,
-} from "../utils/local-transcription.utils";
 import { getLogger } from "../utils/log.utils";
 import type { LocalDataWriteLease } from "../utils/local-data-write-gate";
 import { getMyUser } from "../utils/user.utils";
 import { pushPillPlacementToNative } from "./windows-sync.actions";
-
 import { updateUser, updateUserPreferences } from "./user-actions-core";
+
+export * from "./user-ai-preferences.actions";
 
 export const setPreferredMicrophone = async (
   preferredMicrophone: Nullable<string>,
@@ -33,7 +24,9 @@ export const setPreferredMicrophone = async (
     (preferences) => {
       preferences.preferredMicrophone = normalized;
     },
-    "Failed to save microphone preference. Please try again.",
+    getIntl().formatMessage({
+      defaultMessage: "Failed to save microphone preference. Please try again.",
+    }),
     { showErrorToast: false },
   );
 };
@@ -42,27 +35,34 @@ export const migratePreferredMicrophoneToPreferences =
   async (): Promise<void> => {
     const state = getAppState();
     const user = getMyUser(state);
-    if (!user) {
+    if (!user || user.hasMigratedPreferredMicrophone) {
       return;
     }
 
-    if (user.hasMigratedPreferredMicrophone) {
-      return;
-    }
-
+    const intl = getIntl();
     const microphoneToMigrate = user.preferredMicrophone ?? null;
     if (microphoneToMigrate) {
-      await updateUserPreferences((preferences) => {
-        preferences.preferredMicrophone = microphoneToMigrate;
-      }, "Failed to migrate microphone preference.");
+      await updateUserPreferences(
+        (preferences) => {
+          preferences.preferredMicrophone = microphoneToMigrate;
+        },
+        intl.formatMessage({
+          defaultMessage: "Failed to migrate microphone preference.",
+        }),
+      );
     }
 
     await updateUser(
       (u) => {
         u.hasMigratedPreferredMicrophone = true;
       },
-      "Unable to mark microphone as migrated. User not found.",
-      "Failed to mark microphone as migrated.",
+      intl.formatMessage({
+        defaultMessage:
+          "Unable to mark microphone as migrated. User not found.",
+      }),
+      intl.formatMessage({
+        defaultMessage: "Failed to mark microphone as migrated.",
+      }),
     );
   };
 
@@ -71,12 +71,17 @@ export const setPreferredLanguage = async (
   lease?: LocalDataWriteLease,
   options: { showErrorToast?: boolean } = {},
 ): Promise<void> => {
+  const intl = getIntl();
   await updateUser(
     (user) => {
       user.preferredLanguage = language;
     },
-    "Unable to update preferred language. User not found.",
-    "Failed to save preferred language. Please try again.",
+    intl.formatMessage({
+      defaultMessage: "Unable to update preferred language. User not found.",
+    }),
+    intl.formatMessage({
+      defaultMessage: "Failed to save preferred language. Please try again.",
+    }),
     lease,
     { requireUser: true, showErrorToast: options.showErrorToast },
   );
@@ -85,18 +90,30 @@ export const setPreferredLanguage = async (
 export const setActiveDictationLanguage = async (
   language: string,
 ): Promise<void> => {
-  await updateUserPreferences((preferences) => {
-    preferences.activeDictationLanguage = language;
-  }, "Failed to save active dictation language. Please try again.");
+  await updateUserPreferences(
+    (preferences) => {
+      preferences.activeDictationLanguage = language;
+    },
+    getIntl().formatMessage({
+      defaultMessage:
+        "Failed to save active dictation language. Please try again.",
+    }),
+  );
 };
 
 export const setInteractionChimeEnabled = async (enabled: boolean) => {
+  const intl = getIntl();
   await updateUser(
     (user) => {
       user.playInteractionChime = enabled;
     },
-    "Unable to update interaction chime. User not found.",
-    "Failed to save interaction chime preference. Please try again.",
+    intl.formatMessage({
+      defaultMessage: "Unable to update interaction chime. User not found.",
+    }),
+    intl.formatMessage({
+      defaultMessage:
+        "Failed to save interaction chime preference. Please try again.",
+    }),
   );
   // AppSideEffects mirrors the store value from the main window, including
   // rollback or reconciliation after a failed save.
@@ -112,155 +129,63 @@ export const setInteractionFeedbackVolume = async (
   // payload never exceeds the effective [0.05, 0.5] range. The Rust
   // sink clamps playback to the same window, so clamping here keeps the
   // persisted value, the IPC payload, and what the user actually hears
-  // identical — a slider at maximum must not silently play at half.
+  // identical; a slider at maximum must not silently play at half.
   const clamped = Math.max(0.05, Math.min(0.5, volume));
+  const intl = getIntl();
   await updateUser(
     (user) => {
       user.interactionFeedbackVolume = clamped;
     },
-    "Unable to update interaction feedback volume. User not found.",
-    "Failed to save interaction feedback volume. Please try again.",
+    intl.formatMessage({
+      defaultMessage:
+        "Unable to update interaction feedback volume. User not found.",
+    }),
+    intl.formatMessage({
+      defaultMessage:
+        "Failed to save interaction feedback volume. Please try again.",
+    }),
   );
   // AppSideEffects is the sole native mirror, including for restored values.
 };
 
 export const setUserName = async (name: string): Promise<void> => {
   const normalized = name.trim();
+  const intl = getIntl();
 
   await updateUser(
     (user) => {
       user.name = normalized;
     },
-    "Unable to update username. User not found.",
-    "Failed to save username. Please try again.",
+    intl.formatMessage({
+      defaultMessage: "Unable to update username. User not found.",
+    }),
+    intl.formatMessage({
+      defaultMessage: "Failed to save username. Please try again.",
+    }),
   );
 };
 
-export const setPreferredTranscriptionMode = async (
-  mode: TranscriptionMode,
-): Promise<void> => {
-  produceAppState((draft) => {
-    draft.settings.aiTranscription.mode = mode;
-  });
-
-  await updateUserPreferences((preferences) => {
-    preferences.transcriptionMode = mode;
-  });
-};
-
-export const setPreferredTranscriptionApiKeyId = async (
-  id: Nullable<string>,
-): Promise<void> => {
-  produceAppState((draft) => {
-    draft.settings.aiTranscription.selectedApiKeyId = id;
-  });
-
-  await updateUserPreferences((preferences) => {
-    preferences.transcriptionApiKeyId = id;
-  });
-};
-
-export const setPreferredTranscriptionDevice = async (
-  device: string,
-): Promise<void> => {
-  const normalizedDevice = normalizeTranscriptionDevice(device);
-  const gpuEnumerationEnabled =
-    isGpuPreferredTranscriptionDevice(normalizedDevice);
-
-  produceAppState((draft) => {
-    draft.settings.aiTranscription.device = normalizedDevice;
-    draft.settings.aiTranscription.gpuEnumerationEnabled =
-      gpuEnumerationEnabled;
-  });
-
-  await updateUserPreferences((preferences) => {
-    preferences.transcriptionDevice = normalizedDevice;
-    preferences.gpuEnumerationEnabled = gpuEnumerationEnabled;
-  });
-};
-
-export const setPreferredTranscriptionModelSize = async (
-  modelSize: string,
-): Promise<void> => {
-  const normalizedModelSize = normalizeLocalWhisperModel(modelSize);
-  produceAppState((draft) => {
-    draft.settings.aiTranscription.modelSize = normalizedModelSize;
-  });
-
-  await updateUserPreferences((preferences) => {
-    preferences.transcriptionModelSize = normalizedModelSize;
-  });
-};
-
-export const setGpuEnumerationEnabled = async (
-  enabled: boolean,
-): Promise<void> => {
-  const nextEnabled = supportsGpuTranscriptionDevice() && enabled;
-  produceAppState((draft) => {
-    draft.settings.aiTranscription.gpuEnumerationEnabled = nextEnabled;
-  });
-
-  await updateUserPreferences((preferences) => {
-    preferences.gpuEnumerationEnabled = nextEnabled;
-  });
-};
-
-export const setPreferredPostProcessingMode = async (
-  mode: PostProcessingMode,
-): Promise<void> => {
-  produceAppState((draft) => {
-    draft.settings.aiPostProcessing.mode = mode;
-  });
-
-  await updateUserPreferences((preferences) => {
-    preferences.postProcessingMode = mode;
-  });
-};
-
-export const setPreferredPostProcessingApiKeyId = async (
-  id: Nullable<string>,
-): Promise<void> => {
-  produceAppState((draft) => {
-    draft.settings.aiPostProcessing.selectedApiKeyId = id;
-  });
-
-  await updateUserPreferences((preferences) => {
-    preferences.postProcessingApiKeyId = id;
-  });
-};
-
-export const setPreferredAgentMode = async (mode: AgentMode): Promise<void> => {
-  produceAppState((draft) => {
-    draft.settings.agentMode.mode = mode;
-  });
-
-  await updateUserPreferences((preferences) => {
-    preferences.agentMode = mode;
-  });
-};
-
-export const setPreferredAgentModeApiKeyId = async (
-  id: Nullable<string>,
-): Promise<void> => {
-  produceAppState((draft) => {
-    draft.settings.agentMode.selectedApiKeyId = id;
-  });
-
-  await updateUserPreferences((preferences) => {
-    preferences.agentModeApiKeyId = id;
-  });
-};
-
 export const setGotStartedAtNow = async (): Promise<void> => {
-  await updateUserPreferences((preferences) => {
-    preferences.gotStartedAt = Date.now();
-  }, "Failed to save got started timestamp. Please try again.");
+  await updateUserPreferences(
+    (preferences) => {
+      preferences.gotStartedAt = Date.now();
+    },
+    getIntl().formatMessage({
+      defaultMessage: "Failed to save got started timestamp. Please try again.",
+    }),
+  );
 };
 
 export const clearGotStartedAt = async (): Promise<void> => {
-  await updateUserPreferences((preferences) => {
-    preferences.gotStartedAt = null;
-  }, "Failed to clear got started timestamp. Please try again.");
+  await updateUserPreferences(
+    (preferences) => {
+      preferences.gotStartedAt = null;
+    },
+    getIntl().formatMessage({
+      defaultMessage:
+        "Failed to clear got started timestamp. Please try again.",
+    }),
+  );
 };
 
 export const markFeatureSeen = (featureDate: string): void => {
@@ -270,61 +195,103 @@ export const markFeatureSeen = (featureDate: string): void => {
 };
 
 export const setIgnoreUpdateDialog = async (ignore: boolean): Promise<void> => {
-  await updateUserPreferences((preferences) => {
-    preferences.ignoreUpdateDialog = ignore;
-  }, "Failed to save update dialog preference. Please try again.");
+  await updateUserPreferences(
+    (preferences) => {
+      preferences.ignoreUpdateDialog = ignore;
+    },
+    getIntl().formatMessage({
+      defaultMessage:
+        "Failed to save update dialog preference. Please try again.",
+    }),
+  );
 };
 
 export const setIncognitoModeEnabled = async (
   enabled: boolean,
 ): Promise<void> => {
-  await updateUserPreferences((preferences) => {
-    preferences.incognitoModeEnabled = enabled;
-    if (!enabled) {
-      // Reset to default when disabling for clarity.
-      preferences.incognitoModeIncludeInStats = false;
-    }
-  }, "Failed to save incognito mode preference. Please try again.");
+  await updateUserPreferences(
+    (preferences) => {
+      preferences.incognitoModeEnabled = enabled;
+      if (!enabled) {
+        // Reset to default when disabling for clarity.
+        preferences.incognitoModeIncludeInStats = false;
+      }
+    },
+    getIntl().formatMessage({
+      defaultMessage:
+        "Failed to save incognito mode preference. Please try again.",
+    }),
+  );
 };
 
 export const setIncognitoModeIncludeInStats = async (
   enabled: boolean,
 ): Promise<void> => {
-  await updateUserPreferences((preferences) => {
-    preferences.incognitoModeIncludeInStats = enabled;
-  }, "Failed to save incognito mode stats preference. Please try again.");
+  await updateUserPreferences(
+    (preferences) => {
+      preferences.incognitoModeIncludeInStats = enabled;
+    },
+    getIntl().formatMessage({
+      defaultMessage:
+        "Failed to save incognito mode stats preference. Please try again.",
+    }),
+  );
 };
 
 export const setPreserveAudioOnFailure = async (
   enabled: boolean,
 ): Promise<void> => {
-  await updateUserPreferences((preferences) => {
-    preferences.preserveAudioOnFailure = enabled;
-  }, "Failed to save failed-transcription audio preference. Please try again.");
+  await updateUserPreferences(
+    (preferences) => {
+      preferences.preserveAudioOnFailure = enabled;
+    },
+    getIntl().formatMessage({
+      defaultMessage:
+        "Failed to save failed-transcription audio preference. Please try again.",
+    }),
+  );
 };
 
 export const setDictationPillVisibility = async (
   visibility: DictationPillVisibility,
 ): Promise<void> => {
-  await updateUserPreferences((preferences) => {
-    preferences.dictationPillVisibility = visibility;
-  }, "Failed to save dictation pill visibility preference. Please try again.");
+  await updateUserPreferences(
+    (preferences) => {
+      preferences.dictationPillVisibility = visibility;
+    },
+    getIntl().formatMessage({
+      defaultMessage:
+        "Failed to save dictation pill visibility preference. Please try again.",
+    }),
+  );
 };
 
 export const setPillResetMonitorStrategy = async (
   strategy: PillResetMonitorStrategy,
 ): Promise<void> => {
-  await updateUserPreferences((preferences) => {
-    preferences.pillResetMonitorStrategy = strategy;
-  }, "Failed to save pill reset monitor strategy. Please try again.");
+  await updateUserPreferences(
+    (preferences) => {
+      preferences.pillResetMonitorStrategy = strategy;
+    },
+    getIntl().formatMessage({
+      defaultMessage:
+        "Failed to save pill reset monitor strategy. Please try again.",
+    }),
+  );
 };
 
 export const setPillPlacement = async (
   placement: PillPlacement,
 ): Promise<void> => {
-  await updateUserPreferences((preferences) => {
-    preferences.pillPlacement = placement;
-  }, "Failed to save pill placement preference. Please try again.");
+  await updateUserPreferences(
+    (preferences) => {
+      preferences.pillPlacement = placement;
+    },
+    getIntl().formatMessage({
+      defaultMessage:
+        "Failed to save pill placement preference. Please try again.",
+    }),
+  );
   try {
     await pushPillPlacementToNative(placement);
   } catch (error) {

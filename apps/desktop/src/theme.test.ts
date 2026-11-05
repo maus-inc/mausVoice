@@ -8,6 +8,7 @@ import {
   guardedThemeStorageManager,
   theme,
 } from "./theme";
+import { premiumSurface } from "./styles/shadows";
 
 const indexHtml = readFileSync(
   new URL("../index.html", import.meta.url),
@@ -174,6 +175,74 @@ describe("theme mode configuration", () => {
     expect(darkStyleBlock).toContain('applyStyles("dark"');
     expect(lightStyleBlock.match(lucideInheritanceRule) ?? []).toHaveLength(1);
     expect(darkStyleBlock.match(lucideInheritanceRule) ?? []).toHaveLength(1);
+  });
+
+  it("shares elevated shadow and press geometry across contained, destructive contained, and flat buttons", () => {
+    const buttonConfig = theme.components?.MuiButton;
+    const containedOverride = buttonConfig?.styleOverrides?.contained;
+    const errorVariant = buttonConfig?.variants?.find(
+      (v) =>
+        typeof v.props === "object" &&
+        v.props !== null &&
+        "variant" in v.props &&
+        v.props.variant === "contained" &&
+        "color" in v.props &&
+        v.props.color === "error",
+    );
+    const flatVariant = buttonConfig?.variants?.find(
+      (v) =>
+        typeof v.props === "object" &&
+        v.props !== null &&
+        "variant" in v.props &&
+        v.props.variant === "flat",
+    );
+
+    expect(typeof containedOverride).toBe("function");
+    expect(typeof errorVariant?.style).toBe("function");
+    expect(typeof flatVariant?.style).toBe("function");
+
+    const [darkKey] = Object.keys(theme.applyStyles("dark", { color: "red" }));
+    const containedStyles = (
+      containedOverride as (arg: { theme: typeof theme }) => Record<string, any>
+    )({ theme });
+    const errorStyles = (
+      errorVariant!.style as (arg: {
+        theme: typeof theme;
+      }) => Record<string, any>
+    )({ theme });
+    const flatStyles = (
+      flatVariant!.style as (arg: {
+        theme: typeof theme;
+      }) => Record<string, any>
+    )({ theme });
+
+    for (const styles of [containedStyles, errorStyles, flatStyles]) {
+      expect(styles.boxShadow).toBe(premiumSurface.light.rest);
+      expect(styles["&:hover"]).toMatchObject({
+        boxShadow: premiumSurface.light.hover,
+        transform: "translateY(-1px)",
+      });
+      expect(styles["&:active"]).toMatchObject({
+        boxShadow: premiumSurface.light.active,
+        transform: "scale(0.98) translateY(0)",
+      });
+      expect(styles[darkKey]).toMatchObject({
+        boxShadow: premiumSurface.dark.rest,
+        "&:hover": {
+          boxShadow: premiumSurface.dark.hover,
+          transform: "translateY(-1px)",
+        },
+        "&:active": {
+          boxShadow: premiumSurface.dark.active,
+          transform: "scale(0.98) translateY(0)",
+        },
+      });
+    }
+
+    expect(errorStyles.backgroundColor).toBe(theme.vars.palette.error.main);
+    expect(errorStyles[darkKey].backgroundColor).toBe(
+      theme.vars.palette.error.main,
+    );
   });
 });
 

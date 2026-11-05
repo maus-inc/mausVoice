@@ -3,6 +3,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useIntl } from "react-intl";
 import { AudioPlaybackButton } from "./AudioPlaybackButton";
 import { AudioWaveformBars } from "./AudioWaveformBars";
+import {
+  type AudioPillPlaybackSession,
+  createAudioPillPlaybackSession,
+} from "./audio-pill-playback-session";
 import { showErrorSnackbar } from "../../actions/app.actions";
 import { getTranscriptionRepo } from "../../repos";
 import {
@@ -14,15 +18,10 @@ import {
   MIN_WAVEFORM_BAR_VALUE,
   playWebAudio,
   seekPlayback,
-  stopActivePlayback,
   WAVEFORM_BAR_GAP,
   WAVEFORM_BAR_MAX_WIDTH,
   WAVEFORM_BAR_MIN_WIDTH,
 } from "../../utils/audio-playback.utils";
-
-// A request owns playback from the moment a row is chosen, including while its
-// audio is loading and before the Web Audio context becomes active.
-let playbackOwner: symbol | null = null;
 
 export type AudioPlayerPillProps = {
   transcriptionId: string;
@@ -43,8 +42,11 @@ export const AudioPlayerPill = ({
   const [waveformWidth, setWaveformWidth] = useState(0);
   const waveformContainerRef = useRef<HTMLDivElement | null>(null);
   const pointerCleanupRef = useRef<(() => void) | null>(null);
-  const playbackNonceRef = useRef(0);
-  const ownerRef = useRef<symbol | null>(null);
+  const playbackSessionRef = useRef<AudioPillPlaybackSession | null>(null);
+  const getPlaybackSession = () => {
+    playbackSessionRef.current ??= createAudioPillPlaybackSession();
+    return playbackSessionRef.current;
+  };
   const isPlayingRef = useRef(false);
   const playbackProgressRef = useRef(0);
   const transcriptionIdRef = useRef(transcriptionId);
@@ -113,21 +115,11 @@ export const AudioPlayerPill = ({
     return () => {
       pointerCleanupRef.current?.();
       pointerCleanupRef.current = null;
-      playbackNonceRef.current += 1;
-      if (ownerRef.current && playbackOwner === ownerRef.current) {
-        playbackOwner = null;
-        stopActivePlayback("stopped");
-      }
-      ownerRef.current = null;
+      getPlaybackSession().stopOwned();
     };
   }, [transcriptionId]);
   useEffect(() => {
-    if (!disabled || !ownerRef.current || playbackOwner !== ownerRef.current)
-      return;
-    playbackNonceRef.current += 1;
-    playbackOwner = null;
-    ownerRef.current = null;
-    stopActivePlayback("stopped");
+    if (!disabled || !getPlaybackSession().stopOwned()) return;
     isPlayingRef.current = false;
     setIsPlaying(false);
   }, [disabled]);
@@ -162,46 +154,33 @@ export const AudioPlayerPill = ({
     return () => observer.disconnect();
   }, [transcriptionId]);
   const handlePlaybackToggle = useCallback(async () => {
-    const currentNonce = playbackNonceRef.current + 1;
-    playbackNonceRef.current = currentNonce;
+    const session = getPlaybackSession();
+    if (isPlayingRef.current) {
+      session.stopOwned();
+      isPlayingRef.current = false;
+      setIsPlaying(false);
+      return;
+    }
 
+    const attempt = session.beginRequest();
     try {
-      if (isPlayingRef.current) {
-        if (playbackOwner === ownerRef.current) {
-          playbackOwner = null;
-          stopActivePlayback("stopped");
-        }
-        ownerRef.current = null;
-        isPlayingRef.current = false;
-        setIsPlaying(false);
-        return;
-      }
-
-      const owner = Symbol();
-      ownerRef.current = owner;
-      playbackOwner = owner;
-      // Supersede both active audio and any Web Audio setup already in flight.
-      stopActivePlayback("replaced");
       const audioData =
         await getTranscriptionRepo().loadTranscriptionAudio(transcriptionId);
 
-      if (
-        playbackNonceRef.current !== currentNonce ||
-        playbackOwner !== owner
-      ) {
+      if (!attempt.isCurrent()) {
         return;
       }
 
       isPlayingRef.current = true;
       setIsPlaying(true);
-      let setupPending = true;
+      attempt.beginSetup();
       await playWebAudio(
         transcriptionId,
         audioData,
         (progress) => {
           if (
             transcriptionIdRef.current === transcriptionId &&
-            playbackNonceRef.current === currentNonce &&
+            attempt.isNonceCurrent() &&
             !isDraggingRef.current
           ) {
             setPlaybackProgress(progress);
@@ -210,19 +189,9 @@ export const AudioPlayerPill = ({
         (reason) => {
           if (
             transcriptionIdRef.current !== transcriptionId ||
-            playbackNonceRef.current !== currentNonce
+            !attempt.handleStopCallback(reason)
           ) {
             return;
-          }
-          // A setup failure stops the just-published source before rejecting.
-          // Keep ownership until the catch reports that failure.
-          if (!(
-            setupPending &&
-            reason === "stopped" &&
-            playbackOwner === owner
-          )) {
-            if (playbackOwner === owner) playbackOwner = null;
-            ownerRef.current = null;
           }
           isPlayingRef.current = false;
           setIsPlaying(false);
@@ -232,16 +201,9 @@ export const AudioPlayerPill = ({
         },
         playbackProgressRef.current,
       );
-      setupPending = false;
+      attempt.completeSetup();
     } catch (error) {
-      if (
-        playbackNonceRef.current !== currentNonce ||
-        playbackOwner !== ownerRef.current ||
-        !ownerRef.current
-      )
-        return;
-      playbackOwner = null;
-      ownerRef.current = null;
+      if (!attempt.releaseOnError()) return;
       isPlayingRef.current = false;
       console.error("Failed to toggle audio playback", error);
       setIsPlaying(false);

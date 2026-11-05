@@ -1,5 +1,7 @@
 import {
   type LocalDataWriteLease,
+  getLocalDataClearGeneration,
+  isLocalDataClearRequested,
   withLocalDataWrite,
 } from "../utils/local-data-write-gate";
 import { notifyDailyActivityChanged } from "../utils/daily-activity.events";
@@ -16,7 +18,13 @@ import {
   setUserPreferences,
 } from "../utils/user.utils";
 
-import { enqueueUserMutation, updateUser } from "./user-actions-core";
+import {
+  enqueuePrefsMutation,
+  enqueueUserMutation,
+  markPreferencesReconciled,
+  markUserReconciled,
+  updateUser,
+} from "./user-actions-core";
 
 const getCurrentDateString = (): string => dayjs().format("YYYY-MM-DD");
 
@@ -129,14 +137,19 @@ export const recordStreak = async (): Promise<void> => {
   const yesterday = getYesterdayDateString();
   const isConsecutive = user.streakRecordedAt === yesterday;
   const newStreak = isConsecutive ? (user.streak ?? 0) + 1 : 1;
+  const intl = getIntl();
 
   await updateUser(
     (u) => {
       u.streak = newStreak;
       u.streakRecordedAt = today;
     },
-    "Unable to update streak. User not found.",
-    "Failed to update streak. Please try again.",
+    intl.formatMessage({
+      defaultMessage: "Unable to update streak. User not found.",
+    }),
+    intl.formatMessage({
+      defaultMessage: "Failed to update streak. Please try again.",
+    }),
   );
 
   const info = getStreakInfo(newStreak);
@@ -188,12 +201,16 @@ export const recordUsageWords = (
     }
   });
 
-// Runs on the same chain as `updateUser` so a refresh never reads a row that a
-// queued save is halfway through writing. It must never be called from inside
-// a queued task: the chain is already occupied there and the call would wait on
-// itself forever. The failure path in `updateUser` therefore re-reads the row
-// inline rather than calling this.
-const refreshUserAndPreferences = async (): Promise<void> => {
+// Runs across both user and preference mutation chains so a refresh never reads
+// a row that a queued save is halfway through writing. Never call this from
+// inside a queued user or preference task.
+const refreshUserAndPreferences = async (generation: number): Promise<void> => {
+  if (
+    isLocalDataClearRequested() ||
+    generation !== getLocalDataClearGeneration()
+  ) {
+    return;
+  }
   try {
     getLogger().verbose("Refreshing current user and preferences");
     const [userResult, preferencesResult] = await Promise.allSettled([
@@ -201,16 +218,27 @@ const refreshUserAndPreferences = async (): Promise<void> => {
       getUserPreferencesRepo().getUserPreferences(),
     ]);
 
+    if (
+      isLocalDataClearRequested() ||
+      generation !== getLocalDataClearGeneration()
+    ) {
+      return;
+    }
+
     const user = userResult.status === "fulfilled" ? userResult.value : null;
     const hasPreferencesResult = preferencesResult.status === "fulfilled";
     const preferences = hasPreferencesResult ? preferencesResult.value : null;
     if (userResult.status === "rejected") {
       getLogger().warning(`Failed to refresh user: ${userResult.reason}`);
+    } else if (user) {
+      markUserReconciled();
     }
     if (preferencesResult.status === "rejected") {
       getLogger().warning(
         `Failed to refresh user preferences: ${preferencesResult.reason}`,
       );
+    } else {
+      markPreferencesReconciled();
     }
 
     produceAppState((draft) => {
@@ -236,5 +264,9 @@ const refreshUserAndPreferences = async (): Promise<void> => {
   }
 };
 
-export const refreshCurrentUser = (): Promise<void> =>
-  enqueueUserMutation(refreshUserAndPreferences);
+export const refreshCurrentUser = (): Promise<void> => {
+  const generation = getLocalDataClearGeneration();
+  return enqueueUserMutation(() =>
+    enqueuePrefsMutation(() => refreshUserAndPreferences(generation)),
+  );
+};

@@ -382,7 +382,7 @@ describe("concurrent app target changes", () => {
     );
     const first = setAppTargetTypingSpeed("app", 10);
     const second = setAppTargetTypingSpeed("app", 30);
-    await Promise.all([first, second]);
+    await expect(Promise.all([first, second])).resolves.toEqual([false, true]);
     expect(upsertAppTargetMock).toHaveBeenCalledTimes(2);
     expect(getAppState().appTargetById.app.typingSpeedMs).toBe(30);
   });

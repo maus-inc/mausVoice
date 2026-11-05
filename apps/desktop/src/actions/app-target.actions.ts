@@ -189,12 +189,13 @@ export const setAppTargetInsertionMethod = async (
 export const setAppTargetTypingSpeed = async (
   id: string,
   typingSpeedMs: number | null,
-): Promise<void> => {
+): Promise<boolean> => {
   try {
-    await updateAppTarget(id, { typingSpeedMs });
+    return await updateAppTarget(id, { typingSpeedMs });
   } catch (error) {
     console.error("Failed to update app target typing speed", error);
     showAppTargetSaveError();
+    return false;
   }
 };
 

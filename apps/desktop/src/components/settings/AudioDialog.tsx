@@ -107,7 +107,7 @@ export const AudioDialog = () => {
 
   const handleToggle = (event: ChangeEvent<HTMLInputElement>) => {
     const enabled = event.target.checked;
-    void setInteractionChimeEnabled(enabled);
+    void setInteractionChimeEnabled(enabled).catch(() => {});
   };
 
   // Live display value while dragging; the persisted value updates on commit.

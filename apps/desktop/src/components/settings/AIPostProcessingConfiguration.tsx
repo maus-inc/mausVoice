@@ -23,11 +23,11 @@ export const AIPostProcessingConfiguration = () => {
   const effectiveMode = useAppStore(getEffectivePostProcessingMode);
 
   const handleModeChange = useCallback((mode: PostProcessingMode) => {
-    void setPreferredPostProcessingMode(mode);
+    void setPreferredPostProcessingMode(mode).catch(() => {});
   }, []);
 
   const handleApiKeyChange = useCallback((id: string | null) => {
-    void setPreferredPostProcessingApiKeyId(id);
+    void setPreferredPostProcessingApiKeyId(id).catch(() => {});
   }, []);
 
   return (

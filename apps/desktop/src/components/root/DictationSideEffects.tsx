@@ -1108,7 +1108,9 @@ export const DictationSideEffects = () => {
 
     const hasOnboarded = getIsOnboarded(getAppState());
     if (hasOnboarded) {
-      delayed(2000).then(() => recordStreak());
+      delayed(2000)
+        .then(() => recordStreak())
+        .catch(() => {});
     }
 
     getLogger().info("stopRecording entered");

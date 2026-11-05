@@ -29,7 +29,7 @@ export const SettingSelect = <Value extends string>({
 }: {
   value: Value;
   options: SettingSelectOption<Value>[];
-  onChange: (value: Value) => void;
+  onChange: (value: Value) => void | Promise<unknown>;
   ariaLabel: string;
 }) => (
   <Select<Value>
@@ -37,9 +37,11 @@ export const SettingSelect = <Value extends string>({
     fullWidth
     value={value}
     aria-label={ariaLabel}
-    onChange={(event: SelectChangeEvent) =>
-      onChange(event.target.value as Value)
-    }
+    onChange={(event: SelectChangeEvent) => {
+      void Promise.resolve(onChange(event.target.value as Value)).catch(
+        () => {},
+      );
+    }}
     MenuProps={{ slotProps: { paper: { style: { maxHeight: 320 } } } }}
   >
     {options.map((option) => (

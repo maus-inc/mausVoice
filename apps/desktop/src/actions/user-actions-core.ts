@@ -8,7 +8,6 @@ import { PRIMARY_LANGUAGE_SENTINEL } from "../utils/language.utils";
 import { getLogger } from "../utils/log.utils";
 import {
   type LocalDataWriteLease,
-  beginLocalDataWrite,
   withLocalDataWrite,
 } from "../utils/local-data-write-gate";
 import { createMutationQueue } from "../utils/mutation-queue";
@@ -32,6 +31,22 @@ export const { enqueue: enqueueUserMutation } = createMutationQueue();
 // A rejected repository call can have committed before its response failed.
 // Do not base the next whole-row update on an unverified profile in that case.
 let userNeedsReconciliation = false;
+
+export const markUserReconciled = (): void => {
+  userNeedsReconciliation = false;
+};
+
+// Acquire or retain the local-data write lease before entering a mutation queue
+// so blocked writes reject immediately and queued saves drain before a clear.
+const enqueueLocalDataMutation = <T>(
+  enqueue: <R>(task: () => Promise<R>) => Promise<R>,
+  operation: (lease: LocalDataWriteLease) => Promise<T>,
+  existingLease?: LocalDataWriteLease,
+): Promise<T> =>
+  withLocalDataWrite(
+    (writeLease) => enqueue(() => operation(writeLease)),
+    existingLease,
+  );
 
 const reconcileUser = async (lease: LocalDataWriteLease): Promise<void> => {
   const latest = await getUserRepo().getMyUser();
@@ -68,8 +83,9 @@ export const updateUser = (
   existingLease?: LocalDataWriteLease,
   options: { requireUser?: boolean; showErrorToast?: boolean } = {},
 ): Promise<void> =>
-  enqueueUserMutation(async () => {
-    const saveUser = async (lease: LocalDataWriteLease): Promise<void> => {
+  enqueueLocalDataMutation(
+    enqueueUserMutation,
+    async (lease) => {
       if (userNeedsReconciliation) {
         try {
           await reconcileUser(lease);
@@ -115,21 +131,9 @@ export const updateUser = (
           showErrorSnackbar(saveErrorMessage);
         throw error;
       }
-    };
-
-    if (existingLease) {
-      await withLocalDataWrite(saveUser, existingLease);
-      return;
-    }
-
-    const releaseWrite = beginLocalDataWrite();
-    if (!releaseWrite) return;
-    try {
-      await saveUser(releaseWrite.lease);
-    } finally {
-      releaseWrite();
-    }
-  });
+    },
+    existingLease,
+  );
 
 export const createDefaultPreferences = (): UserPreferences => ({
   userId: LOCAL_USER_ID,
@@ -189,8 +193,12 @@ export const createDefaultPreferences = (): UserPreferences => ({
 // Serializes preference mutations so overlapping tool toggles or numeric edits
 // cannot read a stale snapshot and clobber each other's change. Each task reads
 // the latest committed preferences when it actually runs.
-const { enqueue: enqueuePrefsMutation } = createMutationQueue();
+export const { enqueue: enqueuePrefsMutation } = createMutationQueue();
 let preferencesNeedReconciliation = false;
+
+export const markPreferencesReconciled = (): void => {
+  preferencesNeedReconciliation = false;
+};
 
 const reconcilePreferences = async (
   lease: LocalDataWriteLease,
@@ -207,8 +215,6 @@ type UpdateUserPreferencesOptions = {
   showErrorToast?: boolean;
   /** Reuse a write lease the caller already holds instead of taking one. */
   existingLease?: LocalDataWriteLease;
-  /** Reject a blocked write when the caller must distinguish it from a save. */
-  requireWrite?: boolean;
 };
 
 export const updateUserPreferences = (
@@ -218,10 +224,9 @@ export const updateUserPreferences = (
   }),
   options: UpdateUserPreferencesOptions = {},
 ): Promise<void> =>
-  enqueuePrefsMutation(async () => {
-    const savePreferences = async (
-      lease: LocalDataWriteLease,
-    ): Promise<void> => {
+  enqueueLocalDataMutation(
+    enqueuePrefsMutation,
+    async (lease) => {
       if (preferencesNeedReconciliation) {
         try {
           await reconcilePreferences(lease);
@@ -283,21 +288,6 @@ export const updateUserPreferences = (
         }
         throw error;
       }
-    };
-
-    if (options.existingLease) {
-      await withLocalDataWrite(savePreferences, options.existingLease);
-      return;
-    }
-
-    const releaseWrite = beginLocalDataWrite();
-    if (!releaseWrite) {
-      if (options.requireWrite) throw new Error("Local data write is blocked.");
-      return;
-    }
-    try {
-      await savePreferences(releaseWrite.lease);
-    } finally {
-      releaseWrite();
-    }
-  });
+    },
+    options.existingLease,
+  );

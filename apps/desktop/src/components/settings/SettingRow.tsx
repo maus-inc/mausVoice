@@ -284,7 +284,7 @@ export type SettingToggleRowProps = {
   title: ReactNode;
   description?: ReactNode;
   checked: boolean;
-  onChange: (event: ChangeEvent<HTMLInputElement>) => void;
+  onChange: (event: ChangeEvent<HTMLInputElement>) => void | Promise<unknown>;
   disabled?: boolean;
 };
 
@@ -332,7 +332,9 @@ export const SettingToggleRow = ({
       <Box sx={controlColumnSx}>
         <Switch
           checked={checked}
-          onChange={onChange}
+          onChange={(event) => {
+            void Promise.resolve(onChange(event)).catch(() => {});
+          }}
           disabled={disabled}
           edge="end"
           slotProps={{

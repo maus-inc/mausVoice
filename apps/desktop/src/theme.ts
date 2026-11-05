@@ -1,4 +1,4 @@
-import { createTheme, type Shadows } from "@mui/material/styles";
+import { createTheme, type Shadows, type Theme } from "@mui/material/styles";
 import { stopComposingEscape } from "./components/common/ime-keyboard";
 import type { StorageManager } from "@mui/system/cssVars";
 import { withLocalDataWriteSync } from "./utils/local-data-write-gate";
@@ -29,6 +29,48 @@ import {
 import { THEME_MODE_STORAGE_KEY } from "./utils/local-storage.utils";
 
 const easeOut = cssEase(easeOutQuint);
+
+type ElevatedButtonTone = {
+  color: string;
+  base: string;
+  hover: string;
+  active: string;
+};
+
+const elevatedButtonStyle = (
+  theme: Theme,
+  light: ElevatedButtonTone,
+  dark: ElevatedButtonTone = light,
+) => ({
+  color: light.color,
+  backgroundColor: light.base,
+  boxShadow: premiumSurface.light.rest,
+  "&:hover": {
+    backgroundColor: light.hover,
+    boxShadow: premiumSurface.light.hover,
+    transform: "translateY(-1px)",
+  },
+  "&:active": {
+    backgroundColor: light.active,
+    boxShadow: premiumSurface.light.active,
+    transform: "scale(0.98) translateY(0)",
+  },
+  ...theme.applyStyles("dark", {
+    color: dark.color,
+    backgroundColor: dark.base,
+    boxShadow: premiumSurface.dark.rest,
+    "&:hover": {
+      backgroundColor: dark.hover,
+      boxShadow: premiumSurface.dark.hover,
+      transform: "translateY(-1px)",
+    },
+    "&:active": {
+      backgroundColor: dark.active,
+      boxShadow: premiumSurface.dark.active,
+      transform: "scale(0.98) translateY(0)",
+    },
+  }),
+});
 
 const uiFont = '"Satoshi", system-ui, -apple-system, sans-serif';
 /** TAN-PARADISO only via CSS var(--font-display) on logo + welcome/name. */
@@ -548,36 +590,22 @@ export const theme = createTheme({
             backgroundColor: theme.vars.palette.level3,
           },
         }),
-        contained: ({ theme }) => ({
-          color: surfaces.light.level1,
-          backgroundColor: inkSolid.base,
-          boxShadow: premiumSurface.light.rest,
-          "&:hover": {
-            backgroundColor: inkSolid.raised,
-            boxShadow: premiumSurface.light.hover,
-            transform: "translateY(-1px)",
-          },
-          "&:active": {
-            transform: "scale(0.98) translateY(0)",
-            boxShadow: premiumSurface.light.active,
-            backgroundColor: inkSolid.pressed,
-          },
-          ...theme.applyStyles("dark", {
-            color: surfaces.dark.level0,
-            backgroundColor: chalkSolid.base,
-            boxShadow: premiumSurface.dark.rest,
-            "&:hover": {
-              backgroundColor: chalkSolid.raised,
-              boxShadow: premiumSurface.dark.hover,
-              transform: "translateY(-1px)",
+        contained: ({ theme }) =>
+          elevatedButtonStyle(
+            theme,
+            {
+              color: surfaces.light.level1,
+              base: inkSolid.base,
+              hover: inkSolid.raised,
+              active: inkSolid.pressed,
             },
-            "&:active": {
-              transform: "scale(0.98) translateY(0)",
-              boxShadow: premiumSurface.dark.active,
-              backgroundColor: chalkSolid.pressed,
+            {
+              color: surfaces.dark.level0,
+              base: chalkSolid.base,
+              hover: chalkSolid.raised,
+              active: chalkSolid.pressed,
             },
-          }),
-        }),
+          ),
       },
       variants: [
         // A destructive confirmation must not wear the primary CTA's fill. The
@@ -590,83 +618,42 @@ export const theme = createTheme({
         // two differ only in meaning.
         {
           props: { variant: "contained", color: "error" },
-          style: ({ theme }) => ({
-            // The scheme-specific values are repeated inside `applyStyles`
-            // rather than left to the base block. The `contained` override
-            // above carries a `[data-mui-color-scheme]` selector for dark,
-            // which outranks a base rule regardless of source order, so the
-            // dark fill has to be stated in its own scheme block to win.
-            color: surfaces.light.level1,
-            backgroundColor: theme.vars.palette.error.main,
-            boxShadow: premiumSurface.light.rest,
-            "&:hover": {
-              backgroundColor: theme.vars.palette.error.dark,
-              boxShadow: premiumSurface.light.hover,
-              transform: "translateY(-1px)",
-            },
-            "&:active": {
-              transform: "scale(0.98) translateY(0)",
-              boxShadow: premiumSurface.light.active,
-              backgroundColor: theme.vars.palette.error.dark,
-            },
-            ...theme.applyStyles("dark", {
-              color: onDark(1),
-              backgroundColor: theme.vars.palette.error.main,
-              boxShadow: premiumSurface.dark.rest,
-              "&:hover": {
-                backgroundColor: theme.vars.palette.error.dark,
-                boxShadow: premiumSurface.dark.hover,
+          // Dark scheme rules in `contained` use `[data-mui-color-scheme]`,
+          // which outranks a base rule regardless of source order, so the
+          // helper emits matching light and dark scheme blocks for the error
+          // palette while keeping shadows and press transforms in one place.
+          style: ({ theme }) =>
+            elevatedButtonStyle(
+              theme,
+              {
+                color: surfaces.light.level1,
+                base: theme.vars.palette.error.main,
+                hover: theme.vars.palette.error.dark,
+                active: theme.vars.palette.error.dark,
               },
-              // The fill is restated here for the same reason the light block
-              // states it: the `contained` override's own `&:active` paints
-              // chalk (a light fill) and outranks this variant for any property
-              // this block leaves out, which left the label unreadable on a
-              // light flash the moment the button was pressed.
-              "&:active": {
-                transform: "scale(0.98) translateY(0)",
-                boxShadow: premiumSurface.dark.active,
-                backgroundColor: theme.vars.palette.error.dark,
+              {
+                color: onDark(1),
+                base: theme.vars.palette.error.main,
+                hover: theme.vars.palette.error.dark,
+                active: theme.vars.palette.error.dark,
               },
-            }),
-          }),
+            ),
         },
         {
           props: { variant: "flat" },
-          style: ({ theme }) => {
-            return {
-              backgroundColor: theme.vars.palette.level1,
+          style: ({ theme }) => ({
+            ...elevatedButtonStyle(theme, {
               color: theme.vars.palette.primary.main,
-              boxShadow: premiumSurface.light.rest,
-              "&:hover": {
-                backgroundColor: theme.vars.palette.level2,
-                boxShadow: premiumSurface.light.hover,
-                transform: "translateY(-1px)",
-              },
-              "&:active": {
-                backgroundColor: theme.vars.palette.level3,
-                transform: "scale(0.98) translateY(0)",
-                boxShadow: premiumSurface.light.active,
-              },
-              ...theme.applyStyles("dark", {
-                boxShadow: premiumSurface.dark.rest,
-                "&:hover": {
-                  backgroundColor: theme.vars.palette.level2,
-                  boxShadow: premiumSurface.dark.hover,
-                  transform: "translateY(-1px)",
-                },
-                "&:active": {
-                  backgroundColor: theme.vars.palette.level3,
-                  transform: "scale(0.98) translateY(0)",
-                  boxShadow: premiumSurface.dark.active,
-                },
-              }),
-              fontSize: theme.typography.pxToRem(15),
-              "& .MuiButton-startIcon > .MuiSvgIcon-root, \
+              base: theme.vars.palette.level1,
+              hover: theme.vars.palette.level2,
+              active: theme.vars.palette.level3,
+            }),
+            fontSize: theme.typography.pxToRem(15),
+            "& .MuiButton-startIcon > .MuiSvgIcon-root, \
     & .MuiButton-endIcon  > .MuiSvgIcon-root": {
-                fontSize: 22,
-              },
-            };
-          },
+              fontSize: 22,
+            },
+          }),
         },
         {
           props: { variant: "chrome" },

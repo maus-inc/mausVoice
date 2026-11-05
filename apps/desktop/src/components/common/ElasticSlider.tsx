@@ -8,6 +8,10 @@ import {
 } from "@mui/material";
 import { motion, useReducedMotion } from "framer-motion";
 import { useEffect, useRef, useState } from "react";
+import {
+  type SliderCommitQueue,
+  createSliderCommitQueue,
+} from "./slider-commit-queue";
 
 export type ElasticSliderProps = {
   /**
@@ -124,17 +128,53 @@ export const ElasticSlider = ({
   const [dragValue, setDragValue] = useState(value);
   const [settled, setSettled] = useState(0);
   const draggingRef = useRef(false);
-  // Keep the latest saved value available to asynchronous failure handlers.
+  const mountedRef = useRef(true);
+  // Keep the latest callbacks and saved value available to queued handlers.
   const savedValueRef = useRef(value);
+  const onCommitRef = useRef(onCommit);
+  const onChangeDisplayRef = useRef(onChangeDisplay);
   const interactionRef = useRef(0);
-  const pendingCommitsRef = useRef(0);
+  const commitQueueRef = useRef<SliderCommitQueue | null>(null);
   savedValueRef.current = value;
+  onCommitRef.current = onCommit;
+  onChangeDisplayRef.current = onChangeDisplay;
+
+  const getCommitQueue = () => {
+    commitQueueRef.current ??= createSliderCommitQueue({
+      runCommit: (nextValue) => onCommitRef.current(nextValue),
+      onRollback: (interaction) => {
+        if (
+          !mountedRef.current ||
+          interaction !== interactionRef.current ||
+          draggingRef.current
+        ) {
+          return;
+        }
+        const saved = savedValueRef.current;
+        setDragValue(saved);
+        onChangeDisplayRef.current?.(saved);
+      },
+      onSettled: () => {
+        if (mountedRef.current) {
+          setSettled((count) => count + 1);
+        }
+      },
+    });
+    return commitQueueRef.current;
+  };
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const accentFill = elasticSliderAccent(theme);
   const rail = theme.vars?.palette.level3 ?? theme.palette.level3;
 
   useEffect(() => {
-    if (!draggingRef.current && pendingCommitsRef.current === 0) {
+    if (!draggingRef.current && getCommitQueue().getPendingCount() === 0) {
       setDragValue(value);
       onChangeDisplay?.(value);
     }
@@ -152,30 +192,11 @@ export const ElasticSlider = ({
     const nextValue = typeof next === "number" ? next : (next[0] ?? value);
     draggingRef.current = false;
     setDragValue(nextValue);
+    const commitQueue = getCommitQueue();
     // A return to the old value still needs saving if an earlier change is
     // in flight; otherwise that earlier change would win after it completes.
-    if (nextValue === value && pendingCommitsRef.current === 0) return;
-    const interaction = interactionRef.current;
-    pendingCommitsRef.current += 1;
-    // An older failure must not overwrite a newer interaction.
-    const rollback = () => {
-      if (interaction !== interactionRef.current || draggingRef.current) return;
-      const saved = savedValueRef.current;
-      setDragValue(saved);
-      onChangeDisplay?.(saved);
-    };
-    try {
-      Promise.resolve(onCommit(nextValue))
-        .catch(rollback)
-        .finally(() => {
-          pendingCommitsRef.current -= 1;
-          setSettled((count) => count + 1);
-        });
-    } catch {
-      pendingCommitsRef.current -= 1;
-      rollback();
-      setSettled((count) => count + 1);
-    }
+    if (nextValue === value && commitQueue.getPendingCount() === 0) return;
+    commitQueue.submit(nextValue, interactionRef.current);
   };
 
   return (
