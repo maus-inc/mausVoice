@@ -1562,13 +1562,12 @@ describe("retranscribeTranscription unstyled post-processing", () => {
       };
       // The newest hundred rows carry no claim, so the claim only appears on
       // the second page an explicit scan has to walk.
-      listTranscriptions.mockImplementation(
-        async (params?: { limit?: number; offset?: number }) =>
-          (params?.offset ?? 0) === 0
-            ? Array.from({ length: 100 }, (_, index) =>
-                sampleTranscription(`filler-${index}`),
-              )
-            : [claimed],
+      listTranscriptions.mockImplementation((params?: { offset?: number }) =>
+        (params?.offset ?? 0) === 0
+          ? Array.from({ length: 100 }, (_, index) =>
+              sampleTranscription(`filler-${index}`),
+            )
+          : [claimed],
       );
 
       resumeAllInterruptedPostProcessEditRetries();

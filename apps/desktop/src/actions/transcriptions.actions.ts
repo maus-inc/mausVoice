@@ -811,6 +811,14 @@ const finishRetranscribeSuccess = (
 };
 
 /**
+ * Local data was cleared or a newer clear started while a run was in flight,
+ * so the run's result belongs to data the user asked to remove.
+ */
+const wasLocalDataCleared = (clearGeneration: number): boolean =>
+  isLocalDataClearRequested() ||
+  getLocalDataClearGeneration() !== clearGeneration;
+
+/**
  * Apply a finished run's outcome to the row it owns. Returns the update the
  * run stored, or null when a newer run superseded it or local data was
  * cleared underneath it, which are the states a caller must not schedule a
@@ -831,10 +839,7 @@ const completeRetranscribeRun = ({
     abandonRetranscribeRun();
     return null;
   }
-  if (
-    isLocalDataClearRequested() ||
-    getLocalDataClearGeneration() !== clearGeneration
-  ) {
+  if (wasLocalDataCleared(clearGeneration)) {
     cancelRetranscribeRunForClear(transcriptionId, generation);
     return null;
   }
@@ -869,10 +874,7 @@ const handleRetranscribeError = ({
     abandonRetranscribeRun();
     return;
   }
-  if (
-    isLocalDataClearRequested() ||
-    getLocalDataClearGeneration() !== clearGeneration
-  ) {
+  if (wasLocalDataCleared(clearGeneration)) {
     cancelRetranscribeRunForClear(transcriptionId, generation);
     return;
   }
@@ -947,17 +949,24 @@ export const retranscribeTranscription = async (
  * Rows resume through the same retranscription path, which updates the existing
  * History row rather than writing a second one.
  */
+/**
+ * The count a claim was written at is still the row's count. A claim can land
+ * on a later failure in the chain, and matching the recorded value is what
+ * tells a claim that never reported back from one whose pass ran and stored
+ * a higher count. Rows claimed before the column existed recorded nothing,
+ * and those claims were only ever written one failure past the threshold.
+ */
+const isClaimedFailureCountStillStanding = (
+  transcription: Transcription,
+): boolean =>
+  transcription.postProcessEditFailureCount ===
+  (transcription.postProcessEditRetryClaimCount ??
+    POST_PROCESS_EDIT_FAILURE_RETRANSCRIBE_AFTER + 1);
+
 const isResumableAutomaticRetry = (transcription: Transcription): boolean =>
   transcription.postProcessEditFailed === true &&
   transcription.postProcessEditAutoRetryUsed === true &&
-  // The count a claim was written at, not a fixed threshold: a claim can land
-  // on a later failure in the chain, and matching the recorded value is what
-  // tells a claim that never reported back from one whose pass ran and stored
-  // a higher count. Rows claimed before the column existed recorded nothing,
-  // and those claims were only ever written one failure past the threshold.
-  transcription.postProcessEditFailureCount ===
-    (transcription.postProcessEditRetryClaimCount ??
-      POST_PROCESS_EDIT_FAILURE_RETRANSCRIBE_AFTER + 1) &&
+  isClaimedFailureCountStillStanding(transcription) &&
   // A row already carrying a post-processing failure had its recovery attempt
   // delivered and recorded, so it must not be delivered again.
   transcription.postProcessFailed !== true &&
