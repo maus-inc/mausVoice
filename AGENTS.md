@@ -118,15 +118,13 @@ Verification coverage target: aim for full class coverage, not just instance cov
 
 - Proactive is not autonomous scope creep. You MUST ask before you expand beyond the confirmed scope. Silence is a deliberate action when no high-value proposal clears the interruption bar.
 - Proactive is not over-engineering. Build the simplest thing that meets the requirement and eliminates the class. Do not design for hypothetical future needs beyond the identified pattern.
-- Proactive is not adding outbound calls, telemetry, or new dependencies without explicit user request. Network calls remain attributable, visible, and bounded.
-- Proactive is not inventing `#` numbers, credentials, or co-authors. Never fabricate evidence.
+- Proactive is not adding outbound calls, telemetry, or new dependencies without explicit user request, and never invents `#` numbers, credentials, or co-authors. Network calls stay attributable, visible, and bounded.
 - Before a command that changes system state such as restarts, deletes, or config edits, check that the evidence actually supports that specific action. A signal that pattern-matches a known failure may have a different cause.
 
 ### 6. Enforcement
 
 - The Verification Gate MUST show head SHA plus results for `pnpm install --frozen-lockfile`, `pnpm run lint`, `pnpm run build`, `pnpm run test`, `pnpm run skills:verify`, and the Rust gates in `engineering/rust-toolchain.md` when relevant. Every progress claim MUST cite the tool output that proves it.
-- Typecheck is scoped per package, and CI runs three of them: `pnpm --filter desktop run check-types`, `pnpm --filter docs run check-types`, and `pnpm --filter @maus-inc/preview run check-types`. The root `pnpm run check-types` runs all fourteen workspace projects through turbo and is the cheaper single command, so prefer it and treat any failure as yours.
-- `apps/preview` only typechecks after the `@maus-inc/*` workspace packages are built, because its tsconfig reaches into `apps/desktop/src`. If you see `TS2307 Cannot find module '@maus-inc/...'`, build them first with `pnpm exec turbo run build --filter=desktop^...`. Do not chase that error into the source; it is build order, not a defect.
+- Typecheck runs per package in CI (`desktop`, `docs`, `@maus-inc/preview`), but the root `pnpm run check-types` covers all fourteen workspace projects through turbo in one pass, so prefer it and treat any failure as yours. `apps/preview` only typechecks after the `@maus-inc/*` packages build, because its tsconfig reaches into `apps/desktop/src`; if you see `TS2307 Cannot find module '@maus-inc/...'`, run `pnpm exec turbo run build --filter=desktop^...` first. That error is build order, not a defect, so do not chase it into the source.
 - The pull request body MUST pass `pnpm run check:pr-body`. A review record, a babysit round or a CI log outside a collapsible block is a defect, and so is a footer hidden inside one.
 - The depth pass MUST appear in the report as the four answers and the gate result per claim, run or labelled. A report that calls work deeper without naming the external check, or naming why it could not run, is not depth.
 - The Diff web-research review MUST list queries, sources, pattern class, instances found, edge cases, and failed attempts. A review that omits the pattern class is not run.
@@ -328,23 +326,32 @@ Run `pnpm gen:bindings` and confirm it produces no diff whenever a Tauri command
 
 Run the gate the way CI runs it. A piped command reports the exit code of the pipe, so read the printed diagnostics too. Follow `.agents/PREFLIGHT.md` before every push, paste the head SHA plus every result into the PR verification block, and never push directly to `main`.
 
+## Environment claims carry their scope
+
+The class this section exists to stop: measure one machine, then write that measurement into the repository as a standing fact. The damage runs both ways. An agent on an unrestricted host reads the limit as its own, reports a gate as impossible, or withholds work it could have run. A developer reads a snapshot of one sandbox as a property of the project.
+
+- Name the environment in every environment claim: an Arena agent sandbox, a GitHub Actions runner, a developer machine, or the user's machine. "crates.io is unreachable" states nothing. "crates.io has no route from the Arena agent sandbox, measured with one curl on 2026-11-05" states something a reader can check and can falsify on their own host.
+- Measure before you claim. One `curl -m 8 -o /dev/null -w '%{http_code}'`, one `command -v`, one version command. A limitation you copied out of a document is a hypothesis until this run confirms it.
+- Do not carry a limit across environments in either direction. A blocked sandbox does not mean blocked CI, and a green CI run does not mean the gate runs here.
+- Write durable documents in conditional form. A repository doc says what to do when a host is unreachable. A document that describes one host says which host, in its first paragraph.
+- When the environment stops a gate, report the environment, the measurement, the gap number and which half of the gate still ran. Never present a substitute check as the real one, and never hide a check you could have run.
+
 ## Blocked sandbox toolchain
 
-A restricted sandbox reaches `github.com`, `codeload.github.com`, `api.github.com`, `registry.npmjs.org`, `pypi.org` and `files.pythonhosted.org`. It cannot reach `sh.rustup.rs`, `crates.io`, `static.rust-lang.org`, `huggingface.co`, `googlechromelabs.github.io`, `objects.githubusercontent.com`, `cdn.playwright.dev`, `dl.google.com`, `nodejs.org` or any Debian mirror, and `apt-get update` fails against every mirror even though `sudo` works. GitHub Release assets answer 302 to `release-assets.githubusercontent.com`, which is blocked, so a `build.rs` that downloads a release tarball fails and so does any tool fetched from a release.
+This section describes one environment. It is the Arena agent sandbox that runs this repository's agent, measured on 2026-11-05, and it is not a property of the project. It reaches `github.com`, `codeload.github.com`, `api.github.com`, `registry.npmjs.org`, `pypi.org` and `files.pythonhosted.org`. It cannot reach `sh.rustup.rs`, `crates.io`, `static.rust-lang.org`, `huggingface.co`, `googlechromelabs.github.io`, `objects.githubusercontent.com`, `cdn.playwright.dev`, `dl.google.com`, `nodejs.org` or any Debian mirror, and `apt-get update` fails against every mirror even though `sudo` works. GitHub Release assets answer 302 to `release-assets.githubusercontent.com`, which is blocked, so a `build.rs` that downloads a release tarball fails and so does any tool fetched from a release.
 
-Fetch the orphan branch `vendor/sandbox-toolchain` on `maus-inc/mausVoice` before you report a Rust gate as unrunnable. It carries the Rust 1.88.0 components, the cargo dependency tree for all seven workspaces, a Debian 12 sysroot, the missing command line tools and the two native archives. Follow its `FETCH.md`.
+On a host that reaches the wider internet, none of this applies. Install the toolchain the normal way and run the gates. Check before you assume either state: one `curl` per host, and a version command per tool.
+
+From the blocked environment, fetch the orphan branch `vendor/sandbox-toolchain` on `maus-inc/mausVoice` before you report a Rust gate as unrunnable. It carries the Rust 1.88.0 components, the cargo dependency tree for all seven workspaces, a Debian 12 sysroot, the missing command line tools and the two native archives. Follow its `FETCH.md`.
 
 ```bash
 set -euo pipefail
 SV_SHA=61fb32959d6ac6a36b0c6356069a767ee7725caa   # pin the commit you reviewed, not the branch head
 SV="$(mktemp -d)"                                  # private root, so concurrent runs cannot clash
 curl -sSL -o "$SV.tar.gz" "https://codeload.github.com/maus-inc/mausVoice/tar.gz/$SV_SHA"
-tar xzf "$SV.tar.gz" -C "$SV" --strip-components=1
-cd "$SV"
+tar xzf "$SV.tar.gz" -C "$SV" --strip-components=1 && cd "$SV"
 for f in $(grep -o '^[a-f0-9]\{64\}  .*\.part-00$' MANIFEST.sha256 | sed 's/.*  //; s/\.part-00$//'); do cat "$f".part-* > "$f"; done
-sha256sum -c MANIFEST.sha256
-cd - >/dev/null
-echo "payload root: $SV"
+sha256sum -c MANIFEST.sha256 && cd - >/dev/null && echo "payload root: $SV"
 ```
 
 Extract to `/tmp`, never into the workspace, because the workspace is snapshotted against a size and file cap and the extracted payload is about 5.3 GB. Pin the commit you reviewed and re-run `sha256sum -c` on every fetch: `MANIFEST.sha256` travels with the payload, so it proves the download was intact, not that the branch head is still the commit you reviewed.
@@ -357,7 +364,7 @@ Five facts decide whether a gate can pass:
 - `cmake` from `system/tools/bin` must be on `PATH` before any build of `packages/rust_transcription`. `packages/rust_gtk_pill` needs `xvfb-run -a`.
 - A gate the payload still cannot serve is a gap to report, not a limit to accept. `engineering/sandbox-coverage-gaps.md` lists each one with its measurement, the stage it blocks and what to vendor: media tools for `ui-capture`, model weights, the WebDriver driver chain, cross-target standard libraries, packaging tools and the gitleaks binary. Name the gap number in the PR body when one of them stops you.
 
-Measured in this sandbox on 2026-11-05, after `pnpm install --frozen-lockfile --ignore-scripts`: `pnpm run check-types` passed with 9 turbo tasks in 49 seconds, and `pnpm run build` passed with 11 turbo tasks in 68 seconds. The TypeScript half of the cycle works with no payload at all. The Rust half does not start.
+Measured in that sandbox on 2026-11-05, after `pnpm install --frozen-lockfile --ignore-scripts`: `pnpm run check-types` passed with 9 turbo tasks in 49 seconds, and `pnpm run build` with 11 tasks in 68 seconds. The TypeScript half of the cycle ran with no payload. The Rust half did not start, because no Rust toolchain was installed there.
 
 `engineering/rust-toolchain.md` holds the offline cargo environment, the per-crate gate commands and the measured results. Run `.agents/PREFLIGHT.md` before any push. The build specification for the payload is `docs/sandbox-toolchain-vendor-spec.md`, and the procedure to rebuild it is `engineering/sandbox-vendor-handoff-prompt.md`.
 
@@ -745,21 +752,16 @@ Rule. Do not compress a standing rule into a pointer. Earlier versions of this f
 
 ## What was pruned and why
 
-The oldest version of this file embedded full skill docs inline. That duplicated about 94 percent of the file and drifted from the real skill sources. This version keeps the trigger and the contract per skill, and points at the skill for the detail.
+The oldest version embedded full skill docs inline, duplicated about 94 percent of the file, and drifted from the skill sources. It was then pruned too hard, which made agents shallower rather than faster, so the instruction hierarchy, the review loop, the PR workflow, the babysit loop, the bot rules, the domain practices, the preferences and the do-not list were restored in full on 2026-11-05.
 
-Pruned detail that does not belong here:
-
-* Long Postgres and ORM tutorials, because this repo is SQLite and sqlx. Full API curl samples for SonarCloud, because one reference link belongs in the skill. Teaching examples for plan writing, which the `plan` skill holds. Large workflow ASCII diagrams, which `search-first` holds.
-
-Restored on 2026-11-05, because pruning them made agents shallower rather than faster: the instruction source hierarchy, the pre-push and review loop, the PR filing workflow, the babysitting loop, the review bot rules, the domain practices, the repository preferences and the do-not list. They live in this file again, in full.
+Keep pruning the four kinds that never belonged here: Postgres and ORM tutorials, because this repo is SQLite and sqlx; SonarCloud curl samples, which belong in the skill; plan writing examples, which `plan` holds; and workflow diagrams, which `search-first` holds.
 
 ## Where full skill docs live
 
-* Project specific skills. The 57 directories under `.agents/skills/<name>/SKILL.md`: 53 locked vendored skills plus `be-ambitious`, `find-skills`, `ui-capture` and `unslop`, which are project owned. Read `engineering/design-skills.md` for the routing.
-* The design spec. `apps/desktop/DESIGN.md` is the durable word on anything a user sees, with `apps/desktop/docs/design-system-baseline.md` as its short extract and 39 specs in `apps/preview/specs/`. These predate every vendored skill and outrank them.
+* Project skills. The 57 directories under `.agents/skills/<name>/SKILL.md`: 53 locked, plus `be-ambitious`, `find-skills`, `ui-capture` and `unslop`, which are project owned. Routing is in `engineering/design-skills.md`.
+* The design spec. `apps/desktop/DESIGN.md` for anything a user sees, with `apps/desktop/docs/design-system-baseline.md` as the short extract and 39 specs in `apps/preview/specs/`. These predate every vendored skill and outrank them.
 * Binding engineering docs. `engineering/design-skills.md`, `engineering/motion-design.md`, `engineering/rust-toolchain.md`, `engineering/proactive-protocol.md`, `engineering/deep-refinement-protocol.md`, `engineering/sandbox-vendored-toolchain.md`, `engineering/sandbox-coverage-gaps.md` and the checklist `.agents/PREFLIGHT.md`.
-* Global skills. `~/.agents/skills/` or the plugin source you installed from.
-* This file. Pointers for detail only, never for a rule.
+* Global skills in `~/.agents/skills/`, and this file. Pointers for detail only, never for a rule.
 
 ## Facts about this repository
 

@@ -43,14 +43,19 @@ touched. Full detail and the measured results are in `engineering/rust-toolchain
 - [ ] `xvfb-run -a cargo test --locked --manifest-path packages/rust_gtk_pill/Cargo.toml`
 
 `CARGO_BUILD_JOBS=1` stays on the test steps. Parallel linking peaks above the memory
-a small sandbox has and the linker dies with `signal 9`.
+a 3 GB Arena agent sandbox has and the linker dies with `signal 9`.
 
 The pin is 1.88.0 and no crate in the tree declares a `rust-version` floor, so
 `--ignore-rust-version` is never needed. Do not add it.
 
 ## Blocked sandbox
 
-A restricted sandbox reaches `github.com`, `codeload.github.com`, `api.github.com`,
+This section is about the Arena agent sandbox and nothing else. On a host that reaches
+the wider internet, install the toolchain and go straight to the gates. Decide which
+situation you are in with `command -v cargo` and one `curl -m 8 -o /dev/null -w
+'%{http_code}'` per host, then follow the matching branch below.
+
+That sandbox reaches `github.com`, `codeload.github.com`, `api.github.com`,
 `registry.npmjs.org`, `pypi.org` and `files.pythonhosted.org`. It cannot reach
 `sh.rustup.rs`, `crates.io`, `static.rust-lang.org` or `huggingface.co`, and
 `apt-get update` fails against every Debian mirror even though `sudo` works.
@@ -76,8 +81,9 @@ The gap register in `engineering/sandbox-coverage-gaps.md` names what no payload
 
 The `--ignored` tests in
 `packages/rust_transcription/tests/sidecar_integration.rs` download models from
-`huggingface.co`. They cannot run in a sandbox. Record them as unrunnable with the
-reason. Do not report them as passed.
+`huggingface.co`. They cannot run in the Arena agent sandbox, which has no route there.
+Check `printenv` for a local mirror before you give up on them, and record them as
+unrunnable with the reason. Do not report them as passed.
 
 ## UI rule
 

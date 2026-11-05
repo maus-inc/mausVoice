@@ -1,9 +1,10 @@
 # Sandbox vendor handoff prompt
 
-Use this when the vendor payload has to be rebuilt. The build cannot happen inside a
-network-restricted sandbox, because it needs `static.rust-lang.org`, `crates.io`,
-Debian mirrors and GitHub Release assets. It has to be handed to an agent that has
-unrestricted internet.
+Use this when the vendor payload has to be rebuilt. The build cannot happen inside the
+Arena agent sandbox described in `engineering/sandbox-vendored-toolchain.md`, because
+it needs `static.rust-lang.org`, `crates.io`, Debian mirrors and GitHub Release assets.
+Hand it to an agent on a host that reaches all four, and confirm the handoff by having
+that agent print one `200` per host before it starts.
 
 The exhaustive specification is `docs/sandbox-toolchain-vendor-spec.md`. It is the
 document to hand over. This file is the short prompt that wraps it, plus the
@@ -20,7 +21,7 @@ Rebuild when any of these changes:
 - A native pin in `packages/rust_transcription/build.rs` (ONNX Runtime) or
   `patches/sherpa-onnx-sys-1.13.5/build.rs` (sherpa-onnx).
 - The GTK, Tauri or WebKit link set, which changes the Debian sysroot package list.
-- A new `build.rs` that downloads from a host a sandbox cannot reach.
+- A new `build.rs` that downloads from a host the Arena agent sandbox cannot reach.
 
 Do not rebuild for a TypeScript-only change, a docs change, or a migration.
 
@@ -69,11 +70,12 @@ your own build output, say so in `README.md`, the same way the licence group doe
 >   and the reassembled name in the manifest.
 > - `MANIFEST.sha256` in `sha256sum -c` format, covering every blob, not listing
 >   itself.
-> - `FETCH.md` must be self-contained: an agent in a restricted sandbox reads it and
->   nothing else, and ends with every gate run.
-> - Extract and build under `/tmp`. Pack with `xz` only, because the consuming sandbox
->   has no `zstd` and no `7z`.
-> - The consuming sandbox is Debian 12, x86_64, glibc 2.36, about 3.9 GB RAM with no
+> - `FETCH.md` must be self-contained: an agent in the Arena agent sandbox reads it
+>   and nothing else, and ends with every gate run.
+> - Extract and build under `/tmp`. Pack with `xz` only, because the consuming
+>   environment has no `zstd` and no `7z`.
+> - The consuming environment, the Arena agent sandbox, is Debian 12, x86_64, glibc
+>   2.36, about 3.9 GB RAM with no
 >   swap, 2 cores. It has git, curl, tar, xz, gzip, bzip2, unzip, gcc 12.2, make,
 >   binutils, python3, node 22 and sha256sum. It has no cmake, pkg-config, patchelf,
 >   file, clang, libclang, zstd, 7z, pnpm, bun, cargo, rustc, rustup or Xvfb. Ship all
@@ -154,7 +156,7 @@ you found that the build report did not mention.
   and the vendored directory settles it. The delivered branch also proves it, because its
   `Transcription lib tests` gate compiled the C++ with the tools tree's `cmake`.
 - A GitHub release asset is not a delivery path. The URL answers 302 to
-  `release-assets.githubusercontent.com`, which a restricted sandbox cannot reach. This is
+  `release-assets.githubusercontent.com`, which the Arena agent sandbox cannot reach. This is
   why `gitleaks` has to be vendored rather than downloaded at scan time, and why both
   `build.rs` scripts need pre-seeded archives.
 - Never extract into the workspace. Everything under the workspace root is snapshotted

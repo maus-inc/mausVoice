@@ -1,8 +1,14 @@
 # Sandboxed vendored toolchain
 
-This file orients an agent working in a network-restricted sandbox. It records what
-the vendor payload contains, what has been measured against this repository, and what
-still cannot run. It does not duplicate the instructions.
+This file orients an agent working in the Arena agent sandbox: `github.com`,
+`codeload.github.com`, `api.github.com`, `registry.npmjs.org`, `pypi.org` and
+`files.pythonhosted.org` reachable, 2 vCPU, 3 GB RAM, no Docker daemon, measured on
+2026-11-05. Every limit below is a statement about that environment, not about the
+repository and not about your machine, so probe before you repeat one. On a host that
+reaches `crates.io` and `static.rust-lang.org`, install the toolchain normally and skip
+the payload. This file records what the payload contains, what has been measured
+against this repository, and what still cannot run there. It does not duplicate the
+instructions.
 
 Authoritative sources, in the order you should read them:
 
@@ -138,16 +144,20 @@ commit message, so it remains a single orphan commit.
 
 ## Known limits
 
+Each line was measured in the Arena agent sandbox. Where one says a gate cannot run,
+check the host first with a `command -v` and one `curl`, because a limit that does not
+hold where you are is not a limit.
+
 - `file --version` runs under `env -i`, but classifying a file needs
   `MAGIC=/tmp/tools/share/magic.mgc`, because Debian's `file` has a compiled-in path at
-  `/usr/share/misc/magic.mgc` that does not exist in the sandbox. Nothing in this
+  `/usr/share/misc/magic.mgc` that does not exist in that sandbox. Nothing in this
   repository calls `file`, so this is a note rather than a blocker.
 - The `--ignored` tests in
   `packages/rust_transcription/tests/sidecar_integration.rs` download models from
   `huggingface.co`, which is not on the allowlist. They cannot run. Report them as
   unrunnable with the reason. Do not report them as passed.
 - `cargo test` needs `CARGO_BUILD_JOBS=1`. Parallel linking peaks above the memory a
-  sandbox has and the linker dies with `signal 9`.
+  3 GB Arena agent sandbox has and the linker dies with `signal 9`.
 - `packages/rust_gtk_pill` opens a display, so it needs `xvfb-run -a`.
 - `cmake` must be on `PATH` before any build of `packages/rust_transcription`.
 - There is no browser group in the payload, and this repository does have a WebDriver

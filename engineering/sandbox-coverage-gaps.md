@@ -1,17 +1,17 @@
 # What the vendored toolchain still does not cover
 
-The orphan branch `vendor/sandbox-toolchain` makes most of this repository buildable in a network-restricted sandbox. This file records the parts of the development cycle it still cannot cover, with the measurement for each one, so an agent stops guessing and a builder knows what to add.
+The orphan branch `vendor/sandbox-toolchain` makes most of this repository buildable inside the Arena agent sandbox: the six-host egress allowlist, 2 vCPU, 3 GB RAM, no Docker daemon. Every number here was measured in that environment on 2026-11-05 and describes it alone, not the repository, not CI, and not your machine. An unrestricted host closes most of these gaps by installing the tool, so probe before you repeat a limit or file a gap. What follows records the parts of the development cycle the payload cannot cover, with the measurement for each one, so an agent stops guessing and a builder knows what to add.
 
 It answers two questions.
 
-1. What can an agent do in this sandbox today.
+1. What can an agent do in that sandbox today.
 2. Which missing requirement blocks the rest, and what exactly has to be vendored to unblock it.
 
 Read `engineering/sandbox-vendored-toolchain.md` first for what the payload contains. Read `docs/sandbox-toolchain-vendor-spec.md` when the payload has to be rebuilt. This file is the delta.
 
 ## Measured environment
 
-Measured on 2026-11-05 in the Arena sandbox that runs the agent for this repository. Re-measure before you rely on it, because the numbers move.
+Measured on 2026-11-05 in the Arena agent sandbox that runs the agent for this repository. Re-measure before you rely on it, because the numbers move.
 
 ### Hosts
 
@@ -187,7 +187,7 @@ Substitute today. Say that platform gated code was checked by CI for that platfo
 
 No payload closes these. Name them in the pull request rather than working around them.
 
-- Provider API keys. The `GROQ_API_KEY` integration tests in `apps/desktop` need a key, and the sandbox has none. Do not invent one and do not skip silently.
+- Provider API keys. The `GROQ_API_KEY` integration tests in `apps/desktop` need a key that the Arena agent sandbox does not carry. CI supplies one through `secrets.GROQ_API_KEY`, and a developer machine may have one in `.env.local`, so check `printenv GROQ_API_KEY` before you call the test impossible. Do not invent a key and do not skip silently.
 - Audio devices. Microphone capture, the pill overlay against a real stream, and anything that needs a sound card. Use wav fixtures from `scripts/transcripts/`.
 - macOS and Windows runners. Signing, notarisation, `dmg` and `msi` output, and the Cocoa and Win32 code paths.
 - Containers. `config/docker-compose.yml` and the Ollama path need Docker Hub and a running daemon.

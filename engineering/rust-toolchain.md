@@ -1,6 +1,16 @@
 # Rust toolchain in agent sandboxes
 
-A restricted sandbox reaches `github.com`, `codeload.github.com`, `api.github.com`,
+This file describes one environment, not the world: the Arena agent sandbox that runs
+this repository's agent, measured on 2026-11-05. It is not a property of the repository,
+of CI, or of your machine. On a host that reaches the wider internet, install rustup
+normally and run the gates directly; read this file only for the `$CARGO_HOME` and
+`CARGO_BUILD_JOBS` notes.
+
+Probe before you trust any line below: `command -v cargo`, `cargo --version`, and
+`curl -m 8 -o /dev/null -w '%{http_code}' https://static.rust-lang.org`. A `200` settles
+it in favour of installing upstream.
+
+That sandbox reaches `github.com`, `codeload.github.com`, `api.github.com`,
 `registry.npmjs.org`, `pypi.org` and `files.pythonhosted.org`. It cannot reach
 `sh.rustup.rs`, `static.rust-lang.org`, `crates.io`, `index.crates.io`,
 `static.crates.io` or `huggingface.co`. `apt-get update` fails against every Debian
@@ -102,7 +112,8 @@ ships its own `rust/cargo-config.toml` with three stanzas, including the replace
 for the `ferrous-focus` git dependency, and `directory = "/tmp/cargo-vendor"`.
 
 - `CARGO_BUILD_JOBS=1` is required for `cargo test`. Parallel linking peaks above the
-  memory a sandbox has and the linker dies with `signal 9`. CI sets it too.
+  memory a 3 GB Arena agent sandbox has, and the linker dies with `signal 9`. CI sets
+  it too.
 - `cargo --config <path> clippy` does not work. Cargo does not forward the global
   `--config` flag to external subcommands, so clippy resolves against crates.io and
   fails. Built-in commands such as `metadata` and `check` do honour the flag. Put the
@@ -114,7 +125,8 @@ for the `ferrous-focus` git dependency, and `directory = "/tmp/cargo-vendor"`.
 
 ## Native payloads
 
-Two `build.rs` scripts download release archives that a sandbox cannot reach. The
+Two `build.rs` scripts download release archives that the Arena agent sandbox cannot
+reach. The
 vendor branch pre-seeds both under `native/`, and the digests in its
 `MANIFEST.sha256` match the pins in the build scripts byte for byte.
 
@@ -130,8 +142,9 @@ crate that cannot run. `SHERPA_ONNX_LIB_DIR` bypasses the digest check. Use
 Pre-seeding only the extracted directory does not work, so pre-seed the archive.
 
 The `--ignored` tests in `packages/rust_transcription/tests/sidecar_integration.rs`
-download models from `huggingface.co`, which is not reachable. They cannot run in a
-sandbox. Say so in the PR body instead of reporting them as passed.
+download models from `huggingface.co`, which the Arena agent sandbox cannot reach.
+They cannot run there. Check `printenv` for a local mirror before you give up on them,
+and say which gate you ran instead in the PR body rather than reporting them as passed.
 
 ## Do not repeat these mistakes
 

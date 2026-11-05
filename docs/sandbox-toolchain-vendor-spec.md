@@ -1,8 +1,12 @@
 # Spec: `vendor/sandbox-toolchain` orphan branch for `maus-inc/mausVoice`
 
 **Status:** build specification, handed to an agent with unrestricted internet.
-**Author of spec:** an agent running inside the restricted sandbox, so every statement
-about the sandbox below was *measured there*, not assumed.
+**Author of spec:** an agent running inside the Arena agent sandbox, so every statement
+about that environment below was *measured there*, not assumed.
+**Environment described:** the Arena agent sandbox only. Six reachable hosts, 2 vCPU,
+about 3.9 GB RAM, no Docker daemon, Debian 12. Nothing here claims anything about a
+host that reaches the wider internet: such a host may fetch upstream instead of
+vendoring, and should probe before it repeats a limit from this file.
 **Reference implementation:** `better-Shape/app`, branch `vendor/sandbox-toolchain`,
 commit `7c4c8788b138294d1a9be31dbee79075df5e7f3d` ("vendor: sandbox toolchain payload
 (G1-G4)", 2026-10-16, author `mausagent <mausAgent@proton.me>`). That branch was read
