@@ -9,7 +9,7 @@ It answers two questions.
 1. What can an agent do in that sandbox today.
 2. Which missing requirement blocks the rest, and what exactly has to be vendored to unblock it.
 
-Read `engineering/sandbox-vendored-toolchain.md` first for what the payload contains. Read `docs/sandbox-toolchain-vendor-spec.md` when the payload has to be rebuilt. This file is the delta.
+Read `engineering/sandbox-vendored-toolchain.md` first for what the payload contains. This file is about this repository's gates; the tools an Arena agent sandbox lacks for a development cycle in any repository are in `engineering/sandbox-capability-gaps.md`. Read `docs/sandbox-toolchain-vendor-spec.md` when the payload has to be rebuilt. This file is the delta.
 
 ## Measured environment
 
