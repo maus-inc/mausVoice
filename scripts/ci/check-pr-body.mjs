@@ -117,6 +117,12 @@ function check(body, maxOpen) {
       awaitingSummary = true;
     }
 
+    // A one-line <details><summary>...</summary> is valid HTML and turns up in bot
+    // boilerplate, so the summary may arrive on the line that opens the fold.
+    if (awaitingSummary && /<summary>[\s\S]*<\/summary>/i.test(scan)) {
+      awaitingSummary = false;
+    }
+
     if (depth > 0 && awaitingSummary) {
       if (/^<summary>[\s\S]*<\/summary>$/.test(scan)) {
         awaitingSummary = false;

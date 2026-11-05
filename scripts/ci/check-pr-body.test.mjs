@@ -59,6 +59,22 @@ describe("check-pr-body", () => {
     assert.match(out, /R1 line 4/);
   });
 
+  it("passes a one-line details and summary, as bots append", () => {
+    const body = [
+      "## Summary",
+      "Text.",
+      "<details><summary><strong>Usage Guide</strong></summary>",
+      "",
+      "### Checking Your Pull Request",
+      "Boilerplate.",
+      "",
+      "</details>",
+      footer,
+    ].join("\n");
+    const { code, out } = run(body);
+    assert.equal(code, 0, out);
+  });
+
   it("fails an unclosed details block", () => {
     const body = [
       "## Summary",
