@@ -1,0 +1,68 @@
+Model weights (G10)
+===================
+
+Why this file is here
+---------------------
+The four `#[ignore]` tests in
+`packages/rust_transcription/tests/sidecar_integration.rs` download model weights
+from `huggingface.co`, which a restricted sandbox cannot reach. The payload
+carries the smallest useful set so those tests can run with real models instead
+of synthetic buffers.
+
+Nothing here verifies transcript content. A model that loads and produces text
+is not a transcript that is correct. Record only that a model loaded.
+
+Whisper GGML weights
+--------------------
+File    : models/whisper/ggml-tiny.bin
+sha256  : be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21
+Source  : https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin
+
+File    : models/whisper/ggml-base.bin
+sha256  : 60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe
+Source  : https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin
+
+Both are the upstream published artifacts, unmodified. `ggml-base.bin` is split
+into `.part-00` and `.part-01` at 94,371,840 bytes per piece; reassemble before
+use. These are the only whisper models vendored. The small, medium, large-v3 and
+large-v3-turbo weights are not shipped; a task that needs them downloads them or
+extends this group behind a flag.
+
+The whisper model URLs are runtime-overridable with
+`RUST_TRANSCRIPTION_MODEL_URL_<UPPERCASE_ID>`, so a consumer can point them at a
+local file server without rebuilding.
+
+ONNX model bundle (SenseVoice)
+------------------------------
+File    : models/onnx/sense-voice/model.int8.onnx
+sha256  : 12ca1a2ae7ecf3e0019ef2822307ee0b5cadc9196569e379b4c4026f8205276d
+Source  : https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09/resolve/355f4d4884d8afd08aef04b9007a8556d7b463b2/model.int8.onnx
+Revision: 355f4d4884d8afd08aef04b9007a8556d7b463b2 (immutable)
+
+File    : models/onnx/sense-voice/tokens.txt
+sha256  : f449eb28dc567533d7fa59be34e2abca8784f771850c78a47fb731a31429a1dc
+Source  : https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09/resolve/355f4d4884d8afd08aef04b9007a8556d7b463b2/tokens.txt
+
+Both digests are the constants `packages/rust_transcription/src/models.rs` pins
+for `Self::SenseVoice` (`SENSEVOICE_MODEL_SHA256` and `SENSEVOICE_TOKENS_SHA256`),
+and the revision is `SENSEVOICE_REVISION` in the same file. `model.int8.onnx` is
+split into three `.part-NN` pieces.
+
+SenseVoice is the smallest non-whisper bundle. The Parakeet CTC, Parakeet TDT
+and Canary 1B bundles are larger and are not vendored. Their digests are pinned
+in `models.rs`; a task that needs them extends this group. The ONNX and
+SenseVoice URLs are deliberately not runtime-overridable, so a consumer cannot
+redirect them to a local mirror.
+
+How the sidecar finds them
+--------------------------
+The sidecar reads `RUST_TRANSCRIPTION_MODELS_DIR` and looks for
+`<dir>/<model-file>` for whisper and `<dir>/<model-id>/<artifact>` for ONNX.
+`FETCH.md` step 7b unpacks the models under the private payload path and exports
+that variable.
+
+Licences
+--------
+whisper.cpp weights are MIT (the whisper.cpp project). SenseVoice is Apache-2.0
+(sherpa-onnx). No licence text is redistributed in this group; add it before any
+redistribution outside this internal branch.

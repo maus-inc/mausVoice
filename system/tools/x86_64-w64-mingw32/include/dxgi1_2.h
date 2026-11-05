@@ -1,0 +1,1 @@
+../../share/mingw-w64/include/dxgi1_2.h

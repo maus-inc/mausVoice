@@ -1,0 +1,75 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: Config::IniFiles
+Upstream-Contact: https://github.com/shlomif/perl-Config-IniFiles/issues
+Source: https://metacpan.org/release/Config-IniFiles/
+ https://github.com/shlomif/perl-Config-IniFiles.git
+ git://github.com/shlomif/perl-Config-IniFiles.git
+
+Files: *
+Copyright:
+  2000, Scott Hutton
+  2000, Rich Bowen
+  2000, Jeremy Wadsack
+License-Grant:
+ This is free software; you can redistribute it and/or modify it under
+ the same terms as the Perl 5 programming language system itself.
+License: Artistic or GPL-1+
+Comment:
+ Perl 5 is licensed under either the 'Artistic license' or the 'GNU
+ General Public License' version 1 or later.
+
+Files: inc/Test/Run/Builder.pm
+Copyright:
+  2006 Shlomi Fish <shlomif@iglu.org.il>
+License: Artistic or GPL-1+
+Comment:
+ Mangled convenience copy of Test::Run.
+
+Files: t/30parameters-with-empty-values.t
+Copyright:
+  2011, Shlomi Fish <shlomif@iglu.org.il>
+License: Expat
+
+Files: t/34trailing-comments-double-delimeter.t
+Copyright:
+  2015, Shlomi Fish <shlomif@iglu.org.il>
+License: Expat
+
+Files: debian/*
+Copyright:
+  2002-2004,2006,2008-2018, Jonas Smedegaard <dr@jones.dk>
+License-Grant:
+ This program is free software; you can redistribute it and/or modify it
+ under the terms of the GNU General Public License as published by the
+ Free Software Foundation; either version 3, or (at your option) any
+ later version.
+License: GPL-3+
+
+License: Artistic
+License-Reference: /usr/share/common-licenses/Artistic
+
+License: GPL-1+
+License-Reference: /usr/share/common-licenses/GPL-1
+
+License: GPL-3+
+License-Reference: /usr/share/common-licenses/GPL-3'
+
+License: Expat
+ Permission is hereby granted, free of charge, to any person obtaining a
+ copy of this software and associated documentation files (the
+ "Software"), to deal in the Software without restriction, including
+ without limitation the rights to use, copy, modify, merge, publish,
+ distribute, sublicense, and/or sell copies of the Software, and to
+ permit persons to whom the Software is furnished to do so, subject to
+ the following conditions:
+ .
+ The above copyright notice and this permission notice shall be included
+ in all copies or substantial portions of the Software.
+ .
+ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+ OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+ IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+ CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+ TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.

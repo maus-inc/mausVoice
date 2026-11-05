@@ -1,0 +1,31 @@
+gitleaks secret-scan binary (G13)
+=================================
+
+Why this file is here
+---------------------
+`.github/workflows/secret-scan.yml` pins gitleaks 8.18.0 and downloads it from a
+GitHub Release asset at scan time. That URL answers 302 to
+`release-assets.githubusercontent.com`, which a restricted sandbox cannot reach,
+so the history scan cannot run locally without this binary.
+
+Vendored binary
+---------------
+File    : system/tools/bin/gitleaks
+Version : 8.18.0
+Source  : https://github.com/gitleaks/gitleaks/releases/download/v8.18.0/gitleaks_8.18.0_linux_x64.tar.gz
+Archive sha256 : 6e19050a3ee0688265ed3be4c46a0362487d20456ecd547e8c7328eaed3980cb
+Binary sha256  : 1fac68c9568f1c45a055738d9829dd354c49eccb52781d4546ec2f5a46fed692
+The binary reports its version with `gitleaks version`; there is no `--version`
+flag and it exits non-zero with `unknown flag: --version` if given one.
+
+Gate it the way CI runs it
+--------------------------
+Do not use `gitleaks detect --source .`. That scans a different commit set and
+auto-loads the `.gitleaksignore` in the tree it walks, so its finding count
+cannot be compared with CI. The workflow scans a commit range from the trusted
+base commit with that commit's config:
+
+    gitleaks detect --log-opts="<base-sha>..<head-sha>" --config <base-sha>:gitleaks.toml
+
+Compare the range scan's count with the last CI run on the same commit. A
+different count is a payload or configuration defect, not a clean result.

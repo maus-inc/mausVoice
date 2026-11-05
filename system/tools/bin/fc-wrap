@@ -1,0 +1,19 @@
+#!/bin/sh
+self=$0
+case "$self" in */*) : ;; *) self=$(command -v "$self" 2>/dev/null || echo "$self") ;; esac
+dir=${self%/*}
+real="${FC_NAME:-fc-list}"
+if [ -z "${FONTCONFIG_FILE:-}" ]; then
+  conf=${TMPDIR:-/tmp}/mausvoice-fontconfig.$$.conf
+  {
+    echo '<?xml version="1.0"?>'
+    echo '<!DOCTYPE fontconfig SYSTEM "fonts.dtd">'
+    echo '<fontconfig>'
+    echo "  <dir>$dir/../share/fonts</dir>"
+    echo "  <cachedir>${TMPDIR:-/tmp}</cachedir>"
+    echo '</fontconfig>'
+  } > "$conf" 2>/dev/null
+  FONTCONFIG_FILE="$conf"
+  export FONTCONFIG_FILE
+fi
+exec "$dir/$real.real" "$@"

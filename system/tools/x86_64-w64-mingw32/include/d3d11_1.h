@@ -1,0 +1,1 @@
+../../share/mingw-w64/include/d3d11_1.h

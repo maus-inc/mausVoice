@@ -1,0 +1,95 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+X-Format: https://dep.debian.net/deps/dep5
+Upstream-Name: neon
+Upstream-Contact: Joe Orton <joe@manyfish.co.uk>
+Source: https://github.com/notroj/neon/
+
+Files: *
+Copyright: 1999-2023 Joe Orton <joe@manyfish.co.uk>
+License: GPL-2+
+
+Files: src/ne_privssl.h src/ne_gnutls.c src/ne_socket.c
+Copyright: 2004 Aleix Conchillo Flaque <aleix@member.fsf.org>,
+ 2002-2011 Joe Orton <joe@manyfish.co.uk>
+License: GPL-2+
+
+Files: po/de.po
+Copyright: 2000 Thomas Schultz <tststs@gmx.de>
+License: GPL-2+
+
+Files: po/fr.po
+Copyright: 2000 Sylvain Glaize <mokona@puupuu.org>
+License: GPL-2+
+
+Files: po/ja.po
+Copyright: 2000 Nobuyuki Tsuchimura <tutimura@nn.iij4u.or.jp>
+License: GPL-2+
+
+Files: po/nn.po
+Copyright: 2001-2002 Karl Ove Hufthammer <karl@huftis.org>
+License: GPL-2+
+
+Files: po/pl.po
+Copyright: 2007-2009 Arfrever Frehtes Taifersar Arahesis <Arfrever.FTA@gmail.com>
+License: GPL-2+
+
+Files: po/ru.po
+Copyright: 1999 Michael Sobolev
+License: GPL-2+
+
+Files: src/ne_oldacl.c
+Copyright: 2001 Arun Garg <arung@pspl.co.in>,
+ 2001-2006 Joe Orton <joe@manyfish.co.uk>
+License: GPL-2+
+
+Files: src/ne_ntlm.c
+Copyright: 2003 Daniel Stenberg <daniel@haxx.se>,
+ 2009 Kai Sommerfeld <kso@openoffice.org>
+License: GPL-2+
+
+Files: src/ne_ntlm.h
+Copyright: 2009 Kai Sommerfeld <kso@openoffice.org>
+License: GPL-2+
+
+Files: src/ne_acl3744.h src/ne_acl3744.c
+Copyright: 2001, Arun Garg <arung@pspl.co.in>,
+ 2007 Henrik Holst <henrik.holst2@gmail.com>,
+ 2001-2008 Joe Orton <joe@manyfish.co.uk>
+License: GPL-2+
+
+Files: src/ne_dates.c
+Copyright: 2004 Jiang Lei <tristone@deluxe.ocn.ne.jp>,
+ 1999-2006 Joe Orton <joe@manyfish.co.uk>
+License: GPL-2+
+
+Files: src/ne_sspi.c
+Copyright: 2004-2005 Vladimir Berezniker,
+ 2007 Yves Martin  <ymartin59@free.fr>
+License: GPL-2+
+
+Files: src/ne_sspi.h
+Copyright: 2004-2005 Vladimir Berezniker
+License: GPL-2+
+
+Files: debian/*
+Copyright: 2001-2004 Wolfgang Sourdeau <was@debian.org>,
+ 2004-2005 Siggy Brentrup <bsb@debian.org>,
+ 2005-     Laszlo Boszormenyi (GCS) <gcs@debian.org>
+License: GPL-2+
+
+License: GPL-2+
+ This package is free software; you can redistribute it and/or modify
+ it under the terms of the GNU General Public License as published by
+ the Free Software Foundation; either version 2 of the License, or
+ (at your option) any later version.
+ .
+ This package is distributed in the hope that it will be useful,
+ but WITHOUT ANY WARRANTY; without even the implied warranty of
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ GNU General Public License for more details.
+ .
+ You should have received a copy of the GNU General Public License
+ along with this program. If not, see <https://www.gnu.org/licenses/>.
+ .
+ On Debian systems, the complete text of the GNU General
+ Public License can be found in `/usr/share/common-licenses/GPL-2'.

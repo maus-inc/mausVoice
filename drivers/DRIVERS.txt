@@ -1,0 +1,43 @@
+WebDriver driver chain (G11)
+============================
+
+Why this file is here
+---------------------
+`apps/desktop/webdriver/wdio.conf.js` runs through
+`pnpm --filter desktop test:webdriver`. On Linux it spawns `tauri-driver`, which
+is in no `Cargo.lock` in this repository, so it needs crates.io. On macOS it
+spawns `chromedriver`. Neither is reachable from a restricted sandbox, and the
+`chromedriver` npm postinstall that would fetch it cannot download either.
+
+Vendored binaries
+-----------------
+File    : drivers/tauri-driver/tauri-driver
+Version : 2.0.6
+Build   : cargo install tauri-driver --version 2.0.6 --locked --root <prefix>
+Binary sha256 : 82a5e60e074eb0c7b2202e740b62fe0f7d26b96258a415bd6389f4fa2e4cb70b
+Version 2.1.0 is the current release and requires rustc 1.90 or newer, which is
+above this repository's 1.88.0 pin. 2.0.6 builds on 1.88.0 and is the version
+this payload carries. The digest is this build's own output, not an upstream
+publication.
+
+File    : drivers/chromedriver-152.0.0/chromedriver
+Version : ChromeDriver 152.0.7977.42
+Source  : https://storage.googleapis.com/chrome-for-testing-public/152.0.7977.42/linux64/chromedriver-linux64.zip
+Archive sha256 : d6625ea71d0bd3dc0afb45b559d6737d5a5fccfbc04621ad9429e7668de65503
+Binary sha256  : 5544b570e939b39e03233b98fb9efb51d1f16ddfa85473ba379c3a54728fa59c
+This is the linux64 archive. The npm package pins `chromedriver@152.0.0`, which
+resolves to Chrome 152.0.7977.42, so the major matches. A macOS runner needs the
+matching mac-x64 or mac-arm64 archive instead; it is not shipped here.
+
+WebKitWebDriver
+---------------
+On Linux `wdio.conf.js` also needs WebKitWebDriver, which is not a separate
+download. It sits inside the sysroot package `libwebkit2gtk-4.1-0` at
+`/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebDriver`. `FETCH.md` step 10
+prints that path from the extracted sysroot.
+
+Scope
+-----
+This group carries no browser. `tauri-driver` drives the app's own WebKitGTK
+build through WebKitWebDriver, and the macOS path drives a Vite preview server
+through `chromedriver`. No Chromium or Chrome binary is required on Linux.

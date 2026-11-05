@@ -1,0 +1,51 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: Image-ExifTool
+Source: https://metacpan.org/release/Image-ExifTool
+Upstream-Contact: Phil Harvey (philharvey66@gmail.com)
+Files-Excluded: t/images/EXE.* t/images/Flash.*
+Comment: exclude binary test data files without source
+ (most probably trivial test files created by upstream, still we have no
+ source for them)
+
+Files: *
+Copyright: 2003-2023, Phil Harvey (philharvey66@gmail.com)
+License: Artistic or GPL-1+
+
+Files: lib/Image/ExifTool/BZZ.pm
+Comment:
+ This code is based on ZPCodec and BSByteStream of DjVuLibre 3.5.21 (see
+ additional copyrights and the first reference below), which are covered
+ under the GNU GPL license.
+Copyright:
+ 2003-2017, Phil Harvey (philharvey66@gmail.com)
+ 2002, Leon Bottou and Yann Le Cun
+ 2001, AT&T
+ 1999-2001, LizardTech Inc.
+License: GPL-1+
+
+Files: lib/Image/ExifTool/InfiRay.pm
+Copyright: 2003-2023, Marcos Del Sol Vives <marcos@orca.pet>
+License: Artistic or GPL-1+
+
+Files: debian/*
+Copyright: 2005, 2006, 2007, 2008, 2009, 2010, 2011, Mari Wang <mariwan@ifi.uio.no>
+ 2005, Petter Reinholdtsen <pere@debian.org>
+ 2008, Mark Hymers <mhy@debian.org>
+ 2012-2023, gregor herrmann <gregoa@debian.org>
+License: Artistic or GPL-1+
+
+License: Artistic
+ This program is free software; you can redistribute it and/or modify
+ it under the terms of the Artistic License, which comes with Perl.
+ .
+ On Debian systems, the complete text of the Artistic License can be
+ found in `/usr/share/common-licenses/Artistic'.
+
+License: GPL-1+
+ This program is free software; you can redistribute it and/or modify
+ it under the terms of the GNU General Public License as published by
+ the Free Software Foundation; either version 1, or (at your option)
+ any later version.
+ .
+ On Debian systems, the complete text of version 1 of the GNU General
+ Public License can be found in `/usr/share/common-licenses/GPL-1'.

@@ -1,0 +1,114 @@
+sherpa-onnx prebuilt payload
+============================
+
+Why this file is here
+---------------------
+`patches/sherpa-onnx-sys-1.13.5/build.rs` downloads a prebuilt archive from GitHub
+Releases at build time when no local copy is configured:
+
+    const RELEASE_BASE_URL: &str = "https://github.com/k2-fsa/sherpa-onnx/releases/download";
+    url = format!("{RELEASE_BASE_URL}/v{version}/{archive_name}")   // version = CARGO_PKG_VERSION = 1.13.5
+
+A GitHub Release asset download is a 302 redirect to `objects.githubusercontent.com`,
+which a network-restricted sandbox cannot reach. Shipping the archive here lets the
+consumer hand it to `build.rs` through `SHERPA_ONNX_ARCHIVE_DIR`, which keeps the
+pinned digest check live.
+
+Vendored archive
+----------------
+File    : sherpa-onnx-v1.13.5-linux-x64-static-lib.tar.bz2
+Source  : https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.5/sherpa-onnx-v1.13.5-linux-x64-static-lib.tar.bz2
+Size    : 22394054 bytes
+sha256  : 2ade8b7c62de66b9cf2e32bd7dbe077addaa4b18f422b49dc1bf3a1a0b1f762e
+
+That digest is the value `build.rs` pins in `ARCHIVE_SHA256_DIGESTS` for
+`sherpa-onnx-v1.13.5-linux-x64-static-lib.tar.bz2`, and the downloaded file was
+verified against it. It is the upstream published artifact, unmodified.
+
+Why the static linux-x64 archive
+--------------------------------
+`archive_name()` selects `sherpa-onnx-v{version}-linux-x64-static-lib.tar.bz2` for
+`(LinkMode::Static, "linux", "x86_64")`, which is what
+`packages/rust_transcription/Cargo.toml` requests on non-Windows and non-Android
+(`features = ["static"]`).
+
+Archive contents
+----------------
+sherpa-onnx-v1.13.5-linux-x64-static-lib/lib/libespeak-ng.a
+sherpa-onnx-v1.13.5-linux-x64-static-lib/lib/libkaldi-decoder-core.a
+sherpa-onnx-v1.13.5-linux-x64-static-lib/lib/libkaldi-native-fbank-core.a
+sherpa-onnx-v1.13.5-linux-x64-static-lib/lib/libkissfft-float.a
+sherpa-onnx-v1.13.5-linux-x64-static-lib/lib/libonnxruntime.a
+sherpa-onnx-v1.13.5-linux-x64-static-lib/lib/libpiper_phonemize.a
+sherpa-onnx-v1.13.5-linux-x64-static-lib/lib/libsherpa-onnx-c-api.a
+sherpa-onnx-v1.13.5-linux-x64-static-lib/lib/libsherpa-onnx-core.a
+sherpa-onnx-v1.13.5-linux-x64-static-lib/lib/libsherpa-onnx-cxx-api.a
+sherpa-onnx-v1.13.5-linux-x64-static-lib/lib/libsherpa-onnx-fst.a
+sherpa-onnx-v1.13.5-linux-x64-static-lib/lib/libsherpa-onnx-fstfar.a
+sherpa-onnx-v1.13.5-linux-x64-static-lib/lib/libsherpa-onnx-kaldifst-core.a
+sherpa-onnx-v1.13.5-linux-x64-static-lib/lib/libsherpa-onnx-portaudio_static.a
+sherpa-onnx-v1.13.5-linux-x64-static-lib/lib/libssentencepiece_core.a
+sherpa-onnx-v1.13.5-linux-x64-static-lib/lib/libucd.a
+
+The archive ships no licence file. `patches/sherpa-onnx-sys-1.13.5/Cargo.toml`
+declares `license = "Apache-2.0"`.
+
+Libraries `build.rs` links statically (SHERPA_ONNX_STATIC_LIBS)
+--------------------------------------------------------------
+sherpa-onnx-c-api, sherpa-onnx-core, kaldi-decoder-core,
+sherpa-onnx-kaldifst-core, sherpa-onnx-fstfar, sherpa-onnx-fst,
+kaldi-native-fbank-core, kissfft-float, piper_phonemize, espeak-ng, ucd,
+onnxruntime, ssentencepiece_core
+
+On Linux it additionally links `stdc++` and `m` as dylibs. A consumer debugging an
+undefined symbol should look in this list first.
+
+Consumer escape hatches, in the order `build.rs` evaluates them
+--------------------------------------------------------------
+1. `DOCS_RS=1` skips downloading and linking. Do NOT use: it changes what gets
+   linked and the resulting binary is not the one CI tests.
+2. `SHERPA_ONNX_LIB_DIR=<dir>` is used directly as the lib directory. This bypasses
+   the archive and the digest check entirely. `build.rs` errors if the directory does
+   not exist.
+3. `SHERPA_ONNX_ARCHIVE_DIR=<dir>` makes `build.rs` copy
+   `<dir>/sherpa-onnx-v1.13.5-linux-x64-static-lib.tar.bz2` into its cache and verify
+   the pinned digest. This is the documented path in FETCH.md, because it keeps the
+   digest check live. It errors with
+   `SHERPA_ONNX_ARCHIVE_DIR does not contain expected archive: <path>` when the file
+   name is not exactly right.
+
+Cache layout `build.rs` maintains
+---------------------------------
+<CARGO_TARGET_DIR or .../target>/sherpa-onnx-prebuilt/
+    sherpa-onnx-v1.13.5-linux-x64-static-lib.tar.bz2
+    sherpa-onnx-v1.13.5-linux-x64-static-lib/lib/            <- what gets linked
+    sherpa-onnx-v1.13.5-linux-x64-static-lib.extracted.sha256
+
+`build.rs` re-verifies the extracted tree against the recorded digest and re-extracts
+from the verified archive when it does not match. If a consumer pre-seeds the
+extracted directory without the archive, `build.rs` discards it as unverifiable
+("the archive it came from is missing") and tries to download. Pre-seed the archive,
+or use `SHERPA_ONNX_ARCHIVE_DIR`.
+
+Full pinned digest table
+------------------------
+Reproduced from `ARCHIVE_SHA256_DIGESTS` so a future maintainer can extend this
+branch. Only the linux-x64 static archive is vendored.
+
+sherpa-onnx-v1.13.5-linux-x64-static-lib.tar.bz2          2ade8b7c62de66b9cf2e32bd7dbe077addaa4b18f422b49dc1bf3a1a0b1f762e  <- vendored
+sherpa-onnx-v1.13.5-linux-aarch64-static-lib.tar.bz2      f78af8260892f3060c8c0aba9ae93e4e4c1b16fe509238b88e3688889235e1b2
+sherpa-onnx-v1.13.5-osx-x64-static-lib.tar.bz2            689f8167a52dc4dbaf05369705e26c8f203c748a8c342750fdfdcd8ca6bb8699
+sherpa-onnx-v1.13.5-osx-arm64-static-lib.tar.bz2          339c8fc19bb4b26e118c80792bbc4546eb263040fac36ef0cc027ec29c756b44
+sherpa-onnx-v1.13.5-osx-universal2-static-lib.tar.bz2     9e64f3274c4209c485fdb936c22bee27f4940e1872f3e93abe0e3e6db0190148
+sherpa-onnx-v1.13.5-win-x64-static-MT-Release-lib.tar.bz2 b7080b6f470bac96ef0afe56b25ae9b2f9f0ca82d10dad19bf3a2fc5ffd6cffc
+sherpa-onnx-v1.13.5-linux-x64-shared-lib.tar.bz2          dee76d27657cab8cb95a47322e88d93977d9a7e75f0a1abad032d8843e1542c9
+sherpa-onnx-v1.13.5-linux-aarch64-shared-cpu-lib.tar.bz2  e9e284e887c67959f45b2cad834d9b2fae281bb4e8e596928ffe371506d803ac
+sherpa-onnx-v1.13.5-osx-x64-shared-lib.tar.bz2            e1868ca5b756b0d5d33682b187cbce6cd448edf785e3fa8b7586f2c04cb0d84c
+sherpa-onnx-v1.13.5-osx-arm64-shared-lib.tar.bz2          df54b4f9406e00c3aee9152aeca65795848d197b80917ecb0bd472b852c5db9f
+sherpa-onnx-v1.13.5-osx-universal2-shared-lib.tar.bz2     79b1635418e1ec0ec2f72f7a2bda1467914cbb9a9e411b5b4800d97fc1110598
+sherpa-onnx-v1.13.5-win-x64-shared-MT-Release-lib.tar.bz2 e7092add4a05013043b5c7f0fa4ccd3de9cf2840a51b6501caf20c03086d2b97
+sherpa-onnx-v1.13.5-android.tar.bz2                       635eee004bf12d5881789876ea01964a6ef10dc74ccf317271ba9388d8718a84
+
+`scripts/ci/verify-sherpa-archives.test.mjs` asserts that the patch crate pins
+exactly these archives. If that test fails, the repository moved and these digests
+are stale.

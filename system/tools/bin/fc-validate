@@ -1,0 +1,6 @@
+#!/bin/sh
+self=$0
+case "$self" in */*) : ;; *) self=$(command -v "$self" 2>/dev/null || echo "$self") ;; esac
+FC_NAME=fc-validate
+export FC_NAME
+exec "${self%/*}/fc-wrap" "$@"

@@ -1,0 +1,62 @@
+ONNX Runtime prebuilt payload
+=============================
+
+Why this file is here
+---------------------
+`packages/rust_transcription/build.rs` downloads an ONNX Runtime archive from
+GitHub Releases at build time when no local runtime is configured:
+
+    const ORT_VERSION: &str = "1.23.2";
+    url = format!("https://github.com/microsoft/onnxruntime/releases/download/v{ORT_VERSION}/{archive}")
+
+A GitHub Release asset download is a 302 redirect to `objects.githubusercontent.com`.
+A network-restricted sandbox cannot reach that host, so the download fails late,
+after cargo has already compiled several hundred crates. Shipping the archive here
+lets the consumer point `build.rs` at a local copy instead.
+
+Vendored archive
+----------------
+File    : onnxruntime-linux-x64-1.23.2.tgz
+Source  : https://github.com/microsoft/onnxruntime/releases/download/v1.23.2/onnxruntime-linux-x64-1.23.2.tgz
+Size    : 8309231 bytes
+sha256  : 1fa4dcaef22f6f7d5cd81b28c2800414350c10116f5fdd46a2160082551c5f9b
+
+That digest is the value `packages/rust_transcription/build.rs` pins in
+`runtime_asset()` for `x86_64-unknown-linux-gnu`, and the downloaded file was
+verified against it. It is the upstream published artifact, unmodified.
+
+Archive contents (relevant paths)
+---------------------------------
+onnxruntime-linux-x64-1.23.2/lib/libonnxruntime.so        -> libonnxruntime.so.1
+onnxruntime-linux-x64-1.23.2/lib/libonnxruntime.so.1      -> libonnxruntime.so.1.23.2
+onnxruntime-linux-x64-1.23.2/lib/libonnxruntime.so.1.23.2 (22326072 bytes)
+onnxruntime-linux-x64-1.23.2/lib/libonnxruntime_providers_shared.so
+onnxruntime-linux-x64-1.23.2/LICENSE                      (MIT)
+onnxruntime-linux-x64-1.23.2/VERSION_NUMBER               (1.23.2)
+onnxruntime-linux-x64-1.23.2/GIT_COMMIT_ID                (a83fc4d58cb48eb68890dd689f94f28288cf2278)
+
+Consumer escape hatches
+-----------------------
+1. `MAUSVOICE_ORT_DYLIB_PATH` or `ORT_DYLIB_PATH` pointing at an extracted
+   `libonnxruntime.so` FILE. `configured_runtime()` takes the first of the two that
+   `path.is_file()`. `build.rs` copies it beside the built binaries and into `deps/`,
+   and emits `cargo:rustc-env=MAUSVOICE_BUILD_ORT_DYLIB=<path>`. This is the
+   documented path in FETCH.md.
+2. Cache pre-seed: place the `.tgz` at
+   `<CARGO_TARGET_DIR>/mausvoice-onnxruntime/1.23.2/onnxruntime-linux-x64-1.23.2/onnxruntime-linux-x64-1.23.2.tgz`.
+   `build.rs` verifies the digest and extracts. Fragile, because it depends on
+   `CARGO_TARGET_DIR` and the archive-stem directory name.
+
+Other targets are NOT vendored
+------------------------------
+`runtime_asset()` also pins archives for `aarch64-unknown-linux-gnu`,
+`x86_64-apple-darwin`/`aarch64-apple-darwin` (universal2), `x86_64-pc-windows-msvc`
+and `aarch64-pc-windows-msvc`. The consuming sandbox is x86_64 Linux, so those four
+were deliberately not vendored (they would add roughly 1 GB). A consumer building
+for another target must supply the matching archive itself.
+
+Licence
+-------
+MIT. The full text is in the archive at
+`onnxruntime-linux-x64-1.23.2/LICENSE` and is copied to
+`LICENSES/onnxruntime/LICENSE` on this branch.

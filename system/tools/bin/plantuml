@@ -1,0 +1,9 @@
+#!/bin/sh
+self=$0
+case "$self" in */*) : ;; *) self=$(command -v "$self" 2>/dev/null || echo "$self") ;; esac
+dir=${self%/*}
+: "${JAVA_HOME:=$dir/../lib/jvm/java-17-openjdk-amd64}"
+export JAVA_HOME
+HEADLESS="-Djava.awt.headless=true"
+[ -n "${DISPLAY:-}" ] && HEADLESS=""
+exec "$JAVA_HOME/bin/java" -Djava.net.useSystemProxies=true $HEADLESS -jar "$dir/../share/plantuml/plantuml.jar" "$@"

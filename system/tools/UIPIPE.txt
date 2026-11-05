@@ -1,0 +1,48 @@
+UI capture media tools (G9)
+===========================
+
+Why this file is here
+---------------------
+`.agents/skills/ui-capture/SKILL.md` records a UI change by encoding frames with
+`ffmpeg` and `ffprobe` and compressing the GIF with `gifsicle`, with `tesseract`
+as an optional OCR check. None of the four is present in a restricted sandbox,
+and none of them is an npm or PyPI package, so the payload has to carry them.
+
+Vendored binaries
+-----------------
+All four run under `env -i` with no `LD_LIBRARY_PATH`, which is the sanity check
+the other tools in `system/tools/bin` also pass.
+
+File    : system/tools/bin/ffmpeg
+Version : ffmpeg 7.0.2-static (johnvansickle.com amd64-static build)
+Source  : https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz
+Archive sha256 : abda8d77ce8309141f83ab8edf0596834087c52467f6badf376a6a2a4c87cf67
+Binary sha256  : e7e7fb30477f717e6f55f9180a70386c62677ef8a4d4d1a5d948f4098aa3eb99
+
+File    : system/tools/bin/ffprobe
+Version : ffprobe 7.0.2-static (same archive)
+Binary sha256 : 4f231a1960d83e403d08f7971e271707bec278a9ae18e21b8b5b03186668450d
+
+File    : system/tools/bin/gifsicle
+Version : LCDF Gifsicle 1.95
+Source  : https://www.lcdf.org/gifsicle/gifsicle-1.95.tar.gz
+Archive sha256 : b2711647009fd2a13130f3be160532ed46538e762bfc0f020dea50618a7dc950
+Binary sha256  : 22890f581d298bc4ba9554dd66544b57d31bd9a9ce6315e341f2c7a6f5b769cf
+Built with: ./configure --disable-gifview --disable-gifdiff && make
+The GitHub source tag (kohler/gifsicle v1.95) ships no `configure`, only
+`bootstrap.sh` and `configure.ac`, so it needs autoconf. The lcdf.org release
+tarball ships a generated `configure` and builds with `make` alone. Neither
+site publishes a sha256; the digests above are this build's own output.
+
+Licences
+--------
+system/tools/GPLv3.txt is the ffmpeg static build's own licence text, shipped in
+its archive. gifsicle is GPL-2.0-or-later; its COPYING is not redistributed here
+and must be added before any redistribution outside this internal branch.
+
+Not vendored
+------------
+tesseract and its `eng.traineddata` are optional and are not in this group. The
+`ui-capture` validation step skips the OCR check and says so when tesseract is
+absent, so the group is useful without it. Add it behind a flag if a task needs
+the caption round-trip.

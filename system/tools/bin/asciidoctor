@@ -1,0 +1,8 @@
+#!/bin/sh
+self=$0
+case "$self" in */*) : ;; *) self=$(command -v "$self" 2>/dev/null || echo "$self") ;; esac
+dir=${self%/*}
+export RUBYLIB="$dir/../lib/x86_64-linux-gnu/ruby/3.1.0:$dir/../lib/ruby/3.1.0:$dir/../lib/ruby/vendor_ruby${RUBYLIB:+:$RUBYLIB}"
+export GEM_HOME="$dir/../share/rubygems-integration/all"
+export GEM_PATH="$GEM_HOME"
+exec "$dir/ruby3.1" "$GEM_HOME/gems/asciidoctor-2.0.18/bin/asciidoctor" "$@"

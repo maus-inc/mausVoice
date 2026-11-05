@@ -1,0 +1,94 @@
+Provenance for groups G23 to G27
+================================
+
+Fourth delivery, built 2026-11-08/09. Every Debian package below was resolved from
+bookworm (deb.debian.org, including bookworm-security) and verified by sha256 before
+extraction. Columns: package, version, cached .deb filename, sha256 of that .deb.
+A copy of each package's copyright file is under LICENSES/debian/<package>/copyright.
+
+G23 native C/C++ build: clang-14, clang++-14, llvm-14, and the GNU binutils the linker
+step needs. The sysroot in system/debian12-dev-sysroot.tar.xz already carried the clang
+binaries; this group vendors them into system/tools/bin with a full library closure
+(libLLVM-14.so.1, libclang-cpp.so.14) and rpath $ORIGIN/../lib, plus ld/as/ar/nm/objcopy/
+objdump/strip/ranlib so clang can link. Verified: clang-14 and clang++-14 compile and link
+a C and a C++ program under `env -i` with only system/tools/bin on PATH.
+
+G24 runtime data: fontconfig, the DejaVu and Liberation fonts, tzdata and the locale
+source. fontconfig resolves "DejaVu Sans" from system/tools/share/fonts with
+FONTCONFIG_FILE pointed at a fonts.conf the bin/ wrappers write in a temp directory at run
+time, so the tree stays relocatable. tzdata provides system/tools/share/zoneinfo; locales provides
+localedef plus system/tools/share/i18n, from which en_US.UTF-8 is pre-generated into
+system/tools/lib/locale.
+
+G25 browser: Chromium 156.0.8078.79 with its full shared-library closure. The binary is
+system/tools/lib/chromium/chromium; bin/chromium is a launcher that sets LD_LIBRARY_PATH
+to the closure. Verified headless: `--dump-dom` renders and `--screenshot` writes a PNG
+under `env -i`.
+
+G26 language runtimes: a headless OpenJDK 17 JRE (PlantUML and any JVM tool), Ruby 3.1.2
+(asciidoctor), CPython 3.11 with its stdlib (binwalk, lldb), and Perl 5.36 (exiftool).
+Each ships a self-locating bin/ wrapper that sets the home/library variables it needs, so
+every one of them runs under `env -i`.
+
+G27 tools: pandoc, potrace, plantuml, asciidoctor, exiftool, binwalk, lldb, mtr, hyperfine,
+heaptrack, perf, the X11 capture/query tools (xdotool, scrot, xdpyinfo, xwininfo, xprop,
+xlsfonts) and osslsigncode.
+
+packageversiondebsha256
+libclang-cpp14	1:14.0.6-12	libclang-cpp14_1%3a14.0.6-12_amd64.deb	964b13d74e9aece340cde93fecd2a2f18dd63afcb707a797ce7b39d430a01c46
+libllvm14	1:14.0.6-12	libllvm14_1%3a14.0.6-12_amd64.deb	cd986403cfe53f47c41b80667f6b344c40fe35de4c5081dad9358b4c77cf64a8
+llvm-14	1:14.0.6-12	llvm-14_1%3a14.0.6-12_amd64.deb	228b10afde4f9cae59c8bbc4f4ea973f1f192d957c19f0427aafb78ab24e3b29
+llvm-14-tools	1:14.0.6-12	llvm-14-tools_1%3a14.0.6-12_amd64.deb	d8944819057332993f6257a81734539870c00e8f381111fc55e0da76f8e0bd96
+llvm-14-linker-tools	1:14.0.6-12	llvm-14-linker-tools_1%3a14.0.6-12_amd64.deb	6aa497a334836a9bfa7e2cc6d24edea553467482b6f6493154f766bbb697e846
+linux-perf	6.1.190-1	linux-perf_6.1.190-1_amd64.deb	16cf587fd870fc3687c9f3aea5fdb294ac4f76d29b3df805dad350eea2c2d36e
+mtr-tiny	0.95-1	mtr-tiny_0.95-1_amd64.deb	3f14c574dead81a4d24c4cd8237f7abde55729365b9be392b304d616cfdc5101
+hyperfine	1.15.0-2	hyperfine_1.15.0-2_amd64.deb	a652add8d272fa0635f9bb38cfeab49df4d218a5c328dde3618166feedec076c
+heaptrack	1.4.0-2	heaptrack_1.4.0-2_amd64.deb	2ff6dbf3b992ef31bf8213a0efd3a9583ea9540212648eecf599c49b975da212
+pandoc	2.17.1.1-2~deb12u1	pandoc_2.17.1.1-2~deb12u1_amd64.deb	18728969bc79d5cc25db572b164ebeb0f29e12ec1389750f05d648f8bdb43af5
+potrace	1.16-2	potrace_1.16-2_amd64.deb	39b14c5e208e8f22a02d1823066e365fff15bcf542aab424ee7160b6e2fd4d6d
+xdotool	1:3.20160805.1-5	xdotool_1%3a3.20160805.1-5_amd64.deb	baf0f340e8272e9313848f820ec962aaf843f17ee5737fe256c970f8f5f152b5
+scrot	1.8.1-1	scrot_1.8.1-1_amd64.deb	add2c552d6e38c8851c2c707c8f875d377a1eb32ed67cf29331128f616408b8e
+x11-utils	7.7+5	x11-utils_7.7+5_amd64.deb	64f2b157e6f00590c4d8633333bfdc890b66fc26ad61ce5e6f1fddcd0527ed1d
+osslsigncode	2.5-4	osslsigncode_2.5-4_amd64.deb	f3e32b717f34f074cd3ae3ed93cc3c9edbc09d8ef8eb2b897fd0437bdd2f9cf2
+libimage-exiftool-perl	12.57+dfsg-1	libimage-exiftool-perl_12.57+dfsg-1_all.deb	d2df8a61a0e65d7697f75866fb29fbc4370386f66ac51eb268f295241a3731dd
+binwalk	2.3.4+dfsg1-1	binwalk_2.3.4+dfsg1-1_all.deb	fc90c9785c27afaff00dee93c6b6f2f4dd620eeacacc9cc0c6be4b854fafbc5e
+lldb-14	1:14.0.6-12	lldb-14_1%3a14.0.6-12_amd64.deb	7a7e45b9b998ea03a13f337589a8e9d7b1fe2db05de9abc26f21608505f319dc
+plantuml	1:1.2020.2+ds-3	plantuml_1%3a1.2020.2+ds-3_all.deb	90db238f509e118b2d636cca1d954f06d049187863464132ed019e99bc5e38d1
+asciidoctor	2.0.18-2	asciidoctor_2.0.18-2_all.deb	dfe686199fda022090c4bb1d9c4e79a1a9046145f242ea0f85442747533b6544
+chromium	156.0.8078.79-1~deb12u1	chromium_156.0.8078.79-1~deb12u1_amd64.deb	8f1f898bd42225ffb0dd2ca0234505ab9e9a2fc1493f996a091afe32218d8996
+openjdk-17-jre-headless	17.0.21+9-1~deb12u1	openjdk-17-jre-headless_17.0.21+9-1~deb12u1_amd64.deb	8718901962a88b57e98fb3d238277a31c5a0106778b1d0bc824db8b7abfd1f3b
+ruby3.1	3.1.2-7+deb12u1	ruby3.1_3.1.2-7+deb12u1_amd64.deb	714adc8690d962bfa54e9226d59e4c7e9f70e2aec4060ac0a41412a3094bf379
+libruby3.1	3.1.2-7+deb12u1	libruby3.1_3.1.2-7+deb12u1_amd64.deb	5b14a1054f39de3945321637d0ded2b20bbbf1d31108e39d69bfbabe3622f274
+libpython3.11-stdlib	3.11.2-6+deb12u9	libpython3.11-stdlib_3.11.2-6+deb12u9_amd64.deb	10f13e000ee757f5f2d2d3569f9e30546214a0c850acd78695feae373bfa3e53
+python3.11-minimal	3.11.2-6+deb12u9	python3.11-minimal_3.11.2-6+deb12u9_amd64.deb	b5f855ab922dfcd5d1a3223b2118c3dae13ffc7751b0cd5dc24740386323a33a
+perl	5.36.0-7+deb12u4	perl_5.36.0-7+deb12u4_amd64.deb	67e7a883c5d835939638f89a750799282df243ac1446281aa92ef9e19300940b
+perl-modules-5.36	5.36.0-7+deb12u4	perl-modules-5.36_5.36.0-7+deb12u4_all.deb	3ed38ffa8320e9bf7597cefa01b6a6ace4a08ccc77cdfd15ef7d8b711dea7166
+libperl5.36	5.36.0-7+deb12u4	libperl5.36_5.36.0-7+deb12u4_amd64.deb	ed8480b621ad574c25aea30d36194d0133ea74093756ecbe3dff157d0510ef7f
+perl-base	5.36.0-7+deb12u4	perl-base_5.36.0-7+deb12u4_amd64.deb	d7d1943aec9597629bf73075efcc5ef6dc9bda96d78e80d843156ecd448478b8
+fonts-dejavu-core	2.37-6	fonts-dejavu-core_2.37-6_all.deb	8892669e51aab4dc56682c8e39d8ddb7d70fad83c369344e1e240bf3ca22bb76
+fontconfig	2.14.1-4	fontconfig_2.14.1-4_amd64.deb	010e57c24a983eecc39aab8a84219a716c10901e03bacd1927331388656f890f
+fontconfig-config	2.14.1-4	fontconfig-config_2.14.1-4_amd64.deb	281c66e46b95f045a0282a6c7a03b33de0e9a08d016897a759aaf4a04adfddbe
+tzdata	2026f-0+deb12u1	tzdata_2026f-0+deb12u1_all.deb	3254eb870c8a949518214805aee5e4276af7699988ea8b9a3a583cd0f1eab31c
+locales	2.36-9+deb12u14	locales_2.36-9+deb12u14_all.deb	00c6e3d9456411ac78b199b577f25231be80186796ebdff65089240154ebbcb0
+libopenh264-7	2.3.1+dfsg-3+deb12u2	libopenh264-7_2.3.1+dfsg-3+deb12u2_amd64.deb	d453c4d81b7b3ff14663da75471250a4894543ae5ab5e902e225aca56aec56e8
+libnss3	2:3.87.1-1+deb12u4	libnss3_2%3a3.87.1-1+deb12u4_amd64.deb	666bce4768414a6a79d2dacb1549f922cedb1facd373790a477e12739878284e
+libnspr4	2:4.35-1	libnspr4_2%3a4.35-1_amd64.deb	6cca09767e94e4b5d2888ef31ad797bd3e7cec27fbbe98b49b10d4884746ce77
+libcups2	2.4.2-3+deb12u9	libcups2_2.4.2-3+deb12u9_amd64.deb	8dbfd3b7cd81166a2d79bb7e3898b0203fec05c7e927f60e207122a1e36b95c8
+libdav1d6	1.0.0-2+deb12u1	libdav1d6_1.0.0-2+deb12u1_amd64.deb	197f08108242177aeae4c04aac11825c39b7d18598191ab769f910687ccb387f
+libopus0	1.3.1-3	libopus0_1.3.1-3_amd64.deb	c172e212f9039e741916aa8e12f3670d1e049dc0c16685325641288c2d83faa7
+libgbm1	22.3.6-1+deb12u2	libgbm1_22.3.6-1+deb12u2_amd64.deb	4323840f2b7b3e108990848529125d99c0956ae5a854c1e0568ed08c8faeaa2e
+libxkbcommon0	1.5.0-1	libxkbcommon0_1.5.0-1_amd64.deb	e3fe045b9a33a101de1c5a912a4a10928db055c3f68930f47eccbb44d7c7d54e
+libatk-bridge2.0-0	2.46.0-5	libatk-bridge2.0-0_2.46.0-5_amd64.deb	fbb07714fdd3fdee7b63fd8595053f4fa8021d8e350a5de6281c6ce7cd4f158f
+libxcomposite1	1:0.4.5-1	libxcomposite1_1%3a0.4.5-1_amd64.deb	4c26ebf519d2ebc22fc1416dee45e12c4c4ef68aa9b2ed890356830df42b652a
+libxdamage1	1:1.1.6-1	libxdamage1_1%3a1.1.6-1_amd64.deb	fcdf7e4c29b307ba8711c864e1e646d76315a8f55121198143653e56592fa8a7
+libxrandr2	2:1.5.2-2+b1	libxrandr2_2%3a1.5.2-2+b1_amd64.deb	e2e10b672085ddf1d294cd689ed21bde5899325fd13626c2614b7d7b2d49a808
+libxfixes3	1:6.0.0-2	libxfixes3_1%3a6.0.0-2_amd64.deb	1cd616396ff2ecae77e6e8b5b7695d414f0146de2d147837a2a02165f99e1a2c
+libasound2	1.2.8-1+b1	libasound2_1.2.8-1+b1_amd64.deb	44c77b076a7b11ae99712439022d822245b1994c435da564ebd320bb676faf4c
+libpulse0	16.1+dfsg1-2+b1	libpulse0_16.1+dfsg1-2+b1_amd64.deb	7b2c5403cb726312219aad678becc6d6adcee1d8694fdffce0b6ec15ae010831
+libsndfile1	1.2.0-1+deb12u1	libsndfile1_1.2.0-1+deb12u1_amd64.deb	02dc3f08fe8476e82e005f412e3b7289ff641180f33a9be8073f4bde61c85e8e
+libudev1	252.39-1~deb12u2	libudev1_252.39-1~deb12u2_amd64.deb	6f7e08f11c4809d2e5998c775f7b423ab5ec2ce0309494b4a2615037052245e2
+libxcb1	1.15-1	libxcb1_1.15-1_amd64.deb	fdc61332a3892168f3cc9cfa1fe9cf11a91dc3e0acacbc47cbc50ebaa234cc71
+libxext6	2:1.3.4-1+b1	libxext6_2%3a1.3.4-1+b1_amd64.deb	504b7be9d7df4f6f4519e8dd4d6f9d03a9fb911a78530fa23a692fba3058cba6
+libx11-xcb1	2:1.8.4-2+deb12u2	libx11-xcb1_2%3a1.8.4-2+deb12u2_amd64.deb	f5da45e1d881a793250a96613f28c471a248877f1a0f18a5c90e2a620a76c898
+libxshmfence1	1.3-1	libxshmfence1_1.3-1_amd64.deb	1a38142e40e3d32dc4f9a326bf5617363b7d9b4bb762fdcdd262f2192092024d
+libxrandr2	2:1.5.2-2+b1	libxrandr2_2%3a1.5.2-2+b1_amd64.deb	e2e10b672085ddf1d294cd689ed21bde5899325fd13626c2614b7d7b2d49a808
