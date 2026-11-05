@@ -143,6 +143,10 @@ import {
   WHISPER_LANGUAGES,
 } from "../../utils/language.utils";
 import {
+  chromeSelectMenuItemSx,
+  chromeSelectMenuProps,
+} from "../common/chromeMenu";
+import {
   PERSONAL_DEEPGRAM_API_KEY_ID,
   PERSONAL_DEEPGRAM_API_KEY_NAME,
   PERSONAL_GROQ_API_KEY_ID,
@@ -1027,18 +1031,14 @@ export default function SettingsPage() {
                 variant="outlined"
                 fullWidth
                 inputProps={{ "aria-label": "Dictation language" }}
-                MenuProps={{
-                  slotProps: {
-                    paper: {
-                      style: {
-                        maxHeight: 300,
-                      },
-                    },
-                  },
-                }}
+                MenuProps={chromeSelectMenuProps}
               >
                 {DICTATION_LANGUAGE_OPTIONS.map(([value, label]) => (
-                  <MenuItem key={value} value={value}>
+                  <MenuItem
+                    key={value}
+                    value={value}
+                    sx={chromeSelectMenuItemSx}
+                  >
                     {label}
                   </MenuItem>
                 ))}
