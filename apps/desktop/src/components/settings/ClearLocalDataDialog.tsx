@@ -140,14 +140,25 @@ export const ClearLocalDataDialog = () => {
         setClearStarted(true);
       }
 
-      stoppingSubsystems = true;
-      await stopLocalDataSubsystems();
-      stoppingSubsystems = false;
+      let subsystemStopError: unknown;
+      let subsystemStopFailed = false;
+      try {
+        await stopLocalDataSubsystems();
+      } catch (stopError) {
+        subsystemStopFailed = true;
+        subsystemStopError = stopError;
+      }
 
       await invoke("clear_local_data");
       resetPendingTranscriptionDeletes();
       resetAutoLearnSessionState();
       clearAppLocalStorage();
+
+      if (subsystemStopFailed) {
+        stoppingSubsystems = true;
+        throw subsystemStopError;
+      }
+
       await invoke("complete_local_data_clear");
       removeLocalDataClearPendingMarker();
       // Keep the browser-side gate closed until this reload resets the stores.
@@ -163,7 +174,7 @@ export const ClearLocalDataDialog = () => {
         stoppingSubsystems
           ? intl.formatMessage({
               defaultMessage:
-                "mausVoice could not stop recording or keyboard monitoring. Local data was not cleared in this attempt. Try again.",
+                "Local data was cleared, but mausVoice could not confirm that recording or keyboard monitoring stopped. Try again to finish resetting this device.",
             })
           : describeClearFailure(error, intl) || message,
       );

@@ -137,7 +137,13 @@ describe("ClearLocalDataDialog", () => {
     expect(confirmButton()?.hasAttribute("disabled")).toBe(false);
   });
 
-  it("explains a stop failure without exposing native error details", async () => {
+  it("wipes local data even when a subsystem stop fails and keeps recovery pending without exposing native error details", async () => {
+    window.localStorage.setItem(LOCAL_STATE_STORAGE_KEY, "{}");
+    const reload = vi.fn();
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { ...window.location, reload },
+    });
     mocks.invoke.mockImplementation((command: string) =>
       command === "stop_key_listener"
         ? Promise.reject(new Error("private native diagnostic"))
@@ -149,14 +155,17 @@ describe("ClearLocalDataDialog", () => {
     act(() => confirmButton()?.click());
     await vi.waitFor(() => {
       expect(document.body.textContent).toContain(
-        "Local data was not cleared in this attempt.",
+        "Local data was cleared, but mausVoice could not confirm that recording or keyboard monitoring stopped.",
       );
     });
     expect(document.body.textContent).not.toContain(
       "private native diagnostic",
     );
-    expect(mocks.invoke).not.toHaveBeenCalledWith("clear_local_data");
     expect(mocks.invoke).toHaveBeenCalledWith("stop_recording");
+    expect(mocks.invoke).toHaveBeenCalledWith("clear_local_data");
+    expect(mocks.invoke).not.toHaveBeenCalledWith("complete_local_data_clear");
+    expect(window.localStorage.getItem(LOCAL_STATE_STORAGE_KEY)).toBeNull();
+    expect(reload).not.toHaveBeenCalled();
   });
 
   it("asks for the phrase, so a stray click cannot wipe the device", () => {

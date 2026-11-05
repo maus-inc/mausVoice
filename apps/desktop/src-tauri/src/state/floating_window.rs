@@ -136,6 +136,12 @@ impl FloatingWindowState {
         Ok(())
     }
 
+    pub fn clear_all_composer_text(&self) {
+        if let Ok(mut pending) = self.pending_composer_text.lock() {
+            pending.clear();
+        }
+    }
+
     /// Runs the same expiration pass the background reaper runs. Exposed so the
     /// reaper's behavior is observable in tests without sleeping for the reaper
     /// interval.
@@ -169,6 +175,11 @@ mod tests {
     #[test]
     fn register_peek_and_discard_composer_text() {
         let state = FloatingWindowState::new();
+        assert!(state
+            .register_composer_text("r1".into(), "hello".into())
+            .is_ok());
+        state.clear_all_composer_text();
+        assert_eq!(state.peek_composer_text("r1").unwrap(), None);
         assert!(state
             .register_composer_text("r1".into(), "hello".into())
             .is_ok());

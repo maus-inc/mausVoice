@@ -92,12 +92,15 @@ export const DeleteAccountDialog = () => {
     }
   };
 
-  const clearDeletedAccountData = async () => {
+  const clearDeletedAccountData = async (subsystemStopFailed: boolean) => {
     await invoke("clear_local_data");
     resetPendingTranscriptionDeletes();
     resetAutoLearnSessionState();
     clearAppLocalStorage();
     await signOutAfterAccountDeletion();
+    if (subsystemStopFailed) {
+      return;
+    }
     await invoke("complete_local_data_clear");
     removeLocalDataClearPendingMarker();
   };
@@ -129,8 +132,18 @@ export const DeleteAccountDialog = () => {
     try {
       await ensureClearLease();
       await deleteAccountOnce();
-      await stopLocalDataSubsystems();
-      await clearDeletedAccountData();
+      let subsystemStopError: unknown;
+      let subsystemStopFailed = false;
+      try {
+        await stopLocalDataSubsystems();
+      } catch (stopError) {
+        subsystemStopFailed = true;
+        subsystemStopError = stopError;
+      }
+      await clearDeletedAccountData(subsystemStopFailed);
+      if (subsystemStopFailed) {
+        throw subsystemStopError;
+      }
       setConfirmationValue("");
       produceAppState((state) => {
         state.settings.deleteAccountDialog = false;

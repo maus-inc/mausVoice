@@ -1,4 +1,8 @@
 import type { StopRecordingResponse } from "../../types/transcription-session.types";
+import {
+  isLocalDataClearRequested,
+  subscribeToLocalDataClearRequested,
+} from "../../utils/local-data-write-gate";
 import { invokeStopRecording } from "../../utils/recorded-audio.utils";
 
 export type VoiceRecorderState = "idle" | "provider" | "browser";
@@ -58,15 +62,20 @@ export class VoiceInstructionRecorder {
   private disposed = false;
   private opGen = 0;
   private stopInFlight = false;
+  private unsubscribeClear: (() => void) | null = null;
 
-  constructor(private readonly deps: VoiceInstructionRecorderDeps) {}
+  constructor(private readonly deps: VoiceInstructionRecorderDeps) {
+    this.unsubscribeClear = subscribeToLocalDataClearRequested(() => {
+      this.abortForClear();
+    });
+  }
 
   getState(): VoiceRecorderState {
     return this.state;
   }
 
   async toggle(): Promise<void> {
-    if (this.busy || this.disposed) return;
+    if (this.busy || this.disposed || isLocalDataClearRequested()) return;
     this.busy = true;
     const gen = ++this.opGen;
     try {
@@ -83,7 +92,9 @@ export class VoiceInstructionRecorder {
     }
   }
 
-  private async startProvider(gen: number): Promise<boolean> {
+  private async startProvider(
+    gen: number,
+  ): Promise<"started" | "blocked" | "unavailable"> {
     try {
       await this.deps.invoke("start_recording", {
         args: {
@@ -94,26 +105,42 @@ export class VoiceInstructionRecorder {
       // toggle) ran while we awaited mic init, release the recorder instead
       // of notifying the UI it is listening — otherwise the OS recording
       // indicator stays on behind a closed composer.
-      if (gen !== this.opGen || this.disposed) {
+      if (gen !== this.opGen || this.disposed || isLocalDataClearRequested()) {
         void this.deps.invoke("stop_recording").catch(() => undefined);
-        return false;
+        return "blocked";
       }
       this.state = "provider";
       this.deps.onListeningChange(true);
-      return true;
-    } catch {
-      if (gen !== this.opGen || this.disposed) return false;
+      return "started";
+    } catch (error) {
+      if (gen !== this.opGen || this.disposed) return "blocked";
+      const message =
+        typeof error === "string"
+          ? error
+          : error instanceof Error && typeof error.message === "string"
+            ? error.message
+            : "";
+      if (
+        isLocalDataClearRequested() ||
+        message.includes("Local data is being cleared")
+      ) {
+        return "blocked";
+      }
       this.deps.logger.warning(
         "Voice Edit Mode: configured provider recording unavailable, falling back to browser speech recognition",
       );
     }
-    return false;
+    return "unavailable";
   }
 
   private async start(gen: number): Promise<void> {
-    if (this.deps.canUseProvider() && (await this.startProvider(gen))) return;
+    if (isLocalDataClearRequested()) return;
+    if (this.deps.canUseProvider()) {
+      const outcome = await this.startProvider(gen);
+      if (outcome === "started" || outcome === "blocked") return;
+    }
 
-    if (gen !== this.opGen || this.disposed) {
+    if (gen !== this.opGen || this.disposed || isLocalDataClearRequested()) {
       return;
     }
 
@@ -283,6 +310,22 @@ export class VoiceInstructionRecorder {
     if (wasListening) this.deps.onListeningChange(false);
   }
 
+  private abortForClear(): void {
+    if (this.disposed) return;
+    this.opGen++;
+    this.busy = false;
+    const recognition = this.detachBrowserRecognition();
+    if (recognition && this.state === "browser") {
+      this.stopBrowserRecognition(recognition);
+    }
+    if (this.state === "provider" && !this.stopInFlight) {
+      void this.deps.invoke("stop_recording").catch(() => undefined);
+    }
+    if (this.state !== "idle") {
+      this.setIdle();
+    }
+  }
+
   /**
    * Stop every active microphone path. Safe to call repeatedly. Any in-flight
    * operation is invalidated via `opGen`, so its deferred callbacks become
@@ -291,6 +334,8 @@ export class VoiceInstructionRecorder {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.unsubscribeClear?.();
+    this.unsubscribeClear = null;
     this.opGen++;
     const recognition = this.detachBrowserRecognition();
     if (recognition && this.state === "browser") {
