@@ -667,6 +667,18 @@ Follow this pattern.
 * Migrations are forward only. Never edit a migration that has shipped.
 * Test with a copy of production sized data when you can, and add a test that opens a database at the previous schema and runs the new migration.
 
+## UI design recon (mandatory)
+
+This step applies to every change that touches product UI, in any app surface. It includes small polish and one-line style edits. A control that looks fine is exactly the control that hides the generic default, so the search matters most on small diffs.
+
+Procedure:
+
+1. Load the design world first. Read the owning app's DESIGN.md and its design-system baseline fully into context before the first edit.
+2. Load the design skill sets named in the skill index, currently impeccable and antislopui. Load each set's floor or bans document immediately before the edit. Fetch the sets from their upstream sources when they are not vendored.
+3. Run a recon spree before coding. Gather current references for the component at hand from premium design sources and comparable shipped product UI, for example Dribbble, Pinterest, and Attio or Linear class pickers. Pull the QA artifact screenshots for the touched surface.
+4. Weigh every radius, slope, density, state, and label against the gathered references and the design docs. The committed world wins over habit.
+5. Cite the references in the PR description. A UI diff without listed references is not reviewable.
+
 ## Triage and briefs, short version
 
 For triage, read the full issue or PR, check `.out-of-scope/*.md`, verify the claim by reproducing or running tests, then recommend category and state. For `ready-for-agent`, post a brief that describes desired behavior and acceptance criteria. It must stay valid if files move. No paths, no line numbers.
@@ -715,6 +727,8 @@ Phase 4. Add failing test first, fix root cause, verify suite passes. After 3 fa
 | dead-state-detection | you removed UI that owned state | Trace every state variable from declaration to last read. Remove dead state, effects, and imports. Verify build. |
 | figure-it-out | large or cross cutting work with no playbook | Design the workflow first, list falsifiable done criteria, build verification harness before features, log decisions. |
 | deep-research | thorough research with citations | Break topic into 3 to 5 sub questions, search firecrawl and exa, read 3 to 5 sources fully, cite every claim, flag gaps. |
+| impeccable | any UI edit in apps/desktop or apps/preview | Load SKILL.md and reference/craft-floor.md from pbakaus/impeccable before the edit. Refuse side stripes, gradient text, and decorative glass. |
+| antislopui | any UI edit in apps/desktop or apps/preview, same as impeccable | Load SKILL.md and references/design-principles.md from Adefebrian/AntislopUI. Give motion a reason and honor reduced motion. |
 | repo-scan | audit of a large codebase | Classify every file as project, third party, or artifact. Tag embedded libraries and choose verdict per module. |
 | security-bounty-hunter | hunt for exploitable issues | Focus on remotely reachable paths. Prove user control reaches a sink, provide minimal PoC, check duplicates and scope. |
 | handoff | hand work to another agent | Save summary to OS temp dir, list suggested skills, link artifacts instead of copying them, redact secrets. |
