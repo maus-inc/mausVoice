@@ -2,7 +2,7 @@
 
 The orphan branch `vendor/sandbox-toolchain` makes most of this repository buildable inside the Arena agent sandbox: the six-host egress allowlist, 2 vCPU, 3.9 GB RAM (3,939 MB), no Docker daemon. Every number here was measured in that environment on 2026-11-05 and describes it alone, not the repository, not CI, and not your machine. An unrestricted host closes most of these gaps by installing the tool, so probe before you repeat a limit or file a gap. What follows records the parts of the development cycle the payload cannot cover, with the measurement for each one, so an agent stops guessing and a builder knows what to add.
 
-The payload carries two deliveries. G1 to G8 are the mandatory set every gate needs. G9 to G13 are an optional second set, added 2026-11-05, that opens stages the mandatory set does not reach. A gap below that a delivered group closes is marked, with the `FETCH.md` step that wires it up. Read the section as the register of what the payload does not carry, not as a list of stages that cannot run.
+The payload carries three deliveries. G1 to G8 are the mandatory set every gate needs. G9 to G13 are an optional second set, added 2026-11-05, that opens stages the mandatory set does not reach. G16 to G22 are an optional third set, added 2026-11-05, that adds debugging, native build tools, database clients, OCR, shell and crypto tooling, cross compilers and supply-chain scanners. A gap below that a delivered group closes is marked, with the `FETCH.md` step that wires it up. Read the section as the register of what the payload does not carry, not as a list of stages that cannot run.
 
 It answers two questions.
 
@@ -13,11 +13,16 @@ Read `engineering/sandbox-vendored-toolchain.md` first for what the payload cont
 
 ## Measured environment
 
-Measured on 2026-11-05 in the Arena agent sandbox that runs the agent for this repository. Re-measure before you rely on it, because the numbers move.
+Two agent sandboxes ran this repository's agent on 2026-11-05, and they are not the same machine. Every number in this file is a statement about one of them, so read the heading on each table before you repeat a limit.
+
+- **Arena agent sandbox.** Six-host egress allowlist, 2 vCPU, 3,939 MB RAM, 21 GB disk, Debian 12 base image, no Docker daemon, no `apt-get` mirror. The `Hosts`, `Machine` and `Commands` tables below were measured here.
+- **Second agent sandbox.** Broad egress, 4 vCPU, 15,990 MB RAM, 50 GB free disk, Debian 13 (trixie) base image, `apt-get` works. Re-measured on 2026-11-05 with `curl -m 8` and `command -v`. On this host `crates.io` answers 403 (its bot policy, not a missing route), and `static.rust-lang.org`, `sh.rustup.rs`, `huggingface.co`, `deb.debian.org`, `snapshot.debian.org`, `nodejs.org`, `dl.google.com` and the GitHub Release asset host all answer. A limit that says "no route" here is a property of the Arena sandbox, not of the network, so probe before you repeat one.
+
+Both hosts ran the third delivery (G16 to G22). Its sizes were measured in the second sandbox, named per table below.
 
 ### Hosts
 
-`curl -m 8 -o /dev/null -w '%{http_code}' https://<host>/`, run from a clean shell.
+`curl -m 8 -o /dev/null -w '%{http_code}' https://<host>/`, run from a clean shell. The results below are the Arena agent sandbox. The second sandbox reaches every host in this table and returns a non-000 code for all of them.
 
 | Host                                                | Result   | Consequence here                                |
 | --------------------------------------------------- | -------- | ----------------------------------------------- |
@@ -186,6 +191,31 @@ What to do, in preference order.
 
 Substitute today. `pnpm install --frozen-lockfile --ignore-scripts`. Name the flag in the pull request, because it also skips the other `onlyBuiltDependencies` scripts. Measured as harmless here, since esbuild and sharp resolve their platform binaries from npm optional dependencies, and `bcrypt` and `re2` are not in the lockfile.
 
+### G16 to G22: the third delivery
+
+The third delivery was built on 2026-11-05 in the second agent sandbox, the one with broad egress, Debian 13 and `apt-get`. It closes seven of the entries in `engineering/sandbox-capability-gaps.md` and is folded into the same orphan commit. Sizes below are measured, not estimated.
+
+| Group | Carries                                                                                                                                      | Opens                                                                  | Unpacked |
+| ----- | -------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- | -------- |
+| G16   | `gdb` 13.1, `strace` 6.1, `ltrace` 0.7.3, `valgrind` 3.19.0                                                                                  | a backtrace and a syscall trace for the native paths                   | 176 MB   |
+| G17   | `ninja` 1.11.1, `meson` 1.0.1, `autoconf` 2.71, `bison` 3.8.2, `flex` 2.6.4                                                                  | building a native dependency from source                               | 311 MB   |
+| G18   | `sqlite3` 3.40.1, `psql` 15.8, `mariadb` 10.11.6, `redis-cli` 7.0.15                                                                         | inspecting and repairing a database                                    | 201 MB   |
+| G19   | `tesseract` 5.3.0 with `eng.traineddata`                                                                                                     | the OCR round trip in the capture check                                | 114 MB   |
+| G20   | `shellcheck`, `shfmt` 3.6.0, `gpg`/`gpgv` 2.2.40, `git-lfs` 3.3.0, `zstd` 1.5.4, `brotli` 1.0.9, `7z` 22.01, `dig` 9.18.28, `tcpdump` 4.99.3 | shell lint, signing, archives, and a network probe that proves a claim | 258 MB   |
+| G21   | `mingw-w64` gcc 12, `aarch64-linux-gnu` gcc 12.2.0, `qemu-aarch64-static` 7.2.13                                                             | cross build and emulate a second target                                | 1.7 GB   |
+| G22   | `trivy` 0.76.2, `syft` 1.20.0, `grype` 0.87.0, `osv-scanner` 1.9.2                                                                           | an SBOM and a vulnerability scan of a local build                      | 140 MB   |
+
+G21 is large because a cross compiler is not a binary. It resolves `cc1` from `lib/gcc/<triple>/<version>`, the target headers and libraries from a fixed relative sysroot, and its binutils from `<triple>/bin`, which are symlinks into `bin/`. A payload that ships only the driver fails with `cannot execute 'cc1'`, then `stdio.h: No such file or directory`, then a missing `Scrt1.o`. The delivered layout preserves those relative paths under `system/tools` and ships the cross libc (`libc6-dev-arm64-cross`, `libc6-arm64-cross`, `linux-libc-dev-arm64-cross`).
+
+Four of the new binaries need a documented env var or flag to run relocatably, and each is recorded in `FETCH.md`:
+
+- `gdb` needs `--data-directory=<tools>/share/gdb`, because its embedded Python looks for the `gdb` module under the compiled-in `/usr/share/gdb/python`.
+- `valgrind` needs `VALGRIND_LIB=<tools>/libexec/valgrind`, because `memcheck` and the other tools are separate programs under `libexec`.
+- `meson` is a Python program and needs a `python3` on `PATH`.
+- `aarch64-linux-gnu-gcc` needs `--sysroot=<tools>` to find its target libc, and `qemu-aarch64-static -L <tools>/usr/aarch64-linux-gnu` to run the result.
+
+Verified in the second sandbox on 2026-11-05: 27 of 31 checks pass under `env -i`, and the four that need the env var above pass once it is set. G22 is verifiable here because the second sandbox reaches the GitHub Release asset host; on the Arena sandbox, where it does not, G22 would have to be built elsewhere or left out.
+
 ## Accepted gaps
 
 No payload closes these. Name them in the pull request rather than working around them.
@@ -206,7 +236,8 @@ So the register is not read as a list of failures.
 | `rust/cargo-vendor` | 1114 crate directories, the union of the seven lockfiles                                                                               |
 | `rust/targets`      | G12, the `x86_64-pc-windows-msvc` and `aarch64-apple-darwin` standard libraries, for `cargo check --target`                            |
 | `system/`           | Debian 12 development sysroot, `cmake`, `file`, `patchelf`, `pkgconf`, Xvfb, ImageMagick, and the GTK, WebKit, ALSA and Pulse link set |
-| `system/tools/bin`  | G9 `ffmpeg`, `ffprobe` and `gifsicle` for `ui-capture`, and G13 `gitleaks` 8.18.0                                                      |
+| `system/tools/bin`  | G9 `ffmpeg`, `ffprobe` and `gifsicle` for `ui-capture`, G13 `gitleaks` 8.18.0, and the third delivery's G16 to G22 binaries            |
+| `system/tools/`     | G21's `lib/gcc`, `lib/gcc-cross` and target sysroot trees, and G16's `libexec/valgrind` and `share/gdb`                                |
 | `native/`           | ONNX Runtime 1.23.2 and sherpa-onnx 1.13.5 linux x64 archives                                                                          |
 | `models/`           | G10, the whisper `ggml-tiny` and `ggml-base` weights and the SenseVoice ONNX bundle                                                    |
 | `drivers/`          | G11, `tauri-driver` 2.0.6 and `chromedriver` 152.0.7977.42                                                                             |
@@ -216,15 +247,16 @@ So the register is not read as a list of failures.
 
 Cheapest unblock first. Each line names the stage it opens. The second delivery is shipped, so the lines that named it are done and the table records what each one opened.
 
-| Step | Group                                                                              | Opens                                                        | State                                              |
-| ---- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------ | -------------------------------------------------- |
-| 1    | `CHROMEDRIVER_SKIP_DOWNLOAD` in `FETCH.md`, `.agents/PREFLIGHT.md` and `AGENTS.md` | a clean install                                              | documented                                         |
-| 2    | G13 gitleaks, 7 MB                                                                 | the history scan locally                                     | shipped                                            |
-| 3    | G9 ffmpeg, ffprobe and gifsicle, 160 MB                                            | `ui-capture` encoding and GIF assembly, browser still absent | shipped                                            |
-| 4    | G12 cross-target standard libraries, 47.5 MB packed                                | local type checks of platform gated code                     | shipped                                            |
-| 5    | G11 tauri-driver 2.0.6 and chromedriver, 24 MB                                     | the end to end gate on Linux, once the app is built          | shipped                                            |
-| 6    | G10 model weights, 463 MB                                                          | transcription behaviour with real models                     | shipped                                            |
-| 7    | G14 packaging                                                                      | local installer checks                                       | deferred until a release task lands in the sandbox |
+| Step | Group                                                                              | Opens                                                                                                 | State                                              |
+| ---- | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| 1    | `CHROMEDRIVER_SKIP_DOWNLOAD` in `FETCH.md`, `.agents/PREFLIGHT.md` and `AGENTS.md` | a clean install                                                                                       | documented                                         |
+| 2    | G13 gitleaks, 7 MB                                                                 | the history scan locally                                                                              | shipped                                            |
+| 3    | G9 ffmpeg, ffprobe and gifsicle, 160 MB                                            | `ui-capture` encoding and GIF assembly, browser still absent                                          | shipped                                            |
+| 4    | G12 cross-target standard libraries, 47.5 MB packed                                | local type checks of platform gated code                                                              | shipped                                            |
+| 5    | G11 tauri-driver 2.0.6 and chromedriver, 24 MB                                     | the end to end gate on Linux, once the app is built                                                   | shipped                                            |
+| 6    | G10 model weights, 463 MB                                                          | transcription behaviour with real models                                                              | shipped                                            |
+| 7    | G14 packaging                                                                      | local installer checks                                                                                | deferred until a release task lands in the sandbox |
+| 8    | G16 to G22, 376 MB packed / 1.2 GB unpacked                                        | debugging, native builds, databases, OCR, shell and crypto tooling, cross compiles, SBOM and scanning | shipped                                            |
 
 ## Rebuild triggers
 

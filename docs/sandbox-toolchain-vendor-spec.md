@@ -445,6 +445,8 @@ Two **defects in the reference branch to not copy**:
 | G7 licences | 7.6 MB | ~9 MB | More packages → more `copyright` files |
 | G8 manifest+docs | 0.5 MB | ~0.6 MB | More files → more lines |
 | **Total** | **880 MB** | **~0.9–1.1 GB** | |
+| **Total, G9 to G13 shipped** | — | **1.5 GB packed / 3891 files** at tip `065f527b` | The first-delivery estimate above sizes G1 to G8 only. The second delivery added G9 to G13 on 2026-11-05, which took the shipped total past the estimate. Measure the tree, do not reuse the G1 to G8 figure. |
+| **Total, G16 to G22 shipped** | — | **about 376 MB packed / 1.2 GB unpacked** added to `system/tools` | The third delivery adds G16 to G22. The tools tree grew from 248 MB to 1.2 GB unpacked, about 376 MB packed. G21 is most of it, because a cross compiler needs its `lib/gcc`, `lib/gcc-cross` and target sysroot trees. |
 
 Extracted total ≈ **3.5–4.5 GB** in `/tmp`. Against 19 GB free that leaves room for
 `target/` dirs, but `README.md` must still tell the consumer to delete the downloaded

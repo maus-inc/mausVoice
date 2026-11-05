@@ -14,9 +14,9 @@ Base image has: `git`, `gh`, node 22 with npm, pnpm and yarn, python 3.11 with p
 
 The payload at `065f527b` adds the Rust 1.88 toolchain and vendored crate tree, a Debian 12 development sysroot of 634 packages, `system/tools/bin` with cmake, file, patchelf, pkgconf, ffmpeg, ffprobe, gifsicle and gitleaks, the WebDriver drivers, the model set, and the cross-target standard libraries.
 
-## Tier 0: already in the payload, not wired up
+## Tier 0: partly in the payload, partly a download
 
-These need no new download. They need a `FETCH.md` step or a symlink, and each one costs nothing.
+The PATH and font wiring needs no new download: it needs a `FETCH.md` step or a symlink. Three of the four rows are not free. `tzdata`, `locales` and the `sqlite3` CLI are absent from both the base image and the payload, so a builder adds them as downloads (about 15 MB combined). The `sqlite3` CLI is now built into group G18. Only the `clang` PATH entry and the fontconfig wiring are free.
 
 | Capability                      | Where it already is                                                                                                                        | What is missing                                                                                                         |
 | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
@@ -50,7 +50,7 @@ Total for Tier 1: about 200 MB, which is small next to the 5.5 GB already shippe
 
 ## Tier 2: missing by domain, for any project
 
-Each row is absent from both the base image and the payload. Whether to vendor it depends on what the project does; the cost is what a builder would add.
+Except where a row is marked delivered, each row is absent from both the base image and the payload. Whether to vendor it depends on what the project does; the cost is what a builder would add.
 
 ### Languages and runtimes
 
@@ -149,26 +149,28 @@ These are properties of the sandbox, not missing software. Record them as limits
 
 The payload keeps one orphan commit on `vendor/sandbox-toolchain`, so a further delivery folds into the same commit and moves the tip. Everything here follows the rules already in `docs/sandbox-toolchain-vendor-spec.md`:
 
-1. No file over 100 MiB. Split with `.part-NN` and record the reassembly in `FETCH.md`, as the sysroot, the crate tree, `ggml-base.bin` and the SenseVoice model already do.
+1. No file over 90 MiB, and split with `.part-NN` at exactly 94,371,840 bytes to match the vendor contract, recording the reassembly in `FETCH.md`, as the sysroot, the crate tree, `ggml-base.bin` and the SenseVoice model already do. GitHub rejects a push over 100 MiB, so 90 MiB leaves headroom.
 2. Every artifact gets its upstream URL, its published sha256 and its licence under `LICENSES/`. `MANIFEST.sha256` carries one line per file plus one per reassembled archive.
-3. Every binary is checked under `env -i` with no `LD_LIBRARY_PATH`, and prints a version banner. A binary that needs a library the payload does not carry is a payload defect.
+3. Every binary is checked under `env -i` with no `LD_LIBRARY_PATH`, and prints a version banner. A binary that needs a library the payload does not carry is a payload defect. Some binaries need a documented env var to run relocatably, and each one is recorded in `FETCH.md` rather than treated as a defect: `gdb` needs `--data-directory=<tools>/share/gdb`, `valgrind` needs `VALGRIND_LIB=<tools>/libexec/valgrind`, `meson` needs a `python3` on `PATH`, and the cross compilers need `--sysroot=<tools>` for `aarch64-linux-gnu-gcc`.
 4. Record what each group opens, in `README.md` on the branch and in `engineering/sandbox-coverage-gaps.md` here. A group that opens nothing must not ship.
 5. Measure the packed and unpacked size on the build host and put the number in the table. Do not estimate.
 
-Suggested grouping for the next delivery, continuing the numbering after G15:
+Suggested grouping for the next delivery, continuing the numbering after G15. The `Estimate` column is the original budget. The `Measured` column records what the delivered group actually cost, in the second agent sandbox that built them (Debian 13 host, 4 vCPU, 15.9 GB RAM, broad egress).
 
-| Group | Carries                                                                           | Opens                                                                  | Estimate     |
-| ----- | --------------------------------------------------------------------------------- | ---------------------------------------------------------------------- | ------------ |
-| G16   | `gdb`, `strace`, `ltrace`, `valgrind`                                             | a backtrace and a syscall trace for the native paths                   | about 60 MB  |
-| G17   | `ninja`, `meson`, `autoconf`, `automake`, `libtool`, `bison`, `flex`              | building a native dependency from source                               | about 25 MB  |
-| G18   | `sqlite3`, `psql`, `mariadb`, `redis-cli`                                         | inspecting and repairing a database                                    | about 25 MB  |
-| G19   | `tesseract` and `eng.traineddata`                                                 | the OCR round trip in the capture check                                | about 15 MB  |
-| G20   | `shellcheck`, `shfmt`, `gpg`, `git-lfs`, `zstd`, `brotli`, `7z`, `dig`, `tcpdump` | shell lint, signing, archives, and a network probe that proves a claim | about 40 MB  |
-| G21   | `mingw-w64`, `aarch64-linux-gnu` gcc, `qemu-user`                                 | cross build and emulate a second target                                | about 180 MB |
-| G22   | `trivy`, `syft`, `osv-scanner`                                                    | an SBOM and a vulnerability scan of a local build                      | about 190 MB |
+| Group | Carries                                                                           | Opens                                                                  | Estimate     | Measured unpacked |
+| ----- | --------------------------------------------------------------------------------- | ---------------------------------------------------------------------- | ------------ | ----------------- |
+| G16   | `gdb`, `strace`, `ltrace`, `valgrind`                                             | a backtrace and a syscall trace for the native paths                   | about 60 MB  | 176 MB            |
+| G17   | `ninja`, `meson`, `autoconf`, `automake`, `libtool`, `bison`, `flex`              | building a native dependency from source                               | about 25 MB  | 311 MB            |
+| G18   | `sqlite3`, `psql`, `mariadb`, `redis-cli`                                         | inspecting and repairing a database                                    | about 25 MB  | 201 MB            |
+| G19   | `tesseract` and `eng.traineddata`                                                 | the OCR round trip in the capture check                                | about 15 MB  | 114 MB            |
+| G20   | `shellcheck`, `shfmt`, `gpg`, `git-lfs`, `zstd`, `brotli`, `7z`, `dig`, `tcpdump` | shell lint, signing, archives, and a network probe that proves a claim | about 40 MB  | 258 MB            |
+| G21   | `mingw-w64`, `aarch64-linux-gnu` gcc, `qemu-user`                                 | cross build and emulate a second target                                | about 180 MB | 1.7 GB (tree)     |
+| G22   | `trivy`, `syft`, `osv-scanner`                                                    | an SBOM and a vulnerability scan of a local build                      | about 190 MB | 140 MB            |
 
-Tier 0 first, because it is free: put the sysroot's `usr/bin` on `PATH`, point `FONTCONFIG_PATH` at the sysroot's fonts, add `tzdata` and `locales` to the package set, and ship the `sqlite3` CLI.
+G21's estimate was lower than its two component estimates because it counted only the driver binaries, not the `lib/gcc`, `lib/gcc-cross` and target sysroot trees a cross compiler resolves by a fixed relative layout. The measured column is the whole group, so a builder should budget about 330 MB unpacked rather than 180 MB.
+
+Tier 0 first: put the sysroot's `usr/bin` on `PATH`, point `FONTCONFIG_PATH` at the sysroot's fonts, and add `tzdata` and `locales` to the package set as downloads. The `sqlite3` CLI now ships in G18.
 
 ## Prompt to hand to the builder
 
-> Update the `vendor/sandbox-toolchain` orphan branch on `maus-inc/mausVoice`. Read `engineering/sandbox-capability-gaps.md` in the repository first, then `docs/sandbox-toolchain-vendor-spec.md`. Ship Tier 0 as a wiring change with no new downloads, then groups G16 to G20 from the handoff table, and G21 and G22 only if the size is acceptable to you. Keep one orphan commit and move its tip, keep every file under 100 MiB with `.part-NN` splitting, record an upstream URL, a published sha256 and a licence for every artifact, verify each binary under `env -i`, and put the measured packed and unpacked size of each group in `README.md` on the branch. Then report the new commit SHA, the manifest line count, and what each group opens, so the repository's register can be updated to match.
+> Update the `vendor/sandbox-toolchain` orphan branch on `maus-inc/mausVoice`. Read `engineering/sandbox-capability-gaps.md` in the repository first, then `docs/sandbox-toolchain-vendor-spec.md`. Ship the free Tier 0 wiring (the `clang` PATH entry and the fontconfig wiring) with no new downloads, then groups G16 to G20 from the handoff table, and G21 and G22 only if the size is acceptable to you. Add `tzdata` and `locales` as downloads when you build the groups. Keep one orphan commit and move its tip, keep every file under 90 MiB with `.part-NN` splitting at 94,371,840 bytes, record an upstream URL, a published sha256 and a licence for every artifact, verify each binary under `env -i`, and put the measured packed and unpacked size of each group in `README.md` on the branch. Then report the new commit SHA, the manifest line count, and what each group opens, so the repository's register can be updated to match.

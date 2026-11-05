@@ -63,9 +63,11 @@ sudo apt-get install -y ffmpeg gifsicle
 
 Without `ffmpeg` the pipeline stops. Without `gifsicle` the GIF is written
 unoptimized and larger, and the encode prints a note saying so. Install both.
-On a host that cannot reach a Debian mirror, the vendored toolchain carries
-`ffmpeg`, `ffprobe` and `gifsicle` in `system/tools/bin` (gap G9 in
-`engineering/sandbox-coverage-gaps.md`), which `FETCH.md` step 6 puts on `PATH`.
+In the Linux x86-64 sandbox, when a Debian mirror is unreachable, the vendored
+toolchain carries `ffmpeg`, `ffprobe` and `gifsicle` in `system/tools/bin` (gap G9
+in `engineering/sandbox-coverage-gaps.md`), which `FETCH.md` step 6 puts on `PATH`.
+On macOS or any other platform, use that platform's install command above; the
+payload is a Debian x86-64 tree and does not apply.
 
 ## The clip is a still image
 
