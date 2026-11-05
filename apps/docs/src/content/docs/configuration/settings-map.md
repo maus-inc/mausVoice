@@ -74,7 +74,7 @@ A credential can appear for more than one task only when its provider supports t
 - **Auto-learn dictionary** adds words from History corrections to your glossary automatically.
 - **Learn from corrections** watches the target app after a dictation lands and offers a correction you can accept or ignore.
 - **Multi-device** opens the receiver, pairing, and routing controls. Microphone audio is never routed to the receiver.
-- **Danger zone** contains **Clear local data**. It clears eleven SQLite tables but is not a full uninstall or filesystem wipe, so read the confirmation dialog and the [clear-local-data guide](./clear-local-data/) first.
+- **Danger zone** contains **Clear local data**. It clears fourteen SQLite tables, including daily word totals and their usage-event ledger, but is not a full uninstall or filesystem wipe. Read the confirmation dialog and the [clear-local-data guide](./clear-local-data/) first.
 
 ## Updates
 

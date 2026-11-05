@@ -27,6 +27,7 @@ import { getAppState, produceAppState } from "../store";
 import { createTool } from "../tools";
 import { modifyAgentState } from "../utils/agent.utils";
 import { getLogger } from "../utils/log.utils";
+import { withLocalDataWrite } from "../utils/local-data-write-gate";
 import { humanizeScrub } from "../utils/humanize.utils";
 import type { PersistedRunOutcome } from "../utils/chat-parts.utils";
 import type { AgentTypeConfig } from "./agent-configs";
@@ -343,44 +344,41 @@ export async function runAgent(
               conversationId,
               toolCallId: event.toolCallId,
             },
-            async () => {
-              // This result belongs to a tool call the replacement run's context
-              // does not contain, so it must not outlive the run that produced
-              // it. Both edges of the write are checked, because the await in
-              // between is exactly where a second run for this conversation
-              // takes over.
-              if (activeLoops.get(conversationId) !== loop) {
-                getLogger().verbose(
-                  "Skipped tool-result persist: a newer run superseded this one",
+            async () =>
+              withLocalDataWrite(async (lease) => {
+                // This result belongs to the run that produced it. Keep one
+                // lease across both edges so a takeover cannot leave an
+                // orphaned tool result after a clear starts.
+                if (activeLoops.get(conversationId) !== loop) {
+                  getLogger().verbose(
+                    "Skipped tool-result persist: a newer run superseded this one",
+                  );
+                  return;
+                }
+                const saved = await createChatMessage(
+                  {
+                    id: crypto.randomUUID(),
+                    conversationId,
+                    role: "system",
+                    content: event.result,
+                    createdAt: new Date().toISOString(),
+                    metadata: {
+                      type: "tool-result",
+                      status,
+                      toolCallId: event.toolCallId,
+                      toolName: event.toolName,
+                      ...(reason && { reason }),
+                    },
+                  },
+                  lease,
                 );
-                return;
-              }
-              const saved = await createChatMessage({
-                id: crypto.randomUUID(),
-                conversationId,
-                role: "system",
-                content: event.result,
-                createdAt: new Date().toISOString(),
-                metadata: {
-                  type: "tool-result",
-                  status,
-                  toolCallId: event.toolCallId,
-                  toolName: event.toolName,
-                  ...(reason && { reason }),
-                },
-              });
-              if (activeLoops.get(conversationId) !== loop) {
-                // Committed after the takeover. Left in place it is a `tool`
-                // message whose `tool_calls` entry no live turn declares, and
-                // the next run rehydrates precisely that. Take it back out of
-                // the store and of state, which lands where the check above
-                // would have.
-                getLogger().verbose(
-                  "Rolled back tool-result persist: a newer run superseded this one",
-                );
-                await deleteChatMessages(conversationId, [saved.id]);
-              }
-            },
+                if (activeLoops.get(conversationId) !== loop) {
+                  getLogger().verbose(
+                    "Rolled back tool-result persist: a newer run superseded this one",
+                  );
+                  await deleteChatMessages(conversationId, [saved.id], lease);
+                }
+              }),
           );
           updateRunState((draft) => {
             if (currentMessageId) {
@@ -527,24 +525,39 @@ async function finalizeAssistantMessage(
   // On failure the in-memory copy still gets the scrubbed final text so
   // the conversation view stays coherent for the session; only the
   // durable history row is missing, and that is what the log records.
+  let streamingStateCleared = false;
   try {
-    if (!isActive || isActive()) {
-      await getChatMessageRepo().createChatMessage(final);
-      if (isActive && !isActive()) {
-        await getChatMessageRepo()
-          .deleteChatMessages([final.id])
-          .catch(() => undefined);
+    await withLocalDataWrite(async (lease) => {
+      try {
+        if (!isActive || isActive()) {
+          await getChatMessageRepo().createChatMessage(final, lease);
+          if (isActive && !isActive()) {
+            await getChatMessageRepo()
+              .deleteChatMessages([final.id], lease)
+              .catch(() => undefined);
+          }
+        }
+      } finally {
+        produceAppState((draft) => {
+          // A deleted conversation/message must not be resurrected by a late write.
+          if (!isActive || isActive()) {
+            if (draft.chatMessageById[messageId])
+              draft.chatMessageById[messageId] = final;
+          }
+          delete draft.streamingMessageById[messageId];
+        }, lease);
+        streamingStateCleared = true;
       }
-    }
-  } finally {
-    produceAppState((draft) => {
-      // A deleted conversation/message must not be resurrected by a late write.
-      if (!isActive || isActive()) {
-        if (draft.chatMessageById[messageId])
-          draft.chatMessageById[messageId] = final;
-      }
-      delete draft.streamingMessageById[messageId];
     });
+  } finally {
+    // If acquiring or using the lease failed, still retire the transient
+    // streaming bubble in memory. The store suppresses persistence while a
+    // clear is active, so this cannot repopulate local data.
+    if (!streamingStateCleared) {
+      produceAppState((draft) => {
+        delete draft.streamingMessageById[messageId];
+      });
+    }
   }
 }
 

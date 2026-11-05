@@ -3,7 +3,9 @@ pub mod app_target_queries;
 pub mod chat_message_queries;
 mod consolidation;
 pub mod conversation_queries;
+pub mod daily_activity_queries;
 pub mod hotkey_queries;
+pub mod local_data_write_gate;
 pub mod open;
 pub mod paired_remote_device_queries;
 pub mod preferences_queries;
@@ -175,13 +177,21 @@ pub const USER_PROFILE_TIMESTAMPS_MIGRATION_SQL: &str =
 /// against databases that already applied some of those steps individually.
 pub const PENDING_AUDIO_DELETIONS_MIGRATION_SQL: &str =
     include_str!("migrations/090_pending_audio_deletions.sql");
+/// Daily word totals and idempotency keys for live usage metering plus the
+/// transcription-history backfill.
+pub const DAILY_WORD_ACTIVITY_MIGRATION_SQL: &str =
+    include_str!("migrations/091_daily_word_activity.sql");
 /// Persists semantic post-processing edit failures, their per-row retry-chain
-/// count, and the durable one-pass automatic-recovery guard.
+/// count, and the durable one-pass automatic-recovery guard. Numbered 92: the
+/// consolidation branch took 91 for `daily_word_activity` first.
 pub const POST_PROCESS_EDIT_FAILURE_MIGRATION_SQL: &str =
-    include_str!("migrations/091_post_process_edit_failure.sql");
+    include_str!("migrations/092_post_process_edit_failure.sql");
 /// Persists the tone and language a claimed recovery pass must reuse.
 pub const POST_PROCESS_EDIT_RETRY_CONTEXT_MIGRATION_SQL: &str =
-    include_str!("migrations/092_post_process_edit_retry_context.sql");
+    include_str!("migrations/093_post_process_edit_retry_context.sql");
+/// Persists the failure count a recovery claim was written at.
+pub const POST_PROCESS_EDIT_RETRY_CLAIM_COUNT_MIGRATION_SQL: &str =
+    include_str!("migrations/094_post_process_edit_retry_claim_count.sql");
 /// Schema pieces folded into [`CONSOLIDATED_V0_1_6_MIGRATION_SQL`] /
 /// [`migrations`]: `preserve_audio_on_failure`, `transcription_path`,
 /// `pill_placement`, `hands_free_delay_ms`, `auto_learn_dictionary_enabled`,
@@ -622,14 +632,26 @@ pub fn migrations() -> Vec<tauri_plugin_sql::Migration> {
         },
         tauri_plugin_sql::Migration {
             version: 91,
+            description: "create_daily_word_activity_tables",
+            sql: DAILY_WORD_ACTIVITY_MIGRATION_SQL,
+            kind: tauri_plugin_sql::MigrationKind::Up,
+        },
+        tauri_plugin_sql::Migration {
+            version: 92,
             description: "post_process_edit_failure",
             sql: POST_PROCESS_EDIT_FAILURE_MIGRATION_SQL,
             kind: tauri_plugin_sql::MigrationKind::Up,
         },
         tauri_plugin_sql::Migration {
-            version: 92,
+            version: 93,
             description: "post_process_edit_retry_context",
             sql: POST_PROCESS_EDIT_RETRY_CONTEXT_MIGRATION_SQL,
+            kind: tauri_plugin_sql::MigrationKind::Up,
+        },
+        tauri_plugin_sql::Migration {
+            version: 94,
+            description: "post_process_edit_retry_claim_count",
+            sql: POST_PROCESS_EDIT_RETRY_CLAIM_COUNT_MIGRATION_SQL,
             kind: tauri_plugin_sql::MigrationKind::Up,
         },
     ]

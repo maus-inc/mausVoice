@@ -607,10 +607,14 @@ describe("runAgent supersession while a tool result is being written", () => {
     if (!issued) {
       throw new Error("no tool result was persisted");
     }
-    // The mock stands in for the repository method, which `deleteChatMessages`
-    // calls with the id list alone; the conversation id is only used to prune
-    // state.
-    expect(deleteChatMessagesMock).toHaveBeenCalledWith([issued.id]);
+    const createLease = getChatMessageRepoCreateMock.mock.calls[0]?.[1];
+    expect(createLease).toBeDefined();
+    // The repository receives the id list and the same write lease used for
+    // the create; the conversation id is only used to prune in-memory state.
+    expect(deleteChatMessagesMock).toHaveBeenCalledWith(
+      [issued.id],
+      createLease,
+    );
 
     const verbose = loggerMock.verbose.mock.calls.map((c) => String(c[0]));
     expect(

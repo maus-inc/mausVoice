@@ -7,6 +7,7 @@ import { isPersistenceAllowed } from "../utils/incognito.utils";
 import { getLogger } from "../utils/log.utils";
 import { createId } from "../utils/id.utils";
 import { orFalse, orNull } from "../utils/nullable.utils";
+import { registerTranscriptions } from "../utils/app.utils";
 import { POST_PROCESS_TRUNCATED_WARNING } from "../utils/prompt.utils";
 import {
   beginRetranscribe,
@@ -16,6 +17,12 @@ import {
   RETRANSCRIPTION_SUCCESS_VISIBLE_MS,
 } from "../state/transcriptions.state";
 import { getAppState, produceAppState } from "../store";
+import {
+  type LocalDataWriteLease,
+  getLocalDataClearGeneration,
+  isLocalDataClearRequested,
+  withLocalDataWrite,
+} from "../utils/local-data-write-gate";
 import { sanitizeTranscriptText } from "../utils/sanitize-transcript.utils";
 import {
   getPostProcessEditRetranscribeDelayMs,
@@ -324,6 +331,7 @@ const postProcessOutcomeFields = (
   postProcessEditAutoRetryUsed: boolean | null;
   postProcessEditRetryToneId: string | null;
   postProcessEditRetryLanguageCode: string | null;
+  postProcessEditRetryClaimCount: number | null;
 } =>
   unstyled
     ? {
@@ -349,6 +357,9 @@ const postProcessOutcomeFields = (
         postProcessEditRetryLanguageCode: orNull(
           transcription.postProcessEditRetryLanguageCode,
         ),
+        postProcessEditRetryClaimCount: orNull(
+          transcription.postProcessEditRetryClaimCount,
+        ),
       }
     : {
         postProcessFailed: orNull(metadata.postProcessFailed),
@@ -357,6 +368,7 @@ const postProcessOutcomeFields = (
         postProcessEditAutoRetryUsed: null,
         postProcessEditRetryToneId: null,
         postProcessEditRetryLanguageCode: null,
+        postProcessEditRetryClaimCount: null,
       };
 
 /**
@@ -385,14 +397,16 @@ const unstyledFeedback = (
  */
 const persistTranscriptionUpdate = async (
   payload: Transcription,
+  lease: LocalDataWriteLease,
 ): Promise<Transcription> =>
   isPersistenceAllowed()
-    ? await getTranscriptionRepo().updateTranscription(payload)
+    ? await getTranscriptionRepo().updateTranscription(payload, lease)
     : payload;
 
 const updateStoredTranscription = async (
   transcription: Transcription,
   processed: ProcessedAudio,
+  lease: LocalDataWriteLease,
 ): Promise<RetranscribeUpdate> => {
   const { transcribeResult, sanitizedTranscript, postProcessResult } =
     processed;
@@ -429,7 +443,7 @@ const updateStoredTranscription = async (
     rawTranscript: transcribeResult.rawTranscript || finalTranscript,
     warnings: warnings.length > 0 ? warnings : null,
   };
-  const stored = await persistTranscriptionUpdate(payload);
+  const stored = await persistTranscriptionUpdate(payload, lease);
   return {
     styled: !unstyled,
     ...unstyledFeedback(unstyledRun),
@@ -641,19 +655,37 @@ const syncRetranscribeFeedback = (event: "success" | "error" | "abandoned") => {
   dismissRetranscribeLoadingFeedback();
 };
 
-const performRetranscribe = async ({
-  transcriptionId,
-  toneId,
-  languageCode,
-}: RetranscribeTranscriptionParams): Promise<RetranscribeUpdate> => {
+const assertRetranscribeClearGeneration = (generation: number): void => {
+  if (
+    isLocalDataClearRequested() ||
+    getLocalDataClearGeneration() !== generation
+  ) {
+    throw new Error("Local data was cleared during retranscription.");
+  }
+};
+
+const performRetranscribe = async (
+  { transcriptionId, toneId, languageCode }: RetranscribeTranscriptionParams,
+  clearGeneration: number,
+): Promise<RetranscribeUpdate> => {
   const transcription = getRec(
     getAppState().transcriptionById,
     transcriptionId,
   );
   if (!transcription) throw new Error("Transcription not found.");
 
-  const audioData =
-    await getTranscriptionRepo().loadTranscriptionAudio(transcriptionId);
+  const audioData = await withLocalDataWrite((lease) => {
+    assertRetranscribeClearGeneration(clearGeneration);
+    return getTranscriptionRepo().loadTranscriptionAudio(
+      transcriptionId,
+      lease,
+    );
+  });
+  assertRetranscribeClearGeneration(clearGeneration);
+
+  // Provider and styling calls can take much longer than local DB work. Do not
+  // keep a clear-drain lease while they run; the captured generation prevents
+  // their late result from being persisted after a clear or retry.
   const processed = await processAudio({
     samples: audioData.samples,
     sampleRate: audioData.sampleRate,
@@ -662,12 +694,21 @@ const performRetranscribe = async ({
     postProcessEditFailureCount:
       transcription.postProcessEditFailureCount ?? null,
   });
-  const updated = await updateStoredTranscription(transcription, processed);
+  assertRetranscribeClearGeneration(clearGeneration);
 
-  produceAppState((draft) => {
-    draft.transcriptionById[transcriptionId] = updated.transcription;
+  return withLocalDataWrite(async (lease) => {
+    assertRetranscribeClearGeneration(clearGeneration);
+    const updated = await updateStoredTranscription(
+      transcription,
+      processed,
+      lease,
+    );
+
+    produceAppState((draft) => {
+      draft.transcriptionById[transcriptionId] = updated.transcription;
+    }, lease);
+    return updated;
   });
-  return updated;
 };
 
 /**
@@ -676,6 +717,21 @@ const performRetranscribe = async ({
  * loading toast, and only once nothing is left running.
  */
 const abandonRetranscribeRun = (): void => {
+  syncRetranscribeFeedback("abandoned");
+};
+
+const cancelRetranscribeRunForClear = (
+  transcriptionId: string,
+  generation: number,
+): void => {
+  if (isCurrentRetranscribeGeneration(transcriptionId, generation)) {
+    // This is transient in-memory feedback, not persisted local data. The
+    // storage adapter rejects persistence while the clear gate is closed.
+    produceAppState((draft) => {
+      finishRetranscribe(draft.transcriptions, transcriptionId, false);
+    });
+    releaseRetranscribeGeneration(transcriptionId, generation);
+  }
   syncRetranscribeFeedback("abandoned");
 };
 
@@ -756,20 +812,30 @@ const finishRetranscribeSuccess = (
 
 /**
  * Apply a finished run's outcome to the row it owns. Returns the update the
- * run stored, or null when a newer run superseded it, which is the state a
- * caller must not schedule a recovery pass against.
+ * run stored, or null when a newer run superseded it or local data was
+ * cleared underneath it, which are the states a caller must not schedule a
+ * recovery pass against.
  */
 const completeRetranscribeRun = ({
   transcriptionId,
   generation,
+  clearGeneration,
   update,
 }: {
   transcriptionId: string;
   generation: number;
+  clearGeneration: number;
   update: RetranscribeUpdate;
 }): RetranscribeUpdate | null => {
   if (!isCurrentRetranscribeGeneration(transcriptionId, generation)) {
     abandonRetranscribeRun();
+    return null;
+  }
+  if (
+    isLocalDataClearRequested() ||
+    getLocalDataClearGeneration() !== clearGeneration
+  ) {
+    cancelRetranscribeRunForClear(transcriptionId, generation);
     return null;
   }
   if (!update.styled) {
@@ -791,14 +857,23 @@ const completeRetranscribeRun = ({
 const handleRetranscribeError = ({
   transcriptionId,
   generation,
+  clearGeneration,
   error,
 }: {
   transcriptionId: string;
   generation: number;
+  clearGeneration: number;
   error: unknown;
 }): void => {
   if (!isCurrentRetranscribeGeneration(transcriptionId, generation)) {
     abandonRetranscribeRun();
+    return;
+  }
+  if (
+    isLocalDataClearRequested() ||
+    getLocalDataClearGeneration() !== clearGeneration
+  ) {
+    cancelRetranscribeRunForClear(transcriptionId, generation);
     return;
   }
   failRetranscribeRun({
@@ -827,26 +902,34 @@ export const retranscribeTranscription = async (
   const { transcriptionId } = params;
   if (
     isRetranscribingId(getAppState().transcriptions, transcriptionId) ||
-    automaticRetranscriptionIds.has(transcriptionId)
+    automaticRetranscriptionIds.has(transcriptionId) ||
+    isLocalDataClearRequested()
   ) {
     return { started: false, update: null };
   }
 
+  const clearGeneration = getLocalDataClearGeneration();
   const generation = nextRetranscribeGeneration(transcriptionId);
   beginRetranscribeRun(transcriptionId);
 
   try {
-    const update = await performRetranscribe(params);
+    const update = await performRetranscribe(params, clearGeneration);
     return {
       started: true,
       update: completeRetranscribeRun({
         transcriptionId,
         generation,
+        clearGeneration,
         update,
       }),
     };
   } catch (error) {
-    handleRetranscribeError({ transcriptionId, generation, error });
+    handleRetranscribeError({
+      transcriptionId,
+      generation,
+      clearGeneration,
+      error,
+    });
     return { started: true, update: null };
   }
 };
@@ -867,8 +950,14 @@ export const retranscribeTranscription = async (
 const isResumableAutomaticRetry = (transcription: Transcription): boolean =>
   transcription.postProcessEditFailed === true &&
   transcription.postProcessEditAutoRetryUsed === true &&
+  // The count a claim was written at, not a fixed threshold: a claim can land
+  // on a later failure in the chain, and matching the recorded value is what
+  // tells a claim that never reported back from one whose pass ran and stored
+  // a higher count. Rows claimed before the column existed recorded nothing,
+  // and those claims were only ever written one failure past the threshold.
   transcription.postProcessEditFailureCount ===
-    POST_PROCESS_EDIT_FAILURE_RETRANSCRIBE_AFTER + 1 &&
+    (transcription.postProcessEditRetryClaimCount ??
+      POST_PROCESS_EDIT_FAILURE_RETRANSCRIBE_AFTER + 1) &&
   // A row already carrying a post-processing failure had its recovery attempt
   // delivered and recorded, so it must not be delivered again.
   transcription.postProcessFailed !== true &&
@@ -949,6 +1038,15 @@ const resumeAutomaticRetry = async (
   }
 };
 
+/**
+ * In-process ownership of a row's resumed pass. The History exit reset clears
+ * the retranscribing markers from app state, but a fire-and-forget pass keeps
+ * running behind it, so this module-level set — which no UI reset touches — is
+ * what stops a remount from starting a second pass for the same row while the
+ * first is still in flight.
+ */
+const resumingRetryIds = new Set<string>();
+
 export const resumeInterruptedPostProcessEditRetries = (
   transcriptions: Transcription[],
 ): void => {
@@ -956,16 +1054,61 @@ export const resumeInterruptedPostProcessEditRetries = (
     return;
   }
   for (const transcription of transcriptions) {
-    if (isResumableAutomaticRetry(transcription)) {
+    if (
+      isResumableAutomaticRetry(transcription) &&
+      !resumingRetryIds.has(transcription.id)
+    ) {
+      resumingRetryIds.add(transcription.id);
       // Fire-and-forget, with a backstop: the resume path records or
       // re-delivers on its own, and this catch only surfaces the unexpected.
-      resumeAutomaticRetry(transcription).catch((error: unknown) => {
-        getLogger().warning(
-          `Automatic audio retranscription resume failed: ${error}`,
-        );
-      });
+      resumeAutomaticRetry(transcription)
+        .catch((error: unknown) => {
+          getLogger().warning(
+            `Automatic audio retranscription resume failed: ${error}`,
+          );
+        })
+        .finally(() => {
+          // Released only once the attempt, including its
+          // recordUnsettledRetryAttempt tail, has settled. The row an attempt
+          // settled is no longer resumable, and one whose attempt failed
+          // before settling stays claimable by a later pass, which is the
+          // same rule a restart follows.
+          resumingRetryIds.delete(transcription.id);
+        });
     }
   }
+};
+
+/**
+ * Walk every History page for interrupted claims. The paged list returns the
+ * newest rows first, so a claim on an older row is never part of the page a
+ * surface loads for its own list, and each page is registered before it is
+ * delivered because the retranscription path reads the row from app state.
+ */
+export const resumeAllInterruptedPostProcessEditRetries = (): void => {
+  const pageSize = 100;
+  const scan = async (): Promise<void> => {
+    for (let offset = 0; ; offset += pageSize) {
+      const page = await getTranscriptionRepo().listTranscriptions({
+        limit: pageSize,
+        offset,
+      });
+      produceAppState((draft) => {
+        registerTranscriptions(draft, page);
+      });
+      resumeInterruptedPostProcessEditRetries(page);
+      if (page.length < pageSize) {
+        return;
+      }
+    }
+  };
+  // Fire-and-forget like the delivery it performs: startup must not wait on
+  // scanning history that may turn out to be long.
+  scan().catch((error: unknown) => {
+    getLogger().warning(
+      `Automatic audio retranscription history scan failed: ${error}`,
+    );
+  });
 };
 
 /**
@@ -993,6 +1136,7 @@ const claimAutomaticRetryRow = async (
     postProcessEditAutoRetryUsed: true,
     postProcessEditRetryToneId: retryContextColumn(toneId),
     postProcessEditRetryLanguageCode: retryContextColumn(languageCode),
+    postProcessEditRetryClaimCount: failureCount,
   });
   produceAppState((draft) => {
     draft.transcriptionById[transcription.id] = marked;

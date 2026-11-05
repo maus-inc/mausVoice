@@ -1,4 +1,4 @@
-import { resumeInterruptedPostProcessEditRetries } from "../../actions/transcriptions.actions";
+import { resumeAllInterruptedPostProcessEditRetries } from "../../actions/transcriptions.actions";
 import { useAsyncEffect } from "../../hooks/async.hooks";
 import { useOnExit } from "../../hooks/helper.hooks";
 import { getTranscriptionRepo } from "../../repos";
@@ -15,8 +15,9 @@ export const TranscriptionsSideEffects = () => {
     });
     // A row a previous run claimed for automatic recovery and never reported
     // back on is picked up here, because the claim outlives the process that
-    // wrote it.
-    resumeInterruptedPostProcessEditRetries(transcriptions);
+    // wrote it. The scan walks every History page, so a claim on an older row
+    // is delivered too, not just the rows this list loaded.
+    resumeAllInterruptedPostProcessEditRetries();
   }, []);
 
   useOnExit(() => {

@@ -234,6 +234,43 @@ describe("i18n catalogs", () => {
     );
   });
 
+  it("formats heatmap activity counts in every locale", () => {
+    const locales = loadLocales();
+    const activeDaysMessage = {
+      id: "count_plural_one_active_day_other_active_days",
+      defaultMessage:
+        "{count, plural, one {# active day} other {# active days}}",
+    };
+    const activitySummaryMessage = {
+      id: "daily_word_activity_activedays_plural_one_active_day_other_a",
+      defaultMessage:
+        "Daily word activity: {activeDays, plural, one {# active day} other {# active days}} and {totalWords, number} words in the past year.",
+    };
+
+    for (const locale of manifest.supportedLocales as string[]) {
+      const intl = createIntl({
+        locale,
+        messages: locales[locale],
+        onError: (error) => {
+          throw error;
+        },
+      });
+      for (const count of [0, 1, 2]) {
+        const label = intl.formatMessage(activeDaysMessage, { count });
+        const summary = intl.formatMessage(activitySummaryMessage, {
+          activeDays: count,
+          totalWords: 42,
+        });
+        expect(label, `${locale}:${count}`).toBeTruthy();
+        expect(label, `${locale}:${count}`).not.toContain("{count");
+        expect(summary, `${locale}:${count}`).toContain(intl.formatNumber(42));
+        expect(summary, `${locale}:${count}`).not.toMatch(
+          /\{(?:activeDays|totalWords)/,
+        );
+      }
+    }
+  });
+
   it("flags messages still English in every translated locale", () => {
     const locales = loadLocales();
     const keyedEnglish = messagesFor(locales, manifest.defaultLocale);

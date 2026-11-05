@@ -65,6 +65,11 @@ pub struct Transcription {
     /// string when the failed run used no override.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub post_process_edit_retry_language_code: Option<String>,
+    /// Failure count the recovery claim was written at. A restart matches the
+    /// live count against it to tell a claim that never reported back from one
+    /// whose pass ran and failed again.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub post_process_edit_retry_claim_count: Option<i64>,
     /// Sanitized, non-secret error message from a failed post-processing
     /// request.
     #[serde(skip_serializing_if = "Option::is_none")]
