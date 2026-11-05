@@ -26,6 +26,7 @@ Touched-package checks, the ones `AGENTS.md` names:
 - [ ] `pnpm --filter @repo/agent test` all passed
 - [ ] `pnpm --filter @maus-inc/preview test` all passed, if you touched `apps/preview`
 - [ ] `node --test scripts/ci/*.test.mjs` all passed, if you touched `scripts/ci`
+- [ ] `pnpm run check:pr-body .github/pull_request_template.md` passes, and the same command passes on the pull request body before you call it ready
 - [ ] After modifying a built TypeScript package under `packages/`, rebuilt it before checking downstream consumers
 
 ## Rust checks
