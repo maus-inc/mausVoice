@@ -824,6 +824,29 @@ const wasLocalDataCleared = (clearGeneration: number): boolean =>
  * cleared underneath it, which are the states a caller must not schedule a
  * recovery pass against.
  */
+/**
+ * Report a finished run whose styling could not be applied. The row holds its
+ * previous text plus this run's raw ASR, which is a usable outcome for the
+ * user but not the styling they asked for, so it must not be reported as a
+ * finished retranscription.
+ */
+const failUnstyledRetranscribeRun = ({
+  transcriptionId,
+  generation,
+  update,
+}: {
+  transcriptionId: string;
+  generation: number;
+  update: RetranscribeUpdate;
+}): void => {
+  failRetranscribeRun({
+    transcriptionId,
+    generation,
+    message: update.unstyledMessage ?? "",
+    reason: update.unstyledReason ?? undefined,
+  });
+};
+
 const completeRetranscribeRun = ({
   transcriptionId,
   generation,
@@ -844,15 +867,7 @@ const completeRetranscribeRun = ({
     return null;
   }
   if (!update.styled) {
-    // The row now holds its previous text plus this run's raw ASR, which is
-    // a usable outcome for the user but not the styling they asked for, so it
-    // must not be reported as a finished retranscription.
-    failRetranscribeRun({
-      transcriptionId,
-      generation,
-      message: update.unstyledMessage ?? "",
-      reason: update.unstyledReason ?? undefined,
-    });
+    failUnstyledRetranscribeRun({ transcriptionId, generation, update });
     return update;
   }
   finishRetranscribeSuccess(transcriptionId, generation);
