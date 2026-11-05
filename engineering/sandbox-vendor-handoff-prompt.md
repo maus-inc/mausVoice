@@ -33,13 +33,13 @@ records the stages it cannot cover, and the specification now carries a group fo
 The second delivery shipped these five groups on 2026-11-05, so the table records what each
 one carries and its measured size. Extend the same branch and manifest if a task needs more.
 
-| Group | Carries                                                                    | Opens                                         | Measured                        |
-| ----- | -------------------------------------------------------------------------- | --------------------------------------------- | ------------------------------- |
-| G9    | `ffmpeg`, `ffprobe`, `gifsicle`, optional `tesseract` and `tessdata`       | the `ui-capture` workflow                     | 160 MB                          |
-| G10   | `ggml-tiny.bin`, `ggml-base.bin`, one small ONNX bundle, `MODELS.txt`      | the four `#[ignore]` sidecar tests            | 463 MB                          |
-| G11   | `tauri-driver` 2.0.6, optional `chromedriver` 152.0.0                      | `test:webdriver` on Linux                     | 24 MB                           |
-| G12   | `rust-std` for `x86_64-pc-windows-msvc` and `aarch64-apple-darwin`, 1.88.0 | `cargo check --target` on platform gated code | 47.5 MB packed, 245 MB unpacked |
-| G13   | `gitleaks` 8.18.0                                                          | the history scan                              | 7 MB                            |
+| Group | Carries                                                                    | Opens                                                    | Measured                        |
+| ----- | -------------------------------------------------------------------------- | -------------------------------------------------------- | ------------------------------- |
+| G9    | `ffmpeg`, `ffprobe`, `gifsicle`                                            | the `ui-capture` workflow, without OCR                   | 160 MB                          |
+| G10   | `ggml-tiny.bin`, `ggml-base.bin`, the SenseVoice bundle, `MODELS.txt`      | whisper and SenseVoice loads, not all four ignored tests | 463 MB                          |
+| G11   | `tauri-driver` 2.0.6, optional `chromedriver` 152.0.0                      | `test:webdriver` on Linux                                | 24 MB                           |
+| G12   | `rust-std` for `x86_64-pc-windows-msvc` and `aarch64-apple-darwin`, 1.88.0 | `cargo check --target` on platform gated code            | 47.5 MB packed, 245 MB unpacked |
+| G13   | `gitleaks` 8.18.0                                                          | the history scan                                         | 7 MB                            |
 
 `tesseract` and its `tessdata` are not shipped, so the `ui-capture` OCR check is still
 absent. The payload carries `tauri-driver` 2.0.6 rather than 2.1.0, because 2.1.0 needs

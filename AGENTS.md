@@ -346,7 +346,7 @@ From the blocked environment, fetch the orphan branch `vendor/sandbox-toolchain`
 
 ```bash
 set -euo pipefail
-SV_SHA=61fb32959d6ac6a36b0c6356069a767ee7725caa   # pin the commit you reviewed, not the branch head
+SV_SHA=c43df0ec06e04ff8c323bcdd01165390eef894a3   # pin the commit you reviewed, not the branch head
 SV="$(mktemp -d)"                                  # private root, so concurrent runs cannot clash
 curl -sSL -o "$SV.tar.gz" "https://codeload.github.com/maus-inc/mausVoice/tar.gz/$SV_SHA"
 tar xzf "$SV.tar.gz" -C "$SV" --strip-components=1 && cd "$SV"
@@ -354,7 +354,7 @@ for f in $(grep -o '^[a-f0-9]\{64\}  .*\.part-00$' MANIFEST.sha256 | sed 's/.*  
 sha256sum -c MANIFEST.sha256 && cd - >/dev/null && echo "payload root: $SV"
 ```
 
-Extract to `/tmp`, never into the workspace, because the workspace is snapshotted against a size and file cap and the extracted payload is about 5.3 GB. Pin the commit you reviewed and re-run `sha256sum -c` on every fetch: `MANIFEST.sha256` travels with the payload, so it proves the download was intact, not that the branch head is still the commit you reviewed.
+Extract to `/tmp`, never into the workspace, because the workspace is snapshotted against a size and file cap and the extracted payload is about 5.5 GB. Pin the commit you reviewed and re-run `sha256sum -c` on every fetch: `MANIFEST.sha256` travels with the payload, so it proves the download was intact, not that the branch head is still the commit you reviewed.
 
 Five facts decide whether a gate can pass:
 

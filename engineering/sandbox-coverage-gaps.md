@@ -44,7 +44,7 @@ A release asset such as `https://github.com/gitleaks/gitleaks/releases/download/
 | ------------------------------------------ | ------------------ | -------------------------------------------------------------------------------------- |
 | CPU                                        | 2 vCPU             | `cargo test` links one binary at a time, so `CARGO_BUILD_JOBS=1`                       |
 | Memory                                     | 3,939 MB           | Parallel linking peaks above it and the linker dies with signal 9                      |
-| Disk                                       | 21 GB free         | The extracted payload is about 5.3 GB, the Rust target tree several more               |
+| Disk                                       | 21 GB free         | The extracted payload is about 5.5 GB, the Rust target tree several more               |
 | Node                                       | v22.22.3           | Satisfies `engines`, is behind the `.nvmrc` pin of 24                                  |
 | npm                                        | 10.9.8             | Installs pnpm@10.34.5 from the registry                                                |
 | Python                                     | 3.11.2, pip 23.0.1 | `req.txt` resolves from PyPI                                                           |
@@ -146,7 +146,7 @@ Measured before the second delivery. `cargo clippy` on Linux compiles only the h
 
 Delivered. The second delivery ships `rust/targets/x86_64-pc-windows-msvc/rust-std-1.88.0.tar.xz` and the `aarch64-apple-darwin` equivalent, both digests equal to the `xz_hash` values in `channel-rust-1.88.0.toml`. `rust/targets/TARGETS.txt` records them. `FETCH.md` step 3b unpacks both into the toolchain prefix. `cargo check` does not link, so no Windows SDK and no macOS SDK is needed.
 
-Caveat. The cross-target `cargo check` needs the full dependency graph for the target, which the sandbox has no vendored crate tree for, so the command is recorded in `TARGETS.txt` for a consumer that has one. `rustc --print target-list` proves nothing on its own, because it lists targets without their standard libraries. Confirm `lib/rustlib/<target>/lib/libstd-*.rlib` exists for both targets.
+Caveat. The vendored crate tree ships, but it is resolved for the host triple. Run `cargo check --target <triple>` with the shipped vendor config, record the result for each target in `TARGETS.txt`, and do not assume the host-resolved tree covers a target-specific dependency. `rustc --print target-list` proves nothing on its own, because it lists targets without their standard libraries. Confirm `lib/rustlib/<target>/lib/libstd-*.rlib` exists for both targets.
 
 Substitute when the crate tree is not available. Say that platform gated code was checked by CI for that platform, and name the job.
 
