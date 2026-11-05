@@ -1,7 +1,7 @@
 blank_issues_enabled: false
 contact_links:
   - name: Documentation
-    url: https://github.com/maus-inc/mausVoice/tree/main/apps/docs
+    url: https://maus-inc.github.io/mausVoice/docs/
     about: Install, configure, and troubleshooting guides live here.
   - name: Contributing guide
     url: https://github.com/maus-inc/mausVoice/blob/main/CONTRIBUTING.md

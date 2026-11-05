@@ -75,7 +75,7 @@ your own build output, say so in `README.md`, the same way the licence group doe
 > - Extract and build under `/tmp`. Pack with `xz` only, because the consuming
 >   environment has no `zstd` and no `7z`.
 > - The consuming environment, the Arena agent sandbox, is Debian 12, x86_64, glibc
->   2.36, about 3.9 GB RAM with no
+>   2.36, 3,939 MB of RAM as `free` reports it and no
 >   swap, 2 cores. It has git, curl, tar, xz, gzip, bzip2, unzip, gcc 12.2, make,
 >   binutils, python3, node 22 and sha256sum. It has no cmake, pkg-config, patchelf,
 >   file, clang, libclang, zstd, 7z, pnpm, bun, cargo, rustc, rustup or Xvfb. Ship all

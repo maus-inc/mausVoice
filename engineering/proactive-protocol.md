@@ -25,7 +25,11 @@ This document is the elaboration for the Proactive Problem Solving Protocol HARD
 - Gate the fourth answer. Run the external check and attach the result, or label the claim as a
   hypothesis awaiting verification with what would settle it, or downgrade the work to a plan
   awaiting verification when the answer is empty. Never fabricate a check, a source or a result.
-  A stated cannot verify now passes. An invented verification fails.
+  A stated cannot verify now passes. An invented verification fails. When a sandbox gap is what
+  stops the check, name its number from `engineering/sandbox-coverage-gaps.md`, not just the
+  word sandbox.
+- Record the pass. The four answers and the gate result per claim go in the report, so a run
+  that loses context mid-way still leaves the evidence behind.
 - Depth is not scope. A move that makes the job larger goes through the confirmation rule below.
   A move that makes the same job better does not need permission.
 

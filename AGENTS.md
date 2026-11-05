@@ -125,7 +125,7 @@ Verification coverage target: aim for full class coverage, not just instance cov
 
 - The Verification Gate MUST show head SHA plus results for `pnpm install --frozen-lockfile`, `pnpm run lint`, `pnpm run build`, `pnpm run test`, `pnpm run skills:verify`, and the Rust gates in `engineering/rust-toolchain.md` when relevant. Every progress claim MUST cite the tool output that proves it.
 - Typecheck runs per package in CI (`desktop`, `docs`, `@maus-inc/preview`), but the root `pnpm run check-types` covers all fourteen workspace projects through turbo in one pass, so prefer it and treat any failure as yours. `apps/preview` only typechecks after the `@maus-inc/*` packages build, because its tsconfig reaches into `apps/desktop/src`; if you see `TS2307 Cannot find module '@maus-inc/...'`, run `pnpm exec turbo run build --filter=desktop^...` first. That error is build order, not a defect, so do not chase it into the source.
-- The pull request body MUST pass `pnpm run check:pr-body`. A review record, a babysit round or a CI log outside a collapsible block is a defect, and so is a footer hidden inside one.
+- The pull request body MUST pass `pnpm run check:pr-body -- <file>`, or `gh pr view <n> --json body -q .body | pnpm run check:pr-body -- -`. A review record, a babysit round or a CI log outside a collapsible block is a defect, and so is a footer hidden inside one.
 - The depth pass MUST appear in the report as the four answers and the gate result per claim, run or labelled. A report that calls work deeper without naming the external check, or naming why it could not run, is not depth.
 - The Diff web-research review MUST list queries, sources, pattern class, instances found, edge cases, and failed attempts. A review that omits the pattern class is not run.
 - The PR description MUST include the proactive proposal and verification that the class is addressed; include human confirmation evidence only when scope expansion was proposed and confirmed, otherwise state that no expansion was needed with evidence that no broader class exists. For UI work, attach the observed capture artifact and name what it confirmed, or state why no capture could run.
@@ -277,7 +277,7 @@ If any step in this protocol is skipped, the change is not ready to file. Fix th
 - `pnpm --filter desktop i18n`, extract/prune messages and synchronize the locale catalogs after changing user-facing strings.
 - `pnpm --filter desktop dev:mac` / `dev:windows` / `dev:linux`, run the desktop app for a specific platform.
 - `pnpm --filter @maus-inc/preview dev`, the preview app on port 5193. This is the visual verification surface. It accepts `PREVIEW_ALLOWED_HOSTS` when you are not on localhost.
-- `pnpm --filter desktop test:webdriver`, the WebDriver end to end suite. It needs `tauri-driver`, a built debug binary, and on Linux WebKitWebDriver. See `engineering/sandbox-coverage-gaps.md` before you try it in a restricted sandbox.
+- `pnpm --filter desktop test:webdriver`, the WebDriver end to end suite. It needs `tauri-driver`, a built debug binary, and on Linux WebKitWebDriver. See `engineering/sandbox-coverage-gaps.md` before you try it in the Arena agent sandbox.
 - `pnpm --filter @maus-inc/preview gen:specs`, regenerate the 39 specs under `apps/preview/specs/`. Nothing in CI runs it, so the specs can drift from the code.
 - `node --test scripts/ci/*.test.mjs`, the CI guard tests. Run them whenever you touch `scripts/ci` or a workflow.
 
@@ -438,7 +438,7 @@ The steps, in order:
 - Use short, direct sentences. Put every measurement, file list and research record in a collapsible block after the first paragraph.
 - Put deep detail in a dropdown block so the user can expand if needed, rather than forcing them to read a wall of jargon.
 - Keep review counts, polling logs, "still waiting" notes and CI wall text out of the description. The check run holds the logs.
-- Fold every record of a review round, a babysit poll, a fix batch, a triage disposition, a check run or a research pass into a collapsible block. No unfolded heading may carry one, and a round adds a row to the round log rather than a new section. That rule is what stops the description turning into an infinite scroll, and `pnpm run check:pr-body` enforces it against the body.
+- Fold every record of a review round, a babysit poll, a fix batch, a triage disposition, a check run or a research pass into a collapsible block. No unfolded heading may carry one, and a round adds a row to the round log rather than a new section. That rule is what stops the description turning into an infinite scroll, and `pnpm run check:pr-body -- -` enforces it against the body on stdin.
 - Attach in-session artifacts, plans and research notes, in full, inside a collapsible block, or link them by repository path. Do not paste a session transcript.
 
 End the description with the footer below, filled in with the model you are actually running as, the verified human's git username, and the date:
@@ -594,7 +594,7 @@ pnpm --filter @maus-inc/preview gen:specs  # regenerate the specs after a compon
 
 Inspect the demo group covering your change in light mode and in dark mode. Say what you inspected and what it showed, so a reviewer can tell an inspected change from an uninspected one.
 
-The recording path exists and is gated on the sandbox. `apps/desktop/webdriver/` holds a WebdriverIO suite (`pnpm --filter desktop test:webdriver`) that drives a real Tauri build through `tauri-driver` and WebKitWebDriver on Linux and through `chromedriver` on macOS. The `ui-capture` skill needs `ffmpeg`, `ffprobe` and `gifsicle` plus a Chromium. A restricted sandbox has none of them, which is gaps G9 and G11 in `engineering/sandbox-coverage-gaps.md`. When a capture cannot run, say that plainly in the pull request, name the gap, and give the inspection you did instead. Never attach a recording you did not watch, and never describe a capture you did not make.
+The recording path exists and is gated on the sandbox. `apps/desktop/webdriver/` holds a WebdriverIO suite (`pnpm --filter desktop test:webdriver`) that drives a real Tauri build through `tauri-driver` and WebKitWebDriver on Linux and through `chromedriver` on macOS. The `ui-capture` skill needs `ffmpeg`, `ffprobe` and `gifsicle` plus a Chromium. The Arena agent sandbox has none of them, which is gaps G9 and G11 in `engineering/sandbox-coverage-gaps.md`. When a capture cannot run, say that plainly in the pull request, name the gap, and give the inspection you did instead. Never attach a recording you did not watch, and never describe a capture you did not make.
 
 ## Skills
 
@@ -779,7 +779,7 @@ Measured on 2026-11-05. Re-measure rather than trusting a number that has moved.
 - `rust-windows-gated` runs on `windows-2022` because cfg-gated Windows code does not compile on Linux. Nothing you run locally proves it.
 - CodeRabbit auto reviews non-draft PRs whose base is `main`, per `.coderabbit.yaml`. Drafts are excluded. For any other base, request a manual review only when the PR is substantially critical.
 - A blocked sandbox gets the toolchain it cannot download from the orphan branch `vendor/sandbox-toolchain`. Read `engineering/sandbox-vendored-toolchain.md` for what it carries and `engineering/sandbox-coverage-gaps.md` for what it does not.
-- `config/` holds the docker compose files for the local model stack. Docker is not available in a restricted sandbox, so treat that path as unavailable and say so.
+- `config/` holds the docker compose files for the local model stack. Docker is not available in the Arena agent sandbox, so treat that path as unavailable there and say so.
 
 ## Plans, research and decisions
 

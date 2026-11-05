@@ -1363,9 +1363,17 @@ system/tools/bin/gitleaks              version 8.18.0, static, about 30 MB
 system/tools/GITLEAKS.txt              upstream URL, published sha256, version
 ```
 
-Gate it with `gitleaks detect --source . --config gitleaks.toml` and compare the finding count
-with the last CI run on the same commit. A different count is a payload defect, not a clean
-result.
+Gate it the way CI runs it, not with a bare `detect --source .`. The workflow scans a commit
+range from the trusted base commit with that commit's config:
+
+```bash
+gitleaks detect --log-opts="<base-sha>..<head-sha>" --config <base-sha>:gitleaks.toml
+```
+
+A bare `--source .` scans a different set of commits and auto-loads the `.gitleaksignore` in
+the tree it walks, so its finding count cannot be compared with CI. Compare the range scan's
+count with the last CI run on the same commit; a different count is a payload defect, not a
+clean result.
 
 ---
 

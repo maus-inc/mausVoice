@@ -26,7 +26,7 @@ Touched-package checks, the ones `AGENTS.md` names:
 - [ ] `pnpm --filter @repo/agent test` all passed
 - [ ] `pnpm --filter @maus-inc/preview test` all passed, if you touched `apps/preview`
 - [ ] `node --test scripts/ci/*.test.mjs` all passed, if you touched `scripts/ci`
-- [ ] `pnpm run check:pr-body .github/pull_request_template.md` passes, and the same command passes on the pull request body before you call it ready
+- [ ] `pnpm run check:pr-body -- .github/pull_request_template.md` passes, and `gh pr view <n> --json body -q .body | pnpm run check:pr-body -- -` passes on the live body before you call it ready
 - [ ] After modifying a built TypeScript package under `packages/`, rebuilt it before checking downstream consumers
 
 ## Rust checks
@@ -82,8 +82,8 @@ The gap register in `engineering/sandbox-coverage-gaps.md` names what no payload
 The `--ignored` tests in
 `packages/rust_transcription/tests/sidecar_integration.rs` download models from
 `huggingface.co`. They cannot run in the Arena agent sandbox, which has no route there.
-Check `printenv` for a local mirror before you give up on them, and record them as
-unrunnable with the reason. Do not report them as passed.
+Nothing in the code offers a mirror override for those artifact URLs, so record them as
+unrunnable with the G10 reason. Do not report them as passed.
 
 ## UI rule
 

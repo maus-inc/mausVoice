@@ -171,13 +171,13 @@ test:webdriver`, it spawns `tauri-driver` on Linux and `chromedriver` on macOS, 
   fetches Chrome for Testing metadata from `googlechromelabs.github.io`, which is not
   reachable. `--ignore-scripts` also works and skips the other build scripts. Measured
   on 2026-11-05: 1398 packages in 29 seconds, then `pnpm run check-types` passes with 9
-  turbo tasks in 49 seconds. This is gap G9.
+  turbo tasks in 49 seconds. This is gap G15.
 - `ffmpeg`, `ffprobe`, `gifsicle`, `tesseract` and any Chromium are absent, so the
   `ui-capture` skill cannot record. `apps/preview` is still the rendering surface, and an
-  inspection of it in both themes is the substitute. This is gap G12.
+  inspection of it in both themes is the substitute. This is gap G9.
 - The gitleaks release asset redirects to `release-assets.githubusercontent.com`, which
   is blocked, so the history scan runs in CI only. The scan configuration tests still
-  pass locally. This is gap G14.
+  pass locally. This is gap G13.
 - No model weights ship in the payload, because they live on `huggingface.co`. The four
   `#[ignore]` tests in `packages/rust_transcription/tests/sidecar_integration.rs` need
   them. This is gap G10.

@@ -45,6 +45,8 @@ body:
       label: mausVoice version
       description: Shown in the app's About panel, or the release tag you installed.
       placeholder: e.g. 0.1.6
+    validations:
+      required: true
   - type: dropdown
     id: os
     attributes:
@@ -57,6 +59,8 @@ body:
         - Linux, X11
         - Linux, Wayland
         - Other
+    validations:
+      required: true
   - type: dropdown
     id: install
     attributes:
@@ -84,6 +88,8 @@ body:
         - canary-1b
         - sense-voice
         - Not model related
+    validations:
+      required: true
   - type: input
     id: provider
     attributes:
@@ -94,6 +100,8 @@ body:
     attributes:
       label: Logs and screenshots
       description: Attach the app log file, the transcript text, or a screen recording. Redact API keys and personal audio.
+    validations:
+      required: true
   - type: checkboxes
     id: checks
     attributes:

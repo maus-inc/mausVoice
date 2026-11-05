@@ -54,60 +54,60 @@ A release asset such as `https://github.com/gitleaks/gitleaks/releases/download/
 
 ### Commands, run here
 
-| Command                                                          | Result            | Note                                                                                                      |
-| ---------------------------------------------------------------- | ----------------- | --------------------------------------------------------------------------------------------------------- |
-| `npm i -g pnpm@10.34.5`                                          | passed            | about 10 seconds                                                                                          |
-| `pnpm install --frozen-lockfile`                                 | failed            | chromedriver postinstall, see gap G9                                                                      |
-| `CHROMEDRIVER_SKIP_DOWNLOAD=true pnpm install --frozen-lockfile` | passed            | the recipe in `FETCH.md` step 8 plus `--ignore-scripts`, 1398 packages, 29 seconds, 14 workspace projects |
-| `pnpm run check-types`                                           | passed            | 9 turbo tasks, 49 seconds, no Rust needed                                                                 |
-| `pnpm run build`                                                 | passed            | 11 turbo tasks, 68 seconds, vite plus astro, no Rust and no browser                                       |
-| `cargo --version`                                                | command not found | needs the payload                                                                                         |
-| `pnpm --filter desktop test:webdriver`                           | cannot start      | needs tauri-driver, WebKitWebDriver, and a built app                                                      |
-| `ffmpeg -version`                                                | command not found | blocks `ui-capture`                                                                                       |
+| Command                                           | Result            | Note                                                                              |
+| ------------------------------------------------- | ----------------- | --------------------------------------------------------------------------------- |
+| `npm i -g pnpm@10.34.5`                           | passed            | about 10 seconds                                                                  |
+| `pnpm install --frozen-lockfile`                  | failed            | chromedriver postinstall, see gap G9                                              |
+| `pnpm install --frozen-lockfile --ignore-scripts` | passed            | 1398 packages, 29 seconds, 14 workspace projects; skips the G15 chromedriver step |
+| `pnpm run check-types`                            | passed            | 9 turbo tasks, 49 seconds, no Rust needed                                         |
+| `pnpm run build`                                  | passed            | 11 turbo tasks, 68 seconds, vite plus astro, no Rust and no browser               |
+| `cargo --version`                                 | command not found | needs the payload                                                                 |
+| `pnpm --filter desktop test:webdriver`            | cannot start      | needs tauri-driver, WebKitWebDriver, and a built app                              |
+| `ffmpeg -version`                                 | command not found | blocks `ui-capture`                                                               |
 
 ## Coverage by stage
 
 Status is what an agent gets here after following `FETCH.md`, not what CI gets on a hosted runner.
 
-| Stage                                    | Status                            | What makes it work                                                                                   |
-| ---------------------------------------- | --------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| Dependency install                       | works when the recipe is followed | `CHROMEDRIVER_SKIP_DOWNLOAD=true` from `FETCH.md` step 8. A bare `pnpm install` fails. Gap G9        |
-| Formatting                               | works                             | `pnpm run format:check`, plus `cargo fmt` once the payload is in place                               |
-| Lint, TypeScript and Rust                | works                             | `pnpm run lint`, `cargo clippy --locked` from the payload                                            |
-| Type check                               | works                             | `pnpm run check-types` measured at 9 tasks in 49 seconds                                             |
-| Unit tests, TypeScript                   | works                             | vitest per package                                                                                   |
-| Unit tests, Rust                         | works                             | linux targets only, `CARGO_BUILD_JOBS=1`                                                             |
-| Integration tests, sidecar               | partial                           | 7 pass, 4 are `#[ignore]` because they download models. Gap G10                                      |
-| App build, renderer                      | works                             | vite builds `apps/desktop`, `apps/preview`, and astro builds `apps/docs`                             |
-| Desktop app, `tauri dev`                 | works with the payload            | needs the sysroot and the two native archives                                                        |
-| Desktop bundle, `tauri build --bundles`  | blocked                           | Tauri downloads linuxdeploy and the AppImage runtime at bundle time. Gap G13                         |
-| WebDriver end to end                     | blocked                           | tauri-driver is not vendored, WebKitWebDriver must be checked, chromedriver cannot download. Gap G11 |
-| Visual verification with the preview app | works                             | `pnpm --filter @maus-inc/preview dev` on port 5193                                                   |
-| Visual capture, `ui-capture`             | blocked                           | ffmpeg, gifsicle and a Chromium are absent. Gap G9 and G12                                           |
-| Secret scan over history                 | blocked                           | the gitleaks release asset redirects to a blocked host. Gap G14                                      |
-| Secret scan over config only             | works                             | `pnpm run test:secret-scan` and `node --test scripts/ci/*.test.mjs`                                  |
-| Docs site build                          | works                             | astro, sharp arrives from npm                                                                        |
-| Release signing and notarisation         | impossible here                   | needs a macOS runner and Apple credentials                                                           |
-| Windows and macOS builds                 | impossible here                   | needs those runners, see accepted gaps                                                               |
-| Dependency bumps                         | works from npm and PyPI           | crates.io needs a payload rebuild                                                                    |
+| Stage                                    | Status                            | What makes it work                                                                             |
+| ---------------------------------------- | --------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Dependency install                       | works when the recipe is followed | `CHROMEDRIVER_SKIP_DOWNLOAD=true` from `FETCH.md` step 8. A bare `pnpm install` fails. Gap G15 |
+| Formatting                               | works                             | `pnpm run format:check`, plus `cargo fmt` once the payload is in place                         |
+| Lint, TypeScript and Rust                | works                             | `pnpm run lint`, `cargo clippy --locked` from the payload                                      |
+| Type check                               | works                             | `pnpm run check-types` measured at 9 tasks in 49 seconds                                       |
+| Unit tests, TypeScript                   | works                             | vitest per package                                                                             |
+| Unit tests, Rust                         | works                             | linux targets only, `CARGO_BUILD_JOBS=1`                                                       |
+| Integration tests, sidecar               | partial                           | 7 pass, 4 are `#[ignore]` because they download models. Gap G10                                |
+| App build, renderer                      | works                             | vite builds `apps/desktop`, `apps/preview`, and astro builds `apps/docs`                       |
+| Desktop app, `tauri dev`                 | works with the payload            | needs the sysroot and the two native archives                                                  |
+| Desktop bundle, `tauri build --bundles`  | blocked                           | Tauri downloads linuxdeploy and the AppImage runtime at bundle time. Gap G14                   |
+| WebDriver end to end                     | blocked                           | tauri-driver is not vendored and WebKitWebDriver must be checked. Gap G11, install half in G15 |
+| Visual verification with the preview app | works                             | `pnpm --filter @maus-inc/preview dev` on port 5193                                             |
+| Visual capture, `ui-capture`             | blocked                           | ffmpeg and gifsicle are absent. Gap G9, plus the browser group the spec declines to build      |
+| Secret scan over history                 | blocked                           | the gitleaks release asset redirects to a blocked host. Gap G13                                |
+| Secret scan over config only             | works                             | `pnpm run test:secret-scan` and `node --test scripts/ci/*.test.mjs`                            |
+| Docs site build                          | works                             | astro, sharp arrives from npm                                                                  |
+| Release signing and notarisation         | impossible here                   | needs a macOS runner and Apple credentials                                                     |
+| Windows and macOS builds                 | impossible here                   | needs those runners, see accepted gaps                                                         |
+| Dependency bumps                         | works from npm and PyPI           | crates.io needs a payload rebuild                                                              |
 
 ## Open gaps
 
 Each gap names the stage it blocks, the measurement, what to vendor, and the substitute to use until it exists.
 
-### G9: the install step fails on chromedriver
+### G9: no media tools for UI capture
 
-Blocks dependency install, and therefore every gate that starts with a clean checkout.
+Blocks the `ui-capture` workflow that `AGENTS.md` and `.agents/skills/ui-capture/SKILL.md` require for a change a user sees.
 
-Measured. A bare `pnpm install --frozen-lockfile` prints `Failed` at `chromedriver install`, then `ELIFECYCLE Command failed with exit code 1`. The payload already documents the fix in `FETCH.md` step 8, and this repository's own preflight and `AGENTS.md` did not carry it until now, so an agent that started from the repository docs hit the failure and an agent that started from `FETCH.md` did not. The install script makes a request to `https://googlechromelabs.github.io/chrome-for-testing/152.0.7977.42.json`, which fails with `ECONNRESET` because that host has no route. `chromedriver@152.0.0` is a devDependency of `apps/desktop`, and both `package.json` and `pnpm-workspace.yaml` list it in `onlyBuiltDependencies`, so its install script runs on every full install. No CI job runs the WebDriver suite, so the binary itself is only needed by `pnpm --filter desktop test:webdriver`.
+Measured. `ffmpeg`, `ffprobe`, `gifsicle` and `tesseract` are all absent. `system/PKGS.txt` carries `libavcodec59`, `libavformat`, `libsndfile1` and `imagemagick`, so the libraries are there and the executables are not. `system/tools/bin` holds five binaries, `cmake`, `file`, `patchelf`, `pkgconf` and `pkg-config`.
 
-What to do, in preference order.
+What to vendor.
 
-1. Repeat `CHROMEDRIVER_SKIP_DOWNLOAD=true pnpm install --frozen-lockfile` in `.agents/PREFLIGHT.md` and `AGENTS.md`, which now do carry it. The install script exits 0 when it sees the flag. Nothing has to be built.
-2. Ship `drivers/chromedriver-152.0.0/chromedriver-linux64.zip` plus its URL and sha256, and set `CHROMEDRIVER_FILEPATH`. This is the option to take when someone intends to run the macOS WebDriver path.
-3. Ship `drivers/tauri-driver` as a prebuilt binary. See G11.
+- `system/tools/bin/ffmpeg` and `ffprobe` as static builds, with the licence text.
+- `system/tools/bin/gifsicle`.
+- Optional `system/tools/bin/tesseract` plus `tessdata` for the caption OCR check. About 15 MB for English.
 
-Substitute today. `pnpm install --frozen-lockfile --ignore-scripts`. Name the flag in the pull request, because it also skips the other `onlyBuiltDependencies` scripts. Measured as harmless here, since esbuild and sharp resolve their platform binaries from npm optional dependencies, and `bcrypt` and `re2` are not in the lockfile.
+Substitute today. No recording. The preview app gives a rendered surface and a manual inspection gives evidence, but nothing produces a GIF. Say so plainly.
 
 ### G10: no model weights
 
@@ -139,31 +139,17 @@ What to vendor.
 
 Substitute today. `pnpm --filter @maus-inc/preview dev` and an inspection of the demo group in both themes, written down as an inspection rather than a recording.
 
-### G12: no media tools for UI capture
+### G12: no cross-target Rust standard library
 
-Blocks the `ui-capture` workflow that `AGENTS.md` and `.agents/skills/ui-capture/SKILL.md` require for a change a user sees.
+Blocks local type checking of code behind `#[cfg(windows)]` and `#[cfg(target_os = "macos")]`.
 
-Measured. `ffmpeg`, `ffprobe`, `gifsicle` and `tesseract` are all absent. `system/PKGS.txt` carries `libavcodec59`, `libavformat`, `libsndfile1` and `imagemagick`, so the libraries are there and the executables are not. `system/tools/bin` holds five binaries, `cmake`, `file`, `patchelf`, `pkgconf` and `pkg-config`.
+Measured. `cargo clippy` on Linux compiles only the host cfg. `test-desktop-unit.yml` runs a `rust-windows-gated` job on `windows-2022` for the code that never compiles here. The payload carries the host toolchain only, so `cargo check --target x86_64-pc-windows-msvc` fails on the missing standard library before it reaches the code.
 
-What to vendor.
+What to vendor. `rust-toolchains/x86_64-pc-windows-msvc/rust-std` and `aarch64-apple-darwin/rust-std` from the same 1.88.0 channel, wired through `rustup toolchain link` or a direct `--sysroot`. `cargo check` does not link, so no Windows SDK is needed for a type check. This turns a "checked by CI only" note into a real local gate.
 
-- `system/tools/bin/ffmpeg` and `ffprobe` as static builds, with the licence text.
-- `system/tools/bin/gifsicle`.
-- Optional `system/tools/bin/tesseract` plus `tessdata` for the caption OCR check. About 15 MB for English.
+Substitute today. Say that platform gated code was checked by CI for that platform, and name the job.
 
-Substitute today. No recording. The preview app gives a rendered surface and a manual inspection gives evidence, but nothing produces a GIF. Say so plainly.
-
-### G13: no packaging toolchain
-
-Blocks `tauri build --bundles`, and therefore any local check of an installer. `apps/desktop/src-tauri/tauri.conf.json` sets `bundle.targets` to `all`.
-
-Measured. Tauri resolves `linuxdeploy` and the AppImage runtime by downloading them from GitHub releases at bundle time, and those redirect to a blocked host. `dpkg-deb` is present, so the deb target has a chance, and a full release build also needs several GB of `target/`, which the workspace snapshot cap forbids.
-
-What to vendor, if anyone needs local bundling. A `system/bundle/` group with `linuxdeploy-x86_64.AppImage`, the AppImage runtime, and a documented `TAURI_BUNDLER_TOOLS` style override. The spec records the decision to defer this, D-5. Keep it deferred until a release task lands in the sandbox.
-
-Substitute today. Treat bundling as CI-only, and say so in the pull request.
-
-### G14: no secret scanning binary
+### G13: no secret scanning binary
 
 Blocks the history scan in `.github/workflows/secret-scan.yml`, which pins gitleaks 8.18.0 and downloads it from a GitHub release.
 
@@ -173,15 +159,29 @@ What to vendor. `system/tools/bin/gitleaks` 8.18.0, static, with a sha256 in `MA
 
 Substitute today. Run the configuration tests, and state in the pull request that the history scan runs in CI only.
 
-### G15: no cross-target Rust standard library
+### G14: no packaging toolchain
 
-Blocks local type checking of code behind `#[cfg(windows)]` and `#[cfg(target_os = "macos")]`.
+Blocks `tauri build --bundles`, and therefore any local check of an installer. `apps/desktop/src-tauri/tauri.conf.json` sets `bundle.targets` to `all`.
 
-Measured. `cargo clippy` on Linux compiles only the host cfg. `test-desktop-unit.yml` runs a `rust-windows-gated` job on `windows-2022` for the code that never compiles here. The payload carries the host toolchain only, so `cargo check --target x86_64-pc-windows-msvc` fails on the missing standard library before it reaches the code.
+Measured. Tauri resolves `linuxdeploy` and the AppImage runtime by downloading them from GitHub releases at bundle time, and those redirect to a blocked host. `dpkg-deb` is present, so the deb target has a chance, and a full release build also needs several GB of `target/`, which the workspace snapshot cap forbids.
 
-What to vendor. `rust-toolchains/x86_64-pc-windows-msvc/rust-std` and `aarch64-apple-darwin/rust-std` from the same 1.88.0 channel, wired through `rustup toolchain link` or a direct `--sysroot`. `cargo check` does not link, so no Windows SDK is needed for a type check. This turns a "checked by CI only" note into a real local gate.
+What to vendor, if anyone needs local bundling. A `system/bundle/` group with `linuxdeploy-x86_64.AppImage`, the AppImage runtime, and a documented `TAURI_BUNDLER_TOOLS` style override. The spec records the decision to defer this, D-5. Keep it deferred until a release task lands in the sandbox.
 
-Substitute today. Say that platform gated code was checked by CI for that platform, and name the job.
+Substitute today. Treat bundling as CI-only, and say so in the pull request.
+
+### G15: the install step fails on chromedriver
+
+Blocks dependency install, and therefore every gate that starts with a clean checkout.
+
+Measured. A bare `pnpm install --frozen-lockfile` prints `Failed` at `chromedriver install`, then `ELIFECYCLE Command failed with exit code 1`. The payload already documents the fix in `FETCH.md` step 8, and this repository's own preflight and `AGENTS.md` did not carry it until now, so an agent that started from the repository docs hit the failure and an agent that started from `FETCH.md` did not. The install script makes a request to `https://googlechromelabs.github.io/chrome-for-testing/152.0.7977.42.json`, which fails with `ECONNRESET` because that host has no route. `chromedriver@152.0.0` is a devDependency of `apps/desktop`, and both `package.json` and `pnpm-workspace.yaml` list it in `onlyBuiltDependencies`, so its install script runs on every full install. No CI job runs the WebDriver suite, so the binary itself is only needed by `pnpm --filter desktop test:webdriver`.
+
+What to do, in preference order.
+
+1. Repeat `CHROMEDRIVER_SKIP_DOWNLOAD=true pnpm install --frozen-lockfile` in `.agents/PREFLIGHT.md` and `AGENTS.md`, which now do carry it. The install script exits 0 when it sees the flag. Nothing has to be built.
+2. Ship a platform-matched chromedriver plus its URL and sha256, and set `CHROMEDRIVER_FILEPATH`. Take the Linux archive for `test:webdriver` under Xvfb here, and only add a macOS archive if someone intends to run that path on a Mac.
+3. Ship `drivers/tauri-driver` as a prebuilt binary. See G11.
+
+Substitute today. `pnpm install --frozen-lockfile --ignore-scripts`. Name the flag in the pull request, because it also skips the other `onlyBuiltDependencies` scripts. Measured as harmless here, since esbuild and sharp resolve their platform binaries from npm optional dependencies, and `bcrypt` and `re2` are not in the lockfile.
 
 ## Accepted gaps
 
@@ -210,12 +210,12 @@ So the register is not read as a list of failures.
 Cheapest unblock first. Each line names the stage it opens.
 
 1. `CHROMEDRIVER_SKIP_DOWNLOAD` documented in `FETCH.md`, `.agents/PREFLIGHT.md` and `AGENTS.md`. Opens a clean install. Costs one paragraph.
-2. G14 gitleaks, about 30 MB. Opens the history scan locally.
-3. G12 ffmpeg, ffprobe and gifsicle, about 90 MB with a static build. Opens `ui-capture`.
-4. G15 cross-target standard libraries, about 400 MB. Opens local type checks of platform gated code.
+2. G13 gitleaks, about 30 MB. Opens the history scan locally.
+3. G9 ffmpeg, ffprobe and gifsicle, about 90 MB with a static build. Opens `ui-capture`.
+4. G12 cross-target standard libraries, about 400 MB. Opens local type checks of platform gated code.
 5. G11 tauri-driver plus the `WebKitWebDriver` path check. Opens the end to end gate on Linux.
 6. G10 model weights, smallest set only. Opens transcription behaviour.
-7. G13 packaging, deferred until a release task has to run here.
+7. G14 packaging, deferred until a release task has to run here.
 
 ## Rebuild triggers
 

@@ -15,8 +15,9 @@ the matching decision not to vendor a browser group into the sandbox toolchain.
 
 Correction, 2026-11-05. This decision used to claim that nothing names `webdriverio`
 either. That was wrong. `apps/desktop/package.json` carries `@wdio/cli`, `@wdio/globals`,
-`@wdio/local-runner`, `@wdio/mocha-framework`, `@wdio/spec-reporter`, `webdriverio` and
-`chromedriver`, `apps/desktop/webdriver/` holds `wdio.conf.js` and one spec, and
+`@wdio/local-runner`, `@wdio/mocha-framework`, `@wdio/spec-reporter` and
+`chromedriver`, with `webdriverio` arriving transitively through them,
+`apps/desktop/webdriver/` holds `wdio.conf.js` and one spec, and
 `pnpm --filter desktop test:webdriver` runs it. On Linux that suite spawns `tauri-driver`
 and WebKitWebDriver against a built Tauri binary. On macOS it spawns `chromedriver`
 against a Vite preview server. No workflow invokes it.

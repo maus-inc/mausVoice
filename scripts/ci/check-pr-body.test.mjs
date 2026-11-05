@@ -75,6 +75,56 @@ describe("check-pr-body", () => {
     assert.equal(code, 0, out);
   });
 
+  it("fails a nested details block with no summary", () => {
+    const body = [
+      "## Summary",
+      "Text.",
+      "<details>",
+      "<summary>Review and babysit log</summary>",
+      "",
+      "<details>",
+      "long explanation",
+      "</details>",
+      "",
+      "</details>",
+      footer,
+    ].join("\n");
+    const { code, out } = run(body);
+    assert.equal(code, 1);
+    assert.match(out, /R1 line 7/);
+  });
+
+  it("ignores fold markup inside a fenced example", () => {
+    const body = [
+      "## Summary",
+      "Text.",
+      "",
+      "```md",
+      "<details>",
+      "no summary and never closed",
+      "```",
+      "",
+      footer,
+    ].join("\n");
+    const { code, out } = run(body);
+    assert.equal(code, 0, out);
+  });
+
+  it("fails a visible heading outside the template sections", () => {
+    const body = [
+      "## Summary",
+      "Text.",
+      "",
+      "## Deployment notes",
+      "Text.",
+      "",
+      footer,
+    ].join("\n");
+    const { code, out } = run(body);
+    assert.equal(code, 1);
+    assert.match(out, /R6 line 4/);
+  });
+
   it("fails an unclosed details block", () => {
     const body = [
       "## Summary",

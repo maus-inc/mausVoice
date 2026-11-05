@@ -6,9 +6,11 @@ of CI, or of your machine. On a host that reaches the wider internet, install ru
 normally and run the gates directly; read this file only for the `$CARGO_HOME` and
 `CARGO_BUILD_JOBS` notes.
 
-Probe before you trust any line below: `command -v cargo`, `cargo --version`, and
-`curl -m 8 -o /dev/null -w '%{http_code}' https://static.rust-lang.org`. A `200` settles
-it in favour of installing upstream.
+Probe before you trust any line below: `command -v cargo`, `cargo --version`, and one
+`curl -m 8 -o /dev/null -w '%{http_code}'` for `https://sh.rustup.rs`,
+`https://static.rust-lang.org` and `https://index.crates.io`. Three `200`s settle it in
+favour of installing upstream; the installer needs the first two and the gates need the
+third.
 
 That sandbox reaches `github.com`, `codeload.github.com`, `api.github.com`,
 `registry.npmjs.org`, `pypi.org` and `files.pythonhosted.org`. It cannot reach
@@ -142,8 +144,8 @@ Pre-seeding only the extracted directory does not work, so pre-seed the archive.
 
 The `--ignored` tests in `packages/rust_transcription/tests/sidecar_integration.rs`
 download models from `huggingface.co`, which the Arena agent sandbox cannot reach.
-They cannot run there. Check `printenv` for a local mirror before you give up on them,
-and say which gate you ran instead in the PR body rather than reporting them as passed.
+They cannot run there, and the code offers no mirror override for those artifact URLs.
+Say which gate you ran instead in the PR body rather than reporting them as passed.
 
 ## Do not repeat these mistakes
 

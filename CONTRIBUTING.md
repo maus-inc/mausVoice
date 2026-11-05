@@ -54,10 +54,10 @@ shows you. Turn it on with:
 
 ```bash
 git config commit.template .gitmessage
-lefthook install
+npx lefthook install   # lefthook is not a dependency, so npx fetches it on first run
 ```
 
-Pull requests fill `.github/pull_request_template.md`, and `pnpm run check:pr-body` checks the
+Pull requests fill `.github/pull_request_template.md`, and `pnpm run check:pr-body -- <file>` checks the
 shape of the body. Every record of a review round, a babysit poll or a CI log goes inside a
 collapsible block, so a long-running PR stays one screen of summary. The `PR Body Fold Check`
 workflow runs that command on every pull request open, edit, reopen and push. Every section is used, including the

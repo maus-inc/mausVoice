@@ -9,6 +9,7 @@
  * Usage:
  *   node scripts/ci/check-pr-body.mjs <path>      # file
  *   printf '%s' "$BODY" | node scripts/ci/check-pr-body.mjs -
+ *   pnpm run check:pr-body -- <path>              # same, through the package script
  *
  * Options:
  *   --max-open <n>   fail when the unfolded body exceeds n non-blank lines (default 150)
@@ -22,6 +23,7 @@
  *       research record. Those sections are folded, so the heading becomes the `<summary>`
  *   R4  the unfolded part of the body stays within the line budget
  *   R5  the footer line appears exactly once, outside any fold
+ *   R6  every visible level-2 heading is one of the four the template keeps unfolded
  */
 
 import { readFileSync } from "node:fs";
@@ -29,6 +31,10 @@ import process from "node:process";
 
 const FOLDABLE_HEADING =
   /(review|babysit|poll|round|checks?\b|\bci\b|logs?\b|triage|research|fix log|re verification)/i;
+
+// The template keeps four sections unfolded. Anything else visible is a record that belongs in a fold.
+const VISIBLE_HEADING =
+  /^##\s+(Summary|Verification gate|Checklist|Footer)\s*$/;
 
 function parseArgs(argv) {
   const args = { file: null, maxOpen: 150 };
@@ -60,6 +66,18 @@ function readBody(file) {
 
 function stripNoise(raw, state) {
   let line = raw;
+  const fence =
+    line.trimStart().startsWith("```") || line.trimStart().startsWith("~~~");
+  if (state.inFence) {
+    if (fence) {
+      state.inFence = false;
+    }
+    return "";
+  }
+  if (fence) {
+    state.inFence = true;
+    return "";
+  }
   if (state.inComment) {
     const end = line.indexOf("-->");
     if (end === -1) {
@@ -81,7 +99,7 @@ function stripNoise(raw, state) {
 function check(body, maxOpen) {
   const lines = body.split("\n");
   const violations = [];
-  const state = { inComment: false };
+  const state = { inComment: false, inFence: false };
   let depth = 0;
   let awaitingSummary = false;
   let openLines = 0;
@@ -101,6 +119,11 @@ function check(body, maxOpen) {
 
     if (!wasOpen) {
       openLines += 1;
+      if (/^## /.test(scan) && !VISIBLE_HEADING.test(scan)) {
+        violations.push(
+          `R6 line ${lineNo}: visible heading "${scan}" is not one of Summary, Verification gate, Checklist or Footer. Fold it and use the title as the <summary>.`,
+        );
+      }
       if (/^#{1,6} /.test(scan) && FOLDABLE_HEADING.test(scan)) {
         violations.push(
           `R3 line ${lineNo}: unfolded heading "${scan}" records a review, log or research round. Fold the section and use the title as the <summary>.`,
@@ -113,24 +136,18 @@ function check(body, maxOpen) {
       footerInsideFold = true;
     }
 
-    if (opens > 0 && depth === 0) {
-      awaitingSummary = true;
-    }
+    const hasSummary = /<summary>[\s\S]*<\/summary>/i.test(scan);
 
-    // A one-line <details><summary>...</summary> is valid HTML and turns up in bot
-    // boilerplate, so the summary may arrive on the line that opens the fold.
-    if (awaitingSummary && /<summary>[\s\S]*<\/summary>/i.test(scan)) {
+    if (opens > 0) {
+      // A one-line <details><summary>...</summary> is valid HTML, turns up in bot
+      // boilerplate, and needs no follow-up line. A bare <details> does.
+      awaitingSummary = !hasSummary;
+    } else if (awaitingSummary && depth > 0) {
       awaitingSummary = false;
-    }
-
-    if (depth > 0 && awaitingSummary) {
-      if (/^<summary>[\s\S]*<\/summary>$/.test(scan)) {
-        awaitingSummary = false;
-      } else if (!/^<details\b/.test(scan)) {
+      if (!hasSummary) {
         violations.push(
           `R1 line ${lineNo}: a <details> block starts with "${scan}" instead of a <summary>.`,
         );
-        awaitingSummary = false;
       }
     }
 

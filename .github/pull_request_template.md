@@ -2,7 +2,7 @@
 
 Describe what this change does, why it is needed, and which part of the repository it touches. Write the opening paragraph for a reader who has never seen this codebase and does not know what to look out for.
 
-Everything below this paragraph returns inside a collapsible block, except the verification gate, the design confirmation, the checklist and the footer. A review round or a babysit poll adds a row to the round log, never a new section, and a raw log never goes in the body at all.
+Everything below this paragraph returns inside a collapsible block, except the verification gate, the checklist and the footer. A review round or a babysit poll adds a row to the round log, never a new section, and a raw log never goes in the body at all.
 
 ## Verification gate
 
