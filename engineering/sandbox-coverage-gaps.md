@@ -191,30 +191,31 @@ What to do, in preference order.
 
 Substitute today. `pnpm install --frozen-lockfile --ignore-scripts`. Name the flag in the pull request, because it also skips the other `onlyBuiltDependencies` scripts. Measured as harmless here, since esbuild and sharp resolve their platform binaries from npm optional dependencies, and `bcrypt` and `re2` are not in the lockfile.
 
-### G16 to G22: the third delivery
+### G16 to G22: the third delivery, delivered
 
-The third delivery was built on 2026-11-05 in the second agent sandbox, the one with broad egress, Debian 13 and `apt-get`. It closes seven of the entries in `engineering/sandbox-capability-gaps.md` and is folded into the same orphan commit. Sizes below are measured, not estimated.
+The third delivery was built on 2026-11-05 in the second agent sandbox, the one with broad egress, Debian 13 and `apt-get`. It closes seven of the entries in `engineering/sandbox-capability-gaps.md` and ships at tip `8442ae0` of the same orphan branch. Sizes below are measured unpacked, not estimated.
 
-| Group | Carries                                                                                                                                      | Opens                                                                  | Unpacked |
-| ----- | -------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- | -------- |
-| G16   | `gdb` 13.1, `strace` 6.1, `ltrace` 0.7.3, `valgrind` 3.19.0                                                                                  | a backtrace and a syscall trace for the native paths                   | 176 MB   |
-| G17   | `ninja` 1.11.1, `meson` 1.0.1, `autoconf` 2.71, `bison` 3.8.2, `flex` 2.6.4                                                                  | building a native dependency from source                               | 311 MB   |
-| G18   | `sqlite3` 3.40.1, `psql` 15.8, `mariadb` 10.11.6, `redis-cli` 7.0.15                                                                         | inspecting and repairing a database                                    | 201 MB   |
-| G19   | `tesseract` 5.3.0 with `eng.traineddata`                                                                                                     | the OCR round trip in the capture check                                | 114 MB   |
-| G20   | `shellcheck`, `shfmt` 3.6.0, `gpg`/`gpgv` 2.2.40, `git-lfs` 3.3.0, `zstd` 1.5.4, `brotli` 1.0.9, `7z` 22.01, `dig` 9.18.28, `tcpdump` 4.99.3 | shell lint, signing, archives, and a network probe that proves a claim | 258 MB   |
-| G21   | `mingw-w64` gcc 12, `aarch64-linux-gnu` gcc 12.2.0, `qemu-aarch64-static` 7.2.13                                                             | cross build and emulate a second target                                | 1.7 GB   |
-| G22   | `trivy` 0.76.2, `syft` 1.20.0, `grype` 0.87.0, `osv-scanner` 1.9.2                                                                           | an SBOM and a vulnerability scan of a local build                      | 140 MB   |
+| Group | Carries                                                                                                                                            | Opens                                                                     | Unpacked |
+| ----- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- | -------- |
+| G16   | `gdb` 13.1, `strace` 6.1, `ltrace` 0.7.3, `valgrind` 3.19.0 with its `libc6-dbg` build-id tree                                                     | a backtrace and a syscall trace for the native paths                      | 180 MB   |
+| G17   | `ninja` 1.11.1, `meson` 1.0.1, `autoconf` 2.71, `automake` 1.16.5, `libtoolize` 2.4.7, `m4` 1.4.19, `bison` 3.8.2, `flex` 2.6.4                    | building a native dependency from source, end to end through `autoreconf` | 300 MB   |
+| G18   | `sqlite3` 3.40.1, `psql` 15.8, `mariadb` 10.11.6, `redis-cli` 7.0.15                                                                               | inspecting and repairing a database                                       | 188 MB   |
+| G19   | `tesseract` 5.3.0 with `eng.traineddata` and `osd.traineddata`                                                                                     | the OCR round trip in the capture check                                   | 111 MB   |
+| G20   | `shellcheck` 0.9.0, `shfmt` 3.6.0, `gpg`/`gpgv` 2.2.40, `git-lfs` 3.3.0, `zstd` 1.5.4, `brotli` 1.0.9, `7z` 22.01, `dig` 9.18.28, `tcpdump` 4.99.3 | shell lint, signing, archives, and a network probe that proves a claim    | 243 MB   |
+| G21   | `mingw-w64` gcc 12, `aarch64-linux-gnu` gcc 12.2.0, `qemu-aarch64-static` 7.2.13                                                                   | cross build and emulate a second target                                   | 1.7 GB   |
+| G22   | `trivy` 0.76.2, `syft` 1.20.0, `grype` 0.87.0, `osv-scanner` 1.9.2                                                                                 | an SBOM and a vulnerability scan of a local build                         | 326 MB   |
 
 G21 is large because a cross compiler is not a binary. It resolves `cc1` from `lib/gcc/<triple>/<version>`, the target headers and libraries from a fixed relative sysroot, and its binutils from `<triple>/bin`, which are symlinks into `bin/`. A payload that ships only the driver fails with `cannot execute 'cc1'`, then `stdio.h: No such file or directory`, then a missing `Scrt1.o`. The delivered layout preserves those relative paths under `system/tools` and ships the cross libc (`libc6-dev-arm64-cross`, `libc6-arm64-cross`, `linux-libc-dev-arm64-cross`).
 
-Four of the new binaries need a documented env var or flag to run relocatably, and each is recorded in `FETCH.md`:
+Six of the new tools need a documented env var, flag or root copy to run relocatably, and each is recorded in `FETCH.md` step 7e to 7k:
 
 - `gdb` needs `--data-directory=<tools>/share/gdb`, because its embedded Python looks for the `gdb` module under the compiled-in `/usr/share/gdb/python`.
-- `valgrind` needs `VALGRIND_LIB=<tools>/libexec/valgrind`, because `memcheck` and the other tools are separate programs under `libexec`.
-- `meson` is a Python program and needs a `python3` on `PATH`.
+- `valgrind` needs `VALGRIND_LIB=<tools>/libexec/valgrind`, because `memcheck` and the other tools are separate programs under `libexec`, and it needs the traced program's glibc debug symbols at `/usr/lib/debug/.build-id`, shipped under `system/tools/debug/libc6-dbg`.
+- `meson` is a Python program and needs a `python3` on `PATH`, with its module tree on `PYTHONPATH`.
 - `aarch64-linux-gnu-gcc` needs `--sysroot=<tools>` to find its target libc, and `qemu-aarch64-static -L <tools>/usr/aarch64-linux-gnu` to run the result.
+- the autotools need a root copy of their `share` trees to `/usr/share` and the scripts to `/usr/bin`, because `autoconf`, `autom4te`, `automake`, `aclocal` and `libtoolize` each read a compiled-in path and no single env var redirects them all.
 
-Verified in the second sandbox on 2026-11-05: 27 of 31 checks pass under `env -i`, and the four that need the env var above pass once it is set. G22 is verifiable here because the second sandbox reaches the GitHub Release asset host; on the Arena sandbox, where it does not, G22 would have to be built elsewhere or left out.
+Verified in the second sandbox on 2026-11-05: 37 of 37 binaries print a version under `env -i`, the OCR round trip reads `HELLO 42`, both cross compilers produce a runnable binary, and `sha256sum -c` passes on all 14437 listed files. G22 is verifiable in the second sandbox because it reaches the GitHub Release asset host; on the Arena sandbox, where it does not, G22 would have to be built elsewhere or left out.
 
 ## Accepted gaps
 

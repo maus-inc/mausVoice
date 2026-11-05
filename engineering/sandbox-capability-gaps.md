@@ -1,6 +1,6 @@
 # What the sandbox still lacks, beyond this repository's gates
 
-Scope. This file describes one environment: the Arena agent sandbox that runs this repository's agent, measured on 2026-11-05, with `vendor/sandbox-toolchain` at `065f527b` fetched. It is not a property of the repository, of CI, or of your machine. On a host with normal internet, none of this applies: install the tool and move on. Probe before you repeat a line here, because a limit that does not hold where you run is not a limit.
+Scope. This file describes one environment: the Arena agent sandbox that runs this repository's agent, measured on 2026-11-05, with `vendor/sandbox-toolchain` at `8442ae0` fetched. It is not a property of the repository, of CI, or of your machine. On a host with normal internet, none of this applies: install the tool and move on. Probe before you repeat a line here, because a limit that does not hold where you run is not a limit.
 
 Purpose. `engineering/sandbox-coverage-gaps.md` covers the gaps that block this repository's own gates (G9 to G15). This file covers everything else a development cycle needs, in this repository and in any other, so a builder on an unrestricted machine knows what to add to the payload and what can never be added.
 
@@ -12,11 +12,11 @@ Machine: 2 vCPU, 3,939 MB of RAM, 21 GB free disk, no Docker daemon, no GPU, no 
 
 Base image has: `git`, `gh`, node 22 with npm, pnpm and yarn, python 3.11 with pip, gcc and g++ 12, make, binutils, `curl`, `wget`, `jq`, `openssl`, `perl`, `tar`, `xz`, `zip`, `unzip`, `nc`, `socat`, `ssh`, `scp`, `ps`, `top`, `free`, `convert`, `ldd`.
 
-The payload at `065f527b` adds the Rust 1.88 toolchain and vendored crate tree, a Debian 12 development sysroot of 634 packages, `system/tools/bin` with cmake, file, patchelf, pkgconf, ffmpeg, ffprobe, gifsicle and gitleaks, the WebDriver drivers, the model set, and the cross-target standard libraries.
+The payload at `8442ae0` adds the Rust 1.88 toolchain and vendored crate tree, a Debian 12 development sysroot of 634 packages, the WebDriver drivers, the model set, the cross-target standard libraries, and `system/tools` with the G9, G13 and G16 to G22 binaries. `system/tools` grew from 249 MB to 1.4 GB unpacked across the three deliveries.
 
 ## Tier 0: partly in the payload, partly a download
 
-The PATH and font wiring needs no new download: it needs a `FETCH.md` step or a symlink. Three of the four rows are not free. `tzdata`, `locales` and the `sqlite3` CLI are absent from both the base image and the payload, so a builder adds them as downloads (about 15 MB combined). The `sqlite3` CLI is now built into group G18. Only the `clang` PATH entry and the fontconfig wiring are free.
+Only the `clang` PATH entry and the fontconfig wiring are free, because the files are already in the sysroot and only need a `FETCH.md` step or a symlink. The rest are not. `tzdata` and `locales` are absent from both the base image and the payload, so a builder adds them as downloads, about 15 MB combined. The `sqlite3` CLI is now delivered in group G18, so a builder gets it from the payload rather than adding it. The ImageMagick row is a note about syntax, not a missing artifact, because `convert` is already on the base image and in the sysroot.
 
 | Capability                      | Where it already is                                                                                                                        | What is missing                                                                                                         |
 | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
@@ -30,23 +30,23 @@ The PATH and font wiring needs no new download: it needs a `FETCH.md` step or a 
 
 Measured on the host, then checked against `system/PKGS.txt` so nothing here is already shipped. Sizes are estimates to be measured on the build host.
 
-| Tool                                                                 | Why the cycle needs it                                                                                                                     | Size        | Priority |
-| -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ----------- | -------- |
-| `gdb` with debug symbols                                             | the Rust and GTK paths die with `signal 9` and segfaults; without a debugger the only evidence is an exit code                             | about 45 MB | high     |
-| `strace`, `ltrace`                                                   | proves what a build script or a binary is actually doing when it fails silently, including the blocked host that started a download        | about 2 MB  | high     |
-| `ninja`, `meson`, `autoconf`, `automake`, `libtool`, `bison`, `flex` | any native dependency built from source; today only `make` and `cmake` are present, so a `configure`-based or meson-based build cannot run | about 25 MB | high     |
-| `sqlite3`                                                            | inspect and repair the app database, check a migration                                                                                     | about 2 MB  | high     |
-| `postgresql-client`, `mariadb-client`, `redis-cli`                   | any feature that talks to a server, and any reproduction that needs a client                                                               | about 25 MB | medium   |
-| `tesseract` plus `eng.traineddata`                                   | the OCR round trip in the `ui-capture` validation, which G9 left out                                                                       | about 15 MB | medium   |
-| `shellcheck`, `shfmt`                                                | `scripts/` and the hooks are shell, and nothing lints them locally                                                                         | about 6 MB  | medium   |
-| `gpg`                                                                | sign a commit or a tag, verify a signature, check a release artifact                                                                       | about 12 MB | medium   |
-| `git-lfs`                                                            | any binary asset that lands in the tree                                                                                                    | about 12 MB | medium   |
-| `zstd`, `brotli`, `7z`                                               | unpack an artifact, inspect an AppImage, read a tarball the build produced                                                                 | about 4 MB  | medium   |
-| `dig`, `tcpdump`, `mtr`                                              | prove a network claim instead of asserting one, which is the failure this repository already paid for                                      | about 5 MB  | medium   |
-| `hyperfine`                                                          | compare two builds or two implementations when a change claims a speedup                                                                   | about 2 MB  | low      |
-| `valgrind`, `perf`, `heaptrack`                                      | memory and CPU work on the native paths                                                                                                    | about 40 MB | low      |
+| Tool                                                                 | Why the cycle needs it                                                                                                                          | Size        | Priority |
+| -------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | -------- |
+| `gdb` with debug symbols                                             | the Rust and GTK paths die with `signal 9` and segfaults; without a debugger the only evidence is an exit code                                  | about 45 MB | high     |
+| `strace`, `ltrace`                                                   | proves what a build script or a binary is actually doing when it fails silently, including the blocked host that started a download             | about 2 MB  | high     |
+| `ninja`, `meson`, `autoconf`, `automake`, `libtool`, `bison`, `flex` | any native dependency built from source; the base image carries only `make` and `cmake`, so a `configure`-based or meson-based build cannot run | about 25 MB | high     |
+| `sqlite3`                                                            | inspect and repair the app database, check a migration                                                                                          | about 2 MB  | high     |
+| `postgresql-client`, `mariadb-client`, `redis-cli`                   | any feature that talks to a server, and any reproduction that needs a client                                                                    | about 25 MB | medium   |
+| `tesseract` plus `eng.traineddata`                                   | the OCR round trip in the `ui-capture` validation, which G9 left out                                                                            | about 15 MB | medium   |
+| `shellcheck`, `shfmt`                                                | `scripts/` and the hooks are shell, and nothing lints them locally                                                                              | about 6 MB  | medium   |
+| `gpg`                                                                | sign a commit or a tag, verify a signature, check a release artifact                                                                            | about 12 MB | medium   |
+| `git-lfs`                                                            | any binary asset that lands in the tree                                                                                                         | about 12 MB | medium   |
+| `zstd`, `brotli`, `7z`                                               | unpack an artifact, inspect an AppImage, read a tarball the build produced                                                                      | about 4 MB  | medium   |
+| `dig`, `tcpdump`, `mtr`                                              | prove a network claim instead of asserting one, which is the failure this repository already paid for                                           | about 5 MB  | medium   |
+| `hyperfine`                                                          | compare two builds or two implementations when a change claims a speedup                                                                        | about 2 MB  | low      |
+| `valgrind`, `perf`, `heaptrack`                                      | memory and CPU work on the native paths                                                                                                         | about 40 MB | low      |
 
-Total for Tier 1: about 200 MB, which is small next to the 5.5 GB already shipped.
+Total for Tier 1: about 200 MB. Most of it now ships in the third delivery: `gdb`, `strace`, `ltrace`, `valgrind`, `ninja`, `meson`, `autoconf`, `automake`, `libtool`, `bison`, `flex`, `sqlite3`, `psql`, `mariadb`, `redis-cli`, `tesseract`, `shellcheck`, `shfmt`, `gpg`, `git-lfs`, `zstd`, `brotli`, `7z`, `dig` and `tcpdump` are all in G16 to G22. What still does not ship is `mtr`, `perf`, `heaptrack` and `hyperfine`. The whole payload is about 7 GB unpacked.
 
 ## Tier 2: missing by domain, for any project
 
@@ -159,15 +159,15 @@ Suggested grouping for the next delivery, continuing the numbering after G15. Th
 
 | Group | Carries                                                                           | Opens                                                                  | Estimate     | Measured unpacked |
 | ----- | --------------------------------------------------------------------------------- | ---------------------------------------------------------------------- | ------------ | ----------------- |
-| G16   | `gdb`, `strace`, `ltrace`, `valgrind`                                             | a backtrace and a syscall trace for the native paths                   | about 60 MB  | 176 MB            |
-| G17   | `ninja`, `meson`, `autoconf`, `automake`, `libtool`, `bison`, `flex`              | building a native dependency from source                               | about 25 MB  | 311 MB            |
-| G18   | `sqlite3`, `psql`, `mariadb`, `redis-cli`                                         | inspecting and repairing a database                                    | about 25 MB  | 201 MB            |
-| G19   | `tesseract` and `eng.traineddata`                                                 | the OCR round trip in the capture check                                | about 15 MB  | 114 MB            |
-| G20   | `shellcheck`, `shfmt`, `gpg`, `git-lfs`, `zstd`, `brotli`, `7z`, `dig`, `tcpdump` | shell lint, signing, archives, and a network probe that proves a claim | about 40 MB  | 258 MB            |
-| G21   | `mingw-w64`, `aarch64-linux-gnu` gcc, `qemu-user`                                 | cross build and emulate a second target                                | about 180 MB | 1.7 GB (tree)     |
-| G22   | `trivy`, `syft`, `osv-scanner`                                                    | an SBOM and a vulnerability scan of a local build                      | about 190 MB | 140 MB            |
+| G16   | `gdb`, `strace`, `ltrace`, `valgrind`                                             | a backtrace and a syscall trace for the native paths                   | about 60 MB  | 180 MB            |
+| G17   | `ninja`, `meson`, `autoconf`, `automake`, `libtool`, `bison`, `flex`              | building a native dependency from source                               | about 25 MB  | 300 MB            |
+| G18   | `sqlite3`, `psql`, `mariadb`, `redis-cli`                                         | inspecting and repairing a database                                    | about 25 MB  | 188 MB            |
+| G19   | `tesseract` and `eng.traineddata`                                                 | the OCR round trip in the capture check                                | about 15 MB  | 111 MB            |
+| G20   | `shellcheck`, `shfmt`, `gpg`, `git-lfs`, `zstd`, `brotli`, `7z`, `dig`, `tcpdump` | shell lint, signing, archives, and a network probe that proves a claim | about 40 MB  | 243 MB            |
+| G21   | `mingw-w64`, `aarch64-linux-gnu` gcc, `qemu-user`                                 | cross build and emulate a second target                                | about 330 MB | 1.7 GB (tree)     |
+| G22   | `trivy`, `syft`, `osv-scanner`                                                    | an SBOM and a vulnerability scan of a local build                      | about 190 MB | 326 MB            |
 
-G21's estimate was lower than its two component estimates because it counted only the driver binaries, not the `lib/gcc`, `lib/gcc-cross` and target sysroot trees a cross compiler resolves by a fixed relative layout. The measured column is the whole group, so a builder should budget about 330 MB unpacked rather than 180 MB.
+G21's first estimate of 180 MB was lower than its own two component estimates because it counted only the driver binaries, not the `lib/gcc`, `lib/gcc-cross` and target sysroot trees a cross compiler resolves by a fixed relative layout. The estimate column now reads about 330 MB and the measured column records the whole delivered group.
 
 Tier 0 first: put the sysroot's `usr/bin` on `PATH`, point `FONTCONFIG_PATH` at the sysroot's fonts, and add `tzdata` and `locales` to the package set as downloads. The `sqlite3` CLI now ships in G18.
 

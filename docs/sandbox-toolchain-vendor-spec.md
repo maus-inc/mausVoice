@@ -48,7 +48,8 @@ so the divergence stays visible rather than being quietly rewritten.
    in the branch README was re-derived from the git tree on 2026-10-29 and matches.
 
    That figure is the first delivery. The second delivery, G9 to G13, raised the total to
-   1,500,745,192 bytes across 3891 files at tip `065f527b`, measured on 2026-11-05.
+   1,500,745,192 bytes across 3891 files at its tip, and the third, G16 to G22, raised it
+   again to 2,631,684,475 bytes across 14438 blobs at tip `8442ae0`, measured on 2026-11-05.
 
 None of these change what the payload contains, and none of them invalidate the gates.
 The branch is correct. The spec's arithmetic and two of its command snippets were not.
@@ -102,7 +103,7 @@ what you build.
 | Git LFS | **Not used.** This repo has no LFS (`.gitattributes` carries only two rules: `-whitespace` on `packages/desktop-native-apis/src/bindings.ts` and `*.sql text eol=lf`). Do not introduce LFS |
 | Per-file size cap | **Every file < 90 MiB.** GitHub rejects pushes over 100 MiB. The reference branch splits at exactly `94371840` bytes (= 90 MiB) |
 | Split naming | `<asset>.part-00`, `<asset>.part-01`, … zero-padded two digits, ascending, produced by `split -b 90m` |
-| Total payload | Reference branch: 880 MB packed / 3777 files. Expect **1.0–1.4 GB packed** here (§5 sizes the delta). As shipped with G9 to G13: **1.5 GB packed / 3891 files** at tip `065f527b` |
+| Total payload | Reference branch: 880 MB packed / 3777 files. Expect **1.0–1.4 GB packed** here (§5 sizes the delta). As shipped with G9 to G13: **1.5 GB packed / 3891 files**. As shipped with G16 to G22: **2.63 GB packed / 14438 blobs** at tip `8442ae0` |
 | Manifest | `MANIFEST.sha256` at the branch root, `sha256sum` format (`<64 hex><two spaces><relative path>`), covering **every** file in the tree **plus** each split archive listed a second time under its **reassembled** name |
 | Docs | `README.md` and `FETCH.md` at the branch root (§8, §9) |
 | Source code | **None.** No `apps/`, no `packages/`, no `.github/`. Nothing here is imported by the application at build or run time |
@@ -445,8 +446,8 @@ Two **defects in the reference branch to not copy**:
 | G7 licences | 7.6 MB | ~9 MB | More packages → more `copyright` files |
 | G8 manifest+docs | 0.5 MB | ~0.6 MB | More files → more lines |
 | **Total** | **880 MB** | **~0.9–1.1 GB** | |
-| **Total, G9 to G13 shipped** | — | **1.5 GB packed / 3891 files** at tip `065f527b` | The first-delivery estimate above sizes G1 to G8 only. The second delivery added G9 to G13 on 2026-11-05, which took the shipped total past the estimate. Measure the tree, do not reuse the G1 to G8 figure. |
-| **Total, G16 to G22 shipped** | — | **about 376 MB packed / 1.2 GB unpacked** added to `system/tools` | The third delivery adds G16 to G22. The tools tree grew from 248 MB to 1.2 GB unpacked, about 376 MB packed. G21 is most of it, because a cross compiler needs its `lib/gcc`, `lib/gcc-cross` and target sysroot trees. |
+| **Total, G9 to G13 shipped** | — | **1.5 GB packed / 3891 files** | The first-delivery estimate above sizes G1 to G8 only. The second delivery added G9 to G13 on 2026-11-05, which took the shipped total past the estimate. Measure the tree, do not reuse the G1 to G8 figure. |
+| **Total, G16 to G22 shipped** | — | **`system/tools` is 1.4 GB; the whole branch is 2.63 GB** at tip `8442ae0` | The third delivery adds G16 to G22. G21 is most of the growth, because a cross compiler needs its `lib/gcc`, `lib/gcc-cross` and target sysroot trees. The estimate above sized the driver binaries only. Measured with `du` over `system/tools` and `git ls-tree -r -l` over the branch, 2026-11-05. |
 
 Extracted total ≈ **3.5–4.5 GB** in `/tmp`. Against 19 GB free that leaves room for
 `target/` dirs, but `README.md` must still tell the consumer to delete the downloaded
@@ -1286,9 +1287,10 @@ list). Non-negotiable inclusions:
 
 G1 to G8 make the gates the delivered branch already passes. G9 to G13 close the stages that
 branch cannot cover, measured in `engineering/sandbox-coverage-gaps.md`. They shipped in the
-same orphan commit, tip `065f527b97c6b182a5c4c48ad3e2c09717d019dc`, so a consumer gets them
-from the same fetch. The build notes below stay as the rebuild procedure. Extend a group
-rather than adding a branch when a task needs more.
+same orphan commit, which the third delivery moved to
+`8442ae0c4e8d0c6a3e2a54072c53e8db5e0fa9e7`, so a consumer gets every group from the same
+fetch. The build notes below stay as the rebuild procedure. Extend a group rather than
+adding a branch when a task needs more.
 
 ### G9 — Media tools for UI capture, required for `ui-capture`
 

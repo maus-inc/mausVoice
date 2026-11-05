@@ -47,8 +47,10 @@ development sysroot for the Tauri and GTK stack, the missing command line tools,
 the two native archives the `build.rs` scripts would otherwise download.
 
 Fetch it, extract it under `/tmp`, and follow its `FETCH.md`. It is the only
-instruction file you need. Commit `065f527b97c6b182a5c4c48ad3e2c09717d019dc`, 3891 blobs and the G1 to G13
-groups, no parents, nothing merged into `main`.
+instruction file you need. Commit `8442ae0c4e8d0c6a3e2a54072c53e8db5e0fa9e7`, 14438 blobs
+and the G1 to G8, G9 to G13 and G16 to G22 groups, no parents, nothing merged into `main`.
+The branch is a single orphan commit that each delivery moves, so pin the SHA you reviewed
+rather than the branch head.
 
 Measured with that payload, as recorded in the branch `README.md`:
 

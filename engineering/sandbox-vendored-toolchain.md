@@ -37,32 +37,32 @@ Authoritative sources, in the order you should read them:
 ## The payload
 
 Orphan branch `vendor/sandbox-toolchain` on `maus-inc/mausVoice`. Commit
-`065f527b97c6b182a5c4c48ad3e2c09717d019dc`, no parents, authored 2026-10-28, message
-`vendor: sandbox toolchain payload (G1-G8, G9-G13)`. It is not merged into `main` and no
-pull request exists for it. `main` is unaffected.
+`8442ae0c4e8d0c6a3e2a54072c53e8db5e0fa9e7`, no parents, authored 2026-11-05, message
+`vendor: sandbox toolchain payload (G1-G8, G9-G13, G16-G22)`. It is not merged into `main`
+and no pull request exists for it. `main` is unaffected.
 
-3891 blobs. The root tree is exactly `FETCH.md`, `LICENSES`, `MANIFEST.sha256`,
+14438 blobs. The root tree is exactly `FETCH.md`, `LICENSES`, `MANIFEST.sha256`,
 `README.md`, `drivers`, `models`, `native`, `rust`, `system`.
 
-| Group       | Blobs | Logical bytes | What it is                                                                                                    |
-| ----------- | ----- | ------------- | ------------------------------------------------------------------------------------------------------------- |
-| `system/`   | 3251  | 666,084,652   | Debian 12 development sysroot, the command line tools, the G9/G13 binaries, and the build scripts             |
-| `rust/`     | 13    | 306,619,901   | Rust 1.88.0 components, the channel toml, the vendored crate tree, the cargo config, the G12 target libraries |
-| `native/`   | 4     | 30,713,132    | ONNX Runtime 1.23.2 and sherpa-onnx 1.13.5 archives                                                           |
-| `models/`   | 8     | 463,077,947   | G10: whisper `ggml-tiny` and `ggml-base`, the SenseVoice ONNX bundle, `MODELS.txt`                            |
-| `drivers/`  | 3     | 24,047,333    | G11: `tauri-driver` 2.0.6, `chromedriver` 152.0.7977.42, `DRIVERS.txt`                                        |
-| `LICENSES/` | 609   | 9,652,209     | 605 Debian `copyright` files plus the ONNX Runtime, sherpa-onnx and whisper.cpp licences                      |
-| root        | 3     | 550,018       | `README.md`, `FETCH.md`, `MANIFEST.sha256`                                                                    |
+| Group       | Blobs | Logical bytes | What it is                                                                                                              |
+| ----------- | ----- | ------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `system/`   | 13648 | 1,791,514,548 | Debian 12 development sysroot, the command line tools, the G9/G13 binaries, the G16 to G22 tools, and the build scripts |
+| `rust/`     | 13    | 306,619,901   | Rust 1.88.0 components, the channel toml, the vendored crate tree, the cargo config, the G12 target libraries           |
+| `native/`   | 4     | 30,713,132    | ONNX Runtime 1.23.2 and sherpa-onnx 1.13.5 archives                                                                     |
+| `models/`   | 8     | 463,077,947   | G10: whisper `ggml-tiny` and `ggml-base`, the SenseVoice ONNX bundle, `MODELS.txt`                                      |
+| `drivers/`  | 3     | 24,047,333    | G11: `tauri-driver` 2.0.6, `chromedriver` 152.0.7977.42, `DRIVERS.txt`                                                  |
+| `LICENSES/` | 759   | 13,832,512    | 755 Debian `copyright` files plus the ONNX Runtime, sherpa-onnx and whisper.cpp licences                                |
+| root        | 3     | 1,879,102     | `README.md`, `FETCH.md`, `MANIFEST.sha256`                                                                              |
 
-No single file reaches 100 MiB. Twelve files are `.part-NN` pieces at exactly 94,371,840
-bytes, across four archives: the vendored crate tree in two parts, the sysroot in five,
-`ggml-base.bin` in two and the SenseVoice `model.int8.onnx` in three. `MANIFEST.sha256`
-carries 3894 lines, which is 3890 whole tree files plus the 4 reassembled archives. It
-does not list itself.
+No single file reaches 100 MiB. Fourteen files are `.part-NN` pieces, nine of them at
+exactly 94,371,840 bytes, across five archives: the vendored crate tree in two parts, the
+sysroot in five, `ggml-base.bin` in two, the SenseVoice `model.int8.onnx` in three and
+`trivy` in two. `MANIFEST.sha256` carries 14442 lines, which is 14437 whole tree files
+plus the 5 reassembled archives. It does not list itself.
 
-Extracted size is about 5.5 GB. The sysroot is about 1.9 GB, the vendored crate tree
-about 1.8 GB, the toolchain about 1.3 GB and the second-delivery groups about 0.9 GB
-unpacked. Roughly 950 MB of the crate tree is five
+Extracted size is about 7 GB. The sysroot is about 1.9 GB, the vendored crate tree
+about 1.8 GB, the toolchain about 1.3 GB, `system/tools` about 1.4 GB and the
+second-delivery groups about 0.9 GB unpacked. Roughly 950 MB of the crate tree is five
 versions of the `windows` crate, 0.51.1, 0.52.0, 0.54.0, 0.58.0 and 0.61.3, which are
 dead weight on Linux but cannot be dropped without breaking `--locked` resolution for
 the Windows installer workspace.
@@ -71,7 +71,10 @@ the Windows installer workspace.
 1.8.1 and a `pkg-config` symlink to `pkgconf`, with 83 library blobs covering 44
 distinct library stems and `$ORIGIN/../lib` rpaths. The second delivery adds `ffmpeg`
 7.0.2-static, `ffprobe` 7.0.2-static, `gifsicle` 1.95 and `gitleaks` 8.18.0 to the same
-directory. `system/build/` ships the three
+directory. The third delivery adds the G16 to G22 binaries there and their support trees
+under `system/tools`: `libexec/valgrind`, `share/gdb`, the `mingw-w64` and
+`aarch64-linux-gnu` cross trees, `share/tessdata` and `debug/libc6-dbg`.
+`system/build/` ships the three
 scripts that produced the closure. `system/PKGS.txt` lists 634 packages.
 
 The vendored crate tree holds 1114 package directories, which is the 1113 crates.io
@@ -81,33 +84,34 @@ packages plus the one git dependency, `ferrous-focus`, that the union of the sev
 ## What has been measured
 
 The branch `README.md` records these results. They were produced against this
-repository at commit `61fb3295` for the first delivery and `065f527b` for the second.
+repository at commit `61fb3295` for the first delivery, `065f527b` for the second, and
+`8442ae0` for the third.
 
-| Gate                            | Result                                                                      |
-| ------------------------------- | --------------------------------------------------------------------------- |
-| Toolchain versions              | rustc 1.88.0, cargo 1.88.0, clippy 0.1.88, rustfmt 1.8.0-stable             |
-| Toolchain component hashes      | 5 of 5 match `channel-rust-1.88.0.toml`                                     |
-| Sysroot symlinks                | 0 broken, 0 absolute                                                        |
-| Sysroot ELFs                    | 1559 checked, all X86-64                                                    |
-| pkg-config modules              | 37 of 37 resolve                                                            |
-| Link smoke test                 | gcc linked 19 libraries successfully                                        |
-| Xvfb                            | started                                                                     |
-| Tools under `env -i`            | 4 of 4 run, and the second delivery's 4 new binaries run too                |
-| Offline resolution              | `cargo metadata --locked` exit 0 for all seven manifests                    |
-| Path patches                    | `block`, `sherpa-onnx-sys` and `rdev` all resolve from `patches/`           |
-| Format                          | `cargo fmt --check` in six crates, 6 of 6 pass                              |
-| Clippy                          | `apps/desktop/src-tauri`, 0 warnings in 6m 13s                              |
-| Desktop lib tests               | 363 passed, 0 failed, 1 ignored                                             |
-| Transcription lib tests         | 64 passed, 0 failed, 1 ignored                                              |
-| pill_shared tests               | 242 passed, 0 failed                                                        |
-| GTK pill tests under `xvfb-run` | 42 passed, 0 failed                                                         |
-| Sidecar integration             | 7 passed, 0 failed, 4 ignored                                               |
-| CI guard tests                  | `node --test scripts/ci/*.test.mjs`, 371 passed                             |
-| Desktop TS unit                 | 3043 passed across 229 files                                                |
-| voice-ai                        | 501 passed across 37 files                                                  |
-| agent                           | 24 passed                                                                   |
-| preview                         | 22 passed across 4 files                                                    |
-| Manifest                        | `MANIFEST.sha256`, 3894 lines: one per blob and one per reassembled archive |
+| Gate                            | Result                                                                                                                                |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| Toolchain versions              | rustc 1.88.0, cargo 1.88.0, clippy 0.1.88, rustfmt 1.8.0-stable                                                                       |
+| Toolchain component hashes      | 5 of 5 match `channel-rust-1.88.0.toml`                                                                                               |
+| Sysroot symlinks                | 0 broken, 0 absolute                                                                                                                  |
+| Sysroot ELFs                    | 1559 checked, all X86-64                                                                                                              |
+| pkg-config modules              | 37 of 37 resolve                                                                                                                      |
+| Link smoke test                 | gcc linked 19 libraries successfully                                                                                                  |
+| Xvfb                            | started                                                                                                                               |
+| Tools under `env -i`            | 4 of 4 run, the second delivery's 4 new binaries run, and the third delivery's 30 run with the documented env var where one is needed |
+| Offline resolution              | `cargo metadata --locked` exit 0 for all seven manifests                                                                              |
+| Path patches                    | `block`, `sherpa-onnx-sys` and `rdev` all resolve from `patches/`                                                                     |
+| Format                          | `cargo fmt --check` in six crates, 6 of 6 pass                                                                                        |
+| Clippy                          | `apps/desktop/src-tauri`, 0 warnings in 6m 13s                                                                                        |
+| Desktop lib tests               | 363 passed, 0 failed, 1 ignored                                                                                                       |
+| Transcription lib tests         | 64 passed, 0 failed, 1 ignored                                                                                                        |
+| pill_shared tests               | 242 passed, 0 failed                                                                                                                  |
+| GTK pill tests under `xvfb-run` | 42 passed, 0 failed                                                                                                                   |
+| Sidecar integration             | 7 passed, 0 failed, 4 ignored                                                                                                         |
+| CI guard tests                  | `node --test scripts/ci/*.test.mjs`, 371 passed                                                                                       |
+| Desktop TS unit                 | 3043 passed across 229 files                                                                                                          |
+| voice-ai                        | 501 passed across 37 files                                                                                                            |
+| agent                           | 24 passed                                                                                                                             |
+| preview                         | 22 passed across 4 files                                                                                                              |
+| Manifest                        | `MANIFEST.sha256`, 14442 lines: one per blob and one per reassembled archive                                                          |
 
 ## Independent verification
 
@@ -130,7 +134,7 @@ branch contents.
   including `clang-14`, `libclang-14-dev`, `libclang-common-14-dev`, `libllvm14`,
   `libpulse-dev`, `libasound2-dev`, `libgtk-layer-shell-dev`, `xvfb`, `xauth`,
   `xserver-common`, `imagemagick`, `libmagickcore-6.q16-6` and `libmagickwand-6.q16-6`.
-- The manifest covers all 3890 tree blobs plus the four reassembled archives, has 0
+- The manifest covers all 14437 tree files plus the five reassembled archives, has 0
   malformed lines, and 23 paths legitimately contain spaces because they are cmake Help
   files. The `.part-00` reassembly loop only
   touches space-free paths, so the spaces are safe.
