@@ -130,14 +130,19 @@ export const ElasticSlider = ({
   const draggingRef = useRef(false);
   const mountedRef = useRef(true);
   // Keep the latest callbacks and saved value available to queued handlers.
+  // Updated in a commit-phase effect so an abandoned concurrent render cannot
+  // replace the committed save handler.
   const savedValueRef = useRef(value);
   const onCommitRef = useRef(onCommit);
   const onChangeDisplayRef = useRef(onChangeDisplay);
   const interactionRef = useRef(0);
   const commitQueueRef = useRef<SliderCommitQueue | null>(null);
-  savedValueRef.current = value;
-  onCommitRef.current = onCommit;
-  onChangeDisplayRef.current = onChangeDisplay;
+
+  useEffect(() => {
+    savedValueRef.current = value;
+    onCommitRef.current = onCommit;
+    onChangeDisplayRef.current = onChangeDisplay;
+  });
 
   const getCommitQueue = () => {
     commitQueueRef.current ??= createSliderCommitQueue({

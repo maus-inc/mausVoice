@@ -1,6 +1,7 @@
 import {
   type LocalDataWriteLease,
   getLocalDataClearGeneration,
+  hasPendingLocalDataClear,
   isLocalDataClearRequested,
   withLocalDataWrite,
 } from "../utils/local-data-write-gate";
@@ -205,10 +206,14 @@ export const recordUsageWords = (
 // a row that a queued save is halfway through writing. Never call this from
 // inside a queued user or preference task.
 const refreshUserAndPreferences = async (generation: number): Promise<void> => {
-  if (
+  // The durable marker is shared through localStorage, so secondary windows
+  // reject a refresh even though their module instance never saw the main
+  // window's clear transition.
+  const clearBlocksRefresh = () =>
     isLocalDataClearRequested() ||
-    generation !== getLocalDataClearGeneration()
-  ) {
+    hasPendingLocalDataClear() ||
+    generation !== getLocalDataClearGeneration();
+  if (clearBlocksRefresh()) {
     return;
   }
   try {
@@ -218,10 +223,7 @@ const refreshUserAndPreferences = async (generation: number): Promise<void> => {
       getUserPreferencesRepo().getUserPreferences(),
     ]);
 
-    if (
-      isLocalDataClearRequested() ||
-      generation !== getLocalDataClearGeneration()
-    ) {
+    if (clearBlocksRefresh()) {
       return;
     }
 

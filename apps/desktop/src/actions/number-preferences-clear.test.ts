@@ -105,7 +105,7 @@ describe("user and preference local-data clear & i18n guards", () => {
         "Local data is being cleared.",
       );
       expect(getAppState().userById[LOCAL_USER_ID]?.name).toBe("Initial");
-      expect(getAppState().localStorageCache.myProfileImage).toBeUndefined();
+      expect(getAppState().local.profileImageByUserId).toEqual({});
       expect(storageRepoMock.setString).not.toHaveBeenCalled();
     } finally {
       localStorage.removeItem(LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY);

@@ -84,22 +84,22 @@ it("restores the saved value and live readout when a commit fails", async () => 
   }
 });
 
-it("does not drop a return to the saved value while the previous commit is pending", async () => {
-  let finish!: () => void;
-  const first = new Promise<void>((resolve) => {
-    finish = resolve;
-  });
-  const calls: number[] = [];
+/**
+ * The shared rig for the gated-commit tests: one slider backed by local state,
+ * a commit body supplied by the test, and keypress helpers. The tests differ
+ * only in what their commit waits on.
+ */
+const createSliderHarness = (
+  makeCommit: (
+    setSaved: (value: number) => void,
+  ) => (value: number) => void | Promise<void>,
+) => {
   const host = document.createElement("div");
   document.body.append(host);
   const root = createRoot(host);
   const Harness = () => {
-    const [saved, setSaved] = useState(35);
-    const commit = async (value: number) => {
-      calls.push(value);
-      await first;
-      setSaved(value);
-    };
+    const [saved, applySaved] = useState(35);
+    const commit = makeCommit(applySaved);
     return (
       <ThemeProvider theme={theme}>
         <ElasticSlider
@@ -113,20 +113,38 @@ it("does not drop a return to the saved value while the previous commit is pendi
       </ThemeProvider>
     );
   };
-  try {
-    act(() => root.render(<Harness />));
-    const slider = host.querySelector<HTMLInputElement>('input[type="range"]')!;
+  const render = () => act(() => root.render(<Harness />));
+  const slider = () =>
+    host.querySelector<HTMLInputElement>('input[type="range"]')!;
+  const press = (key: string) =>
     act(() => {
-      slider.focus();
-      slider.dispatchEvent(
-        new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }),
+      slider().focus();
+      slider().dispatchEvent(
+        new KeyboardEvent("keydown", { key, bubbles: true }),
       );
     });
-    act(() =>
-      slider.dispatchEvent(
-        new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true }),
-      ),
-    );
+  const cleanup = () => {
+    act(() => root.unmount());
+    host.remove();
+  };
+  return { render, slider, press, cleanup };
+};
+
+it("does not drop a return to the saved value while the previous commit is pending", async () => {
+  let finish!: () => void;
+  const first = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  const calls: number[] = [];
+  const harness = createSliderHarness((setSaved) => async (value) => {
+    calls.push(value);
+    await first;
+    setSaved(value);
+  });
+  try {
+    harness.render();
+    harness.press("ArrowRight");
+    harness.press("ArrowLeft");
     // 35 is queued behind the in-flight 40 commit rather than dropped or raced.
     expect(calls).toEqual([40]);
     await act(async () => {
@@ -135,11 +153,10 @@ it("does not drop a return to the saved value while the previous commit is pendi
     });
     await vi.waitFor(() => {
       expect(calls).toEqual([40, 35]);
-      expect(slider.value).toBe("35");
+      expect(harness.slider().value).toBe("35");
     });
   } finally {
-    act(() => root.unmount());
-    host.remove();
+    harness.cleanup();
   }
 });
 
@@ -149,50 +166,18 @@ it("serializes overlapping commits and coalesces rapid queued steps so the lates
     finishFirst = resolve;
   });
   const calls: number[] = [];
-  const host = document.createElement("div");
-  document.body.append(host);
-  const root = createRoot(host);
-  const Harness = () => {
-    const [saved, setSaved] = useState(35);
-    const commit = async (value: number) => {
-      calls.push(value);
-      if (calls.length === 1) {
-        await firstGate;
-      }
-      setSaved(value);
-    };
-    return (
-      <ThemeProvider theme={theme}>
-        <ElasticSlider
-          value={saved}
-          min={0}
-          max={100}
-          step={5}
-          ariaLabel="Volume"
-          onCommit={commit}
-        />
-      </ThemeProvider>
-    );
-  };
+  const harness = createSliderHarness((setSaved) => async (value) => {
+    calls.push(value);
+    if (calls.length === 1) {
+      await firstGate;
+    }
+    setSaved(value);
+  });
   try {
-    act(() => root.render(<Harness />));
-    const slider = host.querySelector<HTMLInputElement>('input[type="range"]')!;
-    act(() => {
-      slider.focus();
-      slider.dispatchEvent(
-        new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }),
-      );
-    });
-    act(() =>
-      slider.dispatchEvent(
-        new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }),
-      ),
-    );
-    act(() =>
-      slider.dispatchEvent(
-        new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }),
-      ),
-    );
+    harness.render();
+    harness.press("ArrowRight");
+    harness.press("ArrowRight");
+    harness.press("ArrowRight");
     // 40 is running; 45 was coalesced into 50.
     expect(calls).toEqual([40]);
     await act(async () => {
@@ -201,11 +186,10 @@ it("serializes overlapping commits and coalesces rapid queued steps so the lates
     });
     await vi.waitFor(() => {
       expect(calls).toEqual([40, 50]);
-      expect(slider.value).toBe("50");
+      expect(harness.slider().value).toBe("50");
     });
   } finally {
-    act(() => root.unmount());
-    host.remove();
+    harness.cleanup();
   }
 });
 
@@ -215,47 +199,21 @@ it("cancels a queued commit and releases its write lease immediately when a loca
     finishFirst = resolve;
   });
   const calls: number[] = [];
-  const host = document.createElement("div");
-  document.body.append(host);
-  const root = createRoot(host);
-  const Harness = () => {
-    const [saved, setSaved] = useState(35);
-    const commit = (value: number) =>
+  const harness = createSliderHarness(
+    (setSaved) => (value) =>
       withLocalDataWrite(async () => {
         calls.push(value);
         if (calls.length === 1) {
           await firstGate;
         }
         setSaved(value);
-      });
-    return (
-      <ThemeProvider theme={theme}>
-        <ElasticSlider
-          value={saved}
-          min={0}
-          max={100}
-          step={5}
-          ariaLabel="Volume"
-          onCommit={commit}
-        />
-      </ThemeProvider>
-    );
-  };
+      }),
+  );
   let releaseClear: (() => void) | undefined;
   try {
-    act(() => root.render(<Harness />));
-    const slider = host.querySelector<HTMLInputElement>('input[type="range"]')!;
-    act(() => {
-      slider.focus();
-      slider.dispatchEvent(
-        new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }),
-      );
-    });
-    act(() =>
-      slider.dispatchEvent(
-        new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }),
-      ),
-    );
+    harness.render();
+    harness.press("ArrowRight");
+    harness.press("ArrowRight");
     expect(calls).toEqual([40]);
 
     let clearPromise!: Promise<() => void>;
@@ -271,7 +229,6 @@ it("cancels a queued commit and releases its write lease immediately when a loca
   } finally {
     localStorage.removeItem(LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY);
     releaseClear?.();
-    act(() => root.unmount());
-    host.remove();
+    harness.cleanup();
   }
 });

@@ -379,7 +379,7 @@
   "failed_to_save_audio_dim_preference_please_try_again": "無法儲存降低音量偏好設定，請重試。",
   "failed_to_save_auto_learn_dictionary_preference_please_try_a": "無法儲存自動學習字典偏好設定，請重試。",
   "failed_to_save_dictation_limit_preference_please_try_again": "無法儲存聽寫時間上限偏好設定，請重試。",
-  "failed_to_save_dictation_pill_visibility_preference_please_t": "無法儲存語音輸入圖示可見性偏好設定，請重試。",
+  "failed_to_save_dictation_pill_visibility_preference_please_t": "無法儲存膠囊視窗可見性偏好設定，請重試。",
   "failed_to_save_elevenlabs_keyterms_preference_please_try_aga": "無法儲存 ElevenLabs 關鍵詞偏好設定，請重試。",
   "failed_to_save_enabled_agent_tools_please_try_again": "無法儲存已啟用的代理工具，請重試。",
   "failed_to_save_failed_transcription_audio_preference_please": "無法儲存失敗轉錄音訊偏好設定，請重試。",

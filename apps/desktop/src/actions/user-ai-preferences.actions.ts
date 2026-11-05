@@ -1,4 +1,9 @@
-import { type AgentMode, Nullable } from "@maus-inc/types";
+import {
+  type AgentMode,
+  Nullable,
+  type UserPreferences,
+} from "@maus-inc/types";
+import type { AppState } from "../state/app.state";
 import { produceAppState } from "../store";
 import {
   type PostProcessingMode,
@@ -12,29 +17,42 @@ import {
 } from "../utils/local-transcription.utils";
 import { updateUserPreferences } from "./user-actions-core";
 
-export const setPreferredTranscriptionMode = async (
+/**
+ * Apply the settings-slice update first, then persist the matching preference
+ * write. The two stores move together in this order everywhere below; only the
+ * field-specific mutations differ per setter.
+ */
+const persistAiPreference = (
+  updateSettings: (draft: AppState) => void,
+  applyToPreferences: (preferences: UserPreferences) => void,
+): Promise<void> => {
+  produceAppState(updateSettings);
+  return updateUserPreferences(applyToPreferences);
+};
+
+export const setPreferredTranscriptionMode = (
   mode: TranscriptionMode,
-): Promise<void> => {
-  produceAppState((draft) => {
-    draft.settings.aiTranscription.mode = mode;
-  });
+): Promise<void> =>
+  persistAiPreference(
+    (draft) => {
+      draft.settings.aiTranscription.mode = mode;
+    },
+    (preferences) => {
+      preferences.transcriptionMode = mode;
+    },
+  );
 
-  await updateUserPreferences((preferences) => {
-    preferences.transcriptionMode = mode;
-  });
-};
-
-export const setPreferredTranscriptionApiKeyId = async (
+export const setPreferredTranscriptionApiKeyId = (
   id: Nullable<string>,
-): Promise<void> => {
-  produceAppState((draft) => {
-    draft.settings.aiTranscription.selectedApiKeyId = id;
-  });
-
-  await updateUserPreferences((preferences) => {
-    preferences.transcriptionApiKeyId = id;
-  });
-};
+): Promise<void> =>
+  persistAiPreference(
+    (draft) => {
+      draft.settings.aiTranscription.selectedApiKeyId = id;
+    },
+    (preferences) => {
+      preferences.transcriptionApiKeyId = id;
+    },
+  );
 
 export const setPreferredTranscriptionDevice = async (
   device: string,
@@ -43,86 +61,87 @@ export const setPreferredTranscriptionDevice = async (
   const gpuEnumerationEnabled =
     isGpuPreferredTranscriptionDevice(normalizedDevice);
 
-  produceAppState((draft) => {
-    draft.settings.aiTranscription.device = normalizedDevice;
-    draft.settings.aiTranscription.gpuEnumerationEnabled =
-      gpuEnumerationEnabled;
-  });
-
-  await updateUserPreferences((preferences) => {
-    preferences.transcriptionDevice = normalizedDevice;
-    preferences.gpuEnumerationEnabled = gpuEnumerationEnabled;
-  });
+  await persistAiPreference(
+    (draft) => {
+      draft.settings.aiTranscription.device = normalizedDevice;
+      draft.settings.aiTranscription.gpuEnumerationEnabled =
+        gpuEnumerationEnabled;
+    },
+    (preferences) => {
+      preferences.transcriptionDevice = normalizedDevice;
+      preferences.gpuEnumerationEnabled = gpuEnumerationEnabled;
+    },
+  );
 };
 
-export const setPreferredTranscriptionModelSize = async (
+export const setPreferredTranscriptionModelSize = (
   modelSize: string,
 ): Promise<void> => {
   const normalizedModelSize = normalizeLocalWhisperModel(modelSize);
-  produceAppState((draft) => {
-    draft.settings.aiTranscription.modelSize = normalizedModelSize;
-  });
-
-  await updateUserPreferences((preferences) => {
-    preferences.transcriptionModelSize = normalizedModelSize;
-  });
+  return persistAiPreference(
+    (draft) => {
+      draft.settings.aiTranscription.modelSize = normalizedModelSize;
+    },
+    (preferences) => {
+      preferences.transcriptionModelSize = normalizedModelSize;
+    },
+  );
 };
 
-export const setGpuEnumerationEnabled = async (
-  enabled: boolean,
-): Promise<void> => {
+export const setGpuEnumerationEnabled = (enabled: boolean): Promise<void> => {
   const nextEnabled = supportsGpuTranscriptionDevice() && enabled;
-  produceAppState((draft) => {
-    draft.settings.aiTranscription.gpuEnumerationEnabled = nextEnabled;
-  });
-
-  await updateUserPreferences((preferences) => {
-    preferences.gpuEnumerationEnabled = nextEnabled;
-  });
+  return persistAiPreference(
+    (draft) => {
+      draft.settings.aiTranscription.gpuEnumerationEnabled = nextEnabled;
+    },
+    (preferences) => {
+      preferences.gpuEnumerationEnabled = nextEnabled;
+    },
+  );
 };
 
-export const setPreferredPostProcessingMode = async (
+export const setPreferredPostProcessingMode = (
   mode: PostProcessingMode,
-): Promise<void> => {
-  produceAppState((draft) => {
-    draft.settings.aiPostProcessing.mode = mode;
-  });
+): Promise<void> =>
+  persistAiPreference(
+    (draft) => {
+      draft.settings.aiPostProcessing.mode = mode;
+    },
+    (preferences) => {
+      preferences.postProcessingMode = mode;
+    },
+  );
 
-  await updateUserPreferences((preferences) => {
-    preferences.postProcessingMode = mode;
-  });
-};
-
-export const setPreferredPostProcessingApiKeyId = async (
+export const setPreferredPostProcessingApiKeyId = (
   id: Nullable<string>,
-): Promise<void> => {
-  produceAppState((draft) => {
-    draft.settings.aiPostProcessing.selectedApiKeyId = id;
-  });
+): Promise<void> =>
+  persistAiPreference(
+    (draft) => {
+      draft.settings.aiPostProcessing.selectedApiKeyId = id;
+    },
+    (preferences) => {
+      preferences.postProcessingApiKeyId = id;
+    },
+  );
 
-  await updateUserPreferences((preferences) => {
-    preferences.postProcessingApiKeyId = id;
-  });
-};
+export const setPreferredAgentMode = (mode: AgentMode): Promise<void> =>
+  persistAiPreference(
+    (draft) => {
+      draft.settings.agentMode.mode = mode;
+    },
+    (preferences) => {
+      preferences.agentMode = mode;
+    },
+  );
 
-export const setPreferredAgentMode = async (mode: AgentMode): Promise<void> => {
-  produceAppState((draft) => {
-    draft.settings.agentMode.mode = mode;
-  });
-
-  await updateUserPreferences((preferences) => {
-    preferences.agentMode = mode;
-  });
-};
-
-export const setPreferredAgentModeApiKeyId = async (
+export const setPreferredAgentModeApiKeyId = (
   id: Nullable<string>,
-): Promise<void> => {
-  produceAppState((draft) => {
-    draft.settings.agentMode.selectedApiKeyId = id;
-  });
-
-  await updateUserPreferences((preferences) => {
-    preferences.agentModeApiKeyId = id;
-  });
-};
+): Promise<void> =>
+  persistAiPreference(
+    (draft) => {
+      draft.settings.agentMode.selectedApiKeyId = id;
+    },
+    (preferences) => {
+      preferences.agentModeApiKeyId = id;
+    },
+  );

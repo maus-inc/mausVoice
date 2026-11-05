@@ -1150,7 +1150,7 @@
   "you_may_need_to_reload_your_compositor_for_changes_to_take_e": "Möglicherweise müssen Sie Ihren Compositor neu laden, damit die Änderungen wirksam werden.",
   "you_re_currently_on_version_version_the_app_will_restart_aft": "Sie verwenden derzeit Version {version}. Die App wird nach Abschluss des Updates neu gestartet.",
   "you_re_up_to_date": "Sie sind auf dem neuesten Stand.",
-  "your_account_was_deleted_but_local_cleanup_is_incomplete_ret": "Dein Konto wurde gelöscht, aber die lokale Bereinigung ist unvollständig. Versuche es erneut, um dieses Gerät vollständig zu löschen.",
+  "your_account_was_deleted_but_local_cleanup_is_incomplete_ret": "Dein Konto wurde gelöscht, aber die lokale Bereinigung ist unvollständig. Versuche es erneut, um die lokalen Daten auf diesem Gerät vollständig zu löschen.",
   "your_azure_openai_resource_endpoint_url": "URL des Azure OpenAI-Ressourcenendpunkts",
   "your_dictation_activity_will_appear_here": "Deine Diktieraktivität wird hier angezeigt.",
   "your_models": "Deine Modelle",
