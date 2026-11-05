@@ -63,7 +63,9 @@ That sandbox reaches `github.com`, `codeload.github.com`, `api.github.com`,
 If the Rust toolchain or the crate registry is unreachable, fetch the orphan branch
 `vendor/sandbox-toolchain` on `maus-inc/mausVoice` first and follow its `FETCH.md`. It
 carries the toolchain, the crate registry, the Debian 12 sysroot, the command line
-tools and the two native archives. Then:
+tools, the two native archives, and the second-delivery groups G9 to G13 (media
+tools, model weights, the WebDriver driver chain, the cross-target Rust standard
+libraries and the gitleaks binary). Then:
 
 - [ ] I set `$CARGO_HOME/config.toml` from the shipped `rust/cargo-config.toml`, because `cargo --config <path>` does not reach `cargo clippy`
 - [ ] I exported `CARGO_NET_OFFLINE=true`

@@ -37,7 +37,7 @@ Authoritative sources, in the order you should read them:
 ## The payload
 
 Orphan branch `vendor/sandbox-toolchain` on `maus-inc/mausVoice`. Commit
-`c43df0ec06e04ff8c323bcdd01165390eef894a3`, no parents, authored 2026-10-28, message
+`065f527b97c6b182a5c4c48ad3e2c09717d019dc`, no parents, authored 2026-10-28, message
 `vendor: sandbox toolchain payload (G1-G8, G9-G13)`. It is not merged into `main` and no
 pull request exists for it. `main` is unaffected.
 
@@ -52,7 +52,7 @@ pull request exists for it. `main` is unaffected.
 | `models/`   | 8     | 463,077,947   | G10: whisper `ggml-tiny` and `ggml-base`, the SenseVoice ONNX bundle, `MODELS.txt`                            |
 | `drivers/`  | 3     | 24,047,333    | G11: `tauri-driver` 2.0.6, `chromedriver` 152.0.7977.42, `DRIVERS.txt`                                        |
 | `LICENSES/` | 609   | 9,652,209     | 605 Debian `copyright` files plus the ONNX Runtime, sherpa-onnx and whisper.cpp licences                      |
-| root        | 3     | 549,557       | `README.md`, `FETCH.md`, `MANIFEST.sha256`                                                                    |
+| root        | 3     | 550,018       | `README.md`, `FETCH.md`, `MANIFEST.sha256`                                                                    |
 
 No single file reaches 100 MiB. Twelve files are `.part-NN` pieces at exactly 94,371,840
 bytes, across four archives: the vendored crate tree in two parts, the sysroot in five,
@@ -81,7 +81,7 @@ packages plus the one git dependency, `ferrous-focus`, that the union of the sev
 ## What has been measured
 
 The branch `README.md` records these results. They were produced against this
-repository at commit `61fb3295` for the first delivery and `c43df0ec` for the second.
+repository at commit `61fb3295` for the first delivery and `065f527b` for the second.
 
 | Gate                            | Result                                                                      |
 | ------------------------------- | --------------------------------------------------------------------------- |

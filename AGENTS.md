@@ -342,11 +342,11 @@ This section describes one environment. It is the Arena agent sandbox that runs 
 
 On a host that reaches the wider internet, none of this applies. Install the toolchain the normal way and run the gates. Check before you assume either state: one `curl` per host, and a version command per tool.
 
-From the blocked environment, fetch the orphan branch `vendor/sandbox-toolchain` on `maus-inc/mausVoice` before you report a Rust gate as unrunnable. It carries the Rust 1.88.0 components, the cargo dependency tree for all seven workspaces, a Debian 12 sysroot, the missing command line tools and the two native archives. Follow its `FETCH.md`.
+From the blocked environment, fetch the orphan branch `vendor/sandbox-toolchain` on `maus-inc/mausVoice` before you report a Rust gate as unrunnable. It carries the Rust 1.88.0 components, the cargo dependency tree for all seven workspaces, a Debian 12 sysroot, the missing command line tools, the two native archives, and the second-delivery groups G9 to G13 (media tools, model weights, the WebDriver driver chain, the cross-target Rust standard libraries and the gitleaks binary). Follow its `FETCH.md`.
 
 ```bash
 set -euo pipefail
-SV_SHA=c43df0ec06e04ff8c323bcdd01165390eef894a3   # pin the commit you reviewed, not the branch head
+SV_SHA=065f527b97c6b182a5c4c48ad3e2c09717d019dc   # pin the commit you reviewed, not the branch head
 SV="$(mktemp -d)"                                  # private root, so concurrent runs cannot clash
 curl -sSL -o "$SV.tar.gz" "https://codeload.github.com/maus-inc/mausVoice/tar.gz/$SV_SHA"
 tar xzf "$SV.tar.gz" -C "$SV" --strip-components=1 && cd "$SV"

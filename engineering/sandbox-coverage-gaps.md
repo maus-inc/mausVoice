@@ -111,7 +111,7 @@ Substitute when no browser is available. Inspect `apps/preview` in both themes a
 
 ### G10: model weights, delivered
 
-Blocks transcription development, the four ignored sidecar tests, and any check of transcript quality.
+Blocks transcription development, the ignored sidecar tests, and any check of transcript quality. The delivered weights open the whisper and SenseVoice paths; the Parakeet and Canary tests stay blocked.
 
 Measured before the second delivery. `huggingface.co` has no route in the Arena agent sandbox, and 19 references in the repository point at it. `packages/rust_transcription/tests/sidecar_integration.rs` marks four tests `#[ignore]` because they download models. The whisper weights are GGML files, `ggml-tiny.bin` upward, and the ONNX models are `parakeet-ctc-0.6b`, `parakeet-tdt-0.6b`, `canary-1b` and `sense-voice`.
 

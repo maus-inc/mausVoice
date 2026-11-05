@@ -48,12 +48,12 @@ app has a real rendering defect in that environment, which is worth reporting.
 
 `capture.mjs` resolves Chromium the same way `playwright.config.ts` does. In
 order: `PLAYWRIGHT_CHROMIUM_PATH`, the Playwright bundled browser, the
-`@sparticuz/chromium` package, then a few well-known paths. When all fail, fetch
-the vendored toolchain from the `vendor/sandbox-toolchain` branch, as
-`AGENTS.md` under Blocked sandbox toolchain describes, and point
-`PLAYWRIGHT_CHROMIUM_PATH` at its Chrome build. On a host without NSS and NSPR,
-set `PLAYWRIGHT_SANDBOX_LIBS` to the directory that carries `libnss3` and
-`libnspr4`, or the browser exits before the first frame.
+`@sparticuz/chromium` package, then a few well-known paths. The vendored
+toolchain on `vendor/sandbox-toolchain` does not carry a browser, which is gap
+G9 in `engineering/sandbox-coverage-gaps.md`, so it is not a source for one.
+Supply a Chromium another way, then point `PLAYWRIGHT_CHROMIUM_PATH` at it. On a
+host without NSS and NSPR, set `PLAYWRIGHT_SANDBOX_LIBS` to the directory that
+carries `libnss3` and `libnspr4`, or the browser exits before the first frame.
 
 ## `ffmpeg` or `gifsicle` is missing
 
@@ -63,6 +63,9 @@ sudo apt-get install -y ffmpeg gifsicle
 
 Without `ffmpeg` the pipeline stops. Without `gifsicle` the GIF is written
 unoptimized and larger, and the encode prints a note saying so. Install both.
+On a host that cannot reach a Debian mirror, the vendored toolchain carries
+`ffmpeg`, `ffprobe` and `gifsicle` in `system/tools/bin` (gap G9 in
+`engineering/sandbox-coverage-gaps.md`), which `FETCH.md` step 6 puts on `PATH`.
 
 ## The clip is a still image
 

@@ -47,6 +47,9 @@ so the divergence stays visible rather than being quietly rewritten.
    across 3870 files, which is 798.8 MB at 10^6 bytes per MB. Every per-directory number
    in the branch README was re-derived from the git tree on 2026-10-29 and matches.
 
+   That figure is the first delivery. The second delivery, G9 to G13, raised the total to
+   1,500,745,192 bytes across 3891 files at tip `065f527b`, measured on 2026-11-05.
+
 None of these change what the payload contains, and none of them invalidate the gates.
 The branch is correct. The spec's arithmetic and two of its command snippets were not.
 
@@ -99,7 +102,7 @@ what you build.
 | Git LFS | **Not used.** This repo has no LFS (`.gitattributes` carries only two rules: `-whitespace` on `packages/desktop-native-apis/src/bindings.ts` and `*.sql text eol=lf`). Do not introduce LFS |
 | Per-file size cap | **Every file < 90 MiB.** GitHub rejects pushes over 100 MiB. The reference branch splits at exactly `94371840` bytes (= 90 MiB) |
 | Split naming | `<asset>.part-00`, `<asset>.part-01`, … zero-padded two digits, ascending, produced by `split -b 90m` |
-| Total payload | Reference branch: 880 MB packed / 3777 files. Expect **1.0–1.4 GB packed** here (§5 sizes the delta) |
+| Total payload | Reference branch: 880 MB packed / 3777 files. Expect **1.0–1.4 GB packed** here (§5 sizes the delta). As shipped with G9 to G13: **1.5 GB packed / 3891 files** at tip `065f527b` |
 | Manifest | `MANIFEST.sha256` at the branch root, `sha256sum` format (`<64 hex><two spaces><relative path>`), covering **every** file in the tree **plus** each split archive listed a second time under its **reassembled** name |
 | Docs | `README.md` and `FETCH.md` at the branch root (§8, §9) |
 | Source code | **None.** No `apps/`, no `packages/`, no `.github/`. Nothing here is imported by the application at build or run time |
@@ -1281,7 +1284,7 @@ list). Non-negotiable inclusions:
 
 G1 to G8 make the gates the delivered branch already passes. G9 to G13 close the stages that
 branch cannot cover, measured in `engineering/sandbox-coverage-gaps.md`. They shipped in the
-same orphan commit, tip `c43df0ec06e04ff8c323bcdd01165390eef894a3`, so a consumer gets them
+same orphan commit, tip `065f527b97c6b182a5c4c48ad3e2c09717d019dc`, so a consumer gets them
 from the same fetch. The build notes below stay as the rebuild procedure. Extend a group
 rather than adding a branch when a task needs more.
 
@@ -1307,8 +1310,10 @@ tools pass in §6.4.
 
 ### G10 — Model weights, required for transcription behaviour
 
-Blocks the four `#[ignore]` tests in `packages/rust_transcription/tests/sidecar_integration.rs`
-and any check of real transcript quality. `huggingface.co` is not allowlisted.
+Blocks the `#[ignore]` tests in `packages/rust_transcription/tests/sidecar_integration.rs`
+and any check of real transcript quality. `huggingface.co` is not allowlisted. The shipped
+whisper and SenseVoice weights open those two paths; the Parakeet and Canary tests stay
+blocked until their bundles ship.
 
 ```text
 models/whisper/ggml-tiny.bin           77.7 MB, upstream published blob
