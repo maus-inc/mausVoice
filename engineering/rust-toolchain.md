@@ -126,8 +126,7 @@ for the `ferrous-focus` git dependency, and `directory = "/tmp/cargo-vendor"`.
 ## Native payloads
 
 Two `build.rs` scripts download release archives that the Arena agent sandbox cannot
-reach. The
-vendor branch pre-seeds both under `native/`, and the digests in its
+reach. The vendor branch pre-seeds both under `native/`, and the digests in its
 `MANIFEST.sha256` match the pins in the build scripts byte for byte.
 
 | Payload             | File                                               | Env var that selects it                                                                  |
