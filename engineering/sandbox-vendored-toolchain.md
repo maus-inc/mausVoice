@@ -1,53 +1,80 @@
 # Sandboxed vendored toolchain
 
-This file orients an agent working in a network-restricted sandbox. It records what
-the vendor payload contains, what has been measured against this repository, and what
-still cannot run. It does not duplicate the instructions.
+This file orients an agent working in the Arena agent sandbox: `github.com`,
+`codeload.github.com`, `api.github.com`, `registry.npmjs.org`, `pypi.org` and
+`files.pythonhosted.org` reachable, 2 vCPU, 3.9 GB RAM (3,939 MB), no Docker daemon, measured on
+2026-11-05. Every limit below is a statement about that environment, not about the
+repository and not about your machine, so probe before you repeat one. On a host that reaches
+`crates.io`, `static.rust-lang.org`, a Debian mirror and GitHub release assets, install
+the toolchain normally and skip the payload. This file records what the payload contains, what has been measured
+against this repository, and what still cannot run there. It does not duplicate the
+instructions.
+
+Re-measured on 2026-11-05 in a second agent sandbox, 4 vCPU and 15.9 GB, which is not the
+Arena sandbox above. `static.rust-lang.org`, `index.crates.io`, `deb.debian.org`,
+`nodejs.org`, `dl.google.com`, `googlechromelabs.github.io` and GitHub Release assets all
+answered a ranged request. Only the `crates.io` JSON API answered 403, which is its bot
+policy rather than a missing route. The allowlist and every "no route" line below are
+therefore a property of the Arena agent sandbox, not of the network, so probe each host
+before repeating a limit from this file.
 
 Authoritative sources, in the order you should read them:
 
-1. `FETCH.md` on the vendor branch. The step-by-step recipe. Eleven steps, with the
-   exports, the reassembly loop and the gate table.
+1. `FETCH.md` on the vendor branch. The step-by-step recipe. Eleven numbered steps, with
+   sub-steps 3b and 7b to 7d for the second delivery, the exports, the reassembly loop and
+   the gate table.
 2. `README.md` on the vendor branch. Provenance, the verification table, size notes,
    and the things the consumer must know.
 3. `engineering/rust-toolchain.md` in this repository. The offline cargo environment,
    the per-crate gate commands, the native payload env vars, and the mistake list.
 4. `docs/sandbox-toolchain-vendor-spec.md` in this repository. The build
    specification, for when the payload has to be rebuilt.
-5. `.agents/PREFLIGHT.md` in this repository. The pre-push checklist.
+5. `engineering/sandbox-coverage-gaps.md` in this repository. What the payload
+   still does not cover, the measured failure for each gap, and the group that
+   would close it.
+6. `.agents/PREFLIGHT.md` in this repository. The pre-push checklist.
 
 ## The payload
 
 Orphan branch `vendor/sandbox-toolchain` on `maus-inc/mausVoice`. Commit
-`61fb32959d6ac6a36b0c6356069a767ee7725caa`, no parents, authored 2026-10-28, message
-`vendor: sandbox toolchain payload (G1-G8)`. It is not merged into `main` and no pull
-request exists for it. `main` is unaffected.
+`8442ae0c4e8d0c6a3e2a54072c53e8db5e0fa9e7`, no parents, authored 2026-11-05, message
+`vendor: sandbox toolchain payload (G1-G8, G9-G13, G16-G22)`. It is not merged into `main`
+and no pull request exists for it. `main` is unaffected.
 
-3870 blobs. The root tree is exactly `FETCH.md`, `LICENSES`, `MANIFEST.sha256`,
-`README.md`, `native`, `rust`, `system`.
+14438 blobs. The root tree is exactly `FETCH.md`, `LICENSES`, `MANIFEST.sha256`,
+`README.md`, `drivers`, `models`, `native`, `rust`, `system`.
 
-| Group       | Blobs | Logical bytes | What it is                                                                               |
-| ----------- | ----- | ------------- | ---------------------------------------------------------------------------------------- |
-| `system/`   | 3244  | 498,752,607   | Debian 12 development sysroot, the command line tools, and the build scripts             |
-| `rust/`     | 10    | 259,104,704   | Rust 1.88.0 components, the channel toml, the vendored crate tree, the cargo config      |
-| `native/`   | 4     | 30,713,132    | ONNX Runtime 1.23.2 and sherpa-onnx 1.13.5 archives                                      |
-| `LICENSES/` | 609   | 9,652,209     | 605 Debian `copyright` files plus the ONNX Runtime, sherpa-onnx and whisper.cpp licences |
-| root        | 3     | 538,810       | `README.md`, `FETCH.md`, `MANIFEST.sha256`                                               |
+| Group       | Blobs | Logical bytes | What it is                                                                                                              |
+| ----------- | ----- | ------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `system/`   | 13648 | 1,791,514,548 | Debian 12 development sysroot, the command line tools, the G9/G13 binaries, the G16 to G22 tools, and the build scripts |
+| `rust/`     | 13    | 306,619,901   | Rust 1.88.0 components, the channel toml, the vendored crate tree, the cargo config, the G12 target libraries           |
+| `native/`   | 4     | 30,713,132    | ONNX Runtime 1.23.2 and sherpa-onnx 1.13.5 archives                                                                     |
+| `models/`   | 8     | 463,077,947   | G10: whisper `ggml-tiny` and `ggml-base`, the SenseVoice ONNX bundle, `MODELS.txt`                                      |
+| `drivers/`  | 3     | 24,047,333    | G11: `tauri-driver` 2.0.6, `chromedriver` 152.0.7977.42, `DRIVERS.txt`                                                  |
+| `LICENSES/` | 759   | 13,832,512    | 755 Debian `copyright` files plus the ONNX Runtime, sherpa-onnx and whisper.cpp licences                                |
+| root        | 3     | 1,879,102     | `README.md`, `FETCH.md`, `MANIFEST.sha256`                                                                              |
 
-No single file reaches 100 MiB. Seven archives are split into `.part-NN` pieces at
-exactly 94,371,840 bytes: the vendored crate tree in two parts and the sysroot in
-five. `MANIFEST.sha256` carries 3871 lines, which is 3862 whole files plus the 7 parts
-plus the 2 reassembled archives. It does not list itself.
+No single file reaches 100 MiB. Fourteen files are `.part-NN` pieces, nine of them at
+exactly 94,371,840 bytes, across five archives: the vendored crate tree in two parts, the
+sysroot in five, `ggml-base.bin` in two, the SenseVoice `model.int8.onnx` in three and
+`trivy` in two. `MANIFEST.sha256` carries 14442 lines, which is 14437 whole tree files
+plus the 5 reassembled archives. It does not list itself.
 
-Extracted size is about 5.3 GB. The sysroot is about 1.9 GB, the vendored crate tree
-about 1.8 GB and the toolchain about 1.3 GB. Roughly 950 MB of the crate tree is five
+Extracted size is about 7 GB. The sysroot is about 1.9 GB, the vendored crate tree
+about 1.8 GB, the toolchain about 1.3 GB, `system/tools` about 1.4 GB and the
+second-delivery groups about 0.9 GB unpacked. Roughly 950 MB of the crate tree is five
 versions of the `windows` crate, 0.51.1, 0.52.0, 0.54.0, 0.58.0 and 0.61.3, which are
 dead weight on Linux but cannot be dropped without breaking `--locked` resolution for
 the Windows installer workspace.
 
 `system/tools/bin` ships `cmake` 3.25.1, `file` 1:5.44, `patchelf` 0.14.3, `pkgconf`
 1.8.1 and a `pkg-config` symlink to `pkgconf`, with 83 library blobs covering 44
-distinct library stems and `$ORIGIN/../lib` rpaths. `system/build/` ships the three
+distinct library stems and `$ORIGIN/../lib` rpaths. The second delivery adds `ffmpeg`
+7.0.2-static, `ffprobe` 7.0.2-static, `gifsicle` 1.95 and `gitleaks` 8.18.0 to the same
+directory. The third delivery adds the G16 to G22 binaries there and their support trees
+under `system/tools`: `libexec/valgrind`, `share/gdb`, the `mingw-w64` and
+`aarch64-linux-gnu` cross trees, `share/tessdata` and `debug/libc6-dbg`.
+`system/build/` ships the three
 scripts that produced the closure. `system/PKGS.txt` lists 634 packages.
 
 The vendored crate tree holds 1114 package directories, which is the 1113 crates.io
@@ -57,33 +84,34 @@ packages plus the one git dependency, `ferrous-focus`, that the union of the sev
 ## What has been measured
 
 The branch `README.md` records these results. They were produced against this
-repository at commit `61fb3295`.
+repository at commit `61fb3295` for the first delivery, `065f527b` for the second, and
+`8442ae0` for the third.
 
-| Gate                            | Result                                                            |
-| ------------------------------- | ----------------------------------------------------------------- |
-| Toolchain versions              | rustc 1.88.0, cargo 1.88.0, clippy 0.1.88, rustfmt 1.8.0-stable   |
-| Toolchain component hashes      | 5 of 5 match `channel-rust-1.88.0.toml`                           |
-| Sysroot symlinks                | 0 broken, 0 absolute                                              |
-| Sysroot ELFs                    | 1559 checked, all X86-64                                          |
-| pkg-config modules              | 37 of 37 resolve                                                  |
-| Link smoke test                 | gcc linked 19 libraries successfully                              |
-| Xvfb                            | started                                                           |
-| Tools under `env -i`            | 4 of 4 run                                                        |
-| Offline resolution              | `cargo metadata --locked` exit 0 for all seven manifests          |
-| Path patches                    | `block`, `sherpa-onnx-sys` and `rdev` all resolve from `patches/` |
-| Format                          | `cargo fmt --check` in six crates, 6 of 6 pass                    |
-| Clippy                          | `apps/desktop/src-tauri`, 0 warnings in 6m 13s                    |
-| Desktop lib tests               | 363 passed, 0 failed, 1 ignored                                   |
-| Transcription lib tests         | 64 passed, 0 failed, 1 ignored                                    |
-| pill_shared tests               | 242 passed, 0 failed                                              |
-| GTK pill tests under `xvfb-run` | 42 passed, 0 failed                                               |
-| Sidecar integration             | 7 passed, 0 failed, 4 ignored                                     |
-| CI guard tests                  | `node --test scripts/ci/*.test.mjs`, 371 passed                   |
-| Desktop TS unit                 | 3043 passed across 229 files                                      |
-| voice-ai                        | 501 passed across 37 files                                        |
-| agent                           | 24 passed                                                         |
-| preview                         | 22 passed across 4 files                                          |
-| Manifest                        | `sha256sum -c MANIFEST.sha256`, 3871 of 3871 OK                   |
+| Gate                            | Result                                                                                                                                |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| Toolchain versions              | rustc 1.88.0, cargo 1.88.0, clippy 0.1.88, rustfmt 1.8.0-stable                                                                       |
+| Toolchain component hashes      | 5 of 5 match `channel-rust-1.88.0.toml`                                                                                               |
+| Sysroot symlinks                | 0 broken, 0 absolute                                                                                                                  |
+| Sysroot ELFs                    | 1559 checked, all X86-64                                                                                                              |
+| pkg-config modules              | 37 of 37 resolve                                                                                                                      |
+| Link smoke test                 | gcc linked 19 libraries successfully                                                                                                  |
+| Xvfb                            | started                                                                                                                               |
+| Tools under `env -i`            | 4 of 4 run, the second delivery's 4 new binaries run, and the third delivery's 30 run with the documented env var where one is needed |
+| Offline resolution              | `cargo metadata --locked` exit 0 for all seven manifests                                                                              |
+| Path patches                    | `block`, `sherpa-onnx-sys` and `rdev` all resolve from `patches/`                                                                     |
+| Format                          | `cargo fmt --check` in six crates, 6 of 6 pass                                                                                        |
+| Clippy                          | `apps/desktop/src-tauri`, 0 warnings in 6m 13s                                                                                        |
+| Desktop lib tests               | 363 passed, 0 failed, 1 ignored                                                                                                       |
+| Transcription lib tests         | 64 passed, 0 failed, 1 ignored                                                                                                        |
+| pill_shared tests               | 242 passed, 0 failed                                                                                                                  |
+| GTK pill tests under `xvfb-run` | 42 passed, 0 failed                                                                                                                   |
+| Sidecar integration             | 7 passed, 0 failed, 4 ignored                                                                                                         |
+| CI guard tests                  | `node --test scripts/ci/*.test.mjs`, 371 passed                                                                                       |
+| Desktop TS unit                 | 3043 passed across 229 files                                                                                                          |
+| voice-ai                        | 501 passed across 37 files                                                                                                            |
+| agent                           | 24 passed                                                                                                                             |
+| preview                         | 22 passed across 4 files                                                                                                              |
+| Manifest                        | `MANIFEST.sha256`, 14442 lines: one per blob and one per reassembled archive                                                          |
 
 ## Independent verification
 
@@ -106,8 +134,9 @@ branch contents.
   including `clang-14`, `libclang-14-dev`, `libclang-common-14-dev`, `libllvm14`,
   `libpulse-dev`, `libasound2-dev`, `libgtk-layer-shell-dev`, `xvfb`, `xauth`,
   `xserver-common`, `imagemagick`, `libmagickcore-6.q16-6` and `libmagickwand-6.q16-6`.
-- The manifest covers all 3870 blobs, has 0 malformed lines, and 23 paths legitimately
-  contain spaces because they are cmake Help files. The `.part-00` reassembly loop only
+- The manifest covers all 14437 tree files plus the five reassembled archives, has 0
+  malformed lines, and 23 paths legitimately contain spaces because they are cmake Help
+  files. The `.part-00` reassembly loop only
   touches space-free paths, so the spaces are safe.
 - 0 pull requests exist for the branch and 0 workflow runs were triggered. `main` is
   unchanged. A compare in both directions returns 404, which confirms unrelated
@@ -135,22 +164,54 @@ commit message, so it remains a single orphan commit.
 
 ## Known limits
 
+Each line was measured in the Arena agent sandbox. Where one says a gate cannot run,
+check the host first with a `command -v` and one `curl`, because a limit that does not
+hold where you are is not a limit.
+
 - `file --version` runs under `env -i`, but classifying a file needs
   `MAGIC=/tmp/tools/share/magic.mgc`, because Debian's `file` has a compiled-in path at
-  `/usr/share/misc/magic.mgc` that does not exist in the sandbox. Nothing in this
+  `/usr/share/misc/magic.mgc` that does not exist in that sandbox. Nothing in this
   repository calls `file`, so this is a note rather than a blocker.
 - The `--ignored` tests in
   `packages/rust_transcription/tests/sidecar_integration.rs` download models from
-  `huggingface.co`, which is not on the allowlist. They cannot run. Report them as
-  unrunnable with the reason. Do not report them as passed.
+  `huggingface.co`, which is not on the allowlist. The second delivery ships the whisper
+  and SenseVoice weights, so they can run once `FETCH.md` step 7b is followed. The
+  Parakeet CTC, Parakeet TDT and Canary 1B bundles are not shipped, so a test that needs
+  one of those still cannot run. Report a test as unrunnable with the reason. Do not
+  report it as passed.
 - `cargo test` needs `CARGO_BUILD_JOBS=1`. Parallel linking peaks above the memory a
-  sandbox has and the linker dies with `signal 9`.
+  3.9 GB Arena agent sandbox has and the linker dies with `signal 9`.
 - `packages/rust_gtk_pill` opens a display, so it needs `xvfb-run -a`.
 - `cmake` must be on `PATH` before any build of `packages/rust_transcription`.
-- There is no browser group. This repository has no Playwright or WebDriver harness, so
-  nothing was vendored for one, and about 260 MB was saved by not shipping it. Visual
-  checking still has a surface inside the repository: `apps/preview` renders the real
-  desktop components in a Vite app on port 5193 and needs no browser automation to run.
+- There is no browser group in the payload, and this repository does have a WebDriver
+  harness. `apps/desktop/webdriver/wdio.conf.js` runs through `pnpm --filter desktop
+test:webdriver`, it spawns `tauri-driver` on Linux and `chromedriver` on macOS, and no
+  workflow invokes it. What that costs, and what to vendor for it, is gap G11 in
+  `engineering/sandbox-coverage-gaps.md`. Do not repeat the older claim that no harness
+  exists, because the directory is in the tree.
+- `pnpm install --frozen-lockfile` fails without `CHROMEDRIVER_SKIP_DOWNLOAD=true`,
+  because `chromedriver@152.0.0` is in `onlyBuiltDependencies` and its install script
+  fetches Chrome for Testing metadata from `googlechromelabs.github.io`, which is not
+  reachable. `--ignore-scripts` also works and skips the other build scripts. Measured
+  on 2026-11-05: 1398 packages in 29 seconds, then `pnpm run check-types` passes with 9
+  turbo tasks in 49 seconds. This is gap G15.
+- `tesseract` and any Chromium are absent, so the `ui-capture` skill cannot complete a
+  recording even though the second delivery ships `ffmpeg`, `ffprobe` and `gifsicle`.
+  `apps/preview` is still the rendering surface, and an inspection of it in both themes
+  is the substitute. The Chromium is the spec's group G6, which declines to build one.
+  This is gap G9.
+- The gitleaks release asset redirects to `release-assets.githubusercontent.com`, which
+  is blocked. The second delivery ships `gitleaks` 8.18.0 in `system/tools/bin`, so the
+  history scan runs locally once `FETCH.md` step 6 puts it on `PATH`. This is gap G13.
+- The whisper small, medium, large-v3 and large-v3-turbo weights and the Parakeet CTC,
+  Parakeet TDT and Canary 1B bundles do not ship, because they live on `huggingface.co`.
+  The second delivery ships `ggml-tiny`, `ggml-base` and the SenseVoice bundle, so the
+  four `#[ignore]` tests in
+  `packages/rust_transcription/tests/sidecar_integration.rs` can run once `FETCH.md` step
+  7b is followed. This is gap G10.
+- Visual checking still has a surface inside the repository: `apps/preview` renders the
+  real desktop components in a Vite app on port 5193 and needs no browser automation to
+  run.
 
 ## Rebuild triggers
 

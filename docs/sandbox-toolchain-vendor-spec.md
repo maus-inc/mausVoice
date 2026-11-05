@@ -1,8 +1,12 @@
 # Spec: `vendor/sandbox-toolchain` orphan branch for `maus-inc/mausVoice`
 
 **Status:** build specification, handed to an agent with unrestricted internet.
-**Author of spec:** an agent running inside the restricted sandbox, so every statement
-about the sandbox below was *measured there*, not assumed.
+**Author of spec:** an agent running inside the Arena agent sandbox, so every statement
+about that environment below was *measured there*, not assumed.
+**Environment described:** the Arena agent sandbox only. Six reachable hosts, 2 vCPU,
+about 3.9 GB RAM, no Docker daemon, Debian 12. Nothing here claims anything about a
+host that reaches the wider internet: such a host may fetch upstream instead of
+vendoring, and should probe before it repeats a limit from this file.
 **Reference implementation:** `better-Shape/app`, branch `vendor/sandbox-toolchain`,
 commit `7c4c8788b138294d1a9be31dbee79075df5e7f3d` ("vendor: sandbox toolchain payload
 (G1-G4)", 2026-10-16, author `mausagent <mausAgent@proton.me>`). That branch was read
@@ -42,6 +46,10 @@ so the divergence stays visible rather than being quietly rewritten.
    1.4 GB packed and Section 5 says about 0.9 to 1.1 GB. The branch is 798,761,772 bytes
    across 3870 files, which is 798.8 MB at 10^6 bytes per MB. Every per-directory number
    in the branch README was re-derived from the git tree on 2026-10-29 and matches.
+
+   That figure is the first delivery. The second delivery, G9 to G13, raised the total to
+   1,500,745,192 bytes across 3891 files at its tip, and the third, G16 to G22, raised it
+   again to 2,631,684,475 bytes across 14438 blobs at tip `8442ae0`, measured on 2026-11-05.
 
 None of these change what the payload contains, and none of them invalidate the gates.
 The branch is correct. The spec's arithmetic and two of its command snippets were not.
@@ -89,13 +97,13 @@ what you build.
 | Repo | `maus-inc/mausVoice` |
 | Branch name | `vendor/sandbox-toolchain` (exactly; the sandbox docs will hardcode it) |
 | History | **Orphan.** `git checkout --orphan`, zero parents, **one** commit |
-| Commit message | `vendor: sandbox toolchain payload (G1-G8)` |
+| Commit message | `vendor: sandbox toolchain payload (G1-G8, G9-G13)` |
 | Mergeable | Never. No PR, no merge, no rebase onto `main` |
 | Base | None. Do not branch from `main` |
 | Git LFS | **Not used.** This repo has no LFS (`.gitattributes` carries only two rules: `-whitespace` on `packages/desktop-native-apis/src/bindings.ts` and `*.sql text eol=lf`). Do not introduce LFS |
 | Per-file size cap | **Every file < 90 MiB.** GitHub rejects pushes over 100 MiB. The reference branch splits at exactly `94371840` bytes (= 90 MiB) |
 | Split naming | `<asset>.part-00`, `<asset>.part-01`, … zero-padded two digits, ascending, produced by `split -b 90m` |
-| Total payload | Reference branch: 880 MB packed / 3777 files. Expect **1.0–1.4 GB packed** here (§5 sizes the delta) |
+| Total payload | Reference branch: 880 MB packed / 3777 files. Expect **1.0–1.4 GB packed** here (§5 sizes the delta). As shipped with G9 to G13: **1.5 GB packed / 3891 files**. As shipped with G16 to G22: **2.63 GB packed / 14438 blobs** at tip `8442ae0` |
 | Manifest | `MANIFEST.sha256` at the branch root, `sha256sum` format (`<64 hex><two spaces><relative path>`), covering **every** file in the tree **plus** each split archive listed a second time under its **reassembled** name |
 | Docs | `README.md` and `FETCH.md` at the branch root (§8, §9) |
 | Source code | **None.** No `apps/`, no `packages/`, no `.github/`. Nothing here is imported by the application at build or run time |
@@ -438,6 +446,8 @@ Two **defects in the reference branch to not copy**:
 | G7 licences | 7.6 MB | ~9 MB | More packages → more `copyright` files |
 | G8 manifest+docs | 0.5 MB | ~0.6 MB | More files → more lines |
 | **Total** | **880 MB** | **~0.9–1.1 GB** | |
+| **Total, G9 to G13 shipped** | — | **1.5 GB packed / 3891 files** | The first-delivery estimate above sizes G1 to G8 only. The second delivery added G9 to G13 on 2026-11-05, which took the shipped total past the estimate. Measure the tree, do not reuse the G1 to G8 figure. |
+| **Total, G16 to G22 shipped** | — | **`system/tools` is 1.4 GB; the whole branch is 2.63 GB** at tip `8442ae0` | The third delivery adds G16 to G22. G21 is most of the growth, because a cross compiler needs its `lib/gcc`, `lib/gcc-cross` and target sysroot trees. The estimate above sized the driver binaries only. Measured with `du` over `system/tools` and `git ls-tree -r -l` over the branch, 2026-11-05. |
 
 Extracted total ≈ **3.5–4.5 GB** in `/tmp`. Against 19 GB free that leaves room for
 `target/` dirs, but `README.md` must still tell the consumer to delete the downloaded
@@ -1273,6 +1283,126 @@ list). Non-negotiable inclusions:
 
 ---
 
+### G9 to G13 — Shipped on 2026-11-05
+
+G1 to G8 make the gates the delivered branch already passes. G9 to G13 close the stages that
+branch cannot cover, measured in `engineering/sandbox-coverage-gaps.md`. They shipped in the
+same orphan commit, which the third delivery moved to
+`8442ae0c4e8d0c6a3e2a54072c53e8db5e0fa9e7`, so a consumer gets every group from the same
+fetch. The build notes below stay as the rebuild procedure. Extend a group rather than
+adding a branch when a task needs more.
+
+### G9 — Media tools for UI capture, required for `ui-capture`
+
+Blocks the capture workflow in `.agents/skills/ui-capture/SKILL.md`, which needs `ffmpeg`,
+`ffprobe`, `gifsicle` and, optionally, `tesseract`.
+
+```text
+system/tools/bin/ffmpeg        static build, x86-64, with the LGPL text
+system/tools/bin/ffprobe       from the same build
+system/tools/bin/gifsicle      static build, GPL text
+system/tools/bin/tesseract     optional, plus system/tools/share/tessdata/eng.traineddata
+system/tools/UIPIPE.txt        version, upstream URL, sha256 for each binary
+```
+
+Sizes, measured from the static builds on the branch, are 79.8 MB for ffmpeg, 79.7 MB for
+ffprobe and 0.7 MB for gifsicle, 160 MB for the three. `tesseract` and its English data are
+not shipped, so the optional OCR round-trip stays absent and the skill's validation step
+skips it. Verify each
+binary runs under `env -i` with no `LD_LIBRARY_PATH`, which is the same sanity check the other
+tools pass in §6.4.
+
+### G10 — Model weights, required for transcription behaviour
+
+Blocks the `#[ignore]` tests in `packages/rust_transcription/tests/sidecar_integration.rs`
+and any check of real transcript quality. `huggingface.co` is not allowlisted. The shipped
+whisper and SenseVoice weights open those two paths; the Parakeet and Canary tests stay
+blocked until their bundles ship.
+
+```text
+models/whisper/ggml-tiny.bin           77.7 MB, upstream published blob
+models/whisper/ggml-base.bin           148 MB, split into 2 parts at 94,371,840 bytes
+models/onnx/sense-voice/               model.int8.onnx 237 MB in 3 parts, plus tokens.txt
+models/MODELS.txt                      upstream URL, revision, sha256, licence for each
+```
+
+Keep the large and medium whisper files, `large-v3-turbo` and `canary-1b` out of the default
+group. A model is
+data, so the digest is the only proof of which bytes loaded. `FETCH.md` needs a step that puts
+them under a private `$SV` path and exports the directory the sidecar reads, and it must say
+that nothing verifies transcript content, only that a model loaded and produced text. The
+whisper weights are runtime-overridable with `RUST_TRANSCRIPTION_MODEL_URL_<UPPERCASE_ID>`;
+the ONNX artifact sets are not.
+
+### G11 — WebDriver driver chain, optional
+
+Blocks `pnpm --filter desktop test:webdriver` on Linux. `wdio.conf.js` spawns
+`tauri-driver`, which appears in no `Cargo.lock` here, so `cargo install tauri-driver` needs
+crates.io. The sysroot already carries `webkit2gtk-driver` (§6.3), and the binary sits inside
+`libwebkit2gtk-4.1-0` at `/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebDriver`.
+
+```text
+drivers/tauri-driver/tauri-driver       2.0.6, built with cargo install --version 2.0.6 --locked
+drivers/DRIVERS.txt                     version, build command, sha256
+drivers/chromedriver-152.0.0/           only for the macOS path in wdio.conf.js
+```
+
+2.1.0 is the current release and needs rustc 1.90, above this repository's 1.88.0 pin, so
+build 2.0.6. Measured on the branch: 24 MB for the group.
+
+`FETCH.md` step 7c must print the `WebKitWebDriver` path from the extracted sysroot, and the
+branch `README.md` must say whether the end to end suite was run, not only that the binary
+exists. `G6` stays closed as a browser group. This group carries no browser.
+
+### G12 — Cross-target Rust standard libraries, optional
+
+Blocks a local type check of code behind `#[cfg(windows)]` and `#[cfg(target_os = "macos")]`.
+`test-desktop-unit.yml` runs a `rust-windows-gated` job on `windows-2022` for exactly that
+code.
+
+```text
+rust/targets/x86_64-pc-windows-msvc/rust-std-1.88.0.tar.xz
+rust/targets/aarch64-apple-darwin/rust-std-1.88.0.tar.xz
+rust/targets/TARGETS.txt                component sha256 from channel-rust-1.88.0.toml
+```
+
+Cargo does not read a standard library out of `rust/targets/`. Install the component into
+the toolchain the payload ships, with `rustup target add` from the vendored channel or a
+direct `--sysroot` whose `lib/rustlib/<target>/` holds the unpacked `rust-std`, and say in
+`FETCH.md` which of the two the consumer gets. `cargo check --target` does not link, so no
+Windows SDK and no macOS SDK is needed. Both
+components come from the same 1.88.0 channel the toolchain already pins, and their hashes are
+listed in `channel-rust-1.88.0.toml`, so the manifest check extends without a new trust
+assumption. Gate it with `cargo check --locked --target x86_64-pc-windows-msvc` in
+`apps/desktop/src-tauri` and in `packages/rust_windows_pill`, and with
+`cargo check --locked --target aarch64-apple-darwin` in `apps/desktop/src-tauri` and
+`packages/rust_macos_pill`. Both targets need their own standard library present, and
+`rustc --print target-list` does not prove either one is.
+
+### G13 — Secret scanning binary, small
+
+Blocks the history scan in `.github/workflows/secret-scan.yml`, which pins gitleaks 8.18.0.
+The release asset answers 302 to `release-assets.githubusercontent.com`, which has no route.
+
+```text
+system/tools/bin/gitleaks              version 8.18.0, static, about 30 MB
+system/tools/GITLEAKS.txt              upstream URL, published sha256, version
+```
+
+Gate it the way CI runs it, not with a bare `detect --source .`. The workflow scans a commit
+range from the trusted base commit with that commit's config:
+
+```bash
+gitleaks detect --log-opts="<base-sha>..<head-sha>" --config <base-sha>:gitleaks.toml
+```
+
+A bare `--source .` scans a different set of commits and auto-loads the `.gitleaksignore` in
+the tree it walks, so its finding count cannot be compared with CI. Compare the range scan's
+count with the last CI run on the same commit; a different count is a payload defect, not a
+clean result.
+
+---
+
 ## 7. Branch mechanics
 
 ```bash
@@ -1285,7 +1415,7 @@ rm -rf ./* ./.[!.]* 2>/dev/null || true      # working tree must be EMPTY of sou
 cp -a /tmp/out/. .
 git add -A
 git -c user.name='mausagent' -c user.email='mausAgent@proton.me' \
-    commit -m 'vendor: sandbox toolchain payload (G1-G8)'
+    commit -m 'vendor: sandbox toolchain payload (G1-G8, G9-G13)'
 git log --format='%H parents:%P'   # parents: must be EMPTY
 git push origin vendor/sandbox-toolchain
 ```
@@ -1673,6 +1803,29 @@ Must be verified during stage 4 (§6.5.3). If yes: nothing to do. If no: G5 grow
 (`crates.io` unreachable; my GitHub lookups for the `whisper-rs` repo 404'd — the
 repository may have moved or been renamed). **Resolve this first; it is the only unknown
 that can change the branch layout.**
+
+**D-6 resolved on 2026-11-05.** `whisper-rs-sys` is in
+`packages/rust_transcription/Cargo.lock`, and the delivered branch records `Transcription lib
+tests 64 passed, 0 failed` with `cmake` on `PATH` from the tools tree. That build cannot run
+without whisper.cpp sources, so the crate carries them and no extra group is needed. The
+remaining check is a `cargo test --locked --lib` run in `packages/rust_transcription` on the
+consumer side, which is already in `.agents/PREFLIGHT.md`.
+
+**D-9 — Build the media tools group (G9)?** Recommended **yes** when any task touches a
+surface a user sees, because `ui-capture` cannot run without `ffmpeg` and `gifsicle`. About
+85 MB, three static binaries, no system libraries to resolve.
+
+**D-10 — Vendor model weights (G10)?** Recommended **yes, smallest set only**. The four
+sidecar tests are the only evidence that the transcription path loads a model at all. Ship
+`ggml-tiny.bin` and one ONNX bundle, and keep the rest out.
+
+**D-11 — Build the WebDriver driver chain (G11)?** Recommended **no** until someone intends
+to run `test:webdriver` inside a sandbox. It pairs with D-2, which stays closed. The
+`WebKitWebDriver` path check costs nothing and should go into `FETCH.md` regardless.
+
+**D-12 — Vendor cross-target standard libraries (G12)?** Recommended **yes**. About 400 MB
+turns "checked by CI on Windows only" into a local `cargo check`, which is the difference
+between a claim and a measurement.
 
 **D-7 — Branch owner identity.** The reference commit is authored
 `mausagent <mausAgent@proton.me>`. Use whatever identity this repo's automation uses;
