@@ -4,6 +4,7 @@ import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { INITIAL_APP_STATE } from "../../state/app.state";
 import { setAppState } from "../../store";
+import { getTipAction } from "../onboarding/tip-actions";
 
 vi.mock("@tauri-apps/api/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@tauri-apps/api/core")>();
@@ -55,13 +56,14 @@ import SettingsPage from "./SettingsPage";
 ensureUiHarness();
 
 /**
- * The generative-provider tip's "Add API key" action must complete the task
- * in place: open the Groq key dialog with keyboard focus on its input (the
- * dialog's TextField carries autoFocus), and reveal the Groq row (smooth
- * scroll + highlight) so the user lands there if they close the dialog
- * without saving.
+ * The generative-provider tip floats in the bottom-right stack (TipToaster)
+ * and its Add API key action is owned by the Settings page: the page must
+ * register the handler on mount, and the handler must complete the task in
+ * place — reveal the Groq key row (smooth scroll + highlight) and open the
+ * key dialog with keyboard focus on its input (the dialog's TextField
+ * carries autoFocus).
  */
-describe("generative-provider tip action", () => {
+describe("SettingsPage generative-provider tip action", () => {
   let container: HTMLDivElement;
   let root: ReturnType<typeof createRoot> | null = null;
   /** jsdom does not run rAF, so queued frames are driven explicitly. */
@@ -126,19 +128,22 @@ describe("generative-provider tip action", () => {
     await drainFrames();
   };
 
-  const clickTipAction = async () => {
-    const addButton = Array.from(container.querySelectorAll("button")).find(
-      (button) => button.textContent === "Add API key",
-    );
-    expect(addButton).toBeTruthy();
-    await act(() => {
-      addButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-  };
-
-  it("opens the Groq key dialog and focuses the key input", async () => {
+  it("registers the Add API key handler while the page is mounted", async () => {
     await renderPage();
-    await clickTipAction();
+
+    const handler = getTipAction("generative-provider");
+    expect(handler).toBeTypeOf("function");
+  });
+
+  it("completes the task in place: reveals the row and opens the focused dialog", async () => {
+    await renderPage();
+
+    const handler = getTipAction("generative-provider");
+    expect(handler).toBeTypeOf("function");
+    act(() => {
+      handler!();
+    });
+    await drainFrames();
 
     // The dialog body copy is unique to the dialog (the row's title shares
     // the "Groq API key" wording).
@@ -154,12 +159,6 @@ describe("generative-provider tip action", () => {
     const keyInput = document.querySelector("input[type='password']");
     expect(keyInput).toBeTruthy();
     expect(document.activeElement).toBe(keyInput);
-  });
-
-  it("reveals the Groq row with a smooth centered scroll", async () => {
-    await renderPage();
-    await clickTipAction();
-    await drainFrames();
 
     const row = document.getElementById("setting-groq_api_key");
     expect(row).not.toBeNull();
@@ -171,5 +170,15 @@ describe("generative-provider tip action", () => {
           call.options?.behavior === "smooth",
       ),
     ).toBe(true);
+  });
+
+  it("unregisters the handler on unmount", async () => {
+    await renderPage();
+    expect(getTipAction("generative-provider")).toBeTypeOf("function");
+
+    act(() => root?.unmount());
+    root = null;
+
+    expect(getTipAction("generative-provider")).toBeUndefined();
   });
 });

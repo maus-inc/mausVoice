@@ -15,12 +15,6 @@ vi.mock("react-intl", async (importOriginal) => {
   return reactIntlWithIdsModule(importOriginal);
 });
 
-// The contextual `update-channel` tip needs a Router, which this test has no
-// router for. Stubbed to a marker so the anchor is still asserted on.
-vi.mock("../onboarding/TipCard", () => ({
-  TipCard: ({ id }: { id: string }) => createElement("div", { "data-tip": id }),
-}));
-
 vi.mock("../../actions/user.actions", async (importOriginal) => {
   const actual =
     await importOriginal<typeof import("../../actions/user.actions")>();
@@ -99,17 +93,6 @@ describe("UpdateChannelSetting", () => {
     const beta = tabByName("Beta") as HTMLElement | undefined;
     expect(stable?.getAttribute("aria-selected")).toBe("true");
     expect(beta?.getAttribute("aria-selected")).toBe("false");
-  });
-
-  it("anchors the update-channel tip where the choice is made", () => {
-    // The tip used to be listed in Help and nowhere else, so the only way to
-    // discover it was to go looking for it. It is anchored on the control it
-    // describes.
-    seedChannel("stable");
-    renderSetting();
-    expect(
-      document.querySelector('[data-tip="update-channel"]'),
-    ).not.toBeNull();
   });
 
   it("asks for confirmation before joining beta", async () => {

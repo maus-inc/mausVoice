@@ -67,7 +67,7 @@ import {
 } from "../../actions/personal-use.actions";
 import { setAutoLaunchEnabled } from "../../actions/settings.actions";
 import { SettingSection } from "../common/SettingSection";
-import { TipCard } from "../onboarding/TipCard";
+import { setTipAction } from "../onboarding/tip-actions";
 import { loadTones } from "../../actions/tone.actions";
 import {
   setAlwaysRequestAdminOnStartup,
@@ -412,11 +412,26 @@ export default function SettingsPage() {
     });
   };
 
-  const openGroqDialog = () => {
+  const openGroqDialog = useCallback(() => {
     setGroqApiKeyInput("");
     setGroqError(null);
     setGroqDialogOpen(true);
-  };
+  }, []);
+
+  // The generative-provider tip floats in the bottom-right stack (TipToaster)
+  // and its Add API key action completes the task in place: it scrolls to
+  // and highlights the Groq key row (visible if the dialog is closed again)
+  // and opens the key dialog, whose input carries autoFocus, so keyboard
+  // focus lands on the field. The page owns the handler because it mutates
+  // this page's dialog state; the toaster looks it up at click time.
+  useEffect(
+    () =>
+      setTipAction("generative-provider", () => {
+        focusSetting("groq_api_key");
+        openGroqDialog();
+      }),
+    [focusSetting, openGroqDialog],
+  );
 
   const closeGroqDialog = () => {
     if (!groqSaving) {
@@ -1221,21 +1236,6 @@ export default function SettingsPage() {
         <FormattedMessage defaultMessage="How mausVoice should manage your transcriptions." />
       }
     >
-      {/* The action completes the task in place instead of navigating: it
-          scrolls to and highlights the Groq key row (visible if the dialog
-          is closed again) and opens the key dialog, whose input carries
-          autoFocus, so keyboard focus lands on the field. (The Help list's
-          "Open settings" wording is a no-op on this page.) */}
-      <TipCard
-        id="generative-provider"
-        action={{
-          label: <FormattedMessage defaultMessage="Add API key" />,
-          onAction: () => {
-            focusSetting("groq_api_key");
-            openGroqDialog();
-          },
-        }}
-      />
       <SettingAnchor settingKey="deepgram_api_key" highlight={highlight}>
         <ListTile
           title={<FormattedMessage defaultMessage="Deepgram API key" />}

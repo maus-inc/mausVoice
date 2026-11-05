@@ -7,7 +7,6 @@ import { getMyUserPreferences } from "../../utils/user.utils";
 import { ConfirmDialog } from "../common/ConfirmDialog";
 import { SegmentedControl } from "../common/SegmentedControl";
 import { SettingSection } from "../common/SettingSection";
-import { TipCard } from "../onboarding/TipCard";
 
 export const UpdateChannelSetting = () => {
   const intl = useIntl();
@@ -54,11 +53,6 @@ export const UpdateChannelSetting = () => {
 
   return (
     <>
-      {/* The tip is anchored here rather than only in Help, so a user reaches it
-          where they actually make the choice. Without a contextual anchor the
-          `update-channel` tip was listed in Help and nowhere else, so the only
-          way to discover it was to go looking for it. */}
-      <TipCard id="update-channel" />
       <SettingSection
         title={<FormattedMessage defaultMessage="Update channel" />}
         description={

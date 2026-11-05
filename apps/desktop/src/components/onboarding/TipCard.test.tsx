@@ -9,6 +9,7 @@ import {
   setMatchMedia,
 } from "../../../test/helpers/jsdom-ui-harness";
 import { THEME_PROVIDER_CONFIG, theme } from "../../theme";
+import { setTipAction } from "./tip-actions";
 
 vi.mock("react-intl", async (importOriginal) => {
   const { reactIntlMockModule } =
@@ -114,7 +115,11 @@ const renderCard = (
 ) =>
   act(() => {
     root.render(
-      createElement(MemoryRouter, null, createElement(TipCard, props)),
+      createElement(
+        ThemeProvider,
+        { theme, ...THEME_PROVIDER_CONFIG },
+        createElement(MemoryRouter, null, createElement(TipCard, props)),
+      ),
     );
   });
 
@@ -144,25 +149,41 @@ describe("TipCard", () => {
     expect(dismissButton()).toBeTruthy();
   });
 
-  it("keeps the face flat: hairline, no elevation cast", async () => {
+  it("carries the floating-layer face: paper, hairline, premium lift", async () => {
     await renderCard();
 
     const card = container.querySelector('[role="note"]');
     if (!(card instanceof HTMLElement)) {
       throw new Error("Card not found");
     }
-    // The row separates by its level1 face and 1px hairline — in-flow tips
-    // must not borrow the floating-layer `premiumSurface` cast. jsdom reports
-    // an undeclared box-shadow as "" rather than "none".
-    expect(getComputedStyle(card).borderTopWidth).toBe("1px");
-    expect(["", "none"]).toContain(getComputedStyle(card).boxShadow);
+    const style = getComputedStyle(card);
+    // Live tips float over the page, so they take the floating-layer
+    // material the toasts use: a 1px hairline and the `premiumSurface` lift
+    // (its inset emboss is the marker — no other app shadow carries one).
+    // The paper face resolves through a theme CSS variable, which jsdom
+    // reports unresolved, so it is asserted by its variable reference.
+    expect(style.borderTopWidth).toBe("1px");
+    expect(style.backgroundColor).toBe("var(--app-palette-background-paper)");
+    expect(style.boxShadow).toContain("inset");
+  });
+
+  it("holds the toast column width so the two corner stacks align", async () => {
+    await renderCard();
+
+    const card = container.querySelector('[role="note"]');
+    if (!(card instanceof HTMLElement)) {
+      throw new Error("Card not found");
+    }
+    // Sonner's default toast width; the tip stack must share the column.
+    expect(getComputedStyle(card).width).toBe("356px");
   });
 
   it("renders no action for a tip anchored on its own feature page", async () => {
     await renderCard();
 
-    // `review-before-insert` is passed no `action`, so only the dismiss
-    // control is present — the page below the tip is the feature.
+    // `review-before-insert` has no entry in `TIP_LIVE_ACTIONS`, so only
+    // the dismiss control is present — the page the tip floats over is the
+    // feature itself.
     expect(container.querySelectorAll("button")).toHaveLength(1);
     expect(dismissButton()).toBeTruthy();
   });
@@ -222,21 +243,27 @@ describe("TipCard", () => {
     });
   });
 
-  it("runs the in-page action", async () => {
+  it("runs the in-page action through the route page's handler", async () => {
+    // The handler lives on the tip's route page (see `tip-actions`); the
+    // card looks it up at click time.
     const onAction = vi.fn();
-    await renderCard({
-      id: "generative-provider",
-      action: { label: "Add API key", onAction },
-    });
+    const unregister = setTipAction("generative-provider", onAction);
+    try {
+      await renderCard({ id: "generative-provider" });
 
-    expect(container.textContent).toContain("Add an AI provider for polishing");
-    act(() => {
-      buttonWithText("Add API key").click();
-    });
+      expect(container.textContent).toContain(
+        "Add an AI provider for polishing",
+      );
+      act(() => {
+        buttonWithText("Add API key").click();
+      });
 
-    expect(onAction).toHaveBeenCalledTimes(1);
-    // The action performs an in-page jump; it must not consume the tip.
-    expect(mocks.dismissTip).not.toHaveBeenCalled();
+      expect(onAction).toHaveBeenCalledTimes(1);
+      // The action performs an in-page jump; it must not consume the tip.
+      expect(mocks.dismissTip).not.toHaveBeenCalled();
+    } finally {
+      unregister();
+    }
   });
 });
 

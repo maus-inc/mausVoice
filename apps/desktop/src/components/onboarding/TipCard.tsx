@@ -7,6 +7,7 @@ import {
   X,
 } from "lucide-react";
 import { Box, Button, IconButton, Stack, Typography } from "@mui/material";
+import { useTheme } from "@mui/material/styles";
 import type { SxProps } from "@mui/material/styles";
 import type { SystemStyleObject, Theme } from "@mui/system";
 import {
@@ -21,7 +22,9 @@ import { FormattedMessage, useIntl } from "react-intl";
 import { dismissTip } from "../../actions/onboarding.actions";
 import { useAppStore } from "../../store";
 import { duration } from "../../styles/motion";
+import { premiumSurface } from "../../styles/shadows";
 import type { OnboardingTipId } from "../../utils/tips";
+import { getTipAction } from "./tip-actions";
 
 export const TIP_COPY: Record<
   OnboardingTipId,
@@ -84,6 +87,20 @@ export const TIP_ICONS: Record<OnboardingTipId, ReactNode> = {
 };
 
 /**
+ * The in-page action for each live tip that has one, and its label. The
+ * handler lives on the tip's route page (`tip-actions` registry), because it
+ * mutates that page's own state (Settings' Groq dialog). Live tips without
+ * an entry here introduce the page itself and carry no action.
+ */
+export const TIP_LIVE_ACTIONS: Partial<
+  Record<OnboardingTipId, { label: ReactNode }>
+> = {
+  "generative-provider": {
+    label: <FormattedMessage defaultMessage="Add API key" />,
+  },
+};
+
+/**
  * Subscribes a component to a tip's visibility: true while the tip has not
  * been dismissed, false after `dismissTip` has persisted it.
  */
@@ -119,15 +136,16 @@ const collectSx = (
 
 /**
  * The presentational shell both tip surfaces render: a notification _row_,
- * not a banner. A flat level1 face with a 1px hairline and the standard card
- * radius — the same material as a list row — so a tip reads as part of the
- * page, never as an ad pinned to it.
+ * not a banner. The base face is a flat level1 row with a 1px hairline and
+ * the standard card radius — the material of an in-flow list row, which is
+ * how `HelpPage` lists the tips. `TipCard` overrides the face to the
+ * floating-layer material (paper + premium lift), because the live tips
+ * float over the page.
  *
  * Deliberately quiet (Linear's inbox rows are the reference class for this
  * component): a bare 16px glyph at `text.secondary` instead of an icon tile,
- * no drop shadow (elevation shadows stay with floating layers — toasts,
- * dialogs, popovers — per the "borders over shadows" rule), and the
- * affordances gathered on the right the way the app's toasts gather theirs.
+ * the affordances gathered on the right the way the app's toasts gather
+ * theirs, and no drop shadow in-flow (elevation is for floating layers).
  *
  * `HelpPage` lists the same tips with a "Show again" action in place of the
  * dismiss control, so the copy, icons, and frame are all single-sourced here
@@ -256,6 +274,7 @@ const TipCardMotion = ({ children }: { children: ReactNode }) => {
   const reduceMotion = useReducedMotion();
   return (
     <motion.div
+      layout
       variants={reduceMotion ? tipFadeVariants : tipVariants}
       initial="hidden"
       animate="shown"
@@ -266,39 +285,28 @@ const TipCardMotion = ({ children }: { children: ReactNode }) => {
   );
 };
 
-export type TipCardAction = {
-  /**
-   * The button's label. Required (rather than falling back to the tip's
-   * Help-list wording): in-page actions say what they do on this page, which
-   * is not the same thing as the Help list's navigate wording.
-   */
-  label: ReactNode;
-  /** In-place action performed on this page (e.g. reveal and open the control the tip is about). */
-  onAction: () => void;
-};
-
 /**
- * The live in-page tip, rendered at the top of a feature page. Shows only
- * while the tip is not dismissed, animates a short entrance, and on dismiss
- * animates out and persists the dismissal once the exit finishes (an
- * interrupted exit is persisted on unmount instead, so navigating away
- * mid-animation cannot resurrect the tip).
+ * The live tip, rendered by `TipToaster` in the floating bottom-right stack
+ * on the tip's own route. Shows only while the tip is not dismissed, animates
+ * a short entrance, and on dismiss animates out and persists the dismissal
+ * once the exit finishes (an interrupted exit is persisted on unmount instead,
+ * so navigating away mid-animation cannot resurrect the tip).
  *
- * `action` is optional because the tips anchored on their own feature page
- * (Styling, Transcriptions) introduce the page itself and have nothing to
- * do in place; the others may offer one quiet in-page action.
+ * The face is the floating-layer material: paper over the page with the
+ * premium lift the app reserves for things that float (toasts, dialogs,
+ * popovers), at the toast column width so the two stacks align in the corner.
+ * `TipCardFrame` keeps the flat in-flow material for the Help page's listing.
+ *
+ * The in-page action, where one exists (`TIP_LIVE_ACTIONS`), runs the handler
+ * the tip's route page registered in `tip-actions`; it never dismisses the
+ * tip — the action completes the task, dismissal stays the X's job.
  */
-export const TipCard = ({
-  id,
-  action,
-}: {
-  id: OnboardingTipId;
-  /** In-page action; omit it when the feature the tip introduces is the page itself. */
-  action?: TipCardAction;
-}) => {
+export const TipCard = ({ id }: { id: OnboardingTipId }) => {
+  const theme = useTheme();
   const visible = useTip(id);
   const [closing, setClosing] = useState(false);
   const dismissedRef = useRef(false);
+  const liveAction = TIP_LIVE_ACTIONS[id];
 
   // A dismiss is a deliberate choice, so it must survive the exit being
   // interrupted (the user navigating away mid-animation): without this the
@@ -341,19 +349,27 @@ export const TipCard = ({
             body={copy.body}
             onDismiss={handleDismiss}
             actions={
-              action ? (
+              liveAction ? (
                 <Button
                   size="small"
                   variant="outlined"
-                  onClick={action.onAction}
+                  onClick={() => getTipAction(id)?.()}
                   // A quiet secondary action: no arrow, which would read as a
                   // marketing CTA in an otherwise neutral row.
                   sx={{ textTransform: "none", borderRadius: 999 }}
                 >
-                  {action.label}
+                  {liveAction.label}
                 </Button>
               ) : undefined
             }
+            sx={{
+              width: 356,
+              bgcolor: "background.paper",
+              boxShadow:
+                theme.palette.mode === "dark"
+                  ? premiumSurface.dark.hover
+                  : premiumSurface.light.hover,
+            }}
           />
         </TipCardMotion>
       )}

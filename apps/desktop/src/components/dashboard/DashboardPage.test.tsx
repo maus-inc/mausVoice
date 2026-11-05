@@ -17,6 +17,12 @@ const historyEntry: Transcription = {
   isDeleted: false,
 };
 
+vi.mock("react-intl", async (importOriginal) => {
+  const { reactIntlMockModule } =
+    await import("../../../test/helpers/react-intl-mock");
+  return reactIntlMockModule(importOriginal);
+});
+
 vi.mock("@tauri-apps/api/app", () => ({
   getVersion: () => Promise.resolve("1.0.0"),
 }));
