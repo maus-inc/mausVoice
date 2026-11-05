@@ -112,8 +112,8 @@ const seedAppTarget = (target: AppTarget) => {
   setAppState(state, true);
 };
 beforeEach(() => {
-  listAppTargetsMock.mockImplementation(async () =>
-    Object.values(getAppState().appTargetById),
+  listAppTargetsMock.mockImplementation(() =>
+    Promise.resolve(Object.values(getAppState().appTargetById)),
   );
 });
 

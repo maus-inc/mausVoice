@@ -68,12 +68,12 @@ describe("user and preference local-data clear & i18n guards", () => {
     const state = structuredClone(INITIAL_APP_STATE);
     state.userById[LOCAL_USER_ID] = seedUser();
     setAppState(state, true);
-    userRepoMock.getMyUser.mockImplementation(
-      async () => getAppState().userById[LOCAL_USER_ID] ?? null,
+    userRepoMock.getMyUser.mockImplementation(() =>
+      Promise.resolve(getAppState().userById[LOCAL_USER_ID] ?? null),
     );
-    userRepoMock.setMyUser.mockImplementation(async (user) => user);
-    userPrefsRepoMock.getUserPreferences.mockImplementation(
-      async () => getAppState().userPrefs,
+    userRepoMock.setMyUser.mockImplementation((user) => Promise.resolve(user));
+    userPrefsRepoMock.getUserPreferences.mockImplementation(() =>
+      Promise.resolve(getAppState().userPrefs),
     );
     userPrefsRepoMock.setUserPreferences.mockImplementation(
       async (prefs) => prefs,

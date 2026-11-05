@@ -16,6 +16,55 @@ import { ScrollListPage } from "../common/ScrollListPage";
 import { AddTermDialog } from "./AddTermDialog";
 import { DictionaryRow } from "./DictionaryRow";
 
+// Module scope so the nested save callbacks stay shallow enough to read; the
+// term itself carries no component state.
+const addTerm = async (
+  sourceValue: string,
+  destinationValue: string,
+  replacement: boolean,
+): Promise<void> => {
+  const newTerm: Term = {
+    id: createId(),
+    createdAt: dayjs().toISOString(),
+    sourceValue,
+    destinationValue,
+    isReplacement: replacement,
+  };
+
+  try {
+    await withLocalDataWrite(async (lease) => {
+      produceAppState((draft) => {
+        draft.termById[newTerm.id] = newTerm;
+        draft.dictionary.termIds = [newTerm.id, ...draft.dictionary.termIds];
+      }, lease);
+
+      await createDictionaryTerm(
+        newTerm,
+        (created) => {
+          if (getAppState().termById[newTerm.id] === newTerm) {
+            produceAppState((draft) => {
+              draft.termById[created.id] = created;
+            }, lease);
+          }
+          setLocalStorageValue("mausvoice:checklist-dictionary", true, lease);
+        },
+        (error) => {
+          produceAppState((draft) => {
+            delete draft.termById[newTerm.id];
+            draft.dictionary.termIds = draft.dictionary.termIds.filter(
+              (termId) => termId !== newTerm.id,
+            );
+          }, lease);
+          showErrorSnackbar(error);
+        },
+        lease,
+      );
+    });
+  } catch (error) {
+    showErrorSnackbar(error);
+  }
+};
+
 export default function DictionaryPage() {
   const termIds = useAppStore((state) => state.dictionary.termIds);
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
@@ -24,77 +73,17 @@ export default function DictionaryPage() {
     await loadDictionary();
   }, []);
 
-  const addTerm = useCallback(
-    async (
-      sourceValue: string,
-      destinationValue: string,
-      replacement: boolean,
-    ) => {
-      const newTerm: Term = {
-        id: createId(),
-        createdAt: dayjs().toISOString(),
-        sourceValue,
-        destinationValue,
-        isReplacement: replacement,
-      };
-
-      try {
-        await withLocalDataWrite(async (lease) => {
-          produceAppState((draft) => {
-            draft.termById[newTerm.id] = newTerm;
-            draft.dictionary.termIds = [
-              newTerm.id,
-              ...draft.dictionary.termIds,
-            ];
-          }, lease);
-
-          await createDictionaryTerm(
-            newTerm,
-            (created) => {
-              if (getAppState().termById[newTerm.id] === newTerm) {
-                produceAppState((draft) => {
-                  draft.termById[created.id] = created;
-                }, lease);
-              }
-              setLocalStorageValue(
-                "mausvoice:checklist-dictionary",
-                true,
-                lease,
-              );
-            },
-            (error) => {
-              produceAppState((draft) => {
-                delete draft.termById[newTerm.id];
-                draft.dictionary.termIds = draft.dictionary.termIds.filter(
-                  (termId) => termId !== newTerm.id,
-                );
-              }, lease);
-              showErrorSnackbar(error);
-            },
-            lease,
-          );
-        });
-      } catch (error) {
-        showErrorSnackbar(error);
-      }
-    },
-    [],
-  );
-
-  const handleAddGlossaryTerms = useCallback(
-    async (terms: string[]) => {
-      for (const term of terms) {
-        await addTerm(term, "", false);
-      }
-    },
-    [addTerm],
-  );
+  const handleAddGlossaryTerms = useCallback(async (terms: string[]) => {
+    for (const term of terms) {
+      await addTerm(term, "", false);
+    }
+  }, []);
 
   const handleAddReplacement = useCallback(
     async (source: string, destination: string) => {
       await addTerm(source, destination, true);
     },
-    [addTerm],
+    [],
   );
 
   return (

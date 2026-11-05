@@ -94,6 +94,8 @@ export const SettingRowText = ({
   description,
   titleId,
   descriptionId,
+  rootComponent = "span",
+  titleHeadingLevel,
 }: {
   /**
    * What the row's subject is, above it: "AI transcription" over the model that
@@ -115,8 +117,18 @@ export const SettingRowText = ({
    */
   titleId?: string;
   descriptionId?: string;
+  /**
+   * `div` for a row that is already a block, `span` for a row that is a
+   * button, where only phrasing content is valid.
+   */
+  rootComponent?: "span" | "div";
+  /**
+   * Renders the title as a native heading element. Used where the settings
+   * document outline needs this row named, rather than a `role="heading"` span.
+   */
+  titleHeadingLevel?: 2 | 3 | 4 | 5 | 6;
 }) => (
-  <Box component="span" sx={{ ...labelColumnSx, display: "block" }}>
+  <Box component={rootComponent} sx={{ ...labelColumnSx, display: "block" }}>
     {subtitle && (
       <Typography
         variant="caption"
@@ -128,7 +140,7 @@ export const SettingRowText = ({
     )}
     <Typography
       id={titleId}
-      component="span"
+      component={titleHeadingLevel ? `h${titleHeadingLevel}` : "span"}
       variant="body1"
       sx={{ display: "block", fontWeight: 600 }}
     >

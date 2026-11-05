@@ -5,12 +5,25 @@ import { loadApiKeys } from "../../actions/api-key.actions";
 import { useAppStore } from "../../store";
 import { logOnRejection } from "../../utils/promise.utils";
 import type { SettingAvailability } from "../../utils/settings-registry";
+import type { ActionStatus } from "../../types/state.types";
 import { settingAnchorId } from "./settings-routes";
 
 const PROVIDER_SETTINGS = [
   "where_your_dictation_audio_goes",
   "elevenlabs_keyterms",
 ] as const;
+
+const describeStatus = (status: ActionStatus) => {
+  if (status === "error") {
+    return (
+      <FormattedMessage defaultMessage="Could not load provider settings." />
+    );
+  }
+  if (status === "success") {
+    return <FormattedMessage defaultMessage="This setting is not available." />;
+  }
+  return <FormattedMessage defaultMessage="Loading provider settings…" />;
+};
 
 /** Explain a provider-dependent deep link until its target can be determined. */
 export const ProviderSettingLinkStatus = ({
@@ -43,13 +56,7 @@ export const ProviderSettingLinkStatus = ({
         ) : undefined
       }
     >
-      {status === "error" ? (
-        <FormattedMessage defaultMessage="Could not load provider settings." />
-      ) : status === "success" ? (
-        <FormattedMessage defaultMessage="This setting is not available." />
-      ) : (
-        <FormattedMessage defaultMessage="Loading provider settings…" />
-      )}
+      {describeStatus(status)}
     </Alert>
   );
 };

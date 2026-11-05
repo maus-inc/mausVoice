@@ -7,6 +7,12 @@ import { invokeStopRecording } from "../../utils/recorded-audio.utils";
 
 export type VoiceRecorderState = "idle" | "provider" | "browser";
 
+const extractErrorMessage = (error: unknown): string => {
+  if (typeof error === "string") return error;
+  if (error instanceof Error) return error.message;
+  return "";
+};
+
 export type SpeechRecognitionLike = {
   lang: string;
   interimResults: boolean;
@@ -114,15 +120,9 @@ export class VoiceInstructionRecorder {
       return "started";
     } catch (error) {
       if (gen !== this.opGen || this.disposed) return "blocked";
-      const message =
-        typeof error === "string"
-          ? error
-          : error instanceof Error && typeof error.message === "string"
-            ? error.message
-            : "";
       if (
         isLocalDataClearRequested() ||
-        message.includes("Local data is being cleared")
+        extractErrorMessage(error).includes("Local data is being cleared")
       ) {
         return "blocked";
       }

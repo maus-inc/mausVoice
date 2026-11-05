@@ -38,7 +38,7 @@ it("exposes pill placement as a heading beneath its settings group", () => {
       ),
     );
     expect(host.querySelector("h2")?.textContent).toBe("Pill");
-    const heading = host.querySelector('[role="heading"][aria-level="3"]');
+    const heading = host.querySelector("h3");
     expect(heading?.textContent).toBe("Pill placement");
     expect(
       host.querySelector('[role="tablist"][aria-label="Pill placement"]'),

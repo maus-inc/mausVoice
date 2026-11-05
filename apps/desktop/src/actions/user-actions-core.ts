@@ -217,6 +217,83 @@ type UpdateUserPreferencesOptions = {
   existingLease?: LocalDataWriteLease;
 };
 
+const reportPreferenceFailure = (
+  message: string,
+  showErrorToast: boolean,
+): void => {
+  if (showErrorToast) {
+    showErrorSnackbar(message);
+  }
+};
+
+/** Re-read after an uncertain failure or a rejected recovery, once per queue. */
+const ensurePreferencesFresh = async (
+  lease: LocalDataWriteLease,
+  saveErrorMessage: string,
+  showErrorToast: boolean,
+): Promise<void> => {
+  if (!preferencesNeedReconciliation) return;
+  try {
+    await reconcilePreferences(lease);
+  } catch (error) {
+    getLogger().error(
+      `Failed to reconcile preferences before update: ${error}`,
+    );
+    reportPreferenceFailure(saveErrorMessage, showErrorToast);
+    throw error;
+  }
+};
+
+const loadPreferencesForUpdate = async (
+  saveErrorMessage: string,
+  showErrorToast: boolean,
+): Promise<UserPreferences> => {
+  let existing = getMyUserPreferences(getAppState());
+  if (!existing) {
+    try {
+      existing = await getUserPreferencesRepo().getUserPreferences();
+    } catch (error) {
+      getLogger().error(
+        `Failed to load existing preferences before update: ${error}`,
+      );
+      reportPreferenceFailure(saveErrorMessage, showErrorToast);
+      throw error;
+    }
+  }
+  return existing ?? createDefaultPreferences();
+};
+
+const persistUserPreferences = async (
+  payload: UserPreferences,
+  lease: LocalDataWriteLease,
+  saveErrorMessage: string,
+  showErrorToast: boolean,
+): Promise<void> => {
+  try {
+    getLogger().verbose(`Saving user preferences (userId=${payload.userId})`);
+    const saved = await getUserPreferencesRepo().setUserPreferences(
+      payload,
+      lease,
+    );
+    produceAppState((draft) => {
+      setUserPreferences(draft, saved);
+    }, lease);
+    getLogger().verbose("User preferences saved successfully");
+  } catch (error) {
+    getLogger().error(`Failed to update user preferences: ${error}`);
+    preferencesNeedReconciliation = true;
+    try {
+      await reconcilePreferences(lease);
+    } catch (recoveryError) {
+      getLogger().error(
+        `Failed to re-read preferences after a failed save: ${recoveryError}`,
+      );
+    }
+    reportPreferenceFailure(saveErrorMessage, showErrorToast);
+    throw error;
+  }
+};
+
 export const updateUserPreferences = (
   updateCallback: (preferences: UserPreferences) => void | false,
   saveErrorMessage = getIntl().formatMessage({
@@ -227,67 +304,23 @@ export const updateUserPreferences = (
   enqueueLocalDataMutation(
     enqueuePrefsMutation,
     async (lease) => {
-      if (preferencesNeedReconciliation) {
-        try {
-          await reconcilePreferences(lease);
-        } catch (error) {
-          getLogger().error(
-            `Failed to reconcile preferences before update: ${error}`,
-          );
-          if (options.showErrorToast !== false)
-            showErrorSnackbar(saveErrorMessage);
-          throw error;
-        }
-      }
-      const state = getAppState();
-      const myUserId = getMyEffectiveUserId(state);
-
-      let existing = getMyUserPreferences(state);
-      if (!existing) {
-        try {
-          existing = await getUserPreferencesRepo().getUserPreferences();
-        } catch (error) {
-          getLogger().error(
-            `Failed to load existing preferences before update: ${error}`,
-          );
-          if (options.showErrorToast !== false) {
-            showErrorSnackbar(saveErrorMessage);
-          }
-          throw error;
-        }
-      }
-
-      const safeExisting = existing ?? createDefaultPreferences();
+      const showErrorToast = options.showErrorToast !== false;
+      await ensurePreferencesFresh(lease, saveErrorMessage, showErrorToast);
+      const myUserId = getMyEffectiveUserId(getAppState());
+      const safeExisting = await loadPreferencesForUpdate(
+        saveErrorMessage,
+        showErrorToast,
+      );
       // The mutation runs when this task reaches the front of the queue, so it
       // always derives from the most recently committed preferences.
       const payload: UserPreferences = { ...safeExisting, userId: myUserId };
       if (updateCallback(payload) === false) return;
-
-      try {
-        getLogger().verbose(`Saving user preferences (userId=${myUserId})`);
-        const saved = await getUserPreferencesRepo().setUserPreferences(
-          payload,
-          lease,
-        );
-        produceAppState((draft) => {
-          setUserPreferences(draft, saved);
-        }, lease);
-        getLogger().verbose("User preferences saved successfully");
-      } catch (error) {
-        getLogger().error(`Failed to update user preferences: ${error}`);
-        preferencesNeedReconciliation = true;
-        try {
-          await reconcilePreferences(lease);
-        } catch (recoveryError) {
-          getLogger().error(
-            `Failed to re-read preferences after a failed save: ${recoveryError}`,
-          );
-        }
-        if (options.showErrorToast !== false) {
-          showErrorSnackbar(saveErrorMessage);
-        }
-        throw error;
-      }
+      await persistUserPreferences(
+        payload,
+        lease,
+        saveErrorMessage,
+        showErrorToast,
+      );
     },
     options.existingLease,
   );

@@ -173,6 +173,8 @@ export type SettingRowProps = {
   /** Makes the row one button that opens this URL in the browser. */
   externalUrl?: string;
   disabled?: boolean;
+  /** Renders the title as a native heading for the document outline. */
+  titleHeadingLevel?: 2 | 3 | 4 | 5 | 6;
 };
 
 /**
@@ -191,6 +193,7 @@ export const SettingRow = ({
   onClick,
   externalUrl,
   disabled,
+  titleHeadingLevel,
 }: SettingRowProps) => {
   const highlight = useSettingHighlight(settingKey);
   const anchorId = settingAnchorId(settingKey);
@@ -229,6 +232,8 @@ export const SettingRow = ({
         description={description}
         titleId={titleId}
         descriptionId={descriptionId}
+        rootComponent={interactive ? "span" : "div"}
+        titleHeadingLevel={titleHeadingLevel}
       />
       <SettingRowControlColumn
         value={value}
@@ -266,7 +271,7 @@ export const SettingRow = ({
           ? [
               {
                 flexWrap: "wrap" as const,
-                "& > span:first-of-type": { flexBasis: "min(200px, 100%)" },
+                "& > div:first-of-type": { flexBasis: "min(200px, 100%)" },
                 "& > :last-child": { maxWidth: "100%", ml: "auto" },
               },
             ]
