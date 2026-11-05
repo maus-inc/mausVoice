@@ -14,6 +14,7 @@ import { showErrorSnackbar } from "../../actions/app.actions";
 import { getAppState, produceAppState, useAppStore } from "../../store";
 import { beginLocalDataWrite } from "../../utils/local-data-write-gate";
 import { focusAfterDictionaryDelete } from "./dictionary-delete-focus";
+import { restoreDictionaryOrder } from "./restore-dictionary-order";
 import {
   deleteDictionaryTerm,
   updateDictionaryTerm,
@@ -139,21 +140,7 @@ export const DictionaryRow = ({ id }: DictionaryRowProps) => {
             // Restore only this deletion, without reverting other edits or removals
             // that completed while the request was pending.
             draft.termById[id] ??= saved;
-            const ids = draft.dictionary.termIds;
-            if (!ids.includes(id)) {
-              const oldIndex = previousIds.indexOf(id);
-              const next = previousIds
-                .slice(oldIndex + 1)
-                .find((candidate) => ids.includes(candidate));
-              const before = previousIds
-                .slice(0, oldIndex)
-                .reverse()
-                .find((candidate) => ids.includes(candidate));
-              let index = Math.min(Math.max(oldIndex, 0), ids.length);
-              if (next) index = ids.indexOf(next);
-              else if (before) index = ids.indexOf(before) + 1;
-              ids.splice(index, 0, id);
-            }
+            restoreDictionaryOrder(draft.dictionary.termIds, previousIds, id);
           }, write.lease);
           showErrorSnackbar(error);
         },

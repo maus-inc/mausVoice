@@ -5,7 +5,6 @@ import {
   PillPlacement,
   PillResetMonitorStrategy,
 } from "@maus-inc/types";
-import { invoke } from "@tauri-apps/api/core";
 import { getAppState, produceAppState } from "../store";
 import {
   type PostProcessingMode,
@@ -99,14 +98,8 @@ export const setInteractionChimeEnabled = async (enabled: boolean) => {
     "Unable to update interaction chime. User not found.",
     "Failed to save interaction chime preference. Please try again.",
   );
-  // A23: Mirror the pref into Rust so native pill thocks honor it too.
-  // Fire-and-forget: the persisted value is the source of truth and the
-  // command only controls the in-memory flag used by audio_feedback. The
-  // command can fail on a non-main window, which is expected and safe to
-  // ignore, but we still surface it for diagnostics.
-  invoke("set_interaction_chime_enabled", { enabled }).catch((error) =>
-    getLogger().verbose(`Failed to set interaction chime on pill: ${error}`),
-  );
+  // AppSideEffects mirrors the store value from the main window, including
+  // rollback or reconciliation after a failed save.
 };
 
 export const setInteractionFeedbackVolume = async (
@@ -128,12 +121,7 @@ export const setInteractionFeedbackVolume = async (
     "Unable to update interaction feedback volume. User not found.",
     "Failed to save interaction feedback volume. Please try again.",
   );
-  invoke("set_interaction_feedback_volume", { volume: clamped }).catch(
-    (error) =>
-      getLogger().verbose(
-        `Failed to set interaction feedback volume on pill: ${error}`,
-      ),
-  );
+  // AppSideEffects is the sole native mirror, including for restored values.
 };
 
 export const setUserName = async (name: string): Promise<void> => {

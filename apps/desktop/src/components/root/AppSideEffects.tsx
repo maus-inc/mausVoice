@@ -80,6 +80,10 @@ import {
   syncHotkeyCombosToNative,
 } from "../../utils/keyboard.utils";
 import { getLogger, initLogging } from "../../utils/log.utils";
+import {
+  syncInteractionChime,
+  syncInteractionFeedbackVolume,
+} from "../../utils/interaction-feedback-sync";
 import { sendPillFlashMessage } from "../../utils/overlay.utils";
 import { isPermissionAuthorized } from "../../utils/permission.utils";
 import { getPlatform } from "../../utils/platform.utils";
@@ -324,9 +328,7 @@ export const AppSideEffects = () => {
   // setting with its fallback defaults.
   useEffect(() => {
     if (!isMainWindow) return;
-    invoke("set_interaction_chime_enabled", {
-      enabled: playInteractionChime,
-    }).catch(() => {
+    syncInteractionChime(playInteractionChime).catch(() => {
       // Best-effort mirror of the persisted preference; the store value
       // remains the source of truth and is re-sent on the next change.
     });
@@ -337,9 +339,7 @@ export const AppSideEffects = () => {
   // process-global reason as the chime gate above.
   useEffect(() => {
     if (!isMainWindow) return;
-    invoke("set_interaction_feedback_volume", {
-      volume: interactionFeedbackVolume,
-    }).catch(() => {
+    syncInteractionFeedbackVolume(interactionFeedbackVolume).catch(() => {
       // Best-effort mirror of the persisted preference; the store value
       // remains the source of truth and is re-sent on the next change.
     });
