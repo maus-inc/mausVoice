@@ -29,31 +29,30 @@ export const useSettingsAvailability = (): SettingAvailability => {
   const snapshot = useAppStore((state) => {
     const preferences = getMyUserPreferences(state);
     const transcriptionPrefs = getTranscriptionPrefs(state);
-    return [
-      shouldEnableDictationLimit(transcriptionPrefs.mode),
-      getEffectiveStylingMode(state),
-      preferences?.incognitoModeEnabled ?? false,
-      transcriptionPrefs.mode === "api" ? transcriptionPrefs.provider : null,
-      disclosureIsVisible(getTranscriptionAudioDisclosure(state)),
-      platform === "macos" || platform === "windows",
-      platform === "windows",
-      isPillPlacementAvailable(),
-      // The account flags are read one by one rather than as the record
-      // `getAccountAvailability` returns: a fresh object every render is a new
-      // reference to every memo that depends on this hook, and the tuple is
-      // what the store's deep comparison is good at.
-      getIsLoggedIn(state) && getHasEmailProvider(state),
-      getIsLoggedIn(state),
-      getIsLoggedIn(state),
-      // Whether the key list has arrived. Everything the app knows about a
-      // selected provider is unknown until it has: "not loaded yet" and "not
-      // available here" are different answers, and the flags built from it are
-      // reported as unknown rather than as false.
-      state.settings.apiKeysStatus === "success",
-    ] as const;
+    const loggedIn = getIsLoggedIn(state);
+    return {
+      dictationLimitEnabled: shouldEnableDictationLimit(
+        transcriptionPrefs.mode,
+      ),
+      stylingMode: getEffectiveStylingMode(state),
+      incognitoModeEnabled: preferences?.incognitoModeEnabled ?? false,
+      transcriptionProvider:
+        transcriptionPrefs.mode === "api" ? transcriptionPrefs.provider : null,
+      audioDisclosureVisible: disclosureIsVisible(
+        getTranscriptionAudioDisclosure(state),
+      ),
+      supportsCorrectionWatch: platform === "macos" || platform === "windows",
+      isWindows: platform === "windows",
+      pillPlacementAvailable: isPillPlacementAvailable(),
+      changePassword: loggedIn && getHasEmailProvider(state),
+      signOut: loggedIn,
+      deleteAccount: loggedIn,
+      // Provider-dependent availability remains unknown until the list loads.
+      apiKeysKnown: state.settings.apiKeysStatus === "success",
+    };
   });
 
-  const [
+  const {
     dictationLimitEnabled,
     stylingMode,
     incognitoModeEnabled,
@@ -66,7 +65,7 @@ export const useSettingsAvailability = (): SettingAvailability => {
     signOut,
     deleteAccount,
     apiKeysKnown,
-  ] = snapshot;
+  } = snapshot;
 
   return useMemo(
     () => ({

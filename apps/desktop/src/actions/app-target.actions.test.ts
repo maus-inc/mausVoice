@@ -248,7 +248,13 @@ describe("concurrent app target changes", () => {
     const pending = new Promise<AppTarget>((resolve) => {
       releaseWrite = resolve;
     });
-    upsertAppTargetMock.mockImplementationOnce(() => pending);
+    let releaseSecond!: (target: AppTarget) => void;
+    const pendingSecond = new Promise<AppTarget>((resolve) => {
+      releaseSecond = resolve;
+    });
+    upsertAppTargetMock
+      .mockImplementationOnce(() => pending)
+      .mockImplementationOnce(() => pendingSecond);
     const first = setAppTargetTypingSpeed("app", 10);
     const second = setAppTargetTypingSpeed("app", 20);
     let clearFinished = false;
@@ -262,6 +268,11 @@ describe("concurrent app target changes", () => {
       );
       expect(clearFinished).toBe(false);
       releaseWrite({ ...target, typingSpeedMs: 10 });
+      await vi.waitFor(() =>
+        expect(upsertAppTargetMock).toHaveBeenCalledTimes(2),
+      );
+      expect(clearFinished).toBe(false);
+      releaseSecond({ ...target, typingSpeedMs: 20 });
       await Promise.all([first, second]);
       const releaseClear = await clear;
       expect(upsertAppTargetMock).toHaveBeenCalledTimes(2);
@@ -269,6 +280,7 @@ describe("concurrent app target changes", () => {
       releaseClear();
     } finally {
       releaseWrite({ ...target, typingSpeedMs: 10 });
+      releaseSecond({ ...target, typingSpeedMs: 20 });
       const releaseClear = await clear;
       localStorage.removeItem(LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY);
       releaseClear();

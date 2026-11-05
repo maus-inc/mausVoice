@@ -4,6 +4,7 @@ import { getRec } from "@maus-inc/utilities";
 import { getAppTargetRepo, getStorageRepo } from "../repos";
 import { AppTargetUpsertParams } from "../repos/app-target.repo";
 import { getAppState, produceAppState } from "../store";
+import { getIntl } from "../i18n";
 import { registerAppTargets } from "../utils/app.utils";
 import { normalizeAppTargetId } from "../utils/apptarget.utils";
 import { createMutationQueue } from "../utils/mutation-queue";
@@ -117,7 +118,11 @@ const updateAppTarget = (
     await reconcileAppTarget(id, lease);
     const existing = getAppState().appTargetById[id];
     if (!existing) {
-      showErrorSnackbar("App target is not registered.");
+      showErrorSnackbar(
+        getIntl().formatMessage({
+          defaultMessage: "This app is not registered.",
+        }),
+      );
       return false;
     }
     await persistAppTarget(
@@ -136,6 +141,14 @@ const updateAppTarget = (
     return true;
   });
 
+const showAppTargetSaveError = () => {
+  showErrorSnackbar(
+    getIntl().formatMessage({
+      defaultMessage: "Could not save app settings. Please try again.",
+    }),
+  );
+};
+
 export const setAppTargetTone = async (
   id: string,
   toneId: string | null,
@@ -144,11 +157,7 @@ export const setAppTargetTone = async (
     return await updateAppTarget(id, { toneId });
   } catch (error) {
     console.error("Failed to update app target tone", error);
-    showErrorSnackbar(
-      error instanceof Error
-        ? error.message
-        : "Failed to update app target tone.",
-    );
+    showAppTargetSaveError();
     return false;
   }
 };
@@ -161,11 +170,7 @@ export const setAppTargetPasteKeybind = async (
     await updateAppTarget(id, { pasteKeybind });
   } catch (error) {
     console.error("Failed to update app target paste keybind", error);
-    showErrorSnackbar(
-      error instanceof Error
-        ? error.message
-        : "Failed to update app target paste keybind.",
-    );
+    showAppTargetSaveError();
   }
 };
 
@@ -177,11 +182,7 @@ export const setAppTargetInsertionMethod = async (
     await updateAppTarget(id, { insertionMethod });
   } catch (error) {
     console.error("Failed to update app target insertion method", error);
-    showErrorSnackbar(
-      error instanceof Error
-        ? error.message
-        : "Failed to update app target insertion method.",
-    );
+    showAppTargetSaveError();
   }
 };
 
@@ -193,11 +194,7 @@ export const setAppTargetTypingSpeed = async (
     await updateAppTarget(id, { typingSpeedMs });
   } catch (error) {
     console.error("Failed to update app target typing speed", error);
-    showErrorSnackbar(
-      error instanceof Error
-        ? error.message
-        : "Failed to update app target typing speed.",
-    );
+    showAppTargetSaveError();
   }
 };
 

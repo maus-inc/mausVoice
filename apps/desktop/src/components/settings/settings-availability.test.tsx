@@ -67,6 +67,29 @@ describe("settings availability", () => {
     container.remove();
   });
 
+  it("keeps the snapshot stable for unrelated store updates", () => {
+    const snapshots: SettingAvailability[] = [];
+    const Probe = () => {
+      snapshots.push(useSettingsAvailability());
+      return null;
+    };
+    act(() => root.render(createElement(Probe)));
+    expect(snapshots).toHaveLength(1);
+    act(() =>
+      produceAppState((draft) => {
+        draft.settings.audioDialogOpen = true;
+      }),
+    );
+    expect(snapshots).toHaveLength(1);
+    act(() =>
+      produceAppState((draft) => {
+        draft.settings.apiKeysStatus = "success";
+      }),
+    );
+    expect(snapshots).toHaveLength(2);
+    expect(snapshots[1]?.elevenlabs_keyterms).toBe(false);
+  });
+
   it("keeps a key-list setting reachable before the key list has loaded", () => {
     render();
 

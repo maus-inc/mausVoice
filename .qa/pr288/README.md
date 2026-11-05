@@ -48,7 +48,7 @@ Each route was checked for identifying text and uncaught page errors (see `resul
 
 ## Limitations
 
-- Route checks only confirm identifying text and absence of uncaught page errors. Dialog checks only confirm opening. They do not verify every control, scroll position, translation, onboarding step, failure state, or platform. Earlier interaction checks and remaining gaps are recorded in `reports/pr288-visual-audit.md`.
+- Route checks only confirm identifying text and absence of uncaught page errors. Dialog checks only confirm opening. They do not verify every control, scroll position, translation, onboarding step, failure state, or platform. Earlier interaction checks and remaining gaps are recorded in [audit notes](audit-notes.md).
 - The AI transcription dialog displays expected browser-preview errors because native `plugin:shell|spawn` is unavailable; these captures do not validate model downloads or devices. Native WebView, microphone/audio, real IME, global shortcuts, cross-window synchronization and platform-specific behavior were not visually verified here.
 - The initial `dialog-results-*.json` shows three failed account selectors; the account actions are whole-row buttons. Corrected selectors and successful captures are recorded in `account-dialog-results-*.json`.
 - The requested 140+ individually verified edge cases and 100 distinct issue-derived cases are not established by these captures.
