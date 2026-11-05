@@ -1,6 +1,6 @@
 # What the vendored toolchain still does not cover
 
-The orphan branch `vendor/sandbox-toolchain` makes most of this repository buildable inside the Arena agent sandbox: the six-host egress allowlist, 2 vCPU, 3 GB RAM, no Docker daemon. Every number here was measured in that environment on 2026-11-05 and describes it alone, not the repository, not CI, and not your machine. An unrestricted host closes most of these gaps by installing the tool, so probe before you repeat a limit or file a gap. What follows records the parts of the development cycle the payload cannot cover, with the measurement for each one, so an agent stops guessing and a builder knows what to add.
+The orphan branch `vendor/sandbox-toolchain` makes most of this repository buildable inside the Arena agent sandbox: the six-host egress allowlist, 2 vCPU, 3.9 GB RAM (3,939 MB), no Docker daemon. Every number here was measured in that environment on 2026-11-05 and describes it alone, not the repository, not CI, and not your machine. An unrestricted host closes most of these gaps by installing the tool, so probe before you repeat a limit or file a gap. What follows records the parts of the development cycle the payload cannot cover, with the measurement for each one, so an agent stops guessing and a builder knows what to add.
 
 It answers two questions.
 
@@ -41,7 +41,7 @@ A release asset such as `https://github.com/gitleaks/gitleaks/releases/download/
 | Resource                                   | Measured           | Effect on the gates                                                      |
 | ------------------------------------------ | ------------------ | ------------------------------------------------------------------------ |
 | CPU                                        | 2 vCPU             | `cargo test` links one binary at a time, so `CARGO_BUILD_JOBS=1`         |
-| Memory                                     | 3 GB               | Parallel linking peaks above it and the linker dies with signal 9        |
+| Memory                                     | 3,939 MB           | Parallel linking peaks above it and the linker dies with signal 9        |
 | Disk                                       | 21 GB free         | The extracted payload is about 5.3 GB, the Rust target tree several more |
 | Node                                       | v22.22.3           | Satisfies `engines`, is behind the `.nvmrc` pin of 24                    |
 | npm                                        | 10.9.8             | Installs pnpm@10.34.5 from the registry                                  |

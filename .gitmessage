@@ -10,4 +10,4 @@
 #   Closes #N            only with a real issue number
 #   Co-authored-by: Real Name <real.email@example.com>
 #
-# Lines starting with # are stripped by git and never reach the commit.
+# With the default commit.cleanup=strip, git drops these # lines before the message is stored.

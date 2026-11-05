@@ -2,11 +2,11 @@
 
 This file orients an agent working in the Arena agent sandbox: `github.com`,
 `codeload.github.com`, `api.github.com`, `registry.npmjs.org`, `pypi.org` and
-`files.pythonhosted.org` reachable, 2 vCPU, 3 GB RAM, no Docker daemon, measured on
+`files.pythonhosted.org` reachable, 2 vCPU, 3.9 GB RAM (3,939 MB), no Docker daemon, measured on
 2026-11-05. Every limit below is a statement about that environment, not about the
-repository and not about your machine, so probe before you repeat one. On a host that
-reaches `crates.io` and `static.rust-lang.org`, install the toolchain normally and skip
-the payload. This file records what the payload contains, what has been measured
+repository and not about your machine, so probe before you repeat one. On a host that reaches
+`crates.io`, `static.rust-lang.org`, a Debian mirror and GitHub release assets, install
+the toolchain normally and skip the payload. This file records what the payload contains, what has been measured
 against this repository, and what still cannot run there. It does not duplicate the
 instructions.
 
@@ -157,7 +157,7 @@ hold where you are is not a limit.
   `huggingface.co`, which is not on the allowlist. They cannot run. Report them as
   unrunnable with the reason. Do not report them as passed.
 - `cargo test` needs `CARGO_BUILD_JOBS=1`. Parallel linking peaks above the memory a
-  3 GB Arena agent sandbox has and the linker dies with `signal 9`.
+  3.9 GB Arena agent sandbox has and the linker dies with `signal 9`.
 - `packages/rust_gtk_pill` opens a display, so it needs `xvfb-run -a`.
 - `cmake` must be on `PATH` before any build of `packages/rust_transcription`.
 - There is no browser group in the payload, and this repository does have a WebDriver

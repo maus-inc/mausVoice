@@ -308,7 +308,7 @@ CARGO_BUILD_JOBS=1 cargo test --locked --lib
 xvfb-run -a cargo test --locked --manifest-path packages/rust_gtk_pill/Cargo.toml
 ```
 
-`CARGO_BUILD_JOBS=1` stays on the test steps. Parallel linking peaks above the memory a small sandbox has and the linker dies with `signal 9`. The pin is 1.88.0 and no crate in the tree declares a `rust-version` floor, so `--ignore-rust-version` is never needed. Do not add it.
+`CARGO_BUILD_JOBS=1` stays on the test steps. Parallel linking peaks above the memory a 3.9 GB Arena agent sandbox has and the linker dies with `signal 9`. The pin is 1.88.0 and no crate in the tree declares a `rust-version` floor, so `--ignore-rust-version` is never needed. Do not add it.
 
 Each `pnpm --filter` gate the preflight names also applies to the package you touched:
 

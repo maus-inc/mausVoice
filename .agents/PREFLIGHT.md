@@ -43,7 +43,7 @@ touched. Full detail and the measured results are in `engineering/rust-toolchain
 - [ ] `xvfb-run -a cargo test --locked --manifest-path packages/rust_gtk_pill/Cargo.toml`
 
 `CARGO_BUILD_JOBS=1` stays on the test steps. Parallel linking peaks above the memory
-a 3 GB Arena agent sandbox has and the linker dies with `signal 9`.
+a 3.9 GB Arena agent sandbox has and the linker dies with `signal 9`.
 
 The pin is 1.88.0 and no crate in the tree declares a `rust-version` floor, so
 `--ignore-rust-version` is never needed. Do not add it.
@@ -77,7 +77,7 @@ tools and the two native archives. Then:
 - [ ] I checked `system/PKGS.txt` for a tool before calling it missing, and read `engineering/sandbox-coverage-gaps.md` before calling a stage blocked
 - [ ] For every gate that still cannot run, I said so in the PR body with the reason and the substitute command I ran, rather than marking it passed
 
-The gap register in `engineering/sandbox-coverage-gaps.md` names what no payload can close here. The short list is model weights, provider API keys, audio devices, a Chromium and the media tools `ui-capture` needs, `tauri-driver`, packaging tooling, and the gitleaks binary. Name the gap number in the PR body when one of them stops a gate.
+The gap register in `engineering/sandbox-coverage-gaps.md` names what the current payload cannot close: model weights (G10), audio devices, a Chromium and the media tools `ui-capture` needs (G9), `tauri-driver` (G11), packaging tooling (G14) and the gitleaks binary (G13). G13, G14 and the rest are vendorable, so read the register before calling one impossible. Name the gap number in the PR body when one of them stops a gate.
 
 The `--ignored` tests in
 `packages/rust_transcription/tests/sidecar_integration.rs` download models from

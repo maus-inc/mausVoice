@@ -7,15 +7,15 @@ pre-commit:
   parallel: true
   jobs:
     - name: prettier (staged)
-      glob: "*.{ts,tsx,md,json,yml,yaml}"
+      glob: "**/*.{ts,tsx,md,json,yml,yaml}"
       run: npx prettier --check {staged_files}
 
     - name: oxlint (staged desktop source)
-      glob: "apps/desktop/{src,test}/**/*.{ts,tsx}"
+      glob: "apps/desktop/**/*.{ts,tsx}"
       run: npx oxlint {staged_files}
 
     - name: rust fmt check
-      glob: "*.rs"
+      glob: "**/*.{rs,toml}"
       run: |
         for m in apps/desktop/src-tauri packages/rust_transcription packages/rust_pill_shared packages/rust_gtk_pill packages/rust_macos_pill packages/rust_windows_pill; do
           cargo fmt --manifest-path "$m/Cargo.toml" --all -- --check
@@ -43,8 +43,10 @@ pre-push:
     - name: tests
       run: pnpm run test
 
+    # A smoke gate: the desktop crate, on any Rust or Cargo change. The full per-crate
+    # list, including the pill crates and the transcription sidecar, is in `.agents/PREFLIGHT.md`.
     - name: rust gates
-      glob: "*.rs"
+      glob: "**/*.{rs,toml,lock}"
       run: |
         cargo clippy --locked --manifest-path apps/desktop/src-tauri/Cargo.toml -- -D warnings
         CARGO_BUILD_JOBS=1 cargo test --locked --lib --manifest-path apps/desktop/src-tauri/Cargo.toml

@@ -30,7 +30,7 @@ import { readFileSync } from "node:fs";
 import process from "node:process";
 
 const FOLDABLE_HEADING =
-  /(review|babysit|poll|round|checks?\b|\bci\b|logs?\b|triage|research|fix log|re verification)/i;
+  /\b(review|babysit|poll|round|check|ci|log|triage|research)(es|s)?\b|\bfix log\b|\bre verification\b/i;
 
 // The template keeps four sections unfolded. Anything else visible is a record that belongs in a fold.
 const VISIBLE_HEADING =

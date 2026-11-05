@@ -1,5 +1,6 @@
 ---
 name: be-ambitious
+user-invocable: false
 description: >
   Turn a task into a deeper version of itself, not a bigger one. Name what a top
   professional in the field would do that the task does not ask for, the rawest

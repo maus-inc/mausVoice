@@ -110,6 +110,15 @@ describe("check-pr-body", () => {
     assert.equal(code, 0, out);
   });
 
+  it("does not read a word that merely contains review as a review heading", () => {
+    const body = ["## Summary", "Text.", "", "## Preview", "Text.", "", footer].join("\n");
+    const { code, out } = run(body);
+    // R6 rejects `## Preview` as an unknown visible section, but R3 must not claim it is a review record.
+    assert.equal(code, 1);
+    assert.doesNotMatch(out, /R3/);
+    assert.match(out, /R6/);
+  });
+
   it("fails a visible heading outside the template sections", () => {
     const body = [
       "## Summary",

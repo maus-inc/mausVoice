@@ -38,7 +38,7 @@ Rust gates, when the change touches any of the seven Cargo workspaces:
 - `CARGO_BUILD_JOBS=1 cargo test --locked --lib` in `apps/desktop/src-tauri` and `packages/rust_transcription`, `cargo test --locked` in `packages/rust_pill_shared`, and `xvfb-run -a cargo test --locked` in `packages/rust_gtk_pill`: <one line each>
 - `packages/rust_transcription/tests/sidecar_integration.rs`: <the seven that run, and the four `#[ignore]` ones named with their gap number>
 
-Every `not run` entry needs its own reason and the substitute command that ran instead. A sandbox that cannot reach the network is not a reason on its own. Follow `engineering/sandbox-vendored-toolchain.md` first, then report what still cannot run.
+Every `not run` entry needs a reason. When the gate could have run on this diff, add the substitute command that ran instead. When it does not apply to this diff, write `not applicable` and say which path or package it would have covered. A sandbox that cannot reach the network is not a reason on its own: follow `engineering/sandbox-vendored-toolchain.md` first, then report what still cannot run.
 
 <details>
 <summary>Changes</summary>
