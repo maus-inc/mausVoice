@@ -23,6 +23,10 @@ pre-commit:
 
     - name: bindings are regenerated
       glob: "{apps/desktop/src-tauri/**,packages/desktop-native-apis/src/bindings.ts}"
+      # The generator builds and runs the Tauri crate, which needs the same sidecar
+      # override CI uses when the binaries are not built yet.
+      env:
+        TAURI_CONFIG: '{"bundle":{"externalBin":[]}}'
       run: |
         pnpm gen:bindings
         git diff --exit-code -- packages/desktop-native-apis/src/bindings.ts \
