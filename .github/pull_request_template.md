@@ -101,7 +101,7 @@ Depth pass, from `AGENTS.md` section 2b.
 <details>
 <summary>Review classification</summary>
 
-- Substantially critical: No
+- Substantially critical: <Yes or No, decided from the criteria below>
 - Reason if yes: <explain which criterion applies>
 
 Set Yes for a breaking change, a security fix, a major architecture or protocol change, a new platform support claim, or a repo policy or workflow change that materially affects future work.

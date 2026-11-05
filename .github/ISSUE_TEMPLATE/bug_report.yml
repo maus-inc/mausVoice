@@ -6,7 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for reporting a bug. For a security issue, read [SECURITY guidance](../blob/main/CODE_OF_CONDUCT.md) first and report it privately rather than in a public issue.
+        Thanks for reporting a bug. For a security issue, read the [privacy and security page](https://maus-inc.github.io/mausVoice/docs/privacy-security/) and report it privately rather than in a public issue.
   - type: textarea
     id: summary
     attributes:
@@ -18,7 +18,7 @@ body:
     id: steps
     attributes:
       label: Steps to reproduce
-      description: Numbered steps that reliably trigger the issue. Include the exact audio file or wording when dictation output is wrong.
+      description: Numbered steps that reliably trigger the issue. Include the wording when dictation output is wrong, and a synthetic or sanitised audio sample rather than your own recording.
       placeholder: |
         1. Open the app
         2. Select the "parakeet-ctc-0.6b" model
@@ -83,6 +83,7 @@ body:
         - whisper, small
         - whisper, medium
         - whisper, large
+        - whisper, large v3 turbo
         - parakeet-ctc-0.6b
         - parakeet-tdt-0.6b
         - canary-1b

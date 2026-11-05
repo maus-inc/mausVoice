@@ -17,7 +17,6 @@ reviews:
     - "!**/Cargo.lock"
     - "!pnpm-lock.yaml"
     - "!packages/desktop-native-apis/src/bindings.ts"
-    - "!apps/preview/specs/**"
     - "!apps/docs/dist/**"
     - "!**/*.tsbuildinfo"
   path_instructions:

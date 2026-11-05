@@ -113,9 +113,9 @@ Read the real paths out of `FETCH.md` rather than trusting the names above. The 
 ships its own `rust/cargo-config.toml` with three stanzas, including the replacement
 for the `ferrous-focus` git dependency, and `directory = "/tmp/cargo-vendor"`.
 
-- `CARGO_BUILD_JOBS=1` is required for `cargo test`. Parallel linking peaks above the
-  memory a 3.9 GB Arena agent sandbox has, and the linker dies with `signal 9`. CI sets
-  it too.
+- `CARGO_BUILD_JOBS=1` is required for `cargo test` in the Arena agent sandbox. Parallel
+  linking peaks above the 3,939 MB it has, and the linker dies with `signal 9`. CI does
+  not set it, and the hosted runners have the memory to link in parallel.
 - `cargo --config <path> clippy` does not work. Cargo does not forward the global
   `--config` flag to external subcommands, so clippy resolves against crates.io and
   fails. Built-in commands such as `metadata` and `check` do honour the flag. Put the

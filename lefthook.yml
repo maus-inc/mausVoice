@@ -47,6 +47,10 @@ pre-push:
     # list, including the pill crates and the transcription sidecar, is in `.agents/PREFLIGHT.md`.
     - name: rust gates
       glob: "**/*.{rs,toml,lock}"
+      # Same override CI uses, or the desktop crate looks for sidecar binaries that a
+      # fresh checkout does not have yet.
+      env:
+        TAURI_CONFIG: '{"bundle":{"externalBin":[]}}'
       run: |
         cargo clippy --locked --manifest-path apps/desktop/src-tauri/Cargo.toml -- -D warnings
         CARGO_BUILD_JOBS=1 cargo test --locked --lib --manifest-path apps/desktop/src-tauri/Cargo.toml

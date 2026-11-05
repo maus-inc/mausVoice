@@ -27,6 +27,8 @@
  *       wrappers, a level-2 heading written entirely in bold, are tolerated because review
  *       bots rewrite bodies with them and the author does not control that
  *   R7  all four of those sections are present, so the gate and the checklist cannot be dropped
+ *   R8  no unfolded bullet records a numbered round, a babysit poll or a check run, which is
+ *       the section-as-a-bullet version of R3. Checklist items are exempt
  */
 
 import { readFileSync } from "node:fs";
@@ -46,6 +48,8 @@ const REQUIRED_SECTIONS = [
   "Checklist",
   "Footer",
 ];
+const ROUND_BULLET =
+  /^[-*]\s+(?!\[[ xX]\]).*\b(round\s*\d+|babysit|poll\b|ci run|check run)/i;
 
 function parseArgs(argv) {
   const args = { file: null, maxOpen: 150 };
@@ -156,6 +160,11 @@ function check(body, maxOpen) {
       }
       if (scan.startsWith("MausAgent | Filed by ")) {
         footerCount += 1;
+      }
+      if (ROUND_BULLET.test(scan)) {
+        violations.push(
+          `R8 line ${lineNo}: unfolded bullet "${quote(scan, 60)}" records a round, a poll or a check run. Put it in the round log table.`,
+        );
       }
     } else if (scan.startsWith("MausAgent | Filed by ")) {
       footerInsideFold = true;

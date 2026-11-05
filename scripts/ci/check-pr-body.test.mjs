@@ -156,6 +156,28 @@ describe("check-pr-body", () => {
     assert.match(out, /## Verification gate/);
   });
 
+  it("fails an unfolded bullet that records a round", () => {
+    const body = [
+      "## Summary",
+      "Text.",
+      "",
+      "- Round 3: CI went red on the lint job.",
+      "",
+      "## Verification gate",
+      "Head SHA: `abc1234`",
+      "",
+      "## Checklist",
+      "- [x] Every review and babysit record is folded, and the round log has one row per round.",
+      "",
+      footer,
+    ].join("\n");
+    const { code, out } = run(body);
+    assert.equal(code, 1);
+    assert.match(out, /R8 line 4/);
+    // A checklist item may talk about rounds without being one.
+    assert.equal(out.match(/R8/g)?.length, 1, out);
+  });
+
   it("tolerates a bold heading that a review bot wraps the body in", () => {
     const body = [
       "## **User description**",

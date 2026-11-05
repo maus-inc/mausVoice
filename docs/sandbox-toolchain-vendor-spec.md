@@ -1347,7 +1347,11 @@ rust/targets/aarch64-apple-darwin/rust-std-1.88.0.tar.xz
 rust/targets/TARGETS.txt                component sha256 from channel-rust-1.88.0.toml
 ```
 
-`cargo check --target` does not link, so no Windows SDK and no macOS SDK is needed. Both
+Cargo does not read a standard library out of `rust/targets/`. Install the component into
+the toolchain the payload ships, with `rustup target add` from the vendored channel or a
+direct `--sysroot` whose `lib/rustlib/<target>/` holds the unpacked `rust-std`, and say in
+`FETCH.md` which of the two the consumer gets. `cargo check --target` does not link, so no
+Windows SDK and no macOS SDK is needed. Both
 components come from the same 1.88.0 channel the toolchain already pins, and their hashes are
 listed in `channel-rust-1.88.0.toml`, so the manifest check extends without a new trust
 assumption. Gate it with `cargo check --locked --target x86_64-pc-windows-msvc` in
