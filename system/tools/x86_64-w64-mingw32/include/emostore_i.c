@@ -1,0 +1,1 @@
+../../share/mingw-w64/include/emostore_i.c

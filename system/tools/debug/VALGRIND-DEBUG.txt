@@ -1,0 +1,30 @@
+libc6-dbg 2.36-9+deb12u8 build-id tree, for valgrind
+=====================================================
+
+Why this is here
+----------------
+valgrind 3.19.0 in system/tools/bin redirects a handful of glibc functions
+(strlen and friends) inside the traced program's ld.so. Without the matching
+debug symbols it aborts at startup with:
+
+  A must-be-redirected function ... was not found whilst processing
+  symbols from the object with soname: ld-linux-x86-64.so.2
+
+There is no env var that points valgrind 3.19 at a build-id tree, and
+--extra-debuginfo-path does not serve build-id lookups on this version. The
+symbols must sit under /usr/lib/debug/.build-id/, which FETCH.md step 7g does
+with sudo.
+
+Matching matters
+----------------
+The symbols must match the glibc the traced binary loads, not the glibc the
+payload carries. In the Arena agent sandbox the host is Debian 12 (glibc 2.36),
+so this 2.36 build-id tree is the right one. On a host whose glibc differs,
+install that host's own libc6-dbg instead and leave this tree unused.
+
+Provenance
+----------
+Package: libc6-dbg_2.36-9+deb12u8_amd64.deb
+Source:  deb.debian.org, the same snapshot system/PKGS.txt was built from
+Digest:  recorded in MANIFEST.sha256 like every other file here
+Licence: LICENSES/debian/libc6-dbg/copyright

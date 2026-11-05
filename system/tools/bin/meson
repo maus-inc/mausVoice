@@ -1,0 +1,7 @@
+#!/bin/sh
+# meson is a Python program. It needs a python3 on PATH and its own module tree,
+# which the payload carries under lib/python3/dist-packages. Set PYTHONPATH so a
+# consumer only has to supply the interpreter.
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+PYTHONPATH="$here/../lib/python3/dist-packages${PYTHONPATH:+:$PYTHONPATH}" \
+  exec python3 "$here/meson.py" "$@"

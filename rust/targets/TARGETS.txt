@@ -1,0 +1,49 @@
+Cross-target Rust standard libraries (G12)
+==========================================
+
+Why this file is here
+---------------------
+`cargo clippy` and `cargo test` on Linux compile only the host cfg. Code behind
+`#[cfg(windows)]` and `#[cfg(target_os = "macos")]` never compiles locally, which
+is why `.github/workflows/test-desktop-unit.yml` runs a `rust-windows-gated` job
+on `windows-2022`. Shipping the two standard libraries lets `cargo check --target`
+type-check that code here.
+
+Vendored components
+-------------------
+File    : rust/targets/x86_64-pc-windows-msvc/rust-std-1.88.0.tar.xz
+Source  : https://static.rust-lang.org/dist/2025-06-26/rust-std-1.88.0-x86_64-pc-windows-msvc.tar.xz
+sha256  : 6b65df769259ad18428271aea110ec1a5027e922f3e36d77923dc69a38ff6318
+Published xz_hash in channel-rust-1.88.0.toml: 6b65df769259ad18428271aea110ec1a5027e922f3e36d77923dc69a38ff6318 (match)
+
+File    : rust/targets/aarch64-apple-darwin/rust-std-1.88.0.tar.xz
+Source  : https://static.rust-lang.org/dist/2025-06-26/rust-std-1.88.0-aarch64-apple-darwin.tar.xz
+sha256  : 532be07511af557cb67f33bfc77044a787363ab281b963752542bc837ce90e96
+Published xz_hash in channel-rust-1.88.0.toml: 532be07511af557cb67f33bfc77044a787363ab281b963752542bc837ce90e96 (match)
+
+Both digests are the values `channel-rust-1.88.0.toml` publishes, so the manifest
+check extends with no new trust assumption. The channel date is 2025-06-26, which
+is the release date of the 1.88.0 channel, not the 2025-06-23 build date of the
+`rustc` commit string.
+
+How to wire them in
+-------------------
+Cargo does not read a standard library out of this directory. Install the
+component into the toolchain that is in use, with either:
+
+    rustup toolchain link   # a vendored channel directory, or
+    tar xJf rust-std-1.88.0-<target>.tar.xz -C <sysroot>   # a direct --sysroot
+
+The unpacked layout is `rust-std-<target>/lib/rustlib/<target>/lib/libstd-*.rlib`,
+which is what `--sysroot` expects one level up. `FETCH.md` step 3b unpacks both
+into the prefix that `rustup toolchain link` points at.
+
+Gate it
+-------
+    cargo check --locked --target x86_64-pc-windows-msvc   # apps/desktop/src-tauri, packages/rust_windows_pill
+    cargo check --locked --target aarch64-apple-darwin      # apps/desktop/src-tauri, packages/rust_macos_pill
+
+`cargo check` does not link, so no Windows SDK and no macOS SDK is needed.
+`rustc --print target-list` proves nothing: it lists targets without their
+standard libraries. Confirm `lib/rustlib/<target>/lib/libstd-*.rlib` exists for
+both targets before recording the group as verified.

@@ -1,0 +1,5 @@
+name	tag	asset	url	sha256
+grype	v0.87.0	grype_0.87.0_linux_amd64.tar.gz	https://github.com/anchore/grype/releases/download/v0.87.0/grype_0.87.0_linux_amd64.tar.gz	be710d15f5477e5c77ce03d14e480263415d7ab135e04b8483663f688823087d
+osv-scanner	v1.9.2	osv-scanner_linux_amd64	https://github.com/google/osv-scanner/releases/download/v1.9.2/osv-scanner_linux_amd64	d6af4b67fa5de658598bd2d445efb99e90d1734b3146962418719c4350ecb74b
+syft	v1.20.0	syft_1.20.0_linux_amd64.tar.gz	https://github.com/anchore/syft/releases/download/v1.20.0/syft_1.20.0_linux_amd64.tar.gz	689e12c5cbf67521ce61b9c126068f9eaabe1223e77971b2fede50033ff6b5cc
+trivy	v0.76.2	trivy_0.76.2_Linux-64bit.tar.gz	https://github.com/aquasecurity/trivy/releases/download/v0.76.2/trivy_0.76.2_Linux-64bit.tar.gz	bc0fc726e017b8927a62b2d3531d7a84ee01769daf5c99ed866dced54089fdbf
