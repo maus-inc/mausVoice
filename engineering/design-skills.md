@@ -44,8 +44,8 @@ with a value recorded in `DESIGN.md`, `DESIGN.md` wins and the conflict goes in
 **Provenance:** ported into mausVoice on 2026-10-28 from `better-Shape/app` branch
 `mega/absorb-all`, commit `008b0cbae2b5`, byte for byte. `node
 scripts/ci/verify-skills.mjs` reports 53 of 53 locked skills verified against the
-`computedHash` values in `skills-lock.json`, with `find-skills`, `ui-capture` and
-`unslop` unrecorded because they are project-owned. The upstream vendoring history is
+`computedHash` values in `skills-lock.json`, with `be-ambitious`, `find-skills`,
+`ui-capture` and `unslop` unrecorded because they are project-owned. The upstream vendoring history is
 in the Provenance section at the end of this file.
 
 This file holds the long material: what each skill is for, when an agent must load it,
@@ -284,7 +284,9 @@ have to redo it.
 
 Checked on 2026-10-28 by hashing all 803 vendored files and comparing every
 `description` field pairwise, plus every skill name referenced anywhere in
-`AGENTS.md` against the 56 vendored directory names.
+`AGENTS.md` against the 56 vendored directory names. `be-ambitious` was added on
+2026-11-05 as the fifty-seventh directory, so that count reads 56 for the vendored set and
+57 directories on disk.
 
 **One name collision, and it is not a duplicate.** `find-skills` appears both as a row
 in the compressed index and as `.agents/skills/find-skills/SKILL.md`. They are the same
@@ -308,7 +310,7 @@ integration, and it searches the repo, then npm and PyPI, then MCP and skills, t
 GitHub. `find-skills` fires when the human asks for a capability that might already
 exist as a skill. Neither replaces the other.
 
-**No duplicate content among the 56.** The highest pairwise description similarity is
+**No duplicate content among the 56 vendored skills.** The highest pairwise description similarity is
 0.24 Jaccard, and all five pairs above 0.20 are intentional families this file already
 routes: `antislop-copywriting` against `antislop-ui` and `antislop-layoutmobile` are the
 same core filter split by task axis, `animate` against `animate-expo` is web against
@@ -356,7 +358,10 @@ Upstream install record, carried over from the source branch:
 `disable-model-invocation: true` and plus an `Invocation` section that makes it apply
 to every chat. That local edit predates the port, its hash therefore does not match
 upstream, and it has no lock entry. `find-skills` and `ui-capture` are project-owned
-for the same reason.
+for the same reason. `be-ambitious` is `DannyMac180/skills` at the head of its pull
+request 11, commit `56be33ba3e047`, with two local edits: it fires without being
+invoked, and it continues into execution instead of stopping after the rewrite. Read
+the provenance note at the top of its `SKILL.md` for both.
 
 Nothing under `.agents/` is imported by the app or bundled into a build.
 
