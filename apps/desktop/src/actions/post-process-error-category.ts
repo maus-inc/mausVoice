@@ -292,7 +292,9 @@ const matchClassificationRules = (
   rules.find(
     (rule) =>
       includesAny(value, rule.markers) ||
-      rule.statusCodes?.some((code) => new RegExp(`\\b${code}\\b`).test(value)),
+      rule.statusCodes?.some((code) =>
+        new RegExp(String.raw`\b${code}\b`).test(value),
+      ),
   )?.category;
 
 // The structured cascade: provider codes and shape names beat prose. The
