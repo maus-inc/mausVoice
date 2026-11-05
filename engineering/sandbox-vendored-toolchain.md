@@ -10,10 +10,19 @@ the toolchain normally and skip the payload. This file records what the payload 
 against this repository, and what still cannot run there. It does not duplicate the
 instructions.
 
+Re-measured on 2026-11-05 in a second agent sandbox, 4 vCPU and 15.9 GB, which is not the
+Arena sandbox above. `static.rust-lang.org`, `index.crates.io`, `deb.debian.org`,
+`nodejs.org`, `dl.google.com`, `googlechromelabs.github.io` and GitHub Release assets all
+answered a ranged request. Only the `crates.io` JSON API answered 403, which is its bot
+policy rather than a missing route. The allowlist and every "no route" line below are
+therefore a property of the Arena agent sandbox, not of the network, so probe each host
+before repeating a limit from this file.
+
 Authoritative sources, in the order you should read them:
 
-1. `FETCH.md` on the vendor branch. The step-by-step recipe. Eleven steps, with the
-   exports, the reassembly loop and the gate table.
+1. `FETCH.md` on the vendor branch. The step-by-step recipe. Eleven numbered steps, with
+   sub-steps 3b and 7b to 7d for the second delivery, the exports, the reassembly loop and
+   the gate table.
 2. `README.md` on the vendor branch. Provenance, the verification table, size notes,
    and the things the consumer must know.
 3. `engineering/rust-toolchain.md` in this repository. The offline cargo environment,
@@ -28,35 +37,41 @@ Authoritative sources, in the order you should read them:
 ## The payload
 
 Orphan branch `vendor/sandbox-toolchain` on `maus-inc/mausVoice`. Commit
-`61fb32959d6ac6a36b0c6356069a767ee7725caa`, no parents, authored 2026-10-28, message
-`vendor: sandbox toolchain payload (G1-G8)`. It is not merged into `main` and no pull
-request exists for it. `main` is unaffected.
+`c43df0ec06e04ff8c323bcdd01165390eef894a3`, no parents, authored 2026-10-28, message
+`vendor: sandbox toolchain payload (G1-G8, G9-G13)`. It is not merged into `main` and no
+pull request exists for it. `main` is unaffected.
 
-3870 blobs. The root tree is exactly `FETCH.md`, `LICENSES`, `MANIFEST.sha256`,
-`README.md`, `native`, `rust`, `system`.
+3891 blobs. The root tree is exactly `FETCH.md`, `LICENSES`, `MANIFEST.sha256`,
+`README.md`, `drivers`, `models`, `native`, `rust`, `system`.
 
-| Group       | Blobs | Logical bytes | What it is                                                                               |
-| ----------- | ----- | ------------- | ---------------------------------------------------------------------------------------- |
-| `system/`   | 3244  | 498,752,607   | Debian 12 development sysroot, the command line tools, and the build scripts             |
-| `rust/`     | 10    | 259,104,704   | Rust 1.88.0 components, the channel toml, the vendored crate tree, the cargo config      |
-| `native/`   | 4     | 30,713,132    | ONNX Runtime 1.23.2 and sherpa-onnx 1.13.5 archives                                      |
-| `LICENSES/` | 609   | 9,652,209     | 605 Debian `copyright` files plus the ONNX Runtime, sherpa-onnx and whisper.cpp licences |
-| root        | 3     | 538,810       | `README.md`, `FETCH.md`, `MANIFEST.sha256`                                               |
+| Group       | Blobs | Logical bytes | What it is                                                                                                    |
+| ----------- | ----- | ------------- | ------------------------------------------------------------------------------------------------------------- |
+| `system/`   | 3251  | 666,084,652   | Debian 12 development sysroot, the command line tools, the G9/G13 binaries, and the build scripts             |
+| `rust/`     | 13    | 306,619,901   | Rust 1.88.0 components, the channel toml, the vendored crate tree, the cargo config, the G12 target libraries |
+| `native/`   | 4     | 30,713,132    | ONNX Runtime 1.23.2 and sherpa-onnx 1.13.5 archives                                                           |
+| `models/`   | 8     | 463,077,947   | G10: whisper `ggml-tiny` and `ggml-base`, the SenseVoice ONNX bundle, `MODELS.txt`                            |
+| `drivers/`  | 3     | 24,047,333    | G11: `tauri-driver` 2.0.6, `chromedriver` 152.0.7977.42, `DRIVERS.txt`                                        |
+| `LICENSES/` | 609   | 9,652,209     | 605 Debian `copyright` files plus the ONNX Runtime, sherpa-onnx and whisper.cpp licences                      |
+| root        | 3     | 549,557       | `README.md`, `FETCH.md`, `MANIFEST.sha256`                                                                    |
 
-No single file reaches 100 MiB. Seven archives are split into `.part-NN` pieces at
-exactly 94,371,840 bytes: the vendored crate tree in two parts and the sysroot in
-five. `MANIFEST.sha256` carries 3871 lines, which is 3862 whole files plus the 7 parts
-plus the 2 reassembled archives. It does not list itself.
+No single file reaches 100 MiB. Twelve files are `.part-NN` pieces at exactly 94,371,840
+bytes, across four archives: the vendored crate tree in two parts, the sysroot in five,
+`ggml-base.bin` in two and the SenseVoice `model.int8.onnx` in three. `MANIFEST.sha256`
+carries 3894 lines, which is 3890 whole tree files plus the 4 reassembled archives. It
+does not list itself.
 
-Extracted size is about 5.3 GB. The sysroot is about 1.9 GB, the vendored crate tree
-about 1.8 GB and the toolchain about 1.3 GB. Roughly 950 MB of the crate tree is five
+Extracted size is about 5.5 GB. The sysroot is about 1.9 GB, the vendored crate tree
+about 1.8 GB, the toolchain about 1.3 GB and the second-delivery groups about 0.9 GB
+unpacked. Roughly 950 MB of the crate tree is five
 versions of the `windows` crate, 0.51.1, 0.52.0, 0.54.0, 0.58.0 and 0.61.3, which are
 dead weight on Linux but cannot be dropped without breaking `--locked` resolution for
 the Windows installer workspace.
 
 `system/tools/bin` ships `cmake` 3.25.1, `file` 1:5.44, `patchelf` 0.14.3, `pkgconf`
 1.8.1 and a `pkg-config` symlink to `pkgconf`, with 83 library blobs covering 44
-distinct library stems and `$ORIGIN/../lib` rpaths. `system/build/` ships the three
+distinct library stems and `$ORIGIN/../lib` rpaths. The second delivery adds `ffmpeg`
+7.0.2-static, `ffprobe` 7.0.2-static, `gifsicle` 1.95 and `gitleaks` 8.18.0 to the same
+directory. `system/build/` ships the three
 scripts that produced the closure. `system/PKGS.txt` lists 634 packages.
 
 The vendored crate tree holds 1114 package directories, which is the 1113 crates.io
@@ -66,7 +81,7 @@ packages plus the one git dependency, `ferrous-focus`, that the union of the sev
 ## What has been measured
 
 The branch `README.md` records these results. They were produced against this
-repository at commit `61fb3295`.
+repository at commit `61fb3295` for the first delivery and `c43df0ec` for the second.
 
 | Gate                            | Result                                                            |
 | ------------------------------- | ----------------------------------------------------------------- |
@@ -77,7 +92,7 @@ repository at commit `61fb3295`.
 | pkg-config modules              | 37 of 37 resolve                                                  |
 | Link smoke test                 | gcc linked 19 libraries successfully                              |
 | Xvfb                            | started                                                           |
-| Tools under `env -i`            | 4 of 4 run                                                        |
+| Tools under `env -i`            | 4 of 4 run, and the second delivery's 4 new binaries run too      |
 | Offline resolution              | `cargo metadata --locked` exit 0 for all seven manifests          |
 | Path patches                    | `block`, `sherpa-onnx-sys` and `rdev` all resolve from `patches/` |
 | Format                          | `cargo fmt --check` in six crates, 6 of 6 pass                    |
@@ -154,8 +169,11 @@ hold where you are is not a limit.
   repository calls `file`, so this is a note rather than a blocker.
 - The `--ignored` tests in
   `packages/rust_transcription/tests/sidecar_integration.rs` download models from
-  `huggingface.co`, which is not on the allowlist. They cannot run. Report them as
-  unrunnable with the reason. Do not report them as passed.
+  `huggingface.co`, which is not on the allowlist. The second delivery ships the whisper
+  and SenseVoice weights, so they can run once `FETCH.md` step 7b is followed. The
+  Parakeet CTC, Parakeet TDT and Canary 1B bundles are not shipped, so a test that needs
+  one of those still cannot run. Report a test as unrunnable with the reason. Do not
+  report it as passed.
 - `cargo test` needs `CARGO_BUILD_JOBS=1`. Parallel linking peaks above the memory a
   3.9 GB Arena agent sandbox has and the linker dies with `signal 9`.
 - `packages/rust_gtk_pill` opens a display, so it needs `xvfb-run -a`.
@@ -172,15 +190,20 @@ test:webdriver`, it spawns `tauri-driver` on Linux and `chromedriver` on macOS, 
   reachable. `--ignore-scripts` also works and skips the other build scripts. Measured
   on 2026-11-05: 1398 packages in 29 seconds, then `pnpm run check-types` passes with 9
   turbo tasks in 49 seconds. This is gap G15.
-- `ffmpeg`, `ffprobe`, `gifsicle`, `tesseract` and any Chromium are absent, so the
-  `ui-capture` skill cannot record. `apps/preview` is still the rendering surface, and an
-  inspection of it in both themes is the substitute. This is gap G9.
+- `tesseract` and any Chromium are absent, so the `ui-capture` skill cannot complete a
+  recording even though the second delivery ships `ffmpeg`, `ffprobe` and `gifsicle`.
+  `apps/preview` is still the rendering surface, and an inspection of it in both themes
+  is the substitute. The Chromium is the spec's group G6, which declines to build one.
+  This is gap G9.
 - The gitleaks release asset redirects to `release-assets.githubusercontent.com`, which
-  is blocked, so the history scan runs in CI only. The scan configuration tests still
-  pass locally. This is gap G13.
-- No model weights ship in the payload, because they live on `huggingface.co`. The four
-  `#[ignore]` tests in `packages/rust_transcription/tests/sidecar_integration.rs` need
-  them. This is gap G10.
+  is blocked. The second delivery ships `gitleaks` 8.18.0 in `system/tools/bin`, so the
+  history scan runs locally once `FETCH.md` step 6 puts it on `PATH`. This is gap G13.
+- The whisper small, medium, large-v3 and large-v3-turbo weights and the Parakeet CTC,
+  Parakeet TDT and Canary 1B bundles do not ship, because they live on `huggingface.co`.
+  The second delivery ships `ggml-tiny`, `ggml-base` and the SenseVoice bundle, so the
+  four `#[ignore]` tests in
+  `packages/rust_transcription/tests/sidecar_integration.rs` can run once `FETCH.md` step
+  7b is followed. This is gap G10.
 - Visual checking still has a surface inside the repository: `apps/preview` renders the
   real desktop components in a Vite app on port 5193 and needs no browser automation to
   run.

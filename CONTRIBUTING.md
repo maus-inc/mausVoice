@@ -54,8 +54,12 @@ shows you. Turn it on with:
 
 ```bash
 git config commit.template .gitmessage
-npx lefthook install   # lefthook is not a dependency, so npx fetches it on first run
+npx lefthook@2.2.2 install   # pinned; lefthook stays out of the manifest so installs stay light
 ```
+
+The hooks are a convenience, not a gate. `lefthook` is deliberately not a repository
+dependency, so every `pnpm install` in CI stays small. Pin the version when you run it, as
+above, so onboarding never executes an unreviewed future release.
 
 Pull requests fill `.github/pull_request_template.md`, and `pnpm run check:pr-body -- <file>` checks the
 shape of the body. Every record of a review round, a babysit poll or a CI log goes inside a

@@ -2,6 +2,8 @@
 
 The orphan branch `vendor/sandbox-toolchain` makes most of this repository buildable inside the Arena agent sandbox: the six-host egress allowlist, 2 vCPU, 3.9 GB RAM (3,939 MB), no Docker daemon. Every number here was measured in that environment on 2026-11-05 and describes it alone, not the repository, not CI, and not your machine. An unrestricted host closes most of these gaps by installing the tool, so probe before you repeat a limit or file a gap. What follows records the parts of the development cycle the payload cannot cover, with the measurement for each one, so an agent stops guessing and a builder knows what to add.
 
+The payload carries two deliveries. G1 to G8 are the mandatory set every gate needs. G9 to G13 are an optional second set, added 2026-11-05, that opens stages the mandatory set does not reach. A gap below that a delivered group closes is marked, with the `FETCH.md` step that wires it up. Read the section as the register of what the payload does not carry, not as a list of stages that cannot run.
+
 It answers two questions.
 
 1. What can an agent do in that sandbox today.
@@ -38,126 +40,127 @@ A release asset such as `https://github.com/gitleaks/gitleaks/releases/download/
 
 ### Machine
 
-| Resource                                   | Measured           | Effect on the gates                                                      |
-| ------------------------------------------ | ------------------ | ------------------------------------------------------------------------ |
-| CPU                                        | 2 vCPU             | `cargo test` links one binary at a time, so `CARGO_BUILD_JOBS=1`         |
-| Memory                                     | 3,939 MB           | Parallel linking peaks above it and the linker dies with signal 9        |
-| Disk                                       | 21 GB free         | The extracted payload is about 5.3 GB, the Rust target tree several more |
-| Node                                       | v22.22.3           | Satisfies `engines`, is behind the `.nvmrc` pin of 24                    |
-| npm                                        | 10.9.8             | Installs pnpm@10.34.5 from the registry                                  |
-| Python                                     | 3.11.2, pip 23.0.1 | `req.txt` resolves from PyPI                                             |
-| Rust, cargo, rustup                        | absent             | Only the payload supplies them                                           |
-| cmake, pkg-config, patchelf, file, pkgconf | absent             | The payload's `system/tools/bin` supplies them                           |
-| ffmpeg, ffprobe, gifsicle, tesseract       | absent             | `ui-capture` cannot run                                                  |
-| Xvfb                                       | absent             | `packages/rust_gtk_pill` cannot run its tests without the payload        |
-| docker                                     | absent             | `config/docker-compose.yml` cannot run                                   |
+| Resource                                   | Measured           | Effect on the gates                                                                    |
+| ------------------------------------------ | ------------------ | -------------------------------------------------------------------------------------- |
+| CPU                                        | 2 vCPU             | `cargo test` links one binary at a time, so `CARGO_BUILD_JOBS=1`                       |
+| Memory                                     | 3,939 MB           | Parallel linking peaks above it and the linker dies with signal 9                      |
+| Disk                                       | 21 GB free         | The extracted payload is about 5.3 GB, the Rust target tree several more               |
+| Node                                       | v22.22.3           | Satisfies `engines`, is behind the `.nvmrc` pin of 24                                  |
+| npm                                        | 10.9.8             | Installs pnpm@10.34.5 from the registry                                                |
+| Python                                     | 3.11.2, pip 23.0.1 | `req.txt` resolves from PyPI                                                           |
+| Rust, cargo, rustup                        | absent             | Only the payload supplies them                                                         |
+| cmake, pkg-config, patchelf, file, pkgconf | absent             | The payload's `system/tools/bin` supplies them                                         |
+| ffmpeg, ffprobe, gifsicle, tesseract       | absent             | The payload's `system/tools/bin` supplies the first three; `tesseract` is not vendored |
+| Xvfb                                       | absent             | `packages/rust_gtk_pill` cannot run its tests without the payload                      |
+| docker                                     | absent             | `config/docker-compose.yml` cannot run                                                 |
 
 ### Commands, run here
 
-| Command                                           | Result            | Note                                                                              |
-| ------------------------------------------------- | ----------------- | --------------------------------------------------------------------------------- |
-| `npm i -g pnpm@10.34.5`                           | passed            | about 10 seconds                                                                  |
-| `pnpm install --frozen-lockfile`                  | failed            | chromedriver postinstall, see gap G9                                              |
-| `pnpm install --frozen-lockfile --ignore-scripts` | passed            | 1398 packages, 29 seconds, 14 workspace projects; skips the G15 chromedriver step |
-| `pnpm run check-types`                            | passed            | 9 turbo tasks, 49 seconds, no Rust needed                                         |
-| `pnpm run build`                                  | passed            | 11 turbo tasks, 68 seconds, vite plus astro, no Rust and no browser               |
-| `cargo --version`                                 | command not found | needs the payload                                                                 |
-| `pnpm --filter desktop test:webdriver`            | cannot start      | needs tauri-driver, WebKitWebDriver, and a built app                              |
-| `ffmpeg -version`                                 | command not found | blocks `ui-capture`                                                               |
+| Command                                           | Result            | Note                                                                                                    |
+| ------------------------------------------------- | ----------------- | ------------------------------------------------------------------------------------------------------- |
+| `npm i -g pnpm@10.34.5`                           | passed            | about 10 seconds                                                                                        |
+| `pnpm install --frozen-lockfile`                  | failed            | chromedriver postinstall, see gap G9                                                                    |
+| `pnpm install --frozen-lockfile --ignore-scripts` | passed            | 1398 packages, 29 seconds, 14 workspace projects; skips the G15 chromedriver step                       |
+| `pnpm run check-types`                            | passed            | 9 turbo tasks, 49 seconds, no Rust needed                                                               |
+| `pnpm run build`                                  | passed            | 11 turbo tasks, 68 seconds, vite plus astro, no Rust and no browser                                     |
+| `cargo --version`                                 | command not found | needs the payload                                                                                       |
+| `pnpm --filter desktop test:webdriver`            | cannot start      | needs a built app; G11 delivers tauri-driver and chromedriver, `WebKitWebDriver` comes from the sysroot |
+| `ffmpeg -version`                                 | command not found | G9 delivers it in `system/tools/bin`; a bare checkout has no ffmpeg                                     |
 
 ## Coverage by stage
 
 Status is what an agent gets here after following `FETCH.md`, not what CI gets on a hosted runner.
 
-| Stage                                    | Status                            | What makes it work                                                                             |
-| ---------------------------------------- | --------------------------------- | ---------------------------------------------------------------------------------------------- |
-| Dependency install                       | works when the recipe is followed | `CHROMEDRIVER_SKIP_DOWNLOAD=true` from `FETCH.md` step 8. A bare `pnpm install` fails. Gap G15 |
-| Formatting                               | works                             | `pnpm run format:check`, plus `cargo fmt` once the payload is in place                         |
-| Lint, TypeScript and Rust                | works                             | `pnpm run lint`, `cargo clippy --locked` from the payload                                      |
-| Type check                               | works                             | `pnpm run check-types` measured at 9 tasks in 49 seconds                                       |
-| Unit tests, TypeScript                   | works                             | vitest per package                                                                             |
-| Unit tests, Rust                         | works                             | linux targets only, `CARGO_BUILD_JOBS=1`                                                       |
-| Integration tests, sidecar               | partial                           | 7 pass, 4 are `#[ignore]` because they download models. Gap G10                                |
-| App build, renderer                      | works                             | vite builds `apps/desktop`, `apps/preview`, and astro builds `apps/docs`                       |
-| Desktop app, `tauri dev`                 | works with the payload            | needs the sysroot and the two native archives                                                  |
-| Desktop bundle, `tauri build --bundles`  | blocked                           | Tauri downloads linuxdeploy and the AppImage runtime at bundle time. Gap G14                   |
-| WebDriver end to end                     | blocked                           | tauri-driver is not vendored and WebKitWebDriver must be checked. Gap G11, install half in G15 |
-| Visual verification with the preview app | works                             | `pnpm --filter @maus-inc/preview dev` on port 5193                                             |
-| Visual capture, `ui-capture`             | blocked                           | ffmpeg and gifsicle are absent. Gap G9, plus the browser group the spec declines to build      |
-| Secret scan over history                 | blocked                           | the gitleaks release asset redirects to a blocked host. Gap G13                                |
-| Secret scan over config only             | works                             | `pnpm run test:secret-scan` and `node --test scripts/ci/*.test.mjs`                            |
-| Docs site build                          | works                             | astro, sharp arrives from npm                                                                  |
-| Release signing and notarisation         | impossible here                   | needs a macOS runner and Apple credentials                                                     |
-| Windows and macOS builds                 | impossible here                   | needs those runners, see accepted gaps                                                         |
-| Dependency bumps                         | works from npm and PyPI           | crates.io needs a payload rebuild                                                              |
+| Stage                                    | Status                            | What makes it work                                                                                                                                      |
+| ---------------------------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Dependency install                       | works when the recipe is followed | `CHROMEDRIVER_SKIP_DOWNLOAD=true` from `FETCH.md` step 8. A bare `pnpm install` fails. Gap G15                                                          |
+| Formatting                               | works                             | `pnpm run format:check`, plus `cargo fmt` once the payload is in place                                                                                  |
+| Lint, TypeScript and Rust                | works                             | `pnpm run lint`, `cargo clippy --locked` from the payload                                                                                               |
+| Type check                               | works                             | `pnpm run check-types` measured at 9 tasks in 49 seconds                                                                                                |
+| Unit tests, TypeScript                   | works                             | vitest per package                                                                                                                                      |
+| Unit tests, Rust                         | works                             | linux targets only, `CARGO_BUILD_JOBS=1`                                                                                                                |
+| Integration tests, sidecar               | works with the second delivery    | 7 pass, 4 are `#[ignore]` because they download models. G10 now delivers the whisper and SenseVoice weights, wired by `FETCH.md` step 7b                |
+| App build, renderer                      | works                             | vite builds `apps/desktop`, `apps/preview`, and astro builds `apps/docs`                                                                                |
+| Desktop app, `tauri dev`                 | works with the payload            | needs the sysroot and the two native archives                                                                                                           |
+| Desktop bundle, `tauri build --bundles`  | blocked                           | Tauri downloads linuxdeploy and the AppImage runtime at bundle time. Gap G14                                                                            |
+| WebDriver end to end                     | works with the second delivery    | G11 delivers `tauri-driver` 2.0.6 and `chromedriver`, wired by `FETCH.md` step 7c; `WebKitWebDriver` comes from the sysroot. Needs a built debug binary |
+| Visual verification with the preview app | works                             | `pnpm --filter @maus-inc/preview dev` on port 5193                                                                                                      |
+| Visual capture, `ui-capture`             | partial with the second delivery  | G9 delivers `ffmpeg`, `ffprobe` and `gifsicle` (step 7d). A Chromium is still absent, and the spec group G6 declines to build one                       |
+| Secret scan over history                 | works with the second delivery    | G13 delivers `gitleaks` 8.18.0 in `system/tools/bin`, on `PATH` from step 6                                                                             |
+| Secret scan over config only             | works                             | `pnpm run test:secret-scan` and `node --test scripts/ci/*.test.mjs`                                                                                     |
+| Docs site build                          | works                             | astro, sharp arrives from npm                                                                                                                           |
+| Release signing and notarisation         | impossible here                   | needs a macOS runner and Apple credentials                                                                                                              |
+| Windows and macOS builds                 | impossible here                   | needs those runners, see accepted gaps                                                                                                                  |
+| Dependency bumps                         | works from npm and PyPI           | crates.io needs a payload rebuild                                                                                                                       |
 
 ## Open gaps
 
 Each gap names the stage it blocks, the measurement, what to vendor, and the substitute to use until it exists.
 
-### G9: no media tools for UI capture
+### G9: media tools for UI capture, delivered
 
 Blocks the `ui-capture` workflow that `AGENTS.md` and `.agents/skills/ui-capture/SKILL.md` require for a change a user sees.
 
-Measured. `ffmpeg`, `ffprobe`, `gifsicle` and `tesseract` are all absent. `system/PKGS.txt` carries `libavcodec59`, `libavformat`, `libsndfile1` and `imagemagick`, so the libraries are there and the executables are not. `system/tools/bin` holds five binaries, `cmake`, `file`, `patchelf`, `pkgconf` and `pkg-config`.
+Measured before the second delivery. `ffmpeg`, `ffprobe`, `gifsicle` and `tesseract` were all absent. `system/PKGS.txt` carries `libavcodec59`, `libavformat`, `libsndfile1` and `imagemagick`, so the libraries were there and the executables were not.
 
-What to vendor.
+Delivered. The second delivery ships `system/tools/bin/ffmpeg` 7.0.2-static, `ffprobe` 7.0.2-static and `gifsicle` 1.95, each run under `env -i`. `system/tools/UIPIPE.txt` records the upstream URL and the sha256 for each. They sit beside `cmake` and `file`, so `FETCH.md` step 6 puts them on `PATH`; step 7d checks them. `tesseract` and its `eng.traineddata` are not vendored, and the `ui-capture` validation step skips the OCR round-trip and says so when tesseract is absent.
 
-- `system/tools/bin/ffmpeg` and `ffprobe` as static builds, with the licence text.
-- `system/tools/bin/gifsicle`.
-- Optional `system/tools/bin/tesseract` plus `tessdata` for the caption OCR check. About 15 MB for English.
+Still blocked. A Chromium. The spec group G6 records the decision not to build one, so a recording that needs a browser still cannot run. The preview app remains the rendered surface.
 
-Substitute today. No recording. The preview app gives a rendered surface and a manual inspection gives evidence, but nothing produces a GIF. Say so plainly.
+Substitute when no browser is available. Inspect `apps/preview` in both themes and write down the inspection rather than claiming a recording.
 
-### G10: no model weights
+### G10: model weights, delivered
 
 Blocks transcription development, the four ignored sidecar tests, and any check of transcript quality.
 
-Measured. `huggingface.co` has no route, and 19 references in the repository point at it. `packages/rust_transcription/tests/sidecar_integration.rs` marks four tests `#[ignore]` because they download models. The whisper weights are GGML files, `ggml-tiny.bin` upward, and the ONNX models are `parakeet-ctc-0.6b`, `parakeet-tdt-0.6b`, `canary-1b` and `sense-voice`. The payload carries the ONNX Runtime and sherpa-onnx archives that load these models, and no weights.
+Measured before the second delivery. `huggingface.co` has no route in the Arena agent sandbox, and 19 references in the repository point at it. `packages/rust_transcription/tests/sidecar_integration.rs` marks four tests `#[ignore]` because they download models. The whisper weights are GGML files, `ggml-tiny.bin` upward, and the ONNX models are `parakeet-ctc-0.6b`, `parakeet-tdt-0.6b`, `canary-1b` and `sense-voice`.
 
-What to vendor. A `models/` group with the smallest useful set, each with URL and sha256.
+Delivered. The second delivery ships the smallest useful set under `models/`, each with its URL, revision and sha256 in `models/MODELS.txt`.
 
-- `ggml-tiny.bin` and `ggml-base.bin`, about 75 MB and 142 MB.
-- One ONNX bundle to exercise the non whisper path, `sense-voice` is the smallest.
-- A `MODELS.txt` that records the upstream URL, the revision, and the digest, because a model is data and the digest is the only way to prove which data.
+- `models/whisper/ggml-tiny.bin` and `ggml-base.bin`, the upstream published blobs, `ggml-base.bin` split into two parts.
+- `models/onnx/sense-voice/model.int8.onnx` and `tokens.txt`, at the immutable revision `355f4d4884d8afd08aef04b9007a8556d7b463b2`. Both digests equal `SENSEVOICE_MODEL_SHA256` and `SENSEVOICE_TOKENS_SHA256` in `models.rs`.
 
-Do not ship the 1.5 GB whisper large model or `canary-1b` in a default payload. Add them behind a flag.
+`FETCH.md` step 7b unpacks them under a private path and exports `RUST_TRANSCRIPTION_MODELS_DIR`. The whisper weights are runtime-overridable with `RUST_TRANSCRIPTION_MODEL_URL_<UPPERCASE_ID>`, so a local mirror is a valid route for `ggml-tiny` and `ggml-base`. The ONNX artifact sets have no such override.
 
-Substitute today. Unit tests that use synthesised audio buffers, and `#[ignore]` for anything that needs a real model. Say in the pull request that the model path was not exercised. Do not claim the transcription path works end to end when no model loaded.
+Not delivered. The Parakeet CTC, Parakeet TDT and Canary 1B bundles, and the whisper small, medium, large-v3 and large-v3-turbo weights. Their digests are pinned in `models.rs`; extend the group behind a flag if a task needs them. Do not ship the 1.5 GB whisper large model in a default payload.
 
-### G11: no WebDriver driver chain
+Substitute when the group is not wired. Unit tests that use synthesised audio buffers, and `#[ignore]` for anything that needs a real model. Say in the pull request that the model path was not exercised. Do not claim the transcription path works end to end when no model loaded. A model that loads is not a transcript that is correct, so record only loading.
+
+### G11: WebDriver driver chain, delivered
 
 Blocks the end to end UI gate, `pnpm --filter desktop test:webdriver`.
 
-Measured. `apps/desktop/webdriver/wdio.conf.js` spawns `~/.cargo/bin/tauri-driver` on Linux and `chromedriver` on macOS. `tauri-driver` appears in no `Cargo.lock` in this repository, so the vendored crate tree cannot build it, and `cargo install tauri-driver` needs crates.io. `webkit2gtk-driver` is in `system/PKGS.txt`, and the spec says the binary sits inside `libwebkit2gtk-4.1-0` at `/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebDriver`. Confirm that path exists in the extracted sysroot before trusting it. The macOS path also needs a Chrome that matches `chromedriver@152.0.0`, which is Chrome 152.0.7977.42.
+Measured before the second delivery. `apps/desktop/webdriver/wdio.conf.js` spawns `~/.cargo/bin/tauri-driver` on Linux and `chromedriver` on macOS. `tauri-driver` appears in no `Cargo.lock` in this repository, so the vendored crate tree cannot build it, and `cargo install tauri-driver` needs crates.io. `webkit2gtk-driver` is in `system/PKGS.txt`, and the binary sits inside `libwebkit2gtk-4.1-0` at `/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebDriver`.
 
-What to vendor.
+Delivered. The second delivery ships `drivers/tauri-driver/tauri-driver` 2.0.6 and `drivers/chromedriver-152.0.0/chromedriver` (152.0.7977.42), with `drivers/DRIVERS.txt` recording each digest. `FETCH.md` step 7c puts both on `PATH`. `tauri-driver` 2.1.0 is the current release and needs rustc 1.90, above this repository's 1.88.0 pin, so the payload carries 2.0.6.
 
-- `drivers/tauri-driver/tauri-driver`, built with `cargo install tauri-driver` on an unrestricted host, plus its version.
-- A check in `FETCH.md` step 10 that prints the `WebKitWebDriver` path from the sysroot.
-- Optional `browsers/chrome-152.0.7977.42/` with the NSS and NSPR closure, only for the macOS path.
+Still needed. A built debug binary of the app, which no payload can supply, and `WebKitWebDriver` from the extracted sysroot. `FETCH.md` step 7c prints that path.
 
-Substitute today. `pnpm --filter @maus-inc/preview dev` and an inspection of the demo group in both themes, written down as an inspection rather than a recording.
+Substitute when the app is not built. `pnpm --filter @maus-inc/preview dev` and an inspection of the demo group in both themes, written down as an inspection rather than a recording.
 
-### G12: no cross-target Rust standard library
+### G12: no cross-target Rust standard library, delivered
 
 Blocks local type checking of code behind `#[cfg(windows)]` and `#[cfg(target_os = "macos")]`.
 
-Measured. `cargo clippy` on Linux compiles only the host cfg. `test-desktop-unit.yml` runs a `rust-windows-gated` job on `windows-2022` for the code that never compiles here. The payload carries the host toolchain only, so `cargo check --target x86_64-pc-windows-msvc` fails on the missing standard library before it reaches the code.
+Measured before the second delivery. `cargo clippy` on Linux compiles only the host cfg. `test-desktop-unit.yml` runs a `rust-windows-gated` job on `windows-2022` for the code that never compiles here. The payload carried the host toolchain only, so `cargo check --target x86_64-pc-windows-msvc` failed on the missing standard library before it reached the code.
 
-What to vendor. `rust-toolchains/x86_64-pc-windows-msvc/rust-std` and `aarch64-apple-darwin/rust-std` from the same 1.88.0 channel, wired through `rustup toolchain link` or a direct `--sysroot`. `cargo check` does not link, so no Windows SDK is needed for a type check. This turns a "checked by CI only" note into a real local gate.
+Delivered. The second delivery ships `rust/targets/x86_64-pc-windows-msvc/rust-std-1.88.0.tar.xz` and the `aarch64-apple-darwin` equivalent, both digests equal to the `xz_hash` values in `channel-rust-1.88.0.toml`. `rust/targets/TARGETS.txt` records them. `FETCH.md` step 3b unpacks both into the toolchain prefix. `cargo check` does not link, so no Windows SDK and no macOS SDK is needed.
 
-Substitute today. Say that platform gated code was checked by CI for that platform, and name the job.
+Caveat. The cross-target `cargo check` needs the full dependency graph for the target, which the sandbox has no vendored crate tree for, so the command is recorded in `TARGETS.txt` for a consumer that has one. `rustc --print target-list` proves nothing on its own, because it lists targets without their standard libraries. Confirm `lib/rustlib/<target>/lib/libstd-*.rlib` exists for both targets.
 
-### G13: no secret scanning binary
+Substitute when the crate tree is not available. Say that platform gated code was checked by CI for that platform, and name the job.
+
+### G13: secret scanning binary, delivered
 
 Blocks the history scan in `.github/workflows/secret-scan.yml`, which pins gitleaks 8.18.0 and downloads it from a GitHub release.
 
-Measured. The release asset answers 302 to `release-assets.githubusercontent.com`, which has no route. `pnpm run test:secret-scan` and `node --test scripts/ci/*.test.mjs` still pass, because they test the scan configuration rather than run a scan.
+Measured before the second delivery. The release asset answers 302 to `release-assets.githubusercontent.com`, which has no route. `pnpm run test:secret-scan` and `node --test scripts/ci/*.test.mjs` still pass, because they test the scan configuration rather than run a scan.
 
-What to vendor. `system/tools/bin/gitleaks` 8.18.0, static, with a sha256 in `MANIFEST.sha256`, and a `FETCH.md` step that puts it on `PATH`. About 30 MB.
+Delivered. The second delivery ships `system/tools/bin/gitleaks` 8.18.0 with its sha256 in `MANIFEST.sha256` and its provenance in `system/tools/GITLEAKS.txt`. `FETCH.md` step 6 puts it on `PATH`. The binary reports its version with `gitleaks version`, not `--version`.
 
-Substitute today. Run the configuration tests, and state in the pull request that the history scan runs in CI only.
+Run it the way CI runs it. `gitleaks detect --log-opts="<base-sha>..<head-sha>" --config <base-sha>:gitleaks.toml`. A bare `--source .` scans a different commit set and cannot be compared with CI.
+
+Substitute when the group is not wired. Run the configuration tests, and state in the pull request that the history scan runs in CI only.
 
 ### G14: no packaging toolchain
 
@@ -201,21 +204,27 @@ So the register is not read as a list of failures.
 | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
 | `rust/toolchain`    | Rust 1.88.0, cargo, clippy 0.1.88, rustfmt                                                                                             |
 | `rust/cargo-vendor` | 1114 crate directories, the union of the seven lockfiles                                                                               |
+| `rust/targets`      | G12, the `x86_64-pc-windows-msvc` and `aarch64-apple-darwin` standard libraries, for `cargo check --target`                            |
 | `system/`           | Debian 12 development sysroot, `cmake`, `file`, `patchelf`, `pkgconf`, Xvfb, ImageMagick, and the GTK, WebKit, ALSA and Pulse link set |
+| `system/tools/bin`  | G9 `ffmpeg`, `ffprobe` and `gifsicle` for `ui-capture`, and G13 `gitleaks` 8.18.0                                                      |
 | `native/`           | ONNX Runtime 1.23.2 and sherpa-onnx 1.13.5 linux x64 archives                                                                          |
+| `models/`           | G10, the whisper `ggml-tiny` and `ggml-base` weights and the SenseVoice ONNX bundle                                                    |
+| `drivers/`          | G11, `tauri-driver` 2.0.6 and `chromedriver` 152.0.7977.42                                                                             |
 | `LICENSES/`         | 609 licence files, so a redistributed payload stays auditable                                                                          |
 
 ## Order of work
 
-Cheapest unblock first. Each line names the stage it opens.
+Cheapest unblock first. Each line names the stage it opens. The second delivery is shipped, so the lines that named it are done and the table records what each one opened.
 
-1. `CHROMEDRIVER_SKIP_DOWNLOAD` documented in `FETCH.md`, `.agents/PREFLIGHT.md` and `AGENTS.md`. Opens a clean install. Costs one paragraph.
-2. G13 gitleaks, about 30 MB. Opens the history scan locally.
-3. G9 ffmpeg, ffprobe and gifsicle, about 90 MB with a static build. Opens `ui-capture`.
-4. G12 cross-target standard libraries, about 400 MB. Opens local type checks of platform gated code.
-5. G11 tauri-driver plus the `WebKitWebDriver` path check. Opens the end to end gate on Linux.
-6. G10 model weights, smallest set only. Opens transcription behaviour.
-7. G14 packaging, deferred until a release task has to run here.
+| Step | Group                                                                              | Opens                                                        | State                                              |
+| ---- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------ | -------------------------------------------------- |
+| 1    | `CHROMEDRIVER_SKIP_DOWNLOAD` in `FETCH.md`, `.agents/PREFLIGHT.md` and `AGENTS.md` | a clean install                                              | documented                                         |
+| 2    | G13 gitleaks, 7 MB                                                                 | the history scan locally                                     | shipped                                            |
+| 3    | G9 ffmpeg, ffprobe and gifsicle, 160 MB                                            | `ui-capture` encoding and GIF assembly, browser still absent | shipped                                            |
+| 4    | G12 cross-target standard libraries, 47.5 MB packed                                | local type checks of platform gated code                     | shipped                                            |
+| 5    | G11 tauri-driver 2.0.6 and chromedriver, 24 MB                                     | the end to end gate on Linux, once the app is built          | shipped                                            |
+| 6    | G10 model weights, 463 MB                                                          | transcription behaviour with real models                     | shipped                                            |
+| 7    | G14 packaging                                                                      | local installer checks                                       | deferred until a release task lands in the sandbox |
 
 ## Rebuild triggers
 

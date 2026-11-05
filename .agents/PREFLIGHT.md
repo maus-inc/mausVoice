@@ -81,9 +81,12 @@ The gap register in `engineering/sandbox-coverage-gaps.md` names what the curren
 
 The `--ignored` tests in
 `packages/rust_transcription/tests/sidecar_integration.rs` download models from
-`huggingface.co`. They cannot run in the Arena agent sandbox, which has no route there.
-Nothing in the code offers a mirror override for those artifact URLs, so record them as
-unrunnable with the G10 reason. Do not report them as passed.
+`huggingface.co`. The whisper weights are overridable with
+`RUST_TRANSCRIPTION_MODEL_URL_<UPPERCASE_ID>`, and the sidecar test injects a loopback URL
+that way, so a local mirror is a valid route for `ggml-tiny` and `ggml-base`. The ONNX
+artifact sets (Parakeet CTC, Parakeet TDT, Canary 1B, SenseVoice) have no such override,
+so those cannot be redirected. Record a test as unrunnable with the G10 reason only after
+checking for a mirror, and do not report it as passed.
 
 ## UI rule
 

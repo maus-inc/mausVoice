@@ -93,7 +93,7 @@ what you build.
 | Repo | `maus-inc/mausVoice` |
 | Branch name | `vendor/sandbox-toolchain` (exactly; the sandbox docs will hardcode it) |
 | History | **Orphan.** `git checkout --orphan`, zero parents, **one** commit |
-| Commit message | `vendor: sandbox toolchain payload (G1-G8)` |
+| Commit message | `vendor: sandbox toolchain payload (G1-G8, G9-G13)` |
 | Mergeable | Never. No PR, no merge, no rebase onto `main` |
 | Base | None. Do not branch from `main` |
 | Git LFS | **Not used.** This repo has no LFS (`.gitattributes` carries only two rules: `-whitespace` on `packages/desktop-native-apis/src/bindings.ts` and `*.sql text eol=lf`). Do not introduce LFS |
@@ -1277,11 +1277,13 @@ list). Non-negotiable inclusions:
 
 ---
 
-### G9 to G13 — Added on 2026-11-05
+### G9 to G13 — Shipped on 2026-11-05
 
 G1 to G8 make the gates the delivered branch already passes. G9 to G13 close the stages that
-branch cannot cover, measured in `engineering/sandbox-coverage-gaps.md`. Build none of them
-for a refresh of the current branch. Build them when a task needs the stage each one names.
+branch cannot cover, measured in `engineering/sandbox-coverage-gaps.md`. They shipped in the
+same orphan commit, tip `c43df0ec06e04ff8c323bcdd01165390eef894a3`, so a consumer gets them
+from the same fetch. The build notes below stay as the rebuild procedure. Extend a group
+rather than adding a branch when a task needs more.
 
 ### G9 — Media tools for UI capture, required for `ui-capture`
 
@@ -1296,8 +1298,10 @@ system/tools/bin/tesseract     optional, plus system/tools/share/tessdata/eng.tr
 system/tools/UIPIPE.txt        version, upstream URL, sha256 for each binary
 ```
 
-Sizes, measured from the same static builds used by the reference branch, are about 78 MB for
-ffmpeg and ffprobe, 5 MB for gifsicle, and 15 MB for tesseract with English data. Verify each
+Sizes, measured from the static builds on the branch, are 79.8 MB for ffmpeg, 79.7 MB for
+ffprobe and 0.7 MB for gifsicle, 160 MB for the three. `tesseract` and its English data are
+not shipped, so the optional OCR round-trip stays absent and the skill's validation step
+skips it. Verify each
 binary runs under `env -i` with no `LD_LIBRARY_PATH`, which is the same sanity check the other
 tools pass in §6.4.
 
@@ -1307,16 +1311,19 @@ Blocks the four `#[ignore]` tests in `packages/rust_transcription/tests/sidecar_
 and any check of real transcript quality. `huggingface.co` is not allowlisted.
 
 ```text
-models/whisper/ggml-tiny.bin           about 75 MB
-models/whisper/ggml-base.bin           about 142 MB
-models/onnx/sense-voice/               smallest non whisper bundle, about 230 MB
+models/whisper/ggml-tiny.bin           77.7 MB, upstream published blob
+models/whisper/ggml-base.bin           148 MB, split into 2 parts at 94,371,840 bytes
+models/onnx/sense-voice/               model.int8.onnx 237 MB in 3 parts, plus tokens.txt
 models/MODELS.txt                      upstream URL, revision, sha256, licence for each
 ```
 
-Keep the large and medium whisper files and `canary-1b` out of the default group. A model is
+Keep the large and medium whisper files, `large-v3-turbo` and `canary-1b` out of the default
+group. A model is
 data, so the digest is the only proof of which bytes loaded. `FETCH.md` needs a step that puts
 them under a private `$SV` path and exports the directory the sidecar reads, and it must say
-that nothing verifies transcript content, only that a model loaded and produced text.
+that nothing verifies transcript content, only that a model loaded and produced text. The
+whisper weights are runtime-overridable with `RUST_TRANSCRIPTION_MODEL_URL_<UPPERCASE_ID>`;
+the ONNX artifact sets are not.
 
 ### G11 — WebDriver driver chain, optional
 
@@ -1326,12 +1333,15 @@ crates.io. The sysroot already carries `webkit2gtk-driver` (§6.3), and the bina
 `libwebkit2gtk-4.1-0` at `/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebDriver`.
 
 ```text
-drivers/tauri-driver/tauri-driver       built with cargo install tauri-driver, version recorded
+drivers/tauri-driver/tauri-driver       2.0.6, built with cargo install --version 2.0.6 --locked
 drivers/DRIVERS.txt                     version, build command, sha256
 drivers/chromedriver-152.0.0/           only for the macOS path in wdio.conf.js
 ```
 
-`FETCH.md` step 10 must print the `WebKitWebDriver` path from the extracted sysroot, and the
+2.1.0 is the current release and needs rustc 1.90, above this repository's 1.88.0 pin, so
+build 2.0.6. Measured on the branch: 24 MB for the group.
+
+`FETCH.md` step 7c must print the `WebKitWebDriver` path from the extracted sysroot, and the
 branch `README.md` must say whether the end to end suite was run, not only that the binary
 exists. `G6` stays closed as a browser group. This group carries no browser.
 
@@ -1396,7 +1406,7 @@ rm -rf ./* ./.[!.]* 2>/dev/null || true      # working tree must be EMPTY of sou
 cp -a /tmp/out/. .
 git add -A
 git -c user.name='mausagent' -c user.email='mausAgent@proton.me' \
-    commit -m 'vendor: sandbox toolchain payload (G1-G8)'
+    commit -m 'vendor: sandbox toolchain payload (G1-G8, G9-G13)'
 git log --format='%H parents:%P'   # parents: must be EMPTY
 git push origin vendor/sandbox-toolchain
 ```

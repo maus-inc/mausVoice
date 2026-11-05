@@ -15,7 +15,11 @@ pre-commit:
       run: pnpm --filter desktop exec oxlint {staged_files}
 
     - name: rust fmt check
-      glob: "**/*.{rs,toml}"
+      # Scope the trigger to exactly the crates the loop formats, so the hook cannot
+      # report success while an unformatted file in another crate goes unchecked.
+      glob:
+        - "{apps/desktop/src-tauri,packages/rust_transcription,packages/rust_pill_shared,packages/rust_gtk_pill,packages/rust_macos_pill,packages/rust_windows_pill}/**/*.{rs,toml}"
+        - "{apps/desktop/src-tauri,packages/rust_transcription,packages/rust_pill_shared,packages/rust_gtk_pill,packages/rust_macos_pill,packages/rust_windows_pill}/*.{rs,toml}"
       run: |
         for m in apps/desktop/src-tauri packages/rust_transcription packages/rust_pill_shared packages/rust_gtk_pill packages/rust_macos_pill packages/rust_windows_pill; do
           cargo fmt --manifest-path "$m/Cargo.toml" --all -- --check

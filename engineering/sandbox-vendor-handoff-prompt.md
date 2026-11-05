@@ -29,19 +29,24 @@ Do not rebuild for a TypeScript-only change, a docs change, or a migration.
 ## The second delivery, groups G9 to G13
 
 G1 to G8 cover the gates the branch already passes. `engineering/sandbox-coverage-gaps.md`
-records the stages it cannot cover, and the specification now carries a group for each. Add
-them as a second delivery, in this order, and only when a task needs the stage.
+records the stages it cannot cover, and the specification now carries a group for each.
+The second delivery shipped these five groups on 2026-11-05, so the table records what each
+one carries and its measured size. Extend the same branch and manifest if a task needs more.
 
-| Group | Carries                                                                    | Opens                                         | Size         |
-| ----- | -------------------------------------------------------------------------- | --------------------------------------------- | ------------ |
-| G9    | `ffmpeg`, `ffprobe`, `gifsicle`, optional `tesseract` and `tessdata`       | the `ui-capture` workflow                     | about 85 MB  |
-| G10   | `ggml-tiny.bin`, `ggml-base.bin`, one small ONNX bundle, `MODELS.txt`      | the four `#[ignore]` sidecar tests            | about 450 MB |
-| G12   | `rust-std` for `x86_64-pc-windows-msvc` and `aarch64-apple-darwin`, 1.88.0 | `cargo check --target` on platform gated code | about 400 MB |
-| G13   | `gitleaks` 8.18.0                                                          | the history scan                              | about 30 MB  |
-| G11   | `tauri-driver`, optional `chromedriver` 152.0.0                            | `test:webdriver` on Linux                     | about 20 MB  |
+| Group | Carries                                                                    | Opens                                         | Measured                        |
+| ----- | -------------------------------------------------------------------------- | --------------------------------------------- | ------------------------------- |
+| G9    | `ffmpeg`, `ffprobe`, `gifsicle`, optional `tesseract` and `tessdata`       | the `ui-capture` workflow                     | 160 MB                          |
+| G10   | `ggml-tiny.bin`, `ggml-base.bin`, one small ONNX bundle, `MODELS.txt`      | the four `#[ignore]` sidecar tests            | 463 MB                          |
+| G11   | `tauri-driver` 2.0.6, optional `chromedriver` 152.0.0                      | `test:webdriver` on Linux                     | 24 MB                           |
+| G12   | `rust-std` for `x86_64-pc-windows-msvc` and `aarch64-apple-darwin`, 1.88.0 | `cargo check --target` on platform gated code | 47.5 MB packed, 245 MB unpacked |
+| G13   | `gitleaks` 8.18.0                                                          | the history scan                              | 7 MB                            |
+
+`tesseract` and its `tessdata` are not shipped, so the `ui-capture` OCR check is still
+absent. The payload carries `tauri-driver` 2.0.6 rather than 2.1.0, because 2.1.0 needs
+rustc 1.90 and this repository pins 1.88.0.
 
 Keep the same branch, the same orphan commit rule, and the same manifest. Amending one orphan
-commit of this size is cheaper than a second branch, so fold a second delivery into the
+commit of this size is cheaper than a second branch, so fold a further delivery into the
 existing commit and move the tip.
 
 Nothing in G9 to G13 changes the trust model. Every binary and every model needs an upstream
@@ -121,9 +126,10 @@ For a second delivery, add these checks.
 - G9. Each media binary runs under `env -i` with a version banner. `ffmpeg -f lavfi -i
 testsrc=duration=1:size=320x240:rate=30 -f gif -` writes bytes, which proves the encoder
   is present and not only the demuxer.
-- G10. Each model digest matches `MODELS.txt`, and every delivered file loads through the
-  loader that will consume it, the sidecar for the ONNX bundles and whisper for the GGML
-  weights. A model that loads is not a transcript that is correct, so record only loading.
+- G10. Each model digest matches `MODELS.txt`, and every delivered model file loads through
+  the loader that will consume it, the sidecar for the ONNX bundles and whisper for the GGML
+  weights. `MODELS.txt` is metadata and loads through nothing, so it is excluded from the load
+  check. A model that loads is not a transcript that is correct, so record only loading.
 - G12. `rustc --print target-list` proves nothing, because it lists targets without their
   standard libraries. Check `lib/rustlib/<target>/lib/libstd-*.rlib` exists for both
   `x86_64-pc-windows-msvc` and `aarch64-apple-darwin`, run `cargo check --target` for each
