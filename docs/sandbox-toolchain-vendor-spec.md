@@ -1351,7 +1351,10 @@ rust/targets/TARGETS.txt                component sha256 from channel-rust-1.88.
 components come from the same 1.88.0 channel the toolchain already pins, and their hashes are
 listed in `channel-rust-1.88.0.toml`, so the manifest check extends without a new trust
 assumption. Gate it with `cargo check --locked --target x86_64-pc-windows-msvc` in
-`apps/desktop/src-tauri` and in `packages/rust_windows_pill`.
+`apps/desktop/src-tauri` and in `packages/rust_windows_pill`, and with
+`cargo check --locked --target aarch64-apple-darwin` in `apps/desktop/src-tauri` and
+`packages/rust_macos_pill`. Both targets need their own standard library present, and
+`rustc --print target-list` does not prove either one is.
 
 ### G13 — Secret scanning binary, small
 

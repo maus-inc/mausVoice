@@ -24,6 +24,7 @@
  *   R4  the unfolded part of the body stays within the line budget
  *   R5  the footer line appears exactly once, outside any fold
  *   R6  every visible level-2 heading is one of the four the template keeps unfolded
+ *   R7  all four of those sections are present, so the gate and the checklist cannot be dropped
  */
 
 import { readFileSync } from "node:fs";
@@ -35,6 +36,12 @@ const FOLDABLE_HEADING =
 // The template keeps four sections unfolded. Anything else visible is a record that belongs in a fold.
 const VISIBLE_HEADING =
   /^##\s+(Summary|Verification gate|Checklist|Footer)\s*$/;
+const REQUIRED_SECTIONS = [
+  "Summary",
+  "Verification gate",
+  "Checklist",
+  "Footer",
+];
 
 function parseArgs(argv) {
   const args = { file: null, maxOpen: 150 };
@@ -110,6 +117,7 @@ function check(body, maxOpen) {
   let openLines = 0;
   let footerCount = 0;
   let footerInsideFold = false;
+  const seenSections = new Set();
 
   lines.forEach((raw, index) => {
     const lineNo = index + 1;
@@ -124,6 +132,10 @@ function check(body, maxOpen) {
 
     if (!wasOpen) {
       openLines += 1;
+      const section = /^##\s+(.+?)\s*$/.exec(scan);
+      if (section && VISIBLE_HEADING.test(scan)) {
+        seenSections.add(section[1]);
+      }
       if (/^## /.test(scan) && !VISIBLE_HEADING.test(scan)) {
         violations.push(
           `R6 line ${lineNo}: visible heading "${quote(scan, 60)}" is not one of Summary, Verification gate, Checklist or Footer. Fold it and use the title as the <summary>.`,
@@ -162,6 +174,16 @@ function check(body, maxOpen) {
     }
   });
 
+  // The footer line is the Footer section, whether or not a "## Footer" heading precedes it.
+  if (footerCount > 0) {
+    seenSections.add("Footer");
+  }
+  const missing = REQUIRED_SECTIONS.filter((name) => !seenSections.has(name));
+  if (missing.length > 0) {
+    violations.push(
+      `R7: the visible sections ${missing.map((name) => `"## ${name}"`).join(", ")} are missing. The template keeps all four unfolded.`,
+    );
+  }
   if (depth > 0) {
     violations.push(`R2: ${depth} <details> block(s) are never closed.`);
   }

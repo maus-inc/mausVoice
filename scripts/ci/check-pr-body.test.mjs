@@ -34,6 +34,13 @@ describe("check-pr-body", () => {
       "",
       "</details>",
       "",
+      "",
+      "## Verification gate",
+      "Head SHA: `abc1234`",
+      "",
+      "## Checklist",
+      "- [x] one",
+      "",
       footer,
     ].join("\n");
     const { code, out } = run(body);
@@ -69,6 +76,13 @@ describe("check-pr-body", () => {
       "Boilerplate.",
       "",
       "</details>",
+      "",
+      "## Verification gate",
+      "Head SHA: `abc1234`",
+      "",
+      "## Checklist",
+      "- [x] one",
+      "",
       footer,
     ].join("\n");
     const { code, out } = run(body);
@@ -104,6 +118,13 @@ describe("check-pr-body", () => {
       "no summary and never closed",
       "```",
       "",
+      "",
+      "## Verification gate",
+      "Head SHA: `abc1234`",
+      "",
+      "## Checklist",
+      "- [x] one",
+      "",
       footer,
     ].join("\n");
     const { code, out } = run(body);
@@ -111,12 +132,28 @@ describe("check-pr-body", () => {
   });
 
   it("does not read a word that merely contains review as a review heading", () => {
-    const body = ["## Summary", "Text.", "", "## Preview", "Text.", "", footer].join("\n");
+    const body = [
+      "## Summary",
+      "Text.",
+      "",
+      "## Preview",
+      "Text.",
+      "",
+      footer,
+    ].join("\n");
     const { code, out } = run(body);
     // R6 rejects `## Preview` as an unknown visible section, but R3 must not claim it is a review record.
     assert.equal(code, 1);
     assert.doesNotMatch(out, /R3/);
     assert.match(out, /R6/);
+  });
+
+  it("fails a body that drops the verification gate and the checklist", () => {
+    const body = ["## Summary", "Text.", "", footer].join("\n");
+    const { code, out } = run(body);
+    assert.equal(code, 1);
+    assert.match(out, /R7/);
+    assert.match(out, /## Verification gate/);
   });
 
   it("fails a visible heading outside the template sections", () => {
@@ -234,6 +271,13 @@ describe("check-pr-body", () => {
       "<summary>Review log</summary>",
       "| Round | 1 |",
       "</details>",
+      "",
+      "## Verification gate",
+      "Head SHA: `abc1234`",
+      "",
+      "## Checklist",
+      "- [x] one",
+      "",
       footer,
     ].join("\n");
     const { code, out } = run(body);

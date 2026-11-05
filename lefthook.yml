@@ -12,7 +12,7 @@ pre-commit:
 
     - name: oxlint (staged desktop source)
       glob: "apps/desktop/**/*.{ts,tsx}"
-      run: npx oxlint {staged_files}
+      run: pnpm --filter desktop exec oxlint {staged_files}
 
     - name: rust fmt check
       glob: "**/*.{rs,toml}"
