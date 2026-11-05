@@ -24,8 +24,12 @@ import { TipCard } from "./TipCard";
 export const TipToaster = () => {
   const { pathname } = useLocation();
   const dismissed = useAppStore((s) => s.local.dismissedTipIds ?? []);
+  // React Router renders existing routes with a trailing slash and keeps it
+  // in `pathname`, so strip it before matching, or a trailing-slash URL would
+  // hide the tip.
+  const route = pathname.replace(/\/+$/, "") || "/";
   const tips = ONBOARDING_TIPS.filter(
-    (tip) => tip.href === pathname && !dismissed.includes(tip.id),
+    (tip) => tip.href === route && !dismissed.includes(tip.id),
   );
 
   return (

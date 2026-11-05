@@ -160,6 +160,17 @@ describe("TipToaster", () => {
     );
   });
 
+  it("matches the route even with a trailing slash", async () => {
+    // React Router renders existing routes with a trailing slash and keeps
+    // it in `pathname`; the match must still hold or the tip hides there.
+    await renderToaster("/dashboard/styling/");
+
+    expect(noteCount()).toBe(1);
+    expect(document.body.textContent).toContain(
+      "Teach mausVoice how you write",
+    );
+  });
+
   it("shows nothing on a route with no tip", async () => {
     await renderToaster("/dashboard/help");
 

@@ -139,9 +139,11 @@ describe("SettingsPage generative-provider tip action", () => {
     await renderPage();
 
     const handler = getTipAction("generative-provider");
-    expect(handler).toBeTypeOf("function");
+    if (typeof handler !== "function") {
+      throw new Error("Generative-provider tip handler is not registered");
+    }
     act(() => {
-      handler!();
+      handler();
     });
     await drainFrames();
 
