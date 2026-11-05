@@ -1,0 +1,105 @@
+name: Bug report
+description: Something in mausVoice is broken or behaves incorrectly
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. For a security issue, read [SECURITY guidance](../blob/main/CODE_OF_CONDUCT.md) first and report it privately rather than in a public issue.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What went wrong, in one or two sentences.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Numbered steps that reliably trigger the issue. Include the exact audio file or wording when dictation output is wrong.
+      placeholder: |
+        1. Open the app
+        2. Select the "parakeet-ctc-0.6b" model
+        3. Dictate for 10 seconds
+        4. See the transcript lose the last sentence
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+      description: What happened instead. Paste the error text as it appears.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: mausVoice version
+      description: Shown in the app's About panel, or the release tag you installed.
+      placeholder: e.g. 0.1.6
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS, Apple Silicon
+        - macOS, Intel
+        - Windows 11
+        - Windows 10
+        - Linux, X11
+        - Linux, Wayland
+        - Other
+  - type: dropdown
+    id: install
+    attributes:
+      label: How you installed it
+      options:
+        - GitHub release, dmg
+        - GitHub release, exe or msi
+        - GitHub release, AppImage or deb
+        - Homebrew cask
+        - Built from source
+        - Other
+  - type: dropdown
+    id: model
+    attributes:
+      label: Transcription model in use
+      description: Pick the model selected in settings when the problem happened.
+      options:
+        - whisper, tiny
+        - whisper, base
+        - whisper, small
+        - whisper, medium
+        - whisper, large
+        - parakeet-ctc-0.6b
+        - parakeet-tdt-0.6b
+        - canary-1b
+        - sense-voice
+        - Not model related
+  - type: input
+    id: provider
+    attributes:
+      label: AI provider and model, when the problem involves cleanup or generation
+      placeholder: e.g. Groq, llama-3.3-70b-versatile
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and screenshots
+      description: Attach the app log file, the transcript text, or a screen recording. Redact API keys and personal audio.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before filing
+      options:
+        - label: I searched existing issues and did not find this one.
+          required: true
+        - label: I removed API keys, tokens, and personal audio from everything I pasted.
+          required: true

@@ -1,0 +1,13 @@
+# Subject: area: what changed
+#   Areas: desktop, tauri, transcription, voice-ai, agent, pill, bindings,
+#   preview, docs, i18n, ci, release, deps, repo. See COMMIT.md.
+#   Describe the change, not the activity. 72 characters or less, no full stop.
+#
+# Body: why the change is needed, and what the old behaviour did wrong.
+#   Say what you ran to verify it when the diff does not make that obvious.
+#
+# Trailers:
+#   Closes #N            only with a real issue number
+#   Co-authored-by: Real Name <real.email@example.com>
+#
+# Lines starting with # are stripped by git and never reach the commit.

@@ -14,7 +14,10 @@ Authoritative sources, in the order you should read them:
    the per-crate gate commands, the native payload env vars, and the mistake list.
 4. `docs/sandbox-toolchain-vendor-spec.md` in this repository. The build
    specification, for when the payload has to be rebuilt.
-5. `.agents/PREFLIGHT.md` in this repository. The pre-push checklist.
+5. `engineering/sandbox-coverage-gaps.md` in this repository. What the payload
+   still does not cover, the measured failure for each gap, and the group that
+   would close it.
+6. `.agents/PREFLIGHT.md` in this repository. The pre-push checklist.
 
 ## The payload
 
@@ -147,10 +150,30 @@ commit message, so it remains a single orphan commit.
   sandbox has and the linker dies with `signal 9`.
 - `packages/rust_gtk_pill` opens a display, so it needs `xvfb-run -a`.
 - `cmake` must be on `PATH` before any build of `packages/rust_transcription`.
-- There is no browser group. This repository has no Playwright or WebDriver harness, so
-  nothing was vendored for one, and about 260 MB was saved by not shipping it. Visual
-  checking still has a surface inside the repository: `apps/preview` renders the real
-  desktop components in a Vite app on port 5193 and needs no browser automation to run.
+- There is no browser group in the payload, and this repository does have a WebDriver
+  harness. `apps/desktop/webdriver/wdio.conf.js` runs through `pnpm --filter desktop
+test:webdriver`, it spawns `tauri-driver` on Linux and `chromedriver` on macOS, and no
+  workflow invokes it. What that costs, and what to vendor for it, is gap G11 in
+  `engineering/sandbox-coverage-gaps.md`. Do not repeat the older claim that no harness
+  exists, because the directory is in the tree.
+- `pnpm install --frozen-lockfile` fails without `CHROMEDRIVER_SKIP_DOWNLOAD=true`,
+  because `chromedriver@152.0.0` is in `onlyBuiltDependencies` and its install script
+  fetches Chrome for Testing metadata from `googlechromelabs.github.io`, which is not
+  reachable. `--ignore-scripts` also works and skips the other build scripts. Measured
+  on 2026-11-05: 1398 packages in 29 seconds, then `pnpm run check-types` passes with 9
+  turbo tasks in 49 seconds. This is gap G9.
+- `ffmpeg`, `ffprobe`, `gifsicle`, `tesseract` and any Chromium are absent, so the
+  `ui-capture` skill cannot record. `apps/preview` is still the rendering surface, and an
+  inspection of it in both themes is the substitute. This is gap G12.
+- The gitleaks release asset redirects to `release-assets.githubusercontent.com`, which
+  is blocked, so the history scan runs in CI only. The scan configuration tests still
+  pass locally. This is gap G14.
+- No model weights ship in the payload, because they live on `huggingface.co`. The four
+  `#[ignore]` tests in `packages/rust_transcription/tests/sidecar_integration.rs` need
+  them. This is gap G10.
+- Visual checking still has a surface inside the repository: `apps/preview` renders the
+  real desktop components in a Vite app on port 5193 and needs no browser automation to
+  run.
 
 ## Rebuild triggers
 

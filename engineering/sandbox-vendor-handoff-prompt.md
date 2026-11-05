@@ -24,6 +24,28 @@ Rebuild when any of these changes:
 
 Do not rebuild for a TypeScript-only change, a docs change, or a migration.
 
+## The second delivery, groups G9 to G13
+
+G1 to G8 cover the gates the branch already passes. `engineering/sandbox-coverage-gaps.md`
+records the stages it cannot cover, and the specification now carries a group for each. Add
+them as a second delivery, in this order, and only when a task needs the stage.
+
+| Group | Carries                                                                    | Opens                                         | Size         |
+| ----- | -------------------------------------------------------------------------- | --------------------------------------------- | ------------ |
+| G9    | `ffmpeg`, `ffprobe`, `gifsicle`, optional `tesseract` and `tessdata`       | the `ui-capture` workflow                     | about 85 MB  |
+| G10   | `ggml-tiny.bin`, `ggml-base.bin`, one small ONNX bundle, `MODELS.txt`      | the four `#[ignore]` sidecar tests            | about 450 MB |
+| G12   | `rust-std` for `x86_64-pc-windows-msvc` and `aarch64-apple-darwin`, 1.88.0 | `cargo check --target` on platform gated code | about 400 MB |
+| G13   | `gitleaks` 8.18.0                                                          | the history scan                              | about 30 MB  |
+| G11   | `tauri-driver`, optional `chromedriver` 152.0.0                            | `test:webdriver` on Linux                     | about 20 MB  |
+
+Keep the same branch, the same orphan commit rule, and the same manifest. Amending one orphan
+commit of this size is cheaper than a second branch, so fold a second delivery into the
+existing commit and move the tip.
+
+Nothing in G9 to G13 changes the trust model. Every binary and every model needs an upstream
+URL, a published digest where one exists, and a line in `MANIFEST.sha256`. Where the digest is
+your own build output, say so in `README.md`, the same way the licence group does.
+
 ## The prompt to hand over
 
 > Build the `vendor/sandbox-toolchain` orphan branch for `maus-inc/mausVoice`,
@@ -40,7 +62,8 @@ Do not rebuild for a TypeScript-only change, a docs change, or a migration.
 >   780 MB of hex digests is a bad idea.
 > - Root tree exactly `FETCH.md`, `LICENSES`, `MANIFEST.sha256`, `README.md`, `native`,
 >   `rust`, `system`. Nothing else at the root.
-> - Groups G1 to G8 as specified. No browser group.
+> - Groups G1 to G8 as specified. No browser group. Add groups G9 to G13 only when the
+>   task that triggered the rebuild names one of them, and never add a browser.
 > - No file may reach 100 MiB. Split any archive at or above 90 MiB into `.part-NN`
 >   pieces of exactly 94,371,840 bytes, zero-padded from `00`, and list both the parts
 >   and the reassembled name in the manifest.
@@ -90,6 +113,22 @@ matter most, in order:
 Then read the branch `README.md` gate table and check the numbers are internally
 consistent. Do not treat a reported gate result as reproduced unless you ran it.
 
+For a second delivery, add these checks.
+
+- G9. Each media binary runs under `env -i` with a version banner. `ffmpeg -f lavfi -i
+testsrc=duration=1:size=320x240:rate=30 -f gif -` writes bytes, which proves the encoder
+  is present and not only the demuxer.
+- G10. Each model digest matches `MODELS.txt`, and the smallest whisper file loads in a
+  scratch process. A model that loads is not a transcript that is correct, so record only
+  loading.
+- G12. `rustc --print target-list` from the payload lists both targets, `cargo check
+--target x86_64-pc-windows-msvc` reaches the code instead of failing on `core`, and the
+  component digests match `channel-rust-1.88.0.toml`.
+- G13. `gitleaks detect --config gitleaks.toml` on a known clean tree reports the same
+  finding count as the last CI run on the same commit.
+- G11. `WebKitWebDriver` exists in the extracted sysroot at the recorded path, and
+  `tauri-driver --version` runs.
+
 Record the outcome in `engineering/sandbox-vendored-toolchain.md`, including anything
 you found that the build report did not mention.
 
@@ -112,7 +151,12 @@ you found that the build report did not mention.
   it to make a gate pass.
 - `whisper-rs-sys` ships `whisper.cpp` inside the crate. There is no separate
   `native/whisper.cpp/` group to build. This was an open question in the specification
-  and the vendored directory settles it.
+  and the vendored directory settles it. The delivered branch also proves it, because its
+  `Transcription lib tests` gate compiled the C++ with the tools tree's `cmake`.
+- A GitHub release asset is not a delivery path. The URL answers 302 to
+  `release-assets.githubusercontent.com`, which a restricted sandbox cannot reach. This is
+  why `gitleaks` has to be vendored rather than downloaded at scan time, and why both
+  `build.rs` scripts need pre-seeded archives.
 - Never extract into the workspace. Everything under the workspace root is snapshotted
   against a size and file cap.
 - Never commit a `.cargo/config.toml` with the vendored source replacement into this

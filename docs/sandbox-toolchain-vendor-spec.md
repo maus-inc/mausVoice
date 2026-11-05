@@ -1273,6 +1273,98 @@ list). Non-negotiable inclusions:
 
 ---
 
+### G9 to G13 — Added on 2026-11-05
+
+G1 to G8 make the gates the delivered branch already passes. G9 to G13 close the stages that
+branch cannot cover, measured in `engineering/sandbox-coverage-gaps.md`. Build none of them
+for a refresh of the current branch. Build them when a task needs the stage each one names.
+
+### G9 — Media tools for UI capture, required for `ui-capture`
+
+Blocks the capture workflow in `.agents/skills/ui-capture/SKILL.md`, which needs `ffmpeg`,
+`ffprobe`, `gifsicle` and, optionally, `tesseract`.
+
+```text
+system/tools/bin/ffmpeg        static build, x86-64, with the LGPL text
+system/tools/bin/ffprobe       from the same build
+system/tools/bin/gifsicle      static build, GPL text
+system/tools/bin/tesseract     optional, plus system/tools/share/tessdata/eng.traineddata
+system/tools/UIPIPE.txt        version, upstream URL, sha256 for each binary
+```
+
+Sizes, measured from the same static builds used by the reference branch, are about 78 MB for
+ffmpeg and ffprobe, 5 MB for gifsicle, and 15 MB for tesseract with English data. Verify each
+binary runs under `env -i` with no `LD_LIBRARY_PATH`, which is the same sanity check the other
+tools pass in §6.4.
+
+### G10 — Model weights, required for transcription behaviour
+
+Blocks the four `#[ignore]` tests in `packages/rust_transcription/tests/sidecar_integration.rs`
+and any check of real transcript quality. `huggingface.co` is not allowlisted.
+
+```text
+models/whisper/ggml-tiny.bin           about 75 MB
+models/whisper/ggml-base.bin           about 142 MB
+models/onnx/sense-voice/               smallest non whisper bundle, about 230 MB
+models/MODELS.txt                      upstream URL, revision, sha256, licence for each
+```
+
+Keep the large and medium whisper files and `canary-1b` out of the default group. A model is
+data, so the digest is the only proof of which bytes loaded. `FETCH.md` needs a step that puts
+them under a private `$SV` path and exports the directory the sidecar reads, and it must say
+that nothing verifies transcript content, only that a model loaded and produced text.
+
+### G11 — WebDriver driver chain, optional
+
+Blocks `pnpm --filter desktop test:webdriver` on Linux. `wdio.conf.js` spawns
+`tauri-driver`, which appears in no `Cargo.lock` here, so `cargo install tauri-driver` needs
+crates.io. The sysroot already carries `webkit2gtk-driver` (§6.3), and the binary sits inside
+`libwebkit2gtk-4.1-0` at `/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebDriver`.
+
+```text
+drivers/tauri-driver/tauri-driver       built with cargo install tauri-driver, version recorded
+drivers/DRIVERS.txt                     version, build command, sha256
+drivers/chromedriver-152.0.0/           only for the macOS path in wdio.conf.js
+```
+
+`FETCH.md` step 10 must print the `WebKitWebDriver` path from the extracted sysroot, and the
+branch `README.md` must say whether the end to end suite was run, not only that the binary
+exists. `G6` stays closed as a browser group. This group carries no browser.
+
+### G12 — Cross-target Rust standard libraries, optional
+
+Blocks a local type check of code behind `#[cfg(windows)]` and `#[cfg(target_os = "macos")]`.
+`test-desktop-unit.yml` runs a `rust-windows-gated` job on `windows-2022` for exactly that
+code.
+
+```text
+rust/targets/x86_64-pc-windows-msvc/rust-std-1.88.0.tar.xz
+rust/targets/aarch64-apple-darwin/rust-std-1.88.0.tar.xz
+rust/targets/TARGETS.txt                component sha256 from channel-rust-1.88.0.toml
+```
+
+`cargo check --target` does not link, so no Windows SDK and no macOS SDK is needed. Both
+components come from the same 1.88.0 channel the toolchain already pins, and their hashes are
+listed in `channel-rust-1.88.0.toml`, so the manifest check extends without a new trust
+assumption. Gate it with `cargo check --locked --target x86_64-pc-windows-msvc` in
+`apps/desktop/src-tauri` and in `packages/rust_windows_pill`.
+
+### G13 — Secret scanning binary, small
+
+Blocks the history scan in `.github/workflows/secret-scan.yml`, which pins gitleaks 8.18.0.
+The release asset answers 302 to `release-assets.githubusercontent.com`, which has no route.
+
+```text
+system/tools/bin/gitleaks              version 8.18.0, static, about 30 MB
+system/tools/GITLEAKS.txt              upstream URL, published sha256, version
+```
+
+Gate it with `gitleaks detect --source . --config gitleaks.toml` and compare the finding count
+with the last CI run on the same commit. A different count is a payload defect, not a clean
+result.
+
+---
+
 ## 7. Branch mechanics
 
 ```bash
@@ -1673,6 +1765,29 @@ Must be verified during stage 4 (§6.5.3). If yes: nothing to do. If no: G5 grow
 (`crates.io` unreachable; my GitHub lookups for the `whisper-rs` repo 404'd — the
 repository may have moved or been renamed). **Resolve this first; it is the only unknown
 that can change the branch layout.**
+
+**D-6 resolved on 2026-11-05.** `whisper-rs-sys` is in
+`packages/rust_transcription/Cargo.lock`, and the delivered branch records `Transcription lib
+tests 64 passed, 0 failed` with `cmake` on `PATH` from the tools tree. That build cannot run
+without whisper.cpp sources, so the crate carries them and no extra group is needed. The
+remaining check is a `cargo test --locked --lib` run in `packages/rust_transcription` on the
+consumer side, which is already in `.agents/PREFLIGHT.md`.
+
+**D-9 — Build the media tools group (G9)?** Recommended **yes** when any task touches a
+surface a user sees, because `ui-capture` cannot run without `ffmpeg` and `gifsicle`. About
+85 MB, three static binaries, no system libraries to resolve.
+
+**D-10 — Vendor model weights (G10)?** Recommended **yes, smallest set only**. The four
+sidecar tests are the only evidence that the transcription path loads a model at all. Ship
+`ggml-tiny.bin` and one ONNX bundle, and keep the rest out.
+
+**D-11 — Build the WebDriver driver chain (G11)?** Recommended **no** until someone intends
+to run `test:webdriver` inside a sandbox. It pairs with D-2, which stays closed. The
+`WebKitWebDriver` path check costs nothing and should go into `FETCH.md` regardless.
+
+**D-12 — Vendor cross-target standard libraries (G12)?** Recommended **yes**. About 400 MB
+turns "checked by CI on Windows only" into a local `cargo check`, which is the difference
+between a claim and a measurement.
 
 **D-7 — Branch owner identity.** The reference commit is authored
 `mausagent <mausAgent@proton.me>`. Use whatever identity this repo's automation uses;

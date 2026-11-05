@@ -8,7 +8,7 @@ This file is the short form. `AGENTS.md` holds the binding rules, and the
 
 ## Required local checks
 
-- [ ] `pnpm install --frozen-lockfile`
+- [ ] `pnpm install --frozen-lockfile`, or `CHROMEDRIVER_SKIP_DOWNLOAD=true pnpm install --frozen-lockfile` on a host that cannot reach `googlechromelabs.github.io`
 - [ ] `pnpm run lint`
 - [ ] `pnpm run check-types`
 - [ ] `pnpm run test`
@@ -67,7 +67,11 @@ tools and the two native archives. Then:
 - [ ] I set `SHERPA_ONNX_ARCHIVE_DIR` and, where needed, `MAUSVOICE_ORT_DYLIB_PATH` from the pre-seeded `native/` payloads, because the `build.rs` downloads point at GitHub Releases, which redirect to a blocked host
 - [ ] I put `cmake` on `PATH` before building `packages/rust_transcription`
 - [ ] I verified the sysroot before any link step: `find "$GTK_SYSROOT" -xtype l -name "lib*.so*"` and `find "$GTK_SYSROOT" -type l -lname '/*'` both print nothing
+- [ ] I installed with `CHROMEDRIVER_SKIP_DOWNLOAD=true`, or with `--ignore-scripts`, because `chromedriver@152.0.0` is in `onlyBuiltDependencies` and its install script downloads from a blocked host
+- [ ] I checked `system/PKGS.txt` for a tool before calling it missing, and read `engineering/sandbox-coverage-gaps.md` before calling a stage blocked
 - [ ] For every gate that still cannot run, I said so in the PR body with the reason and the substitute command I ran, rather than marking it passed
+
+The gap register in `engineering/sandbox-coverage-gaps.md` names what no payload can close here. The short list is model weights, provider API keys, audio devices, a Chromium and the media tools `ui-capture` needs, `tauri-driver`, packaging tooling, and the gitleaks binary. Name the gap number in the PR body when one of them stops a gate.
 
 The `--ignored` tests in
 `packages/rust_transcription/tests/sidecar_integration.rs` download models from
@@ -84,6 +88,7 @@ reason. Do not report them as passed.
 - [ ] Both light and dark modes still read correctly. This app ships both
 - [ ] Every new control has a visible focus state, icon-only controls have `aria-label`, toggles have `aria-pressed`
 - [ ] Every new user-visible string goes through `FormattedMessage` or `useIntl`, with no `id` prop, and the i18n extract shows no unexpected diff
+- [ ] I ran `pnpm --filter @maus-inc/preview dev` and inspected the changed surface in light mode and in dark mode, or I ran `pnpm --filter desktop test:webdriver` when the WebDriver driver chain was available
 - [ ] Copy is sentence case, uses `...` rather than the ellipsis character, and passed an `unslop` read
 
 ## Branch and review rules
