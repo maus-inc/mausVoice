@@ -1,0 +1,41 @@
+name: PR Body Fold Check
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions: {}
+
+# trigger-manual: false
+
+# A pull request description only stays readable while the long records sit behind a fold.
+# Review rounds, babysit polls and CI logs are the three that grow without limit, and each
+# one is a row in a folded table rather than a new section. This workflow is hygiene, not
+# security: it keeps one screen of summary above the folds.
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  body:
+    name: Folded Body Check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - name: Setup Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version-file: .nvmrc
+          # This job installs nothing, so it must not reach for a package-manager cache.
+          package-manager-cache: false
+      - name: Check the guard
+        run: node --test scripts/ci/check-pr-body.test.mjs
+      - name: Check the body
+        # The body arrives through the environment, never spliced into the shell.
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: printf '%s' "$PR_BODY" | node scripts/ci/check-pr-body.mjs -
