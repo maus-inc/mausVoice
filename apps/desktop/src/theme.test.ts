@@ -201,19 +201,28 @@ describe("theme mode configuration", () => {
     expect(typeof errorVariant?.style).toBe("function");
     expect(typeof flatVariant?.style).toBe("function");
 
+    const requireStyleFunction = (
+      value: unknown,
+      name: string,
+    ): ((arg: { theme: typeof theme }) => Record<string, any>) => {
+      if (typeof value !== "function") {
+        throw new Error(`${name} must resolve to a style function`);
+      }
+      return value as (arg: { theme: typeof theme }) => Record<string, any>;
+    };
+
     const [darkKey] = Object.keys(theme.applyStyles("dark", { color: "red" }));
-    const containedStyles = (
-      containedOverride as (arg: { theme: typeof theme }) => Record<string, any>
+    const containedStyles = requireStyleFunction(
+      containedOverride,
+      "MuiButton.contained",
     )({ theme });
-    const errorStyles = (
-      errorVariant!.style as (arg: {
-        theme: typeof theme;
-      }) => Record<string, any>
+    const errorStyles = requireStyleFunction(
+      errorVariant?.style,
+      "error contained variant",
     )({ theme });
-    const flatStyles = (
-      flatVariant!.style as (arg: {
-        theme: typeof theme;
-      }) => Record<string, any>
+    const flatStyles = requireStyleFunction(
+      flatVariant?.style,
+      "flat variant",
     )({ theme });
 
     for (const styles of [containedStyles, errorStyles, flatStyles]) {
