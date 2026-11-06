@@ -714,10 +714,12 @@ const buildRetranscribeSnackbarOptions = (
 // carries the mapped label and click handler; both come from the same outcome.
 const getRetranscribeCompletionToastAction = (
   feedback: RetranscribeSuccessFeedback | null,
-): ToastAction | undefined =>
-  feedback?.action === "fix"
-    ? getPostProcessFeedbackToastAction(feedback.action)
+): ToastAction | undefined => {
+  const action = feedback?.action;
+  return action === "fix"
+    ? getPostProcessFeedbackToastAction(action)
     : undefined;
+};
 
 const showRetranscribeSuccessFeedback = (
   feedback: RetranscribeSuccessFeedback | null = null,
@@ -1519,14 +1521,14 @@ export const importAudioFile = async ({
       postProcessDevice: postProcessResult.metadata.postProcessDevice ?? null,
       postProcessModel: postProcessResult.metadata.postProcessModel ?? null,
       postProcessProvider:
-        postProcessResult.metadata?.postProcessProvider ?? null,
-      postProcessFailed: postProcessResult.metadata?.postProcessFailed ?? null,
+        postProcessResult.metadata.postProcessProvider ?? null,
+      postProcessFailed: postProcessResult.metadata.postProcessFailed ?? null,
       postProcessEditFailed:
-        postProcessResult.metadata?.postProcessEditFailed ?? null,
+        postProcessResult.metadata.postProcessEditFailed ?? null,
       postProcessEditFailureCount:
-        postProcessResult.metadata?.postProcessEditFailureCount ?? null,
+        postProcessResult.metadata.postProcessEditFailureCount ?? null,
       postProcessEditAutoRetryUsed:
-        postProcessResult.metadata?.postProcessEditAutoRetryUsed ?? null,
+        postProcessResult.metadata.postProcessEditAutoRetryUsed ?? null,
       // Retry context is written only when a recovery pass claims the row.
       postProcessEditRetryToneId: null,
       postProcessEditRetryLanguageCode: null,

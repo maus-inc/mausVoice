@@ -407,10 +407,10 @@ const getPostProcessToastDuration = (
 
 const getPostProcessToastAction = (
   feedback: PostProcessFeedback | null | undefined,
-): ToastAction | undefined =>
-  feedback?.action
-    ? getPostProcessFeedbackToastAction(feedback.action)
-    : undefined;
+): ToastAction | undefined => {
+  const action = feedback?.action;
+  return action ? getPostProcessFeedbackToastAction(action) : undefined;
+};
 
 // The native pill displays one toast at a time, so keep both outcomes and the
 // Fix action when fast-style metadata reports an unstyled tail.

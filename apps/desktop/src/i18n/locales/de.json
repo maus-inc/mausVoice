@@ -420,7 +420,7 @@
   "fast_local": "Schnell (lokal)",
   "fast_styling_for_short_dictations": "Schnelle Formatierung für kurze Diktate",
   "fast_styling_left_the_last_droppedchars_characters_of_that_d": "Die schnelle Formatierung hat die letzten {droppedChars} Zeichen des Diktats nicht formatiert. Das nicht formatierte Ende steht in der Historie.",
-  "fast_styling_left_the_last_droppedchars_characters_of_the_au": "Die schnelle Formatierung ließ die letzten {droppedChars} Zeichen des Audios unformatiert. Das unformatierte Ende steht in der Historie.",
+  "fast_styling_left_the_last_droppedchars_characters_of_the_au": "Die schnelle Formatierung ließ die letzten {droppedChars} Zeichen des Audios unformatiert. Das unformatierte Ende steht im Verlauf.",
   "fast_styling_left_the_last_droppedchars_characters_unstyled": "Die schnelle Formatierung ließ die letzten {droppedChars} Zeichen unformatiert. Die App hat sie nicht im Verlauf gespeichert.",
   "fastest_lowest_accuracy": "Am schnellsten, geringste Genauigkeit",
   "final_transcript_unavailable": "Endgültiges Transkript nicht verfügbar.",

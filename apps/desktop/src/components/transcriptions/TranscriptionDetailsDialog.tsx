@@ -308,31 +308,37 @@ export const TranscriptionDetailsDialog = () => {
   );
 
   const warnings = useMemo(() => {
-    if (!transcription?.warnings) {
+    // The row is read through one local so the guarded accesses below stay
+    // bare: an optional chain next to a bare property read on the same value
+    // reads as an unresolved nullability question, and after this guard there
+    // is none left.
+    const row = transcription;
+    const rowWarnings = row?.warnings;
+    if (!row || !rowWarnings) {
       return [];
     }
-    return transcription.warnings
+    return rowWarnings
       .map((warning) => warning.trim())
       .filter((warning) => warning.length > 0)
       .map((warning) => {
         if (isPostProcessErrorCategory(warning)) {
           return resolveCategoryWarning(
             warning,
-            transcription.postProcessFailed,
-            transcription.postProcessFallback,
+            row.postProcessFailed,
+            row.postProcessFallback,
             (descriptor) => intl.formatMessage(descriptor),
           );
         }
         // Translate only the known unusable-reply markers; a fallback row can
         // also carry unrelated warnings that must stay verbatim.
         if (
-          !transcription.postProcessFailed &&
-          transcription.postProcessFallback &&
+          !row.postProcessFailed &&
+          row.postProcessFallback &&
           isUnusableResponseWarning(warning)
         ) {
           return resolveUnusableWarning(
             warning,
-            getUnusableRowHadPreviousText(transcription),
+            getUnusableRowHadPreviousText(row),
           );
         }
         return warning;
