@@ -553,8 +553,8 @@ const scheduleStopPathHistory = ({
   const persistAllowedAtStop =
     (input.persistAllowedAtCapture ?? isPersistenceAllowed()) &&
     isPersistenceAllowed();
-  const persistedConcurrently =
-    owner === "concurrent" && pendingPersistence !== undefined;
+  const concurrentWrite =
+    owner === "concurrent" ? pendingPersistence : undefined;
   const droppedChars = postProcessMetadata?.fastStyleTruncatedChars;
   const notifyDroppedEnding = (kind: "history" | "not-saved"): void => {
     if (typeof droppedChars !== "number" || droppedChars <= 0) {
@@ -600,8 +600,8 @@ const scheduleStopPathHistory = ({
     notifyDroppedEnding(owner === "review" ? "history" : "not-saved");
   };
 
-  if (persistedConcurrently && pendingPersistence) {
-    pendingPersistence.then(onHistoryStored).catch((error) => {
+  if (concurrentWrite !== undefined) {
+    concurrentWrite.then(onHistoryStored).catch((error) => {
       getLogger().warning(`Concurrent history persist failed: ${error}`);
       onHistoryMissed();
     });
