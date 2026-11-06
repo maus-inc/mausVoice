@@ -193,6 +193,9 @@ export const createDefaultPreferences = (): UserPreferences => ({
   // the default is the policy that shows nothing between dictations.
   keepMicrophoneReady: false,
   microphonePrerollSeconds: 0.5,
+  // No linger: a second press inside a few seconds is not worth lighting the
+  // microphone indicator after every recording for.
+  microphoneLingerMs: 0,
 });
 
 // Serializes preference mutations so overlapping tool toggles or numeric edits

@@ -136,6 +136,7 @@ fn main() {
         transcription_import_audio,
         transcription_list,
         transcription_update,
+        set_microphone_linger,
         user_get_one,
         user_record_usage,
         user_preferences_compare_set_expansion_flags,

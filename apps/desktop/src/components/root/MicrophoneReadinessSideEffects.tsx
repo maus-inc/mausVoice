@@ -35,6 +35,9 @@ export const MicrophoneReadinessSideEffects = () => {
   const prerollSeconds = useAppStore(
     (state) => state.userPrefs?.microphonePrerollSeconds ?? 0.5,
   );
+  const lingerMs = useAppStore(
+    (state) => state.userPrefs?.microphoneLingerMs ?? 0,
+  );
   const isRecording = useAppStore(
     (state) => state.activeRecordingMode !== null,
   );
@@ -154,6 +157,16 @@ export const MicrophoneReadinessSideEffects = () => {
     openedPrerollRef.current = prerollSeconds;
     hold(prerollSeconds);
   }, [enabled, isRecording, permissionGranted, prerollSeconds, hold, release]);
+
+  // The post-recording window is a policy the stop path reads, and it has to be
+  // in place before the recording that will stop, not after it. Pushing it on
+  // every change also means turning it off takes effect on the next stop rather
+  // than on the next launch.
+  useEffect(() => {
+    void commands.setMicrophoneLinger(lingerMs).catch((error: unknown) => {
+      getLogger().warning(`Could not set the linger window: ${error}`);
+    });
+  }, [lingerMs]);
 
   // One read on mount, so the dialog shows the truth before anything is toggled.
   useEffect(() => {

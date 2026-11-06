@@ -92,6 +92,16 @@ export type UserPreferences = {
    * not clipped. Bounded to the range the recorder accepts.
    */
   microphonePrerollSeconds: number;
+  /**
+   * How long the device stays open after a dictation stops, in milliseconds.
+   *
+   * Zero closes it at stop and is the default: that is the only policy with no
+   * microphone indicator between dictations, so a user who has not chosen a
+   * linger gets none. A non-zero value makes a second press within the window
+   * instant, at the cost of the indicator staying lit for that long after each
+   * recording.
+   */
+  microphoneLingerMs: number;
 
   // deprecated
 };

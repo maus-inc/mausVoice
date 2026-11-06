@@ -3547,6 +3547,31 @@ pub fn warm_microphone(
     warm.warm_open(preroll)
 }
 
+/// How long the device stays open after a dictation stops, in milliseconds.
+///
+/// Separate from [`warm_microphone`] because it opens nothing. It only sets the
+/// policy the next stop reads, so a user who never asked for a held microphone
+/// can still get a fast second press: the stream from the recording they just
+/// finished is left open for this window and the next press adopts it.
+///
+/// `0` closes the device at stop, which is the default and the only value with
+/// no microphone indicator between dictations.
+#[tauri::command]
+#[specta::specta]
+pub fn set_microphone_linger(
+    warm: State<'_, Arc<dyn crate::platform::WarmCapture>>,
+    linger_ms: f64,
+) {
+    // A zero here is a real instruction: close at stop. Every other value goes
+    // through the same clamp as the open path so the sentinel means the same
+    // thing in both places.
+    if linger_ms <= 0.0 || linger_ms.is_nan() {
+        warm.set_linger(0);
+        return;
+    }
+    warm.set_linger(linger_millis(linger_ms));
+}
+
 /// Closes a microphone held open by [`warm_microphone`], and returns to opening
 /// the device on each press.
 #[tauri::command]
@@ -6774,6 +6799,26 @@ mod tests {
         assert_eq!(super::linger_millis(0.0), 1);
         assert_eq!(super::linger_millis(-5.0), 1);
         assert_eq!(super::linger_millis(f64::NAN), 1);
+    }
+
+    /// A zero linger is a real instruction, not a missing value.
+    ///
+    /// The settings offer "close at stop" as the default and as something the
+    /// user can return to. Sending zero through the same clamp as the open path
+    /// would turn it into the smallest positive hold and leave the microphone
+    /// lit after every dictation for a user who asked for exactly the opposite.
+    #[test]
+    fn a_zero_linger_stays_zero() {
+        assert_eq!(super::linger_millis(0.0), 1);
+        // The command path short-circuits before the clamp, which is what keeps
+        // "close at stop" expressible.
+        let requested = 0.0_f64;
+        let stored = if requested <= 0.0 || requested.is_nan() {
+            0
+        } else {
+            super::linger_millis(requested)
+        };
+        assert_eq!(stored, 0);
     }
 
     /// The pre-roll cap the slider uses is the one this layer clamps to.

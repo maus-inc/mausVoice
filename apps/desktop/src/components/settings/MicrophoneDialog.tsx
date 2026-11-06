@@ -23,6 +23,7 @@ import { FormattedMessage, useIntl } from "react-intl";
 import { toast } from "sonner";
 import {
   setKeepMicrophoneReady,
+  setMicrophoneLingerMs,
   setMicrophonePrerollSeconds,
   setPreferredMicrophone,
 } from "../../actions/user.actions";
@@ -34,6 +35,7 @@ import { MicrophoneSelector } from "../microphone/MicrophoneSelector";
 import { MicrophoneTester } from "../microphone/MicrophoneTester";
 import { ElasticSlider } from "../common/ElasticSlider";
 import {
+  DEFAULT_MICROPHONE_LINGER_MS,
   MAX_MICROPHONE_PREROLL_SECONDS,
   describeHeldState,
 } from "../../utils/microphone-readiness.utils";
@@ -50,6 +52,10 @@ export const MicrophoneDialog = () => {
   );
   const microphoneHeld = useAppStore((state) => state.settings.microphoneHeld);
   const heldState = describeHeldState(microphoneHeld);
+  const lingerMs = useAppStore(
+    (state) => state.userPrefs?.microphoneLingerMs ?? 0,
+  );
+  const lingerOn = lingerMs > 0;
 
   const [selected, setSelected] = useState<Nullable<string>>(savedPreference);
   const [hasChanges, setHasChanges] = useState(false);
@@ -229,6 +235,34 @@ export const MicrophoneDialog = () => {
                 </Stack>
               </>
             )}
+          </Stack>
+
+          <Divider />
+
+          <Stack spacing={1.5}>
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={lingerOn}
+                  disabled={keepReady}
+                  onChange={(event) =>
+                    void setMicrophoneLingerMs(
+                      event.target.checked ? DEFAULT_MICROPHONE_LINGER_MS : 0,
+                    )
+                  }
+                />
+              }
+              label={
+                <FormattedMessage defaultMessage="Stay ready after a dictation" />
+              }
+            />
+            <Typography variant="body2" color="text.secondary">
+              {keepReady ? (
+                <FormattedMessage defaultMessage="Already on, because the microphone is kept ready." />
+              ) : (
+                <FormattedMessage defaultMessage="Keeps the microphone open for a few seconds after each recording, so a second dictation starts instantly. Your system shows its microphone-in-use indicator for that time." />
+              )}
+            </Typography>
           </Stack>
 
           <Divider />

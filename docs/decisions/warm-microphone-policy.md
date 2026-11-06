@@ -44,6 +44,16 @@ the sentinel for "hold until released", which is what the keep-ready preference
 sends. A sentinel rather than a separate boolean means every reader interprets
 one value instead of two that can disagree.
 
+**The post-recording window is a separate, independently settable choice.**
+
+`set_microphone_linger` sets `linger_ms` without opening anything, and the stop
+path reads it when a recording ends. It defaults to `0`, so a user who never
+touches it gets no indicator between dictations. Turning it on keeps the stream
+from the recording that just finished open for the window, so a second dictation
+in the same thought is instant. It is disabled in the settings while the keep-ready
+preference is on, because that preference already holds the device indefinitely
+and the window would have nothing to add.
+
 **The pre-roll never decides whether a device stays open.**
 
 `microphonePrerollSeconds` is a buffer length, bounded to 0-2 seconds. It does

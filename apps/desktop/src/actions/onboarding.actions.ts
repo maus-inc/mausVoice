@@ -367,6 +367,9 @@ const createOnboardingPreferences = (
   // a real value to use.
   keepMicrophoneReady: false,
   microphonePrerollSeconds: DEFAULT_MICROPHONE_PREROLL_SECONDS,
+  // No post-recording window either: it costs the microphone indicator for a
+  // few seconds after every dictation, which is a trade the user has to choose.
+  microphoneLingerMs: 0,
   ignoreUpdateDialog: false,
   incognitoModeEnabled: false,
   incognitoModeIncludeInStats: false,

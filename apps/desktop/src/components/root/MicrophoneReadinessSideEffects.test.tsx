@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => {
     closeMicrophone: vi.fn(async () => undefined),
     microphoneReady: vi.fn(async () => false),
     prepareMicrophone: vi.fn(async () => ({ status: "ok", data: "mic" })),
+    setMicrophoneLinger: vi.fn(async () => undefined),
     clearListeners: new Set<() => void>(),
   };
 });
@@ -35,6 +36,7 @@ vi.mock("@maus-inc/desktop-native-apis", () => ({
     closeMicrophone: mocks.closeMicrophone,
     microphoneReady: mocks.microphoneReady,
     prepareMicrophone: mocks.prepareMicrophone,
+    setMicrophoneLinger: mocks.setMicrophoneLinger,
   },
 }));
 
@@ -78,7 +80,11 @@ let root: Root;
 const setState = (overrides: Record<string, unknown>) => {
   for (const key of Object.keys(mocks.state)) delete mocks.state[key];
   Object.assign(mocks.state, {
-    userPrefs: { keepMicrophoneReady: true, microphonePrerollSeconds: 0.5 },
+    userPrefs: {
+      keepMicrophoneReady: true,
+      microphonePrerollSeconds: 0.5,
+      microphoneLingerMs: 0,
+    },
     activeRecordingMode: null,
     permissions: { microphone: { state: "authorized" } },
     settings: { microphoneHeld: null },
@@ -136,7 +142,11 @@ describe("MicrophoneReadinessSideEffects", () => {
 
   it("opens with the configured pre-roll", async () => {
     setState({
-      userPrefs: { keepMicrophoneReady: true, microphonePrerollSeconds: 1.2 },
+      userPrefs: {
+        keepMicrophoneReady: true,
+        microphonePrerollSeconds: 1.2,
+        microphoneLingerMs: 0,
+      },
     });
     await render();
 
@@ -145,7 +155,11 @@ describe("MicrophoneReadinessSideEffects", () => {
 
   it("does not open anything when the preference is off", async () => {
     setState({
-      userPrefs: { keepMicrophoneReady: false, microphonePrerollSeconds: 0.5 },
+      userPrefs: {
+        keepMicrophoneReady: false,
+        microphonePrerollSeconds: 0.5,
+        microphoneLingerMs: 0,
+      },
     });
     await render();
 
@@ -195,6 +209,7 @@ describe("MicrophoneReadinessSideEffects", () => {
     mocks.state.userPrefs = {
       keepMicrophoneReady: true,
       microphonePrerollSeconds: 1.5,
+      microphoneLingerMs: 0,
     };
     await rerender();
 
@@ -212,9 +227,28 @@ describe("MicrophoneReadinessSideEffects", () => {
     expect(mocks.state.settings).toMatchObject({ microphoneHeld: true });
   });
 
+  it("pushes the linger window before the recording that will stop", async () => {
+    setState({
+      userPrefs: {
+        keepMicrophoneReady: false,
+        microphonePrerollSeconds: 0.5,
+        microphoneLingerMs: 5_000,
+      },
+    });
+    await render();
+
+    // The stop path reads this when a recording ends, so it has to be in place
+    // before that recording, not on the next launch.
+    expect(mocks.setMicrophoneLinger).toHaveBeenCalledWith(5_000);
+  });
+
   it("prepares the device when nothing is held", async () => {
     setState({
-      userPrefs: { keepMicrophoneReady: false, microphonePrerollSeconds: 0.5 },
+      userPrefs: {
+        keepMicrophoneReady: false,
+        microphonePrerollSeconds: 0.5,
+        microphoneLingerMs: 0,
+      },
     });
     await render();
 

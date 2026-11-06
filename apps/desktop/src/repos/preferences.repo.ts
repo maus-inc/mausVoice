@@ -17,6 +17,7 @@ import {
 import { PRIMARY_LANGUAGE_SENTINEL } from "../utils/language.utils";
 import {
   DEFAULT_MICROPHONE_PREROLL_SECONDS,
+  MAX_MICROPHONE_LINGER_MS,
   MAX_MICROPHONE_PREROLL_SECONDS,
 } from "../utils/microphone-readiness.utils";
 import { orFalse, orNull, orTrue, orValue } from "../utils/nullable.utils";
@@ -92,6 +93,7 @@ type LocalUserPreferences = {
   expansionFlags?: Nullable<string>;
   keepMicrophoneReady?: boolean;
   microphonePrerollSeconds?: Nullable<number>;
+  microphoneLingerMs?: Nullable<number>;
 };
 
 const normalizePillResetMonitorStrategy = (
@@ -134,6 +136,20 @@ const normalizePrerollSeconds = (value: number | null | undefined): number => {
     return DEFAULT_MICROPHONE_PREROLL_SECONDS;
   }
   return Math.min(MAX_MICROPHONE_PREROLL_SECONDS, Math.max(0, value));
+};
+
+/**
+ * Clamps a stored linger into the range the recorder accepts.
+ *
+ * A negative or nonsense value means "no window", which is also the default, so
+ * a bad row degrades to the policy that shows nothing rather than to one that
+ * lights the microphone indicator for an arbitrary time.
+ */
+const normalizeLingerMs = (value: number | null | undefined): number => {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return 0;
+  }
+  return Math.min(MAX_MICROPHONE_LINGER_MS, Math.round(value));
 };
 
 const parseAgentEnabledTools = (
@@ -267,6 +283,7 @@ const fromLocalFeaturePreferences = (preferences: LocalUserPreferences) => ({
   ),
   spokenCommandsEnabled: orTrue(preferences.spokenCommandsEnabled),
   keepMicrophoneReady: preferences.keepMicrophoneReady ?? false,
+  microphoneLingerMs: normalizeLingerMs(preferences.microphoneLingerMs),
   microphonePrerollSeconds: normalizePrerollSeconds(
     preferences.microphonePrerollSeconds,
   ),
@@ -357,6 +374,7 @@ const toLocalFeaturePreferences = (preferences: UserPreferences) => ({
   ),
   spokenCommandsEnabled: orTrue(preferences.spokenCommandsEnabled),
   keepMicrophoneReady: preferences.keepMicrophoneReady,
+  microphoneLingerMs: preferences.microphoneLingerMs,
   microphonePrerollSeconds: preferences.microphonePrerollSeconds,
 });
 

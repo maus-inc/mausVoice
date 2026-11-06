@@ -19,6 +19,18 @@ export const MAX_MICROPHONE_PREROLL_SECONDS = 2;
 export const DEFAULT_MICROPHONE_PREROLL_SECONDS = 0.5;
 
 /**
+ * The longest linger window the settings offer, in milliseconds.
+ *
+ * A second press within this window skips the device open entirely. Beyond a few
+ * seconds the window stops covering the case it exists for (a user resuming the
+ * same thought) and only extends the microphone indicator for no benefit.
+ */
+export const MAX_MICROPHONE_LINGER_MS = 30_000;
+
+/** The linger the settings offer as the "a few seconds" choice. */
+export const DEFAULT_MICROPHONE_LINGER_MS = 5_000;
+
+/**
  * The linger value that means "hold until released".
  *
  * The backend reads a hold at or above this magnitude as the sentinel for "no
@@ -41,6 +53,21 @@ export const normalizeMicrophonePrerollSeconds = (
     return DEFAULT_MICROPHONE_PREROLL_SECONDS;
   }
   return Math.min(MAX_MICROPHONE_PREROLL_SECONDS, Math.max(0, value));
+};
+
+/**
+ * Clamps a requested linger into the window the settings offer.
+ *
+ * Zero is kept as zero: closing at stop is a real choice and the default, not a
+ * missing value.
+ */
+export const normalizeMicrophoneLingerMs = (
+  value: number | null | undefined,
+): number => {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return 0;
+  }
+  return Math.min(MAX_MICROPHONE_LINGER_MS, Math.round(value));
 };
 
 /**

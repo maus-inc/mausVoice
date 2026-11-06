@@ -1099,6 +1099,20 @@ async transcriptionUpdate(transcription: Transcription) : Promise<Result<Transcr
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * How long the device stays open after a dictation stops, in milliseconds.
+ * 
+ * Separate from [`warm_microphone`] because it opens nothing. It only sets the
+ * policy the next stop reads, so a user who never asked for a held microphone
+ * can still get a fast second press: the stream from the recording they just
+ * finished is left open for this window and the next press adopts it.
+ * 
+ * `0` closes the device at stop, which is the default and the only value with
+ * no microphone indicator between dictations.
+ */
+async setMicrophoneLinger(lingerMs: number) : Promise<void> {
+    await TAURI_INVOKE("set_microphone_linger", { lingerMs });
+},
 async userGetOne() : Promise<Result<User | null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("user_get_one") };
