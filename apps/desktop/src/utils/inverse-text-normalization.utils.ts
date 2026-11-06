@@ -147,7 +147,7 @@ const NUMBER_WORDS: ReadonlySet<string> = new Set([
 
 const ORDINAL_WORD_SOURCE = Object.keys(ORDINAL_DAYS)
   .sort((a, b) => b.length - a.length)
-  .map((word) => word.replace(/ /g, String.raw`[-\s]`))
+  .map((word) => word.replaceAll(" ", String.raw`[-\s]`))
   .join("|");
 
 const MONTH_SOURCE = Object.keys(MONTHS).join("|");
@@ -169,7 +169,7 @@ const MERIDIEM_NORMALIZATIONS: ReadonlyArray<readonly [RegExp, string]> = [
 ];
 
 const normalizeMeridiem = (word: string): string | null => {
-  const normalized = word.replace(/\./g, "").replace(/\s+/g, "");
+  const normalized = word.replaceAll(".", "").replace(/\s+/g, "");
   for (const [pattern, replacement] of MERIDIEM_NORMALIZATIONS) {
     if (pattern.test(normalized)) return replacement;
   }
@@ -847,12 +847,10 @@ const writeRun = (
   dropArticleBeforeNumber(output, unit);
   output.push(
     `${unit.currencyPrefix}${formatCardinal(parsed.value)}${unit.percentSuffix}`,
+    unit.trailingIndex > 0 ? unit.trailingPunctuation : runPunctuation,
   );
   // The number test stripped the punctuation that ended the sentence on the
   // last word of the run, so it is put back after the digits.
-  output.push(
-    unit.trailingIndex > 0 ? unit.trailingPunctuation : runPunctuation,
-  );
 };
 
 /**

@@ -771,7 +771,7 @@ const joinSpokenDomains = (text: string): string =>
       whole: string,
     ): string => {
       if (SPOKEN_ADDRESS_STOPWORDS.has(host.toLowerCase())) return match;
-      const before = whole.slice(0, offset).match(/(\S+)\s+$/);
+      const before = /(\S+)\s+$/.exec(whole.slice(0, offset));
       const frame = before?.[1].toLowerCase().replace(/[^a-z]/g, "") ?? "";
       return SPOKEN_DOMAIN_FRAMES.has(frame) ? `${host}.${tld}` : match;
     },
@@ -1389,7 +1389,7 @@ const applyDictionaryCasing = (
     // Lookarounds rather than `\b`: the ASCII word boundary never matched a
     // term that starts or ends in a non-ASCII letter ("Beyoncé"), so those
     // terms were silently skipped.
-    const pattern = `(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`;
+    const pattern = String.raw`(?<![\p{L}\p{N}])${escaped}(?![\p{L}\p{N}])`;
     out = out.replace(new RegExp(pattern, "giu"), (match) =>
       match === term ? match : term,
     );
