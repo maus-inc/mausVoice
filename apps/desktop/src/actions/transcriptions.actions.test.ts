@@ -224,6 +224,10 @@ const PROVIDER_LIMIT_SAVED_COPY =
   "Styling failed because the provider request or usage limit was reached. The raw transcript is saved in History.";
 const PROVIDER_LIMIT_SESSION_COPY =
   "Styling failed because the provider request or usage limit was reached. The raw transcript is available in this session, but was not saved in History.";
+const PROVIDER_LIMIT_UNSAVED_COPY =
+  "Styling failed because the provider request or usage limit was reached. The transcript could not be saved in History.";
+const UNUSABLE_IMPORT_UNSAVED_COPY =
+  "The online styling reply was unusable, and the transcript could not be saved in History.";
 const FAST_STYLE_AUDIO_TAIL_COPY =
   "Fast styling left the last 42 characters of the audio unstyled. The unstyled ending is in History.";
 const FAST_STYLE_NO_HISTORY_COPY =
@@ -380,6 +384,45 @@ describe("retranscribeTranscription feedback", () => {
     // shared outcome must not repeat it ten times in a single toast.
     expect(mergedCall?.[0]).toBe(sentence);
     expect(mergedCall?.[1]).toBe(8_000);
+  });
+
+  it("keeps the fuller sentence when one batch row's feedback is contained in another's", async () => {
+    seedTranscription("a");
+    seedTranscription("b");
+    postProcessTranscript
+      .mockResolvedValueOnce({
+        transcript: "Styled transcript A",
+        warnings: [],
+        metadata: { fastStyleTruncatedChars: 42 },
+      })
+      .mockResolvedValueOnce({
+        transcript: "Styled transcript B",
+        warnings: [],
+        metadata: {
+          postProcessFailed: false,
+          postProcessFallback: true,
+          postProcessError: POST_PROCESS_ERROR_CATEGORY.quotaOrPayment,
+          fastStyleTruncatedChars: 42,
+        },
+      });
+
+    await Promise.all([
+      retranscribeTranscription({ transcriptionId: "a" }),
+      retranscribeTranscription({ transcriptionId: "b" }),
+    ]);
+
+    const completionCalls = showCompletionToast.mock
+      .calls as unknown as readonly [string, number?, string?][];
+    const mergedCall = completionCalls.find(([message]) =>
+      message.includes(FAST_STYLE_AUDIO_TAIL_COPY),
+    );
+    // The truncation-only sentence is fully contained in the fallback row's
+    // combined sentence, so the merged toast states it exactly once no matter
+    // which row finishes first. Containment was only checked one way before,
+    // and the other order produced "tail quota tail".
+    expect(mergedCall?.[0]).toBe(
+      `${ONLINE_QUOTA_FALLBACK_COPY} ${FAST_STYLE_AUDIO_TAIL_COPY}`,
+    );
   });
 
   it("recovers cleanly on error so the row is enabled again", async () => {
@@ -2331,19 +2374,60 @@ describe("importAudioFile post-processing feedback", () => {
     );
   });
 
-  it("does not promise History when a failed import was not stored", async () => {
+  it("says the transcript is gone when the store rejected a failed import", async () => {
     setPostProcessResult({
       postProcessFailed: true,
       postProcessFallback: false,
       postProcessError: POST_PROCESS_ERROR_CATEGORY.providerLimit,
+    });
+    // Persistence is allowed here, so the rejected row is not replaced by an
+    // incognito memory record and the transcript exists nowhere: promising it
+    // for "this session" would send the user looking for a row that is gone.
+    storeTranscription.mockResolvedValue({ transcription: null });
+
+    await runImportAudioFile({ toneId: "default" });
+
+    expect(showSnackbar).toHaveBeenCalledWith(
+      PROVIDER_LIMIT_UNSAVED_COPY,
+      expect.objectContaining({ mode: "error", action: undefined }),
+    );
+  });
+
+  it("does not promise History for a failed import in incognito mode", async () => {
+    setPostProcessResult({
+      postProcessFailed: true,
+      postProcessFallback: false,
+      postProcessError: POST_PROCESS_ERROR_CATEGORY.providerLimit,
+    });
+    const state = structuredClone(INITIAL_APP_STATE);
+    state.userPrefs = createDefaultPreferences();
+    state.userPrefs.incognitoModeEnabled = true;
+    setAppState(state, true);
+    storeTranscription.mockResolvedValue({ transcription: null, wordCount: 0 });
+
+    await runImportAudioFile({ toneId: "default" });
+
+    // The incognito import still records a memory row, so the session wording
+    // stays true while History stays out of it.
+    expect(showSnackbar).toHaveBeenCalledWith(
+      PROVIDER_LIMIT_SESSION_COPY,
+      expect.objectContaining({ mode: "error", action: undefined }),
+    );
+  });
+
+  it("says the transcript is gone when the store rejected an unusable import reply", async () => {
+    setPostProcessResult({
+      postProcessFailed: false,
+      postProcessFallback: true,
+      postProcessError: null,
     });
     storeTranscription.mockResolvedValue({ transcription: null });
 
     await runImportAudioFile({ toneId: "default" });
 
     expect(showSnackbar).toHaveBeenCalledWith(
-      PROVIDER_LIMIT_SESSION_COPY,
-      expect.objectContaining({ mode: "error", action: undefined }),
+      UNUSABLE_IMPORT_UNSAVED_COPY,
+      expect.objectContaining({ mode: "info", action: undefined }),
     );
   });
 

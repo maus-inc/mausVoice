@@ -85,6 +85,17 @@ const UNUSABLE_IMPORT_MESSAGE = defineMessage({
   defaultMessage:
     "The original transcript was saved because the online styling reply was unusable.",
 });
+// The store rejected the import row while persistence was allowed, so unlike
+// the incognito case there is no session row holding the transcript either
+// and nothing can be promised, in this session or in History.
+const STYLING_FAILED_IMPORT_UNSAVED_MESSAGE = defineMessage({
+  defaultMessage:
+    "Styling failed because {reason}. The transcript could not be saved in History.",
+});
+const UNUSABLE_IMPORT_UNSAVED_MESSAGE = defineMessage({
+  defaultMessage:
+    "The online styling reply was unusable, and the transcript could not be saved in History.",
+});
 // The import keeps a session-only History row with the original transcript,
 // so say it is available for now rather than claim History never got it.
 const UNUSABLE_IMPORT_WITHOUT_HISTORY_MESSAGE = defineMessage({
@@ -108,6 +119,12 @@ type PostProcessFeedbackOptions = {
   hasPreviousTranscript?: boolean;
   unusableResponseType?: "truncated" | "unreadable";
   canRecoverFromHistory?: boolean;
+  /**
+   * Whether an unpersisted run still left its row on the session's in-memory
+   * History list. Only audio-import can report false: an incognito import
+   * records a memory row, but an import the store rejected leaves nothing.
+   */
+  hasSessionRow?: boolean;
 };
 
 const UNUSABLE_IMPORT_BY_PERSISTENCE = {
@@ -117,10 +134,14 @@ const UNUSABLE_IMPORT_BY_PERSISTENCE = {
 
 const getImportUnusableMessage = (
   options: PostProcessFeedbackOptions,
-): MessageDescriptor =>
-  options.canRecoverFromHistory === false
+): MessageDescriptor => {
+  if (options.canRecoverFromHistory !== false) {
+    return UNUSABLE_IMPORT_BY_PERSISTENCE.recoverable;
+  }
+  return (options.hasSessionRow ?? true)
     ? UNUSABLE_IMPORT_BY_PERSISTENCE.ephemeral
-    : UNUSABLE_IMPORT_BY_PERSISTENCE.recoverable;
+    : UNUSABLE_IMPORT_UNSAVED_MESSAGE;
+};
 
 // For each reply failure type, the wording when the row already holds text
 // and the wording when it does not.
@@ -172,13 +193,16 @@ const getUnusableResponseMessage = (
 
 const getFailedMessageDescriptor = (
   context: PostProcessFeedbackContext,
-  canRecoverFromHistory: boolean,
+  options: { canRecoverFromHistory: boolean; hasSessionRow: boolean },
 ): MessageDescriptor => {
   if (context === "history-details")
     return STYLING_FAILED_HISTORY_DETAILS_MESSAGE;
-  if (canRecoverFromHistory) return STYLING_FAILED_MESSAGE;
+  if (options.canRecoverFromHistory) return STYLING_FAILED_MESSAGE;
   if (context === "dictation") {
     return STYLING_FAILED_WITHOUT_HISTORY_DICTATION_MESSAGE;
+  }
+  if (context === "audio-import" && !options.hasSessionRow) {
+    return STYLING_FAILED_IMPORT_UNSAVED_MESSAGE;
   }
   return STYLING_FAILED_WITHOUT_HISTORY_MESSAGE;
 };
@@ -193,7 +217,10 @@ const getFailedFeedback = (
   const reason = intl.formatMessage(
     postProcessErrorReason(metadata.postProcessError),
   );
-  const message = getFailedMessageDescriptor(context, canRecoverFromHistory);
+  const message = getFailedMessageDescriptor(context, {
+    canRecoverFromHistory,
+    hasSessionRow: options.hasSessionRow ?? true,
+  });
   return {
     kind: "failed",
     severity: "error",

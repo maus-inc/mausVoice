@@ -21,7 +21,10 @@ import {
   getPostProcessFeedback,
   getPostProcessFeedbackToastAction,
 } from "../../actions/post-process-feedback";
-import type { PostProcessFeedback } from "../../actions/post-process-feedback";
+import type {
+  PostProcessFeedback,
+  PostProcessFeedbackMetadata,
+} from "../../actions/post-process-feedback";
 import { dismissToast, runToast, showToast } from "../../actions/toast.actions";
 import { getIntl } from "../../i18n/intl";
 import { applyInDictationStyleSwitch } from "../../actions/tone.actions";
@@ -392,7 +395,7 @@ export type PostTranscriptInput = {
 type PostProcessToastOptions = {
   message: string;
   toastType: "info" | "error";
-  duration?: number;
+  duration: number;
   action?: ToastAction;
 };
 
@@ -427,6 +430,83 @@ const getPostProcessToastOptions = (
     toastType: getPostProcessToastSeverity(feedback),
     duration: getPostProcessToastDuration(feedback, truncatedMessage),
     action: getPostProcessToastAction(feedback),
+  };
+};
+
+// A partial edit batch blocks insertion, so the row is the only copy of what
+// was said, and which sentence to use depends on whether a row was actually
+// written: persistence being allowed does not mean the write succeeded, and
+// an unconditional "saved in History" would point the user at a row that does
+// not exist. The action is dropped with the row: a toast that offers to open
+// History for a transcript that was never saved would be an offer to look at
+// nothing.
+const buildPartialEditFailureToast = (
+  postProcessMetadata: { postProcessEditFailed?: boolean | null },
+  historyEntryAvailable: boolean,
+): PostProcessToastOptions | undefined => {
+  if (!postProcessMetadata.postProcessEditFailed) {
+    return undefined;
+  }
+  const message = historyEntryAvailable
+    ? getIntl().formatMessage({
+        defaultMessage:
+          "Styling was discarded because not all requested edits could be applied. The complete raw transcript is saved in History.",
+      })
+    : getIntl().formatMessage({
+        // Worded differently from the persisted copy on purpose: this
+        // project derives message ids from the message text, and both
+        // sentences answering the same event with the same opening words is
+        // an id collision the extractor refuses.
+        defaultMessage:
+          "Not all requested styling edits could be applied, so the styling was discarded. History is unavailable in this session, so the raw transcript was not saved.",
+      });
+  return {
+    message,
+    toastType: "error",
+    duration: 8_000,
+    action: historyEntryAvailable ? "open_transcriptions" : undefined,
+  };
+};
+
+// A fast-style result can report an unstyled tail, and a failed or degraded
+// run carries its own classified feedback. Both are read only after storage
+// tells us whether History can recover the original text.
+const buildOutcomeFeedbackToast = (
+  postProcessMetadata: PostProcessFeedbackMetadata & {
+    fastStyleTruncatedChars?: number | null;
+  },
+  historyEntryAvailable: boolean,
+): PostProcessToastOptions | undefined =>
+  getPostProcessToastOptions(
+    getPostProcessFeedback(postProcessMetadata, "dictation", {
+      canRecoverFromHistory: historyEntryAvailable,
+    }),
+    getFastStyleTruncationMessage(postProcessMetadata.fastStyleTruncatedChars, {
+      canRecoverFromHistory: historyEntryAvailable,
+      context: "dictation",
+    }),
+  );
+
+const worseToastType = (
+  first: "info" | "error",
+  second: "info" | "error",
+): "info" | "error" =>
+  first === "error" || second === "error" ? "error" : "info";
+
+// The pill shows one toast at a time, so an edit failure and an outcome
+// report from the same run leave as one toast: shown back to back, the second
+// replaced the first mid-read and the user only ever saw one of the two.
+const combinePostProcessToasts = (
+  first: PostProcessToastOptions | undefined,
+  second: PostProcessToastOptions | undefined,
+): PostProcessToastOptions | undefined => {
+  if (!first) return second;
+  if (!second) return first;
+  return {
+    message: [first.message, second.message].join(" "),
+    toastType: worseToastType(first.toastType, second.toastType),
+    duration: Math.max(first.duration, second.duration),
+    action: first.action ?? second.action,
   };
 };
 
@@ -524,67 +604,6 @@ export const postProcessFinalizedTranscript = async (
     }
   };
 
-  // A partial edit batch blocks insertion, so this row is the only copy of
-  // what was said, and which sentence to use depends on whether a row was
-  // actually written: persistence being allowed does not mean the write
-  // succeeded, and an unconditional "saved in History" would point the user
-  // at a row that does not exist. The action is dropped with the row: a
-  // toast that offers to open History for a transcript that was never saved
-  // would be an offer to look at nothing.
-  const showPartialEditFailureToast = async (
-    historyEntryAvailable: boolean,
-  ): Promise<void> => {
-    if (!postProcessMetadata.postProcessEditFailed) {
-      return;
-    }
-    const message = historyEntryAvailable
-      ? getIntl().formatMessage({
-          defaultMessage:
-            "Styling was discarded because not all requested edits could be applied. The complete raw transcript is saved in History.",
-        })
-      : getIntl().formatMessage({
-          // Worded differently from the persisted copy on purpose: this
-          // project derives message ids from the message text, and both
-          // sentences answering the same event with the same opening words is
-          // an id collision the extractor refuses.
-          defaultMessage:
-            "Not all requested styling edits could be applied, so the styling was discarded. History is unavailable in this session, so the raw transcript was not saved.",
-        });
-    await input.showToast({
-      message,
-      toastType: "error",
-      duration: 8_000,
-      action: historyEntryAvailable ? "open_transcriptions" : undefined,
-    });
-  };
-
-  // A fast-style result can report an unstyled tail, and a failed or
-  // degraded run carries its own classified feedback. Show either only
-  // after storage tells us whether History can recover the original text.
-  const showOutcomeFeedback = async (
-    historyEntryAvailable: boolean,
-  ): Promise<void> => {
-    const truncatedMessage = getFastStyleTruncationMessage(
-      postProcessMetadata.fastStyleTruncatedChars,
-      {
-        canRecoverFromHistory: historyEntryAvailable,
-        context: "dictation",
-      },
-    );
-    const postProcessFeedback = getPostProcessFeedback(
-      postProcessMetadata,
-      "dictation",
-      { canRecoverFromHistory: historyEntryAvailable },
-    );
-    const toast = getPostProcessToastOptions(
-      postProcessFeedback,
-      truncatedMessage,
-    );
-    if (toast) {
-      await input.showToast(toast);
-    }
-  };
-
   const persist = async (): Promise<void> => {
     let historyEntryAvailable = reviewOwnedHistory;
     const recordStoredHistory = async (
@@ -609,8 +628,13 @@ export const postProcessFinalizedTranscript = async (
       await storeTranscriptionEntry(recordStoredHistory);
     }
     input.refreshMember();
-    await showPartialEditFailureToast(historyEntryAvailable);
-    await showOutcomeFeedback(historyEntryAvailable);
+    const toast = combinePostProcessToasts(
+      buildPartialEditFailureToast(postProcessMetadata, historyEntryAvailable),
+      buildOutcomeFeedbackToast(postProcessMetadata, historyEntryAvailable),
+    );
+    if (toast) {
+      await input.showToast(toast);
+    }
   };
 
   return {
