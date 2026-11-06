@@ -3,6 +3,11 @@ import { delayed, getRec } from "@maus-inc/utilities";
 import dayjs from "dayjs";
 import { getIntl } from "../i18n/intl";
 import { getTranscriptionRepo } from "../repos";
+import {
+  POST_PROCESS_EMPTY_REPLY_WARNING,
+  POST_PROCESS_UNPARSEABLE_WARNING_PREFIX,
+  POST_PROCESS_UNREADABLE_EDITS_WARNING,
+} from "../utils/ai.utils";
 import { isPersistenceAllowed } from "../utils/incognito.utils";
 import { getLogger } from "../utils/log.utils";
 import { createId } from "../utils/id.utils";
@@ -13,6 +18,12 @@ import {
   isTranscriptionPendingDelete,
 } from "../utils/pending-transcription-delete";
 import { POST_PROCESS_TRUNCATED_WARNING } from "../utils/prompt.utils";
+import {
+  getFastStyleTruncationMessage,
+  getPostProcessFeedback,
+  getPostProcessFeedbackToastAction,
+  type PostProcessFeedback,
+} from "./post-process-feedback";
 import {
   beginRetranscribe,
   clearRetranscribeSuccess,
@@ -34,15 +45,20 @@ import {
   shouldAutomaticallyRetranscribePostProcessEditFailure,
 } from "../utils/post-process-retry.utils";
 import type { ReplacementRule } from "../utils/string.utils";
+import type { ToastAction } from "../types/toast.types";
 import {
   getMyDictationLanguage,
   getMyEffectiveUserId,
   getMyUserPreferences,
 } from "../utils/user.utils";
 import { showErrorSnackbar, showSnackbar } from "./app.actions";
-import { postProcessErrorReason } from "./post-process-error-category";
+import {
+  openPostProcessingSettings,
+  openTranscriptionsHistory,
+} from "./settings.actions";
 import {
   dismissToast,
+  getToastActionLabel,
   runToast,
   showCompletionToast,
   showPersistentToast,
@@ -151,19 +167,12 @@ export type RetranscribeUpdate = {
    * on a styled run.
    */
   unstyledMessage: string | null;
-  /**
-   * The recorded reason behind `unstyledMessage`, in the vocabulary the run
-   * stored, and always carried in the log so a support report keeps the cause.
-   * Null on a styled run.
-   *
-   * It is never shown. For a response that came back unusable it is a developer
-   * string (a parse error, a schema issue list, the token-limit warning); for a
-   * request that never came back it is the recorded failure category, a closed
-   * vocabulary the run builds from the HTTP status with the transcript stripped
-   * out. `unstyledMessage` is the localized sentence for either, and
-   * `postProcessErrorReason` is what turns the category into one.
-   */
+  /** Recorded provider or parse detail, kept in logs and hidden from the user. */
   unstyledReason: string | null;
+  /** Localized outcome and action for a run that left styling unavailable. */
+  unstyledFeedback: PostProcessFeedback | null;
+  /** Feedback for an unstyled audio tail when fast-style metadata reports one. */
+  truncationMessage: string | null;
   transcription: Transcription;
 };
 
@@ -179,47 +188,47 @@ export type RetranscribeRunResult = {
 };
 
 /**
- * The copy for a response that came back but could not be styled. The reason
- * the post-processing step recorded for that answer is a developer string (a
- * parse error, a schema issue list, the token-limit warning), so it is logged
- * and never shown. Only the outcome is localized, and a cut-off reply reads
- * differently from an unreadable one because running out of output budget and
- * receiving a broken payload are different problems for the user to retry.
+ * Build localized feedback for a run that left the row without usable styling.
+ * Provider details remain in the log; only the classified reason or outcome is
+ * shown to the user.
  */
-const unstyledResponseMessage = (reason: string): string => {
-  if (!reason) {
-    // Nothing was recorded, so there is no outcome to describe. The error
-    // surface falls back to its own generic retranscription copy.
-    return "";
-  }
-  const intl = getIntl();
-  if (reason === POST_PROCESS_TRUNCATED_WARNING) {
-    return intl.formatMessage({
-      defaultMessage:
-        "The styling reply was cut off at the model's output limit, so the partial reply was discarded and the previous text was kept.",
-    });
-  }
-  return intl.formatMessage({
-    defaultMessage:
-      "The styling reply could not be read, so it was discarded and the previous text was kept.",
-  });
+const getUnstyledRunReason = (
+  metadata: PostProcessMetadata,
+  postProcessWarnings: string[],
+): string =>
+  orFalse(metadata.postProcessFailed)
+    ? (metadata.postProcessError ?? "")
+    : (postProcessWarnings.at(-1) ?? "");
+
+export const getUnusableResponseType = (
+  reason: string,
+): "truncated" | "unreadable" | undefined => {
+  if (!reason) return undefined;
+  return reason === POST_PROCESS_TRUNCATED_WARNING ? "truncated" : "unreadable";
 };
 
 /**
- * The surface copy and the log detail for a run that produced no styling. A
- * request that never came back reports its recorded failure category, which is
- * a closed vocabulary the row already stores: the user reads the localized
- * descriptor for it, and the category itself stays in the log. A response that
- * came back unusable has no category, so the cause comes from the warnings the
- * post-processing step already recorded on the run: it appends the reason it
- * dropped that answer last, after any dispatch or glossary warning, so the
- * final entry is the cause. That reason stays in the log; the user gets the
- * localized outcome sentence for it.
+ * Rows can carry benign warnings next to an unusable-reply marker, so only the
+ * marker strings themselves qualify for the explanatory feedback swap.
  */
+export const isUnusableResponseWarning = (warning: string): boolean =>
+  warning === POST_PROCESS_TRUNCATED_WARNING ||
+  warning === POST_PROCESS_EMPTY_REPLY_WARNING ||
+  warning === POST_PROCESS_UNREADABLE_EDITS_WARNING ||
+  warning.startsWith(POST_PROCESS_UNPARSEABLE_WARNING_PREFIX);
+
 const describeUnstyledRun = (
   metadata: PostProcessMetadata,
   postProcessWarnings: string[],
-): { message: string; reason: string } => {
+  hasPreviousTranscript: boolean,
+  canRecoverFromHistory: boolean,
+): {
+  message: string;
+  reason: string;
+  feedback: PostProcessFeedback | null;
+} => {
+  // A rejected edit batch kept the complete raw transcript, so it gets the
+  // dedicated edit-failure copy rather than the classified styling feedback.
   if (orFalse(metadata.postProcessEditFailed)) {
     return {
       message: getIntl().formatMessage({
@@ -227,23 +236,31 @@ const describeUnstyledRun = (
           "The requested styling edits failed, so the complete raw transcript was kept in History.",
       }),
       reason: postProcessWarnings.at(-1) ?? "post-process-edit-failure",
+      feedback: null,
     };
   }
-  if (orFalse(metadata.postProcessFailed)) {
-    const reason = metadata.postProcessError ?? "";
-    return {
-      // The category is internal vocabulary ("Rate limit exceeded (429)"), and
-      // `showErrorSnackbar` renders its argument verbatim, so it is resolved to
-      // its localized descriptor rather than printed. An unrecognized category
-      // still resolves, to the generic provider error.
-      message: reason
-        ? getIntl().formatMessage(postProcessErrorReason(reason))
-        : "",
-      reason,
-    };
-  }
-  const reason = postProcessWarnings.at(-1) ?? "";
-  return { message: unstyledResponseMessage(reason), reason };
+  const reason = getUnstyledRunReason(metadata, postProcessWarnings);
+  const feedback = getPostProcessFeedback(metadata, "history-retranscription", {
+    hasPreviousTranscript,
+    unusableResponseType: getUnusableResponseType(reason),
+    canRecoverFromHistory,
+  });
+  return { message: feedback?.message ?? "", reason, feedback };
+};
+
+const getFeedbackSnackbarAction = (
+  feedback: Pick<PostProcessFeedback, "action">,
+): { label: string; onClick: () => void } | undefined => {
+  if (!feedback.action) return undefined;
+  return {
+    label: getToastActionLabel(
+      getPostProcessFeedbackToastAction(feedback.action),
+    ),
+    onClick:
+      feedback.action === "fix"
+        ? openPostProcessingSettings
+        : openTranscriptionsHistory,
+  };
 };
 
 /**
@@ -385,7 +402,12 @@ const resolveRetranscribedText = (
   finalTranscript: string,
   unstyled: boolean,
 ): string =>
-  unstyled ? transcription.transcript || finalTranscript : finalTranscript;
+  // An unusable reply keeps meaningful existing text; a row whose previous
+  // transcript is empty or whitespace-only has none, so it takes the new raw
+  // ASR instead of preserving blanks.
+  unstyled && transcription.transcript.trim().length > 0
+    ? transcription.transcript
+    : finalTranscript;
 
 /** The message and reason pair an unstyled run reports, null on a styled one. */
 const unstyledFeedback = (
@@ -424,11 +446,19 @@ const updateStoredTranscription = async (
   };
   const finalTranscript = postProcessResult.transcript;
   if (!finalTranscript) throw new Error("Retranscription produced no text.");
+  const hasPreviousTranscript = transcription.transcript.trim().length > 0;
+  const canRecoverFromHistory = isPersistenceAllowed();
+  const truncationMessage = getFastStyleTruncationMessage(
+    postProcessResult.metadata.fastStyleTruncatedChars,
+    { canRecoverFromHistory, context: "audio" },
+  );
   const unstyled = isUnstyledPostProcess(postProcessResult.metadata);
   const unstyledRun = unstyled
     ? describeUnstyledRun(
         postProcessResult.metadata,
         postProcessResult.warnings,
+        hasPreviousTranscript,
+        canRecoverFromHistory,
       )
     : null;
 
@@ -451,6 +481,8 @@ const updateStoredTranscription = async (
   return {
     styled: !unstyled,
     ...unstyledFeedback(unstyledRun),
+    unstyledFeedback: unstyledRun?.feedback ?? null,
+    truncationMessage,
     transcription: stored,
   };
 };
@@ -593,6 +625,12 @@ let ownsRetranscribeNativeToast = false;
  * batch's loading toast.
  */
 let retranscribeFeedbackGeneration = 0;
+type RetranscribeSuccessFeedback = Pick<
+  PostProcessFeedback,
+  "message" | "severity" | "action"
+> & { duration?: number };
+let pendingRetranscribeFeedback: RetranscribeSuccessFeedback | null = null;
+let hasRetranscribeBatchError = false;
 
 const retranscribeFeedbackCopy = () => {
   const intl = getIntl();
@@ -611,15 +649,84 @@ const retranscribeFeedbackCopy = () => {
 
 const showRetranscribeLoadingFeedback = () => {
   const { loading } = retranscribeFeedbackCopy();
+  pendingRetranscribeFeedback = null;
+  hasRetranscribeBatchError = false;
   showSnackbar(loading, { duration: RETRANSCRIBE_LOADING_SNACKBAR_MS });
   ownsRetranscribeNativeToast = true;
   retranscribeFeedbackGeneration += 1;
   runToast(showPersistentToast(loading, RETRANSCRIBE_LOADING_SNACKBAR_MS));
 };
 
-const showRetranscribeSuccessFeedback = () => {
+const combineRetranscribeSuccessFeedback = (
+  feedback: PostProcessFeedback | null,
+  truncationMessage: string | null,
+): RetranscribeSuccessFeedback | null => {
+  const messages = [feedback?.message, truncationMessage].filter(
+    (message): message is string => Boolean(message),
+  );
+  if (messages.length === 0) return null;
+
+  return {
+    message: messages.join(" "),
+    severity: feedback?.severity ?? "info",
+    action: feedback?.action,
+    duration: truncationMessage ? 8_000 : undefined,
+  };
+};
+
+/**
+ * A batch shows one completion toast, but two rows finishing in the same
+ * batch can each carry feedback. Merge them instead of letting the later row
+ * overwrite the earlier one and drop its outcome from the toast.
+ */
+const mergeRetranscribeBatchFeedback = (
+  existing: RetranscribeSuccessFeedback | null,
+  incoming: RetranscribeSuccessFeedback,
+): RetranscribeSuccessFeedback => {
+  if (!existing) return incoming;
+  return {
+    // Rows that finished with the same outcome carry the same sentence; once
+    // the merged message already contains it, appending repeats it once per
+    // row in a single toast.
+    message: existing.message.includes(incoming.message)
+      ? existing.message
+      : [existing.message, incoming.message].join(" "),
+    severity: incoming.severity === "error" ? "error" : existing.severity,
+    action: existing.action ?? incoming.action,
+    duration: 8_000,
+  };
+};
+
+const buildRetranscribeSnackbarOptions = (
+  feedback: RetranscribeSuccessFeedback | null,
+): {
+  mode: "success" | RetranscribeSuccessFeedback["severity"];
+  action?: { label: string; onClick: () => void };
+} => {
+  const action = feedback ? getFeedbackSnackbarAction(feedback) : undefined;
+  return {
+    mode: feedback ? feedback.severity : "success",
+    ...(action ? { action } : {}),
+  };
+};
+
+// The native completion toast carries the raw action token while the snackbar
+// carries the mapped label and click handler; both come from the same outcome.
+const getRetranscribeCompletionToastAction = (
+  feedback: RetranscribeSuccessFeedback | null,
+): ToastAction | undefined => {
+  const action = feedback?.action;
+  return action === "fix"
+    ? getPostProcessFeedbackToastAction(action)
+    : undefined;
+};
+
+const showRetranscribeSuccessFeedback = (
+  feedback: RetranscribeSuccessFeedback | null = null,
+) => {
   const { complete } = retranscribeFeedbackCopy();
-  showSnackbar(complete, { mode: "success" });
+  const message = feedback?.message ?? complete;
+  showSnackbar(message, buildRetranscribeSnackbarOptions(feedback));
   // The completion toast carries its own short duration, so the long-lived
   // loading toast is no longer ours once it is replaced.
   ownsRetranscribeNativeToast = false;
@@ -631,7 +738,17 @@ const showRetranscribeSuccessFeedback = () => {
     if (generation !== retranscribeFeedbackGeneration) {
       return undefined;
     }
-    return showCompletionToast(complete);
+    const toastAction = getRetranscribeCompletionToastAction(feedback);
+    if (toastAction) {
+      return showCompletionToast(
+        message,
+        feedback?.duration ?? 4000,
+        toastAction,
+      );
+    }
+    return feedback?.duration
+      ? showCompletionToast(message, feedback.duration)
+      : showCompletionToast(message);
   };
   // Show the completion toast even when the dismiss round trip fails, so a
   // transient IPC error cannot leave the user without the finished state.
@@ -652,10 +769,22 @@ const syncRetranscribeFeedback = (event: "success" | "error" | "abandoned") => {
   if (inFlight > 0) {
     return;
   }
-  if (event === "success") {
-    showRetranscribeSuccessFeedback();
+  if (hasRetranscribeBatchError) {
+    hasRetranscribeBatchError = false;
+    pendingRetranscribeFeedback = null;
+    dismissRetranscribeLoadingFeedback();
     return;
   }
+  if (
+    event === "success" ||
+    (event === "error" && pendingRetranscribeFeedback)
+  ) {
+    const feedback = pendingRetranscribeFeedback;
+    pendingRetranscribeFeedback = null;
+    showRetranscribeSuccessFeedback(feedback);
+    return;
+  }
+  pendingRetranscribeFeedback = null;
   dismissRetranscribeLoadingFeedback();
 };
 
@@ -757,19 +886,30 @@ const failRetranscribeRun = ({
   message,
   reason,
   error,
+  feedback,
 }: {
   transcriptionId: string;
   generation: number;
   message: string;
   reason?: string;
   error?: unknown;
+  feedback?: PostProcessFeedback | null;
 }): void => {
   produceAppState((draft) => {
     finishRetranscribe(draft.transcriptions, transcriptionId, false);
   });
   console.error("Failed to retranscribe audio", error ?? reason ?? message);
   const { failed } = retranscribeFeedbackCopy();
-  showErrorSnackbar(message || failed);
+  if (feedback) {
+    showSnackbar(message || feedback.message, {
+      mode: feedback.severity,
+      action: getFeedbackSnackbarAction(feedback),
+    });
+  } else {
+    showErrorSnackbar(message || failed);
+  }
+  hasRetranscribeBatchError = true;
+  pendingRetranscribeFeedback = null;
   syncRetranscribeFeedback("error");
   releaseRetranscribeGeneration(transcriptionId, generation);
 };
@@ -790,15 +930,26 @@ const beginRetranscribeRun = (transcriptionId: string): void => {
 };
 
 /**
- * The success tail: mark the row finished, show the completion feedback, and
- * clear the success check once it has been visible long enough. The timeout
- * re-checks the generation so a newer run's feedback is never cleared by an
- * older run's timer.
+ * The success tail: fold the run's outcome into the batch feedback, mark the
+ * row finished, show the completion feedback, and clear the success check once
+ * it has been visible long enough. The timeout re-checks the generation so a
+ * newer run's feedback is never cleared by an older run's timer.
  */
 const finishRetranscribeSuccess = (
   transcriptionId: string,
   generation: number,
+  update: RetranscribeUpdate,
 ): void => {
+  const feedback = combineRetranscribeSuccessFeedback(
+    getPostProcessFeedback(update.transcription, "history-retranscription"),
+    update.truncationMessage,
+  );
+  if (feedback && !hasRetranscribeBatchError) {
+    pendingRetranscribeFeedback = mergeRetranscribeBatchFeedback(
+      pendingRetranscribeFeedback,
+      feedback,
+    );
+  }
   produceAppState((draft) => {
     finishRetranscribe(draft.transcriptions, transcriptionId, true);
   });
@@ -846,8 +997,13 @@ const failUnstyledRetranscribeRun = ({
   failRetranscribeRun({
     transcriptionId,
     generation,
-    message: update.unstyledMessage ?? "",
+    // The row now holds its previous text plus this run's raw ASR, and a
+    // fast-style tail can add its own sentence, so the report joins both.
+    message: [update.unstyledMessage, update.truncationMessage]
+      .filter((message): message is string => Boolean(message))
+      .join(" "),
     reason: update.unstyledReason ?? undefined,
+    feedback: update.unstyledFeedback,
   });
 };
 
@@ -874,7 +1030,7 @@ const completeRetranscribeRun = ({
     failUnstyledRetranscribeRun({ transcriptionId, generation, update });
     return update;
   }
-  finishRetranscribeSuccess(transcriptionId, generation);
+  finishRetranscribeSuccess(transcriptionId, generation, update);
   return update;
 };
 
@@ -1355,30 +1511,30 @@ export const importAudioFile = async ({
       inferenceDevice: transcribeResult.metadata?.inferenceDevice ?? null,
       transcriptionPrompt:
         transcribeResult.metadata?.transcriptionPrompt ?? null,
-      postProcessPrompt: postProcessResult.metadata?.postProcessPrompt ?? null,
+      postProcessPrompt: postProcessResult.metadata.postProcessPrompt ?? null,
       transcriptionApiKeyId:
         transcribeResult.metadata?.transcriptionApiKeyId ?? null,
       postProcessApiKeyId:
-        postProcessResult.metadata?.postProcessApiKeyId ?? null,
+        postProcessResult.metadata.postProcessApiKeyId ?? null,
       transcriptionMode: transcribeResult.metadata?.transcriptionMode ?? null,
-      postProcessMode: postProcessResult.metadata?.postProcessMode ?? null,
-      postProcessDevice: postProcessResult.metadata?.postProcessDevice ?? null,
-      postProcessModel: postProcessResult.metadata?.postProcessModel ?? null,
+      postProcessMode: postProcessResult.metadata.postProcessMode ?? null,
+      postProcessDevice: postProcessResult.metadata.postProcessDevice ?? null,
+      postProcessModel: postProcessResult.metadata.postProcessModel ?? null,
       postProcessProvider:
-        postProcessResult.metadata?.postProcessProvider ?? null,
-      postProcessFailed: postProcessResult.metadata?.postProcessFailed ?? null,
+        postProcessResult.metadata.postProcessProvider ?? null,
+      postProcessFailed: postProcessResult.metadata.postProcessFailed ?? null,
       postProcessEditFailed:
-        postProcessResult.metadata?.postProcessEditFailed ?? null,
+        postProcessResult.metadata.postProcessEditFailed ?? null,
       postProcessEditFailureCount:
-        postProcessResult.metadata?.postProcessEditFailureCount ?? null,
+        postProcessResult.metadata.postProcessEditFailureCount ?? null,
       postProcessEditAutoRetryUsed:
-        postProcessResult.metadata?.postProcessEditAutoRetryUsed ?? null,
+        postProcessResult.metadata.postProcessEditAutoRetryUsed ?? null,
       // Retry context is written only when a recovery pass claims the row.
       postProcessEditRetryToneId: null,
       postProcessEditRetryLanguageCode: null,
       postProcessFallback:
-        postProcessResult.metadata?.postProcessFallback ?? null,
-      postProcessError: postProcessResult.metadata?.postProcessError ?? null,
+        postProcessResult.metadata.postProcessFallback ?? null,
+      postProcessError: postProcessResult.metadata.postProcessError ?? null,
       warnings: [...transcribeResult.warnings, ...postProcessResult.warnings],
       audio: undefined,
       remoteStatus: null,
@@ -1386,10 +1542,30 @@ export const importAudioFile = async ({
       transcriptionDurationMs:
         transcribeResult.metadata?.transcriptionDurationMs ?? null,
       postprocessDurationMs:
-        postProcessResult.metadata?.postprocessDurationMs ?? null,
+        postProcessResult.metadata.postprocessDurationMs ?? null,
     };
     produceAppState((draft) => {
       draft.transcriptionById[memoryRecord.id] = memoryRecord;
+    });
+  }
+
+  const canRecoverFromHistory = output.transcription !== null;
+  const feedback = getPostProcessFeedback(
+    postProcessResult.metadata,
+    "audio-import",
+    { canRecoverFromHistory },
+  );
+  const truncationMessage = getFastStyleTruncationMessage(
+    postProcessResult.metadata.fastStyleTruncatedChars,
+    { canRecoverFromHistory, context: "audio" },
+  );
+  const messages = [feedback?.message, truncationMessage].filter(
+    (message): message is string => Boolean(message),
+  );
+  if (messages.length > 0) {
+    showSnackbar(messages.join(" "), {
+      mode: feedback?.severity ?? "info",
+      action: feedback ? getFeedbackSnackbarAction(feedback) : undefined,
     });
   }
   return true;
