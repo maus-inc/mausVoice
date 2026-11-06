@@ -10,7 +10,7 @@ import {
   Stack,
   Typography,
 } from "@mui/material";
-import { useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { Eye, EyeOff } from "lucide-react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
@@ -32,15 +32,39 @@ const getScenario = (search: string): PreviewScenarioId => {
     : getActivePreviewScenario();
 };
 
+/**
+ * QA captures need both popup states to be reproducible without clicking
+ * through the UI first. `?previewPopup=shown|hidden` seeds the visibility
+ * state (and re-seeds it whenever the parameter changes), so a capture URL is
+ * deterministic while the eye toggle keeps working afterwards. This stays
+ * preview-scoped: no production preference is read or written.
+ */
+const getPopupOverride = (search: string): boolean | undefined => {
+  const requested = new URLSearchParams(search).get("previewPopup");
+  if (requested === "shown") return true;
+  if (requested === "hidden") return false;
+  return undefined;
+};
+
 const PreviewToolbar = () => {
-  const [visible, setVisible] = useState(false);
   const cardId = useId();
   const intl = useIntl();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const [visible, setVisible] = useState(
+    () => getPopupOverride(location.search) ?? false,
+  );
+  // A capture URL re-seeds the state on every navigation; manual toggles
+  // between navigations are left alone.
+  useEffect(() => {
+    const seeded = getPopupOverride(location.search);
+    if (seeded !== undefined) {
+      setVisible(seeded);
+    }
+  }, [location.search]);
   const label = visible
     ? intl.formatMessage({ defaultMessage: "Hide preview popup" })
     : intl.formatMessage({ defaultMessage: "Show preview popup" });
-  const location = useLocation();
-  const navigate = useNavigate();
   const scenario = getScenario(location.search);
   const parameters = useMemo(
     () => new URLSearchParams(location.search),

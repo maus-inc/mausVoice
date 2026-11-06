@@ -970,6 +970,7 @@
   "the_release_history_had_an_unexpected_response": "O histórico de versões devolveu uma resposta inesperada.",
   "the_release_history_returned_status_status": "O histórico de versões devolveu o estado {status}.",
   "the_requested_styling_edits_failed_so_the_complete_raw_trans": "As alterações de estilo solicitadas falharam, por isso a transcrição bruta completa foi mantida no Histórico.",
+  "the_saved_audio_for_this_entry_is_unavailable": "O áudio salvo deste item está indisponível.",
   "the_selection_is_too_long_to_add_to_the_dictionary": "A seleção é demasiado longa para ser adicionada ao dicionário.",
   "the_server_doesn_t_support_model_listing_please_enter_the_mo": "O servidor não suporta a listagem de modelos. Por favor, introduza o nome do modelo manualmente.",
   "the_shortcuts_you_use_most_and_the_models_doing_the_work_rig": "Os atalhos que mais usa e os modelos que estão a fazer o trabalho neste momento.",

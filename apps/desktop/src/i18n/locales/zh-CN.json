@@ -970,6 +970,7 @@
   "the_release_history_had_an_unexpected_response": "版本历史返回了意外的响应。",
   "the_release_history_returned_status_status": "版本历史返回状态 {status}。",
   "the_requested_styling_edits_failed_so_the_complete_raw_trans": "请求的样式编辑失败，因此完整的原始转录已保留在历史记录中。",
+  "the_saved_audio_for_this_entry_is_unavailable": "该条目保存的音频不可用。",
   "the_selection_is_too_long_to_add_to_the_dictionary": "所选内容过长，无法添加到词典。",
   "the_server_doesn_t_support_model_listing_please_enter_the_mo": "服务器不支持模型列表。请手动输入模型名称。",
   "the_shortcuts_you_use_most_and_the_models_doing_the_work_rig": "你最常用的快捷键，以及此刻正在处理工作的模型。",

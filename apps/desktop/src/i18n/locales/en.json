@@ -970,6 +970,7 @@
   "the_release_history_had_an_unexpected_response": "The release history had an unexpected response.",
   "the_release_history_returned_status_status": "The release history returned status {status}.",
   "the_requested_styling_edits_failed_so_the_complete_raw_trans": "The requested styling edits failed, so the complete raw transcript was kept in History.",
+  "the_saved_audio_for_this_entry_is_unavailable": "The saved audio for this entry is unavailable.",
   "the_selection_is_too_long_to_add_to_the_dictionary": "The selection is too long to add to the dictionary.",
   "the_server_doesn_t_support_model_listing_please_enter_the_mo": "The server doesn't support model listing. Please enter the model name manually.",
   "the_shortcuts_you_use_most_and_the_models_doing_the_work_rig": "The shortcuts you use most, and the models doing the work right now.",

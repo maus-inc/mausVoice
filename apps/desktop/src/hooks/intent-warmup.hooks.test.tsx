@@ -1,75 +1,148 @@
 // @vitest-environment jsdom
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { ensureUiHarness } from "../../test/helpers/jsdom-ui-harness";
-import { INTENT_DELAY_MS, useIntentWarmup } from "./intent-warmup.hooks";
-ensureUiHarness();
-let container: HTMLDivElement;
-let root: Root;
-const warm = vi.fn(async () => {});
-const Harness = ({ route = "a" }: { route?: string }) => (
-  <button {...useIntentWarmup(warm, route)}>Destination</button>
-);
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  INTENT_DELAY_MS,
+  ROUTE_WARMUP_DELAY_MS,
+  useIntentWarmup,
+} from "./intent-warmup.hooks";
+
+// The full intent lifecycle for #301: hover intent, leave-before-timeout,
+// focus intent, blur, touch exclusion, duplicate intent, unmount cleanup, and
+// route-change (key) cleanup. "Navigation after prefetch reuses the warmed
+// result" is covered by route-prefetch.test.ts (shared import promise).
+
+type HookProps = { key: string; delayMs?: number; warm: () => Promise<unknown> };
+
+/** Minimal renderHook: mounts the hook and mirrors its latest return value. */
+const mountHook = (
+  warm: () => Promise<unknown>,
+  key: string,
+  delayMs?: number,
+) => {
+  const holder: {
+    current: ReturnType<typeof useIntentWarmup>;
+  } = { current: undefined as never };
+  const Probe = ({ key: k, delayMs: d, warm: w }: HookProps) => {
+    holder.current = useIntentWarmup(w, k, d);
+    return null;
+  };
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root: Root = createRoot(container);
+  const render = (props: HookProps) =>
+    act(() => {
+      root.render(<Probe {...props} />);
+    });
+  render({ key, delayMs, warm });
+  return {
+    holder,
+    rerender: (key2: string) => render({ key: key2, delayMs, warm }),
+    unmount: () => {
+      act(() => root.unmount());
+      container.remove();
+    },
+  };
+};
+
 beforeEach(() => {
   vi.useFakeTimers();
-  warm.mockClear();
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-  act(() => root.render(<Harness />));
 });
 afterEach(() => {
-  act(() => root.unmount());
-  container.remove();
   vi.useRealTimers();
 });
-it("warms on sustained focus, but cancels a brief focus", async () => {
-  const button = container.querySelector("button")!;
-  act(() => {
-    button.focus();
-    button.blur();
+
+const enter = (pointerType = "mouse"): React.PointerEvent =>
+  ({ pointerType }) as React.PointerEvent;
+
+describe("useIntentWarmup", () => {
+  it("fires after the hover-intent delay", () => {
+    const warm = vi.fn(() => Promise.resolve());
+    const hook = mountHook(warm, "row-a");
+    act(() => hook.holder.current.onPointerEnter(enter()));
+    act(() => vi.advanceTimersByTime(INTENT_DELAY_MS - 1));
+    expect(warm).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(1));
+    expect(warm).toHaveBeenCalledTimes(1);
   });
-  await act(async () => vi.advanceTimersByTimeAsync(INTENT_DELAY_MS));
-  expect(warm).not.toHaveBeenCalled();
-  act(() => button.focus());
-  await act(async () => vi.advanceTimersByTimeAsync(INTENT_DELAY_MS));
-  expect(warm).toHaveBeenCalledOnce();
-});
-it("cancels intent on route change and unmount", async () => {
-  act(() => container.querySelector("button")!.focus());
-  act(() => root.render(<Harness route="b" />));
-  await act(async () => vi.advanceTimersByTimeAsync(INTENT_DELAY_MS));
-  expect(warm).not.toHaveBeenCalled();
-  act(() => {
-    container.querySelector("button")!.blur();
-    container.querySelector("button")!.focus();
+
+  it("cancels when the pointer leaves before the delay", () => {
+    const warm = vi.fn(() => Promise.resolve());
+    const hook = mountHook(warm, "row-a");
+    act(() => hook.holder.current.onPointerEnter(enter()));
+    act(() => vi.advanceTimersByTime(INTENT_DELAY_MS - 50));
+    act(() => hook.holder.current.onPointerLeave());
+    act(() => vi.advanceTimersByTime(INTENT_DELAY_MS * 2));
+    expect(warm).not.toHaveBeenCalled();
   });
-  act(() => root.render(null));
-  await act(async () => vi.advanceTimersByTimeAsync(INTENT_DELAY_MS));
-  expect(warm).not.toHaveBeenCalled();
-});
-it("ignores touch hover and cancels a brief pointer flyover", async () => {
-  const button = container.querySelector("button")!;
-  const dispatch = (type: string, pointerType: string) => {
-    const event = new Event(type, { bubbles: true });
-    Object.defineProperty(event, "pointerType", { value: pointerType });
-    act(() => button.dispatchEvent(event));
-  };
-  dispatch("pointerover", "touch");
-  await act(async () => vi.advanceTimersByTimeAsync(INTENT_DELAY_MS));
-  expect(warm).not.toHaveBeenCalled();
-  dispatch("pointerover", "mouse");
-  dispatch("pointerout", "mouse");
-  await act(async () => vi.advanceTimersByTimeAsync(INTENT_DELAY_MS));
-  expect(warm).not.toHaveBeenCalled();
-  dispatch("pointerover", "mouse");
-  await act(async () => vi.advanceTimersByTimeAsync(INTENT_DELAY_MS));
-  expect(warm).toHaveBeenCalledOnce();
-});
-it("contains speculative failure without an unhandled rejection", async () => {
-  warm.mockRejectedValueOnce(new Error("offline"));
-  act(() => container.querySelector("button")!.focus());
-  await act(async () => vi.advanceTimersByTimeAsync(INTENT_DELAY_MS));
-  expect(warm).toHaveBeenCalledOnce();
+
+  it("ignores touch pointers: there is no hover intent on touch", () => {
+    const warm = vi.fn(() => Promise.resolve());
+    const hook = mountHook(warm, "row-a");
+    act(() => hook.holder.current.onPointerEnter(enter("touch")));
+    act(() => vi.advanceTimersByTime(INTENT_DELAY_MS * 2));
+    expect(warm).not.toHaveBeenCalled();
+  });
+
+  it("treats keyboard focus as intent and blur as cancellation", () => {
+    const warm = vi.fn(() => Promise.resolve());
+    const hook = mountHook(warm, "row-a");
+    act(() => hook.holder.current.onFocus());
+    act(() => hook.holder.current.onBlur());
+    act(() => vi.advanceTimersByTime(INTENT_DELAY_MS * 2));
+    expect(warm).not.toHaveBeenCalled();
+
+    act(() => hook.holder.current.onFocus());
+    act(() => vi.advanceTimersByTime(INTENT_DELAY_MS));
+    expect(warm).toHaveBeenCalledTimes(1);
+  });
+
+  it("restarts rather than stacks when intent re-enters mid-delay", () => {
+    const warm = vi.fn(() => Promise.resolve());
+    const hook = mountHook(warm, "row-a");
+    act(() => hook.holder.current.onPointerEnter(enter()));
+    act(() => vi.advanceTimersByTime(INTENT_DELAY_MS - 10));
+    act(() => hook.holder.current.onPointerLeave());
+    act(() => hook.holder.current.onPointerEnter(enter()));
+    act(() => vi.advanceTimersByTime(INTENT_DELAY_MS * 2));
+    expect(warm).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not fire after unmount", () => {
+    const warm = vi.fn(() => Promise.resolve());
+    const hook = mountHook(warm, "row-a");
+    act(() => hook.holder.current.onPointerEnter(enter()));
+    hook.unmount();
+    act(() => vi.advanceTimersByTime(INTENT_DELAY_MS * 2));
+    expect(warm).not.toHaveBeenCalled();
+  });
+
+  it("cancels a pending warm when the key changes (route change)", () => {
+    const warm = vi.fn(() => Promise.resolve());
+    const hook = mountHook(warm, "location-1");
+    act(() => hook.holder.current.onPointerEnter(enter()));
+    hook.rerender("location-2");
+    act(() => vi.advanceTimersByTime(INTENT_DELAY_MS * 2));
+    expect(warm).not.toHaveBeenCalled();
+  });
+
+  it("swallows warm rejections: a failed prefetch never breaks the row", () => {
+    const warm = vi.fn(() => Promise.reject(new Error("offline")));
+    const hook = mountHook(warm, "row-a");
+    act(() => hook.holder.current.onPointerEnter(enter()));
+    act(() => vi.advanceTimersByTime(INTENT_DELAY_MS));
+    expect(warm).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the route threshold distinct from the pill threshold", () => {
+    expect(ROUTE_WARMUP_DELAY_MS).toBeGreaterThan(INTENT_DELAY_MS);
+    const warm = vi.fn(() => Promise.resolve());
+    const hook = mountHook(warm, "row-a", ROUTE_WARMUP_DELAY_MS);
+    act(() => hook.holder.current.onPointerEnter(enter()));
+    act(() => vi.advanceTimersByTime(INTENT_DELAY_MS));
+    expect(warm).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(ROUTE_WARMUP_DELAY_MS - INTENT_DELAY_MS));
+    expect(warm).toHaveBeenCalledTimes(1);
+  });
 });

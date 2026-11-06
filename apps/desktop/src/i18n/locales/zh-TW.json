@@ -970,6 +970,7 @@
   "the_release_history_had_an_unexpected_response": "版本記錄傳回了非預期的回應。",
   "the_release_history_returned_status_status": "版本記錄傳回狀態 {status}。",
   "the_requested_styling_edits_failed_so_the_complete_raw_trans": "要求的樣式編輯失敗，因此完整的原始逐字稿已保留在歷史記錄中。",
+  "the_saved_audio_for_this_entry_is_unavailable": "此項目的儲存音訊無法使用。",
   "the_selection_is_too_long_to_add_to_the_dictionary": "所選內容過長，無法加入詞典。",
   "the_server_doesn_t_support_model_listing_please_enter_the_mo": "伺服器不支援模型列表。請手動輸入模型名稱。",
   "the_shortcuts_you_use_most_and_the_models_doing_the_work_rig": "你最常用的快速鍵，以及此刻正在處理工作的模型。",

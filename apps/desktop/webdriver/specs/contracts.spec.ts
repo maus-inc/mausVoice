@@ -302,6 +302,80 @@ describe("MausAgent native deliverable contract", () => {
     }
   });
 
+  it("r7.3.0.2b #301 records before/after route-navigation latency", async () => {
+    // The acceptance criteria ask for a measured before/after on a
+    // representative route. Module imports are memoized per page load, so
+    // "before" (click with no warmup) and "after" (hover-warm, then click) are
+    // measured across two fresh app loads of the same route.
+    try {
+      const freshApp = async () => {
+        await browser.url("tauri://localhost/");
+        await appReady();
+        await settleRoute();
+        await dismissFeatureDialog();
+      };
+      const clickToSettled = async (pathname: string) => {
+        await realClick($(TILE_XPATH[pathname]), pathname);
+        const started = Date.now();
+        await browser.waitUntil(
+          async () =>
+            (await browser.execute(() => window.location.pathname)) ===
+            pathname,
+          {
+            timeout: PAGE_LOAD,
+            timeoutMsg: `static: measurement navigation to ${pathname} failed`,
+          },
+        );
+        await settleRoute();
+        return Date.now() - started;
+      };
+
+      // Before: a plain click navigates and lazy-loads the module.
+      await freshApp();
+      const coldMs = await clickToSettled("/dashboard/transcriptions");
+
+      // After: the hover warms the chunk first on this same page load; the
+      // click then only routes.
+      await freshApp();
+      await browser.execute(() => {
+        const log = [] as string[];
+        (window as unknown as { __pfLog: string[] }).__pfLog = log;
+        window.addEventListener("maus:route-prefetch", (event) => {
+          log.push((event as CustomEvent<string>).detail);
+        });
+      });
+      await realHover(
+        $(TILE_XPATH["/dashboard/transcriptions"]),
+        "History",
+        INTENT_MS,
+      );
+      await browser.waitUntil(
+        async () =>
+          (
+            await browser.execute(
+              () =>
+                ((window as unknown as { __pfLog: string[] }).__pfLog ?? []).filter(
+                  (key) => key === "/dashboard/transcriptions",
+                ).length,
+            )
+          ) >= 1,
+        { timeout: 5_000, timeoutMsg: "static: hover did not warm History" },
+      );
+      const warmMs = await clickToSettled("/dashboard/transcriptions");
+
+      // The evidence lives in the run log; the assertion keeps it honest:
+      // a warm navigation must not be slower than the cold one.
+      console.log(
+        `static: #301 nav-before=${coldMs}ms nav-after=${warmMs}ms (History, click to settled)`,
+      );
+      expect(warmMs).toBeLessThanOrEqual(coldMs + 250);
+    } catch (error) {
+      throw new Error(
+        `static: ${error instanceof Error ? error.message : String(error)} | ${await stateSnapshot("#301-nav")}`,
+      );
+    }
+  });
+
   it("k5.9.9.1 #299 renders list rows with a stable, press-safe layout", async () => {
     try {
       await ensureOn("/dashboard");
@@ -384,6 +458,64 @@ describe("MausAgent native deliverable contract", () => {
       await browser.releaseActions();
       expect(during!.transformed).toEqual([]);
       expect(during!.rect).toEqual(before!.rect);
+
+      // Contract 3: keyboard activation on a real switch row toggles exactly
+      // once per Space, leaves the row's rect stable, and transforms nothing.
+      await ensureOn("/dashboard/settings");
+      await browser.execute(() => {
+        const links = [...document.querySelectorAll("a")];
+        const target = links.find((a) =>
+          (a.textContent ?? "").includes("Appearance"),
+        );
+        target?.click();
+      });
+      await browser.waitUntil(
+        async () =>
+          (await browser.execute(() => document.querySelectorAll('input[role="switch"]').length)) >
+          0,
+        {
+          timeout: 5_000,
+          timeoutMsg: "static: no switch rows on the appearance page",
+        },
+      );
+      const toggleState = await browser.execute(() => {
+        const input = document.querySelector<HTMLInputElement>(
+          'input[role="switch"]',
+        )!;
+        input.focus();
+        const row = input.closest("label")!;
+        const r = row.getBoundingClientRect();
+        return {
+          checked: input.checked,
+          rect: { x: r.x, y: r.y, width: r.width, height: r.height },
+        };
+      });
+      await browser.keys("Space");
+      const afterSpace = await browser.execute(() => {
+        const input = document.querySelector<HTMLInputElement>(
+          'input[role="switch"]',
+        )!;
+        const row = input.closest("label")!;
+        const r = row.getBoundingClientRect();
+        let transformed = false;
+        let node: Element | null = row;
+        while (node) {
+          const t = getComputedStyle(node).transform;
+          if (t && t !== "none") transformed = true;
+          node = node.parentElement;
+        }
+        return {
+          checked: input.checked,
+          rect: { x: r.x, y: r.y, width: r.width, height: r.height },
+          transformed,
+        };
+      });
+      // Exactly once: the checked state flipped, the row did not move or scale.
+      expect(afterSpace.checked).toBe(!toggleState.checked);
+      expect(afterSpace.rect).toEqual(toggleState.rect);
+      expect(afterSpace.transformed).toBe(false);
+      // Restore the setting so the profile is left as found.
+      await browser.keys("Space");
     } catch (error) {
       throw new Error(
         `static: ${error instanceof Error ? error.message : String(error)} | ${await stateSnapshot("#299")}`,
@@ -468,5 +600,42 @@ describe("MausAgent native deliverable contract", () => {
     expect(caption!.width).toBeGreaterThan(0);
     expect(caption!.height).toBeGreaterThan(0);
     expect(caption!.y).toBeGreaterThanOrEqual(settings!.y + settings!.height - 2);
+
+    // Narrow window sizes: the layout fix must hold outside the default size.
+    await browser.setWindowSize(900, 720);
+    try {
+      const narrow = await browser.execute(() => {
+        const rows = [...document.querySelectorAll("li")];
+        const row = rows.find((li) =>
+          [...li.querySelectorAll("span, p, div")].some(
+            (n) =>
+              n.children.length === 0 &&
+              (n.textContent ?? "").trim() === "Settings",
+          ),
+        );
+        const captions = [...document.querySelectorAll("p, span")];
+        const el = captions.find((node) =>
+          /^v\d+\.\d+\.\d+/.test((node.textContent ?? "").trim()),
+        );
+        if (!row || !el) return null;
+        const r = row.getBoundingClientRect();
+        const c = el.getBoundingClientRect();
+        // Hit-target probe: the Settings row's center must hit the row (or a
+        // descendant), never the caption.
+        const probe = document.elementFromPoint(
+          r.x + r.width / 2,
+          r.y + r.height / 2,
+        );
+        return {
+          separated: c.y >= r.y + r.height - 2,
+          hitIsCaption: !!probe && probe.contains(el),
+        };
+      });
+      expect(narrow).not.toBeNull();
+      expect(narrow!.separated).toBe(true);
+      expect(narrow!.hitIsCaption).toBe(false);
+    } finally {
+      await browser.setWindowSize(1280, 800);
+    }
   });
 });

@@ -203,6 +203,54 @@ const resumeAudioContext = (
   });
 };
 
+/**
+ * Bounded cache of converted sample blocks, keyed by the identity of the raw
+ * data object the repository cache returned. The raw cache hands back the same
+ * `TranscriptionAudioData` instance for every hit inside its TTL, so a second
+ * play of a warm clip reuses the conversion instead of rebuilding the
+ * Float32Array. When the raw cache invalidates (delete, update, wipe) it
+ * returns a fresh instance, the identity check misses, and the stale
+ * conversion is dropped on the spot — no cross-layer invalidation wiring.
+ *
+ * Bounded in both entries and bytes: long histories must not accumulate
+ * conversions. The raw cache's 32MB budget bounds the input side; this caps
+ * the converted side at 16MB across 4 clips.
+ */
+const MAX_CONVERTED_ENTRIES = 4;
+const MAX_CONVERTED_BYTES = 16 * 1024 * 1024;
+type ConvertedSamples = {
+  source: { samples: number[] };
+  floatSamples: Float32Array;
+};
+const convertedSamples: ConvertedSamples[] = [];
+let convertedBytes = 0;
+
+const getFloatSamples = (data: { samples: number[] }): Float32Array => {
+  const hitIndex = convertedSamples.findIndex((entry) => entry.source === data);
+  if (hitIndex >= 0) {
+    const [hit] = convertedSamples.splice(hitIndex, 1);
+    convertedSamples.push(hit);
+    return hit.floatSamples;
+  }
+  const floatSamples = Float32Array.from(data.samples ?? []);
+  convertedSamples.push({ source: data, floatSamples });
+  convertedBytes += floatSamples.byteLength;
+  while (
+    convertedSamples.length > MAX_CONVERTED_ENTRIES ||
+    convertedBytes > MAX_CONVERTED_BYTES
+  ) {
+    const evicted = convertedSamples.shift();
+    if (!evicted) break;
+    convertedBytes -= evicted.floatSamples.byteLength;
+  }
+  return floatSamples;
+};
+
+/** Dev/test-only stage marks for the #300 latency budget (names, no content). */
+const markStage = (name: string) => {
+  if (import.meta.env.DEV) performance.mark(name);
+};
+
 export const playWebAudio = async (
   transcriptionId: string,
   data: { samples: number[]; sampleRate: number },
@@ -243,6 +291,7 @@ export const playWebAudio = async (
   let ownedByActivePlayback = false;
   try {
     if (context.state === "suspended") {
+      markStage("mv-audio:context-resume");
       await resumeAudioContext(context, signal);
     }
 
@@ -253,7 +302,8 @@ export const playWebAudio = async (
     }
 
     const channelCount = 1;
-    const floatSamples = Float32Array.from(data.samples ?? []);
+    markStage("mv-audio:buffer-build");
+    const floatSamples = getFloatSamples(data);
     const buffer = context.createBuffer(
       channelCount,
       floatSamples.length,
@@ -298,6 +348,7 @@ export const playWebAudio = async (
     playback.startTime = context.currentTime;
     onProgress(startRatio);
     source.start(0, offset);
+    markStage("mv-audio:first-audio");
     armTick(playback);
   } catch (error) {
     // The far side of that hand-off. Setting up the playback is also what

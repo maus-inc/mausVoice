@@ -48,6 +48,35 @@ afterEach(() => {
   act(() => root.unmount());
   container.remove();
 });
+it("seeds popup visibility from ?previewPopup for deterministic captures", async () => {
+  const renderAt = async (search: string) => {
+    await act(async () => root.unmount());
+    root = createRoot(container);
+    await act(async () =>
+      root.render(
+        <IntlProvider locale="en">
+          <MemoryRouter initialEntries={[`/${search}`]}>
+            <PreviewRoot />
+          </MemoryRouter>
+        </IntlProvider>,
+      ),
+    );
+  };
+  await renderAt("?previewPopup=shown");
+  expect(container.querySelector('[role="combobox"]')).not.toBeNull();
+  const hide = container.querySelector<HTMLButtonElement>(
+    'button[aria-label="Hide preview popup"]',
+  );
+  expect(hide).not.toBeNull();
+  // The seed sets the start; the toggle still works from there.
+  await act(async () => hide!.click());
+  expect(container.querySelector('[role="combobox"]')).toBeNull();
+  await renderAt("?previewPopup=hidden");
+  expect(container.querySelector('[role="combobox"]')).toBeNull();
+  expect(
+    container.querySelector('button[aria-label="Show preview popup"]'),
+  ).not.toBeNull();
+});
 it("starts hidden and restores the card without resetting scenario data", async () => {
   expect(container.querySelector('[role="combobox"]')).toBeNull();
   const toggle = container.querySelector<HTMLButtonElement>(

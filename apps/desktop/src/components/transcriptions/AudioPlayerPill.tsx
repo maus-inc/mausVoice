@@ -211,13 +211,22 @@ export const AudioPlayerPill = ({
     const attempt = session.beginRequest();
     loadingRef.current = true;
     setIsLoading(true);
+    // The error state names the stage that failed: a read failure (missing or
+    // invalid file) is a different recovery than a decode/playback failure.
+    let stage: "read" | "play" = "read";
     try {
+      if (import.meta.env.DEV) performance.mark("mv-audio:read-start");
       const audioData =
         await getTranscriptionRepo().loadTranscriptionAudio(transcriptionId);
+      if (import.meta.env.DEV) {
+        performance.mark("mv-audio:read-end");
+        performance.measure("mv-audio:read", "mv-audio:read-start", "mv-audio:read-end");
+      }
 
       if (!attempt.isCurrent()) {
         return;
       }
+      stage = "play";
 
       loadingRef.current = false;
       setIsLoading(false);
@@ -269,8 +278,14 @@ export const AudioPlayerPill = ({
         (error as { name?: string }).name === "AbortError";
       if (aborted) return;
       console.error("Failed to toggle audio playback", error);
+      // Two literal message calls, one per failing stage (read vs play), so
+      // the extraction pipeline sees both messages.
       showErrorSnackbar(
-        intl.formatMessage({ defaultMessage: "Unable to play audio snippet." }),
+        stage === "read"
+          ? intl.formatMessage({
+              defaultMessage: "The saved audio for this entry is unavailable.",
+            })
+          : intl.formatMessage({ defaultMessage: "Unable to play audio snippet." }),
       );
     }
   }, [transcriptionId, intl]);
@@ -344,6 +359,7 @@ export const AudioPlayerPill = ({
   return (
     <Box
       {...warmup}
+      aria-busy={isLoading}
       sx={{
         display: "flex",
         alignItems: "center",

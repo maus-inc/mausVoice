@@ -116,6 +116,17 @@ it("suppresses errors from cancelled work and permits retry", async () => {
   await click();
   expect(play).toHaveBeenCalledTimes(1);
 });
+it("names the read stage when the saved audio cannot be loaded, and retries", async () => {
+  load.mockRejectedValueOnce(new Error("missing")).mockResolvedValue(audio);
+  await render();
+  await click();
+  expect(error).toHaveBeenCalledExactlyOnceWith(
+    "The saved audio for this entry is unavailable.",
+  );
+  expect(container.querySelector('[aria-label="Play audio"]')).not.toBeNull();
+  await click();
+  expect(play).toHaveBeenCalledTimes(1);
+});
 it("reports a startup failure even when playback teardown notifies stop first", async () => {
   load.mockResolvedValue(audio);
   play.mockImplementationOnce(async (_id, _audio, _progress, onStop) => {

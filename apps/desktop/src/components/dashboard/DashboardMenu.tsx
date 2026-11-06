@@ -1,4 +1,7 @@
-import { useIntentWarmup } from "../../hooks/intent-warmup.hooks";
+import {
+  ROUTE_WARMUP_DELAY_MS,
+  useIntentWarmup,
+} from "../../hooks/intent-warmup.hooks";
 import {
   dashboardRouteLoaders,
   type DashboardRoute,
@@ -40,7 +43,11 @@ const SidebarTile = ({
   ...props
 }: ListTileProps<"li"> & { path: DashboardRoute }) => {
   const location = useLocation();
-  const intent = useIntentWarmup(dashboardRouteLoaders[path], location.key);
+  const intent = useIntentWarmup(
+    dashboardRouteLoaders[path],
+    location.key,
+    ROUTE_WARMUP_DELAY_MS,
+  );
   return <ListTile {...props} {...intent} />;
 };
 

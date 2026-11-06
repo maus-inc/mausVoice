@@ -352,6 +352,24 @@ export const SettingToggleRow = ({
                 ? { "aria-describedby": descriptionId }
                 : undefined),
             },
+            // Reduced motion suppresses the thumb/track travel, never the
+            // state change itself: the checked color and thumb position still
+            // land, just without decorative animation (WCAG 2.3.3 / animation
+            // from interactions). Documented slots, not generated selectors.
+            switchBase: {
+              sx: {
+                "@media (prefers-reduced-motion: reduce)": {
+                  transition: "none",
+                },
+              },
+            },
+            thumb: {
+              sx: {
+                "@media (prefers-reduced-motion: reduce)": {
+                  transition: "none",
+                },
+              },
+            },
           }}
         />
       </Box>
