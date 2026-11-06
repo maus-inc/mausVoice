@@ -997,6 +997,7 @@
   "this_will_prompt_for_administrator_privileges_uac_so_the_pil": "這會提示要求管理員權限（UAC），讓語音輸入小工具能在全域擷取並輸入文字。是否繼續？",
   "this_will_request_accessibility_and_microphone_access_so_the": "這會要求「輔助功能」與「麥克風」存取權，讓語音輸入小工具能在全域擷取並輸入文字。是否繼續？",
   "thought_process": "思考過程",
+  "tip": "Tip:",
   "tip_choose_a_stronger_model_for_better_results_smaller_or_we": "提示：選擇更強大的模型可獲得更好的結果。較小或較弱的模型可能會產生較低品質的輸出。",
   "tip_run_agent_mode_multiple_times_to_keep_refining_it_rememb": "提示：多次執行代理模式以持續精煉！它會記住文字方塊中的內容。",
   "title": "標題",

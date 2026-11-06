@@ -997,6 +997,7 @@
   "this_will_prompt_for_administrator_privileges_uac_so_the_pil": "这将提示请求管理员权限（UAC），以便悬浮条能在全局捕获并输入文字。是否继续？",
   "this_will_request_accessibility_and_microphone_access_so_the": "这将请求辅助功能和麦克风访问权限，以便悬浮条能在全局捕获并输入文字。是否继续？",
   "thought_process": "思考过程",
+  "tip": "Tip:",
   "tip_choose_a_stronger_model_for_better_results_smaller_or_we": "提示：选择更强大的模型可获得更好的结果。较小或较弱的模型可能会产生较低质量的输出。",
   "tip_run_agent_mode_multiple_times_to_keep_refining_it_rememb": "提示：多次运行代理模式可以不断润色！它会记住文本框中的内容。",
   "title": "标题",

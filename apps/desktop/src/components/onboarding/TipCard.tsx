@@ -20,7 +20,12 @@ import { useEffect, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { dismissTip } from "../../actions/onboarding.actions";
 import { useAppStore } from "../../store";
-import { duration } from "../../styles/motion";
+import {
+  cssEase,
+  duration,
+  easeOutQuint,
+  pressScale,
+} from "../../styles/motion";
 import { surfaceAlpha, surfaces } from "../../styles/palette";
 import { hairline, premiumSurface } from "../../styles/shadows";
 import type { OnboardingTipId } from "../../utils/tips";
@@ -196,7 +201,7 @@ export const TipCardFrame = ({
   icon,
   headingLevel,
   actions,
-  onDismiss,
+  onActivate,
   sx,
 }: {
   title: ReactNode;
@@ -204,13 +209,36 @@ export const TipCardFrame = ({
   icon?: ReactNode;
   headingLevel?: "h2" | "h3";
   actions?: ReactNode;
-  onDismiss?: () => void;
+  /**
+   * Marks this tip read when the title-and-body region itself is clicked
+   * or activated from the keyboard, the fallback a tip with no live action
+   * needs so reading it is enough to clear it, not just the 24px dismiss
+   * glyph on the pattern image above. A tip with a live action leaves this
+   * unset: its one explicit button already runs that action without also
+   * closing the card, and the row would otherwise have to guess which of
+   * two different effects a bare click on it should trigger.
+   */
+  onActivate?: () => void;
   sx?: SxProps;
 }) => {
-  const intl = useIntl();
+  const interactive = Boolean(onActivate);
+  const handleKeyDown = (event: React.KeyboardEvent) => {
+    if (!onActivate) return;
+    // Ignore keys bubbling up from a focusable child (the live-action
+    // button, when `actions` renders one) so this row's own Enter/Space
+    // handling never fires alongside that child's native activation.
+    if (event.target !== event.currentTarget) return;
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    onActivate();
+  };
   return (
     <Box
-      role="note"
+      data-tip-frame="true"
+      role={interactive ? "button" : "note"}
+      tabIndex={interactive ? 0 : undefined}
+      onClick={interactive ? onActivate : undefined}
+      onKeyDown={interactive ? handleKeyDown : undefined}
       sx={(theme) => {
         // Overrides resolve here (theme in hand) so any `SxProps` form a
         // caller passes merges over the base instead of into a second entry.
@@ -227,6 +255,15 @@ export const TipCardFrame = ({
           // Flat on purpose: in-flow, the row separates by its luminance step
           // (level1 over level0) and its hairline — no `premiumSurface` cast.
           bgcolor: "level1",
+          ...(interactive && {
+            cursor: "pointer",
+            // Same wash-and-press recipe `TranscriptRow`'s clickable row
+            // already uses, so an activatable tip row reads as one more
+            // instance of a pattern the app already has, not a new one.
+            transition: `background-color ${duration.fast * 1000}ms ${cssEase(easeOutQuint)}, transform 120ms ${cssEase(easeOutQuint)}`,
+            "&:hover": { bgcolor: "action.hover" },
+            "&:active": { transform: `scale(${pressScale})` },
+          }),
           ...overrides,
         };
       }}
@@ -261,25 +298,20 @@ export const TipCardFrame = ({
           {body}
         </Typography>
       </Box>
-      <Stack
-        direction="row"
-        spacing={0.5}
-        sx={{ flexShrink: 0, alignItems: "center", ml: 1 }}
-      >
-        {actions}
-        {onDismiss && (
-          <IconButton
-            size="small"
-            onClick={onDismiss}
-            aria-label={intl.formatMessage({ defaultMessage: "Dismiss tip" })}
-            // No explicit glyph sizing: the theme sizes lucide glyphs inside
-            // icon buttons to the app-wide 16px / 1.9 stroke.
-            sx={{ color: "text.secondary", ml: 0.5 }}
-          >
-            <X aria-hidden />
-          </IconButton>
-        )}
-      </Stack>
+      {actions && (
+        <Stack
+          direction="row"
+          spacing={0.5}
+          sx={{ flexShrink: 0, alignItems: "center", ml: 1 }}
+          // A live action's own button already runs its own effect on
+          // click. Stopping the row's click here keeps that one effect
+          // from also re-firing as this row's activation, the same
+          // single-effect-per-click guarantee `onActivate` depends on.
+          onClick={(event) => event.stopPropagation()}
+        >
+          {actions}
+        </Stack>
+      )}
     </Box>
   );
 };
@@ -343,8 +375,13 @@ const TipCardMotion = ({ children }: { children: ReactNode }) => {
  * row below stays as quiet as the Help listing's.
  *
  * The in-page action, where one exists (`TIP_LIVE_ACTIONS`), runs the handler
- * the tip's route page registered in `tip-actions`; it never dismisses the
- * tip — the action completes the task, dismissal stays the X's job.
+ * the tip's route page registered in `tip-actions`. It never dismisses the
+ * tip; the action completes the task, and dismissal stays the X's job.
+ *
+ * A tip with no live action instead makes its own title-and-body row the
+ * activation target, through `onActivate` on `TipCardFrame`, so reading it
+ * is enough to clear it. The dismiss glyph still works the same way in
+ * both cases; it is just no longer the only way to mark a plain tip read.
  */
 export const TipCard = ({ id }: { id: OnboardingTipId }) => {
   const intl = useIntl();
@@ -452,6 +489,11 @@ export const TipCard = ({ id }: { id: OnboardingTipId }) => {
               icon={TIP_ICONS[id]}
               title={copy.title}
               body={copy.body}
+              // Only an actionless tip gets a click-to-dismiss row: a tip
+              // with a live action keeps that one button as its only
+              // effect, so the row never has to pick between running the
+              // action and marking the tip read on the same click.
+              onActivate={liveAction ? undefined : handleDismiss}
               actions={
                 liveAction ? (
                   <Button

@@ -1,8 +1,11 @@
 import { Box, Portal } from "@mui/material";
+import { useEffect, useRef, useState } from "react";
+import { FormattedMessage } from "react-intl";
 import { useLocation } from "react-router-dom";
 import { useAppStore } from "../../store";
-import { ONBOARDING_TIPS } from "../../utils/tips";
-import { TipCard } from "./TipCard";
+import { visuallyHidden } from "../../styles/a11y";
+import { ONBOARDING_TIPS, type OnboardingTipId } from "../../utils/tips";
+import { TIP_COPY, TipCard } from "./TipCard";
 
 /**
  * The floating tip stack: live onboarding tips render here, bottom-right in
@@ -17,9 +20,15 @@ import { TipCard } from "./TipCard";
  *
  * Mounted once in `DashboardPage`: it must be inside the router (it gates on
  * the route) and an ancestor of every tip route. The Portal keeps the stack
- * out of the content area's overflow; the z-index keeps it under the
- * transient Sonner toasts and the MUI overlays — a confirmation toast may
- * sit on a tip for a few seconds, a tip must never sit on a toast.
+ * out of the content area's overflow. The z-index keeps it under the
+ * transient Sonner toasts and the MUI overlays, since a confirmation toast
+ * may sit on a tip for a few seconds, but a tip must never sit on a toast.
+ *
+ * A hidden `role="status"` region announces a tip's title and body the
+ * moment it first appears, matching the `aria-live="polite"` region
+ * sonner's own toaster already wraps every other toast in. Without it, a
+ * screen reader would get no signal at all for a notification a sighted
+ * user sees slide into the corner.
  */
 export const TipToaster = () => {
   const { pathname } = useLocation();
@@ -37,8 +46,44 @@ export const TipToaster = () => {
     return path === route && !dismissed.includes(tip.id);
   });
 
+  // Sonner's own toaster renders its whole stack with `aria-live="polite"`
+  // (see `SonnerToaster.tsx`), so every ordinary confirmation toast is
+  // announced to a screen reader the moment it appears. This stack holds
+  // its own announcement instead of inheriting one, so a tip gets the same
+  // signal. A stable, comma-joined id string (not the filtered array
+  // itself, a new reference on every render) is the dependency, so the
+  // effect below only runs when the visible set actually changes.
+  const [announcedTip, setAnnouncedTip] = useState<OnboardingTipId | null>(
+    null,
+  );
+  const previousIdsRef = useRef("");
+  const currentIds = tips.map((tip) => tip.id).join(",");
+  useEffect(() => {
+    const previousIds = previousIdsRef.current
+      ? previousIdsRef.current.split(",")
+      : [];
+    const newlyShown = tips.find((tip) => !previousIds.includes(tip.id));
+    if (newlyShown) setAnnouncedTip(newlyShown.id);
+    previousIdsRef.current = currentIds;
+    // `tips` is rebuilt every render; `currentIds` is its stable summary,
+    // and that summary is what should gate this effect.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentIds]);
+
   return (
     <Portal>
+      {/* Always mounted, even with nothing to say: a live region only
+          announces content that changes after it already exists in the
+          DOM, so this span has to be here before `announcedTip` is ever
+          set, not inserted already populated alongside the first tip. */}
+      <Box component="span" role="status" sx={visuallyHidden}>
+        {announcedTip && (
+          <>
+            <FormattedMessage defaultMessage="Tip:" />{" "}
+            {TIP_COPY[announcedTip].title}. {TIP_COPY[announcedTip].body}
+          </>
+        )}
+      </Box>
       <Box
         sx={{
           position: "fixed",

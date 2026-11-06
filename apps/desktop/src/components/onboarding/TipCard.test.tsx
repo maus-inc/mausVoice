@@ -191,8 +191,70 @@ describe("TipCard", () => {
     // the row `TipCardFrame` renders below it for the icon, title, and body.
     const header = image.parentElement;
     expect(header?.contains(dismissButton())).toBe(true);
-    const row = container.querySelector('[role="note"]');
+    const row = container.querySelector('[data-tip-frame="true"]');
     expect(row?.contains(dismissButton())).toBe(false);
+  });
+
+  it("makes the row itself the activation target for a tip with no live action", async () => {
+    await renderCard();
+
+    // `review-before-insert` has no `TIP_LIVE_ACTIONS` entry, so its whole
+    // title-and-body row becomes the one-click way to mark it read.
+    const row = container.querySelector('[data-tip-frame="true"]');
+    if (!(row instanceof HTMLElement)) {
+      throw new Error("Row not found");
+    }
+    expect(row.getAttribute("role")).toBe("button");
+
+    act(() => {
+      row.click();
+    });
+    expect(mocks.dismissTip).not.toHaveBeenCalled();
+    await vi.waitFor(() => {
+      expect(mocks.dismissTip).toHaveBeenCalledWith("review-before-insert");
+    });
+  });
+
+  it("marks an actionless tip read from the keyboard as well as a click", async () => {
+    await renderCard();
+
+    const row = container.querySelector('[data-tip-frame="true"]');
+    if (!(row instanceof HTMLElement)) {
+      throw new Error("Row not found");
+    }
+
+    act(() => {
+      row.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
+      );
+    });
+    await vi.waitFor(() => {
+      expect(mocks.dismissTip).toHaveBeenCalledWith("review-before-insert");
+    });
+  });
+
+  it("leaves the row inert for a tip with a live action, so the action stays the one effect", async () => {
+    const onAction = vi.fn();
+    const unregister = setTipAction("generative-provider", onAction);
+    try {
+      await renderCard({ id: "generative-provider" });
+
+      const row = container.querySelector('[data-tip-frame="true"]');
+      if (!(row instanceof HTMLElement)) {
+        throw new Error("Row not found");
+      }
+      // A live action keeps its own button as the row's only effect, so the
+      // row never becomes a second, competing way to trigger it.
+      expect(row.getAttribute("role")).toBe("note");
+
+      act(() => {
+        row.click();
+      });
+      expect(onAction).not.toHaveBeenCalled();
+      expect(mocks.dismissTip).not.toHaveBeenCalled();
+    } finally {
+      unregister();
+    }
   });
 
   it("renders no action for a tip anchored on its own feature page", async () => {
@@ -286,7 +348,7 @@ describe("TipCard", () => {
 
 describe("TipCardFrame", () => {
   const frameCard = (): HTMLElement => {
-    const target = container.querySelector('[role="note"]');
+    const target = container.querySelector('[data-tip-frame="true"]');
     if (!(target instanceof HTMLElement)) {
       throw new Error("Card not found in frame");
     }
@@ -353,5 +415,75 @@ describe("TipCardFrame", () => {
     });
 
     expect(getComputedStyle(frameCard()).borderTopWidth).toBe("3px");
+  });
+
+  it("stays a plain note with no role=button when onActivate is not passed", async () => {
+    await renderFrame({ title: "Title", body: "Body" });
+
+    expect(frameCard().getAttribute("role")).toBe("note");
+    expect(frameCard().getAttribute("tabindex")).toBeNull();
+  });
+
+  it("becomes a keyboard- and click-reachable button when onActivate is passed", async () => {
+    const onActivate = vi.fn();
+    await renderFrame({ title: "Title", body: "Body", onActivate });
+
+    const card = frameCard();
+    expect(card.getAttribute("role")).toBe("button");
+    expect(card.getAttribute("tabindex")).toBe("0");
+
+    act(() => {
+      card.click();
+    });
+    expect(onActivate).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores a space key bubbling up from a nested action button", async () => {
+    // `actions` can render its own focusable button (the live-action case).
+    // A key event targeting that child and bubbling up must not also fire
+    // the row's own `onActivate`, or one press would trigger two effects.
+    const onActivate = vi.fn();
+    await renderFrame({
+      title: "Title",
+      body: "Body",
+      onActivate,
+      actions: createElement("button", { type: "button" }, "Do the thing"),
+    });
+
+    const button = container.querySelector("button");
+    if (!(button instanceof HTMLButtonElement)) {
+      throw new Error("Nested action button not found");
+    }
+    act(() => {
+      button.dispatchEvent(
+        new KeyboardEvent("keydown", { key: " ", bubbles: true }),
+      );
+    });
+    expect(onActivate).not.toHaveBeenCalled();
+  });
+
+  it("stops a click on the actions stack from also activating the row", async () => {
+    const onActivate = vi.fn();
+    const onActionClick = vi.fn();
+    await renderFrame({
+      title: "Title",
+      body: "Body",
+      onActivate,
+      actions: createElement(
+        "button",
+        { type: "button", onClick: onActionClick },
+        "Do the thing",
+      ),
+    });
+
+    const button = container.querySelector("button");
+    if (!(button instanceof HTMLButtonElement)) {
+      throw new Error("Nested action button not found");
+    }
+    act(() => {
+      button.click();
+    });
+    expect(onActionClick).toHaveBeenCalledTimes(1);
+    expect(onActivate).not.toHaveBeenCalled();
   });
 });

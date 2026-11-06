@@ -193,12 +193,28 @@ choice below names what it rules out.
   `text.secondary`, now a scrim chip over the header image instead of a
   control inline in the row, so the row below stays exactly as quiet as the
   Help listing's.
+- **The row itself is the activation target when there is nothing else to
+  click.** A tip with no `TIP_LIVE_ACTIONS` entry has only the 24px dismiss
+  glyph as an affordance otherwise, too small a target for the one thing most
+  tips ask of the reader: acknowledge it and move on. `TipCardFrame` takes an
+  `onActivate` prop for this case; the title-and-body row becomes a
+  `role="button"`, keyboard-reachable target that marks the tip read the same
+  way the X does. A tip with a live action leaves `onActivate` unset, so its
+  one explicit button stays the row's only effect and a click never has to
+  pick between running the action and dismissing the card.
 - **Motion.** Reveal and exit run 160ms / 180ms ease-out with a 6px rise, and
   a sibling reflows with `layout` when one clears. No scale, no spring.
   Springs stay with shared-layout indicators (see Motion). Reduced motion
   drops the rise.
 - **Dismissal is a choice that persists**, including when navigation
   interrupts the exit. See the `TipCard` unmount guard.
+- **A live tip announces itself to a screen reader.** Sonner's own toaster
+  wraps every ordinary toast in an `aria-live="polite"` region, so a
+  confirmation toast is announced the moment it appears. `TipToaster` carries
+  the same guarantee for a tip through its own hidden `role="status"` region,
+  populated with the tip's title and body once the tip is actually on screen.
+  The region itself is always mounted, even with nothing to say, since a live
+  region only announces content that changes after it exists in the DOM.
 
 ## Recording state machine (pill + composer)
 

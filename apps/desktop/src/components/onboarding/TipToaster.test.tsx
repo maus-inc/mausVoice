@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
-import { act, createElement, type ReactNode } from "react";
+import { act, createElement, useEffect, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { ThemeProvider } from "@mui/material/styles";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useNavigate } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ensureUiHarness,
@@ -107,6 +107,39 @@ const renderToaster = (path: string) =>
     );
   });
 
+/**
+ * Mounts `TipToaster` under a real, still-live router navigation instead of
+ * `MemoryRouter`'s `initialEntries` (which only seeds the very first
+ * location; re-rendering with a new value does not navigate an already
+ * mounted router). Exposes the router's own `navigate` so a test can move
+ * between tip routes the same way the app does, without unmounting
+ * `TipToaster` itself.
+ */
+const renderNavigable = (initialPath: string) => {
+  let navigateRef: ((to: string) => void) | null = null;
+  const Harness = () => {
+    const navigate = useNavigate();
+    useEffect(() => {
+      navigateRef = navigate;
+    }, [navigate]);
+    return createElement(TipToaster);
+  };
+  act(() => {
+    root?.render(
+      createElement(
+        ThemeProvider,
+        { theme, ...THEME_PROVIDER_CONFIG },
+        createElement(
+          MemoryRouter,
+          { initialEntries: [initialPath] },
+          createElement(Harness),
+        ),
+      ),
+    );
+  });
+  return (to: string) => act(() => navigateRef?.(to));
+};
+
 /** The fixed corner stack: the only fixed-position element the toaster adds. */
 const stack = (): HTMLElement => {
   const found = Array.from(document.body.children).find(
@@ -119,11 +152,21 @@ const stack = (): HTMLElement => {
   return found;
 };
 
-const noteCount = () => document.querySelectorAll('[role="note"]').length;
+const noteCount = () =>
+  document.querySelectorAll('[data-tip-frame="true"]').length;
+
+/** The hidden live region `TipToaster` announces a newly shown tip through. */
+const liveRegion = (): HTMLElement => {
+  const region = document.querySelector('[role="status"]');
+  if (!(region instanceof HTMLElement)) {
+    throw new Error("Live region not found");
+  }
+  return region;
+};
 
 /**
  * The dismiss control sits on the card's pattern-image header
- * (`data-tip-card`), a sibling of the `role="note"` row `TipCardFrame`
+ * (`data-tip-card`), a sibling of the `data-tip-frame` row `TipCardFrame`
  * renders for the icon, title, and body, not a descendant of it.
  */
 const dismissButtonIn = (titleText: string): HTMLButtonElement => {
@@ -274,5 +317,56 @@ describe("TipToaster", () => {
     } finally {
       unregister();
     }
+  });
+
+  it("mounts a hidden live region before any tip ever shows", async () => {
+    // A live region only announces content that changes after it exists;
+    // it has to be present (even empty) on a route with no tip at all.
+    await renderToaster("/dashboard/help");
+
+    expect(liveRegion()).toBeTruthy();
+    expect(liveRegion().textContent).toBe("");
+  });
+
+  it("announces a tip's title and body the moment it first appears", async () => {
+    await renderToaster("/dashboard/styling");
+
+    await vi.waitFor(() => {
+      expect(liveRegion().textContent).toContain(
+        "Teach mausVoice how you write",
+      );
+    });
+  });
+
+  it("announces the next tip after navigating to a different tip's route", async () => {
+    const navigate = renderNavigable("/dashboard/styling");
+    await vi.waitFor(() => {
+      expect(liveRegion().textContent).toContain(
+        "Teach mausVoice how you write",
+      );
+    });
+
+    navigate("/dashboard/settings/ai-models");
+    await vi.waitFor(() => {
+      expect(liveRegion().textContent).toContain(
+        "Add an AI provider for polishing",
+      );
+    });
+  });
+
+  it("does not keep re-announcing the same tip across unrelated re-renders", async () => {
+    await renderToaster("/dashboard/styling");
+    await vi.waitFor(() => {
+      expect(liveRegion().textContent).toContain(
+        "Teach mausVoice how you write",
+      );
+    });
+
+    // A render that leaves the same tip visible (no dismissal, no route
+    // change) must not touch the announcement; nothing new happened for a
+    // screen reader to hear again.
+    const before = liveRegion().textContent;
+    await renderToaster("/dashboard/styling");
+    expect(liveRegion().textContent).toBe(before);
   });
 });
