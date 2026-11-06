@@ -11,6 +11,7 @@ import {
   getConfiguredDictationLanguageCodes,
   getDictationSpeed,
   getMyDictationLanguage,
+  getMyProfileImage,
   getTranscriptionPrefs,
   LOCAL_USER_ID,
   setUserPreferences,
@@ -51,6 +52,12 @@ const makeState = (args: {
     hotkeyById,
   };
 };
+
+it("treats a missing persisted profile image map as no image", () => {
+  const state = makeState({});
+  state.local = { ...state.local, profileImageByUserId: undefined as never };
+  expect(getMyProfileImage(state)).toBeNull();
+});
 
 describe("getConfiguredDictationLanguageCodes", () => {
   it("always includes auto", () => {
@@ -180,6 +187,20 @@ describe("getMyDictationLanguage", () => {
 });
 
 describe("getTranscriptionPrefs stale-selection guard", () => {
+  it("does not resolve an inherited API key as a configured provider", () => {
+    const state = structuredClone(INITIAL_APP_STATE);
+    state.settings.aiTranscription.mode = "api";
+    state.settings.aiTranscription.selectedApiKeyId = "inherited";
+    state.apiKeyById = Object.create({
+      inherited: {
+        id: "inherited",
+        provider: "deepgram",
+        keyFull: "not-an-own-key",
+      },
+    }) as AppState["apiKeyById"];
+    expect(getTranscriptionPrefs(state).mode).toBe("local");
+  });
+
   it("falls back to local mode when the selected provider is not transcription-capable (Ollama)", () => {
     const state = structuredClone(INITIAL_APP_STATE);
     state.settings.aiTranscription.mode = "api";

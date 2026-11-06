@@ -1,5 +1,6 @@
 import type { SelectChangeEvent } from "@mui/material";
 import {
+  Alert,
   Button,
   Dialog,
   DialogActions,
@@ -18,7 +19,7 @@ import type {
   RemoteDeviceRole,
   RemoteReceiverStatus,
 } from "@maus-inc/types";
-import { ChangeEvent, useEffect, useState } from "react";
+import { ChangeEvent, useEffect, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { showErrorSnackbar, showSnackbar } from "../../actions/app.actions";
 import { sendRemoteTestOutput } from "../../actions/remote-output.actions";
@@ -242,6 +243,7 @@ const PairDeviceDialog = ({
   form,
   addressLabel,
   addressHelperText,
+  validationError,
   onChange,
   onSave,
   onClose,
@@ -251,11 +253,17 @@ const PairDeviceDialog = ({
   form: PairForm;
   addressLabel: string;
   addressHelperText: string;
+  validationError: boolean;
   onChange: (patch: Partial<PairForm>) => void;
   onSave: () => void;
   onClose: () => void;
 }) => {
   const intl = useIntl();
+  const errorRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (validationError)
+      errorRef.current?.scrollIntoView?.({ block: "nearest" });
+  }, [validationError]);
   return (
     <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
       <DialogTitle>
@@ -332,6 +340,15 @@ const PairDeviceDialog = ({
             onChange={(event) => onChange({ secret: event.target.value })}
             fullWidth
           />
+          {validationError && (
+            <Alert ref={errorRef} severity="error">
+              {form.role === "receiver" ? (
+                <FormattedMessage defaultMessage="Name, device ID, receiver address, and shared secret are required." />
+              ) : (
+                <FormattedMessage defaultMessage="Name, device ID, and shared secret are required." />
+              )}
+            </Alert>
+          )}
         </Stack>
       </DialogContent>
       <DialogActions>
@@ -383,6 +400,7 @@ const ImportInviteDialog = ({
             onChange={(event) => onChangeInviteCode(event.target.value)}
             multiline
             minRows={3}
+            maxRows={8}
             fullWidth
           />
         </Stack>
@@ -714,6 +732,7 @@ type PairDialogState = {
   form: PairForm;
   addressLabel: string;
   addressHelperText: string;
+  validationError: boolean;
   openPairDialog: (device?: PairedRemoteDevice) => void;
   closePairDialog: () => void;
   handleSaveManualPair: () => Promise<void>;
@@ -729,12 +748,14 @@ const usePairDialogState = (
   const [pairDialogOpen, setPairDialogOpen] = useState(false);
   const [editingDeviceId, setEditingDeviceId] = useState<string | null>(null);
   const [form, setForm] = useState<PairForm>(DEFAULT_PAIR_FORM);
+  const [validationError, setValidationError] = useState(false);
 
   const updatePairForm = (patch: Partial<PairForm>) => {
     setForm((prev) => ({ ...prev, ...patch }));
   };
 
   const openPairDialog = (device?: PairedRemoteDevice) => {
+    setValidationError(false);
     setEditingDeviceId(device?.id ?? null);
     setForm(
       device
@@ -752,6 +773,7 @@ const usePairDialogState = (
   };
 
   const closePairDialog = () => {
+    setValidationError(false);
     setPairDialogOpen(false);
     setEditingDeviceId(null);
     setForm(DEFAULT_PAIR_FORM);
@@ -765,14 +787,11 @@ const usePairDialogState = (
     const requiresAddress = form.role === "receiver";
 
     if (!name || !deviceId || !secret || (requiresAddress && !address)) {
-      showErrorSnackbar(
-        requiresAddress
-          ? "Name, device ID, receiver address, and shared secret are required."
-          : "Name, device ID, and shared secret are required.",
-      );
+      setValidationError(true);
       return;
     }
 
+    setValidationError(false);
     try {
       const existing = pairedDevices.find(
         (device) => device.id === (editingDeviceId ?? deviceId),
@@ -859,6 +878,7 @@ const usePairDialogState = (
     form,
     addressLabel,
     addressHelperText,
+    validationError,
     openPairDialog,
     closePairDialog,
     handleSaveManualPair,
@@ -957,6 +977,13 @@ const ReceiverSettingsSection = ({
           <Switch
             edge="end"
             checked={receiverStatus?.enabled ?? false}
+            slotProps={{
+              input: {
+                "aria-label": intl.formatMessage({
+                  defaultMessage: "Receive transcript from another device",
+                }),
+              },
+            }}
             disabled={receiverBusy}
             onChange={onToggleReceiver}
           />
@@ -1001,6 +1028,13 @@ const ReceiverSettingsSection = ({
           <Switch
             edge="end"
             checked={remoteReceiverAutoStart}
+            slotProps={{
+              input: {
+                "aria-label": intl.formatMessage({
+                  defaultMessage: "Start receiver automatically",
+                }),
+              },
+            }}
             onChange={onAutoStartChange}
           />
         }
@@ -1085,6 +1119,13 @@ const SenderSettingsSection = ({
           <Switch
             edge="end"
             checked={remoteOutputEnabled}
+            slotProps={{
+              input: {
+                "aria-label": intl.formatMessage({
+                  defaultMessage: "Send transcript to another device",
+                }),
+              },
+            }}
             onChange={onToggleOutput}
           />
         }
@@ -1234,7 +1275,7 @@ export const MultiDeviceDialog = () => {
         <DialogTitle>
           <FormattedMessage defaultMessage="Multi-device" />
         </DialogTitle>
-        <DialogContent dividers sx={{ minWidth: 360 }}>
+        <DialogContent dividers sx={{ minWidth: "min(360px, 100%)" }}>
           <Stack spacing={3}>
             <ReceiverSettingsSection
               receiverStatus={receiverStatus}
@@ -1283,6 +1324,7 @@ export const MultiDeviceDialog = () => {
         form={pair.form}
         addressLabel={pair.addressLabel}
         addressHelperText={pair.addressHelperText}
+        validationError={pair.validationError}
         onChange={pair.updatePairForm}
         onSave={() => void pair.handleSaveManualPair()}
         onClose={pair.closePairDialog}

@@ -1,3 +1,4 @@
+import { latestVisibleTranscription } from "../../utils/latest-visible-transcription";
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -45,12 +46,7 @@ import { useTauriListen } from "../../hooks/tauri.hooks";
 import { useToastAction } from "../../hooks/toast.hooks";
 import { detectLocale } from "../../i18n";
 import { getEffectiveStylingMode } from "../../utils/feature.utils";
-import {
-  getAuthRepo,
-  getMemberRepo,
-  getTranscriptionRepo,
-  getUserRepo,
-} from "../../repos";
+import { getAuthRepo, getMemberRepo, getUserRepo } from "../../repos";
 import {
   AppState,
   HotkeyStrategy,
@@ -84,6 +80,10 @@ import {
   syncHotkeyCombosToNative,
 } from "../../utils/keyboard.utils";
 import { getLogger, initLogging } from "../../utils/log.utils";
+import {
+  syncInteractionChime,
+  syncInteractionFeedbackVolume,
+} from "../../utils/interaction-feedback-sync";
 import { sendPillFlashMessage } from "../../utils/overlay.utils";
 import { isPermissionAuthorized } from "../../utils/permission.utils";
 import { getPlatform } from "../../utils/platform.utils";
@@ -328,12 +328,9 @@ export const AppSideEffects = () => {
   // setting with its fallback defaults.
   useEffect(() => {
     if (!isMainWindow) return;
-    invoke("set_interaction_chime_enabled", {
-      enabled: playInteractionChime,
-    }).catch(() => {
-      // Best-effort mirror of the persisted preference; the store value
-      // remains the source of truth and is re-sent on the next change.
-    });
+    // Best effort: the store value remains authoritative and will be re-sent
+    // on the next change. The synchronizer logs failures.
+    void syncInteractionChime(playInteractionChime);
   }, [isMainWindow, playInteractionChime]);
 
   // Mirror the user-chosen thock gain into Rust so the warm path AND the
@@ -341,12 +338,7 @@ export const AppSideEffects = () => {
   // process-global reason as the chime gate above.
   useEffect(() => {
     if (!isMainWindow) return;
-    invoke("set_interaction_feedback_volume", {
-      volume: interactionFeedbackVolume,
-    }).catch(() => {
-      // Best-effort mirror of the persisted preference; the store value
-      // remains the source of truth and is re-sent on the next change.
-    });
+    void syncInteractionFeedbackVolume(interactionFeedbackVolume);
   }, [isMainWindow, interactionFeedbackVolume]);
 
   // The native Windows pill starts bottom-anchored in its static cell, so the
@@ -867,12 +859,15 @@ export const AppSideEffects = () => {
     },
   });
 
-  // Hotkey to open settings (Cmd+, on macOS)
+  // Hotkey to open settings (Cmd+, on macOS). `/dashboard/settings` is the
+  // entry route, which redirects to the page last used, so the shortcut does
+  // not reset the surface to the first page; the prefix check keeps a press
+  // while already in settings from reloading the window.
   useKeyDownHandler({
     keys: [","],
     meta: true,
     callback: () => {
-      if (window.location.pathname !== "/dashboard/settings") {
+      if (!window.location.pathname.startsWith("/dashboard/settings")) {
         window.location.href = "/dashboard/settings";
       }
     },
@@ -947,9 +942,7 @@ export const AppSideEffects = () => {
 
   useTauriListen<void>("tray-copy-last-transcript", async () => {
     if (!isMainWindow) return;
-    const [latest] = await getTranscriptionRepo().listTranscriptions({
-      limit: 1,
-    });
+    const latest = await latestVisibleTranscription();
     if (latest?.transcript) {
       await invoke("copy_to_clipboard", { text: latest.transcript });
     }

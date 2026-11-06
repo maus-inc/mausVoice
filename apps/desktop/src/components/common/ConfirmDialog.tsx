@@ -1,16 +1,15 @@
 import {
   Button,
   ButtonProps,
-  CircularProgress,
   Dialog,
   DialogActions,
   DialogContent,
   DialogContentText,
   DialogTitle,
-  Stack,
 } from "@mui/material";
 import { ReactNode, useId } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
+import { BusyButtonLabel } from "./BusyButtonLabel";
 
 export type ConfirmDialogProps = {
   isOpen: boolean;
@@ -24,6 +23,8 @@ export type ConfirmDialogProps = {
   cancelButtonProps?: ButtonProps;
   destructive?: boolean;
   busy?: boolean;
+  /** Called after the closing transition, when focus has returned. */
+  onExited?: () => void;
   /**
    * Names the progress indicator shown while `busy`. A string because it lands
    * in `aria-label`; `FormattedMessage` would render a node there.
@@ -44,6 +45,7 @@ export const ConfirmDialog = ({
   destructive,
   busy,
   busyLabel,
+  onExited,
 }: ConfirmDialogProps) => {
   const intl = useIntl();
   const confirmContent = confirmLabel ?? (
@@ -66,6 +68,7 @@ export const ConfirmDialog = ({
       fullWidth
       aria-labelledby={titleId}
       aria-describedby={contentId}
+      slotProps={{ transition: { onExited } }}
     >
       <DialogTitle id={titleId}>{title}</DialogTitle>
       <DialogContent dividers>
@@ -94,19 +97,9 @@ export const ConfirmDialog = ({
           aria-busy={busy || undefined}
         >
           {busy ? (
-            <Stack
-              direction="row"
-              spacing={1}
-              sx={{ alignItems: "center", justifyContent: "center" }}
-            >
-              <CircularProgress
-                size={16}
-                color="inherit"
-                role="progressbar"
-                aria-label={progressLabel}
-              />
-              <span>{confirmContent}</span>
-            </Stack>
+            <BusyButtonLabel label={progressLabel}>
+              {confirmContent}
+            </BusyButtonLabel>
           ) : (
             confirmContent
           )}

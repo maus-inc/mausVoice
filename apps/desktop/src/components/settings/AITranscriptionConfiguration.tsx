@@ -538,7 +538,7 @@ export const AITranscriptionConfiguration = ({
       return;
     }
 
-    void setPreferredTranscriptionModelSize(fallbackModel);
+    void setPreferredTranscriptionModelSize(fallbackModel).catch(() => {});
   }, [
     transcription,
     localTranscriptionConfig.modelStatusesLoaded,
@@ -547,11 +547,11 @@ export const AITranscriptionConfiguration = ({
   ]);
 
   const handleModeChange = useCallback((mode: TranscriptionMode) => {
-    void setPreferredTranscriptionMode(mode);
+    void setPreferredTranscriptionMode(mode).catch(() => {});
   }, []);
 
   const handleDeviceChange = useCallback((device: string) => {
-    void setPreferredTranscriptionDevice(device);
+    void setPreferredTranscriptionDevice(device).catch(() => {});
   }, []);
 
   const handleModelSizeChange = useCallback(
@@ -562,13 +562,13 @@ export const AITranscriptionConfiguration = ({
         return;
       }
 
-      void setPreferredTranscriptionModelSize(modelSize);
+      void setPreferredTranscriptionModelSize(modelSize).catch(() => {});
     },
     [transcription],
   );
 
   const handleApiKeyChange = useCallback((id: string | null) => {
-    void setPreferredTranscriptionApiKeyId(id);
+    void setPreferredTranscriptionApiKeyId(id).catch(() => {});
   }, []);
 
   const handleDownloadModel = useCallback(

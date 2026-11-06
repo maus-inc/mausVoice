@@ -62,27 +62,47 @@ export const getSwitchToStyleToneId = (actionName: string): string | null => {
   return raw.length > 0 ? raw : null;
 };
 
+/**
+ * Every platform the app builds for, so a default cannot be added for one and
+ * forgotten for another.
+ *
+ * `linux` was missing from this type and from the table below, and the lookup
+ * had no branch for it either: on Linux every shortcut that ships with a
+ * default came up unbound, which is the one platform where the person is least
+ * likely to guess what the key should be. Listing the platforms exhaustively
+ * makes the next default a compile error until it is answered for all three.
+ *
+ * Not `Record<Platform, …>`: `Platform` includes `unknown`, which is the
+ * absence of an answer rather than a platform to answer for.
+ */
 type PlatformHotkeyCombos = {
   macos: string[][];
   windows: string[][];
+  linux: string[][];
 };
 
 export const DEFAULT_HOTKEY_COMBOS: Record<string, PlatformHotkeyCombos> = {
   [DICTATE_HOTKEY]: {
     macos: [["Function"]],
     windows: [["MetaLeft", "ControlLeft"]],
+    // Compositor bridges cannot register a modifier-only shortcut. Include a
+    // regular key so the Linux default works on both Wayland and X11.
+    linux: [["ControlLeft", "AltLeft", "Space"]],
   },
   [CANCEL_TRANSCRIPTION_HOTKEY]: {
     macos: [["Escape"]],
     windows: [["Escape"]],
+    linux: [["Escape"]],
   },
   [SWITCH_WRITING_STYLE_FORWARD_HOTKEY]: {
     macos: [["RightArrow"]],
     windows: [["RightArrow"]],
+    linux: [["RightArrow"]],
   },
   [SWITCH_WRITING_STYLE_BACKWARD_HOTKEY]: {
     macos: [["LeftArrow"]],
     windows: [["LeftArrow"]],
+    linux: [["LeftArrow"]],
   },
 };
 
@@ -94,30 +114,30 @@ export const getDefaultHotkeyCombosForAction = (
   actionName: string,
 ): string[][] => {
   const defaultCombos = DEFAULT_HOTKEY_COMBOS[actionName];
-  if (defaultCombos) {
-    if (getPlatform() === "macos") {
-      return defaultCombos.macos;
-    }
-    if (getPlatform() === "windows") {
-      return defaultCombos.windows;
-    }
+  if (!defaultCombos) {
+    return [];
   }
-  return [];
+
+  const platform = getPlatform();
+  // `unknown` is the absence of a platform, not a third case to guess at, so it
+  // is the one answer that stays empty.
+  return platform === "unknown" ? [] : defaultCombos[platform];
 };
 
 export const getHotkeyCombosForAction = (
   state: AppState,
   actionName: string,
 ): string[][] => {
-  const combos = Object.values(state.hotkeyById)
-    .filter((h) => h.actionName === actionName && h.keys.length > 0)
-    .map((h) => h.keys);
-
-  if (combos.length > 0) {
-    return combos;
-  }
-
-  return getDefaultHotkeyCombosForAction(actionName);
+  const configured = Object.values(state.hotkeyById).filter(
+    (hotkey) => hotkey.actionName === actionName,
+  );
+  // An explicit empty binding is a cleared shortcut, not a missing record.
+  // Only a genuinely unconfigured action inherits the platform default.
+  return configured.length > 0
+    ? configured
+        .filter((hotkey) => hotkey.keys.length > 0)
+        .map((hotkey) => hotkey.keys)
+    : getDefaultHotkeyCombosForAction(actionName);
 };
 
 export type SwitchToStyleEntry = {
@@ -282,7 +302,10 @@ export const getAdditionalLanguageEntries = (
       return {
         actionName: hotkey.actionName,
         language,
-        hotkeyCombos: getHotkeyCombosForAction(state, hotkey.actionName),
+        // Rows represent individual bindings, even when several use the same
+        // language. Looking up all combos by action would give each row the
+        // first binding and silently overwrite the others on the next save.
+        hotkeyCombos: hotkey.keys.length > 0 ? [hotkey.keys] : [],
       };
     })
     .filter((entry): entry is AdditionalLanguageEntry => Boolean(entry));

@@ -9,8 +9,16 @@ import {
 } from "../../actions/onboarding.actions";
 import { produceAppState, useAppStore } from "../../store";
 import { trackButtonClick } from "../../utils/analytics.utils";
+import {
+  getLocalDataClearGeneration,
+  isLocalDataClearRequested,
+} from "../../utils/local-data-write-gate";
 import { AudioWaveform } from "../common/AudioWaveform";
 import { MicrophoneSelector } from "../microphone/MicrophoneSelector";
+import {
+  invokeGuardedRecordingStart,
+  subscribeRecordingAbortForClear,
+} from "../root/recording-start-gate";
 import {
   BackButton,
   DualPaneLayout,
@@ -38,48 +46,103 @@ export const MicCheckForm = () => {
     overlayPhase === "recording" || overlayPhase === "loading";
   const isRecording = recordingState === "recording";
   const isStarting = recordingState === "starting";
+  const mountedRef = useRef(true);
+  const opIdRef = useRef(0);
+  const recordingStateRef = useRef(recordingState);
+  recordingStateRef.current = recordingState;
+
+  const setSyncedRecordingState = useCallback(
+    (next: "idle" | "starting" | "recording" | "stopping") => {
+      recordingStateRef.current = next;
+      if (mountedRef.current) {
+        setRecordingState(next);
+      }
+    },
+    [],
+  );
 
   const startRecording = useCallback(async () => {
-    if (isGlobalRecording || recordingState !== "idle") {
+    if (
+      isGlobalRecording ||
+      recordingStateRef.current !== "idle" ||
+      isLocalDataClearRequested()
+    ) {
       return;
     }
 
-    setRecordingState("starting");
+    const opId = ++opIdRef.current;
+    const clearGeneration = getLocalDataClearGeneration();
+    setSyncedRecordingState("starting");
 
     try {
-      await invoke<void>("start_recording", {
-        args: { preferredMicrophone },
-      });
-      setRecordingState("recording");
+      await invokeGuardedRecordingStart<void>(preferredMicrophone ?? null);
+      if (
+        !mountedRef.current ||
+        opId !== opIdRef.current ||
+        isLocalDataClearRequested() ||
+        clearGeneration !== getLocalDataClearGeneration()
+      ) {
+        await invoke("stop_recording").catch(() => undefined);
+        if (opId === opIdRef.current) {
+          setSyncedRecordingState("idle");
+        }
+        return;
+      }
+      setSyncedRecordingState("recording");
     } catch (error) {
-      console.error("Failed to start recording", error);
-      setRecordingState("idle");
+      if (
+        !isLocalDataClearRequested() &&
+        clearGeneration === getLocalDataClearGeneration()
+      ) {
+        console.error("Failed to start recording", error);
+      }
+      if (opId === opIdRef.current) {
+        setSyncedRecordingState("idle");
+      }
     }
-  }, [isGlobalRecording, recordingState, preferredMicrophone]);
+  }, [isGlobalRecording, preferredMicrophone, setSyncedRecordingState]);
 
   const stopRecording = useCallback(async () => {
-    if (recordingState !== "recording" && recordingState !== "starting") {
+    const currentState = recordingStateRef.current;
+    if (currentState !== "recording" && currentState !== "starting") {
       return;
     }
 
-    setRecordingState("stopping");
+    opIdRef.current += 1;
+    setSyncedRecordingState("stopping");
 
     try {
       await invoke("stop_recording");
     } catch (error) {
       console.error("Failed to stop recording", error);
     } finally {
-      setRecordingState("idle");
-      produceAppState((draft) => {
-        draft.audioLevels = [];
-      });
+      setSyncedRecordingState("idle");
+      if (!isLocalDataClearRequested()) {
+        produceAppState((draft) => {
+          draft.audioLevels = [];
+        });
+      }
     }
-  }, [recordingState]);
+  }, [setSyncedRecordingState]);
 
   const stopRecordingRef = useRef(stopRecording);
   useEffect(() => {
     stopRecordingRef.current = stopRecording;
   }, [stopRecording]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    const unsubscribeClear = subscribeRecordingAbortForClear(
+      () =>
+        recordingStateRef.current === "starting" ||
+        recordingStateRef.current === "recording",
+      () => stopRecordingRef.current(),
+    );
+    return () => {
+      mountedRef.current = false;
+      unsubscribeClear();
+    };
+  }, []);
 
   useEffect(() => {
     if (!showMicSelector) {

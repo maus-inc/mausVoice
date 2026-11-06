@@ -13,7 +13,7 @@ import {
 import { Check } from "lucide-react";
 import type { Tone } from "@maus-inc/types";
 import { getRec } from "@maus-inc/utilities";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useId, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import {
   closeRetranscribeDialog,
@@ -73,6 +73,8 @@ const CheckableMenuItem = ({
 
 export const RetranscribeDialog = () => {
   const intl = useIntl();
+  const styleLabelId = useId();
+  const languageLabelId = useId();
 
   const open = useAppStore(
     (state) => state.transcriptions.retranscribeDialogOpen,
@@ -145,10 +147,11 @@ export const RetranscribeDialog = () => {
         <Stack spacing={2.5} sx={{ mt: 1 }}>
           {styleSelectionAvailable && (
             <FormControl fullWidth size="small">
-              <InputLabel>
+              <InputLabel id={styleLabelId}>
                 <FormattedMessage defaultMessage="Style" />
               </InputLabel>
               <Select
+                labelId={styleLabelId}
                 label={intl.formatMessage({ defaultMessage: "Style" })}
                 value={selectedToneId ?? ""}
                 onChange={(e) => {
@@ -177,10 +180,11 @@ export const RetranscribeDialog = () => {
             </FormControl>
           )}
           <FormControl fullWidth size="small">
-            <InputLabel>
+            <InputLabel id={languageLabelId}>
               <FormattedMessage defaultMessage="Language" />
             </InputLabel>
             <Select
+              labelId={languageLabelId}
               label={intl.formatMessage({ defaultMessage: "Language" })}
               value={selectedLanguage}
               onChange={(e) =>

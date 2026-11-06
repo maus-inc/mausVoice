@@ -338,17 +338,17 @@ impl Drop for LocalDataClearGuard {
 }
 
 #[cfg(test)]
+pub(crate) static TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+#[cfg(test)]
 mod tests {
     use super::{
         begin_local_data_clear, begin_local_data_remote_operation, complete_local_data_clear,
         complete_local_data_clear_with, current_write_generation, is_write_generation_current,
-        lock_local_data_write, lock_startup_database_migration,
+        lock_local_data_write, lock_startup_database_migration, TEST_LOCK,
     };
-    use std::sync::LazyLock;
     use std::time::Duration;
-    use tokio::sync::{oneshot, Mutex};
-
-    static TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+    use tokio::sync::oneshot;
 
     #[tokio::test]
     async fn startup_clear_recovery_migration_lease_does_not_reopen_writes() {

@@ -24,6 +24,7 @@ vi.mock("../../actions/onboarding.actions", () => ({
   resetTip: mocks.resetTip,
 }));
 
+import { TipCardFrame } from "../onboarding/TipCard";
 import HelpPage from "./HelpPage";
 
 ensureUiHarness();
@@ -65,6 +66,38 @@ afterEach(() => {
 });
 
 describe("HelpPage tip cards", () => {
+  it("allows contextual tip headings without changing their appearance variant", () => {
+    act(() =>
+      root.render(
+        createElement(TipCardFrame, {
+          title: "Tip",
+          body: "Body",
+          headingLevel: "h3",
+        }),
+      ),
+    );
+    const heading = container.querySelector("h3");
+    expect(heading?.textContent).toBe("Tip");
+    expect(heading?.classList.contains("MuiTypography-subtitle2")).toBe(true);
+  });
+
+  it("does not invent a heading level for a standalone tip", () => {
+    act(() =>
+      root.render(createElement(TipCardFrame, { title: "Tip", body: "Body" })),
+    );
+    expect(container.querySelector(".MuiTypography-subtitle2")?.tagName).toBe(
+      "P",
+    );
+  });
+
+  it("uses second-level headings for the tips beneath the page title", async () => {
+    await renderPage();
+    expect(container.querySelector("h1")?.textContent).toBe(
+      "Help and onboarding",
+    );
+    expect(container.querySelectorAll("h2")).toHaveLength(5);
+  });
+
   it("dims exactly the tips the user has dismissed", async () => {
     mocks.state.local.dismissedTipIds = ["writing-styles", "update-channel"];
     await renderPage();

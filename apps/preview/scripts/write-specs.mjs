@@ -374,7 +374,7 @@ pulseBorder keyframes (blue 50% ↔ blue) 2s ease-in-out infinite while focused.
 empty / valued / recording (focused) / hover / blur-commit; Escape cancels; bridge strategy rejects modifier-only combos with an error snackbar (store path — not simulated).
 
 ## Accessibility
-tabIndex 0 div with click-to-focus; outline none (pulse replaces it). UNKNOWN: no aria-label/role in source (flag as a11y gap); preview adds both.
+Focusable textbox captures shortcuts on focus; each settings recorder has a localized name and describes its current value. Disabled recorders leave the tab order. The pulse indicates focus; native key capture and screen-reader behavior require platform verification.
 
 ## Live-spec mapping
 Width live (recreated). Pulse + commit logic patch-only: edit \`HotKey.tsx\` → the three settings dialogs.
@@ -407,7 +407,7 @@ Dialog radius live (MuiDialog paper slot → every dialog).
 
 - Status: **reused** — real component from \`${D}/components/common/ConfirmDialog.tsx\`.
 - Source of truth: \`${D}/components/common/ConfirmDialog.tsx\`.
-- Used in: SignInForm, SettingsPage, ManualStylingRow, ToneEditorDialog.
+- Used in: SignInForm, PersonalCredentialsForm, PrivacyDataSettingsPage, UpdateChannelSetting, SystemSettingsPage, ProfileDialog, ManualStylingRow, ToneCreateDiscard, ToneEditConfirmations.
 
 ## Purpose
 Two-action confirmation (Cancel text + Confirm contained).
@@ -425,7 +425,7 @@ open / closed; custom labels; confirmButtonProps/cancelButtonProps passthrough.
 Inherits dialog semantics; actions are real buttons with localized labels.
 
 ## Live-spec mapping
-Patch-only. Persist: edit \`ConfirmDialog.tsx\` → four call sites. Radii follow the dialog + button specs (live).
+Patch-only. Persist: edit \`ConfirmDialog.tsx\` → all direct call sites. Radii follow the dialog + button specs (live).
 `],
 ["popover-menu", `# MenuPopover · MenuPopoverBuilder (\`popover-menu\`)
 
@@ -580,7 +580,7 @@ Card radius live. Hover/ ramp patch-only (\`theme.ts\` MuiCard/MuiPaper → glob
 
 - Status: **reused** — real component + MuiListItemButton/MuiListItemText theme.
 - Source of truth: \`${D}/theme.ts\` (MuiListItemButton, MuiListItemText), \`${D}/components/common/ListTile.tsx\`, \`OverflowTypography.tsx\`.
-- Used in: MenuPopover, DashboardMenu, UpdateListTile, SettingsPage, AppStylingRow, ManualStylingRow.
+- Used in: MenuPopover, DashboardMenu, UpdateListTile, AppStylingRow, ManualStylingRow.
 
 ## Purpose
 Universal row: leading/trailing with hover swap, title/subtitle, selected state, href/cmd-click, motion indicator slot.

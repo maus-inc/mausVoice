@@ -63,6 +63,15 @@ import {
   stopOwnedNativeStart,
 } from "./dictation-recording-intake";
 import { createSystemVolumeDim } from "./dictation-volume-dim";
+import {
+  invokeGuardedRecordingStart,
+  settleRecordingStart,
+  subscribeRecordingAbortForClear,
+} from "./recording-start-gate";
+import {
+  getLocalDataClearGeneration,
+  isLocalDataClearRequested,
+} from "../../utils/local-data-write-gate";
 import type {
   OverlayPhase,
   OverlayResolvePermissionPayload,
@@ -909,29 +918,31 @@ export const DictationSideEffects = () => {
       // A second `stop_recording` can still arrive from the superseded start's own
       // cleanup. That is already tolerated: the invoke is caught and logged.
       const stopNative = stopNativeRecordingForAbort(nativeStartOwnerRef);
-      await sendPhaseToPill("idle");
-      await stopNative;
-
-      // Deterministic cleanup: clear the refs first so no other path can
-      // reach the session mid-cleanup, then guard each cleanup call.
+      // Detach the old session before any IPC can suspend. A later recording
+      // must never be cleaned up by the tail of this abort.
       const session = sessionRef.current;
       const strategy = strategyRef.current;
       strategyRef.current = null;
       sessionRef.current = null;
       clearUtteranceToneSnapshots();
+      clearRecordingState();
 
       try {
         session?.cleanup();
       } catch (error) {
         getLogger().warning(`Session cleanup failed during abort: ${error}`);
       }
+      let strategyCleanup: Promise<void> | undefined;
       try {
-        await strategy?.cleanup();
+        strategyCleanup = strategy?.cleanup().catch((error) => {
+          getLogger().warning(`Strategy cleanup failed during abort: ${error}`);
+        });
       } catch (error) {
         getLogger().warning(`Strategy cleanup failed during abort: ${error}`);
       }
-
-      clearRecordingState();
+      await sendPhaseToPill("idle");
+      await stopNative;
+      await strategyCleanup;
 
       if (message) {
         playAlertSound();
@@ -956,6 +967,14 @@ export const DictationSideEffects = () => {
       intl,
     ],
   );
+
+  useEffect(() => {
+    if (!isMainWindow) return;
+    return subscribeRecordingAbortForClear(
+      () => getAppState().activeRecordingMode !== null,
+      () => abortRecording(),
+    );
+  }, [abortRecording, isMainWindow]);
 
   const captureStopRecordingInfo = useCallback(async (): Promise<{
     audio: StopRecordingResponse | null;
@@ -1288,7 +1307,9 @@ export const DictationSideEffects = () => {
 
     const hasOnboarded = getIsOnboarded(getAppState());
     if (hasOnboarded) {
-      delayed(2000).then(() => recordStreak());
+      delayed(2000)
+        .then(() => recordStreak())
+        .catch(() => {});
     }
 
     getLogger().info("stopRecording entered");
@@ -1542,6 +1563,8 @@ export const DictationSideEffects = () => {
 
   const startRecording = useCallback(
     async (args: { mode: RecordingMode; language?: string | null }) => {
+      if (isLocalDataClearRequested()) return;
+      const clearGeneration = getLocalDataClearGeneration();
       const attempt = ++recordingOperationRef.current;
       audioIntakeSubscriptionFailedRef.current = false;
       const state = getAppState();
@@ -1567,7 +1590,12 @@ export const DictationSideEffects = () => {
       // branch set that was counting against `startRecording`'s cognitive
       // complexity. False means a newer start took over while the style loaded,
       // so the caller must stop.
-      if (!(await prepareAutoStyle(mode, state, attempt))) {
+      if (
+        !(await prepareAutoStyle(mode, state, attempt)) ||
+        recordingOperationRef.current !== attempt ||
+        isLocalDataClearRequested() ||
+        clearGeneration !== getLocalDataClearGeneration()
+      ) {
         return;
       }
 
@@ -1594,6 +1622,8 @@ export const DictationSideEffects = () => {
 
         let audioForwardingReady = false;
         const isCurrentStart = () =>
+          !isLocalDataClearRequested() &&
+          clearGeneration === getLocalDataClearGeneration() &&
           isRecordingStartCurrent(
             operationId,
             recordingOperationRef.current,
@@ -1683,17 +1713,14 @@ export const DictationSideEffects = () => {
         }
         const [, startRecordingResult] = await Promise.all([
           strategy.setPhase("recording"),
-          invoke<StartRecordingResponse>("start_recording", {
-            args: { preferredMicrophone },
-          }).then((result) => {
-            // The phase update can outlive microphone startup. Anchor provider
-            // wall-clock limits at the instant native capture succeeds rather
-            // than waiting for the other Promise.all branch.
-            if (isCurrentStart()) {
-              startProviderRecordingTimers();
-            }
-            return result;
-          }),
+          settleRecordingStart(
+            invokeGuardedRecordingStart<StartRecordingResponse>(
+              preferredMicrophone,
+            ),
+            isCurrentStart,
+            startProviderRecordingTimers,
+            () => stopOwnedNativeStart(nativeStartOwnerRef, operationId),
+          ),
         ]);
 
         const sampleRate = startRecordingResult.sampleRate;

@@ -6,6 +6,7 @@ import { getAppState } from "../store";
 import { getMyEffectiveUserId } from "../utils/user.utils";
 import type { LocalDataWriteLease } from "../utils/local-data-write-gate";
 import { BaseRepo, withLocalDataWrite } from "./base.repo";
+import { trackTranscriptionCreation } from "../utils/transcription-creation-tracker";
 
 const mapAudioSnapshot = (
   audio: TranscriptionAudioSnapshot | null | undefined,
@@ -182,13 +183,19 @@ export class LocalTranscriptionRepo extends BaseTranscriptionRepo {
     transcription: Transcription,
     lease?: LocalDataWriteLease,
   ): Promise<Transcription> {
-    return withLocalDataWrite(async () => {
-      const stored = await invoke<LocalTranscription>("transcription_create", {
-        transcription: toLocalTranscription(transcription),
-      });
-
-      return fromLocalTranscription(stored);
-    }, lease);
+    return withLocalDataWrite(
+      () =>
+        trackTranscriptionCreation(async () => {
+          const stored = await invoke<LocalTranscription>(
+            "transcription_create",
+            {
+              transcription: toLocalTranscription(transcription),
+            },
+          );
+          return fromLocalTranscription(stored);
+        }),
+      lease,
+    );
   }
 
   async listTranscriptions(

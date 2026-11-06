@@ -5,13 +5,20 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ChangeEvent,
 } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { showErrorSnackbar } from "../../actions/app.actions";
-import { getTermRepo } from "../../repos";
 import { getAppState, produceAppState, useAppStore } from "../../store";
+import { beginLocalDataWrite } from "../../utils/local-data-write-gate";
+import { focusAfterDictionaryDelete } from "./dictionary-delete-focus";
+import { restoreDictionaryOrder } from "./restore-dictionary-order";
+import {
+  deleteDictionaryTerm,
+  updateDictionaryTerm,
+} from "../../utils/term-mutation-queue";
 import {
   isEditableTarget,
   useContextMenu,
@@ -32,9 +39,21 @@ export const DictionaryRow = ({ id }: DictionaryRowProps) => {
   const isReplacement = term?.isReplacement ?? true;
   const isGlobal = term?.isGlobal ?? false;
 
+  const lastSource = useRef(term?.sourceValue ?? "");
+  const lastDestination = useRef(term?.destinationValue ?? "");
   useEffect(() => {
-    setSourceValue(term?.sourceValue ?? "");
-    setDestinationValue(term?.destinationValue ?? "");
+    const nextSource = term?.sourceValue ?? "";
+    const nextDestination = term?.destinationValue ?? "";
+    // Do not overwrite a newer, still-uncommitted draft when a previous
+    // request succeeds or rolls back.
+    const previousSource = lastSource.current;
+    const previousDestination = lastDestination.current;
+    setSourceValue((value) => (value === previousSource ? nextSource : value));
+    setDestinationValue((value) =>
+      value === previousDestination ? nextDestination : value,
+    );
+    lastSource.current = nextSource;
+    lastDestination.current = nextDestination;
   }, [term?.sourceValue, term?.destinationValue]);
 
   const handleFieldChange =
@@ -48,7 +67,11 @@ export const DictionaryRow = ({ id }: DictionaryRowProps) => {
     };
 
   const handleCommit = useCallback(async () => {
-    if (!term) {
+    if (
+      !term ||
+      !sourceValue.trim() ||
+      (isReplacement && !destinationValue.trim())
+    ) {
       return;
     }
 
@@ -59,54 +82,72 @@ export const DictionaryRow = ({ id }: DictionaryRowProps) => {
       return;
     }
 
-    const previousTerm = term;
-    const updatedTerm = {
-      ...term,
-      sourceValue,
-      destinationValue,
-    };
-
-    produceAppState((draft) => {
-      draft.termById[id] = updatedTerm;
-    });
-
+    const write = beginLocalDataWrite();
+    if (!write) return;
     try {
-      await getTermRepo().updateTerm(updatedTerm);
-    } catch (error) {
+      const previousTerm = term;
+      const updatedTerm = {
+        ...term,
+        sourceValue,
+        destinationValue,
+      };
+
       produceAppState((draft) => {
-        draft.termById[id] = previousTerm;
-      });
-      setSourceValue(previousTerm.sourceValue);
-      setDestinationValue(previousTerm.destinationValue);
-      showErrorSnackbar(error);
+        draft.termById[id] = updatedTerm;
+      }, write.lease);
+
+      await updateDictionaryTerm(
+        previousTerm,
+        updatedTerm,
+        (saved, error) => {
+          if (getAppState().termById[id] === updatedTerm) {
+            produceAppState((draft) => {
+              draft.termById[id] = saved;
+            }, write.lease);
+          }
+          showErrorSnackbar(error);
+        },
+        write.lease,
+      );
+    } finally {
+      write();
     }
-  }, [destinationValue, id, sourceValue, term]);
+  }, [destinationValue, id, isReplacement, sourceValue, term]);
 
   const handleDelete = useCallback(async () => {
     if (!term) {
       return;
     }
 
-    const previousTerm = term;
-    const previousIds = [...getAppState().dictionary.termIds];
-
-    produceAppState((draft) => {
-      delete draft.termById[id];
-      draft.dictionary.termIds = draft.dictionary.termIds.filter(
-        (termId) => termId !== id,
-      );
-    });
-
+    const write = beginLocalDataWrite();
+    if (!write) return;
     try {
-      await getTermRepo().deleteTerm(id);
-    } catch (error) {
+      const previousTerm = term;
+      const previousIds = [...getAppState().dictionary.termIds];
+      focusAfterDictionaryDelete(id);
+
       produceAppState((draft) => {
-        draft.termById[id] = previousTerm;
-        draft.dictionary.termIds = previousIds;
-      });
-      setSourceValue(previousTerm.sourceValue);
-      setDestinationValue(previousTerm.destinationValue);
-      showErrorSnackbar(error);
+        delete draft.termById[id];
+        draft.dictionary.termIds = draft.dictionary.termIds.filter(
+          (termId) => termId !== id,
+        );
+      }, write.lease);
+
+      await deleteDictionaryTerm(
+        previousTerm,
+        (saved, error) => {
+          produceAppState((draft) => {
+            // Restore only this deletion, without reverting other edits or removals
+            // that completed while the request was pending.
+            draft.termById[id] ??= saved;
+            restoreDictionaryOrder(draft.dictionary.termIds, previousIds, id);
+          }, write.lease);
+          showErrorSnackbar(error);
+        },
+        write.lease,
+      );
+    } finally {
+      write();
     }
   }, [id, term]);
 
@@ -138,6 +179,7 @@ export const DictionaryRow = ({ id }: DictionaryRowProps) => {
     <>
       {ctxMenu.renderMenu()}
       <Stack
+        data-dictionary-row={id}
         direction="row"
         spacing={2}
         onContextMenu={(e) => {
@@ -150,8 +192,11 @@ export const DictionaryRow = ({ id }: DictionaryRowProps) => {
           ctxMenu.handleContextMenu(e.nativeEvent, contextMenuItems);
         }}
         sx={{
-          alignItems: "center",
+          alignItems: "flex-start",
           py: 1,
+          // Keep both fields aligned when one displays a validation message.
+          "& > svg": { mt: "12px" },
+          "& > .MuiIconButton-root, & > span": { mt: "4px" },
         }}
       >
         <TextField
@@ -168,6 +213,18 @@ export const DictionaryRow = ({ id }: DictionaryRowProps) => {
           disabled={isGlobal}
           sx={{ flex: 1 }}
           error={!isGlobal && sourceValue.trim() === ""}
+          helperText={
+            !isGlobal && !sourceValue.trim() ? (
+              <FormattedMessage defaultMessage="Required. Changes not saved." />
+            ) : undefined
+          }
+          slotProps={{
+            htmlInput: {
+              "aria-label": isReplacement
+                ? intl.formatMessage({ defaultMessage: "Original" })
+                : intl.formatMessage({ defaultMessage: "Glossary term" }),
+            },
+          }}
         />
         {isReplacement ? (
           <>
@@ -186,6 +243,18 @@ export const DictionaryRow = ({ id }: DictionaryRowProps) => {
               minRows={1}
               sx={{ flex: 1, "& textarea": { lineHeight: 1.5 } }}
               error={!isGlobal && destinationValue.trim() === ""}
+              helperText={
+                !isGlobal && !destinationValue.trim() ? (
+                  <FormattedMessage defaultMessage="Required. Changes not saved." />
+                ) : undefined
+              }
+              slotProps={{
+                htmlInput: {
+                  "aria-label": intl.formatMessage({
+                    defaultMessage: "Replacement",
+                  }),
+                },
+              }}
             />
           </>
         ) : null}
@@ -204,11 +273,15 @@ export const DictionaryRow = ({ id }: DictionaryRowProps) => {
           </Tooltip>
         ) : (
           <IconButton
+            data-dictionary-delete
             aria-label={intl.formatMessage(
               { defaultMessage: "Delete dictionary item {term}" },
               { term: term.sourceValue },
             )}
-            onClick={handleDelete}
+            onClick={(event) => {
+              // A second click at the same location may now hit the next row.
+              if (event.detail <= 1) void handleDelete();
+            }}
             size="small"
           >
             <Trash2 size={16} strokeWidth={1.9} />

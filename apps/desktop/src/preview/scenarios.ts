@@ -78,6 +78,27 @@ export type PreviewData = {
   chatMessages: ChatMessage[];
 };
 
+/**
+ * What is left of the preview database after a local-data wipe: nothing. The
+ * desktop deletes the rows; the preview has no rows to keep.
+ *
+ * Declared beside the type it is an instance of, so the scenario that starts
+ * empty and the wipe that returns to empty cannot disagree about what empty is.
+ */
+export const EMPTY_PREVIEW_DATA: PreviewData = {
+  user: null,
+  preferences: null,
+  terms: [],
+  apiKeys: [],
+  customTones: [],
+  hotkeys: [],
+  appTargets: [],
+  transcriptions: [],
+  dailyActivity: [],
+  conversations: [],
+  chatMessages: [],
+};
+
 export type PreviewScenarioSnapshot = {
   state: AppState;
   data: PreviewData;
@@ -227,7 +248,7 @@ const previewAppTargets: AppTarget[] = [
     createdAt: "2026-08-22T09:00:00.000Z",
     toneId: "notes",
     iconPath: "preview://icons/notion",
-    pasteKeybind: "Ctrl+V",
+    pasteKeybind: "ctrl+v",
     insertionMethod: "paste",
     typingSpeedMs: null,
   },
@@ -524,19 +545,7 @@ const emptySnapshot = (): PreviewScenarioSnapshot =>
 
 const welcomeSnapshot = (): PreviewScenarioSnapshot => ({
   state: clone(INITIAL_APP_STATE),
-  data: {
-    user: null,
-    preferences: null,
-    terms: [],
-    apiKeys: [],
-    customTones: [],
-    hotkeys: [],
-    appTargets: [],
-    transcriptions: [],
-    dailyActivity: [],
-    conversations: [],
-    chatMessages: [],
-  },
+  data: clone(EMPTY_PREVIEW_DATA),
 });
 
 const onboardingSnapshot = (): PreviewScenarioSnapshot => {

@@ -39,7 +39,10 @@ vi.mock("./toast.actions", async () => ({
 }));
 vi.mock("../repos", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../repos")>()),
-  getUserPreferencesRepo: () => ({ setUserPreferences: savePreferences }),
+  getUserPreferencesRepo: () => ({
+    setUserPreferences: savePreferences,
+    getUserPreferences: async () => getAppState().userPrefs,
+  }),
 }));
 vi.mock("../utils/log.utils", () => ({
   getLogger: () => ({ verbose: vi.fn(), error: vi.fn(), warning: vi.fn() }),

@@ -1,13 +1,12 @@
 import { useCallback, useEffect, useRef } from "react";
 import { resumeAllInterruptedPostProcessEditRetries } from "../../actions/transcriptions.actions";
 import { refreshCurrentUser } from "../../actions/user.actions";
-import { useAsyncEffect } from "../../hooks/async.hooks";
-import { getDailyActivityRepo, getTranscriptionRepo } from "../../repos";
+import { refreshVisibleTranscriptions } from "../../utils/visible-transcriptions";
+import { getDailyActivityRepo } from "../../repos";
 import { produceAppState } from "../../store";
 import { getActivityDateRange } from "../../utils/activity-grid.utils";
 import { getLogger } from "../../utils/log.utils";
 import { subscribeToDailyActivityChanges } from "../../utils/daily-activity.events";
-import { registerTranscriptions } from "../../utils/app.utils";
 
 type HomeSideEffectsProps = {
   today: Date;
@@ -56,29 +55,21 @@ export const HomeSideEffects = ({ today }: HomeSideEffectsProps) => {
     }
   }, [today]);
 
-  useAsyncEffect(async () => {
-    const transcriptionsPromise = getTranscriptionRepo()
-      .listTranscriptions()
-      .catch((error: unknown) => {
-        getLogger().warning(`Failed to load recent transcriptions: ${error}`);
-        return null;
-      });
-    const refreshPromise = refresh().catch((error: unknown) => {
-      getLogger().warning(`Failed to refresh current user: ${error}`);
-    });
-    const [, transcriptions] = await Promise.all([
-      refreshPromise,
-      transcriptionsPromise,
-    ]);
-    if (!transcriptions) return;
-    produceAppState((draft) => {
-      registerTranscriptions(draft, transcriptions);
-      draft.transcriptions.transcriptionIds = transcriptions.map((t) => t.id);
+  useEffect(() => {
+    let current = true;
+    void Promise.all([
+      refresh(),
+      refreshVisibleTranscriptions(() => current),
+    ]).catch((error: unknown) => {
+      getLogger().warning("Failed to refresh home data", error);
     });
     // Same handoff as the History page: a claim written before a restart has no
     // process behind it, so the first surface that loads History delivers it.
     // The scan walks every History page, not just the rows loaded above.
     resumeAllInterruptedPostProcessEditRetries();
+    return () => {
+      current = false;
+    };
   }, [refresh]);
 
   useEffect(() => {

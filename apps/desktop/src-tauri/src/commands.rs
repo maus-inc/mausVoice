@@ -3173,6 +3173,8 @@ pub async fn clear_local_data(
     app: AppHandle,
     database: State<'_, crate::state::OptionKeyDatabase>,
     receiver_state: State<'_, crate::state::RemoteReceiverState>,
+    recorder: State<'_, Arc<dyn crate::platform::Recorder>>,
+    floating_window_state: State<'_, crate::state::FloatingWindowState>,
 ) -> Result<(), String> {
     // Audio storage and transcription insertion are separate IPC calls. Keep
     // their reservation lock through the wipe so pre-clear inserts cannot run
@@ -3182,14 +3184,49 @@ pub async fn clear_local_data(
     let mut reservations = AUDIO_SNAPSHOT_RESERVATIONS.lock().await;
     // Close the native gate before touching the durable marker. If marker I/O
     // fails, dropping this guard still leaves writes blocked, and invalidates
-    // every remote-receiver task that captured the previous generation.
+    // every remote-receiver and recording-start lease from the prior generation.
     let native_clear_guard = crate::db::local_data_write_gate::begin_local_data_clear()
         .await
         .map_err(|err| err.to_string())?;
+    // Discard in-memory composer drafts and close floating review windows so no
+    // secondary WebView retains pre-clear transcripts or an active recognizer.
+    floating_window_state.clear_all_composer_text();
+    for (label, window) in app.webview_windows() {
+        if label.starts_with(crate::state::FLOATING_WINDOW_LABEL_PREFIX) {
+            let _ = window.close();
+        }
+    }
     // The receiver owns an accept loop and detached connection tasks. Stop it
     // as soon as the generation is invalidated so no new peers can be accepted
     // while the durable recovery marker is being written.
     crate::system::remote_receiver::stop(receiver_state.inner().clone());
+    // Defense-in-depth native teardown after `begin_local_data_clear` has
+    // drained in-flight starts and blocked new ones. Do not abort the wipe if a
+    // subsystem reports an error: erase persisted data first and keep the clear
+    // gate closed afterward if teardown was incomplete.
+    let listener_stop_error = crate::platform::keyboard::stop_key_listener().err();
+    let recorder_for_stop = Arc::clone(&recorder);
+    let recorder_stop_error =
+        match tauri::async_runtime::spawn_blocking(move || match recorder_for_stop.stop() {
+            Ok(_) => Ok(()),
+            Err(err) => {
+                let not_recording = (*err)
+                    .downcast_ref::<crate::errors::RecordingError>()
+                    .map(|inner| matches!(inner, crate::errors::RecordingError::NotRecording))
+                    .unwrap_or(false);
+                if not_recording {
+                    Ok(())
+                } else {
+                    Err(err.to_string())
+                }
+            }
+        })
+        .await
+        {
+            Ok(Ok(())) => None,
+            Ok(Err(message)) => Some(message),
+            Err(join_err) => Some(join_err.to_string()),
+        };
     crate::system::local_data_clear_marker::mark_pending(&app).map_err(|error| {
         format!("Unable to persist the native local-data clear marker: {error}")
     })?;
@@ -3262,6 +3299,14 @@ pub async fn clear_local_data(
         log::warn!("VACUUM failed after clearing local data: {err}");
     }
 
+    if let Some(err) = listener_stop_error.or(recorder_stop_error) {
+        log::error!("Local data cleared, but native capture teardown reported an error: {err}");
+        return Err(
+            "Database cleared, but recording or keyboard monitoring could not be stopped"
+                .to_string(),
+        );
+    }
+
     native_clear_guard.mark_ready_for_frontend_completion();
     Ok(())
 }
@@ -3319,40 +3364,20 @@ pub fn play_audio(clip: AudioClip) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
-#[specta::specta]
-pub async fn start_recording(
-    app: AppHandle,
-    recorder: State<'_, Arc<dyn crate::platform::Recorder>>,
-    args: Option<StartRecordingArgs>,
+async fn start_recorder_with_clear_gate(
+    recorder: Arc<dyn crate::platform::Recorder>,
+    preferred_microphone: Option<String>,
+    level_emitter: Option<LevelCallback>,
+    chunk_emitter: Option<ChunkCallback>,
 ) -> Result<StartRecordingResponse, String> {
-    let options = args.unwrap_or_default();
+    let operation = crate::db::local_data_write_gate::begin_local_data_remote_operation()
+        .map_err(|err| err.to_string())?;
 
-    recorder.set_preferred_input_device(options.preferred_microphone.clone());
-
-    let level_emit_handle = app.clone();
-    let level_emitter: LevelCallback = Arc::new(move |levels: Vec<f32>| {
-        let overlay_state = level_emit_handle.state::<crate::state::OverlayState>();
-        overlay_state.set_audio_levels(levels.clone());
-        crate::platform::overlay::notify_audio_levels(&level_emit_handle, &levels);
-
-        let payload = RecordingLevelPayload { levels };
-        if let Err(err) = level_emit_handle.emit_to(EventTarget::any(), EVT_REC_LEVEL, payload) {
-            log::error!("Failed to emit recording_level event: {err}");
-        }
-    });
-
-    let chunk_emit_handle = app.clone();
-    let chunk_emitter: ChunkCallback = Arc::new(move |samples: Vec<f32>, offset: u64| {
-        let payload = AudioChunkPayload { samples, offset };
-        if let Err(err) = chunk_emit_handle.emit_to(EventTarget::any(), EVT_AUDIO_CHUNK, payload) {
-            log::error!("Failed to emit audio_chunk event: {err}");
-        }
-    });
+    recorder.set_preferred_input_device(preferred_microphone);
 
     let recorder_clone = Arc::clone(&recorder);
     let start_result = tauri::async_runtime::spawn_blocking(move || {
-        match recorder_clone.start(Some(level_emitter), Some(chunk_emitter)) {
+        match recorder_clone.start(level_emitter, chunk_emitter) {
             Ok(()) => Ok(()),
             Err(err) => {
                 let already_recording = (*err)
@@ -3365,6 +3390,18 @@ pub async fn start_recording(
     })
     .await
     .map_err(|err| format!("Recording task panicked: {err}"))?;
+
+    // If a local-data clear began while the audio device was opening, stop the
+    // recorder before releasing `operation` so `begin_local_data_clear` never
+    // observes an active microphone after draining leases.
+    if let Err(err) = operation.ensure_current() {
+        let recorder_cleanup = Arc::clone(&recorder);
+        let _ = tauri::async_runtime::spawn_blocking(move || {
+            let _ = recorder_cleanup.stop();
+        })
+        .await;
+        return Err(err.to_string());
+    }
 
     match start_result {
         Ok(()) => {
@@ -3385,6 +3422,50 @@ pub async fn start_recording(
             Err(message)
         }
     }
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn start_recording(
+    app: AppHandle,
+    recorder: State<'_, Arc<dyn crate::platform::Recorder>>,
+    args: Option<StartRecordingArgs>,
+) -> Result<StartRecordingResponse, String> {
+    let options = args.unwrap_or_default();
+
+    let level_emit_handle = app.clone();
+    let level_emitter: LevelCallback = Arc::new(move |levels: Vec<f32>| {
+        if crate::db::local_data_write_gate::current_write_generation().is_none() {
+            return;
+        }
+        let overlay_state = level_emit_handle.state::<crate::state::OverlayState>();
+        overlay_state.set_audio_levels(levels.clone());
+        crate::platform::overlay::notify_audio_levels(&level_emit_handle, &levels);
+
+        let payload = RecordingLevelPayload { levels };
+        if let Err(err) = level_emit_handle.emit_to(EventTarget::any(), EVT_REC_LEVEL, payload) {
+            log::error!("Failed to emit recording_level event: {err}");
+        }
+    });
+
+    let chunk_emit_handle = app.clone();
+    let chunk_emitter: ChunkCallback = Arc::new(move |samples: Vec<f32>, offset: u64| {
+        if crate::db::local_data_write_gate::current_write_generation().is_none() {
+            return;
+        }
+        let payload = AudioChunkPayload { samples, offset };
+        if let Err(err) = chunk_emit_handle.emit_to(EventTarget::any(), EVT_AUDIO_CHUNK, payload) {
+            log::error!("Failed to emit audio_chunk event: {err}");
+        }
+    });
+
+    start_recorder_with_clear_gate(
+        Arc::clone(&recorder),
+        options.preferred_microphone,
+        Some(level_emitter),
+        Some(chunk_emitter),
+    )
+    .await
 }
 
 /// Raw-body command, so it is registered in `app.rs` but kept out of the
@@ -4166,6 +4247,9 @@ pub fn notify_pill_style_info(app: AppHandle, count: u32, name: String) {
 #[tauri::command]
 #[specta::specta]
 pub fn start_key_listener(app: AppHandle) -> Result<(), String> {
+    if crate::db::local_data_write_gate::current_write_generation().is_none() {
+        return Err("Local data is being cleared".to_string());
+    }
     crate::platform::keyboard::start_key_listener(&app)
 }
 
@@ -4198,6 +4282,9 @@ pub fn get_key_listener_health() -> String {
 #[tauri::command]
 #[specta::specta]
 pub fn retry_key_listener(app: AppHandle) -> Result<(), String> {
+    if crate::db::local_data_write_gate::current_write_generation().is_none() {
+        return Err("Local data is being cleared".to_string());
+    }
     crate::platform::keyboard::start_key_listener(&app)
 }
 
@@ -6320,6 +6407,9 @@ pub fn composer_register_text(
     text: String,
     state: State<'_, crate::state::FloatingWindowState>,
 ) -> Result<(), String> {
+    if crate::db::local_data_write_gate::current_write_generation().is_none() {
+        return Err("Local data is being cleared".to_string());
+    }
     let request_id = request_id.trim().to_string();
     if request_id.is_empty() {
         return Err("composer request id must not be empty".to_string());
@@ -10274,5 +10364,115 @@ wLMDjy9FLAuxZ3q4NlEvkgtyhrr0gtTu6KC4KBJdITbbOeAi1zBIYo0v4iTgt8jJpIidRJnp94ABQkJA
         assert!(verify_minisign_data(public_key, b"other", &decoded_signature).is_err());
         // A malformed decoded signature must fail to parse.
         assert!(verify_minisign_data(public_key, b"test", "not-a-signature").is_err());
+    }
+
+    #[tokio::test]
+    async fn start_recorder_with_clear_gate_stops_in_flight_open_and_blocks_post_clear_starts() {
+        struct GateTestRecorder {
+            active: AtomicBool,
+            starts: std::sync::atomic::AtomicUsize,
+            stops: std::sync::atomic::AtomicUsize,
+            entered_tx: std::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+            release_rx: std::sync::Mutex<Option<std::sync::mpsc::Receiver<()>>>,
+        }
+
+        impl crate::platform::Recorder for GateTestRecorder {
+            fn start(
+                &self,
+                _level_callback: Option<LevelCallback>,
+                _chunk_callback: Option<ChunkCallback>,
+            ) -> Result<(), Box<dyn std::error::Error>> {
+                self.starts.fetch_add(1, Ordering::SeqCst);
+                if let Some(tx) = self.entered_tx.lock().unwrap().take() {
+                    let _ = tx.send(());
+                }
+                if let Some(rx) = self.release_rx.lock().unwrap().take() {
+                    let _ = rx.recv();
+                }
+                self.active.store(true, Ordering::SeqCst);
+                Ok(())
+            }
+
+            fn stop(&self) -> Result<crate::domain::RecordingResult, Box<dyn std::error::Error>> {
+                self.stops.fetch_add(1, Ordering::SeqCst);
+                self.active.store(false, Ordering::SeqCst);
+                Ok(crate::domain::RecordingResult {
+                    metrics: crate::domain::RecordingMetrics {
+                        duration: std::time::Duration::ZERO,
+                        size_bytes: 0,
+                    },
+                    audio: crate::domain::RecordedAudio {
+                        samples: Vec::new(),
+                        sample_rate: 16_000,
+                    },
+                })
+            }
+
+            fn pause(&self) -> Result<(), Box<dyn std::error::Error>> {
+                Ok(())
+            }
+
+            fn resume(&self) -> Result<(), Box<dyn std::error::Error>> {
+                Ok(())
+            }
+        }
+
+        let _test_guard = crate::db::local_data_write_gate::TEST_LOCK.lock().await;
+        let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let recorder = Arc::new(GateTestRecorder {
+            active: AtomicBool::new(false),
+            starts: std::sync::atomic::AtomicUsize::new(0),
+            stops: std::sync::atomic::AtomicUsize::new(0),
+            entered_tx: std::sync::Mutex::new(Some(entered_tx)),
+            release_rx: std::sync::Mutex::new(Some(release_rx)),
+        });
+
+        let recorder_for_start: Arc<dyn crate::platform::Recorder> = recorder.clone();
+        let start_task = tokio::spawn(async move {
+            start_recorder_with_clear_gate(recorder_for_start, None, None, None).await
+        });
+
+        entered_rx.await.expect("recorder start must enter");
+
+        let mut clear_task =
+            tokio::spawn(crate::db::local_data_write_gate::begin_local_data_clear());
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(25), &mut clear_task)
+                .await
+                .is_err(),
+            "clear must wait while start_recording holds a remote-operation lease"
+        );
+
+        release_tx.send(()).expect("unblock audio device open");
+        let start_outcome = start_task.await.expect("start task must join");
+        match start_outcome {
+            Err(msg) => assert!(
+                msg.contains("Local data is being cleared"),
+                "expected clear gate error, got {msg}"
+            ),
+            Ok(_) => panic!("expected clear gate error, got a successful start"),
+        }
+
+        let clear_guard = clear_task
+            .await
+            .expect("clear task must join")
+            .expect("clear must acquire guard after start drains");
+        assert!(!recorder.active.load(Ordering::SeqCst));
+        assert_eq!(recorder.starts.load(Ordering::SeqCst), 1);
+        assert_eq!(recorder.stops.load(Ordering::SeqCst), 1);
+
+        let blocked_start =
+            start_recorder_with_clear_gate(recorder.clone(), None, None, None).await;
+        assert!(blocked_start
+            .as_ref()
+            .is_err_and(|msg| msg.contains("Local data is being cleared")));
+        assert_eq!(recorder.starts.load(Ordering::SeqCst), 1);
+
+        clear_guard.mark_ready_for_frontend_completion();
+        drop(clear_guard);
+        crate::db::local_data_write_gate::complete_local_data_clear()
+            .await
+            .expect("reopen clear gate after test");
     }
 }
