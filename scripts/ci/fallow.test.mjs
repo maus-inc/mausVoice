@@ -173,10 +173,8 @@ const INHERITED_CYCLES = [
   // surface when that type import moves to a leaf module.
   "apps/desktop/src/actions/transcribe.actions.ts -> apps/desktop/src/repos/index.ts -> apps/desktop/src/utils/user.utils.ts -> apps/desktop/src/sessions/index.ts -> apps/desktop/src/sessions/local-transcription-session.ts",
   "apps/desktop/src/actions/transcribe.actions.ts -> apps/desktop/src/utils/prompt.utils.ts -> apps/desktop/src/utils/user.utils.ts -> apps/desktop/src/sessions/index.ts -> apps/desktop/src/sessions/batch-transcription-session.ts",
-  "apps/desktop/src/actions/transcribe.actions.ts -> apps/desktop/src/types/transcription-session.types.ts",
   "apps/desktop/src/actions/transcribe.actions.ts -> apps/desktop/src/utils/user.utils.ts -> apps/desktop/src/sessions/index.ts -> apps/desktop/src/sessions/batch-transcription-session.ts",
   "apps/desktop/src/actions/transcribe.actions.ts -> apps/desktop/src/utils/user.utils.ts -> apps/desktop/src/sessions/index.ts -> apps/desktop/src/sessions/local-transcription-session.ts",
-  "apps/desktop/src/actions/transcribe.actions.ts -> apps/desktop/src/utils/user.utils.ts -> apps/desktop/src/sessions/index.ts -> apps/desktop/src/types/transcription-session.types.ts",
   "apps/desktop/src/sessions/assemblyai-transcription-session.ts -> apps/desktop/src/utils/prompt.utils.ts -> apps/desktop/src/utils/user.utils.ts -> apps/desktop/src/sessions/index.ts",
   "apps/desktop/src/sessions/azure-transcription-session.ts -> apps/desktop/src/utils/prompt.utils.ts -> apps/desktop/src/utils/user.utils.ts -> apps/desktop/src/sessions/index.ts",
   "apps/desktop/src/sessions/azure-transcription-session.ts -> apps/desktop/src/utils/user.utils.ts -> apps/desktop/src/sessions/index.ts",
@@ -216,6 +214,18 @@ test("the module graph gains no new circular dependencies", () => {
     newCycles,
     [],
     `new circular dependencies must be broken before merging:\n${newCycles.join("\n")}`,
+  );
+  // A list that only grows stops describing the tree. The entry for a cycle
+  // that has been broken comes out in the commit that breaks it, so a fixed
+  // cycle whose entry is still listed fails here rather than sitting in the
+  // allowlist for good.
+  const fixedCycles = INHERITED_CYCLES.filter(
+    (cycle) => !observed.includes(cycle),
+  );
+  assert.deepEqual(
+    fixedCycles,
+    [],
+    `these listed cycles no longer exist; delete their entries:\n${fixedCycles.join("\n")}`,
   );
 });
 
