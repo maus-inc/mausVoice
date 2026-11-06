@@ -95,7 +95,7 @@ const drawWaveFrame = (
 
   paths.forEach((path, index) => {
     if (!path) return;
-    const config = WAVE_CONFIG[index] ?? WAVE_CONFIG[WAVE_CONFIG.length - 1];
+    const config = WAVE_CONFIG[index] ?? WAVE_CONFIG.at(-1) ?? WAVE_CONFIG[0];
     const amplitudeFactor = Math.min(
       MAX_AMPLITUDE,
       Math.max(MIN_AMPLITUDE, level * config.multiplier),

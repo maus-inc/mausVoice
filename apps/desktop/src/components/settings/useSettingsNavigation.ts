@@ -80,7 +80,7 @@ export const useSettingsNavigation = () => {
       setActiveSection(sectionFromScrollTop(tops, 0));
     };
     const onScroll = () => {
-      if (frame === null) frame = requestAnimationFrame(measure);
+      frame ??= requestAnimationFrame(measure);
     };
     measure();
     // `capture: true` is load-bearing here, not a default: it is what makes a

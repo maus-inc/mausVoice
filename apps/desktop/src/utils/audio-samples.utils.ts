@@ -3,6 +3,9 @@ export const isFiniteAudioSample = (value: unknown): value is number =>
   Number.isFinite(value) &&
   Number.isFinite(Math.fround(value));
 
+// The index loop is deliberate: callers type their chunks as `ArrayLike<number>`
+// (some are typed-array views, some are plain arrays), so `for...of` is not
+// available at the type level and `Array.from` would copy every recorded sample.
 export function hasFiniteAudioSamples(samples: ArrayLike<number>): boolean {
   for (let index = 0; index < samples.length; index += 1) {
     if (!isFiniteAudioSample(samples[index])) return false;

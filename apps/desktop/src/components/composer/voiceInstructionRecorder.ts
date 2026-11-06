@@ -442,12 +442,15 @@ export class VoiceInstructionRecorder {
   }
 
   private async handleProviderTranscriptionFailure(gen: number): Promise<null> {
-    if (gen !== this.opGen || this.disposed) return null;
-    if (!(await this.releaseBeforeFallback(this.nativeLease, gen))) return null;
-    this.nativeLease = null;
-    this.deps.logger.warning("Voice Edit Mode: provider transcription failed");
-    if (this.deps.speechRecognitionSupported) await this.startBrowser(gen);
-    else this.deps.onError(this.deps.unsupportedMessage());
+    const current = gen === this.opGen && !this.disposed;
+    if (current && (await this.releaseBeforeFallback(this.nativeLease, gen))) {
+      this.nativeLease = null;
+      this.deps.logger.warning(
+        "Voice Edit Mode: provider transcription failed",
+      );
+      if (this.deps.speechRecognitionSupported) await this.startBrowser(gen);
+      else this.deps.onError(this.deps.unsupportedMessage());
+    }
     return null;
   }
 

@@ -870,9 +870,11 @@ const persistEligibleAudio = (
   transcriptionFailed: boolean,
   preserveAudioOnFailure: boolean,
 ): Promise<TranscriptionAudioSnapshot | undefined> | undefined => {
+  // Number.isFinite keeps a NaN rate on the skip path that `!(rate > 0)` had.
   if (
-    !(rate > 0) ||
-    !(sampleCount > 0) ||
+    !Number.isFinite(rate) ||
+    rate <= 0 ||
+    sampleCount <= 0 ||
     (transcriptionFailed && !preserveAudioOnFailure)
   )
     return undefined;

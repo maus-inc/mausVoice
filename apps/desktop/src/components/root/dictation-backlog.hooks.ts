@@ -24,7 +24,7 @@ export function useDictationBacklogDrain(
         return;
       const operation = operationRef.current;
       const session = sessionRef.current;
-      if (!session || !session()) return;
+      if (!session?.()) return;
       if (pending?.strategy === strategy && pending.operation === operation)
         return;
       const owner = { strategy, operation };

@@ -777,8 +777,11 @@ export const DictationSideEffects = () => {
         releaseAudioIntake(ownedAudioChunkUnlisten),
       );
       if (ownsAbort()) sendPhaseWithoutWaiting(sendPhaseToPill, "idle");
+      const abortReason = message
+        ? `, reason=${String(message.body).slice(0, 120)}`
+        : "";
       getLogger().info(
-        `Aborting recording (hasSession=${!!ownedSession.session}, hasStrategy=${!!ownedSession.strategy}${message ? `, reason=${String(message.body).slice(0, 120)}` : ""})`,
+        `Aborting recording (hasSession=${!!ownedSession.session}, hasStrategy=${!!ownedSession.strategy}${abortReason})`,
       );
       await stopNative;
       await finishAbort;

@@ -139,7 +139,7 @@ export const SessionSideEffects = () => {
 
   useIntervalAsync(SESSION_HEARTBEAT_INTERVAL_MS, async () => {
     const handle = sessionHandleRef.current;
-    if (!isMainWindow || !handle || !handle.isCurrent()) return;
+    if (!isMainWindow || !handle?.isCurrent()) return;
     await update(handle.sessionRef, {
       name: handle.sessionName,
       lastActive: Date.now(),

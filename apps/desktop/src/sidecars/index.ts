@@ -64,11 +64,11 @@ export interface LocalTranscriptionSidecarManager {
 }
 
 class LocalTranscriptionSidecarFacade implements LocalTranscriptionSidecarManager {
-  private cpuSidecar = new LocalTranscriptionSidecar("cpu");
-  private gpuSidecar = new LocalTranscriptionSidecar("gpu");
+  private readonly cpuSidecar = new LocalTranscriptionSidecar("cpu");
+  private readonly gpuSidecar = new LocalTranscriptionSidecar("gpu");
   private gpuUnavailable = false;
   private gpuDetection: Promise<boolean> | null = null;
-  private downloadOwners = new Map<
+  private readonly downloadOwners = new Map<
     LocalWhisperModel,
     { sidecar: LocalTranscriptionSidecar }
   >();

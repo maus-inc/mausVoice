@@ -62,8 +62,8 @@ const buildNewTone = ({
   tones: Tone[];
   toneById: Record<string, Tone>;
 }): Tone => {
-  const nextSortOrder =
-    tones.length > 0 ? tones[tones.length - 1].sortOrder + 1 : 0;
+  const lastSortOrder = tones.at(-1)?.sortOrder;
+  const nextSortOrder = lastSortOrder === undefined ? 0 : lastSortOrder + 1;
   return {
     id: identity.id,
     name,

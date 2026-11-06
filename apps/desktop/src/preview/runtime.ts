@@ -272,15 +272,15 @@ class PreviewRuntime {
   private recordingIsExternal = false;
   private recordingGeneration = 0;
   private nextRecordingToken = 0;
-  private recordingAdmissions = new Map<
+  private readonly recordingAdmissions = new Map<
     string,
     { generation: number; epoch: number; claimed: boolean }
   >();
-  private recordingResults = new Map<
+  private readonly recordingResults = new Map<
     number,
     { ownerId: string; created: number; replays: number }
   >();
-  private recordingWaiters = new Set<() => void>();
+  private readonly recordingWaiters = new Set<() => void>();
   private database: PreviewDatabase = toDatabase(
     createPreviewScenario("populated").data,
   );

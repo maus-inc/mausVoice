@@ -27,7 +27,7 @@ export async function pruneLocaleFile(localePath, keys) {
   const localeData = await readJson(localePath);
   let updated = false;
   for (const key of keys) {
-    if (Object.prototype.hasOwnProperty.call(localeData, key)) {
+    if (Object.hasOwn(localeData, key)) {
       delete localeData[key];
       updated = true;
     }
@@ -43,11 +43,12 @@ export async function pruneLocaleDirectory(localesDir, changedKeys) {
   const localeFiles = (await readdir(localesDir)).filter(
     (fileName) => fileName.endsWith(".json") && fileName !== "en.json",
   );
-  const prunedLocales = [];
-  for (const fileName of localeFiles) {
-    if (await pruneLocaleFile(join(localesDir, fileName), changedKeys)) {
-      prunedLocales.push(fileName);
-    }
-  }
-  return prunedLocales;
+  const pruned = await Promise.all(
+    localeFiles.map(async (fileName) =>
+      (await pruneLocaleFile(join(localesDir, fileName), changedKeys))
+        ? fileName
+        : null,
+    ),
+  );
+  return pruned.filter((fileName) => fileName !== null);
 }

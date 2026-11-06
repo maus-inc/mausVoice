@@ -335,7 +335,7 @@ const nextMenuIndex = (
 ): number => {
   const position = indices.indexOf(activeIndex);
   if (position < 0)
-    return direction === 1 ? indices[0] : indices[indices.length - 1];
+    return direction === 1 ? indices[0] : (indices.at(-1) ?? indices[0]);
   return indices[(position + direction + indices.length) % indices.length];
 };
 
@@ -400,7 +400,7 @@ export const ContextMenu = ({
         }
         case "End": {
           e.preventDefault();
-          setActiveIndex(actionableIndices[actionableIndices.length - 1]);
+          setActiveIndex(actionableIndices.at(-1) ?? actionableIndices[0]);
           break;
         }
         default:

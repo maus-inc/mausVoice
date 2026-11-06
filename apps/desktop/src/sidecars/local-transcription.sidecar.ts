@@ -792,24 +792,21 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
   ): Promise<T> {
     const { retries, timeoutMs } = requestLimits(options);
     const init = options?.init;
-    let lastError: unknown = null;
+    if (retries < 1) throw new Error(`Request failed for ${path}`);
 
-    for (let attempt = 1; attempt <= retries; attempt += 1) {
+    // Each retry waits out its own backoff before the next request, so the
+    // attempts cannot overlap; one recursive call states one attempt.
+    const attempt = async (number: number): Promise<T> => {
       try {
         return await this.fetchJson<T>(`${baseUrl}${path}`, init, timeoutMs);
       } catch (error) {
-        lastError = error;
-        if (attempt < retries && this.isRetriableError(error)) {
-          await sleep(SIDECAR_REQUEST_RETRY_DELAY_MS * attempt);
-          continue;
-        }
-        throw error;
+        if (number >= retries || !this.isRetriableError(error)) throw error;
+        await sleep(SIDECAR_REQUEST_RETRY_DELAY_MS * number);
+        return attempt(number + 1);
       }
-    }
+    };
 
-    throw lastError instanceof Error
-      ? lastError
-      : new Error(`Request failed for ${path}`);
+    return attempt(1);
   }
 
   /** Decode one response; retry decisions remain with the request loop. */

@@ -31,15 +31,13 @@ function transitionIdentity(
   mp: MixpanelClient,
   previous: string | null,
   current: string | null,
-  createIdentity: () => AnalyticsIdentity,
-): AnalyticsIdentity {
-  const identity = createIdentity();
-  if (!current || current === previous) return identity;
+  identity: AnalyticsIdentity,
+): void {
+  if (!current || current === previous) return;
   mp.identify(current);
   const firstTouch = buildFirstTouchProperties(identity);
   mp.people.set_once({ $created: new Date().toISOString(), ...firstTouch });
   mp.register_once(firstTouch);
-  return identity;
 }
 
 /** Keep Mixpanel's identity and first-touch state owned by the current user. */
@@ -68,20 +66,15 @@ export function useAnalyticsIdentity({
     }
     if (!initialized) return;
 
-    const identity = transitionIdentity(
-      mp,
-      previousUserId.current,
-      currentUserId,
-      () =>
-        buildAnalyticsIdentity({
-          userId: currentUserId,
-          member,
-          localUser,
-          preferences,
-          platform: getPlatform(),
-          locale: detectLocale(),
-        }),
-    );
+    const identity = buildAnalyticsIdentity({
+      userId: currentUserId,
+      member,
+      localUser,
+      preferences,
+      platform: getPlatform(),
+      locale: detectLocale(),
+    });
+    transitionIdentity(mp, previousUserId.current, currentUserId, identity);
     mp.people.set(
       buildPeopleProperties(identity, {
         email: auth?.email,

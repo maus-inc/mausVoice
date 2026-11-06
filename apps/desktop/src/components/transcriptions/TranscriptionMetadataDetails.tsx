@@ -60,6 +60,19 @@ const DetailField = ({
   </Box>
 );
 
+/**
+ * Key each warning by its own text plus its occurrence, so a reordering of the
+ * list cannot renumber the rows React reuses.
+ */
+const warningEntries = (warnings: string[]) => {
+  const occurrences = new Map<string, number>();
+  return warnings.map((warning) => {
+    const occurrence = (occurrences.get(warning) ?? 0) + 1;
+    occurrences.set(warning, occurrence);
+    return { warning, key: `${warning}#${occurrence}` };
+  });
+};
+
 const Warnings = ({ warnings }: { warnings: string[] }) => {
   if (!warnings.length) return null;
   return (
@@ -70,9 +83,9 @@ const Warnings = ({ warnings }: { warnings: string[] }) => {
           <FormattedMessage defaultMessage="Warnings" />
         </Typography>
         <Stack spacing={1} sx={{ mt: 1 }}>
-          {warnings.map((warning, index) => (
+          {warningEntries(warnings).map(({ warning, key }) => (
             <Box
-              key={`warning-${index}`}
+              key={key}
               sx={(theme) => ({
                 p: 1,
                 borderRadius: 1,

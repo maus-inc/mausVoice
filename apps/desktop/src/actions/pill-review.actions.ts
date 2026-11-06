@@ -305,7 +305,7 @@ const advanceQueue = (answer?: ReviewAnswer): void => {
   // transcript must not republish or expire a review handed to that surface.
   if (current.presentation === "composer") return;
   const queuedHead = head();
-  if (!queuedHead || queuedHead.session.id !== current.id) return;
+  if (queuedHead?.session.id !== current.id) return;
   const { id } = current;
   timeoutId = setTimeout(() => {
     timeoutId = null;

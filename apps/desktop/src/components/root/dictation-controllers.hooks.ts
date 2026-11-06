@@ -105,7 +105,7 @@ function createRecordingController(
         if (owner.released) stopRun(owner);
       }, deactivation);
       if (generation !== controller.resetGeneration) return;
-      if (owner.operation === undefined) owner.operation = started;
+      owner.operation ??= started;
       if (owner.released) stopRun(owner);
     },
     async () => {

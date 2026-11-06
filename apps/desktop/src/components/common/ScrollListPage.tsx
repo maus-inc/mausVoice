@@ -354,16 +354,18 @@ function ScrollListItems<Item>({
   renderItem,
   hasMore,
   onLoadMore,
-}: Pick<
-  ScrollListPageProps<Item>,
-  | "items"
-  | "computeItemKey"
-  | "contentMaxWidth"
-  | "itemContainerSx"
-  | "itemWrapperSx"
-  | "renderItem"
-  | "hasMore"
-  | "onLoadMore"
+}: Readonly<
+  Pick<
+    ScrollListPageProps<Item>,
+    | "items"
+    | "computeItemKey"
+    | "contentMaxWidth"
+    | "itemContainerSx"
+    | "itemWrapperSx"
+    | "renderItem"
+    | "hasMore"
+    | "onLoadMore"
+  >
 >) {
   return (
     <>

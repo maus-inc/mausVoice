@@ -136,7 +136,7 @@ export class ContinuousLiveSession implements TranscriptionSession {
   }
 
   finalize(audio: StopRecordingResponse): Promise<TranscriptionSessionResult> {
-    if (!this.finalization) this.finalization = this.finalizeOnce(audio);
+    this.finalization ??= this.finalizeOnce(audio);
     return this.finalization;
   }
 

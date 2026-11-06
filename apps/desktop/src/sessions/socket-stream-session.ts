@@ -110,7 +110,7 @@ export const startSocketStreamSession = (
     cleanup,
     getText,
     prepare: () => {
-      if (deliveryFailed || !ws || ws.readyState !== WebSocket.OPEN) {
+      if (deliveryFailed || ws?.readyState !== WebSocket.OPEN) {
         return CONNECTION_LOST;
       }
       isFinalized = true;
@@ -119,13 +119,13 @@ export const startSocketStreamSession = (
         return "Streaming audio could not be sent";
       }
       log(`[${loggerPrefix}] Total chunks sent:`, buffer.sentChunkCount());
-      if (!ws || ws.readyState !== WebSocket.OPEN) {
+      if (ws?.readyState !== WebSocket.OPEN) {
         return CONNECTION_LOST;
       }
       return null;
     },
     sendTermination: () => {
-      if (!ws || ws.readyState !== WebSocket.OPEN) {
+      if (ws?.readyState !== WebSocket.OPEN) {
         throw new Error(CONNECTION_LOST);
       }
       ws.send(JSON.stringify({ type: terminationMessage }));
@@ -134,7 +134,7 @@ export const startSocketStreamSession = (
 
   const writeAudioChunk = (chunk: Float32Array) => {
     if (isFinalized || deliveryFailed) return;
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
+    if (ws?.readyState !== WebSocket.OPEN) {
       deliveryFailed = true;
       cleanup();
       return;

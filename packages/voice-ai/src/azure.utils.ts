@@ -879,8 +879,12 @@ export const createAzureStreamingSession = async ({
     const finalize = (): Promise<string> => {
       if (finalPromise) return finalPromise;
       if (state === "closed") {
+        // A rejection carries an Error even when the SDK handed back a plain
+        // value; the original reason is already recorded in `failure`.
         finalPromise = Promise.reject(
-          failure ?? new Error("Azure streaming session was closed"),
+          failure instanceof Error
+            ? failure
+            : new Error("Azure streaming session was closed"),
         );
         return finalPromise;
       }

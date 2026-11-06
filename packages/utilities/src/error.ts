@@ -863,7 +863,7 @@ const splitTrailingClosers = (value: string): [string, string] => {
 
 // Match an entire identifier before inspecting it. The anchored credential rule
 // can then fold camelCase without searching for credential suffixes inside words.
-const LABEL_CANDIDATE = /\b[A-Za-z0-9_]+\b(?="?\s*[:=])/g;
+const LABEL_CANDIDATE = /\b\w+\b(?="?\s*[:=])/g;
 
 const credentialValueStart = (message: string, start: number): number => {
   const end = tokenEnd(message, start);
@@ -1180,7 +1180,7 @@ const uniqueRedactedKey = (
   const sanitized = redactSensitiveTokens(key);
   let index = counts.get(sanitized) ?? 1;
   let candidate = index === 1 ? sanitized : `${sanitized} [${index}]`;
-  while (Object.prototype.hasOwnProperty.call(out, candidate)) {
+  while (Reflect.getOwnPropertyDescriptor(out, candidate) !== undefined) {
     index += 1;
     candidate = `${sanitized} [${index}]`;
   }

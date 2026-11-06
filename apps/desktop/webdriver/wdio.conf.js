@@ -1,7 +1,7 @@
 import os from "os";
 import fs from "fs";
 import path from "path";
-import { spawn } from "child_process";
+import { spawn } from "node:child_process";
 import { fileURLToPath } from "url";
 import chromedriver from "chromedriver";
 import SpecReporter from "@wdio/spec-reporter";

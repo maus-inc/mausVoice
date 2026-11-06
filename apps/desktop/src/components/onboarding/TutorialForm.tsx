@@ -498,8 +498,8 @@ const TutorialStepper = ({
 
 type SetTutorialTone = (
   toneId: string,
-  force?: boolean,
   shouldUpdate?: () => boolean,
+  force?: boolean,
 ) => Promise<void>;
 
 // A later tutorial in this webview owns the shared checklist and override.
@@ -597,7 +597,7 @@ const useTutorialSubmission = ({
       cancelled = true;
       if (!ownsCleanup()) return;
       void setChatToneRef
-        .current(POLISHED_TONE_ID, submissionCompleteRef.current, ownsCleanup)
+        .current(POLISHED_TONE_ID, ownsCleanup, submissionCompleteRef.current)
         .catch((error) => {
           if (ownsCleanup()) {
             console.error("Failed to reset tutorial tone on unmount", error);
@@ -690,7 +690,7 @@ const useTutorialToneSync = ({
     const isCurrent = () =>
       active && generation === tutorialGeneration && isCurrentSession();
     const toneId = stepIndex === 0 ? POLISHED_TONE_ID : EMAIL_TONE_ID;
-    void setChatToneRef.current(toneId, false, isCurrent).catch((error) => {
+    void setChatToneRef.current(toneId, isCurrent).catch((error) => {
       if (isCurrent()) {
         console.error("Failed to apply the tutorial writing style", error);
       }
@@ -837,8 +837,8 @@ export const TutorialForm = () => {
 
   const setChatTone: SetTutorialTone = async (
     toneId,
-    force = false,
     shouldUpdate,
+    force = false,
   ) => {
     if (!userExists && !force) {
       return;

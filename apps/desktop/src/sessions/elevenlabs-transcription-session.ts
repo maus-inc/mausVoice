@@ -224,7 +224,7 @@ const startElevenLabsStreaming = async (
     };
 
     const flushPendingSamples = (force = false): boolean => {
-      if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+      if (ws?.readyState !== WebSocket.OPEN) return false;
       if (force && pendingSampleCountRef.value === 0) {
         // A socket can close after the readyState check, so the terminal send
         // is guarded independently from normal audio sends.
