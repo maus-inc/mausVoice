@@ -36,11 +36,10 @@ jobs:
     name: Build Desktop (${{ matrix.label }})
     runs-on: ${{ matrix.os }}
     # A hung build must not hold a runner for the six-hour default, so every job
-    # is capped. The cap is a guard, not a budget: the macOS job builds a
-    # universal binary for two architectures and is the only one that has hit
-    # this ceiling on a healthy build (twice on 2026-11-06, both times with the
-    # runner pool reporting arm64 capacity constraints), so it gets longer.
-    timeout-minutes: ${{ matrix.timeout_minutes }}
+    # is capped. The cap is a guard, not a budget: on 2026-11-06 a healthy build
+    # reached it twice — macOS at 35 minutes while the arm64 pool reported
+    # capacity constraints, then Linux at 35m16s — so the ceiling is 60.
+    timeout-minutes: 60
     permissions:
       contents: read
       actions: write
@@ -50,7 +49,6 @@ jobs:
         include:
           - label: macOS
             os: macos-15
-            timeout_minutes: 60
             args: "--target universal-apple-darwin"
             rust_targets: "aarch64-apple-darwin,x86_64-apple-darwin"
             tauri_platform: macos
@@ -59,7 +57,6 @@ jobs:
             require_gpu_sidecar: true
           - label: Windows
             os: windows-latest
-            timeout_minutes: 35
             args: ""
             rust_targets: ""
             tauri_platform: windows
@@ -68,7 +65,6 @@ jobs:
             require_gpu_sidecar: false
           - label: Linux
             os: ubuntu-22.04
-            timeout_minutes: 35
             args: "--bundles deb"
             rust_targets: ""
             tauri_platform: linux
