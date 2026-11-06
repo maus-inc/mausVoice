@@ -20,7 +20,6 @@ vi.mock("../../actions/app.actions", () => ({
 vi.mock("../../utils/log.utils", () => ({
   getLogger: () => ({ error: mocks.error }),
 }));
-vi.mock("../onboarding/TipCard", () => ({ TipCard: () => null }));
 vi.mock("./ChatPromptBox", () => ({ ChatPromptBox: () => null }));
 vi.mock("./ChatMessageBubble", () => ({ ChatMessageBubble: () => null }));
 vi.mock("./ToolPermissionCard", () => ({ ToolPermissionCard: () => null }));

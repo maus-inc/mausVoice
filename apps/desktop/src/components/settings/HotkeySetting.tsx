@@ -1,7 +1,7 @@
 import { Add, CancelOutlined, Close, RestartAlt } from "@mui/icons-material";
 import { Button, IconButton, Stack, Switch, Typography } from "@mui/material";
 import type { Hotkey } from "@maus-inc/types";
-import type { ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { showErrorSnackbar } from "../../actions/app.actions";
 import { getHotkeyRepo } from "../../repos";
@@ -34,6 +34,7 @@ const isSubsetOrEqualCombo = (a: string[], b: string[]) => {
 };
 
 const HotkeyControls = ({
+  titleId,
   primaryValue,
   primaryHotkey,
   additionalHotkeys,
@@ -51,6 +52,7 @@ const HotkeyControls = ({
   onDisable,
   onAdd,
 }: {
+  titleId: string;
   primaryValue: string[];
   primaryHotkey: Hotkey | undefined;
   additionalHotkeys: Hotkey[];
@@ -69,6 +71,7 @@ const HotkeyControls = ({
   onAdd: () => void;
 }) => {
   const intl = useIntl();
+  const labelPrefix = useId();
   return (
     <Stack
       spacing={1}
@@ -83,7 +86,14 @@ const HotkeyControls = ({
           alignItems: "center",
         }}
       >
-        <HotKey value={primaryValue} onChange={onChangePrimary} />
+        <span id={`${labelPrefix}-primary`} hidden>
+          <FormattedMessage defaultMessage="Primary shortcut" />
+        </span>
+        <HotKey
+          ariaLabelledBy={`${titleId} ${labelPrefix}-primary`}
+          value={primaryValue}
+          onChange={onChangePrimary}
+        />
         {hasEnabledToggle ? (
           <IconButton
             size="small"
@@ -124,7 +134,7 @@ const HotkeyControls = ({
         )}
       </Stack>
       {!hasEnabledToggle &&
-        additionalHotkeys.map((hotkey) => (
+        additionalHotkeys.map((hotkey, index) => (
           <Stack
             key={hotkey.id}
             direction="row"
@@ -133,7 +143,14 @@ const HotkeyControls = ({
               alignItems: "center",
             }}
           >
+            <span id={`${labelPrefix}-${index}`} hidden>
+              <FormattedMessage
+                defaultMessage="Additional shortcut {number}"
+                values={{ number: index + 1 }}
+              />
+            </span>
             <HotKey
+              ariaLabelledBy={`${titleId} ${labelPrefix}-${index}`}
               value={hotkey.keys}
               onChange={(keys) => onUpdateHotkey(hotkey.id, keys)}
             />
@@ -190,6 +207,7 @@ export const HotkeySetting = ({
   enabled,
   onEnabledChange,
 }: HotkeySettingProps) => {
+  const titleId = useId();
   const hasEnabledToggle = enabled !== undefined;
   const isEnabled = enabled ?? true;
   const hotkeys = useAppStore((state) =>
@@ -301,7 +319,6 @@ export const HotkeySetting = ({
     const newEnabled = event.target.checked;
     onEnabledChange?.(newEnabled);
 
-    // When enabling, set up a default hotkey if none exists
     if (newEnabled && !primaryHotkey && defaultCombos.length > 0) {
       void saveKey(undefined, defaultCombos[0]);
     }
@@ -333,6 +350,7 @@ export const HotkeySetting = ({
           }}
         >
           <Typography
+            id={titleId}
             variant="body1"
             sx={{
               fontWeight: "bold",
@@ -357,6 +375,7 @@ export const HotkeySetting = ({
       </Stack>
       {isEnabled && (
         <HotkeyControls
+          titleId={titleId}
           primaryValue={primaryValue}
           primaryHotkey={primaryHotkey}
           additionalHotkeys={additionalHotkeys}

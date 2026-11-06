@@ -1,6 +1,8 @@
-import { getLocalStorage } from "./local-storage.utils";
-
-const TOOL_ALWAYS_ALLOW_PREFIX = "tool_always_allow:";
+import { withLocalDataWriteSync } from "./local-data-write-gate";
+import {
+  getLocalStorage,
+  TOOL_ALWAYS_ALLOW_STORAGE_PREFIX as TOOL_ALWAYS_ALLOW_PREFIX,
+} from "./local-storage.utils";
 
 /**
  * Always-allow decisions are scoped rather than one global switch. Existing
@@ -28,13 +30,19 @@ export const setToolAlwaysAllow = (
   const storage = getLocalStorage();
   if (!storage) return;
   const key = `${TOOL_ALWAYS_ALLOW_PREFIX}${scope}:${toolId}`;
-  if (allowed) {
-    storage.setItem(key, "true");
-  } else {
-    storage.removeItem(key);
-    // Legacy unscoped keys predate per-conversation grants. Always drop
-    // them on revoke so a leftover `tool_always_allow:<id>` cannot keep
-    // auto-executing after the new scoped path says no.
-    storage.removeItem(`${TOOL_ALWAYS_ALLOW_PREFIX}${toolId}`);
-  }
+  withLocalDataWriteSync(() => {
+    try {
+      if (allowed) {
+        storage.setItem(key, "true");
+      } else {
+        storage.removeItem(key);
+        // Legacy unscoped keys predate per-conversation grants. Always drop
+        // them on revoke so a leftover `tool_always_allow:<id>` cannot keep
+        // auto-executing after the new scoped path says no.
+        storage.removeItem(`${TOOL_ALWAYS_ALLOW_PREFIX}${toolId}`);
+      }
+    } catch (error) {
+      console.error("Unable to update tool permission in localStorage:", error);
+    }
+  });
 };

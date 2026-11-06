@@ -20,6 +20,10 @@ import { applyDomMutationGuards } from "./utils/dom-guard.utils";
 import { flushPendingTranscriptionDeletes } from "./utils/pending-transcription-delete";
 import { getIsEmulators } from "./utils/env.utils";
 import {
+  isLocalDataClearRequested,
+  isMainLocalDataWindow,
+} from "./utils/local-data-write-gate";
+import {
   installGlobalErrorOverlay,
   paintFatalError,
 } from "./utils/global-error-overlay.utils";
@@ -95,10 +99,23 @@ if (getIsEmulators()) {
 
 const mixpanelToken = import.meta.env.VITE_MIXPANEL_TOKEN;
 if (mixpanelToken) {
+  const isMainAnalyticsWindow = isMainLocalDataWindow();
+  const localDataClearPending = isLocalDataClearRequested();
+  const analyticsPersistenceEnabled =
+    isMainAnalyticsWindow && !localDataClearPending;
   mixpanel.init(mixpanelToken, {
     debug: import.meta.env.DEV,
     track_pageview: false,
+    // Mixpanel does not support "memory" persistence. Use its supported
+    // storage with persistence disabled and batching off in secondary windows
+    // or while recovering an interrupted local-data clear. A separate name
+    // prevents secondary windows from clearing the main window's anonymous ID.
     persistence: "localStorage",
+    persistence_name: isMainAnalyticsWindow
+      ? undefined
+      : "mausvoice-secondary-window",
+    disable_persistence: !analyticsPersistenceEnabled,
+    batch_requests: analyticsPersistenceEnabled,
   });
 }
 

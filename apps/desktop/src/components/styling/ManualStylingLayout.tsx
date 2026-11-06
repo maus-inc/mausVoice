@@ -104,7 +104,7 @@ export function ManualStylingLayout() {
             mx: "auto",
           }}
         >
-          <Typography variant="h6">
+          <Typography variant="h6" component="h2">
             <FormattedMessage defaultMessage="No styles yet" />
           </Typography>
           <Typography variant="body2">

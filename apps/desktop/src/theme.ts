@@ -1,4 +1,7 @@
-import { createTheme, type Shadows } from "@mui/material/styles";
+import { createTheme, type Shadows, type Theme } from "@mui/material/styles";
+import { stopComposingEscape } from "./components/common/ime-keyboard";
+import type { StorageManager } from "@mui/system/cssVars";
+import { withLocalDataWriteSync } from "./utils/local-data-write-gate";
 import {
   accent,
   chalkSolid,
@@ -6,6 +9,7 @@ import {
   highlight,
   ink,
   inkSolid,
+  onDark,
   surfaces,
   text,
 } from "./styles/palette";
@@ -22,17 +26,118 @@ import {
   easeOutCubic,
   easeOutQuint,
 } from "./styles/motion";
+import { THEME_MODE_STORAGE_KEY } from "./utils/local-storage.utils";
 
 const easeOut = cssEase(easeOutQuint);
+
+type ElevatedButtonTone = {
+  color: string;
+  base: string;
+  hover: string;
+  active: string;
+};
+
+const elevatedButtonStyle = (
+  theme: Theme,
+  light: ElevatedButtonTone,
+  dark: ElevatedButtonTone = light,
+) => ({
+  color: light.color,
+  backgroundColor: light.base,
+  boxShadow: premiumSurface.light.rest,
+  "&:hover": {
+    backgroundColor: light.hover,
+    boxShadow: premiumSurface.light.hover,
+    transform: "translateY(-1px)",
+  },
+  "&:active": {
+    backgroundColor: light.active,
+    boxShadow: premiumSurface.light.active,
+    transform: "scale(0.98) translateY(0)",
+  },
+  ...theme.applyStyles("dark", {
+    color: dark.color,
+    backgroundColor: dark.base,
+    boxShadow: premiumSurface.dark.rest,
+    "&:hover": {
+      backgroundColor: dark.hover,
+      boxShadow: premiumSurface.dark.hover,
+      transform: "translateY(-1px)",
+    },
+    "&:active": {
+      backgroundColor: dark.active,
+      boxShadow: premiumSurface.dark.active,
+      transform: "scale(0.98) translateY(0)",
+    },
+  }),
+});
 
 const uiFont = '"Satoshi", system-ui, -apple-system, sans-serif';
 /** TAN-PARADISO only via CSS var(--font-display) on logo + welcome/name. */
 
-export const THEME_MODE_STORAGE_KEY = "mui-mode";
+// Re-exported from the one module that names every key this app stores, so the
+// appearance preference cannot drift from the key a local-data wipe removes.
+export { THEME_MODE_STORAGE_KEY };
 export const THEME_COLOR_SCHEME_SELECTOR = "data-mui-color-scheme";
+
+const legacyModeStorageKey = "mode";
+
+export const guardedThemeStorageManager: StorageManager = ({
+  key,
+  storageWindow,
+}) => {
+  const targetWindow =
+    storageWindow ?? (typeof window === "undefined" ? null : window);
+  const getStorage = (): Storage | null => {
+    if (!targetWindow) return null;
+    try {
+      return targetWindow.localStorage;
+    } catch {
+      return null;
+    }
+  };
+
+  return {
+    get(defaultValue) {
+      const storage = getStorage();
+      if (!storage) return defaultValue;
+      try {
+        const value = storage.getItem(key);
+        if (value != null) return value;
+        if (key === THEME_MODE_STORAGE_KEY) {
+          return storage.getItem(legacyModeStorageKey) ?? defaultValue;
+        }
+        return defaultValue;
+      } catch {
+        return defaultValue;
+      }
+    },
+    set(value) {
+      const storage = getStorage();
+      if (!storage) return;
+      withLocalDataWriteSync(() => {
+        try {
+          storage.setItem(key, String(value));
+        } catch {
+          // Quota or private mode: keep the in-memory mode only.
+        }
+      });
+    },
+    subscribe(handler) {
+      if (!targetWindow) return () => {};
+      const listener = (event: StorageEvent): void => {
+        if (event.key === key) handler(event.newValue);
+      };
+      targetWindow.addEventListener("storage", listener);
+      return () => targetWindow.removeEventListener("storage", listener);
+    },
+  };
+};
+
 export const THEME_PROVIDER_CONFIG = {
   defaultMode: "system",
   modeStorageKey: THEME_MODE_STORAGE_KEY,
+  storageManager: guardedThemeStorageManager,
   disableTransitionOnChange: true,
 } as const;
 
@@ -259,6 +364,13 @@ export const theme = createTheme({
       },
     },
 
+    // A composing Escape belongs to the input method, not the enclosing modal.
+    // MUI's modal only checks the legacy 229 key code, so guard dialog content
+    // without cancelling the key's default input-method behavior.
+    MuiDialogContent: {
+      defaultProps: { onKeyDown: stopComposingEscape },
+    },
+
     MuiDialogActions: {
       styleOverrides: {
         root: ({ theme }) => ({
@@ -328,7 +440,9 @@ export const theme = createTheme({
         }),
         switchBase: ({ theme }) => ({
           "&.Mui-checked:not(.Mui-disabled)": {
-            color: inkSolid.base,
+            // The thumb must contrast with the checked track so the on state
+            // retains a visible position indicator in both color schemes.
+            color: chalkSolid.base,
             "& + .MuiSwitch-track": {
               backgroundColor: inkSolid.base,
               opacity: 1,
@@ -336,7 +450,7 @@ export const theme = createTheme({
           },
           ...theme.applyStyles("dark", {
             "&.Mui-checked:not(.Mui-disabled)": {
-              color: chalkSolid.base,
+              color: inkSolid.base,
               "& + .MuiSwitch-track": {
                 backgroundColor: chalkSolid.base,
                 opacity: 1,
@@ -456,6 +570,10 @@ export const theme = createTheme({
           fontSize: theme.typography.pxToRem(15),
           padding: theme.spacing(1, 2),
           transition: `transform 120ms ${easeOut}, background-color 180ms ${easeOut}, box-shadow 200ms ${easeOut}, color 180ms ${easeOut}`,
+          "&.Mui-focusVisible": {
+            outline: `2px solid ${theme.vars.palette.text.primary}`,
+            outlineOffset: 2,
+          },
           "& .MuiSvgIcon-root": {
             fontSize: 22,
           },
@@ -472,75 +590,70 @@ export const theme = createTheme({
             backgroundColor: theme.vars.palette.level3,
           },
         }),
-        contained: ({ theme }) => ({
-          color: surfaces.light.level1,
-          backgroundColor: inkSolid.base,
-          boxShadow: premiumSurface.light.rest,
-          "&:hover": {
-            backgroundColor: inkSolid.raised,
-            boxShadow: premiumSurface.light.hover,
-            transform: "translateY(-1px)",
-          },
-          "&:active": {
-            transform: "scale(0.98) translateY(0)",
-            boxShadow: premiumSurface.light.active,
-            backgroundColor: inkSolid.pressed,
-          },
-          ...theme.applyStyles("dark", {
-            color: surfaces.dark.level0,
-            backgroundColor: chalkSolid.base,
-            boxShadow: premiumSurface.dark.rest,
-            "&:hover": {
-              backgroundColor: chalkSolid.raised,
-              boxShadow: premiumSurface.dark.hover,
-              transform: "translateY(-1px)",
+        contained: ({ theme }) =>
+          elevatedButtonStyle(
+            theme,
+            {
+              color: surfaces.light.level1,
+              base: inkSolid.base,
+              hover: inkSolid.raised,
+              active: inkSolid.pressed,
             },
-            "&:active": {
-              transform: "scale(0.98) translateY(0)",
-              boxShadow: premiumSurface.dark.active,
-              backgroundColor: chalkSolid.pressed,
+            {
+              color: surfaces.dark.level0,
+              base: chalkSolid.base,
+              hover: chalkSolid.raised,
+              active: chalkSolid.pressed,
             },
-          }),
-        }),
+          ),
       },
       variants: [
+        // A destructive confirmation must not wear the primary CTA's fill. The
+        // `contained` style override paints every contained button ink (light)
+        // or chalk (dark) and was winning over MUI's own error colour, so
+        // "Clear local data" and "Delete account" rendered as the ordinary
+        // primary action at the moment they destroy something. Variants are
+        // emitted after style overrides, so this is what it takes to have the
+        // error fill stick. Same geometry and press as the primary CTA, so the
+        // two differ only in meaning.
+        {
+          props: { variant: "contained", color: "error" },
+          // Dark scheme rules in `contained` use `[data-mui-color-scheme]`,
+          // which outranks a base rule regardless of source order, so the
+          // helper emits matching light and dark scheme blocks for the error
+          // palette while keeping shadows and press transforms in one place.
+          style: ({ theme }) =>
+            elevatedButtonStyle(
+              theme,
+              {
+                color: surfaces.light.level1,
+                base: theme.vars.palette.error.main,
+                hover: theme.vars.palette.error.dark,
+                active: theme.vars.palette.error.dark,
+              },
+              {
+                color: onDark(1),
+                base: theme.vars.palette.error.main,
+                hover: theme.vars.palette.error.dark,
+                active: theme.vars.palette.error.dark,
+              },
+            ),
+        },
         {
           props: { variant: "flat" },
-          style: ({ theme }) => {
-            return {
-              backgroundColor: theme.vars.palette.level1,
+          style: ({ theme }) => ({
+            ...elevatedButtonStyle(theme, {
               color: theme.vars.palette.primary.main,
-              boxShadow: premiumSurface.light.rest,
-              "&:hover": {
-                backgroundColor: theme.vars.palette.level2,
-                boxShadow: premiumSurface.light.hover,
-                transform: "translateY(-1px)",
-              },
-              "&:active": {
-                backgroundColor: theme.vars.palette.level3,
-                transform: "scale(0.98) translateY(0)",
-                boxShadow: premiumSurface.light.active,
-              },
-              ...theme.applyStyles("dark", {
-                boxShadow: premiumSurface.dark.rest,
-                "&:hover": {
-                  backgroundColor: theme.vars.palette.level2,
-                  boxShadow: premiumSurface.dark.hover,
-                  transform: "translateY(-1px)",
-                },
-                "&:active": {
-                  backgroundColor: theme.vars.palette.level3,
-                  transform: "scale(0.98) translateY(0)",
-                  boxShadow: premiumSurface.dark.active,
-                },
-              }),
-              fontSize: theme.typography.pxToRem(15),
-              "& .MuiButton-startIcon > .MuiSvgIcon-root, \
+              base: theme.vars.palette.level1,
+              hover: theme.vars.palette.level2,
+              active: theme.vars.palette.level3,
+            }),
+            fontSize: theme.typography.pxToRem(15),
+            "& .MuiButton-startIcon > .MuiSvgIcon-root, \
     & .MuiButton-endIcon  > .MuiSvgIcon-root": {
-                fontSize: 22,
-              },
-            };
-          },
+              fontSize: 22,
+            },
+          }),
         },
         {
           props: { variant: "chrome" },
@@ -612,6 +725,10 @@ export const theme = createTheme({
           color: theme.vars.palette.text.primary,
           borderRadius: 12,
           transition: `transform 120ms ${easeOut}, background-color 180ms ${easeOut}`,
+          "&.Mui-focusVisible": {
+            outline: `2px solid ${theme.vars.palette.text.primary}`,
+            outlineOffset: 2,
+          },
           "&:hover": {
             backgroundColor: theme.vars.palette.level2,
           },

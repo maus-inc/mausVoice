@@ -56,6 +56,18 @@ vi.mock("../utils/user.utils", async () => {
 
 import { postProcessTranscript } from "./transcribe.actions";
 
+/**
+ * Short dictations in a prose style are styled locally by default now, so a test
+ * whose subject is what happens when the PROVIDER fails has to ask for the
+ * provider. Turning the routing off is what makes that premise explicit rather
+ * than something the test inherits from a default.
+ */
+const disableShortDictationRouting = () => {
+  const state = structuredClone(INITIAL_APP_STATE);
+  state.settings.fastStyleShortDictationsEnabled = false;
+  setAppState(state, true);
+};
+
 describe("postProcessTranscript provider attribution on failure", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -106,6 +118,33 @@ describe("postProcessTranscript provider attribution on failure", () => {
     expect(result.transcript).toBe("hello world");
     expect(result.metadata.postProcessFailed).toBe(true);
     expect(seenSignal?.aborted).toBe(true);
+  });
+
+  it("keeps the complete raw transcript when one provider edit cannot be applied", async () => {
+    genRepo.generateText.mockResolvedValueOnce({
+      text: JSON.stringify({
+        edits: [
+          { find: "gonna", replace: "going to" },
+          { find: "missing phrase", replace: "x" },
+        ],
+        result: "",
+      }),
+      metadata: {
+        postProcessingMode: "api",
+        inferenceDevice: "API • Cerebras",
+      },
+    });
+
+    const result = await postProcessTranscript({
+      rawTranscript: "we are gonna ship",
+      toneId: null,
+    });
+
+    expect(result.transcript).toBe("we are gonna ship");
+    expect(result.metadata.postProcessFailed).toBe(false);
+    expect(result.metadata.postProcessFallback).toBe(true);
+    expect(result.metadata.postProcessEditFailed).toBe(true);
+    expect(result.metadata.postProcessEditFailureCount).toBe(1);
   });
 
   it("records provider metadata on success", async () => {
@@ -240,6 +279,7 @@ describe("postProcessTranscript fast local style", () => {
       }
     }
     genRepo.generateText.mockRejectedValueOnce(new Cerebras402());
+    disableShortDictationRouting();
 
     const result = await postProcessTranscript({
       rawTranscript: "um so I went to the store",
@@ -275,6 +315,36 @@ describe("postProcessTranscript fast local style", () => {
     );
     expect(result.warnings.join(" ")).toContain("402");
     expect(result.warnings.join(" ")).toContain("Fast local style");
+  });
+
+  it("applies dictionary casing on the provider-failure fallback", async () => {
+    genRepo.generateText.mockRejectedValueOnce(new Error("provider rejected"));
+    const state = structuredClone(INITIAL_APP_STATE);
+    // Routing off, so the provider is what runs and fails, and the fallback is
+    // the subject.
+    state.settings.fastStyleShortDictationsEnabled = false;
+    state.termById = {
+      term1: {
+        id: "term1",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        sourceValue: "GitHub",
+        destinationValue: "GitHub",
+        isReplacement: false,
+      },
+    };
+    state.dictionary = { termIds: ["term1"], status: "idle" };
+    setAppState(state, true);
+
+    const result = await postProcessTranscript({
+      rawTranscript: "i use github daily",
+      toneId: "default",
+    });
+
+    // The fallback is the same local transform the routing path runs, so it
+    // must carry the dictionary too; without it the user's spelling was lost
+    // only on the failure path.
+    expect(result.transcript).toBe("I use GitHub daily.");
+    expect(result.metadata.postProcessFallback).toBe(true);
   });
 
   it("returns the raw transcript unchanged when the tone has no local style", async () => {
@@ -392,6 +462,7 @@ describe("postProcessTranscript fast local style", () => {
 
   it("reports no truncation for input under the cap", async () => {
     genRepo.generateText.mockRejectedValueOnce(new Error("provider down"));
+    disableShortDictationRouting();
 
     const result = await postProcessTranscript({
       rawTranscript: "a short dictation",
@@ -465,53 +536,103 @@ describe("postProcessTranscript output budget", () => {
     expect(shortCall.reasoningEffort).toBe("low");
     expect(longCall.reasoningEffort).toBe("low");
   });
+});
 
-  it("keeps the full raw transcript when the model output was cut off", async () => {
-    const rawTranscript =
-      "we agreed to push the beta to october because the payment integration is not ready";
-    const complete = JSON.stringify({
-      result:
-        "We agreed to push the beta to October because the payment integration is not ready.",
-    });
-    genRepo.generateText.mockResolvedValueOnce({
-      text: complete.slice(0, Math.floor(complete.length * 0.6)),
-    });
-
-    const result = await postProcessTranscript({ rawTranscript, toneId: null });
-
-    expect(result.transcript).toBe(rawTranscript);
-    expect(result.warnings.join(" ")).toContain("truncated at its token limit");
+describe("postProcessTranscript short dictation routing", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setAppState(structuredClone(INITIAL_APP_STATE), true);
   });
 
-  it("hints at truncation for a fenced reply cut off before its closing fence", async () => {
-    const rawTranscript = "we agreed to push the beta to october";
-    genRepo.generateText.mockResolvedValueOnce({
-      text: '```json\n{"result":"We agreed to push the beta',
+  it("styles a short dictation locally without calling the provider", async () => {
+    const result = await postProcessTranscript({
+      rawTranscript: "send the report by friday",
+      toneId: "default",
     });
 
-    const result = await postProcessTranscript({ rawTranscript, toneId: null });
-
-    expect(result.transcript).toBe(rawTranscript);
-    expect(result.warnings.join(" ")).toContain("truncated at its token limit");
+    expect(genRepo.generateText).not.toHaveBeenCalled();
+    expect(result.metadata.postProcessMode).toBe("fast");
+    expect(result.metadata.postProcessModel).toBeNull();
+    // Not a degraded run: the local style is the route the user asked for.
+    expect(result.metadata.postProcessFallback).toBeFalsy();
+    expect(result.metadata.postProcessFailed).toBeFalsy();
+    expect(result.transcript).toBe("Send the report by Friday.");
+    expect(result.warnings).toEqual([]);
   });
 
-  it("sizes the budget from the transcript and asks for low reasoning effort", async () => {
-    genRepo.generateText.mockResolvedValue({
-      text: JSON.stringify({ result: "ok" }),
+  it("sends a long dictation to the provider", async () => {
+    genRepo.generateText.mockResolvedValueOnce({
+      text: JSON.stringify({ result: "Long answer." }),
     });
 
-    await postProcessTranscript({ rawTranscript: "short", toneId: null });
     await postProcessTranscript({
-      rawTranscript: "word ".repeat(2000),
-      toneId: null,
+      rawTranscript:
+        "This is a long dictation that runs for several sentences. ".repeat(4),
+      toneId: "default",
     });
 
-    const [shortCall, longCall] = genRepo.generateText.mock.calls.map(
-      ([input]) => input as { maxTokens: number; reasoningEffort?: string },
-    );
-    expect(shortCall.maxTokens).toBeGreaterThan(600);
-    expect(longCall.maxTokens).toBeGreaterThan(shortCall.maxTokens);
-    expect(shortCall.reasoningEffort).toBe("low");
-    expect(longCall.reasoningEffort).toBe("low");
+    expect(genRepo.generateText).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends a short non-English dictation to the provider", async () => {
+    genRepo.generateText.mockResolvedValueOnce({
+      text: JSON.stringify({ result: "Wir treffen uns am Montag." }),
+    });
+    const state = structuredClone(INITIAL_APP_STATE);
+    state.dictationLanguageOverride = "de";
+    setAppState(state, true);
+
+    const result = await postProcessTranscript({
+      rawTranscript: "wir treffen uns am montag um drei uhr",
+      toneId: "default",
+    });
+
+    // The local transforms delete English fillers, and "um" is a preposition in
+    // German, so this dictation must not be styled locally.
+    expect(genRepo.generateText).toHaveBeenCalledTimes(1);
+    expect(result.metadata.postProcessMode).toBe("api");
+  });
+
+  it("sends a short dictation to the provider when the preference is off", async () => {
+    genRepo.generateText.mockResolvedValueOnce({
+      text: JSON.stringify({ result: "Send the report by Friday." }),
+    });
+    disableShortDictationRouting();
+
+    const result = await postProcessTranscript({
+      rawTranscript: "send the report by friday",
+      toneId: "default",
+    });
+
+    expect(genRepo.generateText).toHaveBeenCalledTimes(1);
+    expect(result.metadata.postProcessMode).toBe("api");
+  });
+
+  it("keeps a short dictation in a structured style on the provider", async () => {
+    genRepo.generateText.mockResolvedValueOnce({
+      text: JSON.stringify({ result: "- Send the report by Friday." }),
+    });
+
+    await postProcessTranscript({
+      rawTranscript: "send the report by friday",
+      toneId: "bullets",
+    });
+
+    expect(genRepo.generateText).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to the provider when the local transform produces nothing", async () => {
+    // Filler-only input is the shape the local transforms delete entirely.
+    genRepo.generateText.mockResolvedValueOnce({
+      text: JSON.stringify({ result: "Hmm." }),
+    });
+
+    const result = await postProcessTranscript({
+      rawTranscript: "um uh er",
+      toneId: "default",
+    });
+
+    expect(genRepo.generateText).toHaveBeenCalledTimes(1);
+    expect(result.transcript).toBe("Hmm.");
   });
 });

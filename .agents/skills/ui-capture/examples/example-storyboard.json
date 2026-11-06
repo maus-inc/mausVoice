@@ -1,0 +1,28 @@
+{
+  "name": "settings-editor-switch",
+  "url": "http://127.0.0.1:48921/settings",
+  "viewport": { "width": 1280, "height": 800 },
+  "fps": 30,
+  "captureFps": 60,
+  "settleMs": 900,
+  "tailMs": 800,
+  "steps": [
+    { "action": "badge", "text": "settings-editor-switch" },
+    { "action": "subtitle", "text": "Settings opens on Providers" },
+    { "action": "wait", "ms": 700 },
+    { "action": "screenshot", "label": "settings-providers" },
+
+    { "action": "subtitle", "text": "Select the Editor section" },
+    { "action": "move", "selector": "#bettershape-settings nav >> button:has-text(\"Editor\")", "ms": 600 },
+    { "action": "click", "selector": "#bettershape-settings nav >> button:has-text(\"Editor\")" },
+    { "action": "wait", "ms": 700 },
+    { "action": "screenshot", "label": "settings-editor" },
+
+    { "action": "subtitle", "text": "Toggle the first switch" },
+    { "action": "move", "selector": "[role=\"switch\"]", "ms": 500 },
+    { "action": "click", "selector": "[role=\"switch\"]" },
+    { "action": "wait", "ms": 900 },
+    { "action": "screenshot", "label": "switch-toggled" }
+  ]
+}
+

@@ -4,8 +4,10 @@ import { getRec } from "@maus-inc/utilities";
 import { getAppTargetRepo, getStorageRepo } from "../repos";
 import { AppTargetUpsertParams } from "../repos/app-target.repo";
 import { getAppState, produceAppState } from "../store";
+import { getIntl } from "../i18n";
 import { registerAppTargets } from "../utils/app.utils";
 import { normalizeAppTargetId } from "../utils/apptarget.utils";
+import { createMutationQueue } from "../utils/mutation-queue";
 import { getEffectiveStylingMode } from "../utils/feature.utils";
 import { getLogger } from "../utils/log.utils";
 import { buildAppIconPath, decodeBase64Icon } from "../utils/storage.utils";
@@ -14,57 +16,148 @@ import {
   getManuallySelectedToneId,
 } from "../utils/tone.utils";
 import { getMyUserPreferences } from "../utils/user.utils";
+import {
+  type LocalDataWriteLease,
+  beginLocalDataWrite,
+  getLocalDataClearGeneration,
+  isLocalDataClearRequested,
+  withLocalDataWrite,
+} from "../utils/local-data-write-gate";
 import { showErrorSnackbar } from "./app.actions";
 import { setSelectedToneId } from "./user.actions";
 
-export const loadAppTargets = async (): Promise<void> => {
-  const targets = await getAppTargetRepo().listAppTargets();
+// Reads and whole-row mutations share a queue so a late refresh cannot restore
+// a snapshot taken before a save. This is scoped to this renderer only.
+const appTargetWrites = createMutationQueue();
+const targetsNeedingReconciliation = new Set<string>();
 
-  produceAppState((draft) => {
-    registerAppTargets(draft, targets);
+export const loadAppTargets = (): Promise<void> => {
+  const generation = getLocalDataClearGeneration();
+  return appTargetWrites.enqueue(async () => {
+    if (
+      isLocalDataClearRequested() ||
+      generation !== getLocalDataClearGeneration()
+    )
+      return;
+    const targets = await getAppTargetRepo().listAppTargets();
+    if (
+      isLocalDataClearRequested() ||
+      generation !== getLocalDataClearGeneration()
+    )
+      return;
+    produceAppState((draft) => {
+      registerAppTargets(draft, targets);
+      for (const id of targetsNeedingReconciliation) {
+        if (!targets.some((target) => target.id === id))
+          delete draft.appTargetById[id];
+      }
+    });
+    targetsNeedingReconciliation.clear();
   });
 };
 
-export const upsertAppTarget = async (
-  params: AppTargetUpsertParams,
-): Promise<AppTarget> => {
-  const target = await getAppTargetRepo().upsertAppTarget(params);
+// Hold the local-data lease while waiting in the queue as well as while writing.
+// Read the target inside the queue so changes to different fields compose.
+const enqueueAppTargetWrite = <T>(
+  task: (lease: LocalDataWriteLease) => Promise<T>,
+  lease?: LocalDataWriteLease,
+): Promise<T> =>
+  withLocalDataWrite(
+    (writeLease) => appTargetWrites.enqueue(() => task(writeLease)),
+    lease,
+  );
 
+const reconcileAppTarget = async (id: string, lease: LocalDataWriteLease) => {
+  if (!targetsNeedingReconciliation.has(id)) return;
+  const targets = await getAppTargetRepo().listAppTargets();
+  const target = targets.find((item) => item.id === id);
   produceAppState((draft) => {
-    registerAppTargets(draft, [target]);
+    if (target) registerAppTargets(draft, [target]);
+    else delete draft.appTargetById[id];
+  }, lease);
+  targetsNeedingReconciliation.delete(id);
+};
+
+const persistAppTarget = async (
+  params: AppTargetUpsertParams,
+  lease: LocalDataWriteLease,
+): Promise<AppTarget> => {
+  try {
+    const target = await getAppTargetRepo().upsertAppTarget(params, lease);
+    produceAppState((draft) => {
+      registerAppTargets(draft, [target]);
+    }, lease);
+    return target;
+  } catch (error) {
+    // A failed IPC response does not prove the whole-row upsert did not commit.
+    // The next mutation must re-read or fail rather than overwrite unknown data.
+    targetsNeedingReconciliation.add(params.id);
+    try {
+      await reconcileAppTarget(params.id, lease);
+    } catch (recoveryError) {
+      getLogger().error(
+        `Failed to reload app target after save: ${recoveryError}`,
+      );
+    }
+    throw error;
+  }
+};
+
+type AppTargetChanges = Partial<
+  Pick<
+    AppTargetUpsertParams,
+    "toneId" | "pasteKeybind" | "insertionMethod" | "typingSpeedMs"
+  >
+>;
+
+const updateAppTarget = (
+  id: string,
+  changes: AppTargetChanges,
+): Promise<boolean> =>
+  enqueueAppTargetWrite(async (lease) => {
+    await reconcileAppTarget(id, lease);
+    const existing = getRec(getAppState().appTargetById, id);
+    if (!existing) {
+      showErrorSnackbar(
+        getIntl().formatMessage({
+          defaultMessage: "This app is not registered.",
+        }),
+      );
+      return false;
+    }
+    await persistAppTarget(
+      {
+        id,
+        name: existing.name,
+        toneId: existing.toneId ?? null,
+        iconPath: existing.iconPath ?? null,
+        pasteKeybind: existing.pasteKeybind ?? null,
+        insertionMethod: existing.insertionMethod ?? null,
+        typingSpeedMs: existing.typingSpeedMs ?? null,
+        ...changes,
+      },
+      lease,
+    );
+    return true;
   });
 
-  return target;
+const showAppTargetSaveError = () => {
+  showErrorSnackbar(
+    getIntl().formatMessage({
+      defaultMessage: "Could not save app settings. Please try again.",
+    }),
+  );
 };
 
 export const setAppTargetTone = async (
   id: string,
   toneId: string | null,
 ): Promise<boolean> => {
-  const existing = getAppState().appTargetById[id];
-  if (!existing) {
-    showErrorSnackbar("App target is not registered.");
-    return false;
-  }
-
   try {
-    await upsertAppTarget({
-      id,
-      name: existing.name,
-      toneId,
-      iconPath: existing.iconPath ?? null,
-      pasteKeybind: existing.pasteKeybind ?? null,
-      insertionMethod: existing.insertionMethod ?? null,
-      typingSpeedMs: existing.typingSpeedMs ?? null,
-    });
-    return true;
+    return await updateAppTarget(id, { toneId });
   } catch (error) {
     console.error("Failed to update app target tone", error);
-    showErrorSnackbar(
-      error instanceof Error
-        ? error.message
-        : "Failed to update app target tone.",
-    );
+    showAppTargetSaveError();
     return false;
   }
 };
@@ -73,29 +166,11 @@ export const setAppTargetPasteKeybind = async (
   id: string,
   pasteKeybind: string | null,
 ): Promise<void> => {
-  const existing = getAppState().appTargetById[id];
-  if (!existing) {
-    showErrorSnackbar("App target is not registered.");
-    return;
-  }
-
   try {
-    await upsertAppTarget({
-      id,
-      name: existing.name,
-      toneId: existing.toneId ?? null,
-      iconPath: existing.iconPath ?? null,
-      pasteKeybind,
-      insertionMethod: existing.insertionMethod ?? null,
-      typingSpeedMs: existing.typingSpeedMs ?? null,
-    });
+    await updateAppTarget(id, { pasteKeybind });
   } catch (error) {
     console.error("Failed to update app target paste keybind", error);
-    showErrorSnackbar(
-      error instanceof Error
-        ? error.message
-        : "Failed to update app target paste keybind.",
-    );
+    showAppTargetSaveError();
   }
 };
 
@@ -103,59 +178,24 @@ export const setAppTargetInsertionMethod = async (
   id: string,
   insertionMethod: string | null,
 ): Promise<void> => {
-  const existing = getAppState().appTargetById[id];
-  if (!existing) {
-    showErrorSnackbar("App target is not registered.");
-    return;
-  }
-
   try {
-    await upsertAppTarget({
-      id,
-      name: existing.name,
-      toneId: existing.toneId ?? null,
-      iconPath: existing.iconPath ?? null,
-      pasteKeybind: existing.pasteKeybind ?? null,
-      insertionMethod,
-      typingSpeedMs: existing.typingSpeedMs ?? null,
-    });
+    await updateAppTarget(id, { insertionMethod });
   } catch (error) {
     console.error("Failed to update app target insertion method", error);
-    showErrorSnackbar(
-      error instanceof Error
-        ? error.message
-        : "Failed to update app target insertion method.",
-    );
+    showAppTargetSaveError();
   }
 };
 
 export const setAppTargetTypingSpeed = async (
   id: string,
   typingSpeedMs: number | null,
-): Promise<void> => {
-  const existing = getAppState().appTargetById[id];
-  if (!existing) {
-    showErrorSnackbar("App target is not registered.");
-    return;
-  }
-
+): Promise<boolean> => {
   try {
-    await upsertAppTarget({
-      id,
-      name: existing.name,
-      toneId: existing.toneId ?? null,
-      iconPath: existing.iconPath ?? null,
-      pasteKeybind: existing.pasteKeybind ?? null,
-      insertionMethod: existing.insertionMethod ?? null,
-      typingSpeedMs,
-    });
+    return await updateAppTarget(id, { typingSpeedMs });
   } catch (error) {
     console.error("Failed to update app target typing speed", error);
-    showErrorSnackbar(
-      error instanceof Error
-        ? error.message
-        : "Failed to update app target typing speed.",
-    );
+    showAppTargetSaveError();
+    return false;
   }
 };
 
@@ -185,38 +225,59 @@ export const tryRegisterCurrentAppTarget = async (): Promise<
 
   const shouldRegisterAppTarget = !existingApp || !existingApp.iconPath;
   if (shouldRegisterAppTarget) {
-    let iconPath: string | undefined;
-    if (appInfo.iconBase64) {
-      const targetPath = buildAppIconPath(getAppState(), appTargetId);
+    const releaseWrite = beginLocalDataWrite();
+    if (releaseWrite) {
       try {
-        await getLogger().stopwatch("upload_app_icon", async () => {
-          await getStorageRepo().uploadData({
-            path: targetPath,
-            data: decodeBase64Icon(appInfo.iconBase64),
-          });
-        });
-        iconPath = targetPath;
-      } catch (uploadError) {
-        console.error("Failed to upload app icon", uploadError);
-      }
-    }
+        let iconPath: string | undefined;
+        if (appInfo.iconBase64) {
+          const targetPath = buildAppIconPath(getAppState(), appTargetId);
+          try {
+            await getLogger().stopwatch("upload_app_icon", async () => {
+              await getStorageRepo().uploadData(
+                {
+                  path: targetPath,
+                  data: decodeBase64Icon(appInfo.iconBase64),
+                },
+                releaseWrite.lease,
+              );
+            });
+            iconPath = targetPath;
+          } catch (uploadError) {
+            console.error("Failed to upload app icon", uploadError);
+          }
+        }
 
-    try {
-      const defaultPasteKeybind =
-        getMyUserPreferences(getAppState())?.pasteKeybind ?? null;
-      await getLogger().stopwatch("upsert_app_target", async () => {
-        await upsertAppTarget({
-          id: appTargetId,
-          name: appName,
-          toneId: existingApp?.toneId ?? null,
-          iconPath: iconPath ?? existingApp?.iconPath ?? null,
-          pasteKeybind: existingApp?.pasteKeybind ?? defaultPasteKeybind,
-          insertionMethod: existingApp?.insertionMethod ?? null,
-          typingSpeedMs: existingApp?.typingSpeedMs ?? null,
-        });
-      });
-    } catch (error) {
-      console.error("Failed to upsert app target", error);
+        try {
+          await getLogger().stopwatch("upsert_app_target", () =>
+            enqueueAppTargetWrite(async (lease) => {
+              await reconcileAppTarget(appTargetId, lease);
+              // An edit or another registration may have completed during the
+              // icon upload. Preserve the latest fields, including explicit nulls.
+              const latest = getRec(getAppState().appTargetById, appTargetId);
+              const defaultPasteKeybind =
+                getMyUserPreferences(getAppState())?.pasteKeybind ?? null;
+              await persistAppTarget(
+                {
+                  id: appTargetId,
+                  name: appName,
+                  toneId: latest?.toneId ?? null,
+                  iconPath: iconPath ?? latest?.iconPath ?? null,
+                  pasteKeybind: latest
+                    ? (latest.pasteKeybind ?? null)
+                    : defaultPasteKeybind,
+                  insertionMethod: latest?.insertionMethod ?? null,
+                  typingSpeedMs: latest?.typingSpeedMs ?? null,
+                },
+                lease,
+              );
+            }, releaseWrite.lease),
+          );
+        } catch (error) {
+          console.error("Failed to upsert app target", error);
+        }
+      } finally {
+        releaseWrite();
+      }
     }
   }
 
@@ -229,7 +290,7 @@ export const loadManualStyleForCurrentApp = async (): Promise<void> => {
   try {
     const appInfo = await invoke<{ appName: string }>("get_current_app_info");
     const appTargetId = normalizeAppTargetId(appInfo.appName?.trim() ?? "");
-    const appTarget = getAppState().appTargetById[appTargetId];
+    const appTarget = getRec(getAppState().appTargetById, appTargetId);
     if (appTarget?.toneId) {
       const activeIds = getActiveManualToneIds(getAppState());
       if (activeIds.includes(appTarget.toneId)) {

@@ -3,6 +3,7 @@ import { AIPostProcessingDialog } from "../settings/AIPostProcessingDialog";
 import { AITranscriptionDialog } from "../settings/AITranscriptionDialog";
 import { AppKeybindingsDialog } from "../settings/AppKeybindingsDialog";
 import { AudioDialog } from "../settings/AudioDialog";
+import { ChangePasswordDialog } from "../settings/ChangePasswordDialog";
 import { ClearLocalDataDialog } from "../settings/ClearLocalDataDialog";
 import { DeleteAccountDialog } from "../settings/DeleteAccountDialog";
 import { DictationLanguageDialog } from "../settings/DictationLanguageDialog";
@@ -29,6 +30,7 @@ export const RootDialogs = () => {
       <ShortcutsDialog />
       <ClearLocalDataDialog />
       <DeleteAccountDialog />
+      <ChangePasswordDialog />
       <MultiDeviceDialog />
       <DictationLanguageDialog />
       <StyleHotkeysDialog />

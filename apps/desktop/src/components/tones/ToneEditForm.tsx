@@ -1,5 +1,3 @@
-import { DeleteForeverOutlined } from "@mui/icons-material";
-import SaveIcon from "@mui/icons-material/Save";
 import {
   Accordion,
   AccordionDetails,
@@ -10,7 +8,6 @@ import {
   Button,
   CircularProgress,
   Dialog,
-  DialogActions,
   DialogContent,
   DialogTitle,
   Stack,
@@ -25,10 +22,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { deleteTone, upsertTone } from "../../actions/tone.actions";
 import { getAppState } from "../../store";
-import { ConfirmDialog } from "../common/ConfirmDialog";
 import { useTonePreview } from "./useTonePreview";
 
 import { ToneBasicsFields } from "./ToneBasicsFields";
+import { ToneEditActions } from "./ToneEditActions";
+import { ToneEditConfirmations } from "./ToneEditConfirmations";
 import {
   PREVIEW_SAMPLE_MESSAGE,
   countLabel,
@@ -58,7 +56,6 @@ export const ToneEditDialog = ({
   }, []);
   const theme = useTheme();
   const fullScreen = useMediaQuery(theme.breakpoints.down("sm"));
-
   const [baseline, setBaseline] = useState(tone);
   const [name, setName] = useState(tone.name);
   const [category, setCategory] = useState(tone.category ?? "");
@@ -80,9 +77,7 @@ export const ToneEditDialog = ({
   const writePending = useRef(false);
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
   const [isDiscardOpen, setIsDiscardOpen] = useState(false);
-
   const preview = useTonePreview(defaultSampleText);
-
   // A preview belongs to the exact sample and style fields that produced it.
   // Invalidate both completed results and in-flight requests; never auto-run
   // on every keystroke.
@@ -94,7 +89,6 @@ export const ToneEditDialog = ({
     outputLength,
     exampleInputOutput,
   ]);
-
   const trimmedName = name.trim();
   const trimmedPrompt = promptTemplate.trim();
   const hasChanges = !sameToneDraft(
@@ -102,7 +96,6 @@ export const ToneEditDialog = ({
     baseline,
   );
   const sourceChanged = !sameToneDraft(tone, baseline);
-
   useEffect(() => {
     if (hasChanges || isBusy || !sourceChanged) return;
     // Refresh only a pristine draft. A dirty draft remains available to copy
@@ -209,7 +202,10 @@ export const ToneEditDialog = ({
           <FormattedMessage defaultMessage="Edit style" />
         </DialogTitle>
 
-        <DialogContent dividers sx={{ minHeight: 320 }}>
+        <DialogContent
+          dividers
+          sx={{ minHeight: "min(320px, max(0px, calc(100dvh - 220px)))" }}
+        >
           {sourceChanged && hasChanges && !isBusy && (
             <Alert severity="warning" sx={{ mb: 2 }}>
               <FormattedMessage defaultMessage="This style changed elsewhere. Close and reopen the editor before saving." />
@@ -373,63 +369,30 @@ export const ToneEditDialog = ({
           </Stack>
         </DialogContent>
 
-        <DialogActions sx={{ px: 3, pb: 2 }}>
-          {!tone.isSystem && (
-            <Button
-              variant="text"
-              onClick={() => setIsConfirmOpen(true)}
-              disabled={isBusy}
-              color="warning"
-              sx={{ mr: "auto" }}
-              startIcon={<DeleteForeverOutlined />}
-            >
-              <FormattedMessage defaultMessage="Delete" />
-            </Button>
-          )}
-          <Button variant="text" onClick={handleRequestClose} disabled={isBusy}>
-            <FormattedMessage defaultMessage="Cancel" />
-          </Button>
-          <Button
-            variant="contained"
-            startIcon={<SaveIcon />}
-            onClick={handleSave}
-            disabled={isBusy || sourceChanged || !isValid || !hasChanges}
-          >
-            <FormattedMessage defaultMessage="Save changes" />
-          </Button>
-        </DialogActions>
+        <ToneEditActions
+          isSystem={tone.isSystem}
+          isBusy={isBusy}
+          canSave={!sourceChanged && isValid && hasChanges}
+          onDelete={() => setIsConfirmOpen(true)}
+          onClose={handleRequestClose}
+          onSave={handleSave}
+        />
       </Dialog>
 
-      <ConfirmDialog
-        isOpen={isConfirmOpen}
-        title={<FormattedMessage defaultMessage="Delete style" />}
-        content={
-          <FormattedMessage defaultMessage="Are you sure you want to delete this style?" />
-        }
-        onCancel={() => setIsConfirmOpen(false)}
-        onConfirm={handleDeleteTone}
-        busy={isBusy}
-        confirmLabel={<FormattedMessage defaultMessage="Delete" />}
-        confirmButtonProps={{ color: "error", disabled: isBusy }}
-      />
-
-      <ConfirmDialog
-        isOpen={isDiscardOpen}
-        title={<FormattedMessage defaultMessage="Discard changes?" />}
-        content={
-          <FormattedMessage defaultMessage="You have unsaved changes. Closing now loses them." />
-        }
-        busy={isBusy}
-        onCancel={() => {
+      <ToneEditConfirmations
+        deleteOpen={isConfirmOpen}
+        discardOpen={isDiscardOpen}
+        isBusy={isBusy}
+        onCancelDelete={() => setIsConfirmOpen(false)}
+        onDelete={handleDeleteTone}
+        onCancelDiscard={() => {
           if (!writePending.current) setIsDiscardOpen(false);
         }}
-        onConfirm={() => {
+        onDiscard={() => {
           if (isBusy || writePending.current) return;
           setIsDiscardOpen(false);
           onClose();
         }}
-        confirmLabel={<FormattedMessage defaultMessage="Discard" />}
-        confirmButtonProps={{ color: "warning", disabled: isBusy }}
       />
     </>
   );

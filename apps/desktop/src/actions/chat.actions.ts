@@ -2,6 +2,7 @@ import type { ChatMessage, Conversation } from "@maus-inc/types";
 import { abortAgentLoop, CHAT_AGENT_CONFIG, runAgent } from "../agents";
 import { getChatMessageRepo, getConversationRepo } from "../repos";
 import { getAppState, produceAppState } from "../store";
+import type { AppState } from "../state/app.state";
 import {
   registerChatMessages,
   registerConversations,
@@ -10,7 +11,13 @@ import { nextConversationTitle } from "../utils/chat.utils";
 import { nowIso } from "../utils/date.utils";
 import { getIsDevMode } from "../utils/env.utils";
 import { getLogger } from "../utils/log.utils";
+import { createAsyncMutationTracker } from "../utils/async-mutation-tracker";
+import {
+  type LocalDataWriteLease,
+  withLocalDataWrite,
+} from "../utils/local-data-write-gate";
 
+const conversationCreations = createAsyncMutationTracker();
 const sendQueuesByConversationId = new Map<string, Promise<void>>();
 // Retry and edit share a reservation because both replace conversation history.
 // Agent status alone cannot guard the asynchronous persistence/preparation gap.
@@ -59,7 +66,7 @@ const isAgentRunning = (conversationId: string): boolean => {
 
 const resendConversation = async (
   conversationId: string,
-  persist: () => Promise<boolean>,
+  persist: (lease: LocalDataWriteLease) => Promise<boolean>,
 ): Promise<void> => {
   if (
     resendingConversationIds.has(conversationId) ||
@@ -68,16 +75,18 @@ const resendConversation = async (
     return;
   resendingConversationIds.add(conversationId);
   try {
-    const persisted = await enqueueConversationWrite(conversationId, () => {
-      if (
-        !getAppState().conversationById[conversationId] ||
-        deletingConversationIds.has(conversationId) ||
-        isAgentRunning(conversationId)
-      ) {
-        return Promise.resolve(false);
-      }
-      return persist();
-    });
+    const persisted = await enqueueConversationWrite(conversationId, () =>
+      withLocalDataWrite(async (lease) => {
+        if (
+          !getAppState().conversationById[conversationId] ||
+          deletingConversationIds.has(conversationId) ||
+          isAgentRunning(conversationId)
+        ) {
+          return false;
+        }
+        return persist(lease);
+      }),
+    );
     if (persisted) await runAgentForConversation(conversationId);
   } finally {
     resendingConversationIds.delete(conversationId);
@@ -86,7 +95,7 @@ const resendConversation = async (
 
 /** Replace the trailing assistant attempt with a fresh run for the last user. */
 export const retryAssistant = (conversationId: string): Promise<void> =>
-  resendConversation(conversationId, async () => {
+  resendConversation(conversationId, async (lease) => {
     const state = getAppState();
     const ids = state.chatMessageIdsByConversationId[conversationId] ?? [];
     let lastUser = -1;
@@ -95,7 +104,7 @@ export const retryAssistant = (conversationId: string): Promise<void> =>
     }
     if (lastUser === -1) return false;
     const drop = ids.slice(lastUser + 1);
-    if (drop.length > 0) await deleteChatMessages(conversationId, drop);
+    if (drop.length > 0) await deleteChatMessages(conversationId, drop, lease);
     return true;
   });
 
@@ -126,6 +135,7 @@ const persistEditedMessage = async (
   conversationId: string,
   messageId: string,
   text: string,
+  lease: LocalDataWriteLease,
 ): Promise<boolean> => {
   const state = getAppState();
   const ids = state.chatMessageIdsByConversationId[conversationId] ?? [];
@@ -135,19 +145,22 @@ const persistEditedMessage = async (
 
   // Save the replacement before removing any history. A crash between these
   // writes can leave an extra draft, but cannot discard the original thread.
-  const replacement = await createChatMessage({
-    id: crypto.randomUUID(),
-    conversationId,
-    role: "user",
-    content: text,
-    createdAt: nowIso(),
-    metadata: null,
-  });
+  const replacement = await createChatMessage(
+    {
+      id: crypto.randomUUID(),
+      conversationId,
+      role: "user",
+      content: text,
+      createdAt: nowIso(),
+      metadata: null,
+    },
+    lease,
+  );
   try {
-    await deleteChatMessages(conversationId, ids.slice(index));
+    await deleteChatMessages(conversationId, ids.slice(index), lease);
   } catch (error) {
     try {
-      await deleteChatMessages(conversationId, [replacement.id]);
+      await deleteChatMessages(conversationId, [replacement.id], lease);
     } catch (cleanupError) {
       // Keep the staged draft visible if its cleanup also fails.
       getLogger().error("Failed to remove staged chat edit", cleanupError);
@@ -160,9 +173,10 @@ const persistEditedMessage = async (
       text,
       index === 0,
       replacement.createdAt,
+      lease,
     )
   ) {
-    bumpConversationToTop(conversationId);
+    bumpConversationToTop(conversationId, lease);
   }
   return true;
 };
@@ -174,8 +188,8 @@ export const editAndResend = async (
 ): Promise<void> => {
   const text = newText.trim();
   if (!text) return;
-  await resendConversation(conversationId, () =>
-    persistEditedMessage(conversationId, messageId, text),
+  await resendConversation(conversationId, (lease) =>
+    persistEditedMessage(conversationId, messageId, text, lease),
   );
 };
 
@@ -185,12 +199,20 @@ export const loadConversations = async (): Promise<void> => {
   });
 
   try {
-    const conversations = await getConversationRepo().listConversations();
-    produceAppState((draft) => {
-      registerConversations(draft, conversations);
-      draft.chat.conversationIds = conversations.map((c) => c.id);
-      draft.chat.status = "success";
-    });
+    while (true) {
+      const beforeWait = conversationCreations.revision();
+      await conversationCreations.wait();
+      const revision = conversationCreations.revision();
+      if (beforeWait !== revision) continue;
+      const conversations = await getConversationRepo().listConversations();
+      if (revision !== conversationCreations.revision()) continue;
+      produceAppState((draft) => {
+        registerConversations(draft, conversations);
+        draft.chat.conversationIds = conversations.map((c) => c.id);
+        draft.chat.status = "success";
+      });
+      break;
+    }
   } catch (error) {
     getLogger().error("Failed to load conversations", error);
     produceAppState((draft) => {
@@ -200,82 +222,100 @@ export const loadConversations = async (): Promise<void> => {
   }
 };
 
-export const createConversation = async (
-  conversation: Conversation,
-): Promise<Conversation> => {
-  const saved = await getConversationRepo().createConversation(conversation);
-
-  produceAppState((draft) => {
-    registerConversations(draft, [saved]);
-    draft.chat.conversationIds.unshift(saved.id);
-  });
-
-  return saved;
+type ConditionalConversationCreation = {
+  isCurrent: () => boolean;
+  onRegister: (draft: AppState, saved: Conversation) => void;
 };
 
-export const updateConversation = async (
+export function createConversation(
   conversation: Conversation,
-): Promise<Conversation> => {
-  const saved = await getConversationRepo().updateConversation(conversation);
+  existingLease?: LocalDataWriteLease,
+): Promise<Conversation>;
+export function createConversation(
+  conversation: Conversation,
+  existingLease: LocalDataWriteLease | undefined,
+  condition: ConditionalConversationCreation,
+): Promise<Conversation | null>;
+export function createConversation(
+  conversation: Conversation,
+  existingLease?: LocalDataWriteLease,
+  condition?: ConditionalConversationCreation,
+): Promise<Conversation | null> {
+  return withLocalDataWrite(
+    (lease) =>
+      conversationCreations.track(async () => {
+        const repo = getConversationRepo();
+        if (condition && !condition.isCurrent()) return null;
+        const saved = await repo.createConversation(conversation, lease);
+        if (condition && !condition.isCurrent()) {
+          try {
+            await repo.deleteConversation(saved.id, lease);
+          } catch (error) {
+            getLogger().error(
+              "Failed to remove cancelled agent conversation",
+              error,
+            );
+            throw error;
+          }
+          return null;
+        }
 
-  produceAppState((draft) => {
-    registerConversations(draft, [saved]);
-  });
+        produceAppState((draft) => {
+          registerConversations(draft, [saved]);
+          draft.chat.conversationIds.unshift(saved.id);
+          condition?.onRegister(draft, saved);
+        }, lease);
 
-  return saved;
-};
+        return saved;
+      }),
+    existingLease,
+  );
+}
+
+export const updateConversation = (
+  conversation: Conversation,
+  existingLease?: LocalDataWriteLease,
+): Promise<Conversation> =>
+  withLocalDataWrite(async (lease) => {
+    const saved = await getConversationRepo().updateConversation(
+      conversation,
+      lease,
+    );
+
+    produceAppState((draft) => {
+      registerConversations(draft, [saved]);
+    }, lease);
+
+    return saved;
+  }, existingLease);
 
 export const deleteConversation = async (id: string): Promise<void> => {
-  // Mark the conversation as deleting before the await so a send
-  // initiated during the delete window is rejected by persistSend.
-  // The flag stays set until the in-memory store is cleared, so a
-  // send that races with produceAppState below still bails.
   deletingConversationIds.add(id);
-  // Stop any agent loop still running for this conversation. The run is not
-  // part of the send queue, so waiting for the queue would never stop it;
-  // without this abort a mid-run delete keeps spending LLM iterations and
-  // persists assistant messages against a row that is about to vanish.
   abortAgent(id);
+
   try {
-    // Wait for the in-flight send so its updateConversation cannot
-    // fire after the repo delete. The queue's own rejection is
-    // swallowed so an unrelated send failure does not block the
-    // user-initiated delete. The queue entry is cleared after the
-    // await so a new send that arrives between this point and the
-    // repo delete still sees deletingConversationIds and bails in
-    // persistSend.
+    // Wait without holding a write lease. A queued send may still need one to
+    // settle, so acquiring the lease before this wait would deadlock the queue.
     const previous = sendQueuesByConversationId.get(id) ?? Promise.resolve();
     await previous.catch(() => undefined);
     sendQueuesByConversationId.delete(id);
 
-    await getConversationRepo().deleteConversation(id);
-  } catch (error) {
-    // The repo delete failed. Leave the in-memory store intact so the
-    // conversation remains visible and the user can retry. Re-throw
-    // after clearing the flag below.
-    deletingConversationIds.delete(id);
-    throw error;
-  }
+    await withLocalDataWrite(async (lease) => {
+      await getConversationRepo().deleteConversation(id, lease);
+      produceAppState((draft) => {
+        // Immer draft deletion is intentional. DeepSource JS-0320 flags the
+        // dynamic key, but this is type-safe and matches the repo pattern.
+        delete draft.conversationById[id]; // skipcq: JS-0320
+        draft.chat.conversationIds = draft.chat.conversationIds.filter(
+          (conversationId) => conversationId !== id,
+        );
 
-  // Clear the in-memory store and the flag together. A send that
-  // races with produceAppState would otherwise find the
-  // conversation removed from the store while deletingConversationIds
-  // is already cleared, and would re-add it to the sidebar.
-  try {
-    produceAppState((draft) => {
-      // delete is the idiomatic Immer draft operation and matches
-      // the rest of the codebase. DeepSource JS-0320 flags the dynamic
-      // key, but the deletion is intentional and type-safe here.
-      delete draft.conversationById[id]; // skipcq: JS-0320
-      draft.chat.conversationIds = draft.chat.conversationIds.filter(
-        (cid) => cid !== id,
-      );
-
-      const messageIds = draft.chatMessageIdsByConversationId[id] ?? [];
-      for (const messageId of messageIds) {
-        delete draft.chatMessageById[messageId]; // skipcq: JS-0320
-      }
-      delete draft.chatMessageIdsByConversationId[id]; // skipcq: JS-0320
+        const messageIds = draft.chatMessageIdsByConversationId[id] ?? [];
+        for (const messageId of messageIds) {
+          delete draft.chatMessageById[messageId]; // skipcq: JS-0320
+        }
+        delete draft.chatMessageIdsByConversationId[id]; // skipcq: JS-0320
+      }, lease);
     });
   } finally {
     deletingConversationIds.delete(id);
@@ -292,51 +332,58 @@ export const loadChatMessages = async (
   });
 };
 
-export const createChatMessage = async (
+export const createChatMessage = (
   message: ChatMessage,
-): Promise<ChatMessage> => {
-  const saved = await getChatMessageRepo().createChatMessage(message);
+  existingLease?: LocalDataWriteLease,
+): Promise<ChatMessage> =>
+  withLocalDataWrite(async (lease) => {
+    const saved = await getChatMessageRepo().createChatMessage(message, lease);
 
-  produceAppState((draft) => {
-    draft.chatMessageById[saved.id] = saved;
-    const ids =
-      draft.chatMessageIdsByConversationId[saved.conversationId] ?? [];
-    ids.push(saved.id);
-    draft.chatMessageIdsByConversationId[saved.conversationId] = ids;
-  });
+    produceAppState((draft) => {
+      draft.chatMessageById[saved.id] = saved;
+      const ids =
+        draft.chatMessageIdsByConversationId[saved.conversationId] ?? [];
+      ids.push(saved.id);
+      draft.chatMessageIdsByConversationId[saved.conversationId] = ids;
+    }, lease);
 
-  return saved;
-};
+    return saved;
+  }, existingLease);
 
-export const updateChatMessage = async (
+export const updateChatMessage = (
   message: ChatMessage,
-): Promise<ChatMessage> => {
-  const saved = await getChatMessageRepo().updateChatMessage(message);
+  existingLease?: LocalDataWriteLease,
+): Promise<ChatMessage> =>
+  withLocalDataWrite(async (lease) => {
+    const saved = await getChatMessageRepo().updateChatMessage(message, lease);
 
-  produceAppState((draft) => {
-    draft.chatMessageById[saved.id] = saved;
-  });
+    produceAppState((draft) => {
+      draft.chatMessageById[saved.id] = saved;
+    }, lease);
 
-  return saved;
-};
+    return saved;
+  }, existingLease);
 
-export const deleteChatMessages = async (
+export const deleteChatMessages = (
   conversationId: string,
   ids: string[],
-): Promise<void> => {
-  await getChatMessageRepo().deleteChatMessages(ids);
+  existingLease?: LocalDataWriteLease,
+): Promise<void> =>
+  withLocalDataWrite(async (lease) => {
+    await getChatMessageRepo().deleteChatMessages(ids, lease);
 
-  produceAppState((draft) => {
-    for (const id of ids) {
-      delete draft.chatMessageById[id];
-    }
-    const existing = draft.chatMessageIdsByConversationId[conversationId] ?? [];
-    const idSet = new Set(ids);
-    draft.chatMessageIdsByConversationId[conversationId] = existing.filter(
-      (mid) => !idSet.has(mid),
-    );
-  });
-};
+    produceAppState((draft) => {
+      for (const id of ids) {
+        delete draft.chatMessageById[id];
+      }
+      const existing =
+        draft.chatMessageIdsByConversationId[conversationId] ?? [];
+      const idSet = new Set(ids);
+      draft.chatMessageIdsByConversationId[conversationId] = existing.filter(
+        (messageId) => !idSet.has(messageId),
+      );
+    }, lease);
+  }, existingLease);
 
 export const runAgentForConversation = async (
   conversationId: string,
@@ -364,6 +411,7 @@ const applySendToConversation = async (
   text: string,
   isFirstMessage: boolean,
   createdAt: string,
+  lease: LocalDataWriteLease,
 ): Promise<boolean> => {
   // Re-read right before the update, so the spread below cannot apply a
   // stale snapshot when the conversation changed while the message was
@@ -377,7 +425,10 @@ const applySendToConversation = async (
   // Returns whether the conversation update succeeded so the caller can
   // decide whether to bump the local recency order.
   try {
-    await updateConversation({ ...conversation, title, updatedAt: createdAt });
+    await updateConversation(
+      { ...conversation, title, updatedAt: createdAt },
+      lease,
+    );
     return true;
   } catch (error) {
     const dev = getIsDevMode();
@@ -424,18 +475,22 @@ const computeIsFirstMessage = async (
 };
 
 // Moves the conversation to the top of the local sidebar order.
-const bumpConversationToTop = (conversationId: string) => {
+const bumpConversationToTop = (
+  conversationId: string,
+  lease: LocalDataWriteLease,
+): void => {
   produceAppState((draft) => {
     draft.chat.conversationIds = [
       conversationId,
       ...draft.chat.conversationIds.filter((cid) => cid !== conversationId),
     ];
-  });
+  }, lease);
 };
 
 const persistSend = async (
   conversationId: string,
   text: string,
+  lease: LocalDataWriteLease,
 ): Promise<boolean> => {
   // The conversation may have been deleted between the time the user
   // pressed send and the time this entry reached the front of the queue.
@@ -456,27 +511,31 @@ const persistSend = async (
   // The timestamp comes from inside the serialized section, so queued sends
   // stay monotonic.
   const createdAt = nowIso();
-  await createChatMessage({
-    id: crypto.randomUUID(),
-    conversationId,
-    role: "user",
-    content: text,
-    createdAt,
-    metadata: null,
-  });
+  await createChatMessage(
+    {
+      id: crypto.randomUUID(),
+      conversationId,
+      role: "user",
+      content: text,
+      createdAt,
+      metadata: null,
+    },
+    lease,
+  );
 
   const updated = await applySendToConversation(
     conversationId,
     text,
     isFirstMessage,
     createdAt,
+    lease,
   );
 
   // Only move the conversation to the top of the local sidebar order
   // when the repo update succeeded. A failed update keeps the old
   // order so a reload restores a consistent view, and the next send
   // retries the bump.
-  if (updated) bumpConversationToTop(conversationId);
+  if (updated) bumpConversationToTop(conversationId, lease);
   return true;
 };
 
@@ -486,19 +545,21 @@ export const sendChatMessage = async (
   /** Called after the draft is durable, before the potentially long agent run. */
   onPersisted?: () => void,
 ): Promise<void> => {
-  const persisted = await enqueueConversationWrite(conversationId, async () => {
-    try {
-      return await persistSend(conversationId, text);
-    } catch (error) {
-      const dev = getIsDevMode();
-      getLogger().error(
-        `Failed to persist chat message for conversation ${conversationId}`,
-        ...(dev ? [{ contentPreview: text.slice(0, 50) }] : []),
-        error,
-      );
-      throw error;
-    }
-  });
+  const persisted = await enqueueConversationWrite(conversationId, () =>
+    withLocalDataWrite(async (lease) => {
+      try {
+        return await persistSend(conversationId, text, lease);
+      } catch (error) {
+        const dev = getIsDevMode();
+        getLogger().error(
+          `Failed to persist chat message for conversation ${conversationId}`,
+          ...(dev ? [{ contentPreview: text.slice(0, 50) }] : []),
+          error,
+        );
+        throw error;
+      }
+    }),
+  );
   if (!persisted) return;
   try {
     onPersisted?.();

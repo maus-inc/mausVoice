@@ -58,7 +58,7 @@ export const AppKeybindingsDialog = () => {
     const value = event.target.value;
     void updateUserPreferences((prefs) => {
       prefs.pasteKeybind = value === "shift+insert" ? null : value;
-    });
+    }).catch(() => {});
   };
 
   const handleDefaultInsertionMethodChange = (
@@ -67,14 +67,13 @@ export const AppKeybindingsDialog = () => {
     const value = event.target.value;
     void updateUserPreferences((prefs) => {
       prefs.insertionMethod = value === "paste" ? null : value;
-    });
+    }).catch(() => {});
   };
 
-  const handleDefaultTypingSpeedCommit = (num: number) => {
-    void updateUserPreferences((prefs) => {
+  const handleDefaultTypingSpeedCommit = (num: number) =>
+    updateUserPreferences((prefs) => {
       prefs.typingSpeedMs = num;
     });
-  };
 
   return (
     <Dialog open={open} onClose={handleClose} maxWidth="sm" fullWidth>
@@ -318,8 +317,10 @@ const AppKeybindingRow = ({
     );
   };
 
-  const handleTypingSpeedCommit = (num: number) => {
-    void setAppTargetTypingSpeed(target.id, num);
+  const handleTypingSpeedCommit = async (num: number) => {
+    if (!(await setAppTargetTypingSpeed(target.id, num))) {
+      throw new Error("Failed to update app target typing speed");
+    }
   };
 
   const handleUseDefaultTypingSpeedChange = (

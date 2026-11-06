@@ -5,8 +5,10 @@ import {
   THEME_COLOR_SCHEME_SELECTOR,
   THEME_MODE_STORAGE_KEY,
   THEME_PROVIDER_CONFIG,
+  guardedThemeStorageManager,
   theme,
 } from "./theme";
+import { premiumSurface } from "./styles/shadows";
 
 const indexHtml = readFileSync(
   new URL("../index.html", import.meta.url),
@@ -18,12 +20,10 @@ const runBootstrap = ({
   storedMode,
   fallbackMode,
   systemDark,
-  setItemThrowsKey,
 }: {
   storedMode?: string;
   fallbackMode?: string;
   systemDark: boolean;
-  setItemThrowsKey?: string;
 }) => {
   const storage = new Map<string, string>();
   const dataset: Record<string, string> = {};
@@ -33,12 +33,7 @@ const runBootstrap = ({
   runInNewContext(bootstrapScript ?? "", {
     localStorage: {
       getItem: (key: string) => storage.get(key) ?? null,
-      setItem: (key: string, value: string) => {
-        if (setItemThrowsKey && key === setItemThrowsKey) {
-          throw new Error("quota exceeded");
-        }
-        storage.set(key, value);
-      },
+      setItem: (key: string, value: string) => storage.set(key, value),
       removeItem: (key: string) => storage.delete(key),
     },
     window: {
@@ -68,6 +63,7 @@ describe("theme mode configuration", () => {
     expect(THEME_PROVIDER_CONFIG).toEqual({
       defaultMode: "system",
       modeStorageKey: THEME_MODE_STORAGE_KEY,
+      storageManager: guardedThemeStorageManager,
       disableTransitionOnChange: true,
     });
     expect(indexHtml).toContain(
@@ -97,25 +93,36 @@ describe("theme mode configuration", () => {
     ).toBe("light");
   });
 
-  it("migrates the fallback key without breaking rollback compatibility", () => {
+  it("reads the legacy fallback without writing it back at startup", () => {
     const { appliedScheme, storage } = runBootstrap({
       fallbackMode: "light",
       systemDark: true,
     });
 
     expect(appliedScheme).toBe("light");
-    expect(storage.get(THEME_MODE_STORAGE_KEY)).toBe("light");
+    expect(storage.has(THEME_MODE_STORAGE_KEY)).toBe(false);
     expect(storage.get("mode")).toBe("light");
   });
 
-  it("keeps the legacy mode when the migration write fails", () => {
-    const { appliedScheme } = runBootstrap({
-      fallbackMode: "light",
-      systemDark: true,
-      setItemThrowsKey: THEME_MODE_STORAGE_KEY,
+  it("reads an existing legacy value through MUI without migrating it", () => {
+    const values = new Map([["mode", "light"]]);
+    const storageWindow = {
+      localStorage: {
+        getItem: (key: string) => values.get(key) ?? null,
+        setItem: (key: string, value: string) => values.set(key, value),
+        removeItem: (key: string) => values.delete(key),
+      },
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    } as unknown as Window;
+
+    const manager = guardedThemeStorageManager({
+      key: THEME_MODE_STORAGE_KEY,
+      storageWindow,
     });
 
-    expect(appliedScheme).toBe("light");
+    expect(manager.get("system")).toBe("light");
+    expect(values.has(THEME_MODE_STORAGE_KEY)).toBe(false);
   });
 
   it("keeps the current MUI mode when both storage keys exist", () => {
@@ -127,6 +134,28 @@ describe("theme mode configuration", () => {
 
     expect(appliedScheme).toBe("dark");
     expect(storage.get(THEME_MODE_STORAGE_KEY)).toBe("dark");
+  });
+
+  it("keeps the in-memory theme usable when storage writes fail", () => {
+    let attempted = false;
+    const storageWindow = {
+      localStorage: {
+        getItem: () => null,
+        setItem: () => {
+          attempted = true;
+          throw new Error("storage quota exceeded");
+        },
+      },
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    } as unknown as Window;
+    const manager = guardedThemeStorageManager({
+      key: THEME_MODE_STORAGE_KEY,
+      storageWindow,
+    });
+
+    expect(() => manager.set("dark")).not.toThrow();
+    expect(attempted).toBe(true);
   });
 
   it("lets selected lucide icons inherit list item color in both schemes", () => {
@@ -146,6 +175,83 @@ describe("theme mode configuration", () => {
     expect(darkStyleBlock).toContain('applyStyles("dark"');
     expect(lightStyleBlock.match(lucideInheritanceRule) ?? []).toHaveLength(1);
     expect(darkStyleBlock.match(lucideInheritanceRule) ?? []).toHaveLength(1);
+  });
+
+  it("shares elevated shadow and press geometry across contained, destructive contained, and flat buttons", () => {
+    const buttonConfig = theme.components?.MuiButton;
+    const containedOverride = buttonConfig?.styleOverrides?.contained;
+    const errorVariant = buttonConfig?.variants?.find(
+      (v) =>
+        typeof v.props === "object" &&
+        v.props !== null &&
+        "variant" in v.props &&
+        v.props.variant === "contained" &&
+        "color" in v.props &&
+        v.props.color === "error",
+    );
+    const flatVariant = buttonConfig?.variants?.find(
+      (v) =>
+        typeof v.props === "object" &&
+        v.props !== null &&
+        "variant" in v.props &&
+        v.props.variant === "flat",
+    );
+
+    expect(typeof containedOverride).toBe("function");
+    expect(typeof errorVariant?.style).toBe("function");
+    expect(typeof flatVariant?.style).toBe("function");
+
+    const requireStyleFunction = (
+      value: unknown,
+      name: string,
+    ): ((arg: { theme: typeof theme }) => Record<string, any>) => {
+      if (typeof value !== "function") {
+        throw new Error(`${name} must resolve to a style function`);
+      }
+      return value as (arg: { theme: typeof theme }) => Record<string, any>;
+    };
+
+    const [darkKey] = Object.keys(theme.applyStyles("dark", { color: "red" }));
+    const containedStyles = requireStyleFunction(
+      containedOverride,
+      "MuiButton.contained",
+    )({ theme });
+    const errorStyles = requireStyleFunction(
+      errorVariant?.style,
+      "error contained variant",
+    )({ theme });
+    const flatStyles = requireStyleFunction(
+      flatVariant?.style,
+      "flat variant",
+    )({ theme });
+
+    for (const styles of [containedStyles, errorStyles, flatStyles]) {
+      expect(styles.boxShadow).toBe(premiumSurface.light.rest);
+      expect(styles["&:hover"]).toMatchObject({
+        boxShadow: premiumSurface.light.hover,
+        transform: "translateY(-1px)",
+      });
+      expect(styles["&:active"]).toMatchObject({
+        boxShadow: premiumSurface.light.active,
+        transform: "scale(0.98) translateY(0)",
+      });
+      expect(styles[darkKey]).toMatchObject({
+        boxShadow: premiumSurface.dark.rest,
+        "&:hover": {
+          boxShadow: premiumSurface.dark.hover,
+          transform: "translateY(-1px)",
+        },
+        "&:active": {
+          boxShadow: premiumSurface.dark.active,
+          transform: "scale(0.98) translateY(0)",
+        },
+      });
+    }
+
+    expect(errorStyles.backgroundColor).toBe(theme.vars.palette.error.main);
+    expect(errorStyles[darkKey].backgroundColor).toBe(
+      theme.vars.palette.error.main,
+    );
   });
 });
 

@@ -1,11 +1,11 @@
-import { Button, CircularProgress, Stack, Typography } from "@mui/material";
+import { Box, Button, CircularProgress } from "@mui/material";
 import { getVersion } from "@tauri-apps/api/app";
 import { useCallback } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { checkForAppUpdates } from "../../actions/updater.actions";
 import { useAsyncData } from "../../hooks/async.hooks";
 import { useAppStore } from "../../store";
-import { SettingSection } from "../common/SettingSection";
+import { SettingRow } from "./SettingRow";
 
 const formatCheckedAt = (timestamp: number | null) => {
   if (timestamp == null) {
@@ -84,25 +84,22 @@ export const UpdateSettingSection = () => {
   })();
 
   return (
-    <SettingSection
+    <SettingRow
+      settingKey="software_update"
       title={<FormattedMessage defaultMessage="Software update" />}
-      descriptionSlot={
-        <Stack spacing={0.25}>
-          <Typography variant="body2" sx={{ color: "text.secondary" }}>
-            {versionLabel}
-          </Typography>
-          <Typography
-            variant="body2"
+      description={
+        <>
+          {versionLabel}.{" "}
+          <Box
+            component="span"
             role="status"
-            sx={{
-              color: status === "error" ? "error.main" : "text.secondary",
-            }}
+            sx={{ color: status === "error" ? "error.main" : "inherit" }}
           >
             {statusMessage}
-          </Typography>
-        </Stack>
+          </Box>
+        </>
       }
-      action={
+      control={
         <Button
           size="small"
           variant="outlined"

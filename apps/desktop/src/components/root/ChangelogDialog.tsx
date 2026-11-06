@@ -15,7 +15,7 @@ import {
   useTheme,
 } from "@mui/material";
 import { getVersion } from "@tauri-apps/api/app";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { openExternalUrl } from "../../utils/open-url.utils";
 import { GITHUB_RELEASES_PAGE_URL } from "@maus-inc/desktop-utils";
 import { useCallback, useEffect, useState } from "react";
 import { FormattedMessage } from "react-intl";
@@ -122,7 +122,7 @@ const ReleaseRow = ({
         size="small"
         variant="text"
         sx={{ mt: 0.5, px: 0 }}
-        onClick={() => void openUrl(entry.url)}
+        onClick={() => openExternalUrl(entry.url, "the release notes page")}
       >
         <FormattedMessage defaultMessage="View on GitHub" />
       </Button>
@@ -219,11 +219,9 @@ export const ChangelogDialog = ({
               <Button
                 variant="text"
                 size="small"
-                onClick={() => {
-                  // `openUrl` rejects when no browser handler is available, and
-                  // discarding the promise would leave that unhandled.
-                  openUrl(GITHUB_RELEASES_PAGE_URL).catch(() => undefined);
-                }}
+                onClick={() =>
+                  openExternalUrl(GITHUB_RELEASES_PAGE_URL, "the releases page")
+                }
               >
                 <FormattedMessage defaultMessage="Open releases page" />
               </Button>

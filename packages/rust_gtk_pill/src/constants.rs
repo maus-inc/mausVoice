@@ -91,7 +91,7 @@ pub(crate) const WAVE_CONFIGS: &[WaveConfig] = &[
 ];
 
 // ── Loading — MUI LinearProgress indeterminate ────────────────────
-pub(crate) const LOADING_BAR_WIDTH_FRAC: f64 = 0.4;
+pub(crate) const LOADING_BAR_WIDTH_FRAC: f64 = rust_pill_shared::LOADING_BAR_WIDTH_FRAC;
 pub(crate) const LOADING_SPEED: f64 = 0.015;
 
 // ── Assistant panel — matching AssistantModePanel.tsx ──────────────

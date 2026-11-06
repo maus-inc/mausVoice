@@ -77,6 +77,18 @@ export const getMyUser = (state: AppState): Nullable<User> => {
   return getRec(state.userById, getMyEffectiveUserId(state)) ?? null;
 };
 
+/**
+ * The custom profile photo for the current user, if they have set one.
+ *
+ * Read straight from the local slice rather than the account record: the photo
+ * is this device's copy and is not synced.
+ */
+export const getMyProfileImage = (state: AppState): Nullable<string> => {
+  return (
+    state.local.profileImageByUserId?.[getMyEffectiveUserId(state)] ?? null
+  );
+};
+
 export const getMyPreferredLocale = (state: AppState): Locale => {
   const user = getMyUser(state);
   return (
@@ -262,9 +274,9 @@ export type TranscriptionPrefs =
  * Providers with an implemented batch transcription route — i.e. parity with
  * the `getTranscribeAudioRepo()` switch branches in `repos/index.ts` (mirrored
  * here to avoid a circular import). This is NOT the same as the
- * `supportsTranscriptionModels()` capability flags: Azure is always available
- * in the transcription UI (special-cased by region in `ApiKeyList`), so
- * `AzureModelProviderRepo.supportsTranscriptionModels()` returns `false` while
+ * `supportsTranscriptionModels` capability flags: Azure is always available
+ * in the transcription UI (special-cased by region in `ApiKeyList`), so the
+ * `AzureModelProviderRepo.supportsTranscriptionModels` flag is `false` while
  * `azure` still has a real dispatch branch and must stay in this set. A
  * selected key whose provider is not in this set cannot be transcribed and is
  * treated as stale.
@@ -494,6 +506,7 @@ export const getDictationSpeed = (state: AppState): DictationSpeed | null => {
     const t = getRec(state.transcriptionById, id);
     if (
       !t ||
+      t.transcript === "[Transcription Failed]" ||
       !t.audio?.durationMs ||
       t.audio.durationMs <= 0 ||
       !t.transcript
