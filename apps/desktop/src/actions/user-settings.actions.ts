@@ -255,6 +255,20 @@ export const setHallucinationFilterEnabled = async (
   );
 };
 
+export const setFastStyleShortDictationsEnabled = async (
+  enabled: boolean,
+): Promise<void> => {
+  await updateUserPreferences(
+    (preferences) => {
+      preferences.fastStyleShortDictationsEnabled = enabled;
+    },
+    getIntl().formatMessage({
+      defaultMessage:
+        "Failed to save short dictation preference. Please try again.",
+    }),
+  );
+};
+
 export const setReviewBeforeInsert = async (
   enabled: boolean,
 ): Promise<void> => {

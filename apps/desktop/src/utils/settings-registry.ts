@@ -188,6 +188,11 @@ export const SETTING_ENTRIES: SettingEntry[] = [
   ...settingsForGroup("ai-models", "post_processing", {
     groq_api_key: ["groq", "llm", "api key"],
     ai_post_processing: ["polish", "cleanup", "llm"],
+    fast_styling_for_short_dictations: [
+      "short dictation",
+      "fast style",
+      "local",
+    ],
   }),
   ...settingsForGroup("ai-models", "assistant", {
     assistant_mode: ["agent", "chat", "assistant"],

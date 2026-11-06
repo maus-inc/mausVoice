@@ -45,6 +45,7 @@ import {
   isGlossaryPromptTruncated,
   buildSystemPostProcessingTonePrompt,
   collectDictionaryEntries,
+  collectVocabularyTerms,
   PostProcessingPromptInput,
   PROCESSED_TRANSCRIPTION_JSON_RESPONSE,
   getPostProcessMaxTokens,
@@ -55,6 +56,7 @@ import {
   type TranscriptionSegment,
 } from "../utils/hallucination.utils";
 import { getToneById, getToneConfig } from "../utils/tone.utils";
+import { getMyDictationLanguage } from "../utils/user.utils";
 import {
   getMyEffectiveUserId,
   getMyUserName,
@@ -65,6 +67,7 @@ import {
   applyFastStyle,
   canApplyFastStyle,
 } from "../utils/fast-style.utils";
+import { resolvePostProcessingRoute } from "../utils/post-processing-routing.utils";
 import { getIntl } from "../i18n/intl";
 import { nextPostProcessEditFailureCount } from "../utils/post-process-retry.utils";
 import { showErrorSnackbar } from "./app.actions";
@@ -378,6 +381,14 @@ const resolvePostProcessingLanguage = async (
     ? coerceToDictationLanguage(override)
     : await loadMyEffectiveDictationLanguage(state);
 
+/**
+ * The dictionary's canonical spellings, for the local casing pass. The same
+ * entries the provider is given as a glossary, read from one place so the two
+ * paths cannot disagree about how a term is spelled.
+ */
+const getFastStyleDictionaryTerms = (state: AppState): string[] =>
+  collectVocabularyTerms(collectDictionaryEntries(state));
+
 const buildPostProcessingRequest = (
   state: AppState,
   rawTranscript: string,
@@ -614,19 +625,21 @@ export const applyFastLocalStyle = ({
   metadata,
   warnings,
   reason,
+  dictionaryTerms,
 }: {
   rawTranscript: string;
   toneId: Nullable<string>;
   metadata: PostProcessMetadata;
   warnings: string[];
-  reason: "no-llm" | "llm-failed";
+  reason: "no-llm" | "llm-failed" | "short-input";
+  dictionaryTerms?: readonly string[];
 }): { styled: string; fastDurationMs: number } | null => {
   if (!canApplyFastStyle(toneId)) return null;
 
   const startedAt = performance.now();
   let styled: string;
   try {
-    styled = applyFastStyle(rawTranscript, toneId ?? null);
+    styled = applyFastStyle(rawTranscript, toneId ?? null, { dictionaryTerms });
   } catch (error) {
     getLogger().warning(
       `Fast local style failed for tone=${toneId}, reason=${reason}: ${error}`,
@@ -640,10 +653,12 @@ export const applyFastLocalStyle = ({
   // caller a blank utterance: nothing is inserted, and because
   // `postProcessFailed` is untouched on this path no failure is reported either,
   // so the dictation disappears without a word. Treat an empty transform as "no
-  // local style available" and let the caller fall back to the raw transcript.
+  // local style available" and let the caller pick the alternative it has: the
+  // raw transcript when no provider is configured, the provider request when
+  // one is.
   if (styled.trim().length === 0) {
     getLogger().warning(
-      `Fast local style produced no output for tone=${toneId}, reason=${reason}; falling back to the raw transcript`,
+      `Fast local style produced no output for tone=${toneId}, reason=${reason}`,
     );
     return null;
   }
@@ -752,6 +767,7 @@ const runPostProcessingRequest = async ({
       metadata,
       warnings,
       reason: "llm-failed",
+      dictionaryTerms: getFastStyleDictionaryTerms(state),
     });
     if (fast !== null) {
       recordPostProcessFailure(
@@ -819,6 +835,7 @@ const applyPostProcessing = async (
       metadata,
       warnings,
       reason: "no-llm",
+      dictionaryTerms: getFastStyleDictionaryTerms(state),
     });
     if (fast !== null) {
       onPolishStart?.();
@@ -829,6 +846,42 @@ const applyPostProcessing = async (
     return rawTranscript;
   }
   onPolishStart?.();
+  // A short English dictation in a prose style is styled by the local
+  // transforms instead of the provider. The request carries the whole style
+  // prompt and a reasoning-token floor, so the round trip costs the same for
+  // three words as for three paragraphs; for three words it buys very little.
+  // The decision and its reason are logged because the row records what ran,
+  // not why.
+  // The import path knows the file's language; a live dictation carries it on
+  // the state, resolved the same way the transcription call resolved it.
+  const language = dictationLanguage ?? getMyDictationLanguage(state);
+  const route = resolvePostProcessingRoute({
+    transcript: rawTranscript,
+    toneId,
+    enabled: state.settings.fastStyleShortDictationsEnabled,
+    language,
+  });
+  if (route.route === "local") {
+    getLogger().info(
+      `Short dictation styled locally (${route.reason}), skipping the provider for tone=${toneId}, language=${language}`,
+    );
+    const fast = applyFastLocalStyle({
+      rawTranscript,
+      toneId,
+      metadata,
+      warnings,
+      reason: "short-input",
+      dictionaryTerms: getFastStyleDictionaryTerms(state),
+    });
+    // The local transform produced nothing usable (filler-only input, or a
+    // throw). The provider is still configured and the user asked it to style
+    // this dictation, so the request that was skipped is the fallback rather
+    // than handing back raw text.
+    if (fast !== null) return fast.styled;
+    getLogger().info(
+      "Short dictation produced no local output; falling back to the provider",
+    );
+  }
   return await runPostProcessingRequest({
     state,
     rawTranscript,

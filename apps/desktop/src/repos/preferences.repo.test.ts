@@ -123,6 +123,27 @@ describe("preferences round-trip", () => {
   });
 });
 
+describe("fastStyleShortDictationsEnabled preference", () => {
+  it("defaults to true when the local row omits the field", () => {
+    const loaded = fromLocalPreferences({
+      ...toLocalPreferences(createDefaultPreferences()),
+      fastStyleShortDictationsEnabled: undefined,
+    });
+    expect(loaded.fastStyleShortDictationsEnabled).toBe(true);
+  });
+
+  it("preserves an explicit false across a round-trip", () => {
+    const loaded = fromLocalPreferences({
+      ...toLocalPreferences(createDefaultPreferences()),
+      fastStyleShortDictationsEnabled: false,
+    });
+    expect(loaded.fastStyleShortDictationsEnabled).toBe(false);
+
+    const saved = toLocalPreferences(loaded);
+    expect(saved.fastStyleShortDictationsEnabled).toBe(false);
+  });
+});
+
 describe("autoLearnDictionaryEnabled preference", () => {
   it("defaults to true when the local row omits the field", () => {
     const loaded = fromLocalPreferences({

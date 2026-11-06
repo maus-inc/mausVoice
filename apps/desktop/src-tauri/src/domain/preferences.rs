@@ -107,6 +107,10 @@ pub struct UserPreferences {
     pub in_dictation_style_switching_enabled: bool,
     #[serde(default = "default_hallucination_filter_enabled")]
     pub hallucination_filter_enabled: bool,
+    /// Style short dictations with the deterministic local transforms instead
+    /// of the configured provider. Default on.
+    #[serde(default = "default_true")]
+    pub fast_style_short_dictations_enabled: bool,
     #[serde(default)]
     pub review_before_insert: Option<bool>,
     #[serde(default)]

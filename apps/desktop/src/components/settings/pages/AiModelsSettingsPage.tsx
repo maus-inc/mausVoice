@@ -5,7 +5,11 @@ import type { ChangeEvent } from "react";
 import { useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { produceAppState, useAppStore } from "../../../store";
-import { setStylingMode } from "../../../actions/user.actions";
+import { getMyUserPreferences } from "../../../utils/user.utils";
+import {
+  setFastStyleShortDictationsEnabled,
+  setStylingMode,
+} from "../../../actions/user.actions";
 import { logOnRejection } from "../../../utils/promise.utils";
 import { getEffectiveStylingMode } from "../../../utils/feature.utils";
 import { findPersonalApiKey } from "../../../utils/personal-use.utils";
@@ -50,16 +54,33 @@ export default function AiModelsSettingsPage() {
     null,
   );
 
-  const [hasDeepgramKey, hasGroqKey, stylingMode, disableAutoStyleLoading] =
-    useAppStore((state) => [
-      findPersonalApiKey(state.settings.apiKeys, "deepgram") !== null,
-      findPersonalApiKey(state.settings.apiKeys, "groq") !== null,
-      getEffectiveStylingMode(state),
-      state.local.disableAutoStyleLoading ?? false,
-    ]);
+  const [
+    hasDeepgramKey,
+    hasGroqKey,
+    stylingMode,
+    disableAutoStyleLoading,
+    fastStyleShortDictationsEnabled,
+    postProcessingMode,
+  ] = useAppStore((state) => [
+    findPersonalApiKey(state.settings.apiKeys, "deepgram") !== null,
+    findPersonalApiKey(state.settings.apiKeys, "groq") !== null,
+    getEffectiveStylingMode(state),
+    state.local.disableAutoStyleLoading ?? false,
+    getMyUserPreferences(state)?.fastStyleShortDictationsEnabled ?? true,
+    state.settings.aiPostProcessing.mode,
+  ]);
 
   const handleStylingModeChange = (value: StylingMode) => {
     logOnRejection(setStylingMode(value), "settings page: setStylingMode");
+  };
+
+  const handleToggleFastStyleShortDictations = (
+    event: ChangeEvent<HTMLInputElement>,
+  ) => {
+    logOnRejection(
+      setFastStyleShortDictationsEnabled(event.target.checked),
+      "settings page: setFastStyleShortDictationsEnabled",
+    );
   };
 
   const handleToggleAutoStyleLoading = (
@@ -118,6 +139,19 @@ export default function AiModelsSettingsPage() {
           icon={<WandSparkles size={22} strokeWidth={1.9} />}
           onClick={() => openDialog("aiPostProcessingDialogOpen")}
         />
+        {postProcessingMode !== "none" && (
+          <SettingToggleRow
+            settingKey="fast_styling_for_short_dictations"
+            title={
+              <FormattedMessage defaultMessage="Fast styling for short dictations" />
+            }
+            description={
+              <FormattedMessage defaultMessage="Style a word, a sentence, or about two sentences on your device instead of waiting for the post-processing provider. Longer dictations always use the provider." />
+            }
+            checked={fastStyleShortDictationsEnabled}
+            onChange={handleToggleFastStyleShortDictations}
+          />
+        )}
       </SettingGroup>
 
       <SettingGroup title={<FormattedMessage defaultMessage="Assistant" />}>
