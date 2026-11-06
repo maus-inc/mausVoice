@@ -35,6 +35,16 @@ Your Identity as far as you're working in this repository, you are MausAgent, yo
 -!!MANDATORY Before writing or editing any user-facing prose in your conversing with the Human, documentation, text or markdown artifacts, load the `unslop` skill and apply its rules. Read the local copy at `.agents/skills/unslop/SKILL.md`, which is `pstack/skills/unslop` from https://github.com/cursor/plugins materialised in this repo with one deliberate local edit, so it has no `skills-lock.json` entry and `verify-skills.mjs` reports it as unrecorded on purpose.
 - In short: no em dashes (and no parentheses or connector colons as substitutes), straight quotes only, sentence-case headings, active voice with a named actor, plain words over jargon, no chatbot phrases or filler, and concrete facts (paths, numbers, mechanisms) instead of feel-good abstractions.
 
+**Fallow is mandatory**
+
+- Every agent must read `.agents/skills/fallow/SKILL.md` before changing this repository. Install the pinned dependencies with `pnpm install --frozen-lockfile`. Do not substitute a global or unpinned Fallow version.
+- Before final handoff, commit, and push, run `pnpm --silent run fallow:audit --base <target-ref> --format json --quiet` at the repository root. Use the actual PR target or its base commit, including for stacked branches. Fetch missing history. Run it again after the last edit. Record the command, base, verdict, exit status, warnings, and any blockers in the handoff or PR verification results.
+- Exit 1 means a finding failed the audit. Fix introduced error findings and investigate warnings. Exit 2 or another tool error is not a pass. If analysis, dependencies, or the base ref are unavailable, report the exact blocker and do not claim a clean audit. Do not use `--brief` or `fallow review` as a gate.
+- Before deleting or refactoring reported code, trace its consumers and check dynamic imports, build aliases, public APIs, native boundaries, and tests. Never remove a real consumer or security override merely to clear a report. Do not weaken thresholds, use broad ignores, or apply automatic fixes without reviewing the preview, changes, and tests. Document evidence for any narrow false-positive handling.
+- At the start of each task and after the final edit, run `pnpm exec fallow --format json --quiet --fail-on-issues` as well as the changed-code audit. Inspect dead code, duplication, health, and workspace diagnostics separately. Address relevant findings in touched code without breaking behavior. A clean changed-code audit is not a clean whole-repository scan. Report remaining findings and incomplete analysis rather than asserting zero.
+- For diff reviews, also read `.agents/skills/fallow-review/SKILL.md` and run `pnpm exec fallow review --base <target-ref> --format json --quiet`. Review is advisory and never replaces the audit or human review. The PR workflow runs the audit; a required branch check needs GitHub branch protection.
+- Fallow covers JavaScript, TypeScript, and supported styles. It does not replace Rust checks, lint, type checks, tests, or security review. See `engineering/fallow.md` for setup and limits.
+
 **Repository structure**
 
 - This is a Turborepo monorepo. Root-level: `pnpm run build`, `pnpm run lint`, `pnpm run check-types`, `pnpm run test`.

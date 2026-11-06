@@ -34,8 +34,8 @@ const FormattedMessageMock = ((props: { defaultMessage: string }): string =>
   props.defaultMessage) as never;
 
 export const reactIntlMockModule = async (
-  importOriginal: () => Promise<ReactIntlModule>,
-): Promise<ReactIntlModule> => {
+  importOriginal: () => Promise<typeof import("react-intl")>,
+): Promise<typeof import("react-intl")> => {
   const actual = await importOriginal();
   return {
     ...actual,
@@ -47,8 +47,8 @@ export const reactIntlMockModule = async (
 
 /** Keep real locale formatting, adding only the IDs injected by the Vite build. */
 export const reactIntlWithIdsModule = async (
-  importOriginal: () => Promise<ReactIntlModule>,
-): Promise<ReactIntlModule> => {
+  importOriginal: () => Promise<typeof import("react-intl")>,
+): Promise<typeof import("react-intl")> => {
   const actual = await importOriginal();
   const { createElement } = await import("react");
   const { formatjsOverrideIdFn } =
