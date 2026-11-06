@@ -85,8 +85,10 @@ const RECORDING_COMMAND_RESULTS: Record<string, unknown> = {
   start_recording: { sampleRate: 16_000 },
   stop_recording: { samples: [], sampleRate: 16_000 },
   acknowledge_recording: undefined,
+  claim_browser_recording: undefined,
   discard_recording: undefined,
   pause_recording: undefined,
+  release_browser_recording: undefined,
   resume_recording: undefined,
 };
 
