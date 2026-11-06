@@ -75,6 +75,22 @@ describe("visible transcription loads", () => {
     expect(mocks.state.transcriptions.transcriptionIds).toEqual(["one", "two"]);
   });
 
+  it("discards a list that returns after local data was cleared", async () => {
+    const gate = await import("./local-data-write-gate");
+    const { refreshVisibleTranscriptions } =
+      await import("./visible-transcriptions");
+    const pending = deferred<Transcription[]>();
+    mocks.list.mockReturnValueOnce(pending.promise);
+    const refresh = refreshVisibleTranscriptions(() => true);
+    const release = await gate.beginLocalDataClear();
+    localStorage.removeItem(gate.LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY);
+    release();
+    pending.resolve([row("before-clear")]);
+    await refresh;
+    expect(mocks.state.transcriptions.transcriptionIds).toEqual([]);
+    expect(mocks.state.transcriptionById["before-clear"]).toBeUndefined();
+  });
+
   it("retries a stale list captured before the delete committed", async () => {
     const pending = await import("./pending-transcription-delete");
     const { refreshVisibleTranscriptions } =

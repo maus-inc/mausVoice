@@ -8,6 +8,10 @@ import { getLogger } from "../utils/log.utils";
 import { createId } from "../utils/id.utils";
 import { orFalse, orNull } from "../utils/nullable.utils";
 import { registerTranscriptions } from "../utils/app.utils";
+import {
+  getTranscriptionDeletionRevision,
+  isTranscriptionPendingDelete,
+} from "../utils/pending-transcription-delete";
 import { POST_PROCESS_TRUNCATED_WARNING } from "../utils/prompt.utils";
 import {
   beginRetranscribe,
@@ -1111,16 +1115,38 @@ export const resumeInterruptedPostProcessEditRetries = (
  */
 export const resumeAllInterruptedPostProcessEditRetries = (): void => {
   const pageSize = 100;
+  const generation = getLocalDataClearGeneration();
+  const revision = getTranscriptionDeletionRevision();
   const scan = async (): Promise<void> => {
     for (let offset = 0; ; offset += pageSize) {
+      if (isLocalDataClearRequested() || !isPersistenceAllowed()) return;
       const page = await getTranscriptionRepo().listTranscriptions({
         limit: pageSize,
         offset,
       });
+      if (
+        isLocalDataClearRequested() ||
+        getLocalDataClearGeneration() !== generation ||
+        getTranscriptionDeletionRevision() !== revision ||
+        !isPersistenceAllowed()
+      )
+        return;
+      const candidates = page.filter(
+        (row) => !isTranscriptionPendingDelete(row.id),
+      );
       produceAppState((draft) => {
-        registerTranscriptions(draft, page);
+        // A list response may predate an edit or another recovery scan.
+        // Do not overwrite a live row with that older snapshot.
+        registerTranscriptions(
+          draft,
+          candidates.filter((row) => !getRec(draft.transcriptionById, row.id)),
+        );
       });
-      resumeInterruptedPostProcessEditRetries(page);
+      resumeInterruptedPostProcessEditRetries(
+        candidates
+          .map((row) => getRec(getAppState().transcriptionById, row.id))
+          .filter((row): row is Transcription => row !== undefined),
+      );
       if (page.length < pageSize) {
         return;
       }
