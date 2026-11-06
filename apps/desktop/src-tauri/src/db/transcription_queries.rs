@@ -320,8 +320,8 @@ pub async fn append_transcription_warnings(
         return Ok(Vec::new());
     }
 
-    let warnings_json =
-        serde_json::to_string(warnings).map_err(|error| sqlx::Error::Protocol(error.to_string()))?;
+    let warnings_json = serde_json::to_string(warnings)
+        .map_err(|error| sqlx::Error::Protocol(error.to_string()))?;
     let _activity_write_guard = crate::db::daily_activity_queries::lock_activity_writes().await;
     let row = sqlx::query(transcription_append_warnings_sql())
         .bind(warnings_json)
@@ -331,8 +331,7 @@ pub async fn append_transcription_warnings(
         .ok_or(sqlx::Error::RowNotFound)?;
     let warnings_json: String = row.try_get("warnings_json")?;
 
-    serde_json::from_str(&warnings_json)
-        .map_err(|error| sqlx::Error::Protocol(error.to_string()))
+    serde_json::from_str(&warnings_json).map_err(|error| sqlx::Error::Protocol(error.to_string()))
 }
 
 pub async fn delete_transcription(pool: SqlitePool, id: &str) -> Result<(), sqlx::Error> {
@@ -579,7 +578,10 @@ mod tests {
             .expect("read the appended row");
         assert_eq!(stored.len(), 1);
         assert_eq!(stored[0].transcript, "latest edited transcript");
-        assert_eq!(stored[0].raw_transcript.as_deref(), Some("latest raw transcript"));
+        assert_eq!(
+            stored[0].raw_transcript.as_deref(),
+            Some("latest raw transcript")
+        );
         assert_eq!(stored[0].model_size.as_deref(), Some("current-model"));
         assert_eq!(stored[0].remote_status.as_deref(), Some("sent"));
         assert_eq!(stored[0].remote_device_id.as_deref(), Some("receiver-1"));
@@ -605,13 +607,10 @@ mod tests {
                 .await
                 .expect("seed the warnings JSON case");
 
-            let returned = append_transcription_warnings(
-                pool.clone(),
-                id,
-                &["new warning".to_string()],
-            )
-            .await
-            .expect("append over an invalid prior warning value");
+            let returned =
+                append_transcription_warnings(pool.clone(), id, &["new warning".to_string()])
+                    .await
+                    .expect("append over an invalid prior warning value");
             assert_eq!(returned, vec!["new warning".to_string()]);
 
             let stored = fetch_transcriptions(pool.clone(), 10, 0)
