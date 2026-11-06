@@ -14,6 +14,12 @@ vi.mock("react-intl", async (importOriginal) => {
 import { IntlProvider } from "react-intl";
 import { SettingToggleRow, type SettingToggleRowProps } from "./SettingRow";
 
+/** Test-side must: resolves a querySelector result or fails loudly. */
+const must = <T extends Element>(el: T | null, what: string): T => {
+  if (!el) throw new Error(`missing ${what}`);
+  return el;
+};
+
 ensureUiHarness();
 
 (
@@ -54,9 +60,12 @@ describe("SettingToggleRow activation", () => {
         disabled,
       }),
     );
-    return container.querySelector<HTMLInputElement>(
-      "#setting-spoken_commands input",
-    )!;
+    return must(
+      container.querySelector<HTMLInputElement>(
+        "#setting-spoken_commands input",
+      ),
+      "switch input",
+    );
   };
 
   beforeEach(() => {
@@ -80,23 +89,25 @@ describe("SettingToggleRow activation", () => {
   it("changes the setting exactly once per label activation", () => {
     const onChange = vi.fn();
     renderRow(onChange);
-    const label = container.querySelector<HTMLElement>(
-      "#setting-spoken_commands",
-    )!;
+    const label = must(
+      container.querySelector<HTMLElement>("#setting-spoken_commands"),
+      "label row",
+    );
     act(() => label.click());
     expect(onChange).toHaveBeenCalledTimes(1);
   });
 
   it("exposes the row as one native label around the switch, not stacked handlers", () => {
     renderRow(vi.fn());
-    const label = container.querySelector<HTMLElement>(
-      "#setting-spoken_commands",
-    )!;
+    const label = must(
+      container.querySelector<HTMLElement>("#setting-spoken_commands"),
+      "label row",
+    );
     expect(label.tagName).toBe("LABEL");
     // A native checkbox input: Space/Enter keyboard activation is the
     // browser's built-in label-and-input semantics (verified in the native
     // contract suite); jsdom cannot reproduce key-driven activation.
-    const input = label.querySelector<HTMLInputElement>("input")!;
+    const input = must(label.querySelector<HTMLInputElement>("input"), "input");
     expect(input.type).toBe("checkbox");
     expect(input.getAttribute("role")).toBe("switch");
   });
@@ -111,9 +122,10 @@ describe("SettingToggleRow activation", () => {
 
   it("keeps the row transform-free markup: the press scale exists only on button rows", () => {
     renderRow(vi.fn());
-    const label = container.querySelector<HTMLElement>(
-      "#setting-spoken_commands",
-    )!;
+    const label = must(
+      container.querySelector<HTMLElement>("#setting-spoken_commands"),
+      "label row",
+    );
     // The toggle row is a label, never a button: no press-scale block is
     // attached, so a switch click cannot animate the row's container.
     expect(label.querySelector("button, [role='button']")).toBeNull();

@@ -69,7 +69,7 @@ it("seeds popup visibility from ?previewPopup for deterministic captures", async
   );
   expect(hide).not.toBeNull();
   // The seed sets the start; the toggle still works from there.
-  await act(async () => hide!.click());
+  await act(async () => hide?.click());
   expect(container.querySelector('[role="combobox"]')).toBeNull();
   await renderAt("?previewPopup=hidden");
   expect(container.querySelector('[role="combobox"]')).toBeNull();
@@ -84,11 +84,11 @@ it("starts hidden and restores the card without resetting scenario data", async 
   );
   expect(toggle).not.toBeNull();
   expect(toggle?.getAttribute("aria-expanded")).toBe("false");
-  await act(async () => toggle!.click());
+  await act(async () => toggle?.click());
   expect(container.querySelector('[role="combobox"]')).not.toBeNull();
   expect(toggle?.getAttribute("aria-label")).toBe("Hide preview popup");
   expect(toggle?.getAttribute("aria-expanded")).toBe("true");
-  await act(async () => toggle!.click());
+  await act(async () => toggle?.click());
   expect(container.querySelector('[role="combobox"]')).toBeNull();
   expect(container.textContent).not.toContain("Reset data");
   expect(applyPreviewScenario).not.toHaveBeenCalled();

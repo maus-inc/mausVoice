@@ -59,6 +59,71 @@ type NavItem = {
   icon: IconNode;
 };
 
+const isSelectedPath = (pathname: string, path: string): boolean => {
+  if (path === "/dashboard") {
+    return pathname === "/dashboard";
+  }
+  return pathname === path || pathname.startsWith(`${path}/`);
+};
+
+const sidebarIndicatorSx = (dark: boolean, shadow: string) => ({
+  position: "absolute" as const,
+  inset: 0,
+  borderRadius: 1,
+  bgcolor: dark ? surfaces.dark.level2 : inkSolid.base,
+  boxShadow: shadow,
+  zIndex: 0,
+  pointerEvents: "none" as const,
+});
+
+const ActiveIndicator = ({
+  selected,
+  reduced,
+  dark,
+  shadow,
+}: {
+  selected: boolean;
+  reduced: boolean;
+  dark: boolean;
+  shadow: string;
+}) => {
+  if (!selected) return null;
+  const sx = sidebarIndicatorSx(dark, shadow);
+  return reduced ? (
+    <Box sx={sx} />
+  ) : (
+    <Box
+      component={motion.div}
+      layoutId="sidebar-active"
+      transition={springSnappy}
+      sx={sx}
+    />
+  );
+};
+
+const railSx = (dark: boolean) => ({
+  alignItems: "stretch" as const,
+  height: "100%",
+  // Flush against the window's left edge and full height, rounded only where the
+  // rail faces the page. Rounding all four corners left a notch against
+  // the window frame and made the rail read as a floating card that
+  // happened to be clipped, rather than the edge of a plane.
+  borderRadius: "0 16px 16px 0",
+  // Only the edge that faces content carries a hairline. The other three
+  // run into the window frame or into bare canvas, where a 1px line has
+  // nothing to separate and reads as an artifact.
+  borderRight: dark ? hairline.dark(0.05) : hairline.light(0.05),
+  // Same wash as the title bar and the content panel, so all three read as
+  // one material standing off the canvas. The rail is not contiguous with
+  // the bar: the page header sits between them, so this is shared paint,
+  // not one continuous L-shaped surface. The rim catches light along the
+  // top edge and `raisedEdge` casts along the one edge that faces content.
+  boxShadow: dark
+    ? `${insetRim.dark}, ${raisedEdge.dark}`
+    : `${insetRim.light}, ${raisedEdge.light}`,
+  background: dark ? chromeWash.dark : chromeWash.light,
+});
+
 export type DashboardMenuProps = {
   onChoose?: () => void;
 };
@@ -121,53 +186,18 @@ export const DashboardMenu = ({ onChoose }: DashboardMenuProps) => {
     nav(path);
   };
 
-  const isSelected = (path: string) => {
-    if (path === "/dashboard") {
-      return location.pathname === "/dashboard";
-    }
-    return (
-      location.pathname === path || location.pathname.startsWith(`${path}/`)
-    );
-  };
-
   const selectedShadow = dark
     ? premiumSurface.dark.selected
     : premiumSurface.light.selected;
 
-  const activeIndicator = (selected: boolean) => {
-    if (!selected) return null;
-    if (reduceMotion) {
-      return (
-        <Box
-          sx={{
-            position: "absolute",
-            inset: 0,
-            borderRadius: 1,
-            bgcolor: dark ? surfaces.dark.level2 : inkSolid.base,
-            boxShadow: selectedShadow,
-            zIndex: 0,
-            pointerEvents: "none",
-          }}
-        />
-      );
-    }
-    return (
-      <Box
-        component={motion.div}
-        layoutId="sidebar-active"
-        transition={springSnappy}
-        sx={{
-          position: "absolute",
-          inset: 0,
-          borderRadius: 1,
-          bgcolor: dark ? surfaces.dark.level2 : inkSolid.base,
-          boxShadow: selectedShadow,
-          zIndex: 0,
-          pointerEvents: "none",
-        }}
-      />
-    );
-  };
+  const indicator = (selected: boolean) => (
+    <ActiveIndicator
+      selected={selected}
+      reduced={Boolean(reduceMotion)}
+      dark={dark}
+      shadow={selectedShadow}
+    />
+  );
 
   const list = (
     <List
@@ -175,7 +205,7 @@ export const DashboardMenu = ({ onChoose }: DashboardMenuProps) => {
       sx={{ px: 1.5, pb: 2, pt: 0.5 }}
     >
       {navItems.map(({ label, path, icon }) => {
-        const selected = isSelected(path);
+        const selected = isSelectedPath(location.pathname, path);
         return (
           <SidebarTile
             path={path}
@@ -187,7 +217,7 @@ export const DashboardMenu = ({ onChoose }: DashboardMenuProps) => {
             leading={<MorphNavIcon icon={icon} />}
             title={label}
             disableRipple
-            indicator={activeIndicator(selected)}
+            indicator={indicator(selected)}
             sx={{
               mb: 0.5,
               "& .MuiListItemButton-root": {
@@ -206,7 +236,7 @@ export const DashboardMenu = ({ onChoose }: DashboardMenuProps) => {
     </List>
   );
 
-  const settingsSelected = isSelected(settingsPath);
+  const settingsSelected = isSelectedPath(location.pathname, settingsPath);
 
   return (
     <Stack
@@ -214,28 +244,7 @@ export const DashboardMenu = ({ onChoose }: DashboardMenuProps) => {
       aria-label={intl.formatMessage({
         defaultMessage: "Dashboard navigation",
       })}
-      sx={{
-        alignItems: "stretch",
-        height: "100%",
-        // Flush against the window's left edge and full height, rounded only where the
-        // rail faces the page. Rounding all four corners left a notch against
-        // the window frame and made the rail read as a floating card that
-        // happened to be clipped, rather than the edge of a plane.
-        borderRadius: "0 16px 16px 0",
-        // Only the edge that faces content carries a hairline. The other three
-        // run into the window frame or into bare canvas, where a 1px line has
-        // nothing to separate and reads as an artifact.
-        borderRight: dark ? hairline.dark(0.05) : hairline.light(0.05),
-        // Same wash as the title bar and the content panel, so all three read as
-        // one material standing off the canvas. The rail is not contiguous with
-        // the bar: the page header sits between them, so this is shared paint,
-        // not one continuous L-shaped surface. The rim catches light along the
-        // top edge and `raisedEdge` casts along the one edge that faces content.
-        boxShadow: dark
-          ? `${insetRim.dark}, ${raisedEdge.dark}`
-          : `${insetRim.light}, ${raisedEdge.light}`,
-        background: dark ? chromeWash.dark : chromeWash.light,
-      }}
+      sx={railSx(dark)}
     >
       <Box sx={{ flexGrow: 1, minHeight: 0, overflowY: "auto", pt: 0.5 }}>
         {list}
@@ -256,7 +265,7 @@ export const DashboardMenu = ({ onChoose }: DashboardMenuProps) => {
             leading={<MorphNavIcon icon={Settings} />}
             title={<FormattedMessage defaultMessage="Settings" />}
             disableRipple
-            indicator={activeIndicator(settingsSelected)}
+            indicator={indicator(settingsSelected)}
             sx={{
               "& .MuiListItemButton-root": {
                 "&.Mui-selected": {

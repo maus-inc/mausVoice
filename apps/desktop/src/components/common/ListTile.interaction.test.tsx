@@ -26,7 +26,7 @@ it("keeps navigation rows actionable", () => {
   const element = document.createElement("div");
   element.innerHTML = renderToStaticMarkup(
     <MemoryRouter>
-      <ListTile title="Settings" onClick={() => {}} />
+      <ListTile title="Settings" onClick={() => undefined} />
     </MemoryRouter>,
   );
   expect(element.querySelector('[role="button"]')).not.toBeNull();

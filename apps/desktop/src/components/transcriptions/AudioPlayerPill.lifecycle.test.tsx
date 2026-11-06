@@ -46,7 +46,7 @@ const deferred = () => {
 };
 beforeEach(() => {
   vi.clearAllMocks();
-  play.mockResolvedValue(undefined);
+  play.mockImplementation(() => Promise.resolve());
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -56,7 +56,7 @@ afterEach(() => {
   container.remove();
 });
 const render = async (ids = ["a"]) => {
-  await act(async () =>
+  await act(() =>
     root.render(
       <IntlProvider locale="en">
         {ids.map((id) => (
@@ -67,7 +67,7 @@ const render = async (ids = ["a"]) => {
   );
 };
 const click = async (index = 0) => {
-  await act(async () =>
+  await act(() =>
     container.querySelectorAll<HTMLButtonElement>("button")[index].click(),
   );
 };
@@ -80,7 +80,7 @@ it("acknowledges a pending read and cancels without playing late audio", async (
     container.querySelector('[aria-label="Cancel audio loading"]'),
   ).not.toBeNull();
   await click();
-  await act(async () => pending.resolve(audio));
+  await act(() => pending.resolve(audio));
   expect(play).not.toHaveBeenCalled();
   expect(container.querySelector('[aria-label="Play audio"]')).not.toBeNull();
 });
@@ -90,7 +90,7 @@ it("does not start audio after its row unmounts", async () => {
   await render();
   await click();
   await render([]);
-  await act(async () => pending.resolve(audio));
+  await act(() => pending.resolve(audio));
   expect(play).not.toHaveBeenCalled();
 });
 it("the newest row wins even if an earlier read completes last", async () => {
@@ -100,8 +100,8 @@ it("the newest row wins even if an earlier read completes last", async () => {
   await render(["a", "b"]);
   await click(0);
   await click(1);
-  await act(async () => b.resolve(audio));
-  await act(async () => a.resolve(audio));
+  await act(() => b.resolve(audio));
+  await act(() => a.resolve(audio));
   expect(play).toHaveBeenCalledTimes(1);
   expect(play.mock.calls[0][0]).toBe("b");
 });
@@ -111,7 +111,7 @@ it("suppresses errors from cancelled work and permits retry", async () => {
   await render();
   await click();
   await click();
-  await act(async () => pending.reject(new Error("missing private/path.wav")));
+  await act(() => pending.reject(new Error("missing private/path.wav")));
   expect(error).not.toHaveBeenCalled();
   await click();
   expect(play).toHaveBeenCalledTimes(1);
@@ -129,9 +129,9 @@ it("names the read stage when the saved audio cannot be loaded, and retries", as
 });
 it("reports a startup failure even when playback teardown notifies stop first", async () => {
   load.mockResolvedValue(audio);
-  play.mockImplementationOnce(async (_id, _audio, _progress, onStop) => {
+  play.mockImplementationOnce((_id, _audio, _progress, onStop) => {
     onStop("stopped");
-    throw new Error("source start failed");
+    return Promise.reject(new Error("source start failed"));
   });
   await render();
   await click();
@@ -145,8 +145,9 @@ it("reports a startup failure even when playback teardown notifies stop first", 
 });
 it("does not show playing if the source ends before preparation resolves", async () => {
   load.mockResolvedValue(audio);
-  play.mockImplementationOnce(async (_id, _audio, _progress, onStop) => {
+  play.mockImplementationOnce((_id, _audio, _progress, onStop) => {
     onStop("ended");
+    return Promise.resolve();
   });
   await render();
   await click();
@@ -161,7 +162,7 @@ it("releases request ownership when playback ends and can play again", async () 
   await click();
   const onStop = play.mock.calls[0][3];
   const signal: AbortSignal = play.mock.calls[0][5];
-  await act(async () => onStop("ended"));
+  await act(() => onStop("ended"));
   expect(signal.aborted).toBe(true);
   expect(container.querySelector('[aria-label="Play audio"]')).not.toBeNull();
   await click();
@@ -212,7 +213,7 @@ it("surfaces a real utility startup rejection after releasing the context", asyn
 });
 
 const renderSingle = async (id = "a", disabled = false) => {
-  await act(async () =>
+  await act(() =>
     root.render(
       <StrictMode>
         <IntlProvider locale="en">
@@ -228,7 +229,7 @@ it("rejects the old read when a mounted row changes identity", async () => {
   await renderSingle();
   await click();
   await renderSingle("b");
-  await act(async () => pending.resolve(audio));
+  await act(() => pending.resolve(audio));
   expect(play).not.toHaveBeenCalled();
   await click();
   expect(play).toHaveBeenCalledOnce();
@@ -239,8 +240,12 @@ it("resumes progress updates after an identity change cuts a drag short", async 
   await renderSingle();
   await click();
   expect(play).toHaveBeenCalledOnce();
-  const slider = () => container.querySelector<HTMLElement>('[role="slider"]')!;
-  await act(async () => {
+  const slider = () => {
+    const el = container.querySelector<HTMLElement>('[role="slider"]');
+    if (!el) throw new Error("missing slider");
+    return el;
+  };
+  await act(() => {
     slider().dispatchEvent(
       new Event("pointerdown", { bubbles: true, cancelable: true }),
     );
@@ -256,14 +261,18 @@ it("does not seek after an identity change while playing", async () => {
   load.mockResolvedValue(audio);
   await renderSingle();
   await click();
-  const slider = () => container.querySelector<HTMLElement>('[role="slider"]')!;
+  const slider = () => {
+    const el = container.querySelector<HTMLElement>('[role="slider"]');
+    if (!el) throw new Error("missing slider");
+    return el;
+  };
   const drag = async () => {
-    await act(async () => {
+    await act(() => {
       slider().dispatchEvent(
         new Event("pointerdown", { bubbles: true, cancelable: true }),
       );
     });
-    await act(async () => {
+    await act(() => {
       window.dispatchEvent(new Event("pointerup"));
     });
   };
@@ -281,7 +290,7 @@ it("cancels disabled rows and permits retry after re-enabling", async () => {
   await click();
   await renderSingle("a", true);
   expect(container.querySelector("button")?.disabled).toBe(true);
-  await act(async () => pending.reject(new Error("old read failed")));
+  await act(() => pending.reject(new Error("old read failed")));
   expect(error).not.toHaveBeenCalled();
   expect(play).not.toHaveBeenCalled();
   await renderSingle();
@@ -295,7 +304,7 @@ it("starts only one read under StrictMode and cancels it on unmount", async () =
   await click();
   expect(load).toHaveBeenCalledOnce();
   await render([]);
-  await act(async () => pending.resolve(audio));
+  await act(() => pending.resolve(audio));
   expect(play).not.toHaveBeenCalled();
 });
 it.each([false, true])(
@@ -317,7 +326,7 @@ it.each([false, true])(
       if (loaded)
         expect((play.mock.calls[0][5] as AbortSignal).aborted).toBe(true);
       else {
-        await act(async () => pending.resolve(audio));
+        await act(() => pending.resolve(audio));
         expect(play).not.toHaveBeenCalled();
       }
       expect(
