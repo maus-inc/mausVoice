@@ -1,6 +1,22 @@
-// @vitest-environment jsdom
+// Runs in the default node environment on purpose: react-router's data
+// router hands `AbortController().signal` to the host `Request`, and on
+// Node 24 the webidl converter rejects the jsdom-realm signal
+// ("Expected signal to be an instance of AbortSignal"). Nothing in this
+// file needs the DOM.
 import { expect, it, vi } from "vitest";
 import { createRouteLoader } from "./route-prefetch";
+
+// The prefetch event rides on globalThis, and vitest's node environment does
+// not make globalThis an EventTarget. Back it with a real one when missing so
+// the event contract is exercised under the same realm as `Request`.
+const bus = new EventTarget();
+if (typeof globalThis.addEventListener !== "function") {
+  Object.assign(globalThis, {
+    addEventListener: bus.addEventListener.bind(bus),
+    removeEventListener: bus.removeEventListener.bind(bus),
+    dispatchEvent: bus.dispatchEvent.bind(bus),
+  });
+}
 it("shares the same import between prefetch and navigation", async () => {
   const Component = () => null;
   const load = vi.fn(async () => ({ default: Component }));
