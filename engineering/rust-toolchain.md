@@ -1,6 +1,18 @@
 # Rust toolchain in agent sandboxes
 
-A restricted sandbox reaches `github.com`, `codeload.github.com`, `api.github.com`,
+This file describes one environment, not the world: the Arena agent sandbox that runs
+this repository's agent, measured on 2026-11-05. It is not a property of the repository,
+of CI, or of your machine. On a host that reaches the wider internet, install rustup
+normally and run the gates directly; read this file only for the `$CARGO_HOME` and
+`CARGO_BUILD_JOBS` notes.
+
+Probe before you trust any line below: `command -v cargo`, `cargo --version`, and one
+`curl -m 8 -o /dev/null -w '%{http_code}'` for `https://sh.rustup.rs`,
+`https://static.rust-lang.org` and `https://index.crates.io`. Three `200`s settle it in
+favour of installing upstream; the installer needs the first two and the gates need the
+third.
+
+That sandbox reaches `github.com`, `codeload.github.com`, `api.github.com`,
 `registry.npmjs.org`, `pypi.org` and `files.pythonhosted.org`. It cannot reach
 `sh.rustup.rs`, `static.rust-lang.org`, `crates.io`, `index.crates.io`,
 `static.crates.io` or `huggingface.co`. `apt-get update` fails against every Debian
@@ -35,8 +47,10 @@ development sysroot for the Tauri and GTK stack, the missing command line tools,
 the two native archives the `build.rs` scripts would otherwise download.
 
 Fetch it, extract it under `/tmp`, and follow its `FETCH.md`. It is the only
-instruction file you need. Commit `61fb32959d6ac6a36b0c6356069a767ee7725caa`,
-3870 files, no parents, nothing merged into `main`.
+instruction file you need. Commit `8442ae0c4e8d0c6a3e2a54072c53e8db5e0fa9e7`, 14438 blobs
+and the G1 to G8, G9 to G13 and G16 to G22 groups, no parents, nothing merged into `main`.
+The branch is a single orphan commit that each delivery moves, so pin the SHA you reviewed
+rather than the branch head.
 
 Measured with that payload, as recorded in the branch `README.md`:
 
@@ -101,8 +115,9 @@ Read the real paths out of `FETCH.md` rather than trusting the names above. The 
 ships its own `rust/cargo-config.toml` with three stanzas, including the replacement
 for the `ferrous-focus` git dependency, and `directory = "/tmp/cargo-vendor"`.
 
-- `CARGO_BUILD_JOBS=1` is required for `cargo test`. Parallel linking peaks above the
-  memory a sandbox has and the linker dies with `signal 9`. CI sets it too.
+- `CARGO_BUILD_JOBS=1` is required for `cargo test` in the Arena agent sandbox. Parallel
+  linking peaks above the 3,939 MB it has, and the linker dies with `signal 9`. CI does
+  not set it, and the hosted runners have the memory to link in parallel.
 - `cargo --config <path> clippy` does not work. Cargo does not forward the global
   `--config` flag to external subcommands, so clippy resolves against crates.io and
   fails. Built-in commands such as `metadata` and `check` do honour the flag. Put the
@@ -114,8 +129,8 @@ for the `ferrous-focus` git dependency, and `directory = "/tmp/cargo-vendor"`.
 
 ## Native payloads
 
-Two `build.rs` scripts download release archives that a sandbox cannot reach. The
-vendor branch pre-seeds both under `native/`, and the digests in its
+Two `build.rs` scripts download release archives that the Arena agent sandbox cannot
+reach. The vendor branch pre-seeds both under `native/`, and the digests in its
 `MANIFEST.sha256` match the pins in the build scripts byte for byte.
 
 | Payload             | File                                               | Env var that selects it                                                                  |
@@ -130,8 +145,9 @@ crate that cannot run. `SHERPA_ONNX_LIB_DIR` bypasses the digest check. Use
 Pre-seeding only the extracted directory does not work, so pre-seed the archive.
 
 The `--ignored` tests in `packages/rust_transcription/tests/sidecar_integration.rs`
-download models from `huggingface.co`, which is not reachable. They cannot run in a
-sandbox. Say so in the PR body instead of reporting them as passed.
+download models from `huggingface.co`, which the Arena agent sandbox cannot reach.
+They cannot run there, and the code offers no mirror override for those artifact URLs.
+Say which gate you ran instead in the PR body rather than reporting them as passed.
 
 ## Do not repeat these mistakes
 

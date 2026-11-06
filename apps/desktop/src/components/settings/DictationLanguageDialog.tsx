@@ -27,6 +27,10 @@ import {
   DICTATION_LANGUAGE_OPTIONS,
   KEYBOARD_LAYOUT_LANGUAGE,
 } from "../../utils/language.utils";
+import {
+  chromeSelectMenuItemSx,
+  chromeSelectMenuProps,
+} from "../common/chromeMenu";
 import { getDetectedSystemLocale, getMyUser } from "../../utils/user.utils";
 import { HotKey } from "../common/HotKey";
 import { BusyButtonLabel } from "../common/BusyButtonLabel";
@@ -92,16 +96,10 @@ const DictationLanguageRow = ({
           size="small"
           variant="outlined"
           fullWidth
-          MenuProps={{
-            slotProps: {
-              paper: {
-                style: { maxHeight: 300 },
-              },
-            },
-          }}
+          MenuProps={chromeSelectMenuProps}
         >
           {DICTATION_LANGUAGE_OPTIONS.map(([value, label]) => (
-            <MenuItem key={value} value={value}>
+            <MenuItem key={value} value={value} sx={chromeSelectMenuItemSx}>
               {label}
             </MenuItem>
           ))}

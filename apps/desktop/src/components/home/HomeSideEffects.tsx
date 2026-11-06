@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef } from "react";
+import { resumeAllInterruptedPostProcessEditRetries } from "../../actions/transcriptions.actions";
 import { refreshCurrentUser } from "../../actions/user.actions";
 import { refreshVisibleTranscriptions } from "../../utils/visible-transcriptions";
 import { getDailyActivityRepo } from "../../repos";
@@ -62,6 +63,10 @@ export const HomeSideEffects = ({ today }: HomeSideEffectsProps) => {
     ]).catch((error: unknown) => {
       getLogger().warning("Failed to refresh home data", error);
     });
+    // Same handoff as the History page: a claim written before a restart has no
+    // process behind it, so the first surface that loads History delivers it.
+    // The scan walks every History page, not just the rows loaded above.
+    resumeAllInterruptedPostProcessEditRetries();
     return () => {
       current = false;
     };

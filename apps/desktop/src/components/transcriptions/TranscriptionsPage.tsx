@@ -25,8 +25,8 @@ import { TranscriptionRow } from "./TranscriptRow";
 import { ScrollListPage } from "../common/ScrollListPage";
 import {
   AUTO_LANGUAGE,
-  DICTATION_LANGUAGES,
   type DictationLanguageCode,
+  getRenderSafeLanguageLabel,
   ORDERED_DICTATION_LANGUAGES,
   toSelectableDictationLanguage,
 } from "../../utils/language.utils";
@@ -35,8 +35,9 @@ import { getSortedToneIds } from "../../utils/tone.utils";
 import { getMyDictationLanguage } from "../../utils/user.utils";
 import {
   chromeDialogPaperSx,
-  chromeMenuItemSx,
+  chromeSelectMenuItemSx,
   chromeSelectMenuProps,
+  chromeStyleSelectMenuProps,
   selectedOptionLabel,
 } from "../common/chromeMenu";
 import {
@@ -49,7 +50,7 @@ const languageOptions = (
     AUTO_LANGUAGE,
     ...ORDERED_DICTATION_LANGUAGES,
   ] satisfies DictationLanguageCode[]
-).map((code) => ({ code, label: DICTATION_LANGUAGES[code] }));
+).map((code) => ({ code, label: getRenderSafeLanguageLabel(code) }));
 
 export default function TranscriptionsPage() {
   const intl = useIntl();
@@ -255,7 +256,7 @@ export default function TranscriptionsPage() {
                   onChange={(event) =>
                     setSelectedToneId(event.target.value || null)
                   }
-                  MenuProps={chromeSelectMenuProps}
+                  MenuProps={chromeStyleSelectMenuProps}
                   renderValue={(value) =>
                     selectedOptionLabel(
                       value,
@@ -269,7 +270,7 @@ export default function TranscriptionsPage() {
                     <MenuItem
                       key={tone.id}
                       value={tone.id}
-                      sx={chromeMenuItemSx}
+                      sx={chromeSelectMenuItemSx}
                     >
                       {tone.name}
                       {tone.id === selectedToneId ? (
@@ -300,7 +301,7 @@ export default function TranscriptionsPage() {
                 }
               >
                 {languageOptions.map(({ code, label }) => (
-                  <MenuItem key={code} value={code} sx={chromeMenuItemSx}>
+                  <MenuItem key={code} value={code} sx={chromeSelectMenuItemSx}>
                     {label}
                     {code === selectedLanguage ? (
                       <Check size={16} strokeWidth={2} />

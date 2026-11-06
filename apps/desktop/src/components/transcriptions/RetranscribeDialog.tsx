@@ -17,13 +17,13 @@ import { useCallback, useEffect, useId, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import {
   closeRetranscribeDialog,
-  retranscribeTranscription,
+  retranscribeTranscriptionWithRecovery,
 } from "../../actions/transcriptions.actions";
 import { useAppStore } from "../../store";
 import {
   AUTO_LANGUAGE,
-  DICTATION_LANGUAGES,
   type DictationLanguageCode,
+  getRenderSafeLanguageLabel,
   ORDERED_DICTATION_LANGUAGES,
   toSelectableDictationLanguage,
 } from "../../utils/language.utils";
@@ -32,8 +32,9 @@ import { getSortedToneIds } from "../../utils/tone.utils";
 import { getMyDictationLanguage } from "../../utils/user.utils";
 import {
   chromeDialogPaperSx,
-  chromeMenuItemSx,
+  chromeSelectMenuItemSx,
   chromeSelectMenuProps,
+  chromeStyleSelectMenuProps,
   selectedOptionLabel,
 } from "../common/chromeMenu";
 
@@ -44,7 +45,7 @@ const languageOptions = (
   ] satisfies DictationLanguageCode[]
 ).map((code) => ({
   code,
-  label: DICTATION_LANGUAGES[code],
+  label: getRenderSafeLanguageLabel(code),
 }));
 
 /**
@@ -64,7 +65,7 @@ const CheckableMenuItem = ({
   label: React.ReactNode;
   selected: boolean;
 }) => (
-  <MenuItem value={value} sx={chromeMenuItemSx}>
+  <MenuItem value={value} sx={chromeSelectMenuItemSx}>
     {label}
     {selected ? <Check size={16} strokeWidth={2} /> : null}
   </MenuItem>
@@ -118,7 +119,7 @@ export const RetranscribeDialog = () => {
     if (!transcriptionId || isRetranscribing) return;
 
     closeRetranscribeDialog();
-    void retranscribeTranscription({
+    void retranscribeTranscriptionWithRecovery({
       transcriptionId,
       toneId: styleSelectionAvailable ? selectedToneId : null,
       languageCode: selectedLanguage,
@@ -157,7 +158,7 @@ export const RetranscribeDialog = () => {
                   const value = e.target.value;
                   setSelectedToneId(value || null);
                 }}
-                MenuProps={chromeSelectMenuProps}
+                MenuProps={chromeStyleSelectMenuProps}
                 renderValue={(value) =>
                   selectedOptionLabel(
                     value,
