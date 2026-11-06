@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::io::{self, BufRead, Write};
+use std::io;
 use std::sync::mpsc::Sender;
 
 use serde::{Deserialize, Serialize};
@@ -144,6 +144,8 @@ pub enum InMessage {
     Toast {
         message: String,
         toast_type: Option<String>,
+        #[serde(default)]
+        microphone_safety_owner: Option<String>,
         duration: Option<f64>,
         action: Option<String>,
         action_label: Option<String>,
@@ -152,7 +154,12 @@ pub enum InMessage {
         #[serde(default)]
         reject_action_label: Option<String>,
     },
-    DismissToast,
+    DismissToast {
+        #[serde(default)]
+        expected_action: Option<String>,
+        #[serde(default)]
+        expected_safety_owner: Option<String>,
+    },
     Fireworks {
         message: String,
     },
@@ -257,34 +264,35 @@ pub enum OutMessage {
     },
 }
 
+/// Enqueue for the embedded desktop, or write one standalone stdout record.
+/// Success is not an acknowledgement that the desktop processed the message.
+/// A disconnected embedded channel must never fall back to stdout: it is not
+/// connected to the desktop and may expose private text in application logs.
 pub fn send(msg: &OutMessage) -> bool {
     let sent_via_channel = OUT_SENDER.with(|cell| {
         cell.borrow()
             .as_ref()
-            .map(|s| s.send(msg.clone()).is_ok())
-            .unwrap_or(false)
+            .map(|sender| sender.send(msg.clone()).is_ok())
     });
-    if !sent_via_channel {
-        let mut stdout = io::stdout().lock();
-        if serde_json::to_writer(&mut stdout, msg).is_err() {
-            return false;
-        }
-        if stdout.write_all(b"\n").is_err() {
-            return false;
-        }
-        stdout.flush().is_ok()
-    } else {
-        true
+    if let Some(delivered) = sent_via_channel {
+        return delivered;
+    }
+    match serde_json::to_vec(msg) {
+        Ok(record) => rust_pill_shared::ipc::write_stdout_line(&record).is_ok(),
+        Err(_) => false,
     }
 }
 
 pub fn start_stdin_reader(sender: Sender<InMessage>) {
     std::thread::spawn(move || {
         let stdin = io::stdin();
-        let reader = stdin.lock();
-        for line in reader.lines() {
-            let Ok(line) = line else { break };
-            if line.is_empty() {
+        let mut reader = stdin.lock();
+        let mut line = String::new();
+        while matches!(
+            rust_pill_shared::ipc::read_complete_line(&mut reader, &mut line),
+            Ok(true)
+        ) {
+            if line.trim().is_empty() {
                 continue;
             }
             match serde_json::from_str::<InMessage>(&line) {
@@ -366,5 +374,90 @@ mod review_localization_tests {
         let review = parsed.review.expect("review should be present");
         assert_eq!(review.id, "r1");
         assert_eq!(review.insert_label.as_deref(), Some("Einfuegen"));
+    }
+}
+
+#[cfg(test)]
+mod channel_delivery_tests {
+    use super::{send, set_out_sender, OutMessage, OUT_SENDER};
+    use std::sync::mpsc;
+
+    #[test]
+    fn a_disconnected_embedded_channel_does_not_fall_back_to_stdout() {
+        let (sender, receiver) = mpsc::channel();
+        drop(receiver);
+        set_out_sender(sender);
+        let delivered = send(&OutMessage::TypedMessage {
+            text: "keep this draft".into(),
+        });
+        OUT_SENDER.with(|cell| *cell.borrow_mut() = None);
+        assert!(!delivered);
+    }
+
+    #[test]
+    fn an_embedded_channel_receives_the_original_message() {
+        let (sender, receiver) = mpsc::channel();
+        set_out_sender(sender);
+        let delivered = send(&OutMessage::TypedMessage {
+            text: "  exact draft  ".into(),
+        });
+        OUT_SENDER.with(|cell| *cell.borrow_mut() = None);
+        assert!(delivered);
+        assert!(
+            matches!(receiver.try_recv(), Ok(OutMessage::TypedMessage { text }) if text == "  exact draft  ")
+        );
+    }
+}
+
+#[cfg(test)]
+mod scoped_dismiss_tests {
+    use super::InMessage;
+
+    #[test]
+    fn safety_flag_is_opt_in_and_legacy_toasts_remain_compatible() {
+        let legacy: InMessage = serde_json::from_str(r#"{"type":"toast","message":"x"}"#).unwrap();
+        assert!(matches!(
+            legacy,
+            InMessage::Toast {
+                microphone_safety_owner: None,
+                ..
+            }
+        ));
+        let safety: InMessage = serde_json::from_str(
+            r#"{"type":"toast","message":"x","microphone_safety_owner":"owner"}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            safety,
+            InMessage::Toast {
+                microphone_safety_owner: Some(owner),
+                ..
+            } if owner == "owner"
+        ));
+    }
+
+    #[test]
+    fn accepts_legacy_and_scoped_dismissals() {
+        let legacy: InMessage = serde_json::from_str(r#"{"type":"dismiss_toast"}"#).unwrap();
+        assert!(matches!(
+            legacy,
+            InMessage::DismissToast {
+                expected_action: None,
+                expected_safety_owner: None,
+            }
+        ));
+        let warning: InMessage =
+            serde_json::from_str(r#"{"type":"dismiss_toast","expected_safety_owner":"owner"}"#)
+                .unwrap();
+        assert!(
+            matches!(warning, InMessage::DismissToast { expected_action: None, expected_safety_owner: Some(owner) } if owner == "owner")
+        );
+        let scoped: InMessage = serde_json::from_str(
+            r#"{"type":"dismiss_toast","expected_action":"cancel_recording_stop#owner"}"#,
+        )
+        .unwrap();
+        assert!(
+            matches!(scoped, InMessage::DismissToast { expected_action: Some(action), expected_safety_owner: None } if action == "cancel_recording_stop#owner")
+        );
     }
 }

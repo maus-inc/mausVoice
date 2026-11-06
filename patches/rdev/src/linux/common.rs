@@ -1,5 +1,5 @@
-use crate::linux::keyboard::Keyboard;
 use crate::keycodes::linux::key_from_code;
+use crate::linux::keyboard::Keyboard;
 use crate::rdev::{Button, Event, EventType, KeyboardState};
 use std::convert::TryInto;
 use std::os::raw::{c_int, c_uchar, c_uint};

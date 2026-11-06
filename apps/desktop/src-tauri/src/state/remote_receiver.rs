@@ -28,6 +28,7 @@ pub struct RemoteReceiverStatus {
 struct RemoteReceiverStateInner {
     status: RemoteReceiverStatus,
     shutdown: Option<watch::Sender<bool>>,
+    start_generation: Arc<()>,
 }
 
 #[derive(Clone)]
@@ -74,6 +75,7 @@ impl RemoteReceiverState {
                     device_platform: std::env::consts::OS.to_string(),
                 },
                 shutdown: None,
+                start_generation: Arc::new(()),
             })),
         }
     }
@@ -86,17 +88,33 @@ impl RemoteReceiverState {
         self.inner.lock().unwrap().status.enabled
     }
 
-    pub fn start(&self, listen_address: String, port: u16, shutdown: watch::Sender<bool>) {
+    pub fn prepare_start(&self) -> Option<Arc<()>> {
+        let inner = self.inner.lock().unwrap();
+        (!inner.status.enabled).then(|| Arc::clone(&inner.start_generation))
+    }
+
+    pub fn start_if_current(
+        &self,
+        generation: &Arc<()>,
+        listen_address: String,
+        port: u16,
+        shutdown: watch::Sender<bool>,
+    ) -> bool {
         let mut inner = self.inner.lock().unwrap();
+        if inner.status.enabled || !Arc::ptr_eq(&inner.start_generation, generation) {
+            return false;
+        }
         inner.status.enabled = true;
         inner.status.listen_address = Some(listen_address);
         inner.status.port = Some(port);
         inner.status.pairing_code = generate_pairing_code();
         inner.shutdown = Some(shutdown);
+        true
     }
 
     pub fn stop(&self) {
         let mut inner = self.inner.lock().unwrap();
+        inner.start_generation = Arc::new(());
         if let Some(shutdown) = inner.shutdown.take() {
             let _ = shutdown.send(true);
         }
@@ -105,9 +123,13 @@ impl RemoteReceiverState {
         inner.status.port = None;
     }
 
-    pub fn rotate_pairing_code(&self) {
+    pub fn consume_pairing_code(&self, code: &str) -> bool {
         let mut inner = self.inner.lock().unwrap();
+        if !inner.status.enabled || inner.status.pairing_code != code {
+            return false;
+        }
         inner.status.pairing_code = generate_pairing_code();
+        true
     }
 
     pub fn record_delivery(
@@ -155,4 +177,72 @@ fn generate_pairing_code() -> String {
     let mut bytes = [0u8; 12];
     OsRng.fill_bytes(&mut bytes);
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Barrier;
+    use std::thread;
+
+    #[test]
+    fn stop_invalidates_pending_starts_and_signals_active_connections() {
+        let state = RemoteReceiverState::new();
+        let old = state.prepare_start().unwrap();
+        state.stop();
+        let (sender, _) = watch::channel(false);
+        assert!(!state.start_if_current(&old, "127.0.0.1".into(), 1, sender));
+        assert!(!state.is_enabled());
+
+        let current = state.prepare_start().unwrap();
+        let (sender, receiver) = watch::channel(false);
+        assert!(state.start_if_current(&current, "127.0.0.1".into(), 2, sender));
+        assert!(state.prepare_start().is_none());
+        state.stop();
+        assert!(*receiver.borrow());
+        assert!(!state.is_enabled());
+    }
+
+    #[test]
+    fn simultaneous_starts_cannot_replace_the_running_listener() {
+        let state = RemoteReceiverState::new();
+        let first = state.prepare_start().unwrap();
+        let second = state.prepare_start().unwrap();
+        let (sender, receiver) = watch::channel(false);
+        assert!(state.start_if_current(&first, "first".into(), 1, sender));
+        let (sender, _) = watch::channel(false);
+        assert!(!state.start_if_current(&second, "second".into(), 2, sender));
+        assert_eq!(state.status().port, Some(1));
+        state.stop();
+        assert!(*receiver.borrow());
+    }
+
+    #[test]
+    fn a_pairing_code_is_consumed_by_at_most_one_connection() {
+        let state = RemoteReceiverState::new();
+        let generation = state.prepare_start().unwrap();
+        let (sender, _) = watch::channel(false);
+        assert!(state.start_if_current(&generation, "localhost".into(), 1, sender));
+        let code = state.status().pairing_code;
+        let barrier = Arc::new(Barrier::new(8));
+        let threads: Vec<_> = (0..8)
+            .map(|_| {
+                let state = state.clone();
+                let code = code.clone();
+                let barrier = Arc::clone(&barrier);
+                thread::spawn(move || {
+                    barrier.wait();
+                    state.consume_pairing_code(&code)
+                })
+            })
+            .collect();
+        let accepted = threads
+            .into_iter()
+            .map(|thread| thread.join().unwrap())
+            .filter(|accepted| *accepted)
+            .count();
+        assert_eq!(accepted, 1);
+        state.stop();
+        assert!(!state.consume_pairing_code(&state.status().pairing_code));
+    }
 }

@@ -1,4 +1,4 @@
-use std::io::{BufRead, Write};
+use std::io::Write;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::RecvTimeoutError;
@@ -17,7 +17,9 @@ use crate::domain::{OverlayPhase, PillWindowSize};
 /// `PillProcess`'s own API. The one read is [`publish_pill_process`]'s reject branch.
 pub struct PillProcess {
     _child: Mutex<Child>,
-    stdin: Mutex<ChildStdin>,
+    // A failed nonblocking write or flag restoration can invalidate framing.
+    // Closing the pipe prevents a later control message following a partial line.
+    stdin: Mutex<Option<ChildStdin>>,
 }
 
 /// Monotonic sequence number for phase messages. A rapid loading -> idle
@@ -25,40 +27,79 @@ pub struct PillProcess {
 /// duplicate/late write must not regress the rendered phase.
 static PHASE_SEQ: AtomicU64 = AtomicU64::new(0);
 
+/// A failed `write_all` can have written a prefix. Closing the channel on
+/// failure prevents either a retry or another sender from appending to it.
+fn write_control_frame<W: Write>(writer: &mut Option<W>, msg: &str) -> std::io::Result<()> {
+    rust_pill_shared::ipc::write_complete_line(writer, msg.as_bytes())
+}
+
 impl PillProcess {
-    /// Writes one newline-terminated message to the pill's stdin.
-    ///
-    /// On write failure (broken pipe, pill exited), retries once immediately
-    /// and then surfaces the error to the caller instead of only logging it.
+    /// Write one record while holding the pipe lock. Failed writes close the
+    /// channel because an unknown prefix may already have reached the child.
     pub fn send(&self, msg: &str) -> Result<(), String> {
-        let attempt = |label: &str| -> Result<(), String> {
-            let mut stdin = self
-                .stdin
-                .lock()
-                .map_err(|err| format!("failed to lock pill stdin: {err}"))?;
-            stdin
-                .write_all(msg.as_bytes())
-                .and_then(|_| stdin.write_all(b"\n"))
-                .and_then(|_| stdin.flush())
-                .map_err(|err| format!("{label}: {err}"))
-        };
+        let mut stdin = self
+            .stdin
+            .lock()
+            .map_err(|err| format!("failed to lock pill stdin: {err}"))?;
+        write_control_frame(&mut stdin, msg)
+            .map_err(|err| format!("failed to write to pill process: {err}"))
+    }
 
-        if let Err(first) = attempt("failed to write to pill process") {
-            let second = attempt("retry failed to write to pill process");
-            let error = match second {
-                Ok(()) => {
-                    log::warn!(
-                        "Pill stdin write succeeded on retry (first attempt failed: {first})"
-                    );
-                    return Ok(());
-                }
-                Err(second) => format!("{first}; {second}"),
-            };
-            log::error!("Pill stdin write failed: {error}");
-            return Err(error);
+    /// Levels are replaceable visualization data. Never wait for a busy or
+    /// stalled child from the capture callback. Linux guarantees nonblocking
+    /// writes up to PIPE_BUF are all-or-nothing for a pipe.
+    #[cfg(target_os = "linux")]
+    fn try_send_levels(&self, msg: &str) -> Result<(), String> {
+        use std::os::fd::AsRawFd;
+        use std::sync::TryLockError;
+
+        if msg.len() >= libc::PIPE_BUF {
+            return Err("pill level frame exceeds PIPE_BUF".into());
         }
-
-        Ok(())
+        let mut frame = Vec::with_capacity(msg.len() + 1);
+        frame.extend_from_slice(msg.as_bytes());
+        frame.push(b'\n');
+        let mut guard = match self.stdin.try_lock() {
+            Ok(guard) => guard,
+            Err(TryLockError::WouldBlock) => return Ok(()),
+            Err(TryLockError::Poisoned(_)) => return Err("pill stdin lock is poisoned".into()),
+        };
+        let Some(stdin) = guard.as_mut() else {
+            return Ok(());
+        };
+        let fd = stdin.as_raw_fd();
+        // The mutex gives this code exclusive access to the write descriptor.
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+        if flags == -1 {
+            return Err(format!(
+                "could not read pill pipe flags: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        if unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } == -1 {
+            return Err(format!(
+                "could not set pill pipe nonblocking: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        let written = stdin.write(&frame);
+        let restored = unsafe { libc::fcntl(fd, libc::F_SETFL, flags) } != -1;
+        let restore_error = (!restored).then(std::io::Error::last_os_error);
+        if !restored || matches!(&written, Ok(n) if *n != frame.len()) {
+            // Never append a new JSON record after a partial frame, or use a
+            // descriptor whose original blocking mode could not be restored.
+            *guard = None;
+        }
+        if let Some(error) = restore_error {
+            return Err(format!("could not restore pill pipe flags: {error}"));
+        }
+        match written {
+            Ok(n) if n == frame.len() => Ok(()),
+            Ok(_) => Err("partial pill level frame; pipe closed".into()),
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => Ok(()),
+            Err(error) => Err(format!("could not write pill level frame: {error}")),
+        }
     }
 }
 
@@ -220,7 +261,7 @@ pub fn try_spawn_pill(app: &tauri::AppHandle, pill_path: &std::path::Path) -> bo
 
     let process = std::sync::Arc::new(PillProcess {
         _child: Mutex::new(child),
-        stdin: Mutex::new(stdin),
+        stdin: Mutex::new(Some(stdin)),
     });
 
     if !publish_pill_process(app, process) {
@@ -257,7 +298,11 @@ pub fn notify_audio_levels(app: &tauri::AppHandle, levels: &[f32]) {
         if let Ok(json) =
             serde_json::to_string(&serde_json::json!({"type": "levels", "levels": levels}))
         {
-            if let Err(err) = pill.send(&json) {
+            #[cfg(target_os = "linux")]
+            let result = pill.try_send_levels(&json);
+            #[cfg(not(target_os = "linux"))]
+            let result = pill.send(&json);
+            if let Err(err) = result {
                 log::error!("Failed to notify pill of audio levels: {err}");
             }
         }
@@ -379,6 +424,11 @@ pub fn resolve_pill_binary_in_dev(
     None
 }
 
+fn is_ready_message(line: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(line)
+        .is_ok_and(|value| value.get("type").and_then(serde_json::Value::as_str) == Some("ready"))
+}
+
 fn wait_for_ready(
     stdout: ChildStdout,
     child: &mut Child,
@@ -388,14 +438,13 @@ fn wait_for_ready(
         let mut reader = std::io::BufReader::new(stdout);
         let mut line = String::default();
         loop {
-            line.clear();
-            match reader.read_line(&mut line) {
-                Ok(0) | Err(_) => {
+            match rust_pill_shared::ipc::read_complete_line(&mut reader, &mut line) {
+                Ok(false) | Err(_) => {
                     let _ = tx.send(None);
                     return;
                 }
-                Ok(_) => {
-                    if line.contains("\"ready\"") {
+                Ok(true) => {
+                    if is_ready_message(&line) {
                         let _ = tx.send(Some(reader));
                         return;
                     }
@@ -431,10 +480,9 @@ fn start_stdout_reader(app: tauri::AppHandle, reader: std::io::BufReader<ChildSt
         let mut reader = reader;
         let mut line = String::default();
         loop {
-            line.clear();
-            match reader.read_line(&mut line) {
-                Ok(0) | Err(_) => break,
-                Ok(_) => {
+            match rust_pill_shared::ipc::read_complete_line(&mut reader, &mut line) {
+                Ok(false) | Err(_) => break,
+                Ok(true) => {
                     if let Some(event) = parse_pill_event(&line) {
                         dispatch_pill_event(&app, event);
                     }
@@ -1502,6 +1550,147 @@ mod pill_event_dispatch_tests {
 }
 
 #[cfg(test)]
+mod control_frame_tests {
+    use super::write_control_frame;
+    use std::io::{self, Write};
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Default)]
+    struct Observed {
+        bytes: Vec<u8>,
+        writes: usize,
+        flushes: usize,
+    }
+
+    enum Failure {
+        AfterPrefix,
+        OnDelimiter,
+        OnFlush,
+        Never,
+    }
+
+    struct Writer {
+        observed: Arc<Mutex<Observed>>,
+        failure: Failure,
+        interrupted: bool,
+    }
+
+    impl Write for Writer {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            let mut state = self.observed.lock().unwrap();
+            state.writes += 1;
+            if self.interrupted {
+                self.interrupted = false;
+                return Err(io::ErrorKind::Interrupted.into());
+            }
+            if matches!(self.failure, Failure::AfterPrefix) && !state.bytes.is_empty() {
+                return Err(io::ErrorKind::BrokenPipe.into());
+            }
+            if matches!(self.failure, Failure::OnDelimiter) && bytes == b"\n" {
+                return Err(io::ErrorKind::BrokenPipe.into());
+            }
+            let count = if matches!(self.failure, Failure::AfterPrefix | Failure::Never) {
+                bytes.len().min(2)
+            } else {
+                bytes.len()
+            };
+            state.bytes.extend_from_slice(&bytes[..count]);
+            Ok(count)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            self.observed.lock().unwrap().flushes += 1;
+            if matches!(self.failure, Failure::OnFlush) {
+                Err(io::ErrorKind::BrokenPipe.into())
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    fn writer(failure: Failure, interrupted: bool) -> (Option<Writer>, Arc<Mutex<Observed>>) {
+        let observed = Arc::new(Mutex::new(Observed::default()));
+        (
+            Some(Writer {
+                observed: observed.clone(),
+                failure,
+                interrupted,
+            }),
+            observed,
+        )
+    }
+
+    #[test]
+    fn failed_frames_close_the_channel_without_replaying_a_prefix() {
+        for (failure, expected) in [
+            (Failure::AfterPrefix, &b"ab"[..]),
+            (Failure::OnDelimiter, &b"abcdef"[..]),
+            (Failure::OnFlush, &b"abcdef\n"[..]),
+        ] {
+            let (mut output, observed) = writer(failure, false);
+            assert!(write_control_frame(&mut output, "abcdef").is_err());
+            assert!(output.is_none());
+            let writes = observed.lock().unwrap().writes;
+            assert!(write_control_frame(&mut output, "next").is_err());
+            let state = observed.lock().unwrap();
+            assert_eq!(state.bytes, expected);
+            assert_eq!(state.writes, writes);
+        }
+    }
+
+    #[test]
+    fn ready_handshake_accepts_only_the_ready_type() {
+        assert!(super::is_ready_message(r#"{"type":"ready"}"#));
+        assert!(super::is_ready_message(r#"{"extra":true,"type":"ready"}"#));
+        assert!(!super::is_ready_message(
+            r#"{"type":"hover","value":"ready"}"#
+        ));
+        assert!(!super::is_ready_message(r#"{"message":"ready"}"#));
+        assert!(!super::is_ready_message(r#"{"type":"ready""#));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ready_handshake_requires_a_complete_line_and_preserves_later_records() {
+        use std::process::{Command, Stdio};
+        let mut child = Command::new("sh")
+            .args([
+                "-c",
+                r#"printf '%s\n' '{"message":"ready"}' '{"type":"ready"}' '{"type":"click"}'"#,
+            ])
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let stdout = child.stdout.take().unwrap();
+        let mut reader = super::wait_for_ready(stdout, &mut child).expect("ready message");
+        let mut next = String::new();
+        assert!(rust_pill_shared::ipc::read_complete_line(&mut reader, &mut next).unwrap());
+        assert_eq!(next, "{\"type\":\"click\"}\n");
+        assert!(child.wait().unwrap().success());
+
+        let mut child = Command::new("sh")
+            .args(["-c", r#"printf '%s' '{"type":"ready"}'"#])
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let stdout = child.stdout.take().unwrap();
+        assert!(super::wait_for_ready(stdout, &mut child).is_none());
+        assert!(child.wait().unwrap().success());
+    }
+
+    #[test]
+    fn interrupted_and_short_writes_complete_once_in_order() {
+        let (mut output, observed) = writer(Failure::Never, true);
+        write_control_frame(&mut output, "abcdef").unwrap();
+        write_control_frame(&mut output, "next").unwrap();
+        let state = observed.lock().unwrap();
+        assert_eq!(state.bytes, b"abcdef\nnext\n");
+        assert_eq!(state.flushes, 2);
+        assert!(output.is_some());
+    }
+}
+
+#[cfg(test)]
 mod pill_publish_tests {
     // The reject branch of `publish_pill_process`, driven with real child processes.
     //
@@ -1579,8 +1768,166 @@ mod pill_publish_tests {
         let (child, stdin) = idle_child();
         ReapOnDrop(Arc::new(PillProcess {
             _child: Mutex::new(child),
-            stdin: Mutex::new(stdin),
+            stdin: Mutex::new(Some(stdin)),
         }))
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn levels_skip_a_full_pipe_and_restore_blocking_mode() {
+        use std::io::Write;
+        use std::os::fd::AsRawFd;
+        use std::sync::mpsc;
+
+        let process = pill_process();
+        {
+            let mut guard = process.0.stdin.lock().unwrap();
+            let stdin = guard.as_mut().unwrap();
+            let fd = stdin.as_raw_fd();
+            let original = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+            assert!(original >= 0);
+            assert_eq!(
+                unsafe { libc::fcntl(fd, libc::F_SETFL, original | libc::O_NONBLOCK) },
+                0
+            );
+            let bytes = [b'x'; 4096];
+            loop {
+                match stdin.write(&bytes) {
+                    Ok(n) => assert!(n > 0),
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+                    Err(e) => panic!("filling pipe: {e}"),
+                }
+            }
+            assert_eq!(unsafe { libc::fcntl(fd, libc::F_SETFL, original) }, 0);
+        }
+        // Exercise the same admission gate used by the capture callback, not
+        // just the pipe operation in isolation.
+        use crate::platform::recording_ownership::{RecordingOwnership, StartControl};
+        use std::sync::atomic::AtomicBool;
+        let ownership = Arc::new(RecordingOwnership::default());
+        let window = ownership.window(99);
+        let generation = ownership.reserve("owner", &window).unwrap();
+        let admission = ownership
+            .claim_admission("owner", &window, generation)
+            .unwrap();
+        ownership
+            .start(
+                "owner",
+                &window,
+                generation,
+                StartControl {
+                    cancelled: &AtomicBool::new(false),
+                    admission: Some(&admission),
+                    wait: Duration::ZERO,
+                },
+                || Ok(()),
+                || true,
+            )
+            .unwrap();
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (go_tx, go_rx) = mpsc::channel();
+        let (tx, rx) = mpsc::channel();
+        let pill = process.0.clone();
+        let emitter_admission = admission.clone();
+        let worker = std::thread::spawn(move || {
+            emitter_admission.with_active_level_callback(|| {
+                entered_tx.send(()).unwrap();
+                go_rx.recv().unwrap();
+                tx.send(pill.try_send_levels(r#"{"type":"levels","levels":[0.5]}"#))
+                    .unwrap();
+            });
+        });
+        entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        let (stopped_tx, stopped_rx) = mpsc::channel();
+        let stopping = ownership.clone();
+        let stopper = std::thread::spawn(move || {
+            stopped_tx
+                .send(stopping.stop("owner", || (Ok(()), false)))
+                .unwrap();
+        });
+        go_tx.send(()).unwrap();
+        assert!(rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("level write blocked")
+            .is_ok());
+        stopped_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("release blocked")
+            .unwrap();
+        worker.join().unwrap();
+        stopper.join().unwrap();
+        admission.with_active_level_callback(|| panic!("retired callback ran"));
+        let guard = process.0.stdin.lock().unwrap();
+        let flags = unsafe { libc::fcntl(guard.as_ref().unwrap().as_raw_fd(), libc::F_GETFL) };
+        assert_ne!(flags, -1);
+        assert_eq!(flags & libc::O_NONBLOCK, 0);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn levels_skip_a_busy_writer_and_reject_oversized_frames() {
+        let process = pill_process();
+        let guard = process.0.stdin.lock().unwrap();
+        assert!(process.0.try_send_levels("busy").is_ok());
+        drop(guard);
+        let oversized = "x".repeat(libc::PIPE_BUF);
+        assert!(process.0.try_send_levels(&oversized).is_err());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn poisoned_pill_pipe_fails_closed_for_level_and_control_writes() {
+        let process = pill_process();
+        let pill = process.0.clone();
+        assert!(std::thread::spawn(move || {
+            let _guard = pill.stdin.lock().unwrap();
+            panic!("simulate a failed writer");
+        })
+        .join()
+        .is_err());
+        assert!(process.0.try_send_levels("levels").is_err());
+        assert!(process.0.send("control").is_err());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn levels_and_control_frames_remain_separate_lines() {
+        use std::io::{BufRead, BufReader};
+        let mut child = Command::new("cat")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let stdin = child.stdin.take().unwrap();
+        let stdout = child.stdout.take().unwrap();
+        let process = ReapOnDrop(Arc::new(PillProcess {
+            _child: Mutex::new(child),
+            stdin: Mutex::new(Some(stdin)),
+        }));
+        let level = r#"{"type":"levels","levels":[0.5]}"#;
+        let phase = r#"{"type":"phase","phase":"idle"}"#;
+        process.0.try_send_levels(level).unwrap();
+        process.0.send(phase).unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let reader = std::thread::spawn(move || {
+            let mut reader = BufReader::new(stdout);
+            for _ in 0..2 {
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                if tx.send(line).is_err() {
+                    break;
+                }
+            }
+        });
+        assert_eq!(
+            rx.recv_timeout(Duration::from_secs(2)).unwrap(),
+            format!("{level}\n")
+        );
+        assert_eq!(
+            rx.recv_timeout(Duration::from_secs(2)).unwrap(),
+            format!("{phase}\n")
+        );
+        reader.join().unwrap();
     }
 
     /// How long to wait for a kill this test SENT to be observed. `kill()` raises a signal and

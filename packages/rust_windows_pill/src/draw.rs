@@ -61,6 +61,13 @@ pub(crate) fn draw_all(gfx: &mut Gfx, state: &PillState) {
         draw_keyboard_button(gfx, state, ww, wh);
     }
 
+    if state.assistant_active.get()
+        && state.recording_stop_safety_active()
+        && state.flash_t.get() > 0.01
+    {
+        draw_flash_message(gfx, state, ww, wh);
+    }
+
     if !state.assistant_active.get() {
         if !state.fireworks_rockets.borrow().is_empty() {
             draw_fireworks(gfx, state);
@@ -647,11 +654,24 @@ fn draw_flash_message(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
     let flash_w = (text_w + FLASH_PADDING_H * 2.0 + action_section).max(80.0);
 
     let scale = FLASH_MIN_SCALE + (1.0 - FLASH_MIN_SCALE) * flash_t;
+    let scale = if state.recording_stop_safety_active() {
+        let available = { WINDOW_W_TYPING as f64 - 16.0 };
+        scale * rust_pill_shared::safety_notice_fit_scale(flash_w, available)
+    } else {
+        scale
+    };
     let alpha = flash_t;
 
     let (_, pill_y, _, _) = pill_position(state, ww, wh);
     let full_x = (ww - flash_w) / 2.0;
     let full_y = pill_y - FLASH_GAP - FLASH_HEIGHT;
+    let full_y = rust_pill_shared::safety_notice_top(
+        full_y,
+        state.recording_stop_safety_active() && state.is_typing(),
+        wh - PANEL_BOTTOM_MARGIN - PANEL_INPUT_HEIGHT,
+        FLASH_GAP,
+        FLASH_HEIGHT,
+    );
 
     let center_x = full_x + flash_w / 2.0;
     let center_y = full_y + FLASH_HEIGHT / 2.0;

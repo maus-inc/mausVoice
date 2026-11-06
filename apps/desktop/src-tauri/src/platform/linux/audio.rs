@@ -1,15 +1,16 @@
 use crate::domain::{RecordedAudio, RecordingMetrics, RecordingResult};
 use crate::errors::RecordingError;
 use crate::platform::audio::{
-    compute_level_bins, InputDeviceDescriptor, CHUNK_DISPATCH_INTERVAL, LEVEL_DISPATCH_INTERVAL,
+    compute_level_bins, retain_finite_prefix, InputDeviceDescriptor, CHUNK_DISPATCH_INTERVAL,
+    LEVEL_DISPATCH_INTERVAL,
 };
 use crate::platform::{ChunkCallback, LevelCallback, Recorder};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use libpulse_binding as pulse;
 use libpulse_binding::mainloop::standard::Mainloop;
-use libpulse_simple_binding as psimple;
 
 const FALLBACK_SAMPLE_RATE: u32 = 44_100;
 const READ_CHUNK_FRAMES: usize = 1024;
@@ -20,13 +21,10 @@ pub struct PulseRecorder {
 }
 
 struct ActiveRecording {
-    stop_signal: Arc<Mutex<bool>>,
-    thread: Option<std::thread::JoinHandle<RecordingResult>>,
+    stop_signal: Arc<AtomicBool>,
+    thread: Option<std::thread::JoinHandle<Result<RecordingResult, String>>>,
     sample_rate: u32,
 }
-
-unsafe impl Send for PulseRecorder {}
-unsafe impl Sync for PulseRecorder {}
 
 impl Default for PulseRecorder {
     fn default() -> Self {
@@ -78,21 +76,41 @@ impl Recorder for PulseRecorder {
             native_rate,
         );
 
-        let stop_signal = Arc::new(Mutex::new(false));
+        let stop_signal = Arc::new(AtomicBool::new(false));
         let stop_signal_clone = Arc::clone(&stop_signal);
+        let (ready_tx, ready_rx) = mpsc::channel();
 
         let thread = std::thread::Builder::new()
             .name("pulse-recorder".into())
             .spawn(move || {
-                record_loop(
+                let result = record_loop(
                     source_name.as_deref(),
                     native_rate,
                     stop_signal_clone,
                     level_callback,
                     chunk_callback,
-                )
+                    &ready_tx,
+                );
+                if let Err(error) = &result {
+                    let _ = ready_tx.send(Err(error.clone()));
+                }
+                result
             })
             .map_err(|err| RecordingError::StreamBuild(err.to_string()))?;
+
+        match ready_rx.recv_timeout(Duration::from_secs(6)) {
+            Ok(Ok(())) => {}
+            result => {
+                stop_signal.store(true, Ordering::Release);
+                let _ = thread.join();
+                let error = match result {
+                    Ok(Err(error)) => error,
+                    Err(error) => format!("PulseAudio startup failed: {error}"),
+                    Ok(Ok(())) => unreachable!(),
+                };
+                return Err(Box::new(RecordingError::StreamBuild(error)));
+            }
+        }
 
         *guard = Some(ActiveRecording {
             stop_signal,
@@ -107,13 +125,10 @@ impl Recorder for PulseRecorder {
         let mut guard = self
             .inner
             .lock()
-            .map_err(|_| RecordingError::NotRecording)?;
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut recording = guard.take().ok_or(RecordingError::NotRecording)?;
 
-        // Signal the recording thread to stop
-        if let Ok(mut flag) = recording.stop_signal.lock() {
-            *flag = true;
-        }
+        recording.stop_signal.store(true, Ordering::Release);
 
         let thread = recording
             .thread
@@ -121,7 +136,8 @@ impl Recorder for PulseRecorder {
             .ok_or(RecordingError::NotRecording)?;
         let result = thread
             .join()
-            .map_err(|_| RecordingError::StreamBuild("recording thread panicked".into()))?;
+            .map_err(|_| RecordingError::StreamBuild("recording thread panicked".into()))?
+            .map_err(RecordingError::StreamBuild)?;
 
         Ok(result)
     }
@@ -138,6 +154,10 @@ impl Recorder for PulseRecorder {
         // No caching needed — PulseAudio handles device routing
     }
 
+    fn is_recording(&self) -> bool {
+        self.current_sample_rate().is_some()
+    }
+
     fn current_sample_rate(&self) -> Option<u32> {
         let guard = match self.inner.lock() {
             Ok(g) => g,
@@ -147,8 +167,7 @@ impl Recorder for PulseRecorder {
     }
 
     fn pause(&self) -> Result<(), Box<dyn std::error::Error>> {
-        // PulseAudio simple stream does not expose direct pause/resume.
-        // Returning unsupported keeps the trait contract while making the limitation explicit.
+        // The capture worker does not yet implement pause/resume.
         Err(Box::new(RecordingError::StreamPlay(
             "PulseAudio recorder does not support pause/resume".into(),
         )))
@@ -204,92 +223,181 @@ fn query_source_native_rate(source_name: Option<&str>) -> u32 {
     FALLBACK_SAMPLE_RATE
 }
 
-/// The actual blocking recording loop. Runs on a dedicated thread.
-#[allow(unknown_lints)]
-#[allow(clippy::chunks_exact_to_as_chunks)]
+fn pulse_iterate(mainloop: &mut Mainloop) -> Result<(), String> {
+    match mainloop.iterate(false) {
+        pulse::mainloop::standard::IterateResult::Success(_) => Ok(()),
+        pulse::mainloop::standard::IterateResult::Quit(_) => {
+            Err("PulseAudio mainloop stopped".into())
+        }
+        pulse::mainloop::standard::IterateResult::Err(error) => {
+            Err(format!("PulseAudio mainloop failed: {error}"))
+        }
+    }
+}
+
+fn wait_for_pulse(
+    mainloop: &mut Mainloop,
+    stop: &AtomicBool,
+    mut state: impl FnMut() -> Result<bool, String>,
+) -> Result<(), String> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if stop.load(Ordering::Acquire) {
+            return Err("Recording start was cancelled".into());
+        }
+        if state()? {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err("PulseAudio startup timed out".into());
+        }
+        pulse_iterate(mainloop)?;
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+fn pulse_samples(fragment: pulse::stream::PeekResult<'_>) -> Result<Option<Vec<f32>>, String> {
+    match fragment {
+        pulse::stream::PeekResult::Empty => Ok(None),
+        pulse::stream::PeekResult::Hole(bytes) => {
+            if bytes % 4 != 0 {
+                return Err("Invalid PulseAudio sample alignment".into());
+            }
+            Ok(Some(vec![0.0; bytes / 4]))
+        }
+        pulse::stream::PeekResult::Data(bytes) => {
+            if bytes.len() % 4 != 0 {
+                return Err("Invalid PulseAudio sample alignment".into());
+            }
+            Ok(Some(
+                bytes
+                    .chunks_exact(4)
+                    .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+                    .collect(),
+            ))
+        }
+    }
+}
+
 fn record_loop(
     source_name: Option<&str>,
     sample_rate: u32,
-    stop_signal: Arc<Mutex<bool>>,
+    stop_signal: Arc<AtomicBool>,
     level_callback: Option<LevelCallback>,
     chunk_callback: Option<ChunkCallback>,
-) -> RecordingResult {
+    ready: &mpsc::Sender<Result<(), String>>,
+) -> Result<RecordingResult, String> {
     let spec = pulse::sample::Spec {
         format: pulse::sample::Format::F32le,
         channels: 1,
         rate: sample_rate,
     };
-
     let attr = pulse::def::BufferAttr {
         maxlength: u32::MAX,
         tlength: u32::MAX,
         prebuf: u32::MAX,
         minreq: u32::MAX,
-        // Keep the fragment size small for low-latency level/chunk callbacks
         fragsize: (READ_CHUNK_FRAMES * std::mem::size_of::<f32>()) as u32,
     };
-
-    let source_cstr = source_name.and_then(|s| std::ffi::CString::new(s).ok());
-    let source_ref = source_cstr
-        .as_ref()
-        .map(|c| c.as_c_str().to_str().unwrap_or_default());
-
-    let simple = match psimple::Simple::new(
-        None,        // server (default)
-        "mausVoice", // app name
-        pulse::stream::Direction::Record,
-        source_ref,  // source (None = default)
-        "Recording", // stream description
-        &spec,
-        None, // channel map (default)
-        Some(&attr),
-    ) {
-        Ok(s) => s,
-        Err(err) => {
-            log::error!("failed to open PulseAudio recording stream: {err}");
-            return empty_result();
+    let mut mainloop = Mainloop::new().ok_or("failed to create PulseAudio mainloop")?;
+    let mut context = pulse::context::Context::new(&mainloop, "mausVoice")
+        .ok_or("failed to create PulseAudio context")?;
+    context
+        .connect(None, pulse::context::FlagSet::NOFLAGS, None)
+        .map_err(|error| format!("failed to connect PulseAudio: {error}"))?;
+    wait_for_pulse(&mut mainloop, &stop_signal, || match context.get_state() {
+        pulse::context::State::Ready => Ok(true),
+        pulse::context::State::Failed | pulse::context::State::Terminated => {
+            Err("PulseAudio context failed".into())
         }
-    };
+        _ => Ok(false),
+    })?;
+    let mut stream = pulse::stream::Stream::new(&mut context, "Recording", &spec, None)
+        .ok_or("failed to create PulseAudio stream")?;
+    stream
+        .connect_record(source_name, Some(&attr), pulse::stream::FlagSet::NOFLAGS)
+        .map_err(|error| format!("failed to open PulseAudio stream: {error}"))?;
+    wait_for_pulse(&mut mainloop, &stop_signal, || match stream.get_state() {
+        pulse::stream::State::Ready => Ok(true),
+        pulse::stream::State::Failed | pulse::stream::State::Terminated => {
+            Err("PulseAudio stream failed".into())
+        }
+        _ => Ok(false),
+    })?;
+    if ready.send(Ok(())).is_err() {
+        return Err("Recording start was cancelled".into());
+    }
 
     log::info!(
         "PulseAudio recording started (source: {})",
         source_name.unwrap_or("default")
     );
 
+    Ok(capture_samples(
+        sample_rate,
+        &stop_signal,
+        level_callback,
+        chunk_callback,
+        |stopping| {
+            if !stopping {
+                pulse_iterate(&mut mainloop)?;
+            }
+            match stream.get_state() {
+                pulse::stream::State::Failed | pulse::stream::State::Terminated => {
+                    return Err("PulseAudio recording stream failed".into())
+                }
+                _ => {}
+            }
+            let samples = pulse_samples(
+                stream
+                    .peek()
+                    .map_err(|error| format!("PulseAudio read failed: {error}"))?,
+            )?;
+            if samples.is_some() {
+                stream
+                    .discard()
+                    .map_err(|error| format!("PulseAudio discard failed: {error}"))?;
+            }
+            Ok(samples)
+        },
+    ))
+}
+
+fn capture_samples(
+    sample_rate: u32,
+    stop_signal: &AtomicBool,
+    level_callback: Option<LevelCallback>,
+    chunk_callback: Option<ChunkCallback>,
+    mut read: impl FnMut(bool) -> Result<Option<Vec<f32>>, String>,
+) -> RecordingResult {
     let start = Instant::now();
     let mut all_samples: Vec<f32> = Vec::new();
     let mut last_level_emit = Instant::now();
     let mut last_chunk_emit = Instant::now();
     let mut chunk_buffer: Vec<f32> = Vec::new();
-    // Samples already handed to `chunk_callback`, so each dispatch reports the
-    // absolute index of its first sample. The loop is single threaded, so a
-    // plain counter is enough here.
     let mut emitted_samples: u64 = 0;
-
-    let mut read_buf = vec![0u8; READ_CHUNK_FRAMES * std::mem::size_of::<f32>()];
+    let mut capture_failed = false;
 
     loop {
-        // Check stop signal
-        if let Ok(flag) = stop_signal.lock() {
-            if *flag {
+        let stopping = stop_signal.load(Ordering::Acquire);
+        let mut samples = match read(stopping) {
+            Ok(Some(samples)) => samples,
+            Ok(None) if stopping => break,
+            Ok(None) => {
+                std::thread::sleep(Duration::from_millis(5));
+                continue;
+            }
+            Err(error) => {
+                log::error!("PulseAudio read failed: {error}");
+                capture_failed = true;
                 break;
             }
+        };
+
+        let finite = retain_finite_prefix(&mut samples);
+        if !finite {
+            capture_failed = true;
         }
-
-        // Read audio data (blocking)
-        if let Err(err) = simple.read(&mut read_buf) {
-            log::error!("PulseAudio read error: {err}");
-            break;
-        }
-
-        // Convert bytes to f32 samples (F32LE format)
-        let samples: Vec<f32> = read_buf
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .map(|chunk| f32::from_le_bytes(*chunk))
-            .collect();
-
         // Accumulate for final result
         all_samples.extend_from_slice(&samples);
 
@@ -317,6 +425,9 @@ fn record_loop(
                 }
             }
         }
+        if !finite {
+            break;
+        }
     }
 
     // Flush remaining chunk buffer
@@ -324,6 +435,14 @@ fn record_loop(
         if !chunk_buffer.is_empty() {
             let batch = std::mem::take(&mut chunk_buffer);
             cb(batch, emitted_samples);
+        }
+    }
+
+    if capture_failed {
+        for sample in &mut all_samples {
+            if !sample.is_finite() {
+                *sample = 0.0;
+            }
         }
     }
 
@@ -343,19 +462,7 @@ fn record_loop(
             samples: all_samples,
             sample_rate,
         },
-    }
-}
-
-fn empty_result() -> RecordingResult {
-    RecordingResult {
-        metrics: RecordingMetrics {
-            duration: Duration::ZERO,
-            size_bytes: 0,
-        },
-        audio: RecordedAudio {
-            samples: Vec::new(),
-            sample_rate: FALLBACK_SAMPLE_RATE,
-        },
+        capture_failed,
     }
 }
 
@@ -370,7 +477,16 @@ struct PulseSource {
     sample_rate: u32,
 }
 
+fn poll_pulse_before(mainloop: &mut Mainloop, deadline: Instant) -> bool {
+    if Instant::now() >= deadline || pulse_iterate(mainloop).is_err() {
+        return false;
+    }
+    std::thread::sleep(Duration::from_millis(5));
+    true
+}
+
 fn enumerate_pulse_sources() -> Vec<PulseSource> {
+    let deadline = Instant::now() + Duration::from_secs(3);
     let mut ml = match Mainloop::new() {
         Some(ml) => ml,
         None => {
@@ -397,13 +513,9 @@ fn enumerate_pulse_sources() -> Vec<PulseSource> {
 
     // Wait for context to be ready
     loop {
-        match ml.iterate(true) {
-            pulse::mainloop::standard::IterateResult::Quit(_)
-            | pulse::mainloop::standard::IterateResult::Err(_) => {
-                log::error!("PulseAudio mainloop error during connect");
-                return Vec::new();
-            }
-            _ => {}
+        if !poll_pulse_before(&mut ml, deadline) {
+            log::error!("PulseAudio mainloop failed or timed out during connect");
+            return Vec::new();
         }
         match ctx.get_state() {
             pulse::context::State::Ready => break,
@@ -440,10 +552,8 @@ fn enumerate_pulse_sources() -> Vec<PulseSource> {
                 break;
             }
         }
-        match ml.iterate(true) {
-            pulse::mainloop::standard::IterateResult::Quit(_)
-            | pulse::mainloop::standard::IterateResult::Err(_) => break,
-            _ => {}
+        if !poll_pulse_before(&mut ml, deadline) {
+            break;
         }
     }
 
@@ -499,10 +609,8 @@ fn enumerate_pulse_sources() -> Vec<PulseSource> {
                 break;
             }
         }
-        match ml.iterate(true) {
-            pulse::mainloop::standard::IterateResult::Quit(_)
-            | pulse::mainloop::standard::IterateResult::Err(_) => break,
-            _ => {}
+        if !poll_pulse_before(&mut ml, deadline) {
+            break;
         }
     }
 
@@ -539,4 +647,283 @@ pub fn list_pulse_input_devices() -> Vec<InputDeviceDescriptor> {
     });
 
     devices
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::VecDeque;
+    use std::sync::mpsc;
+
+    #[test]
+    fn pulse_fragments_preserve_float_samples_and_silence_holes() {
+        let bytes = [0.5f32.to_le_bytes(), (-0.25f32).to_le_bytes()].concat();
+        assert_eq!(
+            pulse_samples(pulse::stream::PeekResult::Data(&bytes)).unwrap(),
+            Some(vec![0.5, -0.25])
+        );
+        assert_eq!(
+            pulse_samples(pulse::stream::PeekResult::Hole(8)).unwrap(),
+            Some(vec![0.0, 0.0])
+        );
+        assert_eq!(
+            pulse_samples(pulse::stream::PeekResult::Empty).unwrap(),
+            None
+        );
+        assert!(pulse_samples(pulse::stream::PeekResult::Data(&[1, 2, 3])).is_err());
+        assert!(pulse_samples(pulse::stream::PeekResult::Hole(3)).is_err());
+    }
+
+    #[test]
+    fn stopping_drains_buffered_chunks_and_preserves_offsets() {
+        let stop = AtomicBool::new(true);
+        let mut batches = VecDeque::from([vec![0.25, 0.5], vec![-0.25]]);
+        let chunks = Arc::new(Mutex::new(Vec::new()));
+        let recorded = Arc::clone(&chunks);
+        let callback: ChunkCallback =
+            Arc::new(move |samples, offset| recorded.lock().unwrap().push((samples, offset)));
+        let result = capture_samples(1_000, &stop, None, Some(callback), |_| {
+            Ok(batches.pop_front())
+        });
+        assert_eq!(result.audio.samples, vec![0.25, 0.5, -0.25]);
+        assert_eq!(*chunks.lock().unwrap(), vec![(vec![0.25, 0.5, -0.25], 0)]);
+        assert_eq!(result.audio.sample_rate, 1_000);
+    }
+
+    #[test]
+    fn non_finite_input_returns_and_emits_only_the_valid_prefix() {
+        for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let stop = AtomicBool::new(false);
+            let mut batches = VecDeque::from([vec![0.25], vec![0.5, bad, -0.25]]);
+            let chunks = Arc::new(Mutex::new(Vec::new()));
+            let recorded = Arc::clone(&chunks);
+            let callback: ChunkCallback = Arc::new(move |samples, offset| {
+                recorded.lock().unwrap().push((samples, offset));
+            });
+            let result = capture_samples(1_000, &stop, None, Some(callback), |_| {
+                Ok(Some(
+                    batches.pop_front().expect("must stop at invalid input"),
+                ))
+            });
+            assert!(result.capture_failed);
+            assert_eq!(result.audio.samples, vec![0.25, 0.5]);
+            assert_eq!(*chunks.lock().unwrap(), vec![(vec![0.25, 0.5], 0)]);
+        }
+    }
+
+    #[test]
+    fn stream_error_returns_and_emits_partial_recording() {
+        let stop = AtomicBool::new(false);
+        let mut calls = 0;
+        let chunks = Arc::new(Mutex::new(Vec::new()));
+        let recorded = Arc::clone(&chunks);
+        let callback: ChunkCallback = Arc::new(move |samples, offset| {
+            recorded.lock().unwrap().push((samples, offset));
+        });
+        let result = capture_samples(1_000, &stop, None, Some(callback), |_| {
+            calls += 1;
+            if calls == 1 {
+                Ok(Some(vec![0.25, -0.5]))
+            } else {
+                Err("disconnected".into())
+            }
+        });
+        assert_eq!(result.audio.samples, vec![0.25, -0.5]);
+        assert_eq!(*chunks.lock().unwrap(), vec![(vec![0.25, -0.5], 0)]);
+    }
+
+    #[test]
+    fn silent_capture_stops_without_waiting_for_an_audio_fragment() {
+        let stop = Arc::new(AtomicBool::new(false));
+        let worker_stop = Arc::clone(&stop);
+        let (reading_tx, reading_rx) = mpsc::channel();
+        let (finished_tx, finished_rx) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let result = capture_samples(1_000, &worker_stop, None, None, |_| {
+                let _ = reading_tx.send(());
+                Ok(None)
+            });
+            finished_tx.send(result).unwrap();
+        });
+        reading_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        stop.store(true, Ordering::Release);
+        let result = finished_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert!(result.audio.samples.is_empty());
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn stopped_start_does_not_poll_pulse() {
+        let mut mainloop = Mainloop::new().unwrap();
+        let stop = AtomicBool::new(true);
+        assert!(
+            wait_for_pulse(&mut mainloop, &stop, || -> Result<bool, String> {
+                panic!("cancelled startup polled the server")
+            })
+            .is_err()
+        );
+    }
+
+    // Run explicitly against an isolated PulseAudio server with a null source,
+    // Set PULSE_SERVER to its socket and PULSE_SOURCE=maus_test before running.
+    #[test]
+    #[ignore = "requires an isolated PulseAudio server with a null source"]
+    fn pulse_null_source_capture() {
+        assert!(std::env::var("PULSE_SERVER")
+            .is_ok_and(|server| server.starts_with("unix:") && server.len() > 5));
+        assert_eq!(std::env::var("PULSE_SOURCE").as_deref(), Ok("maus_test"));
+        let recorder = PulseRecorder::new();
+        let (chunk_tx, chunk_rx) = mpsc::channel();
+        let callback: ChunkCallback = Arc::new(move |samples, offset| {
+            let _ = chunk_tx.send((samples, offset));
+        });
+        recorder.start(None, Some(callback)).unwrap();
+        assert!(recorder.is_recording());
+        let first = chunk_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(first.1, 0);
+        let started = Instant::now();
+        let result = recorder.stop().unwrap();
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert!(!recorder.is_recording());
+        let mut samples = first.0;
+        for (chunk, offset) in chunk_rx.try_iter() {
+            assert_eq!(offset, samples.len() as u64);
+            samples.extend(chunk);
+        }
+        assert!(!samples.is_empty());
+        assert_eq!(samples, result.audio.samples);
+        assert!(result.audio.sample_rate > 0);
+
+        // A second recording must acquire the source after the first worker exits.
+        recorder.start(None, None).unwrap();
+        recorder.stop().unwrap();
+        assert!(!recorder.is_recording());
+
+        // Exercise ownership with an actual PulseAudio stream, not just a fake
+        // recorder: a competing owner cannot acquire it until release finishes.
+        use crate::platform::recording_ownership::{RecordingOwnership, StartControl};
+        let ownership = RecordingOwnership::default();
+        let window = ownership.window(1);
+        let cancelled = AtomicBool::new(false);
+        let generation = ownership.reserve("first", &window).unwrap();
+        let admission = ownership
+            .claim_admission("first", &window, generation)
+            .unwrap();
+        ownership
+            .start(
+                "first",
+                &window,
+                generation,
+                StartControl {
+                    cancelled: &cancelled,
+                    admission: Some(&admission),
+                    wait: Duration::ZERO,
+                },
+                || {
+                    recorder
+                        .start(None, None)
+                        .map_err(|error| error.to_string())
+                },
+                || false,
+            )
+            .unwrap();
+        ownership.finish_admission(&admission);
+        let generation = ownership.reserve("second", &window).unwrap();
+        let admission = ownership
+            .claim_admission("second", &window, generation)
+            .unwrap();
+        assert!(ownership
+            .start(
+                "second",
+                &window,
+                generation,
+                StartControl {
+                    cancelled: &cancelled,
+                    admission: Some(&admission),
+                    wait: Duration::ZERO,
+                },
+                || -> Result<(), String> { panic!("a competing recording must not start") },
+                || false,
+            )
+            .is_err());
+        ownership.finish_admission(&admission);
+        assert!(recorder.is_recording());
+        ownership
+            .discard("second", || -> (Result<(), String>, bool) {
+                panic!("a different owner must not stop the recorder")
+            })
+            .unwrap();
+        ownership
+            .stop("first", || {
+                let result = recorder.stop().map_err(|error| error.to_string());
+                (result, recorder.is_recording())
+            })
+            .unwrap();
+        assert!(!recorder.is_recording());
+        let generation = ownership.reserve("successor", &window).unwrap();
+        let admission = ownership
+            .claim_admission("successor", &window, generation)
+            .unwrap();
+        ownership
+            .start(
+                "successor",
+                &window,
+                generation,
+                StartControl {
+                    cancelled: &cancelled,
+                    admission: Some(&admission),
+                    wait: Duration::ZERO,
+                },
+                || {
+                    recorder
+                        .start(None, None)
+                        .map_err(|error| error.to_string())
+                },
+                || false,
+            )
+            .unwrap();
+        ownership.finish_admission(&admission);
+        ownership.begin_reset().unwrap();
+        assert!(ownership.reserve("during-reset", &window).is_err());
+        ownership
+            .force_stop(|| {
+                let result = recorder
+                    .stop()
+                    .map(|_| ())
+                    .map_err(|error| error.to_string());
+                (result, recorder.is_recording())
+            })
+            .unwrap();
+        assert!(!recorder.is_recording());
+        assert!(ownership.reserve("still-resetting", &window).is_err());
+        ownership.end_reset();
+        assert!(ownership.reserve("after-reset", &window).is_ok());
+        ownership.cancel_admission("after-reset");
+    }
+
+    #[test]
+    fn missing_pulse_server_rejects_start() {
+        const CHILD: &str = "MAUS_PULSE_FAILURE_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            let recorder = PulseRecorder::new();
+            assert!(recorder.start(None, None).is_err());
+            assert!(!recorder.is_recording());
+            return;
+        }
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "platform::linux::audio::tests::missing_pulse_server_rejects_start",
+            ])
+            .env(CHILD, "1")
+            .env("PULSE_SERVER", "unix:/nonexistent/maus-pulse-socket")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
+    }
 }

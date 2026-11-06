@@ -8,6 +8,7 @@ pub mod gpu;
 pub mod machine_id;
 pub mod models;
 pub mod paths;
+mod remote_protocol;
 pub mod remote_receiver;
 pub mod remote_sender;
 pub mod storage_repo;

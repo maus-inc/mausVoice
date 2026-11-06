@@ -2,7 +2,9 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::BufReader;
+
+use super::remote_protocol::{read_frame, trusted_for, write_frame, DeviceRole};
 use tokio::net::TcpStream;
 
 use crate::state::RemoteReceiverState;
@@ -79,7 +81,7 @@ pub async fn pair_with_receiver(
             format!("Failed to connect to remote receiver at {receiver_address}: {err}")
         })?;
     let (reader, mut writer) = stream.into_split();
-    let mut lines = BufReader::new(reader).lines();
+    let mut reader = BufReader::new(reader);
 
     write_message(
         &mut writer,
@@ -93,7 +95,7 @@ pub async fn pair_with_receiver(
     )
     .await?;
 
-    match read_message(&mut lines).await? {
+    match read_message(&mut reader).await? {
         IncomingEnvelope::PairingAccept {
             request_id: ack_request_id,
             receiver_device_id: ack_receiver_device_id,
@@ -108,6 +110,9 @@ pub async fn pair_with_receiver(
                 return Err(
                     "Connected receiver does not match the imported pairing code.".to_string(),
                 );
+            }
+            if shared_secret.trim().is_empty() {
+                return Err("Remote receiver supplied an empty pairing secret.".to_string());
             }
 
             let paired_at = chrono::Utc::now().to_rfc3339();
@@ -147,6 +152,29 @@ pub async fn pair_with_receiver(
     }
 }
 
+/// Recheck the same pairing before disclosing a secret or transcript. A user
+/// can revoke, replace, or redirect a target while network setup is in flight.
+async fn ensure_current_receiver(
+    pool: &SqlitePool,
+    original: &crate::domain::PairedRemoteDevice,
+) -> Result<(), String> {
+    let current = crate::db::paired_remote_device_queries::fetch_paired_remote_device_by_id(
+        pool.clone(),
+        &original.id,
+    )
+    .await
+    .map_err(|err| format!("Failed to validate target device: {err}"))?;
+    if !current.is_some_and(|current| {
+        trusted_for(&current, DeviceRole::Receiver)
+            && current.shared_secret == original.shared_secret
+            && current.last_known_address == original.last_known_address
+            && current.paired_at == original.paired_at
+    }) {
+        return Err("Target device pairing changed before delivery.".to_string());
+    }
+    Ok(())
+}
+
 pub async fn deliver_final_text(
     pool: SqlitePool,
     sender_state: RemoteReceiverState,
@@ -159,15 +187,15 @@ pub async fn deliver_final_text(
     }
 
     let target = crate::db::paired_remote_device_queries::fetch_paired_remote_device_by_id(
-        pool,
+        pool.clone(),
         target_device_id,
     )
     .await
     .map_err(|err| format!("Failed to load target device: {err}"))?
     .ok_or_else(|| "Target device is not paired.".to_string())?;
 
-    if !target.trusted {
-        return Err("Target device is not trusted.".to_string());
+    if !trusted_for(&target, DeviceRole::Receiver) {
+        return Err("Target device is not a trusted receiver.".to_string());
     }
 
     let address = target
@@ -184,8 +212,9 @@ pub async fn deliver_final_text(
         .map_err(|_| format!("Timed out connecting to remote receiver at {address}"))?
         .map_err(|err| format!("Failed to connect to remote receiver at {address}: {err}"))?;
     let (reader, mut writer) = stream.into_split();
-    let mut lines = BufReader::new(reader).lines();
+    let mut reader = BufReader::new(reader);
 
+    ensure_current_receiver(&pool, &target).await?;
     write_message(
         &mut writer,
         &OutgoingEnvelope::SessionHello {
@@ -196,7 +225,7 @@ pub async fn deliver_final_text(
     )
     .await?;
 
-    match read_message(&mut lines).await? {
+    match read_message(&mut reader).await? {
         IncomingEnvelope::SessionAck {
             session_id: ack_session_id,
             receiver_device_id,
@@ -219,6 +248,9 @@ pub async fn deliver_final_text(
         }
     }
 
+    // A session acknowledgement can arrive long after the initial check.
+    // Do not send text using a pairing that was revoked in the meantime.
+    ensure_current_receiver(&pool, &target).await?;
     write_message(
         &mut writer,
         &OutgoingEnvelope::FinalText {
@@ -232,7 +264,7 @@ pub async fn deliver_final_text(
     )
     .await?;
 
-    match read_message(&mut lines).await? {
+    match read_message(&mut reader).await? {
         IncomingEnvelope::DeliveryAck {
             session_id: ack_session_id,
             event_id: ack_event_id,
@@ -264,14 +296,13 @@ pub async fn deliver_final_text(
 }
 
 async fn read_message(
-    lines: &mut tokio::io::Lines<BufReader<tokio::net::tcp::OwnedReadHalf>>,
+    reader: &mut BufReader<tokio::net::tcp::OwnedReadHalf>,
 ) -> Result<IncomingEnvelope, String> {
-    let line = tokio::time::timeout(Duration::from_secs(5), lines.next_line())
+    let line = tokio::time::timeout(Duration::from_secs(5), read_frame(reader))
         .await
         .map_err(|_| "Timed out waiting for remote receiver response.".to_string())?
         .map_err(|err| format!("Failed to read remote receiver response: {err}"))?
         .ok_or_else(|| "Remote receiver closed the connection.".to_string())?;
-
     serde_json::from_str(&line)
         .map_err(|err| format!("Failed to parse remote receiver response: {err}"))
 }
@@ -280,19 +311,213 @@ async fn write_message(
     writer: &mut tokio::net::tcp::OwnedWriteHalf,
     message: &OutgoingEnvelope,
 ) -> Result<(), String> {
-    let json = serde_json::to_string(message)
-        .map_err(|err| format!("Failed to serialize remote sender message: {err}"))?;
-    writer
-        .write_all(json.as_bytes())
+    write_frame(writer, message)
         .await
-        .map_err(|err| format!("Failed to write remote sender message: {err}"))?;
-    writer
-        .write_all(b"\n")
-        .await
-        .map_err(|err| format!("Failed to finalize remote sender message: {err}"))?;
-    Ok(())
+        .map_err(|err| format!("Failed to write remote sender message: {err}"))
 }
 
 fn generate_id(prefix: &str) -> String {
-    format!("{prefix}-{:08x}", rand::random::<u32>())
+    // These are opaque protocol IDs. Thirty-two random bits collide readily
+    // over a device's lifetime, particularly with realtime segment delivery.
+    format!("{prefix}-{:032x}", rand::random::<u128>())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::net::TcpListener;
+
+    async fn test_pool() -> SqlitePool {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::query("CREATE TABLE paired_remote_devices (id TEXT PRIMARY KEY, name TEXT NOT NULL, platform TEXT NOT NULL, role TEXT NOT NULL, shared_secret TEXT NOT NULL, paired_at TEXT NOT NULL, last_seen_at TEXT, last_known_address TEXT, trusted INTEGER NOT NULL)")
+            .execute(&pool).await.unwrap();
+        pool
+    }
+
+    fn receiver(address: String) -> crate::domain::PairedRemoteDevice {
+        crate::domain::PairedRemoteDevice {
+            id: "receiver".into(),
+            name: "receiver".into(),
+            platform: "windows".into(),
+            role: "both".into(),
+            shared_secret: "secret".into(),
+            paired_at: "original".into(),
+            last_seen_at: None,
+            last_known_address: Some(address),
+            trusted: true,
+        }
+    }
+
+    #[test]
+    fn generated_protocol_ids_have_a_full_128_bit_random_suffix() {
+        let id = generate_id("event");
+        let suffix = id.strip_prefix("event-").unwrap();
+        assert_eq!(suffix.len(), 32);
+        assert!(suffix.bytes().all(|byte| byte.is_ascii_hexdigit()));
+    }
+
+    #[tokio::test]
+    async fn pairing_refuses_an_empty_secret_without_persisting_trust() {
+        for secret in ["", "   "] {
+            let pool = test_pool().await;
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap().to_string();
+            let pairing = {
+                let pool = pool.clone();
+                tokio::spawn(async move {
+                    pair_with_receiver(
+                        pool,
+                        RemoteReceiverState::new(),
+                        "receiver",
+                        "Receiver",
+                        "windows",
+                        &address,
+                        "code",
+                    )
+                    .await
+                })
+            };
+            let (stream, _) = listener.accept().await.unwrap();
+            let (read, mut write) = stream.into_split();
+            let mut read = BufReader::new(read);
+            let request: serde_json::Value =
+                serde_json::from_str(&read_frame(&mut read).await.unwrap().unwrap()).unwrap();
+            write_frame(
+                &mut write,
+                &serde_json::json!({
+                    "type": "pairing_accept", "request_id": request["request_id"],
+                    "receiver_device_id": "receiver", "receiver_device_name": "Receiver",
+                    "receiver_platform": "windows", "shared_secret": secret,
+                }),
+            )
+            .await
+            .unwrap();
+            assert!(pairing.await.unwrap().is_err());
+            assert!(
+                crate::db::paired_remote_device_queries::fetch_paired_remote_device_by_id(
+                    pool, "receiver"
+                )
+                .await
+                .unwrap()
+                .is_none()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn receiver_revalidation_allows_non_security_metadata_changes() {
+        let pool = test_pool().await;
+        let target = receiver("127.0.0.1:1234".into());
+        crate::db::paired_remote_device_queries::upsert_paired_remote_device(pool.clone(), &target)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE paired_remote_devices SET name = 'renamed', platform = 'macos', role = 'receiver', last_seen_at = 'later'")
+            .execute(&pool).await.unwrap();
+        assert!(ensure_current_receiver(&pool, &target).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn receiver_revalidation_rejects_revoked_replaced_or_redirected_records() {
+        let pool = test_pool().await;
+        let target = receiver("127.0.0.1:1234".into());
+        for mutation in [
+            "UPDATE paired_remote_devices SET trusted = 0",
+            "UPDATE paired_remote_devices SET role = 'sender'",
+            "UPDATE paired_remote_devices SET shared_secret = 'replacement'",
+            "UPDATE paired_remote_devices SET last_known_address = '127.0.0.1:5678'",
+            "UPDATE paired_remote_devices SET paired_at = 'replacement'",
+            "DELETE FROM paired_remote_devices",
+        ] {
+            crate::db::paired_remote_device_queries::upsert_paired_remote_device(
+                pool.clone(),
+                &target,
+            )
+            .await
+            .unwrap();
+            assert!(ensure_current_receiver(&pool, &target).await.is_ok());
+            sqlx::query(mutation).execute(&pool).await.unwrap();
+            assert!(
+                ensure_current_receiver(&pool, &target).await.is_err(),
+                "{mutation}"
+            );
+        }
+    }
+
+    async fn exercise_delivery(revoke: bool) {
+        let pool = test_pool().await;
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let target = receiver(listener.local_addr().unwrap().to_string());
+        crate::db::paired_remote_device_queries::upsert_paired_remote_device(pool.clone(), &target)
+            .await
+            .unwrap();
+        let task = {
+            let pool = pool.clone();
+            tokio::spawn(async move {
+                deliver_final_text(
+                    pool,
+                    RemoteReceiverState::new(),
+                    "receiver",
+                    "private transcript",
+                    "dictation",
+                )
+                .await
+            })
+        };
+        let (stream, _) = listener.accept().await.unwrap();
+        let (read, mut write) = stream.into_split();
+        let mut read = BufReader::new(read);
+        let hello: serde_json::Value =
+            serde_json::from_str(&read_frame(&mut read).await.unwrap().unwrap()).unwrap();
+        let session = hello["session_id"].as_str().unwrap();
+        assert_eq!(hello["type"], "session_hello");
+        if revoke {
+            sqlx::query("UPDATE paired_remote_devices SET trusted = 0 WHERE id = 'receiver'")
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        write_frame(
+            &mut write,
+            &serde_json::json!({
+                "type": "session_ack", "session_id": session, "receiver_device_id": "receiver"
+            }),
+        )
+        .await
+        .unwrap();
+        let next = tokio::time::timeout(Duration::from_secs(2), read_frame(&mut read))
+            .await
+            .unwrap()
+            .unwrap();
+        if revoke {
+            assert!(next.is_none(), "revoked receiver got transcript data");
+            assert!(task.await.unwrap().is_err());
+        } else {
+            let message: serde_json::Value = serde_json::from_str(&next.unwrap()).unwrap();
+            assert_eq!(message["text"], "private transcript");
+            write_frame(
+                &mut write,
+                &serde_json::json!({
+                    "type": "delivery_ack", "session_id": session,
+                    "event_id": message["event_id"], "sequence": 1, "delivered_at": "now"
+                }),
+            )
+            .await
+            .unwrap();
+            task.await.unwrap().unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn revoking_trust_during_handshake_prevents_transcript_delivery() {
+        exercise_delivery(true).await;
+    }
+
+    #[tokio::test]
+    async fn unchanged_bidirectional_receiver_can_receive_a_transcript() {
+        exercise_delivery(false).await;
+    }
 }

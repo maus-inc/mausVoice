@@ -1,5 +1,5 @@
-use crate::linux::common::{FALSE, TRUE};
 use crate::keycodes::linux::code_from_key;
+use crate::linux::common::{FALSE, TRUE};
 use crate::rdev::{Button, EventType, RawKey, SimulateError};
 use std::convert::TryInto;
 use std::os::raw::c_int;

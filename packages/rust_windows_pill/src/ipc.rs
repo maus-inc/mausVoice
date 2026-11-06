@@ -1,4 +1,4 @@
-use std::io::{self, BufRead, Write};
+use std::io;
 use std::sync::mpsc::Sender;
 
 use serde::{Deserialize, Serialize};
@@ -135,6 +135,8 @@ pub enum InMessage {
     Toast {
         message: String,
         toast_type: Option<String>,
+        #[serde(default)]
+        microphone_safety_owner: Option<String>,
         duration: Option<f64>,
         action: Option<String>,
         action_label: Option<String>,
@@ -143,7 +145,12 @@ pub enum InMessage {
         #[serde(default)]
         reject_action_label: Option<String>,
     },
-    DismissToast,
+    DismissToast {
+        #[serde(default)]
+        expected_action: Option<String>,
+        #[serde(default)]
+        expected_safety_owner: Option<String>,
+    },
     Fireworks {
         message: String,
     },
@@ -254,30 +261,27 @@ pub enum OutMessage {
 
 /// Send one message to the desktop process over stdout.
 ///
-/// Returns whether the bytes were actually handed to the pipe. A write to a
-/// desktop process that has exited fails, and callers that would otherwise
-/// discard the user's text — the entry clearing itself on submit — need that
-/// to decide whether the message really landed. This used to discard every
-/// error with `let _ =`, which is why this pill was the only one of the three
-/// that threw the entry away on a failed write.
+/// Returns whether the record was written and flushed, not whether the
+/// desktop processed it. Pipe writes can block if the desktop stops reading.
+/// On an I/O error later records are refused because a partial record may
+/// already be in the stream; callers can retain the user's draft.
 pub fn send(msg: &OutMessage) -> bool {
-    let mut stdout = io::stdout().lock();
-    if serde_json::to_writer(&mut stdout, msg).is_err() {
-        return false;
+    match serde_json::to_vec(msg) {
+        Ok(record) => rust_pill_shared::ipc::write_stdout_line(&record).is_ok(),
+        Err(_) => false,
     }
-    if stdout.write_all(b"\n").is_err() {
-        return false;
-    }
-    stdout.flush().is_ok()
 }
 
 pub fn start_stdin_reader(sender: Sender<InMessage>) {
     std::thread::spawn(move || {
         let stdin = io::stdin();
-        let reader = stdin.lock();
-        for line in reader.lines() {
-            let Ok(line) = line else { break };
-            if line.is_empty() {
+        let mut reader = stdin.lock();
+        let mut line = String::new();
+        while matches!(
+            rust_pill_shared::ipc::read_complete_line(&mut reader, &mut line),
+            Ok(true)
+        ) {
+            if line.trim().is_empty() {
                 continue;
             }
             match serde_json::from_str::<InMessage>(&line) {
@@ -359,5 +363,58 @@ mod review_localization_tests {
         let review = parsed.review.expect("review should be present");
         assert_eq!(review.id, "r1");
         assert_eq!(review.insert_label.as_deref(), Some("Einfuegen"));
+    }
+}
+
+#[cfg(test)]
+mod scoped_dismiss_tests {
+    use super::InMessage;
+
+    #[test]
+    fn safety_flag_is_opt_in_and_legacy_toasts_remain_compatible() {
+        let legacy: InMessage = serde_json::from_str(r#"{"type":"toast","message":"x"}"#).unwrap();
+        assert!(matches!(
+            legacy,
+            InMessage::Toast {
+                microphone_safety_owner: None,
+                ..
+            }
+        ));
+        let safety: InMessage = serde_json::from_str(
+            r#"{"type":"toast","message":"x","microphone_safety_owner":"owner"}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            safety,
+            InMessage::Toast {
+                microphone_safety_owner: Some(owner),
+                ..
+            } if owner == "owner"
+        ));
+    }
+
+    #[test]
+    fn accepts_legacy_and_scoped_dismissals() {
+        let legacy: InMessage = serde_json::from_str(r#"{"type":"dismiss_toast"}"#).unwrap();
+        assert!(matches!(
+            legacy,
+            InMessage::DismissToast {
+                expected_action: None,
+                expected_safety_owner: None,
+            }
+        ));
+        let warning: InMessage =
+            serde_json::from_str(r#"{"type":"dismiss_toast","expected_safety_owner":"owner"}"#)
+                .unwrap();
+        assert!(
+            matches!(warning, InMessage::DismissToast { expected_action: None, expected_safety_owner: Some(owner) } if owner == "owner")
+        );
+        let scoped: InMessage = serde_json::from_str(
+            r#"{"type":"dismiss_toast","expected_action":"cancel_recording_stop#owner"}"#,
+        )
+        .unwrap();
+        assert!(
+            matches!(scoped, InMessage::DismissToast { expected_action: Some(action), expected_safety_owner: None } if action == "cancel_recording_stop#owner")
+        );
     }
 }

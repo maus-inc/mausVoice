@@ -613,6 +613,7 @@ fn perform_tick() {
                 InMessage::Toast {
                     message,
                     toast_type,
+                    microphone_safety_owner,
                     duration,
                     action,
                     action_label,
@@ -623,6 +624,7 @@ fn perform_tick() {
                     ctx.state
                         .flash_is_error
                         .set(toast_type.as_deref() == Some("error"));
+                    *ctx.state.flash_microphone_safety_owner.borrow_mut() = microphone_safety_owner;
                     ctx.state.flash_visible.set(true);
                     ctx.state
                         .flash_timer
@@ -632,8 +634,19 @@ fn perform_tick() {
                     *ctx.state.flash_reject_action.borrow_mut() = reject_action;
                     *ctx.state.flash_reject_action_label.borrow_mut() = reject_action_label;
                 }
-                InMessage::DismissToast => {
-                    clear_flash(&ctx.state);
+                InMessage::DismissToast {
+                    expected_action,
+                    expected_safety_owner,
+                } => {
+                    let matches_current = rust_pill_shared::toast_dismiss_matches(
+                        expected_action.as_deref(),
+                        ctx.state.flash_action.borrow().as_deref(),
+                        expected_safety_owner.as_deref(),
+                        ctx.state.flash_microphone_safety_owner.borrow().as_deref(),
+                    );
+                    if matches_current {
+                        clear_flash(&ctx.state);
+                    }
                 }
                 InMessage::Fireworks { message } => {
                     *ctx.state.flash_message.borrow_mut() = message;
@@ -642,6 +655,7 @@ fn perform_tick() {
                     *ctx.state.flash_action_label.borrow_mut() = None;
                     *ctx.state.flash_reject_action.borrow_mut() = None;
                     *ctx.state.flash_reject_action_label.borrow_mut() = None;
+                    *ctx.state.flash_microphone_safety_owner.borrow_mut() = None;
                     ctx.state.flash_visible.set(true);
                     ctx.state.flash_timer.set(FIREWORKS_TOTAL_DURATION);
 
@@ -657,6 +671,7 @@ fn perform_tick() {
                     *ctx.state.flash_action_label.borrow_mut() = None;
                     *ctx.state.flash_reject_action.borrow_mut() = None;
                     *ctx.state.flash_reject_action_label.borrow_mut() = None;
+                    *ctx.state.flash_microphone_safety_owner.borrow_mut() = None;
                     ctx.state.flash_visible.set(true);
                     ctx.state.flash_timer.set(FLAME_TOTAL_DURATION);
 
@@ -814,7 +829,7 @@ fn perform_tick() {
         let should_show = rust_pill_shared::should_show_pill(
             ctx.state.visibility.get().into(),
             ctx.state.phase.get() != Phase::Idle,
-            ctx.state.owns_panel(),
+            ctx.state.owns_panel() || ctx.state.recording_stop_safety_active(),
         );
         unsafe {
             if should_show {
@@ -943,6 +958,7 @@ fn update_hover(view: id, ctx: &AppContext) {
 // ── Animation tick ────────────────────────────────────────────────
 
 fn clear_flash(state: &PillState) {
+    *state.flash_microphone_safety_owner.borrow_mut() = None;
     rust_pill_shared::clear_flash_state(
         &state.flash_visible,
         &state.flash_timer,
@@ -1264,7 +1280,9 @@ fn tick(state: &PillState, window: id, dt: f64) {
     }
     let flash_target = rust_pill_shared::flash_banner_target(
         state.flash_visible.get(),
-        state.flash_action.borrow().is_some() || state.flash_reject_action.borrow().is_some(),
+        state.flash_action.borrow().is_some()
+            || state.flash_reject_action.borrow().is_some()
+            || state.recording_stop_safety_active(),
         tooltip_target > 0.5,
     );
     rust_pill_shared::spring::spring_01(
@@ -2022,6 +2040,7 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
         cancel_velocity: Cell::new(0.0),
         flash_message: RefCell::new(String::new()),
         flash_visible: Cell::new(false),
+        flash_microphone_safety_owner: RefCell::new(None),
         flash_t: Cell::new(0.0),
         flash_velocity: Cell::new(0.0),
         flash_timer: Cell::new(0.0),

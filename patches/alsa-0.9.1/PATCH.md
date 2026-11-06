@@ -1,0 +1,15 @@
+# Local ALSA wrapper patch
+
+Based on `alsa` 0.9.1. `PCM::close_checked(self)` consumes the native handle
+and reports the result of `snd_pcm_close`; unlike the upstream destructor it
+does not ignore failure. It never retries or drops the handle a second time,
+because a failed close may already have invalidated it. The CPAL input teardown
+uses this after its capture worker has exited and `snd_pcm_drop` succeeded.
+CPAL uses it for capture setup failures and capability probes too.
+
+`PCM::new_checked` distinguishes ordinary open errors from a failed open that
+returns a non-null pointer, or a successful open that returns null. It does not
+close an ambiguous pointer because the native call may already have invalidated
+it. CPAL uses the distinction to block later capture. A failed open with a null
+pointer still relies on ALSA and its plugins to clean up internal resources. The
+ordinary destructor remains unchanged. Real-driver verification is still required.

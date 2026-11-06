@@ -5,6 +5,12 @@
 
 
 export const commands = {
+/**
+ * Retire only the recovery copy after a normal stop reply was received.
+ */
+async acknowledgeRecording(ownerId: string, generation: number) : Promise<void> {
+    await TAURI_INVOKE("acknowledge_recording", { ownerId, generation });
+},
 async apiKeyCreate(apiKey: ApiKeyCreateRequest) : Promise<Result<ApiKeyView, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("api_key_create", { apiKey }) };
@@ -439,9 +445,17 @@ async hotkeyList() : Promise<Result<Hotkey[], string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async hotkeyReplaceStyleHotkeys(prefix: string, hotkeys: Hotkey[]) : Promise<Result<Hotkey[], string>> {
+async hotkeyReplaceStyleHotkeys(prefix: string, hotkeys: Hotkey[], expected: Hotkey[]) : Promise<Result<Hotkey[], string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("hotkey_replace_style_hotkeys", { prefix, hotkeys }) };
+    return { status: "ok", data: await TAURI_INVOKE("hotkey_replace_style_hotkeys", { prefix, hotkeys, expected }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async hotkeyReplaceDictationLanguageHotkeys(primary: Hotkey, additional: Hotkey[], expected: Hotkey[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("hotkey_replace_dictation_language_hotkeys", { primary, additional, expected }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -512,9 +526,28 @@ async openaiCompatibleHttpRequest(apiKeyId: string, request: PrivateHttpRequest)
     else return { status: "error", error: e  as any };
 }
 },
-async pauseRecording() : Promise<Result<null, string>> {
+/**
+ * Release an abandoned lease without affecting a different owner.
+ */
+async discardRecording(ownerId: string, generation: number) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("pause_recording") };
+    return { status: "ok", data: await TAURI_INVOKE("discard_recording", { ownerId, generation }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async forceStopRecording() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("force_stop_recording") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async pauseRecording(ownerId: string, generation: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("pause_recording", { ownerId, generation }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -678,9 +711,9 @@ async restartKeyListener() : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async resumeRecording() : Promise<Result<null, string>> {
+async resumeRecording(ownerId: string, generation: number) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("resume_recording") };
+    return { status: "ok", data: await TAURI_INVOKE("resume_recording", { ownerId, generation }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -870,9 +903,33 @@ async startKeyListener() : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async startRecording(args: StartRecordingArgs | null) : Promise<Result<StartRecordingResponse, string>> {
+async recordingGeneration(ownerId: string) : Promise<Result<number, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("start_recording", { args }) };
+    return { status: "ok", data: await TAURI_INVOKE("recording_generation", { ownerId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async claimBrowserRecording(ownerId: string, generation: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("claim_browser_recording", { ownerId, generation }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async releaseBrowserRecording(ownerId: string, generation: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("release_browser_recording", { ownerId, generation }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async startRecording(ownerId: string, generation: number, args: StartRecordingArgs | null) : Promise<Result<StartRecordingResponse, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("start_recording", { ownerId, generation, args }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1234,6 +1291,7 @@ export type FieldValueResult = { value: string | null; error: string | null }
 export type FloatingWindowInfo = { id: string; url: string; title: string }
 export type GpuAdapterInfo = { name: string; vendor: number; device: number; deviceType: string; backend: string }
 export type Hotkey = { id: string; actionName: string; keys: string[] }
+export type HttpRedirectMode = "follow" | "manual" | "error"
 export type InputDeviceDescriptor = { label: string; isDefault: boolean; caution: boolean }
 /**
  * Canonical string identifier for a JAB element at one level of the tree.
@@ -1296,7 +1354,7 @@ export type PermissionKind = "microphone" | "accessibility"
 export type PermissionState = "authorized" | "denied" | "restricted" | "not-determined"
 export type PermissionStatus = { kind: PermissionKind; state: PermissionState; promptShown: boolean }
 export type PillWindowSize = "dictation" | "assistant_compact" | "assistant_expanded" | "assistant_typing"
-export type PrivateHttpRequest = { requestId: string; url: string; method: string; headers: Partial<{ [key in string]: string }>; 
+export type PrivateHttpRequest = { requestId: string; url: string; method: string; redirect?: HttpRedirectMode | null; headers: Partial<{ [key in string]: string }>; 
 /**
  * RFC 4648 standard Base64 body. A string is substantially smaller than
  * the JSON number array Specta generates for `Vec<u8>` and keeps large
@@ -1314,7 +1372,7 @@ export type RemoteSenderPairArgs = { receiverDeviceId: string; receiverName: str
 export type RunTerminalCommandResponse = { stdout: string; stderr: string; exitCode: number }
 export type ScreenContextInfo = { screenContext: string | null }
 export type ScreenVisibleArea = { topInset: number; bottomInset: number; leftInset: number; rightInset: number }
-export type StartRecordingArgs = { preferredMicrophone: string | null }
+export type StartRecordingArgs = { preferredMicrophone: string | null; waitForRelease?: boolean }
 export type StartRecordingResponse = { sampleRate: number }
 export type StartRemoteReceiverArgs = { port?: number | null }
 export type StorageUploadArgs = { path: string; data: number[] }
