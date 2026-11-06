@@ -1273,14 +1273,18 @@ const ApiKeyAddControl = ({
   listState: ReturnType<typeof getApiKeyListState>;
   handleAddApiKey: (payload: AddApiKeyPayload) => Promise<void>;
   context: ApiKeyListContext;
-}) =>
-  showAddCard ? (
-    <AddApiKeyCard
-      onSave={handleAddApiKey}
-      onCancel={() => setShowAddCard(false)}
-      context={context}
-    />
-  ) : keyCount > 0 || listState === "error" ? (
+}) => {
+  if (showAddCard) {
+    return (
+      <AddApiKeyCard
+        onSave={handleAddApiKey}
+        onCancel={() => setShowAddCard(false)}
+        context={context}
+      />
+    );
+  }
+  if (keyCount === 0 && listState !== "error") return null;
+  return (
     <Button
       variant="outlined"
       startIcon={<Plus size={16} strokeWidth={1.9} />}
@@ -1289,7 +1293,8 @@ const ApiKeyAddControl = ({
     >
       <FormattedMessage defaultMessage="Add another key" />
     </Button>
-  ) : null;
+  );
+};
 
 /** A creation may select its key only while the initiating selection is still current. */
 const useApiKeyCreation = (

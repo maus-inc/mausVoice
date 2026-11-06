@@ -17,6 +17,18 @@ export const ToneOptionContent = ({
   globalLabel?: string;
 }) => {
   const intl = useIntl();
+  const editControl = isSystem ? null : (
+    <IconButton
+      size="small"
+      onClick={(event) => {
+        event.stopPropagation();
+        event.preventDefault();
+        onEdit();
+      }}
+    >
+      <Edit fontSize="small" />
+    </IconButton>
+  );
   return (
     <Stack
       direction="row"
@@ -39,18 +51,9 @@ export const ToneOptionContent = ({
         >
           <Public fontSize="small" sx={{ color: "text.secondary" }} />
         </Tooltip>
-      ) : !isSystem ? (
-        <IconButton
-          size="small"
-          onClick={(event) => {
-            event.stopPropagation();
-            event.preventDefault();
-            onEdit();
-          }}
-        >
-          <Edit fontSize="small" />
-        </IconButton>
-      ) : null}
+      ) : (
+        editControl
+      )}
     </Stack>
   );
 };

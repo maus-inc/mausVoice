@@ -66,21 +66,28 @@ const awaitStopRecovery = async (
   onExpire: () => void,
 ): Promise<StopRecordingResponse | null> => {
   onExpire();
-  if (!lease || !isCurrent()) return null;
+  if (!lease) return null;
   const recoveryDeadline = Date.now() + STOP_RECOVERY_DEADLINE_MS;
-  while (isCurrent() && Date.now() < recoveryDeadline && lease.canRecoverStop) {
+
+  // One recovery round per call: a round waits for a reply and only then paces
+  // the next one, so two attempts can never overlap.
+  const round = async (): Promise<StopRecordingResponse | null> => {
+    if (!isCurrent() || Date.now() >= recoveryDeadline) return null;
+    if (!lease.canRecoverStop) return null;
     const recovered = await lease
       .waitForStopRecovery(STOP_RECOVERY_WAIT_MS, isCurrent)
       .catch(() => null);
     if (recovered) return recovered;
-    if (!isCurrent() || !lease.canRecoverStop) break;
+    if (!isCurrent() || !lease.canRecoverStop) return null;
     // Failed IPC may reject immediately. Pace retries without discarding the
     // admission or blocking explicit cancellation.
     await new Promise<void>((resolve) =>
       setTimeout(resolve, STOP_RECOVERY_RETRY_DELAY_MS),
     );
-  }
-  return null;
+    return round();
+  };
+
+  return round();
 };
 
 /** Drop a stop context nobody will await, without an unhandled rejection. */

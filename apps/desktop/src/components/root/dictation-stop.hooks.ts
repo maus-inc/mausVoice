@@ -375,9 +375,11 @@ export function useRecordingStop({
       // Dispatch the owned audio stop before presentation or other callbacks can
       // retire this operation and replace its listener or native lease.
       const rawStop = stopRecordingRaw().catch((error) => {
-        getLogger().error(
-          `Error during stopRecording: ${error}${error instanceof Error ? ` [name=${error.name}, stack=${error.stack}]` : ""}`,
-        );
+        const details =
+          error instanceof Error
+            ? ` [name=${error.name}, stack=${error.stack}]`
+            : "";
+        getLogger().error(`Error during stopRecording: ${error}${details}`);
         return { shouldContinue: false, abortMessage: String(error) };
       });
       try {

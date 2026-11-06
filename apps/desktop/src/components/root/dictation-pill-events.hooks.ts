@@ -56,14 +56,13 @@ export function useDictationPillEvents({
   });
   useToastAction(async (payload) => {
     if (!isMainWindow) return;
-    if (payload.action === "confirm_cancel_transcription") {
-      await abortRecording();
-    } else if (
+    // Both prompts abort the same recording; only their conditions differ.
+    const cancelsThisStop =
       payload.action === "cancel_recording_stop" &&
       isStoppingRef.current &&
       payload.proposalId !== undefined &&
-      payload.proposalId === nativeStartOwnerRef.current?.ownerId
-    ) {
+      payload.proposalId === nativeStartOwnerRef.current?.ownerId;
+    if (payload.action === "confirm_cancel_transcription" || cancelsThisStop) {
       await abortRecording();
     }
   });

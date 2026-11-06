@@ -64,7 +64,10 @@ export function logFinalizationSummary(
   toneId: string | null,
   appTarget: AppTarget | null,
 ) {
+  const transcriptSummary = rawTranscript
+    ? `${rawTranscript.length} chars`
+    : "empty";
   getLogger().verbose(
-    `Transcription result: rawTranscript=${rawTranscript ? `${rawTranscript.length} chars` : "empty"}, toneId=${toneId ?? "none"}, app=${appTarget?.name ?? "unknown"}`,
+    `Transcription result: rawTranscript=${transcriptSummary}, toneId=${toneId ?? "none"}, app=${appTarget?.name ?? "unknown"}`,
   );
 }
