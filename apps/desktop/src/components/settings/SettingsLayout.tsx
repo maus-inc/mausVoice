@@ -23,6 +23,7 @@ import {
   searchSettings,
   type SettingHit,
 } from "../../utils/settings-registry";
+import { visuallyHidden } from "../../styles/a11y";
 import { useSettingsAvailability } from "./settings-availability";
 import { SETTINGS_PAGE_COPY } from "./settings-page-copy";
 import {
@@ -86,15 +87,6 @@ const SettingsRailLink = ({
     {SETTINGS_PAGE_COPY[pageId].title}
   </Box>
 );
-
-const visuallyHidden = {
-  position: "absolute",
-  width: "1px",
-  height: "1px",
-  overflow: "hidden",
-  clipPath: "inset(50%)",
-  whiteSpace: "nowrap",
-} as const;
 
 /**
  * Whether a keydown should move focus to the search box.
