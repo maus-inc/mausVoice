@@ -703,6 +703,7 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             crate::commands::transcription_list,
             crate::commands::transcription_delete,
             crate::commands::transcription_update,
+            crate::commands::transcription_append_warnings,
             crate::commands::transcription_audio_load,
             crate::commands::transcription_import_audio,
             crate::commands::purge_stale_transcription_audio,

@@ -170,6 +170,11 @@ export abstract class BaseTranscriptionRepo extends BaseRepo {
     transcription: Transcription,
     lease?: LocalDataWriteLease,
   ): Promise<Transcription>;
+  abstract appendWarnings(
+    id: string,
+    warnings: string[],
+    lease?: LocalDataWriteLease,
+  ): Promise<string[]>;
   abstract loadTranscriptionAudio(
     id: string,
     lease?: LocalDataWriteLease,
@@ -229,6 +234,17 @@ export class LocalTranscriptionRepo extends BaseTranscriptionRepo {
       });
       return fromLocalTranscription(stored);
     }, lease);
+  }
+
+  appendWarnings(
+    id: string,
+    warnings: string[],
+    lease?: LocalDataWriteLease,
+  ): Promise<string[]> {
+    return withLocalDataWrite(
+      () => invoke<string[]>("transcription_append_warnings", { id, warnings }),
+      lease,
+    );
   }
 
   loadTranscriptionAudio(

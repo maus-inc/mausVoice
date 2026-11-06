@@ -126,6 +126,59 @@ describe("browser preview transport", () => {
     expect(getAppState().transcriptions.transcriptionIds).toHaveLength(3);
   });
 
+  it("appends warnings without replacing the current preview transcription", async () => {
+    const before = await invokePreviewCommand<Record<string, unknown>[]>(
+      "transcription_list",
+      { limit: 20, offset: 0 },
+    );
+    const row = before[0];
+    expect(row).toBeDefined();
+    const expectedWarnings = [
+      ...((row?.warnings as string[] | null) ?? []),
+      "delivery failed",
+    ];
+
+    await expect(
+      invokePreviewCommand<string[]>("transcription_append_warnings", {
+        id: row?.id,
+        warnings: ["delivery failed"],
+      }),
+    ).resolves.toEqual(expectedWarnings);
+
+    const after = await invokePreviewCommand<Record<string, unknown>[]>(
+      "transcription_list",
+      { limit: 20, offset: 0 },
+    );
+    const updated = after.find((transcription) => transcription.id === row?.id);
+    expect(updated).toMatchObject({
+      transcript: row?.transcript,
+      remoteStatus: row?.remoteStatus,
+      remoteDeviceId: row?.remoteDeviceId,
+      warnings: expectedWarnings,
+    });
+  });
+
+  it("treats empty warning appends as no-ops and validates their payload", async () => {
+    await expect(
+      invokePreviewCommand("transcription_append_warnings", {
+        id: "missing-row",
+        warnings: [],
+      }),
+    ).resolves.toEqual([]);
+    await expect(
+      invokePreviewCommand("transcription_append_warnings", {
+        id: "missing-row",
+        warnings: ["new warning"],
+      }),
+    ).rejects.toThrow("Transcription not found");
+    await expect(
+      invokePreviewCommand("transcription_append_warnings", {
+        id: "missing-row",
+        warnings: ["valid", 1],
+      }),
+    ).rejects.toThrow(TypeError);
+  });
+
   it("does not backfill seeded history twice in the populated scenario", async () => {
     const seededActivity =
       createPreviewScenario("populated").data.dailyActivity;

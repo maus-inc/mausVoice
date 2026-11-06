@@ -1090,6 +1090,46 @@ const persistTranscription = async (
   }
 };
 
+const getAppendedWarnings = (
+  previousWarnings: readonly string[],
+  storedWarnings: readonly string[],
+): string[] => {
+  const previousCounts = new Map<string, number>();
+  for (const warning of previousWarnings) {
+    previousCounts.set(warning, (previousCounts.get(warning) ?? 0) + 1);
+  }
+
+  const appended: string[] = [];
+  for (const warning of storedWarnings) {
+    const count = previousCounts.get(warning) ?? 0;
+    if (count > 0) {
+      previousCounts.set(warning, count - 1);
+    } else {
+      appended.push(warning);
+    }
+  }
+  return appended;
+};
+
+const mergeAppendedWarnings = (
+  currentWarnings: string[] | null | undefined,
+  appendedWarnings: readonly string[],
+): string[] => {
+  const merged = [...(currentWarnings ?? [])];
+  const currentCounts = new Map<string, number>();
+  for (const warning of merged) {
+    currentCounts.set(warning, (currentCounts.get(warning) ?? 0) + 1);
+  }
+
+  const appendedCounts = new Map<string, number>();
+  for (const warning of appendedWarnings) {
+    const count = (appendedCounts.get(warning) ?? 0) + 1;
+    appendedCounts.set(warning, count);
+    if (count > (currentCounts.get(warning) ?? 0)) merged.push(warning);
+  }
+  return merged;
+};
+
 /**
  * Attach warnings to an already-persisted row.
  *
@@ -1107,13 +1147,24 @@ export const appendTranscriptionWarnings = async (
   if (warnings.length === 0) return;
   const existing = getAppState().transcriptionById[transcriptionId];
   if (!existing) return;
+  const previousWarnings = [...(existing.warnings ?? [])];
   try {
-    const stored = await getTranscriptionRepo().updateTranscription({
-      ...existing,
-      warnings: [...(existing.warnings ?? []), ...warnings],
-    });
+    const storedWarnings = await getTranscriptionRepo().appendWarnings(
+      transcriptionId,
+      warnings,
+    );
+    const appendedWarnings = getAppendedWarnings(
+      previousWarnings,
+      storedWarnings,
+    );
+    if (appendedWarnings.length === 0) return;
     produceAppState((draft) => {
-      draft.transcriptionById[stored.id] = stored;
+      const current = draft.transcriptionById[transcriptionId];
+      if (!current) return;
+      current.warnings = mergeAppendedWarnings(
+        current.warnings,
+        appendedWarnings,
+      );
     });
   } catch (error) {
     getLogger().error("Failed to append transcription warnings", error);

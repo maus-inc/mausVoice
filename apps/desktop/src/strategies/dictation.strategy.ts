@@ -388,7 +388,7 @@ export class DictationStrategy extends BaseStrategy {
     let remoteStatus: "sent" | null = null;
     let historyOwner: HistoryOwner = "stop-path";
     let pendingPersistence: HandleTranscriptResult["pendingPersistence"];
-    const remoteDeviceId = this.getActiveRemoteTargetDeviceId();
+    let remoteDeviceId: string | null = null;
 
     // Records a late failure on the warning list and, when the row was already
     // written concurrently with delivery, on the stored row itself. On the
@@ -470,10 +470,25 @@ export class DictationStrategy extends BaseStrategy {
         // before the post-processing await: a receiver paired or a review
         // toggled during that wait must still select the serial path, because
         // routing reads the live preferences in the same tick right after.
+        remoteDeviceId = this.getActiveRemoteTargetDeviceId();
+        const deliveryState = getAppState();
+        const deliveryTarget = args.currentApp
+          ? (deliveryState.appTargetById[args.currentApp.id] ?? args.currentApp)
+          : null;
+        const insertionMethod =
+          deliveryTarget?.insertionMethod ??
+          getMyUserPreferences(deliveryState)?.insertionMethod ??
+          "paste";
+        // Simulated typing can take the length of the transcript. Keep its
+        // History write on the stop path so Incognito is checked after delivery
+        // settles; otherwise a mode change during typing races an already-started
+        // write and saves the row the user just asked us not to retain.
+        const canPersistBeforeDelivery = insertionMethod !== "type";
         const concurrentPersistence =
           args.persistTranscriptNow !== undefined &&
-          getMyUserPreferences(getAppState())?.reviewBeforeInsert !== true &&
-          this.getActiveRemoteTargetDeviceId() === null;
+          getMyUserPreferences(deliveryState)?.reviewBeforeInsert !== true &&
+          remoteDeviceId === null &&
+          canPersistBeforeDelivery;
         if (concurrentPersistence && args.persistTranscriptNow) {
           pendingPersistence = args
             .persistTranscriptNow({

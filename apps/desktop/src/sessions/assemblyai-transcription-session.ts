@@ -42,6 +42,9 @@ export const startAssemblyAIStreaming = async (
   return new Promise((resolve, reject) => {
     let ws: WebSocket | null = null;
     let isFinalized = false;
+    // A provider rejection after Begin otherwise leaves the session alive to
+    // finalize as an empty, warning-free transcript when the socket closes.
+    let sessionError: Error | null = null;
     const transcriptState = createTranscriptAccumulator();
 
     const buffer = createAudioChunkBuffer(() => ws, {
@@ -57,7 +60,7 @@ export const startAssemblyAIStreaming = async (
 
     const writeAudioChunk = createBufferedChunkWriter({
       buffer,
-      isFinalized: () => isFinalized,
+      isFinalized: () => isFinalized || sessionError !== null,
       loggerPrefix: LOGGER_PREFIX,
     });
 
@@ -70,7 +73,16 @@ export const startAssemblyAIStreaming = async (
     };
 
     const finalize = (): Promise<string> => {
-      return new Promise((resolveFinalize) => {
+      return new Promise((resolveFinalize, rejectFinalize) => {
+        const settleFinalize = () => {
+          const text = getText();
+          if (sessionError && !text) {
+            rejectFinalize(sessionError);
+          } else {
+            resolveFinalize(text);
+          }
+        };
+
         getLogger().info(
           `[${LOGGER_PREFIX}] Finalize called, isFinalized:`,
           isFinalized,
@@ -81,7 +93,7 @@ export const startAssemblyAIStreaming = async (
           getLogger().info(
             `[${LOGGER_PREFIX}] Already finalized, returning transcript`,
           );
-          resolveFinalize(getText());
+          settleFinalize();
           return;
         }
 
@@ -102,7 +114,7 @@ export const startAssemblyAIStreaming = async (
               getText().length,
             );
             cleanup();
-            resolveFinalize(getText());
+            settleFinalize();
           }, 2000);
 
           const originalOnClose = ws.onclose;
@@ -116,11 +128,11 @@ export const startAssemblyAIStreaming = async (
               `[${LOGGER_PREFIX}] WebSocket closed, finalizing with transcript length:`,
               getText().length,
             );
-            resolveFinalize(getText());
+            settleFinalize();
           };
         } else {
           cleanup();
-          resolveFinalize(transcriptState.text());
+          settleFinalize();
         }
       });
     };
@@ -177,14 +189,19 @@ export const startAssemblyAIStreaming = async (
           settler.resolveStartup();
           return;
         }
-        if (data.type === "Error" && !settler.settled) {
-          settler.rejectStartup(
-            new Error(
-              String(
-                data.error ?? data.message ?? "AssemblyAI rejected the session",
-              ),
+        if (data.type === "Error") {
+          const error = new Error(
+            String(
+              data.error ?? data.message ?? "AssemblyAI rejected the session",
             ),
           );
+          getLogger().error(`[${LOGGER_PREFIX}] Error from server:`, data);
+          if (!settler.settled) {
+            settler.rejectStartup(error);
+          } else {
+            sessionError = error;
+            cleanup();
+          }
           return;
         }
 

@@ -452,6 +452,64 @@ describe("DictationStrategy backlog lifecycle", () => {
       });
     });
 
+    it("defers History persistence for simulated typing so a late Incognito change takes effect", async () => {
+      const initial = getAppState();
+      setAppState(
+        {
+          userPrefs: {
+            ...(initial.userPrefs ?? createDefaultPreferences()),
+            insertionMethod: "type",
+            incognitoModeEnabled: false,
+          },
+        },
+        false,
+      );
+      const releaseRouting = deferred<{
+        delivered: boolean;
+        remote: boolean;
+        deliveredText: string;
+      }>();
+      routeTranscriptOutputMock.mockImplementationOnce(
+        () => releaseRouting.promise,
+      );
+      const persistTranscriptNow = vi.fn().mockResolvedValue({
+        transcription: { id: "row-1" },
+        wordCount: 2,
+      });
+
+      const pending = new DictationStrategy().handleTranscript(
+        createHandleTranscriptParams({
+          processedTranscript: "clean transcript",
+          persistTranscriptNow,
+        }),
+      );
+      await vi.waitFor(() =>
+        expect(routeTranscriptOutputMock).toHaveBeenCalledTimes(1),
+      );
+      expect(persistTranscriptNow).not.toHaveBeenCalled();
+
+      const duringTyping = getAppState();
+      setAppState(
+        {
+          userPrefs: {
+            ...(duringTyping.userPrefs ?? createDefaultPreferences()),
+            incognitoModeEnabled: true,
+          },
+        },
+        false,
+      );
+      releaseRouting.resolve({
+        delivered: true,
+        remote: false,
+        deliveredText: "clean transcript ",
+      });
+
+      const result = await pending;
+      expect(persistTranscriptNow).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ historyOwner: "stop-path" });
+      expect(result.pendingPersistence).toBeUndefined();
+    });
+
     it("pins skipReview while the concurrent row is being written", async () => {
       // A review opened mid-delivery would persist an edited second row; the
       // routing call must carry skipReview so that cannot happen.
@@ -541,6 +599,13 @@ describe("DictationStrategy backlog lifecycle", () => {
       // the row records the remote delivery instead of racing it.
       const { postProcessTranscript } =
         await import("../actions/transcribe.actions");
+      routeTranscriptOutputMock.mockImplementationOnce(
+        async (args: { text: string }) => ({
+          delivered: true,
+          remote: true,
+          deliveredText: args.text,
+        }),
+      );
       vi.mocked(postProcessTranscript).mockImplementationOnce(async () => {
         await Promise.resolve();
         const state = getAppState();
@@ -566,7 +631,11 @@ describe("DictationStrategy backlog lifecycle", () => {
       );
 
       expect(persistTranscriptNow).not.toHaveBeenCalled();
-      expect(result).toMatchObject({ historyOwner: "stop-path" });
+      expect(result).toMatchObject({
+        historyOwner: "stop-path",
+        remoteStatus: "sent",
+        remoteDeviceId: "device-late",
+      });
     });
 
     it("attaches a delivery failure to the concurrent row", async () => {

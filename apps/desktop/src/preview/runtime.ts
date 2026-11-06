@@ -854,6 +854,36 @@ class PreviewRuntime {
         );
         return clone(transcription);
       }
+      case "transcription_append_warnings": {
+        if (typeof args.id !== "string") {
+          throw new TypeError(
+            "transcription_append_warnings requires a string id",
+          );
+        }
+        if (
+          !Array.isArray(args.warnings) ||
+          !args.warnings.every((warning) => typeof warning === "string")
+        ) {
+          throw new TypeError(
+            "transcription_append_warnings requires an array of strings",
+          );
+        }
+        if (args.warnings.length === 0) return [];
+
+        const transcription = this.database.transcriptions.get(args.id);
+        if (!transcription) throw new Error("Transcription not found");
+        const existingWarnings =
+          Array.isArray(transcription.warnings) &&
+          transcription.warnings.every((warning) => typeof warning === "string")
+            ? (transcription.warnings as string[])
+            : [];
+        const updatedWarnings = [...existingWarnings, ...args.warnings];
+        this.database.transcriptions.set(args.id, {
+          ...transcription,
+          warnings: updatedWarnings,
+        });
+        return clone(updatedWarnings);
+      }
       case "transcription_delete":
         this.database.transcriptions.delete(String(args.id));
         return undefined;

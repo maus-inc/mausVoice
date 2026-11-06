@@ -115,6 +115,18 @@ describe("classifyPostProcessErrorCategory", () => {
     ).toBe(POST_PROCESS_ERROR_CATEGORY.rateLimit);
   });
 
+  it("matches authentication machine codes as complete values", () => {
+    expect(
+      classifyPostProcessErrorCategory({
+        status: 503,
+        type: "unauthorized_client_fallback",
+      }),
+    ).toBe(POST_PROCESS_ERROR_CATEGORY.provider);
+    expect(classifyPostProcessErrorCategory({ type: "unauthorized" })).toBe(
+      POST_PROCESS_ERROR_CATEGORY.authentication,
+    );
+  });
+
   it("keeps an unexplained 429 neutral instead of calling it a rate limit", () => {
     expect(classifyPostProcessErrorCategory({ status: 429 })).toBe(
       POST_PROCESS_ERROR_CATEGORY.providerLimit,

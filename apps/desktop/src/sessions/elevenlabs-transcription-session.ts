@@ -145,6 +145,9 @@ const startElevenLabsStreaming = async (
   return new Promise((resolve, reject) => {
     let ws: WebSocket | null = null;
     let isFinalized = false;
+    // A provider error after session_started must survive until finalize, or
+    // the socket can close and make a failed stream look like an empty success.
+    let sessionError: Error | null = null;
     let sentChunkCount = 0;
     let pendingChunks: Float32Array[] = [];
     const pendingSampleCountRef = { value: 0 };
@@ -303,7 +306,16 @@ const startElevenLabsStreaming = async (
     });
 
     const finalize = (): Promise<string> => {
-      return new Promise((resolveFinalize) => {
+      return new Promise((resolveFinalize, rejectFinalize) => {
+        const settleFinalize = () => {
+          const text = getText();
+          if (sessionError && !text) {
+            rejectFinalize(sessionError);
+          } else {
+            resolveFinalize(text);
+          }
+        };
+
         getLogger().verbose(
           "[ElevenLabs WebSocket] Finalize called, isFinalized:",
           isFinalized,
@@ -314,7 +326,7 @@ const startElevenLabsStreaming = async (
           getLogger().verbose(
             "[ElevenLabs WebSocket] Already finalized, returning transcript",
           );
-          resolveFinalize(getText());
+          settleFinalize();
           return;
         }
 
@@ -328,14 +340,20 @@ const startElevenLabsStreaming = async (
         );
 
         if (ws && ws.readyState === WebSocket.OPEN) {
-          bookkeeper.begin(resolveFinalize);
+          bookkeeper.begin((text) => {
+            if (sessionError && !text) {
+              rejectFinalize(sessionError);
+            } else {
+              resolveFinalize(text);
+            }
+          });
           bookkeeper.armTimeout(
             6000,
             "Timeout waiting for final transcript, length:",
           );
         } else {
           cleanup();
-          resolveFinalize(getText());
+          settleFinalize();
         }
       });
     };
@@ -413,16 +431,20 @@ const startElevenLabsStreaming = async (
           messageType.toLowerCase().includes("error")
         ) {
           getLogger().error("[ElevenLabs WebSocket] Error from server:", data);
+          const error = new Error(
+            String(
+              data.error ?? data.message ?? "ElevenLabs rejected the session",
+            ),
+          );
           if (!settler.settled) {
-            settler.rejectStartup(
-              new Error(
-                String(
-                  data.error ??
-                    data.message ??
-                    "ElevenLabs rejected the session",
-                ),
-              ),
-            );
+            settler.rejectStartup(error);
+          } else {
+            sessionError = error;
+            if (isFinalized) {
+              bookkeeper.complete();
+            } else {
+              cleanup();
+            }
           }
         }
       } catch (error) {

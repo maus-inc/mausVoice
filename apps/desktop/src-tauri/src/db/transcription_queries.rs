@@ -250,6 +250,42 @@ fn transcription_update_sql() -> String {
     )
 }
 
+fn transcription_append_warnings_sql() -> &'static str {
+    "UPDATE transcriptions
+     SET warnings_json = (
+         SELECT json_group_array(value)
+         FROM (
+             SELECT existing.value AS value,
+                    0 AS source_order,
+                    CAST(existing.key AS INTEGER) AS item_order
+             FROM json_each(
+                 CASE
+                     WHEN json_valid(transcriptions.warnings_json) THEN
+                         CASE
+                             WHEN json_type(transcriptions.warnings_json) = 'array'
+                                 AND NOT EXISTS (
+                                     SELECT 1
+                                     FROM json_each(transcriptions.warnings_json) AS item
+                                     WHERE item.type <> 'text'
+                                 )
+                             THEN transcriptions.warnings_json
+                             ELSE '[]'
+                         END
+                     ELSE '[]'
+                 END
+             ) AS existing
+             UNION ALL
+             SELECT appended.value AS value,
+                    1 AS source_order,
+                    CAST(appended.key AS INTEGER) AS item_order
+             FROM json_each(?1) AS appended
+             ORDER BY source_order, item_order
+         )
+     )
+     WHERE id = ?2
+     RETURNING warnings_json"
+}
+
 /// Update one row and return it as stored.
 ///
 /// The read is `RETURNING`, not a follow-up `SELECT`. On the shared pool
@@ -275,6 +311,30 @@ pub async fn update_transcription(
     row_to_transcription(row)
 }
 
+pub async fn append_transcription_warnings(
+    pool: SqlitePool,
+    id: &str,
+    warnings: &[String],
+) -> Result<Vec<String>, sqlx::Error> {
+    if warnings.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let warnings_json =
+        serde_json::to_string(warnings).map_err(|error| sqlx::Error::Protocol(error.to_string()))?;
+    let _activity_write_guard = crate::db::daily_activity_queries::lock_activity_writes().await;
+    let row = sqlx::query(transcription_append_warnings_sql())
+        .bind(warnings_json)
+        .bind(id)
+        .fetch_optional(&pool)
+        .await?
+        .ok_or(sqlx::Error::RowNotFound)?;
+    let warnings_json: String = row.try_get("warnings_json")?;
+
+    serde_json::from_str(&warnings_json)
+        .map_err(|error| sqlx::Error::Protocol(error.to_string()))
+}
+
 pub async fn delete_transcription(pool: SqlitePool, id: &str) -> Result<(), sqlx::Error> {
     // Keep deletion ordered with backfill's read-and-insert window. A completed
     // deletion before backfill starts stays uncounted; a backfill that wins the
@@ -294,7 +354,8 @@ pub async fn delete_transcription(pool: SqlitePool, id: &str) -> Result<(), sqlx
 #[cfg(test)]
 mod tests {
     use super::{
-        delete_transcription, fetch_transcriptions, insert_transcription, update_transcription,
+        append_transcription_warnings, delete_transcription, fetch_transcriptions,
+        insert_transcription, update_transcription,
     };
     use crate::db::daily_activity_queries::fetch_daily_activity;
     use crate::db::user_queries::{fetch_user, upsert_user};
@@ -478,6 +539,133 @@ mod tests {
             .expect("read event count");
         assert_eq!(saved, 1);
         assert_eq!(events, 0);
+    }
+
+    #[tokio::test]
+    async fn append_warnings_preserves_the_current_row_and_json_strings() {
+        let pool = transcription_pool("append-warnings").await;
+        let mut saved = transcription("warning-row", "before edit");
+        saved.warnings = Some(vec!["existing warning".to_string()]);
+        saved.remote_status = Some("sent".to_string());
+        saved.remote_device_id = Some("receiver-1".to_string());
+        insert_transcription(pool.clone(), &saved)
+            .await
+            .expect("insert the original row");
+
+        let mut edited = saved.clone();
+        edited.transcript = "latest edited transcript".to_string();
+        edited.raw_transcript = Some("latest raw transcript".to_string());
+        edited.model_size = Some("current-model".to_string());
+        update_transcription(pool.clone(), &edited)
+            .await
+            .expect("save the newer transcription values");
+
+        let additions = vec![
+            r#"delivery said "failed""#.to_string(),
+            r"line\break".to_string(),
+        ];
+        let returned = append_transcription_warnings(pool.clone(), &edited.id, &additions)
+            .await
+            .expect("append warnings to the current row");
+        let expected = vec![
+            "existing warning".to_string(),
+            r#"delivery said "failed""#.to_string(),
+            r"line\break".to_string(),
+        ];
+        assert_eq!(returned, expected);
+
+        let stored = fetch_transcriptions(pool, 10, 0)
+            .await
+            .expect("read the appended row");
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].transcript, "latest edited transcript");
+        assert_eq!(stored[0].raw_transcript.as_deref(), Some("latest raw transcript"));
+        assert_eq!(stored[0].model_size.as_deref(), Some("current-model"));
+        assert_eq!(stored[0].remote_status.as_deref(), Some("sent"));
+        assert_eq!(stored[0].remote_device_id.as_deref(), Some("receiver-1"));
+        assert_eq!(stored[0].warnings, Some(expected));
+    }
+
+    #[tokio::test]
+    async fn append_warnings_recovers_from_invalid_or_non_string_json() {
+        let pool = transcription_pool("append-invalid-warnings").await;
+        for (id, warnings_json) in [
+            ("null-warnings", None),
+            ("invalid-json", Some("not json")),
+            ("wrong-shape", Some(r#"{"warning":"old"}"#)),
+            ("wrong-item-type", Some(r#"[1,"old"]"#)),
+        ] {
+            insert_transcription(pool.clone(), &transcription(id, "keep me"))
+                .await
+                .expect("insert a row for the JSON case");
+            sqlx::query("UPDATE transcriptions SET warnings_json = ?1 WHERE id = ?2")
+                .bind(warnings_json)
+                .bind(id)
+                .execute(&pool)
+                .await
+                .expect("seed the warnings JSON case");
+
+            let returned = append_transcription_warnings(
+                pool.clone(),
+                id,
+                &["new warning".to_string()],
+            )
+            .await
+            .expect("append over an invalid prior warning value");
+            assert_eq!(returned, vec!["new warning".to_string()]);
+
+            let stored = fetch_transcriptions(pool.clone(), 10, 0)
+                .await
+                .expect("read the appended row");
+            let stored = stored
+                .into_iter()
+                .find(|transcription| transcription.id == id)
+                .expect("row must still exist");
+            assert_eq!(stored.transcript, "keep me");
+            assert_eq!(stored.warnings, Some(vec!["new warning".to_string()]));
+        }
+    }
+
+    #[tokio::test]
+    async fn append_warnings_noops_for_empty_input_and_reports_missing_rows() {
+        let pool = transcription_pool("append-empty-warnings").await;
+        let mut saved = transcription("empty-warning-list", "unchanged");
+        saved.warnings = Some(vec!["existing".to_string()]);
+        insert_transcription(pool.clone(), &saved)
+            .await
+            .expect("insert the row");
+
+        let empty_result = append_transcription_warnings(pool.clone(), &saved.id, &[])
+            .await
+            .expect("empty append is a no-op");
+        assert!(empty_result.is_empty());
+        let unchanged = fetch_transcriptions(pool.clone(), 10, 0)
+            .await
+            .expect("read the unchanged row");
+        assert_eq!(unchanged[0].transcript, "unchanged");
+        assert_eq!(unchanged[0].warnings, saved.warnings);
+
+        assert!(matches!(
+            append_transcription_warnings(pool, "absent", &["new".to_string()]).await,
+            Err(sqlx::Error::RowNotFound)
+        ));
+    }
+
+    #[test]
+    fn append_warnings_sql_updates_only_the_warning_column_in_one_statement() {
+        let sql = super::transcription_append_warnings_sql();
+        let statements = sql
+            .split(';')
+            .map(str::trim)
+            .filter(|statement| !statement.is_empty())
+            .count();
+        assert_eq!(statements, 1, "expected one statement, got: {sql}");
+        let update = sql.split("WHERE").next().expect("an update predicate");
+        assert!(update.contains("SET warnings_json ="), "{sql}");
+        assert!(!update.contains("transcript ="), "{sql}");
+        assert!(sql.contains("json_group_array"), "{sql}");
+        assert!(sql.contains("ORDER BY source_order, item_order"), "{sql}");
+        assert!(sql.contains("RETURNING warnings_json"), "{sql}");
     }
 
     /// The returned row must be the row *this* call wrote.
