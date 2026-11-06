@@ -150,7 +150,9 @@ export ALSA_CONFIG_PATH="$workdir/asound.conf"
 # into `rustc` or a build script, only into the test binary. The binary is then
 # run directly, because a `cargo test` per row re-resolves the whole workspace
 # for every one of them -- 32 rows took 19 minutes that way.
-export CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-$workdir/target}
+# `CARGO_TARGET_DIR` is deliberately left alone: CI has already built this
+# crate for the unit-test step, and pointing the build somewhere fresh would
+# rebuild every dependency for one extra invocation.
 artifacts=$(cd "$desktop_crate" && "$cargo_bin" test --locked --lib --no-run --message-format=json)
 test_binary=$(printf '%s\n' "$artifacts" \
   | grep -o '"executable":"[^"]*"' \
