@@ -76,6 +76,78 @@ describe("visible transcription loads", () => {
     expect(mocks.state.transcriptions.transcriptionIds).toEqual(["one", "two"]);
   });
 
+  it("keeps a session-only memory row listed across a repository refresh", async () => {
+    const sessionOnly = await import("./session-only-transcriptions");
+    const { refreshVisibleTranscriptions } =
+      await import("./visible-transcriptions");
+    const persisted = row("one");
+    const memory: Transcription = {
+      ...row("memory"),
+      createdAt: "2026-09-25T13:00:00.000Z",
+    };
+    mocks.state.transcriptionById = { memory };
+    mocks.state.transcriptions.transcriptionIds = ["memory"];
+    sessionOnly.markTranscriptionSessionOnly("memory");
+    mocks.list.mockResolvedValue([persisted]);
+
+    await refreshVisibleTranscriptions(() => true);
+
+    // The repository never sees the incognito memory row, so a plain
+    // replacement would drop it from History mid-session. The newer memory
+    // row keeps its place above the older persisted row.
+    expect(mocks.state.transcriptions.transcriptionIds).toEqual([
+      "memory",
+      "one",
+    ]);
+    expect(mocks.state.transcriptionById.memory).toBeDefined();
+  });
+
+  it("orders an older session-only row below newer persisted rows", async () => {
+    const sessionOnly = await import("./session-only-transcriptions");
+    const { refreshVisibleTranscriptions } =
+      await import("./visible-transcriptions");
+    const newer: Transcription = {
+      ...row("newer"),
+      createdAt: "2026-09-25T14:00:00.000Z",
+    };
+    const older = row("older");
+    const memory: Transcription = {
+      ...row("memory"),
+      createdAt: "2026-09-25T13:00:00.000Z",
+    };
+    mocks.state.transcriptionById = { memory };
+    sessionOnly.markTranscriptionSessionOnly("memory");
+    mocks.list.mockResolvedValue([newer, older]);
+
+    await refreshVisibleTranscriptions(() => true);
+
+    expect(mocks.state.transcriptions.transcriptionIds).toEqual([
+      "newer",
+      "memory",
+      "older",
+    ]);
+  });
+
+  it("drops a session-only row once its record leaves the state", async () => {
+    const sessionOnly = await import("./session-only-transcriptions");
+    const pending = await import("./pending-transcription-delete");
+    const { refreshVisibleTranscriptions } =
+      await import("./visible-transcriptions");
+    const memory = row("memory");
+    mocks.state.transcriptionById = { memory };
+    sessionOnly.markTranscriptionSessionOnly("memory");
+    mocks.list.mockResolvedValue([]);
+
+    await refreshVisibleTranscriptions(() => true);
+    expect(mocks.state.transcriptions.transcriptionIds).toEqual(["memory"]);
+
+    // A delete removes the record from the state; the registry id alone must
+    // not keep a deleted row listed.
+    pending.scheduleTranscriptionDelete(memory, 5000);
+    await refreshVisibleTranscriptions(() => true);
+    expect(mocks.state.transcriptions.transcriptionIds).toEqual([]);
+  });
+
   it("preserves a newer recovery result when an older list returns", async () => {
     const { refreshVisibleTranscriptions } =
       await import("./visible-transcriptions");

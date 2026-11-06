@@ -13,6 +13,7 @@ import { getLogger } from "../utils/log.utils";
 import { createId } from "../utils/id.utils";
 import { orFalse, orNull } from "../utils/nullable.utils";
 import { registerTranscriptions } from "../utils/app.utils";
+import { markTranscriptionSessionOnly } from "../utils/session-only-transcriptions";
 import {
   getTranscriptionDeletionRevision,
   isTranscriptionPendingDelete,
@@ -1555,6 +1556,7 @@ export const importAudioFile = async ({
       postprocessDurationMs:
         postProcessResult.metadata.postprocessDurationMs ?? null,
     };
+    markTranscriptionSessionOnly(memoryRecord.id);
     produceAppState((draft) => {
       draft.transcriptionById[memoryRecord.id] = memoryRecord;
       // The History page and the recent list render from transcriptionIds,
