@@ -492,6 +492,99 @@ export const postProcessFinalizedTranscript = async (
   // slow save was silently dropped. The caller releases the gate first and
   // runs this afterwards; everything it uses was captured while the session
   // was still the live one.
+  // The serial History write, guarded like every other storeTranscription
+  // caller in this file and like the concurrent path in the strategy: a
+  // rejected write must not take the feedback down with it. The toasts below
+  // are what tell the user what happened to their words and whether the raw
+  // transcript is recoverable, which is exactly what they need when the write
+  // itself failed. historyEntryAvailable stays false on this path, so the
+  // "not saved" wording is chosen.
+  const storeTranscriptionEntry = async (
+    recordStoredHistory: (stored: StoreTranscriptionOutput) => Promise<void>,
+  ): Promise<void> => {
+    getLogger().verbose("Storing transcription");
+    try {
+      const stored = await input.storeTranscriptionFn({
+        audio: input.audio,
+        rawTranscript: input.rawTranscript ?? null,
+        sanitizedTranscript,
+        transcript,
+        transcriptionMetadata: input.transcribeResult.metadata,
+        postProcessMetadata,
+        warnings: [...input.transcribeResult.warnings, ...postProcessWarnings],
+        remoteStatus: result.remoteStatus,
+        remoteDeviceId: result.remoteDeviceId,
+        trace: input.trace ?? null,
+      });
+      await recordStoredHistory(stored);
+    } catch (error) {
+      getLogger().error(
+        `Serial history persistence failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  };
+
+  // A partial edit batch blocks insertion, so this row is the only copy of
+  // what was said, and which sentence to use depends on whether a row was
+  // actually written: persistence being allowed does not mean the write
+  // succeeded, and an unconditional "saved in History" would point the user
+  // at a row that does not exist. The action is dropped with the row: a
+  // toast that offers to open History for a transcript that was never saved
+  // would be an offer to look at nothing.
+  const showPartialEditFailureToast = async (
+    historyEntryAvailable: boolean,
+  ): Promise<void> => {
+    if (!postProcessMetadata.postProcessEditFailed) {
+      return;
+    }
+    const message = historyEntryAvailable
+      ? getIntl().formatMessage({
+          defaultMessage:
+            "Styling was discarded because not all requested edits could be applied. The complete raw transcript is saved in History.",
+        })
+      : getIntl().formatMessage({
+          // Worded differently from the persisted copy on purpose: this
+          // project derives message ids from the message text, and both
+          // sentences answering the same event with the same opening words is
+          // an id collision the extractor refuses.
+          defaultMessage:
+            "Not all requested styling edits could be applied, so the styling was discarded. History is unavailable in this session, so the raw transcript was not saved.",
+        });
+    await input.showToast({
+      message,
+      toastType: "error",
+      duration: 8_000,
+      action: historyEntryAvailable ? "open_transcriptions" : undefined,
+    });
+  };
+
+  // A fast-style result can report an unstyled tail, and a failed or
+  // degraded run carries its own classified feedback. Show either only
+  // after storage tells us whether History can recover the original text.
+  const showOutcomeFeedback = async (
+    historyEntryAvailable: boolean,
+  ): Promise<void> => {
+    const truncatedMessage = getFastStyleTruncationMessage(
+      postProcessMetadata.fastStyleTruncatedChars,
+      {
+        canRecoverFromHistory: historyEntryAvailable,
+        context: "dictation",
+      },
+    );
+    const postProcessFeedback = getPostProcessFeedback(
+      postProcessMetadata,
+      "dictation",
+      { canRecoverFromHistory: historyEntryAvailable },
+    );
+    const toast = getPostProcessToastOptions(
+      postProcessFeedback,
+      truncatedMessage,
+    );
+    if (toast) {
+      await input.showToast(toast);
+    }
+  };
+
   const persist = async (): Promise<void> => {
     let historyEntryAvailable = reviewOwnedHistory;
     const recordStoredHistory = async (
@@ -513,74 +606,11 @@ export const postProcessFinalizedTranscript = async (
       getLogger().verbose("Awaiting concurrent history persistence");
       await recordStoredHistory(await result.pendingPersistence);
     } else if (willStore) {
-      getLogger().verbose("Storing transcription");
-      const stored = await input.storeTranscriptionFn({
-        audio: input.audio,
-        rawTranscript: input.rawTranscript ?? null,
-        sanitizedTranscript,
-        transcript,
-        transcriptionMetadata: input.transcribeResult.metadata,
-        postProcessMetadata,
-        warnings: [...input.transcribeResult.warnings, ...postProcessWarnings],
-        remoteStatus: result.remoteStatus,
-        remoteDeviceId: result.remoteDeviceId,
-        trace: input.trace ?? null,
-      });
-      await recordStoredHistory(stored);
+      await storeTranscriptionEntry(recordStoredHistory);
     }
     input.refreshMember();
-
-    if (postProcessMetadata.postProcessEditFailed) {
-      // A partial edit batch blocks insertion, so this row is the only copy of
-      // what was said, and which sentence to use depends on whether a row was
-      // actually written: persistence being allowed does not mean the write
-      // succeeded, and an unconditional "saved in History" would point the user
-      // at a row that does not exist. The action is dropped with the row: a
-      // toast that offers to open History for a transcript that was never saved
-      // would be an offer to look at nothing.
-      const message = historyEntryAvailable
-        ? getIntl().formatMessage({
-            defaultMessage:
-              "Styling was discarded because not all requested edits could be applied. The complete raw transcript is saved in History.",
-          })
-        : getIntl().formatMessage({
-            // Worded differently from the persisted copy on purpose: this
-            // project derives message ids from the message text, and both
-            // sentences answering the same event with the same opening words is
-            // an id collision the extractor refuses.
-            defaultMessage:
-              "Not all requested styling edits could be applied, so the styling was discarded. History is unavailable in this session, so the raw transcript was not saved.",
-          });
-      await input.showToast({
-        message,
-        toastType: "error",
-        duration: 8_000,
-        action: historyEntryAvailable ? "open_transcriptions" : undefined,
-      });
-    }
-
-    // A fast-style result can report an unstyled tail, and a failed or
-    // degraded run carries its own classified feedback. Show either only
-    // after storage tells us whether History can recover the original text.
-    const truncatedMessage = getFastStyleTruncationMessage(
-      postProcessMetadata.fastStyleTruncatedChars,
-      {
-        canRecoverFromHistory: historyEntryAvailable,
-        context: "dictation",
-      },
-    );
-    const postProcessFeedback = getPostProcessFeedback(
-      postProcessMetadata,
-      "dictation",
-      { canRecoverFromHistory: historyEntryAvailable },
-    );
-    const toast = getPostProcessToastOptions(
-      postProcessFeedback,
-      truncatedMessage,
-    );
-    if (toast) {
-      await input.showToast(toast);
-    }
+    await showPartialEditFailureToast(historyEntryAvailable);
+    await showOutcomeFeedback(historyEntryAvailable);
   };
 
   return {

@@ -452,6 +452,7 @@ describe("postProcessFinalizedTranscript", () => {
     options: {
       store?: boolean;
       storeResult?: boolean;
+      storeRejects?: boolean;
       agent?: boolean;
       droppedChars?: number;
       postProcessMetadata?: PostProcessMetadata;
@@ -485,6 +486,9 @@ describe("postProcessFinalizedTranscript", () => {
       PostTranscriptInput["storeTranscriptionFn"]
     >(() => {
       order.push("store");
+      if (options.storeRejects === true) {
+        return Promise.reject(new Error("database is locked"));
+      }
       return Promise.resolve({
         transcription:
           options.storeResult === false ? null : ({} as Transcription),
@@ -670,6 +674,40 @@ describe("postProcessFinalizedTranscript", () => {
 
     await runPipeline(input);
 
+    expect(showToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message:
+          "Styling failed because the provider request or usage limit was reached. The app did not insert the transcript or save it in History.",
+        toastType: "error",
+        action: undefined,
+      }),
+    );
+  });
+
+  it("still surfaces the not-saved feedback when the history write rejects", async () => {
+    // A rejected History write used to reject the whole deferred persist step,
+    // which the caller only logged: the transcript was not inserted, not
+    // saved, and the user got no message at all. The write failure is caught
+    // like the concurrent path catches its own, so the member refresh and the
+    // not-saved feedback still run.
+    const { input, order, refreshMember, showToast } = buildInput({
+      storeRejects: true,
+      postProcessMetadata: {
+        postProcessFailed: true,
+        postProcessError: POST_PROCESS_ERROR_CATEGORY.providerLimit,
+      },
+    });
+
+    await expect(runPipeline(input)).resolves.toBeDefined();
+
+    expect(order).toEqual([
+      "handleTranscript",
+      "idle",
+      "store",
+      "refresh",
+      "toast",
+    ]);
+    expect(refreshMember).toHaveBeenCalledTimes(1);
     expect(showToast).toHaveBeenCalledWith(
       expect.objectContaining({
         message:
