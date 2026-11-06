@@ -14,7 +14,7 @@ export const ButtonDemo = () => {
   return (
     <DemoSection
       title="Variants"
-      hint="contained = primary CTA (ink in light, white in dark) · text = quiet · flat = machined surface · chrome = the one accent, silver/ink. All: radius 12, 600 weight, 15px, ripple off, press scale 0.97."
+      hint="contained = primary CTA (ink in light, white in dark) · text = quiet · flat = machined surface · chrome = the one accent. All: radius 12, 600 weight, 15px, ripple off, press scale 0.97."
     >
       <TryIt>hover, keyboard-focus (Tab), and press each button.</TryIt>
       <Matrix>

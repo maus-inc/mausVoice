@@ -2,9 +2,14 @@ import { Term } from "@maus-inc/types";
 import dayjs from "dayjs";
 import { setLocalStorageValue } from "./local-storage.actions";
 import { getTermRepo } from "../repos";
-import { produceAppState } from "../store";
+import { getAppState, produceAppState } from "../store";
 import { registerTerms } from "../utils/app.utils";
 import { createId } from "../utils/id.utils";
+import { createDictionaryTerm } from "../utils/term-mutation-queue";
+import {
+  dictionaryMutationRevision,
+  waitForDictionaryMutations,
+} from "../utils/dictionary-mutations";
 import { getLogger } from "../utils/log.utils";
 import {
   type LocalDataWriteLease,
@@ -12,15 +17,22 @@ import {
 } from "../utils/local-data-write-gate";
 
 export const loadDictionary = async (): Promise<void> => {
-  const terms = await getTermRepo().listTerms();
-  const activeTerms = terms.sort(
-    (a, b) => dayjs(b.createdAt).valueOf() - dayjs(a.createdAt).valueOf(),
-  );
-
-  produceAppState((draft) => {
-    registerTerms(draft, terms);
-    draft.dictionary.termIds = activeTerms.map((term) => term.id);
-  });
+  while (true) {
+    const beforeWait = dictionaryMutationRevision();
+    await waitForDictionaryMutations();
+    const revision = dictionaryMutationRevision();
+    if (beforeWait !== revision) continue;
+    const terms = await getTermRepo().listTerms();
+    if (revision !== dictionaryMutationRevision()) continue;
+    const activeTerms = terms.sort(
+      (a, b) => dayjs(b.createdAt).valueOf() - dayjs(a.createdAt).valueOf(),
+    );
+    produceAppState((draft) => {
+      registerTerms(draft, terms);
+      draft.dictionary.termIds = activeTerms.map((term) => term.id);
+    });
+    return;
+  }
 };
 
 type GlossaryResult = { created: Term[]; failed: number };
@@ -56,26 +68,30 @@ const addGlossaryTerm = async (
     draft.dictionary.termIds = [newTerm.id, ...draft.dictionary.termIds];
   }, lease);
 
-  try {
-    const persisted = await getTermRepo().createTerm(newTerm, lease);
-    produceAppState((draft) => {
-      draft.termById[persisted.id] = persisted;
-    }, lease);
-    result.created.push(persisted);
-    // Every path that grows the dictionary satisfies the "add a word to
-    // your dictionary" onboarding item, whether it is auto-learn, an
-    // edit-watch proposal, the add-to-dictionary hotkey or this dialog.
-    setLocalStorageValue("mausvoice:checklist-dictionary", true, lease);
-  } catch (error) {
-    produceAppState((draft) => {
-      delete draft.termById[newTerm.id];
-      draft.dictionary.termIds = draft.dictionary.termIds.filter(
-        (id) => id !== newTerm.id,
-      );
-    }, lease);
-    getLogger().warning(`Failed to create glossary term: ${error}`);
-    result.failed += 1;
-  }
+  await createDictionaryTerm(
+    newTerm,
+    (persisted) => {
+      if (getAppState().termById[newTerm.id] === newTerm) {
+        produceAppState((draft) => {
+          draft.termById[persisted.id] = persisted;
+        }, lease);
+      }
+      result.created.push(persisted);
+      // All glossary creation paths satisfy the onboarding checklist.
+      setLocalStorageValue("mausvoice:checklist-dictionary", true, lease);
+    },
+    (error) => {
+      produceAppState((draft) => {
+        delete draft.termById[newTerm.id];
+        draft.dictionary.termIds = draft.dictionary.termIds.filter(
+          (id) => id !== newTerm.id,
+        );
+      }, lease);
+      getLogger().warning(`Failed to create glossary term: ${error}`);
+      result.failed += 1;
+    },
+    lease,
+  );
 };
 
 /**

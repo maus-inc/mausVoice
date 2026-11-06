@@ -110,7 +110,7 @@ const resolveApiKeyLabel = (
     return noneLabel;
   }
 
-  const record = records[apiKeyId];
+  const record = getRec(records, apiKeyId);
   if (!record) {
     return unknownLabel;
   }

@@ -27,6 +27,7 @@ import {
   sessionMissingResult,
 } from "../utils/streaming-session.utils";
 import { loadMyEffectiveDictationLanguage } from "../utils/user.utils";
+import { getStartupAbortReason } from "./provider-startup.utils";
 
 const GLADIA_SAFE_LIVE_LIMIT_MS = 179 * 60 * 1000;
 const STARTUP_BUFFER_SECONDS = 30;
@@ -83,7 +84,10 @@ export class GladiaTranscriptionSession implements TranscriptionSession {
     this.interimCallback = callback;
   }
 
-  async onRecordingStart(inputSampleRate: number): Promise<void> {
+  async onRecordingStart(
+    inputSampleRate: number,
+    signal?: AbortSignal,
+  ): Promise<void> {
     const generation = ++this.generation;
     this.streamReady = false;
     this.readyPromise = new Promise<void>((resolve) => {
@@ -158,9 +162,18 @@ export class GladiaTranscriptionSession implements TranscriptionSession {
         const message = error instanceof Error ? error.message : String(error);
         getLogger().error("Gladia streaming session could not start", error);
         this.addWarning(`Gladia streaming session could not start: ${message}`);
+        throw error;
       }
     })();
     await this.startupPromise;
+    if (generation !== this.generation) return;
+    if (signal?.aborted) throw getStartupAbortReason(signal);
+    if (!this.session) {
+      throw new Error("Gladia streaming session was not created");
+    }
+    await this.readyPromise;
+    if (generation !== this.generation) return;
+    if (signal?.aborted) throw getStartupAbortReason(signal);
   }
 
   writeAudioChunk(input: Float32Array): void {
@@ -183,7 +196,7 @@ export class GladiaTranscriptionSession implements TranscriptionSession {
   async finalize(
     _audio: StopRecordingResponse,
   ): Promise<TranscriptionSessionResult> {
-    await this.startupPromise;
+    await this.startupPromise?.catch(() => undefined);
     this.finalized = true;
 
     const activeSession = this.session;
@@ -255,15 +268,35 @@ export class GladiaTranscriptionSession implements TranscriptionSession {
   cleanup(): void {
     this.generation++;
     this.finalized = true;
-    this.session?.cleanup();
+
+    const activeSession = this.session;
+    const pump = this.pump;
+    const resampler = this.resampler;
+    const resolveReady = this.readyResolve;
     this.session = null;
-    this.readyResolve?.();
+    this.pump = null;
+    this.resampler = null;
     this.readyResolve = null;
     this.readyPromise = null;
     this.streamReady = false;
-    this.pump?.resetBuffers();
-    this.pump = null;
-    this.resampler?.reset();
-    this.resampler = null;
+    resolveReady?.();
+
+    try {
+      activeSession?.cleanup();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.addWarning(`Gladia cleanup failed: ${message}`);
+      getLogger().warning(`Gladia cleanup failed: ${message}`);
+    }
+    try {
+      pump?.resetBuffers();
+    } catch (error) {
+      getLogger().warning(`Gladia audio-buffer cleanup failed: ${error}`);
+    }
+    try {
+      resampler?.reset();
+    } catch (error) {
+      getLogger().warning(`Gladia resampler cleanup failed: ${error}`);
+    }
   }
 }

@@ -13,17 +13,17 @@ import {
 import { Check } from "lucide-react";
 import type { Tone } from "@maus-inc/types";
 import { getRec } from "@maus-inc/utilities";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useId, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import {
   closeRetranscribeDialog,
-  retranscribeTranscription,
+  retranscribeTranscriptionWithRecovery,
 } from "../../actions/transcriptions.actions";
 import { useAppStore } from "../../store";
 import {
   AUTO_LANGUAGE,
-  DICTATION_LANGUAGES,
   type DictationLanguageCode,
+  getRenderSafeLanguageLabel,
   ORDERED_DICTATION_LANGUAGES,
   toSelectableDictationLanguage,
 } from "../../utils/language.utils";
@@ -32,8 +32,9 @@ import { getSortedToneIds } from "../../utils/tone.utils";
 import { getMyDictationLanguage } from "../../utils/user.utils";
 import {
   chromeDialogPaperSx,
-  chromeMenuItemSx,
+  chromeSelectMenuItemSx,
   chromeSelectMenuProps,
+  chromeStyleSelectMenuProps,
   selectedOptionLabel,
 } from "../common/chromeMenu";
 
@@ -44,7 +45,7 @@ const languageOptions = (
   ] satisfies DictationLanguageCode[]
 ).map((code) => ({
   code,
-  label: DICTATION_LANGUAGES[code],
+  label: getRenderSafeLanguageLabel(code),
 }));
 
 /**
@@ -64,7 +65,7 @@ const CheckableMenuItem = ({
   label: React.ReactNode;
   selected: boolean;
 }) => (
-  <MenuItem value={value} sx={chromeMenuItemSx}>
+  <MenuItem value={value} sx={chromeSelectMenuItemSx}>
     {label}
     {selected ? <Check size={16} strokeWidth={2} /> : null}
   </MenuItem>
@@ -72,6 +73,8 @@ const CheckableMenuItem = ({
 
 export const RetranscribeDialog = () => {
   const intl = useIntl();
+  const styleLabelId = useId();
+  const languageLabelId = useId();
 
   const open = useAppStore(
     (state) => state.transcriptions.retranscribeDialogOpen,
@@ -116,7 +119,7 @@ export const RetranscribeDialog = () => {
     if (!transcriptionId || isRetranscribing) return;
 
     closeRetranscribeDialog();
-    void retranscribeTranscription({
+    void retranscribeTranscriptionWithRecovery({
       transcriptionId,
       toneId: styleSelectionAvailable ? selectedToneId : null,
       languageCode: selectedLanguage,
@@ -144,17 +147,18 @@ export const RetranscribeDialog = () => {
         <Stack spacing={2.5} sx={{ mt: 1 }}>
           {styleSelectionAvailable && (
             <FormControl fullWidth size="small">
-              <InputLabel>
+              <InputLabel id={styleLabelId}>
                 <FormattedMessage defaultMessage="Style" />
               </InputLabel>
               <Select
+                labelId={styleLabelId}
                 label={intl.formatMessage({ defaultMessage: "Style" })}
                 value={selectedToneId ?? ""}
                 onChange={(e) => {
                   const value = e.target.value;
                   setSelectedToneId(value || null);
                 }}
-                MenuProps={chromeSelectMenuProps}
+                MenuProps={chromeStyleSelectMenuProps}
                 renderValue={(value) =>
                   selectedOptionLabel(
                     value,
@@ -176,10 +180,11 @@ export const RetranscribeDialog = () => {
             </FormControl>
           )}
           <FormControl fullWidth size="small">
-            <InputLabel>
+            <InputLabel id={languageLabelId}>
               <FormattedMessage defaultMessage="Language" />
             </InputLabel>
             <Select
+              labelId={languageLabelId}
               label={intl.formatMessage({ defaultMessage: "Language" })}
               value={selectedLanguage}
               onChange={(e) =>

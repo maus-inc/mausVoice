@@ -67,6 +67,16 @@ describe("HomeSideEffects daily activity refresh", () => {
     setAppState(structuredClone(INITIAL_APP_STATE), true);
   });
 
+  it("reports initial refresh failures through the diagnostic logger", async () => {
+    const failure = new Error("refresh failed");
+    mocks.refresh.mockRejectedValueOnce(failure);
+    await mount();
+    expect(mocks.warning).toHaveBeenCalledWith(
+      "Failed to refresh home data",
+      failure,
+    );
+  });
+
   it("loads the visible local-date range and stores the returned totals", async () => {
     await mount();
 

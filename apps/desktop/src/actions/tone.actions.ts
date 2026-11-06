@@ -22,11 +22,8 @@ import {
 } from "../utils/local-data-write-gate";
 import { showErrorSnackbar, showSnackbar } from "./app.actions";
 import { showToast } from "./toast.actions";
-import {
-  activateAndSelectTone,
-  setSelectedToneId,
-  updateUserPreferences,
-} from "./user.actions";
+import { activateAndSelectTone, setSelectedToneId } from "./user.actions";
+import { updateUserPreferences } from "./user-actions-core";
 
 export const loadTones = async (): Promise<void> => {
   const tones = await getToneRepo().listTones();
@@ -65,8 +62,6 @@ export const upsertTone = async (
 export const deleteTone = async (id: string): Promise<void> =>
   withLocalDataWrite(async (lease) => {
     try {
-      const shouldClearActiveTone =
-        getAppState().userPrefs?.activeToneId === id;
       await getToneRepo().deleteTone(id, lease);
 
       produceAppState((draft) => {
@@ -83,19 +78,30 @@ export const deleteTone = async (id: string): Promise<void> =>
         if (draft.tones.selectedToneId === id) {
           draft.tones.selectedToneId = null;
         }
-        if (draft.userPrefs?.activeToneId === id) {
-          draft.userPrefs.activeToneId = null;
-        }
       }, lease);
 
-      if (shouldClearActiveTone) {
+      try {
         await updateUserPreferences(
           (preferences) => {
+            if (preferences.activeToneId !== id) return false;
             preferences.activeToneId = null;
           },
-          "Failed to clear the deleted tone preference. Please try again.",
-          { existingLease: lease },
+          undefined,
+          { existingLease: lease, showErrorToast: false },
         );
+      } catch (error) {
+        produceAppState((draft) => {
+          if (draft.userPrefs?.activeToneId === id)
+            draft.userPrefs.activeToneId = null;
+        }, lease);
+        console.error("Style deleted, but default style update failed", error);
+        showErrorSnackbar(
+          getIntl().formatMessage({
+            defaultMessage:
+              "Style deleted, but its default setting could not be saved. Choose a default style again.",
+          }),
+        );
+        return;
       }
 
       showSnackbar("Tone deleted successfully", { mode: "success" });
@@ -115,13 +121,17 @@ export const setActiveTone = async (toneId: string | null): Promise<void> =>
         throw new Error("User preferences not found");
       }
 
+      let applied = false;
       await updateUserPreferences(
         (preferences) => {
+          if (toneId && !getAppState().toneById[toneId]) return false;
           preferences.activeToneId = toneId;
+          applied = true;
         },
         "Failed to save active tone. Please try again.",
-        { existingLease: lease },
+        { existingLease: lease, showErrorToast: false },
       );
+      if (!applied) return;
 
       showSnackbar(toneId ? "Default tone set" : "Default tone cleared", {
         mode: "success",

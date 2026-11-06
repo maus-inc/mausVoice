@@ -6,8 +6,7 @@ import { useAppStore } from "../../store";
 import { getMyUserPreferences } from "../../utils/user.utils";
 import { ConfirmDialog } from "../common/ConfirmDialog";
 import { SegmentedControl } from "../common/SegmentedControl";
-import { SettingSection } from "../common/SettingSection";
-import { TipCard } from "../onboarding/TipCard";
+import { SettingRow } from "./SettingRow";
 
 export const UpdateChannelSetting = () => {
   const intl = useIntl();
@@ -54,17 +53,13 @@ export const UpdateChannelSetting = () => {
 
   return (
     <>
-      {/* The tip is anchored here rather than only in Help, so a user reaches it
-          where they actually make the choice. Without a contextual anchor the
-          `update-channel` tip was listed in Help and nowhere else, so the only
-          way to discover it was to go looking for it. */}
-      <TipCard id="update-channel" />
-      <SettingSection
+      <SettingRow
+        settingKey="update_channel"
         title={<FormattedMessage defaultMessage="Update channel" />}
         description={
           <FormattedMessage defaultMessage="Stable ships tested releases. Beta offers prereleases early and may wait for a newer stable before switching back." />
         }
-        action={
+        control={
           <SegmentedControl<UpdateChannel>
             value={channel}
             onChange={handleChange}

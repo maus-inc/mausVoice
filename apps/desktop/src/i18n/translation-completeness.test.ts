@@ -20,8 +20,13 @@ const UNIVERSAL_SAFE = [
 
 // These user-facing controls and feedback messages must not fall back to
 // English in any supported locale.
+const FAILURE_AUDIO_MESSAGES = [
+  "keeps_the_audio_of_a_failed_transcription_so_you_can_replay",
+  "preserve_audio_on_failure",
+  "transcription_failed_the_recording_audio_was_not_saved",
+];
+
 const REQUIRED_TRANSLATION_MESSAGES = [
-  "keep_the_audio_snapshot_with_a_failed_transcription_so_you_c",
   "preserve_audio_on_failure",
   "fast_styling_left_the_last_droppedchars_characters_of_that_d",
   "fast_styling_left_the_last_droppedchars_characters_of_the_au",
@@ -381,6 +386,37 @@ describe("i18n catalogs", () => {
     ]) {
       expect(korean[key], `ko:${key} must exist`).toBeTypeOf("string");
       expect(korean[key], `ko:${key}`).not.toMatch(audioWording);
+    }
+  });
+
+  it("translates the live-provider Connecting status in every locale", () => {
+    const locales = loadLocales();
+    const english = messagesFor(locales, manifest.defaultLocale);
+    expect(english.connecting).toBe("Connecting");
+
+    for (const locale of (manifest.supportedLocales as string[]).filter(
+      (code) => code !== manifest.defaultLocale,
+    )) {
+      expect(locales[locale]?.connecting, `${locale}:connecting`).toBeTruthy();
+      expect(locales[locale]?.connecting, `${locale}:connecting`).not.toBe(
+        english.connecting,
+      );
+    }
+  });
+
+  it("translates failed-transcription audio controls in every locale", () => {
+    const locales = loadLocales();
+    const keyedEnglish = messagesFor(locales, manifest.defaultLocale);
+    const translatedCodes = (manifest.supportedLocales as string[]).filter(
+      (code) => code !== manifest.defaultLocale,
+    );
+
+    for (const key of FAILURE_AUDIO_MESSAGES) {
+      for (const locale of translatedCodes) {
+        const translation = locales[locale]?.[key];
+        expect(translation, `${locale}:${key} must exist`).toBeTypeOf("string");
+        expect(translation, `${locale}:${key}`).not.toBe(keyedEnglish[key]);
+      }
     }
   });
 

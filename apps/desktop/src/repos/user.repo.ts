@@ -1,7 +1,11 @@
 import { Nullable, User } from "@maus-inc/types";
 import { invoke } from "@tauri-apps/api/core";
 import { nowIso } from "../utils/date.utils";
-import { getLocalStorage } from "../utils/local-storage.utils";
+import {
+  getLocalStorage,
+  ACCOUNT_CREATED_AT_STORAGE_KEY,
+  ONBOARDED_AT_STORAGE_KEY,
+} from "../utils/local-storage.utils";
 import type { LocalDataWriteLease } from "../utils/local-data-write-gate";
 import { withLocalDataWriteSync } from "../utils/local-data-write-gate";
 import { orFalse, orNull, orUndefined, orValue } from "../utils/nullable.utils";
@@ -16,8 +20,6 @@ import { BaseRepo, withLocalDataWrite } from "./base.repo";
  * these two write-once localStorage anchors carry the value across the upgrade
  * for anyone who already had a profile row.
  */
-const ACCOUNT_CREATED_AT_KEY = "mausvoice:account-created-at";
-const ONBOARDED_AT_KEY = "mausvoice:onboarded-at";
 
 /**
  * A legacy profile predates both the column and the anchor, so its age is
@@ -88,10 +90,10 @@ const persistTimestampAnchors = (
   const observed = observedCreatedAt(user.createdAt);
   const onboardedAt = resolveOnboardedAt(user.onboardedAt);
   if (observed != null) {
-    writeTimestampAnchorOnce(ACCOUNT_CREATED_AT_KEY, observed, lease);
+    writeTimestampAnchorOnce(ACCOUNT_CREATED_AT_STORAGE_KEY, observed, lease);
   }
   if (onboardedAt != null) {
-    writeTimestampAnchorOnce(ONBOARDED_AT_KEY, onboardedAt, lease);
+    writeTimestampAnchorOnce(ONBOARDED_AT_STORAGE_KEY, onboardedAt, lease);
   }
 };
 
@@ -106,7 +108,7 @@ const observedCreatedAt = (
   if (isKnownInstant(persisted)) {
     return persisted;
   }
-  const anchored = readTimestampAnchor(ACCOUNT_CREATED_AT_KEY);
+  const anchored = readTimestampAnchor(ACCOUNT_CREATED_AT_STORAGE_KEY);
   return isKnownInstant(anchored) ? anchored : null;
 };
 
@@ -119,7 +121,7 @@ const resolveOnboardedAt = (
   if (isTimestamp(persisted)) {
     return persisted;
   }
-  return readTimestampAnchor(ONBOARDED_AT_KEY);
+  return readTimestampAnchor(ONBOARDED_AT_STORAGE_KEY);
 };
 
 const parseActiveToneIds = (
@@ -206,7 +208,6 @@ const fromLocalUser = (localUser: LocalUser): User => {
 export const toLocalUser = (user: User): LocalUser => {
   const observed = observedCreatedAt(user.createdAt);
   const onboardedAt = resolveOnboardedAt(user.onboardedAt);
-
   return {
     id: LOCAL_USER_ID,
     name: user.name,

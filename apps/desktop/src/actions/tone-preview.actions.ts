@@ -45,9 +45,11 @@ export class TonePreviewNoProviderError extends Error {
 /**
  * Why a reply that parsed held nothing to preview. "empty" is a reply with no
  * usable text of any kind; "unreadable-edits" is a reply that declared edits and
- * could not act on any of them.
+ * could not act on any of them; "partial-edits" is retained for the shared
+ * resolver's strict production result, although preview explicitly permits it.
  */
-export type TonePreviewUnusableReason = "empty" | "unreadable-edits";
+export type TonePreviewUnusableReason =
+  "empty" | "unreadable-edits" | "partial-edits";
 
 /**
  * The provider answered, but the answer held no previewable text.
@@ -95,7 +97,9 @@ export class TonePreviewUnusableError extends Error {
  * preview, with no indication the style had produced nothing at all.
  */
 const unwrapResultJson = (raw: string, sample: string): string => {
-  const resolution = resolveProcessedTranscription(raw, sample);
+  const resolution = resolveProcessedTranscription(raw, sample, {
+    allowPartialEdits: true,
+  });
   if (resolution.status === "cleaned") {
     // A reply that declared edits and had none of them applied comes back as
     // "cleaned" with a warning, because the text is a valid transcript and the

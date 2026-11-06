@@ -1,15 +1,7 @@
 import { ArrowForward, OpenInNew } from "@mui/icons-material";
 import { LoadingButton } from "@mui/lab";
-import {
-  Alert,
-  Box,
-  Button,
-  Link,
-  Stack,
-  TextField,
-  Typography,
-} from "@mui/material";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { Alert, Box, Button, Link, Stack, TextField } from "@mui/material";
+import { openExternalUrl } from "../../utils/open-url.utils";
 import { useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import remoteImage from "../../assets/2-remote.png";
@@ -23,6 +15,7 @@ import { ConfirmDialog } from "../common/ConfirmDialog";
 import {
   BackButton,
   DualPaneLayout,
+  OnboardingFormHeader,
   OnboardingFormLayout,
 } from "./OnboardingCommon";
 
@@ -36,7 +29,7 @@ const ConsoleLink = ({
   <Link
     component="button"
     variant="body2"
-    onClick={() => openUrl(url)}
+    onClick={() => openExternalUrl(url, "the provider console")}
     sx={{ alignSelf: "flex-start" }}
   >
     <Stack
@@ -130,28 +123,15 @@ export const PersonalCredentialsForm = () => {
         </Stack>
       }
     >
-      <Stack spacing={3}>
-        <Box>
-          <Typography
-            variant="h4"
-            sx={{
-              fontWeight: 600,
-              pb: 1,
-            }}
-          >
-            <FormattedMessage defaultMessage="Connect your API keys" />
-          </Typography>
-          <Typography
-            variant="body1"
-            sx={{
-              color: "text.secondary",
-            }}
-          >
+      <Stack spacing={2}>
+        <OnboardingFormHeader
+          title={<FormattedMessage defaultMessage="Connect your API keys" />}
+          subtitle={
             <FormattedMessage defaultMessage="Add your Deepgram key for fast streaming transcription and your Groq key for AI post-processing. Keys are encrypted and stored locally, and you can change them any time in Settings." />
-          </Typography>
-        </Box>
+          }
+        />
 
-        <Stack spacing={2}>
+        <Stack spacing={1.5}>
           {error && <Alert severity="error">{error}</Alert>}
 
           <TextField
@@ -221,7 +201,11 @@ export const PersonalCredentialsForm = () => {
         confirmLabel={<FormattedMessage defaultMessage="Skip for now" />}
         cancelButtonProps={{ autoFocus: true }}
       />
-      <DualPaneLayout left={form} right={rightContent} />
+      <DualPaneLayout
+        left={form}
+        right={rightContent}
+        flex={[{ xs: 1.5, md: 1 }, 1]}
+      />
     </>
   );
 };

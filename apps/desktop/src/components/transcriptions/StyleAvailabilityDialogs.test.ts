@@ -11,7 +11,10 @@ const mocks = vi.hoisted(() => ({
   closeRetranscribeDialog: vi.fn(),
   importAudioFile: vi.fn().mockResolvedValue(undefined),
   openFileDialog: vi.fn().mockResolvedValue("/tmp/import.wav"),
-  retranscribeTranscription: vi.fn().mockResolvedValue(undefined),
+  retranscribeTranscriptionWithRecovery: vi.fn().mockResolvedValue({
+    started: true,
+    update: null,
+  }),
 }));
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
@@ -21,7 +24,8 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
 vi.mock("../../actions/transcriptions.actions", () => ({
   closeRetranscribeDialog: mocks.closeRetranscribeDialog,
   importAudioFile: mocks.importAudioFile,
-  retranscribeTranscription: mocks.retranscribeTranscription,
+  retranscribeTranscriptionWithRecovery:
+    mocks.retranscribeTranscriptionWithRecovery,
 }));
 
 vi.mock("react-intl", async (importOriginal) => {
@@ -114,6 +118,27 @@ const hasStyleField = (): boolean =>
     (label) => label.textContent?.trim() === "Style",
   );
 
+const expectSelectLabels = () => {
+  const controls = [
+    ...document.body.querySelectorAll<HTMLElement>(
+      '[role="dialog"] [role="combobox"]',
+    ),
+  ];
+  expect(controls).toHaveLength(2);
+  for (const [control, label] of controls.map(
+    (control, i) => [control, ["Style", "Language"][i]] as const,
+  )) {
+    const references = (control.getAttribute("aria-labelledby") ?? "").split(
+      " ",
+    );
+    expect(
+      references.some(
+        (id) => document.getElementById(id)?.textContent === label,
+      ),
+    ).toBe(true);
+  }
+};
+
 const settle = async () => {
   await act(async () => {
     await Promise.resolve();
@@ -167,6 +192,7 @@ describe("Import audio style availability", () => {
     await openImportDialog();
 
     expect(hasStyleField()).toBe(true);
+    expectSelectLabels();
   });
 
   it("shows styles when post-processing has a usable provider", async () => {
@@ -175,6 +201,7 @@ describe("Import audio style availability", () => {
     await openImportDialog();
 
     expect(hasStyleField()).toBe(true);
+    expectSelectLabels();
   });
 
   it("keeps styles and imports with style when post-processing is turned off (fast path)", async () => {
@@ -209,7 +236,10 @@ describe("Retranscribe style availability", () => {
     resetState();
     seedTone();
     vi.clearAllMocks();
-    mocks.retranscribeTranscription.mockResolvedValue(undefined);
+    mocks.retranscribeTranscriptionWithRecovery.mockResolvedValue({
+      started: true,
+      update: null,
+    });
     produceAppState((draft) => {
       draft.transcriptions.retranscribeDialogOpen = true;
       draft.transcriptions.retranscribeDialogTranscriptionId =
@@ -237,6 +267,7 @@ describe("Retranscribe style availability", () => {
     await renderDialog();
 
     expect(hasStyleField()).toBe(true);
+    expectSelectLabels();
   });
 
   it("keeps styles visible when post-processing is disabled (fast path)", async () => {
@@ -253,7 +284,7 @@ describe("Retranscribe style availability", () => {
       transcribe?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
-    expect(mocks.retranscribeTranscription).toHaveBeenCalledWith(
+    expect(mocks.retranscribeTranscriptionWithRecovery).toHaveBeenCalledWith(
       expect.objectContaining({
         transcriptionId: "transcription-1",
         toneId: expect.any(String),

@@ -3,15 +3,15 @@
  * apps/website/registry/components/keycap-01/keycap-01.tsx
  * Sized down for in-row badges (min 22 vs demo 64).
  */
-import ButtonBase, { type ButtonBaseProps } from "@mui/material/ButtonBase";
+import { Box, type BoxProps } from "@mui/material";
 import { darkInk, highlight, ink } from "../../styles/palette";
 
-export type KeycapProps = Omit<ButtonBaseProps, "disableRipple">;
+export type KeycapProps = BoxProps<"span">;
 
 export function Keycap({ sx, children, ...props }: KeycapProps) {
   return (
-    <ButtonBase
-      disableRipple
+    <Box
+      component="span"
       sx={[
         (theme) => ({
           minWidth: 22,
@@ -34,11 +34,6 @@ export function Keycap({ sx, children, ...props }: KeycapProps) {
           fontWeight: 650,
           lineHeight: 1,
           color: "text.primary",
-          "&.Mui-focusVisible": {
-            outline: "2px solid",
-            outlineColor: "primary.main",
-            outlineOffset: 2,
-          },
           backgroundColor: theme.vars.palette.level1,
           boxShadow: [
             `inset 0 1px 0 ${highlight(0.7)}`,
@@ -67,6 +62,6 @@ export function Keycap({ sx, children, ...props }: KeycapProps) {
       {...props}
     >
       {children}
-    </ButtonBase>
+    </Box>
   );
 }

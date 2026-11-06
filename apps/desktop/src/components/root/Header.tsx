@@ -1,18 +1,18 @@
 import { CircleUser } from "lucide-react";
 import { getIdentifier } from "@tauri-apps/api/app";
-import { Avatar, Box, Button, Stack, Typography } from "@mui/material";
-import { useMemo, useState } from "react";
+import { Box, Button, Stack, Typography } from "@mui/material";
+import { useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { useAsyncData } from "../../hooks/async.hooks";
-import { useIsOnboarded } from "../../hooks/user.hooks";
+import { useIsOnboarded, useMyProfileImage } from "../../hooks/user.hooks";
 import { produceAppState, useAppStore } from "../../store";
 import { getEffectivePlan, planToDisplayName } from "../../utils/member.utils";
-import { getInitials } from "../../utils/string.utils";
 import { getMyUser, getMyUserFirstName } from "../../utils/user.utils";
 import {
   MenuPopoverBuilder,
   type MenuPopoverItem,
 } from "../common/MenuPopover";
+import { UserAvatar } from "../common/UserAvatar";
 import { GpuMigrationDialog } from "./GpuMigrationDialog";
 import { SenderReceiverChip } from "./SenderReceiverChip";
 
@@ -73,10 +73,7 @@ export const AppHeader = () => {
   const guestName = intl.formatMessage({ defaultMessage: "Guest" });
   const displayName = myName || myFullName || guestName;
   const initialsSource = myFullName || displayName;
-  const myInitials = useMemo(
-    () => getInitials(initialsSource),
-    [initialsSource],
-  );
+  const profileImage = useMyProfileImage();
   const identifierData = useAsyncData(getIdentifier, []);
   const isGpuBuild =
     identifierData.state === "success" &&
@@ -127,34 +124,32 @@ export const AppHeader = () => {
           transformOrigin={{ vertical: "top", horizontal: "right" }}
           items={sharedRightMenuItems}
         >
-          {({ ref, open }) => (
+          {({ ref, open, isOpen }) => (
             <Button
               ref={ref}
+              aria-haspopup="menu"
+              aria-expanded={isOpen}
               onClick={open}
               sx={{
                 display: { xs: "none", sm: "flex" },
-                flexShrink: 0,
+                flexShrink: 1,
+                minWidth: 0,
+                maxWidth: "min(320px, 40vw)",
                 flexDirection: "row",
                 alignItems: "center",
                 gap: 1.5,
               }}
             >
-              <Avatar
-                sx={{
-                  width: 24,
-                  height: 24,
-                  fontSize: 12,
-                }}
-              >
-                {myInitials}
-              </Avatar>
+              <UserAvatar name={initialsSource} src={profileImage} size={24} />
               <Stack
                 spacing={0.5}
                 sx={{
                   textAlign: "left",
+                  minWidth: 0,
                 }}
               >
                 <Typography
+                  noWrap
                   variant="subtitle1"
                   sx={{
                     fontWeight: 500,

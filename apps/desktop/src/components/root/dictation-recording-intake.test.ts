@@ -59,6 +59,7 @@ import {
   forwardAudioChunk,
   isRecordingStartCurrent,
   releaseRecordingResources,
+  requiresLiveIntakeRecovery,
   stopNativeRecordingForAbort,
   stopOwnedNativeStart,
 } from "./dictation-recording-intake";
@@ -103,6 +104,20 @@ beforeEach(() => {
   mocks.verboseMock.mockClear();
 });
 
+describe("requiresLiveIntakeRecovery", () => {
+  it("flags a failed subscription only for live-streaming sessions", () => {
+    expect(requiresLiveIntakeRecovery("live-streaming", true)).toBe(true);
+    expect(requiresLiveIntakeRecovery("after-stop", true)).toBe(false);
+    expect(requiresLiveIntakeRecovery("local", true)).toBe(false);
+  });
+
+  it("never flags an established subscription", () => {
+    expect(requiresLiveIntakeRecovery("live-streaming", false)).toBe(false);
+    expect(requiresLiveIntakeRecovery("after-stop", false)).toBe(false);
+    expect(requiresLiveIntakeRecovery("local", false)).toBe(false);
+  });
+});
+
 describe("audio intake ownership", () => {
   it("registers exactly one audio_chunk listener per recording", async () => {
     const session = sessionWith(vi.fn());
@@ -115,10 +130,11 @@ describe("audio intake ownership", () => {
     expect(mocks.listenCalls).toBe(1);
   });
 
-  it("falls back to the whole recording when the subscription fails", async () => {
-    // A subscription that cannot be established is a missing optimisation, not a
-    // broken dictation. Letting this reject reached the outer start-failure
-    // handler and reported "Recording failed" for a recording that was fine.
+  it("tolerates subscription failure so stop can recover the native recording", async () => {
+    // A subscription that cannot be established is not a reason to fail native
+    // capture. Non-streaming sessions can transcribe the full recording at stop;
+    // live sessions finalize empty and rely on the failed-transcription recovery
+    // path to retain audio when the strategy and persistence policy allow.
     mocks.rejectListen = true;
     const intake = await attachSessionAudioIntake(
       sessionWith(vi.fn()),
@@ -128,6 +144,7 @@ describe("audio intake ownership", () => {
     );
     expect(intake.unlisten).toBeNull();
     expect(intake.current).toBe(true);
+    expect(intake.subscriptionFailed).toBe(true);
   });
 
   it("skips registration for a session that takes no live audio", async () => {
@@ -140,6 +157,7 @@ describe("audio intake ownership", () => {
     expect(mocks.listenCalls).toBe(0);
     expect(intake.unlisten).toBeNull();
     expect(intake.current).toBe(true);
+    expect(intake.subscriptionFailed).toBe(false);
   });
 
   it("reports a superseded start that has nothing to attach", async () => {
