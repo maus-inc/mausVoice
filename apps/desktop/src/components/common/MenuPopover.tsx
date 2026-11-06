@@ -14,9 +14,11 @@ import {
 import { useEffect, useRef, useState } from "react";
 import { chromeMenuPaperSx } from "./chromeMenu";
 import { ListTile } from "./ListTile";
+import { keyboardMenuSx, useMenuNavigation } from "./use-menu-navigation";
 
 export type MenuPopoverCallbackArgs = {
   close: () => void;
+  closeThen: (action: () => void) => void;
   event: React.MouseEvent<HTMLElement>;
 };
 
@@ -26,6 +28,11 @@ export type MenuPopoverListItem = {
   title?: React.ReactNode;
   leading?: React.ReactNode;
   trailing?: React.ReactNode;
+  /** A separate focusable action alongside the primary menu item. */
+  endAction?:
+    | React.ReactNode
+    | ((args: { closeThen: (action: () => void) => void }) => React.ReactNode);
+  checked?: boolean;
   onClick?: (args: MenuPopoverCallbackArgs) => void;
 };
 
@@ -58,27 +65,37 @@ export type MenuPopoverItem =
 type MenuPopoverItemRendProps = {
   item: MenuPopoverItem;
   close: () => void;
+  closeThen: (action: () => void) => void;
 };
 
 type MenuPopoverSubMenuItemProps = {
   item: MenuPopoverSubMenu;
   close: () => void;
+  closeThen: (action: () => void) => void;
 };
-
-const menuWrapperRole = (item: MenuPopoverItem): "menuitem" | undefined =>
-  item.kind === "divider" || item.kind === "genericItem"
-    ? undefined
-    : "menuitem";
 
 function MenuPopoverSubMenuItem({
   item,
   close,
+  closeThen,
 }: Readonly<MenuPopoverSubMenuItemProps>) {
   const [submenuOpen, setSubmenuOpen] = useState(false);
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
   const buttonRef = useRef<HTMLDivElement>(null);
   const hideTimerRef = useRef<number | null>(null);
 
-  const openSubmenu = (): void => {
+  const menuNavigation = useMenuNavigation(
+    submenuOpen,
+    close,
+    keyboardOpen,
+    () => {
+      setSubmenuOpen(false);
+      setKeyboardOpen(false);
+    },
+  );
+
+  const openSubmenu = (keyboard = false): void => {
+    if (keyboard) setKeyboardOpen(true);
     if (hideTimerRef.current) {
       window.clearTimeout(hideTimerRef.current);
       hideTimerRef.current = null;
@@ -87,7 +104,10 @@ function MenuPopoverSubMenuItem({
   };
 
   const closeSubmenu = (): void => {
-    hideTimerRef.current = window.setTimeout(() => setSubmenuOpen(false), 80);
+    hideTimerRef.current = window.setTimeout(() => {
+      setSubmenuOpen(false);
+      setKeyboardOpen(false);
+    }, 80);
   };
 
   useEffect(() => {
@@ -102,13 +122,15 @@ function MenuPopoverSubMenuItem({
     <>
       <div
         ref={buttonRef}
-        onMouseEnter={openSubmenu}
+        onMouseEnter={() => openSubmenu()}
         onMouseLeave={closeSubmenu}
       >
         <ListItemButton
+          role="menuitem"
+          tabIndex={-1}
           aria-haspopup="menu"
           aria-expanded={submenuOpen}
-          onClick={openSubmenu}
+          onClick={(event) => openSubmenu(event.detail === 0)}
           onKeyDown={(event) => {
             if (
               event.key === "Enter" ||
@@ -116,7 +138,7 @@ function MenuPopoverSubMenuItem({
               event.key === "ArrowRight"
             ) {
               event.preventDefault();
-              openSubmenu();
+              openSubmenu(true);
             }
           }}
         >
@@ -128,23 +150,38 @@ function MenuPopoverSubMenuItem({
       <Popover
         open={submenuOpen}
         anchorEl={buttonRef.current}
-        onClose={() => setSubmenuOpen(false)}
+        onClose={() => {
+          setSubmenuOpen(false);
+          setKeyboardOpen(false);
+        }}
+        disableAutoFocus={!keyboardOpen}
+        disableEnforceFocus={!keyboardOpen}
+        disableRestoreFocus={!keyboardOpen}
         anchorOrigin={{ vertical: "top", horizontal: "right" }}
         transformOrigin={{ vertical: "top", horizontal: "left" }}
         slotProps={{
           paper: {
-            onMouseEnter: openSubmenu,
+            onMouseEnter: () => openSubmenu(),
             onMouseLeave: closeSubmenu,
-            role: "menu",
-            tabIndex: -1,
             sx: chromeMenuPaperSx,
           },
         }}
       >
-        <Stack>
+        <Stack
+          role="menu"
+          ref={menuNavigation.ref}
+          data-keyboard-navigation={menuNavigation.keyboardNavigation}
+          onKeyDown={menuNavigation.onKeyDown}
+          onMouseMove={menuNavigation.onMouseMove}
+          sx={keyboardMenuSx}
+        >
           {item.children.map((child) => (
-            <Box key={child.id} role={menuWrapperRole(child)}>
-              <MenuPopoverItemRend item={child} close={close} />
+            <Box key={child.id}>
+              <MenuPopoverItemRend
+                item={child}
+                close={close}
+                closeThen={closeThen}
+              />
             </Box>
           ))}
         </Stack>
@@ -156,15 +193,31 @@ function MenuPopoverSubMenuItem({
 function MenuPopoverItemRend({
   item,
   close,
+  closeThen,
 }: Readonly<MenuPopoverItemRendProps>): React.ReactNode {
   if (item.kind === "listItem") {
-    return (
+    const tile = (
       <ListTile
+        itemRole={item.checked === undefined ? "menuitem" : "menuitemcheckbox"}
+        ariaChecked={item.checked}
         leading={item.leading}
         title={item.title}
         trailing={item.trailing}
-        onClick={(e) => item.onClick && item.onClick({ close, event: e })}
+        onClick={(e) => item.onClick?.({ close, closeThen, event: e })}
+        sx={
+          item.endAction ? { flex: 1, minWidth: 0, width: "auto" } : undefined
+        }
       />
+    );
+    return item.endAction ? (
+      <Stack direction="row" sx={{ alignItems: "center" }}>
+        {tile}
+        {typeof item.endAction === "function"
+          ? item.endAction({ closeThen })
+          : item.endAction}
+      </Stack>
+    ) : (
+      tile
     );
   }
 
@@ -177,7 +230,9 @@ function MenuPopoverItemRend({
   }
 
   if (item.kind === "subMenu") {
-    return <MenuPopoverSubMenuItem item={item} close={close} />;
+    return (
+      <MenuPopoverSubMenuItem item={item} close={close} closeThen={closeThen} />
+    );
   }
 
   return null;
@@ -207,6 +262,15 @@ export const MenuPopover = ({
   transformOrigin,
   ...rest
 }: MenuPopoverProps) => {
+  const menuNavigation = useMenuNavigation(open, onClose);
+  const afterClose = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    if (open) afterClose.current = null;
+  }, [open]);
+  const closeThen = (action: () => void) => {
+    afterClose.current = action;
+    onClose();
+  };
   const handleClose = (event: React.MouseEvent<HTMLElement>): void => {
     event.stopPropagation();
     onClose?.();
@@ -236,13 +300,31 @@ export const MenuPopover = ({
       }
       slotProps={{
         paper: { sx: chromeMenuPaperSx },
+        transition: {
+          onExited: () => {
+            const action = afterClose.current;
+            afterClose.current = null;
+            action?.();
+          },
+        },
       }}
       {...rest}
     >
-      <Stack sx={sx} role="menu">
+      <Stack
+        sx={[...(Array.isArray(sx) ? sx : [sx ?? {}]), keyboardMenuSx]}
+        role="menu"
+        ref={menuNavigation.ref}
+        data-keyboard-navigation={menuNavigation.keyboardNavigation}
+        onKeyDown={menuNavigation.onKeyDown}
+        onMouseMove={menuNavigation.onMouseMove}
+      >
         {items.map((item) => (
-          <Box key={item.id} role={menuWrapperRole(item)}>
-            <MenuPopoverItemRend item={item} close={onClose} />
+          <Box key={item.id}>
+            <MenuPopoverItemRend
+              item={item}
+              close={onClose}
+              closeThen={closeThen}
+            />
           </Box>
         ))}
       </Stack>

@@ -14,6 +14,25 @@ This document is the elaboration for the Proactive Problem Solving Protocol HARD
 - Name class explicitly, check boundaries bidirectionally, record instances + evidence in Research Gate.
 - PR without class name is incomplete.
 
+## Depth pass
+
+- Before acting on a plan-first or non-trivial task, run the four-question depth pass from
+  `.agents/skills/be-ambitious/SKILL.md`. Name the field, then answer what an expert would do
+  that the task did not ask for, which raw material they would start from, which named methods
+  and tools fit, and what other than the agent or the human would show the result is right.
+- Run it, do not offer it. No rewritten prompt handed to the human, no question about whether to
+  go deeper, no stopping after the pass. The task continues into execution in the same turn.
+- Gate the fourth answer. Run the external check and attach the result, or label the claim as a
+  hypothesis awaiting verification with what would settle it, or downgrade the work to a plan
+  awaiting verification when the answer is empty. Never fabricate a check, a source or a result.
+  A stated cannot verify now passes. An invented verification fails. When a sandbox gap is what
+  stops the check, name its number from `engineering/sandbox-coverage-gaps.md`, or its heading
+  for the accepted gaps that carry no number, not just the word sandbox.
+- Record the pass. The four answers and the gate result per claim go in the report, so a run
+  that loses context mid-way still leaves the evidence behind.
+- Depth is not scope. A move that makes the job larger goes through the confirmation rule below.
+  A move that makes the same job better does not need permission.
+
 ## Proactive solving
 
 - NEVER symptom-only; trace via 5 Whys, name architectural vs logical root cause.

@@ -33,12 +33,29 @@ export const createRouteLoader = (
   };
 };
 
+/**
+ * Route modules keyed by the path each sidebar tile navigates to. The same
+ * loaders serve the router's `lazy` routes and the sidebar hover warmup, so a
+ * prefetch and the eventual navigation share one import promise. Modules with
+ * named exports are adapted through the `then` mapper.
+ */
 export const dashboardRouteLoaders = {
   "/dashboard": createRouteLoader("/dashboard", () =>
     import("../components/home/HomePage"),
   ),
   "/dashboard/settings": createRouteLoader("/dashboard/settings", () =>
-    import("../components/settings/SettingsPage"),
+    import("../components/settings/SettingsLayout").then((m) => ({
+      default: m.SettingsLayout,
+    })),
+  ),
+  // The settings entry redirect lives in the layout module; a separate key
+  // keeps one event per resolved route while sharing the module cache.
+  "/dashboard/settings/entry": createRouteLoader(
+    "/dashboard/settings/entry",
+    () =>
+      import("../components/settings/SettingsLayout").then((m) => ({
+        default: m.SettingsEntryRedirect,
+      })),
   ),
   "/dashboard/transcriptions": createRouteLoader(
     "/dashboard/transcriptions",
@@ -52,6 +69,9 @@ export const dashboardRouteLoaders = {
   ),
   "/dashboard/chats": createRouteLoader("/dashboard/chats", () =>
     import("../components/chats/ChatsPage"),
+  ),
+  "/dashboard/apps": createRouteLoader("/dashboard/apps", () =>
+    import("../components/apps/AppsPage"),
   ),
   "/dashboard/help": createRouteLoader("/dashboard/help", () =>
     import("../components/help/HelpPage"),

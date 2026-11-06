@@ -1,0 +1,77 @@
+# Lefthook git hooks for mausVoice
+# https://lefthook.dev/configuration/
+# Install: npm install -g lefthook && lefthook install
+# The rules behind these jobs live in COMMIT.md, .agents/PREFLIGHT.md and AGENTS.md.
+
+pre-commit:
+  parallel: true
+  jobs:
+    - name: prettier (staged)
+      glob: "**/*.{ts,tsx,md,json,yml,yaml}"
+      run: npx prettier --check {staged_files}
+
+    - name: oxlint (staged desktop source)
+      glob: "apps/desktop/**/*.{ts,tsx}"
+      run: pnpm --filter desktop exec oxlint {staged_files}
+
+    - name: rust fmt check
+      # Scope the trigger to exactly the crates the loop formats, so the hook cannot
+      # report success while an unformatted file in another crate goes unchecked.
+      glob:
+        - "{apps/desktop/src-tauri,packages/rust_transcription,packages/rust_pill_shared,packages/rust_gtk_pill,packages/rust_macos_pill,packages/rust_windows_pill}/**/*.{rs,toml}"
+        - "{apps/desktop/src-tauri,packages/rust_transcription,packages/rust_pill_shared,packages/rust_gtk_pill,packages/rust_macos_pill,packages/rust_windows_pill}/*.{rs,toml}"
+      run: |
+        for m in apps/desktop/src-tauri packages/rust_transcription packages/rust_pill_shared packages/rust_gtk_pill packages/rust_macos_pill packages/rust_windows_pill; do
+          cargo fmt --manifest-path "$m/Cargo.toml" --all -- --check
+        done
+
+    - name: bindings are regenerated
+      glob: "{apps/desktop/src-tauri/**,packages/desktop-native-apis/src/bindings.ts}"
+      # The generator builds and runs the Tauri crate, which needs the same sidecar
+      # override CI uses when the binaries are not built yet.
+      env:
+        TAURI_CONFIG: '{"bundle":{"externalBin":[]}}'
+      run: |
+        pnpm gen:bindings
+        git diff --exit-code -- packages/desktop-native-apis/src/bindings.ts \
+          || { echo "bindings.ts is stale. Commit the output of pnpm gen:bindings."; exit 1; }
+
+    - name: vendored skills match the lockfile
+      glob: "{.agents/skills/**,skills-lock.json}"
+      run: pnpm run skills:verify
+
+pre-push:
+  jobs:
+    - name: lint
+      run: pnpm run lint
+
+    - name: check types
+      run: pnpm run check-types
+
+    - name: tests
+      run: pnpm run test
+
+    # A smoke gate: the desktop crate, on any Rust or Cargo change. The full per-crate
+    # list, including the pill crates and the transcription sidecar, is in `.agents/PREFLIGHT.md`.
+    - name: rust gates
+      glob: "**/*.{rs,toml,lock}"
+      # Same override CI uses, or the desktop crate looks for sidecar binaries that a
+      # fresh checkout does not have yet.
+      env:
+        TAURI_CONFIG: '{"bundle":{"externalBin":[]}}'
+      run: |
+        cargo clippy --locked --manifest-path apps/desktop/src-tauri/Cargo.toml -- -D warnings
+        CARGO_BUILD_JOBS=1 cargo test --locked --lib --manifest-path apps/desktop/src-tauri/Cargo.toml
+
+commit-msg:
+  jobs:
+    - name: commit message shape
+      run: |
+        MSG=$(head -n1 {1})
+        if echo "$MSG" | grep -Eq '^[a-z0-9-]+(\([^)]+\))?: .{5,}$'; then exit 0; fi
+        if echo "$MSG" | grep -Eq '^(feat|fix|chore|docs|ci|refactor|test|perf|build|style|security|release)(\(.+\))?: .{5,}$'; then exit 0; fi
+        if echo "$MSG" | grep -Eq '^Merge '; then exit 0; fi
+        echo "Commit subject must be 'area: short summary', for example 'transcription: stop replaying an aborted request'."
+        echo "Got: $MSG"
+        echo "Areas and rules are in COMMIT.md."
+        exit 1

@@ -1,3 +1,5 @@
+import { INITIAL_LOCAL_STATE } from "../state/local.state";
+import { produceAppState } from "../store";
 import { getLocalStorage } from "./local-storage.utils";
 import { disableAnalyticsPersistenceForLocalDataClear } from "./analytics-persistence.utils";
 import { LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY } from "./local-data-write-gate";
@@ -34,6 +36,10 @@ export const clearAppLocalStorage = (): void => {
   }
 
   disableAnalyticsPersistenceForLocalDataClear();
+  // The clear gate blocks persistence while the live store drops sensitive data.
+  produceAppState((draft) => {
+    draft.local = INITIAL_LOCAL_STATE;
+  });
 
   const keysToRemove: string[] = [];
   try {

@@ -181,6 +181,26 @@ pub const PENDING_AUDIO_DELETIONS_MIGRATION_SQL: &str =
 /// transcription-history backfill.
 pub const DAILY_WORD_ACTIVITY_MIGRATION_SQL: &str =
     include_str!("migrations/091_daily_word_activity.sql");
+/// Persists semantic post-processing edit failures, their per-row retry-chain
+/// count, and the durable one-pass automatic-recovery guard. Numbered 92: the
+/// consolidation branch took 91 for `daily_word_activity` first.
+pub const POST_PROCESS_EDIT_FAILURE_MIGRATION_SQL: &str =
+    include_str!("migrations/092_post_process_edit_failure.sql");
+/// Persists the tone and language a claimed recovery pass must reuse.
+pub const POST_PROCESS_EDIT_RETRY_CONTEXT_MIGRATION_SQL: &str =
+    include_str!("migrations/093_post_process_edit_retry_context.sql");
+/// Persists the failure count a recovery claim was written at.
+pub const POST_PROCESS_EDIT_RETRY_CLAIM_COUNT_MIGRATION_SQL: &str =
+    include_str!("migrations/094_post_process_edit_retry_claim_count.sql");
+/// Whether a short dictation in a prose style is styled by the deterministic
+/// local transforms instead of the configured provider. Default on.
+///
+/// Numbered 95 because 91 to 94 are taken by the consolidation branch. Like
+/// them it sits above the 71-88 retirement window, for the reason
+/// [`PENDING_AUDIO_DELETIONS_MIGRATION_SQL`] gives: a number inside the window
+/// is checksum-compared against databases that already applied those steps.
+pub const FAST_STYLE_SHORT_DICTATIONS_MIGRATION_SQL: &str =
+    include_str!("migrations/095_fast_style_short_dictations.sql");
 /// Schema pieces folded into [`CONSOLIDATED_V0_1_6_MIGRATION_SQL`] /
 /// [`migrations`]: `preserve_audio_on_failure`, `transcription_path`,
 /// `pill_placement`, `hands_free_delay_ms`, `auto_learn_dictionary_enabled`,
@@ -623,6 +643,30 @@ pub fn migrations() -> Vec<tauri_plugin_sql::Migration> {
             version: 91,
             description: "create_daily_word_activity_tables",
             sql: DAILY_WORD_ACTIVITY_MIGRATION_SQL,
+            kind: tauri_plugin_sql::MigrationKind::Up,
+        },
+        tauri_plugin_sql::Migration {
+            version: 92,
+            description: "post_process_edit_failure",
+            sql: POST_PROCESS_EDIT_FAILURE_MIGRATION_SQL,
+            kind: tauri_plugin_sql::MigrationKind::Up,
+        },
+        tauri_plugin_sql::Migration {
+            version: 93,
+            description: "post_process_edit_retry_context",
+            sql: POST_PROCESS_EDIT_RETRY_CONTEXT_MIGRATION_SQL,
+            kind: tauri_plugin_sql::MigrationKind::Up,
+        },
+        tauri_plugin_sql::Migration {
+            version: 94,
+            description: "post_process_edit_retry_claim_count",
+            sql: POST_PROCESS_EDIT_RETRY_CLAIM_COUNT_MIGRATION_SQL,
+            kind: tauri_plugin_sql::MigrationKind::Up,
+        },
+        tauri_plugin_sql::Migration {
+            version: 95,
+            description: "add_fast_style_short_dictations_enabled",
+            sql: FAST_STYLE_SHORT_DICTATIONS_MIGRATION_SQL,
             kind: tauri_plugin_sql::MigrationKind::Up,
         },
     ]

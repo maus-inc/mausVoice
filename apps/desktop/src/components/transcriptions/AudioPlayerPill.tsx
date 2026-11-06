@@ -1,18 +1,18 @@
-import { Box, CircularProgress, IconButton, Typography } from "@mui/material";
-import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
-import { Pause, Play } from "lucide-react";
-import { useIntentWarmup } from "../../hooks/intent-warmup.hooks";
-import { transcriptionAudioCache } from "../../utils/transcription-audio-cache";
-import { subscribeToLocalDataClearRequested } from "../../utils/local-data-write-gate";
-import { springPop } from "../../styles/motion";
+import { Box, Typography } from "@mui/material";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useIntl } from "react-intl";
-import { MetalChrome } from "../common/MetalChrome";
+import { useIntentWarmup } from "../../hooks/intent-warmup.hooks";
+import { subscribeToLocalDataClearRequested } from "../../utils/local-data-write-gate";
+import { transcriptionAudioCache } from "../../utils/transcription-audio-cache";
+import { AudioPlaybackButton } from "./AudioPlaybackButton";
+import { AudioWaveformBars } from "./AudioWaveformBars";
+import {
+  type AudioPillPlaybackSession,
+  createAudioPillPlaybackSession,
+} from "./audio-pill-playback-session";
 import { showErrorSnackbar } from "../../actions/app.actions";
 import { getTranscriptionRepo } from "../../repos";
 import {
-  cancelAudioPlaybackRequest,
-  createAudioPlaybackRequest,
   buildWaveformOutline,
   DEFAULT_WAVEFORM_BAR_COUNT,
   formatDuration,
@@ -40,29 +40,32 @@ export const AudioPlayerPill = ({
   actions,
 }: AudioPlayerPillProps) => {
   const intl = useIntl();
-  const reduceMotion = useReducedMotion();
-
   const [isPlaying, setIsPlaying] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const requestRef = useRef<AbortController | null>(null);
-  const mountedRef = useRef(false);
+  const loadingRef = useRef(false);
   const [playbackProgress, setPlaybackProgress] = useState(0);
   const [waveformWidth, setWaveformWidth] = useState(0);
   const waveformContainerRef = useRef<HTMLDivElement | null>(null);
   const pointerCleanupRef = useRef<(() => void) | null>(null);
+  const playbackSessionRef = useRef<AudioPillPlaybackSession | null>(null);
+  const getPlaybackSession = () => {
+    playbackSessionRef.current ??= createAudioPillPlaybackSession();
+    return playbackSessionRef.current;
+  };
   const isPlayingRef = useRef(false);
   const playbackProgressRef = useRef(0);
+  const transcriptionIdRef = useRef(transcriptionId);
   const isDraggingRef = useRef(false);
   const progressAtDragStartRef = useRef(0);
-
   useEffect(() => {
     isPlayingRef.current = isPlaying;
   }, [isPlaying]);
-
   useEffect(() => {
     playbackProgressRef.current = playbackProgress;
   }, [playbackProgress]);
-
+  useEffect(() => {
+    transcriptionIdRef.current = transcriptionId;
+  }, [transcriptionId]);
   const desiredWaveformBarCount = useMemo(() => {
     if (waveformWidth <= 0) {
       return DEFAULT_WAVEFORM_BAR_COUNT;
@@ -79,7 +82,6 @@ export const AudioPlayerPill = ({
       Math.min(MAX_COMPUTED_BAR_COUNT, approximateCount),
     );
   }, [waveformWidth]);
-
   const waveformValues = useMemo(
     () =>
       buildWaveformOutline(
@@ -89,7 +91,6 @@ export const AudioPlayerPill = ({
       ),
     [durationMs, desiredWaveformBarCount, transcriptionId],
   );
-
   const waveformBars = useMemo(() => {
     if (!waveformValues.length) {
       return Array.from(
@@ -100,7 +101,6 @@ export const AudioPlayerPill = ({
 
     return waveformValues;
   }, [desiredWaveformBarCount, waveformValues]);
-
   const computedBarWidth = useMemo(() => {
     if (waveformWidth <= 0 || waveformBars.length === 0) {
       return WAVEFORM_BAR_MIN_WIDTH;
@@ -115,35 +115,42 @@ export const AudioPlayerPill = ({
       Math.min(WAVEFORM_BAR_MAX_WIDTH, widthPerBar),
     );
   }, [waveformBars.length, waveformWidth]);
-
   const progressPercent = Math.min(Math.max(playbackProgress, 0), 1) * 100;
-
   useEffect(() => {
-    mountedRef.current = true;
-    setIsPlaying(false);
-    setIsLoading(false);
-    setPlaybackProgress(0);
-    const cancel = () => {
-      if (requestRef.current) cancelAudioPlaybackRequest(requestRef.current);
-      requestRef.current = null;
-    };
-    const unsubscribe = subscribeToLocalDataClearRequested(cancel);
     return () => {
-      mountedRef.current = false;
-      unsubscribe();
-      cancel();
       pointerCleanupRef.current?.();
       pointerCleanupRef.current = null;
+      getPlaybackSession().stopOwned();
     };
-  }, [transcriptionId, disabled]);
-
+  }, [transcriptionId]);
+  useEffect(() => {
+    if (!disabled || !getPlaybackSession().stopOwned()) return;
+    isPlayingRef.current = false;
+    setIsPlaying(false);
+    loadingRef.current = false;
+    setIsLoading(false);
+  }, [disabled]);
+  // A local-data wipe must drop in-flight and active audio with the rows it
+  // invalidates; the repo clears its cache through the same subscription.
+  useEffect(() => {
+    return subscribeToLocalDataClearRequested(() => {
+      getPlaybackSession().stopOwned();
+      isPlayingRef.current = false;
+      setIsPlaying(false);
+      loadingRef.current = false;
+      setIsLoading(false);
+      setPlaybackProgress(0);
+    });
+  }, [transcriptionId]);
+  // Hovering the pill warms the saved audio through the repository cache so
+  // the first click starts from a warm read (the cache is TTL-bounded and
+  // throttled; see transcription-audio-cache.ts).
   const warmAudio = useCallback(async () => {
     if (!disabled && transcriptionAudioCache.canWarm()) {
       await getTranscriptionRepo().loadTranscriptionAudio(transcriptionId);
     }
   }, [disabled, transcriptionId]);
   const warmup = useIntentWarmup(warmAudio, transcriptionId);
-
   useEffect(() => {
     const element = waveformContainerRef.current;
     if (!element) {
@@ -174,74 +181,89 @@ export const AudioPlayerPill = ({
     observer.observe(element);
     return () => observer.disconnect();
   }, [transcriptionId]);
-
   const handlePlaybackToggle = useCallback(async () => {
-    if (disabled) return;
-    if (requestRef.current && !requestRef.current.signal.aborted) {
-      cancelAudioPlaybackRequest(requestRef.current);
-      requestRef.current = null;
+    const session = getPlaybackSession();
+    if (isPlayingRef.current) {
+      session.stopOwned();
+      isPlayingRef.current = false;
+      setIsPlaying(false);
       return;
     }
-    const request = createAudioPlaybackRequest();
-    requestRef.current = request;
-    const current = () =>
-      mountedRef.current &&
-      requestRef.current === request &&
-      !request.signal.aborted;
-    let preparing = true;
-    let stoppedDuringPreparation = false;
-    const reset = () => {
-      if (!mountedRef.current || requestRef.current !== request) return;
+    if (loadingRef.current) {
+      // The button reads "Cancel audio loading" while a read is pending;
+      // clicking it abandons that read instead of stacking another one.
+      session.stopOwned();
+      loadingRef.current = false;
       setIsLoading(false);
-      setIsPlaying(false);
-      isPlayingRef.current = false;
-      requestRef.current = null;
-      cancelAudioPlaybackRequest(request);
-    };
-    request.signal.addEventListener("abort", reset, { once: true });
+      return;
+    }
+
+    const attempt = session.beginRequest();
+    loadingRef.current = true;
     setIsLoading(true);
     try {
       const audioData =
         await getTranscriptionRepo().loadTranscriptionAudio(transcriptionId);
-      if (!current()) return;
+
+      if (!attempt.isCurrent()) {
+        return;
+      }
+
+      loadingRef.current = false;
+      setIsLoading(false);
+      isPlayingRef.current = true;
+      setIsPlaying(true);
+      attempt.beginSetup();
       await playWebAudio(
         transcriptionId,
         audioData,
         (progress) => {
-          if (current() && !isDraggingRef.current)
+          if (
+            transcriptionIdRef.current === transcriptionId &&
+            attempt.isNonceCurrent() &&
+            !isDraggingRef.current
+          ) {
             setPlaybackProgress(progress);
+          }
         },
         (reason) => {
-          if (!current()) return;
-          // Teardown can notify stop before preparation rejects. Keep its error owner.
-          if (preparing) stoppedDuringPreparation = true;
-          else reset();
-          if (reason === "ended") setPlaybackProgress(0);
+          if (
+            transcriptionIdRef.current !== transcriptionId ||
+            !attempt.handleStopCallback(reason)
+          ) {
+            return;
+          }
+          isPlayingRef.current = false;
+          setIsPlaying(false);
+          if (reason === "ended") {
+            setPlaybackProgress(0);
+          }
         },
         playbackProgressRef.current,
-        request.signal,
+        attempt.signal,
       );
-      preparing = false;
-      if (current()) {
-        if (stoppedDuringPreparation) {
-          reset();
-          return;
-        }
-        setIsLoading(false);
-        setIsPlaying(true);
-        isPlayingRef.current = true;
-      }
+      attempt.completeSetup();
     } catch (error) {
-      if (!current()) return;
-      reset();
+      if (!attempt.releaseOnError()) return;
+      loadingRef.current = false;
+      setIsLoading(false);
+      isPlayingRef.current = false;
+      setIsPlaying(false);
       setPlaybackProgress(0);
+      // Abandoned work (row torn down, read invalidated mid-flight) rejects
+      // with AbortError; the owner already reset the row, so stay silent.
+      const aborted =
+        typeof error === "object" &&
+        error !== null &&
+        "name" in error &&
+        (error as { name?: string }).name === "AbortError";
+      if (aborted) return;
       console.error("Failed to toggle audio playback", error);
       showErrorSnackbar(
         intl.formatMessage({ defaultMessage: "Unable to play audio snippet." }),
       );
     }
-  }, [transcriptionId, intl, disabled]);
-
+  }, [transcriptionId, intl]);
   const durationLabel = formatDuration(durationMs);
 
   /** Scrub mapping from client X (same idea as elevenlabs-ui scrub-bar). Bars are a seeded silhouette, not live PCM. */
@@ -253,24 +275,22 @@ export const AudioPlayerPill = ({
     const ratio = (clientX - rect.left) / rect.width;
     return Math.min(Math.max(ratio, 0), 1);
   }, []);
-
   const previewSeek = useCallback((ratio: number) => {
+    playbackProgressRef.current = ratio;
     setPlaybackProgress(ratio);
   }, []);
-
   const commitSeek = useCallback((ratio: number) => {
+    playbackProgressRef.current = ratio;
     setPlaybackProgress(ratio);
     if (isPlayingRef.current) {
       seekPlayback(ratio);
     }
   }, []);
-
   const handlePointerDown = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
       if (disabled) return;
       event.preventDefault();
       event.currentTarget.focus();
-      pointerCleanupRef.current?.();
       isDraggingRef.current = true;
       progressAtDragStartRef.current = playbackProgressRef.current;
       const next = getProgressFromClientX(event.clientX);
@@ -280,17 +300,12 @@ export const AudioPlayerPill = ({
         const ratio = getProgressFromClientX(moveEvent.clientX);
         if (ratio != null) previewSeek(ratio);
       };
-      // Every exit path (release, cancel, re-entrant drag, lifecycle cleanup)
-      // runs this one teardown so `isDraggingRef` can never outlive its listeners.
-      const endDrag = () => {
+      const handleUp = (upEvent: PointerEvent) => {
         window.removeEventListener("pointermove", handleMove);
         window.removeEventListener("pointerup", handleUp);
         window.removeEventListener("pointercancel", handleCancel);
         pointerCleanupRef.current = null;
         isDraggingRef.current = false;
-      };
-      const handleUp = (upEvent: PointerEvent) => {
-        endDrag();
         const ratio = getProgressFromClientX(upEvent.clientX);
         if (ratio != null) {
           commitSeek(ratio);
@@ -299,17 +314,26 @@ export const AudioPlayerPill = ({
         }
       };
       const handleCancel = () => {
-        endDrag();
+        window.removeEventListener("pointermove", handleMove);
+        window.removeEventListener("pointerup", handleUp);
+        window.removeEventListener("pointercancel", handleCancel);
+        pointerCleanupRef.current = null;
+        isDraggingRef.current = false;
+        playbackProgressRef.current = progressAtDragStartRef.current;
         setPlaybackProgress(progressAtDragStartRef.current);
       };
+      pointerCleanupRef.current?.();
       window.addEventListener("pointermove", handleMove);
       window.addEventListener("pointerup", handleUp, { once: true });
       window.addEventListener("pointercancel", handleCancel, { once: true });
-      pointerCleanupRef.current = endDrag;
+      pointerCleanupRef.current = () => {
+        window.removeEventListener("pointermove", handleMove);
+        window.removeEventListener("pointerup", handleUp);
+        window.removeEventListener("pointercancel", handleCancel);
+      };
     },
     [disabled, getProgressFromClientX, previewSeek, commitSeek],
   );
-
   return (
     <Box
       {...warmup}
@@ -327,51 +351,12 @@ export const AudioPlayerPill = ({
         alignSelf: "flex-start",
       }}
     >
-      <MetalChrome variant="circle">
-        <IconButton
-          aria-label={
-            isLoading
-              ? intl.formatMessage({ defaultMessage: "Cancel audio loading" })
-              : isPlaying
-                ? intl.formatMessage({ defaultMessage: "Pause audio" })
-                : intl.formatMessage({ defaultMessage: "Play audio" })
-          }
-          aria-busy={isLoading}
-          size="small"
-          onClick={handlePlaybackToggle}
-          disabled={disabled}
-          sx={{ p: 0.5 }}
-        >
-          {isLoading ? (
-            <CircularProgress size="1rem" color="inherit" />
-          ) : (
-            <AnimatePresence mode="popLayout" initial={false}>
-              <motion.span
-                key={isPlaying ? "pause" : "play"}
-                initial={
-                  reduceMotion
-                    ? false
-                    : { opacity: 0, scale: 0.25, filter: "blur(4px)" }
-                }
-                animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
-                exit={
-                  reduceMotion
-                    ? undefined
-                    : { opacity: 0, scale: 0.25, filter: "blur(4px)" }
-                }
-                transition={springPop}
-                style={{ display: "inline-flex" }}
-              >
-                {isPlaying ? (
-                  <Pause size={16} strokeWidth={1.9} />
-                ) : (
-                  <Play size={16} strokeWidth={1.9} />
-                )}
-              </motion.span>
-            </AnimatePresence>
-          )}
-        </IconButton>
-      </MetalChrome>
+      <AudioPlaybackButton
+        isPlaying={isPlaying}
+        isLoading={isLoading}
+        disabled={disabled}
+        onClick={handlePlaybackToggle}
+      />
       <Typography
         variant="body2"
         sx={{
@@ -389,6 +374,7 @@ export const AudioPlayerPill = ({
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={Math.round(progressPercent)}
+        aria-disabled={disabled || undefined}
         aria-label={intl.formatMessage({ defaultMessage: "Playback position" })}
         onPointerDown={handlePointerDown}
         onKeyDown={(event) => {
@@ -396,12 +382,15 @@ export const AudioPlayerPill = ({
           if (event.key === " ") {
             event.preventDefault();
             void handlePlaybackToggle();
-          } else if (event.key === "ArrowRight") {
+          } else if (event.key === "ArrowRight" || event.key === "ArrowUp") {
             event.preventDefault();
             commitSeek(Math.min(1, playbackProgressRef.current + 0.05));
-          } else if (event.key === "ArrowLeft") {
+          } else if (event.key === "ArrowLeft" || event.key === "ArrowDown") {
             event.preventDefault();
             commitSeek(Math.max(0, playbackProgressRef.current - 0.05));
+          } else if (event.key === "Home" || event.key === "End") {
+            event.preventDefault();
+            commitSeek(event.key === "Home" ? 0 : 1);
           }
         }}
         sx={{
@@ -416,43 +405,19 @@ export const AudioPlayerPill = ({
           cursor: "pointer",
           touchAction: "none",
           userSelect: "none",
+          borderRadius: 0.5,
+          "&:focus-visible": {
+            outline: "2px solid",
+            outlineColor: "primary.main",
+            outlineOffset: 2,
+          },
         }}
       >
-        <Box
-          sx={{
-            position: "absolute",
-            inset: 0,
-            pointerEvents: "none",
-          }}
-        >
-          <Box
-            sx={(theme) => ({
-              position: "absolute",
-              top: 0,
-              bottom: 0,
-              left: 0,
-              right: 0,
-              backgroundColor:
-                theme.vars?.palette.level1 ?? theme.palette.background.paper,
-              opacity: 0.5,
-              transform: `translateX(${progressPercent}%)`,
-              transition: "transform 140ms linear",
-            })}
-          />
-        </Box>
-        {waveformBars.map((value, index) => (
-          <Box
-            key={`wave-bar-${index}`}
-            sx={(theme) => ({
-              flex: "0 0 auto",
-              width: `${computedBarWidth}px`,
-              borderRadius: theme.spacing(0.25),
-              backgroundColor: theme.vars?.palette.primary.main,
-              height: `${Math.round(35 + value * 55)}%`,
-              transition: "opacity 140ms ease",
-            })}
-          />
-        ))}
+        <AudioWaveformBars
+          values={waveformBars}
+          barWidth={computedBarWidth}
+          progressPercent={progressPercent}
+        />
       </Box>
       {actions}
     </Box>

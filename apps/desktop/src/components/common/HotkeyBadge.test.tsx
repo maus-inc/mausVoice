@@ -41,10 +41,8 @@ const render = (keys: string[], sx?: SxProps<Theme>) =>
     );
   });
 const caps = () =>
-  Array.from(container.querySelectorAll(".MuiButtonBase-root"));
+  Array.from(container.querySelectorAll("span[aria-hidden=true]"));
 
-// The clickable variant is the reason the override exists: a native button
-// nested in a native button is invalid and confusing to assistive tech.
 const renderClickable = (keys: string[]) =>
   act(() => {
     root.render(
@@ -58,10 +56,6 @@ it.each([
   ["read-only", false],
   ["clickable", true],
 ])("never renders a keycap as a native button (%s)", (_name, clickable) => {
-  // A read-only badge is a `role="group"` with an `aria-label`. `Keycap` is a
-  // `ButtonBase`, so without an explicit `component` every cap was a native
-  // `<button>` that was focusable and interactive while carrying no name of its
-  // own (`aria-hidden`, `tabIndex={-1}`) - a hidden interactive control.
   act(() => {
     if (clickable) renderClickable(["ControlLeft", "KeyK"]);
     else render(["ControlLeft", "KeyK"]);
@@ -69,6 +63,8 @@ it.each([
   expect(caps().length).toBe(2);
   for (const cap of caps()) {
     expect(cap.tagName).toBe("SPAN");
+    expect(cap.hasAttribute("tabindex")).toBe(false);
+    expect(cap.hasAttribute("role")).toBe(false);
   }
   expect(container.querySelector("button button")).toBeNull();
 });

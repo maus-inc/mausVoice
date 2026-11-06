@@ -2,7 +2,7 @@
 
 - Status: **reused** — real component + MuiListItemButton/MuiListItemText theme.
 - Source of truth: `apps/desktop/src/theme.ts` (MuiListItemButton, MuiListItemText), `apps/desktop/src/components/common/ListTile.tsx`, `OverflowTypography.tsx`.
-- Used in: MenuPopover, DashboardMenu, UpdateListTile, SettingsPage, AppStylingRow, ManualStylingRow.
+- Used in: MenuPopover, DashboardMenu, UpdateListTile, AppStylingRow, ManualStylingRow.
 
 ## Purpose
 
@@ -22,7 +22,7 @@ default / hover (swap) / selected / disabled / href (+cmd-click new tab) / leadi
 
 ## Accessibility
 
-Rows with an onClick handler or href use ListItemButton with keyboard activation and a focus-visible ring. Presentation-only rows use a static container so nested switches do not activate a row press transform. Disabled static rows are inert. OverflowTypography provides tooltips for truncated titles.
+Rows with an onClick handler or href use ListItemButton (button semantics, keyboard activation, focus-visible ring); action menus can put menuitem or menuitemcheckbox semantics on that focusable control. Presentation-only rows use a static container so nested switches do not activate a row press transform. Disabled static rows are inert. OverflowTypography provides tooltips for truncated titles.
 
 ## Live-spec mapping
 

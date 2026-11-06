@@ -1,7 +1,5 @@
-import { dashboardRouteLoaders } from "./utils/route-prefetch";
 import type { ReactNode } from "react";
 import { createBrowserRouter, Outlet, RouterProvider } from "react-router-dom";
-import AppsPage from "./components/apps/AppsPage.tsx";
 import { ComposerPage } from "./components/composer/ComposerPage.tsx";
 import { PageLayout } from "./components/common/PageLayout.tsx";
 import DashboardPage from "./components/dashboard/DashboardPage.tsx";
@@ -12,7 +10,16 @@ import { AppHeader } from "./components/root/Header.tsx";
 import Root from "./components/root/Root.tsx";
 import { Guard } from "./components/routing/Guard.tsx";
 import { Redirect } from "./components/routing/Redirectors.tsx";
+import AccountSettingsPage from "./components/settings/pages/AccountSettingsPage.tsx";
+import AiModelsSettingsPage from "./components/settings/pages/AiModelsSettingsPage.tsx";
+import AppearanceSettingsPage from "./components/settings/pages/AppearanceSettingsPage.tsx";
+import DictationSettingsPage from "./components/settings/pages/DictationSettingsPage.tsx";
+import HomeSettingsPage from "./components/settings/pages/HomeSettingsPage.tsx";
+import PrivacyDataSettingsPage from "./components/settings/pages/PrivacyDataSettingsPage.tsx";
+import ShortcutsSettingsPage from "./components/settings/pages/ShortcutsSettingsPage.tsx";
+import SystemSettingsPage from "./components/settings/pages/SystemSettingsPage.tsx";
 import WelcomePage from "./components/welcome/WelcomePage.tsx";
+import { dashboardRouteLoaders } from "./utils/route-prefetch";
 
 const AppWrapper = () => {
   return (
@@ -93,6 +100,50 @@ const appRoutes = (root: ReactNode) => [
               {
                 path: "settings",
                 lazy: dashboardRouteLoaders["/dashboard/settings"],
+                children: [
+                  {
+                    index: true,
+                    lazy: dashboardRouteLoaders["/dashboard/settings/entry"],
+                  },
+                  {
+                    path: "home",
+                    element: <HomeSettingsPage />,
+                  },
+                  {
+                    path: "dictation",
+                    element: <DictationSettingsPage />,
+                  },
+                  {
+                    path: "ai-models",
+                    element: <AiModelsSettingsPage />,
+                  },
+                  {
+                    path: "shortcuts",
+                    element: <ShortcutsSettingsPage />,
+                  },
+                  {
+                    path: "appearance",
+                    element: <AppearanceSettingsPage />,
+                  },
+                  {
+                    path: "privacy-data",
+                    element: <PrivacyDataSettingsPage />,
+                  },
+                  {
+                    path: "system",
+                    element: <SystemSettingsPage />,
+                  },
+                  {
+                    path: "account",
+                    element: <AccountSettingsPage />,
+                  },
+                  {
+                    // An unknown page name, including an old one, resolves to
+                    // the page the person last used rather than a blank pane.
+                    path: "*",
+                    lazy: dashboardRouteLoaders["/dashboard/settings/entry"],
+                  },
+                ],
               },
               {
                 path: "transcriptions",
@@ -112,7 +163,7 @@ const appRoutes = (root: ReactNode) => [
               },
               {
                 path: "apps",
-                element: <AppsPage />,
+                lazy: dashboardRouteLoaders["/dashboard/apps"],
               },
               {
                 path: "help",

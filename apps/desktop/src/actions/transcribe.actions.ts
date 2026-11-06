@@ -29,6 +29,7 @@ import {
   coerceToDictationLanguage,
   mapDictationLanguageToWhisperLanguage,
 } from "../utils/language.utils";
+import { encodeRecordedAudio } from "../utils/recorded-audio.utils";
 import { orFalse, orNull } from "../utils/nullable.utils";
 import { withTimeout } from "../utils/timeout.utils";
 import { getLogger } from "../utils/log.utils";
@@ -44,6 +45,7 @@ import {
   isGlossaryPromptTruncated,
   buildSystemPostProcessingTonePrompt,
   collectDictionaryEntries,
+  collectVocabularyTerms,
   PostProcessingPromptInput,
   PROCESSED_TRANSCRIPTION_JSON_RESPONSE,
   getPostProcessMaxTokens,
@@ -55,6 +57,7 @@ import {
 } from "../utils/hallucination.utils";
 import { getToneById, getToneConfig } from "../utils/tone.utils";
 import {
+  getMyDictationLanguage,
   getMyEffectiveUserId,
   getMyUserName,
   loadMyEffectiveDictationLanguage,
@@ -64,7 +67,9 @@ import {
   applyFastStyle,
   canApplyFastStyle,
 } from "../utils/fast-style.utils";
+import { resolvePostProcessingRoute } from "../utils/post-processing-routing.utils";
 import { getIntl } from "../i18n/intl";
+import { nextPostProcessEditFailureCount } from "../utils/post-process-retry.utils";
 import { showErrorSnackbar } from "./app.actions";
 import {
   recordUsageWords as recordUsageWordsAction,
@@ -121,6 +126,8 @@ export type PostProcessInput = {
   rawTranscript: string;
   toneId: Nullable<string>;
   dictationLanguage?: string;
+  /** Number of edit-application failures already recorded for this row. */
+  postProcessEditFailureCount?: number | null;
   trace?: PipelineTrace | null;
   onPolishStart?: () => void;
 };
@@ -136,6 +143,12 @@ export type PostProcessMetadata = {
   postprocessDurationMs?: number | null;
   /** True when a post-processing request was attempted and failed. */
   postProcessFailed?: boolean | null;
+  /** True when the provider returned an edit that could not be applied. */
+  postProcessEditFailed?: boolean | null;
+  /** Number of edit-application failures in this transcription retry chain. */
+  postProcessEditFailureCount?: number | null;
+  /** True after the one automatic full-audio retranscription was consumed. */
+  postProcessEditAutoRetryUsed?: boolean | null;
   /**
    * True when post-processing failed and the deterministic local style produced
    * the output instead. The transcript is still delivered; this marks the row
@@ -320,19 +333,26 @@ export const transcribeAudio = async ({
 const resolvePostProcessedTranscript = (
   reply: string,
   rawTranscript: string,
-): { transcript: string; warning: string | null; unusable: boolean } => {
+): {
+  transcript: string;
+  warning: string | null;
+  unusable: boolean;
+  reason: "empty" | "unparseable" | "unreadable-edits" | "partial-edits" | null;
+} => {
   const resolution = resolveProcessedTranscription(reply, rawTranscript);
   if (resolution.status === "cleaned") {
     return {
       transcript: resolution.transcript,
       warning: resolution.warning,
       unusable: false,
+      reason: null,
     };
   }
   return {
     transcript: rawTranscript,
     warning: resolution.warning,
     unusable: true,
+    reason: resolution.reason,
   };
 };
 
@@ -347,6 +367,7 @@ type RunPostProcessingRequestArgs = {
   genProvider: Nullable<string>;
   metadata: PostProcessMetadata;
   warnings: string[];
+  previousEditFailureCount?: number | null;
 };
 
 const fallbackValue = (value: Nullable<string>, fallback: string): string =>
@@ -359,6 +380,14 @@ const resolvePostProcessingLanguage = async (
   override
     ? coerceToDictationLanguage(override)
     : await loadMyEffectiveDictationLanguage(state);
+
+/**
+ * The dictionary's canonical spellings, for the local casing pass. The same
+ * entries the provider is given as a glossary, read from one place so the two
+ * paths cannot disagree about how a term is spelled.
+ */
+const getFastStyleDictionaryTerms = (state: AppState): string[] =>
+  collectVocabularyTerms(collectDictionaryEntries(state));
 
 const buildPostProcessingRequest = (
   state: AppState,
@@ -389,6 +418,7 @@ const applyPostProcessSuccess = (
   metadata: PostProcessMetadata,
   warnings: string[],
   postprocessStart: number,
+  previousEditFailureCount: number | null | undefined,
 ): string => {
   const postprocessDuration = performance.now() - postprocessStart;
   metadata.postprocessDurationMs = Math.round(postprocessDuration);
@@ -416,6 +446,15 @@ const applyPostProcessSuccess = (
     // only reads the failure sentinel would treat this as a finished
     // retranscription and overwrite text the user already had polished.
     metadata.postProcessFallback = true;
+    if (
+      parseResult.reason === "partial-edits" ||
+      parseResult.reason === "unreadable-edits"
+    ) {
+      metadata.postProcessEditFailed = true;
+      metadata.postProcessEditFailureCount = nextPostProcessEditFailureCount(
+        previousEditFailureCount,
+      );
+    }
   }
 
   metadata.postProcessMode =
@@ -586,19 +625,21 @@ export const applyFastLocalStyle = ({
   metadata,
   warnings,
   reason,
+  dictionaryTerms,
 }: {
   rawTranscript: string;
   toneId: Nullable<string>;
   metadata: PostProcessMetadata;
   warnings: string[];
-  reason: "no-llm" | "llm-failed";
+  reason: "no-llm" | "llm-failed" | "short-input";
+  dictionaryTerms?: readonly string[];
 }): { styled: string; fastDurationMs: number } | null => {
   if (!canApplyFastStyle(toneId)) return null;
 
   const startedAt = performance.now();
   let styled: string;
   try {
-    styled = applyFastStyle(rawTranscript, toneId ?? null);
+    styled = applyFastStyle(rawTranscript, toneId ?? null, { dictionaryTerms });
   } catch (error) {
     getLogger().warning(
       `Fast local style failed for tone=${toneId}, reason=${reason}: ${error}`,
@@ -612,10 +653,12 @@ export const applyFastLocalStyle = ({
   // caller a blank utterance: nothing is inserted, and because
   // `postProcessFailed` is untouched on this path no failure is reported either,
   // so the dictation disappears without a word. Treat an empty transform as "no
-  // local style available" and let the caller fall back to the raw transcript.
+  // local style available" and let the caller pick the alternative it has: the
+  // raw transcript when no provider is configured, the provider request when
+  // one is.
   if (styled.trim().length === 0) {
     getLogger().warning(
-      `Fast local style produced no output for tone=${toneId}, reason=${reason}; falling back to the raw transcript`,
+      `Fast local style produced no output for tone=${toneId}, reason=${reason}`,
     );
     return null;
   }
@@ -647,6 +690,7 @@ const runPostProcessingRequest = async ({
   genProvider,
   metadata,
   warnings,
+  previousEditFailureCount,
 }: RunPostProcessingRequestArgs): Promise<string> => {
   beginPostProcessingRequest({
     metadata,
@@ -709,6 +753,7 @@ const runPostProcessingRequest = async ({
       metadata,
       warnings,
       postprocessStart,
+      previousEditFailureCount,
     );
   } catch (error) {
     // Terminal provider failure (e.g. Cerebras 402) or network error. Degrade
@@ -722,6 +767,7 @@ const runPostProcessingRequest = async ({
       metadata,
       warnings,
       reason: "llm-failed",
+      dictionaryTerms: getFastStyleDictionaryTerms(state),
     });
     if (fast !== null) {
       recordPostProcessFailure(
@@ -764,7 +810,13 @@ const runPostProcessingRequest = async ({
 };
 
 const applyPostProcessing = async (
-  { rawTranscript, toneId, dictationLanguage, onPolishStart }: PostProcessInput,
+  {
+    rawTranscript,
+    toneId,
+    dictationLanguage,
+    postProcessEditFailureCount,
+    onPolishStart,
+  }: PostProcessInput,
   state: AppState,
   gen: ReturnType<typeof getGenerateTextRepo>,
   metadata: PostProcessMetadata,
@@ -783,6 +835,7 @@ const applyPostProcessing = async (
       metadata,
       warnings,
       reason: "no-llm",
+      dictionaryTerms: getFastStyleDictionaryTerms(state),
     });
     if (fast !== null) {
       onPolishStart?.();
@@ -793,6 +846,42 @@ const applyPostProcessing = async (
     return rawTranscript;
   }
   onPolishStart?.();
+  // A short English dictation in a prose style is styled by the local
+  // transforms instead of the provider. The request carries the whole style
+  // prompt and a reasoning-token floor, so the round trip costs the same for
+  // three words as for three paragraphs; for three words it buys very little.
+  // The decision and its reason are logged because the row records what ran,
+  // not why.
+  // The import path knows the file's language; a live dictation carries it on
+  // the state, resolved the same way the transcription call resolved it.
+  const language = dictationLanguage ?? getMyDictationLanguage(state);
+  const route = resolvePostProcessingRoute({
+    transcript: rawTranscript,
+    toneId,
+    enabled: state.settings.fastStyleShortDictationsEnabled,
+    language,
+  });
+  if (route.route === "local") {
+    getLogger().info(
+      `Short dictation styled locally (${route.reason}), skipping the provider for tone=${toneId}, language=${language}`,
+    );
+    const fast = applyFastLocalStyle({
+      rawTranscript,
+      toneId,
+      metadata,
+      warnings,
+      reason: "short-input",
+      dictionaryTerms: getFastStyleDictionaryTerms(state),
+    });
+    // The local transform produced nothing usable (filler-only input, or a
+    // throw). The provider is still configured and the user asked it to style
+    // this dictation, so the request that was skipped is the fallback rather
+    // than handing back raw text.
+    if (fast !== null) return fast.styled;
+    getLogger().info(
+      "Short dictation produced no local output; falling back to the provider",
+    );
+  }
   return await runPostProcessingRequest({
     state,
     rawTranscript,
@@ -804,6 +893,7 @@ const applyPostProcessing = async (
     genProvider: gen.provider,
     metadata,
     warnings,
+    previousEditFailureCount: postProcessEditFailureCount,
   });
 };
 
@@ -896,13 +986,17 @@ const persistAudioSnapshot = async (
   lease: LocalDataWriteLease,
 ): Promise<TranscriptionAudioSnapshot | undefined> => {
   try {
+    // Raw-body invoke: the samples cross IPC as packed f32 bytes with the id
+    // in a header, the same framing `stop_recording` uses on the way out. A
+    // JSON number array of this size costs hundreds of milliseconds to
+    // serialize on long dictations and sits directly on the save path.
     return await withLocalDataWrite(
       () =>
-        invoke<TranscriptionAudioSnapshot>("store_transcription_audio", {
-          id: transcriptionId,
-          samples,
-          sampleRate,
-        }),
+        invoke<TranscriptionAudioSnapshot>(
+          "store_transcription_audio",
+          encodeRecordedAudio(samples, sampleRate),
+          { headers: { "x-transcription-id": transcriptionId } },
+        ),
       lease,
     );
   } catch (error) {
@@ -950,6 +1044,16 @@ const buildTranscriptionRecord = ({
   postProcessModel: orNull(input.postProcessMetadata.postProcessModel),
   postProcessProvider: orNull(input.postProcessMetadata.postProcessProvider),
   postProcessFailed: input.postProcessMetadata.postProcessFailed ?? null,
+  postProcessEditFailed:
+    input.postProcessMetadata.postProcessEditFailed ?? null,
+  postProcessEditFailureCount:
+    input.postProcessMetadata.postProcessEditFailureCount ?? null,
+  postProcessEditAutoRetryUsed:
+    input.postProcessMetadata.postProcessEditAutoRetryUsed ?? null,
+  // Retry context is written only when a recovery pass claims the row.
+  postProcessEditRetryToneId: null,
+  postProcessEditRetryLanguageCode: null,
+  postProcessEditRetryClaimCount: null,
   postProcessFallback: input.postProcessMetadata.postProcessFallback ?? null,
   postProcessError: orNull(input.postProcessMetadata.postProcessError),
   transcriptionDurationMs: orNull(
@@ -984,6 +1088,36 @@ const persistTranscription = async (
     getLogger().error("Failed to store transcription", error);
     showErrorSnackbar("Unable to save transcription. Please try again.");
     return null;
+  }
+};
+
+/**
+ * Attach warnings to an already-persisted row.
+ *
+ * History persistence starts concurrently with output delivery (see the
+ * dictation strategy), so a failure the delivery reports after the row is
+ * written cannot ride on the original store call the way it does on the
+ * serial path. This closes that gap: the row ends up carrying the same
+ * warnings either way. A row that vanished in between (deleted, or never
+ * persisted because persistence is suppressed) is simply skipped.
+ */
+export const appendTranscriptionWarnings = async (
+  transcriptionId: string,
+  warnings: string[],
+): Promise<void> => {
+  if (warnings.length === 0) return;
+  const existing = getAppState().transcriptionById[transcriptionId];
+  if (!existing) return;
+  try {
+    const stored = await getTranscriptionRepo().updateTranscription({
+      ...existing,
+      warnings: [...(existing.warnings ?? []), ...warnings],
+    });
+    produceAppState((draft) => {
+      draft.transcriptionById[stored.id] = stored;
+    });
+  } catch (error) {
+    getLogger().error("Failed to append transcription warnings", error);
   }
 };
 

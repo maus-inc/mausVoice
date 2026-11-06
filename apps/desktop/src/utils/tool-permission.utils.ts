@@ -1,7 +1,8 @@
 import { withLocalDataWriteSync } from "./local-data-write-gate";
-import { getLocalStorage } from "./local-storage.utils";
-
-const TOOL_ALWAYS_ALLOW_PREFIX = "tool_always_allow:";
+import {
+  getLocalStorage,
+  TOOL_ALWAYS_ALLOW_STORAGE_PREFIX as TOOL_ALWAYS_ALLOW_PREFIX,
+} from "./local-storage.utils";
 
 /**
  * Always-allow decisions are scoped rather than one global switch. Existing

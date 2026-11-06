@@ -634,16 +634,19 @@ describe("macOS-gated coverage is recorded, not silent", () => {
   // So the invariant worth pinning is the real one, and it is the one a
   // "consolidate the lint jobs" or "trim the slow matrix" refactor would break:
   // macOS lint coverage of the desktop crate exists ONLY as a matrix entry. Drop
-  // `macos-14` from that matrix and `cfg(target_os = "macos")` silently stops
-  // being linted anywhere, with no job left to notice the absence. That is the
-  // failure this file is for.
+  // the macOS entry from that matrix and `cfg(target_os = "macos")` silently
+  // stops being linted anywhere, with no job left to notice the absence. The
+  // image label itself is matched generically because GitHub retires runner
+  // images (macos-14 left service in November 2026) and the matrix has to be
+  // able to move without losing this guard. That is the failure this file is
+  // for.
   const LINT_WORKFLOW = ".github/workflows/lint-desktop.yml";
   const lintText = read(LINT_WORKFLOW);
 
   it("keeps a macOS runner in the lint matrix", () => {
     assert.match(
       lintText,
-      /os: macos-14/,
+      /os: macos-\d+/,
       "`lint-desktop.yml` must keep a macOS entry in its matrix: that entry is " +
         'the ONLY thing that lints `cfg(target_os = "macos")`, since Linux ' +
         "clippy exits 0 without compiling it",

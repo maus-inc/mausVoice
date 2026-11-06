@@ -918,14 +918,6 @@ async storageUploadData(args: StorageUploadArgs) : Promise<Result<null, string>>
     else return { status: "error", error: e  as any };
 }
 },
-async storeTranscriptionAudio(id: string, samples: number[], sampleRate: number) : Promise<Result<TranscriptionAudioSnapshot, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("store_transcription_audio", { id, samples, sampleRate }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 async supportsAppDetection() : Promise<boolean> {
     return await TAURI_INVOKE("supports_app_detection");
 },
@@ -1371,6 +1363,34 @@ postProcessProvider?: string | null;
  */
 postProcessFailed?: boolean | null; 
 /**
+ * True when a provider edit could not be applied to the transcript.
+ */
+postProcessEditFailed?: boolean | null; 
+/**
+ * Number of edit-application failures in this transcription retry chain.
+ */
+postProcessEditFailureCount?: number | null; 
+/**
+ * True after the one automatic full-audio retranscription was consumed.
+ */
+postProcessEditAutoRetryUsed?: boolean | null; 
+/**
+ * Tone the claimed recovery pass restyles with, or an empty string when
+ * the failed run used none.
+ */
+postProcessEditRetryToneId?: string | null; 
+/**
+ * Language the claimed recovery pass retranscribes with, or an empty
+ * string when the failed run used no override.
+ */
+postProcessEditRetryLanguageCode?: string | null; 
+/**
+ * Failure count the recovery claim was written at. A restart matches the
+ * live count against it to tell a claim that never reported back from one
+ * whose pass ran and failed again.
+ */
+postProcessEditRetryClaimCount?: number | null; 
+/**
  * Sanitized, non-secret error message from a failed post-processing
  * request.
  */
@@ -1430,7 +1450,12 @@ pillPlacement?: string;
  * Delay (ms) between a hands-free stop and the actual paste/type
  * action. NULL disables the delay (immediate paste on stop).
  */
-handsFreeDelayMs?: number | null; inDictationStyleSwitchingEnabled?: boolean; hallucinationFilterEnabled?: boolean; reviewBeforeInsert?: boolean | null; agentEnabledTools?: string | null; agentMaxIterations?: number; agentPermissionTimeoutMs?: number; 
+handsFreeDelayMs?: number | null; inDictationStyleSwitchingEnabled?: boolean; hallucinationFilterEnabled?: boolean; 
+/**
+ * Style short dictations with the deterministic local transforms instead
+ * of the configured provider. Default on.
+ */
+fastStyleShortDictationsEnabled?: boolean; reviewBeforeInsert?: boolean | null; agentEnabledTools?: string | null; agentMaxIterations?: number; agentPermissionTimeoutMs?: number; 
 /**
  * Deterministic spoken formatting / scratch-that. Default on.
  */

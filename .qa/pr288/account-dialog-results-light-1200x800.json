@@ -1,0 +1,29 @@
+[
+  {
+    "name": "profile",
+    "url": "/dashboard/settings/account",
+    "button": "Name",
+    "opened": true,
+    "file": "dialog-profile-light-1200x800.jpg",
+    "text": "Edit profile\nML\nPNG, JPG, or WebP, up to 5 MB. Cropped to a square.\nChange photo\nName\nName\n\nUsed when mausVoice writes on your behalf.\n\nCancel\nSave",
+    "errors": []
+  },
+  {
+    "name": "clear-data",
+    "url": "/dashboard/settings/account",
+    "button": "Clear local data",
+    "opened": true,
+    "file": "dialog-clear-data-light-1200x800.jpg",
+    "text": "Clear local data\nTHIS REMOVES\n\nPreferences and settings\n\nYour profile name and photo\n\nDictionary entries\n\nSaved transcriptions and audio\n\nThis cannot be undone. Your account and sign-in stay as they are.\n\nType clear to confirm.\n\n​\nCancel\nClear local data",
+    "errors": []
+  },
+  {
+    "name": "delete-account",
+    "url": "/dashboard/settings/account",
+    "button": "Delete account",
+    "opened": true,
+    "file": "dialog-delete-account-light-1200x800.jpg",
+    "text": "Delete account\nTHIS REMOVES\n\nAll your data on this device, including history and audio\n\nYour profile name and photo\n\nYour preferences and settings\n\nType delete to confirm.\n\n​\nCancel\nDelete account",
+    "errors": []
+  }
+]

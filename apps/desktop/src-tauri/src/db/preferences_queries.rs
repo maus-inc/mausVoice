@@ -57,6 +57,7 @@ const USER_PREFERENCES_COLUMNS: &[&str] = &[
     "hands_free_delay_ms",
     "in_dictation_style_switching_enabled",
     "hallucination_filter_enabled",
+    "fast_style_short_dictations_enabled",
     "review_before_insert",
     "agent_enabled_tools",
     "agent_max_iterations",
@@ -197,6 +198,7 @@ pub async fn upsert_user_preferences(
     .bind(preferences.hands_free_delay_ms)
     .bind(preferences.in_dictation_style_switching_enabled)
     .bind(preferences.hallucination_filter_enabled)
+    .bind(preferences.fast_style_short_dictations_enabled)
     .bind(preferences.review_before_insert)
     .bind(&preferences.agent_enabled_tools)
     .bind(preferences.agent_max_iterations)
@@ -383,6 +385,10 @@ fn user_preferences_from_row(row: SqliteRow) -> UserPreferences {
             .unwrap_or(false),
         hallucination_filter_enabled: row
             .try_get::<i64, _>("hallucination_filter_enabled")
+            .map(|v| v != 0)
+            .unwrap_or(true),
+        fast_style_short_dictations_enabled: row
+            .try_get::<i64, _>("fast_style_short_dictations_enabled")
             .map(|v| v != 0)
             .unwrap_or(true),
         review_before_insert: row
@@ -675,6 +681,7 @@ mod tests {
                 "handsFreeDelayMs": 1043,
                 "inDictationStyleSwitchingEnabled": true,
                 "hallucinationFilterEnabled": false,
+                "fastStyleShortDictationsEnabled": true,
                 "reviewBeforeInsert": true,
                 "agentEnabledTools": "v47",
                 "agentMaxIterations": 1048,

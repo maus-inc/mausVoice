@@ -47,22 +47,6 @@ export type ActiveWebAudioPlayback = {
 export let activePlayback: ActiveWebAudioPlayback | null = null;
 let closingContext: Promise<void> | null = null;
 let playbackGeneration = 0;
-let playbackRequest: AbortController | null = null;
-
-export const cancelAudioPlaybackRequest = (request: AbortController): void => {
-  request.abort();
-  if (playbackRequest === request) {
-    playbackRequest = null;
-    stopActivePlayback("stopped");
-  }
-};
-
-export const createAudioPlaybackRequest = (): AbortController => {
-  if (playbackRequest) cancelAudioPlaybackRequest(playbackRequest);
-  stopActivePlayback("replaced");
-  playbackRequest = new AbortController();
-  return playbackRequest;
-};
 
 const elapsedRatio = (playback: ActiveWebAudioPlayback): number => {
   const elapsed =

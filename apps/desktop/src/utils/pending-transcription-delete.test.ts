@@ -24,21 +24,25 @@ vi.mock("../actions/app.actions", () => ({
 
 const snapshot = sampleTranscription("t1");
 const memory = new Map<string, string>();
+let storageAvailable = true;
 
 vi.mock("../utils/local-storage.utils", () => ({
-  getLocalStorage: () => ({
-    getItem: (key: string) => memory.get(key) ?? null,
-    setItem: (key: string, value: string) => {
-      memory.set(key, value);
-    },
-    removeItem: (key: string) => {
-      memory.delete(key);
-    },
-    get length() {
-      return memory.size;
-    },
-    key: (index: number) => [...memory.keys()][index] ?? null,
-  }),
+  getLocalStorage: () =>
+    storageAvailable
+      ? {
+          getItem: (key: string) => memory.get(key) ?? null,
+          setItem: (key: string, value: string) => {
+            memory.set(key, value);
+          },
+          removeItem: (key: string) => {
+            memory.delete(key);
+          },
+          get length() {
+            return memory.size;
+          },
+          key: (index: number) => [...memory.keys()][index] ?? null,
+        }
+      : null,
 }));
 
 describe("pending transcription delete", () => {
@@ -47,6 +51,7 @@ describe("pending transcription delete", () => {
     vi.resetModules();
     deleteTranscription.mockReset().mockResolvedValue(undefined);
     memory.clear();
+    storageAvailable = true;
   });
 
   afterEach(() => {
@@ -54,6 +59,19 @@ describe("pending transcription delete", () => {
     produceCalls.length = 0;
     deleteTranscription.mockClear();
     vi.useRealTimers();
+  });
+
+  it("retries hydration after browser storage becomes available", async () => {
+    memory.set(
+      "mausvoice.pending-transcription-deletes",
+      JSON.stringify(["t1"]),
+    );
+    storageAvailable = false;
+    const { isTranscriptionPendingDelete } =
+      await import("./pending-transcription-delete");
+    expect(isTranscriptionPendingDelete("t1")).toBe(false);
+    storageAvailable = true;
+    expect(isTranscriptionPendingDelete("t1")).toBe(true);
   });
 
   it("does not call native delete until the undo window elapses", async () => {
@@ -172,5 +190,43 @@ describe("pending transcription delete", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(deleteTranscription).toHaveBeenCalledTimes(2);
     expect(memory.has(first.PENDING_DELETE_STORAGE_KEY)).toBe(false);
+  });
+
+  it("restores an undone middle item in chronological order", async () => {
+    vi.useFakeTimers();
+    const { scheduleTranscriptionDelete, undoTranscriptionDelete } =
+      await import("./pending-transcription-delete");
+    const middle = {
+      ...snapshot,
+      id: "middle",
+      createdAt: "2026-02-01T00:00:00.000Z",
+    };
+    const state = {
+      transcriptionById: {
+        newest: {
+          ...snapshot,
+          id: "newest",
+          createdAt: "2026-03-01T00:00:00.000Z",
+        },
+        middle,
+        oldest: {
+          ...snapshot,
+          id: "oldest",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+      },
+      transcriptions: { transcriptionIds: ["newest", "middle", "oldest"] },
+    };
+    scheduleTranscriptionDelete(middle as never, 5000);
+    (produceCalls.shift() as unknown as (value: typeof state) => void)(state);
+    expect(state.transcriptions.transcriptionIds).toEqual(["newest", "oldest"]);
+    expect(undoTranscriptionDelete("middle")).toBe(true);
+    (produceCalls.shift() as unknown as (value: typeof state) => void)(state);
+    expect(state.transcriptions.transcriptionIds).toEqual([
+      "newest",
+      "middle",
+      "oldest",
+    ]);
+    vi.useRealTimers();
   });
 });

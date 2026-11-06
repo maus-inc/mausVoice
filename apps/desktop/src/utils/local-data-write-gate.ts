@@ -218,10 +218,11 @@ export const withSynchronousLocalDataWriteLease = <T>(
 export const getSynchronousLocalDataWriteLease =
   (): LocalDataWriteLease | null => synchronousLease;
 
-export const withLocalDataWriteSync = <T>(
+const runWithSyncWriteLease = <T>(
   operation: (lease: LocalDataWriteLease) => T,
-  existingLease?: LocalDataWriteLease,
-): T | undefined => {
+  existingLease: LocalDataWriteLease | undefined,
+  onBlocked: () => T,
+): T => {
   let lease: LocalDataWriteLease;
   let releaseWrite: Release;
 
@@ -230,7 +231,7 @@ export const withLocalDataWriteSync = <T>(
     releaseWrite = retainLease(existingLease);
   } else {
     const write = beginLocalDataWrite();
-    if (!write) return undefined;
+    if (!write) return onBlocked();
     lease = write.lease;
     releaseWrite = write;
   }
@@ -241,6 +242,24 @@ export const withLocalDataWriteSync = <T>(
     releaseWrite();
   }
 };
+
+export const withLocalDataWriteSync = <T>(
+  operation: (lease: LocalDataWriteLease) => T,
+  existingLease?: LocalDataWriteLease,
+): T | undefined =>
+  runWithSyncWriteLease<T | undefined>(
+    operation,
+    existingLease,
+    () => undefined,
+  );
+
+export const withRequiredLocalDataWriteSync = <T>(
+  operation: (lease: LocalDataWriteLease) => T,
+  existingLease?: LocalDataWriteLease,
+): T =>
+  runWithSyncWriteLease(operation, existingLease, () => {
+    throw blockedWriteError();
+  });
 
 export const beginLocalDataClear = async (): Promise<Release> => {
   if (!isMainLocalDataWindow()) {

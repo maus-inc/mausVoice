@@ -23,6 +23,41 @@ const pendingById = new Map<string, PendingDelete>();
 /** Timer + in-flight IPC. Written to localStorage so quit cannot drop deletes. */
 const queuedIds = new Set<string>();
 let hasResumed = false;
+let hydrated = false;
+let deletionRevision = 0;
+
+// Read the persisted queue before a list load can expose a pending deletion,
+// even if the startup resume effect has not run yet.
+const hydrateQueuedIds = (): void => {
+  if (hydrated) return;
+  const storage = getLocalStorage();
+  if (!storage) return;
+  hydrated = true;
+  try {
+    const parsed: unknown = JSON.parse(
+      storage.getItem(PENDING_DELETE_STORAGE_KEY) ?? "[]",
+    );
+    if (!Array.isArray(parsed)) return;
+    for (const id of parsed) {
+      if (typeof id === "string" && !queuedIds.has(id)) {
+        queuedIds.add(id);
+        deletionRevision += 1;
+      }
+    }
+  } catch {
+    // An unreadable queue cannot provide any IDs to hide.
+  }
+};
+
+export const getTranscriptionDeletionRevision = (): number => {
+  hydrateQueuedIds();
+  return deletionRevision;
+};
+
+export const isTranscriptionPendingDelete = (id: string): boolean => {
+  hydrateQueuedIds();
+  return queuedIds.has(id);
+};
 
 const writeQueuedIds = (lease?: LocalDataWriteLease): void => {
   const storage = getLocalStorage();
@@ -51,7 +86,18 @@ const restoreInStore = (
   produceAppState((draft) => {
     draft.transcriptionById[snapshot.id] = snapshot;
     if (!draft.transcriptions.transcriptionIds.includes(snapshot.id)) {
-      draft.transcriptions.transcriptionIds.unshift(snapshot.id);
+      // The repository lists newest first. Undo and failed deletes must not
+      // move an older recording to the top of History.
+      const created = Date.parse(snapshot.createdAt);
+      const index = Number.isFinite(created)
+        ? draft.transcriptions.transcriptionIds.findIndex((id) => {
+            const other = draft.transcriptionById[id];
+            return other && Date.parse(other.createdAt) < created;
+          })
+        : 0;
+      const insertAt =
+        index < 0 ? draft.transcriptions.transcriptionIds.length : index;
+      draft.transcriptions.transcriptionIds.splice(insertAt, 0, snapshot.id);
     }
   }, lease);
 };
@@ -88,11 +134,13 @@ const invokeDelete = (
     try {
       await getTranscriptionRepo().deleteTranscription(id, lease);
       queuedIds.delete(id);
+      deletionRevision += 1;
       writeQueuedIds(lease);
       removeFromStore(id, lease);
     } catch (error) {
       if (snapshot) {
         queuedIds.delete(id);
+        deletionRevision += 1;
         writeQueuedIds(lease);
         restoreInStore(snapshot, lease);
         showErrorSnackbar(error);
@@ -119,7 +167,9 @@ export const scheduleTranscriptionDelete = (
     const existing = pendingById.get(snapshot.id);
     if (existing) clearTimeout(existing.timer);
 
+    hydrateQueuedIds();
     queuedIds.add(snapshot.id);
+    deletionRevision += 1;
     writeQueuedIds(lease);
     removeFromStore(snapshot.id, lease);
     const timer = setTimeout(() => commitDelete(snapshot.id), delayMs);
@@ -131,6 +181,7 @@ export const undoTranscriptionDelete = (id: string): boolean =>
   withLocalDataWriteSync((lease) => {
     const pending = pendingById.get(id);
     if (!pending) return false;
+    deletionRevision += 1;
 
     clearTimeout(pending.timer);
     pendingById.delete(id);
@@ -180,7 +231,10 @@ export const resumePendingTranscriptionDeletes = (): void => {
   }
 
   for (const id of stored) {
-    queuedIds.add(id);
+    if (!queuedIds.has(id)) {
+      queuedIds.add(id);
+      deletionRevision += 1;
+    }
     if (!pendingById.has(id)) void invokeDelete(id);
   }
   writeQueuedIds();
@@ -192,5 +246,6 @@ export const resetPendingTranscriptionDeletes = (): void => {
     clearTimeout(pending.timer);
   }
   pendingById.clear();
+  if (queuedIds.size) deletionRevision += 1;
   queuedIds.clear();
 };
