@@ -1594,13 +1594,31 @@ mod cpal_impl {
                 .map(|value| value.trim().to_string())
                 .filter(|value| !value.is_empty());
 
-            match self.preferred_input_name.lock() {
+            // The command layer sets this on every press, so an unchanged value
+            // has to cost nothing. Reopening the held stream on every press
+            // would turn the pre-warm into a device open per press, which is the
+            // exact cost it exists to remove.
+            let unchanged = match self.preferred_input_name.lock() {
                 Ok(mut guard) => {
-                    *guard = sanitized;
+                    if *guard == sanitized {
+                        true
+                    } else {
+                        *guard = sanitized;
+                        false
+                    }
                 }
                 Err(poisoned) => {
-                    *poisoned.into_inner() = sanitized;
+                    let mut guard = poisoned.into_inner();
+                    if *guard == sanitized {
+                        true
+                    } else {
+                        *guard = sanitized;
+                        false
+                    }
                 }
+            };
+            if unchanged {
+                return;
             }
 
             self.clear_device_cache();
@@ -1792,13 +1810,20 @@ mod cpal_impl {
     fn build_sink_stream(
         device: &Device,
         config: &StreamConfig,
+        sample_format: Option<SampleFormat>,
         sink: Arc<StreamSink>,
     ) -> Result<Stream, RecordingError> {
         let channel_count = cmp::max(config.channels as usize, 1);
-        let sample_format = device
-            .default_input_config()
-            .map(|config| config.sample_format())
-            .map_err(|err| RecordingError::StreamConfig(err.to_string()))?;
+        let sample_format = match sample_format {
+            Some(format) => format,
+            // No format was resolved for this config, so nothing describes the
+            // samples and building a stream would read them as the wrong type.
+            None => {
+                return Err(RecordingError::StreamConfig(
+                    "no sample format resolved for this device".to_string(),
+                ))
+            }
+        };
 
         fn fold<T>(data: &[T], channel_count: usize) -> Vec<f32>
         where
@@ -1887,6 +1912,7 @@ mod cpal_impl {
         let config = device
             .default_input_config()
             .map_err(|err| RecordingError::StreamConfig(err.to_string()))?;
+        let sample_format = config.sample_format();
         let stream_config: StreamConfig = config.into();
         let sample_rate = stream_config.sample_rate.0;
         let channels = cmp::max(stream_config.channels as usize, 1);
@@ -1901,7 +1927,12 @@ mod cpal_impl {
         let sink = StreamSink::new(SinkMode::Warm {
             preroll: Arc::clone(&ring),
         });
-        let stream = build_sink_stream(device, &stream_config, Arc::clone(&sink))?;
+        let stream = build_sink_stream(
+            device,
+            &stream_config,
+            Some(sample_format),
+            Arc::clone(&sink),
+        )?;
         trace.mark(AudioStartupStage::StreamBuilt);
 
         stream
@@ -1996,6 +2027,7 @@ mod cpal_impl {
         let config = device
             .default_input_config()
             .map_err(|err| RecordingError::StreamConfig(err.to_string()))?;
+        let sample_format = config.sample_format();
         let stream_config: StreamConfig = config.into();
         let sample_rate = stream_config.sample_rate.0;
         let channels = cmp::max(stream_config.channels as usize, 1);
@@ -2003,7 +2035,12 @@ mod cpal_impl {
 
         let (seed, ring) = cold_start_seed();
         let sink = StreamSink::new(SinkMode::Discard);
-        let stream = build_sink_stream(device, &stream_config, Arc::clone(&sink))?;
+        let stream = build_sink_stream(
+            device,
+            &stream_config,
+            Some(sample_format),
+            Arc::clone(&sink),
+        )?;
         trace.mark(AudioStartupStage::StreamBuilt);
 
         stream
@@ -2777,6 +2814,40 @@ mod cpal_impl {
 
             assert!(!manager.has_warm_stream());
             assert_eq!(manager.linger_ms.load(Ordering::SeqCst), 0);
+        }
+
+        #[test]
+        fn re_applying_the_same_preference_costs_nothing() {
+            use crate::platform::Recorder;
+
+            let manager = RecordingManager::new();
+            manager.set_linger(Duration::from_millis(u64::MAX));
+            manager.set_preferred_input_device(Some("Shure MV7".to_string()));
+            manager.cache_successful_device(cpal::default_host().id(), "Shure MV7".to_string());
+            assert!(manager.last_successful_device.lock().unwrap().is_some());
+
+            // The command layer sets the preference on every press. Treating an
+            // unchanged value as a change would reopen the held stream per
+            // press, which is exactly the device open the hold exists to avoid,
+            // and it would also throw away the device cache.
+            manager.set_preferred_input_device(Some("  Shure MV7  ".to_string()));
+
+            assert!(manager.last_successful_device.lock().unwrap().is_some());
+        }
+
+        #[test]
+        fn a_changed_preference_clears_the_device_cache() {
+            use crate::platform::Recorder;
+
+            let manager = RecordingManager::new();
+            manager.set_preferred_input_device(Some("Shure MV7".to_string()));
+            manager.cache_successful_device(cpal::default_host().id(), "Shure MV7".to_string());
+
+            // A real change has to drop the cache, or the next press tries the
+            // device the user just moved off.
+            manager.set_preferred_input_device(Some("MacBook Pro Microphone".to_string()));
+
+            assert!(manager.last_successful_device.lock().unwrap().is_none());
         }
 
         #[test]
