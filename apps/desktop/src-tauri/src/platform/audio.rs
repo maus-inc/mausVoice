@@ -1203,6 +1203,8 @@ mod cpal_impl {
         pub fn open_warm(&self, preroll: Duration) -> Result<(), RecordingError> {
             // Serialises with a press, so the press reuses this open instead of
             // racing it onto the same device.
+            // The press takes these two in the same order, so that order is the
+            // one that cannot deadlock against it.
             let _gate = match self.warm_open_gate.lock() {
                 Ok(guard) => guard,
                 Err(poisoned) => poisoned.into_inner(),
@@ -1213,6 +1215,22 @@ mod cpal_impl {
             };
             if warm_guard.is_some() {
                 log::debug!("warm stream already open; nothing to do");
+                return Ok(());
+            }
+
+            // A recording that is already running has the device, and the front
+            // end asks for this in the same breath as it stops one, so the two
+            // overlap. Opening a second stream on the same device mid-recording
+            // either fails on the device or steals it from the press that is
+            // still in flight. The stop path opens its own hold when it ends, so
+            // declining here costs nothing and only avoids the collision.
+            if self
+                .inner
+                .lock()
+                .map(|guard| guard.is_some())
+                .unwrap_or(true)
+            {
+                log::debug!("a recording owns the device; not opening a warm stream over it");
                 return Ok(());
             }
 
@@ -2814,6 +2832,34 @@ mod cpal_impl {
 
             assert!(!manager.has_warm_stream());
             assert_eq!(manager.linger_ms.load(Ordering::SeqCst), 0);
+        }
+
+        #[test]
+        fn a_running_recording_is_never_handed_to_a_warm_open() {
+            let manager = RecordingManager::new();
+            manager.set_linger(Duration::from_millis(u64::MAX));
+
+            // Stand in for a recording that is in flight: the guard is what
+            // `open_warm` reads to decide whether the device is already taken.
+            *manager.inner.lock().unwrap() = Some(super::ActiveRecording {
+                stream: None,
+                sink: None,
+                preroll_after_stop: None,
+                start: std::time::Instant::now(),
+                buffer: None,
+                sample_rate: 48_000,
+                device_label: "test device".to_string(),
+                preferred: None,
+                channels: 1,
+            });
+
+            // The front end asks for the hold as it stops the recording, so this
+            // is the ordinary overlap, not an exotic race. Opening over it would
+            // either fail on the device or steal it from the press in flight.
+            manager
+                .open_warm(Duration::from_millis(500))
+                .expect("declining is not an error");
+            assert!(!manager.has_warm_stream());
         }
 
         #[test]
