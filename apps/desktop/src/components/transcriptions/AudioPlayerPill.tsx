@@ -220,7 +220,11 @@ export const AudioPlayerPill = ({
         await getTranscriptionRepo().loadTranscriptionAudio(transcriptionId);
       if (import.meta.env.DEV) {
         performance.mark("mv-audio:read-end");
-        performance.measure("mv-audio:read", "mv-audio:read-start", "mv-audio:read-end");
+        performance.measure(
+          "mv-audio:read",
+          "mv-audio:read-start",
+          "mv-audio:read-end",
+        );
       }
 
       if (!attempt.isCurrent()) {
@@ -285,7 +289,9 @@ export const AudioPlayerPill = ({
           ? intl.formatMessage({
               defaultMessage: "The saved audio for this entry is unavailable.",
             })
-          : intl.formatMessage({ defaultMessage: "Unable to play audio snippet." }),
+          : intl.formatMessage({
+              defaultMessage: "Unable to play audio snippet.",
+            }),
       );
     }
   }, [transcriptionId, intl]);

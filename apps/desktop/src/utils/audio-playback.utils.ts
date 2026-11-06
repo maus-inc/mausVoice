@@ -259,7 +259,13 @@ export const playWebAudio = async (
   startProgress = 0,
   signal?: AbortSignal,
 ): Promise<void> => {
-  if (signal?.aborted) return;
+  // Same contract as the supersede checks below: a caller parked on this
+  // promise owns its "playing" state already, so an abandoned attempt must
+  // still notify before returning.
+  if (signal?.aborted) {
+    onStop("replaced");
+    return;
+  }
   // Replacing the previous playback first, and reading the generation after it,
   // because that stop advances the generation itself. Capturing it beforehand
   // would make every call supersede its own request.

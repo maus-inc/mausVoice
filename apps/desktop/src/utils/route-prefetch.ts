@@ -40,8 +40,9 @@ export const createRouteLoader = (
  * named exports are adapted through the `then` mapper.
  */
 export const dashboardRouteLoaders = {
-  "/dashboard": createRouteLoader("/dashboard", () =>
-    import("../components/home/HomePage"),
+  "/dashboard": createRouteLoader(
+    "/dashboard",
+    () => import("../components/home/HomePage"),
   ),
   "/dashboard/settings": createRouteLoader("/dashboard/settings", () =>
     import("../components/settings/SettingsLayout").then((m) => ({
@@ -61,20 +62,25 @@ export const dashboardRouteLoaders = {
     "/dashboard/transcriptions",
     () => import("../components/transcriptions/TranscriptionsPage"),
   ),
-  "/dashboard/dictionary": createRouteLoader("/dashboard/dictionary", () =>
-    import("../components/dictionary/DictionaryPage"),
+  "/dashboard/dictionary": createRouteLoader(
+    "/dashboard/dictionary",
+    () => import("../components/dictionary/DictionaryPage"),
   ),
-  "/dashboard/styling": createRouteLoader("/dashboard/styling", () =>
-    import("../components/styling/StylingPage"),
+  "/dashboard/styling": createRouteLoader(
+    "/dashboard/styling",
+    () => import("../components/styling/StylingPage"),
   ),
-  "/dashboard/chats": createRouteLoader("/dashboard/chats", () =>
-    import("../components/chats/ChatsPage"),
+  "/dashboard/chats": createRouteLoader(
+    "/dashboard/chats",
+    () => import("../components/chats/ChatsPage"),
   ),
-  "/dashboard/apps": createRouteLoader("/dashboard/apps", () =>
-    import("../components/apps/AppsPage"),
+  "/dashboard/apps": createRouteLoader(
+    "/dashboard/apps",
+    () => import("../components/apps/AppsPage"),
   ),
-  "/dashboard/help": createRouteLoader("/dashboard/help", () =>
-    import("../components/help/HelpPage"),
+  "/dashboard/help": createRouteLoader(
+    "/dashboard/help",
+    () => import("../components/help/HelpPage"),
   ),
 } satisfies Record<string, ReturnType<typeof createRouteLoader>>;
 

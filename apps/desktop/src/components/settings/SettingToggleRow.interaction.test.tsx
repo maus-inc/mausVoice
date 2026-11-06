@@ -1,10 +1,5 @@
 // @vitest-environment jsdom
-import {
-  act,
-  createElement,
-  type ChangeEvent,
-  type ReactNode,
-} from "react";
+import { act, createElement, type ChangeEvent, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../../i18n/locales/en.json";
@@ -17,10 +12,7 @@ vi.mock("react-intl", async (importOriginal) => {
 });
 
 import { IntlProvider } from "react-intl";
-import {
-  SettingToggleRow,
-  type SettingToggleRowProps,
-} from "./SettingRow";
+import { SettingToggleRow, type SettingToggleRowProps } from "./SettingRow";
 
 ensureUiHarness();
 
@@ -124,8 +116,6 @@ describe("SettingToggleRow activation", () => {
     )!;
     // The toggle row is a label, never a button: no press-scale block is
     // attached, so a switch click cannot animate the row's container.
-    expect(
-      label.querySelector("button, [role='button']"),
-    ).toBeNull();
+    expect(label.querySelector("button, [role='button']")).toBeNull();
   });
 });

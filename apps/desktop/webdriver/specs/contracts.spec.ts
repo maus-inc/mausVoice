@@ -41,11 +41,9 @@ const PAGE_LOAD = 20_000;
  */
 const TILE_XPATH: Record<string, string> = {
   "/dashboard": '//li[.//*[normalize-space(text())="Home"]]',
-  "/dashboard/transcriptions":
-    '//li[.//*[normalize-space(text())="History"]]',
+  "/dashboard/transcriptions": '//li[.//*[normalize-space(text())="History"]]',
   "/dashboard/settings": '//li[.//*[normalize-space(text())="Settings"]]',
 };
-
 
 async function appReady() {
   await browser.waitUntil(
@@ -68,8 +66,7 @@ async function appReady() {
  */
 async function settleRoute() {
   await browser.waitUntil(
-    async () =>
-      (await browser.execute(() => window.location.pathname)) !== "/",
+    async () => (await browser.execute(() => window.location.pathname)) !== "/",
     { timeout: 15_000, timeoutMsg: "static: router never left /" },
   );
 }
@@ -149,7 +146,9 @@ async function ensureOn(pathname: string) {
     }
     current = await browser.execute(() => window.location.pathname);
     if (current !== pathname) {
-      throw new Error(`static: navigate to ${pathname} failed | path=${current}`);
+      throw new Error(
+        `static: navigate to ${pathname} failed | path=${current}`,
+      );
     }
   }
   await dismissFeatureDialog();
@@ -157,7 +156,8 @@ async function ensureOn(pathname: string) {
 
 async function realClick(tile: TileLocator, name: string) {
   const el = await resolveTile(tile, name);
-  await browser.action("pointer")
+  await browser
+    .action("pointer")
     .move({ origin: el, x: 2, y: 2 })
     .down()
     .up()
@@ -166,9 +166,7 @@ async function realClick(tile: TileLocator, name: string) {
 
 async function realHover(tile: TileLocator, name: string, dwellMs: number) {
   const el = await resolveTile(tile, name);
-  await browser.action("pointer")
-    .move({ origin: el, x: 2, y: 2 })
-    .perform();
+  await browser.action("pointer").move({ origin: el, x: 2, y: 2 }).perform();
   await browser.pause(dwellMs);
 }
 
@@ -351,14 +349,12 @@ describe("MausAgent native deliverable contract", () => {
       );
       await browser.waitUntil(
         async () =>
-          (
-            await browser.execute(
-              () =>
-                ((window as unknown as { __pfLog: string[] }).__pfLog ?? []).filter(
-                  (key) => key === "/dashboard/transcriptions",
-                ).length,
-            )
-          ) >= 1,
+          (await browser.execute(
+            () =>
+              (
+                (window as unknown as { __pfLog: string[] }).__pfLog ?? []
+              ).filter((key) => key === "/dashboard/transcriptions").length,
+          )) >= 1,
         { timeout: 5_000, timeoutMsg: "static: hover did not warm History" },
       );
       const warmMs = await clickToSettled("/dashboard/transcriptions");
@@ -428,7 +424,8 @@ describe("MausAgent native deliverable contract", () => {
       expect(before!.transformed).toEqual([]);
 
       const tileEl = await resolveTile(settingsTile, "Settings");
-      await browser.action("pointer")
+      await browser
+        .action("pointer")
         .move({ origin: tileEl, x: 2, y: 2 })
         .down()
         .perform();
@@ -471,8 +468,9 @@ describe("MausAgent native deliverable contract", () => {
       });
       await browser.waitUntil(
         async () =>
-          (await browser.execute(() => document.querySelectorAll('input[role="switch"]').length)) >
-          0,
+          (await browser.execute(
+            () => document.querySelectorAll('input[role="switch"]').length,
+          )) > 0,
         {
           timeout: 5_000,
           timeoutMsg: "static: no switch rows on the appearance page",
@@ -599,7 +597,9 @@ describe("MausAgent native deliverable contract", () => {
     expect(caption).not.toBeNull();
     expect(caption!.width).toBeGreaterThan(0);
     expect(caption!.height).toBeGreaterThan(0);
-    expect(caption!.y).toBeGreaterThanOrEqual(settings!.y + settings!.height - 2);
+    expect(caption!.y).toBeGreaterThanOrEqual(
+      settings!.y + settings!.height - 2,
+    );
 
     // Narrow window sizes: the layout fix must hold outside the default size.
     await browser.setWindowSize(900, 720);

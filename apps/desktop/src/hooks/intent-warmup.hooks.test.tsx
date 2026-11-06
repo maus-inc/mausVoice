@@ -13,7 +13,11 @@ import {
 // route-change (key) cleanup. "Navigation after prefetch reuses the warmed
 // result" is covered by route-prefetch.test.ts (shared import promise).
 
-type HookProps = { key: string; delayMs?: number; warm: () => Promise<unknown> };
+type HookProps = {
+  key: string;
+  delayMs?: number;
+  warm: () => Promise<unknown>;
+};
 
 /** Minimal renderHook: mounts the hook and mirrors its latest return value. */
 const mountHook = (
