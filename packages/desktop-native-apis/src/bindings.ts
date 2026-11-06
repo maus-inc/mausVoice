@@ -5,6 +5,9 @@
 
 
 export const commands = {
+/**
+ * Retire only the recovery copy after a normal stop reply was received.
+ */
 async acknowledgeRecording(ownerId: string, generation: number) : Promise<void> {
     await TAURI_INVOKE("acknowledge_recording", { ownerId, generation });
 },
@@ -466,6 +469,16 @@ async hotkeyReplaceStyleHotkeys(prefix: string, hotkeys: Hotkey[], expected: Hot
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Replace the whole dictation group -- the primary `dictate` shortcut plus the
+ * additional language shortcuts -- in one transaction.
+ * 
+ * `additional` carries every row of the group the caller keeps, including any
+ * extra `dictate` row a user bound in the shortcuts dialog, so saving a
+ * language change cannot delete a shortcut the dialog never displayed.
+ * `expected` is the group the caller edited; passing `None` replaces whatever
+ * the group holds now, which is still atomic.
+ */
 async hotkeyReplaceDictationLanguageHotkeys(primary: Hotkey, additional: Hotkey[], expected: Hotkey[] | null) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("hotkey_replace_dictation_language_hotkeys", { primary, additional, expected }) };
@@ -539,6 +552,9 @@ async openaiCompatibleHttpRequest(apiKeyId: string, request: PrivateHttpRequest)
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Release an abandoned lease without affecting a different owner.
+ */
 async discardRecording(ownerId: string, generation: number) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("discard_recording", { ownerId, generation }) };
