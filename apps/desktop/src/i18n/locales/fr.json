@@ -947,7 +947,7 @@
   "text_insertion_options": "Options d’insertion de texte",
   "text_is_already_in_your_dictionary": "« {text} » est déjà dans votre dictionnaire",
   "text_prepared_for_manual_paste": "Texte préparé pour collage manuel",
-"that_dictation_outran_fast_styling_so_its_last_droppedchars": "Cette dictée a dépassé le style rapide, donc ses {droppedChars} derniers caractères n'ont pas été stylisés, et cette fin n'a pas été enregistrée.",
+  "that_dictation_outran_fast_styling_so_its_last_droppedchars": "Cette dictée a dépassé le style rapide, donc ses {droppedChars} derniers caractères n'ont pas été stylisés, et cette fin n'a pas été enregistrée.",
   "that_image_could_not_be_read_try_another_file": "Cette image n'a pas pu être lue. Essayez un autre fichier.",
   "that_image_is_larger_than_5_mb_choose_a_smaller_one": "Cette image dépasse 5 Mo. Choisissez-en une plus petite.",
   "that_image_is_too_big_to_open_choose_a_smaller_one": "Cette image est trop grande pour être ouverte. Choisissez-en une plus petite.",

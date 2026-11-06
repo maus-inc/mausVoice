@@ -947,7 +947,7 @@
   "text_insertion_options": "텍스트 삽입 옵션",
   "text_is_already_in_your_dictionary": "“{text}”은(는) 이미 사전에 있습니다",
   "text_prepared_for_manual_paste": "수동 붙여넣기를 위해 준비된 텍스트",
-"that_dictation_outran_fast_styling_so_its_last_droppedchars": "해당 받아쓰기가 빠른 스타일링보다 빨라 마지막 {droppedChars}자가 스타일되지 않았고, 그 끝부분은 저장되지 않았습니다.",
+  "that_dictation_outran_fast_styling_so_its_last_droppedchars": "해당 받아쓰기가 빠른 스타일링보다 빨라 마지막 {droppedChars}자가 스타일되지 않았고, 그 끝부분은 저장되지 않았습니다.",
   "that_image_could_not_be_read_try_another_file": "이미지를 읽을 수 없습니다. 다른 파일을 사용해 보세요.",
   "that_image_is_larger_than_5_mb_choose_a_smaller_one": "이미지가 5MB를 초과합니다. 더 작은 이미지를 선택하세요.",
   "that_image_is_too_big_to_open_choose_a_smaller_one": "이 이미지는 너무 커서 열 수 없습니다. 더 작은 이미지를 선택하세요.",
