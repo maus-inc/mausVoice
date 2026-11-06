@@ -2,6 +2,10 @@ import { invoke } from "@tauri-apps/api/core";
 import type { StopRecordingResponse } from "../types/transcription-session.types";
 import { createId } from "./id.utils";
 import { getLogger } from "./log.utils";
+import {
+  acquireLocalNativeRecording,
+  releaseLocalNativeRecording,
+} from "./local-recording-activity";
 import { decodeStopRecordingPayload } from "./recorded-audio.utils";
 
 export type RecordingInvoke = (
@@ -44,6 +48,9 @@ const EMPTY_RESULT = (): StopRecordingResponse => ({
 /** The recorder this module owns, if a recording is live. */
 let liveHandle: NativeRecordingHandle | null = null;
 
+/** The in-webview slot token that live handle holds, if any. */
+let liveLocalOwner: object | null = null;
+
 /** The recorder this module currently owns, if any. */
 export const currentNativeRecording = (): NativeRecordingHandle | null =>
   liveHandle;
@@ -51,6 +58,7 @@ export const currentNativeRecording = (): NativeRecordingHandle | null =>
 /** Test seam: forget the tracked recording without touching native. */
 export const resetNativeRecordingSession = (): void => {
   liveHandle = null;
+  liveLocalOwner = null;
 };
 
 const isSafeGeneration = (value: unknown): value is number =>
@@ -89,9 +97,27 @@ export const beginNativeRecording = async (
     });
   }
 
+  // The browser recognizer holds the same in-webview slot, so a dictation
+  // started while it listens is refused here instead of opening a second
+  // capture beside it.
+  const localOwner = {};
+  if (!acquireLocalNativeRecording(invokeFn, localOwner)) {
+    throw new Error("A recording is already in progress");
+  }
+  const releaseLocal = () => {
+    releaseLocalNativeRecording(invokeFn, localOwner);
+    if (liveLocalOwner === localOwner) liveLocalOwner = null;
+  };
   const ownerId = createId();
-  const reserved = await invokeFn("recording_generation", { ownerId });
+  let reserved: unknown;
+  try {
+    reserved = await invokeFn("recording_generation", { ownerId });
+  } catch (error) {
+    releaseLocal();
+    throw error;
+  }
   if (!isSafeGeneration(reserved)) {
+    releaseLocal();
     throw new Error("Invalid recording generation");
   }
 
@@ -117,12 +143,20 @@ export const beginNativeRecording = async (
       }).catch((error: unknown) => {
         getLogger().verbose(`acknowledge_recording failed: ${error}`);
       });
+      releaseLocal();
       return decoded;
     },
     discard: async () => {
       settled = true;
       if (liveHandle === handle) liveHandle = null;
-      await invokeFn("discard_recording", { ownerId, generation: reserved });
+      try {
+        await invokeFn("discard_recording", { ownerId, generation: reserved });
+      } finally {
+        // Native answers a refused discard with a mismatch, so the slot is
+        // released here even when the call failed: a stale handle is exactly
+        // what a browser-recognition start must not be blocked by.
+        releaseLocal();
+      }
     },
     pause: async () => {
       await invokeFn("pause_recording", { ownerId, generation: reserved });
@@ -133,6 +167,7 @@ export const beginNativeRecording = async (
   };
 
   liveHandle = handle;
+  liveLocalOwner = localOwner;
   try {
     const response = await invokeFn("start_recording", {
       ownerId,
@@ -147,6 +182,7 @@ export const beginNativeRecording = async (
     // The start may have opened the device before it failed; a discard is the
     // only call that proves the recorder is released again.
     await handle.discard().catch(() => undefined);
+    releaseLocal();
     throw error;
   }
 };
@@ -176,6 +212,10 @@ export const stopNativeRecording = async (
     }).catch((error: unknown) => {
       getLogger().verbose(`acknowledge_recording failed: ${error}`);
     });
+    if (liveLocalOwner) {
+      releaseLocalNativeRecording(invokeFn, liveLocalOwner);
+      liveLocalOwner = null;
+    }
     return decoded;
   } catch (error) {
     // Keep the handle addressable so a retry can still release the recorder.
