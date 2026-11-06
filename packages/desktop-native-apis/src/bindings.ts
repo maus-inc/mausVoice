@@ -455,9 +455,17 @@ async hotkeyList() : Promise<Result<Hotkey[], string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async hotkeyReplaceStyleHotkeys(prefix: string, hotkeys: Hotkey[]) : Promise<Result<Hotkey[], string>> {
+async hotkeyReplaceDictationLanguageHotkeys(primary: Hotkey, additional: Hotkey[], expected: Hotkey[] | null) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("hotkey_replace_style_hotkeys", { prefix, hotkeys }) };
+    return { status: "ok", data: await TAURI_INVOKE("hotkey_replace_dictation_language_hotkeys", { primary, additional, expected }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async hotkeyReplaceStyleHotkeys(prefix: string, hotkeys: Hotkey[], expected: Hotkey[] | null) : Promise<Result<Hotkey[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("hotkey_replace_style_hotkeys", { prefix, hotkeys, expected }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };

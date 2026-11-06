@@ -2,7 +2,7 @@ import type { Hotkey } from "@maus-inc/types";
 import { loadTones } from "../../actions/tone.actions";
 import { setPreferredLanguage } from "../../actions/user.actions";
 import { getHotkeyRepo } from "../../repos";
-import { getAppState, produceAppState } from "../../store";
+import { produceAppState } from "../../store";
 import { createId } from "../../utils/id.utils";
 import {
   ADDITIONAL_LANGUAGE_HOTKEY_PREFIX,
@@ -10,14 +10,52 @@ import {
   getAdditionalLanguageActionName,
   syncHotkeyCombosToNative,
 } from "../../utils/keyboard.utils";
+import type { LocalDataWriteLease } from "../../utils/local-data-write-gate";
 import { withLocalDataWrite } from "../../utils/local-data-write-gate";
-import { applyReplacedStyleHotkeys } from "../../utils/style-hotkey";
 
 type LanguageRow = { language: string; hotkeyKeys: string[] };
 
+/** A row of the dictation group: the primary `dictate` shortcut, an extra
+ * `dictate` row the shortcuts dialog added, or an additional language. */
+const isDictationGroupRow = (hotkey: Hotkey): boolean =>
+  hotkey.actionName === DICTATE_HOTKEY ||
+  hotkey.actionName.startsWith(ADDITIONAL_LANGUAGE_HOTKEY_PREFIX);
+
+const byId = (left: Hotkey, right: Hotkey): number =>
+  left.id.localeCompare(right.id);
+
+/** Replace the dictation group in the store with what the database now holds.
+ * The group is replaced as a whole, so rows the dialog never displayed -- an
+ * extra `dictate` row, a language it removed -- cannot survive a save. */
+const applyReplacedDictationHotkeys = (
+  saved: Hotkey[],
+  removedIds: Iterable<string>,
+  lease: LocalDataWriteLease | undefined,
+): void => {
+  produceAppState((draft) => {
+    const removed = new Set(removedIds);
+    for (const id of removed) delete draft.hotkeyById[id];
+    draft.settings.hotkeyIds = draft.settings.hotkeyIds.filter(
+      (id) => !removed.has(id),
+    );
+    for (const hotkey of saved) {
+      draft.hotkeyById[hotkey.id] = hotkey;
+      if (!draft.settings.hotkeyIds.includes(hotkey.id)) {
+        draft.settings.hotkeyIds.push(hotkey.id);
+      }
+    }
+  }, lease);
+};
+
 /** The language preference, primary hotkey and additional group are separate
  * writes. Publish only committed changes and synchronize them even on a later
- * failure; keep the dialog's draft available for retry. */
+ * failure; keep the dialog's draft available for retry.
+ *
+ * The dictation group is written in one transaction: the primary `dictate` row,
+ * the language rows the dialog edited and every other `dictate` row the
+ * shortcuts dialog owns. Saving a language change therefore cannot delete a
+ * second dictation shortcut the language dialog never displayed, and cannot
+ * leave the primary saved while the group failed. */
 export const saveDictationLanguageSettings = async (
   rows: LanguageRow[],
   currentLanguage: string,
@@ -42,56 +80,48 @@ export const saveDictationLanguageSettings = async (
       await loadTones();
     }
 
-    const existing = Object.values(getAppState().hotkeyById);
+    const repo = getHotkeyRepo();
+    // Read the group immediately before replacing it: the snapshot is what the
+    // replacement asserts, so a shortcut added in another dialog between the
+    // dialog opening and this save is reported instead of silently dropped.
+    const group = (await repo.listHotkeys())
+      .filter(isDictationGroupRow)
+      .sort(byId);
+    const existingPrimary = group.find(
+      (hotkey) => hotkey.actionName === DICTATE_HOTKEY,
+    );
     const primaryHotkey: Hotkey = {
-      id:
-        existing.find((item) => item.actionName === DICTATE_HOTKEY)?.id ??
-        createId(),
+      id: existingPrimary?.id ?? createId(),
       actionName: DICTATE_HOTKEY,
       keys: primary.hotkeyKeys,
     };
-    const newAdditional: Hotkey[] = additional.map((row) => ({
+    const untouchedDictationRows = group.filter(
+      (hotkey) =>
+        hotkey.actionName === DICTATE_HOTKEY && hotkey.id !== primaryHotkey.id,
+    );
+    const languageRows: Hotkey[] = additional.map((row) => ({
       id: createId(),
       actionName: getAdditionalLanguageActionName(row.language),
       keys: row.hotkeyKeys,
     }));
-    const repo = getHotkeyRepo();
-    const savedPrimary = await repo.saveHotkey(primaryHotkey, lease);
-    produceAppState((draft) => {
-      draft.hotkeyById[savedPrimary.id] = savedPrimary;
-      if (!draft.settings.hotkeyIds.includes(savedPrimary.id)) {
-        draft.settings.hotkeyIds.push(savedPrimary.id);
-      }
-    }, lease);
+    const saved = [
+      primaryHotkey,
+      ...languageRows,
+      ...untouchedDictationRows,
+    ].sort(byId);
 
-    try {
-      // This command replaces an arbitrary prefix in one SQLite transaction,
-      // despite its historical style-specific name.
-      const saved = await repo.replaceStyleHotkeys(
-        ADDITIONAL_LANGUAGE_HOTKEY_PREFIX,
-        newAdditional,
-        lease,
-      );
-      produceAppState((draft) => {
-        applyReplacedStyleHotkeys(
-          draft,
-          ADDITIONAL_LANGUAGE_HOTKEY_PREFIX,
-          saved,
-        );
-      }, lease);
-    } catch (error) {
-      // The primary write has already committed. Do not leave native shortcuts
-      // pointing at the old primary value when the group replacement fails.
-      try {
-        await syncHotkeyCombosToNative();
-      } catch (syncError) {
-        console.error(
-          "Failed to synchronize the saved primary shortcut",
-          syncError,
-        );
-      }
-      throw error;
-    }
+    await repo.replaceDictationLanguageHotkeys(
+      primaryHotkey,
+      [...languageRows, ...untouchedDictationRows],
+      group,
+      lease,
+    );
+
+    applyReplacedDictationHotkeys(
+      saved,
+      group.map((hotkey) => hotkey.id),
+      lease,
+    );
     await syncHotkeyCombosToNative();
   });
 };

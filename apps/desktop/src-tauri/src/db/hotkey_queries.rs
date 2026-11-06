@@ -74,9 +74,17 @@ async fn verify_hotkey_snapshot(
     connection: &mut SqliteConnection,
     prefix: &str,
     include_dictate: bool,
-    expected: &[Hotkey],
+    expected: Option<&[Hotkey]>,
     conflict: &str,
 ) -> Result<(), sqlx::Error> {
+    // A caller that does not hold a snapshot of the group it is replacing is
+    // asking for a plain atomic replace: the delete and the insert still happen
+    // in one transaction, so no reader sees a partial group. Only a caller that
+    // edited a snapshot it read earlier can assert what the group held, and
+    // that assertion is what catches a concurrent edit from another dialog.
+    let Some(expected) = expected else {
+        return Ok(());
+    };
     let rows = sqlx::query(
         "SELECT id, action_name, keys FROM hotkeys
          WHERE (?2 AND action_name = 'dictate') OR instr(action_name, ?1) = 1 ORDER BY id",
@@ -148,7 +156,7 @@ pub async fn replace_dictation_language_hotkeys(
     pool: SqlitePool,
     primary: &Hotkey,
     additional: &[Hotkey],
-    expected: &[Hotkey],
+    expected: Option<&[Hotkey]>,
 ) -> Result<(), sqlx::Error> {
     if primary.action_name != PRIMARY_DICTATION_ACTION {
         return Err(sqlx::Error::Protocol("Invalid dictation hotkey".into()));
@@ -197,7 +205,7 @@ pub async fn replace_hotkeys_by_prefix(
     pool: SqlitePool,
     prefix: &str,
     hotkeys: &[Hotkey],
-    expected: &[Hotkey],
+    expected: Option<&[Hotkey]>,
 ) -> Result<Vec<Hotkey>, sqlx::Error> {
     if prefix.is_empty() {
         return Err(sqlx::Error::Protocol(
@@ -308,9 +316,14 @@ mod tests {
             action_name: "switch-to-style:casual".to_string(),
             keys: vec!["Control".to_string()],
         }];
-        replace_hotkeys_by_prefix(pool.clone(), "switch-to-style:", &replacement, &expected)
-            .await
-            .expect("replace style hotkeys");
+        replace_hotkeys_by_prefix(
+            pool.clone(),
+            "switch-to-style:",
+            &replacement,
+            Some(expected.as_slice()),
+        )
+        .await
+        .expect("replace style hotkeys");
 
         assert_eq!(
             action_names(&pool).await,
@@ -333,7 +346,7 @@ mod tests {
         seed(&pool, "b", "styleXYcasual").await;
 
         let expected = group_snapshot(&pool, "style%_", false).await;
-        replace_hotkeys_by_prefix(pool.clone(), "style%_", &[], &expected)
+        replace_hotkeys_by_prefix(pool.clone(), "style%_", &[], Some(expected.as_slice()))
             .await
             .expect("replace literal prefix");
 
@@ -354,9 +367,14 @@ mod tests {
         let expected = group_snapshot(&pool, "switch-to-style:", false).await;
         assert_eq!(expected.len(), 2);
 
-        let saved = replace_hotkeys_by_prefix(pool.clone(), "switch-to-style:", &[], &expected)
-            .await
-            .unwrap();
+        let saved = replace_hotkeys_by_prefix(
+            pool.clone(),
+            "switch-to-style:",
+            &[],
+            Some(expected.as_slice()),
+        )
+        .await
+        .unwrap();
         assert!(saved.is_empty());
         let names = action_names(&pool).await;
         assert!(!names.iter().any(|name| name == "switch-to-style:one"));
@@ -366,7 +384,7 @@ mod tests {
 
         // A cleared group is a valid starting point for the next replacement.
         assert!(
-            replace_hotkeys_by_prefix(pool.clone(), "switch-to-style:", &[], &[])
+            replace_hotkeys_by_prefix(pool.clone(), "switch-to-style:", &[], Some(&[]))
                 .await
                 .unwrap()
                 .is_empty()
@@ -375,9 +393,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_caller_without_a_snapshot_still_replaces_the_whole_prefix() {
+        let pool = migrated_pool().await;
+        seed(&pool, "a", "switch-to-style:a").await;
+        seed(&pool, "b", "switch-to-style:b").await;
+        seed(&pool, "keep", "dictate").await;
+
+        let saved = replace_hotkeys_by_prefix(
+            pool.clone(),
+            "switch-to-style:",
+            &[shortcut("c", "switch-to-style:c", "C")],
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(saved.len(), 1);
+        assert_eq!(
+            action_names(&pool).await,
+            vec!["dictate".to_string(), "switch-to-style:c".to_string()]
+        );
+    }
+
+    #[tokio::test]
     async fn an_empty_prefix_is_rejected() {
         let pool = migrated_pool().await;
-        assert!(replace_hotkeys_by_prefix(pool, "", &[], &[]).await.is_err());
+        assert!(replace_hotkeys_by_prefix(pool, "", &[], Some(&[]))
+            .await
+            .is_err());
     }
 
     #[tokio::test]
@@ -389,9 +432,14 @@ mod tests {
         let newer = shortcut("newer", "switch-to-style:two", "N");
         upsert_hotkey(pool.clone(), &newer).await.unwrap();
         let after = fetch_hotkeys(pool.clone()).await.unwrap();
-        let err = replace_hotkeys_by_prefix(pool.clone(), "switch-to-style:", &[], &expected)
-            .await
-            .unwrap_err();
+        let err = replace_hotkeys_by_prefix(
+            pool.clone(),
+            "switch-to-style:",
+            &[],
+            Some(expected.as_slice()),
+        )
+        .await
+        .unwrap_err();
         assert!(err.to_string().contains("STYLE_HOTKEYS_CHANGED"));
         assert_eq!(fetch_hotkeys(pool.clone()).await.unwrap(), after);
         let current = group_snapshot(&pool, "switch-to-style:", false).await;
@@ -403,7 +451,7 @@ mod tests {
                 pool.clone(),
                 "switch-to-style:",
                 &[invalid],
-                &current
+                Some(&current)
             )
             .await
             .is_err());
@@ -443,7 +491,7 @@ mod tests {
             &mut stale_tx,
             "switch-to-style:",
             false,
-            &expected,
+            Some(expected.as_slice()),
             "STYLE_HOTKEYS_CHANGED",
         )
         .await
@@ -453,7 +501,7 @@ mod tests {
             pool.clone(),
             "switch-to-style:",
             std::slice::from_ref(&newer),
-            &expected,
+            Some(expected.as_slice()),
         )
         .await
         .unwrap();
@@ -484,9 +532,14 @@ mod tests {
             shortcut("fr", "additional-language:fr", "F"),
             shortcut("de", "additional-language:de", "G"),
         ];
-        replace_dictation_language_hotkeys(pool.clone(), &primary, &additional, &expected)
-            .await
-            .expect("replace dictation language hotkeys");
+        replace_dictation_language_hotkeys(
+            pool.clone(),
+            &primary,
+            &additional,
+            Some(expected.as_slice()),
+        )
+        .await
+        .expect("replace dictation language hotkeys");
 
         assert_eq!(
             action_names(&pool).await,
@@ -523,9 +576,14 @@ mod tests {
             shortcut("primary-alt", PRIMARY_DICTATION_ACTION, "Y"),
             shortcut("fr", "additional-language:fr", "F"),
         ];
-        replace_dictation_language_hotkeys(pool.clone(), &primary, &additional, &expected)
-            .await
-            .expect("replace dictation language hotkeys");
+        replace_dictation_language_hotkeys(
+            pool.clone(),
+            &primary,
+            &additional,
+            Some(expected.as_slice()),
+        )
+        .await
+        .expect("replace dictation language hotkeys");
 
         let saved = fetch_hotkeys(pool.clone()).await.unwrap();
         let bindings: Vec<_> = saved
@@ -557,7 +615,7 @@ mod tests {
             pool.clone(),
             &primary,
             &[shortcut("primary", PRIMARY_DICTATION_ACTION, "Y")],
-            &expected,
+            Some(expected.as_slice()),
         )
         .await
         .unwrap_err();
@@ -594,7 +652,7 @@ mod tests {
                 pool.clone(),
                 &primary,
                 &additional,
-                &expected
+                Some(expected.as_slice())
             )
             .await
             .is_err());
@@ -617,7 +675,7 @@ mod tests {
             pool.clone(),
             &shortcut("primary", PRIMARY_DICTATION_ACTION, "D"),
             &[shortcut("fr", "additional-language:fr", "F")],
-            &expected,
+            Some(expected.as_slice()),
         )
         .await
         .unwrap_err();

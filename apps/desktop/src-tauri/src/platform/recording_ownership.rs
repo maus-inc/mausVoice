@@ -540,14 +540,18 @@ impl RecordingOwnership {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut expired_claimed = Vec::new();
         admissions.retain(|_, admission| {
-            let expired = admission.created.elapsed() >= ADMISSION_LIFETIME;
-            if expired {
+            // A reservation cancelled by a reset is finished: nothing can claim
+            // it any more, so the next reservation for the same owner replaces
+            // it instead of being refused as a duplicate.
+            let dead = admission.created.elapsed() >= ADMISSION_LIFETIME
+                || admission.cancelled.load(Ordering::SeqCst);
+            if dead {
                 admission.cancelled.store(true, Ordering::SeqCst);
                 if admission.claimed.load(Ordering::SeqCst) {
                     expired_claimed.push((admission.token, Arc::downgrade(admission)));
                 }
             }
-            !expired
+            !dead
         });
         // A claimed start can still own the driver after its admission expires.
         // Keep its token addressable for a normal stop without retaining it.
@@ -752,11 +756,14 @@ impl RecordingOwnership {
             return Err("Recording reset is already in progress".into());
         }
         self.generation.fetch_add(1, Ordering::SeqCst);
-        let mut admissions = self
+        let admissions = self
             .admissions
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        for admission in admissions.drain().map(|(_, admission)| admission) {
+        // Cancel in place instead of dropping: a start that races the reset then
+        // reports a cancelled admission instead of an unknown one, and the next
+        // reservation prunes the cancelled entry.
+        for admission in admissions.values() {
             admission.cancelled.store(true, Ordering::SeqCst);
         }
         let mut recovered = self

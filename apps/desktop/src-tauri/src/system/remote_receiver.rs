@@ -13,6 +13,14 @@ use crate::state::{RemoteReceiverEventDetails, RemoteReceiverState, RemoteReceiv
 
 pub const EVT_REMOTE_FINAL_TEXT_RECEIVED: &str = "remote_final_text_received";
 
+/// The largest frame the receiver accepts, newline included.
+///
+/// A peer that never sends a newline would otherwise grow the read buffer until
+/// the process runs out of memory, and nothing has authenticated that peer yet:
+/// the frame is parsed before it is authorized. A dictation frame is a small
+/// JSON envelope, so four mebibytes is generous.
+const MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RemoteFinalTextReceivedPayload {
@@ -500,7 +508,8 @@ impl ConnectionMessageHandler<'_> {
             device_result.map_err(|error| format!("Failed to validate sender device: {error}"))?;
 
         match device {
-            Some(device) if device.trusted && secret_matches(&device.shared_secret, &auth_token) => {}
+            Some(device)
+                if device.trusted && secret_matches(&device.shared_secret, &auth_token) => {}
             Some(_) => {
                 return self
                     .reject_sender(session_id, &sender_device_id, SenderRejection::Unauthorized)
@@ -760,6 +769,53 @@ impl ConnectionMessageHandler<'_> {
     }
 }
 
+/// Read one newline-delimited frame, refusing a frame larger than
+/// [`MAX_FRAME_BYTES`].
+///
+/// The cap is per frame rather than per connection, so a well-behaved peer keeps
+/// its connection for as long as it sends ordinary frames. A frame that hits the
+/// cap fails the connection instead of being truncated and parsed.
+async fn read_frame<R: tokio::io::AsyncBufRead + Unpin>(
+    reader: &mut R,
+    frame: &mut Vec<u8>,
+) -> Result<Option<String>, String> {
+    frame.clear();
+    loop {
+        let (complete, consumed) = {
+            let available = reader
+                .fill_buf()
+                .await
+                .map_err(|err| format!("Failed to read receiver message: {err}"))?;
+            if available.is_empty() {
+                // A peer that disconnects mid-frame leaves a partial frame; the
+                // caller reports it as a parse failure rather than losing it.
+                if frame.is_empty() {
+                    return Ok(None);
+                }
+                (true, 0)
+            } else if let Some(index) = available.iter().position(|byte| *byte == b'\n') {
+                frame.extend_from_slice(&available[..index]);
+                (true, index + 1)
+            } else {
+                frame.extend_from_slice(available);
+                (false, available.len())
+            }
+        };
+        reader.consume(consumed);
+        if frame.len() > MAX_FRAME_BYTES {
+            return Err("Remote receiver frame exceeds the size limit".to_string());
+        }
+        if complete {
+            break;
+        }
+    }
+
+    let frame = std::mem::take(frame);
+    String::from_utf8(frame)
+        .map(Some)
+        .map_err(|err| format!("Remote receiver frame is not UTF-8: {err}"))
+}
+
 async fn handle_connection(
     stream: TcpStream,
     pool: SqlitePool,
@@ -774,14 +830,13 @@ async fn handle_connection(
     }
 
     let (reader, mut writer) = stream.into_split();
-    let mut lines = BufReader::new(reader).lines();
+    let mut reader = BufReader::new(reader);
+    let mut frame = Vec::new();
     let mut authenticated_sender: Option<AuthenticatedSender> = None;
 
     loop {
         let line = tokio::select! {
-            result = lines.next_line() => {
-                result.map_err(|err| format!("Failed to read receiver message: {err}"))?
-            }
+            result = read_frame(&mut reader, &mut frame) => result?,
             _ = wait_for_shutdown(&mut shutdown) => return Ok(()),
         };
         let Some(line) = line else {
@@ -855,7 +910,10 @@ async fn write_message(
 
 #[cfg(test)]
 mod tests {
-    use super::{rejection_message, secret_matches, wait_for_shutdown, SenderRejection};
+    use super::{
+        read_frame, rejection_message, secret_matches, wait_for_shutdown, SenderRejection,
+        MAX_FRAME_BYTES,
+    };
     use crate::system::remote_channel::ReceiverMessage;
     use std::time::Duration;
 
@@ -897,6 +955,40 @@ mod tests {
                 message: "Sender authentication failed.".to_string(),
             }
         );
+    }
+
+    #[tokio::test]
+    async fn a_frame_larger_than_the_cap_fails_the_connection() {
+        let oversized = vec![b'a'; MAX_FRAME_BYTES + 1];
+        let mut reader: &[u8] = &oversized;
+        let mut frame = Vec::new();
+
+        let err = read_frame(&mut reader, &mut frame)
+            .await
+            .expect_err("an oversized frame is refused");
+
+        assert!(err.contains("size limit"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn frames_are_read_one_line_at_a_time_including_a_partial_last_frame() {
+        let mut reader: &[u8] = b"{\"a\":1}\n{\"b\":2}\n{\"c\":";
+        let mut frame = Vec::new();
+
+        assert_eq!(
+            read_frame(&mut reader, &mut frame).await.unwrap(),
+            Some("{\"a\":1}".to_string())
+        );
+        assert_eq!(
+            read_frame(&mut reader, &mut frame).await.unwrap(),
+            Some("{\"b\":2}".to_string())
+        );
+        // A peer that disconnects mid-frame leaves the parse to the caller.
+        assert_eq!(
+            read_frame(&mut reader, &mut frame).await.unwrap(),
+            Some("{\"c\":".to_string())
+        );
+        assert_eq!(read_frame(&mut reader, &mut frame).await.unwrap(), None);
     }
 
     #[tokio::test]

@@ -2980,17 +2980,26 @@ pub async fn hotkey_delete(
 
 #[tauri::command]
 #[specta::specta]
+/// Replace the whole dictation group -- the primary `dictate` shortcut plus the
+/// additional language shortcuts -- in one transaction.
+///
+/// `additional` carries every row of the group the caller keeps, including any
+/// extra `dictate` row a user bound in the shortcuts dialog, so saving a
+/// language change cannot delete a shortcut the dialog never displayed.
+/// `expected` is the group the caller edited; passing `None` replaces whatever
+/// the group holds now, which is still atomic.
 pub async fn hotkey_replace_dictation_language_hotkeys(
     primary: crate::domain::Hotkey,
     additional: Vec<crate::domain::Hotkey>,
-    expected: Vec<crate::domain::Hotkey>,
+    expected: Option<Vec<crate::domain::Hotkey>>,
     database: State<'_, crate::state::OptionKeyDatabase>,
 ) -> Result<(), String> {
+    let _write_guard = acquire_local_data_write_guard().await?;
     crate::db::hotkey_queries::replace_dictation_language_hotkeys(
         database.pool(),
         &primary,
         &additional,
-        &expected,
+        expected.as_deref(),
     )
     .await
     .map_err(|err| err.to_string())
@@ -3001,7 +3010,7 @@ pub async fn hotkey_replace_dictation_language_hotkeys(
 pub async fn hotkey_replace_style_hotkeys(
     prefix: String,
     hotkeys: Vec<crate::domain::Hotkey>,
-    expected: Vec<crate::domain::Hotkey>,
+    expected: Option<Vec<crate::domain::Hotkey>>,
     database: State<'_, crate::state::OptionKeyDatabase>,
 ) -> Result<Vec<crate::domain::Hotkey>, String> {
     let _write_guard = acquire_local_data_write_guard().await?;
@@ -3012,7 +3021,7 @@ pub async fn hotkey_replace_style_hotkeys(
         database.pool(),
         &prefix,
         &hotkeys,
-        &expected,
+        expected.as_deref(),
     )
     .await
     .map_err(|err| err.to_string())
@@ -11601,7 +11610,12 @@ wLMDjy9FLAuxZ3q4NlEvkgtyhrr0gtTu6KC4KBJdITbbOeAi1zBIYo0v4iTgt8jJpIidRJnp94ABQkJA
         assert!(err.contains("reset") || err.contains("cancelled"), "{err}");
 
         // Even an admission taken before the reset cannot start the recorder.
+        // `begin_reset` cancels every reservation it finds, so the admission
+        // has to be claimed before the reset it is supposed to survive.
         ownership.end_reset();
+        let generation = ownership
+            .reserve("owner", &window)
+            .expect("reserve a generation after the reset");
         let admission = ownership
             .claim_admission("owner", &window, generation)
             .expect("claim before the reset");

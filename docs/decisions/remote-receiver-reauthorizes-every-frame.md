@@ -22,6 +22,11 @@ shared secret. `SessionHello` verifies it with `secret_matches`, which compares
 the full secret instead of stopping at the first differing byte, and the session
 keeps the token rather than only the device id.
 
+Frames are newline delimited, and `read_frame` refuses a frame larger than four
+mebibytes. The cap exists because authorization happens after parsing: a peer
+that never sends a newline could otherwise grow the read buffer until the
+process ran out of memory, and nothing has checked that peer's secret yet.
+
 After that, every `final_text` frame is authorized on its own.
 `authorize_final_text` re-reads the device row inside the same generation guard
 the connection already uses and requires it to still be trusted and to still
@@ -37,6 +42,9 @@ per delivery frame.
 Because there is no TLS, a peer that can read the LAN traffic learns the secret
 and can impersonate the sender until the device is revoked. The receiver accepts
 that on a trusted home network and mitigates it with single-use pairing and
-per-frame authorization. The base branch's receiver — framing, read/write
-timeouts, and generation-scoped write gates — is what this builds on; see
-`consolidation-supersedes-parallel-refactor.md`.
+per-frame authorization and a bounded frame.
+
+The receiver keeps no read or write timeout, and it does not cap the number of
+open connections: a peer that connects and stays silent holds a task until it
+sends a frame or disconnects. Both were considered and left out of this change,
+which is why the framing cap is the only bound on a single peer.
