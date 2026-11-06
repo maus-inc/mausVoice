@@ -276,7 +276,15 @@ export const MicrophoneTester = ({
 
         if (!opts?.silent && !isLocalDataClearRequested()) {
           const url = createPreviewUrl(response.samples, rate);
-          if (url) {
+          if (response.captureFailed) {
+            // The device stopped delivering audio partway through the test. The
+            // preview still plays what was captured, and the test says why it
+            // is short instead of reporting a clean result.
+            updatePreviewUrl(url ?? null);
+            setTestError(
+              "The microphone stopped partway through. The preview is shorter than the test.",
+            );
+          } else if (url) {
             updatePreviewUrl(url);
           } else {
             updatePreviewUrl(null);

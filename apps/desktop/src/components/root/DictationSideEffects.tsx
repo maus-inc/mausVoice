@@ -1007,6 +1007,25 @@ export const DictationSideEffects = () => {
         getLogger().verbose(
           `Recording stopped (samples=${outAudio?.samples?.length ?? 0})`,
         );
+        // Native keeps what it captured when the device fails mid-recording and
+        // flags the result. The samples are still worth transcribing, but the
+        // user has to know the dictation was cut short instead of silently
+        // receiving a truncated transcript.
+        if (outAudio?.captureFailed) {
+          getLogger().warning(
+            "Recording capture failed partway; transcribing the captured audio",
+          );
+          runToast(
+            showToast({
+              message: intl.formatMessage({
+                defaultMessage:
+                  "Recording failed partway. Transcribing what was captured.",
+              }),
+              toastType: "error",
+              duration: 8_000,
+            }),
+          );
+        }
         return outAudio;
       } catch (error) {
         getLogger().error(`Failed to stop recording: ${error}`);

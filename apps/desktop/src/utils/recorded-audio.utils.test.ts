@@ -126,6 +126,35 @@ describe("encodeRecordedAudio", () => {
     expect(decoded.samples).toHaveLength(0);
   });
 
+  it("round-trips the capture-failed flag native sets on a partial recording", () => {
+    const decoded = decodeStopRecordingPayload(
+      encodeRecordedAudio(new Float32Array([0.5]), 16_000, true),
+    );
+    // The flag lives in the top bit of the header, so the rate a caller reads
+    // stays the rate the device reported.
+    expect(decoded.sampleRate).toBe(16_000);
+    expect(decoded.captureFailed).toBe(true);
+    expect(Array.from(decoded.samples)).toEqual(
+      Array.from(new Float32Array([0.5])),
+    );
+  });
+
+  it("leaves captureFailed unset for a complete recording", () => {
+    const decoded = decodeStopRecordingPayload(
+      encodeRecordedAudio(new Float32Array([0.5]), 16_000),
+    );
+    expect(decoded.sampleRate).toBe(16_000);
+    expect(decoded.captureFailed).toBeUndefined();
+  });
+
+  it("masks the capture-failed bit out of the sample rate native sends", () => {
+    const bytes = encodeRecordedAudio(new Float32Array([0.25]), 48_000, true);
+    // Native frames the same header; a reader that ignored the flag would see
+    // 0x8000BB80 as the rate.
+    expect(new DataView(bytes.buffer).getUint32(0, true)).toBe(0x8000_bb80);
+    expect(decodeStopRecordingPayload(bytes).sampleRate).toBe(48_000);
+  });
+
   it("does not write into the caller's samples", () => {
     const samples = new Float32Array([0.5]);
     encodeRecordedAudio(samples, 16_000);
