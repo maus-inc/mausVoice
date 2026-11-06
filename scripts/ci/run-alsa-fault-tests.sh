@@ -160,6 +160,7 @@ test_binary=$(printf '%s\n' "$artifacts" \
   | grep -v '^null$' \
   | tail -n 1)
 if [[ -z "$test_binary" || ! -x "$test_binary" ]]; then
+  echo "::error title=run-alsa-fault-tests::cargo produced no test binary"
   echo "run-alsa-fault-tests: cargo produced no test binary" >&2
   printf '%s\n' "$artifacts" | tail -n 20 >&2
   exit 1
@@ -188,6 +189,7 @@ for row in "${rows[@]}"; do
 
   echo "::group::$test${preload:+ (preload ${fixture}.so)}"
   status=0
+  output="$workdir/$test.log"
   (
     # The fixture reads these; they are not visible to the Rust test body.
     if [[ -n "$env_spec" ]]; then
@@ -200,11 +202,18 @@ for row in "${rows[@]}"; do
     else
       "$test_binary" --exact --ignored --test-threads=1 "$test_module::$test"
     fi
-  ) || status=$?
+  ) >"$output" 2>&1 || status=$?
+  cat "$output"
   echo "::endgroup::"
 
   if [[ $status -ne 0 ]]; then
     failed+=("$test")
+    # Annotations are readable without the job log (which the API serves from
+    # blob storage), so a failure here can be diagnosed from the check run.
+    # Newlines become `%0A` so the tail lands inside one annotation message.
+    detail=$(tail -c 1200 "$output" | sed -e 's/%/%25/g' -e 's/\r//g' | tr '\n' '\001')
+    detail=${detail//$'\001'/%0A}
+    echo "::error title=${test} failed::fixture=${fixture} env=${env_spec:-none} status=${status}%0A${detail}"
   else
     passed=$((passed + 1))
   fi
