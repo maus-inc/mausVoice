@@ -295,7 +295,7 @@ jobs:
   # WebView2 and a bare runner has no runtime for it; see the lint step below.
   #
   # The standalone macOS pill crate needed nothing: `lint-desktop.yml` already
-  # lints and tests it on `macos-14`. Its gap was formatting, and that is
+  # lints and tests it on `macos-15`. Its gap was formatting, and that is
   # covered here -- `cargo fmt --check` does not need the target.
   rust-windows-gated:
     name: Rust (Windows-gated code)
