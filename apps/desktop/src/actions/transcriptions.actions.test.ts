@@ -1554,6 +1554,39 @@ describe("retranscribeTranscription unstyled post-processing", () => {
     }
   });
 
+  it("discards a recovery page returned after a completed local-data clear", async () => {
+    let resolvePage!: (rows: Transcription[]) => void;
+    listTranscriptions.mockReturnValueOnce(
+      new Promise<Transcription[]>((resolve) => {
+        resolvePage = resolve;
+      }),
+    );
+    resumeAllInterruptedPostProcessEditRetries();
+    const release = await beginLocalDataClear();
+    localStorage.removeItem(LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY);
+    release();
+    resolvePage([sampleTranscription("stale-scan")]);
+    await vi.waitFor(() => expect(listTranscriptions).toHaveBeenCalledTimes(1));
+    await Promise.resolve();
+    expect(getAppState().transcriptionById["stale-scan"]).toBeUndefined();
+    expect(transcribeAudio).not.toHaveBeenCalled();
+  });
+
+  it("does not replace a newer in-memory row with a recovery scan snapshot", async () => {
+    const stale = sampleTranscription("scan-existing");
+    const current = { ...stale, transcript: "newer edit" };
+    produceAppState((draft) => {
+      draft.transcriptionById[current.id] = current;
+    });
+    listTranscriptions.mockResolvedValueOnce([stale]);
+    resumeAllInterruptedPostProcessEditRetries();
+    await vi.waitFor(() => expect(listTranscriptions).toHaveBeenCalledTimes(1));
+    await Promise.resolve();
+    expect(getAppState().transcriptionById[current.id]?.transcript).toBe(
+      "newer edit",
+    );
+  });
+
   it("delivers an interrupted claim that sits beyond the first History page", async () => {
     vi.useFakeTimers();
     try {
