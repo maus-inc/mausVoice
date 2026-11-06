@@ -10,7 +10,8 @@
     "clean": "rm -rf dist",
     "test": "vitest run",
     "test:watch": "vitest",
-    "example": "tsx scripts/example.ts"
+    "example": "tsx scripts/example.ts",
+    "check-types": "tsc --noEmit && tsc --project tsconfig.scripts.json"
   },
   "files": [
     "dist"
@@ -22,6 +23,7 @@
   "devDependencies": {
     "@maus-inc/typescript-config": "workspace:*",
     "@maus-inc/voice-ai": "workspace:*",
+    "@types/node": "^24.13.3",
     "tsx": "^4.23.12",
     "typescript": "5.9.3",
     "vitest": "^3.2.7"

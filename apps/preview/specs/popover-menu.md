@@ -2,7 +2,7 @@
 
 - Status: **reused** — real components from `apps/desktop/src/components/common/MenuPopover.tsx` + MuiPopover theme.
 - Source of truth: `apps/desktop/src/theme.ts` (MuiPopover), `apps/desktop/src/components/common/MenuPopover.tsx`.
-- Used in: ConversationListItem, ContextMenu, Header, AppStylingRow, ManualAddStyle, ManualStylingRow, TranscriptionToneMenu.
+- Used in: ConversationListItem, ContextMenu, Header, AppStylingRow, ManualAddStyle, ManualStylingRow.
 
 ## Purpose
 

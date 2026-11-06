@@ -160,6 +160,10 @@ function validatePngHeader(png) {
       "interlaced PNG is not supported (re-export non-interlaced)",
     );
   }
+}
+
+/** Image data and palette requirements follow the supported header profile. */
+function validatePngData(png) {
   if (png.idat.length === 0) {
     throw new Error("PNG has no image data (IDAT)");
   }
@@ -317,6 +321,7 @@ export function decodePng(buf) {
 
   const png = parsePngChunks(buf);
   validatePngHeader(png);
+  validatePngData(png);
 
   const channels = PNG_CHANNELS[png.colorType];
   const rowBytes = png.width * channels;

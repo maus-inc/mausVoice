@@ -23,6 +23,7 @@ const speech = vi.hoisted(() => ({
   },
   subscriptions: [] as string[][],
   formats: [] as unknown[][],
+  writes: [] as ArrayBuffer[],
   calls: 0,
 }));
 /** Where the probe's own log lines land, so a test can read them. */
@@ -52,7 +53,9 @@ vi.mock("microsoft-cognitiveservices-speech-sdk", () => ({
   },
   AudioInputStream: {
     createPushStream: () => ({
-      write: () => undefined,
+      write: (buffer: ArrayBuffer) => {
+        speech.writes.push(buffer);
+      },
       close: () => undefined,
     }),
   },
@@ -108,6 +111,7 @@ beforeEach(() => {
   speech.result = { reason: "recognized", text: "hello world" };
   speech.subscriptions = [];
   speech.formats = [];
+  speech.writes = [];
   speech.calls = 0;
   // The probe logs every failure it raises, which keeps the run readable and
   // lets the message-bound test read what was logged.
@@ -120,6 +124,23 @@ afterEach(() => {
 });
 
 describe("azureTranscribeAudio phrase list", () => {
+  it("reads WAV metadata and samples from the Buffer view, not its backing pool", async () => {
+    const wav = Buffer.from(wavBlob());
+    wav.set([1, 2, 3], 44);
+    const pool = Buffer.alloc(wav.length + 20, 255);
+    wav.copy(pool, 10);
+    await azureTranscribeAudio({
+      subscriptionKey: "key",
+      region: "eastus",
+      blob: pool.subarray(10, 10 + wav.length),
+    });
+    expect(speech.formats[0]).toEqual([16_000, 16, 1]);
+    expect(Array.from(new Uint8Array(speech.writes[0]).slice(0, 3))).toEqual([
+      1, 2, 3,
+    ]);
+    expect(speech.writes[0].byteLength).toBe(wav.length - 44);
+  });
+
   it("adds each vocabulary phrase to the recognizer, multi-word phrases intact", async () => {
     capturedPhrases.length = 0;
     const output = await azureTranscribeAudio({
@@ -326,6 +347,33 @@ describe("azureTestIntegration", () => {
     await expect(
       azureTestIntegration({ subscriptionKey: "bad-key", region: "eastus" }),
     ).resolves.toBe(false);
+  });
+
+  it.each([
+    ["StatusCode: 404 authentication failed", /rejected the region/],
+    ["StatusCode: 429 invalid subscription key", /no quota left/],
+    ["StatusCode: 0 access denied", /could not be reached/],
+  ])(
+    "gives the handshake status priority over conflicting text: %s",
+    async (reason, expected) => {
+      speech.error = reason;
+      await expect(
+        azureTestIntegration({ subscriptionKey: "key", region: "eastus" }),
+      ).rejects.toThrow(expected);
+    },
+  );
+
+  it("uses ordered text rules when the status itself is not classified", async () => {
+    speech.error =
+      "StatusCode: 500 authentication failed for region with exhausted quota";
+    await expect(
+      azureTestIntegration({ subscriptionKey: "key", region: "eastus" }),
+    ).resolves.toBe(false);
+
+    speech.error = "region quota exhausted";
+    await expect(
+      azureTestIntegration({ subscriptionKey: "key", region: "eastus" }),
+    ).rejects.toThrow(/rejected the region/);
   });
 
   it("names the region instead of blaming the key when the region is wrong", async () => {
@@ -764,6 +812,24 @@ describe("credential redaction is safe on hostile input", () => {
     // The status survives, so the line is still a diagnosis.
     expect(logged).toContain("StatusCode: 0");
     expect(raised?.message).not.toContain(key);
+  });
+
+  it("treats every metacharacter in the supplied key as literal and redacts repeated echoes", async () => {
+    const key = String.raw`a.*[x]$\suffix`;
+    speech.error = `StatusCode: 0 gateway echoed ${key} twice ${key}. Similar text aZZx suffix remains.`;
+    const error = await azureTestIntegration({
+      subscriptionKey: key,
+      region: "eastus",
+    }).then(
+      () => undefined,
+      (caught: unknown) => caught as Error,
+    );
+    expect(error).toBeDefined();
+    const logged = loggedLine();
+    expect(logged).not.toContain(key);
+    expect(logged.match(/\[redacted\]/g)).toHaveLength(2);
+    expect(logged).toContain("Similar text aZZx suffix remains.");
+    expect(error?.message).not.toContain(key);
   });
 
   it("redacts a bare provider token whatever case its prefix arrives in", async () => {

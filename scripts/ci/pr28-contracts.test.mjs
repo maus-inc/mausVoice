@@ -3,6 +3,8 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
+import { JSDOM } from "jsdom";
+import { excludesForkPullRequests } from "./fork-guard-expression.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -61,6 +63,8 @@ const PATHS = [
   ["commands", "apps/desktop/src-tauri/src/commands.rs"],
   ["tray", "apps/desktop/src-tauri/src/system/tray.rs"],
   ["effects", "apps/desktop/src/components/root/AppSideEffects.tsx"],
+  ["pillControls", "apps/desktop/src/hooks/tray-pill-controls.hooks.ts"],
+  ["appChrome", "apps/desktop/src/hooks/app-chrome.hooks.ts"],
   ["macOverlay", "apps/desktop/src-tauri/src/platform/macos/overlay.rs"],
   ["linuxOverlay", "apps/desktop/src-tauri/src/platform/linux/overlay.rs"],
   ["windowsOverlay", "apps/desktop/src-tauri/src/platform/windows/overlay.rs"],
@@ -151,9 +155,6 @@ const workflowJobs = (workflowText) => {
 // == 'true'`), and one literal spelling of the comparison (`== ` with single spaces, operands in
 // this order). Both are legal and both fail closed, which means a correctly gated workflow written
 // that way is rejected rather than admitted.
-const FORK_GUARD_SOURCE =
-  "github.event.pull_request.head.repo.full_name == github.repository";
-const FORK_GUARD_RE = new RegExp(FORK_GUARD_SOURCE.replace(/\./g, "\\."));
 
 /**
  * Where the YAML comment starts on `line`, or -1 when the line has none.
@@ -167,20 +168,33 @@ const FORK_GUARD_RE = new RegExp(FORK_GUARD_SOURCE.replace(/\./g, "\\."));
  * Every rule here can only REMOVE text, never add it, so a mistake in any of them rejects a
  * correctly guarded job rather than admitting an unguarded one.
  */
+// Single-quoted YAML escapes a quote by doubling it; double-quoted YAML uses
+// backslashes. Return the end of the scalar so its hashes remain content.
+const quotedYamlEnd = (line, start) => {
+  const quote = line[start];
+  let index = start + 1;
+  while (index < line.length) {
+    if (quote === '"' && line[index] === "\\") {
+      index += 2;
+      continue;
+    }
+    if (line[index] === quote) {
+      if (quote === "'" && line[index + 1] === "'") {
+        index += 2;
+        continue;
+      }
+      return index;
+    }
+    index += 1;
+  }
+  return line.length;
+};
+
 const commentStart = (line) => {
-  let quote = null;
   for (let index = 0; index < line.length; index += 1) {
     const char = line[index];
-    if (quote !== null) {
-      if (char === "\\" && quote === '"') index += 1;
-      else if (char === quote) quote = null;
-      continue;
-    }
-    if (char === '"' || char === "'") {
-      quote = char;
-      continue;
-    }
-    if (char === "#" && (index === 0 || /\s/.test(line[index - 1])))
+    if (char === '"' || char === "'") index = quotedYamlEnd(line, index);
+    else if (char === "#" && (index === 0 || /\s/.test(line[index - 1])))
       return index;
   }
   return -1;
@@ -194,14 +208,25 @@ const commentStart = (line) => {
  * real workflow documents this rule in a comment directly above its own `if:`, which makes the
  * trailing spelling the natural next one to try.
  */
-const stripYamlComments = (text) =>
-  text
+const isBlockScalarHeader = (line) =>
+  /:\s*[|>](?:[+-]?[1-9]?|[1-9][+-]?)\s*$/.test(line);
+
+const stripYamlComments = (text) => {
+  let blockIndent = null;
+  return text
     .split("\n")
     .map((line) => {
+      const indent = line.length - line.trimStart().length;
+      if (blockIndent !== null && (line.trim() === "" || indent > blockIndent))
+        return line;
+      blockIndent = null;
       const at = commentStart(line);
-      return at === -1 ? line : line.slice(0, at);
+      const code = at === -1 ? line : line.slice(0, at);
+      if (isBlockScalarHeader(code)) blockIndent = indent;
+      return code;
     })
     .join("\n");
+};
 
 /**
  * The value of the `if:` key at exactly `indent` spaces, comments already stripped.
@@ -211,7 +236,7 @@ const stripYamlComments = (text) =>
  * anywhere in the job text is precisely what let a job with the guard only in prose pass.
  *
  * A block scalar body (`if: |`) continues at deeper indentation than its key, so the body is
- * collected too. `FORK_GUARD_RE` needs the two halves concatenated, because a folded or split
+ * collected too. The condition proof needs the two halves concatenated, because a folded or split
  * condition puts the guard somewhere other than the first physical line.
  */
 const ifConditionAt = (text, indent) => {
@@ -255,51 +280,53 @@ const ifConditionAt = (text, indent) => {
  *     hardcoded 6 spaces could not see those, and would then attribute the secret to the header,
  *     where only a job-level `if:` can gate it -- so a guarded job read as an unguarded one.
  */
-const splitJob = (jobBody) => {
-  const header = [];
-  const steps = [];
-  // Each step carries the indent of its OWN keys, which is the dash indent plus two. A step list
-  // written at its key's own indent has 4-column keys and a step list written conventionally has
-  // 8-column keys, so the value is recorded per step rather than assumed once.
+const isStepLine = (line, indent, stepIndent) =>
+  /^ *- /.test(line) &&
+  indent >= 4 &&
+  (stepIndent === null || indent === stepIndent);
+
+const readSteps = (lines, start, header, steps) => {
   let step = null;
   let stepIndent = null;
-  let inSteps = false;
-
+  let keyIndent = null;
   const flush = () => {
-    if (step !== null) {
-      steps.push({ text: step.join("\n"), keyIndent: stepIndent + 2 });
-      step = null;
-    }
+    if (step !== null) steps.push({ text: step.join("\n"), keyIndent });
+    step = null;
   };
-
-  for (const line of jobBody.split("\n")) {
-    if (/^ {4}steps:/.test(line)) {
-      flush();
-      inSteps = true;
-      header.push(line);
-      continue;
-    }
+  for (let index = start; index < lines.length; index += 1) {
+    const line = lines[index];
     const indent = line.length - line.trimStart().length;
-    const startsStep =
-      /^ *- /.test(line) &&
-      indent <= 6 &&
-      (stepIndent === null || indent === stepIndent);
-    if (inSteps && startsStep) {
+    if (isStepLine(line, indent, stepIndent)) {
       if (stepIndent === null) stepIndent = indent;
       flush();
+      keyIndent = indent + /^ *- +/.exec(line)[0].trimStart().length;
       step = [line];
       continue;
     }
-    // A non-blank line at 4 columns or shallower, that is not a step, is the job's next key. This
-    // is what ends the step list, and dropping it lets a later `env:` value read as a job gate.
-    if (inSteps && line.trim() !== "" && indent <= 4) {
+    // The next job key belongs to the header, even when it follows steps.
+    if (line.trim() !== "" && indent <= 4) {
       flush();
-      inSteps = false;
+      return index;
     }
     if (step !== null) step.push(line);
     else header.push(line);
   }
   flush();
+  return lines.length;
+};
+
+const splitJob = (jobBody) => {
+  const header = [];
+  const steps = [];
+  const lines = jobBody.split("\n");
+  let index = 0;
+  while (index < lines.length) {
+    const line = lines[index++];
+    header.push(line);
+    if (/^ {4}steps:/.test(line)) {
+      index = readSteps(lines, index, header, steps);
+    }
+  }
   return { header: header.join("\n"), steps };
 };
 
@@ -310,8 +337,7 @@ const splitJob = (jobBody) => {
  * Only the FIRST line is rewritten: a `- ` deeper in the block belongs to a nested list or a shell
  * body, and shifting it left would move text the parser then misreads. `keyIndent` comes from the
  * step's own dash rather than a constant, so a step written at its key's own indent still has its
- * keys where `ifConditionAt` looks for them, and the whitespace after the dash is consumed so
- * `-   if:` lands on the same column as `- if:`.
+ * keys where `ifConditionAt` looks for them, including the actual whitespace after the dash.
  */
 const undashStep = (step, keyIndent) =>
   step.replace(/^ *-\s+/, " ".repeat(keyIndent));
@@ -342,13 +368,13 @@ const readsSecret = (text, secret) => text.includes(`secrets.${secret}`);
  */
 const jobIsForkGated = (jobBody, secret) => {
   const code = stripYamlComments(jobBody);
-  if (FORK_GUARD_RE.test(ifConditionAt(code, 4))) return true;
+  if (excludesForkPullRequests(ifConditionAt(code, 4))) return true;
   const { header, steps } = splitJob(code);
   if (readsSecret(header, secret)) return false;
   const readers = steps.filter((step) => readsSecret(step.text, secret));
   if (readers.length === 0) return false;
   return readers.every((step) =>
-    FORK_GUARD_RE.test(
+    excludesForkPullRequests(
       ifConditionAt(undashStep(step.text, step.keyIndent), step.keyIndent),
     ),
   );
@@ -413,20 +439,24 @@ describe("PR28 native reset contracts", () => {
   });
 
   it("keeps tray reset state synchronized after native position events", () => {
+    assert.match(source.effects, /from "\.\.\/\.\.\/hooks\/app-chrome\.hooks"/);
+    assert.match(source.effects, /useAppChrome\(/);
+    assert.match(source.appChrome, /from "\.\/tray-pill-controls\.hooks"/);
+    assert.match(source.appChrome, /useTrayPillControls\(/);
     assert.match(source.tray, /RESET_PILL_POSITION_MENU_ID/);
     assert.match(source.tray, /set_reset_pill_position_enabled/);
-    assert.match(source.effects, /tray-reset-pill-position/);
-    assert.match(source.effects, /pill-position-changed/);
-    assert.match(source.effects, /set_reset_pill_position_enabled/);
+    assert.match(source.pillControls, /tray-reset-pill-position/);
+    assert.match(source.pillControls, /pill-position-changed/);
+    assert.match(source.pillControls, /set_reset_pill_position_enabled/);
   });
 });
 
 describe("PR28 reset IPC execution and missing-overlay handling", () => {
   it("dispatches reset_position to every native pill and survives a closed overlay", () => {
     // Frontend forwards the tray reset through the Tauri command.
-    assert.match(source.effects, /tray-reset-pill-position/);
+    assert.match(source.pillControls, /tray-reset-pill-position/);
     assert.match(
-      source.effects,
+      source.pillControls,
       /invoke\("reset_pill_position", \{ strategy \}\)/,
     );
     // The Rust command emits a typed reset_position payload to the pill
@@ -476,8 +506,11 @@ describe("PR28 reset IPC execution and missing-overlay handling", () => {
 
   it("emits the frontend reset state event after a native position change", () => {
     // Native position change -> frontend enables/disables the tray reset item.
-    assert.match(source.effects, /pill-position-changed/);
-    assert.match(source.effects, /invoke\("set_reset_pill_position_enabled"/);
+    assert.match(source.pillControls, /pill-position-changed/);
+    assert.match(
+      source.pillControls,
+      /invoke\("set_reset_pill_position_enabled"/,
+    );
     // The command that the frontend invokes is registered in commands.rs.
     assert.match(source.commands, /reset_pill_position/);
     assert.match(source.commands, /set_reset_pill_position_enabled/);
@@ -809,6 +842,85 @@ describe("PR28 workflow and public-asset contracts", () => {
 
     // A `y` helper so no fixture body carries its own escape sequence.
     const y = (...lines) => lines.join("\n");
+
+    describe("the condition must actually exclude untrusted pull requests", () => {
+      const guard =
+        "github.event.pull_request.head.repo.full_name == github.repository";
+      for (const condition of [
+        `true || ${guard}`,
+        `${guard} || always()`,
+        `!(${guard})`,
+        `contains('${guard}', 'repository')`,
+        `github.event_name == 'push' || (${guard} || true)`,
+      ]) {
+        it(`rejects a bypassing job condition: ${condition}`, () => {
+          const workflow = job(
+            "provider",
+            y(
+              `    if: \${{ ${condition} }}`,
+              "    steps:",
+              "      - run: echo ${{ secrets.GROQ_API_KEY }}",
+            ),
+          );
+          assert.throws(
+            () =>
+              assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+            /fork guard/,
+          );
+        });
+      }
+      it("accepts a guard ANDed with other conditions", () => {
+        const workflow = job(
+          "provider",
+          y(
+            `    if: ${guard} && (true || false)`,
+            "    steps:",
+            "      - run: echo ${{ secrets.GROQ_API_KEY }}",
+          ),
+        );
+        assert.doesNotThrow(() =>
+          assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+        );
+      });
+      it("does not split operators inside quoted expression values", () => {
+        assert.equal(
+          excludesForkPullRequests(`${guard} && github.ref == 'a || b'`),
+          true,
+        );
+        assert.equal(
+          excludesForkPullRequests(`${guard} || github.ref == 'a && b'`),
+          false,
+        );
+        assert.equal(
+          excludesForkPullRequests(`${guard} && github.ref == 'unterminated`),
+          false,
+        );
+      });
+      it("rejects malformed and unsupported expressions rather than guessing", () => {
+        for (const expression of [
+          `(${guard}`,
+          `${guard} ||`,
+          `always() && ${guard}`,
+          `'${guard}'`,
+          `${guard} == true`,
+        ])
+          assert.equal(excludesForkPullRequests(expression), false, expression);
+      });
+      it("rejects a bypassing step condition", () => {
+        const workflow = job(
+          "provider",
+          y(
+            "    steps:",
+            `      - if: true || ${guard}`,
+            "        run: echo ${{ secrets.GROQ_API_KEY }}",
+          ),
+        );
+        assert.throws(
+          () => assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+          /fork guard/,
+        );
+      });
+    });
 
     // The guard must be an `if:` VALUE, not prose that merely contains the text. `if: always()`
     // with the guard in a trailing comment is the exact bypass class the job was opened to close,
@@ -1427,6 +1539,88 @@ describe("PR28 workflow and public-asset contracts", () => {
         );
       });
 
+      it("does not ignore a secret expression inside a shell comment", () => {
+        const workflow = job(
+          "provider",
+          y(
+            "    steps:",
+            `      - if: ${guard}`,
+            "        run: echo ${{ secrets.GROQ_API_KEY }}",
+            "      - run: |",
+            "          # ${{ secrets.GROQ_API_KEY }}",
+            "          echo safe",
+          ),
+        );
+        assert.throws(
+          () => assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+          /fork guard/,
+        );
+      });
+
+      for (const indicator of ["|-", "|+2", "|2-", ">", ">2+"]) {
+        it(`treats comments in ${indicator} block scalars as secret reads`, () => {
+          const workflow = job(
+            "provider",
+            y(
+              "    steps:",
+              `      - if: ${guard}`,
+              "        run: echo ${{ secrets.GROQ_API_KEY }}",
+              `      - run: ${indicator} # yaml header comment`,
+              "          # ${{ secrets.GROQ_API_KEY }}",
+            ),
+          );
+          assert.throws(
+            () =>
+              assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+            /fork guard/,
+          );
+        });
+      }
+
+      it("does not mistake a later job-level matrix for guarded steps", () => {
+        const workflow = job(
+          "provider",
+          y(
+            "    steps:",
+            "          - run: echo safe",
+            "    strategy:",
+            "      matrix:",
+            "        include:",
+            `          - if: ${guard}`,
+            "            token: ${{ secrets.GROQ_API_KEY }}",
+          ),
+        );
+        assert.throws(
+          () => assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+          /fork guard/,
+        );
+      });
+
+      it("accepts a deeply indented step sequence without losing its guard", () => {
+        const workflow = job(
+          "provider",
+          y(
+            "    steps:",
+            `          - if: ${guard}`,
+            "            run: echo ${{ secrets.GROQ_API_KEY }}",
+          ),
+        );
+        assert.doesNotThrow(() =>
+          assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+        );
+      });
+
+      it("still rejects a deeply indented unguarded reader", () => {
+        const workflow = job(
+          "provider",
+          y("    steps:", "          - run: echo ${{ secrets.GROQ_API_KEY }}"),
+        );
+        assert.throws(
+          () => assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+          /fork guard/,
+        );
+      });
+
       it("accepts a guard split across the comparison in a block scalar", () => {
         // The condition's lines are joined with a space, so a guard written across a line break
         // reassembles. Joining with nothing leaves `==github.repository`, which is not the guard.
@@ -1657,6 +1851,135 @@ describe("PR28 workflow and public-asset contracts", () => {
     assert.match(source.docsWorkflow, /publish\/docs\/llms\.txt/);
   });
 
+  it("keeps masthead typography proportional through named theme tokens", () => {
+    const { document } = new JSDOM("<!doctype html><html><body></body></html>")
+      .window;
+    const style = document.createElement("style");
+    style.textContent = readRaw("apps/docs/src/styles/custom.css");
+    document.head.append(style);
+    const rules = [...style.sheet.cssRules];
+    const find = (selector) =>
+      rules.find((rule) => rule.selectorText === selector)?.style;
+    const root = rules.find(
+      (rule) =>
+        rule.selectorText === ":root" &&
+        rule.style.getPropertyValue("--mv-docs-brand-size"),
+    )?.style;
+    assert.equal(
+      root?.getPropertyValue("--mv-docs-brand-size").trim(),
+      "0.86em",
+    );
+    assert.equal(
+      root?.getPropertyValue("--mv-docs-suffix-size").trim(),
+      "0.78em",
+    );
+    assert.equal(
+      find(".site-title .site-title-brand")?.fontSize,
+      "var(--mv-docs-brand-size)",
+    );
+    assert.equal(
+      find(".site-title .site-title-suffix")?.fontSize,
+      "var(--mv-docs-suffix-size)",
+    );
+  });
+
+  it("preserves docs typography selector scopes", () => {
+    const { document } =
+      new JSDOM(`<!doctype html><html data-theme="light"><body>
+      <div class="sl-markdown-content"><p>Text</p><ul><li>A</li><li>B</li></ul>
+      <ol><li>C</li></ol><blockquote>Quote</blockquote><h2>Title</h2><h3>Sub</h3><h4>Leaf</h4></div>
+    </body></html>`).window;
+    const style = document.createElement("style");
+    style.textContent = readRaw("apps/docs/src/styles/custom.css");
+    document.head.append(style);
+    const equivalent = (oldSelector, nextSelector) => {
+      const rule = [...style.sheet.cssRules].find(
+        (candidate) =>
+          candidate.selectorText?.replace(/\s+/g, " ").trim() === nextSelector,
+      );
+      assert.ok(rule, `missing ${nextSelector}`);
+      assert.deepEqual(
+        [...document.querySelectorAll(rule.selectorText)],
+        [...document.querySelectorAll(oldSelector)],
+      );
+    };
+    equivalent(
+      ".sl-markdown-content :is(p, ul, ol, blockquote)",
+      ".sl-markdown-content p, .sl-markdown-content ul, .sl-markdown-content ol, .sl-markdown-content blockquote",
+    );
+    equivalent(
+      ".sl-markdown-content :is(h2, h3, h4)",
+      ".sl-markdown-content h2, .sl-markdown-content h3, .sl-markdown-content h4",
+    );
+  });
+
+  it("keeps card artwork attached to the intended content, not grid position", () => {
+    const cards = [
+      ...source.docsIndex.matchAll(/<Card title="([^"]+)">([\s\S]*?)<\/Card>/g),
+    ];
+    const expected = [
+      ["Get a first dictation working", "cube"],
+      ["Use every daily feature", "pyramid"],
+      ["Configure providers correctly", "sphere"],
+      ["Understand the data flow", "diamond"],
+      ["Fix a broken pipeline", "pyramid"],
+      ["Build and contribute", "diamond-left"],
+    ];
+    assert.equal(cards.length, expected.length);
+    for (const [index, [title, artwork]] of expected.entries()) {
+      assert.equal(cards[index][1], title);
+      assert.match(
+        cards[index][2],
+        new RegExp(
+          `<span class="mv-docs-card-art mv-docs-card-art--${artwork}" aria-hidden="true"></span>`,
+        ),
+      );
+    }
+
+    const document = new JSDOM().window.document;
+    const style = document.createElement("style");
+    style.textContent = readRaw("apps/docs/src/styles/custom.css");
+    document.head.append(style);
+    const rules = [...style.sheet.cssRules];
+    const rule = (selector) => {
+      const found = rules.find(
+        (candidate) => candidate.selectorText === selector,
+      );
+      assert.ok(found, `missing ${selector}`);
+      return found.style;
+    };
+    const base = rule(".mv-docs-card-art");
+    assert.equal(base.position, "absolute");
+    assert.equal(base.pointerEvents, "none");
+    assert.equal(base.width, "220px");
+    assert.equal(base.height, "150px");
+    for (const [variant, asset, vertical, horizontal, angle] of [
+      ["cube", "cube", "top", "left", "135deg"],
+      ["pyramid", "pyramid", "top", "right", "225deg"],
+      ["sphere", "sphere", "bottom", "left", "315deg"],
+      ["diamond", "diamond", "bottom", "right", "45deg"],
+      ["diamond-left", "diamond", "bottom", "left", "315deg"],
+    ]) {
+      const art = rule(`.mv-docs-card-art--${variant}`);
+      assert.equal(art[vertical], "0px");
+      assert.equal(art[horizontal], "0px");
+      assert.match(art.backgroundImage, new RegExp(`ascii-${asset}\\.svg`));
+      assert.match(art.getPropertyValue("mask-image"), new RegExp(angle));
+      assert.equal(
+        art.getPropertyValue("-webkit-mask-image"),
+        art.getPropertyValue("mask-image"),
+      );
+    }
+    assert.match(
+      readRaw("apps/docs/src/styles/custom.css"),
+      /--mv-docs-card-art-filter:\s*invert\(1\)/,
+    );
+    assert.match(
+      readRaw("apps/docs/src/styles/custom.css"),
+      /--mv-docs-card-art-opacity:\s*0\.6/,
+    );
+  });
+
   it("keeps homepage motion, accessibility, and responsive fallbacks wired", () => {
     assert.match(source.index, /id="caption-toggle"/);
     assert.match(source.index, /aria-pressed="false"/);
@@ -1675,7 +1998,11 @@ describe("PR28 workflow and public-asset contracts", () => {
     const asset = resolve(repoRoot, "docs/assets/mausvoice-banner.png");
     assert.equal(statSync(asset).isFile(), true);
     assert.match(source.index, /docs\/assets\/mausvoice-banner\.png/);
-    assert.match(source.astro, /docsBase\}assets\/mausvoice-banner\.png/);
+    assert.match(source.astro, /"assets\/mausvoice-banner\.png"/);
+    assert.match(
+      source.docsWorkflow,
+      /dist\/getting-started\/introduction\/index\.html/,
+    );
   });
 });
 
@@ -2196,7 +2523,10 @@ describe("native review and monitor contracts", () => {
     // `GetMonitorInfoW` belongs to the one wrapper, not to its callers.
     assert.equal(pill.match(/GetMonitorInfoW\(/g)?.length, 1);
     assert.ok((pill.match(/query_monitor_info\(/g)?.length ?? 0) >= 6);
+  });
 
+  it("guards every monitor-info binding before use", () => {
+    const pill = source.windowsPill;
     // A caller binds the info in one of two ways, and both have to guard: a
     // `?`, or a let-else whose block returns. Counting the two guarded shapes
     // separately is what makes this bite -- a new binding with neither leaves
@@ -2293,7 +2623,13 @@ describe("PR28 live audio chunk contract", () => {
       .split("}")[0];
     assert.match(payload, /pub offset: u64/);
 
-    assert.match(source.commands, /AudioChunkPayload \{ samples, offset \}/);
+    // The literal also carries the owner and generation that scope a batch to
+    // one recording, so pin the fields rather than the whole line.
+    const literal = source.commands
+      .split("let payload = AudioChunkPayload {")[1]
+      .split("};")[0];
+    assert.match(literal, /\bsamples,/);
+    assert.match(literal, /\boffset,/);
     assert.match(source.commands, /move \|samples: Vec<f32>, offset: u64\|/);
   });
 
@@ -2303,8 +2639,18 @@ describe("PR28 live audio chunk contract", () => {
     // therefore still guard on it, or the "optional" default silently
     // discards every chunk on a build that never sends one.
     assert.match(source.audioChunks, /offset\?: number/);
-    assert.match(source.audioChunks, /payload\.offset \?\? null/);
+    // A missing, fractional, or negative offset cannot be placed on the
+    // recording timeline, so the webview reports it as null and the intake
+    // drops the chunk rather than renumbering a discontinuous stream.
+    assert.match(
+      source.audioChunks,
+      /Number\.isSafeInteger\(payload\.offset\)[\s\S]*?: null/,
+    );
     assert.match(source.intake, /if \(offset === null\)/);
+    // A batch is also scoped to the recording that produced it, so a late
+    // chunk from a stopped or replaced recorder cannot reach a newer session.
+    assert.match(source.audioChunks, /payload\.ownerId !== ownerId/);
+    assert.match(source.audioChunks, /payload\.generation !== generation/);
   });
 });
 

@@ -1,3 +1,4 @@
+import { audioToArrayBuffer } from "./audio-convert.utils";
 import {
   GladiaClient,
   type LiveV2InitRequest,
@@ -41,6 +42,8 @@ export type GladiaTranscribeAudioOutput = {
 export type GladiaStreamingSession = {
   sendAudio: (audio: ArrayBuffer) => void;
   finalize: () => Promise<string>;
+  /** True only after a non-forced normal end following the stop request. */
+  isComplete: () => boolean;
   cleanup: () => void;
   getWarnings: () => string[];
 };
@@ -155,27 +158,6 @@ export const createGladiaLiveClient = ({
     GLADIA_LIVE_RETRY_CLOSE_CODES;
   return client;
 };
-
-const errorMessage = (error: unknown): string =>
-  (error instanceof Error ? error.message : String(error))
-    .replace(/wss:\/\/[^\s)\]}]+/gi, "[Gladia WebSocket endpoint]")
-    .replace(/\bBearer\s+[^\s,;)]+/gi, "Bearer [redacted]")
-    .replace(
-      /\brefresh[_-]?token(\s*[:=]\s*)[^\s,;)]+/gi,
-      "refresh_token$1[redacted]",
-    )
-    .replace(
-      /\bx[-_]?gladia[-_]?key(\s*[:=]\s*)[^\s,;)]+/gi,
-      "x-gladia-key$1[redacted]",
-    )
-    .replace(
-      /\bauthorization(\s*[:=]\s*)[^\s,;)]+/gi,
-      "authorization$1[redacted]",
-    )
-    .replace(/\bapi[_-]?key(\s*[:=]\s*)[^\s,;)]+/gi, "api_key$1[redacted]")
-    .replace(/\btoken(\s*[:=]\s*)[^\s,;)]+/gi, "token$1[redacted]")
-    .replace(/\bkey(\s*[:=]\s*)[^\s,;)]+/gi, "key$1[redacted]")
-    .slice(0, 500);
 
 const deduplicate = (values: string[]): string[] => Array.from(new Set(values));
 
@@ -374,14 +356,8 @@ export class GladiaTranscriptAccumulator {
   }
 }
 
-const getMessageError = (message: LiveV2WebSocketMessage): string | null => {
-  if (!("error" in message) || !message.error) {
-    return null;
-  }
-  return typeof message.error === "object" && "message" in message.error
-    ? String(message.error.message)
-    : String(message.error);
-};
+const hasMessageError = (message: LiveV2WebSocketMessage): boolean =>
+  "error" in message && Boolean(message.error);
 
 const waitBeforeDeadline = async (
   promise: Promise<void>,
@@ -460,6 +436,10 @@ export const createGladiaStreamingSession = ({
   let validationSettled = false;
   let validationResolve: (() => void) | null = null;
   let ended = false;
+  let stopRequested = false;
+  let forceEnding = false;
+  let providerFailed = false;
+  let completed = false;
   let endedResolve: (() => void) | null = null;
   let finalizePromise: Promise<string> | null = null;
   let deletionPromise: Promise<void> | null = null;
@@ -489,10 +469,11 @@ export const createGladiaStreamingSession = ({
   };
 
   const endSessionSafely = () => {
+    forceEnding = true;
     try {
       session.endSession();
-    } catch (error) {
-      addWarning(`Gladia session shutdown failed: ${errorMessage(error)}`);
+    } catch {
+      addWarning("Gladia session shutdown failed.");
     }
   };
 
@@ -510,8 +491,8 @@ export const createGladiaStreamingSession = ({
         if (!deleted) {
           addWarning("Gladia live data deletion was not acknowledged.");
         }
-      } catch (error) {
-        addWarning(`Gladia live data deletion failed: ${errorMessage(error)}`);
+      } catch {
+        addWarning("Gladia live data deletion failed.");
       }
     })();
     return deletionPromise;
@@ -562,69 +543,105 @@ export const createGladiaStreamingSession = ({
     }
   });
 
-  session.on("message", (message) => {
-    if (disposed) {
+  const handleTranscript = (
+    message: Extract<LiveV2WebSocketMessage, { type: "transcript" }>,
+  ) => {
+    const data = message.data;
+    if (
+      !data ||
+      typeof data.id !== "string" ||
+      typeof data.is_final !== "boolean" ||
+      !data.utterance ||
+      typeof data.utterance.text !== "string"
+    ) {
+      addWarning("Gladia returned a malformed transcript message.");
       return;
     }
+    const update = transcript.update(
+      data.id,
+      data.utterance.text,
+      data.is_final,
+    );
+    if (update.committedSegment) onFinalSegment?.(update.committedSegment);
+  };
 
-    const providerError = getMessageError(message);
-    if (providerError) {
-      addWarning(`Gladia reported an error: ${errorMessage(providerError)}`);
+  const handleAuthoritativeTranscript = (text: unknown, warning: string) => {
+    if (typeof text === "string") transcript.setAuthoritativeText(text);
+    else addWarning(warning);
+  };
+
+  session.on("message", (message) => {
+    if (disposed) return;
+    if (hasMessageError(message)) {
+      providerFailed = true;
+      addWarning("Gladia reported an error.");
     }
-
     if (message.type === "transcript") {
-      const data = message.data;
-      if (
-        !data ||
-        typeof data.id !== "string" ||
-        typeof data.is_final !== "boolean" ||
-        !data.utterance ||
-        typeof data.utterance.text !== "string"
-      ) {
-        addWarning("Gladia returned a malformed transcript message.");
-        return;
-      }
-      const update = transcript.update(
-        data.id,
-        data.utterance.text,
-        data.is_final,
-      );
-      if (update.committedSegment) {
-        onFinalSegment?.(update.committedSegment);
-      }
+      handleTranscript(message);
     } else if (message.type === "post_final_transcript") {
-      const fullTranscript = message.data?.transcription?.full_transcript;
-      if (typeof fullTranscript === "string") {
-        transcript.setAuthoritativeText(fullTranscript);
-      } else {
-        addWarning("Gladia returned a malformed post-final transcript.");
-      }
+      handleAuthoritativeTranscript(
+        message.data?.transcription?.full_transcript,
+        "Gladia returned a malformed post-final transcript.",
+      );
     } else if (message.type === "post_transcript") {
-      if (typeof message.data?.full_transcript === "string") {
-        transcript.setAuthoritativeText(message.data.full_transcript);
-      } else {
-        addWarning("Gladia returned a malformed post transcript.");
-      }
+      handleAuthoritativeTranscript(
+        message.data?.full_transcript,
+        "Gladia returned a malformed post transcript.",
+      );
     }
   });
 
-  session.on("error", (error) => {
+  session.on("error", () => {
     if (!disposed) {
-      addWarning(`Gladia connection error: ${errorMessage(error)}`);
+      addWarning("Gladia connection error.");
     }
   });
 
-  session.once("ended", ({ code, reason }) => {
+  session.once("ended", ({ code }) => {
+    completed =
+      stopRequested &&
+      !forceEnding &&
+      !disposed &&
+      !providerFailed &&
+      code === 1000;
     if (code !== 1000 && !disposed) {
       onConnectionInterrupted?.();
-      const safeReason = reason ? errorMessage(reason) : "";
-      const reasonSuffix = safeReason ? `: ${safeReason}` : "";
-      addWarning(
-        `Gladia live session ended unexpectedly (${code}${reasonSuffix}).`,
-      );
+      addWarning(`Gladia live session ended unexpectedly (${code}).`);
     }
     finishEnded();
   });
+
+  // Wait for endpoint validation before stopping: the SDK otherwise skips the
+  // started event while still opening a WebSocket whose URL we could not check.
+  const waitForValidationBeforeStop = async (
+    deadline: number,
+  ): Promise<void> => {
+    const validationCompleted = await waitBeforeDeadline(
+      validationPromise,
+      deadline,
+    );
+    if (!validationCompleted) {
+      addWarning("Gladia initialization timed out before endpoint validation.");
+      endSessionSafely();
+      finishEnded();
+    }
+  };
+
+  const stopAndWaitForEnd = async (deadline: number): Promise<void> => {
+    stopRequested = true;
+    session.stopRecording();
+    const finalizedBeforeDeadline = await waitBeforeDeadline(
+      endedPromise,
+      deadline,
+    );
+    if (!finalizedBeforeDeadline) {
+      addWarning(
+        "Gladia finalization timed out; using finalized text received so far.",
+      );
+      endSessionSafely();
+      finishEnded();
+    }
+  };
 
   const finalize = (): Promise<string> => {
     if (finalizePromise) {
@@ -649,40 +666,15 @@ export const createGladiaStreamingSession = ({
       const deadline = Date.now() + budgetMs;
 
       try {
-        // Calling the SDK's stopRecording() while its initialization request is
-        // still pending changes its state to "ending". In that state the SDK
-        // skips the `started` event but can still open the returned WebSocket,
-        // bypassing our endpoint check. Wait for validation before stopping.
         if (!ended && !endpointValidated) {
-          const validationCompleted = await waitBeforeDeadline(
-            validationPromise,
-            deadline,
-          );
-          if (!validationCompleted) {
-            addWarning(
-              "Gladia initialization timed out before endpoint validation.",
-            );
-            endSessionSafely();
-            finishEnded();
-          }
+          await waitForValidationBeforeStop(deadline);
         }
-
         if (!ended && endpointValidated) {
-          session.stopRecording();
-          const finalizedBeforeDeadline = await waitBeforeDeadline(
-            endedPromise,
-            deadline,
-          );
-          if (!finalizedBeforeDeadline) {
-            addWarning(
-              "Gladia finalization timed out; using finalized text received so far.",
-            );
-            endSessionSafely();
-            finishEnded();
-          }
+          await stopAndWaitForEnd(deadline);
         }
-      } catch (error) {
-        addWarning(`Gladia finalization failed: ${errorMessage(error)}`);
+      } catch {
+        completed = false;
+        addWarning("Gladia finalization failed.");
         endSessionSafely();
         finishEnded();
       }
@@ -722,6 +714,7 @@ export const createGladiaStreamingSession = ({
       }
     },
     finalize,
+    isComplete: () => completed && !providerFailed,
     cleanup,
     getWarnings: () => deduplicate(warnings),
   };
@@ -753,17 +746,9 @@ const normalizeGladiaPollingControls = (
 };
 
 const createGladiaAudioFile = (blob: ArrayBuffer | Buffer): File => {
-  let audioBlobPart: ArrayBuffer;
-  if (blob instanceof ArrayBuffer) {
-    audioBlobPart = blob;
-  } else {
-    // Node Buffers may be backed by SharedArrayBuffer, which is not a
-    // BlobPart. Desktop-owned ArrayBuffers do not need this defensive copy.
-    const copied = new Uint8Array(blob.byteLength);
-    copied.set(blob);
-    audioBlobPart = copied.buffer;
-  }
-  return new File([audioBlobPart], "audio.wav", { type: "audio/wav" });
+  return new File([audioToArrayBuffer(blob)], "audio.wav", {
+    type: "audio/wav",
+  });
 };
 
 const getGladiaBatchWarnings = (
@@ -893,9 +878,9 @@ const deleteGladiaBatchJob = async ({
       warnings,
       primaryError,
     );
-  } catch (error) {
+  } catch {
     reportBatchCleanupWarning(
-      `Gladia pre-recorded data deletion failed: ${errorMessage(error)}`,
+      "Gladia pre-recorded data deletion failed.",
       warnings,
       primaryError,
     );

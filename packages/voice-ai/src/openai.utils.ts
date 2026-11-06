@@ -8,7 +8,7 @@ import type {
   LlmToolChoice,
 } from "@maus-inc/types";
 import { retry } from "@maus-inc/utilities";
-import OpenAI, { toFile } from "openai";
+import OpenAI from "openai";
 import {
   buildJsonSchemaResponseFormat,
   OPENAI_LEGACY_CHAT_MODELS,
@@ -20,7 +20,7 @@ import {
 } from "./openai-compatible-generate.utils";
 import type { CustomFetch, DiscoveredModelId } from "./types";
 import {
-  runSdkTranscription,
+  transcribeSdkAudio,
   TranscriptionSegment,
   TranscribeAudioOutput,
 } from "./transcription.utils";
@@ -207,22 +207,14 @@ export const openaiTranscribeAudio = async ({
   customFetch,
 }: OpenAITranscriptionArgs): Promise<OpenAITranscribeAudioOutput> => {
   const client = createClient(apiKey, undefined, customFetch);
-  const file = await toFile(blob, `audio.${ext}`);
-  return runSdkTranscription(
-    (body) =>
-      client.audio.transcriptions.create(
-        body as unknown as Parameters<
-          typeof client.audio.transcriptions.create
-        >[0],
-      ),
-    {
-      file,
-      model,
-      prompt,
-      language,
-      response_format: getTranscriptionResponseFormat(model),
-    },
-  );
+  return transcribeSdkAudio(client.audio.transcriptions, {
+    blob,
+    ext,
+    model,
+    prompt,
+    language,
+    responseFormat: getTranscriptionResponseFormat(model),
+  });
 };
 
 export type OpenAIGenerateTextArgs = {
@@ -441,6 +433,15 @@ type OpenAIChunkState = {
   modelId: string | undefined;
 };
 
+const mergeToolCallDelta = (
+  current: { id: string; name: string; arguments: string },
+  delta: ChatCompletionChunk.Choice.Delta.ToolCall,
+): { id: string; name: string; arguments: string } => ({
+  id: delta.id || current.id,
+  name: delta.function?.name || current.name,
+  arguments: current.arguments + (delta.function?.arguments || ""),
+});
+
 const applyOpenAIToolCalls = (
   choice: ChatCompletionChunk.Choice,
   toolCalls: OpenAIChunkState["toolCalls"],
@@ -452,10 +453,7 @@ const applyOpenAIToolCalls = (
       name: "",
       arguments: "",
     };
-    if (tc.id) current.id = tc.id;
-    if (tc.function?.name) current.name = tc.function.name;
-    if (tc.function?.arguments) current.arguments += tc.function.arguments;
-    toolCalls.set(index, current);
+    toolCalls.set(index, mergeToolCallDelta(current, tc));
   }
 };
 

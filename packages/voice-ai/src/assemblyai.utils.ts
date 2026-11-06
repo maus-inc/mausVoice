@@ -1,3 +1,4 @@
+import { audioToArrayBuffer } from "./audio-convert.utils";
 import { delayed, parseRetryAfterMs } from "@maus-inc/utilities";
 import type { CustomFetch } from "./types";
 
@@ -453,8 +454,7 @@ export const assemblyaiTranscribeAudio = async ({
   validatePositiveDuration(pollIntervalMs, "poll interval");
   const speechModels = speechModelsFor(model);
 
-  const arrayBuffer =
-    blob instanceof ArrayBuffer ? blob : new Uint8Array(blob).buffer;
+  const arrayBuffer = audioToArrayBuffer(blob);
 
   // One total time budget covers every phase — upload, transcript creation,
   // and status polling — so a hung request at any hop is aborted instead of

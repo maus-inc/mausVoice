@@ -6,4 +6,5 @@ export * from "./string";
 export * from "./member";
 export * from "./error";
 export * from "./http-error";
+export * from "./http-response";
 export * from "./json";

@@ -45,80 +45,23 @@
  */
 
 import { execFileSync } from "node:child_process";
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
-import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { resolveConvertBinary } from "./imagemagick-resolution.mjs";
+import { withTemporaryIconFiles } from "./icon-temporary-files.mjs";
 import { fileURLToPath } from "node:url";
+import {
+  parseIcoFrames,
+  parseIcnsFrames,
+  checkIcoFrameSizes,
+  checkIcnsFrameSizes,
+  parseCornerAlpha,
+} from "./app-icon-containers.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
-/**
- * Directories trusted to provide the ImageMagick binary, in priority order.
- *
- * Resolving the executable ourselves — rather than letting the OS search
- * `$PATH` — means a writable or attacker-controlled directory earlier in
- * `$PATH` cannot substitute its own `convert`. Callers can still point at a
- * specific binary with `IMAGEMAGICK_CONVERT`, which is validated below.
- */
-const TRUSTED_BIN_DIRS = [
-  "/usr/bin",
-  "/bin",
-  "/usr/local/bin",
-  "/opt/homebrew/bin",
-  "/opt/local/bin",
-];
-
 /** Absolute path to the ImageMagick binary, resolved once at startup. */
 let convertBin = null;
-
-/**
- * Locate ImageMagick without trusting `$PATH` ordering.
- *
- * Order: an explicit `IMAGEMAGICK_CONVERT` override, then the trusted
- * directories above. Both ImageMagick 7 (`magick`) and 6 (`convert`) are
- * accepted.
- */
-function resolveConvertBinary() {
-  const override = process.env.IMAGEMAGICK_CONVERT?.trim();
-  if (override) {
-    if (!isAbsolute(override)) {
-      throw new Error(
-        `IMAGEMAGICK_CONVERT must be an absolute path, got: ${override}`,
-      );
-    }
-    if (!existsSync(override) || !statSync(override).isFile()) {
-      throw new Error(
-        `IMAGEMAGICK_CONVERT does not point at a file: ${override}`,
-      );
-    }
-    return override;
-  }
-
-  // Keep only trusted directories that actually appear in PATH-like locations;
-  // the list itself is fixed, so nothing user-writable can be injected here.
-  for (const dir of TRUSTED_BIN_DIRS) {
-    for (const name of ["magick", "convert"]) {
-      const candidate = join(dir, name);
-      if (existsSync(candidate) && statSync(candidate).isFile()) {
-        return candidate;
-      }
-    }
-  }
-
-  throw new Error(
-    "ImageMagick was not found in a trusted location.\n" +
-      `Searched: ${TRUSTED_BIN_DIRS.join(delimiter)}\n` +
-      "Install it, or set IMAGEMAGICK_CONVERT to an absolute path:\n" +
-      "  macOS:  brew install imagemagick\n" +
-      "  Ubuntu: sudo apt-get install imagemagick",
-  );
-}
 
 /**
  * Branding master: a 1024x1024 dark rounded tile with the mausVoice wordmark.
@@ -200,8 +143,6 @@ const ICNS_FRAMES = [
 /** The distinct pixel sizes the ICNS frames are rendered at. */
 const ICNS_SIZES = [...new Set(ICNS_FRAMES.map((frame) => frame.size))];
 
-const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-
 /** Runs ImageMagick with the given args; returns its stdout. */
 function convert(args) {
   return execFileSync(convertBin, args, { stdio: ["ignore", "pipe", "pipe"] });
@@ -243,29 +184,6 @@ function renderSquare(size, outPath) {
   ]);
 }
 
-/** Parse an ICO directory so the frame list can be asserted. */
-function readIcoFrames(path) {
-  const data = readFileSync(path);
-  if (
-    data.length < 6 ||
-    data.readUInt16LE(0) !== 0 ||
-    data.readUInt16LE(2) !== 1
-  ) {
-    throw new Error(`${path} is not a valid ICO file`);
-  }
-  const count = data.readUInt16LE(4);
-  const frames = [];
-  for (let i = 0; i < count; i += 1) {
-    const entry = 6 + i * 16;
-    frames.push({
-      width: data[entry] === 0 ? 256 : data[entry],
-      height: data[entry + 1] === 0 ? 256 : data[entry + 1],
-      bpp: data.readUInt16LE(entry + 6),
-    });
-  }
-  return frames;
-}
-
 /**
  * Assemble a real ICNS container.
  *
@@ -295,60 +213,6 @@ function writeIcns(framePathBySize, outPath) {
 }
 
 /**
- * Width/height from a PNG's IHDR, or nulls when the payload is not a PNG.
- * Requires the 8-byte signature followed by a first chunk of type `IHDR` with
- * length 13, so a truncated or random payload cannot yield plausible dims.
- */
-function readPngSize(payload) {
-  const isPng =
-    payload.length >= 33 &&
-    payload.subarray(0, 8).equals(PNG_MAGIC) &&
-    payload.readUInt32BE(8) === 13 &&
-    payload.toString("ascii", 12, 16) === "IHDR";
-  if (!isPng) {
-    return { width: null, height: null };
-  }
-  return { width: payload.readUInt32BE(16), height: payload.readUInt32BE(20) };
-}
-
-/** Walk an ICNS container so its frame set can be asserted. */
-function readIcnsFrames(path) {
-  const data = readFileSync(path);
-  if (data.length < 8 || data.toString("ascii", 0, 4) !== "icns") {
-    throw new Error(
-      `${path} is not an ICNS container (a renamed PNG will not do)`,
-    );
-  }
-  const declared = data.readUInt32BE(4);
-  if (declared !== data.length) {
-    throw new Error(
-      `${path}: header declares ${declared} bytes but the file is ${data.length}`,
-    );
-  }
-
-  const frames = [];
-  let offset = 8;
-  while (offset + 8 <= data.length) {
-    const type = data.toString("ascii", offset, offset + 4);
-    const length = data.readUInt32BE(offset + 4);
-    if (length < 8 || offset + length > data.length) {
-      throw new Error(`${path}: chunk '${type}' declares an invalid length`);
-    }
-    frames.push({
-      type,
-      ...readPngSize(data.subarray(offset + 8, offset + length)),
-    });
-    offset += length;
-  }
-  if (offset !== data.length) {
-    throw new Error(
-      `${path}: ${data.length - offset} trailing byte(s) after the last chunk`,
-    );
-  }
-  return frames;
-}
-
-/**
  * Corner alpha tolerance.
  *
  * A correctly generated corner is 0, but the smallest frames pick up a little
@@ -365,33 +229,12 @@ function cornerAlpha(imageSpec) {
     [imageSpec, "-alpha", "on", "-format", "%[fx:p{0,0}.a]", "info:"],
     { encoding: "utf8" },
   );
-  return Number.parseFloat(out.trim());
+  return parseCornerAlpha(out, imageSpec);
 }
 
 /** True when a corner pixel is opaque enough to look like a black square. */
 function isCornerOpaque(alpha) {
-  return Number.isFinite(alpha) && alpha > CORNER_ALPHA_TOLERANCE;
-}
-
-/** Every required frame size is present, at 32bpp. */
-function checkIcoFrameSizes(ico, frames) {
-  const problems = [];
-
-  for (const size of ICO_SIZES) {
-    if (
-      !frames.some((frame) => frame.width === size && frame.height === size)
-    ) {
-      problems.push(`${ico}: missing a ${size}x${size} frame`);
-    }
-  }
-  for (const frame of frames) {
-    if (frame.bpp !== 32) {
-      problems.push(
-        `${ico}: frame ${frame.width}x${frame.height} is ${frame.bpp}bpp, need 32bpp for alpha`,
-      );
-    }
-  }
-  return problems;
+  return alpha > CORNER_ALPHA_TOLERANCE;
 }
 
 /**
@@ -416,9 +259,14 @@ function checkIco(dir) {
   if (!existsSync(ico)) {
     return [`missing ${ico}`];
   }
-  const frames = readIcoFrames(ico);
+  let frames;
+  try {
+    frames = parseIcoFrames(readFileSync(ico), ico);
+  } catch (err) {
+    return [err.message];
+  }
   return [
-    ...checkIcoFrameSizes(ico, frames),
+    ...checkIcoFrameSizes(ico, frames, ICO_SIZES),
     ...checkIcoFrameAlpha(ico, frames),
   ];
 }
@@ -435,25 +283,12 @@ function checkIcns(dir) {
 
   let frames;
   try {
-    frames = readIcnsFrames(icns);
+    frames = parseIcnsFrames(readFileSync(icns), icns);
   } catch (err) {
     return [err.message];
   }
 
-  const problems = [];
-  for (const { type, size } of ICNS_FRAMES) {
-    const frame = frames.find((candidate) => candidate.type === type);
-    if (!frame) {
-      problems.push(`${icns}: missing the ${size}x${size} '${type}' frame`);
-      continue;
-    }
-    if (frame.width !== size || frame.height !== size) {
-      problems.push(
-        `${icns}: '${type}' frame is ${frame.width}x${frame.height}, expected ${size}x${size}`,
-      );
-    }
-  }
-  return problems;
+  return checkIcnsFrameSizes(icns, frames, ICNS_FRAMES);
 }
 
 /** Validate a representative sample of the generated PNGs. */
@@ -474,27 +309,8 @@ function verify() {
   ];
 }
 
-/**
- * Regenerates every packaged icon from the branding master, or verifies the
- * existing assets when run with `--check` (CI-friendly).
- */
-function main() {
-  assertImageMagick();
-
-  if (process.argv.includes("--check")) {
-    const problems = verify();
-    if (problems.length > 0) {
-      console.error("App icon verification failed:");
-      for (const p of problems) console.error(`  - ${p}`);
-      process.exit(1);
-    }
-    console.log(
-      "App icons OK: alpha preserved, every required ICO frame present, " +
-        "and icon.icns is a real multi-resolution container.",
-    );
-    return;
-  }
-
+/** Render every packaged size from the branding master. */
+function generateIcons() {
   if (!existsSync(MASTER)) {
     throw new Error(`Branding master not found: ${MASTER}`);
   }
@@ -514,12 +330,10 @@ function main() {
 
   // Render each ICO/ICNS frame at its native size rather than letting the
   // encoder downscale one source, so the small frames stay legible.
-  const tmp = [];
-  try {
+  withTemporaryIconFiles((track) => {
     const icoFrames = ICO_SIZES.map((size) => {
-      const p = join(desktopIcons, `.tmp-ico-${size}.png`);
+      const p = track(join(desktopIcons, `.tmp-ico-${size}.png`));
       renderSquare(size, p);
-      tmp.push(p);
       return p;
     });
     convert([...icoFrames, join(desktopIcons, "icon.ico")]);
@@ -528,9 +342,8 @@ function main() {
 
     const icnsFrames = new Map(
       ICNS_SIZES.map((size) => {
-        const p = join(desktopIcons, `.tmp-icns-${size}.png`);
+        const p = track(join(desktopIcons, `.tmp-icns-${size}.png`));
         renderSquare(size, p);
-        tmp.push(p);
         return [size, p];
       }),
     );
@@ -542,17 +355,36 @@ function main() {
     renderSquare(512, join(publicDir, "app-icon.png"));
     renderSquare(512, join(publicDir, "app-icon-512.png"));
     console.log("Wrote public app icons");
-  } finally {
-    for (const p of tmp) rmSync(p, { force: true });
-  }
+  });
+}
 
+/** Verify every output and fail closed when any container is invalid. */
+function requireValidIcons(failureTitle, successMessage) {
   const problems = verify();
   if (problems.length > 0) {
-    console.error("\nGenerated icons failed verification:");
-    for (const p of problems) console.error(`  - ${p}`);
+    console.error(failureTitle);
+    for (const problem of problems) console.error(`  - ${problem}`);
     process.exit(1);
   }
-  console.log("\nAll icons regenerated and verified.");
+  console.log(successMessage);
+}
+
+/** Regenerate assets, or verify the existing ones with --check. */
+function main() {
+  assertImageMagick();
+  if (process.argv.includes("--check")) {
+    requireValidIcons(
+      "App icon verification failed:",
+      "App icons OK: alpha preserved, every required ICO frame present, " +
+        "and icon.icns is a real multi-resolution container.",
+    );
+    return;
+  }
+  generateIcons();
+  requireValidIcons(
+    "\nGenerated icons failed verification:",
+    "\nAll icons regenerated and verified.",
+  );
 }
 
 main();

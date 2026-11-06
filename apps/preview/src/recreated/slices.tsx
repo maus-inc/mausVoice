@@ -3,16 +3,15 @@
  *
  * ToneSelect — recreated: store (toneById, prefs) + actions (openToneEditor).
  *   Render code copied verbatim from components/tones/ToneSelect.tsx; fixture
- *   tones stand in for the store. TranscriptionToneMenu is a MenuPopoverBuilder
- *   of the same rows — the demo composes the REAL MenuPopoverBuilder +
- *   ListTile with the same Add labels.
+ *   tones stand in for the store. The demo also shows a generic menu built
+ *   with the real MenuPopoverBuilder.
  * MicrophoneSelector — recreated: native device enumeration via
- *   @maus-inc/desktop-native-apis (tauri invoke). Render code copied verbatim
- *   from components/microphone/MicrophoneSelector.tsx; fixture devices.
- *   MicrophoneTester pairs the selector with the REAL AudioWaveform.
+ *   @maus-inc/desktop-native-apis (tauri invoke); fixture devices drive the
+ *   recreated selector. Option rows and the tester use real desktop components.
  */
+import { MicrophoneOptionContent } from "@desktop/components/microphone/MicrophoneOptionContent";
 import { useSimulatedLevels } from "../lib/simulated-levels";
-import { Add, Edit, Public } from "@mui/icons-material";
+import { Add } from "@mui/icons-material";
 import {
   Alert,
   Box,
@@ -21,12 +20,10 @@ import {
   CircularProgress,
   Divider,
   FormControl,
-  IconButton,
   InputLabel,
   MenuItem,
   Select,
   Stack,
-  Tooltip,
   Typography,
   type SelectChangeEvent,
   type SxProps,
@@ -34,6 +31,7 @@ import {
 } from "@mui/material";
 import { useState } from "react";
 import { AudioWaveform } from "@desktop/components/common/AudioWaveform";
+import { ToneOptionContent } from "@desktop/components/tones/ToneOptionContent";
 
 // ─── ToneSelect ───────────────────────────────────────────────────
 
@@ -96,35 +94,16 @@ export const ToneSelectPreview = ({
             <div>New style</div>
           </Stack>
         </MenuItem>
+        <MenuItem value="">Default</MenuItem>
         {tones.map((tone) => (
           <MenuItem key={tone.id} value={tone.id}>
-            <Stack
-              direction="row"
-              sx={{
-                alignItems: "center",
-                justifyContent: "space-between",
-                width: "100%",
-              }}
-            >
-              <div>{tone.name}</div>
-              {tone.isGlobal ? (
-                <Tooltip title="This is a global style and cannot be edited">
-                  <Public fontSize="small" sx={{ color: "text.secondary" }} />
-                </Tooltip>
-              ) : null}
-              {!tone.isGlobal && !tone.isSystem ? (
-                <IconButton
-                  size="small"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    event.preventDefault();
-                    setMenuOpen(false);
-                  }}
-                >
-                  <Edit fontSize="small" />
-                </IconButton>
-              ) : null}
-            </Stack>
+            <ToneOptionContent
+              name={tone.name}
+              isGlobal={tone.isGlobal}
+              isSystem={tone.isSystem}
+              globalLabel="This is a global style and cannot be edited"
+              onEdit={() => setMenuOpen(false)}
+            />
           </MenuItem>
         ))}
       </Select>
@@ -142,7 +121,7 @@ export type MicOption = {
   isDefault?: boolean;
 };
 
-export const MIC_FIXTURES: MicOption[] = [
+const MIC_FIXTURES: MicOption[] = [
   { value: "macbook-mic", label: "MacBook Pro Microphone", isDefault: true },
   { value: "usb-yeti", label: "Yeti USB Microphone" },
   { value: "bt-airpods", label: "AirPods Pro", caution: true },
@@ -192,53 +171,10 @@ export const MicrophoneSelectorPreview = ({
           <Divider sx={{ my: 0.5 }} />
           {options.map((option) => (
             <MenuItem key={option.value} value={option.value}>
-              <Stack
-                direction="row"
-                spacing={2}
-                sx={{ justifyContent: "space-between", width: "100%" }}
-              >
-                <Box sx={{ display: "flex", flexDirection: "column" }}>
-                  <Typography>{option.label}</Typography>
-                  {option.unavailable ? (
-                    <Typography
-                      variant="caption"
-                      sx={{ color: "warning.main" }}
-                    >
-                      Currently unavailable
-                    </Typography>
-                  ) : null}
-                  {!option.unavailable && option.caution ? (
-                    <Typography
-                      variant="caption"
-                      sx={{ color: "text.secondary" }}
-                    >
-                      May provide lower audio quality
-                    </Typography>
-                  ) : null}
-                </Box>
-                <Stack
-                  direction="row"
-                  spacing={0.75}
-                  sx={{ alignItems: "center" }}
-                >
-                  {option.isDefault && (
-                    <Chip
-                      size="small"
-                      label="Default"
-                      color="primary"
-                      variant="outlined"
-                    />
-                  )}
-                  {option.caution && !option.unavailable && (
-                    <Chip
-                      size="small"
-                      label="Caution"
-                      color="warning"
-                      variant="outlined"
-                    />
-                  )}
-                </Stack>
-              </Stack>
+              <MicrophoneOptionContent
+                option={option}
+                showUnavailableSuffix={false}
+              />
             </MenuItem>
           ))}
         </Select>

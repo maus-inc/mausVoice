@@ -18,19 +18,22 @@ const isPrereleaseIdentifier = (id) =>
   (isNumericIdentifier(id) ||
     (/^[0-9A-Za-z-]+$/.test(id) && /[A-Za-z-]/.test(id)));
 
+const splitOptional = (value, separator) => {
+  const index = value.indexOf(separator);
+  return index === -1
+    ? [value, null]
+    : [value.slice(0, index), value.slice(index + 1)];
+};
+
 const parseSemver = (version) => {
   if (typeof version !== "string") return null;
-  const buildIndex = version.indexOf("+");
-  const withoutBuild =
-    buildIndex === -1 ? version : version.slice(0, buildIndex);
-  const build = buildIndex === -1 ? null : version.slice(buildIndex + 1);
+  const [withoutBuild, build] = splitOptional(version, "+");
   if (build !== null && !build.split(".").every(isBuildIdentifier)) {
     return null;
   }
-  const dashIndex = withoutBuild.indexOf("-");
-  const core = dashIndex === -1 ? withoutBuild : withoutBuild.slice(0, dashIndex);
-  const prerelease = dashIndex === -1 ? null : withoutBuild.slice(dashIndex + 1);
-  if (core.split(".").length !== 3 || !core.split(".").every(isNumericIdentifier)) {
+  const [core, prerelease] = splitOptional(withoutBuild, "-");
+  const coreParts = core.split(".");
+  if (coreParts.length !== 3 || !coreParts.every(isNumericIdentifier)) {
     return null;
   }
   if (
@@ -53,12 +56,13 @@ export const isPrereleaseVersion = (version) =>
  * validation; notably, a hyphen in build metadata does not make a prerelease.
  */
 export const releaseVersionIsPrerelease = (version) => {
-  if (!isStrictSemver(version)) {
+  const parsed = parseSemver(version);
+  if (!parsed) {
     throw new Error(
       `Invalid version '${version}' (expected SemVer 2.0.0, e.g. 0.1.3 or 0.2.0-rc.1)`,
     );
   }
-  return isPrereleaseVersion(version);
+  return parsed.prerelease !== null;
 };
 
 export const validateReleaseInputs = ({ version, prerelease }) => {

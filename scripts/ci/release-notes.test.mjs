@@ -62,6 +62,58 @@ describe("one release-notes source", () => {
       if (notes) assert.equal(normalized, notes.replace(/\r\n?/g, "\n").trim());
     });
   }
+  it("encodes a custom tag as one safe download URL segment", (t) => {
+    const cwd = mkdtempSync(join(tmpdir(), "release-tag-"));
+    t.after(() => rmSync(cwd, { recursive: true, force: true }));
+    writeFileSync(join(cwd, "app(example).msi"), "fixture");
+    const body = run("generate-release-body.mjs", cwd, {
+      ...process.env,
+      ARTIFACTS_DIR: cwd,
+      RELEASE_VERSION: "1.2.3+build.1",
+      RELEASE_TAG: 'custom/tag"quoted(test)',
+      RELEASE_NAME: "Fixture release",
+      RELEASE_NOTES: "Safe notes",
+      RELEASE_NOTES_FILE: "",
+      GITHUB_REPOSITORY: "maus-inc/mausVoice",
+    });
+    assert.ok(
+      body.includes(
+        "/releases/download/custom%2Ftag%22quoted%28test%29/app%28example%29.msi",
+      ),
+    );
+    assert.ok(!body.includes('/releases/download/custom/tag"quoted(test)/'));
+  });
+
+  it("renders artifact names and release metadata as text, not Markdown or HTML", (t) => {
+    const cwd = mkdtempSync(join(tmpdir(), "release-markup-"));
+    t.after(() => rmSync(cwd, { recursive: true, force: true }));
+    writeFileSync(
+      join(cwd, "app](https:evil.example)|<img src=x>.deb"),
+      "fixture",
+    );
+    const body = run("generate-release-body.mjs", cwd, {
+      ...process.env,
+      ARTIFACTS_DIR: cwd,
+      RELEASE_VERSION: "",
+      RELEASE_TAG: 'tag" onerror="injected',
+      RELEASE_NAME: "Release <img src=x> [click](https:evil.example)",
+      RELEASE_NOTES: "Safe notes",
+      RELEASE_NOTES_FILE: "",
+      GITHUB_REPOSITORY: "maus-inc/mausVoice",
+    });
+    assert.ok(!body.includes("app](https:evil.example)|<img src=x>"));
+    assert.ok(!body.includes('onerror="injected"'));
+    assert.ok(!body.includes("Release <img src=x>"));
+    assert.ok(
+      body.includes("app\\](https:evil.example)\\|&lt;img src=x&gt;.deb"),
+    );
+    assert.ok(
+      body.includes(
+        "Release &lt;img src=x&gt; \\[click\\](https:evil.example)",
+      ),
+    );
+  });
+
   it("fails closed if an explicitly selected notes artifact is missing", (t) => {
     const cwd = mkdtempSync(join(tmpdir(), "release-notes-missing-"));
     t.after(() => rmSync(cwd, { recursive: true, force: true }));

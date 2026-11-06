@@ -1,7 +1,16 @@
 packages:
   - "apps/*"
-  - "apps/firebase/functions"
-  - "packages/*"
+  # Rust crates and shared-font assets under packages/ are not JS workspaces.
+  # check-workspace-hygiene.test.mjs keeps this list in sync with package.json files.
+  - "packages/agent"
+  - "packages/desktop-native-apis"
+  - "packages/desktop-utils"
+  - "packages/eslint-config"
+  - "packages/firemix"
+  - "packages/types"
+  - "packages/typescript-config"
+  - "packages/utilities"
+  - "packages/voice-ai"
 
 onlyBuiltDependencies:
   - "esbuild"

@@ -496,12 +496,19 @@ jobs:
           INPUT_VERSION: ${{ inputs.version }}
         run: |
           if [ -n "$INPUT_TAG" ]; then
-            echo "tag_name=$INPUT_TAG" >> "$GITHUB_OUTPUT"
-            echo "release_name=mausVoice $INPUT_TAG" >> "$GITHUB_OUTPUT"
+            TAG_NAME="$INPUT_TAG"
+            RELEASE_NAME="mausVoice $INPUT_TAG"
           else
-            echo "tag_name=mausVoice-v$INPUT_VERSION" >> "$GITHUB_OUTPUT"
-            echo "release_name=mausVoice v$INPUT_VERSION" >> "$GITHUB_OUTPUT"
+            TAG_NAME="mausVoice-v$INPUT_VERSION"
+            RELEASE_NAME="mausVoice v$INPUT_VERSION"
           fi
+          # GitHub's output file is line-oriented. Reject invalid Git refs,
+          # especially embedded newlines, before writing either output.
+          if ! git check-ref-format "refs/tags/$TAG_NAME"; then
+            echo "::error::Invalid release tag" >&2
+            exit 1
+          fi
+          printf '%s\n' "tag_name=$TAG_NAME" "release_name=$RELEASE_NAME" >> "$GITHUB_OUTPUT"
 
       - name: Generate release body
         id: body

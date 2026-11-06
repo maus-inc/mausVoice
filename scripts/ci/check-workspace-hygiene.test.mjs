@@ -3,6 +3,7 @@ import { execSync } from "node:child_process";
 import {
   existsSync,
   mkdtempSync,
+  mkdirSync,
   readFileSync,
   readdirSync,
   rmSync,
@@ -96,36 +97,30 @@ const globToRegExp = (pattern) => {
 // repository root: resolving `scripts/ci/` against the `scripts/ci` directory
 // looks for `scripts/ci/scripts/ci`, which is how the first version of this
 // expanded a glob to nothing and then failed on its own guard.
+function suitePathsForToken(raw, repoRoot) {
+  const token = raw.replace(/[;"'`]+$/, "").replace(/^["'`]/, "");
+  const directory = token.slice(0, token.lastIndexOf("/") + 1);
+  const name = token.slice(token.lastIndexOf("/") + 1);
+  if (!name.endsWith(".test.mjs")) return [];
+  if (!name.includes("*")) return [`${directory}${name}`];
+  const target = resolve(repoRoot, directory);
+  if (!existsSync(target)) return [];
+  // Match the entire glob, not just its first prefix and final suffix.
+  const pattern = globToRegExp(name);
+  return readdirSync(target)
+    .filter((file) => pattern.test(file))
+    .map((file) => `${directory}${file}`);
+}
+
 function executedSuites(workflowsText, repoRoot) {
   const executed = new Set();
   for (const line of workflowsText.split("\n")) {
     if (/^\s*#/.test(line)) continue;
     const command = /node\s+--test\b(.*)$/.exec(line);
     if (!command) continue;
-    for (const raw of command[1].split(/\s+/)) {
-      const token = raw.replace(/[;"'`]+$/, "").replace(/^["'`]/, "");
-      // The suite name is the token's last path segment. Matching the tail with
-      // `[\w.-]+` instead would read `scripts/ci/*.test.mjs` as no match at all,
-      // because neither `/` nor `*` is in that class -- which is the one shape
-      // this was extended to handle.
-      const directory = token.slice(0, token.lastIndexOf("/") + 1);
-      const name = token.slice(token.lastIndexOf("/") + 1);
-      if (!name.endsWith(".test.mjs")) continue;
-      if (!name.includes("*")) {
-        executed.add(`${directory}${name}`);
-        continue;
-      }
-      // A glob stands for the suites it names, so expand it rather than
-      // recording a literal `*` no suite is called.
-      const target = resolve(repoRoot, directory);
-      if (!existsSync(target)) continue;
-      const prefix = name.slice(0, name.indexOf("*"));
-      const suffix = name.slice(name.lastIndexOf("*") + 1);
-      for (const file of readdirSync(target)) {
-        if (file.startsWith(prefix) && file.endsWith(suffix)) {
-          executed.add(`${directory}${file}`);
-        }
-      }
+    for (const token of command[1].split(/\s+/)) {
+      for (const path of suitePathsForToken(token, repoRoot))
+        executed.add(path);
     }
   }
   return executed;
@@ -186,6 +181,30 @@ function flowEntries(tail) {
   );
 }
 
+// Strip a YAML comment only after a quoted item has closed: a hash inside a
+// quoted glob is part of the pattern, not the start of a comment.
+function parsePathItem(raw) {
+  const quoted = /^["']/.test(raw);
+  const cut = quoted ? raw.search(/(["'])\s+#/) : raw.indexOf(" #");
+  return (cut >= 0 ? raw.slice(0, cut) : raw)
+    .trim()
+    .replace(/^["']|["']$/g, "");
+}
+
+function blockPathEntries(lines, start, keyIndent) {
+  const entries = [];
+  for (let scan = start; scan < lines.length; scan += 1) {
+    const line = lines[scan];
+    if (line.trim() === "" || /^\s*#/.test(line)) continue;
+    const item = /^(\s*)-\s*(.+?)\s*$/.exec(line);
+    // YAML permits an indentless sequence, but a less-indented list belongs
+    // to an outer structure and must not expand this event's filter.
+    if (!item || item[1].length < keyIndent) break;
+    entries.push(parsePathItem(item[2]));
+  }
+  return entries;
+}
+
 function pathsEntries(text) {
   const lines = text.split("\n");
   const blocks = [];
@@ -195,45 +214,10 @@ function pathsEntries(text) {
     const inline = flowEntries(keyed[1]);
     if (inline) {
       blocks.push(inline);
-      continue;
+    } else if (keyed[1].trim() === "") {
+      const keyIndent = /^\s*/.exec(lines[index])[0].length;
+      blocks.push(blockPathEntries(lines, index + 1, keyIndent));
     }
-    // The block spelling: the key alone on its line, items on the ones below.
-    if (keyed[1].trim() !== "") continue;
-    const entries = [];
-    for (let scan = index + 1; scan < lines.length; scan += 1) {
-      const line = lines[scan];
-      // A list item of this block, or a deeper one -- `paths:` at four spaces
-      // puts its items at six, and a workflow is free to indent further.
-      const item = /^\s*-\s*(.+?)\s*$/.exec(line);
-      if (item) {
-        // A comment after the entry is not part of the pattern, and it must come off
-        // BEFORE the quotes do. `!/^["']|["']$/g` only reaches a closing quote that is
-        // already at end of line, so with `- "!scripts/ci/**"  # note` the quote is
-        // interior: it survives, and the comment becomes part of the glob. The result
-        // matches nothing, so a negated entry silently stops excluding anything and
-        // this guard reports a suite as covered that the workflow does not run --
-        // the opposite of the truth, and quietly, because a broken parse leaves
-        // nothing to notice.
-        //
-        // Only a `#` that begins the comment counts. A `#` inside a quoted pattern is
-        // legal in YAML and is part of the glob, so the comment scan starts at the
-        // quote when there is one.
-        const raw = item[1];
-        const quoted = /^["']/.test(raw);
-        const cut = quoted
-          ? raw.search(/(["'])\s+#/)
-          : raw.indexOf(" #");
-        entries.push(
-          (cut >= 0 ? raw.slice(0, cut) : raw).trim().replace(/^["']|["']$/g, ""),
-        );
-        continue;
-      }
-      // A line at or left of the `paths:` key, or a non-item sibling of one,
-      // ends the block. Blanks and comments sit inside blocks and do not.
-      if (line.trim() === "" || /^\s*#/.test(line)) continue;
-      if (/^\s*-\s/.test(line) || /^\s*\S/.test(line)) break;
-    }
-    blocks.push(entries);
   }
   return blocks;
 }
@@ -311,6 +295,32 @@ function missingFromTriggerFilter(text, repoRoot) {
 }
 
 describe("workspace hygiene contracts", () => {
+  it("lists every JavaScript package without treating Rust or assets as workspaces", () => {
+    const configured = [
+      ...readFileSync(
+        resolve(repoRoot, "pnpm-workspace.yaml"),
+        "utf8",
+      ).matchAll(/^\s*-\s*"packages\/([^"*]+)"\s*$/gm),
+    ]
+      .map((match) => match[1])
+      .sort();
+    const actual = readdirSync(resolve(repoRoot, "packages"), {
+      withFileTypes: true,
+    })
+      .filter(
+        (entry) =>
+          entry.isDirectory() &&
+          existsSync(resolve(repoRoot, "packages", entry.name, "package.json")),
+      )
+      .map((entry) => entry.name)
+      .sort();
+    assert.deepEqual(
+      configured,
+      actual,
+      "add each JavaScript package to pnpm-workspace.yaml",
+    );
+  });
+
   it("rejects captured session transcripts and stray debug dumps", () => {
     assert.ok(
       !existsSync(resolve(repoRoot, "fully read this.txt.txt")),
@@ -602,6 +612,23 @@ describe("the workflow scan finds every way a suite is executed", () => {
       ![...found].some((name) => name.includes("*")),
       "a glob must not be recorded as a suite name",
     );
+  });
+
+  it("expands every part of a multi-star suite glob", () => {
+    const root = mkdtempSync(join(tmpdir(), "workflow-suite-glob-"));
+    try {
+      mkdirSync(join(root, "scripts", "ci"), { recursive: true });
+      for (const name of ["a-middle-b-tail.test.mjs", "a-unrelated.test.mjs"]) {
+        writeFileSync(join(root, "scripts", "ci", name), "");
+      }
+      const text = "- run: node --test scripts/ci/a*b*.test.mjs";
+      assert.deepEqual(
+        [...executedSuites(text, root)],
+        ["scripts/ci/a-middle-b-tail.test.mjs"],
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("still ignores a suite that is only named, never run", () => {
@@ -952,6 +979,29 @@ describe("the trigger filter check compares executed paths to filter entries", (
       ["root.test.mjs"],
       "`scripts/**` is still scoped to scripts/ and does not cover the top level",
     );
+  });
+
+  it("does not include a less-indented sibling sequence in a paths filter", () => {
+    const text = [
+      "on:",
+      "  pull_request:",
+      "    paths:",
+      "      - docs/**",
+      "  - scripts/ci/**",
+    ].join("\n");
+    assert.deepEqual(pathsEntries(text), [["docs/**"]]);
+  });
+
+  it("accepts an indentless YAML sequence belonging to paths", () => {
+    const text = [
+      "on:",
+      "  pull_request:",
+      "    paths:",
+      "    - scripts/ci/**",
+      "    branches:",
+      "    - main",
+    ].join("\n");
+    assert.deepEqual(pathsEntries(text), [["scripts/ci/**"]]);
   });
 
   it("reads a `paths:` filter written as a flow sequence", () => {

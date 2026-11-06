@@ -1,4 +1,10 @@
-import { HttpError, countWords, retry } from "@maus-inc/utilities";
+import { audioToArrayBuffer } from "./audio-convert.utils";
+import { countWords, retry } from "@maus-inc/utilities";
+import {
+  assertPrivateProviderResponseOk,
+  parsePrivateProviderJson,
+  requestSensitiveTransport,
+} from "./provider-response.utils";
 import { appendQueryParamValues } from "./query-params.utils";
 import type { CustomFetch } from "./types";
 
@@ -64,6 +70,7 @@ export type DeepgramTranscriptionArgs = {
    */
   keyterms?: string[];
   customFetch?: CustomFetch;
+  signal?: AbortSignal;
 };
 
 export type DeepgramTranscribeAudioOutput = {
@@ -79,9 +86,11 @@ export const deepgramTranscribeAudio = ({
   language,
   keyterms,
   customFetch = fetch,
+  signal,
 }: DeepgramTranscriptionArgs): Promise<DeepgramTranscribeAudioOutput> => {
   return retry({
     retries: 3,
+    signal,
     fn: async () => {
       const params = new URLSearchParams({
         model,
@@ -100,7 +109,7 @@ export const deepgramTranscribeAudio = ({
       // plain terms are ever sent.
       appendQueryParamValues(params, "keyterm", keyterms);
 
-      const response = await customFetch(
+      const response = await requestSensitiveTransport(
         `${DEEPGRAM_LISTEN_URL}?${params.toString()}`,
         {
           method: "POST",
@@ -108,21 +117,24 @@ export const deepgramTranscribeAudio = ({
             Authorization: `Token ${apiKey.trim()}`,
             "Content-Type": `audio/${ext}`,
           },
-          body:
-            blob instanceof ArrayBuffer ? blob : (blob.buffer as ArrayBuffer),
+          body: audioToArrayBuffer(blob),
+          redirect: "error",
+          signal,
         },
+        customFetch,
+        "Deepgram",
       );
 
-      if (!response.ok) {
-        const errorText = await response.text().catch(() => "Unknown error");
-        throw new HttpError(
-          response.status,
-          `Deepgram transcription request failed with status ${response.status}: ${errorText}`,
-          { retryAfter: response.headers.get("retry-after") },
-        );
-      }
+      assertPrivateProviderResponseOk(
+        response,
+        "Deepgram transcription request failed with status",
+      );
 
-      const data = (await response.json()) as {
+      const data = (await parsePrivateProviderJson(
+        response,
+        "Deepgram",
+        signal,
+      )) as {
         results?: {
           channels?: Array<{
             alternatives?: Array<{

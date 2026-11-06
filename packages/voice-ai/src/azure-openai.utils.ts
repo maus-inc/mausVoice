@@ -1,5 +1,8 @@
 import { AzureOpenAI } from "openai";
-import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
+import type {
+  ChatCompletion,
+  ChatCompletionMessageParam,
+} from "openai/resources/chat/completions";
 import { retry, countWords } from "@maus-inc/utilities";
 import {
   buildJsonSchemaResponseFormat,
@@ -119,6 +122,16 @@ const createClient = (
   });
 };
 
+const readAzureTextResponse = (
+  response: ChatCompletion,
+): AzureOpenAIGenerateResponseOutput => {
+  const content = response.choices?.[0]?.message?.content || "";
+  return {
+    text: content,
+    tokensUsed: response.usage?.total_tokens ?? countWords(content),
+  };
+};
+
 export const azureOpenAIGenerateText = ({
   apiKey,
   endpoint,
@@ -195,11 +208,7 @@ export const azureOpenAIGenerateText = ({
 
       const response = await client.chat.completions.create(params, { signal });
 
-      const content = response.choices?.[0]?.message?.content || "";
-      return {
-        text: content,
-        tokensUsed: response.usage?.total_tokens ?? countWords(content),
-      };
+      return readAzureTextResponse(response);
     },
   });
 };

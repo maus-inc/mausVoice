@@ -9,20 +9,6 @@ interface InstallProgress {
 
 type InstallerState = "idle" | "installing" | "complete" | "error";
 
-const LOGO_SVG = `
-<svg viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <path d="M75.3206 52.5707L19.8206 108.071" stroke="currentColor" stroke-width="9" stroke-linecap="round"/>
-  <path d="M32.1525 94.8831L27.4937 59.8648C27.2023 57.6748 27.8296 55.4619 29.2267 53.7505L53.5296 23.9816C55.622 21.4186 59.0762 20.4081 62.2201 21.4393L94.883 32.1527" stroke="currentColor" stroke-width="12" stroke-linecap="round"/>
-  <path d="M32.7586 95.4893L67.7769 100.148C69.9669 100.44 72.1798 99.8123 73.8912 98.4151L103.66 74.1122C106.223 72.0198 107.234 68.5656 106.202 65.4218L95.489 32.7588" stroke="currentColor" stroke-width="12" stroke-linecap="round"/>
-</svg>
-`;
-
-const CLOSE_SVG = `
-<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"/>
-</svg>
-`;
-
 class Installer {
   private state: InstallerState = "idle";
   private progress = 0;
@@ -130,38 +116,67 @@ class Installer {
       <div class="installer-container">
         <div class="drag-region"></div>
         <button class="close-button" id="closeBtn">
-          ${CLOSE_SVG}
+          <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
         </button>
 
         <div class="content">
           <div class="logo-container">
-            <div class="${this.getLogoClass()}">
-              ${LOGO_SVG}
+            <div class="logo">
+              <svg viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M75.3206 52.5707L19.8206 108.071" stroke="currentColor" stroke-width="9" stroke-linecap="round"/>
+                <path d="M32.1525 94.8831L27.4937 59.8648C27.2023 57.6748 27.8296 55.4619 29.2267 53.7505L53.5296 23.9816C55.622 21.4186 59.0762 20.4081 62.2201 21.4393L94.883 32.1527" stroke="currentColor" stroke-width="12" stroke-linecap="round"/>
+                <path d="M32.7586 95.4893L67.7769 100.148C69.9669 100.44 72.1798 99.8123 73.8912 98.4151L103.66 74.1122C106.223 72.0198 107.234 68.5656 106.202 65.4218L95.489 32.7588" stroke="currentColor" stroke-width="12" stroke-linecap="round"/>
+              </svg>
             </div>
           </div>
 
           <h1 class="title">mausVoice</h1>
 
-          <p class="status">${this.state === "error" ? this.errorMessage : this.message}</p>
+          <p class="status"></p>
 
-          <div class="progress-container ${showProgress ? "" : "hidden"}">
-            <div class="${this.getProgressClass()}" style="width: ${this.progress}%"></div>
+          <div class="progress-container">
+            <div class="progress-bar"></div>
           </div>
 
           <div class="actions">
-            <button class="btn btn-primary ${showLaunchButton ? "" : "hidden"}" id="launchBtn">
+            <button class="btn btn-primary" id="launchBtn">
               Launch mausVoice
             </button>
-            <button class="btn btn-secondary ${showRetryButton ? "" : "hidden"}" id="retryBtn">
+            <button class="btn btn-secondary" id="retryBtn">
               Retry
             </button>
-            <button class="btn btn-secondary ${showCloseButton ? "" : "hidden"}" id="exitBtn">
-              ${this.state === "complete" ? "Close" : "Exit"}
+            <button class="btn btn-secondary" id="exitBtn">
+              Exit
             </button>
           </div>
         </div>
       </div>
     `;
+
+    app.querySelector<HTMLElement>(".logo")!.className = this.getLogoClass();
+    app.querySelector<HTMLElement>(".progress-bar")!.className =
+      this.getProgressClass();
+    app
+      .querySelector<HTMLElement>(".progress-container")!
+      .classList.toggle("hidden", !showProgress);
+    document
+      .getElementById("launchBtn")!
+      .classList.toggle("hidden", !showLaunchButton);
+    document
+      .getElementById("retryBtn")!
+      .classList.toggle("hidden", !showRetryButton);
+    const exitButton = document.getElementById("exitBtn")!;
+    exitButton.classList.toggle("hidden", !showCloseButton);
+    exitButton.textContent = this.state === "complete" ? "Close" : "Exit";
+
+    // Native progress and error strings may contain arbitrary text. Never put
+    // them in the HTML template (or interpolate progress into an attribute).
+    app.querySelector<HTMLElement>(".status")!.textContent =
+      this.state === "error" ? this.errorMessage : this.message;
+    app.querySelector<HTMLElement>(".progress-bar")!.style.width =
+      `${this.progress}%`;
 
     document.getElementById("closeBtn")?.addEventListener("click", () => {
       this.closeInstaller();

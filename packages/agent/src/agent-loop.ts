@@ -148,6 +148,11 @@ export class AgentLoop {
     };
   }
 
+  private providerFailure(history: LlmMessage[], error: unknown): AgentEvent {
+    if (this.aborted) return this.finishEvent(history, "aborted");
+    return this.finishEvent(history, "error", "", unknownToMessage(error));
+  }
+
   private async *streamTurn(
     history: LlmMessage[],
   ): AsyncGenerator<
@@ -174,18 +179,17 @@ export class AgentLoop {
             });
             break;
           case "error":
-            yield this.finishEvent(history, "error", "", event.error);
+            yield this.finishEvent(
+              history,
+              "error",
+              "",
+              unknownToMessage(event.error),
+            );
             return null;
         }
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      yield this.finishEvent(
-        history,
-        this.aborted ? "aborted" : "error",
-        "",
-        this.aborted ? undefined : message,
-      );
+      yield this.providerFailure(history, error);
       return null;
     }
     if (this.aborted) {
@@ -264,25 +268,23 @@ export class AgentLoop {
         return { success: false, failureReason: unknownToMessage(err) };
       });
 
-      // The abort waiter is per call, not per loop: a shared promise resolves once
-      // and its reaction then sits on every result this loop ever produced, which
-      // keeps each tool's output alive until the run ends.
-      const waitForAbort = (): Promise<AgentToolOutput> =>
-        new Promise<AgentToolOutput>((resolve) => {
-          if (this.aborted) {
-            resolve(ABORTED_TOOL_OUTPUT);
-            return;
-          }
-          this.abortController.signal.addEventListener(
-            "abort",
-            () => resolve(ABORTED_TOOL_OUTPUT),
-            { once: true },
-          );
-        });
+      const signal = this.abortController.signal;
+      let onAbort: (() => void) | undefined;
+      const waitForAbort = new Promise<AgentToolOutput>((resolve) => {
+        if (this.aborted) {
+          resolve(ABORTED_TOOL_OUTPUT);
+          return;
+        }
+        onAbort = () => resolve(ABORTED_TOOL_OUTPUT);
+        signal.addEventListener("abort", onAbort, { once: true });
+      });
 
-      // Whichever settles first wins; the loser stops mattering because nothing
-      // here holds a reference to it once this frame returns.
-      return await Promise.race([run, waitForAbort()]);
+      try {
+        return await Promise.race([run, waitForAbort]);
+      } finally {
+        // Completed calls must not leave listeners attached to the run signal.
+        if (onAbort) signal.removeEventListener("abort", onAbort);
+      }
     } catch (err) {
       return { success: false, failureReason: unknownToMessage(err) };
     }
@@ -325,48 +327,51 @@ export class AgentLoop {
       // with a tool result message in history to keep provider conversational context valid.
       yield this.toolResult(tc, "Tool execution aborted", history, true);
     } else {
-      const params = parseJsonObject(tc.arguments);
-
-      yield {
-        type: "tool-call-start",
-        toolCallId: tc.id,
-        toolName: tc.name,
-        args: params ?? {},
-      };
-
-      // Once tool-call-start is emitted, always pair it with a tool-call-result
-      // (and history entry) even if abort wins mid-flight. Skipping the result
-      // leaves the assistant tool-call without a matching tool message.
-      if (!params) {
-        yield this.toolResult(
-          tc,
-          "Tool arguments must be a JSON object",
-          history,
-          true,
-        );
-      } else {
-        const { reason, ...toolParams } = params;
-        const tool = this.config.tools.find((t) => t.name === tc.name);
-
-        if (!tool) {
-          yield this.toolResult(tc, `Unknown tool: ${tc.name}`, history, true);
-        } else {
-          const output = await this.executeTool(
-            tool,
-            tc.id,
-            toolParams,
-            reason,
-          );
-          const resultStr = output.success
-            ? stringifyToolResult(output.result)
-            : (output.failureReason ?? "Tool execution failed");
-
-          yield this.toolResult(tc, resultStr, history, !output.success);
-        }
-      }
+      yield* this.processOneToolCall(history, tc);
     }
 
     yield* this.processToolCallsFrom(history, toolCalls, index + 1);
+  }
+
+  /** Execute one announced call and always pair its start with a result. */
+  private async *processOneToolCall(
+    history: LlmMessage[],
+    tc: LlmToolCall,
+  ): AsyncGenerator<AgentEvent> {
+    const params = parseJsonObject(tc.arguments);
+
+    yield {
+      type: "tool-call-start",
+      toolCallId: tc.id,
+      toolName: tc.name,
+      args: params ?? {},
+    };
+
+    // Once tool-call-start is emitted, always pair it with a tool-call-result
+    // (and history entry) even if abort wins mid-flight. Skipping the result
+    // leaves the assistant tool-call without a matching tool message.
+    if (!params) {
+      yield this.toolResult(
+        tc,
+        "Tool arguments must be a JSON object",
+        history,
+        true,
+      );
+    } else {
+      const { reason, ...toolParams } = params;
+      const tool = this.config.tools.find((t) => t.name === tc.name);
+
+      if (!tool) {
+        yield this.toolResult(tc, `Unknown tool: ${tc.name}`, history, true);
+      } else {
+        const output = await this.executeTool(tool, tc.id, toolParams, reason);
+        const resultStr = output.success
+          ? stringifyToolResult(output.result)
+          : unknownToMessage(output.failureReason ?? "Tool execution failed");
+
+        yield this.toolResult(tc, resultStr, history, !output.success);
+      }
+    }
   }
 
   private toolResult(

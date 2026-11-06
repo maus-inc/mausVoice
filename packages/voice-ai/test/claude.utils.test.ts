@@ -28,6 +28,41 @@ describe("claudeGenerateTextResponse request shape", () => {
     }));
   };
 
+  it.each([
+    { usage: { input_tokens: 2, output_tokens: 3 }, expected: 5 },
+    { usage: { input_tokens: 0, output_tokens: 0 }, expected: 2 },
+    { usage: undefined, expected: 2 },
+  ])(
+    "extracts the first text block and token usage",
+    async ({ usage, expected }) => {
+      const createMessage = vi.fn().mockResolvedValue({
+        content: [
+          { type: "tool_use" },
+          { type: "text", text: "hello world" },
+          { type: "text", text: "ignored" },
+        ],
+        usage,
+      });
+      mockCreate(createMessage);
+      const { claudeGenerateTextResponse } =
+        await import("../src/claude.utils");
+      await expect(
+        claudeGenerateTextResponse({ apiKey: "key", prompt: "hi" }),
+      ).resolves.toEqual({ text: "hello world", tokensUsed: expected });
+    },
+  );
+
+  it("rejects a response without text", async () => {
+    const createMessage = vi
+      .fn()
+      .mockResolvedValue({ content: [{ type: "tool_use" }], usage: {} });
+    mockCreate(createMessage);
+    const { claudeGenerateTextResponse } = await import("../src/claude.utils");
+    await expect(
+      claudeGenerateTextResponse({ apiKey: "key", prompt: "hi" }),
+    ).rejects.toThrow("No text response from Claude");
+  });
+
   it("forwards the system prompt as the top-level system field", async () => {
     const createMessage = vi.fn().mockResolvedValue({
       content: [{ type: "text", text: "ok" }],

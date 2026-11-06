@@ -5,6 +5,43 @@ import { describe, expect, it } from "vitest";
 import * as providerErrorUtils from "./provider-error.utils";
 import { redactSensitiveTokens } from "@maus-inc/utilities";
 
+/** Lazily enumerate a product without nesting one loop per input axis. */
+function* crossProduct(
+  axes: readonly (readonly string[])[],
+): Generator<string[]> {
+  if (axes.some((axis) => axis.length === 0)) return;
+  const indices = axes.map(() => 0);
+  while (true) {
+    yield axes.map((axis, index) => axis[indices[index]]);
+    let index = axes.length - 1;
+    while (index >= 0) {
+      indices[index] += 1;
+      if (indices[index] < axes[index].length) break;
+      indices[index] = 0;
+      index -= 1;
+    }
+    if (index < 0) return;
+  }
+}
+
+describe("test matrix enumeration", () => {
+  it("covers each combination, including empty axes", () => {
+    expect([
+      ...crossProduct([
+        ["a", "b"],
+        ["1", "2"],
+      ]),
+    ]).toEqual([
+      ["a", "1"],
+      ["a", "2"],
+      ["b", "1"],
+      ["b", "2"],
+    ]);
+    expect([...crossProduct([[]])]).toEqual([]);
+    expect([...crossProduct([])]).toEqual([[]]);
+  });
+});
+
 describe("provider-error.utils", () => {
   it("exports only the readers and the scrubber, and no retry policy", () => {
     // Which statuses are worth not retrying is per provider, not a property of
@@ -360,19 +397,15 @@ describe("redactProviderMessage", () => {
     // that decides whether the scanner reads the same match out of the same
     // text.
     let compared = 0;
-    for (const label of LABELS) {
-      for (const before of BEFORE_SEPARATOR) {
-        for (const separator of SEPARATORS) {
-          for (const after of AFTER_SEPARATOR) {
-            for (const value of VALUES) {
-              compared += 1;
-              expectSameAsPattern(
-                `${label}${before}${separator}${after}${value}`,
-              );
-            }
-          }
-        }
-      }
+    for (const [label, before, separator, after, value] of crossProduct([
+      LABELS,
+      BEFORE_SEPARATOR,
+      SEPARATORS,
+      AFTER_SEPARATOR,
+      VALUES,
+    ])) {
+      compared += 1;
+      expectSameAsPattern(`${label}${before}${separator}${after}${value}`);
     }
     // A sweep that silently degenerated into a handful of cases would pass
     // while proving nothing.
@@ -410,33 +443,34 @@ describe("redactProviderMessage", () => {
       values.filter((_value, position) => position % 2 === 0);
     let compared = 0;
     let hidMore = 0;
-    for (const label of REAL_LABELS) {
-      for (const before of everyOther(BEFORE_SEPARATOR)) {
-        for (const separator of everyOther(SEPARATORS)) {
-          for (const after of everyOther(AFTER_SEPARATOR)) {
-            for (const value of everyOther(VALUES)) {
-              const core = `${label}${before}${separator}${after}${value}`;
-              for (const prefix of WRAPPERS) {
-                for (const suffix of WRAPPERS) {
-                  compared += 1;
-                  const message = `${prefix}${core}${suffix}`;
-                  const shipped =
-                    providerErrorUtils.redactProviderMessage(message);
-                  const revealedByShip = shipped.split(MARKER).join("");
-                  const revealedByPattern = referenceRedact(message)
-                    .split(MARKER)
-                    .join("");
-                  expect(
-                    isSubsequence(revealedByShip, revealedByPattern),
-                    `shipped scrubber revealed more than the pattern on ${JSON.stringify(message)}`,
-                  ).toBe(true);
-                  if (shipped !== referenceRedact(message)) hidMore += 1;
-                }
-              }
-            }
-          }
-        }
-      }
+    for (const [
+      label,
+      before,
+      separator,
+      after,
+      value,
+      prefix,
+      suffix,
+    ] of crossProduct([
+      REAL_LABELS,
+      everyOther(BEFORE_SEPARATOR),
+      everyOther(SEPARATORS),
+      everyOther(AFTER_SEPARATOR),
+      everyOther(VALUES),
+      WRAPPERS,
+      WRAPPERS,
+    ])) {
+      compared += 1;
+      const message = `${prefix}${label}${before}${separator}${after}${value}${suffix}`;
+      const shipped = providerErrorUtils.redactProviderMessage(message);
+      const reference = referenceRedact(message);
+      const revealedByShip = shipped.split(MARKER).join("");
+      const revealedByPattern = reference.split(MARKER).join("");
+      expect(
+        isSubsequence(revealedByShip, revealedByPattern),
+        `shipped scrubber revealed more than the pattern on ${JSON.stringify(message)}`,
+      ).toBe(true);
+      if (shipped !== reference) hidMore += 1;
     }
     expect(compared).toBeGreaterThan(15_000);
     // The relationship above has to be able to differ at all, or it would be a

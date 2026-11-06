@@ -5,6 +5,7 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  writeFileSync,
 } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
@@ -39,133 +40,110 @@ const POSIX_ONLY = [/\bif\s*\[/, /^\s*elif\b/m, /^\s*fi\b/m, /^\s*then\b/m];
 // how many times each had been called.
 const PRE_VERDICT_SCRIPTS_CI = /(?:^|[\s;&|(])\.?\/?scripts\/ci\//;
 
-// Extract the steps of a workflow file as { name, shell, shells, run } records.
-// The release workflow pins structure by convention (steps are `- name:`
-// entries with an optional `shell:` and a `run: |` block), so a line scanner
-// is enough and keeps this test dependency-free.
+// The release workflow uses named steps with block or inline run commands.
+// Preserve block contents before interpreting step keys. Shell commands and
+// action inputs can themselves contain lines that look like YAML keys.
+const stepBlockLine = (block, line, current) => {
+  const indent = line.match(/^(\s*)/)?.[1].length ?? 0;
+  if (line.trim() !== "" && !/^\s*#/.test(line) && indent <= block.indent)
+    return false;
+  current[block.field].push(line);
+  return true;
+};
+
+// Accept explicit YAML scalars for security-relevant paths. Unknown encodings
+// fail closed rather than making a dangerous action disappear from the guard.
+function stepPathValue(raw) {
+  const match =
+    /^("(?:[^"\\]|\\.)*"|'(?:[^']|'')*'|[^\s]+)(?:[ \t]+#.*)?[ \t]*$/.exec(
+      raw.trim(),
+    );
+  if (!match) throw new Error(`Unsupported workflow scalar: ${raw}`);
+  const value = match[1];
+  if (value.startsWith('"')) return JSON.parse(value);
+  if (value.startsWith("'")) return value.slice(1, -1).replaceAll("''", "'");
+  return value;
+}
+
+const readStepProperty = (step, line) => {
+  const pathMatch = /^\s*(uses|working-directory):\s*(.*?)\s*$/.exec(line);
+  if (pathMatch) {
+    const field = pathMatch[1] === "uses" ? "uses" : "workingDirectory";
+    step[field] = stepPathValue(pathMatch[2]);
+    return;
+  }
+  const ifMatch = /^\s*if:\s*(.+?)\s*$/.exec(line);
+  if (ifMatch) {
+    step.if = ifMatch[1];
+    return;
+  }
+  const shellMatch = line.match(/^\s*shell:\s*(\S+)/);
+  if (shellMatch) {
+    step.shell = shellMatch[1];
+    step.shells.push(shellMatch[1]);
+  }
+};
+
+const makeStep = (name) => ({
+  name,
+  shell: null,
+  shells: [],
+  run: [],
+  inputs: [],
+  uses: null,
+  if: null,
+  workingDirectory: null,
+});
+
+// Consume a property of the current step and return an active block, if any.
+function readStepLine(step, line) {
+  const runMatch = line.match(
+    /^(\s*)run:\s*[|>](?:[+-]?[1-9]?|[1-9][+-]?)?(?:\s+#.*)?\s*$/,
+  );
+  if (runMatch) return { field: "run", indent: runMatch[1].length };
+  const inlineRun = line.match(/^\s*run:\s*(\S.*?)\s*$/);
+  if (inlineRun) {
+    step.run.push(inlineRun[1]);
+    return null;
+  }
+  const withMatch = line.match(/^(\s*)with:\s*$/);
+  if (withMatch) return { field: "inputs", indent: withMatch[1].length };
+  readStepProperty(step, line);
+  return null;
+}
+
+// A step can start with a display name, an action, or a run command.
+// Normalize its first property so the same property reader handles each form.
+function parseStepHeader(line) {
+  const match = /^(\s*)-\s+(name|uses|run):\s*(.*?)\s*$/.exec(line);
+  if (!match) return null;
+  const [, indent, key, value] = match;
+  return {
+    step: makeStep(key === "name" ? value : `${key}: ${value}`),
+    firstLine: key === "name" ? "" : `${indent}  ${key}: ${value}`,
+  };
+}
+
 const extractSteps = (workflowText) => {
-  const lines = workflowText.split("\n");
   /** @type {{ name: string, uses: string | null, shell: string | null, shells: string[], run: string[],
    *          inputs: string[], if: string | null, workingDirectory: string | null }[]} */
   const steps = [];
   let current = null;
-  let inRun = false;
-  let runIndent = 0;
-  let inWith = false;
-  let withIndent = 0;
+  let block = null;
 
-  for (const line of lines) {
-    const stepMatch = line.match(/^\s*-\s+name:\s*(.+?)\s*$/);
-    if (stepMatch) {
+  for (let line of workflowText.split("\n")) {
+    if (block && stepBlockLine(block, line, current)) continue;
+    block = null;
+
+    const header = parseStepHeader(line);
+    if (header) {
       if (current) steps.push(current);
-      current = {
-        name: stepMatch[1],
-        shell: null,
-        shells: [],
-        run: [],
-        inputs: [],
-        uses: null,
-        if: null,
-        workingDirectory: null,
-      };
-      inRun = false;
-      continue;
+      current = header.step;
+      line = header.firstLine;
     }
     if (!current) continue;
 
-    const runMatch = line.match(/^(\s*)run:\s*\|/);
-    if (runMatch) {
-      inRun = true;
-      runIndent = runMatch[1].length;
-      continue;
-    }
-
-    // A single-line `run:`. This parser used to capture only the `run: |` block form, so
-    // every `step.run` assertion in this file was silently blind to any step written
-    // inline -- and the three steps this branch's ordering turns on are exactly that.
-    // A check that cannot see half the steps is worse than none, because it reports a
-    // coverage it does not have.
-    const inlineRun = line.match(/^\s*run:\s*(\S.*?)\s*$/);
-    if (inlineRun) {
-      current.run.push(inlineRun[1]);
-      inRun = false;
-      continue;
-    }
-    if (inRun) {
-      const indent = line.match(/^(\s*)/)?.[1].length ?? 0;
-      if (line.trim() === "" || indent > runIndent) {
-        current.run.push(line);
-        continue;
-      }
-      inRun = false;
-    }
-
-    // Step-level keys, read together and only once the run-body block above has had its
-    // say -- so a line inside a `run: |` body cannot be taken for a key.
-    //
-    // Unconditional, and that is load-bearing rather than sloppy. A line inside a `run: |`
-    // body cannot reach here: the block above `continue`s on it when it is blank or more
-    // indented than the `run:` key, and clears `inRun` on a dedent. So a guard here used to
-    // read `if (!inRun)`, which DeepScan was right about -- it is always true, because
-    // arriving here already means `inRun` is false.
-    //
-    // The property that guard was written to protect is real, and it is the `continue` above
-    // rather than the condition. Reinstating the guard would add a check that cannot fail,
-    // which reads as protection and is not.
-    //
-    // `shell:` used to be read up beside `run:`, before any of this. That was a real bug and
-    // not a theoretical one: a `shell:` line inside a run body was taken for the step's shell
-    // AND cleared `inRun`, so every line after it in that body was read as a step key too. No
-    // workflow here has such a line -- measured, 0 across `.github/workflows/*.yml` -- so it
-    // never fired; `does not read a step key out of a run: | body` now covers it.
-    //
-    const ifMatch = line.match(/^\s*if:\s*(.+?)\s*$/);
-    if (ifMatch) {
-      current.if = ifMatch[1];
-      continue;
-    }
-    // A step's `uses:` is recorded for the same reason `with:` is: a step that calls a
-    // local action executes code from the scanned checkout and has NO `run:` body for an
-    // assertion to read. Without this, `uses: ./.github/actions/...` before the secret-scan
-    // verdict was invisible to every check here -- measured, inserting one left the suite
-    // at 30/30. Read beside `if:`, so a `uses:` inside a run body cannot be mistaken for
-    // the step's key, which is the same reason `shell:` was moved.
-    const usesMatch = line.match(/^\s*uses:\s*(\S+)\s*$/);
-    if (usesMatch) {
-      current.uses = usesMatch[1];
-      continue;
-    }
-    const wdMatch = line.match(/^\s*working-directory:\s*(.+?)\s*$/);
-    if (wdMatch) {
-      current.workingDirectory = wdMatch[1];
-      continue;
-    }
-    // The `with:` block, recorded because a step's INPUTS are as much a part of what it
-    // does as its run body, and one assertion could not be written without them: the
-    // trusted checkout's `ref:` lives there, and until now the only way to assert on it
-    // was to match the whole file -- which any step carrying the same string satisfies.
-    // Collected as raw lines, not parsed into a map: nothing needs the keys separately,
-    // and a parsed map would commit this parser to a YAML reader it does not have.
-    const withMatch = line.match(/^(\s*)with:\s*$/);
-    if (withMatch) {
-      inWith = true;
-      withIndent = withMatch[1].length;
-      continue;
-    }
-    if (inWith) {
-      const indent = line.match(/^(\s*)/)?.[1].length ?? 0;
-      if (line.trim() === "" || indent > withIndent) {
-        current.inputs.push(line);
-        continue;
-      }
-      inWith = false;
-    }
-    const shellMatch = line.match(/^\s*shell:\s*(\S+)/);
-    if (shellMatch) {
-      current.shell = shellMatch[1];
-      current.shells.push(shellMatch[1]);
-      continue;
-    }
+    block = readStepLine(current, line);
   }
   if (current) steps.push(current);
   return steps;
@@ -362,6 +340,18 @@ describe("release workflow shell contracts", () => {
   // and the scaffolding is where the decision lives. Measured: flipping one scan's
   // `active=1` to `active=0` leaves all four programs byte-identical, so that assertion
   // reported 30/30 on a gate that would never have activated in that scan.
+  // Refuse to complete a partial block with lines from a later block.
+  const findBoundedLine = (lines, start, match, boundary) => {
+    for (let index = start; index < lines.length; index += 1) {
+      if (boundary.test(lines[index])) return -1;
+      if (match.test(lines[index])) return index;
+    }
+    return -1;
+  };
+  const capabilityStart = /^\s*active=0\s*$/;
+  const resolverStart = /^\s*POLICY_DIR="\$\(mktemp -d\)"/;
+  const blockEnd = /^\s*fi\s*$/;
+
   const capabilityBlocks = (text) => {
     const lines = text.split("\n");
     const blocks = [];
@@ -370,24 +360,22 @@ describe("release workflow shell contracts", () => {
       // Skip lines inside a block already collected, so a second `active=0` further
       // down the same arm cannot register as another copy.
       if (i <= afterClose) continue;
-      if (!/^\s*active=0\s*$/.test(lines[i])) continue;
-      let opened = -1;
-      for (let j = i + 1; j < lines.length; j += 1) {
-        if (/^\s*if \[ "\$active" -ne 1 \]; then\s*$/.test(lines[j])) {
-          opened = j;
-          break;
-        }
-      }
+      if (!capabilityStart.test(lines[i])) continue;
+      const opened = findBoundedLine(
+        lines,
+        i + 1,
+        /^\s*if \[ "\$active" -ne 1 \]; then\s*$/,
+        capabilityStart,
+      );
       if (opened === -1) continue;
       // Line-anchored, because the comments inside the arm contain prose that ends in
       // the word `fi` -- the same reason `4175584793` needed a line-anchored close.
-      let closed = -1;
-      for (let j = opened + 1; j < lines.length; j += 1) {
-        if (/^\s*fi\s*$/.test(lines[j])) {
-          closed = j;
-          break;
-        }
-      }
+      const closed = findBoundedLine(
+        lines,
+        opened + 1,
+        blockEnd,
+        capabilityStart,
+      );
       if (closed === -1) continue;
       const body = lines.slice(i, closed + 1);
       blocks.push({
@@ -400,6 +388,21 @@ describe("release workflow shell contracts", () => {
     }
     return blocks;
   };
+
+  it("does not borrow a later capability gate to complete an earlier one", () => {
+    const blocks = capabilityBlocks(
+      [
+        "active=0",
+        "echo incomplete",
+        "active=0",
+        'if [ "$active" -ne 1 ]; then',
+        "  exit 1",
+        "fi",
+      ].join("\n"),
+    );
+    assert.equal(blocks.length, 1);
+    assert.equal(blocks[0].startLine, 3);
+  });
 
   // Ordering, asserted POSITIVELY. Every other check in this file asks whether the verdict
   // reads the right BYTES; this one asks whether the branch has had a chance to change them
@@ -435,6 +438,136 @@ describe("release workflow shell contracts", () => {
   // left all 28 tests green. Nothing in this repository has a run body containing a
   // key-shaped line either -- measured, 0 across `.github/workflows/*.yml` -- so no real
   // workflow exercises it. This fixture does.
+  it("keeps key-shaped lines in run and action input blocks", () => {
+    const workflow = [
+      "jobs:",
+      "  test:",
+      "    steps:",
+      "      - name: action",
+      "        uses: actions/checkout@abc",
+      "        with:",
+      "          if: input, not a step condition",
+      "          uses: input, not an action",
+      "          working-directory: input, not a directory",
+      "          shell: input, not a shell",
+      "          run: input, not a command",
+      "          message: |",
+      "            - name: input, not a step",
+      "      - name: shell",
+      "        shell: bash",
+      "        run: |",
+      "          cat <<'EOF'",
+      "          - name: command text, not a step",
+      "          run: another command line",
+      "          with:",
+      "          EOF",
+      "          echo finish",
+      "        if: always()",
+      "      - name: following",
+      "        run: echo real",
+    ].join("\n");
+
+    const steps = extractSteps(workflow);
+    assert.deepEqual(
+      steps.map((step) => step.name),
+      ["action", "shell", "following"],
+    );
+    const [action, shell, following] = steps;
+    assert.equal(action.uses, "actions/checkout@abc");
+    assert.equal(action.if, null);
+    assert.equal(action.workingDirectory, null);
+    assert.equal(action.shell, null);
+    assert.deepEqual(action.run, []);
+    assert.ok(action.inputs.join("\n").includes("- name: input, not a step"));
+    assert.equal(shell.shell, "bash");
+    assert.equal(shell.if, "always()");
+    assert.ok(
+      shell.run.join("\n").includes("- name: command text, not a step"),
+    );
+    assert.ok(shell.run.join("\n").includes("run: another command line"));
+    assert.ok(shell.run.join("\n").includes("echo finish"));
+    assert.deepEqual(following.run, ["echo real"]);
+  });
+
+  it("keeps unnamed action and run steps separate from the previous step", () => {
+    const steps = extractSteps(
+      [
+        "      - name: first",
+        "        run: echo first",
+        "      - uses: actions/checkout@abcdef",
+        "        with:",
+        "          fetch-depth: 0",
+        "      - run: echo second",
+        "      - name: last",
+        "        run: echo last",
+      ].join("\n"),
+    );
+    assert.equal(steps.length, 4);
+    assert.deepEqual(steps[0].run, ["echo first"]);
+    assert.equal(steps[1].uses, "actions/checkout@abcdef");
+    assert.ok(steps[1].inputs.join("\n").includes("fetch-depth: 0"));
+    assert.deepEqual(steps[2].run, ["echo second"]);
+    assert.deepEqual(steps[3].run, ["echo last"]);
+  });
+
+  it("preserves an action reference followed by a YAML comment", () => {
+    const [step] = extractSteps(
+      [
+        "      - name: local action",
+        "        uses: ./.github/actions/check # local action",
+      ].join("\n"),
+    );
+    assert.equal(step.uses, "./.github/actions/check");
+  });
+
+  it("decodes quoted action and working-directory scalars", () => {
+    const [step] = extractSteps(
+      [
+        "      - name: local action",
+        '        uses: "./.github/actions/check" # local action',
+        "        working-directory: 'scan-target' # checkout",
+      ].join("\n"),
+    );
+    assert.equal(step.uses, "./.github/actions/check");
+    assert.equal(step.workingDirectory, "scan-target");
+  });
+
+  it("decodes supported escapes and rejects unsupported quoted path encodings", () => {
+    assert.equal(
+      stepPathValue('"\\u002e/.github/actions/check"'),
+      "./.github/actions/check",
+    );
+    assert.equal(stepPathValue("'path''with-quote'"), "path'with-quote");
+    assert.throws(() => stepPathValue('"\\x2e/.github/actions/check"'));
+  });
+
+  it("keeps folded and chomped YAML run bodies inside their step", () => {
+    for (const indicator of [">", ">-", "|+"]) {
+      const [step] = extractSteps(
+        [
+          "      - name: folded",
+          `        run: ${indicator}`,
+          "          ./scripts/ci/branch-helper.sh",
+        ].join("\n"),
+      );
+      assert.match(step.run.join("\n"), /scripts\/ci\/branch-helper\.sh/);
+    }
+  });
+
+  it("continues a block after an outdented YAML comment", () => {
+    const [step] = extractSteps(
+      [
+        "      - name: script",
+        "        run: |",
+        "  # workflow comment",
+        "          ./scripts/ci/branch-helper.sh",
+        "        shell: bash",
+      ].join("\n"),
+    );
+    assert.match(step.run.join("\n"), /scripts\/ci\/branch-helper\.sh/);
+    assert.equal(step.shell, "bash");
+  });
+
   it("does not read a step key out of a run: | body", () => {
     const steps = extractSteps(
       [
@@ -515,7 +648,7 @@ describe("release workflow shell contracts", () => {
     assert.deepEqual(next.run, ["echo second"]);
   });
 
-it("treats a pre-verdict scripts/ci path as the hazard whatever launches it", () => {
+  it("treats a pre-verdict scripts/ci path as the hazard whatever launches it", () => {
     // PRE_VERDICT_SCRIPTS_CI names no launcher. It used to be a list of them:
     //
     //     (?:node|npx|bun|deno|sh|bash|zsh|python3?|ruby|perl)\s[^\n]*scripts\/ci\/
@@ -856,33 +989,15 @@ it("treats a pre-verdict scripts/ci path as the hazard whatever launches it", ()
       let afterClose = -1;
       for (let i = 0; i < lines.length; i += 1) {
         if (i <= afterClose) continue;
-        if (!/^\s*POLICY_DIR="\$\(mktemp -d\)"/.test(lines[i])) continue;
-        let closed = -1;
-        // The block ends at the `fi` that closes the DIVERGENCE GUARD, not at the first
-        // `fi` after POLICY_DIR. The block holds three `if` blocks in sequence and the
-        // first one closes on the `cat-file` failure; stopping there excludes the
-        // `cmp -s` guard, which is the part the block exists for. Measured: a first-`fi`
-        // version of this extractor returned 13 lines, and a copy whose divergence guard
-        // had been rewritten still compared equal.
-        let guard = -1;
-        for (let j = i + 1; j < lines.length; j += 1) {
-          // Never run past the capability gate, which is a different block entirely.
-          if (/^\s*active=0\s*$/.test(lines[j])) break;
-          if (/cmp -s /.test(lines[j])) {
-            guard = j;
-            break;
-          }
-        }
-        if (guard !== -1) {
-          for (let j = guard + 1; j < lines.length; j += 1) {
-            // Line-anchored for the reason `4175584793` needed one -- prose above ends
-            // in the word `fi`.
-            if (/^\s*fi\s*$/.test(lines[j])) {
-              closed = j;
-              break;
-            }
-          }
-        }
+        if (!resolverStart.test(lines[i])) continue;
+        // The divergence guard, not the preceding cat-file guard, ends this
+        // resolver; stop before any subsequent resolver or capability block.
+        const nextBlock = /^\s*(?:active=0\s*$|POLICY_DIR="\$\(mktemp -d\)")/;
+        const guard = findBoundedLine(lines, i + 1, /cmp -s /, nextBlock);
+        const closed =
+          guard === -1
+            ? -1
+            : findBoundedLine(lines, guard + 1, blockEnd, nextBlock);
         if (closed === -1) continue;
         blocks.push({
           text: lines.slice(i, closed + 1).join("\n"),
@@ -892,6 +1007,19 @@ it("treats a pre-verdict scripts/ci path as the hazard whatever launches it", ()
       }
       return blocks;
     };
+
+    const incompleteResolver = resolverBlocks(
+      [
+        'POLICY_DIR="$(mktemp -d)"',
+        "echo incomplete",
+        'POLICY_DIR="$(mktemp -d)"',
+        'if ! cmp -s "$POLICY_TMP" target; then',
+        "  exit 1",
+        "fi",
+      ].join("\n"),
+    );
+    assert.equal(incompleteResolver.length, 1);
+    assert.equal(incompleteResolver[0].startLine, 3);
 
     const resolverBlocksFound = resolverBlocks(scan);
     assert.equal(
@@ -1837,6 +1965,46 @@ it("treats a pre-verdict scripts/ci path as the hazard whatever launches it", ()
       /if:\s*github\.event_name == 'pull_request'\s*\n\s*env:\s*\n\s*HEAD_REPO:/,
       "the strip step must be gated on pull_request and compare HEAD_REPO",
     );
+  });
+
+  it("validates the release tag before writing GitHub outputs", (t) => {
+    const command = extractSteps(release)
+      .find((step) => step.name === "Resolve tag name")
+      ?.run.join("\n");
+    assert.ok(command);
+    const cwd = mkdtempSync(join(tmpdir(), "release-tag-output-"));
+    t.after(() => rmSync(cwd, { recursive: true, force: true }));
+    const output = join(cwd, "output");
+    const execute = (tag) => {
+      writeFileSync(output, "");
+      const result = spawnSync("bash", ["-e", "-c", command], {
+        cwd,
+        env: {
+          ...process.env,
+          INPUT_TAG: tag,
+          INPUT_VERSION: "1.2.3+build.1",
+          GITHUB_OUTPUT: output,
+        },
+        encoding: "utf8",
+      });
+      return { status: result.status, output: readFileSync(output, "utf8") };
+    };
+    assert.deepEqual(execute(""), {
+      status: 0,
+      output:
+        "tag_name=mausVoice-v1.2.3+build.1\nrelease_name=mausVoice v1.2.3+build.1\n",
+    });
+    assert.deepEqual(execute("custom/tag"), {
+      status: 0,
+      output: "tag_name=custom/tag\nrelease_name=mausVoice custom/tag\n",
+    });
+    for (const invalid of [
+      "valid\nrelease_name=injected",
+      "valid\rspoof",
+      "invalid..tag",
+    ]) {
+      assert.deepEqual(execute(invalid), { status: 1, output: "" });
+    }
   });
 
   it("does not duplicate a step's shell key", () => {

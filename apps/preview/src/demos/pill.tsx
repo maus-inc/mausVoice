@@ -227,8 +227,8 @@ export const ToneSelectDemo = () => (
       </Matrix>
     </DemoSection>
     <DemoSection
-      title="TranscriptionToneMenu pattern (real MenuPopover + ListTile)"
-      hint="Row menus use MenuPopoverBuilder with the same Add/Edit rows as ToneSelect."
+      title="Generic tone menu (real MenuPopover + ListTile)"
+      hint="Example tone rows use MenuPopoverBuilder; this is not a desktop call site."
     >
       <Matrix>
         <State label="menu" wide>

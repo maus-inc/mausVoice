@@ -1,4 +1,13 @@
-import { readFileSync, readdirSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import ts from "typescript";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -20,43 +29,232 @@ import { describe, expect, it } from "vitest";
  *
  * The sweep is deliberately constructor-agnostic. An earlier version of this listed
  * `new OpenAI(`, `new Anthropic(` and `new Groq(` and skipped any file not containing one of
- * them, which silently skipped `azure-openai.utils.ts` -- a site that carries the same
- * `retry()` call and the same comment. So it matches `new <Anything>({` whose options object
- * contains a `fetch:` key, which is what makes a client ours.
+ * them, which silently skipped `azure-openai.utils.ts`. The sweep inspects each constructor
+ * whose literal options include a `fetch` property and known SDK imports, without trusting
+ * comments or nearby code. Non-literal options for a known SDK fail closed.
  */
 const SRC = join(import.meta.dirname);
 
-const sourceFiles = readdirSync(SRC).filter(
-  (name) => name.endsWith(".ts") && !name.endsWith(".test.ts"),
-);
+type Site = { file: string; line: number; ctor: string; safe: boolean };
 
-type Site = { file: string; line: number; ctor: string };
+/** Static property names include quoted and computed string-literal keys. */
+function propertyName(name: ts.PropertyName): string | null {
+  if (ts.isIdentifier(name) || ts.isStringLiteral(name)) return name.text;
+  if (ts.isComputedPropertyName(name) && ts.isStringLiteral(name.expression)) {
+    return name.expression.text;
+  }
+  return null;
+}
 
-const clientSites = (): Site[] => {
-  const sites: Site[] = [];
-  for (const file of sourceFiles) {
-    const lines = readFileSync(join(SRC, file), "utf8").split("\n");
-    for (let i = 0; i < lines.length; i += 1) {
-      const ctor = /^\s*(?:return |const \w+ = )?new (\w+)\(\{/.exec(
-        lines[i] ?? "",
-      );
-      if (!ctor) continue;
-      const window: string[] = [];
-      for (let j = i; j < Math.min(i + 30, lines.length); j += 1) {
-        window.push(lines[j] ?? "");
-        if (/^\s*\}\);\s*$/.test(lines[j] ?? "")) break;
-      }
-      // A `fetch:` in the options object is what makes the constructor an HTTP client that
-      // we own, and therefore one whose retry behaviour is this package's decision.
-      if (!window.some((w) => w.includes("fetch:"))) continue;
-      sites.push({ file, line: i + 1, ctor: ctor[1] ?? "?" });
+/** The final effective maxRetries must be literal zero, not shadowed by a spread. */
+function retryPolicy(options: ts.ObjectLiteralExpression) {
+  let hasFetch = false;
+  let safe = false;
+  for (const property of options.properties) {
+    if (ts.isSpreadAssignment(property)) {
+      safe = false;
+      continue;
+    }
+    const key = propertyName(property.name);
+    if (key === null) safe = false;
+    if (key === "fetch") hasFetch = true;
+    if (key === "maxRetries") {
+      safe =
+        ts.isPropertyAssignment(property) &&
+        ts.isNumericLiteral(property.initializer) &&
+        Number(property.initializer.text) === 0;
     }
   }
-  return sites;
+  return { hasFetch, safe };
+}
+
+const SDK_EXPORTS: Record<string, readonly string[]> = {
+  openai: ["OpenAI", "AzureOpenAI"],
+  "@anthropic-ai/sdk": ["Anthropic"],
+  "groq-sdk": ["Groq"],
+  "groq-sdk/index": ["Groq"],
 };
+
+/** Collect local aliases for known SDK class exports. */
+function addSdkBindings(
+  clients: Set<string>,
+  clause: ts.ImportClause,
+  exports: readonly string[],
+) {
+  if (clause.name) clients.add(clause.name.text);
+  const bindings = clause.namedBindings;
+  if (!bindings) return;
+  if (ts.isNamespaceImport(bindings)) {
+    for (const name of exports) clients.add(`${bindings.name.text}.${name}`);
+    return;
+  }
+  for (const item of bindings.elements) {
+    if (
+      !item.isTypeOnly &&
+      exports.includes((item.propertyName ?? item.name).text)
+    ) {
+      clients.add(item.name.text);
+    }
+  }
+}
+
+/** Recognize imported SDKs even when a client omits its custom fetch. */
+function knownSdkClients(source: ts.SourceFile): Set<string> {
+  const clients = new Set<string>();
+  for (const node of source.statements) {
+    if (
+      !ts.isImportDeclaration(node) ||
+      !ts.isStringLiteral(node.moduleSpecifier)
+    )
+      continue;
+    const exports = SDK_EXPORTS[node.moduleSpecifier.text];
+    const clause = node.importClause;
+    if (exports && clause && !clause.isTypeOnly)
+      addSdkBindings(clients, clause, exports);
+  }
+  return clients;
+}
+
+function objectOptions(
+  value: ts.Expression | undefined,
+): ts.ObjectLiteralExpression | null {
+  while (
+    value &&
+    (ts.isParenthesizedExpression(value) ||
+      ts.isAsExpression(value) ||
+      ts.isTypeAssertionExpression(value) ||
+      ts.isSatisfiesExpression(value) ||
+      ts.isNonNullExpression(value))
+  ) {
+    value = value.expression;
+  }
+  return value && ts.isObjectLiteralExpression(value) ? value : null;
+}
+
+/** Inspect actual constructor option properties rather than nearby text or comments. */
+function clientSitesFromSource(file: string, text: string): Site[] {
+  const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
+  const sites: Site[] = [];
+  const known = knownSdkClients(source);
+  const visit = (node: ts.Node) => {
+    if (ts.isNewExpression(node)) {
+      const ctor = node.expression.getText(source);
+      const options = objectOptions(node.arguments?.[0]);
+      const policy = options ? retryPolicy(options) : null;
+      if (policy?.hasFetch || known.has(ctor)) {
+        sites.push({
+          file,
+          line:
+            source.getLineAndCharacterOfPosition(node.getStart(source)).line +
+            1,
+          ctor,
+          safe: policy?.safe ?? false,
+        });
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return sites;
+}
+
+function sourceFiles(dir = SRC): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(dir, entry.name);
+    if (entry.isSymbolicLink())
+      throw new Error(`Unexpected source link: ${path}`);
+    if (entry.isDirectory()) {
+      return entry.name === "__tests__" ? [] : sourceFiles(path);
+    }
+    return entry.isFile() &&
+      /\.(?:[cm]?ts|tsx)$/.test(entry.name) &&
+      !/\.(?:test|spec)\./.test(entry.name)
+      ? [path]
+      : [];
+  });
+}
+
+const clientSites = () =>
+  sourceFiles().flatMap((file) =>
+    clientSitesFromSource(file, readFileSync(file, "utf8")),
+  );
 
 describe("SDK clients do not retry behind the shared helper", () => {
   const sites = clientSites();
+
+  it("does not count comments, nested properties, or later spreads as retry policy", () => {
+    const fixtures = [
+      `new SDK({ fetch: myFetch, /* maxRetries: 0, */ })`,
+      `new SDK({ fetch: myFetch, nested: { maxRetries: 0 }, })`,
+      `new SDK({ fetch: myFetch, maxRetries: 0, ...overrides })`,
+      `new SDK({ fetch: myFetch, maxRetries: 0, maxRetries: 2 })`,
+    ];
+    for (const source of fixtures) {
+      expect(clientSitesFromSource("fixture.ts", source)).toMatchObject([
+        { safe: false },
+      ]);
+    }
+  });
+
+  it("finds multiline constructors and validates the final retry option", () => {
+    const source = `new SDK(\n{\n  fetch,\n  ...defaults,\n  maxRetries: 0\n}\n)`;
+    expect(clientSitesFromSource("fixture.ts", source)).toMatchObject([
+      { safe: true },
+    ]);
+  });
+
+  it("does not trust unknown computed keys after the retry option", () => {
+    expect(
+      clientSitesFromSource(
+        "fixture.ts",
+        `new SDK({fetch, maxRetries: 0, [name]: 2})`,
+      ),
+    ).toMatchObject([{ safe: false }]);
+    expect(
+      clientSitesFromSource(
+        "fixture.ts",
+        `new SDK({fetch, [name]: 2, ["maxRetries"]: 0})`,
+      ),
+    ).toMatchObject([{ safe: true }]);
+  });
+
+  it("finds nested source files without scanning tests", () => {
+    const root = mkdtempSync(join(tmpdir(), "retry-source-"));
+    try {
+      mkdirSync(join(root, "providers"));
+      for (const name of [
+        "provider.ts",
+        "provider.test.ts",
+        "provider.spec.tsx",
+        "providers/second.ts",
+      ]) {
+        writeFileSync(join(root, name), "");
+      }
+      expect(
+        sourceFiles(root)
+          .map((file) => file.slice(root.length + 1))
+          .sort(),
+      ).toEqual(["provider.ts", join("providers", "second.ts")].sort());
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("also checks known SDK clients without a custom fetch", () => {
+    const source = `
+      import Client from "openai";
+      import { AzureOpenAI as Azure } from "openai";
+      import * as AnthropicSDK from "@anthropic-ai/sdk";
+      new Client({ maxRetries: 0 });
+      new Azure(options);
+      new AnthropicSDK.Anthropic({});
+    `;
+    expect(clientSitesFromSource("fixture.ts", source)).toMatchObject([
+      { ctor: "Client", safe: true },
+      { ctor: "Azure", safe: false },
+      { ctor: "AnthropicSDK.Anthropic", safe: false },
+    ]);
+  });
 
   it("finds the clients at all", () => {
     // A sweep that matches nothing passes everything below it, so its subject is pinned
@@ -66,19 +264,7 @@ describe("SDK clients do not retry behind the shared helper", () => {
   });
 
   it("sets maxRetries: 0 on every one", () => {
-    const offenders = sites.filter((site) => {
-      const lines = readFileSync(join(SRC, site.file), "utf8").split("\n");
-      const window: string[] = [];
-      for (
-        let j = site.line - 1;
-        j < Math.min(site.line + 29, lines.length);
-        j += 1
-      ) {
-        window.push(lines[j] ?? "");
-        if (/^\s*\}\);\s*$/.test(lines[j] ?? "")) break;
-      }
-      return !window.some((w) => w.includes("maxRetries: 0,"));
-    });
+    const offenders = sites.filter((site) => !site.safe);
     expect(
       offenders.map((s) => `${s.file}:${s.line} (${s.ctor})`),
       "each of these leaves the SDK's own retry layer enabled underneath retry()",

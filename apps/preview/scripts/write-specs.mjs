@@ -431,7 +431,7 @@ Patch-only. Persist: edit \`ConfirmDialog.tsx\` → four call sites. Radii follo
 
 - Status: **reused** — real components from \`${D}/components/common/MenuPopover.tsx\` + MuiPopover theme.
 - Source of truth: \`${D}/theme.ts\` (MuiPopover), \`${D}/components/common/MenuPopover.tsx\`.
-- Used in: ConversationListItem, ContextMenu, Header, AppStylingRow, ManualAddStyle, ManualStylingRow, TranscriptionToneMenu.
+- Used in: ConversationListItem, ContextMenu, Header, AppStylingRow, ManualAddStyle, ManualStylingRow.
 
 ## Purpose
 Anchor menu of ListTile rows + dividers + hover submenus + generic builders.
@@ -931,14 +931,14 @@ Real Chips/buttons with localized labels; overlay buttons are \`<button>\` with 
 ## Live-spec mapping
 Docs-only recreation. Persist: edit \`ToolPermissionPrompt.tsx\` → ToolPermissionCard.
 `],
-["tone-select", `# ToneSelect · TranscriptionToneMenu (\`tone-select\`)
+["tone-select", `# ToneSelect · menu example (\`tone-select\`)
 
-- Status: **recreated slice** — store/action-bound (tone CRUD, prefs). Recreation copies the render code; fixture tones; menus compose the REAL MenuPopoverBuilder + ListTile.
-- Source of truth: \`${D}/components/tones/ToneSelect.tsx\`, \`${D}/components/transcriptions/TranscriptionToneMenu.tsx\`.
-- Used in: AppStylingLayout, AppStylingRow, TranscriptionToneMenu.
+- Status: **recreated slice** — store/action-bound (tone CRUD, prefs). Recreation uses fixture tones; a separate generic menu example uses the real MenuPopoverBuilder.
+- Source of truth: \`${D}/components/tones/ToneSelect.tsx\`.
+- Used in: AppStylingLayout, AppStylingRow.
 
 ## Purpose
-Style picker (select + row-menu variants) with create/edit affordances.
+Style picker with create/edit affordances, plus a generic tone-menu example.
 
 ## Visual tokens
 FormControl + displayEmpty Select; “New style” row (Add small); tone rows: name + global Public tooltip (“cannot be edited”) or Edit IconButton (stops propagation, closes menu, opens editor dialog); system tones show neither; empty value renders “Default” / “Default ({toneName})”.
@@ -953,7 +953,7 @@ empty default / selected / disabled / global/system/custom rows / menu open-clos
 MUI select semantics + labels; per-row edit buttons stop propagation (verify focus return after dialog).
 
 ## Live-spec mapping
-Docs-only slice. Radii/motion follow popover-menu + list-tile + text-field specs (live there). Persist: edit \`ToneSelect.tsx\` → styling + transcription call sites.
+Docs-only slice. Radii/motion follow popover-menu + list-tile + text-field specs (live there). Persist: edit \`ToneSelect.tsx\` → styling call sites.
 `],
 ["mic-check", `# MicrophoneSelector · MicrophoneTester (\`mic-check\`)
 

@@ -5,7 +5,10 @@ import sitemap from "@astrojs/sitemap";
 
 const docsSite = "https://maus-inc.github.io";
 const docsBase = "/mausVoice/docs/";
-const socialImage = `${docsSite}${docsBase}assets/mausvoice-banner.png`;
+const socialImage = new URL(
+  "assets/mausvoice-banner.png",
+  new URL(docsBase, docsSite),
+).href;
 
 /**
  * @param {Record<string, string>} attrs

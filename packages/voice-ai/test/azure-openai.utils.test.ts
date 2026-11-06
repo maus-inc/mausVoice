@@ -59,6 +59,50 @@ describe("azureOpenAIGenerateText deployment coverage", () => {
     vi.resetModules();
   });
 
+  it.each([
+    { response: { choices: [], usage: undefined }, text: "", tokensUsed: 0 },
+    {
+      response: {
+        choices: [{ message: { content: "one two" } }],
+        usage: undefined,
+      },
+      text: "one two",
+      tokensUsed: 2,
+    },
+    {
+      response: {
+        choices: [{ message: { content: null } }],
+        usage: { total_tokens: 0 },
+      },
+      text: "",
+      tokensUsed: 0,
+    },
+    {
+      response: {
+        choices: [{ message: { content: "hello" } }],
+        usage: { total_tokens: 0 },
+      },
+      text: "hello",
+      tokensUsed: 0,
+    },
+  ])(
+    "preserves response text and usage fallback",
+    async ({ response, text, tokensUsed }) => {
+      const create = vi.fn().mockResolvedValue(response);
+      mockChatCompletions(create);
+      const { azureOpenAIGenerateText } =
+        await import("../src/azure-openai.utils");
+      await expect(
+        azureOpenAIGenerateText({
+          apiKey: "k",
+          endpoint: "https://test.azure.com",
+          deploymentName: "gpt-4o",
+          prompt: "hi",
+        }),
+      ).resolves.toEqual({ text, tokensUsed });
+    },
+  );
+
   // User-deployed models (Llama, Phi, ...) are not in the Azure allow-list, so
   // the request must use json_object or the provider rejects it outright.
   it.each([

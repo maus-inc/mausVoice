@@ -30,7 +30,6 @@ export default defineConfig({
       "@emotion/react",
       "@emotion/styled",
       "framer-motion",
-      "morphicons",
       "lucide",
     ],
   },

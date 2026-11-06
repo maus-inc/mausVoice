@@ -408,24 +408,10 @@ const trimLabelEdges = (label: string): string => {
  * and `max_tokens`, which the holder rule rejects for the same reason the
  * snake_case ones are rejected.
  *
- * WHAT THE TEXT FORM STILL DOES NOT CATCH, and why it is left that way: a
- * QUALIFIED camelCase label. `openaiApiKey`, `azureApiKey`, `authToken`,
- * `signingKey` and `userPassword` all reach `unknownToMessage` in the clear in a
- * message, while none leak as an object key. Those five are examples from the
- * same measured set as the "7 of 15" above -- not a second, smaller measurement
- * -- and a wider probe found every qualified camelCase name it tried leaking,
- * 8 of 8. An unqualified camelCase name -- `apiKey`, `secretKey`, `clientSecret`
- * -- matches on both forms.
- *
- * The obvious way to close it is to let the text form's tier-1 qualifier take a
- * separator-less prefix, i.e. `(?:[a-z0-9]+[_-]*)*`. Measured: that does not fail
- * a test, it HANGS the suite. The separator is what bounds each iteration, and
- * making it optional turns the qualifier into a nested quantifier that
- * backtracks catastrophically on ordinary input. So the gap is not held open by
- * an oversight and `monkey` is not the only reason -- removing the separator is
- * worse than the leak, and the pinned test
- * `leaves the text half of that gap exactly as it is today` is what will catch
- * anyone trying it and finding out the slow way.
+ * The free-text pass uses the same anchored check on complete candidate labels.
+ * It does not widen the unanchored credential regex, which would backtrack on
+ * separator-free prefixes and match suffixes inside ordinary words.
+
  */
 const CAMEL_BOUNDARY = /([a-z0-9])([A-Z])/g;
 const foldCamelLabel = (label: string): string =>
@@ -443,6 +429,9 @@ const foldSeparators = (label: string): string => label.replace(SPACE_RUN, "_");
 const isCredentialLabel = (label: string): boolean => {
   const trimmed = trimLabelEdges(label);
   return (
+    // Bare `token` is a common credential field, while plural `tokens` is
+    // commonly a usage count. Keep it outside the qualified-name pattern.
+    trimmed.toLowerCase() === "token" ||
     ANCHORED_CREDENTIAL_LABEL.test(trimmed) ||
     ANCHORED_CREDENTIAL_LABEL.test(foldCamelLabel(trimmed)) ||
     ANCHORED_CREDENTIAL_LABEL.test(foldSeparators(foldCamelLabel(trimmed)))
@@ -821,6 +810,9 @@ const LABEL_SEPARATORS = /[ _-]/g;
  * that buys and what it costs.
  */
 const isTokenShapedLabel = (joined: string): boolean => {
+  // Only the bare label is newly single-token. Treating every suffix `token`
+  // this way would leak the tail of a free-form `secret_token` value.
+  if (joined === "token") return true;
   for (const name of TOKEN_SHAPED_SECRET_ALIASES) {
     if (joined.endsWith(name)) return true;
   }
@@ -869,20 +861,124 @@ const splitTrailingClosers = (value: string): [string, string] => {
   return [value.slice(0, end), value.slice(end)];
 };
 
-export const redactSensitiveTokens = (message: string): string =>
-  message
+// Match an entire identifier before inspecting it. The anchored credential rule
+// can then fold camelCase without searching for credential suffixes inside words.
+const LABEL_CANDIDATE = /\b[A-Za-z0-9_]+\b(?="?\s*[:=])/g;
+
+const credentialValueStart = (message: string, start: number): number => {
+  const end = tokenEnd(message, start);
+  if (!AUTHORIZATION_SCHEMES.has(message.slice(start, end).toLowerCase()))
+    return start;
+  const next = spaceEnd(message, end);
+  return next > end && next < message.length ? next : start;
+};
+
+const credentialValueEnd = (
+  message: string,
+  start: number,
+  freeForm: boolean,
+): number => {
+  let end = start;
+  while (end < message.length && message[end] !== "," && message[end] !== ";") {
+    if (!freeForm && SCHEME_WHITESPACE.test(message[end])) break;
+    end += 1;
+  }
+  return end;
+};
+
+type CredentialValue = { end: number; tail: string };
+
+// The existing bearer pass keeps the scheme for token-shaped labels.
+const deferToBearerPass = (
+  message: string,
+  start: number,
+  valueStart: number,
+  freeForm: boolean,
+): boolean =>
+  !freeForm &&
+  valueStart > start &&
+  message.slice(start, tokenEnd(message, start)).toLowerCase() === "bearer";
+
+const readCamelCredentialValue = (
+  message: string,
+  label: string,
+  start: number,
+): CredentialValue | null => {
+  if (start === message.length) return null;
+  const valueStart = credentialValueStart(message, start);
+  if (message[valueStart] === '"' || message[valueStart] === "'") {
+    const end = quotedValueEnd(message, valueStart);
+    return { end: end === valueStart ? message.length : end, tail: "" };
+  }
+  const freeForm = isFreeFormSecretLabel(label);
+  if (deferToBearerPass(message, start, valueStart, freeForm)) return null;
+  const end = credentialValueEnd(message, valueStart, freeForm);
+  const [value, tail] = splitTrailingClosers(message.slice(valueStart, end));
+  return !value || describesField(value) ? null : { end, tail };
+};
+
+const readCamelCredential = (
+  message: string,
+  label: string,
+  index: number,
+  bareToken: boolean,
+): { prefix: string; end: number; tail: string } | null => {
+  const isBareToken = label.toLowerCase() === "token";
+  if (isBareToken !== bareToken) return null;
+  // A bare token may follow punctuation in a URL or document, but a token
+  // suffix after a hyphen can be a metric such as `max-token`.
+  if (isBareToken && message[index - 1] === "-") return null;
+  if (ANCHORED_CREDENTIAL_LABEL.test(label) || !isCredentialLabel(label))
+    return null;
+  let separator = index + label.length;
+  if (message[separator] === '"') separator += 1;
+  separator = spaceEnd(message, separator);
+  const value = readCamelCredentialValue(
+    message,
+    label,
+    spaceEnd(message, separator + 1),
+  );
+  return value
+    ? { prefix: message.slice(index, separator + 1), ...value }
+    : null;
+};
+
+const redactCamelCredentials = (message: string, bareToken = false): string => {
+  const pieces: string[] = [];
+  let cursor = 0;
+  for (const match of message.matchAll(LABEL_CANDIDATE)) {
+    if (match.index < cursor) continue;
+    const credential = readCamelCredential(
+      message,
+      match[0],
+      match.index,
+      bareToken,
+    );
+    if (!credential) continue;
+    pieces.push(
+      message.slice(cursor, match.index),
+      credential.prefix,
+      REDACTED,
+      credential.tail,
+    );
+    cursor = credential.end;
+  }
+  if (cursor === 0) return message;
+  pieces.push(message.slice(cursor));
+  return pieces.join("");
+};
+
+const redactLabeledCredentials = (message: string): string => {
+  const scrubbed = redactCamelCredentials(message)
     // First, and only for the labels whose value is free-form. `LABELED_SECRET_BARE`
     // captures one token, which is the whole of a token-shaped credential but
     // only the first word of a passphrase or a key blob; this pass re-reads the
     // run from where that token ended and takes it to the separator.
     //
-    // It runs before every pass that writes the marker, and that ordering is the
-    // point rather than an accident. A pass that ran after them would have to
-    // recognise the marker to tell an already-redacted value from a credential
-    // that begins with the marker's own characters, and any such test has a
-    // hole: `password: [redacted] hunter2` is either a finished redaction or a
-    // passphrase starting with a bracket. Reading the value first means the
-    // marker is never there to be confused, so both cases redact.
+    // The earlier camelCase scanner reads each newly recognized value whole.
+    // This pass runs before the other marker-writing patterns. A later pass
+    // cannot tell an existing marker from a credential that starts with those
+    // characters, so `password: [redacted] hunter2` must be read here whole.
     .replace(
       FREE_FORM_SECRET_BARE,
       (match, label: string, sep: string, rawValue: string) => {
@@ -942,6 +1038,62 @@ export const redactSensitiveTokens = (message: string): string =>
         return `${label}${sep}${REDACTED}${tail}`;
       },
     );
+  // Run bare-token recognition last: consuming a nested `password:` or
+  // `Bearer` as a token value first would hide its label and leak its tail.
+  return redactCamelCredentials(scrubbed, true);
+};
+
+// The credential patterns allow separator-delimited qualifiers. Searching for
+// those patterns at every word boundary in an untrusted run such as `auth-`
+// repeated thousands of times is quadratic. Check the run in one pass and
+// omit the diagnostic instead of risking a stall or exposing a partial secret.
+const MAX_LABEL_RUN_SEGMENTS = 128;
+const MAX_POTENTIAL_LABEL_STARTS = 16;
+const MAX_HOLDER_LENGTH = Math.max(
+  ...KEY_HOLDERS.map((holder) => holder.length),
+);
+const LABEL_RUN_PARTS = /[a-z0-9]+|[^a-z0-9]+/gi;
+const isLabelHolder = (part: string): boolean =>
+  part.length <= MAX_HOLDER_LENGTH && KEY_HOLDERS.includes(part.toLowerCase());
+
+const hasOversizedLabelRun = (message: string): boolean => {
+  let segments = 0;
+  let potentialStarts = 0;
+  for (const [part] of message.matchAll(LABEL_RUN_PARTS)) {
+    if (!/[a-z0-9]/i.test(part[0])) {
+      if (part === "-") potentialStarts += 1;
+      else if (part !== " " && part !== "_") {
+        segments = 0;
+        potentialStarts = 0;
+      }
+    } else {
+      segments += 1;
+      if (isLabelHolder(part)) potentialStarts += 1;
+    }
+    if (
+      segments > MAX_LABEL_RUN_SEGMENTS &&
+      potentialStarts > MAX_POTENTIAL_LABEL_STARTS
+    )
+      return true;
+  }
+  return false;
+};
+
+export const redactSensitiveTokens = (message: string): string => {
+  // All label-based patterns require a colon or equals sign. Bearer and known
+  // provider prefixes still need the independent passes on separator-free text.
+  if (!message.includes(":") && !message.includes("=")) {
+    return message
+      .replace(BEARER_TOKEN, "Bearer [redacted]")
+      .replace(PROVIDER_KEY_PREFIX, REDACTED);
+  }
+  if (
+    message.length > MAX_LABEL_RUN_SEGMENTS * 2 &&
+    hasOversizedLabelRun(message)
+  )
+    return REDACTED;
+  return redactLabeledCredentials(message);
+};
 
 /**
  * Cuts the message at a character boundary rather than at a code-unit offset.
@@ -1019,6 +1171,23 @@ const redactJsonForm = (
   }
 };
 
+/** Keep distinct entries if redaction makes their original keys identical. */
+const uniqueRedactedKey = (
+  out: Record<string, unknown>,
+  counts: Map<string, number>,
+  key: string,
+): string => {
+  const sanitized = redactSensitiveTokens(key);
+  let index = counts.get(sanitized) ?? 1;
+  let candidate = index === 1 ? sanitized : `${sanitized} [${index}]`;
+  while (Object.prototype.hasOwnProperty.call(out, candidate)) {
+    index += 1;
+    candidate = `${sanitized} [${index}]`;
+  }
+  counts.set(sanitized, index + 1);
+  return candidate;
+};
+
 const redactUnknown = (
   value: unknown,
   depth: number,
@@ -1045,9 +1214,16 @@ const redactUnknown = (
       if (Array.isArray(collection)) {
         return collection.map((item) => redactUnknown(item, depth + 1, seen));
       }
-      const out: Record<string, unknown> = {};
+      // Preserve an own `__proto__` as data instead of invoking the legacy
+      // prototype setter and silently dropping that part of the diagnostic.
+      const out: Record<string, unknown> = Object.create(null) as Record<
+        string,
+        unknown
+      >;
+      const keyCounts = new Map<string, number>();
       for (const [key, child] of Object.entries(collection)) {
-        out[key] = isCredentialLabel(key)
+        const safeKey = uniqueRedactedKey(out, keyCounts, key);
+        out[safeKey] = isCredentialLabel(key)
           ? REDACTED
           : redactUnknown(child, depth + 1, seen);
       }

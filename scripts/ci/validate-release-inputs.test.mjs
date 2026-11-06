@@ -85,6 +85,39 @@ describe("release dispatcher inputs", () => {
     }
   });
 
+  it("validates optional sections and does not confuse build metadata with prereleases", () => {
+    for (const version of [
+      "1.2.3+build-foo",
+      "1.2.3+001",
+      "1.2.3-0+build.01",
+      "1.2.3-alpha-beta+build-foo",
+    ])
+      assert.equal(isStrictSemver(version), true, version);
+    assert.equal(releaseVersionIsPrerelease("1.2.3+build-foo"), false);
+    assert.equal(releaseVersionIsPrerelease("1.2.3-0+build.01"), true);
+
+    for (const version of [
+      "1.2.3+",
+      "1.2.3+foo+bar",
+      "1.2.3+foo..bar",
+      "1.2.3-rc..1",
+      "1.2.3-01+build",
+      "1.2.3-rc+",
+      "1.2.3.4",
+      "1.2.3\n",
+      null,
+      undefined,
+      123,
+    ]) {
+      assert.equal(isStrictSemver(version), false, String(version));
+      assert.equal(isPrereleaseVersion(version), false, String(version));
+      assert.throws(
+        () => releaseVersionIsPrerelease(version),
+        /Invalid version/,
+      );
+    }
+  });
+
   it("rejects prerelease-channel mismatches and malformed boolean flags", () => {
     assert.throws(
       () =>

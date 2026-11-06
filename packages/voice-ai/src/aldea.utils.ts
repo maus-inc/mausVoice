@@ -1,6 +1,22 @@
-import { HttpError, retry, countWords } from "@maus-inc/utilities";
+import { audioToArrayBuffer } from "./audio-convert.utils";
+import { retry, countWords } from "@maus-inc/utilities";
+import {
+  assertPrivateProviderResponseOk,
+  parsePrivateProviderJson,
+  requestPrivateTransport,
+} from "./provider-response.utils";
 
 const ALDEA_API_URL = "https://api.aldea.ai/v1/listen";
+
+/** Do not expose transport failures that may contain private request fragments. */
+const requestAldea = (url: string, init: RequestInit): Promise<Response> =>
+  requestPrivateTransport(
+    url,
+    init,
+    globalThis.fetch,
+    "Aldea",
+    "Unable to connect to Aldea",
+  );
 
 export type AldeaTranscriptionArgs = {
   apiKey: string;
@@ -40,34 +56,37 @@ export const aldeaTranscribeAudio = async ({
 }: AldeaTranscriptionArgs): Promise<AldeaTranscribeAudioOutput> => {
   return retry({
     retries: 3,
+    signal,
     isRetryable: () => !signal?.aborted,
     fn: async () => {
       signal?.throwIfAborted();
-      const bodyData =
-        blob instanceof ArrayBuffer ? blob : (blob.buffer as ArrayBuffer);
+      const bodyData = audioToArrayBuffer(blob);
       const url = new URL(ALDEA_API_URL);
       if (language && language !== "auto") {
         url.searchParams.set("language", language);
       }
-      const response = await fetch(url.toString(), {
+      const response = await requestAldea(url.toString(), {
         method: "POST",
         headers: {
           Authorization: `Bearer ${apiKey.trim()}`,
         },
         body: bodyData,
+        // A 307/308 redirect can otherwise forward the private audio body to
+        // a different origin even if fetch strips the Authorization header.
+        redirect: "error",
         signal,
       });
 
-      if (!response.ok) {
-        const errorText = await response.text().catch(() => "Unknown error");
-        throw new HttpError(
-          response.status,
-          `Aldea API request failed with status ${response.status}: ${errorText}`,
-          { retryAfter: response.headers.get("retry-after") },
-        );
-      }
+      assertPrivateProviderResponseOk(
+        response,
+        "Aldea API request failed with status",
+      );
 
-      const data: AldeaResponse = await response.json();
+      const data = await parsePrivateProviderJson<AldeaResponse>(
+        response,
+        "Aldea",
+        signal,
+      );
 
       const transcript =
         data?.results?.channels?.[0]?.alternatives?.[0]?.transcript;
@@ -91,18 +110,17 @@ export const aldeaTestIntegration = async ({
   apiKey,
 }: AldeaTestIntegrationArgs): Promise<boolean> => {
   try {
-    const response = await fetch(ALDEA_API_URL, {
+    const response = await requestAldea(ALDEA_API_URL, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey.trim()}`,
       },
       body: new ArrayBuffer(0),
+      redirect: "error",
     });
 
     return response.ok || response.status === 400;
-  } catch (error) {
-    throw new Error(
-      `Aldea integration test failed: ${error instanceof Error ? error.message : "Unknown error"}`,
-    );
+  } catch {
+    throw new Error("Aldea integration test failed: unable to connect");
   }
 };

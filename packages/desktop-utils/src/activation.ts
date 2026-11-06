@@ -8,8 +8,11 @@ export class ActivationController {
   private pressTimestamp: number | null = null;
   private lastReleaseTimestamp: number | null = null;
   private toggleInProgress = false;
+  private resetVersion = {};
   private onActivateRef: (() => void) | null = null;
   private onDeactivateRef: (() => void) | null = null;
+  private deactivation: AbortController | null = null;
+  private activatingSignal: AbortSignal | null = null;
   private readonly holdToTalk: boolean;
   // Serializes activate/deactivate side effects. The dictation callbacks are async at runtime
   // (start/stopRecording), so a quick hold-to-talk press+release could otherwise fire
@@ -51,6 +54,15 @@ export class ActivationController {
     return this.lastReleaseTimestamp !== null;
   }
 
+  get resetGeneration(): object {
+    return this.resetVersion;
+  }
+
+  /** Available synchronously inside the activation callback for this press. */
+  get activationDeactivationSignal(): AbortSignal | null {
+    return this.activatingSignal;
+  }
+
   private clearPendingDeactivation(): void {
     if (this.deactivateTimer) {
       clearTimeout(this.deactivateTimer);
@@ -71,7 +83,19 @@ export class ActivationController {
     this.clearPendingDeactivation();
     this._isActive = true;
     this.pressTimestamp = timestamp;
-    this.runSerialized(this.onActivateRef);
+    const version = this.resetVersion;
+    const activate = this.onActivateRef;
+    const deactivation = new AbortController();
+    this.deactivation = deactivation;
+    this.runSerialized(() => {
+      if (version !== this.resetVersion) return;
+      this.activatingSignal = deactivation.signal;
+      try {
+        return activate?.();
+      } finally {
+        this.activatingSignal = null;
+      }
+    });
   }
 
   private doDeactivate(): void {
@@ -84,7 +108,14 @@ export class ActivationController {
     this.pressTimestamp = null;
 
     if (wasActive) {
-      this.runSerialized(this.onDeactivateRef);
+      const version = this.resetVersion;
+      const deactivate = this.onDeactivateRef;
+      const deactivation = this.deactivation;
+      this.deactivation = null;
+      deactivation?.abort();
+      this.runSerialized(() => {
+        if (version === this.resetVersion) return deactivate?.();
+      });
     }
   }
 
@@ -158,7 +189,11 @@ export class ActivationController {
     this.doDeactivate();
   }
 
+  // A forced reset retires queued callbacks without running deactivation.
+  // The owner must release any work already dispatched by an active callback.
   forceReset(): void {
+    this.resetVersion = {};
+    this.deactivation = null;
     this._isActive = false;
     this._isLocked = false;
     this.ignoreNextActivation = false;

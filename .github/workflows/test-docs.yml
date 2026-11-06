@@ -14,6 +14,12 @@ on:
       - "scripts/ci/pr37-contracts.test.mjs"
       - "scripts/ci/release-shell-contracts.test.mjs"
       - "scripts/ci/generate-release-body.mjs"
+      - "scripts/ci/artifact-files.mjs"
+      - "scripts/ci/script-entry.mjs"
+      - "scripts/ci/release-notes.mjs"
+      - "scripts/ci/release-notes.test.mjs"
+      - "scripts/ci/auto-release-notes.mjs"
+      - "scripts/ci/auto-release-notes.test.mjs"
       - "scripts/ci/build-updater-manifest.mjs"
       - "scripts/ci/updater-manifest.test.mjs"
       - "scripts/ci/build-changelog.mjs"
@@ -60,10 +66,16 @@ jobs:
         # Docs are static and do not need dependency lifecycle scripts in CI.
         # Keeping scripts disabled also prevents install-time code execution.
         run: pnpm install --filter docs... --frozen-lockfile --ignore-scripts
+      - name: Verify docs image optimization
+        run: node --test apps/docs/scripts/image-service.test.mjs
       - name: Run PR28 contract tests
         run: node --test scripts/ci/pr28-contracts.test.mjs
       - name: Run updater manifest tests
         run: node --test scripts/ci/updater-manifest.test.mjs
+      - name: Run release notes tests
+        run: node --test scripts/ci/release-notes.test.mjs
+      - name: Run automatic release notes tests
+        run: node --test scripts/ci/auto-release-notes.test.mjs
       - name: Run changelog artifact tests
         run: node --test scripts/ci/build-changelog.test.mjs
       - name: Run release shell contract tests
@@ -72,6 +84,8 @@ jobs:
         run: pnpm --filter docs run check-types
       - name: Build docs
         run: pnpm --filter docs run build
+      - name: Verify built homepage card artwork
+        run: node --test apps/docs/scripts/homepage-cards.test.mjs
       - name: Verify internal docs links
         working-directory: apps/docs
         run: |
@@ -90,8 +104,8 @@ jobs:
             dist/sitemap-index.xml
           grep -Fq 'https://maus-inc.github.io/mausVoice/docs/assets/mausvoice-banner.png' \
             ../../index.html
-          grep -Fq 'docsBase}assets/mausvoice-banner.png' \
-            astro.config.mjs
+          grep -Fq 'https://maus-inc.github.io/mausVoice/docs/assets/mausvoice-banner.png' \
+            dist/getting-started/introduction/index.html
       - name: Assemble Pages artifact (landing page + docs + assets)
         run: |
           rm -rf publish

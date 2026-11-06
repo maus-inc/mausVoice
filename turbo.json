@@ -48,6 +48,14 @@
     "dev": {
       "cache": false,
       "persistent": true
+    },
+    "@maus-inc/preview#build": {
+      "dependsOn": ["^build", "desktop#build"],
+      "inputs": ["$TURBO_DEFAULT$", ".env*"],
+      "outputs": [".next/**", "!.next/cache/**", "dist/**", "lib/**"]
+    },
+    "@maus-inc/preview#check-types": {
+      "dependsOn": ["^build", "desktop#build"]
     }
   }
 }

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { getEventListeners } from "node:events";
 import type { LlmChatInput, LlmMessage, LlmStreamEvent } from "@maus-inc/types";
 import { AgentLoop } from "./agent-loop";
 import type { AgentLlmProvider, AgentTool } from "./types";
@@ -166,6 +167,37 @@ describe("AgentLoop", () => {
     });
   });
 
+  it("redacts credentials in tool-reported failures before events and history", async () => {
+    const secret = ["mock", "sensitive", "value"].join("-");
+    const tool: AgentTool = {
+      ...echoTool(),
+      execute: async () => ({
+        success: false,
+        failureReason: `failed api_key=${secret}`,
+      }),
+    };
+    const { provider, calls } = scriptedProvider([
+      [toolCallEvent("call", "echo")],
+      [{ type: "text-delta", text: "Recovered" }],
+    ]);
+    const events = await runLoop(
+      new AgentLoop({ provider, tools: [tool], systemPrompt: "sys" }),
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "tool-call-result",
+        result: "failed api_key=[redacted]",
+        isError: true,
+      }),
+    );
+    expect(calls[1].messages).toContainEqual({
+      role: "tool",
+      toolCallId: "call",
+      content: "failed api_key=[redacted]",
+    });
+    expect(JSON.stringify(events)).not.toContain(secret);
+  });
+
   it("catches a tool that throws and still continues the loop", async () => {
     const throwing: AgentTool = {
       name: "boom",
@@ -197,6 +229,26 @@ describe("AgentLoop", () => {
     const events = await runLoop(loop);
     expectFinish(events, { reason: "error", error: "network down" });
   });
+
+  it.each(["throw", "event"] as const)(
+    "redacts provider credentials in a %s failure",
+    async (kind) => {
+      const message = `provider refused api_key=${["mock", "sensitive", "value"].join("-")}`;
+      const provider: AgentLlmProvider = {
+        async *streamChat() {
+          if (kind === "throw") throw new Error(message);
+          yield { type: "error", error: message };
+        },
+      };
+      const events = await runLoop(
+        new AgentLoop({ provider, tools: [], systemPrompt: "sys" }),
+      );
+      expectFinish(events, {
+        reason: "error",
+        error: "provider refused api_key=[redacted]",
+      });
+    },
+  );
 
   it("stops at maxIterations with a visible terminal reason", async () => {
     // Every turn requests the tool; the loop must not silently stop, it
@@ -506,7 +558,7 @@ describe("AgentLoop", () => {
         () => new Promise<{ success: true; result: string }>(() => {}),
       ),
     } as unknown as AgentTool;
-    const { provider } = scriptedProvider([
+    const { provider, calls } = scriptedProvider([
       [
         {
           type: "tool-call",
@@ -539,11 +591,14 @@ describe("AgentLoop", () => {
     await vi.waitFor(() => {
       expect(hanging.execute).toHaveBeenCalled();
     });
+    const signal = calls[0].signal!;
+    expect(getEventListeners(signal, "abort")).toHaveLength(1);
     loop.abort();
 
     // The generator has to resume on its own, with nothing but the abort to
     // release it.
     const result = await suspended;
+    expect(getEventListeners(signal, "abort")).toHaveLength(0);
     expect(result.value).toMatchObject({
       type: "tool-call-result",
       toolCallId: "call_hang",
@@ -557,6 +612,38 @@ describe("AgentLoop", () => {
     expect(
       messages?.some((m) => m.role === "tool" && m.toolCallId === "call_hang"),
     ).toBe(true);
+  });
+
+  it("removes each tool abort listener after the tool settles", async () => {
+    const { provider, calls } = scriptedProvider([
+      [toolCallEvent("first", "echo"), toolCallEvent("second", "echo")],
+      [{ type: "text-delta", text: "done" }],
+    ]);
+    const loop = new AgentLoop({
+      provider,
+      tools: [echoTool()],
+      systemPrompt: "sys",
+    });
+    const gen = loop.run([{ role: "user", content: "go" }]);
+    expect((await gen.next()).value).toMatchObject({ type: "iteration-start" });
+    expect((await gen.next()).value).toMatchObject({ type: "tool-call-start" });
+    const signal = calls[0].signal;
+    expect(signal).toBeDefined();
+    expect((await gen.next()).value).toMatchObject({
+      type: "tool-call-result",
+      toolCallId: "first",
+    });
+    expect(getEventListeners(signal!, "abort")).toHaveLength(0);
+    expect((await gen.next()).value).toMatchObject({ type: "tool-call-start" });
+    expect((await gen.next()).value).toMatchObject({
+      type: "tool-call-result",
+      toolCallId: "second",
+    });
+    expect(getEventListeners(signal!, "abort")).toHaveLength(0);
+    const rest = await collectEvents(gen);
+    expect(rest).toContainEqual(
+      expect.objectContaining({ type: "finish", reason: "stop" }),
+    );
   });
 
   it("keeps waiting on a tool that settles before the abort", async () => {
@@ -606,6 +693,51 @@ describe("AgentLoop", () => {
       isError: false,
     });
     loop.abort();
+  });
+
+  it("pairs the current and remaining tool calls when aborted after a start", async () => {
+    const { provider } = scriptedProvider([
+      [toolCallEvent("first", "echo"), toolCallEvent("second", "echo")],
+    ]);
+    const execute = vi.fn(async () => ({
+      success: true as const,
+      result: "unexpected",
+    }));
+    const loop = new AgentLoop({
+      provider,
+      tools: [{ ...echoTool(), execute }],
+      systemPrompt: "sys",
+    });
+    const gen = loop.run([{ role: "user", content: "go" }]);
+    expect((await gen.next()).value).toMatchObject({ type: "iteration-start" });
+    expect((await gen.next()).value).toMatchObject({
+      type: "tool-call-start",
+      toolCallId: "first",
+    });
+    loop.abort();
+    expect((await gen.next()).value).toMatchObject({
+      type: "tool-call-result",
+      toolCallId: "first",
+      result: "Tool execution aborted",
+      isError: true,
+    });
+    expect((await gen.next()).value).toMatchObject({
+      type: "tool-call-result",
+      toolCallId: "second",
+      result: "Tool execution aborted",
+      isError: true,
+    });
+    const finish = (await gen.next()).value;
+    expect(finish).toMatchObject({ type: "finish", reason: "aborted" });
+    expect(
+      (finish as { messages: LlmMessage[] }).messages.filter(
+        (message) => message.role === "tool",
+      ),
+    ).toEqual([
+      { role: "tool", toolCallId: "first", content: "Tool execution aborted" },
+      { role: "tool", toolCallId: "second", content: "Tool execution aborted" },
+    ]);
+    expect(execute).not.toHaveBeenCalled();
   });
 
   it("runs one tool call at a time and keeps the model's order", async () => {

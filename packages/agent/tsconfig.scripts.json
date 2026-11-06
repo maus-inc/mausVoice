@@ -1,0 +1,9 @@
+{
+  "extends": "@maus-inc/typescript-config/package-config.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "types": ["node"]
+  },
+  "include": ["src", "scripts"],
+  "exclude": ["dist", "node_modules"]
+}

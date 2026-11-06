@@ -21,6 +21,55 @@ import {
   updaterRulePattern,
 } from "./check-gitleaks-config.mjs";
 
+describe("bounded updater regex execution", () => {
+  it("preserves ordinary matching and rejects invalid or oversized patterns", async () => {
+    const { testBoundedRegex } = await import("./bounded-regex.mjs");
+    assert.deepEqual(testBoundedRegex("^abc$", ["abc", "abcd", ""]), [
+      true,
+      false,
+      false,
+    ]);
+    assert.throws(() => testBoundedRegex("(", ["abc"]), /regex is not valid/);
+    assert.throws(
+      () => testBoundedRegex("x".repeat(65_537), ["abc"]),
+      /maximum length/,
+    );
+  });
+
+  it("bounds the standalone history fixture runner too", (t) => {
+    const root = mkdtempSync(join(tmpdir(), "gitleaks-history-bounded-"));
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    const dir = join(root, "scripts", "ci");
+    mkdirSync(dir, { recursive: true });
+    for (const file of [
+      "test-secret-history-scan.mjs",
+      "check-gitleaks-config.mjs",
+      "bounded-regex.mjs",
+    ]) {
+      copyFileSync(new URL(`./${file}`, import.meta.url), join(dir, file));
+    }
+    const pattern = `(${PREAMBLE}|${PREAMBLE_B64})(?:[\\s\\S]+)+~`;
+    writeFileSync(
+      join(root, "gitleaks.toml"),
+      `[[rules]]\nid = "tauri-minisign-updater-private-key"\nregex = '${pattern}'\n`,
+    );
+    const result = spawnSync(
+      process.execPath,
+      [join(dir, "test-secret-history-scan.mjs")],
+      { encoding: "utf8", timeout: 5_000 },
+    );
+    assert.notEqual(result.status, null, "history runner must not hang");
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /timed out/i);
+  });
+
+  it("passes the pattern as data rather than executable code", async () => {
+    const { testBoundedRegex } = await import("./bounded-regex.mjs");
+    const pattern = '\"; throw 7; //';
+    assert.deepEqual(testBoundedRegex(pattern, ['\"; throw 7; //']), [true]);
+  });
+});
+
 describe("stripTomlComments", () => {
   it("drops full-line and trailing comments", () => {
     assert.equal(
@@ -49,6 +98,16 @@ describe("stripTomlComments", () => {
       stripTomlComments(toml),
       `regex = '''\nfoo # not a comment\n'''  \nx = """\n# also content\n""" \n`,
     );
+  });
+
+  it("keeps trailing quotes in TOML multiline strings without hiding later comments", () => {
+    for (const quote of ['"', "'"]) {
+      for (const count of [4, 5]) {
+        const text = `value = ${quote.repeat(3)}text${quote.repeat(count)} # gone\n[extend] # gone\n`;
+        const expected = `value = ${quote.repeat(3)}text${quote.repeat(count)} \n[extend] \n`;
+        assert.equal(stripTomlComments(text), expected);
+      }
+    }
   });
 
   it("does not treat a quote inside a comment as a string opener", () => {
@@ -187,6 +246,10 @@ describe("updaterRulePattern", () => {
     assert.equal(updaterRulePattern(`${idLine}\nentropy = 3.5\n`), null);
   });
 
+  it("returns null for a missing regex value instead of throwing", () => {
+    assert.equal(updaterRulePattern(`${idLine}\nregex = `), null);
+  });
+
   it("never attributes a later rule's regex to the updater rule", () => {
     const toml = `[[rules]]\n${idLine}\nentropy = 3.5\n\n[[rules]]\nid = "another-rule"\nregex = 'dW50cnVzdGVk'\n`;
     assert.equal(updaterRulePattern(toml), null);
@@ -275,6 +338,47 @@ describe("updaterRulePattern", () => {
     );
   });
 
+  it("supports quoted TOML keys for the rule id and regex", () => {
+    for (const quote of ["'", '"']) {
+      const toml = [
+        "[[rules]]",
+        `${quote}id${quote} = "tauri-minisign-updater-private-key"`,
+        `${quote}regex${quote} = '${RULE_PATTERN}'`,
+      ].join("\n");
+      assert.equal(updaterRulePattern(toml), RULE_PATTERN);
+    }
+  });
+
+  it("finds the regex regardless of its order within the same rule", () => {
+    const toml = [
+      "[[rules]]",
+      `regex = '${RULE_PATTERN}'`,
+      'id = "tauri-minisign-updater-private-key"',
+      "[rules.allowlist]",
+      'description = "nested"',
+    ].join("\n");
+    assert.equal(updaterRulePattern(toml), RULE_PATTERN);
+  });
+
+  it("does not treat a nested allowlist's regex as the detector regex", () => {
+    const toml = [
+      "[[rules]]",
+      'id = "tauri-minisign-updater-private-key"',
+      "[rules.allowlist]",
+      `regex = '${RULE_PATTERN}'`,
+    ].join("\n");
+    assert.equal(updaterRulePattern(toml), null);
+  });
+
+  it("does not mistake the end of another key for the updater rule id", () => {
+    const toml = [
+      "[[rules]]",
+      'valid = "tauri-minisign-updater-private-key"',
+      `regex = '${RULE_PATTERN}'`,
+    ].join("\n");
+    assert.equal(updaterRulePattern(toml), null);
+  });
+
   it("still finds the detector when a description quotes the rule's own id", () => {
     const toml = [
       "[[rules]]",
@@ -299,6 +403,18 @@ describe("hasUseDefaultFalse quoted keys", () => {
 });
 
 describe("tomlTableBody [extend]", () => {
+  it("ignores a header inside a comment", () => {
+    assert.equal(
+      tomlTableBody("# [extend]\nuseDefault = true\n", "[extend]"),
+      "",
+    );
+  });
+
+  it("does not end a table at a nested multiline array", () => {
+    const raw = `[allowlist]\nignored = [\n  ["innocent"]\n]\nregexes = ['${PREAMBLE}']\n[extend]\nuseDefault = true\n`;
+    assert.match(tomlTableBody(raw, "[allowlist]"), /regexes =/);
+  });
+
   it("reads useDefault from [extend] and ignores a dotted sibling", () => {
     const withExtend = [
       "[extend]",
@@ -333,7 +449,7 @@ describe("the guard rejects a rule that cannot detect a real key", () => {
   //
   // So the previous rule matched no real Tauri updater key, while passing every test
   // written against it. These cases are the regression net for exactly that.
-  const run = (t, toml) => {
+  const run = (t, toml, timeout) => {
     const root = mkdtempSync(join(tmpdir(), "gitleaks-config-regress-"));
     t.after(() => rmSync(root, { recursive: true, force: true }));
     const dir = join(root, "scripts", "ci");
@@ -343,10 +459,15 @@ describe("the guard rejects a rule that cannot detect a real key", () => {
       new URL("./check-gitleaks-config.mjs", import.meta.url),
       script,
     );
+    copyFileSync(
+      new URL("./bounded-regex.mjs", import.meta.url),
+      join(dir, "bounded-regex.mjs"),
+    );
     writeFileSync(join(root, "gitleaks.toml"), toml);
     return spawnSync(process.execPath, [script], {
       cwd: root,
       encoding: "utf8",
+      timeout,
     });
   };
 
@@ -361,6 +482,87 @@ describe("the guard rejects a rule that cannot detect a real key", () => {
       "",
     ].join("\n");
 
+  it("rejects a config whose updater id appears only in a different key", (t) => {
+    const bad = config(`(${PREAMBLE}|${PREAMBLE_B64})`).replace(
+      "\nid = ",
+      "\nvalid = ",
+    );
+    const result = run(t, bad);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /could not find regex for id/);
+  });
+
+  it("does not lose a forbidden allowlist regex after a nested array", (t) => {
+    const pattern = `(${PREAMBLE}|${PREAMBLE_B64})`;
+    const toml = [
+      "[extend]",
+      "useDefault = true",
+      "[allowlist]",
+      "ignored = [",
+      '  ["innocent"]',
+      "]",
+      `regexes = ['${PREAMBLE}']`,
+      "[[rules]]",
+      'id = "tauri-minisign-updater-private-key"',
+      `regex = '${pattern}'`,
+    ].join("\n");
+    const result = run(t, toml);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /EXEMPTED/);
+  });
+
+  it("rejects a detector whose only regex belongs to a nested allowlist", (t) => {
+    const pattern = `(${PREAMBLE}|${PREAMBLE_B64})`;
+    const toml = [
+      "[extend]",
+      "useDefault = true",
+      "[[rules]]",
+      'id = "tauri-minisign-updater-private-key"',
+      "[rules.allowlist]",
+      `regex = '${pattern}'`,
+    ].join("\n");
+    const result = run(t, toml);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /could not find regex for id/);
+  });
+
+  for (const assignment of [
+    "useDefault = true",
+    "'useDefault' = true",
+    '"useDefault" = false',
+  ]) {
+    it(`rejects ${assignment} within the global allowlist`, (t) => {
+      const pattern = `(${PREAMBLE}|${PREAMBLE_B64})`;
+      const toml = [
+        "[extend]",
+        "useDefault = true",
+        "[allowlist]",
+        assignment,
+        "[[rules]]",
+        'id = "tauri-minisign-updater-private-key"',
+        `regex = '${pattern}'`,
+      ].join("\n");
+      const result = run(t, toml);
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, /nested inside \[allowlist\]/);
+    });
+  }
+
+  it("accepts an allowlist before extend and prose mentioning useDefault", (t) => {
+    const pattern = `(${PREAMBLE}|${PREAMBLE_B64})`;
+    const toml = [
+      "[allowlist]",
+      'description = "do not place useDefault here"',
+      "[extend]",
+      "useDefault = true",
+      "[[rules]]",
+      'id = "tauri-minisign-updater-private-key"',
+      `regex = '${pattern}'`,
+    ].join("\n");
+    const result = run(t, toml);
+    assert.equal(result.status, 0, result.stderr);
+  });
+
   it("rejects a base64-only rule, which detects no real key file", (t) => {
     const result = run(t, config(PREAMBLE_B64));
     assert.notEqual(result.status, 0, "a base64-only rule must be refused");
@@ -373,8 +575,40 @@ describe("the guard rejects a rule that cannot detect a real key", () => {
     assert.match(result.stderr, /Keep the base64 arm/);
   });
 
+  it("bounds catastrophic backtracking in an untrusted updater rule", (t) => {
+    const pattern = `(${PREAMBLE}|${PREAMBLE_B64})(?:[\\s\\S]+)+~`;
+    const result = run(t, config(pattern), 5_000);
+    assert.notEqual(
+      result.status,
+      null,
+      "guard must stop itself rather than hang",
+    );
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /timed out/i);
+  });
+
   it("accepts both arms", (t) => {
     const result = run(t, config(`(${PREAMBLE}|${PREAMBLE_B64})`));
+    assert.equal(result.status, 0, result.stderr);
+  });
+
+  it("allows keyword pre-filters on other rules and mentions inside descriptions", (t) => {
+    const pattern = `(${PREAMBLE}|${PREAMBLE_B64})`;
+    const toml = [
+      "[extend]",
+      "useDefault = true",
+      "[[rules]]",
+      'id = "tauri-minisign-updater-private-key"',
+      'description = """Documentation:',
+      'keywords = ["example"]',
+      '"""',
+      `regex = '${pattern}'`,
+      "[[rules]]",
+      'id = "another-rule"',
+      'regex = "another"',
+      'keywords = ["another"]',
+    ].join("\n");
+    const result = run(t, toml);
     assert.equal(result.status, 0, result.stderr);
   });
 
@@ -404,7 +638,7 @@ describe("the guard rejects a rule that cannot detect a real key", () => {
     ["bare", 'keywords = ["rsign"]'],
     ["single-quoted", "'keywords' = [\"rsign\"]"],
     ["double-quoted", '"keywords" = ["rsign"]'],
-    ["padded", "keywords   =   [\"rsign\"]"],
+    ["padded", 'keywords   =   ["rsign"]'],
     ["indented", '  keywords = ["rsign"]'],
   ]) {
     it(`rejects a ${label} \`keywords\` pre-filter`, (t) => {
@@ -466,6 +700,21 @@ describe("CLI requires explicit built-in rule extension", () => {
       "[extend]\n  [extend.other]\nuseDefault = true\n",
       1,
     ],
+    [
+      "inline table is not an extension option",
+      "[extend]\nmetadata = { useDefault = true }\n",
+      1,
+    ],
+    [
+      "quoted inline table key is not an extension option",
+      '[extend]\nmetadata = { "useDefault" = true }\n',
+      1,
+    ],
+    [
+      "dotted key is not an extension option",
+      "[extend]\nmetadata.useDefault = true\n",
+      1,
+    ],
     ["explicit extension", "[extend]\nuseDefault = true\n", 0],
     ["quoted option", '[extend]\n"useDefault" = true\n', 0],
     [
@@ -484,6 +733,10 @@ describe("CLI requires explicit built-in rule extension", () => {
       copyFileSync(
         new URL("./check-gitleaks-config.mjs", import.meta.url),
         script,
+      );
+      copyFileSync(
+        new URL("./bounded-regex.mjs", import.meta.url),
+        join(dir, "bounded-regex.mjs"),
       );
       writeFileSync(
         join(root, "gitleaks.toml"),

@@ -42,4 +42,4 @@ Root scripts: `pnpm run build`, `lint`, `check-types`, `test`, `format`, `gen:bi
 
 `scripts/` and `.github/scripts/` prepare bindings, sidecars, release text, casks, and CI environments. `.github/workflows/` separates build, lint, desktop tests, sidecar tests, docs/Pages, and releases.
 
-`pnpm-workspace.yaml` still names `apps/firebase/functions`, but that directory is absent. Some package metadata also points at older repository coordinates. Treat the checked-out source graph and root lockfile as authoritative; do not invent an `enterprise/` or Firebase application because an old path/type remains.
+Some package metadata points at older repository coordinates. Treat the checked-out source graph and root lockfile as authoritative; do not invent an `enterprise/` or Firebase application because an old path or type remains.

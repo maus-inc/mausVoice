@@ -20,7 +20,9 @@
 
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { collectArtifactFiles } from "./artifact-files.mjs";
+import { runIfDirect } from "./script-entry.mjs";
+export { isDirectInvocation } from "./script-entry.mjs";
 import { readReleaseNotes } from "./release-notes.mjs";
 
 // Tauri resolves an installer URL by `{os}-{arch}-{installer}` first and then
@@ -95,43 +97,63 @@ export function assetUrl(repository, tag, basename) {
   )}/${encodeURIComponent(basename)}`;
 }
 
-async function collectFiles(dir) {
-  const out = [];
-  const queue = [dir];
-  while (queue.length) {
-    const current = queue.pop();
-    // A directory that is gone is not an error: the artifact root itself may be
-    // absent, and a matrix job that produced nothing leaves nothing to walk. Any
-    // other failure means the bundles in there exist but cannot be read, and
-    // treating that as an empty directory would publish a manifest missing
-    // platforms rather than failing the release.
-    const entries = await fs
-      .readdir(current, { withFileTypes: true })
-      .catch((error) => {
-        if (error.code === "ENOENT") return [];
-        throw error;
-      });
-    for (const entry of entries) {
-      const full = path.join(current, entry.name);
-      if (entry.isDirectory()) {
-        queue.push(full);
-      } else if (entry.isFile()) {
-        out.push(full);
-      }
-    }
-  }
-  return out;
-}
-
 /**
  * Pairs every updater bundle with the detached signature Tauri wrote beside
  * it and returns the `platforms` map for the manifest.
  *
  * @throws when a platform's bundle exists but its `.sig` is missing.
  */
+/** Release assets are uploaded by basename, so collisions cannot be addressed safely. */
+function assertUniqueUpdaterBasenames(bundles) {
+  const seen = new Map();
+  for (const file of bundles) {
+    if (!INSTALLER_TYPES.some((type) => type.match(path.basename(file))))
+      continue;
+    const basename = path.basename(file);
+    if (seen.has(basename) && seen.get(basename) !== file) {
+      throw new Error(`Duplicate updater asset basename: ${basename}`);
+    }
+    seen.set(basename, file);
+  }
+}
+
+/** Read each selected detached signature before publishing the manifest. */
+async function resolveSignatures(platforms) {
+  const signatures = new Map();
+  for (const target of Object.values(platforms)) {
+    const signaturePath = target.signature;
+    if (!signatures.has(signaturePath)) {
+      const signature = (await fs.readFile(signaturePath, "utf8")).trim();
+      if (!signature)
+        throw new Error(`Empty updater signature: ${signaturePath}`);
+      signatures.set(signaturePath, signature);
+    }
+    target.signature = signatures.get(signaturePath);
+  }
+}
+
+/** Prefer a signed bundle, while retaining diagnostics for unsigned-only types. */
+function signedBundleForType(type, bundles, signatures, missing) {
+  const candidates = bundles.filter((file) => type.match(path.basename(file)));
+  const bundle = candidates.find((file) => signatures.has(`${file}.sig`));
+  if (!bundle && candidates.length)
+    missing.push(...candidates.map((file) => path.basename(file)));
+  return bundle;
+}
+
+/** The documented precedence keeps fallback selection independent of file order. */
+function recordBareCandidate(type, entry, bareCandidates) {
+  if (!type.bare) return;
+  const existing = bareCandidates[type.bare];
+  if (!existing || type.barePrecedence < existing.precedence) {
+    bareCandidates[type.bare] = { precedence: type.barePrecedence, entry };
+  }
+}
+
 export function buildPlatforms(files, { repository, tag }) {
   const bundles = files.filter((file) => !file.endsWith(".sig"));
   const signatures = new Set(files.filter((file) => file.endsWith(".sig")));
+  assertUniqueUpdaterBasenames(bundles);
 
   const platforms = {};
   // Bare fallback candidates: bareKey -> { precedence, entry }. The lowest
@@ -140,23 +162,8 @@ export function buildPlatforms(files, { repository, tag }) {
   const missing = [];
 
   for (const type of INSTALLER_TYPES) {
-    // The candidates for this type, partitioned once. The installer and the
-    // updater bundle share a prefix, so both a bare `.msi` and a `.msi.zip`
-    // match this type and only one of them is signed; picking the first match
-    // instead made the outcome depend on the order the directory walk happened
-    // to produce.
-    const candidates = bundles.filter((file) => type.match(path.basename(file)));
-    // Prefer a candidate that actually has a signature beside it.
-    const bundle = candidates.find((file) => signatures.has(`${file}.sig`));
-    if (!bundle) {
-      // No candidate at all means this platform simply produced nothing, which
-      // is normal for a matrix job that did not run. Only a candidate that
-      // exists without a signature is the error the manifest must refuse.
-      if (candidates.length > 0) {
-        missing.push(...candidates.map((file) => path.basename(file)));
-      }
-      continue;
-    }
+    const bundle = signedBundleForType(type, bundles, signatures, missing);
+    if (!bundle) continue;
 
     const signaturePath = `${bundle}.sig`;
 
@@ -169,12 +176,7 @@ export function buildPlatforms(files, { repository, tag }) {
       platforms[key] = { ...entry };
     }
 
-    if (type.bare) {
-      const existing = bareCandidates[type.bare];
-      if (!existing || type.barePrecedence < existing.precedence) {
-        bareCandidates[type.bare] = { precedence: type.barePrecedence, entry };
-      }
-    }
+    recordBareCandidate(type, entry, bareCandidates);
   }
 
   // Apply the bare fallbacks last so they never clobber a per-installer key.
@@ -193,11 +195,27 @@ export function buildPlatforms(files, { repository, tag }) {
   return platforms;
 }
 
-async function main() {
+function validateReleaseInputs(version, tag, outputPath) {
+  if (!version || !tag) {
+    throw new Error("RELEASE_VERSION and RELEASE_TAG are required");
+  }
+
+  if (
+    isPrerelease(process.env.RELEASE_PRERELEASE) &&
+    path.basename(outputPath) !== "latest-beta.json"
+  ) {
+    // A prerelease must never reach stable-channel clients. The explicit
+    // beta-channel output (latest-beta.json) is the one intentional
+    // prerelease artifact and is allowed through.
+    throw new Error("Refusing to build an updater manifest for a prerelease");
+  }
+}
+
+/** Validate release-channel inputs before reading or writing artifacts. */
+function releaseInputs() {
   const artifactsRoot = path.resolve(process.env.ARTIFACTS_DIR ?? "dist");
   const version = process.env.RELEASE_VERSION ?? "";
   const tag = process.env.RELEASE_TAG ?? "";
-  const notes = await readReleaseNotes();
   // GitHub Actions always sets GITHUB_REPOSITORY, so the fallback only applies
   // to local runs and fixture tests. It is intentionally the upstream repo
   // because shipped clients resolve latest.json from maus-inc/mausVoice — but
@@ -207,21 +225,16 @@ async function main() {
   const repository = process.env.GITHUB_REPOSITORY ?? "maus-inc/mausVoice";
   const outputPath = path.resolve(process.env.OUTPUT_PATH ?? "latest.json");
 
-  if (!version || !tag) {
-    throw new Error("RELEASE_VERSION and RELEASE_TAG are required");
-  }
+  validateReleaseInputs(version, tag, outputPath);
 
-  if (
-    isPrerelease(process.env.RELEASE_PRERELEASE) &&
-    !outputPath.endsWith("latest-beta.json")
-  ) {
-    // A prerelease must never reach stable-channel clients. The explicit
-    // beta-channel output (latest-beta.json) is the one intentional
-    // prerelease artifact and is allowed through.
-    throw new Error("Refusing to build an updater manifest for a prerelease");
-  }
+  return { artifactsRoot, version, tag, repository, outputPath };
+}
 
-  const files = await collectFiles(artifactsRoot);
+async function main() {
+  const { artifactsRoot, version, tag, repository, outputPath } =
+    releaseInputs();
+  const notes = await readReleaseNotes();
+  const files = await collectArtifactFiles(artifactsRoot);
   const platforms = buildPlatforms(files, { repository, tag });
 
   if (Object.keys(platforms).length === 0) {
@@ -232,9 +245,7 @@ async function main() {
   }
 
   // The signature field carries the file's contents, not its path.
-  for (const target of Object.values(platforms)) {
-    target.signature = (await fs.readFile(target.signature, "utf8")).trim();
-  }
+  await resolveSignatures(platforms);
 
   const manifest = {
     version,
@@ -249,26 +260,5 @@ async function main() {
   );
 }
 
-// Convert the command path through Node's URL API rather than concatenating a
-// `file://` string. The latter mis-encodes spaces and produces invalid URLs for
-// drive-letter paths on Windows, causing direct invocations to silently skip.
-export function isDirectInvocation(
-  moduleUrl,
-  scriptPath,
-  windows = process.platform === "win32",
-) {
-  return (
-    Boolean(scriptPath) &&
-    moduleUrl === pathToFileURL(scriptPath, { windows }).href
-  );
-}
-
-// Only run when executed directly, so the tests can import the helpers.
-if (isDirectInvocation(import.meta.url, process.argv[1])) {
-  try {
-    await main();
-  } catch (error) {
-    console.error(error.message);
-    process.exit(1);
-  }
-}
+// Run only for direct invocation; imports expose the helpers without side effects.
+await runIfDirect(import.meta.url, main);

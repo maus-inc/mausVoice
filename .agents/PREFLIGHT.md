@@ -14,6 +14,7 @@ This file is the short form. `AGENTS.md` holds the binding rules, and the
 - [ ] `pnpm run test`
 - [ ] `pnpm run format:check`
 - [ ] `pnpm run test:secret-scan`
+- [ ] `pnpm --silent run fallow:audit --base <target-ref> --format json --quiet` on the final tree. Record the base, verdict, and exit status
 - [ ] `node scripts/ci/verify-skills.mjs` if you touched `.agents/skills/` or `skills-lock.json`
 - [ ] `pnpm gen:bindings` produced no diff, if you touched a Tauri command or `packages/desktop-native-apis`
 
@@ -28,6 +29,11 @@ Touched-package checks, the ones `AGENTS.md` names:
 - [ ] `node --test scripts/ci/*.test.mjs` all passed, if you touched `scripts/ci`
 - [ ] After modifying a built TypeScript package under `packages/`, rebuilt it before checking downstream consumers
 
+Two gates read build output rather than source, so they need their build step first:
+`node --test apps/docs/scripts/*.test.mjs` opens `apps/docs/dist/index.html` and fails
+with `ENOENT` until `pnpm --filter docs run build` has run, and `scripts/check-bindings.sh`
+regenerates `bindings.ts` through `cargo run --example gen_bindings`.
+
 ## Rust checks
 
 If you changed any of the seven Rust workspaces, run the gates for the crates you
@@ -39,10 +45,14 @@ touched. Full detail and the measured results are in `engineering/rust-toolchain
 - [ ] `CARGO_BUILD_JOBS=1 cargo test --locked --lib` in `apps/desktop/src-tauri`
 - [ ] `CARGO_BUILD_JOBS=1 cargo test --locked --manifest-path packages/rust_transcription/Cargo.toml --lib`
 - [ ] `cargo test --locked --manifest-path packages/rust_pill_shared/Cargo.toml`
-- [ ] `xvfb-run -a cargo test --locked --manifest-path packages/rust_gtk_pill/Cargo.toml`
+- [ ] `xvfb-run -a cargo test --locked --manifest-path packages/rust_gtk_pill/Cargo.toml`, or the direct `Xvfb` form below when the sandbox has no `xvfb-run`
 
 `CARGO_BUILD_JOBS=1` stays on the test steps. Parallel linking peaks above the memory
 a small sandbox has and the linker dies with `signal 9`.
+
+The payload ships `Xvfb` but not `xvfb-run`, so on the vendor toolchain start the
+server yourself and point the test at it. `engineering/rust-toolchain.md` has the
+exact commands.
 
 The pin is 1.88.0 and no crate in the tree declares a `rust-version` floor, so
 `--ignore-rust-version` is never needed. Do not add it.

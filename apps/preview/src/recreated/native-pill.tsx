@@ -159,6 +159,157 @@ const paintStageLabel = (
   ctx.fillText(label, opts.rx + opts.pillW / 2, opts.ry + opts.pillH / 2 + 0.5);
 };
 
+type PillGeometry = {
+  rx: number;
+  ry: number;
+  pillW: number;
+  pillH: number;
+  expand: number;
+};
+
+const paintWaveform = (
+  ctx: CanvasRenderingContext2D,
+  { rx, ry, pillW, pillH, expand }: PillGeometry,
+  level: number,
+  wavePhase: number,
+) => {
+  const baseline = ry + pillH / 2;
+  const pad = pillH * 0.1;
+  const waveW = pillW - pad * 2;
+  const segments = Math.max(72, Math.floor(waveW / 2));
+  for (const cfg of WAVES) {
+    const ampF = Math.min(MAX_AMP, Math.max(MIN_AMP, level * cfg.multiplier));
+    const amp = Math.max(1, pillH * 0.75 * ampF);
+    ctx.strokeStyle = `rgba(255,255,255,${(cfg.opacity * expand).toFixed(3)})`;
+    ctx.lineWidth = STROKE;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.beginPath();
+    for (let i = 0; i <= segments; i++) {
+      const tt = i / segments;
+      const x = rx + pad + waveW * tt;
+      const y =
+        baseline +
+        amp *
+          Math.sin(
+            cfg.frequency * tt * Math.PI * 2 + wavePhase + cfg.phaseOffset,
+          );
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+};
+
+type PillPaintState = {
+  phase: PillPhase;
+  hovered: boolean;
+  stageText?: string | null;
+  reduceMotion: boolean | null;
+};
+
+const paintPhase = (
+  ctx: CanvasRenderingContext2D,
+  geometry: PillGeometry,
+  state: PillPaintState,
+  level: number,
+  wavePhase: number,
+  loadOffset: number,
+) => {
+  const { rx, ry, pillW, pillH, expand } = geometry;
+  switch (state.phase) {
+    case "recording":
+      paintWaveform(ctx, geometry, level, wavePhase);
+      break;
+    case "loading": {
+      const stage = (state.stageText ?? "").trim();
+      const [track, indicator] = stage
+        ? [LOAD_DIM_TRACK_ALPHA, LOAD_DIM_IND_ALPHA]
+        : [LOAD_TRACK_ALPHA, LOAD_IND_ALPHA];
+      paintLoadingBar(ctx, {
+        rx,
+        ry,
+        pillW,
+        pillH,
+        loadOffset,
+        reduceMotion: Boolean(state.reduceMotion),
+        trackAlpha: track * expand,
+        indicatorAlpha: indicator * expand,
+      });
+      if (stage) paintStageLabel(ctx, stage, geometry);
+      break;
+    }
+    case "paused": {
+      const barH = 2;
+      const barY = ry + (pillH - barH) / 2;
+      const pad = pillH * 0.1;
+      const tx = rx + pad;
+      const tw = pillW - pad * 2;
+      ctx.fillStyle = `rgba(255,255,255,${(0.1 * expand).toFixed(3)})`;
+      ctx.fillRect(tx, barY, tw, barH);
+      const iw = tw * LOAD_FRAC;
+      ctx.fillStyle = `rgba(255,255,255,${(0.45 * expand).toFixed(3)})`;
+      ctx.fillRect(tx + (tw - iw) / 2, barY, iw, barH);
+      break;
+    }
+    case "idle":
+      break;
+  }
+};
+
+const paintEdges = (
+  ctx: CanvasRenderingContext2D,
+  { rx, ry, pillW, pillH, expand }: PillGeometry,
+) => {
+  const a = 0.9 * expand;
+  const lw = pillW * 0.18;
+  const lg = ctx.createLinearGradient(rx, 0, rx + lw, 0);
+  lg.addColorStop(0, `rgba(0,0,0,${a.toFixed(3)})`);
+  lg.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.fillStyle = lg;
+  ctx.fillRect(rx, ry, lw, pillH);
+  const rs = rx + pillW * 0.85;
+  const rw = pillW * 0.15;
+  const rg = ctx.createLinearGradient(rs, 0, rx + pillW, 0);
+  rg.addColorStop(0, "rgba(0,0,0,0)");
+  rg.addColorStop(1, `rgba(0,0,0,${a.toFixed(3)})`);
+  ctx.fillStyle = rg;
+  ctx.fillRect(rs, ry, rw, pillH);
+};
+
+const paintIdleLabel = (
+  ctx: CanvasRenderingContext2D,
+  { rx, ry, pillW, pillH, expand }: PillGeometry,
+  state: PillPaintState,
+) => {
+  if (expand <= 0.5 || state.phase !== "idle" || !state.hovered) return;
+  ctx.font = "12px Satoshi, system-ui, sans-serif";
+  ctx.fillStyle = `rgba(255,255,255,${expand.toFixed(3)})`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText("Click to dictate", rx + pillW / 2, ry + pillH / 2 + 0.5);
+};
+
+const paintPillContents = (
+  ctx: CanvasRenderingContext2D,
+  geometry: PillGeometry,
+  radius: number,
+  state: PillPaintState,
+  level: number,
+  wavePhase: number,
+  loadOffset: number,
+) => {
+  paintIdleLabel(ctx, geometry, state);
+  if (geometry.expand <= 0.1 || state.phase === "idle") return;
+  const { rx, ry, pillW, pillH } = geometry;
+  ctx.save();
+  roundedRect(ctx, rx, ry, pillW, pillH, radius);
+  ctx.clip();
+  paintPhase(ctx, geometry, state, level, wavePhase, loadOffset);
+  paintEdges(ctx, geometry);
+  ctx.restore();
+};
+
 const nextTargetLevel = (
   phase: PillPhase,
   reduceMotion: boolean | null,
@@ -269,113 +420,15 @@ export const NativePillCanvas = ({
       ctx.fillStyle = `rgba(0,0,0,${bgAlpha.toFixed(3)})`;
       ctx.fill();
 
-      const drawClipped = (fn: () => void) => {
-        ctx.save();
-        roundedRect(ctx, rx, ry, pillW, pillH, radius);
-        ctx.clip();
-        fn();
-        ctx.restore();
-      };
-
-      if (expand > 0.1 && s.phase === "recording") {
-        drawClipped(() => {
-          const baseline = ry + pillH / 2;
-          const pad = pillH * 0.1;
-          const waveW = pillW - pad * 2;
-          const segments = Math.max(72, Math.floor(waveW / 2));
-          for (const cfg of WAVES) {
-            const ampF = Math.min(
-              MAX_AMP,
-              Math.max(MIN_AMP, level * cfg.multiplier),
-            );
-            const amp = Math.max(1, pillH * 0.75 * ampF);
-            ctx.strokeStyle = `rgba(255,255,255,${(cfg.opacity * expand).toFixed(3)})`;
-            ctx.lineWidth = STROKE;
-            ctx.lineCap = "round";
-            ctx.lineJoin = "round";
-            ctx.beginPath();
-            for (let i = 0; i <= segments; i++) {
-              const tt = i / segments;
-              const x = rx + pad + waveW * tt;
-              const y =
-                baseline +
-                amp *
-                  Math.sin(
-                    cfg.frequency * tt * Math.PI * 2 +
-                      wavePhase +
-                      cfg.phaseOffset,
-                  );
-              if (i === 0) ctx.moveTo(x, y);
-              else ctx.lineTo(x, y);
-            }
-            ctx.stroke();
-          }
-        });
-      }
-
-      if (expand > 0.1 && s.phase === "loading") {
-        drawClipped(() => {
-          const stage = (s.stageText ?? "").trim();
-          const [baseTrack, baseInd] = stage
-            ? [LOAD_DIM_TRACK_ALPHA, LOAD_DIM_IND_ALPHA]
-            : [LOAD_TRACK_ALPHA, LOAD_IND_ALPHA];
-          paintLoadingBar(ctx, {
-            rx,
-            ry,
-            pillW,
-            pillH,
-            loadOffset,
-            reduceMotion: Boolean(s.reduceMotion),
-            trackAlpha: baseTrack * expand,
-            indicatorAlpha: baseInd * expand,
-          });
-          if (stage) {
-            paintStageLabel(ctx, stage, { rx, ry, pillW, pillH, expand });
-          }
-        });
-      }
-
-      if (expand > 0.1 && s.phase === "paused") {
-        drawClipped(() => {
-          const barH = 2;
-          const barY = ry + (pillH - barH) / 2;
-          const pad = pillH * 0.1;
-          const tx = rx + pad;
-          const tw = pillW - pad * 2;
-          ctx.fillStyle = `rgba(255,255,255,${(0.1 * expand).toFixed(3)})`;
-          ctx.fillRect(tx, barY, tw, barH);
-          const iw = tw * LOAD_FRAC;
-          ctx.fillStyle = `rgba(255,255,255,${(0.45 * expand).toFixed(3)})`;
-          ctx.fillRect(tx + (tw - iw) / 2, barY, iw, barH);
-        });
-      }
-
-      if (expand > 0.5 && s.phase === "idle" && s.hovered) {
-        ctx.font = "12px Satoshi, system-ui, sans-serif";
-        ctx.fillStyle = `rgba(255,255,255,${expand.toFixed(3)})`;
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        ctx.fillText("Click to dictate", rx + pillW / 2, ry + pillH / 2 + 0.5);
-      }
-
-      if (expand > 0.1 && s.phase !== "idle") {
-        drawClipped(() => {
-          const a = 0.9 * expand;
-          const lw = pillW * 0.18;
-          const lg = ctx.createLinearGradient(rx, 0, rx + lw, 0);
-          lg.addColorStop(0, `rgba(0,0,0,${a.toFixed(3)})`);
-          lg.addColorStop(1, "rgba(0,0,0,0)");
-          ctx.fillStyle = lg;
-          ctx.fillRect(rx, ry, lw, pillH);
-          const rs = rx + pillW * 0.85;
-          const rw = pillW * 0.15;
-          const rg = ctx.createLinearGradient(rs, 0, rx + pillW, 0);
-          rg.addColorStop(0, "rgba(0,0,0,0)");
-          rg.addColorStop(1, `rgba(0,0,0,${a.toFixed(3)})`);
-          ctx.fillStyle = rg;
-          ctx.fillRect(rs, ry, rw, pillH);
-        });
-      }
+      paintPillContents(
+        ctx,
+        { rx, ry, pillW, pillH, expand },
+        radius,
+        s,
+        level,
+        wavePhase,
+        loadOffset,
+      );
 
       roundedRect(
         ctx,

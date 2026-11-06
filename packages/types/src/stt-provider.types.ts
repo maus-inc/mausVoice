@@ -1,4 +1,5 @@
 import z from "zod";
+import { providerInputShape } from "./provider-input-shape";
 import type { PullStatus } from "./common.types";
 
 export type SttProvider = {
@@ -25,13 +26,5 @@ export type SttProviderInput = {
 };
 
 export const SttProviderInputZod = z
-  .object({
-    id: z.string().optional(),
-    provider: z.string(),
-    name: z.string(),
-    url: z.string(),
-    apiKey: z.string().default(""),
-    model: z.string(),
-    tier: z.number().int(),
-  })
+  .object(providerInputShape)
   .strict() satisfies z.ZodType<SttProviderInput>;

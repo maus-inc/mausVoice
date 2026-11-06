@@ -16,7 +16,8 @@
 
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { runIfDirect } from "./script-entry.mjs";
+export { isDirectInvocation } from "./script-entry.mjs";
 import { normalizeReleaseNotes, readReleaseNotes } from "./release-notes.mjs";
 
 export function isPrerelease(value) {
@@ -99,23 +100,5 @@ async function main() {
   console.log(`Wrote ${outPath}`);
 }
 
-export function isDirectInvocation(
-  moduleUrl,
-  scriptPath,
-  windows = process.platform === "win32",
-) {
-  return (
-    Boolean(scriptPath) &&
-    moduleUrl === pathToFileURL(scriptPath, { windows }).href
-  );
-}
-
-// Only run when executed directly, so the tests can import the helpers.
-if (isDirectInvocation(import.meta.url, process.argv[1])) {
-  try {
-    await main();
-  } catch (error) {
-    console.error(error.message);
-    process.exit(1);
-  }
-}
+// Run only for direct invocation; imports expose the helpers without side effects.
+await runIfDirect(import.meta.url, main);
