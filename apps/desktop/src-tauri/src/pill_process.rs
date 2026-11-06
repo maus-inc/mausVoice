@@ -1742,7 +1742,7 @@ mod pill_publish_tests {
 
     impl Drop for ReapOnDrop {
         fn drop(&mut self) {
-            // `unwrap_or_else(|poisoned| poisoned.into_inner())`, not `if let Ok`.
+            // `unwrap_or_else(std::sync::PoisonError::into_inner)`, not `if let Ok`.
             //
             // The third of the three places in this module that lock `_child`, and the only
             // one that cannot poison the mutex: `kill()`'s `Result` is discarded rather than
@@ -1759,7 +1759,7 @@ mod pill_publish_tests {
                 .0
                 ._child
                 .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             let _ = child.kill();
         }
     }
@@ -1952,7 +1952,7 @@ mod pill_publish_tests {
 
     /// Whether `process`'s child has exited within `budget`.
     fn has_exited(process: &PillProcess, budget: Duration) -> bool {
-        // `unwrap_or_else(|poisoned| poisoned.into_inner())`, not `expect`, at each of the
+        // `unwrap_or_else(std::sync::PoisonError::into_inner)`, not `expect`, at each of the
         // two places that lock `_child` and can then panic inside the lock: the
         // `try_wait().expect(..)` below, and `kill().expect(..)` in the control test. The
         // third lock site, `ReapOnDrop::drop`, cannot panic and accounts for itself.
@@ -1973,7 +1973,7 @@ mod pill_publish_tests {
         let mut child = process
             ._child
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let deadline = Instant::now() + budget;
         loop {
             if child
@@ -2057,7 +2057,7 @@ mod pill_publish_tests {
                 .0
                 ._child
                 .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             child.kill().expect("kill the control child");
         }
         assert!(

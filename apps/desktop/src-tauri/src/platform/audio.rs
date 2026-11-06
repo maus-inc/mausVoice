@@ -257,7 +257,10 @@ mod cpal_impl {
         }
 
         fn retire(&self) {
-            *self.0.lock().unwrap_or_else(|error| error.into_inner()) = CallbackState::Retired;
+            *self
+                .0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = CallbackState::Retired;
         }
     }
 
@@ -389,12 +392,12 @@ mod cpal_impl {
             let _in_order = self
                 .dispatch
                 .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             let (chunk, offset) = {
                 let mut buffer = self
                     .buffer
                     .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 if buffer.is_empty() {
                     return;
                 }
@@ -1081,7 +1084,7 @@ mod cpal_impl {
             let mut guard = self
                 .inner
                 .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             let Some(recording) = guard.take() else {
                 if capture_cleanup_uncertain() {
                     publish(Err(RecordingError::ReleaseUncertain(

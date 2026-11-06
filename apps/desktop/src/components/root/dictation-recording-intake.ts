@@ -10,6 +10,7 @@ import {
 import { ensureFloat32Array } from "../../utils/audio.utils";
 import { hasFiniteAudioSamples } from "../../utils/audio-samples.utils";
 import { getLogger } from "../../utils/log.utils";
+import { startAsPromise } from "../../utils/promise.utils";
 import { sendPhaseWithoutWaiting } from "../../utils/phase-delivery.utils";
 import { NativeRecordingLease } from "../../utils/native-recording-lease";
 import { releaseRecordingResource } from "./dictation-cleanup";
@@ -42,25 +43,24 @@ export function resolveStartAtNativeDispatch(
       return;
     }
     releaseSignal?.addEventListener("abort", release, { once: true });
-    try {
+    // start() may fail before it returns a promise; both outcomes are settled
+    // through the same handlers below.
+    void startAsPromise(() =>
       start((operation) => {
         dispatched = true;
         cleanup();
         resolve(operation);
-      }).then(
-        (result) => {
-          cleanup();
-          resolve(result);
-        },
-        (error: unknown) => {
-          cleanup();
-          reject(error);
-        },
-      );
-    } catch (error) {
-      cleanup();
-      reject(error);
-    }
+      }),
+    ).then(
+      (result) => {
+        cleanup();
+        resolve(result);
+      },
+      (error: unknown) => {
+        cleanup();
+        reject(error);
+      },
+    );
   });
 }
 
@@ -261,22 +261,25 @@ export const stopNativeRecordingForAbort = (
   const lease = ownerRef.current;
   ownerRef.current = null;
   if (!lease) return Promise.resolve();
-  try {
-    return lease
-      .cancel()
-      .then(() => undefined)
-      .catch((error) => {
-        getLogger().verbose(`stop_recording failed during abort: ${error}`);
-        onUnconfirmed();
-      });
-  } catch (error) {
-    // Keep an unexpected synchronous failure reachable rather than allowing a
-    // successor to assume the capture was released.
-    if (ownerRef.current === null) ownerRef.current = lease;
-    getLogger().verbose(`stop_recording failed during abort: ${error}`);
-    onUnconfirmed();
-    return Promise.resolve();
-  }
+  // A transport that throws before returning a promise never dispatched the
+  // stop, so the lease must stay reachable rather than letting a successor
+  // assume the capture was released. A rejection means it did dispatch, and
+  // ownership retires with it.
+  let transportStarted = false;
+  const cancel = (): Promise<void> => {
+    const pending = lease.cancel();
+    transportStarted = true;
+    return pending;
+  };
+  return startAsPromise(cancel)
+    .then(() => undefined)
+    .catch((error) => {
+      if (!transportStarted && ownerRef.current === null) {
+        ownerRef.current = lease;
+      }
+      getLogger().verbose(`stop_recording failed during abort: ${error}`);
+      onUnconfirmed();
+    });
 };
 
 /**

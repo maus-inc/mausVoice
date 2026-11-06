@@ -1,3 +1,5 @@
+import { startAsPromise } from "./promise.utils";
+
 type Unlisten = ReturnType<typeof observeDashboardMenu>;
 
 /** Own each window listener independently, including late or failed registrations. */
@@ -25,25 +27,17 @@ export function observeDashboardMenu({
     clearTimeout(timer);
     timer = setTimeout(() => {
       timer = undefined;
-      try {
-        void push().catch(onError);
-      } catch (error) {
-        onError(error);
-      }
+      void startAsPromise(push).catch(onError);
     }, 50);
   };
   sync();
   for (const register of subscribe) {
-    try {
-      void register(sync)
-        .then((unlisten) => {
-          if (active) unlisteners.push(unlisten);
-          else release(unlisten);
-        })
-        .catch(onError);
-    } catch (error) {
-      onError(error);
-    }
+    void startAsPromise(() => register(sync))
+      .then((unlisten) => {
+        if (active) unlisteners.push(unlisten);
+        else release(unlisten);
+      })
+      .catch(onError);
   }
   return () => {
     if (!active) return;

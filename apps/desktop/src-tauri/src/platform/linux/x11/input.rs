@@ -155,7 +155,9 @@ fn paste_via_clipboard(
         .map_err(|err| format!("failed to store clipboard text: {err}"))?;
 
     {
-        let mut hold = CLIPBOARD_HOLD.lock().unwrap_or_else(|p| p.into_inner());
+        let mut hold = CLIPBOARD_HOLD
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         *hold = Some(clipboard);
     }
 
@@ -168,7 +170,9 @@ fn paste_via_clipboard(
     } else {
         thread::spawn(move || {
             thread::sleep(Duration::from_millis(800));
-            let mut hold = CLIPBOARD_HOLD.lock().unwrap_or_else(|p| p.into_inner());
+            let mut hold = CLIPBOARD_HOLD
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             *hold = None;
             previous.restore();
         });

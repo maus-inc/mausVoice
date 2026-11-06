@@ -7,6 +7,7 @@ import { getAppState } from "../../store";
 import type { OverlayPhase } from "../../types/overlay.types";
 import type { StopRecordingResponse } from "../../types/transcription-session.types";
 import { getLogger } from "../../utils/log.utils";
+import { startAsPromise } from "../../utils/promise.utils";
 import { sendPhaseWithoutWaiting } from "../../utils/phase-delivery.utils";
 import { sendPillStageText } from "../../utils/overlay.utils";
 import {
@@ -160,12 +161,9 @@ const beginCaptureStop = (
   }>,
   isCurrent: () => boolean,
 ): ReturnType<typeof captureStopRecordingInfo> => {
-  let capture: ReturnType<typeof captureStopRecordingInfo>;
-  try {
-    capture = captureStopRecordingInfo(isCurrent);
-  } catch (error) {
-    capture = Promise.reject(error);
-  }
+  // A synchronous transport failure must reach the same caller as a rejected
+  // stop, and both are observed here rather than left unhandled.
+  const capture = startAsPromise(() => captureStopRecordingInfo(isCurrent));
   void capture.catch(() => undefined);
   return capture;
 };

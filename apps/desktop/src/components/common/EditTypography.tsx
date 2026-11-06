@@ -10,8 +10,10 @@ import {
 type EditTypographyProps = Parameters<typeof EditTypography>[0];
 
 /** Compose MUI's object, callback and ordered-array sx forms without flattening them. */
-const sxLayers = (sx: TypographyProps["sx"]) =>
-  Array.isArray(sx) ? sx : sx ? [sx] : [];
+const sxLayers = (sx: TypographyProps["sx"]) => {
+  if (Array.isArray(sx)) return sx;
+  return sx ? [sx] : [];
+};
 
 /** Own edit state and keyboard commits separately from the display markup. */
 const useEditableTypography = ({

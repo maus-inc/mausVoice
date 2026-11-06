@@ -329,7 +329,8 @@ const startElevenLabsStreaming = async (
         isFlushingFinalAudio = true;
         // A failed first attempt can leave the queue drained in part, so the
         // terminal send is retried once before the recording is called lost.
-        const sent = flushPendingSamples(true) || flushPendingSamples(true);
+        let sent = flushPendingSamples(true);
+        if (!sent) sent = flushPendingSamples(true);
         isFlushingFinalAudio = false;
         if (deliveryFailure) return deliveryFailure;
         return sent

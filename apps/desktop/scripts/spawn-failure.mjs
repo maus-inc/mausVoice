@@ -7,11 +7,8 @@ export function describeSpawnFailure(result) {
     error?.message ||
     (signal ? `signal:${signal}` : undefined) ||
     (result?.status ?? "unknown");
-  const suffix =
-    error?.message && reason !== error.message
-      ? ` — ${error.message}`
-      : signal
-        ? ` — killed by signal ${signal}`
-        : "";
-  return `${reason}${suffix}`;
+  const errorSuffix =
+    error?.message && reason !== error.message ? ` — ${error.message}` : null;
+  const signalSuffix = signal ? ` — killed by signal ${signal}` : "";
+  return `${reason}${errorSuffix ?? signalSuffix}`;
 }

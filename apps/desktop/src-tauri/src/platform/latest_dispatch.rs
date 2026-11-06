@@ -25,9 +25,13 @@ impl LatestDispatcher {
             .spawn(move || loop {
                 let job = {
                     let (lock, wake) = &*worker_shared;
-                    let mut state = lock.lock().unwrap_or_else(|error| error.into_inner());
+                    let mut state = lock
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
                     while state.job.is_none() && !state.closed {
-                        state = wake.wait(state).unwrap_or_else(|error| error.into_inner());
+                        state = wake
+                            .wait(state)
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
                     }
                     if state.closed {
                         return;
@@ -49,7 +53,9 @@ impl LatestDispatcher {
             return false;
         }
         let (lock, wake) = &*self.shared;
-        let mut state = lock.lock().unwrap_or_else(|error| error.into_inner());
+        let mut state = lock
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if state.closed {
             return false;
         }
@@ -62,7 +68,9 @@ impl LatestDispatcher {
 impl Drop for LatestDispatcher {
     fn drop(&mut self) {
         let (lock, wake) = &*self.shared;
-        let mut state = lock.lock().unwrap_or_else(|error| error.into_inner());
+        let mut state = lock
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         state.closed = true;
         state.job = None;
         wake.notify_one();

@@ -1539,11 +1539,9 @@ async function* parseGeminiSse(
   } finally {
     // A hostile or broken stream can leave cancel() pending forever. Start
     // cancellation without letting it prevent the consumer from stopping.
-    try {
-      void reader.cancel().catch(() => undefined);
-    } catch {
-      // Cancellation is best-effort, including synchronous failures.
-    }
+    // The async wrapper turns a transport that throws instead of returning a
+    // promise into the same rejection this swallows.
+    void (async () => reader.cancel())().catch(() => undefined);
     try {
       reader.releaseLock();
     } catch {

@@ -47,7 +47,7 @@ impl InputCallback {
         let entry = Arc::new(Entry(Mutex::new(Some(Box::new(callback)))));
         registry()
             .lock()
-            .unwrap_or_else(|error| error.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(token, Arc::clone(&entry));
         Some(Self { token, entry })
     }
@@ -59,7 +59,7 @@ impl InputCallback {
     fn unregister(&self) {
         let removed = registry()
             .lock()
-            .unwrap_or_else(|error| error.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .remove(&self.token);
         drop(removed);
     }
@@ -85,7 +85,7 @@ impl Drop for InputCallback {
             .entry
             .0
             .lock()
-            .unwrap_or_else(|error| error.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let retired = callback.take();
         drop(callback);
         drop(retired);
@@ -106,7 +106,7 @@ pub(super) unsafe extern "C" fn trampoline(
     std::panic::catch_unwind(|| {
         let entry = registry()
             .lock()
-            .unwrap_or_else(|error| error.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(&(refcon as usize))
             .cloned();
         if let Some(entry) = entry {

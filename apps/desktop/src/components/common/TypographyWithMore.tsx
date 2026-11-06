@@ -11,15 +11,16 @@ const defaultClampStyles = (maxLines: number) => ({
   overflow: "hidden",
 });
 
+const toSxLayers = (sx: TypographyProps["sx"]) => {
+  if (Array.isArray(sx)) return sx;
+  return sx ? [sx] : [];
+};
+
 /** Preserve the caller's ordered MUI styles between the clamp and toggle space. */
 const clampedSx = (
   baseClampStyles: Record<string, unknown>,
   sx: TypographyProps["sx"],
-): TypographyProps["sx"] => [
-  baseClampStyles,
-  ...(Array.isArray(sx) ? sx : sx ? [sx] : []),
-  { pr: 6 },
-];
+): TypographyProps["sx"] => [baseClampStyles, ...toSxLayers(sx), { pr: 6 }];
 
 /** Surface and text colors for both CSS-variable and ordinary MUI themes. */
 const disclosurePalette = (theme: Theme) => ({

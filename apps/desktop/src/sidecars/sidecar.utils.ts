@@ -1,5 +1,6 @@
 import { discardResponseBody } from "@maus-inc/utilities";
 import { secureFetch as fetch } from "../utils/secure-fetch.utils";
+import { startAsPromise } from "../utils/promise.utils";
 
 export type Deferred<T> = {
   promise: Promise<T>;
@@ -81,24 +82,23 @@ export const fetchWithTimeout = async (
   try {
     // Sidecars are bound to their own loopback port and have no redirecting
     // routes. Never replay private audio to a redirect-selected destination.
-    let request: Promise<Response>;
-    try {
-      request = fetch(url, {
+    // A synchronous transport failure is routed through the same
+    // abort-aware wrapper as a rejection.
+    const request = startAsPromise(() =>
+      fetch(url, {
         ...init,
         redirect: "error",
         signal: controller.signal,
-      }).then(
-        (response) => {
-          // Some transports ignore abort. Retire a response that arrives after
-          // we have stopped waiting rather than leaving its stream alive.
-          if (controller.signal.aborted) discardResponseBody(response);
-          return response;
-        },
-        (error: unknown) => throwTransportFailure(error, controller.signal),
-      );
-    } catch (error) {
-      return throwTransportFailure(error, controller.signal);
-    }
+      }),
+    ).then(
+      (response) => {
+        // Some transports ignore abort. Retire a response that arrives after
+        // we have stopped waiting rather than leaving its stream alive.
+        if (controller.signal.aborted) discardResponseBody(response);
+        return response;
+      },
+      (error: unknown) => throwTransportFailure(error, controller.signal),
+    );
     return await Promise.race([request, timeoutPromise, callerCancellation]);
   } finally {
     if (timeoutHandle !== null) clearTimeout(timeoutHandle);

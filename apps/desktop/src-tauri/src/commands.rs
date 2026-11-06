@@ -7672,7 +7672,7 @@ mod tests {
     fn the_cancel_signal_test_guard_restores_the_latch_as_well_as_the_flag() {
         let _serialized = CANCEL_TYPING_TEST_LOCK
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
 
         // Start from a known state whose flag has to survive the round trip.
         CANCEL_TYPING.store(true, Ordering::SeqCst);
@@ -7713,7 +7713,7 @@ mod tests {
     fn a_cancel_delivered_before_the_typing_session_starts_is_not_discarded() {
         let _serialized = CANCEL_TYPING_TEST_LOCK
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let _signal = CancelSignalTestGuard::take();
 
         // The frontend registers its blur/Escape handler *before* it issues the
@@ -7740,7 +7740,7 @@ mod tests {
     fn a_cancel_is_recorded_whether_or_not_a_session_is_live() {
         let _serialized = CANCEL_TYPING_TEST_LOCK
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let _signal = CancelSignalTestGuard::take();
 
         // No session live: still recorded, because the session may be starting.
@@ -7766,7 +7766,7 @@ mod tests {
     fn a_cancel_recorded_before_the_session_stops_it_from_typing() {
         let _serialized = CANCEL_TYPING_TEST_LOCK
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let _signal = CancelSignalTestGuard::take();
 
         // The pre-start window: the user hit Escape, the handler is live, but
@@ -7789,7 +7789,7 @@ mod tests {
     fn a_cancel_from_a_finished_session_does_not_abort_the_next_one() {
         let _serialized = CANCEL_TYPING_TEST_LOCK
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let _signal = CancelSignalTestGuard::take();
 
         // A cancel raised during a live session, which then ends...
@@ -7814,7 +7814,7 @@ mod tests {
     fn an_expired_cancel_does_not_abort_a_later_session() {
         let _serialized = CANCEL_TYPING_TEST_LOCK
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let _signal = CancelSignalTestGuard::take();
 
         // `0` is the "nothing latched" sentinel and never aborts.
@@ -7857,7 +7857,7 @@ mod tests {
     fn the_cancel_grace_clock_is_process_monotonic_rather_than_wall_clock() {
         let _serialized = CANCEL_TYPING_TEST_LOCK
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
 
         // A wall clock reading would be roughly 1.8e12 (milliseconds since the
         // Unix epoch), so this separates the two sources on its own.
@@ -7906,7 +7906,7 @@ mod tests {
         for _ in 0..ROUNDS {
             let _serialized = CANCEL_TYPING_TEST_LOCK
                 .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             let _signal = CancelSignalTestGuard::take();
 
             let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));

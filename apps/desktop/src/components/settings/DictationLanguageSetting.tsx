@@ -79,7 +79,9 @@ export const DictationLanguageSetting = ({
     // The action reports errors and rethrows, so handle the rejected promise.
     logOnRejection(
       setPreferredLanguage(nextValue).then(() => {
-        loadTones();
+        // The tone list is provider-dependent, so a rejection here is reported
+        // through the same path as the language write.
+        logOnRejection(loadTones(), "settings: reload tones");
       }),
       "settings: setPreferredLanguage",
     );

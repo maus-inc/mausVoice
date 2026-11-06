@@ -9,12 +9,11 @@ const MAX_ERROR_BODY_WAIT_MS = 2_000;
 
 const cancelWithoutWaiting = (
   reader: ReadableStreamDefaultReader<Uint8Array>,
-) => {
-  try {
-    void reader.cancel().catch(() => {});
-  } catch {
-    // Cancellation is best effort; an HTTP failure must still settle.
-  }
+): void => {
+  // The async wrapper turns a transport that throws instead of returning a
+  // promise into the same rejection this swallows, so cancellation stays best
+  // effort and an HTTP failure still settles.
+  void (async () => reader.cancel())().catch(() => {});
 };
 
 /** Consume at most the bounded diagnostic bytes. */

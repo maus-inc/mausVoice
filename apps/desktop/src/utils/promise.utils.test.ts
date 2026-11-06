@@ -11,7 +11,7 @@ vi.mock("./log.utils", () => ({
   }),
 }));
 
-import { logOnRejection } from "./promise.utils";
+import { logOnRejection, startAsPromise } from "./promise.utils";
 
 beforeEach(() => {
   warningMock.mockClear();
@@ -55,5 +55,35 @@ describe("logOnRejection", () => {
     } finally {
       process.removeListener("unhandledRejection", onUnhandled);
     }
+  });
+});
+
+describe("startAsPromise", () => {
+  it("starts the work synchronously and resolves with its value", async () => {
+    const order: string[] = [];
+    const promise = startAsPromise(async () => {
+      order.push("started");
+      return 7;
+    });
+    order.push("returned");
+    await expect(promise).resolves.toBe(7);
+    expect(order).toEqual(["started", "returned"]);
+  });
+
+  it("turns a synchronous throw into a rejection instead of throwing", async () => {
+    const boom = new Error("boom");
+    let promise: Promise<never> | undefined;
+    expect(() => {
+      promise = startAsPromise<never>(() => {
+        throw boom;
+      });
+    }).not.toThrow();
+    await expect(promise).rejects.toBe(boom);
+  });
+
+  it("adopts the returned promise rather than wrapping it twice", async () => {
+    const inner = Promise.reject(new Error("inner"));
+    const outer = startAsPromise(() => inner);
+    await expect(outer).rejects.toThrow("inner");
   });
 });

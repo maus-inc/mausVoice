@@ -48,7 +48,11 @@ export function sleepSync(
   } catch {
     // Some runtimes do not permit Atomics.wait on the main thread.
   }
-  if (tryChildSleep(ms, spawn, warn) || tryChildSleep(ms, spawn, warn)) return;
+  // One retry: a transient spawn failure should not drop the caller straight to
+  // the busy-wait that pins a core for the whole delay.
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    if (tryChildSleep(ms, spawn, warn)) return;
+  }
   const start = now();
   while (now() - start < ms) {
     // Last resort when neither atomic nor child-process sleeping is available.

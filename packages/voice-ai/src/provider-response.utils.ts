@@ -32,13 +32,14 @@ export const requestAbortableTransport = async (
 ): Promise<Response> => {
   const signal = init?.signal;
   signal?.throwIfAborted();
-  let operation: Promise<Response>;
-  try {
-    operation = transport(url, init);
-  } catch (error) {
-    signal?.throwIfAborted();
-    throw error;
-  }
+  // The async wrapper keeps a transport that throws before returning a promise
+  // on the same path as a rejection: an abort reason wins over both.
+  const operation = (async () => transport(url, init))().catch(
+    (error: unknown) => {
+      signal?.throwIfAborted();
+      throw error;
+    },
+  );
   if (!signal) return operation;
 
   let response: Response | undefined;
@@ -68,17 +69,20 @@ const hasErrorName = (error: unknown, name: string): boolean => {
 export const isAbortError = (error: unknown): boolean =>
   hasErrorName(error, "AbortError");
 
+/** Name the transport failure so callers can branch on abort and timeout. */
+const transportFailureName = (error: unknown): string => {
+  if (isAbortError(error)) return "AbortError";
+  if (hasErrorName(error, "TimeoutError")) return "TimeoutError";
+  return "ProviderTransportError";
+};
+
 /** Keep retry metadata while omitting transport messages and causes. */
 class PrivateTransportFailure extends Error {
   readonly status: number | undefined;
 
   constructor(provider: string, error: unknown, status: number | undefined) {
     super(`${provider} transport request failed`);
-    this.name = isAbortError(error)
-      ? "AbortError"
-      : hasErrorName(error, "TimeoutError")
-        ? "TimeoutError"
-        : "ProviderTransportError";
+    this.name = transportFailureName(error);
     this.status = status;
   }
 }

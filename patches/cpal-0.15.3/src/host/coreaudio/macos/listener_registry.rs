@@ -20,7 +20,7 @@ pub(super) fn insert(callback: impl FnMut() + Send + 'static) -> Option<usize> {
         .ok()?;
     callbacks()
         .lock()
-        .unwrap_or_else(|error| error.into_inner())
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
         .insert(
             id,
             Arc::new(Callback {
@@ -34,7 +34,7 @@ pub(super) fn insert(callback: impl FnMut() + Send + 'static) -> Option<usize> {
 pub(super) fn remove(id: usize) {
     let removed = callbacks()
         .lock()
-        .unwrap_or_else(|error| error.into_inner())
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
         .remove(&id);
     drop(removed);
 }
@@ -42,7 +42,7 @@ pub(super) fn remove(id: usize) {
 pub(super) fn invoke(id: usize) {
     let callback = callbacks()
         .lock()
-        .unwrap_or_else(|error| error.into_inner())
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
         .get(&id)
         .cloned();
     if let Some(callback) = callback {

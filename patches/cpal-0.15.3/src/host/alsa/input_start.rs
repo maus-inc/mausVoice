@@ -51,7 +51,7 @@ impl Drop for InputCycle<'_> {
             .0
             .state
             .lock()
-            .unwrap_or_else(|error| error.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         inner.cycle_active = false;
         if std::thread::panicking() && inner.state != State::Retired {
             inner.state = State::Failed;
@@ -262,14 +262,20 @@ impl InputStart {
         // that the device must stay reserved. Refusing to retire would make the
         // caller retain a stream it can never release, so the state is retired
         // through the poison guard the way `retire_on_drop` already does.
-        let mut inner = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        let mut inner = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         inner.state = State::Retired;
         self.changed.notify_all();
         Ok(())
     }
 
     pub(super) fn retire_on_drop(&self) {
-        let mut inner = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        let mut inner = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         inner.state = State::Retired;
         self.changed.notify_all();
     }

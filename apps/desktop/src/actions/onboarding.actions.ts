@@ -20,6 +20,7 @@ import {
 } from "../utils/expansion-flags-revision";
 import { DEFAULT_HANDS_FREE_DELAY_MS } from "../utils/hands-free-delay.utils";
 import { PRIMARY_LANGUAGE_SENTINEL } from "../utils/language.utils";
+import { startAsPromise } from "../utils/promise.utils";
 import { captureUserSession } from "../utils/user-session.utils";
 import {
   EMAIL_TONE_ID,
@@ -489,16 +490,11 @@ const settleOnboardingWrites = async ({
   preferences: OnboardingPreferences;
   isCurrentSession: () => boolean;
 }): Promise<OnboardingWrites> => {
-  const invokeWrite = <T>(write: () => Promise<T>): Promise<T> => {
-    try {
-      return Promise.resolve(write());
-    } catch (error) {
-      return Promise.reject(error);
-    }
-  };
-  const userWrite = invokeWrite(() => repo.setMyUser(user));
+  // Both writes are dispatched before either is awaited, so a synchronous
+  // transport failure in one must not stop the other from being attempted.
+  const userWrite = startAsPromise(() => repo.setMyUser(user));
   const preferencesWrite = isCurrentSession()
-    ? invokeWrite(() => preferencesRepo.setUserPreferences(preferences))
+    ? startAsPromise(() => preferencesRepo.setUserPreferences(preferences))
     : Promise.resolve(null);
   const [userResult, preferencesResult] = await Promise.allSettled([
     userWrite,

@@ -60,7 +60,7 @@ impl Recorder for PulseRecorder {
             let pref_guard = self
                 .preferred_source
                 .lock()
-                .unwrap_or_else(|p| p.into_inner());
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             pref_guard.clone()
         };
 
@@ -125,7 +125,7 @@ impl Recorder for PulseRecorder {
         let mut guard = self
             .inner
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut recording = guard.take().ok_or(RecordingError::NotRecording)?;
 
         recording.stop_signal.store(true, Ordering::Release);
@@ -618,7 +618,10 @@ fn enumerate_pulse_sources() -> Vec<PulseSource> {
 
     match Arc::try_unwrap(sources) {
         Ok(mutex) => mutex.into_inner().unwrap_or_default(),
-        Err(arc) => arc.lock().unwrap_or_else(|p| p.into_inner()).clone(),
+        Err(arc) => arc
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone(),
     }
 }
 

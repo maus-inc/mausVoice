@@ -16,14 +16,16 @@ const RECORDING_OWNERSHIP_FAILURES = new Set([
   "Recording window is closed",
 ]);
 
+/** Read a failure message without assuming the thrown value is an Error. */
+const failureMessage = (error: unknown): string => {
+  if (typeof error === "string") return error;
+  if (error instanceof Error) return error.message;
+  return "";
+};
+
 function isRecordingOwnershipFailure(error: unknown): boolean {
   try {
-    const message =
-      typeof error === "string"
-        ? error
-        : error instanceof Error
-          ? error.message
-          : "";
+    const message = failureMessage(error);
     return RECORDING_OWNERSHIP_FAILURES.has(message);
   } catch {
     return true;

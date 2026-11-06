@@ -5,6 +5,7 @@ import {
   acquireLocalNativeRecording,
   releaseLocalNativeRecording,
 } from "./local-recording-activity";
+import { captureSyncThrow } from "./promise.utils";
 import { tryDecodeStopRecordingPayload } from "./recorded-audio.utils";
 
 type RecordingInvoke = (
@@ -215,18 +216,18 @@ export class NativeRecordingLease {
     return this.startPromise;
   }
 
-  /** Ask native for this lease's admission token. A synchronous transport
-   * failure cannot have dispatched a start, so the local reservation is
-   * released here. */
+  /** Ask native for this lease's admission token. Any transport failure means
+   * no start was dispatched, so the local reservation is released on both the
+   * synchronous-throw and rejection paths. */
   private requestAdmission(): Promise<unknown> {
-    try {
-      return this.invokeFn("recording_generation", {
+    const admission = captureSyncThrow(() =>
+      this.invokeFn("recording_generation", {
         ownerId: this.ownerId,
-      });
-    } catch (error) {
-      releaseLocalNativeRecording(this.invokeFn, this);
-      return Promise.reject(error);
-    }
+      }),
+    );
+    if (admission.ok) return admission.value;
+    releaseLocalNativeRecording(this.invokeFn, this);
+    return Promise.reject(admission.error);
   }
 
   /**
@@ -396,15 +397,13 @@ export class NativeRecordingLease {
         if (settled || attempts >= 2) return;
         attempts += 1;
         pending += 1;
-        let request: Promise<unknown>;
-        try {
-          request = this.invokeFn("stop_recording", {
+        const stop = captureSyncThrow(() =>
+          this.invokeFn("stop_recording", {
             ownerId: this.ownerId,
             generation,
-          });
-        } catch (error) {
-          request = Promise.reject(error);
-        }
+          }),
+        );
+        const request = stop.ok ? stop.value : Promise.reject(stop.error);
         void request.then((payload) => {
           if (settled) return;
           try {
@@ -436,13 +435,16 @@ export class NativeRecordingLease {
   private acknowledge(): void {
     // Acknowledgement removes only the recovery copy. It does not stop a
     // recorder and does not delay delivery if IPC is unavailable.
-    try {
-      void this.invokeFn("acknowledge_recording", {
+    const acknowledgement = captureSyncThrow(() =>
+      this.invokeFn("acknowledge_recording", {
         ownerId: this.ownerId,
         generation: this.admissionToken,
-      }).catch(() => undefined);
-    } catch {
-      // Native also expires unacknowledged copies.
+      }),
+    );
+    // Native also expires unacknowledged copies, so a transport that throws
+    // before it returns a promise needs no handling here either.
+    if (acknowledgement.ok) {
+      void acknowledgement.value.catch(() => undefined);
     }
   }
 
@@ -537,55 +539,58 @@ export class NativeRecordingLease {
       if (error) rejectRecovery(error.value);
       else resolveRecovery();
     };
-    try {
-      void this.dispatchStopWithRetry(generation).then(
-        (result) => {
-          try {
-            if (this.cancelled) {
-              finish({ value: new Error("Recording was cancelled") });
-              return;
-            }
-            // Keep the result available to an explicit stop retry, with a
-            // process-wide bound in addition to native's own replay budget.
-            const bytes =
-              result.samples instanceof Float32Array
-                ? result.samples.buffer.byteLength
-                : result.samples.length * 8;
-            if (
-              recoveredStopCount >= MAX_RECOVERED_STOPS ||
-              bytes > MAX_RECOVERED_STOP_BYTES - recoveredStopBytes
-            ) {
-              finish({ value: new Error("Recording recovery buffer is full") });
-              return;
-            }
-            recoveredStopCount += 1;
-            recoveredStopBytes += bytes;
-            this.retainedBytes = bytes;
-            this.recoveredStop = result;
-            // Invariant: a retained copy is always deliverable, so an earlier
-            // expiry latch must not keep hiding audio that a later retry
-            // managed to recover.
-            this.recoveryExpired = false;
-            this.recoveryDeadline = Date.now() + RECOVERED_STOP_LIFETIME_MS;
-            this.recoveryTimer = setTimeout(() => {
-              this.takeRecoveredStop();
-              this.recoveryExpired = true;
-            }, RECOVERED_STOP_LIFETIME_MS);
-            this.released = true;
-            this.releaseConfirmed = !result.captureFailed;
-            releasesFor(this.invokeFn).delete(this);
-            releaseLocalNativeRecording(this.invokeFn, this);
-            finish();
-          } catch (error) {
-            this.takeRecoveredStop();
-            finish({ value: error });
-          }
-        },
-        (error: unknown) => finish({ value: error }),
-      );
-    } catch (error) {
-      finish({ value: error });
+    const recovery = captureSyncThrow(() =>
+      this.dispatchStopWithRetry(generation),
+    );
+    if (!recovery.ok) {
+      finish({ value: recovery.error });
+      return shared;
     }
+    void recovery.value.then(
+      (result) => {
+        try {
+          if (this.cancelled) {
+            finish({ value: new Error("Recording was cancelled") });
+            return;
+          }
+          // Keep the result available to an explicit stop retry, with a
+          // process-wide bound in addition to native's own replay budget.
+          const bytes =
+            result.samples instanceof Float32Array
+              ? result.samples.buffer.byteLength
+              : result.samples.length * 8;
+          if (
+            recoveredStopCount >= MAX_RECOVERED_STOPS ||
+            bytes > MAX_RECOVERED_STOP_BYTES - recoveredStopBytes
+          ) {
+            finish({ value: new Error("Recording recovery buffer is full") });
+            return;
+          }
+          recoveredStopCount += 1;
+          recoveredStopBytes += bytes;
+          this.retainedBytes = bytes;
+          this.recoveredStop = result;
+          // Invariant: a retained copy is always deliverable, so an earlier
+          // expiry latch must not keep hiding audio that a later retry
+          // managed to recover.
+          this.recoveryExpired = false;
+          this.recoveryDeadline = Date.now() + RECOVERED_STOP_LIFETIME_MS;
+          this.recoveryTimer = setTimeout(() => {
+            this.takeRecoveredStop();
+            this.recoveryExpired = true;
+          }, RECOVERED_STOP_LIFETIME_MS);
+          this.released = true;
+          this.releaseConfirmed = !result.captureFailed;
+          releasesFor(this.invokeFn).delete(this);
+          releaseLocalNativeRecording(this.invokeFn, this);
+          finish();
+        } catch (error) {
+          this.takeRecoveredStop();
+          finish({ value: error });
+        }
+      },
+      (error: unknown) => finish({ value: error }),
+    );
     return shared;
   }
 

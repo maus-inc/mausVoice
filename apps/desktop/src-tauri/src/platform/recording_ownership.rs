@@ -48,7 +48,7 @@ impl RecordingAdmission {
         let active = self
             .level_callback_active
             .lock()
-            .unwrap_or_else(|error| error.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if *active {
             callback();
         }
@@ -60,14 +60,14 @@ impl RecordingAdmission {
         *self
             .level_callback_active
             .lock()
-            .unwrap_or_else(|error| error.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     fn set_level_callback_active(&self, value: bool) {
         *self
             .level_callback_active
             .lock()
-            .unwrap_or_else(|error| error.into_inner()) = value;
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = value;
     }
 }
 
@@ -117,7 +117,10 @@ pub struct RecordingStopIntent {
 
 impl Drop for RecordingStopIntent {
     fn drop(&mut self) {
-        let _owner = self.owner.lock().unwrap_or_else(|error| error.into_inner());
+        let _owner = self
+            .owner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         self.admission
             .normal_stop_requested
             .fetch_sub(1, Ordering::SeqCst);
@@ -251,7 +254,10 @@ impl RecordingOwnership {
         current.driver_busy = true;
         drop(owner);
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(action));
-        let mut owner = self.owner.lock().unwrap_or_else(|error| error.into_inner());
+        let mut owner = self
+            .owner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let current = owner
             .as_mut()
             .filter(|current| Arc::ptr_eq(&current.identity, &identity))
@@ -315,7 +321,7 @@ impl RecordingOwnership {
         let mut windows = self
             .windows
             .lock()
-            .unwrap_or_else(|error| error.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(window) = windows.get(&key).and_then(Weak::upgrade) {
             return window;
         }
@@ -328,13 +334,13 @@ impl RecordingOwnership {
         let mut windows = self
             .windows
             .lock()
-            .unwrap_or_else(|error| error.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let window = windows.remove(&key)?.upgrade()?;
         window.closed.store(true, Ordering::SeqCst);
         let mut admissions = self
             .admissions
             .lock()
-            .unwrap_or_else(|error| error.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         admissions.retain(|_, admission| {
             let closed = Arc::ptr_eq(&admission.window, &window);
             if closed {
@@ -344,7 +350,7 @@ impl RecordingOwnership {
         });
         self.recovered
             .lock()
-            .unwrap_or_else(|error| error.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .retain(|_, entry| {
                 if Arc::ptr_eq(&entry.admission.window, &window) {
                     entry.admission.cancelled.store(true, Ordering::SeqCst);
@@ -362,7 +368,10 @@ impl RecordingOwnership {
         window: &Arc<RecordingWindow>,
         stop: impl FnOnce() -> (Result<T, String>, bool),
     ) -> Option<Result<T, String>> {
-        let mut owner = self.owner.lock().unwrap_or_else(|error| error.into_inner());
+        let mut owner = self
+            .owner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if !owner
             .as_ref()
             .is_some_and(|owner| Arc::ptr_eq(&owner.window, window))
@@ -396,7 +405,7 @@ impl RecordingOwnership {
         let mut recovered = self
             .recovered
             .lock()
-            .unwrap_or_else(|error| error.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         prune_expired_recoveries(&mut recovered);
         if !admission.may_recover_audio()
             || self.resetting.load(Ordering::SeqCst)
@@ -433,7 +442,7 @@ impl RecordingOwnership {
         let recovered = self
             .recovered
             .lock()
-            .unwrap_or_else(|error| error.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         !recovered.is_empty() && !self.recovery_reaper_running.swap(true, Ordering::SeqCst)
     }
 
@@ -442,7 +451,7 @@ impl RecordingOwnership {
         let mut recovered = self
             .recovered
             .lock()
-            .unwrap_or_else(|error| error.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         prune_expired_recoveries(&mut recovered);
         if recovered.is_empty() {
             self.recovery_reaper_running.store(false, Ordering::SeqCst);
@@ -455,7 +464,7 @@ impl RecordingOwnership {
     fn forget_abandoned_audio(&self, token: u64) {
         self.recovered
             .lock()
-            .unwrap_or_else(|error| error.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .remove(&token);
     }
 
@@ -463,7 +472,7 @@ impl RecordingOwnership {
         let mut recovered = self
             .recovered
             .lock()
-            .unwrap_or_else(|error| error.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if recovered.get(&token).is_some_and(|entry| {
             entry.admission.id == id && Arc::ptr_eq(&entry.admission.window, window)
         }) {
@@ -482,7 +491,7 @@ impl RecordingOwnership {
         let mut recovered = self
             .recovered
             .lock()
-            .unwrap_or_else(|error| error.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let Some(entry) = recovered.get_mut(&token) else {
             return Ok(None);
         };
@@ -528,7 +537,7 @@ impl RecordingOwnership {
         let mut admissions = self
             .admissions
             .lock()
-            .unwrap_or_else(|error| error.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut expired_claimed = Vec::new();
         admissions.retain(|_, admission| {
             let expired = admission.created.elapsed() >= ADMISSION_LIFETIME;
@@ -546,7 +555,7 @@ impl RecordingOwnership {
             let mut retired = self
                 .retired_admissions
                 .lock()
-                .unwrap_or_else(|error| error.into_inner());
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             retired.retain(|_, admission| admission.strong_count() > 0);
             retired.extend(expired_claimed);
         }
@@ -600,7 +609,7 @@ impl RecordingOwnership {
         let admissions = self
             .admissions
             .lock()
-            .unwrap_or_else(|error| error.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let admission = admissions.get(id).ok_or("Recording admission is missing")?;
         if admission.token != generation
             || admission.generation != self.generation()
@@ -618,7 +627,7 @@ impl RecordingOwnership {
         let mut admissions = self
             .admissions
             .lock()
-            .unwrap_or_else(|error| error.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if admissions
             .get(&admission.id)
             .is_some_and(|current| Arc::ptr_eq(current, admission))
@@ -626,7 +635,7 @@ impl RecordingOwnership {
             let mut retired = self
                 .retired_admissions
                 .lock()
-                .unwrap_or_else(|error| error.into_inner());
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             retired.retain(|_, admission| admission.strong_count() > 0);
             retired.insert(admission.token, Arc::downgrade(admission));
             admissions.remove(&admission.id);
@@ -641,7 +650,7 @@ impl RecordingOwnership {
         let mut admissions = self
             .admissions
             .lock()
-            .unwrap_or_else(|error| error.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let matches = admissions.get(id).is_some_and(|admission| {
             scope.is_none_or(|(window, token)| {
                 admission.token == token && Arc::ptr_eq(&admission.window, window)
@@ -661,7 +670,7 @@ impl RecordingOwnership {
         let retired = scope.and_then(|(window, token)| {
             self.retired_admissions
                 .lock()
-                .unwrap_or_else(|error| error.into_inner())
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .get(&token)
                 .and_then(Weak::upgrade)
                 .filter(|admission| admission.id == id && Arc::ptr_eq(&admission.window, window))
@@ -692,11 +701,14 @@ impl RecordingOwnership {
         // driver under that same lock. Registering under it makes the check and
         // stop-intent admission one ordered decision, rather than allowing an
         // intent to appear after cleanup's check but before it takes the audio.
-        let _owner = self.owner.lock().unwrap_or_else(|error| error.into_inner());
+        let _owner = self
+            .owner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let admissions = self
             .admissions
             .lock()
-            .unwrap_or_else(|error| error.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let admission = admissions
             .get(id)
             .filter(|admission| admission.token == token)
@@ -704,7 +716,7 @@ impl RecordingOwnership {
             .or_else(|| {
                 self.retired_admissions
                     .lock()
-                    .unwrap_or_else(|error| error.into_inner())
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .get(&token)
                     .and_then(Weak::upgrade)
             });
@@ -743,14 +755,14 @@ impl RecordingOwnership {
         let mut admissions = self
             .admissions
             .lock()
-            .unwrap_or_else(|error| error.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         for admission in admissions.drain().map(|(_, admission)| admission) {
             admission.cancelled.store(true, Ordering::SeqCst);
         }
         let mut recovered = self
             .recovered
             .lock()
-            .unwrap_or_else(|error| error.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         for entry in recovered.drain().map(|(_, entry)| entry) {
             entry.admission.cancelled.store(true, Ordering::SeqCst);
         }
@@ -801,7 +813,7 @@ impl RecordingOwnership {
         let mut owner = self
             .owner
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let deadline = Instant::now() + control.wait;
         loop {
             if self.resetting.load(Ordering::SeqCst)
@@ -846,7 +858,7 @@ impl RecordingOwnership {
             owner = self
                 .released
                 .wait_timeout(owner, remaining)
-                .unwrap_or_else(|error| error.into_inner())
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .0;
         }
         *owner = Some(Owner {
@@ -872,7 +884,10 @@ impl RecordingOwnership {
         // mutex across potentially unbounded device enumeration or driver open.
         drop(owner);
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(start));
-        let mut owner = self.owner.lock().unwrap_or_else(|error| error.into_inner());
+        let mut owner = self
+            .owner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let current = owner.as_mut().expect("opening owner remains reserved");
         current.opening = false;
         // Wake normal stop waiters even if the open panicked. The owner stays
@@ -917,7 +932,10 @@ impl RecordingOwnership {
 
     /// Hold the same exclusive slot while a webview owns browser recognition.
     pub fn start_external(&self, admission: &Arc<RecordingAdmission>) -> Result<(), String> {
-        let mut owner = self.owner.lock().unwrap_or_else(|error| error.into_inner());
+        let mut owner = self
+            .owner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let cancelled = || {
             self.resetting.load(Ordering::SeqCst)
                 || admission.generation != self.generation()
@@ -956,7 +974,10 @@ impl RecordingOwnership {
     /// Release only after the browser's end event, or before it has started.
     fn release_external_matching(&self, id: &str, scope: Option<(&Arc<RecordingWindow>, u64)>) {
         self.cancel_matching_admission(id, scope);
-        let mut owner = self.owner.lock().unwrap_or_else(|error| error.into_inner());
+        let mut owner = self
+            .owner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if owner.as_ref().is_some_and(|owner| {
             owner.external
                 && owner.id == id
@@ -979,7 +1000,10 @@ impl RecordingOwnership {
     }
 
     pub fn release_external_admission(&self, admission: &RecordingAdmission) {
-        let mut owner = self.owner.lock().unwrap_or_else(|error| error.into_inner());
+        let mut owner = self
+            .owner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if owner.as_ref().is_some_and(|owner| {
             owner.external && Arc::ptr_eq(&owner.identity, &admission.identity)
         }) {
@@ -997,7 +1021,10 @@ impl RecordingOwnership {
         replay: impl Fn() -> Option<Result<T, String>>,
         absent: impl FnOnce() -> Option<Result<T, String>>,
     ) -> Option<Result<T, String>> {
-        let mut owner = self.owner.lock().unwrap_or_else(|error| error.into_inner());
+        let mut owner = self
+            .owner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if !owner.as_ref().is_some_and(|owner| {
             owner.id == id
                 && scope.is_none_or(|(window, token)| {
@@ -1031,7 +1058,7 @@ impl RecordingOwnership {
                 owner = self
                     .released
                     .wait(owner)
-                    .unwrap_or_else(|error| error.into_inner());
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
             }
             let Some(current) = owner
                 .as_mut()
@@ -1225,7 +1252,10 @@ impl RecordingOwnership {
         admission: &RecordingAdmission,
         stop: impl FnOnce() -> RecoveryStop,
     ) -> Option<Result<(), String>> {
-        let mut owner = self.owner.lock().unwrap_or_else(|error| error.into_inner());
+        let mut owner = self
+            .owner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if !owner.as_ref().is_some_and(|owner| {
             !owner.external && Arc::ptr_eq(&owner.identity, &admission.identity)
         }) {
@@ -1263,7 +1293,10 @@ impl RecordingOwnership {
         id: &str,
         scope: Option<(&Arc<RecordingWindow>, u64)>,
     ) -> Option<RecordingRetry> {
-        let mut owner = self.owner.lock().unwrap_or_else(|error| error.into_inner());
+        let mut owner = self
+            .owner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         match owner.as_mut() {
             Some(owner)
                 if owner.id == id
@@ -1307,7 +1340,10 @@ impl RecordingOwnership {
         &self,
         window: &Arc<RecordingWindow>,
     ) -> Option<RecordingRetry> {
-        let mut owner = self.owner.lock().unwrap_or_else(|error| error.into_inner());
+        let mut owner = self
+            .owner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         match owner.as_mut() {
             Some(owner)
                 if Arc::ptr_eq(&owner.window, window)
@@ -1325,7 +1361,10 @@ impl RecordingOwnership {
     }
 
     pub fn end_release_retry(&self, token: &RecordingRetry) {
-        let mut owner = self.owner.lock().unwrap_or_else(|error| error.into_inner());
+        let mut owner = self
+            .owner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(owner) = owner
             .as_mut()
             .filter(|owner| Arc::ptr_eq(&owner.identity, &token.0))
@@ -1341,7 +1380,10 @@ impl RecordingOwnership {
         token: &RecordingRetry,
         stop: impl FnOnce(bool) -> RecoveryStop,
     ) -> bool {
-        let owner = self.owner.lock().unwrap_or_else(|error| error.into_inner());
+        let owner = self
+            .owner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if !owner
             .as_ref()
             .is_some_and(|owner| Arc::ptr_eq(&owner.identity, &token.0) && owner.release_requested)
@@ -1372,7 +1414,10 @@ impl RecordingOwnership {
     }
 
     pub fn pending_release(&self) -> Option<String> {
-        let owner = self.owner.lock().unwrap_or_else(|error| error.into_inner());
+        let owner = self
+            .owner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         owner
             .as_ref()
             .filter(|owner| owner.release_requested)
@@ -1388,7 +1433,7 @@ impl RecordingOwnership {
         let mut owner = self
             .owner
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         loop {
             let Some(current) = owner.as_ref().filter(|owner| {
                 owner.id == id
@@ -1407,7 +1452,7 @@ impl RecordingOwnership {
             owner = self
                 .released
                 .wait(owner)
-                .unwrap_or_else(|error| error.into_inner());
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
         }
         let (_owner, result) = self.run_owned_without_lock(owner, action);
         result?
@@ -1439,7 +1484,7 @@ impl RecordingOwnership {
         let mut owner = self
             .owner
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if owner.as_ref().is_some_and(|owner| owner.external) {
             return Err("Browser recording has not ended".into());
         }

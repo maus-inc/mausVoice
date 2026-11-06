@@ -22,6 +22,7 @@ import type {
 } from "../../types/transcription-session.types";
 import { tryPlayAudioChime } from "../../utils/audio.utils";
 import { getLogger } from "../../utils/log.utils";
+import { startAsPromise } from "../../utils/promise.utils";
 import { sendPhaseWithoutWaiting } from "../../utils/phase-delivery.utils";
 import {
   markFinalizedTranscription,
@@ -110,12 +111,11 @@ const finalizeSessionWithDeadline = (
   },
   audio: StopRecordingResponse,
 ): Promise<TranscriptionSessionResult> => {
-  let resultPromise: Promise<TranscriptionSessionResult>;
-  try {
-    resultPromise = session.finalize(audio);
-  } catch (error) {
-    resultPromise = Promise.reject(error);
-  }
+  // finalize() is started here and may throw before it returns a promise; the
+  // timeout below must cover that failure too.
+  const resultPromise = startAsPromise<TranscriptionSessionResult>(() =>
+    session.finalize(audio),
+  );
   return withTimeout(
     resultPromise,
     FINALIZE_TIMEOUT_MS,

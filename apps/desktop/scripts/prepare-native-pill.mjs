@@ -52,10 +52,9 @@ export function prepareNativePill({
     failure(`manifest not found: ${pillManifestPath}`);
     return;
   }
+  const overrideDir = (dir) => (isAbsolute(dir) ? dir : resolve(repoRoot, dir));
   const pillTargetDir = cargoTargetDirOverride
-    ? isAbsolute(cargoTargetDirOverride)
-      ? cargoTargetDirOverride
-      : resolve(repoRoot, cargoTargetDirOverride)
+    ? overrideDir(cargoTargetDirOverride)
     : join(repoRoot, "packages", packageDir, "target");
   const args = [
     "build",

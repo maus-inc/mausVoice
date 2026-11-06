@@ -5,6 +5,7 @@ import type {
   TranscriptionSessionResult,
 } from "../../types/transcription-session.types";
 import { getLogger } from "../../utils/log.utils";
+import { startAsPromise } from "../../utils/promise.utils";
 import { captureUserSession } from "../../utils/user-session.utils";
 import type { PipelineTrace } from "../../utils/pipeline-trace";
 
@@ -17,11 +18,8 @@ const notifySafely = (
   notify: () => Promise<unknown>,
   onFailure: () => void,
 ): void => {
-  try {
-    void notify().catch(onFailure);
-  } catch {
-    onFailure();
-  }
+  // A synchronous throw from notify() reaches the same handler as a rejection.
+  void startAsPromise(notify).catch(onFailure);
 };
 
 /** Capture the recording's trace and metadata before the review may outlive it. */

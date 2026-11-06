@@ -139,12 +139,9 @@ const privateTranscriptionError = (
   try {
     const payload = JSON.parse(text) as { error?: { code?: unknown } } | null;
     const rawCode = payload?.error?.code;
-    code =
-      rawCode === "model_not_downloaded"
-        ? rawCode
-        : rawCode
-          ? "other_sidecar_error"
-          : undefined;
+    if (rawCode === "model_not_downloaded") code = rawCode;
+    else if (rawCode) code = "other_sidecar_error";
+    else code = undefined;
   } catch {
     // Invalid private error bodies supply neither trusted text nor a code.
   }
