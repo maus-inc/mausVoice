@@ -77,12 +77,15 @@ export async function logMicrophoneReadiness(): Promise<void> {
     const report = await repo.microphoneReadinessReport();
     getLogger().info(`Microphone readiness: ${report}`);
     const stages = await repo.captureStartupTiming();
-    if (stages.length > 0) {
-      const rendered = stages
-        .map((stage) => `${stage.stage}=${stage.micros}us`)
-        .join(" ");
-      getLogger().info(`Microphone last start: ${rendered}`);
-    }
+    // `none` rather than silence: a build where no start was ever traced is a
+    // different bug from one where the trace is empty, and the export is the
+    // only place the difference can still be seen after the fact. This also
+    // covers the pre-warm open, which records a trace without a recording.
+    const rendered =
+      stages.length > 0
+        ? stages.map((stage) => `${stage.stage}=${stage.micros}us`).join(" ")
+        : "none";
+    getLogger().info(`Microphone last start: ${rendered}`);
   } catch (error) {
     getLogger().warning(`Could not read microphone readiness: ${error}`);
   }
