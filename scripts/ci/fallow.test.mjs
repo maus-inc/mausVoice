@@ -166,6 +166,13 @@ test("architecture detects a cyclic fixture", (t) => {
 const INHERITED_CYCLES = [
   "apps/desktop/src/actions/chat.actions.ts -> apps/desktop/src/agents/index.ts -> apps/desktop/src/agents/run-agent.ts",
   "apps/desktop/src/actions/transcribe.actions.ts -> apps/desktop/src/repos/index.ts -> apps/desktop/src/utils/user.utils.ts -> apps/desktop/src/sessions/index.ts -> apps/desktop/src/sessions/batch-transcription-session.ts",
+  // The same action-to-session cycle, reported along its other two routes:
+  // `local-transcription-session.ts` calls `transcribeAudio`, and
+  // `prompt.utils.ts` reaches `user.utils.ts` first. Both were hidden while the
+  // shorter route through `types/transcription-session.types.ts` existed, and
+  // surface when that type import moves to a leaf module.
+  "apps/desktop/src/actions/transcribe.actions.ts -> apps/desktop/src/repos/index.ts -> apps/desktop/src/utils/user.utils.ts -> apps/desktop/src/sessions/index.ts -> apps/desktop/src/sessions/local-transcription-session.ts",
+  "apps/desktop/src/actions/transcribe.actions.ts -> apps/desktop/src/utils/prompt.utils.ts -> apps/desktop/src/utils/user.utils.ts -> apps/desktop/src/sessions/index.ts -> apps/desktop/src/sessions/batch-transcription-session.ts",
   "apps/desktop/src/actions/transcribe.actions.ts -> apps/desktop/src/types/transcription-session.types.ts",
   "apps/desktop/src/actions/transcribe.actions.ts -> apps/desktop/src/utils/user.utils.ts -> apps/desktop/src/sessions/index.ts -> apps/desktop/src/sessions/batch-transcription-session.ts",
   "apps/desktop/src/actions/transcribe.actions.ts -> apps/desktop/src/utils/user.utils.ts -> apps/desktop/src/sessions/index.ts -> apps/desktop/src/sessions/local-transcription-session.ts",

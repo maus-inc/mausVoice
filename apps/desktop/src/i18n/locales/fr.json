@@ -774,7 +774,7 @@
   "recommended_with_gpu_acceleration": "Recommandé avec accélération GPU",
   "record": "Enregistrer",
   "recording_failed": "Échec de l'enregistrement",
-  "recording_failed_partway_transcribing_what_was_captured": "Recording failed partway. Transcribing what was captured.",
+  "recording_failed_partway_transcribing_what_was_captured": "L'enregistrement a échoué en cours de route. La partie captée est transcrite.",
   "recording_keys": "Enregistrement des touches...",
   "recording_stopped_duration_limit_reached": "Enregistrement arrêté : limite de durée atteinte",
   "recording_stopped_provider_duration_limit_reached": "Enregistrement arrêté : la limite de durée du fournisseur est atteinte",
