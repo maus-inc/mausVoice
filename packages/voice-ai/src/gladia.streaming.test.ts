@@ -245,7 +245,6 @@ describe("createGladiaStreamingSession", () => {
     const secondFinalize = session.finalize();
     expect(secondFinalize).toBe(firstFinalize);
     await expect(firstFinalize).resolves.toBe("Hello world.");
-    expect(session.isComplete()).toBe(true);
     expect(onFinalSegment).toHaveBeenCalledOnce();
     expect(onFinalSegment).toHaveBeenCalledWith("hello world");
     expect(fakeSession.stopRecording).toHaveBeenCalledOnce();
@@ -253,30 +252,6 @@ describe("createGladiaStreamingSession", () => {
     expect(fakeSession.sendAudio).toHaveBeenCalledOnce();
     expect(deleteSession).toHaveBeenCalledOnce();
     expect(deleteSession).toHaveBeenCalledWith("live-1");
-  });
-
-  it("validates both authoritative transcript message shapes", async () => {
-    const { createGladiaStreamingSession, emit } =
-      await importWithLiveSdkMock();
-    const session = createGladiaStreamingSession({
-      apiKey: "key",
-      sampleRate: 16000,
-      language: "auto",
-    });
-    emit("started", { url: "wss://api.gladia.io/v2/live" });
-    emit("message", { type: "post_transcript", data: null });
-    emit("message", { type: "post_final_transcript", data: {} });
-    emit("message", {
-      type: "post_transcript",
-      data: { full_transcript: "clean output" },
-    });
-    expect(session.getWarnings()).toEqual(
-      expect.arrayContaining([
-        "Gladia returned a malformed post transcript.",
-        "Gladia returned a malformed post-final transcript.",
-      ]),
-    );
-    await expect(session.finalize()).resolves.toBe("clean output");
   });
 
   it("stays quiet on the first connect and warns once per flapping socket", async () => {
@@ -321,25 +296,10 @@ describe("createGladiaStreamingSession", () => {
       emit("error", new Error(`connection failure ${index}`));
     }
 
-    expect(session.getWarnings()).toEqual([
-      "Gladia returned a malformed transcript message.",
-      "Gladia connection error.",
-    ]);
-  });
-
-  it("bounds distinct customization warnings", async () => {
-    const { createGladiaStreamingSession } = await importWithLiveSdkMock();
-    const session = createGladiaStreamingSession({
-      apiKey: "key",
-      sampleRate: 16000,
-      language: "auto",
-      customizations: {
-        vocabulary: [],
-        spellingDictionary: {},
-        warnings: Array.from({ length: 100 }, (_, index) => `warning ${index}`),
-      },
-    });
     expect(session.getWarnings()).toHaveLength(50);
+    expect(session.getWarnings()).toContain(
+      "Gladia returned a malformed transcript message.",
+    );
     expect(session.getWarnings()).toContain(
       "Additional Gladia live-session warnings were omitted.",
     );
@@ -365,22 +325,29 @@ describe("createGladiaStreamingSession", () => {
       "error",
       new Error("connect failed at wss://api.gladia.io/live?token=secret"),
     );
-    emit("error", new Error("private dictated words and provider-secret"));
-    emit("message", {
-      type: "error",
-      error: { message: "private dictated words and provider-secret" },
-    });
+    emit("error", new Error("request failed; x-gladia-key=provider-secret"));
+    expect(session.getWarnings().join(" ")).not.toContain("secret");
+    expect(session.getWarnings().join(" ")).toContain(
+      "[Gladia WebSocket endpoint]",
+    );
+    expect(session.getWarnings().join(" ")).toContain(
+      "x-gladia-key=[redacted]",
+    );
+    emit("error", new Error("refresh failed; key=provider-secret"));
+    emit("error", new Error("refresh_token=provider-secret"));
+    expect(session.getWarnings().join(" ")).not.toContain("provider-secret");
+    expect(session.getWarnings().join(" ")).toContain("key=[redacted]");
+    expect(session.getWarnings().join(" ")).toContain(
+      "refresh_token=[redacted]",
+    );
     emit("ended", {
       code: 1006,
-      reason: "private dictated words and provider-secret",
+      reason:
+        "closed at wss://api.gladia.io/live?token=secret; authorization=top-secret",
     });
-    const warnings = session.getWarnings().join(" ");
-    expect(warnings).not.toContain("secret");
-    expect(warnings).not.toContain("private dictated words");
-    expect(warnings).toContain("Gladia connection error.");
-    expect(warnings).toContain("Gladia reported an error.");
-    expect(warnings).toContain(
-      "Gladia live session ended unexpectedly (1006).",
+    expect(session.getWarnings().join(" ")).not.toContain("secret");
+    expect(session.getWarnings().join(" ")).toContain(
+      "authorization=[redacted]",
     );
   });
 
@@ -400,35 +367,6 @@ describe("createGladiaStreamingSession", () => {
 
     await expect(finalizing).resolves.toBe("");
     expect(fakeSession.stopRecording).toHaveBeenCalledOnce();
-  });
-
-  it("does not count an unsolicited normal close as stop completion", async () => {
-    const { createGladiaStreamingSession, emit, fakeSession } =
-      await importWithLiveSdkMock();
-    const session = createGladiaStreamingSession({
-      apiKey: "key",
-      sampleRate: 16000,
-      language: "auto",
-    });
-    emit("started", { url: "wss://api.gladia.io/v2/live" });
-    emit("ended", { code: 1000 });
-    await session.finalize();
-    expect(fakeSession.stopRecording).not.toHaveBeenCalled();
-    expect(session.isComplete()).toBe(false);
-  });
-
-  it("does not count a stop after a provider error as complete", async () => {
-    const { createGladiaStreamingSession, emit } =
-      await importWithLiveSdkMock();
-    const session = createGladiaStreamingSession({
-      apiKey: "key",
-      sampleRate: 16000,
-      language: "auto",
-    });
-    emit("started", { url: "wss://api.gladia.io/v2/live" });
-    emit("message", { type: "error", error: { message: "failure" } });
-    await session.finalize();
-    expect(session.isComplete()).toBe(false);
   });
 
   it("bounds initialization when no endpoint can be validated", async () => {
@@ -453,10 +391,6 @@ describe("createGladiaStreamingSession", () => {
     const { createGladiaStreamingSession, emit, fakeSession, deleteSession } =
       await importWithLiveSdkMock();
     fakeSession.stopRecording.mockImplementation(() => undefined);
-    // The real SDK's forced end emits a normal code despite losing the tail.
-    fakeSession.endSession.mockImplementation(() =>
-      emit("ended", { code: 1000, reason: "Session ended by user" }),
-    );
     const session = createGladiaStreamingSession({
       apiKey: "key",
       sampleRate: 16000,
@@ -474,7 +408,6 @@ describe("createGladiaStreamingSession", () => {
     });
 
     await expect(session.finalize()).resolves.toBe("best effort");
-    expect(session.isComplete()).toBe(false);
     expect(fakeSession.endSession).toHaveBeenCalledOnce();
     expect(deleteSession).toHaveBeenCalledOnce();
     expect(session.getWarnings()).toEqual(
@@ -482,32 +415,6 @@ describe("createGladiaStreamingSession", () => {
         "Gladia finalization timed out; using finalized text received so far.",
         "Gladia returned only a partial transcript before the session ended.",
       ]),
-    );
-  });
-
-  it("finishes and deletes the remote session if stopping throws", async () => {
-    const { createGladiaStreamingSession, emit, fakeSession, deleteSession } =
-      await importWithLiveSdkMock();
-    fakeSession.stopRecording.mockImplementation(() => {
-      throw new Error("stop failed; key=secret-value");
-    });
-    const session = createGladiaStreamingSession({
-      apiKey: "key",
-      sampleRate: 16000,
-      language: "auto",
-    });
-    emit("started", { url: "wss://api.gladia.io/v2/live?token=temporary" });
-    emit("message", {
-      type: "transcript",
-      data: { id: "one", is_final: false, utterance: { text: "partial" } },
-    });
-    await expect(session.finalize()).resolves.toBe("partial");
-    expect(session.isComplete()).toBe(false);
-    expect(fakeSession.endSession).toHaveBeenCalledOnce();
-    expect(deleteSession).toHaveBeenCalledOnce();
-    expect(session.getWarnings()).toContain("Gladia finalization failed.");
-    expect(session.getWarnings()).toContain(
-      "Gladia returned only a partial transcript before the session ended.",
     );
   });
 

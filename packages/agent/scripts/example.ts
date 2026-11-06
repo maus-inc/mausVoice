@@ -1,12 +1,12 @@
 import * as readline from "readline";
+import { exec } from "child_process";
+import { promisify } from "util";
 import type { LlmMessage } from "@maus-inc/types";
 import { openaiStreamChat } from "@maus-inc/voice-ai";
 import { AgentLoop } from "../src/agent-loop";
 import type { AgentLlmProvider, AgentTool } from "../src/types";
-import { askForConfirmation } from "./confirmation";
-import { runConfirmedCommand } from "./terminal-command";
-import { renderAgentEvents } from "./agent-events";
-import { createSpinner } from "./spinner";
+
+const execAsync = promisify(exec);
 
 const API_KEY = process.env.OPENAI_API_KEY;
 if (!API_KEY) {
@@ -29,7 +29,31 @@ const provider: AgentLlmProvider = {
 let rl: readline.Interface;
 
 function confirm(message: string): Promise<boolean> {
-  return askForConfirmation(rl, message);
+  return new Promise((resolve) => {
+    rl.question(`  ${message} [y/n] `, (answer) => {
+      resolve(answer.trim().toLowerCase() !== "n");
+    });
+  });
+}
+
+const spinnerFrames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+function createSpinner(message: string) {
+  let i = 0;
+  const timer = setInterval(() => {
+    process.stdout.write(
+      `\r  ${spinnerFrames[i++ % spinnerFrames.length]} ${message}`,
+    );
+  }, 80);
+  return {
+    update(msg: string) {
+      message = msg;
+    },
+    stop() {
+      clearInterval(timer);
+      process.stdout.write("\r" + " ".repeat(message.length + 10) + "\r");
+    },
+  };
 }
 
 // --- Tools ---
@@ -103,7 +127,29 @@ const executeTerminalCommand: AgentTool = {
     required: ["command"],
   },
   async execute({ params, reason }) {
-    return await runConfirmedCommand(params.command as string, reason, confirm);
+    const command = params.command as string;
+    const allowed = await confirm(`Execute "${command}"?\n  Reason: ${reason}`);
+    if (!allowed) {
+      return { success: false, failureReason: "User denied the command." };
+    }
+    try {
+      const { stdout, stderr } = await execAsync(command, { timeout: 30000 });
+      return {
+        success: true,
+        result: { stdout: stdout.trim(), stderr: stderr.trim(), exitCode: 0 },
+      };
+    } catch (err: unknown) {
+      const e = err as {
+        stdout?: string;
+        stderr?: string;
+        message?: string;
+        code?: number;
+      };
+      return {
+        success: false,
+        failureReason: e.stderr?.trim() ?? e.message ?? "Command failed",
+      };
+    }
   },
 };
 
@@ -148,16 +194,41 @@ async function chat(userMessage: string) {
 
   const spinner = createSpinner("Thinking...");
 
-  await renderAgentEvents(loop.run(conversationHistory), {
-    spinner,
-    history: conversationHistory,
-    output: {
-      write: (text) => {
-        process.stdout.write(text);
-      },
-      log: (...values) => console.log(...values),
-    },
-  });
+  for await (const event of loop.run(conversationHistory)) {
+    switch (event.type) {
+      case "text-delta":
+        spinner.stop();
+        process.stdout.write(event.text);
+        break;
+      case "iteration-start":
+        spinner.update(
+          event.iteration === 0 ? "Thinking..." : "Thinking more...",
+        );
+        break;
+      case "tool-call-start":
+        spinner.stop();
+        console.log(
+          `\n  [${event.toolName}]`,
+          JSON.stringify(event.args).substring(0, 120),
+        );
+        spinner.update(`Running ${event.toolName}...`);
+        break;
+      case "tool-call-result":
+        spinner.stop();
+        if (event.isError) {
+          console.log(`  [Error]`, event.result.substring(0, 200));
+        } else {
+          console.log(`  [Result]`, event.result.substring(0, 200));
+        }
+        break;
+      case "finish":
+        spinner.stop();
+        console.log();
+        conversationHistory.length = 0;
+        conversationHistory.push(...event.messages);
+        break;
+    }
+  }
 }
 
 function prompt() {
@@ -167,11 +238,7 @@ function prompt() {
       rl.close();
       return;
     }
-    try {
-      await chat(trimmed);
-    } catch (error) {
-      console.error("Agent request failed:", error);
-    }
+    await chat(trimmed);
     prompt();
   });
 }

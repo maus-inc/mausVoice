@@ -6,7 +6,7 @@ import type {
 import { retry } from "@maus-inc/utilities";
 import Groq from "groq-sdk/index";
 import type { ChatCompletionMessageParam } from "groq-sdk/resources/chat/completions";
-import OpenAI from "openai";
+import OpenAI, { toFile } from "openai";
 import { openaiCompatibleStreamChat } from "./openai.utils";
 import {
   buildReasoningEffortParams,
@@ -21,7 +21,7 @@ import {
 import { buildGptOssReasoningParams } from "./reasoning.utils";
 import type { CustomFetch, DiscoveredModelId, ReasoningEffort } from "./types";
 import {
-  transcribeSdkAudio,
+  runSdkTranscription,
   TranscriptionSegment,
   TranscribeAudioOutput,
 } from "./transcription.utils";
@@ -343,14 +343,22 @@ export const groqTranscribeAudio = async ({
   customFetch,
 }: GroqTranscriptionArgs): Promise<GroqTranscribeAudioOutput> => {
   const client = createClient(apiKey, customFetch);
-  return transcribeSdkAudio(client.audio.transcriptions, {
-    blob,
-    ext,
-    model,
-    prompt,
-    language,
-    responseFormat: "verbose_json",
-  });
+  const file = await toFile(blob, `audio.${ext}`);
+  return runSdkTranscription(
+    (body) =>
+      client.audio.transcriptions.create(
+        body as unknown as Parameters<
+          typeof client.audio.transcriptions.create
+        >[0],
+      ),
+    {
+      file,
+      model,
+      prompt,
+      language,
+      response_format: "verbose_json",
+    },
+  );
 };
 
 export type GroqGenerateTextArgs = {

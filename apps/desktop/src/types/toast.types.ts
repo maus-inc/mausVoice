@@ -1,12 +1,11 @@
 export type ToastType = "info" | "error";
 
-const TOAST_ACTIONS = [
+export const TOAST_ACTIONS = [
   "upgrade",
   "open_agent_settings",
   "surface_window",
   "open_transcriptions",
   "confirm_cancel_transcription",
-  "cancel_recording_stop",
   "auto_learn_accept",
   "auto_learn_reject",
 ] as const;

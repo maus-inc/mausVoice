@@ -3,7 +3,7 @@ import { Auth, getAuth } from "firebase/auth";
 
 let _auth: Auth | null = null;
 
-const getEffectiveAuth = (): Auth => {
+export const getEffectiveAuth = (): Auth => {
   if (!_auth) {
     throw new Error("Auth has not been initialized. Call createAuth first.");
   }

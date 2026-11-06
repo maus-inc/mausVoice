@@ -13,11 +13,10 @@ import {
   Stack,
   Typography,
 } from "@mui/material";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { openExternalUrl } from "../../utils/open-url.utils";
 import { isReadOnlyFilesystemInstallError } from "@maus-inc/desktop-utils";
 import { useCallback, useMemo, useState } from "react";
 import { FormattedMessage, useIntl, type IntlShape } from "react-intl";
-import { formatReleaseDate } from "./release-date.utils";
 import { ReleaseNotesMarkdown } from "./ReleaseNotesMarkdown";
 import {
   dismissUpdateDialog,
@@ -27,6 +26,22 @@ import { UpdaterStatus } from "../../state/updater.state";
 import { useAppStore } from "../../store";
 import { formatSize } from "../../utils/format.utils";
 import { ChangelogDialog } from "./ChangelogDialog";
+
+const formatReleaseDate = (isoDate: string | null) => {
+  if (!isoDate) {
+    return null;
+  }
+
+  const parsed = new Date(isoDate);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(parsed);
+};
 
 const getUpdaterUiState = ({
   status,
@@ -238,20 +253,38 @@ const UpdateDialogActions = ({
   );
 };
 
-const UpdateReleaseDetails = ({
-  availableVersion,
-  currentVersion,
-  releaseDate,
-  releaseNotes,
-  offeredChannel,
-}: {
-  availableVersion: string | null;
-  currentVersion: string | null;
-  releaseDate: string | null;
-  releaseNotes: string | null;
-  offeredChannel: string | null;
-}) => {
+export const UpdateDialog = () => {
   const intl = useIntl();
+  const dialogOpen = useAppStore((state) => state.updater.dialogOpen);
+  const status = useAppStore((state) => state.updater.status);
+  const availableVersion = useAppStore(
+    (state) => state.updater.availableVersion,
+  );
+  const currentVersion = useAppStore((state) => state.updater.currentVersion);
+  const releaseDate = useAppStore((state) => state.updater.releaseDate);
+  const releaseNotes = useAppStore((state) => state.updater.releaseNotes);
+  const manualInstallerUrl = useAppStore(
+    (state) => state.updater.manualInstallerUrl,
+  );
+  const downloadProgress = useAppStore(
+    (state) => state.updater.downloadProgress,
+  );
+  const downloadedBytes = useAppStore((state) => state.updater.downloadedBytes);
+  const totalBytes = useAppStore((state) => state.updater.totalBytes);
+  const errorMessage = useAppStore((state) => state.updater.errorMessage);
+  const requiresManualInstall = useAppStore(
+    (state) => state.updater.requiresManualInstall,
+  );
+  const offeredChannel = useAppStore((state) => state.updater.offeredChannel);
+  const [changelogOpen, setChangelogOpen] = useState(false);
+
+  const ui = getUpdaterUiState({
+    status,
+    requiresManualInstall,
+    errorMessage,
+    manualInstallerUrl,
+  });
+
   const versionLabel = availableVersion
     ? intl.formatMessage(
         {
@@ -264,8 +297,17 @@ const UpdateReleaseDetails = ({
       });
 
   const formattedDate = useMemo(
-    () => formatReleaseDate(releaseDate, true),
+    () => formatReleaseDate(releaseDate),
     [releaseDate],
+  );
+
+  const percent = useMemo(
+    () => getDownloadPercent(downloadProgress),
+    [downloadProgress],
+  );
+  const progressLabel = useMemo(
+    () => getProgressLabel(downloadedBytes, totalBytes, intl),
+    [downloadedBytes, totalBytes, intl],
   );
 
   const currentVersionLabel =
@@ -289,111 +331,6 @@ const UpdateReleaseDetails = ({
     { version: currentVersionLabel },
   );
 
-  return (
-    <>
-      <Stack spacing={0.5}>
-        <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
-          <Typography
-            variant="body1"
-            sx={{
-              fontWeight: 600,
-            }}
-          >
-            {readyToInstallLabel}
-          </Typography>
-          {offeredChannel === "beta" && (
-            <Chip
-              size="small"
-              label={<FormattedMessage defaultMessage="Beta" />}
-              color="warning"
-              variant="outlined"
-            />
-          )}
-        </Stack>
-        <Typography
-          variant="body2"
-          sx={{
-            color: "text.secondary",
-          }}
-        >
-          {currentVersionDescription}
-        </Typography>
-        {formattedDate && (
-          <Typography
-            variant="caption"
-            sx={{
-              color: "text.secondary",
-            }}
-          >
-            <FormattedMessage
-              defaultMessage="Released on {date}"
-              values={{ date: formattedDate }}
-            />
-          </Typography>
-        )}
-      </Stack>
-
-      {releaseNotes && (
-        <Stack spacing={1}>
-          <Typography variant="body1">
-            <FormattedMessage defaultMessage="What's new" />
-          </Typography>
-          <ReleaseNotesMarkdown>{releaseNotes}</ReleaseNotesMarkdown>
-        </Stack>
-      )}
-    </>
-  );
-};
-
-export const UpdateDialog = () => {
-  const intl = useIntl();
-  const {
-    dialogOpen,
-    status,
-    availableVersion,
-    currentVersion,
-    releaseDate,
-    releaseNotes,
-    manualInstallerUrl,
-    downloadProgress,
-    downloadedBytes,
-    totalBytes,
-    errorMessage,
-    requiresManualInstall,
-    offeredChannel,
-  } = useAppStore(({ updater }) => ({
-    dialogOpen: updater.dialogOpen,
-    status: updater.status,
-    availableVersion: updater.availableVersion,
-    currentVersion: updater.currentVersion,
-    releaseDate: updater.releaseDate,
-    releaseNotes: updater.releaseNotes,
-    manualInstallerUrl: updater.manualInstallerUrl,
-    downloadProgress: updater.downloadProgress,
-    downloadedBytes: updater.downloadedBytes,
-    totalBytes: updater.totalBytes,
-    errorMessage: updater.errorMessage,
-    requiresManualInstall: updater.requiresManualInstall,
-    offeredChannel: updater.offeredChannel,
-  }));
-  const [changelogOpen, setChangelogOpen] = useState(false);
-
-  const ui = getUpdaterUiState({
-    status,
-    requiresManualInstall,
-    errorMessage,
-    manualInstallerUrl,
-  });
-
-  const percent = useMemo(
-    () => getDownloadPercent(downloadProgress),
-    [downloadProgress],
-  );
-  const progressLabel = useMemo(
-    () => getProgressLabel(downloadedBytes, totalBytes, intl),
-    [downloadedBytes, totalBytes, intl],
-  );
-
   const handleClose = useCallback(() => {
     if (ui.isUpdating) {
       return;
@@ -412,7 +349,7 @@ export const UpdateDialog = () => {
     if (!manualInstallerUrl) {
       return;
     }
-    openUrl(manualInstallerUrl);
+    openExternalUrl(manualInstallerUrl, "the manual download");
   }, [manualInstallerUrl]);
 
   return (
@@ -433,13 +370,56 @@ export const UpdateDialog = () => {
         </DialogTitle>
         <DialogContent>
           <Stack spacing={2} sx={{ mt: 1 }}>
-            <UpdateReleaseDetails
-              availableVersion={availableVersion}
-              currentVersion={currentVersion}
-              releaseDate={releaseDate}
-              releaseNotes={releaseNotes}
-              offeredChannel={offeredChannel}
-            />
+            <Stack spacing={0.5}>
+              <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
+                <Typography
+                  variant="body1"
+                  sx={{
+                    fontWeight: 600,
+                  }}
+                >
+                  {readyToInstallLabel}
+                </Typography>
+                {offeredChannel === "beta" && (
+                  <Chip
+                    size="small"
+                    label={<FormattedMessage defaultMessage="Beta" />}
+                    color="warning"
+                    variant="outlined"
+                  />
+                )}
+              </Stack>
+              <Typography
+                variant="body2"
+                sx={{
+                  color: "text.secondary",
+                }}
+              >
+                {currentVersionDescription}
+              </Typography>
+              {formattedDate && (
+                <Typography
+                  variant="caption"
+                  sx={{
+                    color: "text.secondary",
+                  }}
+                >
+                  <FormattedMessage
+                    defaultMessage="Released on {date}"
+                    values={{ date: formattedDate }}
+                  />
+                </Typography>
+              )}
+            </Stack>
+
+            {releaseNotes && (
+              <Stack spacing={1}>
+                <Typography variant="body1">
+                  <FormattedMessage defaultMessage="What's new" />
+                </Typography>
+                <ReleaseNotesMarkdown>{releaseNotes}</ReleaseNotesMarkdown>
+              </Stack>
+            )}
 
             <Box>
               <Button

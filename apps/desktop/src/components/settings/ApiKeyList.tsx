@@ -19,8 +19,7 @@ import {
   useTheme,
 } from "@mui/material";
 import { API_KEY_PROVIDERS, type ApiKeyProvider } from "@maus-inc/types";
-import { unknownToMessage } from "@maus-inc/utilities";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   defineMessages,
   FormattedMessage,
@@ -49,32 +48,23 @@ import { OpenAICompatibleModelPicker } from "./OpenAICompatibleModelPicker";
 import { OpenRouterModelPicker } from "./OpenRouterModelPicker";
 import { OpenRouterProviderRouting } from "./OpenRouterProviderRouting";
 import { ProviderFormFields } from "./ProviderFormFields";
-import { useApiKeyFormSave } from "./useApiKeyFormSave";
-import { useApiKeyFormFields } from "./useApiKeyFormFields";
 
 export type ApiKeyListContext = "transcription" | "post-processing";
 
-/** Scrub both recognizable credential shapes and the key supplied to this test. */
-const providerTestError = (
-  error: unknown,
-  key: string | null | undefined,
-): string => {
-  if (!(error instanceof Error)) return "API key test failed.";
-  const message = key
-    ? error.message.split(key).join("[redacted]")
-    : error.message;
-  return unknownToMessage(message);
+type ApiKeyListProps = {
+  selectedApiKeyId: string | null;
+  onChange: (id: string | null) => void;
+  context: ApiKeyListContext;
+  compactCards?: boolean;
 };
-
-type ApiKeyListProps = Parameters<typeof ApiKeyList>[0];
 
 const getAvailableProviders = (context: ApiKeyListContext): ApiKeyProvider[] =>
   API_KEY_PROVIDERS.filter((p) => {
     if (p === "azure") return true;
     const repo = getModelProviderRepo(p);
     return context === "transcription"
-      ? repo.supportsTranscriptionModels()
-      : repo.supportsGenerativeTextModels();
+      ? repo.supportsTranscriptionModels
+      : repo.supportsGenerativeTextModels;
   });
 
 const ApiKeyFormActions = ({
@@ -152,9 +142,9 @@ type AddApiKeyCardProps = {
 const AddApiKeyCard = ({ onSave, onCancel, context }: AddApiKeyCardProps) => {
   const [name, setName] = useState("");
   const [provider, setProvider] = useState<SettingsApiKeyProvider>("groq");
-  const { fieldValues, setFieldValues, handleFieldChange } =
-    useApiKeyFormFields();
+  const [fieldValues, setFieldValues] = useState<Record<string, string>>({});
   const [includeV1Path, setIncludeV1Path] = useState(true);
+  const [saving, setSaving] = useState(false);
 
   const config = useMemo(
     () => getProviderFormConfig(provider, context),
@@ -167,33 +157,54 @@ const AddApiKeyCard = ({ onSave, onCancel, context }: AddApiKeyCardProps) => {
     !!name &&
     config.fields.filter((f) => f.required).every((f) => !!fieldValues[f.key]);
 
-  const save = useCallback(async () => {
-    const apiKeyValue = fieldValues.apiKey || "";
-    const baseUrl = fieldValues.baseUrl || config.defaultBaseUrl || undefined;
-    const azureRegion = fieldValues.azureRegion || undefined;
-    const transcriptionModel = fieldValues.transcriptionModel || undefined;
-    const includeV1PathValue = config.showIncludeV1Path
-      ? includeV1Path
-      : undefined;
-    const transcriptionPath = fieldValues.transcriptionPath
-      ? fieldValues.transcriptionPath
-      : undefined;
+  const handleFieldChange = useCallback((key: string, value: string) => {
+    setFieldValues((prev) => ({ ...prev, [key]: value }));
+  }, []);
 
-    await onSave({
-      name,
-      provider,
-      key: apiKeyValue,
-      baseUrl,
-      azureRegion,
-      transcriptionModel,
-      includeV1Path: includeV1PathValue,
-      transcriptionPath,
-    });
-    setName("");
-    setFieldValues({});
-    setIncludeV1Path(true);
-  }, [name, provider, fieldValues, includeV1Path, config, onSave]);
-  const { saving, handleSave } = useApiKeyFormSave(canSave, save);
+  const handleSave = useCallback(async () => {
+    if (!canSave || saving) return;
+
+    setSaving(true);
+    try {
+      const apiKeyValue = fieldValues.apiKey || "";
+      const baseUrl = fieldValues.baseUrl || config.defaultBaseUrl || undefined;
+      const azureRegion = fieldValues.azureRegion || undefined;
+      const transcriptionModel = fieldValues.transcriptionModel || undefined;
+      const includeV1PathValue = config.showIncludeV1Path
+        ? includeV1Path
+        : undefined;
+      const transcriptionPath = fieldValues.transcriptionPath
+        ? fieldValues.transcriptionPath
+        : undefined;
+
+      await onSave({
+        name,
+        provider,
+        key: apiKeyValue,
+        baseUrl,
+        azureRegion,
+        transcriptionModel,
+        includeV1Path: includeV1PathValue,
+        transcriptionPath,
+      });
+      setName("");
+      setFieldValues({});
+      setIncludeV1Path(true);
+    } catch (error) {
+      console.error("Failed to save API key", error);
+    } finally {
+      setSaving(false);
+    }
+  }, [
+    canSave,
+    saving,
+    name,
+    provider,
+    fieldValues,
+    includeV1Path,
+    config,
+    onSave,
+  ]);
 
   return (
     <Paper
@@ -251,16 +262,6 @@ const AddApiKeyCard = ({ onSave, onCancel, context }: AddApiKeyCardProps) => {
   );
 };
 
-/** A configured but cleared field is null; an unsupported field is unchanged. */
-const editedOptionalField = (
-  key: string,
-  config: ReturnType<typeof getProviderFormConfig>,
-  values: Record<string, string>,
-): string | null | undefined =>
-  config.fields.some((field) => field.key === key)
-    ? values[key] || null
-    : undefined;
-
 type EditApiKeyCardProps = {
   apiKey: SettingsApiKey;
   onSave: (payload: {
@@ -287,7 +288,7 @@ const EditApiKeyCard = ({
   context,
 }: EditApiKeyCardProps) => {
   const [name, setName] = useState(apiKey.name);
-  const { fieldValues, handleFieldChange } = useApiKeyFormFields(() => {
+  const [fieldValues, setFieldValues] = useState<Record<string, string>>(() => {
     const initial: Record<string, string> = {};
     if (apiKey.baseUrl) initial.baseUrl = apiKey.baseUrl;
     if (apiKey.azureRegion) initial.azureRegion = apiKey.azureRegion;
@@ -300,6 +301,7 @@ const EditApiKeyCard = ({
   const [includeV1Path, setIncludeV1Path] = useState(
     apiKey.includeV1Path ?? true,
   );
+  const [saving, setSaving] = useState(false);
 
   const config = useMemo(
     () => getProviderFormConfig(apiKey.provider, context),
@@ -315,35 +317,57 @@ const EditApiKeyCard = ({
         return !!fieldValues[f.key];
       });
 
-  const save = useCallback(async () => {
-    const baseUrl =
-      fieldValues.baseUrl || config.defaultBaseUrl || apiKey.baseUrl;
-    const azureRegion = fieldValues.azureRegion || apiKey.azureRegion;
-    const includeV1PathValue = config.showIncludeV1Path
-      ? includeV1Path
-      : apiKey.includeV1Path;
-    const transcriptionModel = editedOptionalField(
-      "transcriptionModel",
-      config,
-      fieldValues,
-    );
-    const transcriptionPath = editedOptionalField(
-      "transcriptionPath",
-      config,
-      fieldValues,
-    );
+  const handleFieldChange = useCallback((key: string, value: string) => {
+    setFieldValues((prev) => ({ ...prev, [key]: value }));
+  }, []);
 
-    await onSave({
-      name,
-      key: fieldValues.apiKey || "",
-      baseUrl,
-      azureRegion,
-      includeV1Path: includeV1PathValue,
-      transcriptionModel,
-      transcriptionPath,
-    });
-  }, [name, fieldValues, includeV1Path, config, apiKey, onSave]);
-  const { saving, handleSave } = useApiKeyFormSave(canSave, save);
+  const handleSave = useCallback(async () => {
+    if (!canSave || saving) return;
+    setSaving(true);
+    try {
+      const baseUrl =
+        fieldValues.baseUrl || config.defaultBaseUrl || apiKey.baseUrl;
+      const azureRegion = fieldValues.azureRegion || apiKey.azureRegion;
+      const includeV1PathValue = config.showIncludeV1Path
+        ? includeV1Path
+        : apiKey.includeV1Path;
+      const hasTranscriptionModelField = config.fields.some(
+        (f) => f.key === "transcriptionModel",
+      );
+      const transcriptionModel = hasTranscriptionModelField
+        ? fieldValues.transcriptionModel || null
+        : undefined;
+      const hasTranscriptionPathField = config.fields.some(
+        (f) => f.key === "transcriptionPath",
+      );
+      const transcriptionPath = hasTranscriptionPathField
+        ? fieldValues.transcriptionPath || null
+        : undefined;
+
+      await onSave({
+        name,
+        key: fieldValues.apiKey || "",
+        baseUrl,
+        azureRegion,
+        includeV1Path: includeV1PathValue,
+        transcriptionModel,
+        transcriptionPath,
+      });
+    } catch (error) {
+      console.error("Failed to save API key", error);
+    } finally {
+      setSaving(false);
+    }
+  }, [
+    canSave,
+    saving,
+    name,
+    fieldValues,
+    includeV1Path,
+    config,
+    apiKey,
+    onSave,
+  ]);
 
   const handleTest = useCallback(() => {
     const overrides: Partial<SettingsApiKey> = { name };
@@ -471,21 +495,19 @@ const ModelSetupSection = ({
   );
 };
 
-type ModelPickerProps = {
-  apiKey: SettingsApiKey;
-  context: ApiKeyListContext;
-  currentModel: string | null;
-  onModelChange: (model: string | null) => void;
-  disabled: boolean;
-};
-
 const ModelPickerForProvider = ({
   apiKey,
   context,
   currentModel,
   onModelChange,
   disabled,
-}: ModelPickerProps) => {
+}: {
+  apiKey: SettingsApiKey;
+  context: ApiKeyListContext;
+  currentModel: string | null;
+  onModelChange: (model: string | null) => void;
+  disabled: boolean;
+}) => {
   if (apiKey.provider === "openrouter" && context === "post-processing") {
     return (
       <ModelSetupSection context={context}>
@@ -550,7 +572,13 @@ const GenericModelPicker = ({
   currentModel,
   onModelChange,
   disabled,
-}: ModelPickerProps) => {
+}: {
+  apiKey: SettingsApiKey;
+  context: ApiKeyListContext;
+  currentModel: string | null;
+  onModelChange: (model: string | null) => void;
+  disabled: boolean;
+}) => {
   const intl = useIntl();
   const [models, setModels] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -690,22 +718,24 @@ const ApiKeyCardAction = ({
 const ApiKeyCard = ({
   apiKey,
   selected,
-  actions,
+  onSelect,
+  onTest,
+  onEdit,
+  onDelete,
   testing,
   deleting,
+  onModelChange,
   context,
 }: {
   apiKey: SettingsApiKey;
   selected: boolean;
-  actions: {
-    onSelect: () => void;
-    onTest: () => void;
-    onEdit: () => void;
-    onDelete: () => void;
-    onModelChange: (model: string | null) => void;
-  };
+  onSelect: () => void;
+  onTest: () => void;
+  onEdit: () => void;
   testing: boolean;
+  onDelete: () => void;
   deleting: boolean;
+  onModelChange: (model: string | null) => void;
   context: ApiKeyListContext;
 }) => {
   const intl = useIntl();
@@ -715,7 +745,6 @@ const ApiKeyCard = ({
     [apiKey.provider, context],
   );
   const currentModel = getModelForContext(apiKey, context);
-  const busy = testing || deleting;
 
   return (
     <Paper
@@ -753,7 +782,7 @@ const ApiKeyCard = ({
           component="button"
           type="button"
           aria-pressed={selected}
-          aria-disabled={busy}
+          aria-disabled={testing || deleting}
           onClick={() => {
             // `aria-disabled` rather than `disabled`: a disabled button leaves
             // the tab order and blurs itself if it held focus, so activating
@@ -761,8 +790,8 @@ const ApiKeyCard = ({
             // dropped focus to `<body>` and sent the next Tab back to the top of
             // the settings page. This stays focusable, and the guard below is
             // what makes it inert.
-            if (busy) return;
-            actions.onSelect();
+            if (testing || deleting) return;
+            onSelect();
           }}
           sx={{
             // A native <button> for real semantics: Enter and Space activate
@@ -860,8 +889,8 @@ const ApiKeyCard = ({
           <Button
             variant="outlined"
             size="small"
-            onClick={actions.onTest}
-            disabled={busy}
+            onClick={onTest}
+            disabled={testing || deleting}
           >
             {testing ? (
               <FormattedMessage defaultMessage="Testing..." />
@@ -871,14 +900,14 @@ const ApiKeyCard = ({
           </Button>
           <ApiKeyCardAction
             title={<FormattedMessage defaultMessage="Edit key" />}
-            onClick={actions.onEdit}
-            disabled={busy}
+            onClick={onEdit}
+            disabled={deleting || testing}
             icon={<Pencil size={16} strokeWidth={1.9} />}
           />
           <ApiKeyCardAction
             title={<FormattedMessage defaultMessage="Delete key" />}
-            onClick={actions.onDelete}
-            disabled={busy}
+            onClick={onDelete}
+            disabled={deleting || testing}
             color="error"
             icon={<Trash2 size={16} strokeWidth={1.9} />}
           />
@@ -888,8 +917,8 @@ const ApiKeyCard = ({
         apiKey={apiKey}
         context={context}
         currentModel={currentModel}
-        onModelChange={actions.onModelChange}
-        disabled={busy}
+        onModelChange={onModelChange}
+        disabled={testing || deleting}
       />
     </Paper>
   );
@@ -901,345 +930,32 @@ const supportsContext = (key: SettingsApiKey, context: ApiKeyListContext) => {
   }
   const repo = getModelProviderRepo(key.provider);
   return context === "transcription"
-    ? repo.supportsTranscriptionModels()
-    : repo.supportsGenerativeTextModels();
+    ? repo.supportsTranscriptionModels
+    : repo.supportsGenerativeTextModels;
 };
 
 const generateApiKeyId = () =>
   `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 
-/** Independent ownership for provider tests: one key must never clear another's busy state. */
-const useApiKeyTests = (context: ApiKeyListContext) => {
-  const [testingIds, setTestingIds] = useState<Set<string>>(() => new Set());
-  const pending = useRef(new Set<string>());
-  const mounted = useRef(false);
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
-  const test = useCallback(
-    async (apiKey: SettingsApiKey, displayedId = apiKey.id) => {
-      if (pending.current.has(displayedId)) return;
-      pending.current.add(displayedId);
-      setTestingIds((current) => new Set(current).add(displayedId));
-      try {
-        const config = getProviderFormConfig(apiKey.provider, context);
-        const success = await config.testIntegration(apiKey, context);
-        if (!mounted.current) return;
-        if (success) {
-          showSnackbar("Integration successful", { mode: "success" });
-        } else {
-          showErrorSnackbar("Integration failed. Provide a valid API key.");
-        }
-      } catch (error) {
-        if (mounted.current)
-          showErrorSnackbar(providerTestError(error, apiKey.keyFull));
-      } finally {
-        pending.current.delete(displayedId);
-        if (mounted.current)
-          setTestingIds((current) => {
-            const next = new Set(current);
-            next.delete(displayedId);
-            return next;
-          });
-      }
-    },
-    [context],
-  );
-  return { testingIds, test };
-};
-
-/** The confirmation owns its pending deletion until the action settles. */
-const useApiKeyDeletion = () => {
-  const [apiKeyToDelete, setApiKeyToDelete] = useState<SettingsApiKey | null>(
-    null,
-  );
-  const [deletingApiKeyId, setDeletingApiKeyId] = useState<string | null>(null);
-  const pending = useRef(false);
-  const mounted = useRef(false);
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
-  const handleRequestDelete = useCallback((apiKey: SettingsApiKey) => {
-    if (!pending.current) setApiKeyToDelete(apiKey);
-  }, []);
-  const handleCloseDeleteDialog = useCallback(() => {
-    if (!pending.current) setApiKeyToDelete(null);
-  }, []);
-  const handleConfirmDelete = useCallback(async () => {
-    if (!apiKeyToDelete || pending.current) return;
-    pending.current = true;
-    setDeletingApiKeyId(apiKeyToDelete.id);
-    try {
-      await deleteApiKey(apiKeyToDelete.id);
-      if (mounted.current) {
-        showSnackbar("API key deleted", { mode: "success" });
-        setApiKeyToDelete(null);
-      }
-    } catch {
-      // Errors are surfaced via deleteApiKey.
-    } finally {
-      pending.current = false;
-      if (mounted.current) setDeletingApiKeyId(null);
-    }
-  }, [apiKeyToDelete]);
-  return {
-    apiKeyToDelete,
-    deletingApiKeyId,
-    handleRequestDelete,
-    handleCloseDeleteDialog,
-    handleConfirmDelete,
-  };
-};
-
-/** Editing sessions are distinct even when the same key is reopened. */
-const useApiKeyEditing = () => {
-  const [editingApiKeyId, setEditingApiKeyId] = useState<string | null>(null);
-  const editorRevision = useRef(0);
-  useEffect(
-    () => () => {
-      editorRevision.current += 1;
-    },
-    [],
-  );
-  const openEditor = useCallback((id: string) => {
-    editorRevision.current += 1;
-    setEditingApiKeyId(id);
-  }, []);
-  const closeEditor = useCallback(() => {
-    editorRevision.current += 1;
-    setEditingApiKeyId(null);
-  }, []);
-  const handleEditApiKey = useCallback(
-    async (
-      apiKeyId: string,
-      payload: {
-        name: string;
-        key: string;
-        baseUrl?: string | null;
-        azureRegion?: string | null;
-        includeV1Path?: boolean | null;
-        transcriptionModel?: string | null;
-        transcriptionPath?: string | null;
-      },
-    ) => {
-      const revision = editorRevision.current;
-      await updateApiKey({
-        id: apiKeyId,
-        name: payload.name,
-        key: payload.key || undefined,
-        baseUrl: payload.baseUrl,
-        azureRegion: payload.azureRegion,
-        includeV1Path: payload.includeV1Path,
-        transcriptionModel:
-          payload.transcriptionModel !== undefined
-            ? payload.transcriptionModel
-            : undefined,
-        transcriptionPath:
-          payload.transcriptionPath !== undefined
-            ? payload.transcriptionPath
-            : undefined,
-        clearTranscriptionPath: payload.transcriptionPath === null,
-      });
-      if (editorRevision.current === revision) closeEditor();
-    },
-    [closeEditor],
-  );
-
-  return { editingApiKeyId, openEditor, closeEditor, handleEditApiKey };
-};
-
-/** Loading and error placeholders never hide an already-loaded key. */
-const getApiKeyListState = (
-  status: "loading" | "success" | "error" | "idle",
-  keyCount: number,
-  adding: boolean,
-) => {
-  if (keyCount > 0) return "ready";
-  if (status === "loading") return "loading";
-  if (status === "error") return "error";
-  return adding ? "ready" : "empty";
-};
-
-const DeleteApiKeyDialog = ({
-  apiKeyToDelete,
-  deletingApiKeyId,
-  handleCloseDeleteDialog,
-  handleConfirmDelete,
-}: Pick<
-  ReturnType<typeof useApiKeyDeletion>,
-  | "apiKeyToDelete"
-  | "deletingApiKeyId"
-  | "handleCloseDeleteDialog"
-  | "handleConfirmDelete"
->) => (
-  <Dialog
-    open={apiKeyToDelete !== null}
-    onClose={handleCloseDeleteDialog}
-    maxWidth="xs"
-    fullWidth
-  >
-    <DialogTitle>
-      <FormattedMessage defaultMessage="Delete API key" />
-    </DialogTitle>
-    <DialogContent>
-      <Typography variant="body2">
-        <FormattedMessage
-          defaultMessage="Are you sure you want to delete the API key {keyName}?"
-          values={{
-            keyName: (
-              <Box
-                component="span"
-                sx={{
-                  fontWeight: 600,
-                }}
-              >
-                {apiKeyToDelete?.name ?? "this API key"}
-              </Box>
-            ),
-          }}
-        />
-      </Typography>
-      <Typography
-        variant="body2"
-        sx={{
-          color: "text.secondary",
-          mt: 1,
-        }}
-      >
-        <FormattedMessage defaultMessage="Removing the key signs you out of that provider on this device." />
-      </Typography>
-    </DialogContent>
-    <DialogActions>
-      <Button
-        onClick={handleCloseDeleteDialog}
-        disabled={deletingApiKeyId !== null}
-      >
-        <FormattedMessage defaultMessage="Cancel" />
-      </Button>
-      <Button
-        variant="contained"
-        color="error"
-        onClick={handleConfirmDelete}
-        disabled={deletingApiKeyId !== null}
-      >
-        {deletingApiKeyId !== null ? (
-          <FormattedMessage defaultMessage="Deleting..." />
-        ) : (
-          <FormattedMessage defaultMessage="Delete" />
-        )}
-      </Button>
-    </DialogActions>
-  </Dialog>
-);
-
-type ApiKeyGridProps = {
-  apiKeys: SettingsApiKey[];
-  context: ApiKeyListContext;
-  compactCards: boolean;
-  state: {
-    selectedApiKeyId: string | null;
-    editingApiKeyId: string | null;
-    deletingApiKeyId: string | null;
-    testingIds: Set<string>;
-  };
-  actions: {
-    onChange: ApiKeyListProps["onChange"];
-    openEditor: ReturnType<typeof useApiKeyEditing>["openEditor"];
-    closeEditor: ReturnType<typeof useApiKeyEditing>["closeEditor"];
-    handleEditApiKey: ReturnType<typeof useApiKeyEditing>["handleEditApiKey"];
-    handleTestApiKey: ReturnType<typeof useApiKeyTests>["test"];
-    handleRequestDelete: ReturnType<
-      typeof useApiKeyDeletion
-    >["handleRequestDelete"];
-    handleTestEditingApiKey: (
-      key: SettingsApiKey,
-      overrides: Partial<SettingsApiKey>,
-    ) => Promise<void>;
-    handleModelChange: (id: string, model: string | null) => Promise<void>;
-  };
-};
-
-const ApiKeyGrid = ({
-  apiKeys,
+export const ApiKeyList = ({
+  selectedApiKeyId,
+  onChange,
   context,
-  compactCards,
-  state,
-  actions,
-}: ApiKeyGridProps) => {
-  const { selectedApiKeyId, editingApiKeyId, deletingApiKeyId, testingIds } =
-    state;
-  const {
-    onChange,
-    openEditor,
-    closeEditor,
-    handleEditApiKey,
-    handleTestApiKey,
-    handleRequestDelete,
-    handleTestEditingApiKey,
-    handleModelChange,
-  } = actions;
-  return (
-    <Box
-      sx={{
-        display: "grid",
-        gridTemplateColumns: compactCards
-          ? "repeat(auto-fit, minmax(min(100%, 340px), 1fr))"
-          : "1fr",
-        alignItems: "start",
-        gap: 1.5,
-        width: "100%",
-      }}
-    >
-      {apiKeys.map((apiKey) =>
-        editingApiKeyId === apiKey.id ? (
-          <EditApiKeyCard
-            key={apiKey.id}
-            apiKey={apiKey}
-            onSave={(payload) => handleEditApiKey(apiKey.id, payload)}
-            onCancel={closeEditor}
-            onTest={(overrides) => handleTestEditingApiKey(apiKey, overrides)}
-            testing={testingIds.has(apiKey.id)}
-            context={context}
-          />
-        ) : (
-          <ApiKeyCard
-            key={apiKey.id}
-            apiKey={apiKey}
-            selected={selectedApiKeyId === apiKey.id}
-            actions={{
-              onSelect: () => onChange(apiKey.id),
-              onTest: () => handleTestApiKey(apiKey),
-              onEdit: () => openEditor(apiKey.id),
-              onDelete: () => handleRequestDelete(apiKey),
-              onModelChange: (model) => handleModelChange(apiKey.id, model),
-            }}
-            testing={testingIds.has(apiKey.id)}
-            deleting={deletingApiKeyId === apiKey.id}
-            context={context}
-          />
-        ),
-      )}
-    </Box>
-  );
-};
-
-/** Inventory and fallback selection share the same context-filtered snapshot. */
-const useApiKeyInventory = (
-  context: ApiKeyListContext,
-  selectedApiKeyId: string | null,
-  onChange: ApiKeyListProps["onChange"],
-) => {
+  compactCards = false,
+}: ApiKeyListProps) => {
   const allApiKeys = useAppStore((state) => state.settings.apiKeys);
 
   const apiKeys = allApiKeys.filter((key) => supportsContext(key, context));
 
   const status = useAppStore((state) => state.settings.apiKeysStatus);
+  const [showAddCard, setShowAddCard] = useState(false);
+  const [editingApiKeyId, setEditingApiKeyId] = useState<string | null>(null);
+  const [testingApiKeyId, setTestingApiKeyId] = useState<string | null>(null);
+  const [apiKeyToDelete, setApiKeyToDelete] = useState<SettingsApiKey | null>(
+    null,
+  );
+  const [deletingApiKeyId, setDeletingApiKeyId] = useState<string | null>(null);
+
   useEffect(() => {
     if (apiKeys.length === 0) {
       return;
@@ -1256,72 +972,6 @@ const useApiKeyInventory = (
     }
   }, [apiKeys, selectedApiKeyId, onChange]);
 
-  return { apiKeys, status };
-};
-
-const ApiKeyAddControl = ({
-  showAddCard,
-  setShowAddCard,
-  keyCount,
-  listState,
-  handleAddApiKey,
-  context,
-}: {
-  showAddCard: boolean;
-  setShowAddCard: (show: boolean) => void;
-  keyCount: number;
-  listState: ReturnType<typeof getApiKeyListState>;
-  handleAddApiKey: (payload: AddApiKeyPayload) => Promise<void>;
-  context: ApiKeyListContext;
-}) => {
-  if (showAddCard) {
-    return (
-      <AddApiKeyCard
-        onSave={handleAddApiKey}
-        onCancel={() => setShowAddCard(false)}
-        context={context}
-      />
-    );
-  }
-  if (keyCount === 0 && listState !== "error") return null;
-  return (
-    <Button
-      variant="outlined"
-      startIcon={<Plus size={16} strokeWidth={1.9} />}
-      onClick={() => setShowAddCard(true)}
-      sx={{ alignSelf: "flex-start" }}
-    >
-      <FormattedMessage defaultMessage="Add another key" />
-    </Button>
-  );
-};
-
-/** A creation may select its key only while the initiating selection is still current. */
-const useApiKeyCreation = (
-  selectedApiKeyId: string | null,
-  context: ApiKeyListContext,
-  onChange: ApiKeyListProps["onChange"],
-) => {
-  const selectionRevision = useRef(0);
-  const mounted = useRef(false);
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-      selectionRevision.current += 1;
-    };
-  }, []);
-  useEffect(() => {
-    selectionRevision.current += 1;
-  }, [selectedApiKeyId, context]);
-  const selectKey = useCallback(
-    (id: string | null) => {
-      selectionRevision.current += 1;
-      onChange(id);
-    },
-    [onChange],
-  );
-  const [showAddCard, setShowAddCard] = useState(false);
   const handleAddApiKey = useCallback(
     async ({
       name,
@@ -1333,7 +983,6 @@ const useApiKeyCreation = (
       includeV1Path,
       transcriptionPath,
     }: AddApiKeyPayload) => {
-      const revision = selectionRevision.current;
       const created = await createApiKey({
         id: generateApiKeyId(),
         name,
@@ -1349,44 +998,61 @@ const useApiKeyCreation = (
         await updateApiKey({ id: created.id, transcriptionModel });
       }
 
-      if (!mounted.current) return;
-      if (selectionRevision.current === revision) onChange(created.id);
+      onChange(created.id);
       setShowAddCard(false);
     },
     [onChange],
   );
 
-  return { selectKey, showAddCard, setShowAddCard, handleAddApiKey };
-};
-
-export const ApiKeyList = ({
-  selectedApiKeyId,
-  onChange,
-  context,
-  compactCards = false,
-}: {
-  selectedApiKeyId: string | null;
-  onChange: (id: string | null) => void;
-  context: ApiKeyListContext;
-  compactCards?: boolean;
-}) => {
-  const { selectKey, showAddCard, setShowAddCard, handleAddApiKey } =
-    useApiKeyCreation(selectedApiKeyId, context, onChange);
-  const { apiKeys, status } = useApiKeyInventory(
-    context,
-    selectedApiKeyId,
-    onChange,
+  const handleTestApiKey = useCallback(
+    async (apiKey: SettingsApiKey) => {
+      setTestingApiKeyId(apiKey.id);
+      try {
+        const config = getProviderFormConfig(apiKey.provider, context);
+        const success = await config.testIntegration(apiKey, context);
+        if (success) {
+          showSnackbar("Integration successful", { mode: "success" });
+        } else {
+          showErrorSnackbar("Integration failed. Provide a valid API key.");
+        }
+      } catch (error) {
+        showErrorSnackbar(
+          error instanceof Error ? error.message : "API key test failed.",
+        );
+      } finally {
+        setTestingApiKeyId(null);
+      }
+    },
+    [context],
   );
-  const { editingApiKeyId, openEditor, closeEditor, handleEditApiKey } =
-    useApiKeyEditing();
-  const { testingIds, test: handleTestApiKey } = useApiKeyTests(context);
-  const {
-    apiKeyToDelete,
-    deletingApiKeyId,
-    handleRequestDelete,
-    handleCloseDeleteDialog,
-    handleConfirmDelete,
-  } = useApiKeyDeletion();
+
+  const handleRequestDelete = useCallback((apiKey: SettingsApiKey) => {
+    setApiKeyToDelete(apiKey);
+  }, []);
+
+  const handleCloseDeleteDialog = useCallback(() => {
+    if (deletingApiKeyId !== null) {
+      return;
+    }
+    setApiKeyToDelete(null);
+  }, [deletingApiKeyId]);
+
+  const handleConfirmDelete = useCallback(async () => {
+    if (!apiKeyToDelete) {
+      return;
+    }
+
+    setDeletingApiKeyId(apiKeyToDelete.id);
+    try {
+      await deleteApiKey(apiKeyToDelete.id);
+      showSnackbar("API key deleted", { mode: "success" });
+      setApiKeyToDelete(null);
+    } catch {
+      // Errors are surfaced via deleteApiKey.
+    } finally {
+      setDeletingApiKeyId(null);
+    }
+  }, [apiKeyToDelete, showSnackbar, deleteApiKey]);
 
   const handleRetryLoad = useCallback(() => {
     void loadApiKeys();
@@ -1407,6 +1073,41 @@ export const ApiKeyList = ({
     [context],
   );
 
+  const handleEditApiKey = useCallback(
+    async (
+      apiKeyId: string,
+      payload: {
+        name: string;
+        key: string;
+        baseUrl?: string | null;
+        azureRegion?: string | null;
+        includeV1Path?: boolean | null;
+        transcriptionModel?: string | null;
+        transcriptionPath?: string | null;
+      },
+    ) => {
+      await updateApiKey({
+        id: apiKeyId,
+        name: payload.name,
+        key: payload.key || undefined,
+        baseUrl: payload.baseUrl,
+        azureRegion: payload.azureRegion,
+        includeV1Path: payload.includeV1Path,
+        transcriptionModel:
+          payload.transcriptionModel !== undefined
+            ? payload.transcriptionModel
+            : undefined,
+        transcriptionPath:
+          payload.transcriptionPath !== undefined
+            ? payload.transcriptionPath
+            : undefined,
+        clearTranscriptionPath: payload.transcriptionPath === null,
+      });
+      setEditingApiKeyId(null);
+    },
+    [],
+  );
+
   const handleTestEditingApiKey = useCallback(
     async (apiKey: SettingsApiKey, overrides: Partial<SettingsApiKey>) => {
       const merged = { ...apiKey, ...overrides };
@@ -1417,9 +1118,24 @@ export const ApiKeyList = ({
         showErrorSnackbar("Save endpoint URL changes before testing them.");
         return;
       }
-      await handleTestApiKey(merged, apiKey.id);
+      setTestingApiKeyId(apiKey.id);
+      try {
+        const config = getProviderFormConfig(merged.provider, context);
+        const success = await config.testIntegration(merged, context);
+        if (success) {
+          showSnackbar("Integration successful", { mode: "success" });
+        } else {
+          showErrorSnackbar("Integration failed. Provide a valid API key.");
+        }
+      } catch (error) {
+        showErrorSnackbar(
+          error instanceof Error ? error.message : "API key test failed.",
+        );
+      } finally {
+        setTestingApiKeyId(null);
+      }
     },
-    [handleTestApiKey],
+    [context],
   );
 
   const loadingState = (
@@ -1503,50 +1219,136 @@ export const ApiKeyList = ({
     </Stack>
   );
 
-  const listState = getApiKeyListState(status, apiKeys.length, showAddCard);
+  const shouldShowLoading = status === "loading" && apiKeys.length === 0;
+  const shouldShowError = status === "error" && apiKeys.length === 0;
+  const shouldShowEmpty =
+    apiKeys.length === 0 &&
+    !showAddCard &&
+    !shouldShowLoading &&
+    !shouldShowError;
 
   return (
     <Stack spacing={1} sx={{ width: "100%" }}>
-      {listState === "loading" && loadingState}
-      {listState === "error" && errorState}
-      {listState === "empty" && emptyState}
-      {listState === "ready" && (
-        <ApiKeyGrid
-          apiKeys={apiKeys}
-          context={context}
-          compactCards={compactCards}
-          state={{
-            selectedApiKeyId,
-            editingApiKeyId,
-            deletingApiKeyId,
-            testingIds,
+      {shouldShowLoading && loadingState}
+      {shouldShowError && errorState}
+      {shouldShowEmpty && emptyState}
+      {!shouldShowLoading && !shouldShowError && !shouldShowEmpty && (
+        <Box
+          sx={{
+            display: "grid",
+            gridTemplateColumns: compactCards
+              ? "repeat(auto-fit, minmax(min(100%, 340px), 1fr))"
+              : "1fr",
+            alignItems: "start",
+            gap: 1.5,
+            width: "100%",
           }}
-          actions={{
-            onChange: selectKey,
-            openEditor,
-            closeEditor,
-            handleEditApiKey,
-            handleTestApiKey,
-            handleRequestDelete,
-            handleTestEditingApiKey,
-            handleModelChange,
-          }}
-        />
+        >
+          {apiKeys.map((apiKey) =>
+            editingApiKeyId === apiKey.id ? (
+              <EditApiKeyCard
+                key={apiKey.id}
+                apiKey={apiKey}
+                onSave={(payload) => handleEditApiKey(apiKey.id, payload)}
+                onCancel={() => setEditingApiKeyId(null)}
+                onTest={(overrides) =>
+                  handleTestEditingApiKey(apiKey, overrides)
+                }
+                testing={testingApiKeyId === apiKey.id}
+                context={context}
+              />
+            ) : (
+              <ApiKeyCard
+                key={apiKey.id}
+                apiKey={apiKey}
+                selected={selectedApiKeyId === apiKey.id}
+                onSelect={() => onChange(apiKey.id)}
+                onTest={() => handleTestApiKey(apiKey)}
+                onEdit={() => setEditingApiKeyId(apiKey.id)}
+                testing={testingApiKeyId === apiKey.id}
+                onDelete={() => handleRequestDelete(apiKey)}
+                deleting={deletingApiKeyId === apiKey.id}
+                onModelChange={(model) => handleModelChange(apiKey.id, model)}
+                context={context}
+              />
+            ),
+          )}
+        </Box>
       )}
-      <ApiKeyAddControl
-        showAddCard={showAddCard}
-        setShowAddCard={setShowAddCard}
-        keyCount={apiKeys.length}
-        listState={listState}
-        handleAddApiKey={handleAddApiKey}
-        context={context}
-      />
-      <DeleteApiKeyDialog
-        apiKeyToDelete={apiKeyToDelete}
-        deletingApiKeyId={deletingApiKeyId}
-        handleCloseDeleteDialog={handleCloseDeleteDialog}
-        handleConfirmDelete={handleConfirmDelete}
-      />
+      {showAddCard ? (
+        <AddApiKeyCard
+          onSave={handleAddApiKey}
+          onCancel={() => setShowAddCard(false)}
+          context={context}
+        />
+      ) : apiKeys.length > 0 || shouldShowError ? (
+        <Button
+          variant="outlined"
+          startIcon={<Plus size={16} strokeWidth={1.9} />}
+          onClick={() => setShowAddCard(true)}
+          sx={{ alignSelf: "flex-start" }}
+        >
+          <FormattedMessage defaultMessage="Add another key" />
+        </Button>
+      ) : null}
+      <Dialog
+        open={apiKeyToDelete !== null}
+        onClose={handleCloseDeleteDialog}
+        maxWidth="xs"
+        fullWidth
+      >
+        <DialogTitle>
+          <FormattedMessage defaultMessage="Delete API key" />
+        </DialogTitle>
+        <DialogContent>
+          <Typography variant="body2">
+            <FormattedMessage
+              defaultMessage="Are you sure you want to delete the API key {keyName}?"
+              values={{
+                keyName: (
+                  <Box
+                    component="span"
+                    sx={{
+                      fontWeight: 600,
+                    }}
+                  >
+                    {apiKeyToDelete?.name ?? "this API key"}
+                  </Box>
+                ),
+              }}
+            />
+          </Typography>
+          <Typography
+            variant="body2"
+            sx={{
+              color: "text.secondary",
+              mt: 1,
+            }}
+          >
+            <FormattedMessage defaultMessage="Removing the key signs you out of that provider on this device." />
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button
+            onClick={handleCloseDeleteDialog}
+            disabled={deletingApiKeyId !== null}
+          >
+            <FormattedMessage defaultMessage="Cancel" />
+          </Button>
+          <Button
+            variant="contained"
+            color="error"
+            onClick={handleConfirmDelete}
+            disabled={deletingApiKeyId !== null}
+          >
+            {deletingApiKeyId !== null ? (
+              <FormattedMessage defaultMessage="Deleting..." />
+            ) : (
+              <FormattedMessage defaultMessage="Delete" />
+            )}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Stack>
   );
 };

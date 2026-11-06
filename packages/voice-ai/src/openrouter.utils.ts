@@ -96,53 +96,32 @@ export type OpenRouterFetchModelsOutput = {
   models: OpenRouterModel[];
 };
 
-/** Do not pass provider-controlled transport or parser errors to callers. */
-const fetchOpenRouterCatalog = async <T>(
-  resource: "models" | "providers",
-  customFetch: CustomFetch | undefined,
-  apiKey?: string,
-): Promise<T[]> => {
-  const fetchFn = customFetch ?? globalThis.fetch;
-  let response: Response;
-  try {
-    response = await fetchFn(`${OPENROUTER_BASE_URL}/${resource}`, {
-      headers: {
-        ...(apiKey === undefined
-          ? {}
-          : { Authorization: `Bearer ${apiKey.trim()}` }),
-        "HTTP-Referer": OPENROUTER_APP_URL,
-        "X-Title": OPENROUTER_APP_NAME,
-      },
-    });
-  } catch {
-    throw new Error(
-      `Failed to fetch OpenRouter ${resource}: network request failed`,
-    );
-  }
-  if (!response.ok) {
-    throw new Error(
-      `Failed to fetch OpenRouter ${resource}: ${response.status}`,
-    );
-  }
-  try {
-    const data = (await response.json()) as { data: T[] };
-    return data.data ?? [];
-  } catch {
-    throw new Error(`Failed to fetch OpenRouter ${resource}: invalid response`);
-  }
-};
-
-/** Fetch all available models from OpenRouter. */
+/**
+ * Fetch all available models from OpenRouter.
+ */
 export const openrouterFetchModels = async ({
   apiKey,
   customFetch,
-}: OpenRouterFetchModelsArgs): Promise<OpenRouterFetchModelsOutput> => ({
-  models: await fetchOpenRouterCatalog<OpenRouterModel>(
-    "models",
-    customFetch,
-    apiKey,
-  ),
-});
+}: OpenRouterFetchModelsArgs): Promise<OpenRouterFetchModelsOutput> => {
+  const fetchFn = customFetch ?? globalThis.fetch;
+
+  const response = await fetchFn(`${OPENROUTER_BASE_URL}/models`, {
+    headers: {
+      Authorization: `Bearer ${apiKey.trim()}`,
+      "HTTP-Referer": OPENROUTER_APP_URL,
+      "X-Title": OPENROUTER_APP_NAME,
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(
+      `Failed to fetch OpenRouter models: ${response.status} ${response.statusText}`,
+    );
+  }
+
+  const data = (await response.json()) as { data: OpenRouterModel[] };
+  return { models: data.data ?? [] };
+};
 
 // ============================================================================
 // Fetch Providers
@@ -156,15 +135,31 @@ export type OpenRouterFetchProvidersOutput = {
   providers: OpenRouterProvider[];
 };
 
-/** Fetch all providers; this endpoint does not require an API key. */
+/**
+ * Fetch all available providers from OpenRouter.
+ * No API key required for this endpoint.
+ */
 export const openrouterFetchProviders = async ({
   customFetch,
-}: OpenRouterFetchProvidersArgs = {}): Promise<OpenRouterFetchProvidersOutput> => ({
-  providers: await fetchOpenRouterCatalog<OpenRouterProvider>(
-    "providers",
-    customFetch,
-  ),
-});
+}: OpenRouterFetchProvidersArgs = {}): Promise<OpenRouterFetchProvidersOutput> => {
+  const fetchFn = customFetch ?? globalThis.fetch;
+
+  const response = await fetchFn(`${OPENROUTER_BASE_URL}/providers`, {
+    headers: {
+      "HTTP-Referer": OPENROUTER_APP_URL,
+      "X-Title": OPENROUTER_APP_NAME,
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(
+      `Failed to fetch OpenRouter providers: ${response.status} ${response.statusText}`,
+    );
+  }
+
+  const data = (await response.json()) as { data: OpenRouterProvider[] };
+  return { providers: data.data ?? [] };
+};
 
 // ============================================================================
 // Generate Text

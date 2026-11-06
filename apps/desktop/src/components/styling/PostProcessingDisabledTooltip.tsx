@@ -5,13 +5,15 @@ import { FormattedMessage } from "react-intl";
 import { produceAppState } from "../../store";
 import { ConditionalTooltip } from "../common/ConditionalTooltip";
 
+type PostProcessingDisabledTooltipProps = {
+  disabled: boolean;
+  children: ReactElement;
+};
+
 export const PostProcessingDisabledTooltip = ({
   disabled,
   children,
-}: {
-  disabled: boolean;
-  children: ReactElement;
-}) => {
+}: PostProcessingDisabledTooltipProps) => {
   const openPostProcessingSettings = useCallback(() => {
     produceAppState((draft) => {
       draft.settings.aiPostProcessingDialogOpen = true;

@@ -15,6 +15,14 @@ import { FadingScrollArea } from "../common/FadingScrollArea";
 import { MetalChrome } from "../common/MetalChrome";
 import { ConversationListItem } from "./ConversationListItem";
 
+type ConversationListLayoutProps = {
+  selectedId: string | null;
+  fullWidth?: boolean;
+  onSelect: (id: string) => void;
+  onNewChat: () => void;
+  onDelete: (id: string) => void;
+};
+
 const GROUP_ORDER: ThreadDayGroup[] = ["today", "yesterday", "earlier"];
 
 const EmptyListMessage = ({ message }: { message: ReactNode }) => (
@@ -35,15 +43,11 @@ const EmptyListMessage = ({ message }: { message: ReactNode }) => (
 
 export const ConversationListLayout = ({
   selectedId,
+  fullWidth = false,
   onSelect,
   onNewChat,
   onDelete,
-}: {
-  selectedId: string | null;
-  onSelect: (id: string) => void;
-  onNewChat: () => void;
-  onDelete: (id: string) => void;
-}) => {
+}: ConversationListLayoutProps) => {
   const intl = useIntl();
   const conversationIds = useAppStore((s) => s.chat.conversationIds);
   const conversationById = useAppStore((s) => s.conversationById);
@@ -165,9 +169,10 @@ export const ConversationListLayout = ({
   return (
     <Box
       sx={{
-        width: 240,
-        maxWidth: 240,
-        minWidth: 240,
+        width: fullWidth ? "100%" : 240,
+        maxWidth: fullWidth ? "none" : 240,
+        minWidth: fullWidth ? 0 : 240,
+        minHeight: 0,
         display: "flex",
         flexDirection: "column",
         gap: 1,
@@ -178,6 +183,7 @@ export const ConversationListLayout = ({
       <MetalChrome>
         <Button
           onClick={onNewChat}
+          data-conversation-new
           data-active={selectedId == null ? "true" : undefined}
           startIcon={<Plus size={16} strokeWidth={2} />}
           sx={{

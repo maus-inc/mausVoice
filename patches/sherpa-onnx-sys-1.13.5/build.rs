@@ -1216,7 +1216,7 @@ mod tests {
             // `unwrap_or_else` rather than `unwrap`: a test that panicked while
             // holding the lock poisons it, and the tests that follow must still run
             // and report their own failures rather than dying on someone else's.
-            let guard = WIRING_ENV.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let guard = WIRING_ENV.lock().unwrap_or_else(|err| err.into_inner());
 
             let root = scratch.path().join(tag);
             // `OUT_DIR` is never read on this path -- `target_dir_from_out_dir`
@@ -1762,7 +1762,7 @@ mod tests {
         // Takes the wiring lock because the override is process-wide: without it this
         // could read an override a wiring test installed, and fail for that reason
         // rather than for the one it is checking.
-        let _guard = WIRING_ENV.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _guard = WIRING_ENV.lock().unwrap_or_else(|err| err.into_inner());
         assert!(
             PINNED_DIGEST_OVERRIDE
                 .lock()

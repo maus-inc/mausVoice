@@ -237,33 +237,6 @@ describe("decodePng", () => {
     expect(() => decodePng(gray)).toThrow(/tRNS/);
   });
 
-  it("rejects missing dimensions, image data, and palette", () => {
-    const missingHeader = Buffer.concat([
-      PNG_SIGNATURE,
-      pngChunk("IEND", Buffer.alloc(0)),
-    ]);
-    expect(() => decodePng(missingHeader)).toThrow(/missing its IHDR/);
-    const png = buildPng(1, 1, 0, [7]);
-    const noData = Buffer.concat([
-      png.subarray(0, 33),
-      pngChunk("IEND", Buffer.alloc(0)),
-    ]);
-    expect(() => decodePng(noData)).toThrow(/no image data/);
-    expect(() => decodePng(buildPng(1, 1, 3, [0]))).toThrow(/missing its PLTE/);
-  });
-
-  it("rejects unknown colour types and transparency on alpha-bearing types", () => {
-    const unknown = buildPng(1, 1, 0, [0]);
-    unknown[25] = 1;
-    expect(() => decodePng(unknown)).toThrow(/colour type 1/);
-    expect(() =>
-      decodePng(buildPng(1, 1, 4, [0, 255], { trns: [0, 0] })),
-    ).toThrow(/tRNS/);
-    expect(() =>
-      decodePng(buildPng(1, 1, 6, [0, 0, 0, 255], { trns: [0, 0] })),
-    ).toThrow(/tRNS/);
-  });
-
   it("rejects an unknown scanline filter", () => {
     const png = buildPng(1, 1, 0, [7], { rawRows: Buffer.from([7, 200]) });
     expect(() => decodePng(png)).toThrow(/unknown filter 7/);

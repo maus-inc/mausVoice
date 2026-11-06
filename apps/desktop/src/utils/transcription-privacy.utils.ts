@@ -1,6 +1,6 @@
 import type { ApiKeyProvider } from "@maus-inc/types";
 import type { IntlShape } from "react-intl";
-import { getProviderFormConfig } from "../components/settings/api-key-provider-config";
+import { getProviderDisplayName } from "../components/settings/api-key-provider-config";
 import {
   resolveTranscriptionSessionKind,
   type TranscriptionSessionKind,
@@ -25,19 +25,16 @@ export type TranscriptionAudioDisclosure = {
   providerName: string | null;
 };
 
-const readProviderName = (provider: ApiKeyProvider | null): string | null => {
-  if (!provider) {
-    return null;
-  }
-  try {
-    return getProviderFormConfig(provider, "transcription").displayName;
-  } catch {
-    // Every transcription-capable provider has a form config, so this only
-    // covers a key row written by a newer build. A disclosure that cannot name
-    // its provider stays hidden rather than crashing the surface that shows it.
-    return null;
-  }
-};
+/**
+ * The bare display name of a provider, or null when it cannot be named.
+ *
+ * Every transcription-capable provider has a form config, so null only covers
+ * a key row written by a newer build. A disclosure that cannot name its
+ * provider stays hidden rather than crashing the surface that shows it, and a
+ * summary row that cannot name it falls back to a state word.
+ */
+const readProviderName = (provider: ApiKeyProvider | null): string | null =>
+  provider ? getProviderDisplayName(provider, "transcription") : null;
 
 /**
  * The one gate every audio-transmission disclosure reads.

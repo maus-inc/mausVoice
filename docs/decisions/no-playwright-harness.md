@@ -8,11 +8,19 @@ Status: accepted
 The `ui-capture` skill asks for a UI change to be recorded as a smooth GIF and watched
 before filing a pull request. That needs browser automation.
 
-This repository has none. Nothing in any `package.json` names `playwright`,
-`puppeteer`, `webdriverio` or `cypress`. There is no `e2e/`, `screenshots/` or `visual/`
-directory. `@vitest/browser` is absent, so the preview tests run under `jsdom` rather
-than a real browser. `engineering/sandbox-vendored-toolchain.md` records the matching
-decision not to vendor a browser group into the sandbox toolchain, saving about 260 MB.
+This repository has no Playwright. Nothing in any `package.json` names `playwright`,
+`puppeteer` or `cypress`. `@vitest/browser` is absent, so the preview tests run under
+`jsdom` rather than a real browser. `engineering/sandbox-vendored-toolchain.md` records
+the matching decision not to vendor a browser group into the sandbox toolchain.
+
+Correction, 2026-11-05. This decision used to claim that nothing names `webdriverio`
+either. That was wrong. `apps/desktop/package.json` carries `@wdio/cli`, `@wdio/globals`,
+`@wdio/local-runner`, `@wdio/mocha-framework`, `@wdio/spec-reporter` and
+`chromedriver`, with `webdriverio` arriving transitively through them,
+`apps/desktop/webdriver/` holds `wdio.conf.js` and one spec, and
+`pnpm --filter desktop test:webdriver` runs it. On Linux that suite spawns `tauri-driver`
+and WebKitWebDriver against a built Tauri binary. On macOS it spawns `chromedriver`
+against a Vite preview server. No workflow invokes it.
 
 What does exist, and was overlooked when this decision was first drafted, is
 `apps/preview`. It is a Vite and React app served on port 5193 by
@@ -33,7 +41,11 @@ substitute verification surface:
 
 Rejected: adding Playwright and vendoring its roughly 933 MB download into the offline
 sandbox. The cost is out of proportion to the benefit while a rendering surface already
-exists in the repository.
+exists in the repository. Also rejected: vendoring a Chrome for Testing build and
+`tauri-driver` so the existing WebDriver suite can run here. That is gap G11 in
+`engineering/sandbox-coverage-gaps.md`, and it stays closed until a task needs it. The
+media tools that `ui-capture` needs, `ffmpeg` and `gifsicle`, are a separate gap, G9, and
+they are cheap enough to build.
 
 ## Consequences
 

@@ -1,4 +1,3 @@
-import { unknownToMessage } from "@maus-inc/utilities";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   previewToneStyle,
@@ -20,8 +19,6 @@ export const useTonePreview = (defaultSampleText: string) => {
       controller.current?.abort();
       const next = new AbortController();
       controller.current = next;
-      const isObsolete = () =>
-        controller.current !== next || next.signal.aborted;
       setStatus("running");
       setError("");
       setOutput("");
@@ -31,20 +28,20 @@ export const useTonePreview = (defaultSampleText: string) => {
           sampleText || defaultSampleText,
           next.signal,
         );
-        if (isObsolete()) {
+        if (controller.current !== next || next.signal.aborted) {
           return;
         }
         setOutput(text);
         setStatus("done");
       } catch (error_) {
-        if (isObsolete()) {
+        if (controller.current !== next || next.signal.aborted) {
           return;
         }
         if (error_ instanceof TonePreviewNoProviderError) {
           setStatus("unavailable");
           return;
         }
-        setError(error_ instanceof Error ? unknownToMessage(error_) : "");
+        setError(error_ instanceof Error ? error_.message : "");
         setStatus("error");
       } finally {
         if (controller.current === next) controller.current = null;

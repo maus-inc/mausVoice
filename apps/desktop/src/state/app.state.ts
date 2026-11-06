@@ -22,6 +22,7 @@ import { OverlayPhase } from "../types/overlay.types";
 import { PermissionMap } from "../types/permission.types";
 
 import { AgentRunState } from "./agent.state";
+import { HomeState, INITIAL_HOME_STATE } from "./home.state";
 import { AutoLearnState, INITIAL_AUTO_LEARN_STATE } from "./auto-learn.state";
 import { ChatState, INITIAL_CHAT_STATE } from "./chat.state";
 import { DictionaryState, INITIAL_DICTIONARY_STATE } from "./dictionary.state";
@@ -44,6 +45,14 @@ import {
 import { INITIAL_UPDATER_STATE, UpdaterState } from "./updater.state";
 
 export type SnackbarMode = "info" | "success" | "error";
+export type SnackbarAction = {
+  label: string;
+  onClick: () => void;
+  /** Optional deadline and focus handling for time-limited undo actions. */
+  expiresAt?: number;
+  focusOnShow?: boolean;
+  onFocusReturn?: (undone: boolean) => void;
+};
 export type HotkeyStrategy = "listener" | "bridge";
 export type PasteKeybindSupport = "disabled" | "per-app" | "global";
 
@@ -80,7 +89,7 @@ export type AppState = {
   auth: Nullable<AuthUser>;
   authSessionNonce: number;
   keysHeld: string[];
-  hotkeyCaptureOwnerIds: string[];
+  isRecordingHotkey: boolean;
   activeRecordingMode: Nullable<RecordingMode>;
   dictationLanguageOverride: Nullable<string>;
   overlayPhase: OverlayPhase;
@@ -129,6 +138,7 @@ export type AppState = {
    * in `pill-review.actions`.
    */
   pendingPillReview: Nullable<{ id: string; text: string }>;
+  home: HomeState;
   chat: ChatState;
 
   snackbarMessage?: string;
@@ -136,7 +146,7 @@ export type AppState = {
   snackbarMode: SnackbarMode;
   snackbarDuration: number;
   snackbarTransitionDuration?: number;
-  snackbarAction?: { label: string; onClick: () => void };
+  snackbarAction?: SnackbarAction;
 
   /** Accumulated dictation segments while no editable target was focused.
    *  Drained on the first editable-focus event or on transcription completion.
@@ -157,7 +167,7 @@ export type AppState = {
 
 export const INITIAL_APP_STATE: AppState = {
   userPrefs: null,
-  hotkeyCaptureOwnerIds: [],
+  isRecordingHotkey: false,
   activeRecordingMode: null,
   dictationLanguageOverride: null,
   localStorageCache: {},
@@ -204,6 +214,7 @@ export const INITIAL_APP_STATE: AppState = {
   pillConversationId: null,
   assistantInputMode: "voice",
   pendingPillReview: null,
+  home: INITIAL_HOME_STATE,
   local: INITIAL_LOCAL_STATE,
   chat: INITIAL_CHAT_STATE,
   onboarding: INITIAL_ONBOARDING_STATE,

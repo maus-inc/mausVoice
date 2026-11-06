@@ -1,10 +1,6 @@
 import type { TranscribeAudioMetadata } from "../actions/transcribe.actions";
 import type { StopRecordingResponse } from "../types/transcription-session.types";
 import { withTimeout } from "../utils/timeout.utils";
-import {
-  checksumFloatSamples,
-  hasFiniteAudioSamples,
-} from "../utils/audio-samples.utils";
 
 export type PretranscribedChunk = {
   text: string;
@@ -88,6 +84,24 @@ type CommittedChunk = {
 };
 
 /**
+ * FNV-1a over the raw sample bytes. A committed span must match the final
+ * recording exactly, so the whole span is digested: checking only a suffix
+ * would accept a stream that diverges in the interior of a span.
+ */
+const checksumSamples = (samples: Float32Array): number => {
+  const bytes = new Uint8Array(
+    samples.buffer,
+    samples.byteOffset,
+    samples.byteLength,
+  );
+  let hash = 0x811c9dc5;
+  for (const byte of bytes) {
+    hash = Math.imul(hash ^ byte, 0x01000193);
+  }
+  return hash >>> 0;
+};
+
+/**
  * Transcribes finished stretches of speech while the user is still talking.
  *
  * Live audio is split only at natural pauses once `minChunkSec` has
@@ -151,12 +165,7 @@ export class PauseChunkedPretranscriber {
    */
   push(samples: ArrayLike<number>, offset: number | null): void {
     if (this.sealed || this.failed || samples.length === 0) return;
-    if (
-      offset === null ||
-      !Number.isSafeInteger(offset) ||
-      offset < 0 ||
-      !hasFiniteAudioSamples(samples)
-    ) {
+    if (offset === null) {
       this.failed = true;
       return;
     }
@@ -178,13 +187,41 @@ export class PauseChunkedPretranscriber {
     // Every path below can leave a billed span request in flight. The caller
     // falls back to a whole-recording request as soon as this returns null,
     // so each of them has to settle the spans first.
-    const pending = this.prepareSpans(audio);
-    if (!pending) return this.doom();
+    if (audio.sampleRate !== this.sampleRate) return this.doom();
+    const samples =
+      audio.samples instanceof Float32Array
+        ? audio.samples
+        : Float32Array.from(audio.samples);
+    const start = this.streamStart ?? 0;
+    if (!this.matchesCommittedAudio(samples, start)) return this.doom();
+
+    // A span that already failed, or a gap seen in a later chunk, dooms the
+    // incremental result. Returning null here sends the caller to the
+    // whole-recording request, so spending another billed request on the
+    // prefix or the tail would only delay that fallback.
+    if (this.failed) return this.doom();
+
+    // The listener attaches after capture starts, so the samples before
+    // `streamStart` never arrived on the live stream. They are still in the
+    // final recording, so transcribe them as a leading span instead of
+    // returning a transcript that silently starts mid-sentence.
+    const prefix = start > 0 ? samples.subarray(0, start) : null;
+    if (prefix && prefix.length > this.minChunkSamples) return this.doom();
+    const prefixResult = prefix ? this.enqueue(prefix.slice()) : null;
+
+    const tail = samples.subarray(start + this.committedOffset);
+    const tailResult = tail.length > 0 ? this.enqueue(tail.slice()) : null;
     let chunks: PretranscribedChunk[];
     try {
-      chunks = await pending;
+      chunks = await Promise.all([
+        ...(prefixResult ? [prefixResult] : []),
+        ...this.results,
+        ...(tailResult ? [tailResult] : []),
+      ]);
     } catch {
-      // Settle all spans before falling back after the first failure.
+      // `Promise.all` rejects on the first failure, so the spans that had not
+      // settled yet are still running. Cancel and wait for them, or the
+      // fallback request overlaps requests the user is still billed for.
       return this.doom();
     }
     if (this.failed || this.disposed) return this.doom();
@@ -195,46 +232,6 @@ export class PauseChunkedPretranscriber {
       warnings: Array.from(new Set(chunks.flatMap((chunk) => chunk.warnings))),
       chunkCount: chunks.length,
     };
-  }
-
-  /** Validate the final recording before scheduling any additional spans. */
-  private prepareSpans(
-    audio: StopRecordingResponse,
-  ): Promise<PretranscribedChunk[]> | null {
-    if (audio.sampleRate !== this.sampleRate) return null;
-    const samples =
-      audio.samples instanceof Float32Array
-        ? audio.samples
-        : Float32Array.from(audio.samples);
-    const start = this.streamStart ?? 0;
-    if (!this.matchesCommittedAudio(samples, start)) return null;
-
-    // A span that already failed, or a gap seen in a later chunk, dooms the
-    // incremental result. Returning null here sends the caller to the
-    // whole-recording request, so spending another billed request on the
-    // prefix or the tail would only delay that fallback.
-    if (this.failed) return null;
-
-    return this.completeSpans(samples, start);
-  }
-
-  /** Include unobserved leading and trailing audio, in recording order. */
-  private completeSpans(
-    samples: Float32Array,
-    start: number,
-  ): Promise<PretranscribedChunk[]> | null {
-    // The listener may attach after recording started; refuse to duplicate a
-    // long prefix when whole-recording fallback is cheaper.
-    const prefix = start > 0 ? samples.subarray(0, start) : null;
-    if (prefix && prefix.length > this.minChunkSamples) return null;
-    const prefixResult = prefix ? this.enqueue(prefix.slice()) : null;
-    const tail = samples.subarray(start + this.committedOffset);
-    const tailResult = tail.length > 0 ? this.enqueue(tail.slice()) : null;
-    return Promise.all([
-      ...(prefixResult ? [prefixResult] : []),
-      ...this.results,
-      ...(tailResult ? [tailResult] : []),
-    ]);
   }
 
   /**
@@ -375,7 +372,7 @@ export class PauseChunkedPretranscriber {
     this.committed.push({
       endOffset: this.committedOffset,
       length: span.length,
-      checksum: checksumFloatSamples(span),
+      checksum: checksumSamples(span),
     });
     this.results.push(this.enqueue(span));
 
@@ -399,9 +396,10 @@ export class PauseChunkedPretranscriber {
 
   /**
    * The live `audio_chunk` stream and the recorder buffer are fed from the
-   * same capture callback. Each committed span is digested in full and
-   * compared with the final recording. A checksum can detect corruption but
-   * cannot prove equality or prevent collisions.
+   * same capture callback, so every committed span must be an exact prefix of
+   * the final recording. Each span is digested in full and compared against
+   * the corresponding range of the final recording before its transcript is
+   * trusted.
    */
   private matchesCommittedAudio(
     samples: Float32Array,
@@ -412,8 +410,7 @@ export class PauseChunkedPretranscriber {
       const start = streamStart + endOffset - length;
       if (start < 0) return false;
       return (
-        checksumFloatSamples(samples.subarray(start, start + length)) ===
-        checksum
+        checksumSamples(samples.subarray(start, start + length)) === checksum
       );
     });
   }

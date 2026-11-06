@@ -13,7 +13,6 @@ import {
   pressScale,
   pressTransition,
   riseVariants,
-  springLayout,
   springSnappy,
   springSoft,
 } from "./motion";
@@ -48,18 +47,6 @@ describe("motion profiles", () => {
     expect(fadeVariants.hidden).toEqual({ opacity: 0 });
     expect(fadeVariants.shown).toEqual({ opacity: 1 });
     expect(fadeVariants.gone).toEqual({ opacity: 0 });
-  });
-
-  it("keeps the reserved layout morph spring aligned with the motion guide", () => {
-    expect(springLayout).toEqual({
-      type: "spring",
-      stiffness: 240,
-      damping: 18,
-      mass: 1.1,
-    });
-    const criticalDamping =
-      2 * Math.sqrt(springLayout.stiffness * springLayout.mass);
-    expect(springLayout.damping).toBeLessThan(criticalDamping);
   });
 
   it("drives layout continuity and emphasis with springs", () => {

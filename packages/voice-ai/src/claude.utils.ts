@@ -1,7 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type {
   ContentBlockParam,
-  Message,
   MessageParam,
   MessageStreamEvent,
   ToolChoiceAuto,
@@ -59,24 +58,6 @@ export type ClaudeGenerateResponseOutput = {
   tokensUsed: number;
 };
 
-const readClaudeTextResponse = (
-  response: Message,
-): ClaudeGenerateResponseOutput => {
-  const textBlock = response.content.find((block) => block.type === "text");
-  if (!textBlock || textBlock.type !== "text") {
-    throw new Error("No text response from Claude");
-  }
-
-  const content = textBlock.text;
-  const tokensUsed =
-    (response.usage?.input_tokens ?? 0) + (response.usage?.output_tokens ?? 0);
-
-  return {
-    text: content,
-    tokensUsed: tokensUsed || countWords(content),
-  };
-};
-
 export const claudeGenerateTextResponse = ({
   apiKey,
   model = CLAUDE_MODELS[0],
@@ -128,7 +109,20 @@ export const claudeGenerateTextResponse = ({
 
       console.log("claude llm usage:", response.usage);
 
-      return readClaudeTextResponse(response);
+      const textBlock = response.content.find((block) => block.type === "text");
+      if (!textBlock || textBlock.type !== "text") {
+        throw new Error("No text response from Claude");
+      }
+
+      const content = textBlock.text;
+      const tokensUsed =
+        (response.usage?.input_tokens ?? 0) +
+        (response.usage?.output_tokens ?? 0);
+
+      return {
+        text: content,
+        tokensUsed: tokensUsed || countWords(content),
+      };
     },
   });
 };

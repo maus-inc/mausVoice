@@ -8,6 +8,10 @@ import {
 } from "@mui/material";
 import { motion, useReducedMotion } from "framer-motion";
 import { useEffect, useRef, useState } from "react";
+import {
+  type SliderCommitQueue,
+  createSliderCommitQueue,
+} from "./slider-commit-queue";
 
 export type ElasticSliderProps = {
   /**
@@ -18,7 +22,7 @@ export type ElasticSliderProps = {
    */
   value: number;
   /** Called once when the drag commits (release / keyboard change). */
-  onCommit: (value: number) => void;
+  onCommit: (value: number) => void | Promise<void>;
   min?: number;
   max?: number;
   step?: number;
@@ -26,7 +30,10 @@ export type ElasticSliderProps = {
   valueLabelFormat?: (value: number) => string;
   ariaLabel?: string;
   disabled?: boolean;
-  /** Optional live display callback, fired during the drag only. */
+  /**
+   * Mirrors the displayed value during interaction and when it synchronizes
+   * with persisted state, including after a failed commit or on mount.
+   */
   onChangeDisplay?: (value: number) => void;
   sx?: SliderProps["sx"];
 };
@@ -119,20 +126,69 @@ export const ElasticSlider = ({
   const theme = useTheme();
   const reduceMotion = useReducedMotion();
   const [dragValue, setDragValue] = useState(value);
+  const [settled, setSettled] = useState(0);
   const draggingRef = useRef(false);
+  const mountedRef = useRef(true);
+  // Keep the latest callbacks and saved value available to queued handlers.
+  // Updated in a commit-phase effect so an abandoned concurrent render cannot
+  // replace the committed save handler.
+  const savedValueRef = useRef(value);
+  const onCommitRef = useRef(onCommit);
+  const onChangeDisplayRef = useRef(onChangeDisplay);
+  const interactionRef = useRef(0);
+  const commitQueueRef = useRef<SliderCommitQueue | null>(null);
+
+  useEffect(() => {
+    savedValueRef.current = value;
+    onCommitRef.current = onCommit;
+    onChangeDisplayRef.current = onChangeDisplay;
+  });
+
+  const getCommitQueue = () => {
+    commitQueueRef.current ??= createSliderCommitQueue({
+      runCommit: (nextValue) => onCommitRef.current(nextValue),
+      onRollback: (interaction) => {
+        if (
+          !mountedRef.current ||
+          interaction !== interactionRef.current ||
+          draggingRef.current
+        ) {
+          return;
+        }
+        const saved = savedValueRef.current;
+        setDragValue(saved);
+        onChangeDisplayRef.current?.(saved);
+      },
+      onSettled: () => {
+        if (mountedRef.current) {
+          setSettled((count) => count + 1);
+        }
+      },
+    });
+    return commitQueueRef.current;
+  };
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const accentFill = elasticSliderAccent(theme);
   const rail = theme.vars?.palette.level3 ?? theme.palette.level3;
 
   useEffect(() => {
-    if (!draggingRef.current) {
+    if (!draggingRef.current && getCommitQueue().getPendingCount() === 0) {
       setDragValue(value);
+      onChangeDisplay?.(value);
     }
-  }, [value]);
+  }, [value, settled, onChangeDisplay]);
 
   const handleChange: SliderProps["onChange"] = (_event, next) => {
     const nextValue = typeof next === "number" ? next : (next[0] ?? value);
     draggingRef.current = true;
+    interactionRef.current += 1;
     setDragValue(nextValue);
     onChangeDisplay?.(nextValue);
   };
@@ -141,9 +197,11 @@ export const ElasticSlider = ({
     const nextValue = typeof next === "number" ? next : (next[0] ?? value);
     draggingRef.current = false;
     setDragValue(nextValue);
-    if (nextValue !== value) {
-      onCommit(nextValue);
-    }
+    const commitQueue = getCommitQueue();
+    // A return to the old value still needs saving if an earlier change is
+    // in flight; otherwise that earlier change would win after it completes.
+    if (nextValue === value && commitQueue.getPendingCount() === 0) return;
+    commitQueue.submit(nextValue, interactionRef.current);
   };
 
   return (
@@ -167,6 +225,7 @@ export const ElasticSlider = ({
         disabled={disabled}
         valueLabelDisplay={valueLabelDisplay}
         valueLabelFormat={valueLabelFormat}
+        getAriaValueText={valueLabelFormat}
         aria-label={ariaLabel}
         sx={buildElasticSliderSx(accentFill, rail)}
       />

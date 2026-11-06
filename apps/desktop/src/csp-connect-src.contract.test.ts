@@ -12,9 +12,10 @@
  *     `src` tree (globbed from `packages`, never hardcoded, so coverage
  *     cannot silently shrink when a package is added) for `http(s)://` /
  *     `ws(s)://` host literals.
- *     Conservatively scans plugin-http call arguments as well: nested
- *     expressions can make webview requests even inside a Rust-side call.
- *     A plugin-only host can be classified explicitly if necessary. Hosts that
+ *     Literals passed to a `@tauri-apps/plugin-http` call are exempt *per
+ *     call site* — that request is executed by Rust and governed by the
+ *     `http:default` capability, not the CSP — while bare `fetch` /
+ *     `WebSocket` literals in the same file are still collected. Hosts that
  *     are *not* network targets (openUrl links, iframe embeds, doc comments)
  *     must be explicitly classified in NON_CONNECT_HOSTS (or, when they only
  *     live outside the scanned sources, KNOWN_NON_SOURCE_REFS) with a
@@ -29,13 +30,9 @@
  *  *http:default capability* contract (the Rust-side mirror: hosts routed
  *  through @tauri-apps/plugin-http are governed there, not by connect-src).
  */
-import { readFileSync } from "node:fs";
-import { relative, resolve } from "node:path";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { join, relative, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import {
-  collectSourceFiles,
-  contractSourceRoots,
-} from "./__tests__/source-tree.test-utils";
 
 const repoRoot = resolve(__dirname, "../../..");
 
@@ -88,6 +85,8 @@ const NON_CONNECT_HOSTS = new Map<string, string>([
   ],
   ["console.groq.com", "openUrl external-browser link / doc comment"],
   ["maus-inc.github.io", "openUrl link + OpenRouter HTTP-Referer header value"],
+  // <iframe> embeds are governed by frame-src, asserted separately below.
+  ["www.youtube.com", "iframe embed — validated against frame-src"],
   // Never fetched by the webview: doc links, XML namespaces, and the fatal
   // error overlay's copy of the custom protocol origin.
   ["tauri.localhost", "fatal-error overlay text naming the app's own origin"],
@@ -107,6 +106,10 @@ const NON_CONNECT_HOSTS = new Map<string, string>([
  */
 const KNOWN_NON_SOURCE_REFS = new Map<string, string>([
   ["schema.tauri.app", "JSON $schema reference in tauri.conf.json"],
+  [
+    "www.youtube-nocookie.com",
+    "frame-src entry in tauri.conf.json — validated against frame-src below",
+  ],
 ]);
 
 /** Every host exempt from the connect-src requirement, with its reason. */
@@ -115,28 +118,103 @@ const EXEMPT_HOSTS = new Map<string, string>([
   ...KNOWN_NON_SOURCE_REFS,
 ]);
 
-/** Scan the same fail-closed production source tree as the capability contract. */
-const scannedFiles = (): string[] =>
-  contractSourceRoots(repoRoot, resolve(repoRoot, "apps/desktop")).flatMap(
-    collectSourceFiles,
-  );
+/** Directory trees scanned for webview-fetched host literals. */
+const SCAN_ROOTS = [
+  "apps/desktop/src",
+  // Globbed, not hardcoded: every workspace package the desktop bundle can
+  // pull in is scanned, so adding a package cannot shrink coverage silently.
+  ...readdirSync(resolve(repoRoot, "packages"), { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => join("packages", entry.name, "src"))
+    .filter((dir) => existsSync(resolve(repoRoot, dir))),
+];
+
+/** Absolute paths of the non-test TS/TSX files covered by the scan. */
+const scannedFiles = (): string[] => {
+  const files: string[] = [];
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const abs = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(abs);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      if (!/\.(ts|tsx)$/.test(entry.name)) continue;
+      // Test files are excluded so this file's own exemption literals cannot
+      // vouch for themselves in the staleness check below.
+      if (/\.test\.(ts|tsx)$/.test(entry.name)) continue;
+      files.push(abs);
+    }
+  };
+  for (const root of SCAN_ROOTS) walk(resolve(repoRoot, root));
+  return files;
+};
+
+/** Local binding names `@tauri-apps/plugin-http` is imported under. */
+const pluginHttpBindings = (source: string): string[] => {
+  const bindings: string[] = [];
+  for (const match of source.matchAll(
+    /import\s*\{([^}]*)\}\s*from\s*["']@tauri-apps\/plugin-http["']/g,
+  )) {
+    for (const specifier of match[1].split(",")) {
+      const [imported, alias] = specifier.trim().split(/\s+as\s+/);
+      const local = (alias ?? imported).trim();
+      if (local) bindings.push(local);
+    }
+  }
+  return bindings;
+};
+
+/**
+ * Character ranges spanning the argument list of every plugin-http call in
+ * `source`. Requests made there are executed by Rust under the `http:default`
+ * capability, so the CSP does not apply to them — but only to *those*
+ * arguments, which is why the exemption is a range and not the whole file.
+ * The paren scan is naive about parens inside string literals; a range cut
+ * short only widens what gets checked, which is the safe direction.
+ */
+const pluginHttpArgumentRanges = (source: string): [number, number][] => {
+  const ranges: [number, number][] = [];
+  for (const binding of pluginHttpBindings(source)) {
+    const calls = new RegExp(
+      `\\b${binding.replace(/\W/g, "\\$&")}\\s*\\(`,
+      "g",
+    );
+    for (const call of source.matchAll(calls)) {
+      const open = (call.index ?? 0) + call[0].length - 1;
+      let depth = 0;
+      for (let i = open; i < source.length; i += 1) {
+        if (source[i] === "(") depth += 1;
+        else if (source[i] === ")") {
+          depth -= 1;
+          if (depth === 0) {
+            ranges.push([open, i]);
+            break;
+          }
+        }
+      }
+    }
+  }
+  return ranges;
+};
 
 type FoundHost = { scheme: string; host: string; file: string };
-
-const sourceHosts = (source: string): Array<{ scheme: string; host: string }> =>
-  Array.from(
-    source.matchAll(/(https?|wss?):\/\/([a-z0-9][a-z0-9.-]*[a-z0-9])/gi),
-    (match) => ({
-      scheme: match[1].toLowerCase(),
-      host: match[2].toLowerCase(),
-    }),
-  );
 
 const collectHosts = (): FoundHost[] => {
   const found: FoundHost[] = [];
   for (const abs of scannedFiles()) {
     const source = readFileSync(abs, "utf8");
-    for (const { scheme, host } of sourceHosts(source)) {
+    const pluginHttpArgs = pluginHttpArgumentRanges(source);
+    for (const match of source.matchAll(
+      /(https?|wss?):\/\/([a-z0-9][a-z0-9.-]*[a-z0-9])/gi,
+    )) {
+      const index = match.index ?? 0;
+      if (pluginHttpArgs.some(([start, end]) => index > start && index < end)) {
+        continue;
+      }
+      const scheme = match[1].toLowerCase();
+      const host = match[2].toLowerCase();
       if (EXEMPT_HOSTS.has(host)) continue;
       found.push({ scheme, host, file: relative(repoRoot, abs) });
     }
@@ -150,7 +228,7 @@ describe("production CSP connect-src covers every webview-fetched provider host"
     expect(connectSources.length).toBeGreaterThan(0);
   });
 
-  it("allows every unclassified http/https/ws/wss host literal", () => {
+  it("allows every http/https/ws/wss host literal used with bare fetch/WebSocket", () => {
     const violations = collectHosts().filter(
       ({ scheme, host }) => !isAllowed(scheme, host, connectSources),
     );
@@ -171,21 +249,13 @@ ${advice}`,
     ).toEqual([]);
   });
 
-  it("does not exempt nested or shadowed webview requests inside plugin calls", () => {
-    const source = `
-      import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
-      tauriFetch("https://allowed.example", { body: fetch("https://nested.example") });
-      function shadow(tauriFetch: typeof fetch) { tauriFetch("https://shadow.example"); }
-    `;
-    expect(sourceHosts(source).map(({ host }) => host)).toEqual([
-      "allowed.example",
-      "nested.example",
-      "shadow.example",
-    ]);
-  });
-
-  it("blocks frames when the app has no iframe embeds", () => {
-    expect(frameSources).toEqual(["'none'"]);
+  it("allows iframe embed hosts via frame-src", () => {
+    for (const host of ["www.youtube.com", "www.youtube-nocookie.com"]) {
+      expect(
+        isAllowed("https", host, frameSources),
+        `https://${host} is embedded as an iframe and must be in frame-src`,
+      ).toBe(true);
+    }
   });
 
   it("allows dynamically-constructed provider endpoints", () => {

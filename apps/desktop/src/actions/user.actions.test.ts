@@ -3,22 +3,22 @@ import { INITIAL_APP_STATE } from "../state/app.state";
 import { getAppState, setAppState } from "../store";
 import { LOCAL_USER_ID } from "../utils/user.utils";
 import {
+  assertLocalDataWriteLease,
+  type LocalDataWriteLease,
+} from "../utils/local-data-write-gate";
+import {
   createDefaultPreferences,
-  clearUnavailableRemoteTarget,
-  setRemoteTargetDeviceId,
+  recordUsageWords,
   refreshCurrentUser,
   setAgentToolEnabled,
   setPreserveAudioOnFailure,
   setPillPlacement,
-  setDictationPillVisibility,
-  toggleDictationPillVisibility,
   setPreferredLanguage,
   setRealtimeOutputEnabled,
   setReviewBeforeInsert,
   setUserName,
-  setSelectedToneId,
 } from "./user.actions";
-import type { ToolInfo, User, UserPreferences } from "@maus-inc/types";
+import type { ToolInfo, User } from "@maus-inc/types";
 
 const { loggerMock, prefsRepoMock, userRepoMock } = vi.hoisted(() => {
   const loggerMock = {
@@ -29,18 +29,33 @@ const { loggerMock, prefsRepoMock, userRepoMock } = vi.hoisted(() => {
     stopwatch: vi.fn((_label: string, fn: () => Promise<unknown>) => fn()),
   };
   const prefsRepoMock = {
-    setUserPreferences: vi.fn((preferences: unknown) =>
-      Promise.resolve(preferences),
-    ),
-    getUserPreferences: vi.fn<() => Promise<UserPreferences | null>>(() =>
-      Promise.resolve(null),
-    ),
+    setUserPreferences: vi.fn<
+      (preferences: unknown, lease?: LocalDataWriteLease) => Promise<unknown>
+    >((preferences) => Promise.resolve(preferences)),
+    getUserPreferences: vi.fn(() => Promise.resolve(null)),
   };
   const userRepoMock = {
-    setMyUser: vi.fn<(user: User) => Promise<User>>((user) =>
-      Promise.resolve(user),
-    ),
+    setMyUser: vi.fn<
+      (user: User, lease?: LocalDataWriteLease) => Promise<User>
+    >((user) => Promise.resolve(user)),
     getMyUser: vi.fn<() => Promise<User | null>>(() => Promise.resolve(null)),
+    recordUsageWords: vi.fn<
+      (
+        eventId: string,
+        localDate: string,
+        wordCount: number,
+        lease?: LocalDataWriteLease,
+      ) => Promise<User>
+    >((_eventId, _localDate, _wordCount) =>
+      Promise.resolve({
+        id: "local-user-id",
+        name: "Test",
+        bio: "",
+        onboarded: true,
+        wordsThisMonth: 0,
+        wordsTotal: 0,
+      } as User),
+    ),
   };
   return { loggerMock, prefsRepoMock, userRepoMock };
 });
@@ -58,6 +73,50 @@ vi.mock("../repos", () => ({
   getUserPreferencesRepo: () => prefsRepoMock,
   getUserRepo: () => userRepoMock,
 }));
+
+describe("recordUsageWords", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setAppState(structuredClone(INITIAL_APP_STATE), true);
+  });
+
+  afterEach(() => {
+    setAppState(structuredClone(INITIAL_APP_STATE), true);
+  });
+
+  it("stores the authoritative profile returned by native usage metering", async () => {
+    const recordedUser: User = {
+      id: LOCAL_USER_ID,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-10-08T00:00:00.000Z",
+      name: "Morgan",
+      bio: "",
+      onboarded: true,
+      playInteractionChime: true,
+      hasFinishedTutorial: true,
+      wordsThisMonth: 18,
+      wordsThisMonthMonth: "2026-10",
+      wordsTotal: 180,
+    };
+    userRepoMock.recordUsageWords.mockImplementation(
+      (_eventId, _localDate, _wordCount, lease) => {
+        if (!lease) throw new Error("expected a local-data write lease");
+        assertLocalDataWriteLease(lease);
+        return Promise.resolve(recordedUser);
+      },
+    );
+
+    await recordUsageWords("transcription-1", "2026-10-08", 18);
+
+    expect(userRepoMock.recordUsageWords).toHaveBeenCalledWith(
+      "transcription-1",
+      "2026-10-08",
+      18,
+      expect.objectContaining({}),
+    );
+    expect(getAppState().userById[LOCAL_USER_ID]).toEqual(recordedUser);
+  });
+});
 
 const minimalToolInfo = (id: string): ToolInfo =>
   ({
@@ -78,6 +137,7 @@ describe("setPillPlacement", () => {
 
     expect(prefsRepoMock.setUserPreferences).toHaveBeenCalledWith(
       expect.objectContaining({ pillPlacement: "top" }),
+      expect.objectContaining({}),
     );
     expect(invokeMock).toHaveBeenCalledWith("set_pill_placement", {
       placement: "top",
@@ -92,66 +152,12 @@ describe("setPillPlacement", () => {
     // The preference write is the source of truth and must survive.
     expect(prefsRepoMock.setUserPreferences).toHaveBeenCalledWith(
       expect.objectContaining({ pillPlacement: "bottom" }),
+      expect.objectContaining({}),
     );
     expect(loggerMock.warning).toHaveBeenCalledTimes(1);
     expect(loggerMock.warning.mock.calls[0][0]).toContain(
       "Failed to push pill placement to native pill",
     );
-  });
-});
-
-describe("tray visibility preference mutations", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    prefsRepoMock.setUserPreferences.mockReset();
-    prefsRepoMock.setUserPreferences.mockImplementation((preferences) =>
-      Promise.resolve(preferences),
-    );
-    setAppState(structuredClone(INITIAL_APP_STATE), true);
-    setAppState({
-      userPrefs: {
-        ...createDefaultPreferences(),
-        dictationPillVisibility: "persistent",
-      },
-    });
-  });
-
-  it("toggles the committed value after an earlier settings write", async () => {
-    let release!: () => void;
-    let started!: () => void;
-    const firstStarted = new Promise<void>((resolve) => {
-      started = resolve;
-    });
-    const firstDone = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    prefsRepoMock.setUserPreferences.mockImplementationOnce(async (prefs) => {
-      started();
-      await firstDone;
-      return prefs;
-    });
-    const settingsWrite = setDictationPillVisibility("hidden");
-    await firstStarted;
-    let toggle: ReturnType<typeof toggleDictationPillVisibility>;
-    try {
-      toggle = toggleDictationPillVisibility();
-    } finally {
-      release();
-      await settingsWrite;
-    }
-    expect(await toggle).toEqual({ previous: "hidden", next: "persistent" });
-    expect(getAppState().userPrefs?.dictationPillVisibility).toBe("persistent");
-  });
-
-  it("serializes repeated toggles and recovers after a failed write", async () => {
-    prefsRepoMock.setUserPreferences.mockRejectedValueOnce(new Error("failed"));
-    const failed = toggleDictationPillVisibility();
-    const second = toggleDictationPillVisibility();
-    const third = toggleDictationPillVisibility();
-    await expect(failed).rejects.toThrow("failed");
-    expect(await second).toEqual({ previous: "persistent", next: "hidden" });
-    expect(await third).toEqual({ previous: "hidden", next: "persistent" });
-    expect(getAppState().userPrefs?.dictationPillVisibility).toBe("persistent");
   });
 });
 
@@ -171,6 +177,7 @@ describe("setPreserveAudioOnFailure", () => {
     expect(getAppState().userPrefs?.preserveAudioOnFailure).toBe(false);
     expect(prefsRepoMock.setUserPreferences).toHaveBeenCalledWith(
       expect.objectContaining({ preserveAudioOnFailure: false }),
+      expect.objectContaining({}),
     );
   });
 });
@@ -360,186 +367,19 @@ describe("updateUser serialization", () => {
     expect(getAppState().userById[LOCAL_USER_ID]?.preferredLanguage).toBe("fr");
   });
 
-  it("rechecks conditional style selection at the head of the user queue", async () => {
-    const gate = deferred();
-    const started = deferred();
-    userRepoMock.setMyUser.mockImplementationOnce(async (user) => {
-      started.release();
-      await gate.promise;
-      return user;
-    });
-    const first = setUserName("Renamed");
-    await started.promise;
-    let current = true;
-    const style = setSelectedToneId("email", () => current);
-    current = false;
-    gate.release();
-    await Promise.all([first, style]);
-    expect(userRepoMock.setMyUser).toHaveBeenCalledTimes(1);
-    expect(
-      getAppState().userById[LOCAL_USER_ID]?.selectedToneId,
-    ).toBeUndefined();
-  });
-
-  it("does not mark a retired style selection complete after its write settles", async () => {
-    const gate = deferred();
-    const started = deferred();
-    userRepoMock.setMyUser.mockImplementationOnce(async (user) => {
-      started.release();
-      await gate.promise;
-      return user;
-    });
-    let current = true;
-    const style = setSelectedToneId("email", () => current);
-    await started.promise;
-    current = false;
-    gate.release();
-    await style;
-    expect(
-      getAppState().localStorageCache["mausvoice:checklist-writing-style"],
-    ).toBeUndefined();
-  });
-
-  it("rejects queued user writes when the initiating session has changed", async () => {
-    const gate = deferred();
-    const started = deferred();
-    userRepoMock.setMyUser.mockImplementationOnce(async (user) => {
-      started.release();
-      await gate.promise;
-      return user;
-    });
-    const first = setUserName("Renamed");
-    await started.promise;
-    const second = setPreferredLanguage("fr");
-    const outcomes = Promise.allSettled([first, second]);
-    setAppState({ authSessionNonce: getAppState().authSessionNonce + 1 });
-    gate.release();
-    const results = await outcomes;
-    expect(results.map((result) => result.status)).toEqual([
-      "rejected",
-      "rejected",
-    ]);
-    expect(userRepoMock.setMyUser).toHaveBeenCalledOnce();
-  });
-
-  it("does not overwrite a newer preference change with an in-flight refresh", async () => {
-    let finish!: (value: UserPreferences | null) => void;
-    const started = deferred();
-    const oldPrefs = {
-      ...createDefaultPreferences(),
-      preserveAudioOnFailure: true,
+  it("stores profile counters preserved by the native upsert", async () => {
+    const saved: User = {
+      ...baseUser,
+      name: "Renamed",
+      wordsThisMonth: 18,
+      wordsThisMonthMonth: "2026-10",
+      wordsTotal: 180,
     };
-    setAppState({ userPrefs: oldPrefs });
-    prefsRepoMock.getUserPreferences.mockImplementationOnce(() => {
-      started.release();
-      return new Promise((resolve) => {
-        finish = resolve;
-      });
-    });
-    prefsRepoMock.setUserPreferences.mockClear();
-    const refresh = refreshCurrentUser();
-    await started.promise;
-    const change = setPreserveAudioOnFailure(false);
-    await change;
-    expect(prefsRepoMock.setUserPreferences).toHaveBeenCalledOnce();
-    finish(oldPrefs);
-    await refresh;
-    expect(getAppState().userPrefs?.preserveAudioOnFailure).toBe(false);
-  });
+    userRepoMock.setMyUser.mockResolvedValue(saved);
 
-  it("preserves preference state changed by another writer during refresh", async () => {
-    let finish!: (value: UserPreferences | null) => void;
-    const started = deferred();
-    const oldPrefs = createDefaultPreferences();
-    setAppState({ userPrefs: oldPrefs });
-    prefsRepoMock.getUserPreferences.mockImplementationOnce(() => {
-      started.release();
-      return new Promise((resolve) => {
-        finish = resolve;
-      });
-    });
-    const refresh = refreshCurrentUser();
-    await started.promise;
-    setAppState({
-      userPrefs: { ...oldPrefs, expansionFlags: '{"test":true}' },
-    });
-    finish(oldPrefs);
-    await refresh;
-    expect(getAppState().userPrefs?.expansionFlags).toBe('{"test":true}');
-  });
+    await setUserName("Renamed");
 
-  it("does not refresh preferences while a preference save is pending", async () => {
-    let finish!: (value: unknown) => void;
-    const started = deferred();
-    const oldPrefs = {
-      ...createDefaultPreferences(),
-      preserveAudioOnFailure: true,
-    };
-    setAppState({ userPrefs: oldPrefs });
-    prefsRepoMock.getUserPreferences.mockClear();
-    prefsRepoMock.setUserPreferences.mockImplementationOnce((preferences) => {
-      started.release();
-      return new Promise((resolve) => {
-        finish = () => resolve(preferences);
-      });
-    });
-    const change = setPreserveAudioOnFailure(false);
-    await started.promise;
-    await refreshCurrentUser();
-    expect(prefsRepoMock.getUserPreferences).not.toHaveBeenCalled();
-    finish(undefined);
-    await change;
-    expect(getAppState().userPrefs?.preserveAudioOnFailure).toBe(false);
-  });
-
-  it("does not publish a failed write's reload after the session changes", async () => {
-    let finish!: (user: User | null) => void;
-    const started = deferred();
-    userRepoMock.setMyUser.mockRejectedValueOnce(new Error("disk full"));
-    userRepoMock.getMyUser.mockImplementationOnce(() => {
-      started.release();
-      return new Promise((resolve) => {
-        finish = resolve;
-      });
-    });
-    const outcome = setUserName("old").catch((error: unknown) => error);
-    await started.promise;
-    const successor = { ...baseUser, name: "successor" };
-    setAppState({
-      authSessionNonce: 1,
-      userById: { [LOCAL_USER_ID]: successor },
-    });
-    finish({ ...baseUser, name: "old reload" });
-    expect(await outcome).toEqual(new Error("User session changed"));
-    expect(getAppState().userById[LOCAL_USER_ID].name).toBe("successor");
-  });
-
-  it("ignores an in-flight refresh after the session changes", async () => {
-    let finish!: (user: User | null) => void;
-    const started = deferred();
-    userRepoMock.getMyUser.mockImplementationOnce(() => {
-      started.release();
-      return new Promise((resolve) => {
-        finish = resolve;
-      });
-    });
-    prefsRepoMock.getUserPreferences.mockResolvedValueOnce(null);
-    const refresh = refreshCurrentUser();
-    await started.promise;
-    const successor = { ...baseUser, name: "successor" };
-    const prefs = {
-      ...createDefaultPreferences(),
-      preferredMicrophone: "successor",
-    };
-    setAppState({
-      authSessionNonce: 1,
-      userById: { [LOCAL_USER_ID]: successor },
-      userPrefs: prefs,
-    });
-    finish({ ...baseUser, name: "old reload" });
-    await refresh;
-    expect(getAppState().userById[LOCAL_USER_ID].name).toBe("successor");
-    expect(getAppState().userPrefs?.preferredMicrophone).toBe("successor");
+    expect(getAppState().userById[LOCAL_USER_ID]).toEqual(saved);
   });
 
   it("re-reads the row after a failed save instead of restoring a snapshot", async () => {
@@ -584,168 +424,5 @@ describe("updateUser serialization", () => {
 
     expect(userRepoMock.getMyUser).toHaveBeenCalled();
     expect(getAppState().userById[LOCAL_USER_ID]?.name).toBe("From disk");
-  });
-});
-
-describe("remote receiver target repair", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    prefsRepoMock.setUserPreferences.mockReset();
-    prefsRepoMock.setUserPreferences.mockImplementation((preferences) =>
-      Promise.resolve(preferences),
-    );
-    setAppState(
-      {
-        ...structuredClone(INITIAL_APP_STATE),
-        userPrefs: {
-          ...createDefaultPreferences(),
-          remoteTargetDeviceId: "missing",
-          remoteOutputEnabled: true,
-        },
-      },
-      true,
-    );
-  });
-  afterEach(() => setAppState(structuredClone(INITIAL_APP_STATE), true));
-
-  it("clears a missing target and disables output in one persisted mutation", async () => {
-    await clearUnavailableRemoteTarget(() => true);
-    expect(prefsRepoMock.setUserPreferences).toHaveBeenCalledTimes(1);
-    expect(getAppState().userPrefs).toMatchObject({
-      remoteTargetDeviceId: null,
-      remoteOutputEnabled: false,
-    });
-  });
-
-  it("does not overwrite a valid target selected while repair is queued", async () => {
-    let release!: () => void;
-    let started!: () => void;
-    const pending = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const startedPromise = new Promise<void>((resolve) => {
-      started = resolve;
-    });
-    prefsRepoMock.setUserPreferences.mockImplementationOnce(
-      async (preferences) => {
-        started();
-        await pending;
-        return preferences;
-      },
-    );
-    setAppState({
-      pairedRemoteDeviceById: { valid: { id: "valid" } as never },
-    });
-    const selecting = setRemoteTargetDeviceId("valid");
-    await startedPromise;
-    const repair = clearUnavailableRemoteTarget(() => true);
-    release();
-    await Promise.all([selecting, repair]);
-    expect(prefsRepoMock.setUserPreferences).toHaveBeenCalledTimes(1);
-    expect(getAppState().userPrefs).toMatchObject({
-      remoteTargetDeviceId: "valid",
-      remoteOutputEnabled: true,
-    });
-  });
-
-  it("does not save after the initializing session is retired", async () => {
-    await clearUnavailableRemoteTarget(() => false);
-    expect(prefsRepoMock.setUserPreferences).not.toHaveBeenCalled();
-    expect(getAppState().userPrefs?.remoteTargetDeviceId).toBe("missing");
-  });
-});
-
-describe("user preference authentication ownership", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    prefsRepoMock.getUserPreferences.mockReset();
-    prefsRepoMock.getUserPreferences.mockResolvedValue(null);
-    prefsRepoMock.setUserPreferences.mockReset();
-    prefsRepoMock.setUserPreferences.mockImplementation((preferences) =>
-      Promise.resolve(preferences),
-    );
-    invokeMock.mockReset();
-    invokeMock.mockResolvedValue(undefined);
-    setAppState(structuredClone(INITIAL_APP_STATE), true);
-  });
-
-  afterEach(() => setAppState(structuredClone(INITIAL_APP_STATE), true));
-
-  it("does not save preferences read for an earlier session", async () => {
-    let finish!: (value: UserPreferences | null) => void;
-    let notify!: () => void;
-    const started = new Promise<void>((resolve) => {
-      notify = resolve;
-    });
-    prefsRepoMock.getUserPreferences.mockImplementationOnce(() => {
-      notify();
-      return new Promise((resolve) => {
-        finish = resolve;
-      });
-    });
-    const outcome = setPreserveAudioOnFailure(false).catch(
-      (error: unknown) => error,
-    );
-    await started;
-    const successor = {
-      ...createDefaultPreferences(),
-      preserveAudioOnFailure: true,
-    };
-    setAppState({ authSessionNonce: 1, userPrefs: successor });
-    finish(createDefaultPreferences());
-    expect(await outcome).toBeInstanceOf(Error);
-    expect(prefsRepoMock.setUserPreferences).not.toHaveBeenCalled();
-    expect(getAppState().userPrefs?.preserveAudioOnFailure).toBe(true);
-  });
-
-  it("does not publish a late save or apply its native side effect after retirement", async () => {
-    const original = createDefaultPreferences();
-    setAppState({ userPrefs: original });
-    let finish!: (value: unknown) => void;
-    let notify!: () => void;
-    const started = new Promise<void>((resolve) => {
-      notify = resolve;
-    });
-    prefsRepoMock.setUserPreferences.mockImplementationOnce((preferences) => {
-      notify();
-      return new Promise((resolve) => {
-        finish = () => resolve(preferences);
-      });
-    });
-    const outcome = setPillPlacement("top").catch((error: unknown) => error);
-    await started;
-    const successor = { ...original, pillPlacement: "bottom" as const };
-    setAppState({ authSessionNonce: 1, userPrefs: successor });
-    finish(undefined);
-    expect(await outcome).toBeInstanceOf(Error);
-    expect(getAppState().userPrefs?.pillPlacement).toBe("bottom");
-    expect(invokeMock).not.toHaveBeenCalled();
-  });
-
-  it("does not execute a queued preference change under the successor session", async () => {
-    setAppState({ userPrefs: createDefaultPreferences() });
-    let finish!: (value: unknown) => void;
-    let notify!: () => void;
-    const started = new Promise<void>((resolve) => {
-      notify = resolve;
-    });
-    prefsRepoMock.setUserPreferences.mockImplementationOnce((preferences) => {
-      notify();
-      return new Promise((resolve) => {
-        finish = () => resolve(preferences);
-      });
-    });
-    const first = setPreserveAudioOnFailure(false);
-    await started;
-    const second = setPillPlacement("top");
-    const outcomes = Promise.allSettled([first, second]);
-    setAppState({ authSessionNonce: 1 });
-    finish(undefined);
-    expect((await outcomes).map((result) => result.status)).toEqual([
-      "rejected",
-      "rejected",
-    ]);
-    expect(prefsRepoMock.setUserPreferences).toHaveBeenCalledOnce();
-    expect(invokeMock).not.toHaveBeenCalled();
   });
 });

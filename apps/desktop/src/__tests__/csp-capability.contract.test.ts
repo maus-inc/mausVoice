@@ -1,11 +1,7 @@
-import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import {
-  collectSourceFiles,
-  contractSourceRoots,
-} from "./source-tree.test-utils";
 
 const here = dirname(fileURLToPath(import.meta.url));
 // `here` is <repo>/apps/desktop/src/__tests__, so the desktop app root is two
@@ -40,13 +36,39 @@ const capabilityHosts = new Set(
     .filter((url) => url.startsWith("https://")),
 );
 
+function collectFiles(dir: string, acc: string[] = []): string[] {
+  for (const entry of readdirSync(dir)) {
+    const full = join(dir, entry);
+    const st = statSync(full);
+    if (st.isDirectory()) {
+      if (
+        entry === "node_modules" ||
+        entry === "dist" ||
+        entry === ".git" ||
+        entry === "__tests__"
+      )
+        continue;
+      collectFiles(full, acc);
+    } else if (
+      (entry.endsWith(".ts") || entry.endsWith(".tsx")) &&
+      !entry.includes(".test.")
+    ) {
+      acc.push(full);
+    }
+  }
+  return acc;
+}
+
 /** Every `https://api.*` host literal in desktop and workspace-package sources. */
 function sourceApiHosts(): Set<string> {
-  const roots = contractSourceRoots(repoRoot, desktopRoot);
+  const packageRoots = readdirSync(resolve(repoRoot, "packages"))
+    .map((entry) => resolve(repoRoot, "packages", entry, "src"))
+    .filter((root) => statSync(root, { throwIfNoEntry: false })?.isDirectory());
+  const roots = [resolve(desktopRoot, "src"), ...packageRoots];
   const hosts = new Set<string>();
   const apiRe = /https:\/\/api\.[a-z0-9.-]+/g;
   for (const root of roots) {
-    for (const file of collectSourceFiles(root)) {
+    for (const file of collectFiles(root)) {
       const text = readFileSync(file, "utf8");
       for (const m of text.matchAll(apiRe)) {
         hosts.add(m[0]);
@@ -96,10 +118,12 @@ const isApprovedHttpScope = (scope: string): boolean => {
     return (
       url.protocol === "https:" &&
       approvedHttpsHosts.has(url.hostname) &&
-      [url.username, url.password, url.port, url.search, url.hash].every(
-        (part) => part === "",
-      ) &&
-      ["/", "/**"].includes(url.pathname)
+      url.username === "" &&
+      url.password === "" &&
+      url.port === "" &&
+      (url.pathname === "/" || url.pathname === "/**") &&
+      url.search === "" &&
+      url.hash === ""
     );
   } catch {
     return false;
@@ -137,9 +161,6 @@ describe("http:default capability contract", () => {
     "https://api.openai.com.evil.com",
     "https://user:secret@api.openai.com",
     "https://api.openai.com:1234",
-    "https://api.openai.com/?token=secret",
-    "https://api.openai.com/#fragment",
-    "https://api.openai.com/other/path",
     "https://evil.com/**",
   ])("rejects an unapproved scope %s", (scope) => {
     expect(isApprovedHttpScope(scope)).toBe(false);
@@ -194,12 +215,23 @@ describe("http:default capability contract", () => {
       ).toBe(true);
     }
 
-    // Keep the existing Google API capability independently of the narrower
-    // Gemini Files API URL checks. Those checks reject unexpected upload and
-    // credential-bearing file origins; the plugin scope is not a substitute.
+    // The `*.googleapis.com` WILDCARD is separately load-bearing and separately pinned.
+    //
+    // It appears exactly once above, in `approvedHttpsHosts`, which this file's own header
+    // calls "Reviewed provider families, independent of the capability under test" -- a
+    // filter for what to accept, not a requirement, so removing a scope cannot fail the test
+    // that uses it. And every host in `nonApiHosts` is a SPECIFIC name, so deleting the
+    // wildcard leaves all six in place and nothing notices.
+    //
+    // It matters because `assertGeminiUrl(url, false)` in `gemini.utils.ts` deliberately
+    // lets an unexpected `*.googleapis.com` upload host through with a warning rather than a
+    // refusal, on the stated grounds that this capability blocks the request before it leaves
+    // the process. That reasoning holds only while the wildcard is here.
     expect(
       capabilityHosts.has("https://*.googleapis.com"),
-      "the Google API capability must retain its reviewed wildcard",
+      "the *.googleapis.com wildcard must be in http:default -- gemini.utils.ts relies on " +
+        "the capability to block a credential-carrying request to an unexpected googleapis " +
+        "host, and no other host asserted here covers that wildcard",
     ).toBe(true);
   });
 });

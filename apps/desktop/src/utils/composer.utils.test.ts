@@ -241,38 +241,6 @@ describe("reviewTextInComposer", () => {
     );
   });
 
-  it("does not open a window when the original transcript handoff fails", async () => {
-    mocks.invoke.mockImplementation(
-      (cmd: string, args?: { requestId?: string }) => {
-        if (
-          cmd === "composer_register_text" &&
-          args?.requestId?.endsWith(":original")
-        ) {
-          return Promise.reject(new Error("handoff unavailable"));
-        }
-        return Promise.resolve(undefined);
-      },
-    );
-    await expect(
-      reviewTextInComposer("draft", { originalText: "original" }),
-    ).resolves.toBeNull();
-    const id = mocks.invoke.mock.calls.find(
-      ([cmd, args]) =>
-        cmd === "composer_register_text" &&
-        !args?.requestId?.endsWith(":original"),
-    )?.[1]?.requestId;
-    expect(mocks.invoke).toHaveBeenCalledWith("composer_discard_text", {
-      requestId: id,
-    });
-    expect(mocks.invoke).toHaveBeenCalledWith("composer_discard_text", {
-      requestId: `${id}:original`,
-    });
-    expect(mocks.invoke).not.toHaveBeenCalledWith(
-      "floating_window_create",
-      expect.anything(),
-    );
-  });
-
   it("does not open a second window while one is already live", async () => {
     let created = 0;
     const listeners = installPerEventListener();
@@ -325,85 +293,6 @@ describe("reviewTextInComposer cleanup", () => {
     stubComposerDefaults();
   });
 
-  it("closes an aborted review without publishing an old edit", async () => {
-    const listeners = installPerEventListener();
-    const abort = new AbortController();
-    mocks.invoke.mockImplementation((cmd: string) =>
-      Promise.resolve(
-        cmd === "floating_window_create" ? { id: "aborted-window" } : undefined,
-      ),
-    );
-    const pending = reviewTextInComposer("private draft", {
-      signal: abort.signal,
-    });
-    for (
-      let i = 0;
-      i < 20 &&
-      !mocks.invoke.mock.calls.some(
-        ([cmd]) => cmd === "floating_window_create",
-      );
-      i += 1
-    )
-      await Promise.resolve();
-    await Promise.resolve();
-    const requestId = mocks.invoke.mock.calls.find(
-      ([cmd]) => cmd === "composer_register_text",
-    )?.[1]?.requestId;
-    abort.abort();
-    listeners.get("composer-result")?.[0]?.({
-      payload: { requestId, accepted: true, text: "stale" },
-    });
-    await expect(pending).resolves.toBeNull();
-    expect(mocks.invoke).toHaveBeenCalledWith("composer_discard_text", {
-      requestId,
-    });
-    expect(mocks.invoke).toHaveBeenCalledWith("floating_window_destroy", {
-      id: "aborted-window",
-    });
-    expect(mocks.showToast).not.toHaveBeenCalled();
-  });
-
-  it("returns the accepted edit even if cleanup IPC never replies", async () => {
-    const listeners = installPerEventListener();
-    mocks.invoke.mockImplementation((cmd: string) => {
-      if (cmd === "floating_window_create")
-        return Promise.resolve({ id: "floating-stalled-cleanup" });
-      if (cmd === "composer_discard_text" || cmd === "floating_window_destroy")
-        return new Promise(() => {});
-      return Promise.resolve(undefined);
-    });
-    const pending = reviewTextInComposer("draft");
-    for (
-      let i = 0;
-      i < 20 &&
-      !mocks.invoke.mock.calls.some(
-        ([cmd]) => cmd === "floating_window_create",
-      );
-      i += 1
-    ) {
-      await Promise.resolve();
-    }
-    const requestId = mocks.invoke.mock.calls.find(
-      ([cmd]) => cmd === "composer_register_text",
-    )?.[1]?.requestId;
-    listeners.get("composer-result")?.[0]?.({
-      payload: { requestId, accepted: true, text: "edited" },
-    });
-    const result = await Promise.race([
-      pending,
-      new Promise<"stalled">((resolve) =>
-        setTimeout(() => resolve("stalled"), 100),
-      ),
-    ]);
-    expect(result).toBe("edited");
-    expect(mocks.invoke).toHaveBeenCalledWith("composer_discard_text", {
-      requestId,
-    });
-    expect(mocks.invoke).toHaveBeenCalledWith("floating_window_destroy", {
-      id: "floating-stalled-cleanup",
-    });
-  });
-
   it("destroys the window and discards its text when the user accepts", async () => {
     const listeners = installPerEventListener();
     let createdId = "";
@@ -417,9 +306,7 @@ describe("reviewTextInComposer cleanup", () => {
       return Promise.resolve(undefined);
     });
 
-    const promise = reviewTextInComposer("draft", {
-      originalText: "private original",
-    });
+    const promise = reviewTextInComposer("draft");
     // Accept only after native creation has started. Emitting a result before
     // creation now correctly skips creating a window rather than destroying
     // an empty label (the old fixture also relied on `window` being absent).
@@ -427,19 +314,9 @@ describe("reviewTextInComposer cleanup", () => {
       await Promise.resolve();
     }
     expect(createdId).toBe("floating-1");
-    const create = mocks.invoke.mock.calls.find(
-      ([command]) => command === "floating_window_create",
-    );
-    expect(create?.[1]?.args?.route).not.toContain("draft");
-    expect(create?.[1]?.args?.route).not.toContain("private");
-    expect(create?.[1]?.args?.route).not.toContain("original=");
     const firstRequestId = mocks.invoke.mock.calls.find(
       (c: unknown[]) => c[0] === "composer_register_text",
     )?.[1]?.requestId as string;
-    expect(mocks.invoke).toHaveBeenCalledWith("composer_register_text", {
-      requestId: `${firstRequestId}:original`,
-      text: "private original",
-    });
     const resultListener = listeners.get("composer-result")?.[0];
     expect(resultListener).toBeDefined();
     resultListener?.({
@@ -459,9 +336,6 @@ describe("reviewTextInComposer cleanup", () => {
     // The discard must target THIS review's registered request, not just
     // any — a stale id would leak the text buffer for the next review.
     expect(discardCall?.[1]).toMatchObject({ requestId: firstRequestId });
-    expect(mocks.invoke).toHaveBeenCalledWith("composer_discard_text", {
-      requestId: `${firstRequestId}:original`,
-    });
   });
 });
 
@@ -541,107 +415,6 @@ describe("reviewTextInComposer ready-timeout safety net", () => {
       vi.useRealTimers();
     }
   }, 20_000);
-
-  it("settles if registration hangs and discards a late registration", async () => {
-    vi.useFakeTimers();
-    try {
-      let finishRegistration!: () => void;
-      const registration = new Promise<void>((resolve) => {
-        finishRegistration = resolve;
-      });
-      mocks.invoke.mockImplementation((cmd: string) => {
-        if (cmd === "composer_register_text") return registration;
-        return Promise.resolve(undefined);
-      });
-      vi.resetModules();
-      const { reviewTextInComposer: freshReview } =
-        await import("./composer.utils");
-      const pending = freshReview("private draft");
-      const requestId = mocks.invoke.mock.calls.find(
-        ([cmd]) => cmd === "composer_register_text",
-      )?.[1]?.requestId;
-      expect(requestId).toBeTruthy();
-      await vi.advanceTimersByTimeAsync(15_001);
-      await expect(pending).resolves.toBeNull();
-      expect(mocks.invoke).toHaveBeenCalledWith("composer_discard_text", {
-        requestId,
-      });
-      expect(mocks.invoke).not.toHaveBeenCalledWith(
-        "floating_window_create",
-        expect.anything(),
-      );
-      finishRegistration();
-      await Promise.resolve();
-      await Promise.resolve();
-      expect(
-        mocks.invoke.mock.calls.filter(
-          ([cmd, args]) =>
-            cmd === "composer_discard_text" && args?.requestId === requestId,
-        ),
-      ).toHaveLength(2);
-      expect(mocks.invoke).not.toHaveBeenCalledWith(
-        "floating_window_create",
-        expect.anything(),
-      );
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("discards both slots if original-text registration completes after timeout", async () => {
-    vi.useFakeTimers();
-    try {
-      let finishOriginal!: () => void;
-      const original = new Promise<void>((resolve) => {
-        finishOriginal = resolve;
-      });
-      mocks.invoke.mockImplementation(
-        (cmd: string, args?: { requestId?: string }) => {
-          if (
-            cmd === "composer_register_text" &&
-            args?.requestId?.endsWith(":original")
-          )
-            return original;
-          return Promise.resolve(undefined);
-        },
-      );
-      vi.resetModules();
-      const { reviewTextInComposer: freshReview } =
-        await import("./composer.utils");
-      const pending = freshReview("edited", {
-        originalText: "secret original",
-      });
-      await Promise.resolve();
-      await vi.advanceTimersByTimeAsync(15_001);
-      await expect(pending).resolves.toBeNull();
-      const id = mocks.invoke.mock.calls.find(
-        ([cmd, args]) =>
-          cmd === "composer_register_text" &&
-          !args?.requestId?.endsWith(":original"),
-      )?.[1]?.requestId;
-      expect(mocks.invoke).toHaveBeenCalledWith("composer_discard_text", {
-        requestId: id,
-      });
-      expect(mocks.invoke).toHaveBeenCalledWith("composer_discard_text", {
-        requestId: `${id}:original`,
-      });
-      finishOriginal();
-      await Promise.resolve();
-      expect(
-        mocks.invoke.mock.calls.filter(
-          ([cmd, args]) =>
-            cmd === "composer_discard_text" &&
-            args?.requestId === `${id}:original`,
-        ),
-      ).toHaveLength(2);
-      expect(mocks.invoke).not.toHaveBeenCalledWith(
-        "floating_window_create",
-        expect.anything(),
-      );
-    } finally {
-      vi.useRealTimers();
-    }
-  });
 
   it("settles and shows recovery when window creation hangs beyond setup deadline", async () => {
     vi.useFakeTimers();
@@ -771,49 +544,6 @@ describe("ensurePillGeometry", () => {
 
     await expect(ensurePillGeometry()).resolves.toBe(true);
     expect(mocks.invoke).not.toHaveBeenCalled();
-  });
-
-  it("times out stalled listener registration and disposes a late listener", async () => {
-    vi.useFakeTimers();
-    try {
-      let finish!: (dispose: () => void) => void;
-      mocks.listen.mockReturnValue(
-        new Promise((resolve) => {
-          finish = resolve;
-        }),
-      );
-      const pending = ensurePillGeometry();
-      await vi.advanceTimersByTimeAsync(1_001);
-      await expect(pending).resolves.toBe(false);
-      const dispose = vi.fn();
-      finish(dispose);
-      await Promise.resolve();
-      expect(dispose).toHaveBeenCalledOnce();
-      expect(mocks.invoke).not.toHaveBeenCalledWith("request_pill_position");
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("times out a stalled request and ignores late geometry", async () => {
-    vi.useFakeTimers();
-    try {
-      const listeners = installPerEventListener();
-      mocks.invoke.mockReturnValue(new Promise(() => {}));
-      const pending = ensurePillGeometry();
-      await vi.advanceTimersByTimeAsync(1_001);
-      await expect(pending).resolves.toBe(false);
-      listeners.get("pill-position-changed")?.[0]?.({
-        payload: {
-          hasSavedPosition: true,
-          rect: { x: 100, y: 100, width: 120, height: 40 },
-          monitor: { x: 0, y: 0, width: 1920, height: 1080 },
-        },
-      });
-      expect(getComposerWindowPosition({ width: 560, height: 420 })).toBeNull();
-    } finally {
-      vi.useRealTimers();
-    }
   });
 
   it("gives up on the anchor when the pill never replies", async () => {

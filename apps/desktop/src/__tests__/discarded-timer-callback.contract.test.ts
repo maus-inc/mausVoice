@@ -1,17 +1,43 @@
-import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import {
-  collectSourceFiles,
-  contractSourceRoots,
-} from "./source-tree.test-utils";
 
 const here = dirname(fileURLToPath(import.meta.url));
 // `here` is <repo>/apps/desktop/src/__tests__, so the desktop app root is two
 // levels up and the repo root two more.
 const desktopRoot = resolve(here, "..", "..");
 const repoRoot = resolve(desktopRoot, "..", "..");
+
+function collectFiles(dir: string, acc: string[] = []): string[] {
+  for (const entry of readdirSync(dir)) {
+    const full = join(dir, entry);
+    const st = statSync(full);
+    if (st.isDirectory()) {
+      if (
+        entry === "node_modules" ||
+        entry === "dist" ||
+        entry === ".git" ||
+        entry === "__tests__"
+      )
+        continue;
+      collectFiles(full, acc);
+    } else if (
+      (entry.endsWith(".ts") || entry.endsWith(".tsx")) &&
+      !entry.includes(".test.")
+    ) {
+      acc.push(full);
+    }
+  }
+  return acc;
+}
+
+function sourceRoots(): string[] {
+  const packageRoots = readdirSync(resolve(repoRoot, "packages"))
+    .map((entry) => resolve(repoRoot, "packages", entry, "src"))
+    .filter((root) => statSync(root, { throwIfNoEntry: false })?.isDirectory());
+  return [resolve(desktopRoot, "src"), ...packageRoots];
+}
 
 /**
  * Contract: a timer or listener registration is never handed a callback that is
@@ -84,8 +110,8 @@ describe("discarded timer callbacks", () => {
 
   it("registers no timer or listener with a callback that does nothing", () => {
     const offenders: string[] = [];
-    for (const root of contractSourceRoots(repoRoot, desktopRoot)) {
-      for (const file of collectSourceFiles(root)) {
+    for (const root of sourceRoots()) {
+      for (const file of collectFiles(root)) {
         const text = readFileSync(file, "utf8");
         for (const match of text.matchAll(DEAD_CALLBACK)) {
           const line = text.slice(0, match.index).split("\n").length;

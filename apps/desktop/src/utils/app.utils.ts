@@ -13,13 +13,17 @@ import {
   Transcription,
   User,
 } from "@maus-inc/types";
-import type { AppState, SnackbarMode } from "../state/app.state";
+import type {
+  AppState,
+  SnackbarAction,
+  SnackbarMode,
+} from "../state/app.state";
 
 export type ShowSnackbarOpts = {
   duration?: number;
   transitionDuration?: number;
   mode?: SnackbarMode;
-  action?: { label: string; onClick: () => void };
+  action?: SnackbarAction;
 };
 
 export const setSnackbar = (
@@ -144,10 +148,7 @@ export const registerPairedRemoteDevices = (
   draft: AppState,
   devices: PairedRemoteDevice[],
 ): void => {
-  // Object.fromEntries creates own data properties even for IDs such as
-  // "__proto__", rather than invoking Object.prototype's legacy setter.
-  draft.pairedRemoteDeviceById = Object.fromEntries([
-    ...Object.entries(draft.pairedRemoteDeviceById),
-    ...devices.map((device) => [device.id, device]),
-  ]);
+  for (const device of devices) {
+    draft.pairedRemoteDeviceById[device.id] = device;
+  }
 };

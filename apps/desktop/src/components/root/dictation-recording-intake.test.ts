@@ -51,36 +51,67 @@ vi.mock("../../utils/log.utils", () => ({
   }),
 }));
 
-import { ActivationController } from "@maus-inc/desktop-utils";
-import { monitorAbortRelease } from "./dictation-abort-safety";
-import { ContinuousLiveSession } from "../../sessions/continuous-live-session";
-import { NativeRecordingLease } from "../../utils/native-recording-lease";
 import type { BaseStrategy } from "../../strategies/base.strategy";
-import { createAudioChunkStartupBuffer } from "../../utils/audio-chunk-startup-buffer";
 import type { TranscriptionSession } from "../../types/transcription-session.types";
+import {
+  beginNativeRecording,
+  resetNativeRecordingSession,
+  type NativeRecordingHandle,
+} from "../../utils/native-recording-session";
 import {
   attachSessionAudioIntake,
   createCurrentSegmentGuard,
-  takeRecordingSession,
-  finishAbortedRecording,
-  releaseOwnedAudioListener,
-  prepareSessionForCapture,
-  configureStreamingInterims,
-  startNativeCapture,
-  claimRecordingStart,
-  resolveStartAtNativeDispatch,
-  startPreparedSession,
-  abortFailedRecordingStart,
   forwardAudioChunk,
   isRecordingStartCurrent,
   releaseRecordingResources,
+  requiresLiveIntakeRecovery,
   stopNativeRecordingForAbort,
+  stopOwnedNativeStart,
+  trackNativeStartHandle,
 } from "./dictation-recording-intake";
 
-const recordingInvoke = (command: string, args?: Record<string, unknown>) =>
-  command === "recording_generation"
-    ? Promise.resolve(0)
-    : mocks.invoke(command, args);
+beforeEach(() => {
+  resetNativeRecordingSession();
+  mocks.invoke.mockReset();
+  mocks.invoke.mockResolvedValue(undefined);
+});
+
+/** A native admission whose discard is observable through the invoke mock. */
+const fakeHandle = (generation: number): NativeRecordingHandle => ({
+  ownerId: `owner-${generation}`,
+  generation,
+  stop: vi.fn(async () => ({
+    samples: new Float32Array(0),
+    sampleRate: 16_000,
+  })),
+  discard: vi.fn(async () => {
+    await mocks.invoke("discard_recording", {
+      ownerId: `owner-${generation}`,
+      generation,
+    });
+  }),
+  pause: vi.fn(async () => undefined),
+  resume: vi.fn(async () => undefined),
+  isLive: () => true,
+});
+
+const discards = () =>
+  mocks.invoke.mock.calls.filter(
+    ([command]) => command === "discard_recording",
+  );
+
+/** Open a live recording so the module-level teardown paths have a target. */
+const startLiveRecording = async (): Promise<NativeRecordingHandle> => {
+  mocks.invoke.mockImplementation((command: string) => {
+    if (command === "recording_generation") return Promise.resolve(1);
+    if (command === "start_recording") {
+      return Promise.resolve({ sampleRate: 16_000 });
+    }
+    return Promise.resolve(new ArrayBuffer(4));
+  });
+  const { handle } = await beginNativeRecording(null);
+  return handle;
+};
 
 const samples = (length: number, value = 0.25) =>
   Array.from({ length }, () => value);
@@ -115,36 +146,28 @@ beforeEach(() => {
   mocks.listenCalls = 0;
   mocks.rejectListen = false;
   mocks.unlisten.mockClear();
-  mocks.invoke.mockReset();
-  mocks.invoke.mockImplementation((command: string) =>
-    Promise.resolve(
-      command === "start_recording" ? { sampleRate: 16000 } : undefined,
-    ),
-  );
+  mocks.invoke.mockClear();
+  mocks.invoke.mockResolvedValue(undefined);
   mocks.errorMock.mockClear();
   mocks.warningMock.mockClear();
   mocks.verboseMock.mockClear();
 });
 
-describe("audio intake ownership", () => {
-  it("drops chunks belonging to another capture before buffering", async () => {
-    const write = vi.fn();
-    await attachSessionAudioIntake(
-      sessionWith(write),
-      () => true,
-      () => true,
-      noOverflow,
-      "mine",
-    );
-    const send = mocks.chunkListener as unknown as (event: {
-      payload: { samples: number[]; offset: number; ownerId: string };
-    }) => void;
-    send({ payload: { samples: [0.5], offset: 0, ownerId: "other" } });
-    expect(write).not.toHaveBeenCalled();
-    send({ payload: { samples: [0.5], offset: 0, ownerId: "mine" } });
-    expect(write).toHaveBeenCalledOnce();
+describe("requiresLiveIntakeRecovery", () => {
+  it("flags a failed subscription only for live-streaming sessions", () => {
+    expect(requiresLiveIntakeRecovery("live-streaming", true)).toBe(true);
+    expect(requiresLiveIntakeRecovery("after-stop", true)).toBe(false);
+    expect(requiresLiveIntakeRecovery("local", true)).toBe(false);
   });
 
+  it("never flags an established subscription", () => {
+    expect(requiresLiveIntakeRecovery("live-streaming", false)).toBe(false);
+    expect(requiresLiveIntakeRecovery("after-stop", false)).toBe(false);
+    expect(requiresLiveIntakeRecovery("local", false)).toBe(false);
+  });
+});
+
+describe("audio intake ownership", () => {
   it("registers exactly one audio_chunk listener per recording", async () => {
     const session = sessionWith(vi.fn());
     await attachSessionAudioIntake(
@@ -156,10 +179,11 @@ describe("audio intake ownership", () => {
     expect(mocks.listenCalls).toBe(1);
   });
 
-  it("falls back to the whole recording when the subscription fails", async () => {
-    // A subscription that cannot be established is a missing optimisation, not a
-    // broken dictation. Letting this reject reached the outer start-failure
-    // handler and reported "Recording failed" for a recording that was fine.
+  it("tolerates subscription failure so stop can recover the native recording", async () => {
+    // A subscription that cannot be established is not a reason to fail native
+    // capture. Non-streaming sessions can transcribe the full recording at stop;
+    // live sessions finalize empty and rely on the failed-transcription recovery
+    // path to retain audio when the strategy and persistence policy allow.
     mocks.rejectListen = true;
     const intake = await attachSessionAudioIntake(
       sessionWith(vi.fn()),
@@ -169,6 +193,7 @@ describe("audio intake ownership", () => {
     );
     expect(intake.unlisten).toBeNull();
     expect(intake.current).toBe(true);
+    expect(intake.subscriptionFailed).toBe(true);
   });
 
   it("skips registration for a session that takes no live audio", async () => {
@@ -181,6 +206,7 @@ describe("audio intake ownership", () => {
     expect(mocks.listenCalls).toBe(0);
     expect(intake.unlisten).toBeNull();
     expect(intake.current).toBe(true);
+    expect(intake.subscriptionFailed).toBe(false);
   });
 
   it("reports a superseded start that has nothing to attach", async () => {
@@ -192,30 +218,6 @@ describe("audio intake ownership", () => {
     );
     expect(mocks.listenCalls).toBe(0);
     expect(intake.current).toBe(false);
-  });
-
-  it("does not convert discarded startup samples before applying the buffer cap", async () => {
-    const onOverflow = vi.fn();
-    const intake = await attachSessionAudioIntake(
-      sessionWith(vi.fn()),
-      () => true,
-      () => false,
-      onOverflow,
-    );
-    intake.buffer.setSampleRate(1); // 30 startup samples
-    const oversized = new Proxy(
-      Array.from({ length: 35 }, () => 0.25),
-      {
-        get(target, key, receiver) {
-          if (key === "30") throw new Error("read past buffer cap");
-          return Reflect.get(target, key, receiver);
-        },
-      },
-    );
-
-    emitChunk(oversized, 0);
-    expect(intake.buffer.pendingSampleCount()).toBe(30);
-    expect(onOverflow).toHaveBeenCalledWith(5);
   });
 
   it("forwards a live chunk with its absolute sample index", async () => {
@@ -374,9 +376,7 @@ describe("audio intake ownership", () => {
     );
 
     expect(() => emitChunk(samples(2), 0)).not.toThrow();
-    expect(mocks.errorMock).toHaveBeenCalledExactlyOnceWith(
-      "[Dictation] Failed to forward audio chunk",
-    );
+    expect(mocks.errorMock).toHaveBeenCalledOnce();
   });
 });
 
@@ -452,554 +452,136 @@ describe("isRecordingStartCurrent", () => {
   });
 });
 
-describe("start failure ownership", () => {
-  it("delegates the current session and strategy cleanup to abort exactly once", async () => {
-    const session = sessionWith();
-    const abort = vi.fn().mockResolvedValue(undefined);
-    expect(
-      abortFailedRecordingStart(new Error("failed"), session, 1, 1, abort),
-    ).toBe(true);
-    expect(abort).toHaveBeenCalledOnce();
-    expect(session.cleanup).not.toHaveBeenCalled();
-  });
-  it("cleans a stale session without aborting its successor", () => {
-    const session = sessionWith();
-    const abort = vi.fn();
-    expect(
-      abortFailedRecordingStart(new Error("failed"), session, 1, 2, abort),
-    ).toBe(false);
-    expect(session.cleanup).toHaveBeenCalledOnce();
-    expect(abort).not.toHaveBeenCalled();
-  });
-  it("observes a rejected asynchronous abort", async () => {
-    const abort = vi.fn().mockRejectedValue(new Error("abort failure"));
-    abortFailedRecordingStart(new Error("failed"), null, 1, 1, abort);
-    await vi.waitFor(() =>
-      expect(mocks.errorMock).toHaveBeenCalledWith(
-        expect.stringContaining("abort failure"),
-      ),
-    );
-  });
-});
-
-describe("recording activation dispatch", () => {
-  it("cancels and settles a start released before dispatch, even if setup never replies", async () => {
-    const release = new AbortController();
-    const cancel = vi.fn();
-    const pending = resolveStartAtNativeDispatch(
-      () => new Promise(() => {}),
-      release.signal,
-      cancel,
-    );
-    release.abort();
-    await expect(pending).resolves.toBeUndefined();
-    expect(cancel).toHaveBeenCalledOnce();
-  });
-
-  it("does not cancel a dispatched start when it is released", async () => {
-    const release = new AbortController();
-    const cancel = vi.fn();
-    const pending = resolveStartAtNativeDispatch(
-      async (dispatched) => {
-        dispatched(12);
-        await new Promise(() => {});
-        return 12;
-      },
-      release.signal,
-      cancel,
-    );
-    release.abort();
-    await expect(pending).resolves.toBe(12);
-    expect(cancel).not.toHaveBeenCalled();
-  });
-});
-
-describe("prepared recording startup", () => {
-  const setup = () => {
-    const session = sessionWith();
-    const strategy = {
-      onBeforeStart: vi.fn(),
-      setPhase: vi.fn().mockResolvedValue(undefined),
-    } as unknown as BaseStrategy;
-    const lease = new NativeRecordingLease(recordingInvoke, "dictation-a");
-    return { session, strategy, lease };
-  };
-
-  it("replays buffered audio only after the provider is ready", async () => {
-    const { session, strategy, lease } = setup();
-    const buffer = createAudioChunkStartupBuffer();
-    buffer.push(new Float32Array([0.5]), 0);
-    const write = vi.fn();
-    session.writeAudioChunk = write;
-    mocks.invoke.mockResolvedValueOnce({ sampleRate: 48000 });
-    const ready = vi.fn();
-    await expect(
-      startPreparedSession({
-        session,
-        strategy,
-        lease,
-        buffer,
-        isCurrent: () => true,
-        preferredMicrophone: null,
-        startProviderTimers: vi.fn(),
-        markReady: ready,
-      }),
-    ).resolves.toBe(true);
-    expect(session.onRecordingStart).toHaveBeenCalledWith(48000);
-    expect(write).toHaveBeenCalledWith(new Float32Array([0.5]), 0);
-    expect(ready).toHaveBeenCalledOnce();
-  });
-
-  it("stops on key release while provider startup is pending and preserves the captured audio", async () => {
-    let finishProvider!: () => void;
-    const source = sessionWith(vi.fn());
-    source.supportsStreaming = () => true;
-    source.onRecordingStart = vi.fn(
-      () =>
-        new Promise<void>((resolve) => {
-          finishProvider = resolve;
-        }),
-    );
-    source.finalize = vi.fn().mockResolvedValue({
-      rawTranscript: "complete",
-      metadata: {},
-      warnings: [],
-    });
-    const session = new ContinuousLiveSession(source);
-    const nativeInvoke = vi.fn((command: string) => {
-      if (command === "recording_generation") return Promise.resolve(42);
-      if (command === "start_recording")
-        return Promise.resolve({ sampleRate: 16000 });
-      if (command === "stop_recording")
-        return Promise.resolve({ sampleRate: 16000, samples: [0.5] });
-      return Promise.resolve(undefined);
-    });
-    const lease = new NativeRecordingLease(nativeInvoke, "key-hold");
-    const strategy = {
-      onBeforeStart: vi.fn(),
-      setPhase: vi.fn().mockResolvedValue(undefined),
-    } as unknown as BaseStrategy;
-    let forward = false;
-    const intake = await attachSessionAudioIntake(
-      session,
-      () => true,
-      () => forward,
-      noOverflow,
-    );
-    let operation: number | undefined;
-    let result:
-      Awaited<ReturnType<TranscriptionSession["finalize"]>> | undefined;
-    const controller = new ActivationController(
-      async () => {
-        operation = await resolveStartAtNativeDispatch(async (captured) => {
-          const started = await startPreparedSession({
-            session,
-            strategy,
-            lease,
-            buffer: intake.buffer,
-            isCurrent: () => true,
-            preferredMicrophone: null,
-            startProviderTimers: vi.fn(),
-            markReady: () => {
-              forward = true;
-            },
-            onNativeStartDispatched: () => captured(7),
-          });
-          return started ? 7 : undefined;
-        });
-      },
-      async () => {
-        expect(operation).toBe(7);
-        const audio = await lease.stop();
-        result = await session.finalize(audio);
-      },
-      true,
-    );
-    controller.handlePress();
-    await vi.waitFor(() =>
-      expect(source.onRecordingStart).toHaveBeenCalledOnce(),
-    );
-    emitChunk([0.5], 0);
-    controller.handleRelease();
-    await vi.waitFor(() =>
-      expect(nativeInvoke).toHaveBeenCalledWith("stop_recording", {
-        ownerId: "key-hold",
-        generation: 42,
-      }),
-    );
-    expect(result).toBeUndefined();
-    expect(source.finalize).not.toHaveBeenCalled();
-    finishProvider();
-    await vi.waitFor(() => expect(result?.rawTranscript).toBe("complete"));
-    expect(source.writeAudioChunk).toHaveBeenCalledExactlyOnceWith(
-      new Float32Array([0.5]),
-      0,
-    );
-    expect(source.finalize).toHaveBeenCalledWith({
-      samples: new Float32Array([0.5]),
-      sampleRate: 16000,
-    });
-    expect(
-      nativeInvoke.mock.calls.some(
-        ([command]) => command === "discard_recording",
-      ),
-    ).toBe(false);
-    intake.unlisten?.();
-    controller.dispose();
-  });
-
-  it("releases capture even when the native start reply is delayed", async () => {
-    let finishNative!: (value: { sampleRate: number }) => void;
-    const nativeInvoke = vi.fn((command: string) => {
-      if (command === "recording_generation") return Promise.resolve(9);
-      if (command === "start_recording")
-        return new Promise<{ sampleRate: number }>((resolve) => {
-          finishNative = resolve;
-        });
-      if (command === "stop_recording")
-        return Promise.resolve({ sampleRate: 16000, samples: [0.5] });
-      return Promise.resolve(undefined);
-    });
-    const lease = new NativeRecordingLease(nativeInvoke, "slow-native");
-    const session = sessionWith();
-    const strategy = {
-      onBeforeStart: vi.fn(),
-      setPhase: vi.fn().mockResolvedValue(undefined),
-    } as unknown as BaseStrategy;
-    let current = true;
-    let operation: number | undefined;
-    let stoppedSamples: number[] | undefined;
-    let startup!: Promise<boolean>;
-    const controller = new ActivationController(
-      async () => {
-        operation = await resolveStartAtNativeDispatch(async (dispatched) => {
-          startup = startPreparedSession({
-            session,
-            strategy,
-            lease,
-            buffer: createAudioChunkStartupBuffer(),
-            isCurrent: () => current,
-            preferredMicrophone: null,
-            startProviderTimers: vi.fn(),
-            markReady: vi.fn(),
-            onNativeStartDispatched: () => dispatched(10),
-          });
-          return (await startup) ? 10 : undefined;
-        });
-      },
-      async () => {
-        expect(operation).toBe(10);
-        stoppedSamples = Array.from((await lease.stop()).samples);
-        current = false;
-      },
-      true,
-    );
-    controller.handlePress();
-    await vi.waitFor(() =>
-      expect(nativeInvoke).toHaveBeenCalledWith(
-        "start_recording",
-        expect.anything(),
-      ),
-    );
-    controller.handleRelease();
-    await vi.waitFor(() => expect(stoppedSamples).toEqual([0.5]));
-    expect(session.onRecordingStart).not.toHaveBeenCalled();
-    finishNative({ sampleRate: 16000 });
-    await expect(startup).resolves.toBe(false);
-    expect(
-      nativeInvoke.mock.calls.some(
-        ([command]) => command === "discard_recording",
-      ),
-    ).toBe(false);
-    controller.dispose();
-  });
-
-  it("stops its own pending native start after retirement", async () => {
-    const { session, strategy, lease } = setup();
-    let open!: (value: { sampleRate: number }) => void;
-    mocks.invoke.mockReturnValueOnce(
-      new Promise((resolve) => {
-        open = resolve;
-      }),
-    );
-    let current = true;
-    const start = startPreparedSession({
-      session,
-      strategy,
-      lease,
-      buffer: createAudioChunkStartupBuffer(),
-      isCurrent: () => current,
-      preferredMicrophone: null,
-      startProviderTimers: vi.fn(),
-      markReady: vi.fn(),
-    });
-    await vi.waitFor(() => expect(mocks.invoke).toHaveBeenCalledOnce());
-    current = false;
-    open({ sampleRate: 48000 });
-    await expect(start).resolves.toBe(false);
-    expect(mocks.invoke).toHaveBeenCalledWith("discard_recording", {
-      ownerId: "dictation-a",
-      generation: expect.any(Number),
-    });
-  });
-
-  it("starts capture and the provider even when the phase reply never arrives", async () => {
-    const { session, strategy, lease } = setup();
-    vi.mocked(strategy.setPhase).mockReturnValue(new Promise(() => {}));
-    mocks.invoke.mockResolvedValueOnce({ sampleRate: 48000 });
-    const outcome = await Promise.race([
-      startPreparedSession({
-        session,
-        strategy,
-        lease,
-        buffer: createAudioChunkStartupBuffer(),
-        isCurrent: () => true,
-        preferredMicrophone: null,
-        startProviderTimers: vi.fn(),
-        markReady: vi.fn(),
-      }),
-      new Promise<"pending">((resolve) =>
-        setTimeout(() => resolve("pending"), 100),
-      ),
-    ]);
-    expect(outcome).toBe(true);
-    expect(session.onRecordingStart).toHaveBeenCalledWith(48000);
-  });
-
-  it("does not turn a phase failure into a failed recording start", async () => {
-    const { session, strategy, lease } = setup();
-    vi.mocked(strategy.setPhase).mockRejectedValue(new Error("phase failed"));
-    mocks.invoke.mockResolvedValueOnce({ sampleRate: 48000 });
-    await expect(
-      startPreparedSession({
-        session,
-        strategy,
-        lease,
-        buffer: createAudioChunkStartupBuffer(),
-        isCurrent: () => true,
-        preferredMicrophone: null,
-        startProviderTimers: vi.fn(),
-        markReady: vi.fn(),
-      }),
-    ).resolves.toBe(true);
-    expect(mocks.warningMock).toHaveBeenCalledWith(
-      "Could not request pill phase recording",
-    );
-  });
-
-  it("cleans and stops a session retired while its provider starts", async () => {
-    const { session, strategy, lease } = setup();
-    let finish!: () => void;
-    session.onRecordingStart = vi.fn(
-      () =>
-        new Promise<void>((resolve) => {
-          finish = resolve;
-        }),
-    );
-    mocks.invoke.mockResolvedValueOnce({ sampleRate: 48000 });
-    let current = true;
-    const ready = vi.fn();
-    const start = startPreparedSession({
-      session,
-      strategy,
-      lease,
-      buffer: createAudioChunkStartupBuffer(),
-      isCurrent: () => current,
-      preferredMicrophone: null,
-      startProviderTimers: vi.fn(),
-      markReady: ready,
-    });
-    await vi.waitFor(() =>
-      expect(session.onRecordingStart).toHaveBeenCalledOnce(),
-    );
-    current = false;
-    finish();
-    await expect(start).resolves.toBe(false);
-    expect(session.cleanup).toHaveBeenCalledOnce();
-    expect(mocks.invoke).toHaveBeenCalledWith("discard_recording", {
-      ownerId: "dictation-a",
-      generation: expect.any(Number),
-    });
-    expect(ready).not.toHaveBeenCalled();
-  });
-});
-
-describe("native capture startup", () => {
-  it("starts the provider timer when capture is dispatched, before its reply", async () => {
-    let finish!: (value: { sampleRate: number }) => void;
-    mocks.invoke.mockReturnValueOnce(
-      new Promise((resolve) => {
-        finish = resolve;
-      }),
-    );
-    const timer = vi.fn();
-    const lease = new NativeRecordingLease(recordingInvoke, "timer-a");
-    const opening = startNativeCapture(lease, "Mic", () => true, timer);
-    await vi.waitFor(() => expect(timer).toHaveBeenCalledOnce());
-    finish({ sampleRate: 48000 });
-    await expect(opening).resolves.toEqual({ sampleRate: 48000 });
-    expect(mocks.invoke).toHaveBeenCalledWith("start_recording", {
-      ownerId: "timer-a",
-      generation: 0,
-      args: { preferredMicrophone: "Mic", waitForRelease: true },
-    });
-    expect(timer).toHaveBeenCalledOnce();
-  });
-  it("does not start a timer for a retired capture", async () => {
-    mocks.invoke.mockResolvedValueOnce({ sampleRate: 48000 });
-    const timer = vi.fn();
-    await expect(
-      startNativeCapture(
-        new NativeRecordingLease(recordingInvoke, "timer-b"),
-        null,
-        () => false,
-        timer,
-      ),
-    ).rejects.toThrow("closed");
-    expect(timer).not.toHaveBeenCalled();
-    expect(mocks.invoke).not.toHaveBeenCalledWith(
-      "start_recording",
-      expect.anything(),
-    );
-  });
-  it("propagates native errors after arming the dispatch deadline", async () => {
-    mocks.invoke.mockRejectedValueOnce(new Error("microphone failure"));
-    const timer = vi.fn();
-    await expect(
-      startNativeCapture(
-        new NativeRecordingLease(recordingInvoke, "timer-c"),
-        null,
-        () => true,
-        timer,
-      ),
-    ).rejects.toThrow("microphone failure");
-    expect(timer).toHaveBeenCalledOnce();
-  });
-});
-
 describe("native capture ownership", () => {
-  it("does not send any stop when there is no owned capture", async () => {
-    await stopNativeRecordingForAbort({ current: null });
+  it("stops the stream for the start that still owns it", async () => {
+    const ownerRef = { current: 3 as number | null };
+    const handle = fakeHandle(3);
+    trackNativeStartHandle(ownerRef, 3, handle);
+    await stopOwnedNativeStart(ownerRef, 3);
+    expect(discards()).toHaveLength(1);
+    expect(handle.discard).toHaveBeenCalledOnce();
+    expect(ownerRef.current).toBeNull();
+  });
+
+  it("leaves a live stream alone when a superseded start reports in", async () => {
+    const ownerRef = { current: 4 as number | null };
+    await stopOwnedNativeStart(ownerRef, 3);
     expect(mocks.invoke).not.toHaveBeenCalled();
+    expect(ownerRef.current).toBe(4);
   });
-  it("retains the old ID when a successor replaces the ref while stop is pending", async () => {
-    let open!: (value: { sampleRate: number }) => void;
-    mocks.invoke.mockReturnValueOnce(
-      new Promise((resolve) => {
-        open = resolve;
-      }),
+
+  it("stops on abort even when a restart has already claimed ownership", async () => {
+    // The P1. An abort landing while the microphone was still opening used to
+    // release the claim, await the pill's idle phase, and only then skip its stop
+    // because a restart had claimed in the meantime. With the admission on the
+    // handle, the abort stops the exact stream this start opened.
+    const ownerRef = { current: 4 as number | null };
+    const handle = fakeHandle(4);
+    trackNativeStartHandle(ownerRef, 4, handle);
+    await stopNativeRecordingForAbort(ownerRef);
+    expect(handle.discard).toHaveBeenCalledOnce();
+    expect(ownerRef.current).toBeNull();
+  });
+
+  it("stops on abort when the claim was already released", async () => {
+    // The abort takes the claim itself, so the ref is normally null by the time
+    // the stop is issued. It must stop the live recording in that state too.
+    const handle = await startLiveRecording();
+    const ownerRef = { current: null as number | null };
+    await stopNativeRecordingForAbort(ownerRef);
+    expect(discards()).toHaveLength(1);
+    expect(discards()[0]?.[1]).toEqual({
+      ownerId: handle.ownerId,
+      generation: handle.generation,
+    });
+  });
+
+  it("stops the stream a superseded start opened after the abort released its claim", async () => {
+    // An abort that lands while a start is still inside `start_recording` stops
+    // that start's own admission, so the superseded start's report cannot let a
+    // recorder come up live with no owner.
+    const ownerRef = { current: 3 as number | null };
+    const handle = fakeHandle(3);
+    trackNativeStartHandle(ownerRef, 3, handle);
+    await stopNativeRecordingForAbort(ownerRef);
+    await stopOwnedNativeStart(ownerRef, 3);
+    expect(discards()).toHaveLength(1);
+  });
+
+  it("does not stop twice when a start that was still opening reports in after its own stop", async () => {
+    const ownerRef = { current: 3 as number | null };
+    const handle = fakeHandle(3);
+    trackNativeStartHandle(ownerRef, 3, handle);
+    await stopOwnedNativeStart(ownerRef, 3);
+    await stopOwnedNativeStart(ownerRef, 3);
+    expect(discards()).toHaveLength(1);
+  });
+
+  it("leaves a newer recording's stream alone even when an abort is owed a stop", async () => {
+    // The claim names the newer recording, so this stale start must not cut off
+    // a live dictation to discharge a debt the abort left behind.
+    const ownerRef = { current: 3 as number | null };
+    const handle = fakeHandle(3);
+    trackNativeStartHandle(ownerRef, 3, handle);
+    await stopNativeRecordingForAbort(ownerRef);
+    ownerRef.current = 4;
+    await stopOwnedNativeStart(ownerRef, 3);
+    expect(discards()).toHaveLength(1);
+    expect(ownerRef.current).toBe(4);
+  });
+
+  it("swallows a stop failure so an abort cannot reject", async () => {
+    await startLiveRecording();
+    mocks.invoke.mockImplementation((command: string) =>
+      command === "discard_recording"
+        ? Promise.reject(new Error("no recorder"))
+        : Promise.resolve(undefined),
     );
-    const old = new NativeRecordingLease(recordingInvoke, "old");
-    const newer = new NativeRecordingLease(recordingInvoke, "new");
-    const opening = old.start(null);
-    await Promise.resolve();
-    const ref = { current: old as NativeRecordingLease | null };
-    const stop = stopNativeRecordingForAbort(ref);
-    ref.current = newer;
-    open({ sampleRate: 16000 });
-    await Promise.all([opening, stop]);
-    expect(mocks.invoke).toHaveBeenCalledWith("discard_recording", {
-      ownerId: "old",
-      generation: expect.any(Number),
-    });
-    expect(ref.current).toBe(newer);
-  });
-  it("keeps cancellation guidance when a real lease's discard is rejected", async () => {
-    mocks.invoke
-      .mockResolvedValueOnce({ sampleRate: 16000 })
-      .mockRejectedValueOnce(new Error("release is pending"));
-    // Use a separate transport identity so this intentionally unconfirmed
-    // release does not affect later tests' pending-release registry.
-    const invoke = (command: string, args?: Record<string, unknown>) =>
-      recordingInvoke(command, args);
-    const lease = new NativeRecordingLease(invoke, "old");
-    await lease.start(null);
-    const ref = { current: lease as NativeRecordingLease | null };
-    const show = vi.fn();
-    const dismiss = vi.fn();
-    const safety = monitorAbortRelease({
-      isCurrent: () => true,
-      show,
-      dismiss,
-      immediately: true,
-    });
-    const cleanup = stopNativeRecordingForAbort(ref, safety.failed);
-    safety.watch(cleanup);
-    await cleanup;
-    await Promise.resolve();
-    expect(safety.isFailed()).toBe(true);
-    expect(show).toHaveBeenCalledTimes(2);
-    expect(dismiss).not.toHaveBeenCalled();
-  });
-
-  it("retries a rejected real-lease discard before dismissing its warning", async () => {
-    vi.useFakeTimers();
-    try {
-      mocks.invoke
-        .mockResolvedValueOnce({ sampleRate: 16000 })
-        .mockRejectedValueOnce(new Error("release is pending"))
-        .mockResolvedValueOnce(undefined);
-      const invoke = (command: string, args?: Record<string, unknown>) =>
-        recordingInvoke(command, args);
-      const lease = new NativeRecordingLease(invoke, "retry-old");
-      await lease.start(null);
-      const ref = { current: lease as NativeRecordingLease | null };
-      const show = vi.fn();
-      const dismiss = vi.fn();
-      const safety = monitorAbortRelease({
-        isCurrent: () => true,
-        show,
-        dismiss,
-        immediately: true,
-        retry: () => lease.cancel(),
-      });
-      const cleanup = stopNativeRecordingForAbort(ref, safety.failed);
-      safety.watch(cleanup);
-      await cleanup;
-      expect(safety.isFailed()).toBe(true);
-      expect(dismiss).not.toHaveBeenCalled();
-      await vi.advanceTimersByTimeAsync(5_000);
-      expect(mocks.invoke).toHaveBeenCalledWith("discard_recording", {
-        ownerId: "retry-old",
-        generation: 0,
-      });
-      expect(dismiss).toHaveBeenCalledOnce();
-      expect(safety.isFailed()).toBe(false);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("keeps the lease reachable when cancellation throws synchronously", async () => {
-    const lease = {
-      cancel: vi.fn(() => {
-        throw new Error("cancel failed");
-      }),
-    } as unknown as NativeRecordingLease;
-    const ref = { current: lease as NativeRecordingLease | null };
-    const unconfirmed = vi.fn();
+    const ownerRef = { current: null as number | null };
     await expect(
-      stopNativeRecordingForAbort(ref, unconfirmed),
+      stopNativeRecordingForAbort(ownerRef),
     ).resolves.toBeUndefined();
-    expect(unconfirmed).toHaveBeenCalledOnce();
-    expect(ref.current).toBe(lease);
+    expect(ownerRef.current).toBeNull();
+  });
+
+  it("stops the stream once when two starts report in for one owner", async () => {
+    const ownerRef = { current: 3 as number | null };
+    const handle = fakeHandle(3);
+    trackNativeStartHandle(ownerRef, 3, handle);
+    await Promise.all([
+      stopOwnedNativeStart(ownerRef, 3),
+      stopOwnedNativeStart(ownerRef, 3),
+    ]);
+    expect(discards()).toHaveLength(1);
+  });
+
+  it("does not throw when the native stop rejects", async () => {
+    const ownerRef = { current: 3 as number | null };
+    const handle = fakeHandle(3);
+    vi.mocked(handle.discard).mockRejectedValueOnce(
+      new Error("no active stream"),
+    );
+    trackNativeStartHandle(ownerRef, 3, handle);
+    await expect(stopOwnedNativeStart(ownerRef, 3)).resolves.toBeUndefined();
     expect(mocks.verboseMock).toHaveBeenCalled();
   });
 
-  it("handles a rejected owned stop without rejecting abort", async () => {
-    mocks.invoke
-      .mockResolvedValueOnce({ sampleRate: 16000 })
-      .mockRejectedValueOnce(new Error("stop failed"));
-    const lease = new NativeRecordingLease(recordingInvoke, "old");
-    await lease.start(null);
-    const ref = { current: lease as NativeRecordingLease | null };
-    const unconfirmed = vi.fn();
-    await expect(
-      stopNativeRecordingForAbort(ref, unconfirmed),
-    ).resolves.toBeUndefined();
-    expect(ref.current).toBeNull();
-    expect(unconfirmed).toHaveBeenCalledOnce();
-    expect(mocks.verboseMock).toHaveBeenCalled();
+  it("keeps ownership across a start, stop, and restart interleaving", async () => {
+    const ownerRef = { current: null as number | null };
+
+    ownerRef.current = 3;
+    const first = fakeHandle(3);
+    trackNativeStartHandle(ownerRef, 3, first);
+    // A stop lands while start 3 is opening the mic: the stop path releases
+    // capture, so the stale start must not issue a second stop.
+    await stopOwnedNativeStart(ownerRef, 3);
+    expect(discards()).toHaveLength(1);
+
+    // A restart claims ownership again; the old start reports in afterwards.
+    ownerRef.current = 4;
+    await stopOwnedNativeStart(ownerRef, 3);
+    expect(discards()).toHaveLength(1);
+    expect(ownerRef.current).toBe(4);
   });
 });
 
@@ -1019,203 +601,12 @@ describe("createCurrentSegmentGuard", () => {
   });
 });
 
-describe("streaming interim ownership", () => {
-  it("forwards only interim segments for the current recording", () => {
-    const session = sessionWith();
-    session.supportsStreaming = () => true;
-    const strategy = {
-      handleInterimSegment: vi.fn(),
-    } as unknown as BaseStrategy;
-    let current = 1;
-    configureStreamingInterims(session, strategy, 1, () => current);
-    const callback = vi.mocked(session.setInterimResultCallback).mock
-      .calls[0][0];
-    callback("live");
-    current = 2;
-    callback("stale");
-    expect(strategy.handleInterimSegment).toHaveBeenCalledExactlyOnceWith(
-      "live",
-      expect.any(Function),
-    );
-  });
-  it("drops interim segments immediately when the recording's auth session retires", () => {
-    const session = sessionWith();
-    session.supportsStreaming = () => true;
-    const strategy = {
-      handleInterimSegment: vi.fn(),
-    } as unknown as BaseStrategy;
-    let current = true;
-    configureStreamingInterims(
-      session,
-      strategy,
-      1,
-      () => 1,
-      () => current,
-    );
-    const callback = vi.mocked(session.setInterimResultCallback).mock
-      .calls[0][0];
-    callback("before");
-    current = false;
-    callback("after");
-    expect(strategy.handleInterimSegment).toHaveBeenCalledExactlyOnceWith(
-      "before",
-      expect.any(Function),
-    );
-  });
-  it("does not install an interim handler on a batch session", () => {
-    const session = sessionWith();
-    configureStreamingInterims(session, strategyStub(), 1, () => 1);
-    expect(session.setInterimResultCallback).not.toHaveBeenCalled();
-  });
-});
-
-describe("session pre-capture setup", () => {
-  it("continues after a recoverable pre-capture failure", async () => {
-    const session = sessionWith();
-    session.onBeforeRecordingStart = vi
-      .fn()
-      .mockRejectedValue(new Error("unavailable"));
-    await expect(prepareSessionForCapture(session, () => true)).resolves.toBe(
-      true,
-    );
-    expect(session.cleanup).not.toHaveBeenCalled();
-    expect(mocks.warningMock).toHaveBeenCalledWith(
-      expect.stringContaining("unavailable"),
-    );
-  });
-  it("cleans a session retired while setup was pending", async () => {
-    const session = sessionWith();
-    let finish!: () => void;
-    session.onBeforeRecordingStart = () =>
-      new Promise<void>((resolve) => {
-        finish = resolve;
-      });
-    let current = true;
-    const setup = prepareSessionForCapture(session, () => current);
-    current = false;
-    finish();
-    await expect(setup).resolves.toBe(false);
-    expect(session.cleanup).toHaveBeenCalledOnce();
-  });
-});
-
-describe("audio listener ownership release", () => {
-  it("retires the listener even when unlisten throws", () => {
-    const failing = vi.fn(() => {
-      throw new Error("unlisten failed");
-    });
-    const ref = { current: failing as (() => void) | null };
-    expect(() => releaseOwnedAudioListener(ref, failing)).not.toThrow();
-    expect(ref.current).toBeNull();
-    expect(failing).toHaveBeenCalledOnce();
-    expect(mocks.warningMock).toHaveBeenCalledWith(
-      expect.stringContaining("unlisten failed"),
-    );
-  });
-  it("does not release a listener already replaced by a newer start", () => {
-    const previous = vi.fn();
-    const current = vi.fn();
-    const ref = { current: current as (() => void) | null };
-    releaseOwnedAudioListener(ref, previous);
-    expect(current).not.toHaveBeenCalled();
-    expect(ref.current).toBe(current);
-  });
-});
-
-describe("abort ownership", () => {
-  it("retires only the captured session and does not clear a newer recording", async () => {
-    const oldSession = sessionWith();
-    let finishStrategy!: () => void;
-    let startedStrategy!: () => void;
-    const started = new Promise<void>((resolve) => {
-      startedStrategy = resolve;
-    });
-    const pending = new Promise<void>((resolve) => {
-      finishStrategy = resolve;
-    });
-    const oldStrategy = {
-      cleanup: vi.fn(() => {
-        startedStrategy();
-        return pending;
-      }),
-    } as unknown as BaseStrategy;
-    const refs = {
-      sessionRef: { current: oldSession as TranscriptionSession | null },
-      strategyRef: { current: oldStrategy as BaseStrategy | null },
-    };
-    const owned = takeRecordingSession(refs);
-    expect(refs.sessionRef.current).toBeNull();
-    expect(refs.strategyRef.current).toBeNull();
-    let currentId = 4;
-    const clearState = vi.fn();
-    const cleanup = finishAbortedRecording(
-      owned,
-      4,
-      () => currentId,
-      clearState,
-    );
-    await started;
-    const nextSession = sessionWith();
-    const nextStrategy = strategyStub();
-    refs.sessionRef.current = nextSession;
-    refs.strategyRef.current = nextStrategy;
-    currentId = 5;
-    finishStrategy();
-    await cleanup;
-    expect(oldSession.cleanup).toHaveBeenCalledOnce();
-    expect(refs.sessionRef.current).toBe(nextSession);
-    expect(refs.strategyRef.current).toBe(nextStrategy);
-    expect(nextSession.cleanup).not.toHaveBeenCalled();
-    expect(clearState).not.toHaveBeenCalled();
-  });
-  it("retire old strategy internals without clearing a reentrant successor", async () => {
-    let currentId = 1;
-    const session = sessionWith();
-    vi.mocked(session.cleanup).mockImplementation(() => {
-      currentId = 2;
-    });
-    const clearShared = vi.fn();
-    const cleanup = vi.fn(async (isCurrent?: () => boolean) => {
-      if (isCurrent?.()) clearShared();
-    });
-    const clearState = vi.fn();
-    await finishAbortedRecording(
-      { session, strategy: { cleanup } as unknown as BaseStrategy },
-      1,
-      () => currentId,
-      clearState,
-    );
-    expect(cleanup).toHaveBeenCalledOnce();
-    expect(clearShared).not.toHaveBeenCalled();
-    expect(clearState).not.toHaveBeenCalled();
-  });
-  it("clears state for the current abort even if cleanup fails", async () => {
-    const session = sessionWith();
-    vi.mocked(session.cleanup).mockImplementation(() => {
-      throw new Error("session cleanup");
-    });
-    const strategy = {
-      cleanup: vi.fn().mockRejectedValue(new Error("strategy cleanup")),
-    } as unknown as BaseStrategy;
-    const clearState = vi.fn();
-    await finishAbortedRecording({ session, strategy }, 1, () => 1, clearState);
-    expect(clearState).toHaveBeenCalledOnce();
-    expect(mocks.warningMock).toHaveBeenCalledTimes(2);
-  });
-});
-
 describe("releaseRecordingResources", () => {
-  const ownedLease = async () => {
-    const lease = new NativeRecordingLease(recordingInvoke, "unmount-owner");
-    await lease.start(null);
-    return { current: lease as NativeRecordingLease | null };
-  };
   it("releases the listener, session, strategy, and native capture on unmount", async () => {
     const unlisten = vi.fn();
     const cleanup = vi.fn();
     const strategyCleanup = vi.fn().mockResolvedValue(undefined);
     const refs = {
-      nativeStartOwnerRef: await ownedLease(),
       audioChunkUnlistenRef: { current: unlisten as typeof unlisten | null },
       sessionRef: {
         current: sessionWith() as unknown as TranscriptionSession | null,
@@ -1229,65 +620,19 @@ describe("releaseRecordingResources", () => {
       cleanup,
     } as TranscriptionSession;
 
+    await startLiveRecording();
     releaseRecordingResources(refs);
 
     expect(unlisten).toHaveBeenCalledOnce();
     expect(refs.audioChunkUnlistenRef.current).toBeNull();
     expect(cleanup).toHaveBeenCalledOnce();
     expect(strategyCleanup).toHaveBeenCalledOnce();
-    await vi.waitFor(() =>
-      expect(mocks.invoke).toHaveBeenCalledWith("discard_recording", {
-        ownerId: "unmount-owner",
-        generation: expect.any(Number),
-      }),
-    );
-  });
-
-  it("releases only the resources captured before reentrant unmount cleanup", () => {
-    const oldSession = { cleanup: vi.fn() } as unknown as TranscriptionSession;
-    const oldStrategy = {
-      cleanup: vi.fn().mockResolvedValue(undefined),
-    } as unknown as BaseStrategy;
-    const oldLease = {
-      cancel: vi.fn().mockResolvedValue(undefined),
-    } as unknown as NativeRecordingLease;
-    const newSession = { cleanup: vi.fn() } as unknown as TranscriptionSession;
-    const newStrategy = {
-      cleanup: vi.fn().mockResolvedValue(undefined),
-    } as unknown as BaseStrategy;
-    const newLease = {
-      cancel: vi.fn().mockResolvedValue(undefined),
-    } as unknown as NativeRecordingLease;
-    const refs = {
-      nativeStartOwnerRef: { current: oldLease as NativeRecordingLease | null },
-      sessionRef: { current: oldSession as TranscriptionSession | null },
-      strategyRef: { current: oldStrategy as BaseStrategy | null },
-      audioChunkUnlistenRef: { current: null as (() => void) | null },
-    };
-    let current = true;
-    refs.audioChunkUnlistenRef.current = () => {
-      current = false;
-      refs.nativeStartOwnerRef.current = newLease;
-      refs.sessionRef.current = newSession;
-      refs.strategyRef.current = newStrategy;
-    };
-    releaseRecordingResources({ ...refs, isCurrent: () => current });
-    expect(oldSession.cleanup).toHaveBeenCalledOnce();
-    expect(oldStrategy.cleanup).toHaveBeenCalledOnce();
-    const guard = vi.mocked(oldStrategy.cleanup).mock.calls[0][0];
-    expect(guard?.()).toBe(false);
-    expect(oldLease.cancel).toHaveBeenCalledOnce();
-    expect(newSession.cleanup).not.toHaveBeenCalled();
-    expect(newStrategy.cleanup).not.toHaveBeenCalled();
-    expect(newLease.cancel).not.toHaveBeenCalled();
-    expect(refs.nativeStartOwnerRef.current).toBe(newLease);
-    expect(refs.sessionRef.current).toBe(newSession);
-    expect(refs.strategyRef.current).toBe(newStrategy);
+    // Unmount is an explicit teardown, so the live recording is discarded.
+    await vi.waitFor(() => expect(discards()).toHaveLength(1));
   });
 
   it("still stops native capture when strategy cleanup rejects", async () => {
     const refs = {
-      nativeStartOwnerRef: await ownedLease(),
       audioChunkUnlistenRef: { current: null as (() => void) | null },
       sessionRef: { current: null as TranscriptionSession | null },
       strategyRef: {
@@ -1299,122 +644,9 @@ describe("releaseRecordingResources", () => {
       },
     };
 
+    await startLiveRecording();
     expect(() => releaseRecordingResources(refs)).not.toThrow();
-    await Promise.resolve();
-    await vi.waitFor(() =>
-      expect(mocks.invoke).toHaveBeenCalledWith("discard_recording", {
-        ownerId: "unmount-owner",
-        generation: expect.any(Number),
-      }),
-    );
+    await vi.waitFor(() => expect(discards()).toHaveLength(1));
     expect(mocks.warningMock).toHaveBeenCalled();
-  });
-
-  it.each(["listener", "session", "strategy"])(
-    "attempts every release and stops native capture if %s cleanup throws synchronously",
-    async (failing) => {
-      const unlisten = vi.fn(() => {
-        if (failing === "listener") throw new Error("listener failed");
-      });
-      const sessionCleanup = vi.fn(() => {
-        if (failing === "session") throw new Error("session failed");
-      });
-      const strategyCleanup = vi.fn(() => {
-        if (failing === "strategy") throw new Error("strategy failed");
-        return Promise.resolve();
-      });
-      const refs = {
-        nativeStartOwnerRef: await ownedLease(),
-        audioChunkUnlistenRef: { current: unlisten as (() => void) | null },
-        sessionRef: {
-          current: {
-            ...sessionWith(),
-            cleanup: sessionCleanup,
-          } as TranscriptionSession | null,
-        },
-        strategyRef: {
-          current: {
-            cleanup: strategyCleanup,
-          } as unknown as BaseStrategy | null,
-        },
-      };
-      expect(() => releaseRecordingResources(refs)).not.toThrow();
-      expect(unlisten).toHaveBeenCalledOnce();
-      expect(refs.audioChunkUnlistenRef.current).toBeNull();
-      expect(sessionCleanup).toHaveBeenCalledOnce();
-      expect(strategyCleanup).toHaveBeenCalledOnce();
-      await vi.waitFor(() =>
-        expect(mocks.invoke).toHaveBeenCalledWith("discard_recording", {
-          ownerId: "unmount-owner",
-          generation: expect.any(Number),
-        }),
-      );
-      expect(mocks.warningMock).toHaveBeenCalled();
-    },
-  );
-
-  it("reports a rejected native stop without an unhandled rejection", async () => {
-    mocks.invoke
-      .mockResolvedValueOnce({ sampleRate: 16000 })
-      .mockRejectedValueOnce(new Error("native stop failed"));
-    releaseRecordingResources({
-      nativeStartOwnerRef: await ownedLease(),
-      audioChunkUnlistenRef: { current: null },
-      sessionRef: { current: null },
-      strategyRef: { current: null },
-    });
-    await vi.waitFor(() =>
-      expect(mocks.warningMock).toHaveBeenCalledWith(
-        expect.stringContaining("Native capture cleanup failed during unmount"),
-      ),
-    );
-  });
-});
-
-describe("recording startup admission", () => {
-  it("refuses competing starts without retiring the current operation", () => {
-    const operationRef = { current: 10 };
-    const pendingRef: { current: { operation: number } | null } = {
-      current: null,
-    };
-    const base = {
-      operationRef,
-      pendingRef,
-      isStopping: false,
-      hasNativeLease: false,
-      currentMode: null,
-      requestedMode: "dictate" as const,
-    };
-    const first = claimRecordingStart(base);
-    expect(first?.operation).toBe(11);
-    expect(claimRecordingStart(base)).toBeNull();
-    expect(operationRef.current).toBe(11);
-    pendingRef.current = null;
-    expect(claimRecordingStart({ ...base, hasNativeLease: true })).toBeNull();
-    expect(claimRecordingStart({ ...base, isStopping: true })).toBeNull();
-    expect(claimRecordingStart({ ...base, currentMode: "agent" })).toBeNull();
-    expect(operationRef.current).toBe(11);
-  });
-
-  it("permits a new start after an abort retires an unresolved attempt", () => {
-    const operationRef = { current: 1 };
-    const pendingRef: { current: { operation: number } | null } = {
-      current: null,
-    };
-    const base = {
-      operationRef,
-      pendingRef,
-      isStopping: false,
-      hasNativeLease: false,
-      currentMode: "agent" as const,
-      requestedMode: "agent" as const,
-    };
-    const old = claimRecordingStart(base);
-    expect(old?.operation).toBe(2);
-    operationRef.current += 1;
-    const replacement = claimRecordingStart(base);
-    expect(replacement?.operation).toBe(4);
-    expect(replacement).not.toBe(old);
-    expect(pendingRef.current).toBe(replacement);
   });
 });

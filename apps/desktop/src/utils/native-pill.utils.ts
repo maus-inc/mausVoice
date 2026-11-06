@@ -28,3 +28,8 @@ export const isNativePillAvailable = (): Promise<boolean> => {
   );
   return availability;
 };
+
+/** Test seam: forget the cached probe result. */
+export const resetNativePillAvailability = (): void => {
+  availability = null;
+};

@@ -203,7 +203,6 @@ pub(crate) struct PillState {
     // Flash message / toast
     pub(crate) flash_message: RefCell<String>,
     pub(crate) flash_visible: Cell<bool>,
-    pub(crate) flash_microphone_safety_owner: RefCell<Option<String>>,
     pub(crate) flash_t: Cell<f64>,
     pub(crate) flash_velocity: Cell<f64>,
     pub(crate) flash_timer: Cell<f64>,
@@ -363,14 +362,6 @@ impl PillState {
     /// when no assistant session is open.
     pub(crate) fn owns_panel(&self) -> bool {
         self.assistant_active.get() || self.assistant_review.borrow().is_some()
-    }
-
-    pub(crate) fn recording_stop_safety_active(&self) -> bool {
-        rust_pill_shared::is_recording_stop_safety_notice(
-            self.flash_visible.get(),
-            self.flash_microphone_safety_owner.borrow().is_some(),
-            self.flash_action.borrow().as_deref(),
-        )
     }
 
     /// The window mode to lay the content out in.

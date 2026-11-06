@@ -10,14 +10,14 @@ export abstract class BaseStrategy {
   constructor() {}
 
   abstract validateAvailability(): Nullable<StrategyValidationError>;
-  abstract onBeforeStart(isCurrent?: () => boolean): Promise<void>;
+  abstract onBeforeStart(): Promise<void>;
   abstract setPhase(phase: OverlayPhase): Promise<void>;
   abstract handleTranscript(
     params: HandleTranscriptParams,
   ): Promise<HandleTranscriptResult>;
   abstract shouldStoreTranscript(): boolean;
 
-  abstract cleanup(isCurrent?: () => boolean): Promise<void>;
+  abstract cleanup(): Promise<void>;
 
-  handleInterimSegment(_segment: string, _isCurrent?: () => boolean): void {}
+  handleInterimSegment(_segment: string): void {}
 }

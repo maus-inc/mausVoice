@@ -1,6 +1,83 @@
-import { type DependencyList, useEffect, useRef, useState } from "react";
+import {
+  type DependencyList,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import { getLogger } from "../utils/log.utils";
+
+// Canonical lowercase tokens for key names, mapping synonyms ("esc"/"escape",
+// "return"/"enter", "up"/"arrowup", ...) onto a single representation.
+export const KEY_ALIASES: Record<string, string> = {
+  " ": "space",
+  space: "space",
+  esc: "escape",
+  escape: "escape",
+  return: "enter",
+  enter: "enter",
+  del: "delete",
+  delete: "delete",
+  arrowup: "arrowup",
+  up: "arrowup",
+  arrowdown: "arrowdown",
+  down: "arrowdown",
+  arrowleft: "arrowleft",
+  left: "arrowleft",
+  arrowright: "arrowright",
+  right: "arrowright",
+};
+
+/**
+ * Canonicalizes a key token to a stable lowercase representation. The raw
+ * (untrimmed) key is queried first so KeyboardEvent.key values like " "
+ * (Space) resolve through the alias table; the trimmed form is the fallback
+ * for padded input.
+ */
+export const canonicalizeKey = (k: string): string => {
+  const raw = k.toLowerCase();
+  const trimmed = raw.trim();
+  return KEY_ALIASES[raw] ?? KEY_ALIASES[trimmed] ?? trimmed;
+};
+
+export function usePrevious<T>(value: T): T | undefined;
+export function usePrevious<T>(value: T, initialValue: T): T;
+export function usePrevious<T>(value: T, initialValue?: T): T | undefined {
+  const hasInitialValue = arguments.length >= 2;
+  const ref = useRef<T | undefined>(initialValue);
+  useEffect(() => {
+    ref.current = value;
+  }, [value]);
+  return hasInitialValue ? (ref.current as T) : ref.current;
+}
+
+export const useDelayedEffect = (
+  delay: number,
+  callback: () => void,
+  deps: DependencyList,
+) => {
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    timeoutRef.current = setTimeout(() => {
+      callback();
+    }, delay);
+
+    return () => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
+    };
+  }, deps);
+};
+
+export const useOnEnter = (callback: () => void) => {
+  useEffect(() => {
+    callback();
+  }, []);
+};
 
 export const useOnExit = (callback: () => void) => {
   useEffect(() => {
@@ -56,9 +133,109 @@ export const useKeyDownHandler = (args: {
   }, [keys, shift, ctrl, meta, alt]);
 };
 
+type UseKeyComboArgs = {
+  keys?: string[];
+  shift?: boolean;
+  ctrl?: boolean;
+  meta?: boolean;
+  alt?: boolean;
+};
+
+/**
+ * Returns true while the specified key combo is held.
+ * - Only `true` values for modifiers are enforced. `false`/`undefined` mean "don't care".
+ * - `keys` is treated as a required subset. Extra pressed keys are ignored.
+ * - Ignores modifier names inside `keys`.
+ */
+export const useKeyCombo = (args: UseKeyComboArgs = {}): boolean => {
+  const [active, setActive] = useState(false);
+  const pressedRef = useRef<Set<string>>(new Set());
+
+  // Canonicalize to stable lowercase tokens. The raw (untrimmed) key is
+  // queried first so KeyboardEvent.key values like " " (Space) resolve through
+  // the alias table; the trimmed form is the fallback for padded input.
+  const canon = canonicalizeKey;
+
+  const isModifierKey = (k: string) =>
+    k === "shift" || k === "control" || k === "alt" || k === "meta";
+
+  const requiredKeys = useMemo<Set<string>>(() => {
+    const list = (args.keys ?? []).map(canon).filter((k) => !isModifierKey(k));
+    return new Set(list);
+  }, [JSON.stringify(args.keys ?? [])]); // stable deps even if array identity changes
+
+  const checkActive = (ev?: KeyboardEvent) => {
+    // Evaluate modifiers from the latest event when available, else from global state
+    const shift = ev ? ev.shiftKey : false;
+    const ctrl = ev ? ev.ctrlKey : false;
+    const alt = ev ? ev.altKey : false;
+    const meta = ev ? ev.metaKey : false;
+
+    // Enforce requested modifiers (only when true)
+    if (args.shift && !shift) return false;
+    if (args.ctrl && !ctrl) return false;
+    if (args.alt && !alt) return false;
+    if (args.meta && !meta) return false;
+
+    // All required non-modifier keys must be down (subset semantics)
+    for (const k of requiredKeys) {
+      if (!pressedRef.current.has(k)) return false;
+    }
+    return true;
+  };
+
+  // Re-evaluate when requirements change
+  useEffect(() => {
+    setActive(checkActive());
+  }, [args.shift, args.ctrl, args.alt, args.meta, requiredKeys]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const addKey = (raw: string) => {
+      const k = canon(raw);
+      if (!isModifierKey(k)) pressedRef.current.add(k);
+    };
+    const removeKey = (raw: string) => {
+      const k = canon(raw);
+      if (!isModifierKey(k)) pressedRef.current.delete(k);
+    };
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      addKey(e.key);
+      setActive(checkActive(e));
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      removeKey(e.key);
+      setActive(checkActive(e));
+    };
+    const clearAll = () => {
+      pressedRef.current.clear();
+      setActive(false);
+    };
+    const onVisibility = () => {
+      if (document.visibilityState !== "visible") clearAll();
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", clearAll);
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", clearAll);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, []);
+
+  return active;
+};
+
 type IntervalCallback = () => void;
 
-const useInterval = (
+export const useInterval = (
   delay: number,
   callback: IntervalCallback,
   dependencies: DependencyList,
@@ -145,11 +322,36 @@ export const useIntervalAsync = (
   );
 };
 
+export const useDebouncedState = <T>(
+  initial: T,
+): [T, (newValue: T, delay?: number) => void] => {
+  const [state, setState] = useState<T>(initial);
+  const timerRef = useRef<ReturnType<typeof setTimeout>>(null);
+
+  const setDebounced = useCallback((newValue: T, delay: number = 0) => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    if (delay <= 0) {
+      setState(newValue);
+    } else {
+      timerRef.current = setTimeout(() => setState(newValue), delay);
+    }
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    },
+    [],
+  );
+
+  return [state, setDebounced];
+};
+
 type EffectCallback = () => void | (() => void);
 
 export const useEffectDebounced = (
   delay: number,
-  effect: () => void | (() => void),
+  effect: EffectCallback,
   deps: DependencyList,
 ): void => {
   const callback = useRef<EffectCallback>(effect);
@@ -176,6 +378,27 @@ export const useEffectDebounced = (
       }
     };
   }, [delay, ...deps]);
+};
+
+export const useCallbackDebounced = <T extends (...args: any[]) => any>(
+  delay: number,
+  callback: T,
+  deps: DependencyList = [],
+): ((...args: Parameters<T>) => void) => {
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  return useCallback(
+    (...args: Parameters<T>) => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
+
+      timeoutRef.current = setTimeout(() => {
+        callback(...args);
+      }, delay);
+    },
+    [delay, ...deps],
+  );
 };
 
 export function useWindowSize() {

@@ -1,17 +1,4 @@
-import { audioToArrayBuffer } from "./audio-convert.utils";
-import {
-  countWords,
-  discardResponseBody,
-  readAbortableResponseArrayBuffer,
-  retry,
-} from "@maus-inc/utilities";
-import {
-  assertProviderIntegrationOk,
-  assertPrivateProviderResponseOk,
-  isAbortError,
-  parsePrivateProviderJson,
-  requestSensitiveTransport,
-} from "./provider-response.utils";
+import { HttpError, countWords, retry } from "@maus-inc/utilities";
 import type { CustomFetch } from "./types";
 
 const XAI_BASE_URL = "https://api.x.ai/v1";
@@ -28,18 +15,23 @@ export const xaiTestIntegration = async ({
   apiKey,
   customFetch = fetch,
 }: XaiTestIntegrationArgs): Promise<boolean> => {
-  const response = await requestSensitiveTransport(
-    `${XAI_BASE_URL}/models`,
-    {
-      method: "GET",
-      redirect: "error",
-      headers: { Authorization: `Bearer ${apiKey.trim()}` },
+  const response = await customFetch(`${XAI_BASE_URL}/models`, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${apiKey.trim()}`,
     },
-    customFetch,
-    "xAI",
-  );
+  });
 
-  await assertProviderIntegrationOk(response, "xAI", [apiKey, apiKey.trim()]);
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new HttpError(
+      response.status,
+      detail
+        ? `xAI responded ${response.status}: ${detail}`
+        : `xAI responded with status ${response.status}`,
+      { retryAfter: response.headers.get("retry-after") },
+    );
+  }
   return true;
 };
 
@@ -49,7 +41,6 @@ export type XaiTranscriptionArgs = {
   ext: string;
   language?: string;
   customFetch?: CustomFetch;
-  signal?: AbortSignal;
 };
 
 export type XaiTranscribeAudioOutput = {
@@ -63,14 +54,13 @@ export const xaiTranscribeAudio = ({
   ext,
   language,
   customFetch = fetch,
-  signal,
 }: XaiTranscriptionArgs): Promise<XaiTranscribeAudioOutput> => {
   return retry({
     retries: 3,
-    signal,
     fn: async () => {
       const formData = new FormData();
-      const bodyData = audioToArrayBuffer(blob);
+      const bodyData =
+        blob instanceof ArrayBuffer ? blob : (blob.buffer as ArrayBuffer);
       const audioBlob = new Blob([bodyData], { type: `audio/${ext}` });
       // xAI requires a specific language when `format=true`; container audio
       // formats are detected from the uploaded file without this field.
@@ -81,33 +71,24 @@ export const xaiTranscribeAudio = ({
       // xAI requires the multipart file field to be appended last.
       formData.append("file", audioBlob, `audio.${ext}`);
 
-      const response = await requestSensitiveTransport(
-        `${XAI_BASE_URL}/stt`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${apiKey.trim()}`,
-          },
-          body: formData,
-          redirect: "error",
-          signal,
+      const response = await customFetch(`${XAI_BASE_URL}/stt`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey.trim()}`,
         },
-        customFetch,
-        "xAI",
-      );
+        body: formData,
+      });
 
-      assertPrivateProviderResponseOk(
-        response,
-        "xAI STT request failed with status",
-      );
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => "Unknown error");
+        throw new HttpError(
+          response.status,
+          `xAI STT request failed with status ${response.status}: ${errorText}`,
+          { retryAfter: response.headers.get("retry-after") },
+        );
+      }
 
-      const data = (await parsePrivateProviderJson(
-        response,
-        "xAI",
-        signal,
-      )) as {
-        text?: string;
-      };
+      const data = (await response.json()) as { text?: string };
       const transcript = data?.text;
 
       if (!transcript) {
@@ -125,7 +106,6 @@ export type XaiSpeakArgs = {
   voice?: XaiTtsVoice;
   language?: string;
   customFetch?: CustomFetch;
-  signal?: AbortSignal;
 };
 
 export const xaiGenerateSpeech = async ({
@@ -134,41 +114,28 @@ export const xaiGenerateSpeech = async ({
   voice = "eve",
   language = "en",
   customFetch = fetch,
-  signal,
 }: XaiSpeakArgs): Promise<ArrayBuffer> => {
-  const response = await requestSensitiveTransport(
-    `${XAI_BASE_URL}/tts`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey.trim()}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        text,
-        voice_id: voice,
-        language,
-      }),
-      redirect: "error",
-      signal,
+  const response = await customFetch(`${XAI_BASE_URL}/tts`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey.trim()}`,
+      "Content-Type": "application/json",
     },
-    customFetch,
-    "xAI",
-  );
+    body: JSON.stringify({
+      text,
+      voice_id: voice,
+      language,
+    }),
+  });
 
-  assertPrivateProviderResponseOk(
-    response,
-    "xAI TTS request failed with status",
-  );
-
-  try {
-    return await readAbortableResponseArrayBuffer(response, signal);
-  } catch (error) {
-    signal?.throwIfAborted();
-    discardResponseBody(response);
-    if (isAbortError(error)) {
-      throw new DOMException("xAI speech response cancelled", "AbortError");
-    }
-    throw new Error("xAI speech response could not be read");
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => "Unknown error");
+    throw new HttpError(
+      response.status,
+      `xAI TTS request failed with status ${response.status}: ${errorText}`,
+      { retryAfter: response.headers.get("retry-after") },
+    );
   }
+
+  return response.arrayBuffer();
 };

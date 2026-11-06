@@ -7,38 +7,7 @@ import { HttpError, isTerminalHttpStatus, readHttpStatus } from "./http-error";
  * caller still sees its own abort value.
  */
 const readAbortReason = (signal: AbortSignal): unknown =>
-  signal.reason === undefined
-    ? new Error("The retry wait was aborted.")
-    : signal.reason;
-
-/** Stop waiting on an already-started operation and release the abort listener. */
-export const raceAbort = async <T>(
-  operation: Promise<T>,
-  signal: AbortSignal,
-  onCancellation?: () => void,
-): Promise<T> => {
-  let rejectAbort!: (reason: unknown) => void;
-  const aborted = new Promise<never>((_, reject) => {
-    rejectAbort = reject;
-  });
-  const onAbort = () => {
-    try {
-      onCancellation?.();
-    } catch {
-      // Cleanup failure must not replace the caller's cancellation reason.
-    }
-    rejectAbort(signal.reason);
-  };
-  signal.addEventListener("abort", onAbort, { once: true });
-  try {
-    if (signal.aborted) onAbort();
-    const result = await Promise.race([aborted, operation]);
-    signal.throwIfAborted();
-    return result;
-  } finally {
-    signal.removeEventListener("abort", onAbort);
-  }
-};
+  signal.reason ?? new Error("The retry wait was aborted.");
 
 /**
  * Wait `ms` milliseconds.

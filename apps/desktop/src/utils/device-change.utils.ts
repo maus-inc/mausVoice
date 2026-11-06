@@ -1,12 +1,11 @@
+type DeviceChangeTarget = {
+  addEventListener: (type: string, listener: () => void) => void;
+  removeEventListener: (type: string, listener: () => void) => void;
+};
+
 /** Subscribe to `devicechange`; returns unsubscribe or undefined when unsupported. */
 export const subscribeDeviceChange = (
-  mediaDevices:
-    | {
-        addEventListener: (type: string, listener: () => void) => void;
-        removeEventListener: (type: string, listener: () => void) => void;
-      }
-    | undefined
-    | null,
+  mediaDevices: DeviceChangeTarget | undefined | null,
   onChange: () => void,
 ): (() => void) | undefined => {
   if (!mediaDevices) {

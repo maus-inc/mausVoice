@@ -7,30 +7,22 @@ import {
 } from "../utils/prompt.utils";
 import { BaseApiTranscriptionSession } from "./base-api-transcription-session";
 import { createTranscriptAccumulator } from "./transcript-accumulator.utils";
+import { createAudioChunkBuffer } from "./transcription-stream.utils";
 import {
-  type SocketStreamControl,
-  type SocketStreamSession,
-  startSocketStreamSession,
-} from "./socket-stream-session";
+  attachStreamingSocketHandlers,
+  closeStreamingSocket,
+  createBufferedChunkWriter,
+  createStartupSettler,
+} from "./streaming-session.utils";
+import { getStartupAbortReason } from "./provider-startup.utils";
+
+type AssemblyAIStreamingSession = {
+  finalize: () => Promise<string>;
+  cleanup: () => void;
+  writeAudioChunk: (chunk: Float32Array) => void;
+};
 
 const LOGGER_PREFIX = "AssemblyAI WebSocket";
-
-/**
- * A provider frame that ends the stream settles a finalization that is already
- * in flight, and otherwise marks the live stream unusable. `reason` is null for
- * the acknowledgement frame and set for an error frame.
- */
-const settleAtStreamEnd = (
-  control: SocketStreamControl,
-  reason: string | null,
-): void => {
-  if (control.isFinalizing()) {
-    if (reason) control.fail(reason);
-    else control.complete();
-    return;
-  }
-  if (!control.isFinalized()) control.markDeliveryFailed();
-};
 
 /**
  * Opens an AssemblyAI v3 streaming WebSocket. The `speech_model` query
@@ -44,81 +36,191 @@ export const startAssemblyAIStreaming = async (
   sampleRate: number,
   keyterms: string[],
   onInterimResult?: (segment: string) => void,
-): Promise<SocketStreamSession> => {
+  signal?: AbortSignal,
+): Promise<AssemblyAIStreamingSession> => {
   getLogger().info(`[${LOGGER_PREFIX}] Starting with sample rate:`, sampleRate);
-  const transcriptState = createTranscriptAccumulator();
-  let currentTurn = 0;
-  const log = (message: string, ...args: unknown[]) =>
-    getLogger().info(message, ...args);
+  return new Promise((resolve, reject) => {
+    let ws: WebSocket | null = null;
+    let isFinalized = false;
+    const transcriptState = createTranscriptAccumulator();
 
-  const handleTurn = (data: {
-    end_of_turn?: boolean;
-    transcript?: string;
-    turn_order?: number;
-  }) => {
-    if (data.end_of_turn) {
-      const turnTranscript = data.transcript || "";
-      transcriptState.appendFinal(turnTranscript);
-      log(
-        `[${LOGGER_PREFIX}] Final formatted transcript received, length:`,
-        transcriptState.finalLength(),
-      );
-      if (currentTurn === data.turn_order) transcriptState.setPartial("");
-      if (onInterimResult && turnTranscript) onInterimResult(turnTranscript);
+    const buffer = createAudioChunkBuffer(() => ws, {
+      sampleRate,
+      minChunkDurationMs: 50,
+      maxChunkDurationMs: 100,
+      loggerPrefix: LOGGER_PREFIX,
+    });
+
+    let currentTurn = 0;
+
+    const getText = () => transcriptState.text();
+
+    const writeAudioChunk = createBufferedChunkWriter({
+      buffer,
+      isFinalized: () => isFinalized,
+      loggerPrefix: LOGGER_PREFIX,
+    });
+
+    const cleanup = () => {
+      // Detach before closing: a socket that fires `onclose` synchronously
+      // inside close() re-enters cleanup and must observe null here.
+      const socket = ws;
+      ws = null;
+      closeStreamingSocket(socket, () => buffer.reset(), LOGGER_PREFIX);
+    };
+
+    const finalize = (): Promise<string> => {
+      return new Promise((resolveFinalize) => {
+        getLogger().info(
+          `[${LOGGER_PREFIX}] Finalize called, isFinalized:`,
+          isFinalized,
+          "ws state:",
+          ws?.readyState,
+        );
+        if (isFinalized) {
+          getLogger().info(
+            `[${LOGGER_PREFIX}] Already finalized, returning transcript`,
+          );
+          resolveFinalize(getText());
+          return;
+        }
+
+        isFinalized = true;
+        buffer.flush(true);
+        getLogger().info(
+          `[${LOGGER_PREFIX}] Total chunks sent:`,
+          buffer.sentChunkCount(),
+        );
+
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          getLogger().info(`[${LOGGER_PREFIX}] Sending Terminate message...`);
+          ws.send(JSON.stringify({ type: "Terminate" }));
+
+          const timeout = setTimeout(() => {
+            getLogger().info(
+              `[${LOGGER_PREFIX}] Timeout reached, finalizing with transcript length:`,
+              getText().length,
+            );
+            cleanup();
+            resolveFinalize(getText());
+          }, 2000);
+
+          const originalOnClose = ws.onclose;
+          const currentWs = ws;
+          ws.onclose = () => {
+            clearTimeout(timeout);
+            if (originalOnClose && currentWs)
+              originalOnClose.call(currentWs, {} as CloseEvent);
+            cleanup();
+            getLogger().info(
+              `[${LOGGER_PREFIX}] WebSocket closed, finalizing with transcript length:`,
+              getText().length,
+            );
+            resolveFinalize(getText());
+          };
+        } else {
+          cleanup();
+          resolveFinalize(transcriptState.text());
+        }
+      });
+    };
+
+    const settler = createStartupSettler<AssemblyAIStreamingSession>({
+      signal,
+      cleanup,
+      resolve,
+      reject,
+      session: { finalize, cleanup, writeAudioChunk },
+    });
+    if (settler.settled) return;
+
+    // Keyterms prompting: a JSON-encoded array of terms (up to 100, each at
+    // most 50 characters) biases the streaming model toward the user's
+    // dictionary vocabulary.
+    const keytermsPrompt =
+      keyterms.length > 0
+        ? `&keyterms_prompt=${encodeURIComponent(JSON.stringify(keyterms))}`
+        : "";
+    const wsUrl = `wss://streaming.assemblyai.com/v3/ws?sample_rate=${sampleRate}&speech_model=universal-3-5-pro&token=${encodeURIComponent(apiKey)}${keytermsPrompt}`;
+    getLogger().info(
+      `[${LOGGER_PREFIX}] Connecting (api key present:`,
+      Boolean(apiKey),
+      "length:",
+      apiKey?.length ?? 0,
+      ")",
+    );
+    try {
+      ws = new WebSocket(wsUrl);
+    } catch (error) {
+      settler.rejectStartup(error);
       return;
     }
-    if (typeof data.turn_order === "number" && data.turn_order >= currentTurn) {
-      currentTurn = data.turn_order;
-      transcriptState.setPartial(data.transcript ?? "");
-    }
-  };
 
-  // Keyterms prompting: a JSON-encoded array of terms (up to 100, each at
-  // most 50 characters) biases the streaming model toward the user's
-  // dictionary vocabulary.
-  const keytermsPrompt =
-    keyterms.length > 0
-      ? `&keyterms_prompt=${encodeURIComponent(JSON.stringify(keyterms))}`
-      : "";
-  const wsUrl = `wss://streaming.assemblyai.com/v3/ws?sample_rate=${sampleRate}&speech_model=universal-3-5-pro&token=${encodeURIComponent(apiKey)}${keytermsPrompt}`;
-  getLogger().info(
-    `[${LOGGER_PREFIX}] Connecting (api key present:`,
-    Boolean(apiKey),
-    "length:",
-    apiKey?.length ?? 0,
-    ")",
-  );
+    ws.onopen = () => {
+      getLogger().info(`[${LOGGER_PREFIX}] WebSocket opened, awaiting Begin`);
+    };
 
-  return startSocketStreamSession({
-    loggerPrefix: LOGGER_PREFIX,
-    sampleRate,
-    minChunkDurationMs: 50,
-    terminationMessage: "Terminate",
-    log,
-    getText: () => transcriptState.text(),
-    createSocket: () => new WebSocket(wsUrl),
-    onConnect: () => {
-      log(`[${LOGGER_PREFIX}] Connected, sending auth...`);
-    },
-    onReady: () => {
-      log(`[${LOGGER_PREFIX}] Session ready`);
-    },
-    onMessage: (data, control) => {
-      if (data.type === "Turn") {
-        handleTurn(data);
-        return;
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        getLogger().info(`[${LOGGER_PREFIX}] Received message`, {
+          type: data.type,
+          turnOrder: data.turn_order,
+          endOfTurn: data.end_of_turn,
+          transcriptLength:
+            typeof data.transcript === "string" ? data.transcript.length : 0,
+        });
+
+        if (data.type === "Begin") {
+          getLogger().info(`[${LOGGER_PREFIX}] Session ready`);
+          buffer.flush(false);
+          settler.resolveStartup();
+          return;
+        }
+        if (data.type === "Error" && !settler.settled) {
+          settler.rejectStartup(
+            new Error(
+              String(
+                data.error ?? data.message ?? "AssemblyAI rejected the session",
+              ),
+            ),
+          );
+          return;
+        }
+
+        if (data.type === "Turn" && data.end_of_turn) {
+          const turnTranscript = data.transcript || "";
+          transcriptState.appendFinal(turnTranscript);
+          getLogger().info(
+            `[${LOGGER_PREFIX}] Final formatted transcript received, length:`,
+            transcriptState.finalLength(),
+          );
+          if (onInterimResult && turnTranscript) {
+            onInterimResult(turnTranscript);
+          }
+          if (currentTurn === data.turn_order) {
+            transcriptState.setPartial("");
+          }
+        } else if (data.type === "Turn") {
+          if (currentTurn != data.turn_order) {
+            currentTurn = data.turn_order;
+
+            transcriptState.setPartial(data.transcript);
+          }
+        }
+      } catch (error) {
+        getLogger().error(`[${LOGGER_PREFIX}] Error parsing message:`, error);
       }
-      if (data.type === "Termination") {
-        settleAtStreamEnd(control, null);
-        return;
-      }
-      if (data.type === "Error") {
-        settleAtStreamEnd(
-          control,
-          "Streaming audio provider returned an error",
-        );
-      }
-    },
+    };
+
+    attachStreamingSocketHandlers({
+      socket: ws,
+      settler,
+      cleanup,
+      loggerPrefix: LOGGER_PREFIX,
+      earlyCloseErrorMessage: "WebSocket closed before the session began",
+      closeLogLevel: "info",
+    });
   });
 };
 
@@ -137,8 +239,10 @@ export class AssemblyAITranscriptionSession extends BaseApiTranscriptionSession 
     return true;
   }
 
-  async onRecordingStart(sampleRate: number): Promise<void> {
-    const generation = this.beginStreamStartup();
+  async onRecordingStart(
+    sampleRate: number,
+    signal?: AbortSignal,
+  ): Promise<void> {
     try {
       getLogger().info("[AssemblyAI] Starting streaming session...");
       const { terms: keyterms, warning } = buildProviderVocabulary(
@@ -149,19 +253,18 @@ export class AssemblyAITranscriptionSession extends BaseApiTranscriptionSession 
       if (warning) {
         getLogger().warning(warning);
       }
-      // Must land in the inherited `streamSession` field: the base
-      // `finalize()` and `cleanup()` read that field, not any local one.
-      const session = await startAssemblyAIStreaming(
+      if (signal?.aborted) throw getStartupAbortReason(signal);
+      this.streamSession = await startAssemblyAIStreaming(
         this.apiKey,
         sampleRate,
         keyterms,
-        this.interimForStartup(generation),
+        this.interimCallback ?? undefined,
+        signal,
       );
-      if (!this.adoptStreamSession(generation, session)) return;
       getLogger().info("[AssemblyAI] Streaming session started successfully");
-    } catch {
-      if (!this.ownsStreamStartup(generation)) return;
-      getLogger().error("[AssemblyAI] Failed to start streaming");
+    } catch (error) {
+      getLogger().error("[AssemblyAI] Failed to start streaming:", error);
+      throw error;
     }
   }
 }

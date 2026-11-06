@@ -1,15 +1,32 @@
-import type { UserPreferences } from "@maus-inc/types";
+// @vitest-environment jsdom
+import type { Transcription, UserPreferences } from "@maus-inc/types";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { INITIAL_APP_STATE } from "../state/app.state";
 import { getAppState, setAppState } from "../store";
-import { startPipelineTrace } from "../utils/pipeline-trace";
 import {
+  appendTranscriptionWarnings,
   storeTranscription,
   transcribeAudio,
   type StoreTranscriptionInput,
 } from "./transcribe.actions";
 import { createDefaultPreferences } from "./user.actions";
 import { LocalTranscribeAudioRepo } from "../repos/transcribe-audio.repo";
+import {
+  beginLocalDataClear,
+  LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY,
+} from "../utils/local-data-write-gate";
+import { decodeStopRecordingPayload } from "../utils/recorded-audio.utils";
+
+const releaseClearAfterRemovingMarker = (release: () => void): void => {
+  window.localStorage.removeItem(LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY);
+  release();
+};
+
+/** Every invoke call aimed at the audio-snapshot command, whatever the shape. */
+const audioStoreCalls = (invoke: { mock: { calls: unknown[][] } }) =>
+  invoke.mock.calls.filter(
+    ([command]) => command === "store_transcription_audio",
+  );
 
 // One second of a low-amplitude tone. The energy-based silence gate
 // short-circuits all-zero (digital silence) samples before reaching the
@@ -22,20 +39,22 @@ const makeToneSamples = (sampleRate = 16000): Float32Array => {
   return samples;
 };
 
-const { loggerMock, invokeMock, addWordsMock } = vi.hoisted(() => ({
-  loggerMock: {
-    info: vi.fn(),
-    warning: vi.fn(),
-    error: vi.fn(),
-    verbose: vi.fn(),
-    stopwatch: vi.fn(async (_label: string, fn: () => Promise<unknown>) => {
-      const result = await fn();
-      return result;
-    }),
-  },
-  invokeMock: vi.fn(),
-  addWordsMock: vi.fn(),
-}));
+const { loggerMock, invokeMock, recordUsageWordsMock, refreshCurrentUserMock } =
+  vi.hoisted(() => ({
+    loggerMock: {
+      info: vi.fn(),
+      warning: vi.fn(),
+      error: vi.fn(),
+      verbose: vi.fn(),
+      stopwatch: vi.fn(async (_label: string, fn: () => Promise<unknown>) => {
+        const result = await fn();
+        return result;
+      }),
+    },
+    invokeMock: vi.fn(),
+    recordUsageWordsMock: vi.fn(),
+    refreshCurrentUserMock: vi.fn(),
+  }));
 
 vi.mock("../utils/log.utils", () => ({ getLogger: () => loggerMock }));
 // `utils/tauri-shell.utils.ts` constructs a `Channel` and assigns its
@@ -55,9 +74,14 @@ vi.mock("@tauri-apps/plugin-http", () => ({
     globalThis.fetch(...args),
 }));
 
-const { createTranscriptionMock, purgeStaleAudioMock } = vi.hoisted(() => ({
+const {
+  createTranscriptionMock,
+  purgeStaleAudioMock,
+  updateTranscriptionMock,
+} = vi.hoisted(() => ({
   createTranscriptionMock: vi.fn(),
   purgeStaleAudioMock: vi.fn(() => Promise.resolve([] as string[])),
+  updateTranscriptionMock: vi.fn(),
 }));
 
 vi.mock("../repos", async (importOriginal) => {
@@ -68,13 +92,18 @@ vi.mock("../repos", async (importOriginal) => {
       ...actual.getTranscriptionRepo(),
       createTranscription: createTranscriptionMock,
       purgeStaleAudio: purgeStaleAudioMock,
+      updateTranscription: updateTranscriptionMock,
     }),
   };
 });
 
 vi.mock("./user.actions", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./user.actions")>();
-  return { ...actual, addWordsToCurrentUser: addWordsMock };
+  return {
+    ...actual,
+    recordUsageWords: recordUsageWordsMock,
+    refreshCurrentUser: refreshCurrentUserMock,
+  };
 });
 
 const staleOllamaState = () => {
@@ -156,25 +185,10 @@ describe("transcribeAudio warning logging and failure-path cause preservation", 
     expect(result).toBeDefined();
   });
 
-  it("preserves a non-Error repository rejection as the cause on the failure path", async () => {
-    const provider = vi
-      .spyOn(LocalTranscribeAudioRepo.prototype, "transcribeAudio")
-      .mockRejectedValue("local failure");
-    try {
-      const error = await transcribeAudio({
-        samples: makeToneSamples(),
-        sampleRate: 16000,
-      }).catch((e: unknown) => e);
-
-      expect(error).toBeInstanceOf(Error);
-      expect((error as Error).cause).toBe("local failure");
-      expect((error as Error).message).toMatch(/local failure/);
-    } finally {
-      provider.mockRestore();
-    }
-  });
-
-  it("does not expose a private provider transport rejection through the action or its cause", async () => {
+  it("preserves a non-Error rejection as the cause on the failure path", async () => {
+    // A transcription-capable provider whose repository fails: Deepgram with
+    // a key, but the network request rejects with a non-Error value. The
+    // action must wrap it with the warning and preserve the original value.
     const state = structuredClone(INITIAL_APP_STATE);
     state.settings.aiTranscription.mode = "api";
     state.settings.aiTranscription.selectedApiKeyId = "deepgram-key";
@@ -188,28 +202,17 @@ describe("transcribeAudio warning logging and failure-path cause preservation", 
     };
     setAppState(state, true);
 
-    const fetch = vi
-      .spyOn(globalThis, "fetch")
-      .mockRejectedValue("private transcript and dg-key");
-    try {
-      const error = await transcribeAudio({
-        samples: makeToneSamples(),
-        sampleRate: 16000,
-      }).catch((e: unknown) => e);
+    // The Deepgram repo's fetch rejects with a non-Error primitive.
+    vi.spyOn(globalThis, "fetch").mockRejectedValue("socket exploded");
 
-      expect(error).toBeInstanceOf(Error);
-      const cause = (error as Error).cause;
-      expect(cause).toBeInstanceOf(Error);
-      expect((cause as Error).message).toBe(
-        "Deepgram transport request failed",
-      );
-      expect((error as Error).message).toBe(
-        "Deepgram transport request failed",
-      );
-      expect((cause as Error).cause).toBeUndefined();
-    } finally {
-      fetch.mockRestore();
-    }
+    const error = await transcribeAudio({
+      samples: makeToneSamples(),
+      sampleRate: 16000,
+    }).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).cause).toBe("socket exploded");
+    expect((error as Error).message).toMatch(/socket exploded/);
   });
 
   it("logs dispatch warnings before the provider call on the failure path", async () => {
@@ -266,6 +269,10 @@ describe("storeTranscription audio retention", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     invokeMock.mockReset();
+    recordUsageWordsMock.mockReset();
+    recordUsageWordsMock.mockResolvedValue(undefined);
+    refreshCurrentUserMock.mockReset();
+    refreshCurrentUserMock.mockResolvedValue(undefined);
     createTranscriptionMock.mockReset();
     purgeStaleAudioMock.mockReset();
     purgeStaleAudioMock.mockResolvedValue([]);
@@ -277,130 +284,32 @@ describe("storeTranscription audio retention", () => {
     setAppState(structuredClone(INITIAL_APP_STATE), true);
   });
 
-  it("records timing under the provider key only after successful storage", async () => {
-    setPrefs({});
-    invokeMock.mockResolvedValue({
-      filePath: "/tmp/audio.wav",
-      durationMs: 100,
-    });
-    const trace = startPipelineTrace();
-    await storeTranscription(
-      buildInput({
-        trace,
-        transcriptionMetadata: {
-          transcriptionMode: "api",
-          modelSize: "model",
-          inferenceDevice: "gpu",
-        },
-        postProcessMetadata: { postProcessMode: "fast" },
-      }),
-    );
-    expect(trace.marks.persisted).toEqual(expect.any(Number));
-    expect(
-      getAppState().local.providerTiming["api|model|gpu|fast"],
-    ).toMatchObject({ samples: 1 });
-    createTranscriptionMock.mockRejectedValueOnce(new Error("save failed"));
-    const failedTrace = startPipelineTrace();
-    await storeTranscription(buildInput({ trace: failedTrace }));
-    expect(failedTrace.marks.persisted).toBeUndefined();
-    expect(
-      getAppState().local.providerTiming["api|model|gpu|fast"].samples,
-    ).toBe(1);
-  });
-
-  it("does not publish or meter a transcript after its auth session retires", async () => {
-    setPrefs({});
-    invokeMock.mockResolvedValue({
-      filePath: "/tmp/audio.wav",
-      durationMs: 100,
-    });
-    let resolveWrite!: (value: unknown) => void;
-    createTranscriptionMock.mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          resolveWrite = resolve;
-        }),
-    );
-    const trace = startPipelineTrace();
-    const pending = storeTranscription(buildInput({ trace }));
-    await vi.waitFor(() => expect(createTranscriptionMock).toHaveBeenCalled());
-    const stored = createTranscriptionMock.mock.calls[0][0];
-    setAppState({ authSessionNonce: 1 });
-    resolveWrite(stored);
-    expect(await pending).toEqual({ transcription: null, wordCount: 0 });
-    expect(getAppState().transcriptionById[stored.id]).toBeUndefined();
-    expect(addWordsMock).not.toHaveBeenCalled();
-    expect(purgeStaleAudioMock).not.toHaveBeenCalled();
-    expect(trace.marks.persisted).toBeUndefined();
-  });
-
-  it("does not show a retired transcript write failure to a successor", async () => {
-    setPrefs({});
-    invokeMock.mockResolvedValue({
-      filePath: "/tmp/audio.wav",
-      durationMs: 100,
-    });
-    let rejectWrite!: (error: Error) => void;
-    createTranscriptionMock.mockImplementationOnce(
-      () =>
-        new Promise((_resolve, reject) => {
-          rejectWrite = reject;
-        }),
-    );
-    const pending = storeTranscription(buildInput());
-    await vi.waitFor(() => expect(createTranscriptionMock).toHaveBeenCalled());
-    setAppState({ authSessionNonce: 1 });
-    rejectWrite(new Error("old session write failed"));
-    expect(await pending).toEqual({ transcription: null, wordCount: 0 });
-    expect(getAppState().snackbarCounter).toBe(0);
-    expect(addWordsMock).not.toHaveBeenCalled();
-    expect(purgeStaleAudioMock).not.toHaveBeenCalled();
-  });
-
-  it("does not apply a late audio retention sweep to a successor session", async () => {
-    setPrefs({});
-    invokeMock.mockResolvedValue({
-      filePath: "/tmp/audio.wav",
-      durationMs: 100,
-    });
-    let finishSweep!: (ids: string[]) => void;
-    purgeStaleAudioMock.mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          finishSweep = resolve;
-        }),
-    );
-    const result = await storeTranscription(buildInput());
-    const id = result.transcription!.id;
-    const successor = { ...result.transcription!, transcript: "successor" };
-    setAppState({
-      authSessionNonce: 1,
-      transcriptionById: { [id]: successor },
-    });
-    finishSweep([id]);
-    await Promise.resolve();
-    expect(getAppState().transcriptionById[id].audio).toEqual(successor.audio);
-  });
-
-  it("does not hold the stop path open on usage metering or the audio sweep", async () => {
+  it("does not hold the stop path open on profile refresh or the audio sweep", async () => {
     // The pill is told to go idle as soon as the transcript is inserted, so it
     // accepts clicks while the stop path is still unwinding. A click in that
     // gap is accepted natively and then dropped, so the save must not wait on
-    // housekeeping: a hung retention sweep or a profile write queued behind
-    // other work would otherwise hold the session locked for as long as they
-    // take. This fails on the previous code, which awaited both.
+    // housekeeping: a hung retention sweep or profile refresh would otherwise
+    // hold the session locked for as long as they take.
     setPrefs({});
     invokeMock.mockResolvedValue({
       filePath: "/tmp/audio.wav",
       durationMs: 100,
     });
-    // `once` so a hang cannot leak into a later block: nothing else resets
-    // `addWordsMock`, and a module mock stays pending for the rest of the file.
+    // Keep housekeeping under test control so its write lease is released after
+    // confirming that the stop path does not wait for it.
+    let finishPurge: ((ids: string[]) => void) | undefined;
     purgeStaleAudioMock.mockImplementationOnce(
-      () => new Promise<string[]>(() => undefined),
+      () =>
+        new Promise<string[]>((resolve) => {
+          finishPurge = resolve;
+        }),
     );
-    addWordsMock.mockImplementationOnce(
-      () => new Promise<void>(() => undefined),
+    let finishRefresh: (() => void) | undefined;
+    refreshCurrentUserMock.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishRefresh = resolve;
+        }),
     );
 
     const settled = await Promise.race([
@@ -411,6 +320,54 @@ describe("storeTranscription audio retention", () => {
     ]);
 
     expect(settled).toBe("settled");
+    expect(finishPurge).toBeDefined();
+    expect(finishRefresh).toBeDefined();
+    finishPurge?.([]);
+    finishRefresh?.();
+
+    // Detached writes must keep their lease until settled, then allow a clear.
+    const releaseClear = await beginLocalDataClear();
+    releaseClearAfterRemovingMarker(releaseClear);
+  });
+
+  it("holds local-data clearing until a detached audio sweep finishes", async () => {
+    setPrefs({});
+    invokeMock.mockResolvedValue({
+      filePath: "/tmp/audio.wav",
+      durationMs: 100,
+    });
+
+    let finishPurge: ((ids: string[]) => void) | undefined;
+    purgeStaleAudioMock.mockImplementationOnce(
+      () =>
+        new Promise<string[]>((resolve) => {
+          finishPurge = resolve;
+        }),
+    );
+    await storeTranscription(buildInput());
+    expect(finishPurge).toBeDefined();
+
+    let releaseClear: (() => void) | undefined;
+    let clearReady = false;
+    const clearing = beginLocalDataClear().then((release) => {
+      releaseClear = release;
+      clearReady = true;
+      return release;
+    });
+
+    try {
+      // Let an unblocked clear pass its asynchronous drain check before proving
+      // the detached purge still owns its lease.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(clearReady).toBe(false);
+      finishPurge?.([]);
+      await clearing;
+      expect(clearReady).toBe(true);
+    } finally {
+      finishPurge?.([]);
+      if (!releaseClear) releaseClear = await clearing;
+      releaseClearAfterRemovingMarker(releaseClear);
+    }
   });
 
   it.each([Infinity, -Infinity])(
@@ -437,7 +394,7 @@ describe("storeTranscription audio retention", () => {
       buildInput({ rawTranscript: null, warnings: ["provider failed"] }),
     );
 
-    expect(invokeMock).not.toHaveBeenCalledWith("store_transcription_audio");
+    expect(audioStoreCalls(invokeMock)).toHaveLength(0);
     expect(createTranscriptionMock).not.toHaveBeenCalled();
     expect(result.transcription).toBeNull();
   });
@@ -451,7 +408,7 @@ describe("storeTranscription audio retention", () => {
 
     const result = await storeTranscription(buildInput());
 
-    expect(invokeMock).not.toHaveBeenCalledWith("store_transcription_audio");
+    expect(audioStoreCalls(invokeMock)).toHaveLength(0);
     expect(createTranscriptionMock).not.toHaveBeenCalled();
     expect(result.transcription).toBeNull();
   });
@@ -467,40 +424,33 @@ describe("storeTranscription audio retention", () => {
       buildInput({ rawTranscript: null, warnings: ["provider failed"] }),
     );
 
-    expect(invokeMock).toHaveBeenCalledWith(
-      "store_transcription_audio",
-      expect.objectContaining({ sampleRate: 16000 }),
+    // Raw-body invoke: packed `[sampleRate u32 LE][f32 LE...]` bytes with the
+    // transcription id in a header, not a JSON sample array.
+    const [command, payload, options] = audioStoreCalls(invokeMock)[0] ?? [];
+    expect(command).toBe("store_transcription_audio");
+    expect(payload).toBeInstanceOf(Uint8Array);
+    const decoded = decodeStopRecordingPayload(payload);
+    expect(decoded.sampleRate).toBe(16000);
+    // f32-rounded: the payload is packed as 32-bit floats on the wire.
+    expect(Array.from(decoded.samples)).toEqual(
+      Array.from(new Float32Array([0.1, 0.2, 0.3])),
     );
     expect(createTranscriptionMock).toHaveBeenCalledTimes(1);
     const stored = createTranscriptionMock.mock.calls[0][0];
+    // The header is the row's own id: Rust names the WAV file after it, so
+    // every later lookup re-derives the file from the row. A mismatch here
+    // would orphan the recording.
+    expect(
+      (options as { headers?: Record<string, string> })?.headers?.[
+        "x-transcription-id"
+      ],
+    ).toBe(stored.id);
     expect(stored.audio).toEqual({
       filePath: "/tmp/audio.wav",
       durationMs: 100,
     });
     expect(stored.transcript).toBe("[Transcription Failed]");
     expect(result.transcription).not.toBeNull();
-  });
-
-  it("does not copy discarded audio before storing a failure marker", async () => {
-    setPrefs({ preserveAudioOnFailure: false });
-    const samples = new Float32Array([0.1, 0.2]);
-    const iterate = vi.fn(() => {
-      throw new Error("discarded audio must not be copied");
-    });
-    Object.defineProperty(samples, Symbol.iterator, { value: iterate });
-    const result = await storeTranscription(
-      buildInput({
-        audio: { samples, sampleRate: 16000 },
-        rawTranscript: null,
-        warnings: ["provider failed"],
-      }),
-    );
-    expect(iterate).not.toHaveBeenCalled();
-    expect(result.transcription).not.toBeNull();
-    expect(invokeMock).not.toHaveBeenCalledWith(
-      "store_transcription_audio",
-      expect.anything(),
-    );
   });
 
   it("does not write the audio file outside incognito on failure when preserveAudioOnFailure is false (no orphan WAV)", async () => {
@@ -518,7 +468,7 @@ describe("storeTranscription audio retention", () => {
     // the DB row, leaking the file (purge only follows audio_path). Skip the
     // write entirely now so the audio directory cannot grow unboundedly when
     // the user opts out of failure retention.
-    expect(invokeMock).not.toHaveBeenCalledWith("store_transcription_audio");
+    expect(audioStoreCalls(invokeMock)).toHaveLength(0);
     expect(createTranscriptionMock).toHaveBeenCalledTimes(1);
     const stored = createTranscriptionMock.mock.calls[0][0];
     expect(stored.audio).toBeUndefined();
@@ -531,6 +481,10 @@ describe("storeTranscription empty-audio retention (#418)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     invokeMock.mockReset();
+    recordUsageWordsMock.mockReset();
+    recordUsageWordsMock.mockResolvedValue(undefined);
+    refreshCurrentUserMock.mockReset();
+    refreshCurrentUserMock.mockResolvedValue(undefined);
     createTranscriptionMock.mockReset();
     purgeStaleAudioMock.mockReset();
     purgeStaleAudioMock.mockResolvedValue([]);
@@ -541,6 +495,51 @@ describe("storeTranscription empty-audio retention (#418)", () => {
   afterEach(() => {
     vi.clearAllMocks();
     setAppState(structuredClone(INITIAL_APP_STATE), true);
+  });
+
+  it("waits for an active text-only save before local data can be cleared", async () => {
+    let finishCreate: ((transcription: unknown) => void) | undefined;
+    createTranscriptionMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishCreate = resolve;
+        }),
+    );
+
+    const saving = storeTranscription(
+      buildInput({
+        audio: { samples: new Float32Array(0), sampleRate: 16000 },
+      }),
+    );
+    await vi.waitFor(() => {
+      expect(createTranscriptionMock).toHaveBeenCalledTimes(1);
+    });
+
+    let releaseClear: (() => void) | undefined;
+    let clearReady = false;
+    const clearing = beginLocalDataClear().then((release) => {
+      releaseClear = release;
+      clearReady = true;
+      return release;
+    });
+
+    try {
+      await expect(storeTranscription(buildInput())).resolves.toEqual({
+        transcription: null,
+        wordCount: 0,
+      });
+      expect(createTranscriptionMock).toHaveBeenCalledTimes(1);
+      expect(clearReady).toBe(false);
+
+      finishCreate?.(createTranscriptionMock.mock.calls[0][0]);
+      await saving;
+      await clearing;
+      expect(clearReady).toBe(true);
+    } finally {
+      finishCreate?.(createTranscriptionMock.mock.calls[0]?.[0]);
+      if (!releaseClear) releaseClear = await clearing;
+      releaseClearAfterRemovingMarker(releaseClear);
+    }
   });
 
   it("saves the text record when samples are empty but rawTranscript is non-empty", async () => {
@@ -562,6 +561,20 @@ describe("storeTranscription empty-audio retention (#418)", () => {
     expect(stored.transcript).toBe("hello world");
     expect(stored.rawTranscript).toBe("hello world");
     expect(result.transcription).not.toBeNull();
+    expect(refreshCurrentUserMock).toHaveBeenCalledTimes(1);
+    expect(recordUsageWordsMock).not.toHaveBeenCalled();
+  });
+
+  it("does not meter a transcription received from another device", async () => {
+    setPrefs({});
+
+    const result = await storeTranscription(
+      buildInput({ remoteStatus: "received" }),
+    );
+
+    expect(result.transcription).not.toBeNull();
+    expect(refreshCurrentUserMock).not.toHaveBeenCalled();
+    expect(recordUsageWordsMock).not.toHaveBeenCalled();
   });
 
   it("saves a transcription-failure marker when samples and transcript are empty but warnings exist", async () => {
@@ -585,6 +598,8 @@ describe("storeTranscription empty-audio retention (#418)", () => {
     expect(stored.transcript).toBe("[Transcription Failed]");
     expect(stored.warnings).toEqual(["provider failed: timeout"]);
     expect(result.transcription).not.toBeNull();
+    expect(refreshCurrentUserMock).not.toHaveBeenCalled();
+    expect(recordUsageWordsMock).not.toHaveBeenCalled();
   });
 
   it("skips storage entirely when samples, transcript, and warnings are all empty", async () => {
@@ -599,7 +614,7 @@ describe("storeTranscription empty-audio retention (#418)", () => {
     );
 
     expect(createTranscriptionMock).not.toHaveBeenCalled();
-    expect(invokeMock).not.toHaveBeenCalledWith("store_transcription_audio");
+    expect(audioStoreCalls(invokeMock)).toHaveLength(0);
     expect(result.transcription).toBeNull();
   });
 });
@@ -608,6 +623,10 @@ describe("storeTranscription post-process model persistence", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     invokeMock.mockReset();
+    recordUsageWordsMock.mockReset();
+    recordUsageWordsMock.mockResolvedValue(undefined);
+    refreshCurrentUserMock.mockReset();
+    refreshCurrentUserMock.mockResolvedValue(undefined);
     createTranscriptionMock.mockReset();
     purgeStaleAudioMock.mockReset();
     purgeStaleAudioMock.mockResolvedValue([]);
@@ -688,27 +707,24 @@ describe("storeTranscription persistence suppression", () => {
 
     expect(result.transcription).toBeNull();
     expect(result.wordCount).toBe(3);
-    expect(addWordsMock).toHaveBeenCalledWith(3);
+    expect(recordUsageWordsMock).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(String),
+      3,
+      expect.objectContaining({}),
+    );
   });
 
   it("does not hold the stop path on the usage write in incognito", async () => {
-    // The non-incognito sibling calls `void recordUsageWords(...)` and the comment
-    // above it says why: the session stays locked until the stop path returns, so
-    // awaiting a queued profile write lets a pill click land in the gap, be accepted
-    // by the pill, and then be dropped by the app. Commit 9a638fa40 applied that
-    // reasoning to the sibling and left the incognito branch awaiting.
-    //
-    // This asserts the thing that actually went wrong -- ordering -- rather than the
-    // call, which a test can see either way. `addWordsToCurrentUser` is held
-    // unresolved; if `storeTranscription` still settles, the write is not on the path
-    // the user is waiting on.
+    // Keep the profile write unresolved. The stop path must still settle after
+    // saving the transcription rather than waiting for this background update.
     applyState({
       incognitoModeEnabled: true,
       incognitoModeIncludeInStats: true,
     });
 
     let releaseUsageWrite: (() => void) | undefined;
-    addWordsMock.mockImplementationOnce(
+    recordUsageWordsMock.mockImplementationOnce(
       () =>
         new Promise<void>((resolve) => {
           releaseUsageWrite = resolve;
@@ -721,14 +737,20 @@ describe("storeTranscription persistence suppression", () => {
       return result;
     });
 
-    // Let the microtask queue drain: anything the implementation awaits has had every
-    // chance to block by now.
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(settled).toBe(true);
-    expect(addWordsMock).toHaveBeenCalledWith(3);
-
-    // The write is still owed; the test releases it so the pending promise settles.
-    releaseUsageWrite?.();
+    try {
+      await vi.waitFor(() => {
+        expect(settled).toBe(true);
+      });
+    } finally {
+      // Release the mocked write even if the expectation times out.
+      releaseUsageWrite?.();
+    }
+    expect(recordUsageWordsMock).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(String),
+      3,
+      expect.objectContaining({}),
+    );
     await expect(pending).resolves.toMatchObject({ wordCount: 3 });
   });
 
@@ -742,7 +764,7 @@ describe("storeTranscription persistence suppression", () => {
 
     expect(result.transcription).toBeNull();
     expect(result.wordCount).toBe(3);
-    expect(addWordsMock).not.toHaveBeenCalled();
+    expect(recordUsageWordsMock).not.toHaveBeenCalled();
   });
 
   it.each([false, true])(
@@ -755,7 +777,7 @@ describe("storeTranscription persistence suppression", () => {
       const result = await storeTranscription(storeInput());
       expect(result.transcription).toBeNull();
       expect(result.wordCount).toBe(3);
-      expect(addWordsMock).not.toHaveBeenCalled();
+      expect(recordUsageWordsMock).not.toHaveBeenCalled();
       expect(createTranscriptionMock).not.toHaveBeenCalled();
       expect(invokeMock).not.toHaveBeenCalled();
     },
@@ -773,5 +795,79 @@ describe("storeTranscription persistence suppression", () => {
 
     expect(suppressed).toBeDefined();
     expect(suppressed).not.toContain("one two three");
+  });
+});
+
+describe("appendTranscriptionWarnings", () => {
+  const seedRow = (warnings: string[] | null) => {
+    const state = structuredClone(INITIAL_APP_STATE);
+    state.transcriptionById["row-1"] = {
+      id: "row-1",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      createdByUserId: "me",
+      transcript: "hello",
+      isDeleted: false,
+      warnings,
+    };
+    setAppState(state, true);
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    updateTranscriptionMock.mockImplementation((transcription: unknown) =>
+      Promise.resolve(transcription),
+    );
+  });
+
+  afterEach(() => {
+    setAppState(structuredClone(INITIAL_APP_STATE), true);
+  });
+
+  it("merges new warnings onto the stored row and refreshes state", async () => {
+    seedRow(["existing"]);
+
+    await appendTranscriptionWarnings("row-1", ["delivery failed"]);
+
+    expect(updateTranscriptionMock).toHaveBeenCalledTimes(1);
+    const updated = updateTranscriptionMock.mock.calls[0][0] as Transcription;
+    expect(updated.warnings).toEqual(["existing", "delivery failed"]);
+    expect(getAppState().transcriptionById["row-1"]?.warnings).toEqual([
+      "existing",
+      "delivery failed",
+    ]);
+  });
+
+  it("treats a row without warnings as an empty list", async () => {
+    seedRow(null);
+
+    await appendTranscriptionWarnings("row-1", ["delivery failed"]);
+
+    const updated = updateTranscriptionMock.mock.calls[0][0] as Transcription;
+    expect(updated.warnings).toEqual(["delivery failed"]);
+  });
+
+  it("no-ops for an empty warning list", async () => {
+    seedRow(["existing"]);
+
+    await appendTranscriptionWarnings("row-1", []);
+
+    expect(updateTranscriptionMock).not.toHaveBeenCalled();
+  });
+
+  it("no-ops when the row is no longer in state", async () => {
+    seedRow(["existing"]);
+
+    await appendTranscriptionWarnings("missing-row", ["delivery failed"]);
+
+    expect(updateTranscriptionMock).not.toHaveBeenCalled();
+  });
+
+  it("swallows a repository failure instead of rejecting", async () => {
+    seedRow(null);
+    updateTranscriptionMock.mockRejectedValueOnce(new Error("db locked"));
+
+    await expect(
+      appendTranscriptionWarnings("row-1", ["delivery failed"]),
+    ).resolves.toBeUndefined();
   });
 });

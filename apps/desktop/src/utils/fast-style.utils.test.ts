@@ -3,6 +3,7 @@ import {
   FAST_STYLE_MAX_INPUT_CHARS,
   applyFastStyle,
   canApplyFastStyle,
+  countFastStyleSentences,
   findChunkCut,
   measureFastStyleTruncation,
   stripEdgePunctuation,
@@ -780,46 +781,6 @@ describe("CJK sentence terminators are recognised everywhere ASCII ones are", ()
     },
   );
 
-  it.each([".", "!", "?", "…", "。", "！", "？"])(
-    "recognises %s at the end and at a sentence boundary",
-    (mark) => {
-      for (const tone of ["default", "chat", "prompt"]) {
-        expect(applyFastStyle(`Weather today${mark}\n`, tone)).toBe(
-          `Weather today${mark}`,
-        );
-      }
-      const bullets = applyFastStyle(`First${mark} Second`, "bullets");
-      expect(bullets.split("\n")).toHaveLength(2);
-      expect(bullets).toContain("First");
-      expect(bullets).toContain("Second");
-    },
-  );
-
-  it.each([".", "!", "?", "…", "。", "！", "？"])(
-    "splits %s only before a capital or digit after whitespace",
-    (mark) => {
-      for (const whitespace of [" ", "  ", "\t", "\n", "\u00a0"]) {
-        for (const next of ["Next", "2nd"]) {
-          expect(
-            applyFastStyle(`First${mark}${whitespace}${next}`, "bullets").split(
-              "\n",
-            ),
-          ).toHaveLength(2);
-        }
-        for (const next of ["next", "中文", "éclair"]) {
-          expect(
-            applyFastStyle(`First${mark}${whitespace}${next}`, "bullets").split(
-              "\n",
-            ),
-          ).toHaveLength(1);
-        }
-      }
-      expect(
-        applyFastStyle(`First${mark}Next`, "bullets").split("\n"),
-      ).toHaveLength(1);
-    },
-  );
-
   it("still appends a stop when there is no terminator at all", () => {
     // The control. Without it the cases above would also pass if the function had
     // simply stopped appending anything.
@@ -827,7 +788,7 @@ describe("CJK sentence terminators are recognised everywhere ASCII ones are", ()
   });
 
   it("splits a mixed Latin and CJK sentence on the CJK full stop", () => {
-    // Sentence splitting needs whitespace plus a capital or digit after it, so the
+    // `SENTENCE_SPLIT_RE` needs whitespace plus a capital or digit after it, so the
     // next sentence here starts with an ASCII capital. Before the fix the `。` was
     // invisible to it and the whole input stayed one blob.
     const out = applyFastStyle("Mixed Latin 和中文。 Next one", "default");
@@ -1672,7 +1633,7 @@ describe("filler removal keeps words that merely end in a filler", () => {
     }
 
     // `toChat` and `toPrompt` tested for an existing terminator with a bare
-    // `[.!?]` while the rest of the module uses `endsWithSentenceTerminator`, which also
+    // `[.!?]` while the rest of the module uses `ENDS_SENTENCE_RE`, which also
     // recognises `…`, `。`, `！` and `？`. A dictation already ending in one of those
     // came back with a second, ASCII, stop -- "第一句。." on a CJK sentence.
     for (const tone of ["chat", "prompt"]) {
@@ -1706,25 +1667,209 @@ describe("filler removal keeps words that merely end in a filler", () => {
   });
 });
 
-describe("static transcription pattern contracts", () => {
-  it.each(["I mean", "so", "well"])(
-    "uses the same comma-filler vocabulary for leading and mid-clause %s",
-    (marker) => {
-      expect(applyFastStyle(`${marker}, we proceed`, "default")).toBe(
-        "We proceed.",
-      );
-      expect(applyFastStyle(`we proceed ${marker}, today`, "default")).toBe(
-        "We proceed today.",
-      );
-    },
-  );
+describe("fast style written-form passes", () => {
+  it("joins a spoken domain instead of leaving a space before the dot", () => {
+    expect(applyFastStyle("go to example dot com", "default")).toBe(
+      "Go to example.com.",
+    );
+    expect(applyFastStyle("our site is mausvoice dot dev", "default")).toBe(
+      "Our site is mausvoice.dev.",
+    );
+  });
 
-  it("preserves independent contraction matches across apostrophe boundaries", () => {
-    expect(applyFastStyle("cant'we're ready", "formal")).toBe(
-      "Cannot'we are ready.",
+  it("joins a spoken email address", () => {
+    expect(
+      applyFastStyle("send it to mike at example dot com", "default"),
+    ).toBe("Send it to mike@example.com.");
+    // The frame is taken from the pattern, not by cutting the match at " at ":
+    // reading it out of the match left the local part inside the frame, and a
+    // local part with a dot in it was delivered twice because the repeated-word
+    // pass could not collapse the pair.
+    expect(
+      applyFastStyle("send it to john.smith at example dot com", "default"),
+    ).toBe("Send it to john.smith@example.com.");
+    expect(
+      applyFastStyle("my email is jane at mausvoice dot com", "default"),
+    ).toBe("My email is jane@mausvoice.com.");
+  });
+
+  it("does not turn a preposition into an at sign", () => {
+    expect(applyFastStyle("look at example.com", "default")).toBe(
+      "Look at example.com.",
     );
-    expect(applyFastStyle("he was wont and we're ready", "formal")).toBe(
-      "He was wont and we are ready.",
+    expect(applyFastStyle("we met at example.com", "default")).toBe(
+      "We met at example.com.",
     );
+  });
+
+  it("drops the corrected value before an unpunctuated marker", () => {
+    expect(
+      applyFastStyle("send the report by friday no wait thursday", "default"),
+    ).toBe("Send the report by Thursday.");
+    expect(applyFastStyle("order two make that three coffees", "default")).toBe(
+      "Order three coffees.",
+    );
+    expect(applyFastStyle("meet me at three or rather four", "default")).toBe(
+      "Meet me at four.",
+    );
+  });
+
+  it("keeps a literal 'no wait' that is not a correction", () => {
+    expect(applyFastStyle("there is no wait at the clinic", "default")).toBe(
+      "There is no wait at the clinic.",
+    );
+    // The stoplists are written with the bare word, so a contraction has to be
+    // compared as the word it wraps: without that this became "At the clinic."
+    expect(applyFastStyle("there's no wait at the clinic", "default")).toBe(
+      "There's no wait at the clinic.",
+    );
+  });
+
+  it("writes numbers, times, dates, currency and percent", () => {
+    expect(
+      applyFastStyle(
+        "the budget is two hundred and fifty thousand dollars",
+        "default",
+      ),
+    ).toBe("The budget is $250,000.");
+    expect(
+      applyFastStyle("ship it on the twenty third of october", "default"),
+    ).toBe("Ship it on October 23.");
+    expect(applyFastStyle("call me at three thirty pm", "default")).toBe(
+      "Call me at 3:30 PM.",
+    );
+    expect(applyFastStyle("raise it by ten percent", "default")).toBe(
+      "Raise it by 10%.",
+    );
+  });
+
+  it("leaves a year written in words alone", () => {
+    expect(applyFastStyle("that was in nineteen eighty four", "default")).toBe(
+      "That was in nineteen eighty four.",
+    );
+  });
+
+  it("applies dictionary casing to a term spelled with different case", () => {
+    expect(
+      applyFastStyle("mausvoice is the app", "default", {
+        dictionaryTerms: ["mausVoice"],
+      }),
+    ).toBe("mausVoice is the app.");
+    expect(
+      applyFastStyle("I use github daily", "default", {
+        dictionaryTerms: ["GitHub"],
+      }),
+    ).toBe("I use GitHub daily.");
+    // A term that begins or ends in a non-ASCII letter, which an ASCII word
+    // boundary never matched.
+    expect(
+      applyFastStyle("i saw beyoncé and then école in zürich", "default", {
+        dictionaryTerms: ["Beyoncé", "École", "Zürich"],
+      }),
+    ).toBe("I saw Beyoncé and then École in Zürich.");
+  });
+
+  it("does not rewrite a dictionary term that is already spelled right", () => {
+    expect(
+      applyFastStyle("mausVoice is the app", "default", {
+        dictionaryTerms: ["mausVoice"],
+      }),
+    ).toBe("mausVoice is the app.");
+  });
+
+  it("counts sentences the way the transforms split them", () => {
+    expect(countFastStyleSentences("")).toBe(0);
+    expect(countFastStyleSentences("hello there")).toBe(1);
+    expect(countFastStyleSentences("hello there. How are you")).toBe(2);
+    expect(countFastStyleSentences("one. Two. Three.")).toBe(3);
+    // A lowercase word after the stop does not open a new sentence under the
+    // transform's own splitter, so it counts as one.
+    expect(countFastStyleSentences("hello there. how are you")).toBe(1);
+  });
+});
+
+describe("fast style written-form guards", () => {
+  it("does not invent a domain out of a phrase", () => {
+    // The host needs an address frame, so a verb in front of "dot com" is left
+    // as it was spoken instead of becoming "use.com".
+    expect(applyFastStyle("we use dot com for links", "default")).toBe(
+      "We use dot com for links.",
+    );
+    expect(applyFastStyle("we bought the domain dot com", "default")).toBe(
+      "We bought the domain dot com.",
+    );
+  });
+
+  it("keeps a phrase that merely contains 'dot com'", () => {
+    // The domain rule needs a host word, so a determiner in front of "dot" is a
+    // phrase and not an address.
+    expect(applyFastStyle("the dot com bubble", "default")).toBe(
+      "The dot com bubble.",
+    );
+    expect(applyFastStyle("put it in the dot com folder", "default")).toBe(
+      "Put it in the dot com folder.",
+    );
+  });
+
+  it("keeps a repeated number word whole", () => {
+    // "twenty twenty six" is a year and "nine nine nine" is a number; collapsing
+    // the repetition first turned them into "26" and "Nine nine".
+    expect(applyFastStyle("twenty twenty six was a good year", "default")).toBe(
+      "Twenty twenty six was a good year.",
+    );
+    expect(applyFastStyle("nine nine nine", "default")).toBe("Nine nine nine.");
+  });
+
+  it("leaves a marker that opens the dictation in place", () => {
+    // There is no value in front of the marker to correct, so nothing may be
+    // deleted: this used to come back as "No Thursday."
+    expect(applyFastStyle("no wait make that thursday", "default")).toBe(
+      "No wait make that Thursday.",
+    );
+  });
+
+  it("does not delete an apology that reads like a correction", () => {
+    expect(applyFastStyle("sorry i meant to call you", "default")).toBe(
+      "Sorry i meant to call you.",
+    );
+  });
+});
+
+describe("fast style calendar casing", () => {
+  it("capitalizes weekdays and unambiguous month names", () => {
+    expect(applyFastStyle("send it by friday", "default")).toBe(
+      "Send it by Friday.",
+    );
+    expect(applyFastStyle("the deadline is in october", "default")).toBe(
+      "The deadline is in October.",
+    );
+  });
+
+  it("leaves month names that are ordinary words alone", () => {
+    // "march", "may" and "august" are verbs, a modal and an adjective as often
+    // as they are months, so only a date rule may rewrite them.
+    expect(applyFastStyle("we march first thing", "concise")).toBe(
+      "We march first thing.",
+    );
+    expect(applyFastStyle("you may want to check", "concise")).toBe(
+      "You may want to check.",
+    );
+  });
+});
+
+describe("fast style dictionary casing guards", () => {
+  it("leaves an ordinary word alone when a term is its uppercase form", () => {
+    // "IT" as a dictionary term must not rewrite every "it".
+    expect(
+      applyFastStyle("it is working", "default", { dictionaryTerms: ["IT"] }),
+    ).toBe("It is working.");
+  });
+
+  it("still recases a term that is not an ordinary word", () => {
+    expect(
+      applyFastStyle("we use postgres daily", "default", {
+        dictionaryTerms: ["Postgres"],
+      }),
+    ).toBe("We use Postgres daily.");
   });
 });

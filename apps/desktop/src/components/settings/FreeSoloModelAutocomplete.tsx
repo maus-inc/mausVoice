@@ -1,6 +1,13 @@
 import { Autocomplete, TextField } from "@mui/material";
 import { FormattedMessage, useIntl } from "react-intl";
 
+type FreeSoloModelAutocompleteProps = {
+  models: string[];
+  selectedModel: string | null;
+  onModelSelect: (model: string | null) => void;
+  disabled?: boolean;
+};
+
 /**
  * Shared free-solo autocomplete used by the provider model pickers. Both the
  * selection and free-text input are forwarded to `onModelSelect`, so typing a
@@ -11,12 +18,7 @@ export const FreeSoloModelAutocomplete = ({
   selectedModel,
   onModelSelect,
   disabled = false,
-}: {
-  models: string[];
-  selectedModel: string | null;
-  onModelSelect: (model: string | null) => void;
-  disabled?: boolean;
-}) => {
+}: FreeSoloModelAutocompleteProps) => {
   const intl = useIntl();
   return (
     <Autocomplete

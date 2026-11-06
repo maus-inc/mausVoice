@@ -153,8 +153,10 @@ const matchesAt = (message: string, index: number, literal: string): boolean =>
  * same value after an `api_key` label redacted whole, because the scheme branch
  * returned before the quote was ever read.
  *
- * Both authorization labels and API-key assignments use this helper, so a
- * quoted credential is treated the same way regardless of its label. The `Digest`
+ * This is deliberately the same order `apiKeyAssignmentEnd` applies, and the two
+ * must stay in step: they read the same `AUTHORIZATION_SCHEMES` and the same
+ * `schemeValueEnd`, and a value redaction that is correct after one label and
+ * leaks after the other is not a distinction any caller can act on. The `Digest`
  * challenge is unaffected because its quote sits after the scheme's first token
  * rather than before it, so `quote` is not the value's here and the scheme run
  * stands on its own.
@@ -174,19 +176,6 @@ const credentialEnd = (
   return closingQuoteEnd === null
     ? schemeEnd
     : Math.max(schemeEnd, closingQuoteEnd);
-};
-
-/** Find the value after an API-key label and separator. */
-const apiKeyValueStart = (message: string, index: number): number | null => {
-  if (!matchesAt(message, index, "api")) return null;
-  let cursor = index + "api".length;
-  if (message[cursor] === "-" || message[cursor] === "_") cursor += 1;
-  if (!matchesAt(message, cursor, "key")) return null;
-  cursor += "key".length;
-  if (isQuote(message[cursor])) cursor += 1;
-  cursor = whitespaceEnd(message, cursor);
-  if (message[cursor] !== ":" && message[cursor] !== "=") return null;
-  return whitespaceEnd(message, cursor + 1);
 };
 
 /**
@@ -219,8 +208,18 @@ const apiKeyValueStart = (message: string, index: number): number | null => {
  * the pattern matched.
  */
 const apiKeyAssignmentEnd = (message: string, index: number): number | null => {
-  let cursor = apiKeyValueStart(message, index);
-  if (cursor === null) return null;
+  if (!matchesAt(message, index, "api")) return null;
+  let cursor = index + "api".length;
+  if (message[cursor] === "-" || message[cursor] === "_") cursor += 1;
+  if (!matchesAt(message, cursor, "key")) return null;
+  cursor += "key".length;
+
+  if (message[cursor] === '"' || message[cursor] === "'") cursor += 1;
+  cursor = whitespaceEnd(message, cursor);
+  if (message[cursor] !== ":" && message[cursor] !== "=") return null;
+  cursor += 1;
+
+  cursor = whitespaceEnd(message, cursor);
   const quote = message[cursor];
   if (isQuote(quote)) cursor += 1;
   cursor = whitespaceEnd(message, cursor);
@@ -229,7 +228,20 @@ const apiKeyAssignmentEnd = (message: string, index: number): number | null => {
   // after its separator is not an assignment. Checked before the quoted run is
   // consulted so an empty quoted value (`api_key=""`) stays a non-assignment.
   if (firstTokenEnd === cursor) return null;
-  const end = credentialEnd(message, cursor, firstTokenEnd, quote ?? "");
+  const schemeEnd = AUTHORIZATION_SCHEMES.has(
+    message.slice(cursor, firstTokenEnd).toLowerCase(),
+  )
+    ? firstTokenEnd + schemeValueEnd(message.slice(firstTokenEnd))
+    : firstTokenEnd;
+  // A quoted value can hold characters the class does not, so it runs to its
+  // closing quote. The scheme run already stops at one -- `schemeValueEnd`
+  // treats a quote as the document resuming -- so this only widens the run for
+  // the bare-token case.
+  const closingQuoteEnd = isQuote(quote)
+    ? quotedValueEnd(message, cursor, quote)
+    : null;
+  const end =
+    closingQuoteEnd === null ? schemeEnd : Math.max(schemeEnd, closingQuoteEnd);
   return end > cursor ? end : null;
 };
 
@@ -351,7 +363,8 @@ const redactAuthorizationLabels = (message: string): string => {
     // label is followed by `_header`, so there is no `:` or `=` and no assignment to
     // redact. Both redactors agree on both, and the control test below pins each.
     const previous = message[index - 1] ?? "";
-    const inside = /[A-Za-z0-9]/.test(previous);
+    const inside =
+      /[A-Za-z0-9_-]/.test(previous) && previous !== "-" && previous !== "_";
     const span =
       label === undefined || inside
         ? null

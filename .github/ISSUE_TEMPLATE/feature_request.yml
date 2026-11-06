@@ -1,0 +1,58 @@
+name: Feature request
+description: Suggest an improvement or a new capability
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the problem before the solution. A request that names the workflow it unblocks is far more likely to be built as you imagine it.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What can you not do today, or what costs you time on every use?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: How should mausVoice behave? Describe the surface it lives on, the default, and what happens when it fails.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Optional. Other approaches, or the workaround you use now.
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where does this belong
+      options:
+        - Desktop UI
+        - Transcription and models
+        - AI providers and cleanup
+        - Pill and system integration
+        - Settings and onboarding
+        - Documentation
+        - Packaging and updates
+        - Not sure
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Which platforms need it
+      options:
+        - All supported platforms
+        - macOS only
+        - Windows only
+        - Linux only
+        - One platform, named in the proposal
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before filing
+      options:
+        - label: I searched existing issues and `.out-of-scope/` and did not find this request.
+          required: true

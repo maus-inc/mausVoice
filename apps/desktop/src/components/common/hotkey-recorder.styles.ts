@@ -12,6 +12,7 @@ const pulseBorder = keyframes`
 export const hotkeyRecorderStyles = (
   focused: boolean,
   width = 200,
+  disabled = false,
 ): SxProps<Theme> => ({
   width,
   height: 40,
@@ -19,7 +20,8 @@ export const hotkeyRecorderStyles = (
   alignItems: "center",
   justifyContent: "center",
   borderRadius: 1,
-  cursor: "pointer",
+  cursor: disabled ? "not-allowed" : "pointer",
+  opacity: disabled ? 0.6 : 1,
   bgcolor: (theme) =>
     focused ? theme.vars?.palette.level2 : theme.vars?.palette.level1,
   border: focused ? "2px solid" : "2px solid transparent",

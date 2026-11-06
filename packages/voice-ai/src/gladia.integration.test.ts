@@ -170,7 +170,7 @@ describe("gladiaTranscribeAudio", () => {
     expect(output.text).toBe("Hello Gladia");
     expect(output.warnings).toEqual([
       "Unsupported Gladia model “old-model” was replaced with solaria-1.",
-      "Gladia pre-recorded data deletion failed.",
+      "Gladia pre-recorded data deletion failed: retention service unavailable",
     ]);
   });
 

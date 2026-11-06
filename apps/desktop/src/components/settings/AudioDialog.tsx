@@ -8,7 +8,7 @@ import {
   Switch,
   Typography,
 } from "@mui/material";
-import { ChangeEvent, useEffect, useState } from "react";
+import { ChangeEvent, useEffect, useId, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import {
   setDictationAudioDim,
@@ -17,14 +17,13 @@ import {
 } from "../../actions/user.actions";
 import { produceAppState, useAppStore } from "../../store";
 import { getMyUser } from "../../utils/user.utils";
-import { logOnRejection } from "../../utils/promise.utils";
 import { ElasticSlider } from "../common/ElasticSlider";
 import { SettingSection } from "../common/SettingSection";
 
 type ThockVolumeControlProps = {
   enabled: boolean;
   volume: number;
-  onCommit: (v: number) => void;
+  onCommit: (v: number) => void | Promise<void>;
 };
 
 /**
@@ -68,6 +67,7 @@ const ThockVolumeControl = ({
           min={0.05}
           max={0.5}
           step={0.05}
+          valueLabelFormat={(value) => `${Math.round(value * 100)}%`}
           disabled={!enabled}
           ariaLabel={intl.formatMessage({
             defaultMessage: "Pill click volume",
@@ -83,6 +83,7 @@ const ThockVolumeControl = ({
 /** Audio settings dialog: interaction chime toggle, thock volume slider, and dictation dim. */
 export const AudioDialog = () => {
   const intl = useIntl();
+  const feedbackId = useId();
   const [
     open,
     playInteractionChime,
@@ -106,7 +107,7 @@ export const AudioDialog = () => {
 
   const handleToggle = (event: ChangeEvent<HTMLInputElement>) => {
     const enabled = event.target.checked;
-    logOnRejection(setInteractionChimeEnabled(enabled), "interaction chime");
+    void setInteractionChimeEnabled(enabled).catch(() => {});
   };
 
   // Live display value while dragging; the persisted value updates on commit.
@@ -120,26 +121,36 @@ export const AudioDialog = () => {
       <DialogTitle>
         <FormattedMessage defaultMessage="Audio" />
       </DialogTitle>
-      <DialogContent sx={{ minWidth: 360 }}>
+      <DialogContent sx={{ minWidth: "min(360px, 100%)" }}>
         <SettingSection
-          title={<FormattedMessage defaultMessage="Interaction feedback" />}
+          title={
+            <span id={feedbackId}>
+              <FormattedMessage defaultMessage="Interaction feedback" />
+            </span>
+          }
           description={
-            <FormattedMessage defaultMessage="Play a short haptic-style click when you press the pill or start and stop recording. No sound plays while a recording is processing." />
+            <span id={`${feedbackId}-description`}>
+              <FormattedMessage defaultMessage="Play a short haptic-style click when you press the pill or start and stop recording. No sound plays while a recording is processing." />
+            </span>
           }
           action={
             <Switch
               edge="end"
               checked={playInteractionChime}
               onChange={handleToggle}
+              slotProps={{
+                input: {
+                  "aria-labelledby": feedbackId,
+                  "aria-describedby": `${feedbackId}-description`,
+                },
+              }}
             />
           }
         />
         <ThockVolumeControl
           enabled={playInteractionChime}
           volume={interactionFeedbackVolume}
-          onCommit={(v) => {
-            setInteractionFeedbackVolume(v).catch(() => undefined);
-          }}
+          onCommit={setInteractionFeedbackVolume}
         />
         <Box sx={{ mt: 3 }}>
           <Typography variant="body1" sx={{ fontWeight: 600 }}>
@@ -157,13 +168,12 @@ export const AudioDialog = () => {
           <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
             <ElasticSlider
               value={dictationAudioDim}
-              onCommit={(v) => {
-                logOnRejection(setDictationAudioDim(v), "dictation audio dim");
-              }}
+              onCommit={setDictationAudioDim}
               onChangeDisplay={setDisplayDim}
               min={0}
               max={1}
               step={0.05}
+              valueLabelFormat={(value) => `${Math.round(value * 100)}%`}
               ariaLabel={intl.formatMessage({
                 defaultMessage: "Dictation audio dim level",
               })}

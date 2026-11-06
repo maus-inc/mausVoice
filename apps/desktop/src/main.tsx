@@ -2,18 +2,27 @@ import "./styles/fonts.css";
 import "./styles/tokens.css";
 import "./styles/dotmatrix.css";
 import "./styles/caption.css";
+import { CssBaseline } from "@mui/material";
+import { ThemeProvider } from "@mui/material/styles";
 import { FirebaseOptions, initializeApp } from "firebase/app";
 import mixpanel from "mixpanel-browser";
 import { connectAuthEmulator } from "firebase/auth";
 import { connectDatabaseEmulator, getDatabase } from "firebase/database";
+import React, { useMemo } from "react";
+import ReactDOM from "react-dom/client";
+import { IntlProvider } from "react-intl";
 import { AppWithLoading } from "./components/root/AppWithLoading";
 import { SnackbarEmitter } from "./components/root/SnackbarEmitter";
+import { getIntlConfig } from "./i18n";
+import { THEME_PROVIDER_CONFIG, theme } from "./theme";
 import { createEffectiveAuth } from "./utils/auth.utils";
 import { applyDomMutationGuards } from "./utils/dom-guard.utils";
-import { getOrCreateReactRoot } from "./utils/react-root.utils";
-import { AppProviders } from "./components/root/AppProviders";
 import { flushPendingTranscriptionDeletes } from "./utils/pending-transcription-delete";
 import { getIsEmulators } from "./utils/env.utils";
+import {
+  isLocalDataClearRequested,
+  isMainLocalDataWindow,
+} from "./utils/local-data-write-gate";
 import {
   installGlobalErrorOverlay,
   paintFatalError,
@@ -90,22 +99,60 @@ if (getIsEmulators()) {
 
 const mixpanelToken = import.meta.env.VITE_MIXPANEL_TOKEN;
 if (mixpanelToken) {
+  const isMainAnalyticsWindow = isMainLocalDataWindow();
+  const localDataClearPending = isLocalDataClearRequested();
+  const analyticsPersistenceEnabled =
+    isMainAnalyticsWindow && !localDataClearPending;
   mixpanel.init(mixpanelToken, {
     debug: import.meta.env.DEV,
     track_pageview: false,
+    // Mixpanel does not support "memory" persistence. Use its supported
+    // storage with persistence disabled and batching off in secondary windows
+    // or while recovering an interrupted local-data clear. A separate name
+    // prevents secondary windows from clearing the main window's anonymous ID.
     persistence: "localStorage",
+    persistence_name: isMainAnalyticsWindow
+      ? undefined
+      : "mausvoice-secondary-window",
+    disable_persistence: !analyticsPersistenceEnabled,
+    batch_requests: analyticsPersistenceEnabled,
   });
 }
 
 const rootElement = document.getElementById("root") as HTMLElement;
-const root = getOrCreateReactRoot(rootElement);
+
+// Prevent HMR from creating multiple React roots.
+// Store the root on the DOM element so we can reuse it across hot reloads.
+const existingRoot = (rootElement as unknown as { _reactRoot?: ReactDOM.Root })
+  ._reactRoot;
+const root = existingRoot ?? ReactDOM.createRoot(rootElement);
+(rootElement as unknown as { _reactRoot?: ReactDOM.Root })._reactRoot = root;
+
+type ChildrenProps = {
+  children: React.ReactNode;
+};
+
+const Main = ({ children }: ChildrenProps) => {
+  const intlConfig = useMemo(() => getIntlConfig(), []);
+
+  return (
+    <React.StrictMode>
+      <IntlProvider {...intlConfig}>
+        <ThemeProvider theme={theme} {...THEME_PROVIDER_CONFIG}>
+          <CssBaseline />
+          {children}
+        </ThemeProvider>
+      </IntlProvider>
+    </React.StrictMode>
+  );
+};
 
 try {
   root.render(
-    <AppProviders>
+    <Main>
       <SnackbarEmitter />
       <AppWithLoading />
-    </AppProviders>,
+    </Main>,
   );
 } catch (error) {
   paintFatalError("mausVoice failed to start", error);

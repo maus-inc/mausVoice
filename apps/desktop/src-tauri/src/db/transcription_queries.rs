@@ -35,6 +35,12 @@ const TRANSCRIPTION_COLUMNS: &[&str] = &[
     "remote_status",
     "remote_device_id",
     "post_process_fallback",
+    "post_process_edit_failed",
+    "post_process_edit_failure_count",
+    "post_process_edit_auto_retry_used",
+    "post_process_edit_retry_tone_id",
+    "post_process_edit_retry_language_code",
+    "post_process_edit_retry_claim_count",
 ];
 
 fn transcription_column_list() -> String {
@@ -65,9 +71,9 @@ fn transcription_update_assignments() -> String {
 /// Binds every transcription field onto `query`, in [`TRANSCRIPTION_COLUMNS`]
 /// order.
 ///
-/// The INSERT and the UPDATE bind the identical 26 values, so they share this
-/// one chain: a field added to one writer and not the other used to be a
-/// silent, per-path data loss.
+/// The INSERT and the UPDATE bind the identical transcription values, so they
+/// share this one chain. A field added to one writer and not the other used to
+/// be a silent, per-path data loss.
 fn bind_transcription_fields<'q>(
     query: sqlx::query::Query<'q, Sqlite, sqlx::sqlite::SqliteArguments<'q>>,
     transcription: &'q Transcription,
@@ -104,6 +110,16 @@ fn bind_transcription_fields<'q>(
         .bind(transcription.remote_status.as_deref())
         .bind(transcription.remote_device_id.as_deref())
         .bind(transcription.post_process_fallback)
+        .bind(transcription.post_process_edit_failed)
+        .bind(transcription.post_process_edit_failure_count)
+        .bind(transcription.post_process_edit_auto_retry_used)
+        .bind(transcription.post_process_edit_retry_tone_id.as_deref())
+        .bind(
+            transcription
+                .post_process_edit_retry_language_code
+                .as_deref(),
+        )
+        .bind(transcription.post_process_edit_retry_claim_count)
 }
 
 fn serialize_warnings(warnings: &Option<Vec<String>>) -> Option<String> {
@@ -144,6 +160,17 @@ fn row_to_transcription(row: SqliteRow) -> Result<Transcription, sqlx::Error> {
         post_process_model: row.try_get::<Option<String>, _>("post_process_model")?,
         post_process_provider: row.try_get::<Option<String>, _>("post_process_provider")?,
         post_process_failed: row.try_get::<Option<bool>, _>("post_process_failed")?,
+        post_process_edit_failed: row.try_get::<Option<bool>, _>("post_process_edit_failed")?,
+        post_process_edit_failure_count: row
+            .try_get::<Option<i64>, _>("post_process_edit_failure_count")?,
+        post_process_edit_auto_retry_used: row
+            .try_get::<Option<bool>, _>("post_process_edit_auto_retry_used")?,
+        post_process_edit_retry_tone_id: row
+            .try_get::<Option<String>, _>("post_process_edit_retry_tone_id")?,
+        post_process_edit_retry_language_code: row
+            .try_get::<Option<String>, _>("post_process_edit_retry_language_code")?,
+        post_process_edit_retry_claim_count: row
+            .try_get::<Option<i64>, _>("post_process_edit_retry_claim_count")?,
         post_process_fallback: row.try_get::<Option<bool>, _>("post_process_fallback")?,
         post_process_error: row.try_get::<Option<String>, _>("post_process_error")?,
         transcription_duration_ms: row.try_get::<Option<i64>, _>("transcription_duration_ms")?,
@@ -158,6 +185,8 @@ pub async fn insert_transcription(
     pool: SqlitePool,
     transcription: &Transcription,
 ) -> Result<Transcription, sqlx::Error> {
+    let _activity_write_guard = crate::db::daily_activity_queries::lock_activity_writes().await;
+    let mut transaction = pool.begin().await?;
     bind_transcription_fields(
         sqlx::query(&format!(
             "INSERT INTO transcriptions ({})
@@ -167,8 +196,12 @@ pub async fn insert_transcription(
         )),
         transcription,
     )
-    .execute(&pool)
+    .execute(&mut *transaction)
     .await?;
+
+    crate::db::daily_activity_queries::record_transcription_usage(&mut transaction, transcription)
+        .await?;
+    transaction.commit().await?;
 
     Ok(transcription.clone())
 }
@@ -229,6 +262,10 @@ pub async fn update_transcription(
     pool: SqlitePool,
     transcription: &Transcription,
 ) -> Result<Transcription, sqlx::Error> {
+    // Backfill snapshots the transcript and records its usage under the same
+    // lock. Serialize edits too, so an edit cannot commit between that read and
+    // event insert and leave a stale count that future backfills cannot repair.
+    let _activity_write_guard = crate::db::daily_activity_queries::lock_activity_writes().await;
     let sql = transcription_update_sql();
     let row = bind_transcription_fields(sqlx::query(&sql), transcription)
         .fetch_optional(&pool)
@@ -239,6 +276,10 @@ pub async fn update_transcription(
 }
 
 pub async fn delete_transcription(pool: SqlitePool, id: &str) -> Result<(), sqlx::Error> {
+    // Keep deletion ordered with backfill's read-and-insert window. A completed
+    // deletion before backfill starts stays uncounted; a backfill that wins the
+    // lock records the real activity before history is removed.
+    let _activity_write_guard = crate::db::daily_activity_queries::lock_activity_writes().await;
     sqlx::query(
         "DELETE FROM transcriptions
          WHERE id = ?1",
@@ -252,10 +293,28 @@ pub async fn delete_transcription(pool: SqlitePool, id: &str) -> Result<(), sqlx
 
 #[cfg(test)]
 mod tests {
-    use super::{delete_transcription, fetch_transcriptions, update_transcription};
-    use crate::domain::Transcription;
+    use super::{
+        delete_transcription, fetch_transcriptions, insert_transcription, update_transcription,
+    };
+    use crate::db::daily_activity_queries::fetch_daily_activity;
+    use crate::db::user_queries::{fetch_user, upsert_user};
+    use crate::domain::{Transcription, User};
+    use chrono::TimeZone;
     use sqlx::sqlite::SqlitePoolOptions;
     use sqlx::{Row, SqlitePool};
+
+    fn user(month: &str) -> User {
+        serde_json::from_value(serde_json::json!({
+            "id": "local-user-id",
+            "name": "Test",
+            "bio": "",
+            "onboarded": true,
+            "wordsThisMonth": 0,
+            "wordsThisMonthMonth": month,
+            "wordsTotal": 0,
+        }))
+        .expect("deserialize test user")
+    }
 
     fn transcription(id: &str, transcript: &str) -> Transcription {
         Transcription {
@@ -277,6 +336,12 @@ mod tests {
             post_process_model: None,
             post_process_provider: None,
             post_process_failed: None,
+            post_process_edit_failed: None,
+            post_process_edit_failure_count: None,
+            post_process_edit_auto_retry_used: None,
+            post_process_edit_retry_tone_id: None,
+            post_process_edit_retry_language_code: None,
+            post_process_edit_retry_claim_count: None,
             post_process_fallback: None,
             post_process_error: None,
             transcription_duration_ms: None,
@@ -335,6 +400,84 @@ mod tests {
                 });
         }
         pool
+    }
+
+    #[tokio::test]
+    async fn insert_commits_usage_with_local_history_but_skips_remote_and_failed_rows() {
+        let pool = transcription_pool("insert-usage").await;
+        let saved = transcription("live-local", "hello world");
+        let local_date = chrono::Local
+            .timestamp_millis_opt(saved.timestamp)
+            .single()
+            .expect("valid local timestamp")
+            .format("%Y-%m-%d")
+            .to_string();
+        upsert_user(pool.clone(), &user(&local_date[..7]))
+            .await
+            .expect("seed profile");
+
+        insert_transcription(pool.clone(), &saved)
+            .await
+            .expect("insert local transcription and meter");
+        let mut remote = transcription("remote-copy", "remote words");
+        remote.remote_status = Some("received".to_string());
+        insert_transcription(pool.clone(), &remote)
+            .await
+            .expect("insert remote transcription without metering");
+        let failed = transcription("failed-local", "[Transcription Failed]");
+        insert_transcription(pool.clone(), &failed)
+            .await
+            .expect("insert failed marker without metering");
+
+        let usage: (String, i64, String) = sqlx::query_as(
+            "SELECT local_date, word_count, source FROM daily_word_activity_events
+             WHERE event_id = 'live-local'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("read the live usage event");
+        assert_eq!(usage, (local_date.clone(), 2, "live".to_string()));
+
+        let event_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM daily_word_activity_events")
+                .fetch_one(&pool)
+                .await
+                .expect("count usage events");
+        assert_eq!(event_count, 1);
+
+        let activity = fetch_daily_activity(pool.clone(), &local_date, &local_date)
+            .await
+            .expect("read daily activity");
+        assert_eq!(activity.len(), 1);
+        assert_eq!(activity[0].word_count, 2);
+        let profile = fetch_user(pool)
+            .await
+            .expect("read profile")
+            .expect("profile exists");
+        assert_eq!(profile.words_total, 2);
+        assert_eq!(profile.words_this_month, 2);
+    }
+
+    #[tokio::test]
+    async fn insert_without_a_profile_still_saves_history_for_later_backfill() {
+        let pool = transcription_pool("insert-without-profile").await;
+        let transcription = transcription("no-profile", "saved words");
+
+        insert_transcription(pool.clone(), &transcription)
+            .await
+            .expect("history must not depend on a profile row");
+
+        let saved: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM transcriptions WHERE id = 'no-profile'")
+                .fetch_one(&pool)
+                .await
+                .expect("read saved history count");
+        let events: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM daily_word_activity_events")
+            .fetch_one(&pool)
+            .await
+            .expect("read event count");
+        assert_eq!(saved, 1);
+        assert_eq!(events, 0);
     }
 
     /// The returned row must be the row *this* call wrote.
@@ -503,6 +646,12 @@ mod tests {
 
         stored.transcript = "second".to_string();
         stored.raw_transcript = Some("raw second".to_string());
+        stored.post_process_edit_failed = Some(true);
+        stored.post_process_edit_failure_count = Some(3);
+        stored.post_process_edit_auto_retry_used = Some(true);
+        stored.post_process_edit_retry_tone_id = Some("custom-tone".to_string());
+        stored.post_process_edit_retry_language_code = Some("fr".to_string());
+        stored.post_process_edit_retry_claim_count = Some(4);
 
         let returned = update_transcription(pool.clone(), &stored)
             .await
@@ -510,11 +659,37 @@ mod tests {
 
         assert_eq!(returned.transcript, "second");
         assert_eq!(returned.raw_transcript.as_deref(), Some("raw second"));
+        assert_eq!(returned.post_process_edit_failed, Some(true));
+        assert_eq!(returned.post_process_edit_failure_count, Some(3));
+        assert_eq!(returned.post_process_edit_auto_retry_used, Some(true));
+        assert_eq!(
+            returned.post_process_edit_retry_tone_id.as_deref(),
+            Some("custom-tone")
+        );
+        assert_eq!(
+            returned.post_process_edit_retry_language_code.as_deref(),
+            Some("fr")
+        );
+        assert_eq!(returned.post_process_edit_retry_claim_count, Some(4));
         let read_back = fetch_transcriptions(pool, 10, 0)
             .await
             .expect("rows must be readable");
         assert_eq!(read_back.len(), 1);
         assert_eq!(read_back[0].transcript, "second");
+        assert_eq!(read_back[0].post_process_edit_failed, Some(true));
+        assert_eq!(read_back[0].post_process_edit_failure_count, Some(3));
+        assert_eq!(read_back[0].post_process_edit_auto_retry_used, Some(true));
+        assert_eq!(
+            read_back[0].post_process_edit_retry_tone_id.as_deref(),
+            Some("custom-tone")
+        );
+        assert_eq!(
+            read_back[0]
+                .post_process_edit_retry_language_code
+                .as_deref(),
+            Some("fr")
+        );
+        assert_eq!(read_back[0].post_process_edit_retry_claim_count, Some(4));
     }
 
     #[tokio::test]

@@ -1,17 +1,19 @@
-import { LoginCredentialsFields } from "./LoginCredentialsFields";
-import { Button, Link, Stack } from "@mui/material";
+import { Button, IconButton, Link, Stack, TextField } from "@mui/material";
 import { FormattedMessage } from "react-intl";
 import { setMode, submitSignIn } from "../../actions/login.actions";
-import { useAppStore } from "../../store";
+import { produceAppState, useAppStore } from "../../store";
 import {
   getCanSubmitLogin,
   getShouldShowEmailForm,
 } from "../../utils/login.utils";
 import { useState } from "react";
+import { Visibility, VisibilityOff } from "@mui/icons-material";
 
 export const SignInForm = () => {
   const [passwordVisible, setPasswordVisible] = useState(false);
 
+  const email = useAppStore((state) => state.login.email);
+  const password = useAppStore((state) => state.login.password);
   const canSubmit = useAppStore((state) => getCanSubmitLogin(state));
   const showEmailForm = useAppStore((state) => getShouldShowEmailForm(state));
 
@@ -23,6 +25,18 @@ export const SignInForm = () => {
     setMode("signUp");
   };
 
+  const handleChangeEmail = (event: React.ChangeEvent<HTMLInputElement>) => {
+    produceAppState((state) => {
+      state.login.email = event.target.value;
+    });
+  };
+
+  const handleChangePassword = (event: React.ChangeEvent<HTMLInputElement>) => {
+    produceAppState((state) => {
+      state.login.password = event.target.value;
+    });
+  };
+
   const handleSubmit = async () => {
     await submitSignIn();
   };
@@ -31,9 +45,34 @@ export const SignInForm = () => {
     <Stack spacing={2}>
       {showEmailForm && (
         <>
-          <LoginCredentialsFields
-            passwordVisible={passwordVisible}
-            onTogglePasswordVisibility={() => setPasswordVisible((v) => !v)}
+          <TextField
+            label={<FormattedMessage defaultMessage="Email" />}
+            type="email"
+            fullWidth
+            value={email}
+            onChange={handleChangeEmail}
+            size="small"
+          />
+          <TextField
+            label={<FormattedMessage defaultMessage="Password" />}
+            type={passwordVisible ? "text" : "password"}
+            fullWidth
+            value={password}
+            onChange={handleChangePassword}
+            size="small"
+            slotProps={{
+              input: {
+                endAdornment: (
+                  <IconButton
+                    onClick={() => setPasswordVisible((v) => !v)}
+                    tabIndex={-1}
+                    size="small"
+                  >
+                    {!passwordVisible ? <VisibilityOff /> : <Visibility />}
+                  </IconButton>
+                ),
+              },
+            }}
           />
 
           <Button

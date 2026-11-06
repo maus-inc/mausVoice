@@ -4,6 +4,7 @@ import {
   scenarioForPath,
   type PreviewScenarioId,
 } from "./scenarios";
+import { CURRENT_FEATURE_DATE } from "../utils/feature.utils";
 import { LOCAL_USER_ID } from "../utils/user.utils";
 
 const workspaceScenarios: PreviewScenarioId[] = [
@@ -21,6 +22,7 @@ describe("browser preview scenarios", () => {
       expect(snapshot.state.initialized).toBe(true);
       expect(snapshot.state.auth?.email).toBe("preview@mausvoice.local");
       expect(snapshot.data.user?.onboarded).toBe(true);
+      expect(snapshot.state.local.featureSeenAt).toBe(CURRENT_FEATURE_DATE);
       expect(snapshot.state.settings.elevationStartupPending).toBe(false);
       expect(snapshot.data.preferences?.userId).toBe(LOCAL_USER_ID);
     },
@@ -30,6 +32,7 @@ describe("browser preview scenarios", () => {
     const snapshot = createPreviewScenario("populated");
 
     expect(snapshot.data.transcriptions).toHaveLength(3);
+    expect(snapshot.data.dailyActivity.length).toBeGreaterThan(0);
     expect(snapshot.data.terms).toHaveLength(3);
     expect(snapshot.data.conversations).toHaveLength(2);
     expect(snapshot.data.apiKeys).toEqual(
@@ -49,35 +52,32 @@ describe("browser preview scenarios", () => {
     expect(snapshot.state.settings.apiKeys).toHaveLength(1);
   });
 
-  it("indexes populated collections and isolates state from fixture data", () => {
-    const { state, data } = createPreviewScenario("populated");
-    for (const term of data.terms) {
-      expect(state.termById[term.id]).toEqual(term);
-      expect(state.termById[term.id]).not.toBe(term);
-    }
-    for (const key of data.apiKeys)
-      expect(state.apiKeyById[key.id]).toEqual(key);
-    for (const tone of data.customTones)
-      expect(state.toneById[tone.id]).toEqual(tone);
-    for (const hotkey of data.hotkeys)
-      expect(state.hotkeyById[hotkey.id]).toEqual(hotkey);
-    for (const target of data.appTargets)
-      expect(state.appTargetById[target.id]).toEqual(target);
-    for (const transcription of data.transcriptions)
-      expect(state.transcriptionById[transcription.id]).toEqual(transcription);
-    for (const conversation of data.conversations) {
-      expect(state.conversationById[conversation.id]).toEqual(conversation);
-      expect(state.chatMessageIdsByConversationId[conversation.id]).toEqual(
-        data.chatMessages
-          .filter((message) => message.conversationId === conversation.id)
-          .map((message) => message.id),
+  it("seeds app paste bindings using the values accepted by the settings selector", () => {
+    const targets = createPreviewScenario("populated").data.appTargets;
+    expect(targets.some((target) => target.pasteKeybind === "ctrl+v")).toBe(
+      true,
+    );
+    for (const target of targets) {
+      expect([null, "shift+insert", "ctrl+v", "ctrl+shift+v"]).toContain(
+        target.pasteKeybind,
       );
     }
-    for (const message of data.chatMessages)
-      expect(state.chatMessageById[message.id]).toEqual(message);
-    const firstTerm = data.terms[0];
-    state.termById[firstTerm.id].sourceValue = "changed only in state";
-    expect(firstTerm.sourceValue).not.toBe("changed only in state");
+  });
+
+  it("reuses populated data without sharing mutable values across scenarios", () => {
+    const populated = createPreviewScenario("populated");
+    const permissionDenied = createPreviewScenario("permission-denied");
+
+    expect(permissionDenied.data).toEqual(populated.data);
+    expect(permissionDenied.data.transcriptions).not.toBe(
+      populated.data.transcriptions,
+    );
+    expect(permissionDenied.data.transcriptions[0]).not.toBe(
+      populated.data.transcriptions[0],
+    );
+    expect(permissionDenied.data.dailyActivity).not.toBe(
+      populated.data.dailyActivity,
+    );
   });
 
   it("exposes an explicit denied-permission workspace", () => {
@@ -91,6 +91,7 @@ describe("browser preview scenarios", () => {
     const snapshot = createPreviewScenario("empty");
 
     expect(snapshot.data.transcriptions).toEqual([]);
+    expect(snapshot.data.dailyActivity).toEqual([]);
     expect(snapshot.data.terms).toEqual([]);
     expect(snapshot.data.conversations).toEqual([]);
     expect(snapshot.state.transcriptions.transcriptionIds).toEqual([]);

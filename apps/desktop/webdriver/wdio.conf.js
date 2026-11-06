@@ -1,30 +1,19 @@
 import os from "os";
 import fs from "fs";
+import http from "http";
 import path from "path";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "child_process";
 import { fileURLToPath } from "url";
 import chromedriver from "chromedriver";
-import SpecReporter from "@wdio/spec-reporter";
 import { preview as createPreviewServer } from "vite";
-import { runCheckedProcess } from "./checked-process.js";
-import {
-  closePreview,
-  waitForPreviewCreation,
-  waitForPreviewListening,
-} from "./preview-lifecycle.js";
-import { waitForHttpServer } from "./wait-for-http-server.js";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 
 let tauriDriverProcess;
 let shuttingDown = false;
 let previewServer;
-let previewStartup;
-let preparation;
 let chromeDriverProcess;
-let chromeDriverStartup;
-const retiredChromeDrivers = new WeakSet();
-const retiredTauriDrivers = new WeakSet();
+let closingChromeDriver = false;
 
 const projectRoot = path.resolve(__dirname, "..");
 const isMac = process.platform === "darwin";
@@ -73,7 +62,7 @@ if (!npmCliPath) {
 }
 
 const runNpm = (args) =>
-  runCheckedProcess(process.execPath, [npmCliPath, ...args], {
+  spawnSync(process.execPath, [npmCliPath, ...args], {
     cwd: projectRoot,
     stdio: "inherit",
   });
@@ -105,19 +94,85 @@ function resolveTauriDriver() {
 }
 
 function closeTauriDriver() {
-  const child = tauriDriverProcess;
+  shuttingDown = true;
+  if (tauriDriverProcess && !tauriDriverProcess.killed) {
+    tauriDriverProcess.kill();
+  }
   tauriDriverProcess = undefined;
-  if (!child) return;
-  retiredTauriDrivers.add(child);
-  if (!child.killed) child.kill();
 }
 
-function resolveChromeDriverBinary() {
-  const binaryPath = chromedriver?.path ?? chromedriver;
-  if (!binaryPath || typeof binaryPath !== "string") {
-    throw new Error("Could not resolve chromedriver binary path.");
-  }
-  return binaryPath;
+function waitForHttpServer({
+  port,
+  requestPath = "/status",
+  timeoutMs = 30000,
+  intervalMs = 500,
+}) {
+  const startedAt = Date.now();
+
+  return new Promise((resolve, reject) => {
+    const attempt = () => {
+      const request = http.request(
+        {
+          host: "127.0.0.1",
+          port,
+          path: requestPath,
+          method: "GET",
+          timeout: 2000,
+        },
+        (response) => {
+          response.resume();
+
+          if (
+            response.statusCode &&
+            response.statusCode >= 200 &&
+            response.statusCode < 500
+          ) {
+            resolve(undefined);
+            return;
+          }
+
+          if (Date.now() - startedAt >= timeoutMs) {
+            reject(
+              new Error(
+                `Server on port ${port} did not respond with success before timeout.`,
+              ),
+            );
+          } else {
+            setTimeout(attempt, intervalMs);
+          }
+        },
+      );
+
+      request.on("error", (error) => {
+        if (Date.now() - startedAt >= timeoutMs) {
+          reject(
+            new Error(
+              `Could not reach server on port ${port}: ${error.message}`,
+            ),
+          );
+        } else {
+          setTimeout(attempt, intervalMs);
+        }
+      });
+
+      request.on("timeout", () => {
+        request.destroy();
+        if (Date.now() - startedAt >= timeoutMs) {
+          reject(
+            new Error(
+              `Timed out waiting for server on port ${port} to respond.`,
+            ),
+          );
+        } else {
+          setTimeout(attempt, intervalMs);
+        }
+      });
+
+      request.end();
+    };
+
+    attempt();
+  });
 }
 
 async function startChromeDriver() {
@@ -125,105 +180,101 @@ async function startChromeDriver() {
     return;
   }
 
-  const child = spawn(
-    resolveChromeDriverBinary(),
+  const binaryPath = chromedriver?.path ?? chromedriver;
+  if (!binaryPath || typeof binaryPath !== "string") {
+    throw new Error("Could not resolve chromedriver binary path.");
+  }
+
+  chromeDriverProcess = spawn(
+    binaryPath,
     [`--port=${driverPort}`, "--url-base=/", "--allowed-ips=127.0.0.1"],
     {
       stdio: ["ignore", "pipe", process.stderr],
     },
   );
 
-  chromeDriverProcess = child;
-  const controller = new AbortController();
-  chromeDriverStartup = { child, controller };
-  child.stdout.on("data", (data) => {
+  chromeDriverProcess.stdout.on("data", (data) => {
     process.stdout.write(data);
   });
 
-  child.on("error", (error) => {
-    if (chromeDriverProcess !== child || retiredChromeDrivers.has(child))
-      return;
-    controller.abort(error);
-    previewStartup?.abort(error);
+  chromeDriverProcess.on("error", (error) => {
     console.error("chromedriver error:", error);
   });
 
-  child.on("exit", (code) => {
-    const isCurrent = chromeDriverProcess === child;
-    if (isCurrent) chromeDriverProcess = undefined;
-    if (isCurrent && !shuttingDown && !retiredChromeDrivers.has(child)) {
-      const error = new Error(
-        `ChromeDriver exited unexpectedly (code ${code ?? "unknown"})`,
-      );
-      controller.abort(error);
-      previewStartup?.abort(error);
+  chromeDriverProcess.on("exit", (code) => {
+    chromeDriverProcess = undefined;
+    const wasClosing = closingChromeDriver;
+    closingChromeDriver = false;
+    if (!shuttingDown && !wasClosing) {
       console.error("chromedriver exited unexpectedly with code:", code);
     }
   });
 
   try {
-    await waitForHttpServer({ port: driverPort, signal: controller.signal });
-    controller.signal.throwIfAborted();
+    await waitForHttpServer({ port: driverPort });
   } catch (error) {
-    if (chromeDriverProcess === child) closeChromeDriver();
+    closeChromeDriver();
     throw error;
-  } finally {
-    if (chromeDriverStartup?.child === child) chromeDriverStartup = undefined;
   }
 }
 
 function closeChromeDriver() {
-  const child = chromeDriverProcess;
-  chromeDriverProcess = undefined;
-  if (!child) return;
-  retiredChromeDrivers.add(child);
-  if (chromeDriverStartup?.child === child) {
-    chromeDriverStartup.controller.abort(new Error("ChromeDriver was retired"));
-    chromeDriverStartup = undefined;
+  if (chromeDriverProcess && !chromeDriverProcess.killed) {
+    closingChromeDriver = true;
+    chromeDriverProcess.kill();
   }
-  if (!child.killed) child.kill();
+  if (!chromeDriverProcess) {
+    closingChromeDriver = false;
+  }
 }
 
 async function startPreviewServer() {
-  if (previewServer) return;
-  const controller = new AbortController();
-  previewStartup = controller;
-  let server;
-  try {
-    server = await waitForPreviewCreation(
-      createPreviewServer({
-        root: projectRoot,
-        configFile: path.resolve(projectRoot, "vite.config.ts"),
-        preview: { host: "127.0.0.1", port: previewPort, open: false },
-      }),
-      controller.signal,
-    );
-    if (controller.signal.aborted) {
-      closePreview(server);
-      controller.signal.throwIfAborted();
-    }
-    previewServer = server;
-    await waitForPreviewListening(server, controller.signal);
-  } catch (error) {
-    if (previewServer === server && server) closePreviewServer();
-    throw error;
-  } finally {
-    if (previewStartup === controller) previewStartup = undefined;
+  if (previewServer) {
+    return;
+  }
+
+  previewServer = await createPreviewServer({
+    root: projectRoot,
+    configFile: path.resolve(projectRoot, "vite.config.ts"),
+    preview: {
+      host: "127.0.0.1",
+      port: previewPort,
+      open: false,
+    },
+  });
+
+  const httpServer = previewServer.httpServer;
+  if (httpServer && !httpServer.listening) {
+    await new Promise((resolve, reject) => {
+      const handleError = (error) => {
+        httpServer.off("listening", handleListening);
+        reject(error);
+      };
+
+      const handleListening = () => {
+        httpServer.off("error", handleError);
+        resolve(undefined);
+      };
+
+      httpServer.once("error", handleError);
+      httpServer.once("listening", handleListening);
+    });
   }
 }
 
 function closePreviewServer() {
-  const controller = previewStartup;
-  previewStartup = undefined;
-  controller?.abort(new Error("Preview server was retired"));
   const server = previewServer;
   previewServer = undefined;
-  if (server) closePreview(server);
+
+  if (server) {
+    server.close().catch((error) => {
+      console.error("Failed to close preview server:", error);
+    });
+  }
 }
 
 function registerShutdownHooks() {
   const cleanup = () => {
-    shuttingDown = true;
     try {
       closeTauriDriver();
       closePreviewServer();
@@ -234,7 +285,6 @@ function registerShutdownHooks() {
   };
 
   process.on("exit", () => {
-    shuttingDown = true;
     closeTauriDriver();
     closePreviewServer();
     closeChromeDriver();
@@ -276,33 +326,7 @@ const baseCapabilities = isMac
       },
     ];
 
-async function prepareApplication() {
-  if (isMac) {
-    runNpm(["run", "build"]);
-    await startChromeDriver();
-    try {
-      await startPreviewServer();
-    } catch (error) {
-      closeChromeDriver();
-      throw error;
-    }
-    return;
-  }
-  runNpm(["run", "tauri", "build", "--", "--debug", "--no-bundle"]);
-  ensureBinaryExists(resolveTauriBinary());
-}
-
-function prepareOnce() {
-  if (preparation) return preparation;
-  const pending = prepareApplication().finally(() => {
-    if (preparation === pending) preparation = undefined;
-  });
-  preparation = pending;
-  return pending;
-}
-
 export const config = {
-  runner: "local",
   host: "127.0.0.1",
   port: driverPort,
   path: "/",
@@ -319,7 +343,7 @@ export const config = {
       transpileOnly: true,
     },
   },
-  reporters: [SpecReporter],
+  reporters: ["spec"],
   framework: "mocha",
   mochaOpts: {
     ui: "bdd",
@@ -332,8 +356,19 @@ export const config = {
         }
       }
     : undefined,
-  // Build fresh artifacts, sharing in-flight work between concurrent callers.
-  onPrepare: prepareOnce,
+  onPrepare: async () => {
+    if (isMac) {
+      runNpm(["run", "build"]);
+
+      await startChromeDriver();
+      await startPreviewServer();
+      return;
+    }
+
+    runNpm(["run", "tauri", "build", "--", "--debug", "--no-bundle"]);
+
+    ensureBinaryExists(resolveTauriBinary());
+  },
   beforeSession: isMac
     ? undefined
     : () => {
@@ -346,32 +381,19 @@ export const config = {
           );
         }
 
-        if (tauriDriverProcess) {
-          throw new Error("A tauri-driver is already owned by this session.");
-        }
-        const child = spawn(tauriDriverPath, [], {
+        tauriDriverProcess = spawn(tauriDriverPath, [], {
           stdio: ["ignore", process.stdout, process.stderr],
         });
-        tauriDriverProcess = child;
 
-        child.on("error", (error) => {
-          if (
-            shuttingDown ||
-            retiredTauriDrivers.has(child) ||
-            tauriDriverProcess !== child
-          )
-            return;
+        tauriDriverProcess.on("error", (error) => {
           console.error("tauri-driver error:", error);
           process.exit(1);
         });
 
-        child.on("exit", (code) => {
-          const isCurrent = tauriDriverProcess === child;
-          if (isCurrent) tauriDriverProcess = undefined;
-          if (isCurrent && !shuttingDown && !retiredTauriDrivers.has(child)) {
+        tauriDriverProcess.on("exit", (code) => {
+          if (!shuttingDown) {
             console.error("tauri-driver exited unexpectedly with code:", code);
-            // A clean exit is still a failed session when it was not requested.
-            process.exit(code || 1);
+            process.exit(code ?? 1);
           }
         });
       },

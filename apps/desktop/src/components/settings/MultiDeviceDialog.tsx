@@ -1,5 +1,6 @@
 import type { SelectChangeEvent } from "@mui/material";
 import {
+  Alert,
   Button,
   Dialog,
   DialogActions,
@@ -26,7 +27,10 @@ import {
   buildRemotePairingInvite,
   pairWithRemoteInvite,
 } from "../../actions/remote-pairing.actions";
-import { deletePairedRemoteDevice } from "../../actions/paired-remote-device.actions";
+import {
+  deletePairedRemoteDevice,
+  upsertPairedRemoteDevice,
+} from "../../actions/paired-remote-device.actions";
 import {
   startRemoteReceiver,
   refreshRemoteReceiverStatus,
@@ -39,21 +43,152 @@ import {
   setRemoteTargetDeviceId,
 } from "../../actions/user.actions";
 import {
-  canReceiveRemoteOutput,
   getRemoteReceiverStatus,
   listPairedRemoteDevices,
 } from "../../utils/device.utils";
 import { produceAppState, useAppStore } from "../../store";
 import { logOnRejection } from "../../utils/promise.utils";
-import { parseReceiverPort } from "../../utils/receiver-port.utils";
 import { getMyUserPreferences } from "../../utils/user.utils";
 import { SettingSection } from "../common/SettingSection";
-import { ReceiverStatusDetails } from "./ReceiverStatusDetails";
-import {
-  saveManualPair,
-  validateManualPair,
-  type PairForm,
-} from "./manual-pairing";
+
+const ReceiverStatusDetails = ({
+  receiverStatus,
+}: {
+  receiverStatus: RemoteReceiverStatus;
+}) => {
+  const lastDeliveryTimeLabel = receiverStatus.lastDeliveryAt
+    ? new Date(receiverStatus.lastDeliveryAt).toLocaleString()
+    : null;
+  const lastTargetLooksLikeMausVoice =
+    receiverStatus.lastTargetClassName === "Tauri Window";
+  const lastTargetMissingEditableField =
+    receiverStatus.lastTargetEditable === false &&
+    receiverStatus.lastDeliveryStatus === "failed";
+
+  return (
+    <Stack spacing={0.5} sx={{ mt: -1 }}>
+      <Typography
+        variant="caption"
+        sx={{
+          color: "text.secondary",
+        }}
+      >
+        <FormattedMessage
+          defaultMessage="Device ID: {deviceId}"
+          values={{ deviceId: receiverStatus.deviceId }}
+        />
+      </Typography>
+      {receiverStatus.enabled && (
+        <Typography
+          variant="caption"
+          sx={{
+            color: "text.secondary",
+          }}
+        >
+          <FormattedMessage
+            defaultMessage="Connect address: {address}:{port}"
+            values={{
+              address: receiverStatus.listenAddress ?? "127.0.0.1",
+              port: receiverStatus.port ?? "unknown",
+            }}
+          />
+        </Typography>
+      )}
+      {receiverStatus.lastSenderDeviceId && (
+        <Typography
+          variant="caption"
+          sx={{
+            color: "text.secondary",
+          }}
+        >
+          <FormattedMessage
+            defaultMessage="Last sender: {senderId}"
+            values={{ senderId: receiverStatus.lastSenderDeviceId }}
+          />
+        </Typography>
+      )}
+      {receiverStatus.lastDeliveryStatus && (
+        <Typography
+          variant="caption"
+          sx={{
+            color: "text.secondary",
+          }}
+        >
+          {lastDeliveryTimeLabel ? (
+            <FormattedMessage
+              defaultMessage="Last delivery: {status} at {timestamp}"
+              values={{
+                status: receiverStatus.lastDeliveryStatus,
+                timestamp: lastDeliveryTimeLabel,
+              }}
+            />
+          ) : (
+            <FormattedMessage
+              defaultMessage="Last delivery: {status}"
+              values={{ status: receiverStatus.lastDeliveryStatus }}
+            />
+          )}
+        </Typography>
+      )}
+      {receiverStatus.lastError && (
+        <Typography
+          variant="caption"
+          sx={{
+            color: "error.main",
+            wordBreak: "break-word",
+          }}
+        >
+          <FormattedMessage
+            defaultMessage="Last error: {message}"
+            values={{ message: receiverStatus.lastError }}
+          />
+        </Typography>
+      )}
+      {(receiverStatus.lastTargetClassName ||
+        receiverStatus.lastTargetTitle) && (
+        <Typography
+          variant="caption"
+          sx={{
+            color: "text.secondary",
+            wordBreak: "break-word",
+          }}
+        >
+          <FormattedMessage
+            defaultMessage="Last target: {className}{title}"
+            values={{
+              className: receiverStatus.lastTargetClassName ?? "unknown class",
+              title: receiverStatus.lastTargetTitle
+                ? ` (${receiverStatus.lastTargetTitle})`
+                : "",
+            }}
+          />
+        </Typography>
+      )}
+      {lastTargetLooksLikeMausVoice && (
+        <Typography
+          variant="caption"
+          sx={{
+            color: "warning.main",
+            wordBreak: "break-word",
+          }}
+        >
+          <FormattedMessage defaultMessage="The last delivery targeted the mausVoice window itself. Focus the destination app on the receiver machine before sending text." />
+        </Typography>
+      )}
+      {lastTargetMissingEditableField && (
+        <Typography
+          variant="caption"
+          sx={{
+            color: "warning.main",
+            wordBreak: "break-word",
+          }}
+        >
+          <FormattedMessage defaultMessage="The last target window was active, but no editable text field was focused. Click back into the destination text field on the receiver machine before sending text." />
+        </Typography>
+      )}
+    </Stack>
+  );
+};
 
 const RemoteTargetDetails = ({
   selectedRemoteTarget,
@@ -108,6 +243,7 @@ const PairDeviceDialog = ({
   form,
   addressLabel,
   addressHelperText,
+  validationError,
   onChange,
   onSave,
   onClose,
@@ -117,11 +253,17 @@ const PairDeviceDialog = ({
   form: PairForm;
   addressLabel: string;
   addressHelperText: string;
+  validationError: boolean;
   onChange: (patch: Partial<PairForm>) => void;
   onSave: () => void;
   onClose: () => void;
 }) => {
   const intl = useIntl();
+  const errorRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (validationError)
+      errorRef.current?.scrollIntoView?.({ block: "nearest" });
+  }, [validationError]);
   return (
     <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
       <DialogTitle>
@@ -159,11 +301,6 @@ const PairDeviceDialog = ({
             </MenuItem>
             <MenuItem value="sender">
               {intl.formatMessage({ defaultMessage: "Sender device" })}
-            </MenuItem>
-            <MenuItem value="both">
-              {intl.formatMessage({ defaultMessage: "Sender device" })}
-              {" / "}
-              {intl.formatMessage({ defaultMessage: "Receiver device" })}
             </MenuItem>
           </Select>
           <Select<RemoteDevicePlatform>
@@ -203,6 +340,15 @@ const PairDeviceDialog = ({
             onChange={(event) => onChange({ secret: event.target.value })}
             fullWidth
           />
+          {validationError && (
+            <Alert ref={errorRef} severity="error">
+              {form.role === "receiver" ? (
+                <FormattedMessage defaultMessage="Name, device ID, receiver address, and shared secret are required." />
+              ) : (
+                <FormattedMessage defaultMessage="Name, device ID, and shared secret are required." />
+              )}
+            </Alert>
+          )}
         </Stack>
       </DialogContent>
       <DialogActions>
@@ -251,10 +397,10 @@ const ImportInviteDialog = ({
           <TextField
             label={intl.formatMessage({ defaultMessage: "Pairing invite" })}
             value={inviteCodeDraft}
-            disabled={pairingBusy}
             onChange={(event) => onChangeInviteCode(event.target.value)}
             multiline
             minRows={3}
+            maxRows={8}
             fullWidth
           />
         </Stack>
@@ -319,7 +465,6 @@ const useReceiverSettings = ({
 }): ReceiverSettings => {
   const intl = useIntl();
   const [receiverBusy, setReceiverBusy] = useState(false);
-  const receiverBusyRef = useRef(false);
   const [receiverPortDraft, setReceiverPortDraft] = useState("");
 
   useEffect(() => {
@@ -329,11 +474,10 @@ const useReceiverSettings = ({
   }, [remoteReceiverPort, open]);
 
   const handleToggleReceiver = async (event: ChangeEvent<HTMLInputElement>) => {
-    if (receiverBusyRef.current) {
+    if (receiverBusy) {
       return;
     }
 
-    receiverBusyRef.current = true;
     setReceiverBusy(true);
     try {
       if (event.target.checked) {
@@ -344,7 +488,6 @@ const useReceiverSettings = ({
     } catch (error) {
       showErrorSnackbar(error);
     } finally {
-      receiverBusyRef.current = false;
       setReceiverBusy(false);
     }
   };
@@ -356,25 +499,23 @@ const useReceiverSettings = ({
   };
 
   const handleApplyRemoteReceiverPort = async () => {
-    const parsed = parseReceiverPort(receiverPortDraft);
-    if (!parsed.valid) {
-      showErrorSnackbar(
-        intl.formatMessage({
-          defaultMessage: "Receiver port must be an integer from 1 to 65535.",
-        }),
-      );
+    const raw = receiverPortDraft.trim();
+    const nextValue = raw === "" ? null : Number(raw);
+    if (
+      raw !== "" &&
+      (nextValue == null || !Number.isInteger(nextValue) || nextValue <= 0)
+    ) {
+      showErrorSnackbar("Receiver port must be a positive integer.");
       return;
     }
-    const nextValue = parsed.value;
     if (nextValue === (remoteReceiverPort ?? null)) {
       showSnackbar("Receiver port is already up to date.");
       return;
     }
-    if (receiverBusyRef.current) {
+    if (receiverBusy) {
       return;
     }
 
-    receiverBusyRef.current = true;
     setReceiverBusy(true);
     try {
       await setRemoteReceiverPort(nextValue);
@@ -391,7 +532,6 @@ const useReceiverSettings = ({
     } catch (error) {
       showErrorSnackbar(error);
     } finally {
-      receiverBusyRef.current = false;
       setReceiverBusy(false);
     }
   };
@@ -484,7 +624,8 @@ const useSenderSettings = ({
   ) => {
     const enabled = event.target.checked;
     if (enabled && !remoteTargetDeviceId) {
-      const firstReceiver = pairedDevices.find(canReceiveRemoteOutput) ?? null;
+      const firstReceiver =
+        pairedDevices.find((device) => device.role === "receiver") ?? null;
       if (!firstReceiver) {
         showErrorSnackbar("Pair a receiver first.");
         return;
@@ -502,11 +643,8 @@ const useSenderSettings = ({
       try {
         await setRemoteTargetDeviceId(firstReceiver.id);
       } catch {
-        // The preference action already reports the error.
+        return;
       }
-      // Selecting a target also enables output. A second write here could
-      // overtake a newer decision to switch it off while selection was saving.
-      return;
     }
     logOnRejection(
       setRemoteOutputEnabled(enabled),
@@ -541,7 +679,9 @@ const useSenderSettings = ({
     }
   };
 
-  const remoteTargetSummary = pairedDevices.some(canReceiveRemoteOutput)
+  const remoteTargetSummary = pairedDevices.some(
+    (device) => device.role === "receiver",
+  )
     ? intl.formatMessage({
         defaultMessage:
           "Route finalized dictation to a paired desktop instead of inserting locally.",
@@ -550,7 +690,9 @@ const useSenderSettings = ({
         defaultMessage:
           "No paired multi-device targets yet. Pair a receiver before enabling cross-device output.",
       });
-  const receiverDevices = pairedDevices.filter(canReceiveRemoteOutput);
+  const receiverDevices = pairedDevices.filter(
+    (device) => device.role === "receiver",
+  );
   const selectedRemoteTarget =
     receiverDevices.find((device) => device.id === remoteTargetDeviceId) ??
     null;
@@ -564,6 +706,15 @@ const useSenderSettings = ({
     handleRemoteTargetDeviceChange,
     handleSendTest,
   };
+};
+
+type PairForm = {
+  name: string;
+  deviceId: string;
+  address: string;
+  secret: string;
+  platform: RemoteDevicePlatform;
+  role: RemoteDeviceRole;
 };
 
 const DEFAULT_PAIR_FORM: PairForm = {
@@ -581,6 +732,7 @@ type PairDialogState = {
   form: PairForm;
   addressLabel: string;
   addressHelperText: string;
+  validationError: boolean;
   openPairDialog: (device?: PairedRemoteDevice) => void;
   closePairDialog: () => void;
   handleSaveManualPair: () => Promise<void>;
@@ -589,17 +741,21 @@ type PairDialogState = {
 
 const usePairDialogState = (
   pairedDevices: PairedRemoteDevice[],
+  remoteTargetDeviceId: string | null,
+  remoteOutputEnabled: boolean,
 ): PairDialogState => {
   const intl = useIntl();
   const [pairDialogOpen, setPairDialogOpen] = useState(false);
   const [editingDeviceId, setEditingDeviceId] = useState<string | null>(null);
   const [form, setForm] = useState<PairForm>(DEFAULT_PAIR_FORM);
+  const [validationError, setValidationError] = useState(false);
 
   const updatePairForm = (patch: Partial<PairForm>) => {
     setForm((prev) => ({ ...prev, ...patch }));
   };
 
   const openPairDialog = (device?: PairedRemoteDevice) => {
+    setValidationError(false);
     setEditingDeviceId(device?.id ?? null);
     setForm(
       device
@@ -617,23 +773,84 @@ const usePairDialogState = (
   };
 
   const closePairDialog = () => {
+    setValidationError(false);
     setPairDialogOpen(false);
     setEditingDeviceId(null);
     setForm(DEFAULT_PAIR_FORM);
   };
 
   const handleSaveManualPair = async () => {
-    const result = validateManualPair(form);
-    if (!result.ok) {
-      showErrorSnackbar(result.error);
+    const name = form.name.trim();
+    const deviceId = form.deviceId.trim();
+    const address = form.address.trim();
+    const secret = form.secret.trim();
+    const requiresAddress = form.role === "receiver";
+
+    if (!name || !deviceId || !secret || (requiresAddress && !address)) {
+      setValidationError(true);
       return;
     }
+
+    setValidationError(false);
     try {
-      await saveManualPair({
-        pair: result.pair,
-        pairedDevices,
-        editingDeviceId,
+      const existing = pairedDevices.find(
+        (device) => device.id === (editingDeviceId ?? deviceId),
+      );
+      // Write the new pairing before retiring the old id, not after. Deleting
+      // first meant a save that failed left the device unpaired with nothing to
+      // recover: the secret it needed lived only in the row that had just been
+      // removed. In this order the worst a failure can leave behind is a stale
+      // extra pairing, which the list can show and the user can delete.
+      await upsertPairedRemoteDevice({
+        id: deviceId,
+        name,
+        platform: form.platform,
+        role: form.role,
+        sharedSecret: secret,
+        pairedAt: existing?.pairedAt ?? new Date().toISOString(),
+        lastSeenAt: existing?.lastSeenAt ?? null,
+        lastKnownAddress: requiresAddress ? address : null,
+        trusted: existing?.trusted ?? true,
       });
+      if (editingDeviceId && editingDeviceId !== deviceId) {
+        // Renaming a receiver is an upsert plus a delete of the old id, and the delete
+        // is not neutral: `deletePairedRemoteDevice` clears `remoteTargetDeviceId` when
+        // it matches, and setting the target to null also flips `remoteOutputEnabled`
+        // false (user.actions.ts). So correcting the id of the receiver you are actually
+        // sending to silently turned remote output off -- and the row was still listed,
+        // so nothing looked broken.
+        //
+        // The re-point has to come AFTER the delete, and the reason is narrower than
+        // "the delete would clear it again": `deletePairedRemoteDevice` reads the stored
+        // target synchronously on its first line, while `setRemoteTargetDeviceId` writes
+        // the store only after its own preference round trip. Set first, the delete would
+        // still read the old id and clear it -- because our write had not landed yet. The
+        // upsert above has already created the new row, so there is nothing to wait for.
+        //
+        // Reading the target from the caller rather than off the store keeps this handler
+        // consistent with the rest of the file, which selects it once via `useAppStore`
+        // and passes it down.
+        const wasTheTarget = remoteTargetDeviceId === editingDeviceId;
+        const wasOutputEnabled = remoteOutputEnabled;
+        await deletePairedRemoteDevice(editingDeviceId);
+        if (wasTheTarget) {
+          await setRemoteTargetDeviceId(deviceId);
+          // `setRemoteTargetDeviceId` is not a pure setter -- it also writes
+          // `remoteOutputEnabled = Boolean(deviceId)`, which turns the output back on
+          // (user.actions.ts:842-843). So without this the rename would trade one silent
+          // surprise for the other: the user turns the switch off, corrects a typo in the
+          // receiver's id, and dictation starts broadcasting to that device again with no
+          // switch visibly moved. "Target selected, output off" is a normal state to be in
+          // -- turning the output off calls `setRemoteOutputEnabled(false)`, which leaves
+          // the target set (`:632`).
+          //
+          // The two are independent user decisions, so the rename moves the pointer and
+          // restores the switch rather than letting the pointer write imply it.
+          if (!wasOutputEnabled) {
+            await setRemoteOutputEnabled(false);
+          }
+        }
+      }
       closePairDialog();
     } catch (error) {
       showErrorSnackbar(error);
@@ -661,6 +878,7 @@ const usePairDialogState = (
     form,
     addressLabel,
     addressHelperText,
+    validationError,
     openPairDialog,
     closePairDialog,
     handleSaveManualPair,
@@ -682,38 +900,27 @@ const useImportInviteState = (): ImportInviteState => {
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [inviteCodeDraft, setInviteCodeDraft] = useState("");
   const [pairingBusy, setPairingBusy] = useState(false);
-  const busy = useRef(false);
-  const mounted = useRef(false);
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
 
   const handleImportInvite = async () => {
-    if (busy.current) {
+    if (pairingBusy) {
       return;
     }
 
-    busy.current = true;
     setPairingBusy(true);
     try {
       const device = await pairWithRemoteInvite(inviteCodeDraft);
-      if (!mounted.current) return;
       showSnackbar(`Paired with ${device.name}.`, { mode: "success" });
       setImportDialogOpen(false);
       setInviteCodeDraft("");
     } catch (error) {
-      if (mounted.current) showErrorSnackbar(error);
+      showErrorSnackbar(error);
     } finally {
-      busy.current = false;
-      if (mounted.current) setPairingBusy(false);
+      setPairingBusy(false);
     }
   };
 
   const closeImportDialog = () => {
-    if (!busy.current) {
+    if (!pairingBusy) {
       setImportDialogOpen(false);
       setInviteCodeDraft("");
     }
@@ -758,7 +965,6 @@ const ReceiverSettingsSection = ({
   onImportInvite: () => void;
 }) => {
   const intl = useIntl();
-  const receiverEnabled = receiverStatus?.enabled ?? false;
 
   return (
     <>
@@ -770,7 +976,14 @@ const ReceiverSettingsSection = ({
         action={
           <Switch
             edge="end"
-            checked={receiverEnabled}
+            checked={receiverStatus?.enabled ?? false}
+            slotProps={{
+              input: {
+                "aria-label": intl.formatMessage({
+                  defaultMessage: "Receive transcript from another device",
+                }),
+              },
+            }}
             disabled={receiverBusy}
             onChange={onToggleReceiver}
           />
@@ -795,7 +1008,7 @@ const ReceiverSettingsSection = ({
           size="small"
           variant="outlined"
           onClick={onCopyInvite}
-          disabled={!receiverEnabled}
+          disabled={!(receiverStatus?.enabled ?? false)}
         >
           <FormattedMessage defaultMessage="Copy invite" />
         </Button>
@@ -815,12 +1028,19 @@ const ReceiverSettingsSection = ({
           <Switch
             edge="end"
             checked={remoteReceiverAutoStart}
+            slotProps={{
+              input: {
+                "aria-label": intl.formatMessage({
+                  defaultMessage: "Start receiver automatically",
+                }),
+              },
+            }}
             onChange={onAutoStartChange}
           />
         }
       />
 
-      {receiverEnabled && (
+      {(receiverStatus?.enabled ?? false) && (
         <>
           <SettingSection
             title={<FormattedMessage defaultMessage="Receiver port" />}
@@ -838,7 +1058,6 @@ const ReceiverSettingsSection = ({
                 <TextField
                   size="small"
                   value={receiverPortDraft}
-                  disabled={receiverBusy}
                   onChange={onPortChange}
                   placeholder={intl.formatMessage({
                     defaultMessage: "Auto",
@@ -900,6 +1119,13 @@ const SenderSettingsSection = ({
           <Switch
             edge="end"
             checked={remoteOutputEnabled}
+            slotProps={{
+              input: {
+                "aria-label": intl.formatMessage({
+                  defaultMessage: "Send transcript to another device",
+                }),
+              },
+            }}
             onChange={onToggleOutput}
           />
         }
@@ -1030,7 +1256,11 @@ export const MultiDeviceDialog = () => {
     remoteTargetDeviceId,
     pairedDevices,
   });
-  const pair = usePairDialogState(pairedDevices);
+  const pair = usePairDialogState(
+    pairedDevices,
+    remoteTargetDeviceId,
+    remoteOutputEnabled,
+  );
   const invite = useImportInviteState();
 
   const handleClose = () => {
@@ -1045,7 +1275,7 @@ export const MultiDeviceDialog = () => {
         <DialogTitle>
           <FormattedMessage defaultMessage="Multi-device" />
         </DialogTitle>
-        <DialogContent dividers sx={{ minWidth: 360 }}>
+        <DialogContent dividers sx={{ minWidth: "min(360px, 100%)" }}>
           <Stack spacing={3}>
             <ReceiverSettingsSection
               receiverStatus={receiverStatus}
@@ -1094,6 +1324,7 @@ export const MultiDeviceDialog = () => {
         form={pair.form}
         addressLabel={pair.addressLabel}
         addressHelperText={pair.addressHelperText}
+        validationError={pair.validationError}
         onChange={pair.updatePairForm}
         onSave={() => void pair.handleSaveManualPair()}
         onClose={pair.closePairDialog}

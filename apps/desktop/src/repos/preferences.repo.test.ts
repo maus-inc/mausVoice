@@ -1,11 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Nullable, PillPlacement } from "@maus-inc/types";
 import { createDefaultPreferences } from "../actions/user.actions";
-import {
-  fromLocalPreferences,
-  toLocalPreferences,
-  type LocalUserPreferences,
-} from "./preferences.repo";
+import { fromLocalPreferences, toLocalPreferences } from "./preferences.repo";
 
 const localPrefsWithActiveLanguage = (
   activeDictationLanguage: string | null,
@@ -78,34 +74,6 @@ describe("preferences round-trip", () => {
     expect(saved.activeDictationLanguage).toBe("primary");
   });
 
-  it("normalizes missing output fields without losing false, zero, or empty values", () => {
-    // Old SQLite rows may contain nulls despite the current generated type.
-    const legacy = {
-      ...toLocalPreferences(createDefaultPreferences()),
-      dictationPillVisibility: null,
-      realtimeOutputEnabled: null,
-      remoteOutputEnabled: false,
-      remoteTargetDeviceId: "",
-      remoteReceiverPort: 0,
-      remoteReceiverAutoStart: null,
-      dictationAudioDim: 0,
-      pasteKeybind: null,
-    } as unknown as LocalUserPreferences;
-    const loaded = fromLocalPreferences(legacy);
-    const expected = {
-      dictationPillVisibility: "persistent",
-      realtimeOutputEnabled: false,
-      remoteOutputEnabled: false,
-      remoteTargetDeviceId: "",
-      remoteReceiverPort: 0,
-      remoteReceiverAutoStart: false,
-      dictationAudioDim: 0,
-      pasteKeybind: null,
-    };
-    expect(loaded).toMatchObject(expected);
-    expect(toLocalPreferences(loaded)).toMatchObject(expected);
-  });
-
   it("round-trips a fully-populated UserPreferences", () => {
     const populated = {
       ...createDefaultPreferences(),
@@ -152,6 +120,27 @@ describe("preferences round-trip", () => {
     const local = toLocalPreferences(populated);
     const reloaded = fromLocalPreferences(local);
     expect(reloaded).toEqual(populated);
+  });
+});
+
+describe("fastStyleShortDictationsEnabled preference", () => {
+  it("defaults to true when the local row omits the field", () => {
+    const loaded = fromLocalPreferences({
+      ...toLocalPreferences(createDefaultPreferences()),
+      fastStyleShortDictationsEnabled: undefined,
+    });
+    expect(loaded.fastStyleShortDictationsEnabled).toBe(true);
+  });
+
+  it("preserves an explicit false across a round-trip", () => {
+    const loaded = fromLocalPreferences({
+      ...toLocalPreferences(createDefaultPreferences()),
+      fastStyleShortDictationsEnabled: false,
+    });
+    expect(loaded.fastStyleShortDictationsEnabled).toBe(false);
+
+    const saved = toLocalPreferences(loaded);
+    expect(saved.fastStyleShortDictationsEnabled).toBe(false);
   });
 });
 

@@ -1,11 +1,4 @@
-import { audioToArrayBuffer } from "./audio-convert.utils";
-import { retry, countWords } from "@maus-inc/utilities";
-import {
-  assertProviderIntegrationOk,
-  assertPrivateProviderResponseOk,
-  parsePrivateProviderJson,
-  requestSensitiveTransport,
-} from "./provider-response.utils";
+import { HttpError, retry, countWords } from "@maus-inc/utilities";
 import type { CustomFetch } from "./types";
 
 export type ElevenLabsTestIntegrationArgs = {
@@ -17,16 +10,20 @@ export const elevenlabsTestIntegration = async ({
   apiKey,
   customFetch = fetch,
 }: ElevenLabsTestIntegrationArgs): Promise<boolean> => {
-  const response = await requestSensitiveTransport(
-    "https://api.elevenlabs.io/v1/user",
-    { method: "GET", headers: { "xi-api-key": apiKey }, redirect: "error" },
-    customFetch,
-    "ElevenLabs",
-  );
-  await assertProviderIntegrationOk(response, "ElevenLabs", [
-    apiKey,
-    apiKey.trim(),
-  ]);
+  const response = await customFetch("https://api.elevenlabs.io/v1/user", {
+    method: "GET",
+    headers: { "xi-api-key": apiKey },
+  });
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new HttpError(
+      response.status,
+      detail
+        ? `ElevenLabs responded ${response.status}: ${detail}`
+        : `ElevenLabs responded with status ${response.status}`,
+      { retryAfter: response.headers.get("retry-after") },
+    );
+  }
   return true;
 };
 
@@ -41,7 +38,6 @@ export type ElevenLabsTranscriptionArgs = {
    */
   keyterms?: string[];
   customFetch?: CustomFetch;
-  signal?: AbortSignal;
 };
 
 export type ElevenLabsTranscribeAudioOutput = {
@@ -56,14 +52,13 @@ export const elevenlabsTranscribeAudio = async ({
   language,
   keyterms,
   customFetch = fetch,
-  signal,
 }: ElevenLabsTranscriptionArgs): Promise<ElevenLabsTranscribeAudioOutput> => {
   return retry({
     retries: 3,
-    signal,
     fn: async () => {
       const formData = new FormData();
-      const bodyData = audioToArrayBuffer(blob);
+      const bodyData =
+        blob instanceof ArrayBuffer ? blob : (blob.buffer as ArrayBuffer);
       const audioBlob = new Blob([bodyData], { type: `audio/${ext}` });
       formData.append("file", audioBlob, `audio.${ext}`);
       formData.append("model_id", "scribe_v2");
@@ -77,7 +72,7 @@ export const elevenlabsTranscribeAudio = async ({
         }
       }
 
-      const response = await requestSensitiveTransport(
+      const response = await customFetch(
         "https://api.elevenlabs.io/v1/speech-to-text",
         {
           method: "POST",
@@ -85,25 +80,19 @@ export const elevenlabsTranscribeAudio = async ({
             "xi-api-key": apiKey.trim(),
           },
           body: formData,
-          redirect: "error",
-          signal,
         },
-        customFetch,
-        "ElevenLabs",
       );
 
-      assertPrivateProviderResponseOk(
-        response,
-        "ElevenLabs API request failed with status",
-      );
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => "Unknown error");
+        throw new HttpError(
+          response.status,
+          `ElevenLabs API request failed with status ${response.status}: ${errorText}`,
+          { retryAfter: response.headers.get("retry-after") },
+        );
+      }
 
-      const data = (await parsePrivateProviderJson(
-        response,
-        "ElevenLabs",
-        signal,
-      )) as {
-        text?: string;
-      };
+      const data = (await response.json()) as { text?: string };
       const transcript = data?.text;
 
       if (!transcript) {

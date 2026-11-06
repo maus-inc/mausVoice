@@ -20,49 +20,15 @@ const FRAME = EDGE;
 
 type Rect = { left: number; top: number; right: number; bottom: number };
 
-/** Resolve one axis of the generated grip positions into absolute bounds. */
-const axisBounds = (
-  extent: number,
-  start?: number,
-  end?: number,
-  size?: number,
-): [number, number] => {
-  const leading = start ?? extent - (end ?? 0) - (size ?? 0);
-  return [leading, size !== undefined ? leading + size : extent - (end ?? 0)];
-};
-
 const toRect = (p: Record<string, number>): Rect => {
-  const [left, right] = axisBounds(WINDOW.width, p.left, p.right, p.width);
-  const [top, bottom] = axisBounds(WINDOW.height, p.top, p.bottom, p.height);
+  const left = p.left ?? WINDOW.width - (p.right ?? 0) - (p.width ?? 0);
+  const top = p.top ?? WINDOW.height - (p.bottom ?? 0) - (p.height ?? 0);
+  const right =
+    p.width !== undefined ? left + p.width : WINDOW.width - (p.right ?? 0);
+  const bottom =
+    p.height !== undefined ? top + p.height : WINDOW.height - (p.bottom ?? 0);
   return { left, top, right, bottom };
 };
-
-it("resolves explicit dimensions and opposing anchors, including zero", () => {
-  expect(toRect({ left: 0, top: 0, width: 10, height: 20 })).toEqual({
-    left: 0,
-    top: 0,
-    right: 10,
-    bottom: 20,
-  });
-  expect(toRect({ right: 5, bottom: 7, width: 10, height: 20 })).toEqual({
-    left: 985,
-    top: 673,
-    right: 995,
-    bottom: 693,
-  });
-  expect(toRect({ left: 10, right: 20, top: 5, bottom: 7 })).toEqual({
-    left: 10,
-    top: 5,
-    right: 980,
-    bottom: 693,
-  });
-  expect(toRect({ left: 10, top: 5, width: 0, height: 0 })).toEqual({
-    left: 10,
-    top: 5,
-    right: 10,
-    bottom: 5,
-  });
-});
 
 const overlaps = (a: Rect, b: Rect) =>
   a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;

@@ -1,12 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import {
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -111,58 +105,6 @@ describe("PR37 generated release-body contracts", () => {
       }
     }
   });
-});
-
-it("classifies installer assets case-insensitively and never offers signatures", () => {
-  const artifactsDir = mkdtempSync(
-    resolve(tmpdir(), "mausvoice-release-assets-"),
-  );
-  const run = () =>
-    execFileSync(
-      process.execPath,
-      [resolve(repoRoot, "scripts/ci/generate-release-body.mjs")],
-      {
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          ARTIFACTS_DIR: artifactsDir,
-          GITHUB_REPOSITORY: "maus-inc/mausVoice",
-          RELEASE_TAG: "mausVoice-v1",
-          RELEASE_NOTES: "notes",
-        },
-      },
-    );
-  try {
-    for (const name of [
-      "Mac.APP.TAR.GZ",
-      "Win.MSI",
-      "Linux.APPIMAGE",
-      "Linux.DEB",
-      "Linux.RPM",
-      "Ignored.EXE.sig",
-      "notes.txt",
-    ])
-      writeFileSync(resolve(artifactsDir, name), "");
-    let body = run();
-    for (const name of [
-      "Mac.APP.TAR.GZ",
-      "Win.MSI",
-      "Linux.APPIMAGE",
-      "Linux.DEB",
-      "Linux.RPM",
-    ])
-      assert.ok(body.includes(`/mausVoice-v1/${name}`), name);
-    assert.doesNotMatch(body, /Ignored\.EXE\.sig|notes\.txt/);
-    writeFileSync(resolve(artifactsDir, "Mac.DMG"), "");
-    writeFileSync(resolve(artifactsDir, "Win.EXE"), "");
-    body = run();
-    assert.match(body, /\| macOS \| \[Mac\.DMG\]/);
-    assert.match(body, /\| Windows \| \[Win\.EXE\]/);
-    assert.doesNotMatch(body, /\| macOS \| \[Mac\.APP\.TAR\.GZ\]/);
-    assert.doesNotMatch(body, /\| Windows \| \[Win\.MSI\]/);
-  } finally {
-    rmSync(artifactsDir, { force: true, recursive: true });
-  }
 });
 
 describe("PR37 custom 404 contracts", () => {

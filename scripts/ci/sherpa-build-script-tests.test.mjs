@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import {
-  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -18,17 +17,10 @@ import {
   findBuildScriptInvocation,
   hasCachedCrates,
   parseEnvPrefix,
-  prepareProbeAttempt,
   replayedTestBinaryName,
   rewriteInvocation,
-  runCompiledTests,
-  runProbeBuildAttempts,
-  selectBuildScriptInvocation,
   tokenizeCargoCommand,
   tokenizeCargoCommandLoose,
-  verifyOverrideIsolation,
-  validateListedTests,
-  validateCompiledHarness,
 } from "./sherpa-build-script-tests.mjs";
 
 const SHERPA_PKG = "sherpa-onnx-sys";
@@ -93,17 +85,7 @@ describe("tokenizeCargoCommand", () => {
   it("handles the '\\'' form cargo uses for a quote inside a quoted run", () => {
     // The escape is OUTSIDE the single quotes, so it is the backslash branch that
     // has to handle it. Getting this wrong silently splits one argument in two.
-    assert.deepEqual(tokenizeCargoCommand("   Running `a 'b'\\''c'`"), [
-      "a",
-      "b'c",
-    ]);
-  });
-
-  it("preserves backslashes before spaces and single quotes in double-quoted words", () => {
-    assert.deepEqual(
-      tokenizeCargoCommand(`   Running ` + "`" + `rustc "a\\ b\\'c"` + "`"),
-      ["rustc", "a\\ b\\'c"],
-    );
+    assert.deepEqual(tokenizeCargoCommand("   Running `a 'b'\\''c'`"), ["a", "b'c"]);
   });
 
   it("honours a backslash escape only inside double quotes", () => {
@@ -185,11 +167,7 @@ describe("the windows shape of a replayed command", () => {
 
   it("parses the `set K=V&&` prefix and finds the invocation", () => {
     const found = findBuildScriptInvocation(windowsLine);
-    assert.equal(
-      found.length,
-      1,
-      "the windows command shape must be recognised",
-    );
+    assert.equal(found.length, 1, "the windows command shape must be recognised");
     assert.equal(found[0].env.CARGO_PKG_NAME, "sherpa-onnx-sys");
     assert.equal(found[0].env.CARGO_CRATE_NAME, "build_script_build");
   });
@@ -221,7 +199,10 @@ describe("the windows shape of a replayed command", () => {
   });
 
   it("accepts a bare `rustc` as well, which is the unix shape", () => {
-    const line = windowsLine.replace(/C:\\Users[^ ]+rustc\.exe /, "rustc ");
+    const line = windowsLine.replace(
+      /C:\\Users[^ ]+rustc\.exe /,
+      "rustc ",
+    );
     assert.equal(findBuildScriptInvocation(line).length, 1);
   });
 
@@ -243,15 +224,8 @@ describe("the windows shape of a replayed command", () => {
     // `&& rustc --crate-name`, which stopped matching when the fixture became a bare
     // windows path -- so the replacement was a no-op and the case asserted that the
     // unmodified line found nothing, which is false. It failed, correctly.
-    const line = windowsLine.replace(
-      "rustc.exe --crate-name",
-      "cc --crate-name",
-    );
-    assert.notEqual(
-      line,
-      windowsLine,
-      "the substitution must actually change the line",
-    );
+    const line = windowsLine.replace("rustc.exe --crate-name", "cc --crate-name");
+    assert.notEqual(line, windowsLine, "the substitution must actually change the line");
     assert.deepEqual(findBuildScriptInvocation(line), []);
   });
 
@@ -268,10 +242,7 @@ describe("the windows shape of a replayed command", () => {
   });
 
   it("still rejects a windows-shaped line for another package", () => {
-    const other = windowsLine.replace(
-      "CARGO_PKG_NAME=sherpa-onnx-sys",
-      "CARGO_PKG_NAME=tar",
-    );
+    const other = windowsLine.replace("CARGO_PKG_NAME=sherpa-onnx-sys", "CARGO_PKG_NAME=tar");
     assert.deepEqual(findBuildScriptInvocation(other), []);
   });
 });
@@ -295,10 +266,7 @@ describe("findBuildScriptInvocation", () => {
   it("ignores this package's library target", () => {
     // Selecting on the package alone would compile the library's tests, which
     // contain no build-script code, and report that they all passed.
-    assert.deepEqual(
-      findBuildScriptInvocation(withEnv(SHERPA_LIB, SHERPA_PKG)),
-      [],
-    );
+    assert.deepEqual(findBuildScriptInvocation(withEnv(SHERPA_LIB, SHERPA_PKG)), []);
   });
 
   it("skips a line it cannot tokenize instead of failing the whole scan", () => {
@@ -325,185 +293,10 @@ describe("findBuildScriptInvocation", () => {
     // here replaced a string with itself, which is the tell that the input was never what
     // it looked like.
     assert.equal(
-      findBuildScriptInvocation(
-        ["garbage", UNPARSEABLE, withEnv(SHERPA_PLAIN, SHERPA_PKG)].join("\n"),
-      ).length,
+      findBuildScriptInvocation(["garbage", UNPARSEABLE, withEnv(SHERPA_PLAIN, SHERPA_PKG)].join("\n")).length,
       1,
       "a well-formed line after an unparseable one must still be found",
     );
-  });
-});
-
-describe("selectBuildScriptInvocation", () => {
-  it("replays only a unique binary build of exactly one build.rs", () => {
-    const good = withEnv(SHERPA_PLAIN, SHERPA_PKG);
-    assert.equal(
-      selectBuildScriptInvocation(good).env.CARGO_PKG_NAME,
-      SHERPA_PKG,
-    );
-    assert.throws(
-      () => selectBuildScriptInvocation(`${good}\n${good}`),
-      /expected exactly one/,
-    );
-    assert.throws(
-      () =>
-        selectBuildScriptInvocation(
-          good.replace("--crate-type bin", "--crate-type lib"),
-        ),
-      /--crate-type bin/,
-    );
-    assert.throws(
-      () =>
-        selectBuildScriptInvocation(
-          good.replace("build.rs`", "build.rs build.rs`"),
-        ),
-      /names build.rs 2 times/,
-    );
-  });
-});
-
-describe("compiled test execution", () => {
-  it("lists and runs from the isolated crate with Cargo variables removed", () => {
-    const calls = [];
-    const options = {
-      testBinary: "/tmp/test-bin",
-      crateDir: "/tmp/probe-crate",
-      env: { CARGO_HOME: "unsafe", CARGO_TARGET_DIR: "unsafe", HOME: "safe" },
-      required: ["tests::required"],
-      captureCommand: (label, cmd, args, opts) => {
-        calls.push({ label, cmd, args, opts });
-        return { status: 0, stdout: "tests::required: test\n" };
-      },
-      spawn: (cmd, args, opts) => {
-        calls.push({ cmd, args, opts });
-        return { status: 0 };
-      },
-    };
-    assert.equal(runCompiledTests(options), 1);
-    assert.equal(calls.length, 2);
-    for (const call of calls) {
-      assert.equal(call.opts.cwd, options.crateDir);
-      assert.deepEqual(call.opts.env, { HOME: "safe" });
-    }
-    assert.throws(
-      () => runCompiledTests({ ...options, spawn: () => ({ status: 1 }) }),
-      /exited 1/,
-    );
-    assert.throws(
-      () =>
-        runCompiledTests({ ...options, captureCommand: () => ({ status: 1 }) }),
-      /could not list/,
-    );
-  });
-});
-
-describe("compilation diagnostics", () => {
-  it("matches literal build-script paths and only complete build.rs tokens", () => {
-    const script = fileURLToPath(
-      new URL("../../patches/sherpa-onnx-sys-1.13.5/build.rs", import.meta.url),
-    );
-    assert.throws(
-      () =>
-        validateCompiledHarness({
-          status: 0,
-          stderr: `warning: ${script}suffix`,
-        }),
-      /produced warnings/,
-    );
-    assert.throws(
-      () =>
-        validateCompiledHarness({ status: 0, stderr: "warning: build.rs:4:2" }),
-      /produced warnings/,
-    );
-    assert.doesNotThrow(() =>
-      validateCompiledHarness({
-        status: 0,
-        stderr: "unrelated rebuild.rs and build.rs_suffix",
-      }),
-    );
-  });
-  it("rejects failed builds and diagnostics for the patched build script", () => {
-    assert.doesNotThrow(() =>
-      validateCompiledHarness({
-        status: 0,
-        stderr: "unrelated toolchain output",
-      }),
-    );
-    assert.throws(
-      () =>
-        validateCompiledHarness({ status: 1, stderr: "compilation failed" }),
-      /could not compile/,
-    );
-    assert.throws(
-      () =>
-        validateCompiledHarness({
-          status: 0,
-          stderr: "warning: build.rs contains unused code",
-        }),
-      /produced warnings/,
-    );
-  });
-});
-
-describe("listed Rust tests", () => {
-  it("only counts lines that the Rust test runner identifies as tests", () => {
-    const required = ["tests::archive", "tests::digest"];
-    assert.equal(
-      validateListedTests(
-        "tests::archive: test\ntests::digest: test\n",
-        required,
-      ),
-      2,
-    );
-    assert.throws(
-      () =>
-        validateListedTests("tests::archive: test\ntests::digest\n", required),
-      /does not contain/,
-    );
-    assert.throws(
-      () =>
-        validateListedTests(
-          "tests::archive: test\ntests::digest: benchmark\n",
-          required,
-        ),
-      /does not contain/,
-    );
-  });
-});
-
-describe("digest override isolation", () => {
-  it("requires the marker in the test artifact but never in the shipped artifact", () => {
-    const marker = Buffer.from("sherpa-pinned-digest-override-cfg-test-only");
-    const clean = Buffer.from("ordinary build");
-    assert.doesNotThrow(() => verifyOverrideIsolation(clean, marker));
-    assert.throws(() => verifyOverrideIsolation(marker, marker), /test-only/);
-    assert.throws(
-      () => verifyOverrideIsolation(clean, clean),
-      /does not contain/,
-    );
-  });
-});
-
-describe("cargo environment prefix boundaries", () => {
-  it("leaves rustc arguments alone even when they resemble cmd separators", () => {
-    assert.deepEqual(
-      parseEnvPrefix([
-        "CARGO_PKG_NAME=sherpa-onnx-sys",
-        "rustc",
-        "--cfg",
-        "set",
-        "&&",
-        "name&&",
-      ]),
-      {
-        env: { CARGO_PKG_NAME: "sherpa-onnx-sys" },
-        argv: ["rustc", "--cfg", "set", "&&", "name&&"],
-      },
-    );
-    assert.deepEqual(parseEnvPrefix(["CARGO_VALUE=literal&&", "rustc"]), {
-      env: { CARGO_VALUE: "literal&&" },
-      argv: ["rustc"],
-    });
   });
 });
 
@@ -519,10 +312,7 @@ describe("rewriteInvocation", () => {
   it("drops the flags that describe the unit cargo wanted", () => {
     const out = rewrite(0, false).argv;
     for (const flag of ["--crate-type", "--out-dir", "--emit"]) {
-      assert.ok(
-        !out.includes(flag),
-        `${flag} survived: ${JSON.stringify(out)}`,
-      );
+      assert.ok(!out.includes(flag), `${flag} survived: ${JSON.stringify(out)}`);
     }
     // and the value that belonged to it
     assert.ok(!out.includes("bin"), "the --crate-type value survived");
@@ -594,16 +384,13 @@ describe("tokenizeCargoCommandLoose", () => {
   const body = `${RUSTC} --crate-name build_script_build --edition=2021 build.rs`;
 
   it("accepts a timestamped prefix", () => {
-    assert.deepEqual(
-      tokenizeCargoCommandLoose("   [0.04s] Running `" + body + "`"),
-      [
-        RUSTC,
-        "--crate-name",
-        "build_script_build",
-        "--edition=2021",
-        "build.rs",
-      ],
-    );
+    assert.deepEqual(tokenizeCargoCommandLoose("   [0.04s] Running `" + body + "`"), [
+      RUSTC,
+      "--crate-name",
+      "build_script_build",
+      "--edition=2021",
+      "build.rs",
+    ]);
   });
 
   it("accepts a bare Fresh prefix", () => {
@@ -664,8 +451,7 @@ describe("tokenizeCargoCommandLoose", () => {
   it("still refuses a line that only mentions backticks", () => {
     // Tolerating the prefix must not become matching anything: both markers are still
     // required, so prose that happens to quote a command cannot be replayed.
-    const prose =
-      "   Running `the crate named build_script_build is sherpa-onnx-sys`";
+    const prose = "   Running `the crate named build_script_build is sherpa-onnx-sys`";
     assert.deepEqual(findBuildScriptInvocation(withEnv(prose, SHERPA_PKG)), []);
   });
 });
@@ -702,28 +488,15 @@ describe("the harness says what cargo printed when it cannot use the output", ()
   //
   // Read it as: the call exists, and it is on the path that reports no invocation.
   it("is echoed from the path that reports no invocation", () => {
-    const source = readFileSync(
-      fileURLToPath(
-        new URL("./sherpa-build-script-tests.mjs", import.meta.url),
-      ),
-      "utf8",
-    );
+    const source = readFileSync(fileURLToPath(new URL("./sherpa-build-script-tests.mjs", import.meta.url)), "utf8");
     const NO_INVOCATION = "if (matches.length === 0) {";
     const REFUSAL = "if (matches.length > 1) {";
     // Both anchors must be UNIQUE. `indexOf` takes the first match, so a decoy
     // occurrence above the real branch reopens exactly the false green this window was
     // narrowed to close: measured, a decoy arm carrying the echo plus a real arm without
     // it is 47 pass 0 fail.
-    assert.equal(
-      source.split(NO_INVOCATION).length - 1,
-      1,
-      `expected exactly one \`${NO_INVOCATION}\` in the harness`,
-    );
-    assert.equal(
-      source.split(REFUSAL).length - 1,
-      1,
-      `expected exactly one \`${REFUSAL}\` in the harness`,
-    );
+    assert.equal(source.split(NO_INVOCATION).length - 1, 1, `expected exactly one \`${NO_INVOCATION}\` in the harness`);
+    assert.equal(source.split(REFUSAL).length - 1, 1, `expected exactly one \`${REFUSAL}\` in the harness`);
     const noInvocation = source.indexOf(NO_INVOCATION);
     // The window is the ARM, derived from where the arm ends rather than hardcoded.
     //
@@ -738,11 +511,7 @@ describe("the harness says what cargo printed when it cannot use the output", ()
     // described a mechanism this slice removed -- `slice(noInvocation, refusal)` cannot
     // read past the arm however long it gets. What does need saying is the one shape the
     // `assert.match` below cannot explain.
-    assert.notEqual(
-      arm,
-      "",
-      "the two anchors were found out of order, so the window is empty",
-    );
+    assert.notEqual(arm, "", "the two anchors were found out of order, so the window is empty");
     assert.match(
       arm,
       /console\.error\(cargoOutputExcerpt\(output\)\)/,
@@ -754,10 +523,7 @@ describe("the harness says what cargo printed when it cannot use the output", ()
   it("says so even when there is nothing to show", () => {
     // An empty excerpt still has to be framed, or the reader cannot tell "cargo printed
     // nothing" from "the harness did not bother".
-    assert.match(
-      cargoOutputExcerpt(""),
-      /--- last \d+ lines cargo printed ---/,
-    );
+    assert.match(cargoOutputExcerpt(""), /--- last \d+ lines cargo printed ---/);
   });
 });
 
@@ -801,10 +567,7 @@ describe("replayedTestBinaryName", () => {
   // and the harness replays THIS binary by name, so a wrong suffix is a spawn failure on
   // Windows with the same shape as the `.cmd` EINVAL this harness already had once.
   it("appends .exe on Windows and nothing elsewhere", () => {
-    assert.equal(
-      replayedTestBinaryName("win32"),
-      "sherpa-build-script-tests.exe",
-    );
+    assert.equal(replayedTestBinaryName("win32"), "sherpa-build-script-tests.exe");
     assert.equal(replayedTestBinaryName("linux"), "sherpa-build-script-tests");
     assert.equal(replayedTestBinaryName("darwin"), "sherpa-build-script-tests");
   });
@@ -821,10 +584,7 @@ describe("replayedTestBinaryName", () => {
   // The control: the two names must actually DIFFER, or the first case would pass with a
   // function that ignored its argument.
   it("is not the same string on every platform", () => {
-    assert.notEqual(
-      replayedTestBinaryName("win32"),
-      replayedTestBinaryName("linux"),
-    );
+    assert.notEqual(replayedTestBinaryName("win32"), replayedTestBinaryName("linux"));
   });
 });
 
@@ -842,101 +602,5 @@ describe("buildScriptBinaryName", () => {
         ? "build-script-build.exe"
         : "build-script-build",
     );
-  });
-});
-
-describe("cargo probe retry ladder", () => {
-  it("re-seeds the last retry and reports the actual attempts", () => {
-    const dir = mkdtempSync(join(tmpdir(), "sherpa-probe-retry-"));
-    try {
-      const crateDir = join(dir, "crate"),
-        targetDir = join(dir, "target"),
-        workspaceLock = join(dir, "workspace.lock");
-      mkdirSync(crateDir);
-      writeFileSync(workspaceLock, "pins");
-      const states = [];
-      const result = runProbeBuildAttempts({
-        attempts: [
-          { offline: true, seeded: true, note: "first" },
-          { offline: true, seeded: false, note: "second" },
-          { offline: false, seeded: true, note: "third" },
-        ],
-        crateDir,
-        targetDir,
-        workspaceLock,
-        seedLock: true,
-        home: "/cache",
-        env: {},
-        captureCommand: (label, cmd, args, opts) => {
-          states.push({
-            lock: existsSync(join(crateDir, "Cargo.lock"))
-              ? readFileSync(join(crateDir, "Cargo.lock"), "utf8")
-              : null,
-            args,
-            opts,
-          });
-          mkdirSync(targetDir);
-          writeFileSync(join(crateDir, "Cargo.lock"), "resolved");
-          return {
-            status: states.length === 3 ? 0 : 1,
-            stdout: `attempt ${states.length}`,
-          };
-        },
-      });
-      assert.deepEqual(
-        states.map((state) => state.lock),
-        ["pins", null, "pins"],
-      );
-      assert.deepEqual(
-        states.map((state) => state.args.includes("--offline")),
-        [true, true, false],
-      );
-      assert.equal(states[2].opts.env.DOCS_RS, "1");
-      assert.equal(states[2].opts.env.CARGO_HOME, "/cache");
-      assert.equal(result.output, "attempt 3");
-      assert.deepEqual(
-        result.failures.map((failure) => failure.note),
-        ["first", "second"],
-      );
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-});
-
-describe("cargo probe attempts", () => {
-  it("restores the seeded lock and starts each retry with a cold target", () => {
-    const dir = mkdtempSync(join(tmpdir(), "sherpa-probe-attempt-"));
-    try {
-      const crateDir = join(dir, "crate");
-      const targetDir = join(dir, "target");
-      const workspaceLock = join(dir, "workspace.lock");
-      const lock = join(crateDir, "Cargo.lock");
-      mkdirSync(crateDir);
-      writeFileSync(workspaceLock, "workspace pins");
-      const prepare = (seeded) =>
-        prepareProbeAttempt({
-          crateDir,
-          targetDir,
-          workspaceLock,
-          seedLock: true,
-          seeded,
-        });
-      prepare(true);
-      assert.equal(readFileSync(lock, "utf8"), "workspace pins");
-      mkdirSync(targetDir);
-      writeFileSync(join(targetDir, "cached"), "stale");
-      writeFileSync(lock, "generated by cargo");
-      prepare(false);
-      assert.equal(existsSync(lock), false);
-      assert.equal(existsSync(targetDir), false);
-      mkdirSync(targetDir);
-      writeFileSync(lock, "unseeded resolution");
-      prepare(true);
-      assert.equal(readFileSync(lock, "utf8"), "workspace pins");
-      assert.equal(existsSync(targetDir), false);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
   });
 });

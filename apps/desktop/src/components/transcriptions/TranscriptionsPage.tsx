@@ -3,36 +3,58 @@ import {
   Dialog,
   DialogActions,
   DialogContent,
+  FormControl,
+  InputLabel,
+  MenuItem,
+  Select,
   Stack,
   Typography,
 } from "@mui/material";
-import { FileUp } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import type { Tone } from "@maus-inc/types";
+import { getRec } from "@maus-inc/utilities";
+import { Check, FileUp } from "lucide-react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { showErrorSnackbar } from "../../actions/app.actions";
 import { importAudioFile } from "../../actions/transcriptions.actions";
 import { useAppStore } from "../../store";
 import { threadDayGroup, type ThreadDayGroup } from "../../utils/date.utils";
 import { TranscriptionsSideEffects } from "./TranscriptionsSideEffects";
-import { TipCard } from "../onboarding/TipCard";
 import { TranscriptionRow } from "./TranscriptRow";
 import { ScrollListPage } from "../common/ScrollListPage";
 import {
+  AUTO_LANGUAGE,
   type DictationLanguageCode,
+  getRenderSafeLanguageLabel,
+  ORDERED_DICTATION_LANGUAGES,
   toSelectableDictationLanguage,
 } from "../../utils/language.utils";
 import { isStyleSelectionAvailable } from "../../utils/post-processing.utils";
-import { getSortedExistingTones } from "../../utils/tone.utils";
+import { getSortedToneIds } from "../../utils/tone.utils";
 import { getMyDictationLanguage } from "../../utils/user.utils";
-import { chromeDialogPaperSx } from "../common/chromeMenu";
-import { TranscriptionOptions } from "./TranscriptionOptions";
+import {
+  chromeDialogPaperSx,
+  chromeSelectMenuItemSx,
+  chromeSelectMenuProps,
+  chromeStyleSelectMenuProps,
+  selectedOptionLabel,
+} from "../common/chromeMenu";
 import {
   DialogTitleWithClose,
   useDialogTitleId,
 } from "../common/DialogTitleWithClose";
 
+const languageOptions = (
+  [
+    AUTO_LANGUAGE,
+    ...ORDERED_DICTATION_LANGUAGES,
+  ] satisfies DictationLanguageCode[]
+).map((code) => ({ code, label: getRenderSafeLanguageLabel(code) }));
+
 export default function TranscriptionsPage() {
   const intl = useIntl();
+  const styleLabelId = useId();
+  const languageLabelId = useId();
   const transcriptionIds = useAppStore(
     (state) => state.transcriptions.transcriptionIds,
   );
@@ -43,7 +65,11 @@ export default function TranscriptionsPage() {
   );
   const defaultLanguage = useAppStore((state) => getMyDictationLanguage(state));
   const styleSelectionAvailable = useAppStore(isStyleSelectionAvailable);
-  const tones = useAppStore(getSortedExistingTones);
+  const tones = useAppStore((state) =>
+    getSortedToneIds(state)
+      .map((id) => getRec(state.toneById, id))
+      .filter((tone): tone is Tone => Boolean(tone)),
+  );
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const importDialogTitleId = useDialogTitleId();
   const [selectedToneId, setSelectedToneId] = useState<string | null>(null);
@@ -57,7 +83,9 @@ export default function TranscriptionsPage() {
   useEffect(() => {
     if (importDialogOpen && !prevImportDialogOpen.current) {
       const state = useAppStore.getState();
-      const firstTone = getSortedExistingTones(state)[0];
+      const firstTone = getSortedToneIds(state)
+        .map((id) => getRec(state.toneById, id))
+        .find((tone): tone is Tone => Boolean(tone));
       setSelectedToneId(firstTone?.id ?? null);
       setSelectedLanguage(
         toSelectableDictationLanguage(getMyDictationLanguage(state)),
@@ -132,7 +160,6 @@ export default function TranscriptionsPage() {
     <>
       <TranscriptionsSideEffects />
       <Stack spacing={2} sx={{ height: "100%" }}>
-        <TipCard id="review-before-insert" />
         <ScrollListPage
           title={<FormattedMessage defaultMessage="History" />}
           subtitle={
@@ -155,7 +182,11 @@ export default function TranscriptionsPage() {
           }
           emptyState={
             <Stack spacing={1} sx={{ alignItems: "center", px: 2 }}>
-              <Typography variant="h6" sx={{ textAlign: "center" }}>
+              <Typography
+                variant="h6"
+                component="h2"
+                sx={{ textAlign: "center" }}
+              >
                 <FormattedMessage defaultMessage="No transcriptions yet." />
               </Typography>
               <Typography
@@ -211,14 +242,72 @@ export default function TranscriptionsPage() {
         </DialogTitleWithClose>
         <DialogContent>
           <Stack spacing={2.5} sx={{ mt: 1 }}>
-            <TranscriptionOptions
-              tones={tones}
-              styleSelectionAvailable={styleSelectionAvailable}
-              selectedToneId={selectedToneId}
-              onToneChange={setSelectedToneId}
-              selectedLanguage={selectedLanguage}
-              onLanguageChange={setSelectedLanguage}
-            />
+            {styleSelectionAvailable && (
+              <FormControl fullWidth size="small">
+                <InputLabel id={styleLabelId}>
+                  <FormattedMessage defaultMessage="Style" />
+                </InputLabel>
+                <Select
+                  labelId={styleLabelId}
+                  label={intl.formatMessage({ defaultMessage: "Style" })}
+                  value={selectedToneId ?? ""}
+                  onChange={(event) =>
+                    setSelectedToneId(event.target.value || null)
+                  }
+                  MenuProps={chromeStyleSelectMenuProps}
+                  renderValue={(value) =>
+                    selectedOptionLabel(
+                      value,
+                      tones,
+                      (tone) => tone.id,
+                      (tone) => tone.name,
+                    )
+                  }
+                >
+                  {tones.map((tone) => (
+                    <MenuItem
+                      key={tone.id}
+                      value={tone.id}
+                      sx={chromeSelectMenuItemSx}
+                    >
+                      {tone.name}
+                      {tone.id === selectedToneId ? (
+                        <Check size={16} strokeWidth={2} />
+                      ) : null}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            )}
+            <FormControl fullWidth size="small">
+              <InputLabel id={languageLabelId}>
+                <FormattedMessage defaultMessage="Language" />
+              </InputLabel>
+              <Select
+                labelId={languageLabelId}
+                label={intl.formatMessage({ defaultMessage: "Language" })}
+                value={selectedLanguage}
+                onChange={(event) =>
+                  setSelectedLanguage(
+                    event.target.value as DictationLanguageCode,
+                  )
+                }
+                MenuProps={chromeSelectMenuProps}
+                renderValue={(value) =>
+                  languageOptions.find((option) => option.code === value)
+                    ?.label ?? ""
+                }
+              >
+                {languageOptions.map(({ code, label }) => (
+                  <MenuItem key={code} value={code} sx={chromeSelectMenuItemSx}>
+                    {label}
+                    {code === selectedLanguage ? (
+                      <Check size={16} strokeWidth={2} />
+                    ) : null}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
           </Stack>
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>

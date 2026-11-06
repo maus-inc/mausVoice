@@ -10,6 +10,16 @@ import {
 import { FormattedMessage } from "react-intl";
 import type { ProviderFormConfig } from "./api-key-provider-config";
 
+type ProviderFormFieldsProps = {
+  config: ProviderFormConfig;
+  values: Record<string, string>;
+  onChange: (key: string, value: string) => void;
+  disabled: boolean;
+  includeV1Path?: boolean;
+  onIncludeV1PathChange?: (value: boolean) => void;
+  isEditing?: boolean;
+};
+
 export const ProviderFormFields = ({
   config,
   values,
@@ -18,15 +28,7 @@ export const ProviderFormFields = ({
   includeV1Path,
   onIncludeV1PathChange,
   isEditing,
-}: {
-  config: ProviderFormConfig;
-  values: Record<string, string>;
-  onChange: (key: string, value: string) => void;
-  disabled: boolean;
-  includeV1Path?: boolean;
-  onIncludeV1PathChange?: (value: boolean) => void;
-  isEditing?: boolean;
-}) => {
+}: ProviderFormFieldsProps) => {
   return (
     <>
       {config.fields.map((field) => (

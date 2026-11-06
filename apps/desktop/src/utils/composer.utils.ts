@@ -4,11 +4,10 @@ import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { getIntl } from "../i18n/intl";
 import { runToast, showToast } from "../actions/toast.actions";
 import { createId } from "./id.utils";
-import { composerOriginalRequestId } from "./composer-request-id.utils";
 import { requestPillPosition } from "./native-pill.utils";
 import { getLogger } from "./log.utils";
 
-type ComposerResult = {
+export type ComposerResult = {
   requestId: string;
   accepted: boolean;
   text: string;
@@ -165,65 +164,54 @@ export const ensurePillGeometry = async (): Promise<boolean> => {
   if (cachedPillRect && cachedPillMonitor) return true;
 
   let unlisten: (() => void) | undefined;
-  let settled = false;
-  let resolveResult!: (published: boolean) => void;
-  const result = new Promise<boolean>((resolve) => {
-    resolveResult = resolve;
-  });
-  const finish = (published: boolean) => {
-    if (settled) return;
-    settled = true;
-    clearTimeout(timeoutId);
-    if (unlisten) releaseComposerListener(unlisten);
-    resolveResult(published);
-  };
-  const timeoutId = setTimeout(() => {
-    finish(false);
-    try {
-      getLogger().warning(
-        "Native pill did not report its geometry in time; using the OS window placement",
-      );
-    } catch {
-      // Logging must not defeat the deadline.
-    }
-  }, PILL_GEOMETRY_TIMEOUT_MS);
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
-  // Register first, request second: a reply sent before a listener is lost.
-  // The deadline covers both registration and request IPC, not just the reply.
-  void (async () => {
-    try {
-      const dispose = await listen<PillPositionEvent>(
-        "pill-position-changed",
-        (event) => {
-          if (settled) return;
-          const { rect, monitor } = event.payload;
-          if (!rect || !monitor) {
-            finish(false);
-            return;
-          }
-          setPillGeometry(rect, monitor);
-          finish(true);
-        },
-      );
-      if (settled) {
-        releaseComposerListener(dispose);
-        return;
-      }
-      unlisten = dispose;
-      await requestPillPosition();
-    } catch {
-      if (settled) return;
-      finish(false);
-      try {
+  try {
+    let settle: (published: boolean) => void = () => {};
+    const published = new Promise<boolean>((resolve) => {
+      settle = resolve;
+    });
+
+    // Register first, request second: the pill answers immediately and a
+    // Tauri event with no listener is dropped, so the reverse order would
+    // lose the only reply we get.
+    unlisten = await listen<PillPositionEvent>(
+      "pill-position-changed",
+      (event) => {
+        const { rect, monitor } = event.payload;
+        if (!rect || !monitor) {
+          settle(false);
+          return;
+        }
+        setPillGeometry(rect, monitor);
+        settle(true);
+      },
+    );
+
+    await requestPillPosition();
+
+    const timedOut = new Promise<boolean>((resolve) => {
+      timeoutId = setTimeout(() => {
         getLogger().warning(
-          "Could not read the native pill geometry; using the OS window placement",
+          "Native pill did not report its geometry in time; using the OS window placement",
         );
-      } catch {
-        // Logging is optional.
-      }
+        resolve(false);
+      }, PILL_GEOMETRY_TIMEOUT_MS);
+    });
+
+    return await Promise.race([published, timedOut]);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    getLogger().warning(
+      `Could not read the native pill geometry (${message}); using the OS window placement`,
+    );
+    return false;
+  } finally {
+    if (timeoutId !== null) {
+      clearTimeout(timeoutId);
     }
-  })();
-  return result;
+    unlisten?.();
+  }
 };
 
 /** The slot remains owned until settlement cleanup begins, never by a late setup. */
@@ -259,90 +247,50 @@ class ComposerReview {
   });
 
   constructor(
-    private text: string,
-    private originalText: string,
-    private readonly signal?: AbortSignal,
+    private readonly text: string,
+    private readonly originalText: string,
   ) {}
 
   async run(): Promise<string | null> {
-    const abort = () => this.finish(null);
-    if (this.signal?.aborted) {
-      this.finish(null);
-    } else {
-      this.signal?.addEventListener("abort", abort, { once: true });
-    }
-    if (!this.settled) this.armSetupTimeout();
-    // Registration can hang just like window creation. The setup deadline must
-    // settle the review even while the native registration has no reply.
-    if (!this.settled) void this.prepare().catch(() => this.fail());
     try {
+      this.armSetupTimeout();
+      await invoke("composer_register_text", {
+        requestId: this.requestId,
+        text: this.text,
+      });
+      void this.open().catch((error: unknown) => this.fail(error));
+      return await this.result;
+    } catch (error: unknown) {
+      this.fail(error);
       return await this.result;
     } finally {
-      this.signal?.removeEventListener("abort", abort);
       this.finish(null);
       if (activeComposer === this) activeComposer = null;
       for (const dispose of this.cleanups) releaseComposerListener(dispose);
       this.cleanups.clear();
-      // Cleanup IPC must not keep the review or the next recording locked. A
-      // late registration is discarded again in prepare(), since the first
-      // discard may have reached native before registration did.
-      void this.discardText(this.requestId);
-      void this.discardText(composerOriginalRequestId(this.requestId));
-      void this.destroyWindow().catch(() => undefined);
+      await invoke("composer_discard_text", {
+        requestId: this.requestId,
+      }).catch(() => {
+        // The composer may already have consumed the request.
+      });
+      await this.destroyWindow();
     }
-  }
-
-  private async discardText(requestId: string): Promise<void> {
-    try {
-      await invoke("composer_discard_text", { requestId });
-    } catch {
-      // The composer may already have consumed the request or be unavailable.
-    }
-  }
-
-  private async prepare(): Promise<void> {
-    await invoke("composer_register_text", {
-      requestId: this.requestId,
-      text: this.text,
-    });
-    if (this.settled) {
-      void this.discardText(this.requestId);
-      return;
-    }
-    const originalId = composerOriginalRequestId(this.requestId);
-    await invoke("composer_register_text", {
-      requestId: originalId,
-      text: this.originalText,
-    });
-    if (this.settled) {
-      void this.discardText(originalId);
-      return;
-    }
-    await this.open();
   }
 
   private armSetupTimeout(): void {
     this.setupTimer = setTimeout(() => {
+      getLogger().error(
+        "reviewTextInComposer: setup timeout (window creation or listener stalled)",
+      );
+      void this.destroyWindow();
+      this.showRecovery();
       this.finish(null);
-      void this.destroyWindow().catch(() => undefined);
-      try {
-        getLogger().error(
-          "reviewTextInComposer: setup timeout (registration, window creation or listener stalled)",
-        );
-        this.showRecovery();
-      } catch {
-        // Feedback is optional; it cannot prevent the deadline from settling.
-      }
     }, COMPOSER_READY_TIMEOUT_MS);
   }
 
   private finish(value: string | null): void {
     if (this.settled) return;
     this.settled = true;
-    // A stalled native registration may keep this object alive after the UI
-    // has retired; do not retain another copy of the transcript here.
-    this.text = "";
-    this.originalText = "";
     clearTimeout(this.setupTimer);
     clearTimeout(this.readyTimer);
     clearTimeout(this.decisionTimer);
@@ -375,8 +323,7 @@ class ComposerReview {
   private windowArgs(): Record<string, unknown> {
     return {
       url: "about:blank",
-      // Transcript text stays in the bounded native handoff, never the URL.
-      route: `composer?requestId=${encodeURIComponent(this.requestId)}`,
+      route: `composer?requestId=${encodeURIComponent(this.requestId)}&original=${encodeURIComponent(this.originalText)}`,
       title: getIntl().formatMessage({ defaultMessage: "Review transcript" }),
       width: 560,
       height: 420,
@@ -436,17 +383,13 @@ class ComposerReview {
     // Readiness can arrive while window creation/lookup is still pending.
     if (!this.ready) {
       this.readyTimer = setTimeout(() => {
-        this.finish(null);
+        getLogger().error(
+          "reviewTextInComposer: composer-ready timeout (webview likely blank)",
+        );
         // Do not queue destruction behind an unresponsive text-discard IPC.
-        void this.destroyWindow().catch(() => undefined);
-        try {
-          getLogger().error(
-            "reviewTextInComposer: composer-ready timeout (webview likely blank)",
-          );
-          this.showRecovery();
-        } catch {
-          // Feedback is optional; the review has already settled.
-        }
+        void this.destroyWindow();
+        this.showRecovery();
+        this.finish(null);
       }, COMPOSER_READY_TIMEOUT_MS);
     }
     this.decisionTimer = setTimeout(
@@ -466,7 +409,7 @@ class ComposerReview {
       showToast({
         message: getIntl().formatMessage({
           defaultMessage:
-            "Could not open the review window. The transcript was not inserted.",
+            "Could not open the review window. Your transcript was saved to history.",
         }),
         toastType: "error",
         duration: 8000,
@@ -475,26 +418,23 @@ class ComposerReview {
     );
   }
 
-  private fail(): void {
+  private fail(error: unknown): void {
     // A late setup rejection must not toast or disturb a newer review.
     if (this.settled) return;
+    const message = error instanceof Error ? error.message : String(error);
+    getLogger().error(
+      `reviewTextInComposer window creation failed: ${message}`,
+    );
+    this.showRecovery();
     this.finish(null);
-    try {
-      // Native errors may contain sensitive transcript text; keep the log generic.
-      getLogger().error("reviewTextInComposer setup failed");
-      this.showRecovery();
-    } catch {
-      // Feedback is optional; the review has already settled.
-    }
   }
 }
 
 /** Review one transcript; resolve edited text or null on cancel/close/failure. */
 export const reviewTextInComposer = async (
   text: string,
-  options?: { originalText?: string; signal?: AbortSignal },
+  options?: { originalText?: string },
 ): Promise<string | null> => {
-  if (options?.signal?.aborted) return null;
   if (activeComposer) {
     if (activeComposer.windowId) {
       WebviewWindow.getByLabel(activeComposer.windowId)
@@ -506,11 +446,7 @@ export const reviewTextInComposer = async (
     );
     return null;
   }
-  const review = new ComposerReview(
-    text,
-    options?.originalText ?? text,
-    options?.signal,
-  );
+  const review = new ComposerReview(text, options?.originalText ?? text);
   // Synchronous reservation: two callers cannot both reach native creation.
   activeComposer = review;
   return review.run();

@@ -260,15 +260,6 @@ const isActiveRun = (state: AgentRunState | undefined): boolean =>
   state.status !== "error" &&
   !state.aborted;
 
-const resolveRunOutcome = (
-  persisted: ReturnType<typeof persistedRunOutcomeOf>,
-  state: AgentRunState | undefined,
-): ReturnType<typeof persistedRunOutcomeOf> => {
-  if (state?.aborted) return "aborted";
-  if (state?.status === "error") return "error";
-  return persisted;
-};
-
 const getRunNote = (
   message: ChatMessage,
   agentState: AgentRunState | undefined,
@@ -276,7 +267,9 @@ const getRunNote = (
 ): MessagePartsInput["runNote"] => {
   // A new run's startup must not display the previous attempt's error.
   if (isActiveRun(agentState)) return null;
-  const outcome = resolveRunOutcome(persistedRunOutcomeOf(message), agentState);
+  let outcome = persistedRunOutcomeOf(message);
+  if (agentState?.aborted) outcome = "aborted";
+  else if (agentState?.status === "error") outcome = "error";
   if (outcome === "aborted") {
     return {
       kind: "status",

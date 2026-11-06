@@ -46,15 +46,6 @@ describe("markdownToPillText", () => {
     expect(result).toContain("3. third");
   });
 
-  it("handles tabs in list indentation and after markers", () => {
-    expect(markdownToPillText("\t-\t  first\n  10.\t second")).toBe(
-      "• first\n10. second",
-    );
-    expect(markdownToPillText("-not a list\n10.not a list")).toBe(
-      "-not a list\n10.not a list",
-    );
-  });
-
   it("handles empty input", () => {
     expect(markdownToPillText("")).toBe("");
     expect(markdownToPillText(null)).toBe("");
@@ -125,19 +116,6 @@ describe("tables and lists stay structured", () => {
     expect(result).toContain("Linus | 10");
     // The separator row must not leak through.
     expect(result).not.toContain("---");
-  });
-
-  it("leaves pipe text alone unless a separator follows a multi-cell header", () => {
-    expect(markdownToPillText("left | right")).toBe("left | right");
-    expect(markdownToPillText("left | right\nnot a separator")).toBe(
-      "left | right\nnot a separator",
-    );
-    expect(markdownToPillText("| only |\n| --- |\nplain text")).toBe(
-      "| only |\n| --- |\nplain text",
-    );
-    expect(markdownToPillText("a | b\n:--- | ---:\n1 | 2\nafter")).toBe(
-      "a | b\n1 | 2\n\nafter",
-    );
   });
 
   it("keeps each bullet on its own line", () => {

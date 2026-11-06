@@ -1,13 +1,29 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
+import type { ApiKey } from "@maus-inc/types";
 import type { DeepgramTranscriptionModel } from "@maus-inc/voice-ai";
 import { getModelProviderRepo } from "../repos";
 import {
   PERSONAL_DEEPGRAM_API_KEY_ID,
   PERSONAL_DEEPGRAM_TRANSCRIPTION_MODEL,
   PERSONAL_GROQ_API_KEY_ID,
+  PERSONAL_GROQ_API_KEY_NAME,
+  PERSONAL_GROQ_POST_PROCESSING_MODEL,
+  PERSONAL_GROQ_TRANSCRIPTION_MODEL,
+  PREVIOUS_PERSONAL_GROQ_TRANSCRIPTION_MODEL,
+  buildPersonalGroqKeyUpdate,
   resolvePersonalTranscriptionTarget,
-  shouldConfigurePersonalGeneration,
 } from "./personal-use.utils";
+
+const personalGroqKey = (overrides: Partial<ApiKey> = {}): ApiKey => ({
+  id: PERSONAL_GROQ_API_KEY_ID,
+  name: PERSONAL_GROQ_API_KEY_NAME,
+  provider: "groq",
+  createdAt: "2024-01-01T00:00:00.000Z",
+  keyFull: "gsk_configured",
+  transcriptionModel: PERSONAL_GROQ_TRANSCRIPTION_MODEL,
+  postProcessingModel: PERSONAL_GROQ_POST_PROCESSING_MODEL,
+  ...overrides,
+});
 
 describe("PERSONAL_DEEPGRAM_TRANSCRIPTION_MODEL", () => {
   // Pin the value itself. This and the repo check below read the same array, so
@@ -37,33 +53,6 @@ describe("PERSONAL_DEEPGRAM_TRANSCRIPTION_MODEL", () => {
     ).getTranscriptionModels({});
 
     expect(offered).toContain(PERSONAL_DEEPGRAM_TRANSCRIPTION_MODEL);
-  });
-});
-
-describe("shouldConfigurePersonalGeneration", () => {
-  it("does not rewrite the preset when the selected key has the canonical id", () => {
-    expect(
-      shouldConfigurePersonalGeneration(
-        "api",
-        PERSONAL_GROQ_API_KEY_ID,
-        PERSONAL_GROQ_API_KEY_ID,
-      ),
-    ).toBe(false);
-  });
-
-  it.each([
-    { mode: null, id: null, expected: true },
-    { mode: "", id: "external", expected: true },
-    { mode: "api", id: "", expected: true },
-    { mode: "api", id: PERSONAL_GROQ_API_KEY_ID, expected: true },
-    { mode: "local", id: "selected", expected: true },
-    { mode: "api", id: "selected", expected: false },
-    { mode: "api", id: "external", expected: false },
-    { mode: "local", id: "external", expected: false },
-  ])("decides whether to set mode=$mode key=$id", ({ mode, id, expected }) => {
-    expect(shouldConfigurePersonalGeneration(mode, id, "selected")).toBe(
-      expected,
-    );
   });
 });
 
@@ -181,5 +170,52 @@ describe("resolvePersonalTranscriptionTarget", () => {
     });
 
     expect(target).toBeNull();
+  });
+});
+
+describe("buildPersonalGroqKeyUpdate", () => {
+  it("corrects only the fields that differ from the preset", () => {
+    const update = buildPersonalGroqKeyUpdate(
+      personalGroqKey({
+        id: "adopted-key",
+        name: "My Groq key",
+        keyFull: "gsk_old",
+        transcriptionModel: "a-model-someone-chose",
+        postProcessingModel: null,
+      }),
+      "gsk_new",
+    );
+
+    expect(update).toEqual({
+      id: "adopted-key",
+      name: PERSONAL_GROQ_API_KEY_NAME,
+      key: "gsk_new",
+      postProcessingModel: PERSONAL_GROQ_POST_PROCESSING_MODEL,
+    });
+    // The deliberately chosen transcription model is not in the payload.
+    expect(update).not.toHaveProperty("transcriptionModel");
+  });
+
+  it("returns the id alone when the stored key already matches", () => {
+    const update = buildPersonalGroqKeyUpdate(
+      personalGroqKey(),
+      "gsk_configured",
+    );
+
+    expect(update).toEqual({ id: PERSONAL_GROQ_API_KEY_ID });
+  });
+
+  it("moves the model this app used to write forward, and nothing else", () => {
+    const update = buildPersonalGroqKeyUpdate(
+      personalGroqKey({
+        transcriptionModel: PREVIOUS_PERSONAL_GROQ_TRANSCRIPTION_MODEL,
+      }),
+      "gsk_configured",
+    );
+
+    expect(update).toEqual({
+      id: PERSONAL_GROQ_API_KEY_ID,
+      transcriptionModel: PERSONAL_GROQ_TRANSCRIPTION_MODEL,
+    });
   });
 });

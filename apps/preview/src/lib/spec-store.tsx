@@ -29,7 +29,7 @@ import {
 import type { RegistryEntry, SpecField } from "./registry";
 import { REGISTRY } from "./registry";
 
-type Overrides = Record<string, Record<string, number | string>>;
+export type Overrides = Record<string, Record<string, number | string>>;
 
 const STORAGE_KEY = "maus-preview-spec-overrides-v1";
 

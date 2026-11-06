@@ -38,6 +38,13 @@ export type CollapseMediaQuery = {
   removeEventListener: (type: "change", listener: () => void) => void;
 };
 
+type ResizeObserverLike = {
+  observe: (target: Element) => void;
+  disconnect: () => void;
+};
+
+type ResizeObserverCtor = new (callback: () => void) => ResizeObserverLike;
+
 export type AttachScrollListCollapseOptions = {
   scroller: CollapseScroller;
   measureElements: readonly (Element | null | undefined)[];
@@ -46,20 +53,10 @@ export type AttachScrollListCollapseOptions = {
   prefersReducedMotion?: () => boolean;
   mediaQuery?: CollapseMediaQuery | null;
   /** Pass `null` to skip ResizeObserver (tests / no-RO fallback). */
-  resizeObserver?:
-    | (new (callback: () => void) => {
-        observe: (target: Element) => void;
-        disconnect: () => void;
-      })
-    | null;
+  resizeObserver?: ResizeObserverCtor | null;
   requestFrame?: (callback: FrameRequestCallback) => number;
   cancelFrame?: (handle: number) => void;
 };
-
-type ResizeObserverCtor = NonNullable<
-  AttachScrollListCollapseOptions["resizeObserver"]
->;
-type ResizeObserverLike = InstanceType<ResizeObserverCtor>;
 
 export type ScrollListCollapseHandle = {
   disconnect: () => void;

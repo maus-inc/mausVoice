@@ -14,12 +14,13 @@ import type {
   TranscriptionMode,
 } from "../types/ai.types";
 import dayjs from "dayjs";
-import { detectLocale } from "../i18n";
-import { DEFAULT_LOCALE } from "../i18n/config";
+import { detectLocale, matchSupportedLocale } from "../i18n";
+import { DEFAULT_LOCALE, type Locale } from "../i18n/config";
+import { createTranscriptionSession } from "../sessions";
 import type { AppState } from "../state/app.state";
 import { applyAiPreferences } from "./ai.utils";
 import { registerUsers } from "./app.utils";
-import { getAdditionalLanguageHotkeys } from "./additional-language.utils";
+import { getAdditionalLanguageEntries } from "./keyboard.utils";
 import {
   AUTO_LANGUAGE,
   coerceToDictationLanguage,
@@ -32,6 +33,12 @@ export const LOCAL_USER_ID = "local-user-id";
 
 export const getIsLoggedIn = (state: AppState): boolean => {
   return !!state.auth;
+};
+
+export const getHasEmailProvider = (state: AppState): boolean => {
+  const auth = state.auth;
+  const providers = auth?.providers ?? [];
+  return providers.includes("password");
 };
 
 export const getIsOnboarded = (state: AppState): boolean => {
@@ -70,6 +77,27 @@ export const getMyUser = (state: AppState): Nullable<User> => {
   return getRec(state.userById, getMyEffectiveUserId(state)) ?? null;
 };
 
+/**
+ * The custom profile photo for the current user, if they have set one.
+ *
+ * Read straight from the local slice rather than the account record: the photo
+ * is this device's copy and is not synced.
+ */
+export const getMyProfileImage = (state: AppState): Nullable<string> => {
+  return (
+    state.local.profileImageByUserId?.[getMyEffectiveUserId(state)] ?? null
+  );
+};
+
+export const getMyPreferredLocale = (state: AppState): Locale => {
+  const user = getMyUser(state);
+  return (
+    matchSupportedLocale(user?.preferredLanguage) ??
+    detectLocale() ??
+    DEFAULT_LOCALE
+  );
+};
+
 export const getDetectedSystemLocale = (): string => {
   return detectLocale() ?? DEFAULT_LOCALE;
 };
@@ -92,7 +120,7 @@ export const getConfiguredDictationLanguageCodes = (
   state: AppState,
 ): Set<string> => {
   const codes = new Set<string>([AUTO_LANGUAGE]);
-  for (const entry of getAdditionalLanguageHotkeys(state)) {
+  for (const entry of getAdditionalLanguageEntries(state)) {
     codes.add(entry.language);
   }
   return codes;
@@ -148,6 +176,14 @@ export const loadMyEffectiveDictationLanguage = async (
   return coerceToDictationLanguage(lang);
 };
 
+export const formatDictationLanguageCode = (language: string): string => {
+  if (language === AUTO_LANGUAGE) {
+    return "AUTO";
+  }
+  const baseCode = language.split("-")[0];
+  return baseCode.toUpperCase().slice(0, 2);
+};
+
 export const getMyUserPreferences = (
   state: AppState,
 ): Nullable<UserPreferences> => {
@@ -187,6 +223,10 @@ export const getMyUserFirstName = (state: AppState): string => {
   return firstName || fullName || "Guest";
 };
 
+export const getIsSignedIn = (state: AppState): boolean => {
+  return !!state.auth;
+};
+
 export const setCurrentUser = (draft: AppState, user: User): void => {
   registerUsers(draft, [user]);
 };
@@ -208,16 +248,18 @@ export const setUserPreferences = (
   applyAiPreferences(draft, normalized);
 };
 
-export type LocalTranscriptionPrefs = {
+type BaseTranscriptionPrefs = {
   warnings: string[];
+};
+
+export type LocalTranscriptionPrefs = BaseTranscriptionPrefs & {
   mode: "local";
   gpuEnumerationEnabled: boolean;
   transcriptionDevice: string | null;
   transcriptionModelSize: string | null;
 };
 
-export type ApiTranscriptionPrefs = {
-  warnings: string[];
+export type ApiTranscriptionPrefs = BaseTranscriptionPrefs & {
   mode: "api";
   provider: ApiKeyProvider;
   apiKeyId: string;
@@ -232,9 +274,9 @@ export type TranscriptionPrefs =
  * Providers with an implemented batch transcription route — i.e. parity with
  * the `getTranscribeAudioRepo()` switch branches in `repos/index.ts` (mirrored
  * here to avoid a circular import). This is NOT the same as the
- * `supportsTranscriptionModels()` capability flags: Azure is always available
- * in the transcription UI (special-cased by region in `ApiKeyList`), so
- * `AzureModelProviderRepo.supportsTranscriptionModels()` returns `false` while
+ * `supportsTranscriptionModels` capability flags: Azure is always available
+ * in the transcription UI (special-cased by region in `ApiKeyList`), so the
+ * `AzureModelProviderRepo.supportsTranscriptionModels` flag is `false` while
  * `azure` still has a real dispatch branch and must stay in this set. A
  * selected key whose provider is not in this set cannot be transcribed and is
  * treated as stale.
@@ -321,8 +363,17 @@ export const getTranscriptionPrefs = (state: AppState): TranscriptionPrefs => {
   };
 };
 
-export type ApiGenerativePrefs = {
+export const getTranscriptionSupportsStreaming = (state: AppState): boolean => {
+  const prefs = getTranscriptionPrefs(state);
+  const session = createTranscriptionSession(prefs);
+  return session.supportsStreaming();
+};
+
+type BaseGenerativePrefs = {
   warnings: string[];
+};
+
+export type ApiGenerativePrefs = BaseGenerativePrefs & {
   mode: "api";
   provider: ApiKeyProvider;
   apiKeyId: string;
@@ -330,8 +381,7 @@ export type ApiGenerativePrefs = {
   postProcessingModel: string | null;
 };
 
-export type NoneGenerativePrefs = {
-  warnings: string[];
+export type NoneGenerativePrefs = BaseGenerativePrefs & {
   mode: "none";
 };
 
@@ -342,11 +392,6 @@ type GenerativeConfigInput = {
   selectedApiKeyId: string | null;
 };
 
-const KEYLESS_GENERATIVE_PROVIDERS = new Set<ApiKeyProvider>([
-  "ollama",
-  "openai-compatible",
-]);
-
 const getGenPrefsInternal = ({
   state,
   config,
@@ -356,29 +401,30 @@ const getGenPrefsInternal = ({
   config: GenerativeConfigInput;
   context: string;
 }): GenerativePrefs => {
-  if (resolveMode(config.mode, "none") !== "api") {
-    return { mode: "none", warnings: [] };
+  const mode = resolveMode(config.mode, "none");
+  const apiKey = getRec(state.apiKeyById, config.selectedApiKeyId)?.keyFull;
+  const warnings: string[] = [];
+
+  if (mode === "api") {
+    const selectedApiKey = getRec(state.apiKeyById, config.selectedApiKeyId);
+    const provider = selectedApiKey?.provider;
+    const noKeyRequired =
+      provider === "ollama" || provider === "openai-compatible";
+    if (apiKey || noKeyRequired) {
+      return {
+        mode: "api",
+        provider: provider ?? "groq",
+        apiKeyId: config.selectedApiKeyId!,
+        apiKeyValue: apiKey ?? "",
+        postProcessingModel: selectedApiKey?.postProcessingModel ?? null,
+        warnings,
+      };
+    } else {
+      warnings.push(`No API key configured for API ${context}.`);
+    }
   }
 
-  const selectedApiKey = getRec(state.apiKeyById, config.selectedApiKeyId);
-  if (
-    !selectedApiKey ||
-    (!selectedApiKey.keyFull &&
-      !KEYLESS_GENERATIVE_PROVIDERS.has(selectedApiKey.provider))
-  ) {
-    return {
-      mode: "none",
-      warnings: [`No API key configured for API ${context}.`],
-    };
-  }
-  return {
-    mode: "api",
-    provider: selectedApiKey.provider ?? "groq",
-    apiKeyId: config.selectedApiKeyId!,
-    apiKeyValue: selectedApiKey.keyFull ?? "",
-    postProcessingModel: selectedApiKey.postProcessingModel ?? null,
-    warnings: [],
-  };
+  return { mode: "none", warnings };
 };
 
 export const getGenerativePrefs = (state: AppState): GenerativePrefs => {
@@ -460,6 +506,7 @@ export const getDictationSpeed = (state: AppState): DictationSpeed | null => {
     const t = getRec(state.transcriptionById, id);
     if (
       !t ||
+      t.transcript === "[Transcription Failed]" ||
       !t.audio?.durationMs ||
       t.audio.durationMs <= 0 ||
       !t.transcript

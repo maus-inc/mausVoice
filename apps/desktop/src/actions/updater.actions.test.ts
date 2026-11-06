@@ -39,7 +39,10 @@ vi.mock("./toast.actions", async () => ({
 }));
 vi.mock("../repos", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../repos")>()),
-  getUserPreferencesRepo: () => ({ setUserPreferences: savePreferences }),
+  getUserPreferencesRepo: () => ({
+    setUserPreferences: savePreferences,
+    getUserPreferences: async () => getAppState().userPrefs,
+  }),
 }));
 vi.mock("../utils/log.utils", () => ({
   getLogger: () => ({ verbose: vi.fn(), error: vi.fn(), warning: vi.fn() }),
@@ -53,7 +56,7 @@ vi.mock("./app.actions", () => ({ showErrorSnackbar: vi.fn() }));
 // transitively, so the rest of the module must stay real.
 vi.mock("../utils/env.utils", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../utils/env.utils")>()),
-  getDesktopPlatform: () => "darwin",
+  getPlatform: () => "darwin",
 }));
 vi.mock("../i18n/intl", () => ({
   getIntl: () => ({
@@ -224,33 +227,6 @@ describe("checkForAppUpdates", () => {
 
     await checkForAppUpdates({ userInitiated: true });
 
-    expect(getAppState().updater.dialogOpen).toBe(true);
-  });
-
-  it("respects the auto-show preference for background checks but not manual checks", async () => {
-    updaterMock.checkForUpdate.mockResolvedValue(availableUpdate);
-    setAppState((state) => {
-      state.userPrefs = {
-        ...createDefaultPreferences(),
-        ignoreUpdateDialog: true,
-      };
-      return state;
-    });
-    await checkForAppUpdates();
-    expect(getAppState().updater.dialogOpen).toBe(false);
-    await checkForAppUpdates({ userInitiated: true });
-    expect(getAppState().updater.dialogOpen).toBe(true);
-  });
-
-  it("reopens after a snooze expires and leaves an already open dialog alone", async () => {
-    updaterMock.checkForUpdate.mockResolvedValue(availableUpdate);
-    setAppState((state) => {
-      state.updater.dismissedUntil = Date.now() - 1;
-      return state;
-    });
-    await checkForAppUpdates();
-    expect(getAppState().updater.dialogOpen).toBe(true);
-    await checkForAppUpdates();
     expect(getAppState().updater.dialogOpen).toBe(true);
   });
 

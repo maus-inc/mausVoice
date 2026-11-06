@@ -1,4 +1,3 @@
-import { AudioPlayerPillFrame } from "@desktop/components/transcriptions/AudioPlayerPillFrame";
 /**
  * AudioPlayerPill — recreated.
  *
@@ -29,7 +28,7 @@ const BAR_MIN_W = 2;
 const BAR_MAX_W = 4;
 const BAR_GAP = 2;
 
-const formatDuration = (durationMs?: number | null): string => {
+export const formatDuration = (durationMs?: number | null): string => {
   if (!durationMs || !Number.isFinite(durationMs)) return "0:00";
   const totalSeconds = Math.floor(durationMs / 1000);
   const minutes = Math.floor(totalSeconds / 60);
@@ -130,7 +129,21 @@ export const AudioPlayerPillPreview = ({
   const progressPercent = Math.min(Math.max(progress, 0), 1) * 100;
 
   return (
-    <AudioPlayerPillFrame maxWidth={maxWidth}>
+    <Box
+      sx={{
+        display: "flex",
+        alignItems: "center",
+        borderRadius: 999,
+        border: (theme) => `1px solid ${theme.palette.divider}`,
+        backgroundColor: (theme) => theme.vars?.palette.level1,
+        px: 1,
+        py: 0.25,
+        gap: 1,
+        width: "100%",
+        maxWidth,
+        alignSelf: "flex-start",
+      }}
+    >
       <IconButton
         aria-label={isPlaying ? "Pause audio" : "Play audio"}
         size="small"
@@ -197,6 +210,6 @@ export const AudioPlayerPillPreview = ({
         ))}
       </Box>
       {actions}
-    </AudioPlayerPillFrame>
+    </Box>
   );
 };

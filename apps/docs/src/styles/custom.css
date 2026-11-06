@@ -103,9 +103,6 @@
   --sl-color-text-accent: hsl(0 0% 100%);
   --sl-color-text-invert: hsl(0 0% 0%);
 
-  /* Masthead faces scale proportionally with Starlight's title size. */
-  --mv-docs-brand-size: 0.86em;
-  --mv-docs-suffix-size: 0.78em;
   --sl-font: "Satoshi", "Inter", system-ui, -apple-system, sans-serif;
   --sl-font-mono:
     "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
@@ -150,7 +147,7 @@ body {
 .site-title .site-title-brand {
   font-family: "TAN-PARADISO", "Satoshi", sans-serif;
   font-weight: 400;
-  font-size: var(--mv-docs-brand-size);
+  font-size: 0.86em;
   letter-spacing: -0.045em;
   line-height: 1;
   vertical-align: baseline;
@@ -159,7 +156,7 @@ body {
 .site-title .site-title-suffix {
   font-family: "Satoshi", "Inter", system-ui, sans-serif;
   font-weight: 500;
-  font-size: var(--mv-docs-suffix-size);
+  font-size: 0.78em;
   letter-spacing: 0.02em;
   line-height: 1.05;
   color: var(--sl-color-gray-2);
@@ -174,7 +171,7 @@ body {
   letter-spacing: -0.014em;
 }
 
-.sl-markdown-content p, .sl-markdown-content ul, .sl-markdown-content ol, .sl-markdown-content blockquote {
+.sl-markdown-content :is(p, ul, ol, blockquote) {
   margin-block: 0.72rem;
 }
 
@@ -182,7 +179,7 @@ body {
   margin-top: 0.18rem;
 }
 
-.sl-markdown-content h2, .sl-markdown-content h3, .sl-markdown-content h4 {
+.sl-markdown-content :is(h2, h3, h4) {
   margin-bottom: 0.48rem;
 }
 
@@ -203,8 +200,10 @@ header,
   line-height: 1.05;
 }
 
-/* Expressive Code frames echo the landing page surface. */
-.expressive-code .frame {
+/* Cards / callouts echo the landing page .card surface. */
+.expressive-code .frame,
+.sl-card,
+.astro-code {
   border-radius: 4px;
 }
 
@@ -236,26 +235,16 @@ header,
 /* ------------------------------------------------------------------ *
  * Bento cards — the coloured icon chrome is scrapped in favour of 3D
  * ASCII element decorations pinned to the card edges. Each card carries a
- * named artwork in a corner, faded toward the centre. Each card owns its
- * decoration so reordering cards cannot change their artwork.
+ * single element in a corner, faded toward the centre; the positioning
+ * alternates across the four edges and the artwork inverts on light theme.
  * ------------------------------------------------------------------ */
 .card-grid.stagger .card {
   position: relative;
   overflow: hidden;
 }
 
-/* The same artwork inverts on light surfaces without per-variant selectors. */
-:root {
-  --mv-docs-card-art-filter: none;
-  --mv-docs-card-art-opacity: 0.85;
-}
-
-:root[data-theme="light"] {
-  --mv-docs-card-art-filter: invert(1);
-  --mv-docs-card-art-opacity: 0.6;
-}
-
-.mv-docs-card-art {
+.card-grid.stagger .card::before {
+  content: "";
   position: absolute;
   width: 220px;
   height: 150px;
@@ -263,12 +252,11 @@ header,
   background-size: contain;
   background-position: center;
   pointer-events: none;
-  filter: var(--mv-docs-card-art-filter);
-  opacity: var(--mv-docs-card-art-opacity);
+  opacity: 0.85;
 }
 
 /* Cube — top-left */
-.mv-docs-card-art--cube {
+.card-grid.stagger .card:nth-child(1)::before {
   top: 0;
   left: 0;
   background-image: url("/mausVoice/docs/assets/cards/ascii-cube.svg");
@@ -276,8 +264,8 @@ header,
   mask-image: linear-gradient(135deg, #000 0%, transparent 70%);
 }
 
-/* Pyramid — top-right, including the trailing card. */
-.mv-docs-card-art--pyramid {
+/* Pyramid — top-right */
+.card-grid.stagger .card:nth-child(2)::before {
   top: 0;
   right: 0;
   background-image: url("/mausVoice/docs/assets/cards/ascii-pyramid.svg");
@@ -286,7 +274,7 @@ header,
 }
 
 /* Sphere — bottom-left */
-.mv-docs-card-art--sphere {
+.card-grid.stagger .card:nth-child(3)::before {
   bottom: 0;
   left: 0;
   background-image: url("/mausVoice/docs/assets/cards/ascii-sphere.svg");
@@ -295,7 +283,7 @@ header,
 }
 
 /* Diamond — bottom-right */
-.mv-docs-card-art--diamond {
+.card-grid.stagger .card:nth-child(4)::before {
   bottom: 0;
   right: 0;
   background-image: url("/mausVoice/docs/assets/cards/ascii-diamond.svg");
@@ -303,11 +291,25 @@ header,
   mask-image: linear-gradient(45deg, #000 0%, transparent 70%);
 }
 
-/* Alternate the positioning for the trailing card. */
-.mv-docs-card-art--diamond-left {
+/* Alternate the positioning for the trailing cards. */
+.card-grid.stagger .card:nth-child(5)::before {
+  top: 0;
+  right: 0;
+  background-image: url("/mausVoice/docs/assets/cards/ascii-pyramid.svg");
+  -webkit-mask-image: linear-gradient(225deg, #000 0%, transparent 70%);
+  mask-image: linear-gradient(225deg, #000 0%, transparent 70%);
+}
+
+.card-grid.stagger .card:nth-child(6)::before {
   bottom: 0;
   left: 0;
   background-image: url("/mausVoice/docs/assets/cards/ascii-diamond.svg");
   -webkit-mask-image: linear-gradient(315deg, #000 0%, transparent 70%);
   mask-image: linear-gradient(315deg, #000 0%, transparent 70%);
+}
+
+/* Invert the white ASCII artwork to black on light theme. */
+:root[data-theme="light"] .card-grid.stagger .card::before {
+  filter: invert(1);
+  opacity: 0.6;
 }

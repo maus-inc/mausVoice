@@ -1,8 +1,18 @@
 import { Box, Button, Typography, type TypographyProps } from "@mui/material";
-import type { Theme } from "@mui/material/styles";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FormattedMessage } from "react-intl";
 import { noHoverQuery } from "../../styles/motion";
+
+type TypographyWithMoreProps = TypographyProps & {
+  maxLines?: number;
+  initiallyExpanded?: boolean;
+  moreLabel?: React.ReactNode;
+  lessLabel?: React.ReactNode;
+  fontSize?: number | string;
+  lineHeight?: number | string;
+  clampPaddingRight?: number | string;
+  inlineToggleRight?: number | string;
+};
 
 const defaultClampStyles = (maxLines: number) => ({
   display: "-webkit-box",
@@ -11,34 +21,41 @@ const defaultClampStyles = (maxLines: number) => ({
   overflow: "hidden",
 });
 
-const toSxLayers = (sx: TypographyProps["sx"]) => {
-  if (Array.isArray(sx)) return sx;
-  return sx ? [sx] : [];
+const coarseTouchQuery = "(hover: none) and (pointer: coarse)";
+const narrowInlineToggleQuery =
+  "@container typography-with-more (max-width: 480px)";
+
+const normalizeSxProp = (
+  baseClampStyles: Record<string, unknown>,
+  shouldClamp: boolean,
+  sx: TypographyProps["sx"],
+): TypographyProps["sx"] => {
+  if (!shouldClamp) {
+    return sx;
+  }
+
+  return { ...baseClampStyles, ...sx };
 };
 
-/** Preserve the caller's ordered MUI styles between the clamp and toggle space. */
-const clampedSx = (
-  baseClampStyles: Record<string, unknown>,
-  sx: TypographyProps["sx"],
-): TypographyProps["sx"] => [baseClampStyles, ...toSxLayers(sx), { pr: 6 }];
-
-/** Surface and text colors for both CSS-variable and ordinary MUI themes. */
-const disclosurePalette = (theme: Theme) => ({
-  primary: theme.vars?.palette.text.primary ?? theme.palette.text.primary,
-  secondary: theme.vars?.palette.text.secondary ?? theme.palette.text.secondary,
-  background: theme.vars?.palette.level0 ?? theme.palette.background.paper,
-  hover: theme.vars?.palette.level2 ?? theme.palette.action.hover,
-  active: theme.vars?.palette.level3 ?? theme.palette.action.selected,
-});
-
-/** Measure the unclamped text and track layout/content changes. */
-const useOverflowMeasurement = (
-  maxLines: number,
-  children: React.ReactNode,
-) => {
+export function TypographyWithMore({
+  children,
+  maxLines = 3,
+  initiallyExpanded = false,
+  moreLabel = <FormattedMessage defaultMessage="Show more" />,
+  lessLabel = <FormattedMessage defaultMessage="Show less" />,
+  sx,
+  fontSize,
+  lineHeight,
+  clampPaddingRight,
+  inlineToggleRight,
+  ...typographyProps
+}: TypographyWithMoreProps) {
+  const [expanded, setExpanded] = useState(initiallyExpanded);
   const [isOverflowing, setIsOverflowing] = useState(false);
   const hiddenTypographyRef = useRef<HTMLElement | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+
+  const clampStyles = useMemo(() => defaultClampStyles(maxLines), [maxLines]);
 
   const measureOverflow = useCallback(() => {
     if (typeof window === "undefined" || !hiddenTypographyRef.current) {
@@ -94,52 +111,57 @@ const useOverflowMeasurement = (
     measureOverflow();
   }, [measureOverflow, children]);
 
-  return { isOverflowing, hiddenTypographyRef, containerRef };
-};
-
-export function TypographyWithMore({
-  children,
-  maxLines = 3,
-  initiallyExpanded = false,
-  moreLabel = <FormattedMessage defaultMessage="Show more" />,
-  lessLabel = <FormattedMessage defaultMessage="Show less" />,
-  sx,
-  fontSize,
-  lineHeight,
-  ...typographyProps
-}: TypographyProps & {
-  maxLines?: number;
-  initiallyExpanded?: boolean;
-  moreLabel?: React.ReactNode;
-  lessLabel?: React.ReactNode;
-  fontSize?: number | string;
-  lineHeight?: number | string;
-}) {
-  const [expanded, setExpanded] = useState(initiallyExpanded);
-  const { isOverflowing, hiddenTypographyRef, containerRef } =
-    useOverflowMeasurement(maxLines, children);
-  const clampStyles = useMemo(() => defaultClampStyles(maxLines), [maxLines]);
-
   const toggleExpanded = () => setExpanded((prev) => !prev);
   const shouldClamp = isOverflowing && !expanded;
 
-  const typographySx = useMemo(
-    () => (shouldClamp ? clampedSx(clampStyles, sx) : sx),
-    [clampStyles, shouldClamp, sx],
-  );
+  const typographySx = useMemo(() => {
+    const normalized = normalizeSxProp(clampStyles, shouldClamp, sx);
+
+    if (!shouldClamp) {
+      return normalized;
+    }
+
+    const paddingAdjustments = [
+      { pr: clampPaddingRight ?? 6 },
+      ...(inlineToggleRight === undefined
+        ? []
+        : [{ [narrowInlineToggleQuery]: { pr: 0 } }]),
+    ];
+
+    if (Array.isArray(normalized)) {
+      return [...normalized, ...paddingAdjustments];
+    }
+
+    if (normalized) {
+      return [normalized, ...paddingAdjustments];
+    }
+
+    return paddingAdjustments;
+  }, [clampPaddingRight, clampStyles, inlineToggleRight, shouldClamp, sx]);
   const hiddenTypographySx = useMemo(() => {
     const baseDisplay = { display: "block" } as const;
 
-    if (!sx) {
+    if (
+      clampPaddingRight === undefined &&
+      inlineToggleRight === undefined &&
+      !sx
+    ) {
       return baseDisplay;
     }
 
-    if (Array.isArray(sx)) {
-      return [baseDisplay, ...sx];
+    const styles = Array.isArray(sx) ? [...sx] : [];
+    if (sx && !Array.isArray(sx)) {
+      styles.push(sx);
+    }
+    if (clampPaddingRight !== undefined) {
+      styles.push({ pr: clampPaddingRight });
+    }
+    if (inlineToggleRight !== undefined) {
+      styles.push({ [narrowInlineToggleQuery]: { pr: 0 } });
     }
 
-    return [baseDisplay, sx];
-  }, [sx]);
+    return [baseDisplay, ...styles];
+  }, [clampPaddingRight, inlineToggleRight, sx]);
 
   const renderToggleButton = (inline: boolean) => (
     <Button
@@ -157,19 +179,24 @@ export function TypographyWithMore({
           lineHeight !== undefined
             ? lineHeight
             : (variantStyles.lineHeight ?? 1.35);
-        const palette = disclosurePalette(theme);
+        const textPrimary =
+          theme.vars?.palette.text.primary ?? theme.palette.text.primary;
+        const textSecondary =
+          theme.vars?.palette.text.secondary ?? theme.palette.text.secondary;
 
         // The revealed state for the inline control, and for the out-of-flow
-        // chip. Declared once each and reused by :hover, :focus-visible and the
-        // no-hover media query, so a change to one reaches the others.
+        // chip. Declared once each and reused by hover, keyboard focus and
+        // touch states so their interaction affordances cannot drift apart.
         const inlineReveal = {
-          color: palette.primary,
+          color: textPrimary,
           textDecorationColor: "currentColor",
-          backgroundColor: palette.background,
+          backgroundColor:
+            theme.vars?.palette.level0 ?? theme.palette.background.paper,
         };
         const chipReveal = {
-          color: palette.primary,
-          backgroundColor: palette.hover,
+          color: textPrimary,
+          backgroundColor:
+            theme.vars?.palette.level2 ?? theme.palette.action.hover,
         };
 
         return {
@@ -179,12 +206,11 @@ export function TypographyWithMore({
           lineHeight: lineHeightResolved,
           textTransform: "none",
           // De-emphasized at rest so the disclosure control never competes
-          // with the content. The affordance is revealed on hover, on
-          // keyboard focus, and at rest wherever there is no hover to trigger
-          // it. `reveal` below is the single definition of that state, so the
-          // three paths cannot drift apart.
+          // with the content. Inline links reveal their cue on hover/focus and
+          // at rest for coarse-touch pointers; chips reveal a surface cue on
+          // devices that cannot hover.
           fontWeight: theme.typography.fontWeightMedium,
-          color: palette.secondary,
+          color: textSecondary,
           textDecoration: "underline",
           textDecorationColor: "transparent",
           textUnderlineOffset: 3,
@@ -192,8 +218,8 @@ export function TypographyWithMore({
           ...(inline
             ? {
                 position: "absolute" as const,
-                right: 0,
-                bottom: 0,
+                right: inlineToggleRight ?? 0,
+                bottom: inlineToggleRight === undefined ? 0 : theme.spacing(1),
                 mt: 0,
                 py: 0,
                 borderRadius: 999,
@@ -201,15 +227,33 @@ export function TypographyWithMore({
                 // painted on reveal (a repaint would double-tone the mask)
                 // and signal interactivity with color + underline instead —
                 // the link affordance for in-flow text toggles.
-                backgroundColor: palette.background,
-                boxShadow: `-12px 0 12px ${palette.background}`,
+                backgroundColor:
+                  theme.vars?.palette.level0 ?? theme.palette.background.paper,
+                boxShadow: `-12px 0 12px ${
+                  theme.vars?.palette.level0 ?? theme.palette.background.paper
+                }`,
                 "&:hover": inlineReveal,
                 "&:focus-visible": inlineReveal,
-                // A pointer that cannot hover never fires :hover, so on touch
-                // the underline is the only thing telling the user this is a
-                // control. Paint it at rest there rather than leaving a
-                // truncated transcript with no affordance at all.
-                [`@media ${noHoverQuery}`]: inlineReveal,
+                // Touch devices have no hover state; the resting underline
+                // keeps the inline disclosure recognizable. A no-pointer
+                // environment can still reveal it on keyboard focus.
+                [`@media ${coarseTouchQuery}`]: inlineReveal,
+                ...(inlineToggleRight === undefined
+                  ? {}
+                  : {
+                      [narrowInlineToggleQuery]: {
+                        position: "static",
+                        right: "auto",
+                        bottom: "auto",
+                        display: "block",
+                        width: "fit-content",
+                        ml: "auto",
+                        mt: 0,
+                        backgroundColor: "transparent",
+                        boxShadow: "none",
+                        borderRadius: 0,
+                      },
+                    }),
               }
             : {
                 // Ghost chip for the out-of-flow toggle: comfortable padding
@@ -227,7 +271,8 @@ export function TypographyWithMore({
                 // tier is its affordance, and a touch device never hovers.
                 [`@media ${noHoverQuery}`]: chipReveal,
                 "&:active": {
-                  backgroundColor: palette.active,
+                  backgroundColor:
+                    theme.vars?.palette.level3 ?? theme.palette.action.selected,
                 },
               }),
         };
@@ -239,7 +284,14 @@ export function TypographyWithMore({
 
   return (
     <Box>
-      <Box ref={containerRef} sx={{ position: "relative" }}>
+      <Box
+        ref={containerRef}
+        sx={{
+          position: "relative",
+          containerName: "typography-with-more",
+          containerType: "inline-size",
+        }}
+      >
         <Typography {...typographyProps} sx={typographySx}>
           {children}
         </Typography>

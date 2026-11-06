@@ -1,6 +1,5 @@
 import { User, UserPreferences } from "@maus-inc/types";
 import { detectLocale } from "../i18n/intl";
-import type { AppState } from "../state/app.state";
 import { getUserPreferencesRepo, getUserRepo } from "../repos";
 import {
   applyOnboardingNameDraft,
@@ -14,14 +13,8 @@ import {
 import { getAppState, produceAppState } from "../store";
 import { CURRENT_COHORT } from "../utils/analytics.utils";
 import { DEFAULT_DICTATION_LIMIT_MINUTES } from "../utils/dictation-limit.utils";
-import {
-  captureExpansionFlags,
-  preserveNewerExpansionFlags,
-} from "../utils/expansion-flags-revision";
 import { DEFAULT_HANDS_FREE_DELAY_MS } from "../utils/hands-free-delay.utils";
 import { PRIMARY_LANGUAGE_SENTINEL } from "../utils/language.utils";
-import { startAsPromise } from "../utils/promise.utils";
-import { captureUserSession } from "../utils/user-session.utils";
 import {
   EMAIL_TONE_ID,
   POLISHED_TONE_ID,
@@ -49,6 +42,10 @@ import {
 } from "../utils/analytics.utils";
 import { isMacOS } from "../utils/env.utils";
 import { isPermissionAuthorized } from "../utils/permission.utils";
+import {
+  beginLocalDataWrite,
+  type LocalDataWriteLease,
+} from "../utils/local-data-write-gate";
 
 export const CURRENT_ONBOARDING_FLOW_VERSION = 3;
 
@@ -147,31 +144,28 @@ const hasStaleOnboardingAccountState = (onboarding: OnboardingState): boolean =>
   onboarding.referralSource.trim() !== "" ||
   onboarding.preferredMicrophone !== null;
 
-/** Detect persisted onboarding data belonging to a different or unknown account. */
-const hasStaleAccountSession = (state: AppState): boolean => {
-  if (!state.auth) return false;
+export const resumeOnboardingPage = (): void => {
+  const state = getAppState();
+  if (state.auth && !state.initialized) return;
+  const resume = state.local.onboardingResumePage;
   const hasForeignNameDraft =
+    state.auth !== null &&
     state.local.onboardingNameDraftUserId !== null &&
     !isOnboardingNameDraftOwnedByAuth(
       state.local.onboardingNameDraftUserId,
       state.auth.uid,
     );
   const hasForeignSession =
+    state.auth !== null &&
     state.local.onboardingSessionUserId !== null &&
     state.local.onboardingSessionUserId !== state.auth.uid;
   const hasUnownedCompletedSession =
+    state.auth !== null &&
     state.local.onboardingSessionUserId === null &&
     state.local.onboardingResumePage === null &&
     state.local.onboardingNameDraft === "" &&
     hasStaleOnboardingAccountState(state.onboarding);
-  return hasForeignNameDraft || hasForeignSession || hasUnownedCompletedSession;
-};
-
-export const resumeOnboardingPage = (): void => {
-  const state = getAppState();
-  if (state.auth && !state.initialized) return;
-  const resume = state.local.onboardingResumePage;
-  if (hasStaleAccountSession(state)) {
+  if (hasForeignNameDraft || hasForeignSession || hasUnownedCompletedSession) {
     const existingName = getMyUser(state)?.name.trim() ?? "";
     produceAppState((draft) => {
       Object.assign(draft.onboarding, INITIAL_ONBOARDING_STATE);
@@ -298,6 +292,12 @@ export const resetOnboarding = () => {
   });
 };
 
+export const setOnboardingIsMac = (isMac: boolean) => {
+  produceAppState((draft) => {
+    draft.onboarding.isMac = isMac;
+  });
+};
+
 export const setDidSignUpWithAccount = (didSignUp: boolean) => {
   produceAppState((draft) => {
     draft.onboarding.didSignUpWithAccount = didSignUp;
@@ -382,6 +382,7 @@ const createOnboardingPreferences = (
   handsFreeDelayMs: DEFAULT_HANDS_FREE_DELAY_MS,
   inDictationStyleSwitchingEnabled: false,
   hallucinationFilterEnabled: true,
+  fastStyleShortDictationsEnabled: true,
   reviewBeforeInsert: null,
   agentEnabledTools: null,
   agentMaxIterations: 20,
@@ -393,185 +394,106 @@ const createOnboardingPreferences = (
   expansionFlags: "{}",
 });
 
-type OnboardingPreferences = ReturnType<typeof createOnboardingPreferences>;
-
 /**
- * The Continue button is already disabled when the name is blank, so this is
- * the defensive twin: an unowned draft or a blank name must never be written.
+ * A stale-session bail that also clears the submitting flag.
+ *
+ * `submitting` is raised once on entry and cleared on the success and error paths, so any early
+ * return that skips both leaves the onboarding UI stuck in its submitting state with no way out
+ * but a reload. Only the first guard did this; the three that follow it returned bare `null`, so
+ * an account handoff during either `await` stranded the flag.
+ *
+ * The flag is global rather than per-session, so clearing it on a stale bail could in principle
+ * clear a newer session's own in-flight submission. That trade is already made by the guard this
+ * replaces, and leaving the flag stuck is the certain failure while the race is a narrow one.
  */
-const onboardingNameIsSubmittable = (
-  state: ReturnType<typeof getAppState>,
-): boolean => {
-  if (!state.auth) return true;
-  return (
-    isOnboardingNameDraftOwnedByAuth(
-      state.local.onboardingNameDraftUserId,
-      state.auth.uid,
-    ) &&
-    state.onboarding.firstName.trim() !== "" &&
-    resolveOnboardingName(state.onboarding, state.local.onboardingNameDraft) !==
-      ""
-  );
-};
-
-/** Publish the submitted name and mark the flow busy until the writes settle. */
-const markOnboardingSubmitting = (trimmedName: string): void => {
+const bailOnStaleSession = (lease?: LocalDataWriteLease): null => {
   produceAppState((draft) => {
-    draft.onboarding.submitting = true;
-    draft.onboarding.name = trimmedName;
-    draft.local.onboardingNameDraft = trimmedName;
-    if (draft.auth?.uid) {
-      draft.local.onboardingNameDraftUserId = draft.auth.uid;
-      draft.local.onboardingSessionUserId = draft.auth.uid;
-    }
-  });
-};
-
-/** Project the onboarding answers onto the user row that gets written. */
-const buildOnboardingUser = ({
-  userId,
-  now,
-  trimmedName,
-  currentState,
-}: {
-  userId: string;
-  now: string;
-  trimmedName: string;
-  currentState: ReturnType<typeof getAppState>;
-}): User => ({
-  id: userId,
-  createdAt: now,
-  updatedAt: now,
-  name: trimmedName,
-  title: getOptionalText(currentState.onboarding.title),
-  company: getOptionalText(currentState.onboarding.company),
-  bio: null,
-  onboarded: false,
-  onboardedAt: null,
-  timezone: null,
-  preferredMicrophone: null,
-  preferredLanguage: detectLocale(),
-  wordsThisMonth: 0,
-  wordsThisMonthMonth: null,
-  wordsTotal: 0,
-  playInteractionChime: true,
-  hasFinishedTutorial: false,
-  hasMigratedPreferredMicrophone: true,
-  cohort: CURRENT_COHORT,
-  stylingMode: "manual",
-  activeToneIds: [POLISHED_TONE_ID, EMAIL_TONE_ID, VERBATIM_TONE_ID],
-  selectedToneId: POLISHED_TONE_ID,
-  referralSource: currentState.onboarding.referralSource || null,
-});
-
-type OnboardingWrites =
-  | { retired: true }
-  | {
-      retired: false;
-      savedUser: User;
-      savedPreferences: OnboardingPreferences;
-    };
-
-/**
- * Dispatch both rows and classify the outcome. A failed write does not cancel
- * the other, so the caller keeps the submitting flag set until both settle
- * rather than inviting a retry while the other write can still overwrite it.
- */
-const settleOnboardingWrites = async ({
-  repo,
-  preferencesRepo,
-  user,
-  preferences,
-  isCurrentSession,
-}: {
-  repo: ReturnType<typeof getUserRepo>;
-  preferencesRepo: ReturnType<typeof getUserPreferencesRepo>;
-  user: User;
-  preferences: OnboardingPreferences;
-  isCurrentSession: () => boolean;
-}): Promise<OnboardingWrites> => {
-  // Both writes are dispatched before either is awaited, so a synchronous
-  // transport failure in one must not stop the other from being attempted.
-  const userWrite = startAsPromise(() => repo.setMyUser(user));
-  const preferencesWrite = isCurrentSession()
-    ? startAsPromise(() => preferencesRepo.setUserPreferences(preferences))
-    : Promise.resolve(null);
-  const [userResult, preferencesResult] = await Promise.allSettled([
-    userWrite,
-    preferencesWrite,
-  ]);
-  // Auth handoff resets the onboarding state and submitting flag. A stale
-  // operation must neither write new data nor clear its successor's flag.
-  if (!isCurrentSession()) return { retired: true };
-  if (userResult.status === "rejected") throw userResult.reason;
-  if (preferencesResult.status === "rejected") throw preferencesResult.reason;
-  if (!preferencesResult.value)
-    throw new Error("Onboarding preferences were not saved");
-  return {
-    retired: false,
-    savedUser: userResult.value,
-    savedPreferences: preferencesResult.value,
-  };
-};
-
-/** Adopt both saved rows, keeping expansion flags that arrived meanwhile. */
-const commitOnboardingRows = (
-  savedUser: User,
-  savedPreferences: OnboardingPreferences,
-  flagsSnapshot: ReturnType<typeof captureExpansionFlags>,
-): void => {
-  produceAppState((draft) => {
-    setCurrentUser(draft, savedUser);
-    setUserPreferences(
-      draft,
-      preserveNewerExpansionFlags(
-        savedPreferences,
-        draft.userPrefs,
-        flagsSnapshot,
-      ),
-    );
     draft.onboarding.submitting = false;
-    draft.onboarding.name = savedUser.name;
-    draft.local.onboardingNameDraft = savedUser.name;
-    if (draft.auth?.uid) {
-      draft.local.onboardingNameDraftUserId = draft.auth.uid;
-      draft.local.onboardingSessionUserId = draft.auth.uid;
-    }
-  });
+  }, lease);
+  return null;
 };
 
 export const submitOnboarding = async () => {
   const state = getAppState();
   if (state.auth && !state.initialized) return null;
-  const isCurrentSession = captureUserSession();
-  if (!onboardingNameIsSubmittable(state)) {
-    // Defensive: return silently instead of surfacing an unlocalized message
-    // (this action module cannot import react-intl).
-    return null;
-  }
+  const initiatingAuthSessionNonce = state.authSessionNonce;
   const trimmedName = resolveOnboardingName(
     state.onboarding,
     state.local.onboardingNameDraft,
   );
-  markOnboardingSubmitting(trimmedName);
+  const nameDraftBelongsToUser =
+    !state.auth ||
+    isOnboardingNameDraftOwnedByAuth(
+      state.local.onboardingNameDraftUserId,
+      state.auth.uid,
+    );
+  if (
+    state.auth &&
+    (!nameDraftBelongsToUser ||
+      !state.onboarding.firstName.trim() ||
+      !trimmedName)
+  ) {
+    // Defensive: the Continue button is already disabled when firstName is
+    // empty, so return silently instead of surfacing an unlocalized message
+    // (this action module cannot import react-intl).
+    return null;
+  }
+
+  const write = beginLocalDataWrite();
+  if (!write) return null;
+  const { lease } = write;
 
   try {
+    produceAppState((draft) => {
+      draft.onboarding.submitting = true;
+      draft.onboarding.name = trimmedName;
+      draft.local.onboardingNameDraft = trimmedName;
+      if (draft.auth?.uid) {
+        draft.local.onboardingNameDraftUserId = draft.auth.uid;
+        draft.local.onboardingSessionUserId = draft.auth.uid;
+      }
+    }, lease);
+
     const repo = getUserRepo();
     const preferencesRepo = getUserPreferencesRepo();
     const now = new Date().toISOString();
 
-    // Auth handoff resets the onboarding state and submitting flag.
-    if (!isCurrentSession()) {
-      return null;
+    // Re-read state immediately before issuing writes so a stale completion
+    // from session A cannot write into account B's record after an auth
+    // handoff — even one that cycles A→B→A. userId and the User/Preferences
+    // payloads are derived from live state, not the entry snapshot.
+    if (getAppState().authSessionNonce !== initiatingAuthSessionNonce) {
+      return bailOnStaleSession(lease);
     }
     const currentState = getAppState();
     const userId = getMyEffectiveUserId(currentState);
-    const user = buildOnboardingUser({
-      userId,
-      now,
-      trimmedName,
-      currentState,
-    });
+
+    const user: User = {
+      id: userId,
+      createdAt: now,
+      updatedAt: now,
+      name: trimmedName,
+      title: getOptionalText(currentState.onboarding.title),
+      company: getOptionalText(currentState.onboarding.company),
+      bio: null,
+      onboarded: false,
+      onboardedAt: null,
+      timezone: null,
+      preferredMicrophone: null,
+      preferredLanguage: detectLocale(),
+      wordsThisMonth: 0,
+      wordsThisMonthMonth: null,
+      wordsTotal: 0,
+      playInteractionChime: true,
+      hasFinishedTutorial: false,
+      hasMigratedPreferredMicrophone: true,
+      cohort: CURRENT_COHORT,
+      stylingMode: "manual",
+      activeToneIds: [POLISHED_TONE_ID, EMAIL_TONE_ID, VERBATIM_TONE_ID],
+      selectedToneId: POLISHED_TONE_ID,
+      referralSource: currentState.onboarding.referralSource || null,
+    };
+
     const preferences = createOnboardingPreferences(
       userId,
       getOptionalText(currentState.onboarding.preferredMicrophone),
@@ -580,49 +502,66 @@ export const submitOnboarding = async () => {
       getAgentModePrefs(currentState),
     );
 
-    // Both repositories write the same local database. Check again before
-    // dispatch, but a later auth handoff cannot revoke already-dispatched writes.
-    if (!isCurrentSession()) {
-      return null;
+    // Re-read state BEFORE writing, for the reason `finishOnboarding` gives below: an auth
+    // handoff mid-await must not clobber the wrong account's record.
+    //
+    // It matters more here than it does there, because both of these writes resolve their
+    // target from the CURRENT session when the command is invoked -- `user_set_one` takes
+    // `State<OptionKeyDatabase>`, so the pool is chosen at call time. An account switch
+    // between this guard and the write therefore lands the previous account's onboarding data
+    // in the NEW account's database, not merely in the wrong row of the same one.
+    //
+    // The check that follows the await cannot undo that. It stops the stale result reaching
+    // the store; it does not un-write the row. What this guard does is close the window
+    // between building the payload and issuing the write. It cannot close the remainder --
+    // a handoff during the write itself is not observable from here.
+    if (getAppState().authSessionNonce !== initiatingAuthSessionNonce) {
+      return bailOnStaleSession(lease);
     }
-    const flagsSnapshot = captureExpansionFlags(getAppState().userPrefs);
-    const writes = await settleOnboardingWrites({
-      repo,
-      preferencesRepo,
-      user,
-      preferences,
-      isCurrentSession,
-    });
-    if (writes.retired) {
-      return null;
+    const [savedUser, savedPreferences] = await Promise.all([
+      repo.setMyUser(user, lease),
+      preferencesRepo.setUserPreferences(preferences, lease),
+    ]);
+    if (getAppState().authSessionNonce !== initiatingAuthSessionNonce) {
+      return bailOnStaleSession(lease);
     }
-    commitOnboardingRows(
-      writes.savedUser,
-      writes.savedPreferences,
-      flagsSnapshot,
-    );
+    produceAppState((draft) => {
+      setCurrentUser(draft, savedUser);
+      setUserPreferences(draft, savedPreferences);
+      draft.onboarding.submitting = false;
+      draft.onboarding.name = savedUser.name;
+      draft.local.onboardingNameDraft = savedUser.name;
+      if (draft.auth?.uid) {
+        draft.local.onboardingNameDraftUserId = draft.auth.uid;
+        draft.local.onboardingSessionUserId = draft.auth.uid;
+      }
+    }, lease);
 
-    await refreshMember();
-    if (!isCurrentSession()) {
+    await refreshMember(lease);
+    if (getAppState().authSessionNonce !== initiatingAuthSessionNonce) {
+      // No `bailOnStaleSession()` here, unlike the four guards above: the success
+      // path at 522 has already cleared `submitting`, so there is no flag to strand.
       return null;
     }
-    return writes.savedUser;
+    return savedUser;
   } catch (err) {
-    if (!isCurrentSession()) {
-      return null;
+    if (getAppState().authSessionNonce !== initiatingAuthSessionNonce) {
+      return bailOnStaleSession(lease);
     }
     produceAppState((draft) => {
       draft.onboarding.submitting = false;
-    });
+    }, lease);
     showErrorSnackbar(err);
     return null;
+  } finally {
+    write();
   }
 };
 
 export const finishOnboarding = async () => {
   const state = getAppState();
   if (state.auth && !state.initialized) return null;
-  const isCurrentSession = captureUserSession();
+  const initiatingAuthSessionNonce = state.authSessionNonce;
   const existingUser = getMyUser(state);
   if (!existingUser) {
     // Called before the post-auth init has hydrated the user row for this
@@ -631,17 +570,21 @@ export const finishOnboarding = async () => {
     return null;
   }
 
-  clearLocalStorageValue("mausvoice:checklist-writing-style");
-  clearLocalStorageValue("mausvoice:checklist-dictionary");
-  clearLocalStorageValue("mausvoice:checklist-dismissed");
+  const write = beginLocalDataWrite();
+  if (!write) return null;
+  const { lease } = write;
 
   try {
+    clearLocalStorageValue("mausvoice:checklist-writing-style", lease);
+    clearLocalStorageValue("mausvoice:checklist-dictionary", lease);
+    clearLocalStorageValue("mausvoice:checklist-dismissed", lease);
+
     const repo = getUserRepo();
     const now = new Date().toISOString();
 
-    // Avoid dispatching from a retired session. This cannot revoke a write
-    // after it has been handed off to the shared local database.
-    if (!isCurrentSession()) {
+    // Re-read state before writing so an auth handoff mid-await can't
+    // clobber the wrong account's record.
+    if (getAppState().authSessionNonce !== initiatingAuthSessionNonce) {
       return null;
     }
     const currentUser = getMyUser(getAppState());
@@ -655,8 +598,8 @@ export const finishOnboarding = async () => {
       hasFinishedTutorial: true,
     };
 
-    const savedUser = await repo.setMyUser(updatedUser);
-    if (!isCurrentSession()) {
+    const savedUser = await repo.setMyUser(updatedUser, lease);
+    if (getAppState().authSessionNonce !== initiatingAuthSessionNonce) {
       return null;
     }
     produceAppState((draft) => {
@@ -666,19 +609,21 @@ export const finishOnboarding = async () => {
       draft.local.onboardingNameDraftUserId = null;
       draft.local.onboardingSessionUserId = null;
       draft.local.onboardingFlowVersion = CURRENT_ONBOARDING_FLOW_VERSION;
-    });
+    }, lease);
 
-    await setAutoLaunchEnabled(true);
-    if (!isCurrentSession()) {
+    await setAutoLaunchEnabled(true, lease);
+    if (getAppState().authSessionNonce !== initiatingAuthSessionNonce) {
       return null;
     }
 
     return savedUser;
   } catch (err) {
-    if (!isCurrentSession()) {
+    if (getAppState().authSessionNonce !== initiatingAuthSessionNonce) {
       return null;
     }
     showErrorSnackbar(err);
     return null;
+  } finally {
+    write();
   }
 };

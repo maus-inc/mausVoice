@@ -1,113 +1,17 @@
 use rand::{rngs::OsRng, RngCore};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use sqlx::SqlitePool;
-use std::future::Future;
 use std::net::UdpSocket;
-use std::sync::Arc;
-use std::time::Duration;
 use tauri::async_runtime;
 use tauri::{AppHandle, Emitter};
-use tokio::io::BufReader;
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{watch, Semaphore};
+use tokio::sync::watch;
 
-use super::remote_protocol::{read_frame, secret_matches, trusted_for, write_frame, DeviceRole};
-use crate::state::{RemoteReceiverState, RemoteReceiverStatus};
-
-const MAX_CONNECTIONS: usize = 32;
-const READ_TIMEOUT: Duration = Duration::from_secs(30);
-/// Consecutive `accept` errors tolerated before the listener gives up.
-const MAX_ACCEPT_FAILURES: u32 = 5;
-/// Pause between accept retries, so a saturated descriptor table cannot spin.
-const ACCEPT_RETRY_DELAY: Duration = Duration::from_millis(50);
+use super::remote_channel::{ReceiverMessage, SenderMessage};
+use crate::state::{RemoteReceiverEventDetails, RemoteReceiverState, RemoteReceiverStatus};
 
 pub const EVT_REMOTE_FINAL_TEXT_RECEIVED: &str = "remote_final_text_received";
-
-struct AuthenticatedSession {
-    sender_id: String,
-    session_id: String,
-    token: String,
-}
-
-async fn authorized_sender(
-    pool: SqlitePool,
-    session: Option<&AuthenticatedSession>,
-    session_id: &str,
-) -> Result<Option<String>, String> {
-    let Some(session) = session.filter(|session| session.session_id == session_id) else {
-        return Ok(None);
-    };
-    let device = crate::db::paired_remote_device_queries::fetch_paired_remote_device_by_id(
-        pool,
-        &session.sender_id,
-    )
-    .await
-    .map_err(|err| format!("Failed to validate sender device: {err}"))?;
-    Ok(device
-        .filter(|device| {
-            trusted_for(device, DeviceRole::Sender)
-                && secret_matches(&device.shared_secret, &session.token)
-        })
-        .map(|_| session.sender_id.clone()))
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-enum IncomingEnvelope {
-    PairingRequest {
-        request_id: String,
-        sender_device_id: String,
-        sender_device_name: String,
-        sender_platform: String,
-        pairing_code: String,
-    },
-    SessionHello {
-        session_id: String,
-        sender_device_id: String,
-        auth_token: String,
-    },
-    FinalText {
-        session_id: String,
-        event_id: String,
-        sequence: u64,
-        text: String,
-        mode: String,
-        created_at: String,
-    },
-    Heartbeat {
-        session_id: String,
-        sent_at: String,
-    },
-}
-
-#[derive(Debug, Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-enum OutgoingEnvelope {
-    PairingAccept {
-        request_id: String,
-        receiver_device_id: String,
-        receiver_device_name: String,
-        receiver_platform: String,
-        shared_secret: String,
-    },
-    SessionAck {
-        session_id: String,
-        receiver_device_id: String,
-    },
-    DeliveryAck {
-        session_id: String,
-        event_id: String,
-        sequence: u64,
-        delivered_at: String,
-    },
-    DeliveryError {
-        session_id: String,
-        event_id: String,
-        sequence: u64,
-        code: String,
-        message: String,
-    },
-}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -125,9 +29,11 @@ pub async fn start(
     pool: SqlitePool,
     port: Option<u16>,
 ) -> Result<RemoteReceiverStatus, String> {
-    let Some(generation) = state.prepare_start() else {
+    let write_generation = crate::db::local_data_write_gate::current_write_generation()
+        .ok_or_else(|| "Local data is being cleared".to_string())?;
+    if state.is_enabled() {
         return Ok(state.status());
-    };
+    }
 
     let bind_port = port.unwrap_or(0);
     let listener = TcpListener::bind(("0.0.0.0", bind_port))
@@ -139,69 +45,59 @@ pub async fn start(
     let connect_address = detect_connect_address().unwrap_or_else(|| "127.0.0.1".to_string());
 
     let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
-    if !state.start_if_current(&generation, connect_address, local_addr.port(), shutdown_tx) {
-        return if state.is_enabled() {
-            Ok(state.status())
-        } else {
-            Err("Remote receiver start was cancelled.".to_string())
-        };
+    {
+        let _start_guard =
+            crate::db::local_data_write_gate::lock_local_data_write(Some(write_generation))
+                .await
+                .map_err(|err| err.to_string())?;
+        if state.is_enabled() {
+            return Ok(state.status());
+        }
+        state.start(connect_address, local_addr.port(), shutdown_tx);
     }
 
     let state_for_task = state.clone();
-    let connections = Arc::new(Semaphore::new(MAX_CONNECTIONS));
     async_runtime::spawn(async move {
-        let mut accept_failures = 0u32;
         loop {
             tokio::select! {
-                biased;
                 _ = shutdown_rx.changed() => {
                     break;
                 }
                 accept_result = listener.accept() => {
                     match accept_result {
                         Ok((stream, _)) => {
-                            accept_failures = 0;
-                            let Ok(permit) = Arc::clone(&connections).try_acquire_owned() else {
+                            let Some(write_generation) =
+                                crate::db::local_data_write_gate::current_write_generation()
+                            else {
                                 continue;
                             };
                             let state = state_for_task.clone();
+                            let receiver_generation = state.generation();
+                            if !state.is_generation_active(receiver_generation) {
+                                continue;
+                            }
                             let pool = pool.clone();
                             let app = app.clone();
-                            let shutdown = shutdown_rx.clone();
+                            let connection_shutdown = shutdown_rx.clone();
                             async_runtime::spawn(async move {
-                                let _permit = permit;
-                                if let Some(Err(err)) = until_shutdown(
-                                    shutdown,
-                                    handle_connection(stream, pool, state, app),
-                                ).await {
+                                if let Err(err) = handle_connection(
+                                    stream,
+                                    pool,
+                                    state,
+                                    app,
+                                    write_generation,
+                                    receiver_generation,
+                                    connection_shutdown,
+                                )
+                                .await
+                                {
                                     log::error!("Remote receiver connection failed: {err}");
                                 }
                             });
                         }
                         Err(err) => {
-                            // A peer that resets between the handshake and
-                            // `accept`, or a momentarily exhausted descriptor
-                            // table, fails one call and not the listener. Give
-                            // up only after repeated failures, and then leave
-                            // the status disabled so the UI cannot show a
-                            // receiver that stopped listening.
-                            accept_failures += 1;
-                            log::error!("Remote receiver accept failed ({accept_failures}): {err}");
-                            if accept_failures >= MAX_ACCEPT_FAILURES {
-                                state_for_task.record_error(
-                                    None,
-                                    None,
-                                    format!(
-                                        "Remote receiver stopped after {accept_failures} accept failures: {err}"
-                                    ),
-                                    None,
-                                    None,
-                                    None,
-                                );
-                                state_for_task.stop();
-                                break;
-                            }
-                            tokio::time::sleep(ACCEPT_RETRY_DELAY).await;
+                            log::error!("Remote receiver accept failed: {err}");
+                            break;
                         }
                     }
                 }
@@ -210,20 +106,6 @@ pub async fn start(
     });
 
     Ok(state.status())
-}
-
-async fn until_shutdown<F: Future>(
-    mut shutdown: watch::Receiver<bool>,
-    work: F,
-) -> Option<F::Output> {
-    if *shutdown.borrow() {
-        return None;
-    }
-    tokio::select! {
-        biased;
-        _ = shutdown.changed() => None,
-        result = work => Some(result),
-    }
 }
 
 /// Pick a "best-guess" LAN IP address the companion device can use to reach
@@ -251,169 +133,204 @@ pub fn stop(state: RemoteReceiverState) {
     state.stop();
 }
 
+/// A sender session that presented a valid shared secret at `SessionHello`.
+///
+/// The secret is kept for the life of the connection so every later frame can be
+/// re-authorized against the device row: revoking or re-trusting a device then
+/// takes effect on its next frame instead of when the connection closes.
+#[derive(Clone)]
+struct AuthenticatedSender {
+    device_id: String,
+    auth_token: String,
+}
+
+/// Compare two shared secrets without stopping at the first differing byte.
+///
+/// The transport has no TLS and the secret is a bearer token, so a comparison
+/// that returns early leaks its prefix length to anyone who can time the reply.
+fn secret_matches(expected: &str, presented: &str) -> bool {
+    let expected = expected.as_bytes();
+    let presented = presented.as_bytes();
+    if expected.len() != presented.len() {
+        return false;
+    }
+    let mut difference = 0u8;
+    for (left, right) in expected.iter().zip(presented.iter()) {
+        difference |= left ^ right;
+    }
+    difference == 0
+}
+
 fn generate_shared_secret() -> String {
     let mut bytes = [0u8; 16];
     OsRng.fill_bytes(&mut bytes);
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-async fn handle_connection(
-    stream: TcpStream,
-    pool: SqlitePool,
-    state: RemoteReceiverState,
-    app: AppHandle,
-) -> Result<(), String> {
-    let (reader, mut writer) = stream.into_split();
-    let mut reader = BufReader::new(reader);
-    let mut authenticated_session: Option<AuthenticatedSession> = None;
+fn is_connection_current(
+    state: &RemoteReceiverState,
+    receiver_generation: u64,
+    write_generation: u64,
+) -> bool {
+    state.is_generation_active(receiver_generation)
+        && crate::db::local_data_write_gate::is_write_generation_current(write_generation)
+}
 
-    while let Some(line) = tokio::time::timeout(READ_TIMEOUT, read_frame(&mut reader))
-        .await
-        .map_err(|_| "Timed out waiting for a remote message.".to_string())?
-        .map_err(|err| format!("Failed to read receiver message: {err}"))?
-    {
-        let envelope: IncomingEnvelope = serde_json::from_str(&line)
-            .map_err(|err| format!("Failed to parse receiver message: {err}"))?;
+async fn wait_for_shutdown(shutdown: &mut watch::Receiver<bool>) {
+    if *shutdown.borrow() {
+        return;
+    }
+    let _ = shutdown.changed().await;
+}
 
+async fn write_message_while_active(
+    writer: &mut tokio::net::tcp::OwnedWriteHalf,
+    message: &ReceiverMessage,
+    shutdown: &mut watch::Receiver<bool>,
+    state: &RemoteReceiverState,
+    receiver_generation: u64,
+    write_generation: u64,
+) -> Result<bool, String> {
+    if !is_connection_current(state, receiver_generation, write_generation) {
+        return Ok(false);
+    }
+
+    tokio::select! {
+        result = write_message(writer, message) => {
+            result?;
+            Ok(is_connection_current(state, receiver_generation, write_generation))
+        }
+        _ = wait_for_shutdown(shutdown) => Ok(false),
+    }
+}
+
+async fn record_error_while_active(
+    state: &RemoteReceiverState,
+    receiver_generation: u64,
+    write_generation: u64,
+    details: RemoteReceiverEventDetails,
+    message: String,
+) -> bool {
+    let Ok(_write_guard) =
+        crate::db::local_data_write_gate::lock_local_data_write(Some(write_generation)).await
+    else {
+        return false;
+    };
+    if !is_connection_current(state, receiver_generation, write_generation) {
+        return false;
+    }
+    state.record_error_for_generation(receiver_generation, details, message)
+}
+
+async fn record_delivery_while_active(
+    state: &RemoteReceiverState,
+    receiver_generation: u64,
+    write_generation: u64,
+    details: RemoteReceiverEventDetails,
+    delivered_at: Option<String>,
+) -> bool {
+    let Ok(_write_guard) =
+        crate::db::local_data_write_gate::lock_local_data_write(Some(write_generation)).await
+    else {
+        return false;
+    };
+    if !is_connection_current(state, receiver_generation, write_generation) {
+        return false;
+    }
+    state.record_delivery_for_generation(receiver_generation, details, delivered_at)
+}
+
+async fn rotate_pairing_code_while_active(
+    state: &RemoteReceiverState,
+    receiver_generation: u64,
+    write_generation: u64,
+) -> bool {
+    let Ok(_write_guard) =
+        crate::db::local_data_write_gate::lock_local_data_write(Some(write_generation)).await
+    else {
+        return false;
+    };
+    is_connection_current(state, receiver_generation, write_generation)
+        && state.rotate_pairing_code_for_generation(receiver_generation)
+}
+
+/// Why a sender was turned away.
+///
+/// The code and message travel to the companion app, which shows them to the
+/// person holding the phone, so they are part of the wire contract rather than
+/// free-form logging text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SenderRejection {
+    NotPaired,
+    Unauthorized,
+}
+
+impl SenderRejection {
+    fn code(self) -> &'static str {
+        match self {
+            Self::NotPaired => "unknown_sender",
+            Self::Unauthorized => "unauthorized",
+        }
+    }
+
+    fn message(self) -> &'static str {
+        match self {
+            Self::NotPaired => "Sender is not paired.",
+            Self::Unauthorized => "Sender authentication failed.",
+        }
+    }
+}
+
+/// Build the delivery error a rejected sender receives.
+fn rejection_message(session_id: String, rejection: SenderRejection) -> ReceiverMessage {
+    ReceiverMessage::DeliveryError {
+        session_id,
+        event_id: String::new(),
+        sequence: 0,
+        code: rejection.code().to_string(),
+        message: rejection.message().to_string(),
+    }
+}
+
+struct ConnectionMessageHandler<'a> {
+    pool: &'a SqlitePool,
+    state: &'a RemoteReceiverState,
+    app: &'a AppHandle,
+    write_generation: u64,
+    receiver_generation: u64,
+    writer: &'a mut tokio::net::tcp::OwnedWriteHalf,
+    shutdown: &'a mut watch::Receiver<bool>,
+    authenticated_sender: &'a mut Option<AuthenticatedSender>,
+}
+
+impl ConnectionMessageHandler<'_> {
+    async fn handle(&mut self, envelope: SenderMessage) -> Result<bool, String> {
         match envelope {
-            IncomingEnvelope::PairingRequest {
+            SenderMessage::PairingRequest {
                 request_id,
                 sender_device_id,
                 sender_device_name,
                 sender_platform,
                 pairing_code,
             } => {
-                if !state.consume_pairing_code(&pairing_code) {
-                    state.record_error(
-                        Some(sender_device_id.clone()),
-                        None,
-                        "Pairing code is invalid.".to_string(),
-                        None,
-                        None,
-                        None,
-                    );
-                    write_message(
-                        &mut writer,
-                        &OutgoingEnvelope::DeliveryError {
-                            session_id: String::new(),
-                            event_id: String::new(),
-                            sequence: 0,
-                            code: "invalid_pairing_code".to_string(),
-                            message: "Pairing code is invalid.".to_string(),
-                        },
-                    )
-                    .await?;
-                    continue;
-                }
-
-                let shared_secret = generate_shared_secret();
-                let sender_device = crate::domain::PairedRemoteDevice {
-                    id: sender_device_id.clone(),
-                    name: sender_device_name,
-                    platform: sender_platform,
-                    role: "sender".to_string(),
-                    shared_secret: shared_secret.clone(),
-                    paired_at: chrono::Utc::now().to_rfc3339(),
-                    last_seen_at: None,
-                    last_known_address: None,
-                    trusted: true,
-                };
-
-                crate::db::paired_remote_device_queries::upsert_paired_remote_device(
-                    pool.clone(),
-                    &sender_device,
+                self.handle_pairing_request(
+                    request_id,
+                    sender_device_id,
+                    sender_device_name,
+                    sender_platform,
+                    pairing_code,
                 )
                 .await
-                .map_err(|err| format!("Failed to store paired sender: {err}"))?;
-
-                let receiver_status = state.status();
-                write_message(
-                    &mut writer,
-                    &OutgoingEnvelope::PairingAccept {
-                        request_id,
-                        receiver_device_id: receiver_status.device_id,
-                        receiver_device_name: receiver_status.device_name,
-                        receiver_platform: receiver_status.device_platform,
-                        shared_secret,
-                    },
-                )
-                .await?;
             }
-            IncomingEnvelope::SessionHello {
+            SenderMessage::SessionHello {
                 session_id,
                 sender_device_id,
                 auth_token,
             } => {
-                authenticated_session = None;
-                let device =
-                    crate::db::paired_remote_device_queries::fetch_paired_remote_device_by_id(
-                        pool.clone(),
-                        &sender_device_id,
-                    )
+                self.handle_session_hello(session_id, sender_device_id, auth_token)
                     .await
-                    .map_err(|err| format!("Failed to validate sender device: {err}"))?;
-
-                let Some(device) = device else {
-                    state.record_error(
-                        Some(sender_device_id.clone()),
-                        None,
-                        "Sender is not paired.".to_string(),
-                        None,
-                        None,
-                        None,
-                    );
-                    write_message(
-                        &mut writer,
-                        &OutgoingEnvelope::DeliveryError {
-                            session_id,
-                            event_id: String::new(),
-                            sequence: 0,
-                            code: "unknown_sender".to_string(),
-                            message: "Sender is not paired.".to_string(),
-                        },
-                    )
-                    .await?;
-                    continue;
-                };
-
-                if !trusted_for(&device, DeviceRole::Sender) || device.shared_secret != auth_token {
-                    state.record_error(
-                        Some(sender_device_id.clone()),
-                        None,
-                        "Sender authentication failed.".to_string(),
-                        None,
-                        None,
-                        None,
-                    );
-                    write_message(
-                        &mut writer,
-                        &OutgoingEnvelope::DeliveryError {
-                            session_id,
-                            event_id: String::new(),
-                            sequence: 0,
-                            code: "unauthorized".to_string(),
-                            message: "Sender authentication failed.".to_string(),
-                        },
-                    )
-                    .await?;
-                    continue;
-                }
-
-                authenticated_session = Some(AuthenticatedSession {
-                    sender_id: sender_device_id,
-                    session_id: session_id.clone(),
-                    token: auth_token,
-                });
-                write_message(
-                    &mut writer,
-                    &OutgoingEnvelope::SessionAck {
-                        session_id,
-                        receiver_device_id: state.status().device_id,
-                    },
-                )
-                .await?;
             }
-            IncomingEnvelope::FinalText {
+            SenderMessage::FinalText {
                 session_id,
                 event_id,
                 sequence,
@@ -421,125 +338,479 @@ async fn handle_connection(
                 mode,
                 created_at,
             } => {
-                let sender =
-                    authorized_sender(pool.clone(), authenticated_session.as_ref(), &session_id)
-                        .await?;
-                let Some(sender_device_id) = sender else {
-                    authenticated_session = None;
-                    state.record_error(
-                        None,
-                        Some(event_id.clone()),
-                        "No authenticated sender session.".to_string(),
-                        None,
-                        None,
-                        None,
-                    );
-                    write_message(
-                        &mut writer,
-                        &OutgoingEnvelope::DeliveryError {
-                            session_id,
-                            event_id,
-                            sequence,
-                            code: "unauthorized".to_string(),
-                            message: "No authenticated sender session.".to_string(),
-                        },
-                    )
-                    .await?;
-                    continue;
-                };
-
-                if mode == "test" {
-                    let delivered_at = chrono::Utc::now().to_rfc3339();
-                    state.record_delivery(
-                        Some(sender_device_id),
-                        Some(event_id.clone()),
-                        Some(delivered_at.clone()),
-                        None,
-                        None,
-                        None,
-                    );
-                    write_message(
-                        &mut writer,
-                        &OutgoingEnvelope::DeliveryAck {
-                            session_id,
-                            event_id,
-                            sequence,
-                            delivered_at,
-                        },
-                    )
-                    .await?;
-                    continue;
-                }
-
-                let target_info = current_target_info();
-                let target_editable = current_target_editable_status();
-                let payload = RemoteFinalTextReceivedPayload {
-                    sender_device_id: sender_device_id.clone(),
-                    event_id: event_id.clone(),
-                    text: text.clone(),
-                    mode,
-                    created_at,
-                };
-
-                match app.emit(EVT_REMOTE_FINAL_TEXT_RECEIVED, payload) {
-                    Ok(()) => {
-                        let delivered_at = chrono::Utc::now().to_rfc3339();
-                        state.record_delivery(
-                            Some(sender_device_id),
-                            Some(event_id.clone()),
-                            Some(delivered_at.clone()),
-                            target_info.class_name.clone(),
-                            target_info.title.clone(),
-                            target_editable,
-                        );
-                        write_message(
-                            &mut writer,
-                            &OutgoingEnvelope::DeliveryAck {
-                                session_id,
-                                event_id,
-                                sequence,
-                                delivered_at,
-                            },
-                        )
-                        .await?;
-                    }
-                    Err(err) => {
-                        let message = format!("Failed to emit remote transcript event: {err}");
-                        state.record_error(
-                            Some(sender_device_id),
-                            Some(event_id.clone()),
-                            message.clone(),
-                            target_info.class_name.clone(),
-                            target_info.title.clone(),
-                            target_editable,
-                        );
-                        write_message(
-                            &mut writer,
-                            &OutgoingEnvelope::DeliveryError {
-                                session_id,
-                                event_id,
-                                sequence,
-                                code: "event_emit_failed".to_string(),
-                                message,
-                            },
-                        )
-                        .await?;
-                    }
-                }
+                self.handle_final_text(session_id, event_id, sequence, text, mode, created_at)
+                    .await
             }
-            IncomingEnvelope::Heartbeat {
+            SenderMessage::Heartbeat {
                 session_id,
-                sent_at: _sent_at,
-            } => {
-                write_message(
-                    &mut writer,
-                    &OutgoingEnvelope::SessionAck {
-                        session_id,
-                        receiver_device_id: state.status().device_id,
-                    },
-                )
-                .await?;
+                sent_at,
+            } => self.handle_heartbeat(session_id, sent_at).await,
+        }
+    }
+
+    async fn handle_pairing_request(
+        &mut self,
+        request_id: String,
+        sender_device_id: String,
+        sender_device_name: String,
+        sender_platform: String,
+        pairing_code: String,
+    ) -> Result<bool, String> {
+        if pairing_code != self.state.status().pairing_code {
+            let message = "Pairing code is invalid.".to_string();
+            if !record_error_while_active(
+                self.state,
+                self.receiver_generation,
+                self.write_generation,
+                RemoteReceiverEventDetails {
+                    sender_device_id: Some(sender_device_id),
+                    ..RemoteReceiverEventDetails::default()
+                },
+                message.clone(),
+            )
+            .await
+            {
+                return Ok(false);
             }
+            return write_message_while_active(
+                self.writer,
+                &ReceiverMessage::DeliveryError {
+                    session_id: String::new(),
+                    event_id: String::new(),
+                    sequence: 0,
+                    code: "invalid_pairing_code".to_string(),
+                    message,
+                },
+                self.shutdown,
+                self.state,
+                self.receiver_generation,
+                self.write_generation,
+            )
+            .await;
+        }
+
+        let shared_secret = generate_shared_secret();
+        let sender_device = crate::domain::PairedRemoteDevice {
+            id: sender_device_id,
+            name: sender_device_name,
+            platform: sender_platform,
+            role: "sender".to_string(),
+            shared_secret: shared_secret.clone(),
+            paired_at: chrono::Utc::now().to_rfc3339(),
+            last_seen_at: None,
+            last_known_address: None,
+            trusted: true,
+        };
+
+        if !is_connection_current(self.state, self.receiver_generation, self.write_generation) {
+            return Ok(false);
+        }
+        if let Err(error) =
+            crate::db::paired_remote_device_queries::upsert_paired_remote_device_for_generation(
+                (*self.pool).clone(),
+                &sender_device,
+                self.write_generation,
+            )
+            .await
+        {
+            if !is_connection_current(self.state, self.receiver_generation, self.write_generation) {
+                return Ok(false);
+            }
+            return Err(format!("Failed to store paired sender: {error}"));
+        }
+        if !is_connection_current(self.state, self.receiver_generation, self.write_generation)
+            || !rotate_pairing_code_while_active(
+                self.state,
+                self.receiver_generation,
+                self.write_generation,
+            )
+            .await
+        {
+            return Ok(false);
+        }
+
+        let receiver_status = self.state.status();
+        write_message_while_active(
+            self.writer,
+            &ReceiverMessage::PairingAccept {
+                request_id,
+                receiver_device_id: receiver_status.device_id,
+                receiver_device_name: receiver_status.device_name,
+                receiver_platform: receiver_status.device_platform,
+                shared_secret,
+            },
+            self.shutdown,
+            self.state,
+            self.receiver_generation,
+            self.write_generation,
+        )
+        .await
+    }
+
+    /// Turn away a sender that did not authenticate, recording the reason on
+    /// the receiver status and answering with the matching delivery error.
+    async fn reject_sender(
+        &mut self,
+        session_id: String,
+        sender_device_id: &str,
+        rejection: SenderRejection,
+    ) -> Result<bool, String> {
+        if !record_error_while_active(
+            self.state,
+            self.receiver_generation,
+            self.write_generation,
+            RemoteReceiverEventDetails {
+                sender_device_id: Some(sender_device_id.to_string()),
+                ..RemoteReceiverEventDetails::default()
+            },
+            rejection.message().to_string(),
+        )
+        .await
+        {
+            return Ok(false);
+        }
+
+        write_message_while_active(
+            self.writer,
+            &rejection_message(session_id, rejection),
+            self.shutdown,
+            self.state,
+            self.receiver_generation,
+            self.write_generation,
+        )
+        .await
+    }
+
+    async fn handle_session_hello(
+        &mut self,
+        session_id: String,
+        sender_device_id: String,
+        auth_token: String,
+    ) -> Result<bool, String> {
+        let device_result =
+            crate::db::paired_remote_device_queries::fetch_paired_remote_device_by_id(
+                (*self.pool).clone(),
+                &sender_device_id,
+            )
+            .await;
+        if !is_connection_current(self.state, self.receiver_generation, self.write_generation) {
+            return Ok(false);
+        }
+        let device =
+            device_result.map_err(|error| format!("Failed to validate sender device: {error}"))?;
+
+        match device {
+            Some(device) if device.trusted && secret_matches(&device.shared_secret, &auth_token) => {}
+            Some(_) => {
+                return self
+                    .reject_sender(session_id, &sender_device_id, SenderRejection::Unauthorized)
+                    .await
+            }
+            None => {
+                return self
+                    .reject_sender(session_id, &sender_device_id, SenderRejection::NotPaired)
+                    .await
+            }
+        };
+
+        if !is_connection_current(self.state, self.receiver_generation, self.write_generation) {
+            return Ok(false);
+        }
+        *self.authenticated_sender = Some(AuthenticatedSender {
+            device_id: sender_device_id,
+            auth_token,
+        });
+        write_message_while_active(
+            self.writer,
+            &ReceiverMessage::SessionAck {
+                session_id,
+                receiver_device_id: self.state.status().device_id,
+            },
+            self.shutdown,
+            self.state,
+            self.receiver_generation,
+            self.write_generation,
+        )
+        .await
+    }
+
+    /// Re-authorize the connection's sender for one frame.
+    ///
+    /// The session was authenticated once at `SessionHello`, but a bearer token
+    /// on a plain TCP stream must be re-checked per frame: a device revoked or
+    /// re-trusted while it holds an open connection would otherwise keep
+    /// delivering with the access it had when it connected.
+    ///
+    /// Returns the sender device id, or `None` when the frame must be rejected.
+    /// A failed check clears the session so the peer has to present
+    /// `SessionHello` again.
+    async fn authorize_final_text(&mut self) -> Result<Option<String>, String> {
+        let Some(session) = self.authenticated_sender.clone() else {
+            return Ok(None);
+        };
+        let device_result =
+            crate::db::paired_remote_device_queries::fetch_paired_remote_device_by_id(
+                (*self.pool).clone(),
+                &session.device_id,
+            )
+            .await;
+        if !is_connection_current(self.state, self.receiver_generation, self.write_generation) {
+            return Ok(None);
+        }
+        let authorized = device_result
+            .map_err(|error| format!("Failed to validate sender device: {error}"))?
+            .is_some_and(|device| {
+                device.trusted && secret_matches(&device.shared_secret, &session.auth_token)
+            });
+        if !authorized {
+            *self.authenticated_sender = None;
+            return Ok(None);
+        }
+        Ok(Some(session.device_id))
+    }
+
+    async fn handle_final_text(
+        &mut self,
+        session_id: String,
+        event_id: String,
+        sequence: u64,
+        text: String,
+        mode: String,
+        created_at: String,
+    ) -> Result<bool, String> {
+        let Some(sender_device_id) = self.authorize_final_text().await? else {
+            if !record_error_while_active(
+                self.state,
+                self.receiver_generation,
+                self.write_generation,
+                RemoteReceiverEventDetails {
+                    event_id: Some(event_id.clone()),
+                    ..RemoteReceiverEventDetails::default()
+                },
+                "No authenticated sender session.".to_string(),
+            )
+            .await
+            {
+                return Ok(false);
+            }
+            return write_message_while_active(
+                self.writer,
+                &ReceiverMessage::DeliveryError {
+                    session_id,
+                    event_id,
+                    sequence,
+                    code: "unauthorized".to_string(),
+                    message: "No authenticated sender session.".to_string(),
+                },
+                self.shutdown,
+                self.state,
+                self.receiver_generation,
+                self.write_generation,
+            )
+            .await;
+        };
+
+        if mode == "test" {
+            let delivered_at = chrono::Utc::now().to_rfc3339();
+            if !record_delivery_while_active(
+                self.state,
+                self.receiver_generation,
+                self.write_generation,
+                RemoteReceiverEventDetails {
+                    sender_device_id: Some(sender_device_id),
+                    event_id: Some(event_id.clone()),
+                    ..RemoteReceiverEventDetails::default()
+                },
+                Some(delivered_at.clone()),
+            )
+            .await
+            {
+                return Ok(false);
+            }
+            return write_message_while_active(
+                self.writer,
+                &ReceiverMessage::DeliveryAck {
+                    session_id,
+                    event_id,
+                    sequence,
+                    delivered_at,
+                },
+                self.shutdown,
+                self.state,
+                self.receiver_generation,
+                self.write_generation,
+            )
+            .await;
+        }
+
+        let target_info = current_target_info();
+        let target_editable = current_target_editable_status();
+        let payload = RemoteFinalTextReceivedPayload {
+            sender_device_id: sender_device_id.clone(),
+            event_id: event_id.clone(),
+            text,
+            mode,
+            created_at,
+        };
+
+        let emit_result = {
+            let Ok(_event_guard) = crate::db::local_data_write_gate::lock_local_data_write(Some(
+                self.write_generation,
+            ))
+            .await
+            else {
+                return Ok(false);
+            };
+            if !is_connection_current(self.state, self.receiver_generation, self.write_generation) {
+                return Ok(false);
+            }
+            self.app.emit(EVT_REMOTE_FINAL_TEXT_RECEIVED, payload)
+        };
+
+        match emit_result {
+            Ok(()) => {
+                let delivered_at = chrono::Utc::now().to_rfc3339();
+                if !record_delivery_while_active(
+                    self.state,
+                    self.receiver_generation,
+                    self.write_generation,
+                    RemoteReceiverEventDetails {
+                        sender_device_id: Some(sender_device_id),
+                        event_id: Some(event_id.clone()),
+                        target_class_name: target_info.class_name.clone(),
+                        target_title: target_info.title.clone(),
+                        target_editable,
+                    },
+                    Some(delivered_at.clone()),
+                )
+                .await
+                {
+                    return Ok(false);
+                }
+                write_message_while_active(
+                    self.writer,
+                    &ReceiverMessage::DeliveryAck {
+                        session_id,
+                        event_id,
+                        sequence,
+                        delivered_at,
+                    },
+                    self.shutdown,
+                    self.state,
+                    self.receiver_generation,
+                    self.write_generation,
+                )
+                .await
+            }
+            Err(error) => {
+                let message = format!("Failed to emit remote transcript event: {error}");
+                if !record_error_while_active(
+                    self.state,
+                    self.receiver_generation,
+                    self.write_generation,
+                    RemoteReceiverEventDetails {
+                        sender_device_id: Some(sender_device_id),
+                        event_id: Some(event_id.clone()),
+                        target_class_name: target_info.class_name.clone(),
+                        target_title: target_info.title.clone(),
+                        target_editable,
+                    },
+                    message.clone(),
+                )
+                .await
+                {
+                    return Ok(false);
+                }
+                write_message_while_active(
+                    self.writer,
+                    &ReceiverMessage::DeliveryError {
+                        session_id,
+                        event_id,
+                        sequence,
+                        code: "event_emit_failed".to_string(),
+                        message,
+                    },
+                    self.shutdown,
+                    self.state,
+                    self.receiver_generation,
+                    self.write_generation,
+                )
+                .await
+            }
+        }
+    }
+
+    async fn handle_heartbeat(
+        &mut self,
+        session_id: String,
+        _sent_at: String,
+    ) -> Result<bool, String> {
+        write_message_while_active(
+            self.writer,
+            &ReceiverMessage::SessionAck {
+                session_id,
+                receiver_device_id: self.state.status().device_id,
+            },
+            self.shutdown,
+            self.state,
+            self.receiver_generation,
+            self.write_generation,
+        )
+        .await
+    }
+}
+
+async fn handle_connection(
+    stream: TcpStream,
+    pool: SqlitePool,
+    state: RemoteReceiverState,
+    app: AppHandle,
+    write_generation: u64,
+    receiver_generation: u64,
+    mut shutdown: watch::Receiver<bool>,
+) -> Result<(), String> {
+    if !is_connection_current(&state, receiver_generation, write_generation) {
+        return Ok(());
+    }
+
+    let (reader, mut writer) = stream.into_split();
+    let mut lines = BufReader::new(reader).lines();
+    let mut authenticated_sender: Option<AuthenticatedSender> = None;
+
+    loop {
+        let line = tokio::select! {
+            result = lines.next_line() => {
+                result.map_err(|err| format!("Failed to read receiver message: {err}"))?
+            }
+            _ = wait_for_shutdown(&mut shutdown) => return Ok(()),
+        };
+        let Some(line) = line else {
+            break;
+        };
+        if !is_connection_current(&state, receiver_generation, write_generation) {
+            return Ok(());
+        }
+        let envelope: SenderMessage = serde_json::from_str(&line)
+            .map_err(|err| format!("Failed to parse receiver message: {err}"))?;
+        if !is_connection_current(&state, receiver_generation, write_generation) {
+            return Ok(());
+        }
+
+        let keep_connection_active = {
+            let mut handler = ConnectionMessageHandler {
+                pool: &pool,
+                state: &state,
+                app: &app,
+                write_generation,
+                receiver_generation,
+                writer: &mut writer,
+                shutdown: &mut shutdown,
+                authenticated_sender: &mut authenticated_sender,
+            };
+            handler.handle(envelope).await?
+        };
+        if !keep_connection_active {
+            return Ok(());
         }
     }
 
@@ -577,155 +848,68 @@ struct FallbackWindowTargetInfo {
 
 async fn write_message(
     writer: &mut tokio::net::tcp::OwnedWriteHalf,
-    message: &OutgoingEnvelope,
+    message: &ReceiverMessage,
 ) -> Result<(), String> {
-    write_frame(writer, message)
-        .await
-        .map_err(|err| format!("Failed to write receiver message: {err}"))
+    super::remote_channel::write_json_message(writer, message, "receiver").await
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use super::{rejection_message, secret_matches, wait_for_shutdown, SenderRejection};
+    use crate::system::remote_channel::ReceiverMessage;
+    use std::time::Duration;
 
-    struct DropSignal(Arc<AtomicBool>);
-    impl Drop for DropSignal {
-        fn drop(&mut self) {
-            self.0.store(true, Ordering::SeqCst);
-        }
+    #[test]
+    fn shared_secrets_compare_without_stopping_at_the_first_difference() {
+        assert!(secret_matches("0123456789abcdef", "0123456789abcdef"));
+        // A single differing byte, in the middle and at the end.
+        assert!(!secret_matches("0123456789abcdef", "0123456789abcdee"));
+        assert!(!secret_matches("0123456789abcdef", "0123456789abcde0"));
+        // Length differences never compare equal, and an empty pair does.
+        assert!(!secret_matches("0123456789abcdef", "0123456789abcde"));
+        assert!(!secret_matches("", "0"));
+        assert!(secret_matches("", ""));
     }
 
-    #[tokio::test]
-    async fn shutdown_retires_existing_connection_work() {
-        let (sender, receiver) = watch::channel(false);
-        let dropped = Arc::new(AtomicBool::new(false));
-        let signal = DropSignal(Arc::clone(&dropped));
-        let task = tokio::spawn(until_shutdown(receiver, async move {
-            let _signal = signal;
-            std::future::pending::<()>().await;
-        }));
-        tokio::task::yield_now().await;
-        sender.send(true).unwrap();
-        assert_eq!(task.await.unwrap(), None);
-        assert!(dropped.load(Ordering::SeqCst));
-    }
-
-    #[tokio::test]
-    async fn deliveries_require_the_current_session_and_current_trust() {
-        let pool = sqlx::sqlite::SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .unwrap();
-        sqlx::query("CREATE TABLE paired_remote_devices (id TEXT PRIMARY KEY, name TEXT NOT NULL, platform TEXT NOT NULL, role TEXT NOT NULL, shared_secret TEXT NOT NULL, paired_at TEXT NOT NULL, last_seen_at TEXT, last_known_address TEXT, trusted INTEGER NOT NULL)")
-            .execute(&pool).await.unwrap();
-        let device = crate::domain::PairedRemoteDevice {
-            id: "sender".into(),
-            name: "sender".into(),
-            platform: "windows".into(),
-            role: "sender".into(),
-            shared_secret: "secret".into(),
-            paired_at: "now".into(),
-            last_seen_at: None,
-            last_known_address: None,
-            trusted: true,
-        };
-        crate::db::paired_remote_device_queries::upsert_paired_remote_device(pool.clone(), &device)
-            .await
-            .unwrap();
-        let session = AuthenticatedSession {
-            sender_id: "sender".into(),
-            session_id: "session".into(),
-            token: "secret".into(),
-        };
+    #[test]
+    fn rejected_senders_get_the_code_and_text_the_companion_app_shows() {
+        assert_eq!(SenderRejection::NotPaired.code(), "unknown_sender");
         assert_eq!(
-            authorized_sender(pool.clone(), Some(&session), "session")
-                .await
-                .unwrap()
-                .as_deref(),
-            Some("sender")
+            SenderRejection::NotPaired.message(),
+            "Sender is not paired."
         );
-        assert!(authorized_sender(pool.clone(), Some(&session), "other")
-            .await
-            .unwrap()
-            .is_none());
-        sqlx::query("UPDATE paired_remote_devices SET role = 'receiver' WHERE id = 'sender'")
-            .execute(&pool)
-            .await
-            .unwrap();
-        assert!(authorized_sender(pool.clone(), Some(&session), "session")
-            .await
-            .unwrap()
-            .is_none());
-        sqlx::query("UPDATE paired_remote_devices SET role = 'sender' WHERE id = 'sender'")
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("UPDATE paired_remote_devices SET trusted = 0 WHERE id = 'sender'")
-            .execute(&pool)
-            .await
-            .unwrap();
-        assert!(authorized_sender(pool.clone(), Some(&session), "session")
-            .await
-            .unwrap()
-            .is_none());
-        sqlx::query("UPDATE paired_remote_devices SET trusted = 1, shared_secret = 'new-secret' WHERE id = 'sender'").execute(&pool).await.unwrap();
-        assert!(authorized_sender(pool.clone(), Some(&session), "session")
-            .await
-            .unwrap()
-            .is_none());
-        sqlx::query("DELETE FROM paired_remote_devices WHERE id = 'sender'")
-            .execute(&pool)
-            .await
-            .unwrap();
-        assert!(authorized_sender(pool, Some(&session), "session")
-            .await
-            .unwrap()
-            .is_none());
-    }
-
-    #[tokio::test]
-    async fn shutdown_closes_an_accepted_socket_while_a_frame_is_incomplete() {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let mut client = TcpStream::connect(listener.local_addr().unwrap())
-            .await
-            .unwrap();
-        let (socket, _) = listener.accept().await.unwrap();
-        let (sender, receiver) = watch::channel(false);
-        let task = tokio::spawn(until_shutdown(receiver, async move {
-            let mut reader = BufReader::new(socket);
-            read_frame(&mut reader).await
-        }));
-        client.write_all(b"partial").await.unwrap();
-        tokio::task::yield_now().await;
-        sender.send(true).unwrap();
-        assert!(task.await.unwrap().is_none());
-        let mut byte = [0_u8; 1];
-        match tokio::time::timeout(Duration::from_secs(1), client.read(&mut byte))
-            .await
-            .unwrap()
-        {
-            Ok(0) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::ConnectionReset => {}
-            other => panic!("socket remained open: {other:?}"),
-        }
-    }
-
-    #[tokio::test]
-    async fn already_stopped_connections_do_not_start() {
-        let (_sender, receiver) = watch::channel(true);
-        let entered = Arc::new(AtomicBool::new(false));
-        let marker = Arc::clone(&entered);
+        assert_eq!(SenderRejection::Unauthorized.code(), "unauthorized");
         assert_eq!(
-            until_shutdown(receiver, async move {
-                marker.store(true, Ordering::SeqCst);
-            })
-            .await,
-            None
+            SenderRejection::Unauthorized.message(),
+            "Sender authentication failed."
         );
-        assert!(!entered.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn a_rejection_carries_no_event_identity_so_the_sender_can_retry() {
+        assert_eq!(
+            rejection_message("session-1".to_string(), SenderRejection::Unauthorized),
+            ReceiverMessage::DeliveryError {
+                session_id: "session-1".to_string(),
+                event_id: String::new(),
+                sequence: 0,
+                code: "unauthorized".to_string(),
+                message: "Sender authentication failed.".to_string(),
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn shutdown_signal_releases_a_waiting_connection_task() {
+        let (shutdown, mut receiver) = tokio::sync::watch::channel(false);
+        let waiting = tokio::spawn(async move {
+            wait_for_shutdown(&mut receiver).await;
+        });
+
+        shutdown.send(true).expect("receiver is still waiting");
+        tokio::time::timeout(Duration::from_secs(1), waiting)
+            .await
+            .expect("shutdown interrupts the connection wait")
+            .expect("wait task does not panic");
     }
 }

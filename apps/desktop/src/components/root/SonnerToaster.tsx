@@ -18,6 +18,8 @@ import { accent } from "../../styles/palette";
 import { duration } from "../../styles/motion";
 import { hairline, premiumSurface } from "../../styles/shadows";
 
+export { toast } from "sonner";
+
 export const SonnerToaster = () => {
   return (
     <>
@@ -74,6 +76,11 @@ export const SonnerToaster = () => {
             transition: `background-color ${duration.fast}s !important`,
             "&:hover": {
               background: `${theme.vars.palette.level3} !important`,
+            },
+            "&:focus-visible": {
+              outline: `2px solid ${theme.vars.palette.text.primary} !important`,
+              outlineOffset: 2,
+              boxShadow: "none !important",
             },
             ...theme.applyStyles("dark", {
               border: `${hairline.dark(0.06)} !important`,

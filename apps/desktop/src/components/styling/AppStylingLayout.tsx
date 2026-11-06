@@ -4,7 +4,6 @@ import { FormattedMessage, useIntl } from "react-intl";
 import { loadTones, setActiveTone } from "../../actions/tone.actions";
 import { useAsyncEffect } from "../../hooks/async.hooks";
 import { useAppStore } from "../../store";
-import { logOnRejection } from "../../utils/promise.utils";
 import { getGenerativePrefs } from "../../utils/user.utils";
 import { ScrollListPage } from "../common/ScrollListPage";
 import { ToneSelect } from "../tones/ToneSelect";
@@ -29,7 +28,7 @@ export function AppStylingLayout() {
   });
 
   const handleActiveToneChange = useCallback((toneId: string | null) => {
-    logOnRejection(setActiveTone(toneId), "default writing style");
+    void setActiveTone(toneId);
   }, []);
 
   const isPostProcessingDisabled = useAppStore(

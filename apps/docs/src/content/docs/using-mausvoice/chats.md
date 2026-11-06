@@ -9,9 +9,9 @@ sidebar:
 
 ## Start or continue a conversation
 
-Choose **Chats**, then use **New chat** (`+`) to create a conversation. Type in the composer and press Enter or choose the send button; use Shift+Enter for a line break. A voice-assistant session also creates a conversation, and the **Open chat** shortcut opens the current pill conversation in this view.
+Choose **Chats**, then use **New Thread** (`+`) to create a conversation. Type in the composer and press Enter or choose the send button; use Shift+Enter for a line break. A voice-assistant session also creates a conversation, and the **Open chat** shortcut opens the current pill conversation in this view.
 
-A conversation stays listed as **New conversation** until you send its first message. The sidebar then names it from that message and orders the list by latest activity. Each row shows the conversation date and switches to the time when you hover over it or open it.
+A conversation stays listed as **New conversation** until you send its first message. The sidebar then names it from that message and orders the list by latest activity. Each row shows the conversation date and switches to the time when you hover over it or open it. In a narrow window, choose **Chats** above the conversation to return to the thread list; selecting a thread opens it again. If you switch threads while a new thread is being created, it remains available in the list without replacing your newer selection.
 
 The response streams into the conversation. Tool activity appears alongside model output, and a tool that needs access pauses for a permission card. Review its parameters and reason, then choose **Deny**, **Allow**, or **Always allow**. Denial returns a failed tool result to the assistant; it does not undo an action that was already approved and completed.
 
@@ -23,7 +23,7 @@ See [Assistant mode](./assistant-mode/) before approving screen reads, paste ope
 
 Conversations, user messages, assistant responses, and tool-result metadata are stored in the local SQLite database. They survive app restarts and are separate from transcription-history rows. Sending another message rebuilds the conversation context and sends the relevant message history to the assistant provider selected in Assistant mode. Tool output can therefore become part of later provider requests.
 
-A conversation's overflow menu offers **Delete**. Deleting it removes the local conversation and all of its chat messages. **Settings → Privacy and data → Danger zone → Clear local data** also clears the `conversations` and `chat_messages` tables. Neither action can retract information already sent to an external model provider or reverse filesystem changes made by a tool.
+Each conversation has a separate, keyboard-accessible options button labelled with its title. Its menu offers **Delete**. When the menu opens, its first action receives focus; use the arrow keys to move among actions and Escape to close it. Deleting it removes the local conversation and all of its chat messages. **Settings → Account → Danger zone → Clear local data** also clears the `conversations` and `chat_messages` tables. Neither action can retract information already sent to an external model provider or reverse filesystem changes made by a tool.
 
 ## Safe operating habits
 

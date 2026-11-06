@@ -11,11 +11,13 @@ import {
 import { showErrorSnackbar, showSnackbar } from "../../actions/app.actions";
 import { getIntl } from "../../i18n/intl";
 
+type PendingPasteReviewBubbleProps = {
+  message: ChatMessage;
+};
+
 export const PendingPasteReviewBubble = ({
   message,
-}: {
-  message: ChatMessage;
-}) => {
+}: PendingPasteReviewBubbleProps) => {
   const pending = getPendingPasteReview(message.metadata);
   const [text, setText] = useState(pending?.text ?? "");
   const [busy, setBusy] = useState(false);

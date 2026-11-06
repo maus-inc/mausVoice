@@ -1,4 +1,6 @@
 import { DEEPGRAM_TRANSCRIPTION_MODELS } from "@maus-inc/voice-ai";
+import type { ApiKey } from "@maus-inc/types";
+import type { UpdateApiKeyPayload } from "../repos/api-key.repo";
 import type { TranscriptionMode } from "../types/ai.types";
 
 export const PERSONAL_GROQ_API_KEY_ID = "personal-groq";
@@ -16,21 +18,83 @@ export const PERSONAL_USER_ID = "local-user-id";
 export const PERSONAL_USER_EMAIL = "personal@mausvoice.local";
 export const PERSONAL_USER_DISPLAY_NAME = "Personal User";
 
+/**
+ * The stored personal key for a provider, matched by id first and by name
+ * second, because keys created before the ids above existed carry the name
+ * only. One selector so the settings page, the key dialog and the actions
+ * cannot disagree about which key counts as the personal one.
+ */
+export const findPersonalApiKey = (
+  apiKeys: readonly ApiKey[],
+  provider: "groq" | "deepgram",
+): ApiKey | null => {
+  const id =
+    provider === "groq"
+      ? PERSONAL_GROQ_API_KEY_ID
+      : PERSONAL_DEEPGRAM_API_KEY_ID;
+  const name =
+    provider === "groq"
+      ? PERSONAL_GROQ_API_KEY_NAME
+      : PERSONAL_DEEPGRAM_API_KEY_NAME;
+
+  return (
+    apiKeys.find((apiKey) => apiKey.id === id) ??
+    apiKeys.find(
+      (apiKey) => apiKey.provider === provider && apiKey.name.trim() === name,
+    ) ??
+    null
+  );
+};
+
+/**
+ * The Groq transcription model this app wrote before it moved to the turbo
+ * model. An existing key still pointing at it is a preset, not a choice, so
+ * configuring the key again is allowed to move it forward.
+ */
+export const PREVIOUS_PERSONAL_GROQ_TRANSCRIPTION_MODEL = "whisper-large-v3";
+
+/**
+ * The update an existing personal Groq key needs to match a freshly configured
+ * key: only the fields that differ, so re-saving the same key is a no-op rather
+ * than a write, and a model someone pinned deliberately is left alone.
+ *
+ * Pure, so the rules can be read and tested without a store or a database.
+ */
+export const buildPersonalGroqKeyUpdate = (
+  existing: ApiKey,
+  configuredKey: string,
+): UpdateApiKeyPayload => {
+  const update: UpdateApiKeyPayload = { id: existing.id };
+
+  if (existing.name !== PERSONAL_GROQ_API_KEY_NAME) {
+    update.name = PERSONAL_GROQ_API_KEY_NAME;
+  }
+  if (existing.keyFull !== configuredKey) {
+    update.key = configuredKey;
+  }
+  if (
+    !existing.transcriptionModel ||
+    existing.transcriptionModel === PREVIOUS_PERSONAL_GROQ_TRANSCRIPTION_MODEL
+  ) {
+    update.transcriptionModel = PERSONAL_GROQ_TRANSCRIPTION_MODEL;
+  }
+  if (!existing.postProcessingModel) {
+    update.postProcessingModel = PERSONAL_GROQ_POST_PROCESSING_MODEL;
+  }
+
+  return update;
+};
+
 export const isPersonalUseProEnabled = (): boolean => true;
 
 export const isPersonalUseEnabled = (): boolean => isPersonalUseProEnabled();
 
-/** Preserve unrelated user-selected generation keys and avoid rewriting an active preset. */
-export const shouldConfigurePersonalGeneration = (
-  mode: string | null | undefined,
-  apiKeyId: string | null | undefined,
-  personalKeyId: string,
-): boolean =>
-  (!mode ||
-    !apiKeyId ||
-    apiKeyId === PERSONAL_GROQ_API_KEY_ID ||
-    apiKeyId === personalKeyId) &&
-  !(mode === "api" && apiKeyId === personalKeyId);
+type PersonalTranscriptionTargetArgs = {
+  deepgramKeyId: string | null;
+  groqKeyId: string | null;
+  currentMode: TranscriptionMode | null;
+  currentApiKeyId: string | null;
+};
 
 /**
  * Decides which personal API key transcription should point at. Deepgram (live
@@ -43,12 +107,7 @@ export const resolvePersonalTranscriptionTarget = ({
   groqKeyId,
   currentMode,
   currentApiKeyId,
-}: {
-  deepgramKeyId: string | null;
-  groqKeyId: string | null;
-  currentMode: TranscriptionMode | null;
-  currentApiKeyId: string | null;
-}): {
+}: PersonalTranscriptionTargetArgs): {
   mode: "api";
   apiKeyId: string;
 } | null => {

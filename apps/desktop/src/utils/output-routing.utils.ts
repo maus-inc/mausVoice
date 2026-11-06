@@ -8,13 +8,13 @@ import { beginEditWatch } from "../actions/edit-watch.actions";
 import { getIntl } from "../i18n/intl";
 import { getAppState, produceAppState } from "../store";
 import { getEffectiveHandsFreeDelayMs } from "./hands-free-delay.utils";
-import { resolveLocalInsertionSettings } from "./insertion-settings.utils";
 import { reviewTranscriptBeforeInsert } from "../actions/pill-review.actions";
 import { getLogger } from "./log.utils";
 import { sendPillFlashMessage, sendPillStageText } from "./overlay.utils";
 import { markPipeline, type PipelineTrace } from "./pipeline-trace";
 import { sanitizeIndentation } from "./string.utils";
 import { getMyUserPreferences } from "./user.utils";
+import { withLocalDataWrite } from "./local-data-write-gate";
 
 let handsFreeSessionId = 0;
 
@@ -89,7 +89,6 @@ export const insertLocalTranscriptOutputViaPaste = async (
   text: string,
   keybind: string | null,
   isInterim?: boolean,
-  isCurrent: () => boolean = () => true,
 ): Promise<PasteOutcome> => {
   const sanitized = sanitizeIndentation(text);
 
@@ -98,7 +97,7 @@ export const insertLocalTranscriptOutputViaPaste = async (
     keybind,
   });
 
-  if (outcome === "copied_to_clipboard" && !isInterim && isCurrent()) {
+  if (outcome === "copied_to_clipboard" && !isInterim) {
     getLogger().info(
       "Focused element was not editable, transcription copied to clipboard",
     );
@@ -151,23 +150,25 @@ const insertLocalOutput = async (
   context: OutputContext,
   text: string,
   isInterim?: boolean,
-  isCurrent: () => boolean = () => true,
 ): Promise<PasteOutcome | undefined> => {
-  const settings = resolveLocalInsertionSettings(
-    context.currentApp,
-    context.prefs,
-    context.state.supportsPasteKeybinds === "global",
-  );
-  if (settings.method === "type") {
-    await insertLocalTranscriptOutputViaTyping(text, settings.delayMs);
+  const insertionMethod =
+    context.currentApp?.insertionMethod ??
+    context.prefs?.insertionMethod ??
+    "paste";
+  if (insertionMethod === "type") {
+    const typingSpeedMs =
+      context.currentApp?.typingSpeedMs ?? context.prefs?.typingSpeedMs ?? 5;
+    await insertLocalTranscriptOutputViaTyping(text, typingSpeedMs);
     return undefined;
   }
-  return insertLocalTranscriptOutputViaPaste(
-    text,
-    settings.keybind,
-    isInterim,
-    isCurrent,
-  );
+
+  const pasteKeybind =
+    context.state.supportsPasteKeybinds === "global"
+      ? (context.prefs?.pasteKeybind ?? null)
+      : (context.currentApp?.pasteKeybind ??
+        context.prefs?.pasteKeybind ??
+        null);
+  return insertLocalTranscriptOutputViaPaste(text, pasteKeybind, isInterim);
 };
 
 const waitForHandsFreeDelay = async (
@@ -220,10 +221,7 @@ const resolveLocalInsertResult = (
 export const routeTranscriptOutput = async (
   args: RouteTranscriptOutputArgs,
   trace: PipelineTrace | null = null,
-  isCurrent: () => boolean = () => true,
 ): Promise<RouteTranscriptOutputResult> => {
-  if (!isCurrent())
-    return { delivered: false, remote: false, deliveredText: null };
   const context = getOutputContext(args);
   const { prefs } = context;
   const sessionId = ++handsFreeSessionId;
@@ -236,7 +234,7 @@ export const routeTranscriptOutput = async (
     args.skipReview,
     trace,
   );
-  if (!isCurrent() || !outputText?.trim()) {
+  if (!outputText?.trim()) {
     return {
       delivered: false,
       remote: remotePrefs !== null,
@@ -245,7 +243,9 @@ export const routeTranscriptOutput = async (
   }
   if (remotePrefs) {
     return deliverWithInsertionStage(args.isInterim, trace, () =>
-      deliverRemoteOutput({ ...args, text: outputText }, remotePrefs),
+      withLocalDataWrite(() =>
+        deliverRemoteOutput({ ...args, text: outputText }, remotePrefs),
+      ),
     );
   }
 
@@ -255,7 +255,7 @@ export const routeTranscriptOutput = async (
       sessionId,
       args.isInterim,
     );
-    if (!canProceed || !isCurrent()) {
+    if (!canProceed) {
       return { delivered: false, remote: false, deliveredText: null };
     }
 
@@ -263,19 +263,8 @@ export const routeTranscriptOutput = async (
       context,
       outputText,
       args.isInterim,
-      isCurrent,
     );
 
-    if (!isCurrent()) {
-      // The native insertion may already have completed, but a retired
-      // recording must not start an edit watch for a successor's target.
-      const delivered = !(args.isInterim && outcome === "copied_to_clipboard");
-      return {
-        delivered,
-        remote: false,
-        deliveredText: delivered ? outputText : null,
-      };
-    }
     return resolveLocalInsertResult(args, outputText, outcome);
   });
 };
@@ -283,6 +272,11 @@ export const routeTranscriptOutput = async (
 // ──────────────────────────────────────────────────────────────────────────────
 // Dictation backlog state management
 // ──────────────────────────────────────────────────────────────────────────────
+
+/** Return a snapshot of the current dictation backlog. */
+export const getDictationBacklog = (): string[] => {
+  return [...getAppState().dictationBacklog];
+};
 
 /** True when the backlog is non-empty. */
 export const hasDictationBacklog = (): boolean => {
@@ -346,9 +340,7 @@ const takeBacklogSnapshot = (): BacklogSnapshot => {
 export const drainDictationBacklog = async (
   newSegment?: string,
   currentAppId?: string | null,
-  isCurrent: () => boolean = () => true,
 ): Promise<{ delivered: boolean; copiedToClipboard: boolean }> => {
-  if (!isCurrent()) return { delivered: false, copiedToClipboard: false };
   const snap = takeBacklogSnapshot();
   if (snap.segments.length === 0 && !newSegment?.trim()) {
     return { delivered: false, copiedToClipboard: false };
@@ -367,7 +359,7 @@ export const drainDictationBacklog = async (
 
   // Check nonce BEFORE delivery — if the session already advanced, this
   // backlog belongs to a prior session and must not be delivered.
-  if (!isCurrent() || getAppState().dictationBacklogNonce !== snap.nonce) {
+  if (getAppState().dictationBacklogNonce !== snap.nonce) {
     return { delivered: false, copiedToClipboard: false };
   }
 
@@ -382,17 +374,10 @@ export const drainDictationBacklog = async (
       ? (state.appTargetById[currentAppId] ?? null)
       : null,
   };
-  if (!isCurrent()) return { delivered: false, copiedToClipboard: false };
-  const pasteOutcome = await insertLocalOutput(
-    context,
-    combinedText,
-    undefined,
-    isCurrent,
-  );
+  const pasteOutcome = await insertLocalOutput(context, combinedText);
 
   // Post-delivery nonce check: session may have advanced during the
   // async deliver call.
-  if (!isCurrent()) return { delivered: false, copiedToClipboard: false };
   if (getAppState().dictationBacklogNonce !== snap.nonce) {
     return {
       delivered: true,

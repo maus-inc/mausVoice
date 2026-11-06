@@ -6,6 +6,9 @@ import type { StylingMode } from "@maus-inc/types";
  * transition. A "switch to style" hotkey is a `select` transition. Both
  * transitions write the same `user.selectedToneId` slot.
  */
+export type WritingStyleSwitchChannel =
+  "pill" | "arrows" | "cycle-hotkey" | "hotkey";
+
 export type WritingStyleSwitchRequest =
   | { channel: "pill" | "arrows" | "cycle-hotkey"; direction: 1 | -1 }
   | { channel: "hotkey"; toneId: string };

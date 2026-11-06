@@ -1,11 +1,16 @@
-import type { User as LocalUser } from "@maus-inc/desktop-native-apis";
 import { Nullable, User } from "@maus-inc/types";
 import { invoke } from "@tauri-apps/api/core";
 import { nowIso } from "../utils/date.utils";
-import { getLocalStorage } from "../utils/local-storage.utils";
+import {
+  getLocalStorage,
+  ACCOUNT_CREATED_AT_STORAGE_KEY,
+  ONBOARDED_AT_STORAGE_KEY,
+} from "../utils/local-storage.utils";
+import type { LocalDataWriteLease } from "../utils/local-data-write-gate";
+import { withLocalDataWriteSync } from "../utils/local-data-write-gate";
 import { orFalse, orNull, orUndefined, orValue } from "../utils/nullable.utils";
 import { LOCAL_USER_ID } from "../utils/user.utils";
-import { BaseRepo } from "./base.repo";
+import { BaseRepo, withLocalDataWrite } from "./base.repo";
 
 /**
  * `createdAt` and `onboardedAt` used to be `new Date().toISOString()` at every
@@ -15,8 +20,6 @@ import { BaseRepo } from "./base.repo";
  * these two write-once localStorage anchors carry the value across the upgrade
  * for anyone who already had a profile row.
  */
-const ACCOUNT_CREATED_AT_KEY = "mausvoice:account-created-at";
-const ONBOARDED_AT_KEY = "mausvoice:onboarded-at";
 
 /**
  * A legacy profile predates both the column and the anchor, so its age is
@@ -59,7 +62,11 @@ const readTimestampAnchor = (key: string): string | null => {
   }
 };
 
-const writeTimestampAnchorOnce = (key: string, value: string): void => {
+const writeTimestampAnchorOnce = (
+  key: string,
+  value: string,
+  lease: LocalDataWriteLease,
+): void => {
   if (readTimestampAnchor(key) != null) {
     return;
   }
@@ -68,9 +75,25 @@ const writeTimestampAnchorOnce = (key: string, value: string): void => {
     return;
   }
   try {
-    storage.setItem(key, JSON.stringify(value));
+    withLocalDataWriteSync(() => {
+      storage.setItem(key, JSON.stringify(value));
+    }, lease);
   } catch {
-    // A full or unavailable localStorage must not break loading the user.
+    // A full or unavailable localStorage must not break saving the user.
+  }
+};
+
+const persistTimestampAnchors = (
+  user: User,
+  lease: LocalDataWriteLease,
+): void => {
+  const observed = observedCreatedAt(user.createdAt);
+  const onboardedAt = resolveOnboardedAt(user.onboardedAt);
+  if (observed != null) {
+    writeTimestampAnchorOnce(ACCOUNT_CREATED_AT_STORAGE_KEY, observed, lease);
+  }
+  if (onboardedAt != null) {
+    writeTimestampAnchorOnce(ONBOARDED_AT_STORAGE_KEY, onboardedAt, lease);
   }
 };
 
@@ -85,7 +108,7 @@ const observedCreatedAt = (
   if (isKnownInstant(persisted)) {
     return persisted;
   }
-  const anchored = readTimestampAnchor(ACCOUNT_CREATED_AT_KEY);
+  const anchored = readTimestampAnchor(ACCOUNT_CREATED_AT_STORAGE_KEY);
   return isKnownInstant(anchored) ? anchored : null;
 };
 
@@ -98,7 +121,7 @@ const resolveOnboardedAt = (
   if (isTimestamp(persisted)) {
     return persisted;
   }
-  return readTimestampAnchor(ONBOARDED_AT_KEY);
+  return readTimestampAnchor(ONBOARDED_AT_STORAGE_KEY);
 };
 
 const parseActiveToneIds = (
@@ -117,6 +140,32 @@ const parseActiveToneIds = (
     // Malformed stored JSON must not break loading the user record.
     return null;
   }
+};
+
+type LocalUser = {
+  id: string;
+  name: string;
+  bio: string;
+  company?: string | null;
+  title?: string | null;
+  onboarded: boolean;
+  preferredMicrophone: string | null;
+  preferredLanguage: string | null;
+  wordsThisMonth: number;
+  wordsThisMonthMonth: string | null;
+  wordsTotal: number;
+  playInteractionChime?: boolean;
+  interactionFeedbackVolume?: number | null;
+  hasFinishedTutorial?: boolean;
+  cohort?: string | null;
+  stylingMode?: string | null;
+  selectedToneId?: string | null;
+  activeToneIds?: string | null;
+  streak?: number | null;
+  streakRecordedAt?: string | null;
+  referralSource?: string | null;
+  createdAt?: string | null;
+  onboardedAt?: string | null;
 };
 
 const fromLocalUser = (localUser: LocalUser): User => {
@@ -157,66 +206,79 @@ const fromLocalUser = (localUser: LocalUser): User => {
 };
 
 export const toLocalUser = (user: User): LocalUser => {
-  // The save is what makes the timestamp durable: a real instant (column, then
-  // anchor) is written to SQLite and, the first time one is known, also planted
-  // as the anchor so a later read can still recover it if the row is lost. An
-  // unknown `createdAt` is written as null, never as the epoch floor, so a real
-  // instant arriving later still wins.
   const observed = observedCreatedAt(user.createdAt);
   const onboardedAt = resolveOnboardedAt(user.onboardedAt);
-  if (observed != null) {
-    writeTimestampAnchorOnce(ACCOUNT_CREATED_AT_KEY, observed);
-  }
-  if (onboardedAt != null) {
-    writeTimestampAnchorOnce(ONBOARDED_AT_KEY, onboardedAt);
-  }
-
   return {
     id: LOCAL_USER_ID,
     name: user.name,
     bio: user.bio ?? "",
-    company: orNull(user.company),
-    title: orNull(user.title),
+    company: user.company ?? null,
+    title: user.title ?? null,
     onboarded: user.onboarded,
-    preferredMicrophone: orNull(user.preferredMicrophone),
-    preferredLanguage: orNull(user.preferredLanguage),
+    preferredMicrophone: user.preferredMicrophone ?? null,
+    preferredLanguage: user.preferredLanguage ?? null,
     wordsThisMonth: user.wordsThisMonth,
-    wordsThisMonthMonth: orNull(user.wordsThisMonthMonth),
+    wordsThisMonthMonth: user.wordsThisMonthMonth ?? null,
     wordsTotal: user.wordsTotal,
     playInteractionChime: user.playInteractionChime,
-    interactionFeedbackVolume: orNull(user.interactionFeedbackVolume),
+    interactionFeedbackVolume: user.interactionFeedbackVolume ?? null,
     hasFinishedTutorial: user.hasFinishedTutorial,
-    cohort: orNull(user.cohort),
-    stylingMode: orNull(user.stylingMode),
-    selectedToneId: orNull(user.selectedToneId),
+    cohort: user.cohort ?? null,
+    stylingMode: user.stylingMode ?? null,
+    selectedToneId: user.selectedToneId ?? null,
     activeToneIds: user.activeToneIds
       ? JSON.stringify(user.activeToneIds)
       : null,
-    streak: orNull(user.streak),
-    streakRecordedAt: orNull(user.streakRecordedAt),
-    referralSource: orNull(user.referralSource),
+    streak: user.streak ?? null,
+    streakRecordedAt: user.streakRecordedAt ?? null,
+    referralSource: user.referralSource ?? null,
     createdAt: observed,
     onboardedAt,
   };
 };
 
 export abstract class BaseUserRepo extends BaseRepo {
-  abstract setMyUser(user: User): Promise<User>;
+  abstract setMyUser(user: User, lease?: LocalDataWriteLease): Promise<User>;
   abstract getMyUser(): Promise<Nullable<User>>;
+  abstract recordUsageWords(
+    eventId: string,
+    localDate: string,
+    wordCount: number,
+    lease?: LocalDataWriteLease,
+  ): Promise<User>;
 }
 
 export class LocalUserRepo extends BaseUserRepo {
-  async setMyUser(user: User): Promise<User> {
-    const stored = await invoke<LocalUser>("user_set_one", {
-      user: toLocalUser(user),
-    });
+  setMyUser(user: User, lease?: LocalDataWriteLease): Promise<User> {
+    return withLocalDataWrite(async (activeLease) => {
+      persistTimestampAnchors(user, activeLease);
+      const stored = await invoke<LocalUser>("user_set_one", {
+        user: toLocalUser(user),
+      });
 
-    return fromLocalUser(stored);
+      return fromLocalUser(stored);
+    }, lease);
   }
 
   async getMyUser(): Promise<Nullable<User>> {
     const user = await invoke<Nullable<LocalUser>>("user_get_one");
 
     return user ? fromLocalUser(user) : null;
+  }
+
+  recordUsageWords(
+    eventId: string,
+    localDate: string,
+    wordCount: number,
+    lease?: LocalDataWriteLease,
+  ): Promise<User> {
+    return withLocalDataWrite(async () => {
+      const user = await invoke<LocalUser>("user_record_usage", {
+        eventId,
+        localDate,
+        wordCount,
+      });
+      return fromLocalUser(user);
+    }, lease);
   }
 }

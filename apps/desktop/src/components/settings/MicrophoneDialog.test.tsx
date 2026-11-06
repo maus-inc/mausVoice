@@ -1,157 +1,285 @@
 // @vitest-environment jsdom
-import { act } from "react";
+import { ThemeProvider } from "@mui/material";
+import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ensureUiHarness } from "../../../test/helpers/jsdom-ui-harness";
 
-const mocks = vi.hoisted(() => ({ save: vi.fn(), close: vi.fn() }));
-vi.mock("../../actions/user.actions", () => ({
-  setPreferredMicrophone: mocks.save,
-}));
-vi.mock("../../hooks/user.hooks", () => ({
-  useMyPreferredMicrophone: () => savedPreference,
-}));
-vi.mock("../../store", () => ({
-  useAppStore: (
-    selector: (state: {
-      settings: { microphoneDialogOpen: boolean };
-    }) => unknown,
-  ) => selector({ settings: { microphoneDialogOpen: open } }),
-  produceAppState: (
-    fn: (draft: { settings: { microphoneDialogOpen: boolean } }) => void,
-  ) => {
-    const draft = { settings: { microphoneDialogOpen: open } };
-    fn(draft);
-    open = draft.settings.microphoneDialogOpen;
-    mocks.close();
+const {
+  getUserPreferences,
+  setUserPreferences,
+  showErrorSnackbar,
+  loggerMock,
+} = vi.hoisted(() => ({
+  getUserPreferences: vi.fn(() => Promise.resolve(null)),
+  setUserPreferences: vi.fn((preferences: unknown) =>
+    Promise.resolve(preferences),
+  ),
+  showErrorSnackbar: vi.fn(),
+  loggerMock: {
+    info: vi.fn(),
+    warning: vi.fn(),
+    error: vi.fn(),
+    verbose: vi.fn(),
+    stopwatch: vi.fn((_label: string, fn: () => Promise<unknown>) => fn()),
   },
 }));
-vi.mock("react-intl", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("react-intl")>()),
-  FormattedMessage: ({ defaultMessage }: { defaultMessage: string }) =>
-    defaultMessage,
+
+vi.mock("../../actions/app.actions", () => ({ showErrorSnackbar }));
+vi.mock("../../repos", () => ({
+  getUserPreferencesRepo: () => ({ getUserPreferences, setUserPreferences }),
+  getUserRepo: () => ({ getMyUser: vi.fn(), setMyUser: vi.fn() }),
 }));
+vi.mock("../../utils/log.utils", () => ({ getLogger: () => loggerMock }));
 vi.mock("../microphone/MicrophoneSelector", () => ({
   MicrophoneSelector: ({
-    value,
     onChange,
-    disabled,
   }: {
-    value: string | null;
     onChange: (value: string | null) => void;
-    disabled: boolean;
-  }) => (
-    <button disabled={disabled} onClick={() => onChange("usb")}>
-      Current: {value ?? "automatic"}
-    </button>
-  ),
+  }) =>
+    createElement(
+      "button",
+      {
+        type: "button",
+        "data-testid": "select-test-microphone",
+        onClick: () => onChange("test-device"),
+      },
+      "Select test microphone",
+    ),
 }));
 vi.mock("../microphone/MicrophoneTester", () => ({
-  MicrophoneTester: () => null,
+  MicrophoneTester: ({ disabled = false }: { disabled?: boolean }) =>
+    createElement("div", {
+      "data-testid": "tester",
+      "data-disabled": String(disabled),
+    }),
 }));
+vi.mock("react-intl", async (importOriginal) => {
+  const { reactIntlWithIdsModule } =
+    await import("../../../test/helpers/react-intl-mock");
+  return reactIntlWithIdsModule(importOriginal);
+});
+
+import { IntlProvider } from "react-intl";
+import { theme } from "../../theme";
+import { INITIAL_APP_STATE } from "../../state/app.state";
+import { produceAppState, setAppState } from "../../store";
+import { setSnackbar } from "../../utils/app.utils";
+import en from "../../i18n/locales/en.json";
+import { SnackbarEmitter } from "../root/SnackbarEmitter";
+import { resetSnackbarEmitForTests } from "../root/snackbar-emit";
 import { MicrophoneDialog } from "./MicrophoneDialog";
 
 ensureUiHarness();
-let open = true;
-let savedPreference: string | null = null;
-let container: HTMLDivElement;
-let root: Root;
-const button = (label: string) =>
-  [...document.querySelectorAll("button")].find((node) =>
-    node.textContent?.includes(label),
-  );
-const render = async () =>
-  act(async () => {
-    root.render(<MicrophoneDialog />);
-  });
 
-beforeEach(() => {
-  open = true;
-  savedPreference = null;
-  vi.clearAllMocks();
-  mocks.save.mockResolvedValue(undefined);
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
-afterEach(() => {
-  act(() => root.unmount());
-  container.remove();
-});
+(
+  globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
+).IS_REACT_ACT_ENVIRONMENT = true;
 
-describe("MicrophoneDialog", () => {
-  it("saves a selection and shows success", async () => {
-    await render();
-    expect(button("Save changes")?.disabled).toBe(true);
-    await act(async () => button("Current:")!.click());
-    await act(async () => {
-      button("Save changes")!.click();
-      await Promise.resolve();
+const resetState = () => setAppState(structuredClone(INITIAL_APP_STATE), true);
+
+describe("MicrophoneDialog save feedback", () => {
+  let container: HTMLDivElement;
+  let root: Root;
+
+  const openDialog = () => {
+    produceAppState((draft) => {
+      draft.settings.microphoneDialogOpen = true;
     });
-    expect(mocks.save).toHaveBeenCalledExactlyOnceWith("usb");
-    expect(document.body.textContent).toContain("Preference saved.");
-  });
+  };
 
-  it("allows retry after a failed save", async () => {
-    mocks.save.mockRejectedValueOnce(new Error("offline"));
-    await render();
-    await act(async () => button("Current:")!.click());
+  const renderDialog = async () => {
     await act(async () => {
-      button("Save changes")!.click();
-      await Promise.resolve();
+      root.render(
+        createElement(
+          IntlProvider,
+          { locale: "en", messages: en },
+          createElement(
+            ThemeProvider,
+            { theme },
+            createElement(
+              "div",
+              null,
+              createElement(MicrophoneDialog),
+              createElement(SnackbarEmitter),
+            ),
+          ),
+        ),
+      );
     });
-    expect(document.body.textContent).toContain(
-      "Failed to save microphone preference",
+  };
+
+  const clickButton = async (selector: string) => {
+    const button = document.body.querySelector<HTMLButtonElement>(selector);
+    if (!button) {
+      throw new Error(`Missing button: ${selector}`);
+    }
+    await act(async () => {
+      button.click();
+    });
+  };
+
+  const clickSave = async () => {
+    const button = Array.from(document.body.querySelectorAll("button")).find(
+      (candidate) => candidate.textContent?.includes("Save changes"),
     );
+    if (!button) {
+      throw new Error("Missing save button");
+    }
     await act(async () => {
-      button("Save changes")!.click();
-      await Promise.resolve();
+      button.click();
     });
-    expect(mocks.save).toHaveBeenCalledTimes(2);
-    expect(document.body.textContent).toContain("Preference saved.");
+  };
+
+  beforeEach(() => {
+    resetState();
+    resetSnackbarEmitForTests();
+    toast.dismiss();
+    getUserPreferences.mockReset().mockResolvedValue(null);
+    setUserPreferences
+      .mockReset()
+      .mockImplementation((preferences) => Promise.resolve(preferences));
+    showErrorSnackbar.mockReset();
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
   });
 
-  it("does not report an earlier session's save after reopening", async () => {
-    let finish: () => void = () => undefined;
-    mocks.save.mockReturnValueOnce(
-      new Promise<void>((resolve) => {
-        finish = resolve;
-      }),
-    );
-    await render();
-    await act(async () => button("Current:")!.click());
-    await act(async () => button("Save changes")!.click());
-    await act(async () => button("Close")!.click());
-    await render();
-    open = true;
-    await render();
-    expect(document.body.textContent).not.toContain("Preference saved.");
-    await act(async () => {
-      finish();
-      await Promise.resolve();
-    });
-    expect(document.body.textContent).not.toContain("Preference saved.");
-    expect(button("Current:")?.disabled).toBe(false);
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    toast.dismiss();
+    resetSnackbarEmitForTests();
+    resetState();
   });
 
-  it("starts only one save on rapid clicks before React commits", async () => {
-    let finish: () => void = () => undefined;
-    mocks.save.mockReturnValueOnce(
-      new Promise<void>((resolve) => {
-        finish = resolve;
-      }),
+  it("announces persisted success in the dialog and shows the global toast", async () => {
+    let resolveSave: (() => void) | undefined;
+    const save = new Promise<void>((resolve) => {
+      resolveSave = resolve;
+    });
+    setUserPreferences.mockImplementation((preferences) =>
+      save.then(() => preferences),
     );
-    await render();
-    await act(async () => button("Current:")!.click());
-    const save = button("Save changes")!;
+
+    openDialog();
+    await renderDialog();
+    await clickButton('[data-testid="select-test-microphone"]');
+    await clickSave();
+
+    expect(setUserPreferences).toHaveBeenCalledWith(
+      expect.objectContaining({ preferredMicrophone: "test-device" }),
+      // Preference writes run under a local-data write lease, so the second
+      // argument is that lease rather than part of the payload.
+      expect.objectContaining({}),
+    );
+    expect(document.querySelector("[data-sonner-toast]")).toBeNull();
+
     await act(async () => {
-      save.click();
-      save.click();
+      // A concurrent state-backed notification must not replace the save
+      // confirmation before the SnackbarEmitter's effect runs.
+      produceAppState((draft) => {
+        setSnackbar(draft, "Concurrent notification", { mode: "info" });
+      });
+      resolveSave?.();
+      await save;
+      await expect
+        .poll(() => {
+          const toastText = Array.from(
+            document.body.querySelectorAll("[data-sonner-toast]"),
+          ).map((toastNode) => toastNode.textContent ?? "");
+          return (
+            toastText.some((text) => text.includes("Preference saved.")) &&
+            toastText.some((text) => text.includes("Concurrent notification"))
+          );
+        })
+        .toBe(true);
     });
-    expect(mocks.save).toHaveBeenCalledOnce();
+
+    const dialog = document.body.querySelector<HTMLElement>("[role='dialog']");
+    const successToast = document.body.querySelector(
+      '[data-sonner-toast][data-type="success"]',
+    );
+    const announcement = dialog?.querySelector<HTMLElement>("[role='status']");
+    const toaster = document.body.querySelector("[data-sonner-toaster]");
+    expect(dialog).not.toBeNull();
+    expect(dialog?.querySelector('[role="alert"]')).toBeNull();
+    expect(announcement?.getAttribute("aria-live")).toBe("polite");
+    expect(announcement?.getAttribute("aria-atomic")).toBe("true");
+    expect(announcement?.textContent).toBe("Preference saved.");
+    expect(announcement?.style.position).toBe("absolute");
+    expect(successToast).not.toBeNull();
+    expect(successToast!.textContent).toContain("Preference saved.");
+    expect(dialog!.contains(successToast)).toBe(false);
+    expect(container.getAttribute("aria-hidden")).toBe("true");
+    expect(container.contains(toaster)).toBe(true);
+    expect(showErrorSnackbar).not.toHaveBeenCalled();
+  });
+
+  it("keeps save failures inline without dismissing during save or a global error toast", async () => {
+    let rejectSave: ((error: Error) => void) | undefined;
+    const save = new Promise<unknown>((_resolve, reject) => {
+      rejectSave = reject;
+    });
+    setUserPreferences.mockImplementation(() => save);
+
+    openDialog();
+    await renderDialog();
+    await clickButton('[data-testid="select-test-microphone"]');
+    await clickSave();
+
+    const dialogWhileSaving =
+      document.body.querySelector<HTMLElement>('[role="dialog"]');
+    const closeButton = Array.from(
+      dialogWhileSaving?.querySelectorAll("button") ?? [],
+    ).find((button) => button.textContent?.includes("Close"));
+    const modalRoot =
+      document.body.querySelector<HTMLElement>(".MuiModal-root");
+    const backdrop =
+      document.body.querySelector<HTMLElement>(".MuiBackdrop-root");
+    expect(closeButton?.disabled).toBe(true);
+    expect(
+      dialogWhileSaving
+        ?.querySelector('[data-testid="tester"]')
+        ?.getAttribute("data-disabled"),
+    ).toBe("false");
+    expect(modalRoot).not.toBeNull();
+    expect(backdrop).not.toBeNull();
+
     await act(async () => {
-      finish();
-      await Promise.resolve();
+      modalRoot?.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+      );
+      backdrop?.click();
     });
+    expect(document.body.querySelector('[role="dialog"]')).not.toBeNull();
+
+    await act(async () => {
+      rejectSave?.(new Error("storage unavailable"));
+      await save.catch(() => undefined);
+    });
+    await expect
+      .poll(() =>
+        document.body
+          .querySelector('[role="dialog"]')
+          ?.textContent?.includes(
+            "Failed to save microphone preference. Please try again.",
+          ),
+      )
+      .toBe(true);
+
+    const dialog = document.body.querySelector('[role="dialog"]');
+    expect(dialog?.textContent).toContain(
+      "Failed to save microphone preference. Please try again.",
+    );
+    expect(dialog?.querySelector('[role="status"]')?.textContent).toBe("");
+    expect(
+      Array.from(dialog?.querySelectorAll("button") ?? []).find((button) =>
+        button.textContent?.includes("Close"),
+      )?.disabled,
+    ).toBe(false);
+    expect(showErrorSnackbar).not.toHaveBeenCalled();
+    expect(document.querySelector("[data-sonner-toast]")).toBeNull();
   });
 });

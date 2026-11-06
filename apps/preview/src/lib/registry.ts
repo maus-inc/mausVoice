@@ -150,7 +150,7 @@ const EASE_OUT = "cubic-bezier(0.23, 1, 0.32, 1)";
 const EASE_OUT_CUBIC = "cubic-bezier(0.33, 1, 0.68, 1)";
 const EASE_IN_OUT = "cubic-bezier(0.645, 0.045, 0.355, 1)";
 
-const EASING_OPTIONS = [
+export const EASING_OPTIONS = [
   { value: EASE_OUT, label: "easeOut · quint (0.23, 1, 0.32, 1)" },
   { value: EASE_OUT_CUBIC, label: "sharp · cubic (0.33, 1, 0.68, 1)" },
   { value: EASE_IN_OUT, label: "easeInOut (0.645, 0.045, 0.355, 1)" },
@@ -875,7 +875,9 @@ export const REGISTRY: RegistryEntry[] = [
     sources: [`${D}components/common/ConfirmDialog.tsx`],
     usedIn: [
       `${D}components/onboarding/SignInForm.tsx`,
-      `${D}components/settings/SettingsPage.tsx`,
+      `${D}components/settings/pages/PrivacyDataSettingsPage.tsx`,
+      `${D}components/settings/pages/SystemSettingsPage.tsx`,
+      `${D}components/settings/UpdateChannelSetting.tsx`,
       `${D}components/styling/ManualStylingRow.tsx`,
       `${D}components/tones/ToneEditorDialog.tsx`,
     ],
@@ -911,6 +913,7 @@ export const REGISTRY: RegistryEntry[] = [
       `${D}components/styling/AppStylingRow.tsx`,
       `${D}components/styling/ManualAddStyle.tsx`,
       `${D}components/styling/ManualStylingRow.tsx`,
+      `${D}components/transcriptions/TranscriptionToneMenu.tsx`,
     ],
     demo: "popover-menu",
     spec: [radiusField("radius", "Popover radius", "MuiPopover", 14, "paper")],
@@ -1080,7 +1083,6 @@ export const REGISTRY: RegistryEntry[] = [
       `${D}components/common/MenuPopover.tsx`,
       `${D}components/dashboard/DashboardMenu.tsx`,
       `${D}components/dashboard/UpdateListTile.tsx`,
-      `${D}components/settings/SettingsPage.tsx`,
       `${D}components/styling/AppStylingRow.tsx`,
       `${D}components/styling/ManualStylingRow.tsx`,
     ],
@@ -1623,15 +1625,19 @@ export const REGISTRY: RegistryEntry[] = [
   },
   {
     id: "tone-select",
-    name: "ToneSelect · menu example",
+    name: "ToneSelect · TranscriptionToneMenu",
     category: "pill",
     status: "recreated",
     statusNote:
-      "Store/action-bound (tone CRUD, user prefs). Recreated with fixture tones; a separate generic MenuPopover example demonstrates menu rows.",
-    sources: [`${D}components/tones/ToneSelect.tsx`],
+      "Store/action-bound (tone CRUD, user prefs). Recreated as the presentational slice: the real MenuPopover + ListTile rows + Add/Edit/Public icons with identical labeling; data is fixture tones.",
+    sources: [
+      `${D}components/tones/ToneSelect.tsx`,
+      `${D}components/transcriptions/TranscriptionToneMenu.tsx`,
+    ],
     usedIn: [
       `${D}components/styling/AppStylingLayout.tsx`,
       `${D}components/styling/AppStylingRow.tsx`,
+      `${D}components/transcriptions/TranscriptionToneMenu.tsx`,
     ],
     demo: "tone-select",
     spec: [
@@ -1639,10 +1645,10 @@ export const REGISTRY: RegistryEntry[] = [
         key: "note",
         label: "Presentational slice (docs)",
         type: "text",
-        default: "MUI Select + MenuItem",
+        default: "MenuPopover + ListTile",
         target: { kind: "source", file: `${D}components/tones/ToneSelect.tsx` },
-        mapsTo: `${D}components/tones/ToneSelect.tsx → MUI Select rows with Add/Edit/Public icons; sorted tone ids via getSortedToneIds — edit radius via popover-menu spec (live)`,
-        patch: `// rows: MenuItem · menu: Select`,
+        mapsTo: `${D}components/tones/ToneSelect.tsx → menu built on MenuPopoverBuilder/ListTile; sorted tone ids via getSortedToneIds — edit radius via popover-menu spec (live), rows via list-tile spec (live)`,
+        patch: `// rows: ListTile · menu: MenuPopoverBuilder`,
       },
     ],
   },
@@ -1684,3 +1690,5 @@ export const entriesByCategory = (c: CategoryId) =>
   REGISTRY.filter((e) => e.category === c);
 
 /** Every registry entry whose demo renders the real component vs a recreation. */
+export const REUSED = REGISTRY.filter((e) => e.status === "reused");
+export const RECREATED = REGISTRY.filter((e) => e.status === "recreated");

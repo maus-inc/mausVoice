@@ -1,11 +1,5 @@
 import assert from "node:assert/strict";
-import {
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -67,74 +61,37 @@ const VERIFIED_PINS = new Map(
 );
 
 const PIN_RE =
-  /^\s*(?:-\s*)?uses:\s*([a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+@[0-9a-f]{40})(?:[ \t]+#[ \t]*([^\s]+).*)?[ \t]*$/;
+  /uses:\s*([a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+@[0-9a-f]{40})\s*(?:#\s*([^\s]+))?/;
 
-// Only structural uses keys count; mentions in comments or shell text cannot
-// prove that an action reference is pinned.
+// The key as it appears at the start of a line, with or without the `- ` step marker.
+//
+// PIN_RE is deliberately unanchored, so it finds a PINNED `uses:` wherever it sits -- including
+// after `- `. This one finds the line that IS a `uses:` key, and it is what turns an UNPINNED
+// one into a `pin: null` entry the assertions can fail on.
+//
+// It used to be /^\s*uses:\s*/, which allowed whitespace before `uses:` and nothing else. Every
+// step in every workflow here is written either `- uses: owner/repo@sha` or with `uses:` on its
+// own line, so an unpinned STEP action matched nothing and was dropped by the `continue` below --
+// silently. The guard's own message claims "every uses: line must be a 40-hex SHA"; nothing in
+// it could ever have checked the step form. Verified against the real tree: all 198 `uses:`
+// lines pass, because all 198 are pinned, not because the step form is inspected.
 const USES_KEY_RE = /^\s*(?:-\s*)?uses:\s*/;
 
 function leadingSpaces(line) {
   return /^ */.exec(line)[0].length;
 }
 
-function startsNextStep(line, usesIndent) {
-  if (/^\s*(?:#|$)/.test(line)) return false;
-  const indent = leadingSpaces(line);
-  return (
-    indent < usesIndent ||
-    (indent === usesIndent && (/^\s*-\s/.test(line) || USES_KEY_RE.test(line)))
-  );
-}
-
-// Only immediate children of `with:` are action inputs; matching an `env:`
-// entry or nested mapping would falsely certify a step with no cache policy.
-function stepInputLines(stepLines) {
-  const start = stepLines.findIndex((line) =>
-    /^\s*with:\s*(?:#.*)?$/.test(line),
-  );
-  if (start === -1) return [];
-  const withIndent = leadingSpaces(stepLines[start]);
-  let inputIndent = null;
-  const inputs = [];
-  for (const line of stepLines.slice(start + 1)) {
-    if (/^\s*(?:#|$)/.test(line)) continue;
-    const indent = leadingSpaces(line);
-    if (indent <= withIndent) break;
-    inputIndent ??= indent;
-    if (indent === inputIndent) inputs.push(line);
-  }
-  return inputs;
-}
-
-function setupNodeStep(lines, index, file) {
-  const usesIndent = leadingSpaces(lines[index]);
-  const stepLines = [];
-  for (let j = index + 1; j < lines.length; j += 1) {
-    if (startsNextStep(lines[j], usesIndent)) break;
-    stepLines.push(lines[j]);
-  }
-  const inputs = stepInputLines(stepLines);
-  return {
-    file,
-    line: index + 1,
-    hasCachePnpm: inputs.some((line) =>
-      /^\s*cache:\s*(?:pnpm|"pnpm"|'pnpm')(?:\s+#.*)?\s*$/.test(line),
-    ),
-    hasPackageManagerCacheFalse: inputs.some((line) =>
-      /^\s*package-manager-cache:\s*(?:false|"false"|'false')(?:\s+#.*)?\s*$/.test(
-        line,
-      ),
-    ),
-  };
-}
-
 function collectWorkflowFacts(dir = WORKFLOW_DIR) {
   const pins = [];
   const setupNodeSteps = [];
-  // GitHub accepts either .yml or .yaml.
-  for (const file of readdirSync(dir).filter((name) => /\.ya?ml$/.test(name))) {
-    const lines = readFileSync(join(dir, file), "utf8").split("\n");
-    for (let i = 0; i < lines.length; i += 1) {
+
+  // Both suffixes: GitHub accepts either, so a workflow saved as `.yaml` would
+  // otherwise carry an unpinned action past this guard entirely.
+  for (const file of readdirSync(dir).filter((f) =>
+    /\.ya?ml$/.test(f),
+  )) {
+      const lines = readFileSync(join(dir, file), "utf8").split("\n");
+    for (let i = 0; i < lines.length; i++) {
       const match = PIN_RE.exec(lines[i]);
       if (!match) {
         if (USES_KEY_RE.test(lines[i])) {
@@ -148,117 +105,42 @@ function collectWorkflowFacts(dir = WORKFLOW_DIR) {
         }
         continue;
       }
+
       pins.push({ file, line: i + 1, pin: match[1], comment: match[2] });
-      if (match[1].startsWith("actions/setup-node@")) {
-        setupNodeSteps.push(setupNodeStep(lines, i, file));
+      if (!match[1].startsWith("actions/setup-node@")) continue;
+
+      const usesIndent = leadingSpaces(lines[i]);
+      const stepLines = [];
+      for (let j = i + 1; j < lines.length; j++) {
+        if (lines[j].trim() === "") {
+          stepLines.push(lines[j]);
+          continue;
+        }
+        const indent = leadingSpaces(lines[j]);
+        // `with:` is a sibling of `uses:` at the same indent. A less-indented
+        // line is the next step or job. Another `uses:` at this indent is the
+        // next step and must not leak into this step's cache flags.
+        if (indent < usesIndent) break;
+        if (indent === usesIndent && USES_KEY_RE.test(lines[j])) break;
+        stepLines.push(lines[j]);
       }
+
+      setupNodeSteps.push({
+        file,
+        line: i + 1,
+        hasCachePnpm: stepLines.some((l) => /^\s*cache:\s*pnpm\s*$/.test(l)),
+        hasPackageManagerCacheFalse: stepLines.some((l) =>
+          /^\s*package-manager-cache:\s*false\s*$/.test(l),
+        ),
+      });
     }
   }
+
   return { pins, setupNodeSteps };
 }
 
 describe("GitHub Actions pin guard", () => {
   const { pins, setupNodeSteps } = collectWorkflowFacts();
-
-  it("does not mistake comments or a SHA prefix for a pinned action", () => {
-    const dir = mkdtempSync(join(tmpdir(), "pin-guard-comments-"));
-    try {
-      const sha = "a".repeat(40);
-      writeFileSync(
-        join(dir, "fixture.yml"),
-        [
-          `# uses: actions/checkout@${sha}`,
-          `- uses: actions/checkout@v5 # uses: actions/checkout@${sha}`,
-          `- uses: actions/checkout@${sha}-floating`,
-          `- uses: actions/checkout@${sha}#v5`,
-        ].join("\n"),
-      );
-      const { pins: found } = collectWorkflowFacts(dir);
-      assert.equal(found.length, 3);
-      assert.deepEqual(
-        found.map((pin) => pin.pin),
-        [null, null, null],
-      );
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it("does not borrow cache settings from a later step", () => {
-    const dir = mkdtempSync(join(tmpdir(), "pin-guard-step-"));
-    try {
-      const sha = "a".repeat(40);
-      writeFileSync(
-        join(dir, "fixture.yml"),
-        [
-          `  - uses: actions/setup-node@${sha} # v5`,
-          "  - name: unrelated step",
-          "    with:",
-          "      cache: pnpm",
-          "      package-manager-cache: false",
-        ].join("\n"),
-      );
-      const { setupNodeSteps: steps } = collectWorkflowFacts(dir);
-      assert.equal(steps.length, 1);
-      assert.equal(steps[0].hasCachePnpm, false);
-      assert.equal(steps[0].hasPackageManagerCacheFalse, false);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it("does not treat environment variables as setup-node inputs", () => {
-    const dir = mkdtempSync(join(tmpdir(), "pin-guard-env-"));
-    try {
-      const sha = "a".repeat(40);
-      writeFileSync(
-        join(dir, "fixture.yml"),
-        [
-          `  - uses: actions/setup-node@${sha} # v5`,
-          "    env:",
-          "      cache: pnpm",
-          "      package-manager-cache: false",
-        ].join("\n"),
-      );
-      const { setupNodeSteps: steps } = collectWorkflowFacts(dir);
-      assert.equal(steps.length, 1);
-      assert.equal(steps[0].hasCachePnpm, false);
-      assert.equal(steps[0].hasPackageManagerCacheFalse, false);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it("recognizes quoted inputs and comments in a setup-node with block", () => {
-    const dir = mkdtempSync(join(tmpdir(), "pin-guard-inputs-"));
-    try {
-      const sha = "a".repeat(40);
-      writeFileSync(
-        join(dir, "fixture.yml"),
-        [
-          `  - uses: actions/setup-node@${sha} # v5`,
-          "    with:",
-          "      cache: 'pnpm' # explicit package manager",
-          "  - uses: actions/setup-node@" + sha + " # v5",
-          "    with:",
-          '      package-manager-cache: "false" # deliberate opt out',
-        ].join("\n"),
-      );
-      const { setupNodeSteps: steps } = collectWorkflowFacts(dir);
-      assert.deepEqual(
-        steps.map(({ hasCachePnpm, hasPackageManagerCacheFalse }) => [
-          hasCachePnpm,
-          hasPackageManagerCacheFalse,
-        ]),
-        [
-          [true, false],
-          [false, true],
-        ],
-      );
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
 
   it("pins every action to a commit SHA", () => {
     const floating = pins.filter((p) => !p.pin);
@@ -339,9 +221,7 @@ describe("GitHub Actions pin guard", () => {
     // Asserting every row's runtime against the two that exist gives it a subject: eleven
     // rows today, and a `node20` row would now fail here rather than being invisible.
     const badRuntime = Object.entries(VERIFIED_ACTION_PINS)
-      .filter(
-        ([, [, , runtime]]) => runtime !== "node24" && runtime !== "composite",
-      )
+      .filter(([, [, , runtime]]) => runtime !== "node24" && runtime !== "composite")
       .map(([name, [pin, , runtime]]) => `${name} ${pin} declares ${runtime}`);
     assert.deepEqual(
       badRuntime,
@@ -349,6 +229,7 @@ describe("GitHub Actions pin guard", () => {
       "every pinned action must run on node24 or be a composite action; a node20 pin will " +
         "fail once GitHub removes the Node 20 runtime (2026-09-16)",
     );
+
   });
 
   it("labels every pin with the version comment that matches the map", () => {

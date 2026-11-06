@@ -8,18 +8,23 @@ import {
   Stack,
   Typography,
 } from "@mui/material";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { openExternalUrl } from "../../utils/open-url.utils";
 import { FormattedMessage } from "react-intl";
+
+type GpuMigrationDialogProps = {
+  open: boolean;
+  onClose: () => void;
+};
 
 export const GpuMigrationDialog = ({
   open,
   onClose,
-}: {
-  open: boolean;
-  onClose: () => void;
-}) => {
+}: GpuMigrationDialogProps) => {
   const handleOpenDownloadPage = () => {
-    openUrl("https://maus-inc.github.io/mausVoice/");
+    openExternalUrl(
+      "https://maus-inc.github.io/mausVoice/",
+      "the migration guide",
+    );
   };
 
   return (

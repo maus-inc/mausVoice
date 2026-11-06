@@ -372,10 +372,7 @@ pub unsafe fn convert_ns_event(ns_event: id, keyboard_state: &mut Keyboard) -> O
                 n => Some(EventType::ButtonRelease(Button::Unknown(n as u8))),
             }
         }
-        NSEventTypeMouseMoved
-        | NSEventTypeLeftMouseDragged
-        | NSEventTypeRightMouseDragged
-        | NSEventTypeOtherMouseDragged => {
+        NSEventTypeMouseMoved | NSEventTypeLeftMouseDragged | NSEventTypeRightMouseDragged | NSEventTypeOtherMouseDragged => {
             // Get mouse location in screen coordinates
             let location: cocoa::foundation::NSPoint = msg_send![ns_event, locationInWindow];
             // Get the window - for global events, this will be nil and location will be in screen coords
@@ -388,8 +385,7 @@ pub unsafe fn convert_ns_event(ns_event: id, keyboard_state: &mut Keyboard) -> O
                 (location.x, frame.size.height - location.y)
             } else {
                 // Convert window coordinates to screen coordinates
-                let screen_location: cocoa::foundation::NSPoint =
-                    msg_send![window, convertPointToScreen: location];
+                let screen_location: cocoa::foundation::NSPoint = msg_send![window, convertPointToScreen: location];
                 let screen: id = msg_send![class!(NSScreen), mainScreen];
                 let frame: cocoa::foundation::NSRect = msg_send![screen, frame];
                 (screen_location.x, frame.size.height - screen_location.y)

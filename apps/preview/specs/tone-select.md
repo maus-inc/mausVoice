@@ -1,12 +1,12 @@
-# ToneSelect · menu example (`tone-select`)
+# ToneSelect · TranscriptionToneMenu (`tone-select`)
 
-- Status: **recreated slice** — store/action-bound (tone CRUD, prefs). Recreation uses fixture tones; a separate generic menu example uses the real MenuPopoverBuilder.
-- Source of truth: `apps/desktop/src/components/tones/ToneSelect.tsx`.
-- Used in: AppStylingLayout, AppStylingRow.
+- Status: **recreated slice** — store/action-bound (tone CRUD, prefs). Recreation copies the render code; fixture tones; menus compose the REAL MenuPopoverBuilder + ListTile.
+- Source of truth: `apps/desktop/src/components/tones/ToneSelect.tsx`, `apps/desktop/src/components/transcriptions/TranscriptionToneMenu.tsx`.
+- Used in: AppStylingLayout, AppStylingRow, TranscriptionToneMenu.
 
 ## Purpose
 
-Style picker with create/edit affordances, plus a generic tone-menu example.
+Style picker (select + row-menu variants) with create/edit affordances.
 
 ## Visual tokens
 
@@ -26,4 +26,4 @@ MUI select semantics + labels; per-row edit buttons stop propagation (verify foc
 
 ## Live-spec mapping
 
-Docs-only slice. Radii/motion follow popover-menu + list-tile + text-field specs (live there). Persist: edit `ToneSelect.tsx` → styling call sites.
+Docs-only slice. Radii/motion follow popover-menu + list-tile + text-field specs (live there). Persist: edit `ToneSelect.tsx` → styling + transcription call sites.

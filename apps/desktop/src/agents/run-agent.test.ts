@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { isLogBreakingControl } from "@maus-inc/utilities";
-import { prepareConversationMessages, safeSideEffect } from "./run-agent";
-import type { LlmMessage } from "@maus-inc/types";
+import { safeSideEffect } from "./run-agent";
 
 const { loggerMock } = vi.hoisted(() => ({
   loggerMock: {
@@ -107,105 +106,5 @@ describe("safeSideEffect", () => {
     );
     const message = String(loggerMock.error.mock.calls[0][0]);
     expect(message).toContain(err);
-  });
-});
-
-describe("conversation context preparation", () => {
-  const toolExchange = (count: number): LlmMessage[] => {
-    const calls = Array.from({ length: count }, (_, i) => ({
-      id: `call-${i}`,
-      name: "lookup",
-      arguments: "{}",
-    }));
-    return [
-      { role: "assistant", content: "latest", toolCalls: calls },
-      ...calls.map((call): LlmMessage => ({
-        role: "tool",
-        toolCallId: call.id,
-        content: "ok",
-      })),
-    ];
-  };
-
-  it("preserves an oversized newest complete exchange rather than silently discarding it", () => {
-    const initial: LlmMessage = { role: "user", content: "initial" };
-    const older: LlmMessage = { role: "assistant", content: "older" };
-    const latest = toolExchange(80);
-    const actual = prepareConversationMessages([initial, older, ...latest]);
-    expect(actual).toEqual([initial, ...latest]);
-  });
-
-  it("keeps a complete exchange together and preserves the first user when trimming", () => {
-    const initial: LlmMessage = { role: "user", content: "initial" };
-    const older: LlmMessage[] = Array.from({ length: 79 }, (_, i) => ({
-      role: "assistant",
-      content: `older-${i}`,
-    }));
-    const latest = toolExchange(2);
-    const actual = prepareConversationMessages([initial, ...older, ...latest]);
-    expect(actual).toHaveLength(80);
-    expect(actual[0]).toEqual(initial);
-    expect(actual.slice(-3)).toEqual(latest);
-  });
-
-  it("drops orphaned results and strips incomplete and duplicate call sets", () => {
-    const call = { id: "call", name: "lookup", arguments: "{}" };
-    const partial: LlmMessage = {
-      role: "assistant",
-      content: "partial",
-      toolCalls: [call, { ...call, id: "missing" }],
-    };
-    const duplicate: LlmMessage = {
-      role: "assistant",
-      content: "duplicate",
-      toolCalls: [call, call],
-    };
-    const result: LlmMessage = {
-      role: "tool",
-      toolCallId: "call",
-      content: "ok",
-    };
-    expect(
-      prepareConversationMessages([result, partial, result, duplicate, result]),
-    ).toEqual([
-      { role: "assistant", content: "partial" },
-      { role: "assistant", content: "duplicate" },
-    ]);
-  });
-
-  it("accepts complete results in any order and rejects interrupted or repeated results", () => {
-    const a = { id: "a", name: "lookup", arguments: "{}" };
-    const b = { id: "b", name: "lookup", arguments: "{}" };
-    const assistant: LlmMessage = {
-      role: "assistant",
-      content: "working",
-      toolCalls: [a, b],
-    };
-    const resultA: LlmMessage = { role: "tool", toolCallId: "a", content: "A" };
-    const resultB: LlmMessage = { role: "tool", toolCallId: "b", content: "B" };
-    const unknown: LlmMessage = {
-      role: "tool",
-      toolCallId: "other",
-      content: "?",
-    };
-    const user: LlmMessage = { role: "user", content: "next" };
-    expect(
-      prepareConversationMessages([assistant, resultB, resultA, unknown, user]),
-    ).toEqual([assistant, resultB, resultA, user]);
-    for (const intervening of [resultA, unknown, user]) {
-      const actual = prepareConversationMessages([
-        assistant,
-        resultA,
-        intervening,
-        resultB,
-      ]);
-      expect(actual[0]).toEqual({ role: "assistant", content: "working" });
-      expect(actual.filter((item) => item.role === "tool")).toEqual([]);
-    }
-    expect(
-      prepareConversationMessages([
-        { role: "assistant", content: "", toolCalls: [] },
-      ]),
-    ).toEqual([{ role: "assistant", content: undefined }]);
   });
 });

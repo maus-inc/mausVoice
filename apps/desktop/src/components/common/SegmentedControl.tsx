@@ -47,6 +47,11 @@ const activeIndicatorDarkSx = (theme: {
 const tabSx = {
   textTransform: "none",
   minHeight: "unset",
+  minWidth: 0,
+  // MUI tabs do not shrink by default, which clips longer translations when
+  // the track reaches its container's width. Let labels wrap instead.
+  flexShrink: 1,
+  overflowWrap: "anywhere",
   py: 1.25,
   px: 2.5,
   borderRadius: 1.5,

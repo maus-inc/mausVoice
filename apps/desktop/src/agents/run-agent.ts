@@ -5,7 +5,6 @@ import type {
   AgentTool,
 } from "@repo/agent";
 import type {
-  ChatMessage,
   ChatToolStatus,
   LlmMessage,
   LlmToolCall,
@@ -16,10 +15,7 @@ import {
   isLogBreakingControl,
   unknownToMessage,
 } from "@maus-inc/utilities";
-import {
-  createChatMessage,
-  deleteChatMessages,
-} from "../actions/chat-message.actions";
+import { createChatMessage, deleteChatMessages } from "../actions/chat.actions";
 import {
   executeTool,
   getToolPermissionStatus,
@@ -31,13 +27,10 @@ import { getAppState, produceAppState } from "../store";
 import { createTool } from "../tools";
 import { modifyAgentState } from "../utils/agent.utils";
 import { getLogger } from "../utils/log.utils";
+import { withLocalDataWrite } from "../utils/local-data-write-gate";
 import { humanizeScrub } from "../utils/humanize.utils";
 import type { PersistedRunOutcome } from "../utils/chat-parts.utils";
 import type { AgentTypeConfig } from "./agent-configs";
-import {
-  isValidPersistedToolCall,
-  toReplayMessage,
-} from "./conversation-replay";
 
 const POLL_INTERVAL_MS = 500;
 const MAX_CONTEXT_MESSAGES = 80;
@@ -122,8 +115,27 @@ const persistedFailureOutcome = (
 ): PersistedRunOutcome | undefined =>
   reason === "error" || reason === "aborted" ? reason : undefined;
 
-/** Abort the previous loop and retire its unfinished streaming messages. */
-function retireSupersededRun(conversationId: string): void {
+/**
+ * Drive one agent conversation to completion on the desktop adapter.
+ * Emits every AgentLoop event into app state; non-critical persistence
+ * failures are logged via safeSideEffect so they do not terminate loop
+ * processing.
+ */
+export async function runAgent(
+  conversationId: string,
+  config: AgentTypeConfig,
+): Promise<void> {
+  const agentState = createAgentRunState(
+    config.agentType,
+    config.maxIterations,
+  );
+  const provider = createLlmProvider();
+  const tools = createAgentTools(conversationId, config, () => {
+    const state = getAppState().agentStateByConversationId[conversationId];
+    return (
+      activeLoops.get(conversationId) === loop && !!state && !state.aborted
+    );
+  });
   // A second run for the same conversation supersedes the first: a send can
   // arrive from the pill while a dashboard send's agent is still running.
   // Aborting the previous loop keeps at most one live loop per conversation
@@ -159,56 +171,6 @@ function retireSupersededRun(conversationId: string): void {
       }
     });
   }
-}
-
-/** Retire only this loop's state, never a newer run's registration. */
-function retireFinishedRun(
-  conversationId: string,
-  loop: AgentLoop,
-  finishedMessageId: string | null,
-): void {
-  if (finishedMessageId) {
-    produceAppState((draft) => {
-      delete draft.streamingMessageById[finishedMessageId];
-    });
-  }
-  // Only deregister if we are still the current run for this
-  // conversation. A superseded (aborted) run can finish after a newer
-  // run has replaced it; an unconditional delete here would remove the
-  // NEWER run's registration and leave it un-abortable (Stop button
-  // stops working) and would wipe the newer run's status UI.
-  if (activeLoops.get(conversationId) === loop) {
-    activeLoops.delete(conversationId);
-    // The loop is the stable identity. Immer replaces run-state objects
-    // whenever status or tool progress changes.
-    produceAppState((draft) => {
-      delete draft.agentStateByConversationId[conversationId];
-    });
-  }
-}
-
-/**
- * Drive one agent conversation to completion on the desktop adapter.
- * Emits every AgentLoop event into app state; non-critical persistence
- * failures are logged via safeSideEffect so they do not terminate loop
- * processing.
- */
-export async function runAgent(
-  conversationId: string,
-  config: AgentTypeConfig,
-): Promise<void> {
-  const agentState = createAgentRunState(
-    config.agentType,
-    config.maxIterations,
-  );
-  const provider = createLlmProvider();
-  const tools = createAgentTools(conversationId, config, () => {
-    const state = getAppState().agentStateByConversationId[conversationId];
-    return (
-      activeLoops.get(conversationId) === loop && !!state && !state.aborted
-    );
-  });
-  retireSupersededRun(conversationId);
 
   const messages = buildConversationMessages(conversationId);
 
@@ -382,44 +344,41 @@ export async function runAgent(
               conversationId,
               toolCallId: event.toolCallId,
             },
-            async () => {
-              // This result belongs to a tool call the replacement run's context
-              // does not contain, so it must not outlive the run that produced
-              // it. Both edges of the write are checked, because the await in
-              // between is exactly where a second run for this conversation
-              // takes over.
-              if (activeLoops.get(conversationId) !== loop) {
-                getLogger().verbose(
-                  "Skipped tool-result persist: a newer run superseded this one",
+            async () =>
+              withLocalDataWrite(async (lease) => {
+                // This result belongs to the run that produced it. Keep one
+                // lease across both edges so a takeover cannot leave an
+                // orphaned tool result after a clear starts.
+                if (activeLoops.get(conversationId) !== loop) {
+                  getLogger().verbose(
+                    "Skipped tool-result persist: a newer run superseded this one",
+                  );
+                  return;
+                }
+                const saved = await createChatMessage(
+                  {
+                    id: crypto.randomUUID(),
+                    conversationId,
+                    role: "system",
+                    content: event.result,
+                    createdAt: new Date().toISOString(),
+                    metadata: {
+                      type: "tool-result",
+                      status,
+                      toolCallId: event.toolCallId,
+                      toolName: event.toolName,
+                      ...(reason && { reason }),
+                    },
+                  },
+                  lease,
                 );
-                return;
-              }
-              const saved = await createChatMessage({
-                id: crypto.randomUUID(),
-                conversationId,
-                role: "system",
-                content: event.result,
-                createdAt: new Date().toISOString(),
-                metadata: {
-                  type: "tool-result",
-                  status,
-                  toolCallId: event.toolCallId,
-                  toolName: event.toolName,
-                  ...(reason && { reason }),
-                },
-              });
-              if (activeLoops.get(conversationId) !== loop) {
-                // Committed after the takeover. Left in place it is a `tool`
-                // message whose `tool_calls` entry no live turn declares, and
-                // the next run rehydrates precisely that. Take it back out of
-                // the store and of state, which lands where the check above
-                // would have.
-                getLogger().verbose(
-                  "Rolled back tool-result persist: a newer run superseded this one",
-                );
-                await deleteChatMessages(conversationId, [saved.id]);
-              }
-            },
+                if (activeLoops.get(conversationId) !== loop) {
+                  getLogger().verbose(
+                    "Rolled back tool-result persist: a newer run superseded this one",
+                  );
+                  await deleteChatMessages(conversationId, [saved.id], lease);
+                }
+              }),
           );
           updateRunState((draft) => {
             if (currentMessageId) {
@@ -485,7 +444,25 @@ export async function runAgent(
       });
     }
   } finally {
-    retireFinishedRun(conversationId, loop, currentMessageId);
+    const finishedMessageId = currentMessageId;
+    if (finishedMessageId) {
+      produceAppState((draft) => {
+        delete draft.streamingMessageById[finishedMessageId];
+      });
+    }
+    // Only deregister if we are still the current run for this
+    // conversation. A superseded (aborted) run can finish after a newer
+    // run has replaced it; an unconditional delete here would remove the
+    // NEWER run's registration and leave it un-abortable (Stop button
+    // stops working) and would wipe the newer run's status UI.
+    if (activeLoops.get(conversationId) === loop) {
+      activeLoops.delete(conversationId);
+      // The loop is the stable identity. Immer replaces run-state objects
+      // whenever status or tool progress changes.
+      produceAppState((draft) => {
+        delete draft.agentStateByConversationId[conversationId];
+      });
+    }
   }
 }
 
@@ -493,13 +470,6 @@ export async function runAgent(
  * Abort the live agent loop for a conversation and mark its state
  * aborted so any in-flight permission polling resolves as denied.
  */
-export function retireAgentLoop(conversationId: string): void {
-  retireSupersededRun(conversationId);
-  produceAppState((draft) => {
-    delete draft.agentStateByConversationId[conversationId];
-  });
-}
-
 export function abortAgentLoop(conversationId: string): void {
   const loop = activeLoops.get(conversationId);
   if (loop) loop.abort();
@@ -513,20 +483,6 @@ export function abortAgentLoop(conversationId: string): void {
       },
     });
   });
-}
-
-/** A superseded run must not leave behind a late durable assistant message. */
-async function persistAssistantIfActive(
-  message: ChatMessage,
-  isActive?: () => boolean,
-): Promise<void> {
-  if (isActive && !isActive()) return;
-  await getChatMessageRepo().createChatMessage(message);
-  if (isActive && !isActive()) {
-    await getChatMessageRepo()
-      .deleteChatMessages([message.id])
-      .catch(() => undefined);
-  }
 }
 
 /**
@@ -569,17 +525,39 @@ async function finalizeAssistantMessage(
   // On failure the in-memory copy still gets the scrubbed final text so
   // the conversation view stays coherent for the session; only the
   // durable history row is missing, and that is what the log records.
+  let streamingStateCleared = false;
   try {
-    await persistAssistantIfActive(final, isActive);
-  } finally {
-    produceAppState((draft) => {
-      // A deleted conversation/message must not be resurrected by a late write.
-      if (!isActive || isActive()) {
-        if (draft.chatMessageById[messageId])
-          draft.chatMessageById[messageId] = final;
+    await withLocalDataWrite(async (lease) => {
+      try {
+        if (!isActive || isActive()) {
+          await getChatMessageRepo().createChatMessage(final, lease);
+          if (isActive && !isActive()) {
+            await getChatMessageRepo()
+              .deleteChatMessages([final.id], lease)
+              .catch(() => undefined);
+          }
+        }
+      } finally {
+        produceAppState((draft) => {
+          // A deleted conversation/message must not be resurrected by a late write.
+          if (!isActive || isActive()) {
+            if (draft.chatMessageById[messageId])
+              draft.chatMessageById[messageId] = final;
+          }
+          delete draft.streamingMessageById[messageId];
+        }, lease);
+        streamingStateCleared = true;
       }
-      delete draft.streamingMessageById[messageId];
     });
+  } finally {
+    // If acquiring or using the lease failed, still retire the transient
+    // streaming bubble in memory. The store suppresses persistence while a
+    // clear is active, so this cannot repopulate local data.
+    if (!streamingStateCleared) {
+      produceAppState((draft) => {
+        delete draft.streamingMessageById[messageId];
+      });
+    }
   }
 }
 
@@ -633,7 +611,7 @@ async function executeWithPermission(
   const tool = createTool(info);
   const permissionScope = `conversation:${conversationId}`;
 
-  const executeApprovedTool = async () => {
+  if (tool.getAlwaysAllow(params, permissionScope)) {
     try {
       const result = await executeTool(info.id, params, { conversationId });
       return { success: true, result };
@@ -643,10 +621,6 @@ async function executeWithPermission(
         failureReason: err instanceof Error ? err.message : String(err),
       };
     }
-  };
-
-  if (tool.getAlwaysAllow(params, permissionScope)) {
-    return executeApprovedTool();
   }
 
   const permissionParams = { ...params, reason };
@@ -678,7 +652,15 @@ async function executeWithPermission(
   );
 
   if (resolution === "allowed" && isActive()) {
-    return executeApprovedTool();
+    try {
+      const result = await executeTool(info.id, params, { conversationId });
+      return { success: true, result };
+    } catch (err) {
+      return {
+        success: false,
+        failureReason: err instanceof Error ? err.message : String(err),
+      };
+    }
   }
 
   return { success: false, failureReason: "Tool call was denied by user" };
@@ -714,32 +696,27 @@ type ResolvedConversationBlock = ConversationMessageBlock & {
   nextIndex: number;
 };
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === "object";
+
+const isValidPersistedToolCall = (value: unknown): value is LlmToolCall => {
+  if (!isRecord(value)) return false;
+  const call = value;
+  return (
+    typeof call.id === "string" &&
+    call.id.length > 0 &&
+    typeof call.name === "string" &&
+    call.name.length > 0 &&
+    typeof call.arguments === "string"
+  );
+};
+
 const textOnlyAssistantMessage = (
   message: Extract<LlmMessage, { role: "assistant" }>,
 ): LlmMessage => ({
   role: "assistant",
   content: message.content || undefined,
 });
-
-/** Collect only a contiguous, complete and uniquely matched set of tool results. */
-const collectToolResults = (
-  messages: LlmMessage[],
-  startIndex: number,
-  expected: Set<string>,
-): { messages: LlmMessage[]; nextIndex: number } | null => {
-  const results: LlmMessage[] = [];
-  const seen = new Set<string>();
-  let nextIndex = startIndex;
-  while (nextIndex < messages.length) {
-    const next = messages[nextIndex];
-    if (next.role !== "tool" || !expected.has(next.toolCallId)) break;
-    if (seen.has(next.toolCallId)) break;
-    seen.add(next.toolCallId);
-    results.push(next);
-    nextIndex += 1;
-  }
-  return seen.size === expected.size ? { messages: results, nextIndex } : null;
-};
 
 /**
  * Resolve one assistant message and its following tool results as one block.
@@ -776,16 +753,24 @@ const resolveConversationBlock = (
     };
   }
 
-  const results = collectToolResults(
-    messages,
-    startIndex + 1,
-    new Set(callIds),
-  );
-  if (results) {
+  const expected = new Set(callIds);
+  const toolResults: LlmMessage[] = [];
+  const seen = new Set<string>();
+  let nextIndex = startIndex + 1;
+  while (nextIndex < messages.length) {
+    const next = messages[nextIndex];
+    if (next.role !== "tool" || !expected.has(next.toolCallId)) break;
+    if (seen.has(next.toolCallId)) break;
+    seen.add(next.toolCallId);
+    toolResults.push(next);
+    nextIndex += 1;
+  }
+
+  if (seen.size === expected.size) {
     return {
       startIndex,
-      messages: [message, ...results.messages],
-      nextIndex: results.nextIndex,
+      messages: [message, ...toolResults],
+      nextIndex,
     };
   }
 
@@ -842,21 +827,23 @@ const trimConversationBlocks = (
     remaining -= firstUserBlock.messages.length;
   }
 
-  // The newest complete block always takes precedence over older context, even
-  // when it alone exceeds the nominal limit. Splitting or dropping an oversized
-  // tool exchange would either break the protocol or replay a stale turn.
-  const newestIndex = blocks.length - 1;
-  if (newestIndex >= 0 && !selected.has(newestIndex)) {
-    selected.add(newestIndex);
-    remaining -= blocks[newestIndex].messages.length;
-  }
-
-  for (let index = blocks.length - 1; index >= 0 && remaining > 0; index--) {
+  let selectedRecentBlock = false;
+  for (let index = blocks.length - 1; index >= 0; index--) {
     if (selected.has(index)) continue;
     const blockSize = blocks[index].messages.length;
     if (blockSize > remaining) continue;
     selected.add(index);
+    selectedRecentBlock = true;
     remaining -= blockSize;
+    if (remaining === 0) break;
+  }
+
+  // Keep at least the newest complete block when a future block is larger
+  // than the nominal budget or none of the recent blocks fit. This preserves
+  // protocol validity over a strict message count.
+  const newestIndex = blocks.length - 1;
+  if (!selectedRecentBlock && newestIndex >= 0 && !selected.has(newestIndex)) {
+    selected.add(newestIndex);
   }
 
   return blocks
@@ -864,10 +851,6 @@ const trimConversationBlocks = (
     .sort((left, right) => left.startIndex - right.startIndex)
     .flatMap((block) => block.messages);
 };
-
-export const prepareConversationMessages = (
-  messages: LlmMessage[],
-): LlmMessage[] => trimConversationBlocks(groupConversationMessages(messages));
 
 function buildConversationMessages(conversationId: string): LlmMessage[] {
   const state = getAppState();
@@ -890,9 +873,36 @@ function buildConversationMessages(conversationId: string): LlmMessage[] {
     const msg = state.chatMessageById[id];
     if (!msg) continue;
 
-    const replay = toReplayMessage(msg);
-    if (replay) messages.push(replay);
+    const metadata = msg.metadata;
+
+    // Tool results are persisted with role "system" plus metadata.type
+    // (see the tool-call-result persist branch above). Rehydrate them
+    // here as LlmMessage `tool` messages by matching the saved id.
+    if (
+      metadata?.type === "tool-result" &&
+      typeof metadata.toolCallId === "string"
+    ) {
+      messages.push({
+        role: "tool",
+        toolCallId: metadata.toolCallId,
+        content: msg.content,
+      });
+    } else if (msg.role === "assistant") {
+      const persistedToolCalls = metadata?.toolCalls;
+      const toolCalls =
+        Array.isArray(persistedToolCalls) &&
+        persistedToolCalls.every(isValidPersistedToolCall)
+          ? persistedToolCalls
+          : undefined;
+      messages.push({
+        role: "assistant",
+        content: msg.content || undefined,
+        ...(toolCalls && { toolCalls }),
+      });
+    } else if (msg.role === "user") {
+      messages.push({ role: "user", content: msg.content });
+    }
   }
 
-  return prepareConversationMessages(messages);
+  return trimConversationBlocks(groupConversationMessages(messages));
 }

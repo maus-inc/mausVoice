@@ -261,8 +261,9 @@ export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
     }
 
     const fallbackModel = this.resolveFallbackModel();
-    if (fallbackModel === undefined) {
-      // The resolver only returns a model distinct from the primary.
+    if (fallbackModel === undefined || fallbackModel === this.model) {
+      // No distinct alternative is available, so a second attempt would
+      // only repeat the same failure.
       throw primaryCause;
     }
 
@@ -339,7 +340,7 @@ export class OpenAIGenerateTextRepo extends BaseGenerateTextRepo {
  * protocol, so they differ only in their default API key and the device label
  * shown in transcription history. Sharing the calls keeps one implementation.
  */
-export abstract class OpenAICompatibleBaseGenerateTextRepo extends BaseGenerateTextRepo {
+abstract class OpenAICompatibleBaseGenerateTextRepo extends BaseGenerateTextRepo {
   protected baseUrl: string;
   protected model: string;
   protected apiKey: string;

@@ -3,16 +3,7 @@ import { AppState } from "../state/app.state";
 import { useAppStore } from "../store";
 import { getEffectiveStylingMode } from "./feature.utils";
 import { getPlatform } from "./platform.utils";
-import { formatHotkeyLabel } from "./hotkey-label.utils";
 import { getIsDictationUnlocked } from "./user.utils";
-import {
-  ADDITIONAL_LANGUAGE_HOTKEY_PREFIX,
-  getAdditionalLanguageHotkeys,
-} from "./additional-language.utils";
-export {
-  ADDITIONAL_LANGUAGE_HOTKEY_PREFIX,
-  getAdditionalLanguageActionName,
-} from "./additional-language.utils";
 
 export const DICTATE_HOTKEY = "dictate";
 export const AGENT_DICTATE_HOTKEY = "agent-dictate";
@@ -23,6 +14,7 @@ export const SWITCH_WRITING_STYLE_BACKWARD_HOTKEY =
 export const CANCEL_TRANSCRIPTION_HOTKEY = "cancel-transcription";
 export const OPEN_CHAT_HOTKEY = "open-chat";
 export const ADD_TO_DICTIONARY_HOTKEY = "add-to-dictionary";
+export const ADDITIONAL_LANGUAGE_HOTKEY_PREFIX = "additional-language:";
 export const SWITCH_TO_STYLE_HOTKEY_PREFIX = "switch-to-style:";
 
 type CompositorBinding = {
@@ -44,61 +36,108 @@ const isCompositorTriggerAction = (actionName: string): boolean =>
   actionName.startsWith(ADDITIONAL_LANGUAGE_HOTKEY_PREFIX) ||
   actionName.startsWith(SWITCH_TO_STYLE_HOTKEY_PREFIX);
 
+export const getAdditionalLanguageActionName = (language: string): string =>
+  `${ADDITIONAL_LANGUAGE_HOTKEY_PREFIX}${language}`;
+
+export const getAdditionalLanguageCode = (
+  actionName: string,
+): string | null => {
+  if (!actionName.startsWith(ADDITIONAL_LANGUAGE_HOTKEY_PREFIX)) {
+    return null;
+  }
+
+  const raw = actionName.slice(ADDITIONAL_LANGUAGE_HOTKEY_PREFIX.length);
+  return raw.length > 0 ? raw : null;
+};
+
 export const getSwitchToStyleActionName = (toneId: string): string =>
   `${SWITCH_TO_STYLE_HOTKEY_PREFIX}${toneId}`;
 
+export const getSwitchToStyleToneId = (actionName: string): string | null => {
+  if (!actionName.startsWith(SWITCH_TO_STYLE_HOTKEY_PREFIX)) {
+    return null;
+  }
+
+  const raw = actionName.slice(SWITCH_TO_STYLE_HOTKEY_PREFIX.length);
+  return raw.length > 0 ? raw : null;
+};
+
+/**
+ * Every platform the app builds for, so a default cannot be added for one and
+ * forgotten for another.
+ *
+ * `linux` was missing from this type and from the table below, and the lookup
+ * had no branch for it either: on Linux every shortcut that ships with a
+ * default came up unbound, which is the one platform where the person is least
+ * likely to guess what the key should be. Listing the platforms exhaustively
+ * makes the next default a compile error until it is answered for all three.
+ *
+ * Not `Record<Platform, …>`: `Platform` includes `unknown`, which is the
+ * absence of an answer rather than a platform to answer for.
+ */
 type PlatformHotkeyCombos = {
   macos: string[][];
   windows: string[][];
+  linux: string[][];
 };
 
-const DEFAULT_HOTKEY_COMBOS: Record<string, PlatformHotkeyCombos> = {
+export const DEFAULT_HOTKEY_COMBOS: Record<string, PlatformHotkeyCombos> = {
   [DICTATE_HOTKEY]: {
     macos: [["Function"]],
     windows: [["MetaLeft", "ControlLeft"]],
+    // Compositor bridges cannot register a modifier-only shortcut. Include a
+    // regular key so the Linux default works on both Wayland and X11.
+    linux: [["ControlLeft", "AltLeft", "Space"]],
   },
   [CANCEL_TRANSCRIPTION_HOTKEY]: {
     macos: [["Escape"]],
     windows: [["Escape"]],
+    linux: [["Escape"]],
   },
   [SWITCH_WRITING_STYLE_FORWARD_HOTKEY]: {
     macos: [["RightArrow"]],
     windows: [["RightArrow"]],
+    linux: [["RightArrow"]],
   },
   [SWITCH_WRITING_STYLE_BACKWARD_HOTKEY]: {
     macos: [["LeftArrow"]],
     windows: [["LeftArrow"]],
+    linux: [["LeftArrow"]],
   },
+};
+
+export const getHasDefaultHotkeyForAction = (actionName: string): boolean => {
+  return Boolean(DEFAULT_HOTKEY_COMBOS[actionName]);
 };
 
 export const getDefaultHotkeyCombosForAction = (
   actionName: string,
 ): string[][] => {
   const defaultCombos = DEFAULT_HOTKEY_COMBOS[actionName];
-  if (defaultCombos) {
-    if (getPlatform() === "macos") {
-      return defaultCombos.macos;
-    }
-    if (getPlatform() === "windows") {
-      return defaultCombos.windows;
-    }
+  if (!defaultCombos) {
+    return [];
   }
-  return [];
+
+  const platform = getPlatform();
+  // `unknown` is the absence of a platform, not a third case to guess at, so it
+  // is the one answer that stays empty.
+  return platform === "unknown" ? [] : defaultCombos[platform];
 };
 
 export const getHotkeyCombosForAction = (
   state: AppState,
   actionName: string,
 ): string[][] => {
-  const combos = Object.values(state.hotkeyById)
-    .filter((h) => h.actionName === actionName && h.keys.length > 0)
-    .map((h) => h.keys);
-
-  if (combos.length > 0) {
-    return combos;
-  }
-
-  return getDefaultHotkeyCombosForAction(actionName);
+  const configured = Object.values(state.hotkeyById).filter(
+    (hotkey) => hotkey.actionName === actionName,
+  );
+  // An explicit empty binding is a cleared shortcut, not a missing record.
+  // Only a genuinely unconfigured action inherits the platform default.
+  return configured.length > 0
+    ? configured
+        .filter((hotkey) => hotkey.keys.length > 0)
+        .map((hotkey) => hotkey.keys)
+    : getDefaultHotkeyCombosForAction(actionName);
 };
 
 export type SwitchToStyleEntry = {
@@ -171,7 +210,7 @@ export const getStyleSwitchActionNamesForKey = (
   );
 };
 
-const isHoldActionHotkey = (actionName: string): boolean => {
+export const isHoldActionHotkey = (actionName: string): boolean => {
   return (
     actionName === DICTATE_HOTKEY ||
     actionName === AGENT_DICTATE_HOTKEY ||
@@ -195,8 +234,50 @@ export const isModifierOnlyCombo = (combo: string[]): boolean => {
   return combo.length > 0 && combo.every((key) => isModifierLikeKey(key));
 };
 
-export const getPrettyKeyName = (key: string): string =>
-  formatHotkeyLabel(key, () => getPlatform() === "macos");
+const MODIFIER_SIDE_RE = /(Left|Right)$/i;
+
+const appendSideLabel = (base: string, key: string): string => {
+  // `match[1]` is the only capture group and it is non-optional in the pattern,
+  // so a successful `exec` always yields it. Reading it through `?.[1]` and
+  // bailing on `undefined` keeps that fact explicit instead of asserting it.
+  const side = MODIFIER_SIDE_RE.exec(key)?.[1];
+  if (side === undefined) return base;
+  return `${base} ${side.charAt(0).toUpperCase()}`;
+};
+
+export const getPrettyKeyName = (key: string): string => {
+  const lower = key.toLowerCase();
+  if (lower.startsWith("key")) {
+    return key.slice(3).toUpperCase();
+  }
+
+  if (lower.startsWith("meta")) {
+    return appendSideLabel(getPlatform() === "macos" ? "⌘" : "⊞", key);
+  }
+
+  if (lower.startsWith("control")) {
+    return appendSideLabel(getPlatform() === "macos" ? "⌃" : "Ctrl", key);
+  }
+
+  if (lower.startsWith("shift")) {
+    return appendSideLabel(getPlatform() === "macos" ? "⇧" : "Shift", key);
+  }
+
+  if (lower.startsWith("alt") || lower.startsWith("option")) {
+    return appendSideLabel(getPlatform() === "macos" ? "⌥" : "Alt", key);
+  }
+
+  if (lower.startsWith("function")) {
+    return "Fn";
+  }
+
+  if (key === "LeftArrow") return "←";
+  if (key === "RightArrow") return "→";
+  if (key === "UpArrow") return "↑";
+  if (key === "DownArrow") return "↓";
+
+  return key;
+};
 
 export type AdditionalLanguageEntry = {
   actionName: string;
@@ -207,13 +288,27 @@ export type AdditionalLanguageEntry = {
 export const getAdditionalLanguageEntries = (
   state: AppState,
 ): AdditionalLanguageEntry[] => {
-  return getAdditionalLanguageHotkeys(state).map(
-    ({ actionName, language }) => ({
-      actionName,
-      language,
-      hotkeyCombos: getHotkeyCombosForAction(state, actionName),
-    }),
-  );
+  return Object.values(state.hotkeyById)
+    .filter(
+      (hotkey) =>
+        hotkey &&
+        hotkey.actionName.startsWith(ADDITIONAL_LANGUAGE_HOTKEY_PREFIX),
+    )
+    .map((hotkey) => {
+      const language = getAdditionalLanguageCode(hotkey.actionName);
+      if (!language) {
+        return null;
+      }
+      return {
+        actionName: hotkey.actionName,
+        language,
+        // Rows represent individual bindings, even when several use the same
+        // language. Looking up all combos by action would give each row the
+        // first binding and silently overwrite the others on the next save.
+        hotkeyCombos: hotkey.keys.length > 0 ? [hotkey.keys] : [],
+      };
+    })
+    .filter((entry): entry is AdditionalLanguageEntry => Boolean(entry));
 };
 
 /**

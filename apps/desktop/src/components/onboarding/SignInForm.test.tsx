@@ -284,27 +284,6 @@ describe("SignInForm name editing", () => {
     expect(getAppState().local.onboardingNameDraftUserId).toBe("user-id");
   });
 
-  it("re-prefills after sign-out and return to the same account", async () => {
-    await renderForm();
-    expect(getAppState().onboarding.name).toBe("Mary Jane Watson");
-    const signedOut = structuredClone(getAppState());
-    signedOut.auth = null;
-    signedOut.local.onboardingNameDraft = "";
-    signedOut.local.onboardingNameDraftUserId = null;
-    act(() => setAppState(signedOut, true));
-
-    const returned = structuredClone(getAppState());
-    returned.auth = {
-      uid: "user-id",
-      email: "mary@example.com",
-      displayName: "Maria Garcia",
-      providers: ["password"],
-    };
-    act(() => setAppState(returned, true));
-    expect(getAppState().onboarding.name).toBe("Maria Garcia");
-    expect(getAppState().local.onboardingNameDraftUserId).toBe("user-id");
-  });
-
   it("clears stale last-name state and preserves a later resume page", async () => {
     const state = structuredClone(getAppState());
     state.auth = {

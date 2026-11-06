@@ -41,9 +41,9 @@ const requestBodyFor = async (
     endpoint: "https://example.openai.azure.com",
     deploymentName,
     prompt: "hi",
-    jsonResponse: { name: "response", schema: { type: "object" } },
+    jsonResponse: true,
     customFetch,
-  });
+  } as never).catch(() => undefined);
   return body;
 };
 

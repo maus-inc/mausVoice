@@ -351,80 +351,6 @@ describe("ToneEditorDialog create wizard", () => {
     expect(closeToneEditorDialogMock).toHaveBeenCalled();
   });
 
-  it("trims the created style and appends it after existing sort order", async () => {
-    seedCreate();
-    const state = structuredClone(getAppState());
-    state.toneById.existing = {
-      id: "existing",
-      name: "Existing",
-      promptTemplate: "Existing prompt",
-      isSystem: false,
-      createdAt: 0,
-      sortOrder: 7,
-    };
-    setAppState(state, true);
-    renderDialog();
-    typeInto(requiredField("Casual, Formal, Business..."), "  Casual  ");
-    typeInto(requiredField("Writing, notes, developer..."), "  notes  ");
-    act(() => requiredButton("Next").click());
-    typeInto(requiredTextarea(), "  Sound casual.  ");
-    typeInto(requiredField("1–3 sentences"), "  short  ");
-    await act(async () => requiredButton("Next").click());
-    await act(async () => requiredButton("Create").click());
-    expect(upsertToneMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: "Casual",
-        promptTemplate: "Sound casual.",
-        category: "notes",
-        outputLength: "short",
-        sortOrder: 8,
-      }),
-      { activate: true },
-    );
-  });
-
-  it("starts only one create when clicked twice before React commits", async () => {
-    seedCreate();
-    renderDialog();
-    typeInto(requiredField("Casual, Formal, Business..."), "Casual");
-    act(() => requiredButton("Next").click());
-    typeInto(requiredTextarea(), "Sound casual.");
-    await act(async () => requiredButton("Next").click());
-    let finish!: () => void;
-    upsertToneMock.mockReturnValueOnce(
-      new Promise<void>((resolve) => {
-        finish = resolve;
-      }),
-    );
-    act(() => {
-      requiredButton("Create").click();
-      requiredButton("Create").click();
-    });
-    expect(upsertToneMock).toHaveBeenCalledOnce();
-    await act(async () => finish());
-    expect(closeToneEditorDialogMock).toHaveBeenCalledOnce();
-  });
-
-  it("does not close a replacement editor after a late create", async () => {
-    seedCreate();
-    renderDialog();
-    typeInto(requiredField("Casual, Formal, Business..."), "Casual");
-    act(() => requiredButton("Next").click());
-    typeInto(requiredTextarea(), "Sound casual.");
-    await act(async () => requiredButton("Next").click());
-    let finish!: () => void;
-    upsertToneMock.mockReturnValueOnce(
-      new Promise<void>((resolve) => {
-        finish = resolve;
-      }),
-    );
-    act(() => requiredButton("Create").click());
-    act(() => seedEdit());
-    await act(async () => finish());
-    expect(closeToneEditorDialogMock).not.toHaveBeenCalled();
-    expect(document.body.textContent).toContain("Edit style");
-  });
-
   it("retains the draft after a failed create and retries the same style", async () => {
     seedCreate();
     renderDialog();
@@ -738,21 +664,6 @@ describe("ToneEditorDialog edit mode", () => {
     await act(async () => requiredButton("Run preview", true).click());
     expect(document.body.textContent).toContain("Styled sample!");
     typeInto(textareaWithValue("Write plainly."), "Write formally.");
-    expect(document.body.textContent).not.toContain("Styled sample!");
-  });
-
-  it("invalidates an edit preview when a pristine source refreshes", async () => {
-    seedEdit();
-    renderDialog();
-    act(() => requiredButton("Test style").click());
-    await act(async () => requiredButton("Run preview", true).click());
-    expect(document.body.textContent).toContain("Styled sample!");
-    const updated = {
-      ...getAppState().toneById.tone1,
-      promptTemplate: "A new remote prompt",
-    };
-    act(() => setAppState({ toneById: { tone1: updated } }));
-    expect(textareaWithValue("A new remote prompt")).toBeTruthy();
     expect(document.body.textContent).not.toContain("Styled sample!");
   });
 

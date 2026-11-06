@@ -28,7 +28,13 @@ import {
 } from "../../actions/openrouter.actions";
 import { useAppStore } from "../../store";
 import { activeRowCheckSx, activeRowSx } from "../../styles/selection";
-import type { ActionStatus } from "../../types/state.types";
+
+type OpenRouterModelPickerProps = {
+  apiKeyId: string;
+  selectedModel: string | null;
+  onModelSelect: (modelId: string) => void;
+  disabled?: boolean;
+};
 
 type ModelRowProps = {
   model: OpenRouterModel;
@@ -124,72 +130,25 @@ const ModelRow = ({
   );
 };
 
-/** Collapsed selector supports keyboard activation as well as pointer input. */
-const CollapsedModelPicker = ({
-  disabled,
-  handleExpand,
-  selectedModelData,
+export const OpenRouterModelPicker = ({
+  apiKeyId,
   selectedModel,
-}: {
-  disabled: boolean;
-  handleExpand: () => void;
-  selectedModelData: OpenRouterModel | undefined;
-  selectedModel: string | null;
-}) => {
-  return (
-    <Paper
-      variant="outlined"
-      role="button"
-      tabIndex={disabled ? -1 : 0}
-      aria-disabled={disabled}
-      aria-expanded={false}
-      onClick={handleExpand}
-      onKeyDown={(event) => {
-        if (!disabled && (event.key === "Enter" || event.key === " ")) {
-          event.preventDefault();
-          handleExpand();
-        }
-      }}
-      sx={{
-        px: 1.5,
-        py: 1,
-        cursor: disabled ? "default" : "pointer",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        opacity: disabled ? 0.5 : 1,
-        "&:hover": {
-          borderColor: disabled ? "divider" : "action.active",
-        },
-      }}
-    >
-      <Box sx={{ minWidth: 0, flex: 1 }}>
-        <Typography
-          variant="caption"
-          sx={{
-            color: "text.secondary",
-          }}
-        >
-          <FormattedMessage defaultMessage="Model" />
-        </Typography>
-        <Typography variant="body2" noWrap>
-          {selectedModelData?.name ?? selectedModel ?? (
-            <FormattedMessage defaultMessage="Select a model" />
-          )}
-        </Typography>
-      </Box>
-      <ExpandMoreIcon color="action" />
-    </Paper>
+  onModelSelect,
+  disabled = false,
+}: OpenRouterModelPickerProps) => {
+  const [expanded, setExpanded] = useState(false);
+  const models = useAppStore((state) => state.settings.openRouterModels);
+  const modelsStatus = useAppStore(
+    (state) => state.settings.openRouterModelsStatus,
   );
-};
+  const searchQuery = useAppStore(
+    (state) => state.settings.openRouterSearchQuery,
+  );
 
-/** Build stable, filtered sections while respecting per-key favorite overrides. */
-const useOpenRouterModelList = (
-  models: OpenRouterModel[],
-  userFavorites: string[] | undefined,
-  searchQuery: string,
-  selectedModel: string | null,
-) => {
+  // Get user favorites from the API key config
+  const config = getOpenRouterConfigForKey(apiKeyId);
+  const userFavorites = config?.favoriteModels;
+
   // Use user's favorites if they've customized them, otherwise use defaults
   // This allows users to remove default favorites by toggling them off
   const allFavoriteIds = useMemo(() => {
@@ -206,7 +165,7 @@ const useOpenRouterModelList = (
     if (!searchQuery.trim()) {
       return models;
     }
-    const query = searchQuery.trim().toLowerCase();
+    const query = searchQuery.toLowerCase();
     return models.filter(
       (m) =>
         m.name.toLowerCase().includes(query) ||
@@ -256,17 +215,6 @@ const useOpenRouterModelList = (
     return models.find((m) => m.id === selectedModel);
   }, [models, selectedModel]);
 
-  return { listItems, selectedModelData };
-};
-
-/** Own expansion, search and model actions for one API-key picker. */
-const useOpenRouterPickerControls = (
-  apiKeyId: string,
-  disabled: boolean,
-  onModelSelect: (modelId: string) => void,
-  modelsStatus: ActionStatus,
-) => {
-  const [expanded, setExpanded] = useState(false);
   // Load models when expanded for the first time
   useEffect(() => {
     if (expanded && modelsStatus === "idle") {
@@ -307,69 +255,42 @@ const useOpenRouterPickerControls = (
     [],
   );
 
-  return {
-    expanded,
-    handleExpand,
-    handleCollapse,
-    handleModelSelect,
-    handleToggleFavorite,
-    handleSearchChange,
-  };
-};
-
-export const OpenRouterModelPicker = ({
-  apiKeyId,
-  selectedModel,
-  onModelSelect,
-  disabled = false,
-}: {
-  apiKeyId: string;
-  selectedModel: string | null;
-  onModelSelect: (modelId: string) => void;
-  disabled?: boolean;
-}) => {
-  const models = useAppStore((state) => state.settings.openRouterModels);
-  const modelsStatus = useAppStore(
-    (state) => state.settings.openRouterModelsStatus,
-  );
-  const searchQuery = useAppStore(
-    (state) => state.settings.openRouterSearchQuery,
-  );
-
-  // Get user favorites from the API key config
-  const config = getOpenRouterConfigForKey(apiKeyId);
-  const userFavorites = config?.favoriteModels;
-
-  const { listItems, selectedModelData } = useOpenRouterModelList(
-    models,
-    userFavorites,
-    searchQuery,
-    selectedModel,
-  );
-
-  const {
-    expanded,
-    handleExpand,
-    handleCollapse,
-    handleModelSelect,
-    handleToggleFavorite,
-    handleSearchChange,
-  } = useOpenRouterPickerControls(
-    apiKeyId,
-    disabled,
-    onModelSelect,
-    modelsStatus,
-  );
-
   // Collapsed state - looks like a Select
   if (!expanded) {
     return (
-      <CollapsedModelPicker
-        disabled={disabled}
-        handleExpand={handleExpand}
-        selectedModelData={selectedModelData}
-        selectedModel={selectedModel}
-      />
+      <Paper
+        variant="outlined"
+        onClick={handleExpand}
+        sx={{
+          px: 1.5,
+          py: 1,
+          cursor: disabled ? "default" : "pointer",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          opacity: disabled ? 0.5 : 1,
+          "&:hover": {
+            borderColor: disabled ? "divider" : "action.active",
+          },
+        }}
+      >
+        <Box sx={{ minWidth: 0, flex: 1 }}>
+          <Typography
+            variant="caption"
+            sx={{
+              color: "text.secondary",
+            }}
+          >
+            <FormattedMessage defaultMessage="Model" />
+          </Typography>
+          <Typography variant="body2" noWrap>
+            {selectedModelData?.name ?? selectedModel ?? (
+              <FormattedMessage defaultMessage="Select a model" />
+            )}
+          </Typography>
+        </Box>
+        <ExpandMoreIcon color="action" />
+      </Paper>
     );
   }
 

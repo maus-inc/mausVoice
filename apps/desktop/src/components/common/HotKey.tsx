@@ -1,10 +1,8 @@
-import { useHotkeyCapture } from "../../hooks/hotkey-capture.hooks";
-import { advanceHotkeyCapture } from "../../utils/hotkey-capture.utils";
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
 import { hotkeyRecorderStyles } from "./hotkey-recorder.styles";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { useIntl, type IntlShape } from "react-intl";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useIntl } from "react-intl";
 import { produceAppState, useAppStore } from "../../store";
 import { setSnackbar } from "../../utils/app.utils";
 import {
@@ -12,37 +10,28 @@ import {
   isModifierOnlyCombo,
 } from "../../utils/keyboard.utils";
 
-const reportBridgeShortcut = (
-  released: string[],
-  requireNonModifier: boolean,
-  intl: IntlShape,
-): boolean => {
-  if (!requireNonModifier) return false;
-  const invalid = isModifierOnlyCombo(released);
-  const message = invalid
-    ? intl.formatMessage({
-        defaultMessage:
-          "Hotkey must include a non-modifier key (e.g. a letter or number)",
-      })
-    : intl.formatMessage({
-        defaultMessage:
-          "You may need to reload your compositor for changes to take effect.",
-      });
-  produceAppState((draft) => {
-    setSnackbar(draft, message, invalid ? { mode: "error" } : undefined);
-  });
-  return invalid;
+// Only the recorder that owns focus may release the global shortcut guard.
+let activeRecorder: symbol | null = null;
+
+type HotKeyProps = {
+  value?: string[];
+  onChange?: (value: string[]) => void;
+  disabled?: boolean;
+  ariaLabel?: string;
+  ariaLabelledBy?: string;
 };
 
 export const HotKey = ({
   value,
   onChange,
-}: {
-  value?: string[];
-  onChange?: (value: string[]) => void;
-}) => {
+  disabled = false,
+  ariaLabel,
+  ariaLabelledBy,
+}: HotKeyProps) => {
   const intl = useIntl();
+  const valueId = useId();
   const boxRef = useRef<HTMLDivElement | null>(null);
+  const recorderId = useRef(Symbol("hotkey recorder"));
   const [focused, setFocused] = useState(false);
   const [hasInteracted, setHasInteracted] = useState(false);
   const keysHeld = useAppStore((s) => s.keysHeld);
@@ -55,32 +44,97 @@ export const HotKey = ({
     lastEmittedRef.current = value;
   }, [value]);
 
-  useHotkeyCapture(focused);
+  useEffect(() => {
+    const owner = recorderId.current;
+    return () => {
+      if (activeRecorder !== owner) return;
+      activeRecorder = null;
+      produceAppState((draft) => {
+        draft.isRecordingHotkey = false;
+      });
+    };
+  }, []);
+
+  useEffect(() => {
+    if (disabled) boxRef.current?.blur();
+  }, [disabled]);
 
   const previousKeysHeldRef = useRef<string[]>([]);
 
   useEffect(() => {
-    const update = advanceHotkeyCapture({
-      focused,
-      interacted: hasInteracted,
-      keysHeld,
-      previousHeld: previousKeysHeldRef.current,
-      lastEmitted: lastEmittedRef.current,
-    });
-    previousKeysHeldRef.current = update.previousHeld;
-    lastEmittedRef.current = update.lastEmitted;
+    if (!focused) {
+      previousKeysHeldRef.current = [];
+      return;
+    }
 
-    if (update.action === "release") {
-      if (reportBridgeShortcut(update.released, requireNonModifier, intl)) {
+    if (!hasInteracted) {
+      lastEmittedRef.current = [];
+    }
+
+    const seen = new Set<string>();
+    const held = keysHeld.filter((k: string) => {
+      if (seen.has(k)) {
+        return false;
+      }
+      seen.add(k);
+      return true;
+    });
+
+    const last = lastEmittedRef.current ?? [];
+
+    const previousHeld = previousKeysHeldRef.current;
+    if (
+      hasInteracted &&
+      previousHeld.length > 0 &&
+      held.length < previousHeld.length
+    ) {
+      if (requireNonModifier && isModifierOnlyCombo(previousHeld)) {
+        produceAppState((draft) => {
+          setSnackbar(
+            draft,
+            intl.formatMessage({
+              defaultMessage:
+                "Hotkey must include a non-modifier key (e.g. a letter or number)",
+            }),
+            { mode: "error" },
+          );
+        });
         onChange?.(valueBeforeRecordingRef.current ?? []);
         lastEmittedRef.current = valueBeforeRecordingRef.current;
+      } else if (requireNonModifier) {
+        produceAppState((draft) => {
+          setSnackbar(
+            draft,
+            intl.formatMessage({
+              defaultMessage:
+                "You may need to reload your compositor for changes to take effect.",
+            }),
+          );
+        });
       }
       boxRef.current?.blur();
-    } else if (update.action === "cancel") {
+      previousKeysHeldRef.current = [];
+      return;
+    }
+
+    previousKeysHeldRef.current = held;
+
+    if (held.length === 0) {
+      return;
+    }
+
+    if (held.length === 1 && held[0] === "Escape") {
       boxRef.current?.blur();
-    } else if (update.action === "record") {
-      setHasInteracted(true);
-      if (update.emitted) onChange?.(update.emitted);
+      return;
+    }
+
+    setHasInteracted(true);
+
+    const lastSet = new Set(last);
+    const anyNewKey = held.some((k) => !lastSet.has(k));
+    if (held.length > last.length || anyNewKey) {
+      lastEmittedRef.current = held;
+      onChange?.(held);
     }
   }, [keysHeld, focused, onChange, hasInteracted, requireNonModifier, intl]);
 
@@ -100,19 +154,44 @@ export const HotKey = ({
   return (
     <Box
       ref={boxRef}
-      tabIndex={0}
-      onClick={() => boxRef.current?.focus()}
+      tabIndex={disabled ? -1 : 0}
+      role={ariaLabel || ariaLabelledBy ? "textbox" : undefined}
+      aria-label={ariaLabel}
+      aria-labelledby={ariaLabelledBy}
+      aria-describedby={ariaLabel || ariaLabelledBy ? valueId : undefined}
+      aria-disabled={disabled || undefined}
+      onClick={() => {
+        if (!disabled) boxRef.current?.focus();
+      }}
+      onKeyDown={(event) => {
+        if (event.key !== "Escape" || event.nativeEvent.isComposing) return;
+        event.preventDefault();
+        event.stopPropagation();
+        boxRef.current?.blur();
+      }}
       onFocus={() => {
+        if (disabled) return;
+        activeRecorder = recorderId.current;
+        produceAppState((draft) => {
+          draft.isRecordingHotkey = true;
+        });
         valueBeforeRecordingRef.current = value;
         setFocused(true);
       }}
       onBlur={() => {
+        if (activeRecorder === recorderId.current) {
+          activeRecorder = null;
+          produceAppState((draft) => {
+            draft.isRecordingHotkey = false;
+          });
+        }
         setFocused(false);
         setHasInteracted(false);
       }}
-      sx={hotkeyRecorderStyles(focused)}
+      sx={hotkeyRecorderStyles(focused, 200, disabled)}
     >
       <Typography
+        id={ariaLabel || ariaLabelledBy ? valueId : undefined}
         variant="body2"
         color={empty ? "text.secondary" : "text.primary"}
       >

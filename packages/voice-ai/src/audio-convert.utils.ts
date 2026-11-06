@@ -26,7 +26,3 @@ export const convertFloat32ToBase64PCM16 = (
   }
   return btoa(binary);
 };
-
-/** Copy Buffer views so pooled bytes outside the audio slice are never sent. */
-export const audioToArrayBuffer = (audio: ArrayBuffer | Buffer): ArrayBuffer =>
-  audio instanceof ArrayBuffer ? audio : new Uint8Array(audio).buffer;

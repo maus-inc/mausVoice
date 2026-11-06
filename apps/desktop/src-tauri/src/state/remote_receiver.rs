@@ -25,10 +25,19 @@ pub struct RemoteReceiverStatus {
     pub device_platform: String,
 }
 
+#[derive(Default)]
+pub(crate) struct RemoteReceiverEventDetails {
+    pub(crate) sender_device_id: Option<String>,
+    pub(crate) event_id: Option<String>,
+    pub(crate) target_class_name: Option<String>,
+    pub(crate) target_title: Option<String>,
+    pub(crate) target_editable: Option<bool>,
+}
+
 struct RemoteReceiverStateInner {
     status: RemoteReceiverStatus,
     shutdown: Option<watch::Sender<bool>>,
-    start_generation: Arc<()>,
+    generation: u64,
 }
 
 #[derive(Clone)]
@@ -75,7 +84,7 @@ impl RemoteReceiverState {
                     device_platform: std::env::consts::OS.to_string(),
                 },
                 shutdown: None,
-                start_generation: Arc::new(()),
+                generation: 0,
             })),
         }
     }
@@ -88,33 +97,28 @@ impl RemoteReceiverState {
         self.inner.lock().unwrap().status.enabled
     }
 
-    pub fn prepare_start(&self) -> Option<Arc<()>> {
-        let inner = self.inner.lock().unwrap();
-        (!inner.status.enabled).then(|| Arc::clone(&inner.start_generation))
+    pub fn generation(&self) -> u64 {
+        self.inner.lock().unwrap().generation
     }
 
-    pub fn start_if_current(
-        &self,
-        generation: &Arc<()>,
-        listen_address: String,
-        port: u16,
-        shutdown: watch::Sender<bool>,
-    ) -> bool {
+    pub fn is_generation_active(&self, generation: u64) -> bool {
+        let inner = self.inner.lock().unwrap();
+        inner.status.enabled && inner.generation == generation
+    }
+
+    pub fn start(&self, listen_address: String, port: u16, shutdown: watch::Sender<bool>) {
         let mut inner = self.inner.lock().unwrap();
-        if inner.status.enabled || !Arc::ptr_eq(&inner.start_generation, generation) {
-            return false;
-        }
+        inner.generation = inner.generation.wrapping_add(1);
         inner.status.enabled = true;
         inner.status.listen_address = Some(listen_address);
         inner.status.port = Some(port);
         inner.status.pairing_code = generate_pairing_code();
         inner.shutdown = Some(shutdown);
-        true
     }
 
     pub fn stop(&self) {
         let mut inner = self.inner.lock().unwrap();
-        inner.start_generation = Arc::new(());
+        inner.generation = inner.generation.wrapping_add(1);
         if let Some(shutdown) = inner.shutdown.take() {
             let _ = shutdown.send(true);
         }
@@ -123,54 +127,58 @@ impl RemoteReceiverState {
         inner.status.port = None;
     }
 
-    pub fn consume_pairing_code(&self, code: &str) -> bool {
+    pub fn rotate_pairing_code_for_generation(&self, generation: u64) -> bool {
         let mut inner = self.inner.lock().unwrap();
-        if !inner.status.enabled || inner.status.pairing_code != code {
+        if !inner.status.enabled || inner.generation != generation {
             return false;
         }
         inner.status.pairing_code = generate_pairing_code();
         true
     }
 
-    pub fn record_delivery(
+    pub(crate) fn record_delivery_for_generation(
         &self,
-        sender_device_id: Option<String>,
-        event_id: Option<String>,
+        generation: u64,
+        details: RemoteReceiverEventDetails,
         delivered_at: Option<String>,
-        target_class_name: Option<String>,
-        target_title: Option<String>,
-        target_editable: Option<bool>,
-    ) {
+    ) -> bool {
         let mut inner = self.inner.lock().unwrap();
-        inner.status.last_sender_device_id = sender_device_id;
-        inner.status.last_event_id = event_id;
+        if !inner.status.enabled || inner.generation != generation {
+            return false;
+        }
+        apply_event_details(&mut inner.status, details);
         inner.status.last_delivery_status = Some("delivered".to_string());
         inner.status.last_delivery_at = delivered_at;
         inner.status.last_error = None;
-        inner.status.last_target_class_name = target_class_name;
-        inner.status.last_target_title = target_title;
-        inner.status.last_target_editable = target_editable;
+        true
     }
 
-    pub fn record_error(
+    pub(crate) fn record_error_for_generation(
         &self,
-        sender_device_id: Option<String>,
-        event_id: Option<String>,
+        generation: u64,
+        details: RemoteReceiverEventDetails,
         message: String,
-        target_class_name: Option<String>,
-        target_title: Option<String>,
-        target_editable: Option<bool>,
-    ) {
+    ) -> bool {
         let mut inner = self.inner.lock().unwrap();
-        inner.status.last_sender_device_id = sender_device_id;
-        inner.status.last_event_id = event_id;
+        if !inner.status.enabled || inner.generation != generation {
+            return false;
+        }
+        apply_event_details(&mut inner.status, details);
         inner.status.last_delivery_status = Some("failed".to_string());
         inner.status.last_error = Some(message);
         inner.status.last_delivery_at = Some(chrono::Utc::now().to_rfc3339());
-        inner.status.last_target_class_name = target_class_name;
-        inner.status.last_target_title = target_title;
-        inner.status.last_target_editable = target_editable;
+        true
     }
+}
+
+/// Copy the event identity and target details shared by delivered and failed
+/// deliveries, leaving the outcome fields to the caller.
+fn apply_event_details(status: &mut RemoteReceiverStatus, details: RemoteReceiverEventDetails) {
+    status.last_sender_device_id = details.sender_device_id;
+    status.last_event_id = details.event_id;
+    status.last_target_class_name = details.target_class_name;
+    status.last_target_title = details.target_title;
+    status.last_target_editable = details.target_editable;
 }
 
 fn generate_pairing_code() -> String {
@@ -181,68 +189,44 @@ fn generate_pairing_code() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::sync::Barrier;
-    use std::thread;
+    use super::{RemoteReceiverEventDetails, RemoteReceiverState};
 
     #[test]
-    fn stop_invalidates_pending_starts_and_signals_active_connections() {
+    fn stopping_and_restarting_invalidates_accepted_connections() {
         let state = RemoteReceiverState::new();
-        let old = state.prepare_start().unwrap();
-        state.stop();
-        let (sender, _) = watch::channel(false);
-        assert!(!state.start_if_current(&old, "127.0.0.1".into(), 1, sender));
-        assert!(!state.is_enabled());
+        let (shutdown, _receiver) = tokio::sync::watch::channel(false);
+        state.start("127.0.0.1".to_string(), 1234, shutdown);
+        let first_generation = state.generation();
+        assert!(state.is_generation_active(first_generation));
 
-        let current = state.prepare_start().unwrap();
-        let (sender, receiver) = watch::channel(false);
-        assert!(state.start_if_current(&current, "127.0.0.1".into(), 2, sender));
-        assert!(state.prepare_start().is_none());
         state.stop();
-        assert!(*receiver.borrow());
-        assert!(!state.is_enabled());
-    }
+        assert!(!state.is_generation_active(first_generation));
+        assert!(!state.record_error_for_generation(
+            first_generation,
+            RemoteReceiverEventDetails {
+                sender_device_id: Some("stale-sender".to_string()),
+                ..RemoteReceiverEventDetails::default()
+            },
+            "stale error".to_string(),
+        ));
+        assert!(!state.record_delivery_for_generation(
+            first_generation,
+            RemoteReceiverEventDetails {
+                sender_device_id: Some("stale-sender".to_string()),
+                event_id: Some("stale-event".to_string()),
+                ..RemoteReceiverEventDetails::default()
+            },
+            None,
+        ));
+        assert!(!state.rotate_pairing_code_for_generation(first_generation));
+        assert_eq!(state.status().last_error, None);
+        assert_eq!(state.status().last_event_id, None);
 
-    #[test]
-    fn simultaneous_starts_cannot_replace_the_running_listener() {
-        let state = RemoteReceiverState::new();
-        let first = state.prepare_start().unwrap();
-        let second = state.prepare_start().unwrap();
-        let (sender, receiver) = watch::channel(false);
-        assert!(state.start_if_current(&first, "first".into(), 1, sender));
-        let (sender, _) = watch::channel(false);
-        assert!(!state.start_if_current(&second, "second".into(), 2, sender));
-        assert_eq!(state.status().port, Some(1));
-        state.stop();
-        assert!(*receiver.borrow());
-    }
-
-    #[test]
-    fn a_pairing_code_is_consumed_by_at_most_one_connection() {
-        let state = RemoteReceiverState::new();
-        let generation = state.prepare_start().unwrap();
-        let (sender, _) = watch::channel(false);
-        assert!(state.start_if_current(&generation, "localhost".into(), 1, sender));
-        let code = state.status().pairing_code;
-        let barrier = Arc::new(Barrier::new(8));
-        let threads: Vec<_> = (0..8)
-            .map(|_| {
-                let state = state.clone();
-                let code = code.clone();
-                let barrier = Arc::clone(&barrier);
-                thread::spawn(move || {
-                    barrier.wait();
-                    state.consume_pairing_code(&code)
-                })
-            })
-            .collect();
-        let accepted = threads
-            .into_iter()
-            .map(|thread| thread.join().unwrap())
-            .filter(|accepted| *accepted)
-            .count();
-        assert_eq!(accepted, 1);
-        state.stop();
-        assert!(!state.consume_pairing_code(&state.status().pairing_code));
+        let (shutdown, _receiver) = tokio::sync::watch::channel(false);
+        state.start("127.0.0.1".to_string(), 1235, shutdown);
+        let second_generation = state.generation();
+        assert_ne!(first_generation, second_generation);
+        assert!(!state.is_generation_active(first_generation));
+        assert!(state.is_generation_active(second_generation));
     }
 }

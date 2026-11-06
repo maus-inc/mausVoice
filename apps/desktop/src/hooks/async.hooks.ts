@@ -6,7 +6,6 @@ import {
   type DependencyList,
 } from "react";
 import { AsyncData } from "../types/async.types";
-import { getLogger } from "../utils/log.utils";
 
 /** Default safety timeout for async data loads, in milliseconds. */
 const ASYNC_DATA_DEFAULT_TIMEOUT_MS = 30_000;
@@ -31,7 +30,7 @@ export class AsyncDataController<T> {
   ) {}
 
   clearPendingTimeout(): void {
-    if (this.timeout !== null) {
+    if (this.timeout) {
       clearTimeout(this.timeout);
       this.timeout = null;
     }
@@ -59,7 +58,6 @@ export class AsyncDataController<T> {
 
     this.timeout = setTimeout(() => {
       if (this.generation !== myGeneration) return;
-      this.timeout = null;
       this.generation += 1;
       this.sink.setError("Request timed out");
       this.sink.setLoading(false);
@@ -142,16 +140,8 @@ export const useAsyncData = <T>(
   return { state: "success", data: data as T, refresh };
 };
 
-function safelyRunAsyncEffectCleanup(cleanup: () => void): void {
-  try {
-    cleanup();
-  } catch (error) {
-    getLogger().warning("useAsyncEffect cleanup failed:", error);
-  }
-}
-
 export const useAsyncEffect = (
-  effect: (isCancelled: () => boolean) => Promise<(() => void) | void>,
+  effect: () => Promise<(() => void) | void>,
   deps: DependencyList,
 ): void => {
   const cleanupRef = useRef<(() => void) | void>(undefined);
@@ -167,23 +157,20 @@ export const useAsyncEffect = (
       }
 
       // Run the previous cleanup if it exists
-      const previousCleanup = cleanupRef.current;
-      cleanupRef.current = undefined;
-      if (previousCleanup) safelyRunAsyncEffectCleanup(previousCleanup);
+      if (cleanupRef.current) {
+        cleanupRef.current();
+        cleanupRef.current = undefined;
+      }
 
       if (cancelled) return;
 
       // Run the new effect and store its cleanup
-      try {
-        const cleanup = await effect(() => cancelled);
-        if (!cancelled) {
-          cleanupRef.current = cleanup;
-        } else if (cleanup) {
-          // If cancelled while effect was running, clean up immediately.
-          safelyRunAsyncEffectCleanup(cleanup);
-        }
-      } catch (error) {
-        getLogger().warning("useAsyncEffect callback failed:", error);
+      const cleanup = await effect();
+      if (!cancelled) {
+        cleanupRef.current = cleanup;
+      } else if (cleanup) {
+        // If cancelled while effect was running, clean up immediately
+        cleanup();
       }
     };
 
@@ -193,9 +180,10 @@ export const useAsyncEffect = (
       cancelled = true;
       // Schedule cleanup to run after current effect completes
       runningRef.current?.then(() => {
-        const cleanup = cleanupRef.current;
-        cleanupRef.current = undefined;
-        if (cleanup) safelyRunAsyncEffectCleanup(cleanup);
+        if (cleanupRef.current) {
+          cleanupRef.current();
+          cleanupRef.current = undefined;
+        }
       });
     };
   }, deps);

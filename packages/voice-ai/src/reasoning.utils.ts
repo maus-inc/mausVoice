@@ -44,6 +44,11 @@
 
 const GENERATE_TEXT_REASONING_EFFORT = "low" as const;
 
+type GptOssReasoningParams = {
+  reasoning_effort?: typeof GENERATE_TEXT_REASONING_EFFORT;
+  reasoning_format?: "hidden";
+};
+
 /**
  * Matches the GPT-OSS id shape used by both providers, with or without a
  * vendor prefix (`gpt-oss-120b` on Cerebras, `openai/gpt-oss-120b` on Groq).
@@ -58,7 +63,7 @@ export const isGptOssReasoningModel = (model: string): boolean =>
 
 export const buildGptOssReasoningParams = (
   model: string,
-): { reasoning_effort?: "low"; reasoning_format?: "hidden" } =>
+): GptOssReasoningParams =>
   isGptOssReasoningModel(model)
     ? {
         reasoning_effort: GENERATE_TEXT_REASONING_EFFORT,

@@ -1,7 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { useIntl } from "react-intl";
 
-type Inputs = Parameters<typeof AgentLiveAnnouncer>[0];
+type Inputs = {
+  agentRunning: boolean;
+  /** Id of the newest message in the conversation, or null when empty. */
+  latestMessageId: string | null;
+  /** Author of the newest message. Only an assistant reply is announced. */
+  latestMessageRole: string | null;
+};
 
 /**
  * Decide what to announce, from the previous inputs.
@@ -15,8 +21,8 @@ type Inputs = Parameters<typeof AgentLiveAnnouncer>[0];
  * the one a screen-reader user most needs to know.
  */
 export const nextAnnouncement = (
-  previous: Parameters<typeof AgentLiveAnnouncer>[0],
-  current: Parameters<typeof AgentLiveAnnouncer>[0],
+  previous: Inputs,
+  current: Inputs,
   messages: {
     replying: string;
     finished: string;
@@ -61,13 +67,7 @@ export const AgentLiveAnnouncer = ({
   agentRunning,
   latestMessageId,
   latestMessageRole,
-}: {
-  agentRunning: boolean;
-  /** Id of the newest message in the conversation, or null when empty. */
-  latestMessageId: string | null;
-  /** Author of the newest message. Only an assistant reply is announced. */
-  latestMessageRole: string | null;
-}) => {
+}: Inputs) => {
   const intl = useIntl();
   const [announcement, setAnnouncement] = useState("");
   const previous = useRef<Inputs>({

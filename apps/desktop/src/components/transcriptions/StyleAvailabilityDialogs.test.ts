@@ -11,7 +11,10 @@ const mocks = vi.hoisted(() => ({
   closeRetranscribeDialog: vi.fn(),
   importAudioFile: vi.fn().mockResolvedValue(undefined),
   openFileDialog: vi.fn().mockResolvedValue("/tmp/import.wav"),
-  retranscribeTranscription: vi.fn().mockResolvedValue(undefined),
+  retranscribeTranscriptionWithRecovery: vi.fn().mockResolvedValue({
+    started: true,
+    update: null,
+  }),
 }));
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
@@ -21,7 +24,8 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
 vi.mock("../../actions/transcriptions.actions", () => ({
   closeRetranscribeDialog: mocks.closeRetranscribeDialog,
   importAudioFile: mocks.importAudioFile,
-  retranscribeTranscription: mocks.retranscribeTranscription,
+  retranscribeTranscriptionWithRecovery:
+    mocks.retranscribeTranscriptionWithRecovery,
 }));
 
 vi.mock("react-intl", async (importOriginal) => {
@@ -114,33 +118,25 @@ const hasStyleField = (): boolean =>
     (label) => label.textContent?.trim() === "Style",
   );
 
-const selectOption = async (fieldIndex: number, label: string) => {
-  const fields =
-    document.body.querySelectorAll<HTMLElement>('[role="combobox"]');
-  expect(fields[fieldIndex]).toBeDefined();
-  await act(async () => {
-    fields[fieldIndex].dispatchEvent(
-      new MouseEvent("mousedown", { bubbles: true, button: 0 }),
+const expectSelectLabels = () => {
+  const controls = [
+    ...document.body.querySelectorAll<HTMLElement>(
+      '[role="dialog"] [role="combobox"]',
+    ),
+  ];
+  expect(controls).toHaveLength(2);
+  for (const [control, label] of controls.map(
+    (control, i) => [control, ["Style", "Language"][i]] as const,
+  )) {
+    const references = (control.getAttribute("aria-labelledby") ?? "").split(
+      " ",
     );
-  });
-  const option = [
-    ...document.body.querySelectorAll<HTMLElement>('[role="option"]'),
-  ].find((element) => element.textContent?.trim() === label);
-  expect(option).toBeDefined();
-  await act(async () => {
-    option?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-  });
-};
-
-const seedAnotherTone = () => {
-  produceAppState((draft) => {
-    draft.toneById["tone-2"] = {
-      ...tone,
-      id: "tone-2",
-      name: "Another style",
-      createdAt: 0,
-    };
-  });
+    expect(
+      references.some(
+        (id) => document.getElementById(id)?.textContent === label,
+      ),
+    ).toBe(true);
+  }
 };
 
 const settle = async () => {
@@ -191,26 +187,12 @@ describe("Import audio style availability", () => {
     });
   };
 
-  it("imports with the chosen style and language", async () => {
-    seedAnotherTone();
-    await renderPage();
-    await openImportDialog();
-    await selectOption(0, "Another style");
-    await selectOption(1, "Español");
-    await act(async () => {
-      findButton("Choose file")?.click();
-    });
-    expect(mocks.importAudioFile).toHaveBeenCalledWith({
-      toneId: "tone-2",
-      languageCode: "es",
-    });
-  });
-
   it("shows styles even while post-processing is disabled via fast path", async () => {
     await renderPage();
     await openImportDialog();
 
     expect(hasStyleField()).toBe(true);
+    expectSelectLabels();
   });
 
   it("shows styles when post-processing has a usable provider", async () => {
@@ -219,6 +201,7 @@ describe("Import audio style availability", () => {
     await openImportDialog();
 
     expect(hasStyleField()).toBe(true);
+    expectSelectLabels();
   });
 
   it("keeps styles and imports with style when post-processing is turned off (fast path)", async () => {
@@ -253,7 +236,10 @@ describe("Retranscribe style availability", () => {
     resetState();
     seedTone();
     vi.clearAllMocks();
-    mocks.retranscribeTranscription.mockResolvedValue(undefined);
+    mocks.retranscribeTranscriptionWithRecovery.mockResolvedValue({
+      started: true,
+      update: null,
+    });
     produceAppState((draft) => {
       draft.transcriptions.retranscribeDialogOpen = true;
       draft.transcriptions.retranscribeDialogTranscriptionId =
@@ -277,23 +263,11 @@ describe("Retranscribe style availability", () => {
     });
   };
 
-  it("retranscribes with the chosen style and language", async () => {
-    seedAnotherTone();
-    await renderDialog();
-    await selectOption(0, "Another style");
-    await selectOption(1, "Español");
-    act(() => findButton("Transcribe")?.click());
-    expect(mocks.retranscribeTranscription).toHaveBeenCalledWith({
-      transcriptionId: "transcription-1",
-      toneId: "tone-2",
-      languageCode: "es",
-    });
-  });
-
   it("shows styles even while post-processing is disabled via fast path", async () => {
     await renderDialog();
 
     expect(hasStyleField()).toBe(true);
+    expectSelectLabels();
   });
 
   it("keeps styles visible when post-processing is disabled (fast path)", async () => {
@@ -310,7 +284,7 @@ describe("Retranscribe style availability", () => {
       transcribe?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
-    expect(mocks.retranscribeTranscription).toHaveBeenCalledWith(
+    expect(mocks.retranscribeTranscriptionWithRecovery).toHaveBeenCalledWith(
       expect.objectContaining({
         transcriptionId: "transcription-1",
         toneId: expect.any(String),

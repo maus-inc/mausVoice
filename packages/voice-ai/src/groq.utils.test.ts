@@ -1,20 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { createChatCompletion, createTranscription } = vi.hoisted(() => ({
+const { createChatCompletion } = vi.hoisted(() => ({
   createChatCompletion: vi.fn(),
-  createTranscription: vi.fn(),
 }));
 
 vi.mock("groq-sdk/index", () => ({
   default: class MockGroq {
     chat = { completions: { create: createChatCompletion } };
-    audio = { transcriptions: { create: createTranscription } };
   },
 }));
 
 import {
   groqGenerateTextResponse,
-  groqTranscribeAudio,
   isGroqAccountScopedError,
   isGroqPermanentRequestError,
 } from "./groq.utils";
@@ -26,52 +23,6 @@ const completion = {
   choices: [{ message: { content: '{"result":"ok"}' } }],
   usage: { total_tokens: 3 },
 };
-
-describe("groqTranscribeAudio", () => {
-  beforeEach(() => {
-    createTranscription.mockReset().mockResolvedValue({ text: "hello world" });
-  });
-
-  it("sends only the selected buffer bytes and normalizes auto language", async () => {
-    const blob = Buffer.from([99, 1, 2, 3, 88]).subarray(1, 4);
-    const result = await groqTranscribeAudio({
-      apiKey: GROQ_KEY,
-      blob,
-      ext: "wav",
-      language: "auto",
-      prompt: "names",
-    });
-    const body = createTranscription.mock.calls[0]?.[0];
-    expect(body).toMatchObject({
-      model: "whisper-large-v3-turbo",
-      response_format: "verbose_json",
-      prompt: "names",
-      language: undefined,
-    });
-    expect(body.file.name).toBe("audio.wav");
-    expect(Array.from(new Uint8Array(await body.file.arrayBuffer()))).toEqual([
-      1, 2, 3,
-    ]);
-    expect(result).toMatchObject({ text: "hello world", wordsUsed: 2 });
-  });
-
-  it("forwards an explicit language and model", async () => {
-    await groqTranscribeAudio({
-      apiKey: GROQ_KEY,
-      blob: new ArrayBuffer(1),
-      ext: "mp3",
-      language: "fr",
-      model: "whisper-large-v3",
-    });
-    expect(createTranscription).toHaveBeenCalledWith(
-      expect.objectContaining({
-        language: "fr",
-        model: "whisper-large-v3",
-        response_format: "verbose_json",
-      }),
-    );
-  });
-});
 
 describe("groqGenerateTextResponse request body", () => {
   beforeEach(() => {

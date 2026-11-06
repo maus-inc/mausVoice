@@ -1,5 +1,5 @@
 import { Member, Nullable } from "@maus-inc/types";
-import { getRec } from "@maus-inc/utilities";
+import { getRec, TRIAL_DURATION_DAYS } from "@maus-inc/utilities";
 import { getIntl } from "../i18n";
 import type { AppState } from "../state/app.state";
 import { EffectivePlan } from "../types/member.types";
@@ -34,6 +34,8 @@ export const getIsOnTrial = (state: AppState): boolean => {
   return member?.isOnTrial === true;
 };
 
+const TRIAL_DURATION_MS = TRIAL_DURATION_DAYS * 24 * 60 * 60 * 1000;
+
 export const getTrialDaysRemaining = (state: AppState): number | null => {
   const member = getMyMember(state);
   if (!member?.isOnTrial || !member.trialEndsAt) {
@@ -44,4 +46,32 @@ export const getTrialDaysRemaining = (state: AppState): number | null => {
   const endsAt = new Date(member.trialEndsAt).getTime();
   const msRemaining = endsAt - now;
   return Math.max(0, Math.ceil(msRemaining / (1000 * 60 * 60 * 24)));
+};
+
+export const getTrialProgress = (state: AppState): number | null => {
+  const member = getMyMember(state);
+  if (!member?.isOnTrial || !member.trialEndsAt) {
+    return null;
+  }
+
+  const now = Date.now();
+  const endsAt = new Date(member.trialEndsAt).getTime();
+  const msRemaining = endsAt - now;
+  return Math.max(0, Math.min(1, msRemaining / TRIAL_DURATION_MS));
+};
+
+export const getIsPro = (state: AppState): boolean => {
+  if (isPersonalUseProEnabled()) {
+    return true;
+  }
+  const member = getMyMember(state);
+  if (!member) {
+    return false;
+  }
+
+  return member.plan !== "free";
+};
+
+export const getIsPaidSubscriber = (state: AppState): boolean => {
+  return getIsPro(state) && !getIsOnTrial(state);
 };

@@ -1,4 +1,4 @@
-export type AsyncData<T> = (
+type AsyncState<T> =
   | {
       state: "loading";
     }
@@ -9,7 +9,8 @@ export type AsyncData<T> = (
   | {
       state: "success";
       data: T;
-    }
-) & {
+    };
+
+export type AsyncData<T> = AsyncState<T> & {
   refresh: () => Promise<void>;
 };

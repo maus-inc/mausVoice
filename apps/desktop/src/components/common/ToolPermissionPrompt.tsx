@@ -6,7 +6,13 @@ import { overlayOnDark } from "../../styles/palette";
 import { useAppStore } from "../../store";
 import { ToolParamsTooltip } from "./ToolParamsTooltip";
 
-type ToolPermissionPromptProps = Parameters<typeof ToolPermissionPrompt>[0];
+type ToolPermissionPromptProps = {
+  permission: ToolPermission;
+  variant?: "default" | "overlay";
+  onAllow: () => void;
+  onDeny: () => void;
+  onAlwaysAllow: () => void;
+};
 
 type PermissionActionsProps = Pick<
   ToolPermissionPromptProps,
@@ -62,21 +68,6 @@ const PermissionActions = ({
   );
 };
 
-const PermissionStatusChip = ({ allowed }: { allowed: boolean }) => (
-  <Chip
-    size="small"
-    color={allowed ? "success" : "error"}
-    sx={{ ml: "auto" }}
-    label={
-      allowed ? (
-        <FormattedMessage defaultMessage="Allowed" />
-      ) : (
-        <FormattedMessage defaultMessage="Denied" />
-      )
-    }
-  />
-);
-
 const PermissionDetails = ({
   permission,
   overlay,
@@ -116,7 +107,18 @@ const PermissionDetails = ({
           iconSize={appearance.iconSize}
         />
         {!overlay && permission.status !== "pending" && (
-          <PermissionStatusChip allowed={allowed} />
+          <Chip
+            size="small"
+            color={allowed ? "success" : "error"}
+            sx={{ ml: "auto" }}
+            label={
+              allowed ? (
+                <FormattedMessage defaultMessage="Allowed" />
+              ) : (
+                <FormattedMessage defaultMessage="Denied" />
+              )
+            }
+          />
         )}
       </Stack>
       {reason && (
@@ -134,13 +136,7 @@ export const ToolPermissionPrompt = ({
   onAllow,
   onDeny,
   onAlwaysAllow,
-}: {
-  permission: ToolPermission;
-  variant?: "default" | "overlay";
-  onAllow: () => void;
-  onDeny: () => void;
-  onAlwaysAllow: () => void;
-}) => {
+}: ToolPermissionPromptProps) => {
   const overlay = variant === "overlay";
   const details = (
     <PermissionDetails permission={permission} overlay={overlay} />

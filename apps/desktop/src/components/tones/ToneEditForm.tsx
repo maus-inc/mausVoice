@@ -1,14 +1,13 @@
-import { DeleteForeverOutlined } from "@mui/icons-material";
-import SaveIcon from "@mui/icons-material/Save";
 import {
   Accordion,
   AccordionDetails,
   AccordionSummary,
   Alert,
+  AlertTitle,
   Box,
   Button,
+  CircularProgress,
   Dialog,
-  DialogActions,
   DialogContent,
   DialogTitle,
   Stack,
@@ -18,28 +17,45 @@ import {
   useTheme,
 } from "@mui/material";
 import { Tone } from "@maus-inc/types";
+import { MAX_PREVIEW_SAMPLE_LEN } from "../../actions/tone-preview.actions";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { FormattedMessage } from "react-intl";
+import { FormattedMessage, useIntl } from "react-intl";
 import { deleteTone, upsertTone } from "../../actions/tone.actions";
 import { getAppState } from "../../store";
-import { ConfirmDialog } from "../common/ConfirmDialog";
-import { useToneDraftPreview } from "./useToneDraftPreview";
+import { useTonePreview } from "./useTonePreview";
 
 import { ToneBasicsFields } from "./ToneBasicsFields";
+import { ToneEditActions } from "./ToneEditActions";
+import { ToneEditConfirmations } from "./ToneEditConfirmations";
 import {
-  ToneExampleField,
-  ToneOutputLengthField,
-  TonePreviewSampleField,
-} from "./ToneGuidanceFields";
-import { TonePreviewFeedback } from "./TonePreviewFeedback";
-import { countLabel, sameToneDraft, MAX_PROMPT_LEN } from "./tone-form.utils";
+  PREVIEW_SAMPLE_MESSAGE,
+  countLabel,
+  sameToneDraft,
+  MAX_OUTPUT_LEN,
+  MAX_EXAMPLE_LEN,
+  MAX_PROMPT_LEN,
+} from "./tone-form.utils";
 
 const trimOrUndefined = (value: string): string | undefined =>
   value.trim() || undefined;
 
-// Keep draft hydration and conflict detection together: a dirty or busy draft
-// must never be overwritten by a newer source record.
-const useToneEditDraft = (tone: Tone, isBusy: boolean) => {
+export const ToneEditDialog = ({
+  tone,
+  onClose,
+}: {
+  tone: Tone;
+  onClose: () => void;
+}) => {
+  const intl = useIntl();
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  const theme = useTheme();
+  const fullScreen = useMediaQuery(theme.breakpoints.down("sm"));
   const [baseline, setBaseline] = useState(tone);
   const [name, setName] = useState(tone.name);
   const [category, setCategory] = useState(tone.category ?? "");
@@ -48,6 +64,31 @@ const useToneEditDraft = (tone: Tone, isBusy: boolean) => {
     tone.exampleInputOutput ?? "",
   );
   const [promptTemplate, setPromptTemplate] = useState(tone.promptTemplate);
+  const defaultSampleText = intl.formatMessage(PREVIEW_SAMPLE_MESSAGE);
+  const [sampleText, setSampleText] = useState(() => defaultSampleText);
+  const [showTester, setShowTester] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  // One shared busy latch: Save and Delete must never interleave, or the
+  // slower command can resurrect a deleted style or overwrite a deletion.
+  const isBusy = isSaving || isDeleting;
+  // State drives the buttons; the ref takes ownership before React commits
+  // that state, so two handlers in the same event batch cannot both write.
+  const writePending = useRef(false);
+  const [isConfirmOpen, setIsConfirmOpen] = useState(false);
+  const [isDiscardOpen, setIsDiscardOpen] = useState(false);
+  const preview = useTonePreview(defaultSampleText);
+  // A preview belongs to the exact sample and style fields that produced it.
+  // Invalidate both completed results and in-flight requests; never auto-run
+  // on every keystroke.
+  useEffect(preview.cancel, [
+    preview.cancel,
+    sampleText,
+    promptTemplate,
+    category,
+    outputLength,
+    exampleInputOutput,
+  ]);
   const trimmedName = name.trim();
   const trimmedPrompt = promptTemplate.trim();
   const hasChanges = !sameToneDraft(
@@ -55,7 +96,6 @@ const useToneEditDraft = (tone: Tone, isBusy: boolean) => {
     baseline,
   );
   const sourceChanged = !sameToneDraft(tone, baseline);
-
   useEffect(() => {
     if (hasChanges || isBusy || !sourceChanged) return;
     // Refresh only a pristine draft. A dirty draft remains available to copy
@@ -69,208 +109,6 @@ const useToneEditDraft = (tone: Tone, isBusy: boolean) => {
   }, [tone, hasChanges, isBusy, sourceChanged]);
 
   const isValid = trimmedName.length > 0 && trimmedPrompt.length > 0;
-  return {
-    baseline,
-    name,
-    setName,
-    category,
-    setCategory,
-    outputLength,
-    setOutputLength,
-    exampleInputOutput,
-    setExampleInputOutput,
-    promptTemplate,
-    setPromptTemplate,
-    trimmedName,
-    trimmedPrompt,
-    hasChanges,
-    sourceChanged,
-    isValid,
-  };
-};
-
-// The sample and preview result are owned by the editable fields that produce them.
-const ToneEditPreview = ({
-  promptTemplate,
-  category,
-  outputLength,
-  exampleInputOutput,
-}: {
-  promptTemplate: string;
-  category: string;
-  outputLength: string;
-  exampleInputOutput: string;
-}) => {
-  const { sampleText, setSampleText, preview, fields } = useToneDraftPreview({
-    promptTemplate,
-    category,
-    outputLength,
-    exampleInputOutput,
-  });
-  const [showTester, setShowTester] = useState(false);
-  const trimmedPrompt = promptTemplate.trim();
-
-  return (
-    <Accordion
-      disableGutters
-      expanded={showTester}
-      onChange={(_, expanded) => setShowTester(expanded)}
-    >
-      <AccordionSummary>
-        <Typography variant="subtitle2">
-          <FormattedMessage defaultMessage="Test style" />
-        </Typography>
-      </AccordionSummary>
-      <AccordionDetails>
-        <Stack spacing={2}>
-          <TonePreviewSampleField value={sampleText} onChange={setSampleText} />
-          <Box sx={{ display: "flex", gap: 1 }}>
-            <Button
-              variant="outlined"
-              size="small"
-              onClick={() => preview.run(fields, sampleText)}
-              disabled={preview.status === "running" || !trimmedPrompt}
-            >
-              <FormattedMessage defaultMessage="Run preview" />
-            </Button>
-            {preview.status === "running" && (
-              <Button variant="text" size="small" onClick={preview.cancel}>
-                <FormattedMessage defaultMessage="Cancel" />
-              </Button>
-            )}
-          </Box>
-          <TonePreviewFeedback
-            status={preview.status}
-            output={preview.output}
-            error={preview.error}
-          />
-        </Stack>
-      </AccordionDetails>
-    </Accordion>
-  );
-};
-
-const ToneEditPrompt = ({
-  promptTemplate,
-  setPromptTemplate,
-}: {
-  promptTemplate: string;
-  setPromptTemplate: (value: string) => void;
-}) => {
-  const trimmedPrompt = promptTemplate.trim();
-  return (
-    <TextField
-      label={<FormattedMessage defaultMessage="Prompt" />}
-      value={promptTemplate}
-      onChange={(event) => setPromptTemplate(event.target.value)}
-      multiline
-      rows={6}
-      fullWidth
-      required
-      error={promptTemplate.length > 0 && !trimmedPrompt}
-      helperText={
-        promptTemplate.length > 0 && !trimmedPrompt ? (
-          <FormattedMessage defaultMessage="Describe how the style should sound." />
-        ) : (
-          countLabel(promptTemplate, MAX_PROMPT_LEN)
-        )
-      }
-      slotProps={{ htmlInput: { maxLength: MAX_PROMPT_LEN } }}
-    />
-  );
-};
-
-const ToneEditActions = ({
-  isSystem,
-  isBusy,
-  sourceChanged,
-  isValid,
-  hasChanges,
-  onRequestDelete,
-  onRequestClose,
-  onSave,
-}: {
-  isSystem: boolean;
-  isBusy: boolean;
-  sourceChanged: boolean;
-  isValid: boolean;
-  hasChanges: boolean;
-  onRequestDelete: () => void;
-  onRequestClose: () => void;
-  onSave: () => void;
-}) => (
-  <DialogActions sx={{ px: 3, pb: 2 }}>
-    {!isSystem && (
-      <Button
-        variant="text"
-        onClick={onRequestDelete}
-        disabled={isBusy}
-        color="warning"
-        sx={{ mr: "auto" }}
-        startIcon={<DeleteForeverOutlined />}
-      >
-        <FormattedMessage defaultMessage="Delete" />
-      </Button>
-    )}
-    <Button variant="text" onClick={onRequestClose} disabled={isBusy}>
-      <FormattedMessage defaultMessage="Cancel" />
-    </Button>
-    <Button
-      variant="contained"
-      startIcon={<SaveIcon />}
-      onClick={onSave}
-      disabled={isBusy || sourceChanged || !isValid || !hasChanges}
-    >
-      <FormattedMessage defaultMessage="Save changes" />
-    </Button>
-  </DialogActions>
-);
-
-export const ToneEditDialog = ({
-  tone,
-  onClose,
-}: {
-  tone: Tone;
-  onClose: () => void;
-}) => {
-  const mounted = useRef(false);
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
-  const theme = useTheme();
-  const fullScreen = useMediaQuery(theme.breakpoints.down("sm"));
-
-  const [isSaving, setIsSaving] = useState(false);
-  const [isDeleting, setIsDeleting] = useState(false);
-  // One shared busy latch: Save and Delete must never interleave, or the
-  // slower command can resurrect a deleted style or overwrite a deletion.
-  const isBusy = isSaving || isDeleting;
-  const {
-    baseline,
-    name,
-    setName,
-    category,
-    setCategory,
-    outputLength,
-    setOutputLength,
-    exampleInputOutput,
-    setExampleInputOutput,
-    promptTemplate,
-    setPromptTemplate,
-    trimmedName,
-    trimmedPrompt,
-    hasChanges,
-    sourceChanged,
-    isValid,
-  } = useToneEditDraft(tone, isBusy);
-  // State drives the buttons; the ref takes ownership before React commits
-  // that state, so two handlers in the same event batch cannot both write.
-  const writePending = useRef(false);
-  const [isConfirmOpen, setIsConfirmOpen] = useState(false);
-  const [isDiscardOpen, setIsDiscardOpen] = useState(false);
 
   const handleSave = useCallback(async () => {
     if (!isValid || isBusy || writePending.current) {
@@ -344,6 +182,13 @@ export const ToneEditDialog = ({
     onClose();
   }, [hasChanges, onClose, isBusy]);
 
+  const fields = {
+    promptTemplate: trimmedPrompt,
+    category: trimOrUndefined(category),
+    outputLength: trimOrUndefined(outputLength),
+    exampleInputOutput: trimOrUndefined(exampleInputOutput),
+  };
+
   return (
     <>
       <Dialog
@@ -357,7 +202,10 @@ export const ToneEditDialog = ({
           <FormattedMessage defaultMessage="Edit style" />
         </DialogTitle>
 
-        <DialogContent dividers sx={{ minHeight: 320 }}>
+        <DialogContent
+          dividers
+          sx={{ minHeight: "min(320px, max(0px, calc(100dvh - 220px)))" }}
+        >
           {sourceChanged && hasChanges && !isBusy && (
             <Alert severity="warning" sx={{ mb: 2 }}>
               <FormattedMessage defaultMessage="This style changed elsewhere. Close and reopen the editor before saving." />
@@ -383,13 +231,34 @@ export const ToneEditDialog = ({
                 <FormattedMessage defaultMessage="Behavior" />
               </Typography>
               <Stack spacing={2}>
-                <ToneEditPrompt
-                  promptTemplate={promptTemplate}
-                  setPromptTemplate={setPromptTemplate}
+                <TextField
+                  label={<FormattedMessage defaultMessage="Prompt" />}
+                  value={promptTemplate}
+                  onChange={(event) => setPromptTemplate(event.target.value)}
+                  multiline
+                  rows={6}
+                  fullWidth
+                  required
+                  error={promptTemplate.length > 0 && !trimmedPrompt}
+                  helperText={
+                    promptTemplate.length > 0 && !trimmedPrompt ? (
+                      <FormattedMessage defaultMessage="Describe how the style should sound." />
+                    ) : (
+                      countLabel(promptTemplate, MAX_PROMPT_LEN)
+                    )
+                  }
+                  slotProps={{ htmlInput: { maxLength: MAX_PROMPT_LEN } }}
                 />
-                <ToneOutputLengthField
+                <TextField
+                  label={<FormattedMessage defaultMessage="Output length" />}
                   value={outputLength}
-                  onChange={setOutputLength}
+                  onChange={(event) => setOutputLength(event.target.value)}
+                  fullWidth
+                  helperText={countLabel(outputLength, MAX_OUTPUT_LEN)}
+                  placeholder={intl.formatMessage({
+                    defaultMessage: "1–3 sentences",
+                  })}
+                  slotProps={{ htmlInput: { maxLength: MAX_OUTPUT_LEN } }}
                 />
               </Stack>
             </Box>
@@ -398,63 +267,132 @@ export const ToneEditDialog = ({
               <Typography variant="subtitle2" gutterBottom>
                 <FormattedMessage defaultMessage="Examples" />
               </Typography>
-              <ToneExampleField
+              <TextField
+                label={
+                  <FormattedMessage defaultMessage="Example input and output" />
+                }
                 value={exampleInputOutput}
-                onChange={setExampleInputOutput}
+                onChange={(event) => setExampleInputOutput(event.target.value)}
+                multiline
+                rows={3}
+                fullWidth
+                helperText={countLabel(exampleInputOutput, MAX_EXAMPLE_LEN)}
+                placeholder={intl.formatMessage({
+                  defaultMessage: "Input: ... Output: ...",
+                })}
+                slotProps={{ htmlInput: { maxLength: MAX_EXAMPLE_LEN } }}
               />
             </Box>
 
-            <ToneEditPreview
-              promptTemplate={promptTemplate}
-              category={category}
-              outputLength={outputLength}
-              exampleInputOutput={exampleInputOutput}
-            />
+            <Accordion
+              disableGutters
+              expanded={showTester}
+              onChange={(_, expanded) => setShowTester(expanded)}
+            >
+              <AccordionSummary>
+                <Typography variant="subtitle2">
+                  <FormattedMessage defaultMessage="Test style" />
+                </Typography>
+              </AccordionSummary>
+              <AccordionDetails>
+                <Stack spacing={2}>
+                  <TextField
+                    value={sampleText}
+                    label={
+                      <FormattedMessage defaultMessage="Sample dictation to restyle..." />
+                    }
+                    slotProps={{
+                      htmlInput: { maxLength: MAX_PREVIEW_SAMPLE_LEN },
+                    }}
+                    helperText={countLabel(sampleText, MAX_PREVIEW_SAMPLE_LEN)}
+                    onChange={(event) => setSampleText(event.target.value)}
+                    multiline
+                    rows={3}
+                    fullWidth
+                    placeholder={intl.formatMessage({
+                      defaultMessage: "Sample dictation to restyle...",
+                    })}
+                  />
+                  <Box sx={{ display: "flex", gap: 1 }}>
+                    <Button
+                      variant="outlined"
+                      size="small"
+                      onClick={() => preview.run(fields, sampleText)}
+                      disabled={preview.status === "running" || !trimmedPrompt}
+                    >
+                      <FormattedMessage defaultMessage="Run preview" />
+                    </Button>
+                    {preview.status === "running" && (
+                      <Button
+                        variant="text"
+                        size="small"
+                        onClick={preview.cancel}
+                      >
+                        <FormattedMessage defaultMessage="Cancel" />
+                      </Button>
+                    )}
+                  </Box>
+                  {preview.status === "running" && (
+                    <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                      <CircularProgress size={18} />
+                      <Typography variant="body2" color="text.secondary">
+                        <FormattedMessage defaultMessage="Styling the sample..." />
+                      </Typography>
+                    </Box>
+                  )}
+                  {preview.status === "done" && (
+                    <Alert severity="success">
+                      <Typography
+                        variant="body2"
+                        sx={{ whiteSpace: "pre-wrap" }}
+                      >
+                        {preview.output}
+                      </Typography>
+                    </Alert>
+                  )}
+                  {preview.status === "error" && (
+                    <Alert severity="error">
+                      <AlertTitle>
+                        <FormattedMessage defaultMessage="Preview failed." />
+                      </AlertTitle>
+                      {preview.error}
+                    </Alert>
+                  )}
+                  {preview.status === "unavailable" && (
+                    <Alert severity="info">
+                      <FormattedMessage defaultMessage="No text-generation provider is configured, so the preview cannot run." />
+                    </Alert>
+                  )}
+                </Stack>
+              </AccordionDetails>
+            </Accordion>
           </Stack>
         </DialogContent>
 
         <ToneEditActions
-          isSystem={Boolean(tone.isSystem)}
+          isSystem={tone.isSystem}
           isBusy={isBusy}
-          sourceChanged={sourceChanged}
-          isValid={isValid}
-          hasChanges={hasChanges}
-          onRequestDelete={() => setIsConfirmOpen(true)}
-          onRequestClose={handleRequestClose}
+          canSave={!sourceChanged && isValid && hasChanges}
+          onDelete={() => setIsConfirmOpen(true)}
+          onClose={handleRequestClose}
           onSave={handleSave}
         />
       </Dialog>
 
-      <ConfirmDialog
-        isOpen={isConfirmOpen}
-        title={<FormattedMessage defaultMessage="Delete style" />}
-        content={
-          <FormattedMessage defaultMessage="Are you sure you want to delete this style?" />
-        }
-        onCancel={() => setIsConfirmOpen(false)}
-        onConfirm={handleDeleteTone}
-        busy={isBusy}
-        confirmLabel={<FormattedMessage defaultMessage="Delete" />}
-        confirmButtonProps={{ color: "error", disabled: isBusy }}
-      />
-
-      <ConfirmDialog
-        isOpen={isDiscardOpen}
-        title={<FormattedMessage defaultMessage="Discard changes?" />}
-        content={
-          <FormattedMessage defaultMessage="You have unsaved changes. Closing now loses them." />
-        }
-        busy={isBusy}
-        onCancel={() => {
+      <ToneEditConfirmations
+        deleteOpen={isConfirmOpen}
+        discardOpen={isDiscardOpen}
+        isBusy={isBusy}
+        onCancelDelete={() => setIsConfirmOpen(false)}
+        onDelete={handleDeleteTone}
+        onCancelDiscard={() => {
           if (!writePending.current) setIsDiscardOpen(false);
         }}
-        onConfirm={() => {
+        onDiscard={() => {
           if (isBusy || writePending.current) return;
           setIsDiscardOpen(false);
           onClose();
         }}
-        confirmLabel={<FormattedMessage defaultMessage="Discard" />}
-        confirmButtonProps={{ color: "warning", disabled: isBusy }}
       />
     </>
   );

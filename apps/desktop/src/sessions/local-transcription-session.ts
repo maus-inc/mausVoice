@@ -26,14 +26,9 @@ import {
 import {
   createActionPretranscriber,
   LOCAL_PRETRANSCRIPTION,
-  finishPretranscriber,
+  logPretranscription,
 } from "./batch-transcription-session";
 import type { PauseChunkedPretranscriber } from "./pause-chunked-pretranscriber";
-import {
-  failedCaptureResult,
-  usableRecordingAudio,
-  wholeRecordingResult,
-} from "./recording-transcription.utils";
 import { SessionAbortScope } from "./session-abort-scope";
 
 // Bounds the startup buffer's memory. The capture rate is unknown when the
@@ -87,177 +82,118 @@ export class LocalTranscriptionSession implements TranscriptionSession {
       ASSUMED_STARTUP_SAMPLE_RATE,
     );
   private startupBufferOverflowed = false;
-  private startupChunkUnindexed = false;
 
   // Capture emits chunks as soon as the microphone opens and Tauri does not
   // replay events, so subscribe before recording starts and buffer until the
   // pretranscriber exists. Otherwise the opening words never reach it.
-  private recordingOwnerId: string | undefined;
-  private recordingGeneration: (() => number | null) | undefined;
-  private generation = 0;
-  private finalizing = false;
-  private modelWarmup: Promise<{ error: unknown } | null> | null = null;
-
-  async onBeforeRecordingStart(
-    ownerId?: string,
-    getGeneration?: () => number | null,
-  ): Promise<void> {
+  async onBeforeRecordingStart(): Promise<void> {
     this.cleanup();
-    this.abortScope = new SessionAbortScope();
-    this.finalizing = false;
-    this.recordingOwnerId = ownerId;
-    this.recordingGeneration = getGeneration;
-    const generation = this.generation;
     try {
-      if (!(await this.startListening(generation))) return;
-      if (generation !== this.generation || this.finalizing) return;
-      this.modelWarmup = this.warmModel(
-        getAppState().settings.aiTranscription,
-        generation,
-      ).then(
-        () => null,
-        (error: unknown) => ({ error }),
-      );
-    } catch {
+      // Subscribe first, then prepare the model. The order is the whole point:
+      // the caller is still holding the microphone shut at this point, so
+      // anything awaited before the subscription is registered is time in which
+      // the user can speak and nothing can be captured. Warming first meant a
+      // first-run model download -- up to MODEL_DOWNLOAD_TIMEOUT_MS, 45 minutes
+      // -- sat in front of `start_recording`, so the hotkey looked dead for the
+      // whole of it and every word spoken was lost. Subscribing first is what
+      // makes the comment true: the download now happens while chunks are
+      // already landing in the startup buffer.
+      await this.startListening();
+      await this.warmModel(getAppState().settings.aiTranscription);
+    } catch (error) {
       getLogger().warning(
-        "[local-stream-session] early audio subscription failed",
+        `[local-stream-session] early audio subscription failed (${this.toErrorMessage(error)})`,
       );
     }
-  }
-
-  /**
-   * Resolve the prompt for this recording, or `null` when the session was
-   * retired while the language lookup ran.
-   */
-  private async loadStartPrompt(
-    state: ReturnType<typeof getAppState>,
-    generation: number,
-  ): Promise<string | null> {
-    const dictationLanguage = await loadMyEffectiveDictationLanguage(state);
-    if (generation !== this.generation || this.finalizing) return null;
-    return buildLocalizedTranscriptionPrompt({
-      entries: collectDictionaryEntries(state),
-      dictationLanguage,
-      state,
-    });
-  }
-
-  /**
-   * Build the pretranscriber and replay the audio captured before it existed.
-   * Anything that throws here leaves the recording live without spans, which
-   * the caller turns into a whole-recording fallback.
-   */
-  private async beginPretranscription(
-    sampleRate: number,
-    state: ReturnType<typeof getAppState>,
-    generation: number,
-    hallucinationFilterEnabled: boolean,
-  ): Promise<void> {
-    if (
-      !(await this.prepareStream(state.settings.aiTranscription, generation)) ||
-      this.finalizing
-    )
-      return;
-
-    const pretranscriber = createActionPretranscriber(sampleRate, {
-      config: LOCAL_PRETRANSCRIPTION,
-      hallucinationFilterEnabled,
-      selectText: (result) => result.sanitizedTranscript,
-    });
-    this.pretranscriber = pretranscriber;
-    // Tauri does not replay audio_chunk events, so anything captured before
-    // the pretranscriber existed is held in the startup buffer. Once the
-    // buffer has overflowed the opening words are already gone, so the
-    // spans can no longer cover the recording and the whole-recording
-    // request has to be used instead.
-    if (this.startupBufferOverflowed) {
-      throw new Error(
-        "startup audio outgrew the buffer before the pretranscriber was ready",
-      );
-    }
-    if (this.startupChunkUnindexed) {
-      throw new Error("startup audio had a chunk without a sample offset");
-    }
-    const buffered = this.startupBuffer.pendingSampleCount();
-    if (buffered > 0) {
-      getLogger().info(
-        `[local-session] flushing ${buffered} samples captured during startup`,
-      );
-    }
-    // Replays in order, each chunk with its absolute sample index, which is
-    // what the pretranscriber needs to align the live stream with the final
-    // recording.
-    this.startupBuffer.setSink((chunk, offset) =>
-      pretranscriber.push(chunk, offset),
-    );
-    this.startupBuffer.replay();
-    this.startupBuffer.setSink(null);
-    this.startupBufferOverflowed = false;
-  }
-
-  /** Record why this recording has no spans and release only stream resources. */
-  private reportStartFailure(error: unknown, generation: number): void {
-    if (generation !== this.generation || this.finalizing) return;
-    const reason =
-      error instanceof Error &&
-      (error.message ===
-        "startup audio outgrew the buffer before the pretranscriber was ready" ||
-        error.message === "startup audio had a chunk without a sample offset")
-        ? ` (${error.message})`
-        : "";
-    this.startupWarnings.push(
-      `Local pretranscription unavailable, transcribing the whole recording${reason}`,
-    );
-    getLogger().warning(
-      `[local-session] start failed, transcribing the whole recording${reason}`,
-    );
-    // The recording is still live, it just has no pretranscriber. Release
-    // only the stream resources: the abort scope has to stay live for the
-    // whole-recording request at stop, and the start-time context has to
-    // survive so the fallback records the same filter choice and prompt
-    // rather than rereading a preference the user may have changed since.
-    // The buffered startup audio is dropped, because there is no span path
-    // left to replay it into.
-    this.releaseStream();
   }
 
   async onRecordingStart(sampleRate: number): Promise<void> {
-    if (this.finalizing) return;
     // Re-arm the abort scope for this recording without releasing the early
     // audio listener: `resetForRecording` calls `cleanup`, which would drop the
     // subscription and the startup buffer holding the words captured so far.
     this.abortScope.abort();
     this.abortScope = new SessionAbortScope();
     this.startupWarnings = [];
-    const generation = this.generation;
-    const state = getAppState();
 
     try {
-      const prompt = await this.loadStartPrompt(state, generation);
-      if (prompt === null) return;
+      const state = getAppState();
+      const dictationLanguage = await loadMyEffectiveDictationLanguage(state);
+      const prompt = buildLocalizedTranscriptionPrompt({
+        entries: collectDictionaryEntries(state),
+        dictationLanguage,
+        state,
+      });
       // Snapshot before anything below can fail, so the whole-recording
       // fallback records the same filter choice and prompt the spans would
       // have used rather than a preference the user may have changed since.
-      const hallucinationFilterEnabled =
-        state.userPrefs?.hallucinationFilterEnabled !== false;
-      this.context = { prompt, hallucinationFilterEnabled };
-      await this.beginPretranscription(
-        sampleRate,
-        state,
-        generation,
+      this.context = {
+        prompt,
+        hallucinationFilterEnabled:
+          state.userPrefs?.hallucinationFilterEnabled !== false,
+      };
+      const { hallucinationFilterEnabled } = this.context;
+
+      // The early hook did not run or could not subscribe. Either way the
+      // model has to be ready, and the warm is idempotent because it is
+      // awaited once per recording here and at most once in the early hook.
+      await this.warmModel(state.settings.aiTranscription);
+      if (!this.unlisten) {
+        await this.startListening();
+      }
+
+      const pretranscriber = createActionPretranscriber(sampleRate, {
+        config: LOCAL_PRETRANSCRIPTION,
         hallucinationFilterEnabled,
+        selectText: (result) => result.sanitizedTranscript,
+      });
+      this.pretranscriber = pretranscriber;
+      // Tauri does not replay audio_chunk events, so anything captured before
+      // the pretranscriber existed is held in the startup buffer. Once the
+      // buffer has overflowed the opening words are already gone, so the
+      // spans can no longer cover the recording and the whole-recording
+      // request has to be used instead.
+      if (this.startupBufferOverflowed) {
+        throw new Error(
+          "startup audio outgrew the buffer before the pretranscriber was ready",
+        );
+      }
+      const buffered = this.startupBuffer.pendingSampleCount();
+      if (buffered > 0) {
+        getLogger().info(
+          `[local-session] flushing ${buffered} samples captured during startup`,
+        );
+      }
+      // Replays in order, each chunk with its absolute sample index, which is
+      // what the pretranscriber needs to align the live stream with the final
+      // recording.
+      this.startupBuffer.setSink((chunk, offset) =>
+        pretranscriber.push(chunk, offset),
       );
+      this.startupBuffer.replay();
+      this.startupBuffer.setSink(null);
+      this.startupBufferOverflowed = false;
     } catch (error) {
-      this.reportStartFailure(error, generation);
+      const message = this.toErrorMessage(error);
+      this.startupWarnings.push(
+        `Local pretranscription unavailable, transcribing the whole recording (${message})`,
+      );
+      getLogger().warning(
+        `[local-session] start failed, transcribing the whole recording (${message})`,
+      );
+      // The recording is still live, it just has no pretranscriber. Release
+      // only the stream resources: the abort scope has to stay live for the
+      // whole-recording request at stop, and the start-time context has to
+      // survive so the fallback records the same filter choice and prompt
+      // rather than rereading a preference the user may have changed since.
+      // The buffered startup audio is dropped, because there is no span path
+      // left to replay it into.
+      this.releaseStream();
     }
   }
 
   async finalize(
     audio: StopRecordingResponse,
   ): Promise<TranscriptionSessionResult> {
-    // Once finalization owns the recording, a late model or language lookup
-    // must not start another pretranscriber or abort the whole-audio request.
-    this.finalizing = true;
     const warnings = [...this.startupWarnings];
     // A user-initiated discard must not come back looking like a failure.
     // `handleEmptyTranscriptionResult` treats a null transcript *with* warnings
@@ -273,40 +209,21 @@ export class LocalTranscriptionSession implements TranscriptionSession {
       warnings: [],
     });
     const pretranscriber = this.pretranscriber;
-    const scope = this.abortScope;
-    const context = this.context;
-    const generation = this.generation;
 
     try {
-      if (scope.isAborted) return discarded();
-      if (audio.captureFailed) return failedCaptureResult();
-      const pretranscribed = await this.finishPretranscription(
-        audio,
-        warnings,
-        pretranscriber,
-        context,
-      );
-      if (scope.isAborted) return discarded();
+      const pretranscribed = await this.finishPretranscription(audio, warnings);
       if (pretranscribed) return pretranscribed;
       // Cancelled mid-finalize: the session is already torn down.
-      if (pretranscriber?.isDisposed) return discarded();
-      return await this.transcribeWholeRecording(
-        audio,
-        warnings,
-        discarded,
-        scope,
-        context,
-      );
+      if (pretranscriber?.isDisposed || this.abortScope.isAborted) {
+        return discarded();
+      }
+      return await this.transcribeWholeRecording(audio, warnings, discarded);
     } finally {
-      if (generation === this.generation) this.cleanup();
+      this.cleanup();
     }
   }
 
   cleanup(): void {
-    this.generation += 1;
-    this.modelWarmup = null;
-    this.recordingOwnerId = undefined;
-    this.recordingGeneration = undefined;
     this.abortScope.abort();
     getLogger().info(
       `[local-session] cleanup (hasUnlisten=${Boolean(this.unlisten)}, hasPretranscriber=${Boolean(this.pretranscriber)})`,
@@ -322,7 +239,6 @@ export class LocalTranscriptionSession implements TranscriptionSession {
     this.pretranscriber = null;
     this.startupBuffer.reset();
     this.startupBufferOverflowed = false;
-    this.startupChunkUnindexed = false;
   }
 
   supportsStreaming(): boolean {
@@ -340,42 +256,33 @@ export class LocalTranscriptionSession implements TranscriptionSession {
   private async finishPretranscription(
     audio: StopRecordingResponse,
     warnings: string[],
-    pretranscriber: PauseChunkedPretranscriber | null,
-    context: LocalSessionContext | null,
   ): Promise<TranscriptionSessionResult | null> {
-    const result = await finishPretranscriber(
-      pretranscriber,
-      audio,
-      "local-session",
-      "[local-session] pretranscription unusable, transcribing the whole recording",
-    );
-    if (!result) return null;
+    const pretranscriber = this.pretranscriber;
+    if (!pretranscriber || pretranscriber.chunkCount === 0) return null;
+    const started = performance.now();
+    const result = await pretranscriber.finish(audio);
+    if (!result) {
+      getLogger().warning(
+        "[local-session] pretranscription unusable, transcribing the whole recording",
+      );
+      return null;
+    }
+    logPretranscription("local-session", result, performance.now() - started);
     return {
       rawTranscript: result.text.trim() || null,
       metadata: {
         ...result.metadata,
         transcriptionMode: "local",
-        transcriptionPrompt: context?.prompt ?? null,
+        transcriptionPrompt: this.context?.prompt ?? null,
       },
       warnings: [...warnings, ...result.warnings],
     };
   }
 
-  private async startListening(generation: number): Promise<boolean> {
-    const unlisten = await listenToAudioChunks(
-      (samples, offset) => {
-        if (generation === this.generation)
-          this.handleAudioChunk(samples, offset);
-      },
-      this.recordingOwnerId,
-      this.recordingGeneration,
+  private async startListening(): Promise<void> {
+    this.unlisten = await listenToAudioChunks((samples, offset) =>
+      this.handleAudioChunk(samples, offset),
     );
-    if (generation !== this.generation || this.finalizing) {
-      unlisten();
-      return false;
-    }
-    this.unlisten = unlisten;
-    return true;
   }
 
   /**
@@ -384,7 +291,7 @@ export class LocalTranscriptionSession implements TranscriptionSession {
    * the words captured while the sidecar was still loading are not lost.
    */
   private handleAudioChunk(samples: number[], offset: number | null): void {
-    if (this.finalizing || !samples.length) return;
+    if (!samples.length) return;
     // A null offset is how the stream says it is no longer contiguous:
     // `PauseChunkedPretranscriber.push` disables pretranscription for the
     // recording, and `dictation-recording-intake` drops the chunk. Coercing it
@@ -395,8 +302,6 @@ export class LocalTranscriptionSession implements TranscriptionSession {
       getLogger().warning(
         "[local-session] Dropped audio_chunk with no sample offset; the recording stream is no longer contiguous",
       );
-      if (this.pretranscriber) this.pretranscriber.push(samples, null);
-      else this.startupChunkUnindexed = true;
       return;
     }
     if (this.pretranscriber) {
@@ -410,25 +315,23 @@ export class LocalTranscriptionSession implements TranscriptionSession {
     audio: StopRecordingResponse,
     warnings: string[],
     discarded: () => TranscriptionSessionResult,
-    scope: SessionAbortScope,
-    context: LocalSessionContext | null,
   ): Promise<TranscriptionSessionResult> {
-    const recording = usableRecordingAudio(audio);
-    if (!recording) {
+    const payloadSamples = audio.samples ?? [];
+    const rate = audio.sampleRate;
+
+    if (rate == null || rate <= 0 || payloadSamples.length === 0) {
       getLogger().warning(
-        `[local-session] skipping transcription (rate=${audio.sampleRate}, samples=${audio.samples?.length ?? 0})`,
+        `[local-session] skipping transcription (rate=${rate}, samples=${payloadSamples.length})`,
       );
       return {
         rawTranscript: null,
         metadata: {
           transcriptionMode: "local",
-          transcriptionPrompt: context?.prompt ?? null,
+          transcriptionPrompt: this.context?.prompt ?? null,
         },
         warnings,
       };
     }
-
-    const { samples: payloadSamples, sampleRate: rate } = recording;
 
     getLogger().info(
       `[local-session] transcribing the whole recording (${payloadSamples.length} samples at ${rate}Hz)`,
@@ -437,19 +340,22 @@ export class LocalTranscriptionSession implements TranscriptionSession {
       const result = await transcribeAudio({
         samples: payloadSamples,
         sampleRate: rate,
-        hallucinationFilterEnabled: context?.hallucinationFilterEnabled,
-        signal: scope.signal,
+        hallucinationFilterEnabled: this.context?.hallucinationFilterEnabled,
+        signal: this.abortScope.signal,
       });
-      if (scope.isAborted) return discarded();
-      return wholeRecordingResult(
-        result,
-        warnings,
+      getLogger().info(
         `[local-session] transcription complete (${result.rawTranscript.length} chars)`,
       );
+
+      return {
+        rawTranscript: result.rawTranscript,
+        metadata: result.metadata,
+        warnings: [...warnings, ...result.warnings],
+      };
     } catch (error) {
       // A discard aborts the request on purpose, so it returns nothing rather
       // than surfacing an error the user did not cause.
-      if (scope.isAborted) {
+      if (this.abortScope.isAborted) {
         getLogger().info(
           "[local-session] transcription cancelled: the dictation was discarded",
         );
@@ -463,41 +369,20 @@ export class LocalTranscriptionSession implements TranscriptionSession {
    * Mirrors the readiness check the sidecar performs before any request, so a
    * missing model is downloaded while the user is still speaking.
    */
-  private async prepareStream(
-    settings: SettingsTranscriptionState,
-    generation: number,
-  ): Promise<boolean> {
-    if (!(await this.prepareModel(settings, generation)) || this.finalizing)
-      return false;
-    return this.unlisten !== null || this.startListening(generation);
-  }
-
-  private async prepareModel(
-    settings: SettingsTranscriptionState,
-    generation: number,
-  ): Promise<boolean> {
-    const warmup = this.modelWarmup;
-    if (warmup) {
-      const failure = await warmup;
-      if (generation !== this.generation) return false;
-      if (failure) throw failure.error;
-    } else {
-      await this.warmModel(settings, generation);
-    }
-    return generation === this.generation;
-  }
-
-  private async warmModel(
-    settings: SettingsTranscriptionState,
-    generation: number,
-  ): Promise<void> {
+  private async warmModel(settings: SettingsTranscriptionState): Promise<void> {
     const manager = getLocalTranscriptionSidecarManager();
     const model = normalizeLocalWhisperModel(settings.modelSize);
     const preferGpu = isGpuPreferredTranscriptionDevice(settings.device);
     const status = await manager.getModelStatus({ model, preferGpu });
-    if (generation !== this.generation || this.finalizing) return;
     if (!status.downloaded || !status.valid) {
       await manager.downloadModel({ model, preferGpu });
     }
+  }
+
+  private toErrorMessage(error: unknown): string {
+    if (error instanceof Error) {
+      return error.message;
+    }
+    return String(error);
   }
 }

@@ -1,7 +1,8 @@
+use std::collections::HashSet;
 use std::io::BufReader;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use base64::Engine;
@@ -18,6 +19,58 @@ use url::Url;
 static PASTE_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 static SIMULATE_TYPE_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 static PLAY_AUDIO_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
+
+const TRANSCRIPTION_CLEARED_DURING_SAVE: &str =
+    "Local data was cleared before this transcription could be saved";
+// Retain tombstones so delayed or retried creates cannot resurrect cleared
+// history, while bounding this process-global ledger. At capacity, audio
+// persistence fails closed; the text transcription can still be saved.
+const MAX_AUDIO_SNAPSHOT_RESERVATION_IDS: usize = 4_096;
+const AUDIO_SNAPSHOT_RESERVATION_LIMIT_REACHED: &str =
+    "Audio snapshot reservation capacity is exhausted";
+
+#[derive(Default)]
+struct AudioSnapshotReservations {
+    pending: HashSet<String>,
+    cancelled: HashSet<String>,
+}
+
+impl AudioSnapshotReservations {
+    fn reserve(&mut self, id: &str) -> Result<(), String> {
+        if self.cancelled.contains(id) {
+            return Err(TRANSCRIPTION_CLEARED_DURING_SAVE.to_string());
+        }
+        if self.pending.contains(id) {
+            return Ok(());
+        }
+        if self.pending.len().saturating_add(self.cancelled.len())
+            >= MAX_AUDIO_SNAPSHOT_RESERVATION_IDS
+        {
+            return Err(AUDIO_SNAPSHOT_RESERVATION_LIMIT_REACHED.to_string());
+        }
+        self.pending.insert(id.to_string());
+        Ok(())
+    }
+
+    fn cancel_pending(&mut self) {
+        self.cancelled.extend(self.pending.drain());
+    }
+
+    fn is_cancelled(&self, id: &str) -> bool {
+        self.cancelled.contains(id)
+    }
+}
+
+static AUDIO_SNAPSHOT_RESERVATIONS: LazyLock<tokio::sync::Mutex<AudioSnapshotReservations>> =
+    LazyLock::new(|| tokio::sync::Mutex::new(AudioSnapshotReservations::default()));
+
+type NativeLocalDataWriteGuard = crate::db::local_data_write_gate::LocalDataWriteGuard;
+
+async fn acquire_local_data_write_guard() -> Result<NativeLocalDataWriteGuard, String> {
+    crate::db::local_data_write_gate::lock_local_data_write(None)
+        .await
+        .map_err(|err| err.to_string())
+}
 
 // A stalled Tauri event delivery must not block the microphone callback or
 // recorder ownership. The FIFO is shared across recordings, bounded both in
@@ -232,7 +285,9 @@ impl Drop for TypingSession {
 
 /// User-data tables wiped by `clear_local_data`. Extend this list when
 /// adding a table that stores user content — a missed table is a privacy leak.
-const USER_DATA_TABLES_TO_CLEAR: [&str; 12] = [
+const USER_DATA_TABLES_TO_CLEAR: [&str; 14] = [
+    "daily_word_activity_events",
+    "daily_word_activity",
     "chat_messages",
     "conversations",
     "user_profiles",
@@ -282,6 +337,25 @@ pub fn encode_recorded_audio(samples: &[f32], sample_rate: u32) -> Vec<u8> {
         bytes.extend_from_slice(&sample.to_le_bytes());
     }
     bytes
+}
+
+/// Inverse of [`encode_recorded_audio`], for the direction the frontend sends
+/// a recording back (`store_transcription_audio`). One wire format describes a
+/// recording in both directions.
+pub fn decode_recorded_audio(bytes: &[u8]) -> Result<(u32, Vec<f32>), String> {
+    if bytes.len() < 4 {
+        return Err("Recorded audio payload is missing its sample-rate header".to_string());
+    }
+    let sample_rate = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+    let payload = &bytes[4..];
+    if payload.len() % 4 != 0 {
+        return Err("Recorded audio payload ends in a truncated sample".to_string());
+    }
+    let mut samples = Vec::with_capacity(payload.len() / 4);
+    for chunk in payload.chunks_exact(4) {
+        samples.push(f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
+    }
+    Ok((sample_rate, samples))
 }
 
 #[derive(serde::Serialize, specta::Type)]
@@ -1873,6 +1947,22 @@ fn audio_path_has_file_path(audio_path: Option<&str>) -> bool {
     matches!(audio_path, Some(path) if !path.is_empty())
 }
 
+fn validate_export_audio_marker(
+    audio_path_before_dialog: Option<&str>,
+    audio_path_after_dialog: Option<&str>,
+) -> Result<(), String> {
+    if audio_path_has_file_path(audio_path_before_dialog)
+        && !audio_path_has_file_path(audio_path_after_dialog)
+    {
+        return Err(
+            "Recorded audio was removed while the export dialog was open. No archive was written; please try exporting again."
+                .to_string(),
+        );
+    }
+
+    Ok(())
+}
+
 /// How a batch of managed-audio deletions actually went.
 ///
 /// `cleared` and `retained` are kept apart because a caller may only treat a
@@ -2026,6 +2116,10 @@ async fn delete_transcription_recording_stranded_audio(
     id: &str,
     stranded: &[String],
 ) -> Result<(), String> {
+    // Serialize the row deletion with legacy activity backfill. Otherwise a
+    // backfill could read this row, lose the race to deletion, then commit an
+    // event for a row that no longer exists.
+    let _activity_write_guard = crate::db::daily_activity_queries::lock_activity_writes().await;
     let mut transaction = pool.begin().await.map_err(|err| err.to_string())?;
     sqlx::query("DELETE FROM transcriptions WHERE id = ?1")
         .bind(id)
@@ -2046,45 +2140,51 @@ async fn delete_transcription_recording_stranded_audio(
 }
 
 /// Delete snapshots whose non-null database marker was collected before a
-/// local-data reset. The storage path itself is intentionally ignored: each
-/// ID maps to its one generated filename in the directory capability.
-fn delete_listed_audio_files(audio_dir: &cap_std::fs::Dir, ids: &[String]) {
+/// local-data reset. The storage path is ignored because each ID maps to one
+/// generated filename in the directory capability. Any failure other than an
+/// already-missing file keeps the durable clear marker in place for a retry.
+fn delete_listed_audio_files(audio_dir: &cap_std::fs::Dir, ids: &[String]) -> Result<(), String> {
     for id in ids {
-        if let Err(err) = crate::system::audio_store::delete_audio_file(audio_dir, id) {
-            if err.kind() != std::io::ErrorKind::NotFound {
-                log::warn!(
-                    "Failed to delete audio file for transcription {id} during clear: {err}"
-                );
+        if let Err(error) = crate::system::audio_store::delete_audio_file(audio_dir, id) {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                return Err(format!(
+                    "Failed to delete audio file for transcription {id}: {error}"
+                ));
             }
         }
     }
+    Ok(())
 }
 
-/// Remove leftover `.wav` files from the directory capability after the DB
-/// table has been wiped (for example, after an interrupted recording).
-fn sweep_orphaned_wavs(audio_dir: &cap_std::fs::Dir) {
-    let Ok(entries) = audio_dir.entries() else {
-        return;
-    };
-    for entry in entries.flatten() {
+/// Remove orphaned `.wav` files from the managed directory after the DB wipe.
+/// Enumeration and deletion errors are fatal to this clear pass: the caller
+/// must not reopen writes while user audio remains behind.
+fn sweep_orphaned_wavs(audio_dir: &cap_std::fs::Dir) -> Result<(), String> {
+    let entries = audio_dir
+        .entries()
+        .map_err(|error| format!("Unable to inspect managed audio directory: {error}"))?;
+    for entry in entries {
+        let entry =
+            entry.map_err(|error| format!("Unable to inspect managed audio entry: {error}"))?;
         let file_name = entry.file_name();
         if std::path::Path::new(&file_name)
             .extension()
             .and_then(|extension| extension.to_str())
             == Some("wav")
         {
-            if let Err(err) =
+            if let Err(error) =
                 crate::system::audio_store::delete_audio_file_named(audio_dir, &file_name)
             {
-                if err.kind() != std::io::ErrorKind::NotFound {
-                    log::warn!(
-                        "Failed to remove orphaned audio file {}: {err}",
+                if error.kind() != std::io::ErrorKind::NotFound {
+                    return Err(format!(
+                        "Failed to remove orphaned audio file {}: {error}",
                         file_name.to_string_lossy()
-                    );
+                    ));
                 }
             }
         }
     }
+    Ok(())
 }
 
 #[tauri::command]
@@ -2093,6 +2193,7 @@ pub async fn user_set_one(
     user: crate::domain::User,
     database: State<'_, crate::state::OptionKeyDatabase>,
 ) -> Result<crate::domain::User, String> {
+    let _write_guard = acquire_local_data_write_guard().await?;
     crate::db::user_queries::upsert_user(database.pool(), &user)
         .await
         .map_err(|err| err.to_string())
@@ -2110,10 +2211,43 @@ pub async fn user_get_one(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn user_record_usage(
+    event_id: String,
+    local_date: String,
+    word_count: i64,
+    database: State<'_, crate::state::OptionKeyDatabase>,
+) -> Result<crate::domain::User, String> {
+    let _write_guard = acquire_local_data_write_guard().await?;
+    crate::db::daily_activity_queries::record_usage_words(
+        database.pool(),
+        &event_id,
+        &local_date,
+        word_count,
+    )
+    .await
+    .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn daily_activity_list(
+    start_date: String,
+    end_date: String,
+    database: State<'_, crate::state::OptionKeyDatabase>,
+) -> Result<Vec<crate::domain::DailyWordActivity>, String> {
+    let _write_guard = acquire_local_data_write_guard().await?;
+    crate::db::daily_activity_queries::fetch_daily_activity(database.pool(), &start_date, &end_date)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn user_preferences_set(
     preferences: crate::domain::UserPreferences,
     database: State<'_, crate::state::OptionKeyDatabase>,
 ) -> Result<crate::domain::UserPreferences, String> {
+    let _write_guard = acquire_local_data_write_guard().await?;
     crate::db::preferences_queries::upsert_user_preferences(database.pool(), &preferences)
         .await
         .map_err(|err| err.to_string())
@@ -2136,6 +2270,7 @@ pub async fn user_preferences_set_expansion_flags(
     args: UserPreferencesSetExpansionFlagsArgs,
     database: State<'_, crate::state::OptionKeyDatabase>,
 ) -> Result<crate::domain::UserPreferences, String> {
+    let _write_guard = acquire_local_data_write_guard().await?;
     use crate::db::preferences_queries::{set_expansion_flags, LOCAL_USER_ID};
     set_expansion_flags(database.pool(), &args.flags)
         .await
@@ -2154,6 +2289,7 @@ pub async fn user_preferences_compare_set_expansion_flags(
     args: UserPreferencesCompareSetExpansionFlagsArgs,
     database: State<'_, crate::state::OptionKeyDatabase>,
 ) -> Result<Option<crate::domain::UserPreferences>, String> {
+    let _write_guard = acquire_local_data_write_guard().await?;
     crate::db::preferences_queries::compare_set_expansion_flags(
         database.pool(),
         &args.expected,
@@ -2243,6 +2379,7 @@ pub async fn app_target_upsert(
     args: AppTargetUpsertArgs,
     database: State<'_, crate::state::OptionKeyDatabase>,
 ) -> Result<crate::domain::AppTarget, String> {
+    let _write_guard = acquire_local_data_write_guard().await?;
     crate::db::app_target_queries::upsert_app_target(
         database.pool(),
         &args.id,
@@ -2273,6 +2410,7 @@ pub async fn paired_remote_device_upsert(
     args: PairedRemoteDeviceUpsertArgs,
     database: State<'_, crate::state::OptionKeyDatabase>,
 ) -> Result<crate::domain::PairedRemoteDevice, String> {
+    let _write_guard = acquire_local_data_write_guard().await?;
     let device = crate::domain::PairedRemoteDevice {
         id: args.id,
         name: args.name,
@@ -2285,9 +2423,13 @@ pub async fn paired_remote_device_upsert(
         trusted: args.trusted,
     };
 
-    crate::db::paired_remote_device_queries::upsert_paired_remote_device(database.pool(), &device)
-        .await
-        .map_err(|err| err.to_string())
+    crate::db::paired_remote_device_queries::upsert_paired_remote_device_unlocked(
+        &_write_guard,
+        database.pool(),
+        &device,
+    )
+    .await
+    .map_err(|err| err.to_string())
 }
 
 #[tauri::command]
@@ -2306,9 +2448,14 @@ pub async fn paired_remote_device_delete(
     args: PairedRemoteDeviceDeleteArgs,
     database: State<'_, crate::state::OptionKeyDatabase>,
 ) -> Result<(), String> {
-    crate::db::paired_remote_device_queries::delete_paired_remote_device(database.pool(), &args.id)
-        .await
-        .map_err(|err| err.to_string())
+    let _write_guard = acquire_local_data_write_guard().await?;
+    crate::db::paired_remote_device_queries::delete_paired_remote_device_unlocked(
+        &_write_guard,
+        database.pool(),
+        &args.id,
+    )
+    .await
+    .map_err(|err| err.to_string())
 }
 
 #[tauri::command]
@@ -2381,15 +2528,37 @@ pub async fn remote_sender_pair_with_receiver(
     .await
 }
 
+async fn create_transcription_with_reservations(
+    pool: sqlx::SqlitePool,
+    transcription: &crate::domain::Transcription,
+    reservations: &mut AudioSnapshotReservations,
+) -> Result<crate::domain::Transcription, String> {
+    if reservations.is_cancelled(&transcription.id) {
+        return Err(TRANSCRIPTION_CLEARED_DURING_SAVE.to_string());
+    }
+
+    let result = crate::db::transcription_queries::insert_transcription(pool, transcription)
+        .await
+        .map_err(|err| err.to_string());
+    reservations.pending.remove(&transcription.id);
+    result
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn transcription_create(
     transcription: crate::domain::Transcription,
     database: State<'_, crate::state::OptionKeyDatabase>,
 ) -> Result<crate::domain::Transcription, String> {
-    crate::db::transcription_queries::insert_transcription(database.pool(), &transcription)
-        .await
-        .map_err(|err| err.to_string())
+    let write_generation = crate::db::local_data_write_gate::current_write_generation()
+        .ok_or_else(|| "Local data is being cleared".to_string())?;
+    let mut reservations = AUDIO_SNAPSHOT_RESERVATIONS.lock().await;
+    let _write_guard =
+        crate::db::local_data_write_gate::lock_local_data_write(Some(write_generation))
+            .await
+            .map_err(|err| err.to_string())?;
+    let pool = database.pool();
+    create_transcription_with_reservations(pool, &transcription, &mut reservations).await
 }
 
 #[tauri::command]
@@ -2414,6 +2583,7 @@ pub async fn transcription_delete(
     id: String,
     database: State<'_, crate::state::OptionKeyDatabase>,
 ) -> Result<(), String> {
+    let _write_guard = acquire_local_data_write_guard().await?;
     let pool = database.pool();
 
     let audio_path: Option<String> = sqlx::query_scalar(
@@ -2461,6 +2631,7 @@ pub async fn transcription_update(
     transcription: crate::domain::Transcription,
     database: State<'_, crate::state::OptionKeyDatabase>,
 ) -> Result<crate::domain::Transcription, String> {
+    let _write_guard = acquire_local_data_write_guard().await?;
     crate::db::transcription_queries::update_transcription(database.pool(), &transcription)
         .await
         .map_err(|err| err.to_string())
@@ -2473,6 +2644,7 @@ pub async fn transcription_audio_load(
     id: String,
     database: State<'_, crate::state::OptionKeyDatabase>,
 ) -> Result<TranscriptionAudioSamplesData, String> {
+    let _write_guard = acquire_local_data_write_guard().await?;
     let pool = database.pool();
 
     let audio_path: Option<String> = sqlx::query_scalar(
@@ -2507,6 +2679,19 @@ pub async fn transcription_audio_load(
     })
 }
 
+/// Ask the user where to save a ZIP export.
+///
+/// `None` means they closed the dialog, which every caller reports as "nothing
+/// exported" rather than as a failure.
+async fn choose_zip_destination(file_name: String) -> Option<PathBuf> {
+    rfd::AsyncFileDialog::new()
+        .set_file_name(file_name)
+        .add_filter("ZIP Archive", &["zip"])
+        .save_file()
+        .await
+        .map(|handle| handle.path().to_path_buf())
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn export_transcription(
@@ -2514,8 +2699,33 @@ pub async fn export_transcription(
     id: String,
     database: State<'_, crate::state::OptionKeyDatabase>,
 ) -> Result<bool, String> {
+    // A character count, not a byte count. `id` arrives over IPC, so a non-ASCII
+    // one would make a byte slice panic on a boundary it cannot land inside --
+    // in a command handler, which is the worst place for that.
     let pool = database.pool();
+    // Capture whether this row currently claims an audio snapshot before the
+    // save dialog opens. A retention sweep may release that marker while the
+    // user chooses a destination; the second guarded read below must report
+    // that transition instead of silently exporting a text-only archive.
+    let audio_path_before_dialog = {
+        let _write_guard = acquire_local_data_write_guard().await?;
+        let row = sqlx::query("SELECT audio_path FROM transcriptions WHERE id = ?1")
+            .bind(&id)
+            .fetch_optional(&pool)
+            .await
+            .map_err(|err| err.to_string())?
+            .ok_or_else(|| "Transcription not found".to_string())?;
+        row.get::<Option<String>, _>("audio_path")
+    };
 
+    let short_id = crate::utils::truncate_chars(&id, 8);
+    let Some(save_path) = choose_zip_destination(format!("mausvoice-{short_id}.zip")).await else {
+        return Ok(false);
+    };
+
+    // Do not hold the global write lock while the user chooses a destination.
+    // Once selected, protect the row and audio read from a concurrent local clear.
+    let _write_guard = acquire_local_data_write_guard().await?;
     let row = sqlx::query(
         "SELECT transcript, raw_transcript, audio_path
          FROM transcriptions
@@ -2530,21 +2740,7 @@ pub async fn export_transcription(
     let transcript: String = row.get("transcript");
     let raw_transcript: Option<String> = row.get("raw_transcript");
     let audio_path: Option<String> = row.get("audio_path");
-
-    // A character count, not a byte count. `id` arrives over IPC, so a non-ASCII
-    // one would make a byte slice panic on a boundary it cannot land inside --
-    // in a command handler, which is the worst place for that.
-    let short_id = crate::utils::truncate_chars(&id, 8);
-    let dialog = rfd::AsyncFileDialog::new()
-        .set_file_name(format!("mausvoice-{short_id}.zip"))
-        .add_filter("ZIP Archive", &["zip"])
-        .save_file()
-        .await;
-
-    let save_path = match dialog {
-        Some(handle) => handle.path().to_path_buf(),
-        None => return Ok(false),
-    };
+    validate_export_audio_marker(audio_path_before_dialog.as_deref(), audio_path.as_deref())?;
 
     let audio_dir = crate::system::audio_store::open_managed_audio_dir(&app)
         .map_err(|err| format!("Unable to open the managed audio directory: {err}"))?;
@@ -2647,15 +2843,9 @@ fn build_transcription_export(
 #[tauri::command]
 #[specta::specta]
 pub async fn export_diagnostics(app: AppHandle, diagnostics_info: String) -> Result<bool, String> {
-    let dialog = rfd::AsyncFileDialog::new()
-        .set_file_name("mausvoice-diagnostics.zip")
-        .add_filter("ZIP Archive", &["zip"])
-        .save_file()
-        .await;
-
-    let save_path = match dialog {
-        Some(handle) => handle.path().to_path_buf(),
-        None => return Ok(false),
+    let Some(save_path) = choose_zip_destination("mausvoice-diagnostics.zip".to_string()).await
+    else {
+        return Ok(false);
     };
 
     let logs_dir = crate::system::paths::logs_dir(&app).map_err(|err| err.to_string())?;
@@ -2714,6 +2904,7 @@ pub async fn term_create(
     term: crate::domain::Term,
     database: State<'_, crate::state::OptionKeyDatabase>,
 ) -> Result<crate::domain::Term, String> {
+    let _write_guard = acquire_local_data_write_guard().await?;
     crate::db::term_queries::insert_term(database.pool(), &term)
         .await
         .map_err(|err| err.to_string())
@@ -2725,6 +2916,7 @@ pub async fn term_update(
     term: crate::domain::Term,
     database: State<'_, crate::state::OptionKeyDatabase>,
 ) -> Result<crate::domain::Term, String> {
+    let _write_guard = acquire_local_data_write_guard().await?;
     crate::db::term_queries::update_term(database.pool(), &term)
         .await
         .map_err(|err| err.to_string())
@@ -2746,6 +2938,7 @@ pub async fn term_delete(
     id: String,
     database: State<'_, crate::state::OptionKeyDatabase>,
 ) -> Result<(), String> {
+    let _write_guard = acquire_local_data_write_guard().await?;
     crate::db::term_queries::delete_term(database.pool(), &id)
         .await
         .map_err(|err| err.to_string())
@@ -2767,6 +2960,7 @@ pub async fn hotkey_save(
     hotkey: crate::domain::Hotkey,
     database: State<'_, crate::state::OptionKeyDatabase>,
 ) -> Result<crate::domain::Hotkey, String> {
+    let _write_guard = acquire_local_data_write_guard().await?;
     crate::db::hotkey_queries::upsert_hotkey(database.pool(), &hotkey)
         .await
         .map_err(|err| err.to_string())
@@ -2778,6 +2972,7 @@ pub async fn hotkey_delete(
     id: String,
     database: State<'_, crate::state::OptionKeyDatabase>,
 ) -> Result<(), String> {
+    let _write_guard = acquire_local_data_write_guard().await?;
     crate::db::hotkey_queries::delete_hotkey(database.pool(), &id)
         .await
         .map_err(|err| err.to_string())
@@ -2809,6 +3004,7 @@ pub async fn hotkey_replace_style_hotkeys(
     expected: Vec<crate::domain::Hotkey>,
     database: State<'_, crate::state::OptionKeyDatabase>,
 ) -> Result<Vec<crate::domain::Hotkey>, String> {
+    let _write_guard = acquire_local_data_write_guard().await?;
     if prefix.is_empty() {
         return Err("hotkey prefix must not be empty".to_string());
     }
@@ -2839,6 +3035,7 @@ pub async fn api_key_create(
     api_key: ApiKeyCreateRequest,
     database: State<'_, crate::state::OptionKeyDatabase>,
 ) -> Result<ApiKeyView, String> {
+    let _write_guard = acquire_local_data_write_guard().await?;
     let ApiKeyCreateRequest {
         id,
         name,
@@ -2907,6 +3104,7 @@ pub async fn api_key_delete(
     id: String,
     database: State<'_, crate::state::OptionKeyDatabase>,
 ) -> Result<(), String> {
+    let _write_guard = acquire_local_data_write_guard().await?;
     crate::db::api_key_queries::delete_api_key(database.pool(), &id)
         .await
         .map_err(|err| err.to_string())
@@ -2918,6 +3116,7 @@ pub async fn api_key_update(
     request: crate::domain::ApiKeyUpdateRequest,
     database: State<'_, crate::state::OptionKeyDatabase>,
 ) -> Result<ApiKeyView, String> {
+    let _write_guard = acquire_local_data_write_guard().await?;
     let (salt, key_hash, key_ciphertext, key_suffix, full_key) =
         match request.key.as_deref().filter(|k| !k.is_empty()) {
             Some(raw_key) => {
@@ -2974,6 +3173,7 @@ pub async fn tone_upsert(
     tone: crate::domain::Tone,
     database: State<'_, crate::state::OptionKeyDatabase>,
 ) -> Result<crate::domain::Tone, String> {
+    let _write_guard = acquire_local_data_write_guard().await?;
     let pool = database.pool();
 
     if let Some(existing) = crate::db::tone_queries::fetch_tone_by_id(pool.clone(), &tone.id)
@@ -3032,36 +3232,20 @@ pub async fn tone_delete(
     id: String,
     database: State<'_, crate::state::OptionKeyDatabase>,
 ) -> Result<(), String> {
+    let _write_guard = acquire_local_data_write_guard().await?;
     crate::db::tone_queries::delete_tone(database.pool(), &id)
         .await
         .map_err(|err| err.to_string())
 }
 
-#[tauri::command]
-#[specta::specta]
-pub async fn clear_local_data(
-    app: AppHandle,
-    database: State<'_, crate::state::OptionKeyDatabase>,
-    recorder: State<'_, Arc<dyn crate::platform::Recorder>>,
-    ownership: State<'_, RecordingOwnerState>,
-) -> Result<(), String> {
-    let pool = database.pool();
-    let recorder = Arc::clone(&recorder);
-    let ownership = Arc::clone(&ownership);
-    ownership.begin_reset()?;
-    let guard = RecordingResetGuard(Arc::clone(&ownership));
-    tauri::async_runtime::spawn(async move {
-        let _guard = guard;
-        tauri::async_runtime::spawn_blocking(move || force_stop_with_retry(ownership, recorder))
-            .await
-            .map_err(|err| err.to_string())??;
-        clear_local_data_inner(app, pool).await
-    })
-    .await
-    .map_err(|err| err.to_string())?
-}
+/// Delete the database portion of a local-data wipe atomically. The activity
+/// lock covers the history snapshot, so a concurrent backfill cannot recreate
+/// totals from transcription rows that this transaction has just removed.
+async fn clear_local_data_from_database(
+    pool: &sqlx::SqlitePool,
+) -> Result<Vec<String>, sqlx::Error> {
+    let _activity_write_guard = crate::db::daily_activity_queries::lock_activity_writes().await;
 
-async fn clear_local_data_inner(app: AppHandle, pool: sqlx::SqlitePool) -> Result<(), String> {
     // Wipe every user-data table. When adding user-data tables, extend
     // `USER_DATA_TABLES_TO_CLEAR` — the UI explicitly promises "this will
     // delete all preferences, dictionary entries, and saved transcriptions
@@ -3069,60 +3253,174 @@ async fn clear_local_data_inner(app: AppHandle, pool: sqlx::SqlitePool) -> Resul
     //
     // Table names are all `&'static str` literals from this source file
     // (never user input), so `format!` is safe from SQL injection here.
-
-    // Collect IDs with non-empty snapshot markers before wiping
-    // transcriptions so their generated managed filenames can be deleted
-    // after commit. This preserves the existing empty-marker behavior.
+    // Collect audio IDs before wiping transcriptions so their managed files
+    // can be deleted after commit. This preserves empty-marker behavior.
     let audio_ids: Vec<String> = sqlx::query_scalar::<_, String>(
         "SELECT id FROM transcriptions WHERE audio_path IS NOT NULL AND audio_path != ''",
     )
-    .fetch_all(&pool)
-    .await
-    .map_err(|err| err.to_string())?;
+    .fetch_all(pool)
+    .await?;
 
-    let mut transaction = pool.begin().await.map_err(|err| err.to_string())?;
+    let mut transaction = pool.begin().await?;
     for table in USER_DATA_TABLES_TO_CLEAR {
         let statement = format!("DELETE FROM {table}");
-        sqlx::query(&statement)
-            .execute(&mut *transaction)
+        sqlx::query(&statement).execute(&mut *transaction).await?;
+    }
+    transaction.commit().await?;
+    Ok(audio_ids)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn clear_local_data(
+    app: AppHandle,
+    database: State<'_, crate::state::OptionKeyDatabase>,
+    receiver_state: State<'_, crate::state::RemoteReceiverState>,
+    recorder: State<'_, Arc<dyn crate::platform::Recorder>>,
+    ownership: State<'_, RecordingOwnerState>,
+    floating_window_state: State<'_, crate::state::FloatingWindowState>,
+) -> Result<(), String> {
+    // Audio storage and transcription insertion are separate IPC calls. Keep
+    // their reservation lock through the wipe so pre-clear inserts cannot run
+    // between cancellation and cleanup. This lock comes before the native
+    // local-data gate because transcription inserts acquire them in that order.
+    let pool = database.pool();
+    // Refuse new recording claims before anything else observes the wipe, and
+    // keep refusing them until the reset finishes. Combined with the native
+    // clear gate below, no recorder can be admitted mid-wipe.
+    let ownership_reset = Arc::clone(&ownership);
+    ownership_reset.begin_reset()?;
+    let _reset_guard = RecordingResetGuard(Arc::clone(&ownership_reset));
+    let mut reservations = AUDIO_SNAPSHOT_RESERVATIONS.lock().await;
+    // Close the native gate before touching the durable marker. If marker I/O
+    // fails, dropping this guard still leaves writes blocked, and invalidates
+    // every remote-receiver and recording-start lease from the prior generation.
+    let native_clear_guard = crate::db::local_data_write_gate::begin_local_data_clear()
+        .await
+        .map_err(|err| err.to_string())?;
+    // Discard in-memory composer drafts and close floating review windows so no
+    // secondary WebView retains pre-clear transcripts or an active recognizer.
+    floating_window_state.clear_all_composer_text();
+    for (label, window) in app.webview_windows() {
+        if label.starts_with(crate::state::FLOATING_WINDOW_LABEL_PREFIX) {
+            let _ = window.close();
+        }
+    }
+    // The receiver owns an accept loop and detached connection tasks. Stop it
+    // as soon as the generation is invalidated so no new peers can be accepted
+    // while the durable recovery marker is being written.
+    crate::system::remote_receiver::stop(receiver_state.inner().clone());
+    // Defense-in-depth native teardown after `begin_local_data_clear` has
+    // drained in-flight starts and blocked new ones. Do not abort the wipe if a
+    // subsystem reports an error: erase persisted data first and keep the clear
+    // gate closed afterward if teardown was incomplete.
+    let listener_stop_error = crate::platform::keyboard::stop_key_listener().err();
+    let recorder_for_stop = Arc::clone(&recorder);
+    let ownership_for_stop = Arc::clone(&ownership_reset);
+    // Ownership-aware teardown: `force_stop` retires every live admission and
+    // retries the native release, so a recorder that is mid-open cannot revive
+    // itself after the guard above started refusing claims.
+    let recorder_stop_error = match tauri::async_runtime::spawn_blocking(move || {
+        force_stop_with_retry(ownership_for_stop, recorder_for_stop)
+    })
+    .await
+    {
+        Ok(Ok(())) => None,
+        Ok(Err(message)) => Some(message),
+        Err(join_err) => Some(join_err.to_string()),
+    };
+    crate::system::local_data_clear_marker::mark_pending(&app).map_err(|error| {
+        format!("Unable to persist the native local-data clear marker: {error}")
+    })?;
+    {
+        let audio_ids = clear_local_data_from_database(&pool)
             .await
             .map_err(|err| err.to_string())?;
-    }
-    transaction.commit().await.map_err(|err| err.to_string())?;
+        reservations.cancel_pending();
 
-    // After commit, open the managed root once, delete every filename derived
-    // from the recorded IDs, then sweep orphaned WAVs through that same held
-    // directory. A root replacement cannot redirect either destructive step.
-    match crate::system::audio_store::open_managed_audio_dir(&app) {
-        Ok(audio_dir) => {
-            delete_listed_audio_files(&audio_dir, &audio_ids);
-            sweep_orphaned_wavs(&audio_dir);
-        }
-        Err(err) => {
-            log::error!("Failed to open managed audio directory for cleanup: {err}");
-            return Err(format!("Database cleared, but audio cleanup failed: {err}"));
+        // After commit, open the managed root once, delete every filename derived
+        // from the recorded IDs, then sweep orphaned WAVs through that same held
+        // directory. A root replacement cannot redirect either destructive step.
+        match crate::system::audio_store::open_managed_audio_dir(&app) {
+            Ok(audio_dir) => {
+                delete_listed_audio_files(&audio_dir, &audio_ids).map_err(|error| {
+                    log::error!(
+                        "Failed to delete listed transcription audio during clear: {error}"
+                    );
+                    format!("Database cleared, but audio cleanup failed: {error}")
+                })?;
+                sweep_orphaned_wavs(&audio_dir).map_err(|error| {
+                    log::error!(
+                        "Failed to sweep managed transcription audio during clear: {error}"
+                    );
+                    format!("Database cleared, but audio cleanup failed: {error}")
+                })?;
+            }
+            Err(err) => {
+                log::error!("Failed to open managed audio directory for cleanup: {err}");
+                return Err(format!("Database cleared, but audio cleanup failed: {err}"));
+            }
         }
     }
 
-    // Delete any quarantined broken database backups (mausvoice.broken-*)
-    // so no historical transcripts, keys, or user data persist after wipe.
-    // The database is stored in app_config_dir (with app_data_dir as fallback).
-    if let Ok(config_dir) = app.path().app_config_dir() {
-        if let Err(err) = crate::db::open::delete_quarantined_databases(&config_dir) {
-            log::warn!("Failed to delete quarantined database copies in config dir during local data wipe: {err}");
-        }
-    }
-    if let Ok(app_data_dir) = app.path().app_data_dir() {
-        if let Err(err) = crate::db::open::delete_quarantined_databases(&app_data_dir) {
-            log::warn!("Failed to delete quarantined database copies in app data dir during local data wipe: {err}");
-        }
-    }
+    crate::system::StorageRepo::clear_storage_data(&app).map_err(|err| {
+        log::error!("Failed to clear app-owned storage after database wipe: {err}");
+        format!("Database cleared, but app storage cleanup failed: {err}")
+    })?;
+
+    // Remove quarantine archives, which can contain the pre-clear database, and
+    // the previous-brand database copy made by the startup migration. Treat
+    // cleanup errors as a failed clear so the durable marker continues to block
+    // writes and the user can retry instead of reopening access to stale data.
+    let config_dir = app.path().app_config_dir().map_err(|error| {
+        format!("Database cleared, but the config directory could not be inspected: {error}")
+    })?;
+    crate::db::open::delete_quarantined_databases(&config_dir).map_err(|error| {
+        log::error!(
+            "Failed to delete quarantined database copies in config dir during clear: {error}"
+        );
+        format!("Database cleared, but database backup cleanup failed: {error}")
+    })?;
+
+    let app_data_dir = app.path().app_data_dir().map_err(|error| {
+        format!("Database cleared, but the app data directory could not be inspected: {error}")
+    })?;
+    crate::db::open::delete_quarantined_databases(&app_data_dir).map_err(|error| {
+        log::error!(
+            "Failed to delete quarantined database copies in app data dir during clear: {error}"
+        );
+        format!("Database cleared, but database backup cleanup failed: {error}")
+    })?;
+
+    crate::system::paths::delete_legacy_database(&app).map_err(|error| {
+        log::error!("Failed to delete the legacy Voquill database during clear: {error}");
+        format!("Database cleared, but legacy database cleanup failed: {error}")
+    })?;
 
     if let Err(err) = sqlx::query("VACUUM").execute(&pool).await {
         log::warn!("VACUUM failed after clearing local data: {err}");
     }
 
+    if let Some(err) = listener_stop_error.or(recorder_stop_error) {
+        log::error!("Local data cleared, but native capture teardown reported an error: {err}");
+        return Err(
+            "Database cleared, but recording or keyboard monitoring could not be stopped"
+                .to_string(),
+        );
+    }
+
+    native_clear_guard.mark_ready_for_frontend_completion();
     Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn complete_local_data_clear(app: AppHandle) -> Result<(), String> {
+    crate::db::local_data_write_gate::complete_local_data_clear_with(|| {
+        crate::system::local_data_clear_marker::clear_pending(&app)
+    })
+    .await
+    .map_err(|err| err.to_string())
 }
 
 /// A23: Mirror the TS playInteractionChime preference into Rust so the
@@ -3169,6 +3467,16 @@ pub fn play_audio(clip: AudioClip) -> Result<(), String> {
 }
 
 type RecordingOwnerState = Arc<crate::platform::recording_ownership::RecordingOwnership>;
+
+/// Refuse a recording that would begin after a local-data clear has closed the
+/// write gate. The ownership layer additionally refuses claims while a reset is
+/// in progress; this is the fast, user-visible half of the same guarantee.
+fn ensure_recording_allowed() -> Result<(), String> {
+    if crate::db::local_data_write_gate::current_write_generation().is_none() {
+        return Err("Local data is being cleared".to_string());
+    }
+    Ok(())
+}
 
 fn recording_window_key(window: &tauri::Window) -> usize {
     // Tauri compares windows by label. The resource table belongs to this
@@ -3467,6 +3775,7 @@ pub async fn claim_browser_recording(
     owner_id: String,
     generation: u64,
 ) -> Result<(), String> {
+    ensure_recording_allowed()?;
     let ownership = Arc::clone(&ownership);
     let scope = ownership.window(recording_window_key(&window));
     let admission = ownership.claim_admission(&owner_id, &scope, generation)?;
@@ -3517,6 +3826,7 @@ pub async fn start_recording(
     generation: u64,
     args: Option<StartRecordingArgs>,
 ) -> Result<StartRecordingResponse, String> {
+    ensure_recording_allowed()?;
     let options = args.unwrap_or_default();
     let recorder = Arc::clone(&recorder);
     let ownership = Arc::clone(&ownership);
@@ -3778,44 +4088,82 @@ pub async fn resume_recording(
     .map_err(|err| err.to_string())?
 }
 
+/// Raw-body command, so it is registered in `app.rs` but kept out of the
+/// Specta bindings (Specta cannot describe `ipc::Request`), mirroring
+/// `stop_recording`. The frontend sends the samples as the packed
+/// `[sample_rate: u32 LE][samples: f32 LE...]` body produced by
+/// `encodeRecordedAudio` and names the transcription in the
+/// `x-transcription-id` header. The previous JSON `samples: number[]` form
+/// serialized the whole recording as text on the save critical path, which is
+/// the same cost `stop_recording` already moved off its own path.
 #[tauri::command]
-#[specta::specta]
 pub async fn store_transcription_audio(
     app: AppHandle,
-    id: String,
-    samples: Vec<f64>,
-    sample_rate: u32,
+    request: tauri::ipc::Request<'_>,
 ) -> Result<TranscriptionAudioSnapshot, String> {
+    let write_generation = crate::db::local_data_write_gate::current_write_generation()
+        .ok_or_else(|| "Local data is being cleared".to_string())?;
+    let header_value = request
+        .headers()
+        .get("x-transcription-id")
+        .ok_or_else(|| "Missing the x-transcription-id header".to_string())?;
+    let transcription_id = header_value
+        .to_str()
+        .map_err(|_| "The x-transcription-id header is not valid UTF-8".to_string())?
+        .to_string();
+    if transcription_id.is_empty() {
+        return Err("Missing the x-transcription-id header".to_string());
+    }
+
+    let body = match request.body() {
+        tauri::ipc::InvokeBody::Raw(raw) => raw.as_slice(),
+        tauri::ipc::InvokeBody::Json(_) => {
+            return Err("store_transcription_audio expects a raw audio body".to_string());
+        }
+    };
+
+    let (sample_rate, mut samples) = decode_recorded_audio(body)?;
     if sample_rate == 0 {
         return Err("Audio sample rate must be greater than zero".to_string());
     }
 
-    let mut filtered = Vec::with_capacity(samples.len());
-    for sample in samples {
-        if sample.is_finite() {
-            filtered.push(sample as f32);
-        }
-    }
-
-    if filtered.is_empty() {
+    // In place rather than a second Vec: the decoded buffer is the only copy
+    // from here to the WAV write, so filtering cannot double its peak memory.
+    samples.retain(|sample| sample.is_finite());
+    if samples.is_empty() {
         return Err("No usable audio samples provided".to_string());
     }
 
-    let handle = app.clone();
-    let audio_id = id.clone();
+    let mut reservations = AUDIO_SNAPSHOT_RESERVATIONS.lock().await;
+    reservations.reserve(&transcription_id)?;
+    let _write_guard =
+        match crate::db::local_data_write_gate::lock_local_data_write(Some(write_generation)).await
+        {
+            Ok(guard) => guard,
+            Err(err) => {
+                reservations.pending.remove(&transcription_id);
+                return Err(err.to_string());
+            }
+        };
 
+    let handle = app.clone();
+    let audio_id = transcription_id.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         crate::system::audio_store::save_transcription_audio(
             &handle,
             &audio_id,
-            &filtered,
+            &samples,
             sample_rate,
         )
         .map_err(|err| err.to_string())
     })
     .await
-    .map_err(|err| err.to_string())?;
+    .map_err(|err| err.to_string())
+    .and_then(|result| result);
 
+    if result.is_err() {
+        reservations.pending.remove(&transcription_id);
+    }
     result
 }
 
@@ -3828,7 +4176,8 @@ pub struct StorageUploadArgs {
 
 #[tauri::command]
 #[specta::specta]
-pub fn storage_upload_data(app: AppHandle, args: StorageUploadArgs) -> Result<(), String> {
+pub async fn storage_upload_data(app: AppHandle, args: StorageUploadArgs) -> Result<(), String> {
+    let _write_guard = acquire_local_data_write_guard().await?;
     let repo = StorageRepo::new(&app).map_err(|err| err.to_string())?;
     repo.upload_data(&args.path, &args.data)
         .map_err(|err| err.to_string())
@@ -3836,7 +4185,8 @@ pub fn storage_upload_data(app: AppHandle, args: StorageUploadArgs) -> Result<()
 
 #[tauri::command]
 #[specta::specta]
-pub fn storage_get_download_url(app: AppHandle, path: String) -> Result<String, String> {
+pub async fn storage_get_download_url(app: AppHandle, path: String) -> Result<String, String> {
+    let _write_guard = acquire_local_data_write_guard().await?;
     let repo = StorageRepo::new(&app).map_err(|err| err.to_string())?;
     repo.get_download_url(&path).map_err(|err| err.to_string())
 }
@@ -3847,6 +4197,7 @@ pub async fn purge_stale_transcription_audio(
     app: AppHandle,
     database: State<'_, crate::state::OptionKeyDatabase>,
 ) -> Result<Vec<String>, String> {
+    let _write_guard = acquire_local_data_write_guard().await?;
     let pool = database.pool();
 
     let rows = sqlx::query(
@@ -4475,6 +4826,9 @@ pub fn notify_pill_style_info(app: AppHandle, count: u32, name: String) {
 #[tauri::command]
 #[specta::specta]
 pub fn start_key_listener(app: AppHandle) -> Result<(), String> {
+    if crate::db::local_data_write_gate::current_write_generation().is_none() {
+        return Err("Local data is being cleared".to_string());
+    }
     crate::platform::keyboard::start_key_listener(&app)
 }
 
@@ -4507,6 +4861,9 @@ pub fn get_key_listener_health() -> String {
 #[tauri::command]
 #[specta::specta]
 pub fn retry_key_listener(app: AppHandle) -> Result<(), String> {
+    if crate::db::local_data_write_gate::current_write_generation().is_none() {
+        return Err("Local data is being cleared".to_string());
+    }
     crate::platform::keyboard::start_key_listener(&app)
 }
 
@@ -5003,6 +5360,7 @@ pub async fn conversation_create(
     conversation: crate::domain::Conversation,
     database: State<'_, crate::state::OptionKeyDatabase>,
 ) -> Result<crate::domain::Conversation, String> {
+    let _write_guard = acquire_local_data_write_guard().await?;
     crate::db::conversation_queries::insert_conversation(database.pool(), &conversation)
         .await
         .map_err(|err| err.to_string())
@@ -5024,6 +5382,7 @@ pub async fn conversation_update(
     conversation: crate::domain::Conversation,
     database: State<'_, crate::state::OptionKeyDatabase>,
 ) -> Result<crate::domain::Conversation, String> {
+    let _write_guard = acquire_local_data_write_guard().await?;
     crate::db::conversation_queries::update_conversation(database.pool(), &conversation)
         .await
         .map_err(|err| err.to_string())
@@ -5035,6 +5394,7 @@ pub async fn conversation_delete(
     id: String,
     database: State<'_, crate::state::OptionKeyDatabase>,
 ) -> Result<(), String> {
+    let _write_guard = acquire_local_data_write_guard().await?;
     crate::db::conversation_queries::delete_conversation(database.pool(), &id)
         .await
         .map_err(|err| err.to_string())
@@ -5046,6 +5406,7 @@ pub async fn chat_message_create(
     message: crate::domain::ChatMessage,
     database: State<'_, crate::state::OptionKeyDatabase>,
 ) -> Result<crate::domain::ChatMessage, String> {
+    let _write_guard = acquire_local_data_write_guard().await?;
     crate::db::chat_message_queries::insert_chat_message(database.pool(), &message)
         .await
         .map_err(|err| err.to_string())
@@ -5071,6 +5432,7 @@ pub async fn chat_message_update(
     message: crate::domain::ChatMessage,
     database: State<'_, crate::state::OptionKeyDatabase>,
 ) -> Result<crate::domain::ChatMessage, String> {
+    let _write_guard = acquire_local_data_write_guard().await?;
     crate::db::chat_message_queries::update_chat_message(database.pool(), &message)
         .await
         .map_err(|err| err.to_string())
@@ -5082,6 +5444,7 @@ pub async fn chat_message_delete_many(
     ids: Vec<String>,
     database: State<'_, crate::state::OptionKeyDatabase>,
 ) -> Result<(), String> {
+    let _write_guard = acquire_local_data_write_guard().await?;
     crate::db::chat_message_queries::delete_chat_messages(database.pool(), &ids)
         .await
         .map_err(|err| err.to_string())
@@ -6623,6 +6986,9 @@ pub fn composer_register_text(
     text: String,
     state: State<'_, crate::state::FloatingWindowState>,
 ) -> Result<(), String> {
+    if crate::db::local_data_write_gate::current_write_generation().is_none() {
+        return Err("Local data is being cleared".to_string());
+    }
     let request_id = request_id.trim().to_string();
     if request_id.is_empty() {
         return Err("composer request id must not be empty".to_string());
@@ -6801,6 +7167,7 @@ pub async fn floating_window_list(app: AppHandle) -> Result<Vec<FloatingWindowIn
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::TimeZone;
 
     static PRIVATE_HTTP_CANCELLATION_TEST_LOCK: once_cell::sync::Lazy<tokio::sync::Mutex<()>> =
         once_cell::sync::Lazy::new(|| tokio::sync::Mutex::new(()));
@@ -7216,6 +7583,38 @@ mod tests {
         expected.extend_from_slice(&(-1.0_f32).to_le_bytes());
         assert_eq!(bytes, expected);
         assert_eq!(encode_recorded_audio(&[], 0), vec![0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn recorded_audio_decoding_reads_the_wire_layout() {
+        let bytes: &[u8] = &[
+            0x80, 0xBB, 0x00, 0x00, // 48000 = 0x0000BB80, u32 LE
+            0x00, 0x00, 0x00, 0x3F, // 0.5 = 0x3F000000, f32 LE
+            0x00, 0x00, 0x80, 0xBF, // -1.0 = 0xBF800000, f32 LE
+        ];
+        assert_eq!(decode_recorded_audio(bytes), Ok((48_000, vec![0.5, -1.0])));
+        assert_eq!(decode_recorded_audio(&[0, 0, 0, 0]), Ok((0, vec![])));
+    }
+
+    #[test]
+    fn recorded_audio_decoding_rejects_short_and_truncated_bodies() {
+        assert_eq!(
+            decode_recorded_audio(&[0x80, 0xBB, 0x00]),
+            Err("Recorded audio payload is missing its sample-rate header".to_string())
+        );
+        assert_eq!(
+            decode_recorded_audio(&[0x80, 0xBB, 0x00, 0x00, 0x00, 0x00, 0x3F]),
+            Err("Recorded audio payload ends in a truncated sample".to_string())
+        );
+    }
+
+    #[test]
+    fn recorded_audio_decoding_roundtrips_the_encoder() {
+        let bytes = encode_recorded_audio(&[0.25, -0.75, 1.0], 16_000);
+        assert_eq!(
+            decode_recorded_audio(&bytes),
+            Ok((16_000, vec![0.25, -0.75, 1.0]))
+        );
     }
 
     #[test]
@@ -8108,6 +8507,20 @@ mod tests {
         assert!(!audio_path_has_file_path(None));
         assert!(!audio_path_has_file_path(Some("")));
         assert!(audio_path_has_file_path(Some("managed/snapshot.wav")));
+    }
+
+    #[test]
+    fn export_refuses_audio_removed_while_save_dialog_was_open() {
+        let error = validate_export_audio_marker(Some("recorded.m4a"), None)
+            .expect_err("a snapshot removed during destination selection must be reported");
+        assert!(
+            error.contains("removed while the export dialog was open"),
+            "the error must explain why the archive was not written: {error}"
+        );
+        assert!(validate_export_audio_marker(Some("recorded.m4a"), Some("recorded.m4a")).is_ok());
+        assert!(validate_export_audio_marker(None, None).is_ok());
+        assert!(validate_export_audio_marker(None, Some("new-snapshot.m4a")).is_ok());
+        assert!(validate_export_audio_marker(Some(""), None).is_ok());
     }
 
     #[test]
@@ -9167,6 +9580,250 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
+    #[tokio::test(flavor = "current_thread")]
+    async fn clear_local_data_cannot_be_followed_by_stale_backfill_rows() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("in-memory pool must open");
+        for migration in crate::db::migrations() {
+            sqlx::raw_sql(migration.sql)
+                .execute(&pool)
+                .await
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "apply migration {} ({}): {error}",
+                        migration.version, migration.description
+                    )
+                });
+        }
+
+        let timestamp = chrono::Local
+            .with_ymd_and_hms(2026, 1, 2, 12, 0, 0)
+            .single()
+            .expect("valid local timestamp");
+        let date = timestamp.format("%Y-%m-%d").to_string();
+        sqlx::query(
+            "INSERT INTO transcriptions (id, transcript, timestamp, audio_path)
+             VALUES ('stale-backfill', 'one two', ?1, 'snapshot')",
+        )
+        .bind(timestamp.timestamp_millis())
+        .execute(&pool)
+        .await
+        .expect("seed history row");
+
+        // Queue the wipe before the dashboard read while both are held behind
+        // an activity write. The read must not capture a page before the wipe
+        // commits and replay it afterward.
+        let activity_write_guard = crate::db::daily_activity_queries::lock_activity_writes().await;
+        let (clear_started_tx, clear_started_rx) = tokio::sync::oneshot::channel();
+        let clear_pool = pool.clone();
+        let clear = tokio::spawn(async move {
+            clear_started_tx
+                .send(())
+                .expect("test receiver must be listening");
+            clear_local_data_from_database(&clear_pool).await
+        });
+        // This current-thread test runtime polls each task through its first
+        // pending lock acquisition before resuming this task, so the channels
+        // establish the shared mutex's FIFO waiter order without sleeps.
+        clear_started_rx.await.expect("clear task must start");
+
+        let (backfill_started_tx, backfill_started_rx) = tokio::sync::oneshot::channel();
+        let activity_pool = pool.clone();
+        let activity_date = date.clone();
+        let backfill = tokio::spawn(async move {
+            backfill_started_tx
+                .send(())
+                .expect("test receiver must be listening");
+            crate::db::daily_activity_queries::fetch_daily_activity(
+                activity_pool,
+                &activity_date,
+                &activity_date,
+            )
+            .await
+        });
+        backfill_started_rx.await.expect("backfill task must start");
+        drop(activity_write_guard);
+
+        let cleared_audio_ids = clear
+            .await
+            .expect("clear task must not panic")
+            .expect("database wipe must succeed");
+        assert_eq!(cleared_audio_ids, vec!["stale-backfill".to_string()]);
+        assert!(backfill
+            .await
+            .expect("backfill task must not panic")
+            .expect("daily activity read must succeed")
+            .is_empty());
+
+        let history_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM transcriptions")
+            .fetch_one(&pool)
+            .await
+            .expect("read remaining history count");
+        let event_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM daily_word_activity_events")
+                .fetch_one(&pool)
+                .await
+                .expect("read remaining event count");
+        let activity_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM daily_word_activity")
+            .fetch_one(&pool)
+            .await
+            .expect("read remaining activity count");
+        assert_eq!(history_count, 0);
+        assert_eq!(event_count, 0);
+        assert_eq!(activity_count, 0);
+    }
+
+    #[test]
+    fn audio_snapshot_reservation_ledger_is_bounded_and_keeps_cancelled_ids() {
+        let mut reservations = AudioSnapshotReservations::default();
+
+        for index in 0..MAX_AUDIO_SNAPSHOT_RESERVATION_IDS - 1 {
+            let id = format!("cleared-audio-{index}");
+            reservations
+                .reserve(&id)
+                .expect("ledger should accept an ID below its cap");
+            reservations.cancel_pending();
+        }
+
+        let pending_id = "last-audio-reservation";
+        reservations
+            .reserve(pending_id)
+            .expect("the final slot should remain available");
+        reservations
+            .reserve(pending_id)
+            .expect("reserving the same pending ID should be idempotent");
+        assert_eq!(
+            reservations.pending.len() + reservations.cancelled.len(),
+            MAX_AUDIO_SNAPSHOT_RESERVATION_IDS
+        );
+
+        assert_eq!(
+            reservations.reserve("over-capacity-audio"),
+            Err(AUDIO_SNAPSHOT_RESERVATION_LIMIT_REACHED.to_string())
+        );
+        reservations.cancel_pending();
+
+        assert!(reservations.pending.is_empty());
+        assert_eq!(
+            reservations.cancelled.len(),
+            MAX_AUDIO_SNAPSHOT_RESERVATION_IDS
+        );
+        assert!(reservations.is_cancelled("cleared-audio-0"));
+        assert!(reservations.is_cancelled(pending_id));
+        assert_eq!(
+            reservations.reserve("cleared-audio-0"),
+            Err(TRANSCRIPTION_CLEARED_DURING_SAVE.to_string())
+        );
+        assert_eq!(
+            reservations.reserve("over-capacity-audio"),
+            Err(AUDIO_SNAPSHOT_RESERVATION_LIMIT_REACHED.to_string())
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn clear_local_data_preserves_audio_reserved_for_a_pending_row_insert() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("in-memory pool must open");
+        for migration in crate::db::migrations() {
+            sqlx::raw_sql(migration.sql)
+                .execute(&pool)
+                .await
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "apply migration {} ({}): {error}",
+                        migration.version, migration.description
+                    )
+                });
+        }
+
+        let id = format!("in-flight-audio-{}", std::process::id());
+        let root = std::env::temp_dir().join(format!("mausvoice-audio-race-{id}"));
+        let app_data = root.join("app-data");
+        let held_audio_dir = crate::system::audio_store::open_managed_audio_dir_for_test(&app_data)
+            .expect("managed audio directory must be openable");
+        let snapshot = app_data
+            .join("transcription-audio")
+            .join(crate::system::audio_store::audio_file_name_for(&id));
+        std::fs::write(&snapshot, b"pending snapshot").expect("audio fixture must be writable");
+
+        let mut reservations = AudioSnapshotReservations::default();
+        reservations
+            .reserve(&id)
+            .expect("pending audio must be reservable before clear");
+        assert!(snapshot.exists(), "pending snapshot must start on disk");
+
+        let audio_ids = clear_local_data_from_database(&pool)
+            .await
+            .expect("clear database before transcription insert");
+        reservations.cancel_pending();
+        delete_listed_audio_files(&held_audio_dir, &audio_ids)
+            .expect("listed audio cleanup must succeed");
+        sweep_orphaned_wavs(&held_audio_dir).expect("orphan audio sweep must succeed");
+        assert!(
+            !snapshot.exists(),
+            "clear must delete the snapshot for a cancelled pending save"
+        );
+
+        let transcription = crate::domain::Transcription {
+            id: id.clone(),
+            transcript: "pending words".to_string(),
+            timestamp: 0,
+            audio: None,
+            model_size: None,
+            inference_device: None,
+            raw_transcript: None,
+            sanitized_transcript: None,
+            transcription_prompt: None,
+            post_process_prompt: None,
+            transcription_api_key_id: None,
+            post_process_api_key_id: None,
+            transcription_mode: None,
+            post_process_mode: None,
+            post_process_device: None,
+            post_process_model: None,
+            post_process_provider: None,
+            post_process_failed: None,
+            post_process_edit_failed: None,
+            post_process_edit_failure_count: None,
+            post_process_edit_auto_retry_used: None,
+            post_process_edit_retry_tone_id: None,
+            post_process_edit_retry_language_code: None,
+            post_process_edit_retry_claim_count: None,
+            post_process_fallback: None,
+            post_process_error: None,
+            transcription_duration_ms: None,
+            postprocess_duration_ms: None,
+            warnings: None,
+            remote_status: None,
+            remote_device_id: None,
+        };
+        let create_result =
+            create_transcription_with_reservations(pool.clone(), &transcription, &mut reservations)
+                .await;
+        assert_eq!(
+            create_result.expect_err("clear must reject the late transcription insert"),
+            TRANSCRIPTION_CLEARED_DURING_SAVE
+        );
+
+        let row_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM transcriptions")
+            .fetch_one(&pool)
+            .await
+            .expect("count transcriptions after clear");
+        assert_eq!(row_count, 0, "cleared history must stay empty");
+        assert!(
+            reservations.is_cancelled(&id),
+            "retrying a stale create must remain cancelled"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn clear_local_data_deletes_derived_names_and_only_sweeps_wavs() {
         let root =
@@ -9186,14 +9843,15 @@ mod tests {
 
         // The list contains IDs collected from non-null database markers, not
         // mutable filesystem paths. It therefore cannot name `outside.wav`.
-        delete_listed_audio_files(&held_audio_dir, &["known-id".to_string()]);
+        delete_listed_audio_files(&held_audio_dir, &["known-id".to_string()])
+            .expect("known audio snapshot must be deleted");
         assert!(
             !expected.exists(),
             "the derived managed file must be deleted"
         );
         assert!(outside.exists(), "an outside file must remain untouched");
 
-        sweep_orphaned_wavs(&held_audio_dir);
+        sweep_orphaned_wavs(&held_audio_dir).expect("orphan WAV must be swept");
         assert!(!orphan.exists(), "the held-root WAV orphan must be removed");
         assert!(other.exists(), "non-WAV files must not be swept");
         assert!(
@@ -9202,6 +9860,25 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn audio_clear_helpers_report_files_they_cannot_remove() {
+        let root = lifecycle_test_root("clear-audio-failure");
+        let app_data = root.join("app-data");
+        let held_audio_dir = crate::system::audio_store::open_managed_audio_dir_for_test(&app_data)
+            .expect("managed audio directory must be openable");
+        let blocked_snapshot = app_data.join("transcription-audio/blocked.wav");
+        std::fs::create_dir_all(&blocked_snapshot).expect("blocked fixture directory must exist");
+
+        let listed_error = delete_listed_audio_files(&held_audio_dir, &["blocked".to_string()])
+            .expect_err("a directory cannot be deleted as an audio snapshot");
+        assert!(listed_error.contains("blocked"));
+
+        let sweep_error = sweep_orphaned_wavs(&held_audio_dir)
+            .expect_err("the orphan sweep must report a surviving WAV-shaped directory");
+        assert!(sweep_error.contains("blocked.wav"));
+        let _ = std::fs::remove_dir_all(root);
     }
 
     /// A test-owned root under a per-test name, so the two audio-lifecycle
@@ -10468,7 +11145,7 @@ mod tests {
         std::fs::write(&replacement_orphan, b"do not delete")
             .expect("replacement fixture must be writable");
 
-        sweep_orphaned_wavs(&held_audio_dir);
+        sweep_orphaned_wavs(&held_audio_dir).expect("orphan sweep must stay in the held root");
 
         assert!(
             !detached.join("orphan.wav").exists(),
@@ -10846,5 +11523,121 @@ wLMDjy9FLAuxZ3q4NlEvkgtyhrr0gtTu6KC4KBJdITbbOeAi1zBIYo0v4iTgt8jJpIidRJnp94ABQkJA
         assert!(verify_minisign_data(public_key, b"other", &decoded_signature).is_err());
         // A malformed decoded signature must fail to parse.
         assert!(verify_minisign_data(public_key, b"test", "not-a-signature").is_err());
+    }
+
+    #[tokio::test]
+    async fn a_local_data_clear_refuses_new_recordings_and_aborts_an_in_flight_start() {
+        use crate::platform::recording_ownership::{RecordingOwnership, StartControl};
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+        struct GateTestRecorder {
+            active: AtomicBool,
+            starts: AtomicUsize,
+        }
+
+        impl crate::platform::Recorder for GateTestRecorder {
+            fn start(
+                &self,
+                _level_callback: Option<LevelCallback>,
+                _chunk_callback: Option<ChunkCallback>,
+            ) -> Result<(), Box<dyn std::error::Error>> {
+                self.starts.fetch_add(1, Ordering::SeqCst);
+                self.active.store(true, Ordering::SeqCst);
+                Ok(())
+            }
+
+            fn stop(&self) -> Result<crate::domain::RecordingResult, Box<dyn std::error::Error>> {
+                self.active.store(false, Ordering::SeqCst);
+                Ok(crate::domain::RecordingResult {
+                    metrics: crate::domain::RecordingMetrics {
+                        duration: std::time::Duration::ZERO,
+                        size_bytes: 0,
+                    },
+                    audio: crate::domain::RecordedAudio {
+                        samples: Vec::new(),
+                        sample_rate: 16_000,
+                    },
+                    capture_failed: false,
+                })
+            }
+
+            fn pause(&self) -> Result<(), Box<dyn std::error::Error>> {
+                Ok(())
+            }
+
+            fn resume(&self) -> Result<(), Box<dyn std::error::Error>> {
+                Ok(())
+            }
+
+            fn is_recording(&self) -> bool {
+                self.active.load(Ordering::SeqCst)
+            }
+        }
+
+        let _test_guard = crate::db::local_data_write_gate::TEST_LOCK.lock().await;
+        let clear_guard = crate::db::local_data_write_gate::begin_local_data_clear()
+            .await
+            .expect("close the clear gate");
+
+        // A start that arrives after the gate closed is refused before the
+        // microphone is opened.
+        assert_eq!(
+            ensure_recording_allowed().unwrap_err(),
+            "Local data is being cleared"
+        );
+
+        // The ownership layer refuses claims for the whole reset window, so a
+        // recording cannot be admitted behind the closed gate.
+        let ownership = RecordingOwnership::default();
+        let window = ownership.window(0);
+        let generation = ownership
+            .reserve("owner", &window)
+            .expect("reserve a generation");
+        ownership.begin_reset().expect("begin reset");
+        let err = match ownership.claim_admission("owner", &window, generation) {
+            Ok(_) => panic!("claims must be refused during a reset"),
+            Err(err) => err,
+        };
+        assert!(err.contains("reset") || err.contains("cancelled"), "{err}");
+
+        // Even an admission taken before the reset cannot start the recorder.
+        ownership.end_reset();
+        let admission = ownership
+            .claim_admission("owner", &window, generation)
+            .expect("claim before the reset");
+        ownership.begin_reset().expect("begin reset again");
+        let recorder = Arc::new(GateTestRecorder {
+            active: AtomicBool::new(false),
+            starts: AtomicUsize::new(0),
+        });
+        let cancelled = AtomicBool::new(false);
+        let recorder_for_start: Arc<dyn crate::platform::Recorder> = recorder.clone();
+        let start = ownership
+            .start(
+                "owner",
+                &window,
+                generation,
+                StartControl {
+                    cancelled: &cancelled,
+                    admission: Some(&admission),
+                    wait: std::time::Duration::ZERO,
+                },
+                || {
+                    recorder_for_start
+                        .start(None, None)
+                        .map_err(|err| err.to_string())
+                },
+                || recorder_for_start.stop().is_ok(),
+            )
+            .expect_err("a start during a reset must be cancelled");
+        assert!(start.contains("cancelled"), "{start}");
+        assert_eq!(recorder.starts.load(Ordering::SeqCst), 0);
+        ownership.end_reset();
+
+        clear_guard.mark_ready_for_frontend_completion();
+        drop(clear_guard);
+        crate::db::local_data_write_gate::complete_local_data_clear()
+            .await
+            .expect("reopen clear gate after test");
     }
 }

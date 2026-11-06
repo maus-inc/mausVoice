@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Button, Stack } from "@mui/material";
 import { useIntl } from "react-intl";
 import { showErrorSnackbar, showSnackbar } from "../../actions/app.actions";
@@ -70,96 +70,18 @@ const MessageActions = ({
   );
 };
 
-// A resend may finish after the user has opened a newer edit. Each edit owns
-// its own recovery and duplicate-submit lock, so a late failure cannot replace
-// a newer draft or issue a second queued resend from a double click.
-const useMessageEditor = (
-  id: string,
-  conversationId: string | undefined,
-  content: string,
-) => {
+type ChatMessageBubbleProps = { id: string };
+
+export const ChatMessageBubble = ({ id }: ChatMessageBubbleProps) => {
+  const intl = useIntl();
+  const ctxMenu = useContextMenu();
+  const { message, parts, permissions, canRetry } = useMessageParts(id);
+  const isStreaming = useAppStore((s) => Boolean(s.streamingMessageById[id]));
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [confirmDrop, setConfirmDrop] = useState(false);
-  const generation = useRef(0);
-  const pending = useRef<number | null>(null);
-  const mounted = useRef(false);
-  const lifetime = useRef(0);
-  useEffect(() => {
-    mounted.current = true;
-    setEditing(false);
-    setDraft("");
-    setConfirmDrop(false);
-    return () => {
-      mounted.current = false;
-      generation.current += 1;
-      lifetime.current += 1;
-    };
-  }, [id]);
 
-  const startEdit = useCallback(() => {
-    generation.current += 1;
-    setDraft(content);
-    setConfirmDrop(false);
-    setEditing(true);
-  }, [content]);
-
-  const changeDraft = (value: string) => {
-    setDraft(value);
-    setConfirmDrop(false);
-  };
-  const cancelEdit = () => {
-    generation.current += 1;
-    setEditing(false);
-    setConfirmDrop(false);
-  };
-  const saveEdit = () => {
-    const text = draft.trim();
-    if (
-      !text ||
-      conversationId === undefined ||
-      pending.current === generation.current
-    )
-      return;
-    if (!confirmDrop && laterMessagesHaveToolActivity(conversationId, id)) {
-      setConfirmDrop(true);
-      return;
-    }
-    const owner = generation.current;
-    const ownerLifetime = lifetime.current;
-    pending.current = owner;
-    setEditing(false);
-    setConfirmDrop(false);
-    void editAndResend(conversationId, id, text)
-      .catch((error) => {
-        getLogger().error("Failed to edit and resend message");
-        if (!mounted.current || lifetime.current !== ownerLifetime) return;
-        showErrorSnackbar(error);
-        if (generation.current !== owner) return;
-        setDraft(text);
-        setEditing(true);
-      })
-      .finally(() => {
-        if (pending.current === owner) pending.current = null;
-      });
-  };
-  return {
-    editing,
-    draft,
-    confirmDrop,
-    startEdit,
-    changeDraft,
-    cancelEdit,
-    saveEdit,
-  };
-};
-
-const useMessageActions = (
-  content: string,
-  role: string | undefined,
-  startEdit: () => void,
-) => {
-  const intl = useIntl();
+  const content = message?.content ?? "";
   const copyAction = useMemo(() => {
     if (!content.trim()) return null;
     return async () => {
@@ -175,6 +97,12 @@ const useMessageActions = (
     };
   }, [content, intl]);
 
+  const startEdit = useCallback(() => {
+    setDraft(content);
+    setConfirmDrop(false);
+    setEditing(true);
+  }, [content]);
+
   const actions = useMemo(
     () =>
       [
@@ -185,7 +113,7 @@ const useMessageActions = (
               run: copyAction,
             }
           : null,
-        role === "user"
+        message?.role === "user"
           ? {
               key: "edit",
               label: intl.formatMessage({ defaultMessage: "Edit and resend" }),
@@ -193,39 +121,7 @@ const useMessageActions = (
             }
           : null,
       ].filter((item): item is NonNullable<typeof item> => item !== null),
-    [copyAction, intl, role, startEdit],
-  );
-
-  const contextMenuItems = useMemo<ContextMenuItem[]>(
-    () =>
-      actions.map((action) => ({
-        label: action.label,
-        onClick: () => void action.run(),
-      })),
-    [actions],
-  );
-
-  return { actions, contextMenuItems };
-};
-
-export const ChatMessageBubble = ({ id }: { id: string }) => {
-  const ctxMenu = useContextMenu();
-  const { message, parts, permissions, canRetry } = useMessageParts(id);
-  const isStreaming = useAppStore((s) => Boolean(s.streamingMessageById[id]));
-  const content = message?.content ?? "";
-  const {
-    editing,
-    draft,
-    confirmDrop,
-    startEdit,
-    changeDraft,
-    cancelEdit,
-    saveEdit,
-  } = useMessageEditor(id, message?.conversationId, content);
-  const { actions, contextMenuItems } = useMessageActions(
-    content,
-    message?.role,
-    startEdit,
+    [copyAction, intl, message?.role, startEdit],
   );
 
   // Both affordances read from one list, so they cannot drift apart.
@@ -236,6 +132,15 @@ export const ChatMessageBubble = ({ id }: { id: string }) => {
   // The row would fight the open editor for the same space, and an empty
   // message has nothing to copy or resend.
   const showActions = !editing && actions.length > 0;
+
+  const contextMenuItems = useMemo<ContextMenuItem[]>(
+    () =>
+      actions.map((action) => ({
+        label: action.label,
+        onClick: () => void action.run(),
+      })),
+    [actions],
+  );
 
   if (!message) {
     return null;
@@ -257,6 +162,28 @@ export const ChatMessageBubble = ({ id }: { id: string }) => {
   }
 
   if (!shouldRenderMessage(message, parts, isStreaming, canRetry)) return null;
+
+  const saveEdit = () => {
+    const text = draft.trim();
+    if (!text) return;
+    if (
+      !confirmDrop &&
+      laterMessagesHaveToolActivity(message.conversationId, id)
+    ) {
+      setConfirmDrop(true);
+      return;
+    }
+    setEditing(false);
+    setConfirmDrop(false);
+    void editAndResend(message.conversationId, id, text).catch((error) => {
+      // The edit already left the UI; surface the failure instead of a silent
+      // rejection, and reopen the editor so the text is not lost.
+      getLogger().error("Failed to edit and resend message");
+      showErrorSnackbar(error);
+      setDraft(text);
+      setEditing(true);
+    });
+  };
 
   return (
     <Stack
@@ -283,8 +210,14 @@ export const ChatMessageBubble = ({ id }: { id: string }) => {
             <MessageEditForm
               draft={draft}
               confirmDrop={confirmDrop}
-              onChange={changeDraft}
-              onCancel={cancelEdit}
+              onChange={(value) => {
+                setDraft(value);
+                setConfirmDrop(false);
+              }}
+              onCancel={() => {
+                setEditing(false);
+                setConfirmDrop(false);
+              }}
               onSave={saveEdit}
             />
           ) : null

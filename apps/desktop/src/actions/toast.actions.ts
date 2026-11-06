@@ -19,8 +19,6 @@ function getActionLabel(action: ToastAction): string {
       return intl.formatMessage({ defaultMessage: "Open history" });
     case "confirm_cancel_transcription":
       return intl.formatMessage({ defaultMessage: "Yes, cancel" });
-    case "cancel_recording_stop":
-      return intl.formatMessage({ defaultMessage: "Cancel transcription" });
     case "auto_learn_accept":
       return intl.formatMessage({ defaultMessage: "Add" });
     case "auto_learn_reject":
@@ -41,10 +39,6 @@ export type ShowToastOptions = {
    * moved past. Both actions carry it: Add and Ignore answer the same prompt.
    */
   proposalId?: string;
-  /** Skip a queued toast if its owner retires before native dispatch. */
-  isCurrent?: () => boolean;
-  /** Owner identity for microphone guidance that overrides ordinary visibility. */
-  microphoneSafetyOwner?: string;
 };
 
 /**
@@ -57,14 +51,12 @@ let toastQueue: Promise<void> = Promise.resolve();
 
 const enqueueToastCommand = (
   payload: Record<string, unknown>,
-  isCurrent: () => boolean = () => true,
 ): Promise<void> => {
-  const next = toastQueue.then(() => {
-    if (!isCurrent()) return;
-    return invoke<void>("sync_native_pill_assistant", {
+  const next = toastQueue.then(() =>
+    invoke<void>("sync_native_pill_assistant", {
       payload: JSON.stringify(payload),
-    });
-  });
+    }),
+  );
   // Keep the chain alive after a rejection so one failed toast cannot wedge
   // every later one, while still surfacing the error to this caller.
   toastQueue = next.then(
@@ -76,42 +68,26 @@ const enqueueToastCommand = (
 
 export async function showToast(options: ShowToastOptions): Promise<void> {
   const durationSec = options.duration ? options.duration / 1000 : undefined;
-  await enqueueToastCommand(
-    {
-      type: "toast",
-      message: options.message,
-      toast_type: options.toastType ?? "info",
-      microphone_safety_owner: options.microphoneSafetyOwner ?? null,
-      duration: durationSec,
-      action: options.action
-        ? encodeToastActionToken(options.action, options.proposalId)
-        : null,
-      action_label: options.action ? getActionLabel(options.action) : null,
-      reject_action: options.rejectAction
-        ? encodeToastActionToken(options.rejectAction, options.proposalId)
-        : null,
-      reject_action_label: options.rejectAction
-        ? getActionLabel(options.rejectAction)
-        : null,
-    },
-    options.isCurrent,
-  );
+  await enqueueToastCommand({
+    type: "toast",
+    message: options.message,
+    toast_type: options.toastType ?? "info",
+    duration: durationSec,
+    action: options.action
+      ? encodeToastActionToken(options.action, options.proposalId)
+      : null,
+    action_label: options.action ? getActionLabel(options.action) : null,
+    reject_action: options.rejectAction
+      ? encodeToastActionToken(options.rejectAction, options.proposalId)
+      : null,
+    reject_action_label: options.rejectAction
+      ? getActionLabel(options.rejectAction)
+      : null,
+  });
 }
 
 export async function dismissToast(): Promise<void> {
   await enqueueToastCommand({ type: "dismiss_toast" });
-}
-
-/** The pill dismisses only the matching action token, not a newer toast. */
-export async function dismissToastForAction(
-  action: ToastAction,
-  proposalId: string,
-): Promise<void> {
-  if (!proposalId) throw new Error("A toast action owner is required");
-  await enqueueToastCommand({
-    type: "dismiss_toast",
-    expected_action: encodeToastActionToken(action, proposalId),
-  });
 }
 
 /**
@@ -121,11 +97,7 @@ export async function dismissToastForAction(
  */
 export const runToast = (work: Promise<void>): void => {
   void work.catch((error: unknown) => {
-    try {
-      console.error("Toast command failed", error);
-    } catch {
-      // A failed diagnostic sink must not create another unhandled rejection.
-    }
+    console.error("Toast command failed", error);
   });
 };
 
@@ -134,16 +106,6 @@ export const runToast = (work: Promise<void>): void => {
  * (`FLASH_DURATION`), so callers that want the toast to outlive a long job
  * must pass an explicit duration.
  */
-export async function dismissMicrophoneSafetyToast(
-  ownerId: string,
-): Promise<void> {
-  if (!ownerId) throw new Error("A microphone safety owner is required");
-  await enqueueToastCommand({
-    type: "dismiss_toast",
-    expected_safety_owner: ownerId,
-  });
-}
-
 export async function showPersistentToast(
   message: string,
   duration: number,

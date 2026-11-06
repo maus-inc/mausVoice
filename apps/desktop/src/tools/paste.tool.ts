@@ -2,6 +2,10 @@ import { invoke } from "@tauri-apps/api/core";
 import type { PasteOutcome } from "@maus-inc/desktop-native-apis";
 import type { ToolInfo } from "@maus-inc/types";
 import { BaseTool, type ToolExecutionContext } from "./base.tool";
+import {
+  getToolAlwaysAllow,
+  setToolAlwaysAllow,
+} from "../utils/tool-permission.utils";
 import { getAppState } from "../store";
 import { getLogger } from "../utils/log.utils";
 import { reviewTranscriptBeforeInsert } from "../actions/pill-review.actions";
@@ -44,7 +48,6 @@ export class PasteTool extends BaseTool {
     if (!text?.trim()) {
       return { canceled: true };
     }
-    const conversationId = context?.conversationId ?? "";
     let outcome: PasteOutcome;
     try {
       outcome = await invoke<PasteOutcome>("paste", { text, keybind: null });
@@ -53,14 +56,26 @@ export class PasteTool extends BaseTool {
       // saved review exists for: the text is only recoverable by hand. The
       // save is best-effort, and the insert's own failure is what the caller
       // has to see, so a failed write is logged rather than reported.
-      await savePendingPasteReview(conversationId, text);
+      await savePendingPasteReview(context?.conversationId ?? "", text);
       throw error;
     }
     if (outcome === "copied_to_clipboard") {
       // The focused target could not take the text, so nothing landed and the
       // clipboard fallback has to be turned into a deliberate hand-off.
-      await savePendingPasteReview(conversationId, text);
+      await savePendingPasteReview(context?.conversationId ?? "", text);
     }
     return {};
+  }
+
+  getAlwaysAllow(_params: Record<string, unknown>, scope = "global"): boolean {
+    return getToolAlwaysAllow(this.info.id, scope);
+  }
+
+  setAlwaysAllow(
+    _params: Record<string, unknown>,
+    allowed: boolean,
+    scope = "global",
+  ): void {
+    setToolAlwaysAllow(this.info.id, allowed, scope);
   }
 }

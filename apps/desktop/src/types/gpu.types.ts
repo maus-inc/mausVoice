@@ -5,3 +5,6 @@ export type GpuInfo = {
   deviceType: string;
   backend: string;
 };
+
+export const buildDeviceLabel = (gpu: GpuInfo) =>
+  `${gpu.name} (${gpu.backend})`;

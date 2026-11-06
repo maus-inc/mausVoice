@@ -27,7 +27,7 @@ export default function WelcomePage() {
   useEffect(() => {
     if (shouldGotoOnboarding) {
       nav("/onboarding");
-      clearGotStartedAt();
+      void clearGotStartedAt().catch(() => {});
     }
   }, [shouldGotoOnboarding]);
 

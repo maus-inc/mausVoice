@@ -45,12 +45,6 @@ const overlapScore = (
 const getLengthRatio = (first: string, second: string): number =>
   Math.min(first.length, second.length) / Math.max(first.length, second.length);
 
-/** Avoid fuzzy comparisons where lengths make a useful match implausible. */
-const comparableSimilarity = (first: string, second: string): number | null => {
-  if (getLengthRatio(first, second) < 0.5) return null;
-  return getStringSimilarity(first, second);
-};
-
 // Normalized forms of the second transcription's word prefixes, indexed by
 // word count (index j holds secondWords.slice(0, j) normalized). Precomputed
 // once per overlap search so per-suffix scans only look up by j.
@@ -76,8 +70,11 @@ const findBestOverlapForSuffix = (
   for (let j = 1; j < normalizedSecondPrefixes.length; j++) {
     const normalizedSecond = normalizedSecondPrefixes[j];
 
-    const similarity = comparableSimilarity(normalizedFirst, normalizedSecond);
-    if (similarity === null || similarity < SIMILARITY_THRESHOLD) continue;
+    // Skip if lengths are too different
+    if (getLengthRatio(normalizedFirst, normalizedSecond) < 0.5) continue;
+
+    const similarity = getStringSimilarity(normalizedFirst, normalizedSecond);
+    if (similarity < SIMILARITY_THRESHOLD) continue;
 
     const isExact = i === j && similarity >= EXACT_MATCH_THRESHOLD;
     const score = overlapScore(j, isExact, similarity);
@@ -155,8 +152,10 @@ const findExactMatchForSuffix = (
   for (let j = 1; j < normalizedSecondPrefixes.length; j++) {
     const normalizedSecond = normalizedSecondPrefixes[j];
 
-    const similarity = comparableSimilarity(normalizedFirst, normalizedSecond);
-    if (similarity !== null && similarity >= EXACT_MATCH_THRESHOLD && i === j) {
+    if (getLengthRatio(normalizedFirst, normalizedSecond) < 0.5) continue;
+
+    const similarity = getStringSimilarity(normalizedFirst, normalizedSecond);
+    if (similarity >= EXACT_MATCH_THRESHOLD && i === j) {
       return j;
     }
   }

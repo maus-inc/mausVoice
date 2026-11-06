@@ -3,6 +3,13 @@ import type { IconNode } from "lucide";
 import { MorphIcon } from "morphicons/react";
 import { useMemo } from "react";
 
+type MorphNavIconProps = {
+  icon: IconNode;
+  size?: number;
+  color?: string;
+  strokeWidth?: number;
+};
+
 /**
  * Level-4 icon surface: morphicons spring morph when the icon node changes.
  * Used for sidebar / header glyphs that swap state.
@@ -12,12 +19,7 @@ export const MorphNavIcon = ({
   size = 22,
   color = "currentColor",
   strokeWidth = 1.85,
-}: {
-  icon: IconNode;
-  size?: number;
-  color?: string;
-  strokeWidth?: number;
-}) => {
+}: MorphNavIconProps) => {
   const node = useMemo(() => icon, [icon]);
   return (
     <Box

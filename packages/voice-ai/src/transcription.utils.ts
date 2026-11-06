@@ -1,5 +1,4 @@
 import { countWords, retry, toHttpError } from "@maus-inc/utilities";
-import { toFile } from "openai";
 
 export type TranscriptionSegment = {
   text: string;
@@ -141,29 +140,4 @@ export function runSdkTranscription(
       }
     },
   });
-}
-
-/** Prepare the audio file once and delegate provider-specific SDK calls to the common runner. */
-export async function transcribeSdkAudio<T>(
-  transcriptions: { create: (body: T) => PromiseLike<unknown> },
-  args: {
-    blob: ArrayBuffer | Buffer;
-    ext: string;
-    model: string;
-    prompt?: string;
-    language?: string;
-    responseFormat: "verbose_json" | "json";
-  },
-): Promise<TranscribeAudioOutput> {
-  const file = await toFile(args.blob, `audio.${args.ext}`);
-  return runSdkTranscription(
-    (body) => Promise.resolve(transcriptions.create(body as unknown as T)),
-    {
-      file,
-      model: args.model,
-      prompt: args.prompt,
-      language: args.language,
-      response_format: args.responseFormat,
-    },
-  );
 }

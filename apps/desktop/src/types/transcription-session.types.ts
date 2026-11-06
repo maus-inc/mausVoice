@@ -1,13 +1,11 @@
-import type {
+import {
   PostProcessMetadata,
   TranscribeAudioMetadata,
-} from "./transcription-metadata.types";
+} from "../actions/transcribe.actions";
 
 export type StopRecordingResponse = {
   samples: number[] | Float32Array;
   sampleRate?: number;
-  /** Audio is a best-effort prefix; capture or microphone release was not confirmed. */
-  captureFailed?: boolean;
 };
 
 export type TranscriptionSessionResult = {
@@ -22,11 +20,8 @@ export type InterimResultCallback = (segment: string) => void;
 
 export interface TranscriptionSession {
   /** Runs before the microphone opens, so audio from the first instant is observable. */
-  onBeforeRecordingStart?(
-    ownerId?: string,
-    getGeneration?: () => number | null,
-  ): Promise<void>;
-  onRecordingStart(sampleRate: number): Promise<void>;
+  onBeforeRecordingStart?(): Promise<void>;
+  onRecordingStart(sampleRate: number, signal?: AbortSignal): Promise<void>;
   finalize(audio: StopRecordingResponse): Promise<TranscriptionSessionResult>;
   cleanup(): void;
   /** Whether the session exposes committed interim transcript segments to the UI. */

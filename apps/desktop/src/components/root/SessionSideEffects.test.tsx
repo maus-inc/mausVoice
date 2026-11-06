@@ -1,259 +1,121 @@
 // @vitest-environment jsdom
-import { act, createElement } from "react";
+import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ensureUiHarness } from "../../../test/helpers/jsdom-ui-harness";
+import { INITIAL_APP_STATE } from "../../state/app.state";
+import { setAppState } from "../../store";
+import {
+  beginLocalDataClear,
+  getLocalDataClearGeneration,
+  LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY,
+} from "../../utils/local-data-write-gate";
 
-const mocks = vi.hoisted(() => ({
-  label: "main",
-  refresh: vi.fn(),
-  set: vi.fn(),
-  remove: vi.fn(),
-  update: vi.fn(),
-  onDisconnectRemove: vi.fn(),
-  onValue: vi.fn(
-    (
-      _ref: { path: string },
-      _callback: (snapshot: { val: () => unknown }) => void,
-    ) =>
-      () => {},
-  ),
-  handle: vi.fn(),
-  toast: vi.fn(),
-  warning: vi.fn(),
-  interval: vi.fn(
-    (_delay: number, _callback: () => Promise<void>, _deps: unknown[]) => {},
-  ),
-  state: {
-    initialized: true,
-    authSessionNonce: 0,
-    auth: { uid: "user" },
-    remoteReceiverStatus: { deviceId: "device", deviceName: "Desktop" },
-  },
+const { firebaseSet, firebaseRemove, refreshStatus } = vi.hoisted(() => ({
+  firebaseSet: vi.fn<(...args: unknown[]) => Promise<void>>(),
+  firebaseRemove: vi.fn<(...args: unknown[]) => Promise<void>>(),
+  refreshStatus:
+    vi.fn<() => Promise<{ deviceId: string; deviceName: string }>>(),
 }));
-vi.mock("@tauri-apps/api/window", () => ({
-  getCurrentWindow: () => ({ label: mocks.label }),
-}));
+
 vi.mock("firebase/database", () => ({
-  getDatabase: () => ({}),
-  ref: (_db: unknown, path: string) => ({ path }),
-  set: mocks.set,
-  remove: mocks.remove,
-  update: mocks.update,
-  onDisconnect: () => ({ remove: mocks.onDisconnectRemove }),
-  onValue: mocks.onValue,
+  getDatabase: vi.fn(() => ({})),
+  onDisconnect: vi.fn(() => ({ remove: vi.fn(async () => undefined) })),
+  onValue: vi.fn(() => () => undefined),
+  ref: vi.fn((_database: unknown, path: string) => ({ path })),
+  remove: firebaseRemove,
+  set: firebaseSet,
+  update: vi.fn(async () => undefined),
 }));
+
 vi.mock("../../actions/remote-receiver.actions", () => ({
-  refreshRemoteReceiverStatus: mocks.refresh,
+  refreshRemoteReceiverStatus: refreshStatus,
 }));
 vi.mock("../../actions/remote-transcript.actions", () => ({
-  handleRemoteFinalTextReceived: mocks.handle,
+  handleRemoteFinalTextReceived: vi.fn(async () => undefined),
 }));
-vi.mock("../../actions/app.actions", () => ({ showSnackbar: mocks.toast }));
-vi.mock("../../utils/log.utils", () => ({
-  getLogger: () => ({ info: vi.fn(), warning: mocks.warning }),
-}));
-vi.mock("../../store", () => ({
-  getAppState: () => mocks.state,
-  useAppStore: (selector: (state: typeof mocks.state) => unknown) =>
-    selector(mocks.state),
-}));
-vi.mock("../../hooks/helper.hooks", () => ({
-  useIntervalAsync: mocks.interval,
-}));
+
 import { SessionSideEffects } from "./SessionSideEffects";
 
-let roots: Root[];
-let containers: HTMLDivElement[];
+ensureUiHarness();
 
-beforeEach(() => {
-  vi.resetAllMocks();
-  mocks.label = "main";
-  mocks.state.authSessionNonce = 0;
-  mocks.refresh.mockResolvedValue(undefined);
-  mocks.set.mockResolvedValue(undefined);
-  mocks.remove.mockResolvedValue(undefined);
-  mocks.update.mockResolvedValue(undefined);
-  mocks.onDisconnectRemove.mockResolvedValue(undefined);
-  mocks.onValue.mockReturnValue(vi.fn());
-  mocks.handle.mockResolvedValue(undefined);
-  roots = [];
-  containers = [];
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-});
+describe("SessionSideEffects local-clear coordination", () => {
+  let container: HTMLDivElement;
+  let root: Root;
+  let finishFirebaseSet: (() => void) | undefined;
 
-afterEach(async () => {
-  await act(async () => {
-    roots.forEach((root) => root.unmount());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    firebaseSet.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          finishFirebaseSet = resolve;
+        }),
+    );
+    firebaseRemove.mockResolvedValue();
+    refreshStatus.mockResolvedValue({
+      deviceId: "desktop-1",
+      deviceName: "Test desktop",
+    });
+
+    const state = structuredClone(INITIAL_APP_STATE);
+    state.initialized = true;
+    state.auth = {
+      uid: "user-1",
+      email: "test@example.com",
+      displayName: "Test User",
+      providers: ["test"],
+    };
+    setAppState(state, true);
+
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    finishFirebaseSet = undefined;
   });
-  containers.forEach((container) => container.remove());
-  vi.unstubAllGlobals();
-});
 
-const mount = async (label: string) => {
-  mocks.label = label;
-  const container = document.createElement("div");
-  document.body.appendChild(container);
-  const root = createRoot(container);
-  roots.push(root);
-  containers.push(container);
-  await act(async () => {
-    root.render(createElement(SessionSideEffects));
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    window.localStorage.removeItem(LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY);
+    setAppState(structuredClone(INITIAL_APP_STATE), true);
+    finishFirebaseSet?.();
+    finishFirebaseSet = undefined;
   });
-  return root;
-};
 
-it("publishes and removes the device session only from the main window", async () => {
-  await mount("main");
-  await vi.waitFor(() => expect(mocks.onValue).toHaveBeenCalledTimes(2));
-  await mount("composer-popout");
-  expect(mocks.refresh).toHaveBeenCalledOnce();
-  expect(mocks.set).toHaveBeenCalledOnce();
-  expect(mocks.onDisconnectRemove).toHaveBeenCalledOnce();
-  expect(mocks.onValue).toHaveBeenCalledTimes(2);
-  await act(async () => {
-    roots[1].unmount();
+  it("does not let an offline session publish block clear and queues its removal", async () => {
+    const initialGeneration = getLocalDataClearGeneration();
+    await act(async () => {
+      root.render(<SessionSideEffects />);
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(firebaseSet).toHaveBeenCalledTimes(1);
+
+    let releaseClear: (() => void) | undefined;
+    const clearPromise = beginLocalDataClear().then((release) => {
+      releaseClear = release;
+      return release;
+    });
+    const clearCompletedBeforeAck = await Promise.race([
+      clearPromise.then(() => true),
+      new Promise<boolean>((resolve) => {
+        setTimeout(() => resolve(false), 50);
+      }),
+    ]);
+
+    try {
+      expect(clearCompletedBeforeAck).toBe(true);
+      expect(getLocalDataClearGeneration()).toBe(initialGeneration + 1);
+      expect(firebaseRemove).toHaveBeenCalledWith({
+        path: "session/user-1/desktop-1",
+      });
+    } finally {
+      finishFirebaseSet?.();
+      if (!releaseClear) releaseClear = await clearPromise;
+      window.localStorage.removeItem(LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY);
+      releaseClear();
+    }
   });
-  roots.splice(1, 1);
-  expect(mocks.remove).not.toHaveBeenCalled();
-  await act(async () => {
-    roots[0].unmount();
-  });
-  roots.splice(0, 1);
-  await vi.waitFor(() => expect(mocks.remove).toHaveBeenCalledOnce());
-});
-
-it("does not publish a session from a secondary window by itself", async () => {
-  await mount("composer-popout");
-  expect(mocks.refresh).not.toHaveBeenCalled();
-  expect(mocks.set).not.toHaveBeenCalled();
-  expect(mocks.onDisconnectRemove).not.toHaveBeenCalled();
-  expect(mocks.onValue).not.toHaveBeenCalled();
-});
-
-it("does not publish a session after its window unmounts during status refresh", async () => {
-  let finish!: () => void;
-  mocks.refresh.mockReturnValueOnce(
-    new Promise<void>((resolve) => {
-      finish = resolve;
-    }),
-  );
-  await mount("main");
-  expect(mocks.refresh).toHaveBeenCalledOnce();
-  await act(async () => {
-    roots[0].unmount();
-  });
-  roots.splice(0, 1);
-  await act(async () => finish());
-  expect(mocks.set).not.toHaveBeenCalled();
-  expect(mocks.onValue).not.toHaveBeenCalled();
-});
-
-it("does not paste into a later session when acknowledgement completes after unmount", async () => {
-  let finish!: () => void;
-  mocks.update.mockReturnValueOnce(
-    new Promise<void>((resolve) => {
-      finish = resolve;
-    }),
-  );
-  await mount("main");
-  await vi.waitFor(() => expect(mocks.onValue).toHaveBeenCalledTimes(2));
-  const subscription = mocks.onValue.mock.calls.find(([reference]) =>
-    reference.path.startsWith("session/"),
-  );
-  if (!subscription) throw new Error("Session subscription missing");
-  const callback = subscription[1] as (snapshot: {
-    val: () => unknown;
-  }) => void;
-  await act(async () =>
-    callback({
-      val: () => ({ pasteText: "private", pasteTimestamp: Date.now() + 1000 }),
-    }),
-  );
-  expect(mocks.update).toHaveBeenCalledOnce();
-  await act(async () => {
-    roots[0].unmount();
-  });
-  roots.splice(0, 1);
-  await act(async () => finish());
-  expect(mocks.handle).not.toHaveBeenCalled();
-});
-
-it("waits for actual insertion and does not show a second success toast", async () => {
-  await mount("main");
-  await vi.waitFor(() => expect(mocks.onValue).toHaveBeenCalledTimes(2));
-  const subscription = mocks.onValue.mock.calls.find(([reference]) =>
-    reference.path.startsWith("session/"),
-  );
-  if (!subscription) throw new Error("Session subscription missing");
-  const callback = subscription[1] as (snapshot: {
-    val: () => unknown;
-  }) => void;
-  await act(async () =>
-    callback({
-      val: () => ({ pasteText: "hello", pasteTimestamp: Date.now() + 1000 }),
-    }),
-  );
-  await vi.waitFor(() => expect(mocks.handle).toHaveBeenCalledOnce());
-  expect(mocks.handle).toHaveBeenCalledWith(
-    expect.objectContaining({ text: "hello", senderDeviceId: "device" }),
-    expect.any(Function),
-  );
-  expect(mocks.toast).not.toHaveBeenCalled();
-});
-
-it("rejects a delayed paste from an earlier login even before React rerenders", async () => {
-  let finish!: () => void;
-  mocks.update.mockReturnValueOnce(
-    new Promise<void>((resolve) => {
-      finish = resolve;
-    }),
-  );
-  await mount("main");
-  await vi.waitFor(() => expect(mocks.onValue).toHaveBeenCalledTimes(2));
-  const subscription = mocks.onValue.mock.calls.find(([reference]) =>
-    reference.path.startsWith("session/"),
-  );
-  if (!subscription) throw new Error("Session subscription missing");
-  const callback = subscription[1];
-  await act(async () =>
-    callback({
-      val: () => ({ pasteText: "private", pasteTimestamp: Date.now() + 1000 }),
-    }),
-  );
-  mocks.state.authSessionNonce += 1;
-  await act(async () => finish());
-  expect(mocks.handle).not.toHaveBeenCalled();
-});
-
-it("does not heartbeat a retired authentication session before React rerenders", async () => {
-  await mount("main");
-  await vi.waitFor(() => expect(mocks.onValue).toHaveBeenCalledTimes(2));
-  const heartbeat = mocks.interval.mock.lastCall?.[1];
-  if (!heartbeat) throw new Error("Heartbeat callback missing");
-  await heartbeat();
-  expect(mocks.update).toHaveBeenCalledOnce();
-  mocks.state.authSessionNonce += 1;
-  await heartbeat();
-  expect(mocks.update).toHaveBeenCalledOnce();
-});
-
-it("handles insertion failures without reporting a false success", async () => {
-  mocks.handle.mockRejectedValueOnce(new Error("private failure details"));
-  await mount("main");
-  await vi.waitFor(() => expect(mocks.onValue).toHaveBeenCalledTimes(2));
-  const subscription = mocks.onValue.mock.calls.find(([reference]) =>
-    reference.path.startsWith("session/"),
-  );
-  if (!subscription) throw new Error("Session subscription missing");
-  await act(async () =>
-    subscription[1]({
-      val: () => ({ pasteText: "private", pasteTimestamp: Date.now() + 1000 }),
-    }),
-  );
-  await vi.waitFor(() =>
-    expect(mocks.warning).toHaveBeenCalledWith(
-      "Could not process remote session text",
-    ),
-  );
-  expect(mocks.toast).not.toHaveBeenCalled();
 });

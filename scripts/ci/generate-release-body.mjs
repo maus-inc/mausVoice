@@ -14,9 +14,7 @@
 
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { collectArtifactFiles } from "./artifact-files.mjs";
 import { normalizeReleaseNotes } from "./release-notes.mjs";
-import { autoReleaseNotes } from "./auto-release-notes.mjs";
 
 const artifactsRoot = path.resolve(process.env.ARTIFACTS_DIR ?? "dist");
 const version = process.env.RELEASE_VERSION ?? "";
@@ -44,73 +42,64 @@ function shieldsText(s) {
 
 const channelLabel = prerelease ? "pre-release" : "stable";
 const versionLabel = version ? `v${version}` : tag || "release";
-const CHANNEL_BADGE = `https://img.shields.io/badge/${encodeURIComponent(shieldsText(versionLabel))}-${encodeURIComponent(shieldsText(channelLabel))}-000000?style=flat&labelColor=000000`;
+const CHANNEL_BADGE = `https://img.shields.io/badge/${shieldsText(versionLabel)}-${shieldsText(channelLabel)}-000000?style=flat&labelColor=000000`;
 
 // mausVoice logo rendered from the repo so releases carry the brand mark.
 const MAUSVOICE_LOGO = `https://raw.githubusercontent.com/${owner}/${repo}/main/branding/mausvoice-logo-256.png`;
 
 // GitHub flattens release assets to their basenames, so asset URLs point at the
 // basename only — never the nested artifact-directory path.
-function encodeDownloadSegment(value) {
-  // encodeURIComponent leaves parentheses untouched, but these URLs are also
-  // embedded in Markdown links where parentheses delimit the destination.
-  return encodeURIComponent(value)
-    .replaceAll("(", "%28")
-    .replaceAll(")", "%29");
-}
-
 function assetUrl(basename) {
-  return `https://github.com/${owner}/${repo}/releases/download/${encodeDownloadSegment(tag)}/${encodeDownloadSegment(basename)}`;
+  const encoded = encodeURIComponent(basename);
+  return `https://github.com/${owner}/${repo}/releases/download/${tag}/${encoded}`;
 }
 
-const ARTIFACT_TYPES = [
-  [
-    ".app.tar.gz",
-    { platform: "macOS", kind: "app", label: "macOS app archive" },
-  ],
-  [".dmg", { platform: "macOS", kind: "dmg", label: "macOS DMG (.dmg)" }],
-  [
-    ".exe",
-    {
-      platform: "Windows",
-      kind: "installer",
-      label: "Windows installer (.exe)",
-    },
-  ],
-  [".msi", { platform: "Windows", kind: "msi", label: "Windows MSI (.msi)" }],
-  [
-    ".appimage",
-    { platform: "Linux", kind: "appimage", label: "Linux AppImage" },
-  ],
-  [".deb", { platform: "Linux", kind: "deb", label: "Linux DEB (.deb)" }],
-  [".rpm", { platform: "Linux", kind: "rpm", label: "Linux RPM (.rpm)" }],
-];
+async function collectFiles(dir) {
+  const out = [];
+  const queue = [dir];
+  while (queue.length) {
+    const current = queue.pop();
+    const entries = await fs
+      .readdir(current, { withFileTypes: true })
+      .catch(() => []);
+    for (const entry of entries) {
+      const full = path.join(current, entry.name);
+      if (entry.isDirectory()) queue.push(full);
+      else if (entry.isFile()) out.push(full);
+    }
+  }
+  return out;
+}
 
 function classify(fileName) {
   const lower = fileName.toLowerCase();
-  // Detached signatures are not installer downloads.
+  // Detached minisign signatures are never downloadable installers — skip
+  // them so a `mausVoice_x.x.x_x64-setup.exe.sig` isn't offered as a Windows
+  // installer download.
   if (lower.endsWith(".sig")) return null;
-  return ARTIFACT_TYPES.find(([suffix]) => lower.endsWith(suffix))?.[1] ?? null;
-}
-
-function escapeHtmlText(value) {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
-}
-
-function escapeMarkdownText(value) {
-  return escapeHtmlText(value)
-    .replaceAll("\\", "\\\\")
-    .replace(/([\[\]_*`|])/g, "\\$1")
-    .replaceAll("\n", "\\n")
-    .replaceAll("\r", "\\r");
+  if (lower.endsWith(".app.tar.gz"))
+    return { platform: "macOS", kind: "app", label: "macOS app archive" };
+  if (lower.endsWith(".dmg"))
+    return { platform: "macOS", kind: "dmg", label: "macOS DMG (.dmg)" };
+  if (lower.endsWith(".exe"))
+    return {
+      platform: "Windows",
+      kind: "installer",
+      label: "Windows installer (.exe)",
+    };
+  if (lower.endsWith(".msi"))
+    return { platform: "Windows", kind: "msi", label: "Windows MSI (.msi)" };
+  if (lower.endsWith(".appimage"))
+    return { platform: "Linux", kind: "appimage", label: "Linux AppImage" };
+  if (lower.endsWith(".deb"))
+    return { platform: "Linux", kind: "deb", label: "Linux DEB (.deb)" };
+  if (lower.endsWith(".rpm"))
+    return { platform: "Linux", kind: "rpm", label: "Linux RPM (.rpm)" };
+  return null;
 }
 
 function markdownLink(label, url) {
-  return `[${escapeMarkdownText(label)}](${url})`;
+  return `[${label}](${url})`;
 }
 
 // Badges and download chips live inside `<p align="center">` raw-HTML blocks.
@@ -125,7 +114,46 @@ function houseBadge(name, alt, url) {
   return badgeImage(`${BADGE_BASE}/${name}.svg`, alt, url);
 }
 
-const files = await collectArtifactFiles(artifactsRoot);
+async function autoNotes() {
+  // Best effort: commits since the previous mausVoice-v* tag (or everything if none).
+  // spawnSync with an args array avoids shell interpretation entirely — the
+  // %(refname:short) format is otherwise parsed as a shell syntax error by /bin/sh.
+  const { spawnSync } = await import("node:child_process");
+  try {
+    const tagsResult = spawnSync(
+      "git",
+      [
+        "for-each-ref",
+        "refs/tags/mausVoice-v*",
+        "--sort=-version:refname",
+        "--format=%(refname:short)",
+      ],
+      { encoding: "utf8" },
+    );
+    const prev = (tagsResult.stdout ?? "")
+      .trim()
+      .split("\n")
+      .map((s) => s.trim())
+      .find((candidate) => candidate && candidate !== tag);
+    const range = prev ? `${prev}..HEAD` : "HEAD";
+    const logResult = spawnSync(
+      "git",
+      ["log", range, "--no-merges", "--format=%s"],
+      { encoding: "utf8" },
+    );
+    const log = (logResult.stdout ?? "").trim();
+    if (!log) return null;
+    return log
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => `- ${line.replace(/^[a-z]+(\([^)]*\))?:\s*/i, "")}`)
+      .join("\n");
+  } catch {
+    return null;
+  }
+}
+
+const files = await collectFiles(artifactsRoot);
 const downloads = [];
 for (const file of files) {
   const rel = path
@@ -154,7 +182,7 @@ const linRpm = downloads.find(
 );
 
 let notes = normalizeReleaseNotes(customNotes);
-if (!notes) notes = normalizeReleaseNotes(autoReleaseNotes(tag));
+if (!notes) notes = normalizeReleaseNotes(await autoNotes());
 if (!notes)
   notes =
     "This release continues the mausVoice desktop line with the changes on this branch.";
@@ -203,7 +231,7 @@ const body = [
   `  <img src="${MAUSVOICE_LOGO}" alt="mausVoice" width="110" />`,
   `</p>`,
   "",
-  `# ${escapeMarkdownText(releaseName)} <a href="${releasesUrl}"><img src="${CHANNEL_BADGE}" alt="${escapeHtmlText(versionLabel)} ${channelLabel}" /></a>`,
+  `# ${releaseName} <a href="${releasesUrl}"><img src="${CHANNEL_BADGE}" alt="${versionLabel} ${channelLabel}" /></a>`,
   "",
   "Voice typing for your own machine. Dictate into any app, clean it up with AI. No account, no subscription.",
   "",

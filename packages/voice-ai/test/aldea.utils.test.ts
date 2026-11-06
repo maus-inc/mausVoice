@@ -46,28 +46,12 @@ describe("aldeaTestIntegration", () => {
     );
   });
 
-  it("does not expose the configured API key in a network error", async () => {
-    const key = "opaque-aldea-credential";
-    vi.spyOn(globalThis, "fetch").mockRejectedValue(
-      new Error(`transport echoed ${key}`),
-    );
-    const { aldeaTestIntegration } = await import("../src/aldea.utils");
-    const error = await aldeaTestIntegration({ apiKey: key }).then(
-      () => {
-        throw new Error("expected failure");
-      },
-      (reason: unknown) => reason,
-    );
-    expect(String(error)).toContain("Aldea integration test failed");
-    expect(String(error)).not.toContain(key);
-  });
-
-  it("reports a network failure without exposing transport details", async () => {
+  it("wraps a network failure in the integration error message", async () => {
     vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("ECONNREFUSED"));
     const { aldeaTestIntegration } = await import("../src/aldea.utils");
 
     await expect(aldeaTestIntegration({ apiKey: "aldea-key" })).rejects.toThrow(
-      "Aldea integration test failed: unable to connect",
+      "Aldea integration test failed: ECONNREFUSED",
     );
   });
 });

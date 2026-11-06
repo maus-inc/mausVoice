@@ -1,5 +1,5 @@
 import { Stack } from "@mui/material";
-import { useEffect, useState, type ComponentType } from "react";
+import { useEffect, useState } from "react";
 import {
   ensureOnboardingFlow,
   markOnboardingStepEntered,
@@ -7,7 +7,6 @@ import {
 } from "../../actions/onboarding.actions";
 import { trackOnboardingStep } from "../../utils/analytics.utils";
 import { useAppStore } from "../../store";
-import type { OnboardingPageKey } from "../../state/onboarding.state";
 import { A11yPermsForm } from "./A11yPermsForm";
 import { ChooseLlmForm } from "./ChooseLlmForm";
 import { ChooseTranscriptionForm } from "./ChooseTranscriptionForm";
@@ -20,21 +19,6 @@ import { SignInForm } from "./SignInForm";
 import { TutorialForm } from "./TutorialForm";
 import { UnlockedProForm } from "./UnlockedProForm";
 import { UserDetailsForm } from "./UserDetailsForm";
-
-const ONBOARDING_PAGES: Record<OnboardingPageKey, ComponentType> = {
-  signIn: SignInForm,
-  personalCredentials: PersonalCredentialsForm,
-  chooseTranscription: ChooseTranscriptionForm,
-  chooseLlm: ChooseLlmForm,
-  userDetails: UserDetailsForm,
-  referralSource: ReferralSourceForm,
-  micPerms: MicPermsForm,
-  a11yPerms: A11yPermsForm,
-  keybindings: KeybindingsForm,
-  micCheck: MicCheckForm,
-  unlockedPro: UnlockedProForm,
-  tutorial: TutorialForm,
-};
 
 export default function OnboardingPage() {
   const currentPage = useAppStore((state) => state.onboarding.currentPage);
@@ -62,9 +46,6 @@ export default function OnboardingPage() {
   )
     return null;
 
-  const Page = Object.hasOwn(ONBOARDING_PAGES, currentPage)
-    ? ONBOARDING_PAGES[currentPage]
-    : null;
   return (
     <Stack
       direction="row"
@@ -74,7 +55,18 @@ export default function OnboardingPage() {
         height: "100%",
       }}
     >
-      {Page && <Page />}
+      {currentPage === "signIn" && <SignInForm />}
+      {currentPage === "personalCredentials" && <PersonalCredentialsForm />}
+      {currentPage === "chooseTranscription" && <ChooseTranscriptionForm />}
+      {currentPage === "chooseLlm" && <ChooseLlmForm />}
+      {currentPage === "userDetails" && <UserDetailsForm />}
+      {currentPage === "referralSource" && <ReferralSourceForm />}
+      {currentPage === "micPerms" && <MicPermsForm />}
+      {currentPage === "a11yPerms" && <A11yPermsForm />}
+      {currentPage === "keybindings" && <KeybindingsForm />}
+      {currentPage === "micCheck" && <MicCheckForm />}
+      {currentPage === "unlockedPro" && <UnlockedProForm />}
+      {currentPage === "tutorial" && <TutorialForm />}
     </Stack>
   );
 }

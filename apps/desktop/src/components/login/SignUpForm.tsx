@@ -1,6 +1,5 @@
-import { LoginCredentialsFields } from "./LoginCredentialsFields";
-import { PasswordField } from "./PasswordField";
-import { Button, Link, Stack } from "@mui/material";
+import { Visibility, VisibilityOff } from "@mui/icons-material";
+import { Button, IconButton, Link, Stack, TextField } from "@mui/material";
 import { useState } from "react";
 import { FormattedMessage } from "react-intl";
 import { produceAppState, useAppStore } from "../../store";
@@ -13,14 +12,16 @@ import {
   getSignUpPasswordValidation,
 } from "../../utils/login.utils";
 
-export const SignUpForm = ({
-  hideModeSwitch = false,
-}: {
+type SignUpFormProps = {
   hideModeSwitch?: boolean;
-}) => {
+};
+
+export const SignUpForm = ({ hideModeSwitch = false }: SignUpFormProps) => {
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [confirmPasswordVisible, setConfirmPasswordVisible] = useState(false);
 
+  const email = useAppStore((state) => state.login.email);
+  const password = useAppStore((state) => state.login.password);
   const confirmPassword = useAppStore((state) => state.login.confirmPassword);
   const canSubmit = useAppStore((state) => getCanSubmitSignUp(state));
   const showEmailForm = useAppStore((state) => getShouldShowEmailForm(state));
@@ -34,6 +35,18 @@ export const SignUpForm = ({
   const confirmPasswordValidation = useAppStore((state) =>
     getSignUpConfirmPasswordValidation(state),
   );
+
+  const handleChangeEmail = (event: React.ChangeEvent<HTMLInputElement>) => {
+    produceAppState((state) => {
+      state.login.email = event.target.value;
+    });
+  };
+
+  const handleChangePassword = (event: React.ChangeEvent<HTMLInputElement>) => {
+    produceAppState((state) => {
+      state.login.password = event.target.value;
+    });
+  };
 
   const handleChangeConfirmPassword = (
     event: React.ChangeEvent<HTMLInputElement>,
@@ -55,20 +68,65 @@ export const SignUpForm = ({
     <Stack spacing={2}>
       {showEmailForm && (
         <>
-          <LoginCredentialsFields
-            passwordVisible={passwordVisible}
-            onTogglePasswordVisibility={() => setPasswordVisible((v) => !v)}
-            emailValidation={emailValidation}
-            passwordValidation={passwordValidation}
+          <TextField
+            label={<FormattedMessage defaultMessage="Email" />}
+            type="email"
+            fullWidth
+            value={email}
+            onChange={handleChangeEmail}
+            error={!!emailValidation}
+            helperText={emailValidation}
+            size="small"
           />
-          <PasswordField
+          <TextField
+            label={<FormattedMessage defaultMessage="Password" />}
+            type={passwordVisible ? "text" : "password"}
+            fullWidth
+            value={password}
+            onChange={handleChangePassword}
+            error={!!passwordValidation}
+            helperText={passwordValidation}
+            size="small"
+            slotProps={{
+              input: {
+                endAdornment: (
+                  <IconButton
+                    onClick={() => setPasswordVisible((v) => !v)}
+                    tabIndex={-1}
+                    size="small"
+                  >
+                    {!passwordVisible ? <VisibilityOff /> : <Visibility />}
+                  </IconButton>
+                ),
+              },
+            }}
+          />
+          <TextField
             label={<FormattedMessage defaultMessage="Confirm password" />}
+            type={confirmPasswordVisible ? "text" : "password"}
+            fullWidth
             value={confirmPassword}
             onChange={handleChangeConfirmPassword}
-            visible={confirmPasswordVisible}
-            onToggleVisibility={() => setConfirmPasswordVisible((v) => !v)}
             error={!!confirmPasswordValidation}
             helperText={confirmPasswordValidation}
+            size="small"
+            slotProps={{
+              input: {
+                endAdornment: (
+                  <IconButton
+                    onClick={() => setConfirmPasswordVisible((v) => !v)}
+                    tabIndex={-1}
+                    size="small"
+                  >
+                    {!confirmPasswordVisible ? (
+                      <VisibilityOff />
+                    ) : (
+                      <Visibility />
+                    )}
+                  </IconButton>
+                ),
+              },
+            }}
           />
 
           <Button

@@ -1,13 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createDefaultPreferences } from "../actions/user.actions";
-import { showToast } from "../actions/toast.actions";
 import { POST_PROCESS_ERROR_CATEGORY } from "../actions/post-process-error-category";
 import { INITIAL_APP_STATE } from "../state/app.state";
 import { getAppState, produceAppState, setAppState } from "../store";
 import type { HandleTranscriptParams } from "../types/strategy.types";
 import { LOCAL_USER_ID } from "../utils/user.utils";
 import { DictationStrategy } from "./dictation.strategy";
-import type { BaseStrategy } from "./base.strategy";
 
 const {
   invokeMock,
@@ -71,6 +69,7 @@ vi.mock("../actions/app-target.actions", () => ({
 }));
 vi.mock("../actions/transcribe.actions", () => ({
   postProcessTranscript: vi.fn(),
+  appendTranscriptionWarnings: vi.fn(),
 }));
 
 // The strategy logs expected failures in these tests; keep the native log
@@ -201,25 +200,8 @@ const toastCall = <T>(
 };
 
 describe("DictationStrategy backlog lifecycle", () => {
-  it("retires internal work without clearing a successor's backlog", async () => {
-    const strategy = new DictationStrategy();
-    await strategy.cleanup(() => false);
-    expect(clearDictationBacklogMock).not.toHaveBeenCalled();
-    expect(incrementDictationBacklogNonceMock).not.toHaveBeenCalled();
-  });
-
-  it("does not advance a successor's nonce if cleanup reenters", async () => {
-    let current = true;
-    clearDictationBacklogMock.mockImplementationOnce(() => {
-      current = false;
-    });
-    await new DictationStrategy().cleanup(() => current);
-    expect(clearDictationBacklogMock).toHaveBeenCalledOnce();
-    expect(incrementDictationBacklogNonceMock).not.toHaveBeenCalled();
-  });
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(showToast).mockResolvedValue(undefined);
     hasDictationBacklogMock.mockReturnValue(false);
     drainDictationBacklogMock.mockResolvedValue({
       delivered: true,
@@ -227,23 +209,6 @@ describe("DictationStrategy backlog lifecycle", () => {
     });
     seedState();
     setTargetState("editable");
-  });
-
-  it("allows dictation and forwards overlay phases through the native command", async () => {
-    const strategy = new DictationStrategy();
-    expect(strategy.validateAvailability()).toBeNull();
-    await strategy.setPhase("recording");
-    expect(invokeMock).toHaveBeenCalledWith("set_phase", {
-      phase: "recording",
-    });
-  });
-
-  it("preserves the base strategy contract and propagates phase failures", async () => {
-    const strategy: BaseStrategy = new DictationStrategy();
-    expect(strategy.validateAvailability()).toBeNull();
-    const error = new Error("phase failed");
-    invokeMock.mockRejectedValueOnce(error);
-    await expect(strategy.setPhase("idle")).rejects.toBe(error);
   });
 
   it("awaits app-target resolution before onBeforeStart completes", async () => {
@@ -314,8 +279,6 @@ describe("DictationStrategy backlog lifecycle", () => {
     await vi.waitFor(() => {
       expect(routeTranscriptOutputMock).toHaveBeenCalledWith(
         expect.objectContaining({ isInterim: true }),
-        null,
-        expect.any(Function),
       );
     });
 
@@ -358,8 +321,6 @@ describe("DictationStrategy backlog lifecycle", () => {
 
     expect(routeTranscriptOutputMock).toHaveBeenCalledWith(
       expect.objectContaining({ text: "second " }),
-      null,
-      expect.any(Function),
     );
   });
 
@@ -407,71 +368,6 @@ describe("DictationStrategy backlog lifecycle", () => {
     expect(drainDictationBacklogMock).toHaveBeenCalledTimes(1);
   });
 
-  it("retires an in-flight app lookup when its strategy is cleaned up", async () => {
-    const { tryRegisterCurrentAppTarget } =
-      await import("../actions/app-target.actions");
-    const lookup = deferred<null>();
-    let current: (() => boolean) | undefined;
-    vi.mocked(tryRegisterCurrentAppTarget).mockImplementationOnce(
-      (predicate) => {
-        current = predicate;
-        return lookup.promise;
-      },
-    );
-    const strategy = new DictationStrategy();
-    const start = strategy.onBeforeStart();
-    expect(current?.()).toBe(true);
-    await strategy.cleanup();
-    expect(current?.()).toBe(false);
-    lookup.resolve(null);
-    await start;
-  });
-
-  it("does not insert a transcript when styling finishes after cleanup", async () => {
-    const { postProcessTranscript } =
-      await import("../actions/transcribe.actions");
-    const styling = deferred<{
-      transcript: string;
-      metadata: {};
-      warnings: string[];
-    }>();
-    vi.mocked(postProcessTranscript).mockReturnValueOnce(styling.promise);
-    const strategy = new DictationStrategy();
-    const result = strategy.handleTranscript(createHandleTranscriptParams());
-    await strategy.cleanup();
-    styling.resolve({
-      transcript: "retired words",
-      metadata: {},
-      warnings: [],
-    });
-    await expect(result).resolves.toMatchObject({
-      shouldContinue: false,
-      transcript: null,
-    });
-    expect(routeTranscriptOutputMock).not.toHaveBeenCalled();
-  });
-
-  it("does not append a failed old interim to the successor's backlog", async () => {
-    const route = deferred<{
-      delivered: boolean;
-      remote: boolean;
-      deliveredText: string | null;
-    }>();
-    const entered = deferred<void>();
-    routeTranscriptOutputMock.mockImplementationOnce(() => {
-      entered.resolve();
-      return route.promise;
-    });
-    const strategy = new DictationStrategy();
-    strategy.handleInterimSegment("old words");
-    await entered.promise;
-    await strategy.cleanup();
-    route.reject(new Error("old delivery failed"));
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(appendToDictationBacklogMock).not.toHaveBeenCalled();
-  });
-
   it("persists the edited review text as soon as it is delivered", async () => {
     const persistReviewedTranscript = vi.fn().mockResolvedValue(true);
     routeTranscriptOutputMock.mockResolvedValueOnce({
@@ -501,9 +397,10 @@ describe("DictationStrategy backlog lifecycle", () => {
     });
   });
 
-  it("does not retry an unconfirmed review write with a fresh row ID", async () => {
-    // A failed IPC may have committed before losing its reply. A second write
-    // with a new ID could create a duplicate.
+  it("reports the review as the row's owner when its persistence failed", async () => {
+    // The failure toast tells the user the transcript is still on the pill to
+    // retry from, so the row is the pill's. Reporting it as unowned would let
+    // the stop path write it too, and the retry would duplicate it.
     const persistReviewedTranscript = vi.fn().mockResolvedValue(false);
     routeTranscriptOutputMock.mockResolvedValueOnce({
       delivered: true,
@@ -520,52 +417,7 @@ describe("DictationStrategy backlog lifecycle", () => {
 
     expect(result).toMatchObject({
       transcript: "edited in the pill",
-      historyOwner: "review-unconfirmed",
-    });
-  });
-
-  it("retains the delivered review text if review persistence throws", async () => {
-    routeTranscriptOutputMock.mockResolvedValueOnce({
-      delivered: true,
-      remote: false,
-      deliveredText: "edited before persistence failure",
-    });
-    const result = await new DictationStrategy().handleTranscript(
-      createHandleTranscriptParams({
-        processedTranscript: "clean transcript",
-        persistReviewedTranscript: vi
-          .fn()
-          .mockRejectedValue(new Error("storage unavailable")),
-      }),
-    );
-    expect(result).toMatchObject({
-      transcript: "edited before persistence failure",
-      historyOwner: "stop-path",
-    });
-  });
-
-  it("retains delivered remote status when showing the success notification fails", async () => {
-    const { showSnackbar } = await import("../actions/app.actions");
-    vi.mocked(showSnackbar).mockImplementationOnce(() => {
-      throw new Error("notification unavailable");
-    });
-    produceAppState((state) => {
-      if (state.userPrefs) {
-        state.userPrefs.remoteOutputEnabled = true;
-        state.userPrefs.remoteTargetDeviceId = "receiver-1";
-      }
-    });
-    routeTranscriptOutputMock.mockResolvedValueOnce({
-      delivered: true,
-      remote: true,
-      deliveredText: "clean transcript ",
-    });
-    const result = await new DictationStrategy().handleTranscript(
-      createHandleTranscriptParams({ processedTranscript: "clean transcript" }),
-    );
-    expect(result).toMatchObject({
-      remoteStatus: "sent",
-      remoteDeviceId: "receiver-1",
+      historyOwner: "pill",
     });
   });
 
@@ -575,6 +427,247 @@ describe("DictationStrategy backlog lifecycle", () => {
     );
 
     expect(result).toMatchObject({ historyOwner: "stop-path" });
+  });
+
+  describe("concurrent history persistence", () => {
+    it("starts the History write during delivery instead of after it", async () => {
+      // Delivery is held open; the persistence hook must already have run
+      // before it resolves, which is the whole point of the overlap.
+      const releaseRouting = deferred<{
+        delivered: boolean;
+        remote: boolean;
+        deliveredText: string;
+      }>();
+      routeTranscriptOutputMock.mockImplementationOnce(
+        () => releaseRouting.promise,
+      );
+      const persistTranscriptNow = vi.fn().mockResolvedValue({
+        transcription: { id: "row-1" },
+        wordCount: 2,
+      });
+
+      const pending = new DictationStrategy().handleTranscript(
+        createHandleTranscriptParams({
+          processedTranscript: "clean transcript",
+          persistTranscriptNow,
+        }),
+      );
+      await vi.waitFor(() =>
+        expect(persistTranscriptNow).toHaveBeenCalledTimes(1),
+      );
+      expect(routeTranscriptOutputMock).toHaveBeenCalledTimes(1);
+
+      releaseRouting.resolve({
+        delivered: true,
+        remote: false,
+        deliveredText: "clean transcript ",
+      });
+      const result = await pending;
+
+      expect(persistTranscriptNow).toHaveBeenCalledWith(
+        expect.objectContaining({ transcript: "clean transcript" }),
+      );
+      expect(result).toMatchObject({
+        historyOwner: "concurrent",
+        transcript: "clean transcript",
+      });
+      await expect(result.pendingPersistence).resolves.toMatchObject({
+        wordCount: 2,
+      });
+    });
+
+    it("pins skipReview while the concurrent row is being written", async () => {
+      // A review opened mid-delivery would persist an edited second row; the
+      // routing call must carry skipReview so that cannot happen.
+      const persistTranscriptNow = vi.fn().mockResolvedValue({
+        transcription: { id: "row-1" },
+        wordCount: 2,
+      });
+
+      await new DictationStrategy().handleTranscript(
+        createHandleTranscriptParams({
+          processedTranscript: "clean transcript",
+          persistTranscriptNow,
+        }),
+      );
+
+      const [routeArgs] = routeTranscriptOutputMock.mock.calls[0] ?? [];
+      expect(routeArgs).toMatchObject({ skipReview: true });
+    });
+
+    it("keeps the serial path when review-before-insert is on", async () => {
+      const state = getAppState();
+      setAppState(
+        {
+          userPrefs: {
+            ...(state.userPrefs ?? createDefaultPreferences()),
+            reviewBeforeInsert: true,
+          },
+        },
+        false,
+      );
+      const persistTranscriptNow = vi.fn();
+
+      const result = await new DictationStrategy().handleTranscript(
+        createHandleTranscriptParams({
+          processedTranscript: "clean transcript",
+          persistTranscriptNow,
+        }),
+      );
+
+      expect(persistTranscriptNow).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ historyOwner: "stop-path" });
+      expect(result.pendingPersistence).toBeUndefined();
+      const [routeArgs] = routeTranscriptOutputMock.mock.calls[0] ?? [];
+      expect(routeArgs).not.toMatchObject({ skipReview: true });
+    });
+
+    it("keeps the serial path when a remote target is paired", async () => {
+      const state = getAppState();
+      setAppState(
+        {
+          userPrefs: {
+            ...(state.userPrefs ?? createDefaultPreferences()),
+            remoteOutputEnabled: true,
+            remoteTargetDeviceId: "device-1",
+          },
+        },
+        false,
+      );
+      const persistTranscriptNow = vi.fn();
+
+      const result = await new DictationStrategy().handleTranscript(
+        createHandleTranscriptParams({
+          processedTranscript: "clean transcript",
+          persistTranscriptNow,
+        }),
+      );
+
+      expect(persistTranscriptNow).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ historyOwner: "stop-path" });
+    });
+
+    it("keeps the serial path when no persistence hook is provided", async () => {
+      const result = await new DictationStrategy().handleTranscript(
+        createHandleTranscriptParams({
+          processedTranscript: "clean transcript",
+        }),
+      );
+
+      expect(result).toMatchObject({ historyOwner: "stop-path" });
+      expect(result.pendingPersistence).toBeUndefined();
+    });
+
+    it("keeps the serial path when a receiver is paired during post-processing", async () => {
+      // The gate re-reads preferences after the post-processing await rather
+      // than trusting the values captured before it: a receiver paired while
+      // the transcript was being polished must still take the serial path, so
+      // the row records the remote delivery instead of racing it.
+      const { postProcessTranscript } =
+        await import("../actions/transcribe.actions");
+      vi.mocked(postProcessTranscript).mockImplementationOnce(async () => {
+        await Promise.resolve();
+        const state = getAppState();
+        setAppState(
+          {
+            userPrefs: {
+              ...(state.userPrefs ?? createDefaultPreferences()),
+              remoteOutputEnabled: true,
+              remoteTargetDeviceId: "device-late",
+            },
+          },
+          false,
+        );
+        return { transcript: "clean transcript", warnings: [], metadata: {} };
+      });
+      const persistTranscriptNow = vi.fn();
+
+      const result = await new DictationStrategy().handleTranscript(
+        createHandleTranscriptParams({
+          rawTranscript: "raw transcript",
+          persistTranscriptNow,
+        }),
+      );
+
+      expect(persistTranscriptNow).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ historyOwner: "stop-path" });
+    });
+
+    it("attaches a delivery failure to the concurrent row", async () => {
+      // Routing rejects after the row was already written concurrently. The
+      // failure cannot ride on the original store call, so it must be appended
+      // to the stored row once the write settles.
+      const { appendTranscriptionWarnings } =
+        await import("../actions/transcribe.actions");
+      const appendMock = vi.mocked(appendTranscriptionWarnings);
+      appendMock.mockClear();
+      appendMock.mockResolvedValue(undefined);
+      const persistTranscriptNow = vi.fn().mockResolvedValue({
+        transcription: { id: "row-1" },
+        wordCount: 2,
+      });
+      routeTranscriptOutputMock.mockRejectedValueOnce(
+        new Error("paste failed"),
+      );
+
+      const result = await new DictationStrategy().handleTranscript(
+        createHandleTranscriptParams({
+          processedTranscript: "clean transcript",
+          persistTranscriptNow,
+        }),
+      );
+
+      expect(result).toMatchObject({ historyOwner: "concurrent" });
+      await vi.waitFor(() =>
+        expect(appendMock).toHaveBeenCalledWith("row-1", ["paste failed"]),
+      );
+    });
+
+    it("never rejects the pending write when persistence itself fails", async () => {
+      const persistTranscriptNow = vi
+        .fn()
+        .mockRejectedValue(new Error("disk full"));
+
+      const result = await new DictationStrategy().handleTranscript(
+        createHandleTranscriptParams({
+          processedTranscript: "clean transcript",
+          persistTranscriptNow,
+        }),
+      );
+
+      expect(result).toMatchObject({ historyOwner: "concurrent" });
+      await expect(result.pendingPersistence).resolves.toEqual({
+        transcription: null,
+        wordCount: 0,
+      });
+    });
+
+    it("does not persist concurrently when post-processing failed", async () => {
+      // The failed row is still stored, but by the stop path: concurrent
+      // persistence only starts on the delivery branch.
+      const { postProcessTranscript } =
+        await import("../actions/transcribe.actions");
+      vi.mocked(postProcessTranscript).mockResolvedValueOnce({
+        transcript: "raw text",
+        warnings: [POST_PROCESS_ERROR_CATEGORY.quotaOrPayment],
+        metadata: {
+          postProcessFailed: true,
+          postProcessError: POST_PROCESS_ERROR_CATEGORY.quotaOrPayment,
+        },
+      });
+      const persistTranscriptNow = vi.fn();
+
+      const result = await new DictationStrategy().handleTranscript(
+        createHandleTranscriptParams({
+          rawTranscript: "raw text",
+          toneId: "custom-tone",
+          persistTranscriptNow,
+        }),
+      );
+
+      expect(persistTranscriptNow).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ historyOwner: "stop-path" });
+    });
   });
 
   it("uses the text inserted after review as the History transcript", async () => {
@@ -632,7 +725,7 @@ describe("DictationStrategy backlog lifecycle", () => {
     expect(showToast).toHaveBeenCalledWith(
       expect.objectContaining({
         message:
-          "Styling failed: Quota or payment required. The final text was not inserted.",
+          "Styling failed: Quota or payment required. The raw transcript is saved in History.",
         toastType: "error",
       }),
     );
@@ -693,38 +786,6 @@ describe("DictationStrategy backlog lifecycle", () => {
     );
   });
 
-  it.each(["pending", "reject"] as const)(
-    "routes the local fallback when its notification is %s",
-    async (outcome) => {
-      const { postProcessTranscript } =
-        await import("../actions/transcribe.actions");
-      vi.mocked(postProcessTranscript).mockResolvedValueOnce({
-        transcript: "styled text",
-        warnings: [],
-        metadata: {
-          postProcessFallback: true,
-          postProcessError: POST_PROCESS_ERROR_CATEGORY.provider,
-        },
-      });
-      vi.mocked(showToast).mockImplementationOnce(() =>
-        outcome === "pending"
-          ? new Promise<void>(() => {})
-          : Promise.reject(new Error("pill unavailable")),
-      );
-      const result = await Promise.race([
-        new DictationStrategy().handleTranscript(
-          createHandleTranscriptParams(),
-        ),
-        new Promise<"stalled">((resolve) =>
-          setTimeout(() => resolve("stalled"), 100),
-        ),
-      ]);
-      expect(result).not.toBe("stalled");
-      expect(result).toMatchObject({ transcript: "styled text" });
-      expect(routeTranscriptOutputMock).toHaveBeenCalledOnce();
-    },
-  );
-
   it("still says the local style ran when the provider request actually failed", async () => {
     // The control for the case above: this is the run the message is written for, and
     // gating on the separator must not silence it.
@@ -783,7 +844,6 @@ describe("DictationStrategy backlog lifecycle", () => {
     expect(routeTranscriptOutputMock).toHaveBeenCalledWith(
       expect.objectContaining({ text: "clean transcript " }),
       null,
-      expect.any(Function),
     );
     await expect(completion).resolves.toMatchObject({
       transcript: "clean transcript",
@@ -877,7 +937,7 @@ describe("DictationStrategy backlog lifecycle", () => {
 
     const toast = toastCall<{ message: string }>(vi.mocked(showToast));
     expect(toast.message).toBe(
-      "Styling failed: Provider error. The final text was not inserted.",
+      "Styling failed: Provider error. The raw transcript is saved in History.",
     );
     expect(toast.message).not.toContain("gpt-oss");
     expect(toast.message).not.toContain("{reason}");
@@ -904,7 +964,7 @@ describe("DictationStrategy backlog lifecycle", () => {
     } as never);
 
     expect(toastCall<{ message: string }>(vi.mocked(showToast)).message).toBe(
-      "Styling failed: Provider error. The final text was not inserted.",
+      "Styling failed: Provider error. The raw transcript is saved in History.",
     );
   });
 
@@ -943,38 +1003,35 @@ describe("DictationStrategy backlog lifecycle", () => {
     expect(result.postProcessMetadata.postProcessFailed).toBe(true);
   });
 
-  it("drops queued interim output immediately when its auth session retires", async () => {
-    const strategy = new DictationStrategy();
-    let current = true;
-    strategy.handleInterimSegment("old words", () => current);
-    current = false;
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(invokeMock).not.toHaveBeenCalledWith("check_focused_paste_target");
-    expect(routeTranscriptOutputMock).not.toHaveBeenCalled();
-    expect(appendToDictationBacklogMock).not.toHaveBeenCalled();
-  });
-
-  it("drops interim output when auth retires during the target probe", async () => {
-    const strategy = new DictationStrategy();
-    const probeStarted = deferred<void>();
-    const probeGate = deferred<"editable">();
-    invokeMock.mockImplementation((command: string) => {
-      if (command === "check_focused_paste_target") {
-        probeStarted.resolve();
-        return probeGate.promise;
-      }
-      return Promise.resolve(undefined);
+  it("blocks insertion when a provider edit batch is partial", async () => {
+    const { postProcessTranscript } =
+      await import("../actions/transcribe.actions");
+    vi.mocked(postProcessTranscript).mockResolvedValueOnce({
+      transcript: "complete raw transcript",
+      warnings: [
+        "Applied 1 of 2 post-processing edits; 1 could not be applied",
+      ],
+      metadata: {
+        postProcessFailed: false,
+        postProcessFallback: true,
+        postProcessEditFailed: true,
+        postProcessEditFailureCount: 1,
+      },
     });
-    let current = true;
-    strategy.handleInterimSegment("old words", () => current);
-    await probeStarted.promise;
-    current = false;
-    probeGate.resolve("editable");
-    await Promise.resolve();
-    await Promise.resolve();
+    const { showToast } = await import("../actions/toast.actions");
+
+    const result = await new DictationStrategy().handleTranscript({
+      rawTranscript: "complete raw transcript",
+      toneId: "custom-tone",
+      currentApp: null,
+    } as never);
+
     expect(routeTranscriptOutputMock).not.toHaveBeenCalled();
-    expect(appendToDictationBacklogMock).not.toHaveBeenCalled();
+    // The strategy stays silent here: the History wording depends on whether
+    // storage actually produced a row, which only the caller knows.
+    expect(showToast).not.toHaveBeenCalled();
+    expect(result.transcript).toBe("complete raw transcript");
+    expect(result.postProcessMetadata.postProcessEditFailed).toBe(true);
   });
 
   it("drops in-flight interim paste work when cleanup runs while target probe is pending", async () => {

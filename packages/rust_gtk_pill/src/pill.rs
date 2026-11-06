@@ -177,7 +177,6 @@ pub fn run(receiver: Receiver<InMessage>) {
         cancel_velocity: Cell::new(0.0),
         flash_message: RefCell::new(String::new()),
         flash_visible: Cell::new(false),
-        flash_microphone_safety_owner: RefCell::new(None),
         flash_t: Cell::new(0.0),
         flash_velocity: Cell::new(0.0),
         flash_timer: Cell::new(0.0),
@@ -592,7 +591,6 @@ pub fn run(receiver: Receiver<InMessage>) {
                 InMessage::Toast {
                     message,
                     toast_type,
-                    microphone_safety_owner,
                     duration,
                     action,
                     action_label,
@@ -603,8 +601,6 @@ pub fn run(receiver: Receiver<InMessage>) {
                     state_tick
                         .flash_is_error
                         .set(toast_type.as_deref() == Some("error"));
-                    *state_tick.flash_microphone_safety_owner.borrow_mut() =
-                        microphone_safety_owner;
                     state_tick.flash_visible.set(true);
                     state_tick
                         .flash_timer
@@ -614,19 +610,8 @@ pub fn run(receiver: Receiver<InMessage>) {
                     *state_tick.flash_reject_action.borrow_mut() = reject_action;
                     *state_tick.flash_reject_action_label.borrow_mut() = reject_action_label;
                 }
-                InMessage::DismissToast {
-                    expected_action,
-                    expected_safety_owner,
-                } => {
-                    let matches_current = rust_pill_shared::toast_dismiss_matches(
-                        expected_action.as_deref(),
-                        state_tick.flash_action.borrow().as_deref(),
-                        expected_safety_owner.as_deref(),
-                        state_tick.flash_microphone_safety_owner.borrow().as_deref(),
-                    );
-                    if matches_current {
-                        clear_flash(&state_tick);
-                    }
+                InMessage::DismissToast => {
+                    clear_flash(&state_tick);
                 }
                 InMessage::Fireworks { message } => {
                     *state_tick.flash_message.borrow_mut() = message;
@@ -635,7 +620,6 @@ pub fn run(receiver: Receiver<InMessage>) {
                     *state_tick.flash_action_label.borrow_mut() = None;
                     *state_tick.flash_reject_action.borrow_mut() = None;
                     *state_tick.flash_reject_action_label.borrow_mut() = None;
-                    *state_tick.flash_microphone_safety_owner.borrow_mut() = None;
                     state_tick.flash_visible.set(true);
                     state_tick.flash_timer.set(FIREWORKS_TOTAL_DURATION);
 
@@ -651,7 +635,6 @@ pub fn run(receiver: Receiver<InMessage>) {
                     *state_tick.flash_action_label.borrow_mut() = None;
                     *state_tick.flash_reject_action.borrow_mut() = None;
                     *state_tick.flash_reject_action_label.borrow_mut() = None;
-                    *state_tick.flash_microphone_safety_owner.borrow_mut() = None;
                     state_tick.flash_visible.set(true);
                     state_tick.flash_timer.set(FLAME_TOTAL_DURATION);
 
@@ -877,7 +860,7 @@ pub fn run(receiver: Receiver<InMessage>) {
         let should_show = rust_pill_shared::should_show_pill(
             state_tick.visibility.get().into(),
             state_tick.phase.get() != Phase::Idle,
-            state_tick.owns_panel() || state_tick.recording_stop_safety_active(),
+            state_tick.owns_panel(),
         );
         if should_show {
             win_tick.show();
@@ -1416,7 +1399,6 @@ fn release_pointer_if_button_up(window: &gtk::Window, state: &PillState) {
 }
 
 fn clear_flash(state: &PillState) {
-    *state.flash_microphone_safety_owner.borrow_mut() = None;
     rust_pill_shared::clear_flash_state(
         &state.flash_visible,
         &state.flash_timer,
@@ -1709,9 +1691,7 @@ fn tick_flash(state: &PillState, tooltip_revealed: bool, dt: f64) {
     }
     let flash_target = rust_pill_shared::flash_banner_target(
         state.flash_visible.get(),
-        state.flash_action.borrow().is_some()
-            || state.flash_reject_action.borrow().is_some()
-            || state.recording_stop_safety_active(),
+        state.flash_action.borrow().is_some() || state.flash_reject_action.borrow().is_some(),
         tooltip_revealed,
     );
     rust_pill_shared::spring::spring_01(

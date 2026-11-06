@@ -156,7 +156,10 @@ describe("DictionaryRow context menu", () => {
     });
 
     const repo = await import("../../repos");
-    expect(repo.getTermRepo().deleteTerm).toHaveBeenCalledWith("term-1");
+    expect(repo.getTermRepo().deleteTerm).toHaveBeenCalledWith(
+      "term-1",
+      expect.any(Object),
+    );
     expect(document.querySelector('[role="menu"]')).toBeNull();
   });
 });

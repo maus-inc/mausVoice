@@ -53,3 +53,12 @@ export const CHAT_AGENT_CONFIG: AgentTypeConfig = {
     return getConfiguredMaxIterations();
   },
 };
+
+/** Registry-backed configs leave room for specialized agents without adding
+ * another switch statement in the run loop. */
+export const AGENT_TYPE_CONFIGS: Readonly<Record<string, AgentTypeConfig>> = {
+  chat: CHAT_AGENT_CONFIG,
+};
+
+export const getAgentTypeConfig = (agentType = "chat"): AgentTypeConfig =>
+  AGENT_TYPE_CONFIGS[agentType] ?? CHAT_AGENT_CONFIG;

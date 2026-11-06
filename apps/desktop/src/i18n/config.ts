@@ -22,3 +22,12 @@ export const SUPPORTED_LOCALES = [
 export type Locale = (typeof SUPPORTED_LOCALES)[number];
 
 export const DEFAULT_LOCALE = manifestData.defaultLocale as Locale;
+
+export const isSupportedLocale = (
+  locale: string | null | undefined,
+): locale is Locale => {
+  if (!locale) {
+    return false;
+  }
+  return SUPPORTED_LOCALES.includes(locale as Locale);
+};

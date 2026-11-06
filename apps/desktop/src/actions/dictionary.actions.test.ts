@@ -5,13 +5,17 @@ import { getAppState, setAppState } from "../store";
 
 const termMocks = vi.hoisted(() => ({
   createTerm: vi.fn(),
+  listTerms: vi.fn(),
   setLocalStorageValue: vi.fn(),
   warning: vi.fn(),
   nextId: 0,
 }));
 
 vi.mock("../repos", () => ({
-  getTermRepo: () => ({ createTerm: termMocks.createTerm }),
+  getTermRepo: () => ({
+    createTerm: termMocks.createTerm,
+    listTerms: termMocks.listTerms,
+  }),
 }));
 
 vi.mock("./local-storage.actions", () => ({
@@ -33,7 +37,8 @@ vi.mock("../utils/id.utils", () => ({
   createId: () => `id-${(termMocks.nextId += 1)}`,
 }));
 
-import { createGlossaryTerms } from "./dictionary.actions";
+import { createGlossaryTerms, loadDictionary } from "./dictionary.actions";
+import { trackDictionaryMutation } from "../utils/dictionary-mutations";
 
 const persistAs = (term: Term): Promise<Term> => Promise.resolve(term);
 
@@ -73,21 +78,6 @@ describe("createGlossaryTerms", () => {
     ]);
   });
 
-  it("keeps persisted terms when the onboarding checklist update fails", async () => {
-    termMocks.createTerm.mockImplementation(persistAs);
-    termMocks.setLocalStorageValue.mockImplementationOnce(() => {
-      throw new Error("checklist unavailable");
-    });
-    const result = await createGlossaryTerms(["Ada", "Lagos"]);
-    expect(result.created.map((term) => term.sourceValue)).toEqual([
-      "Ada",
-      "Lagos",
-    ]);
-    expect(result.failed).toBe(0);
-    expect(sources()).toEqual(["Lagos", "Ada"]);
-    expect(termMocks.warning).toHaveBeenCalledOnce();
-  });
-
   it("skips a value that is only whitespace", async () => {
     termMocks.createTerm.mockImplementation(persistAs);
 
@@ -125,34 +115,6 @@ describe("createGlossaryTerms", () => {
     expect(termMocks.setLocalStorageValue).toHaveBeenCalledTimes(2);
   });
 
-  it.each(["resolve", "reject"] as const)(
-    "retires an in-flight guarded term when the write %ss",
-    async (outcome) => {
-      let finish!: (value: Term) => void;
-      let fail!: (error: Error) => void;
-      termMocks.createTerm.mockReturnValueOnce(
-        new Promise((resolve, reject) => {
-          finish = resolve;
-          fail = reject;
-        }),
-      );
-      let active = true;
-      const pending = createGlossaryTerms(["Ada", "Lagos"], () => active);
-      await vi.waitFor(() =>
-        expect(termMocks.createTerm).toHaveBeenCalledOnce(),
-      );
-      const term = termMocks.createTerm.mock.calls[0][0] as Term;
-      active = false;
-      if (outcome === "resolve") finish(term);
-      else fail(new Error("retired"));
-      await expect(pending).resolves.toEqual({ created: [], failed: 0 });
-      expect(termMocks.createTerm).toHaveBeenCalledOnce();
-      expect(sources()).toEqual([]);
-      expect(termMocks.setLocalStorageValue).not.toHaveBeenCalled();
-      expect(termMocks.warning).not.toHaveBeenCalled();
-    },
-  );
-
   it("adds one value at a time, in the order given", async () => {
     const inFlight: string[] = [];
     const peak: string[] = [];
@@ -167,5 +129,81 @@ describe("createGlossaryTerms", () => {
     await createGlossaryTerms(["a", "b", "c"]);
 
     expect(peak).toEqual(["a", "b", "c"]);
+  });
+});
+
+describe("dictionary list reads during writes", () => {
+  beforeEach(seed);
+  it("keeps an optimistic new term while its creation is pending", async () => {
+    let release!: (value: Term) => void;
+    let created!: Term;
+    let persisted: Term | null = null;
+    termMocks.createTerm.mockImplementation((term: Term) => {
+      created = term;
+      return new Promise<Term>((resolve) => {
+        release = resolve;
+      });
+    });
+    termMocks.listTerms.mockImplementation(async () =>
+      persisted ? [persisted] : [],
+    );
+    const creation = createGlossaryTerms(["new word"]);
+    await vi.waitFor(() => expect(termMocks.createTerm).toHaveBeenCalled());
+    const loading = loadDictionary();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(sources()).toEqual(["new word"]);
+    expect(termMocks.listTerms).not.toHaveBeenCalled();
+    persisted = created;
+    release(created);
+    await creation;
+    await loading;
+    expect(sources()).toEqual(["new word"]);
+  });
+
+  it("waits for a write scheduled between an empty wait and the read", async () => {
+    let release!: () => void;
+    let write!: Promise<void>;
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    queueMicrotask(() => {
+      write = trackDictionaryMutation(() => pending);
+    });
+    termMocks.listTerms.mockResolvedValue([]);
+    const loading = loadDictionary();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(termMocks.listTerms).not.toHaveBeenCalled();
+    release();
+    await write;
+    await loading;
+    expect(termMocks.listTerms).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries an older in-flight list after a new term is saved", async () => {
+    let resolveOld!: (terms: Term[]) => void;
+    let saved!: Term;
+    termMocks.listTerms
+      .mockImplementationOnce(
+        () =>
+          new Promise<Term[]>((resolve) => {
+            resolveOld = resolve;
+          }),
+      )
+      .mockImplementation(async () => [saved]);
+    termMocks.createTerm.mockImplementation(async (term: Term) => {
+      saved = term;
+      return term;
+    });
+    const loading = loadDictionary();
+    await vi.waitFor(() =>
+      expect(termMocks.listTerms).toHaveBeenCalledTimes(1),
+    );
+    await createGlossaryTerms(["new word"]);
+    resolveOld([]);
+    await loading;
+    expect(termMocks.listTerms).toHaveBeenCalledTimes(2);
+    expect(sources()).toEqual(["new word"]);
   });
 });

@@ -140,13 +140,20 @@ it already rules out both modes.
 
 ## Shared domain types
 
-`apps/desktop/src/types/expansion-flags.types.ts` defines the feature-flag map
-used by the app. The meeting, automation, translation, snippet, and workflow
-types described in the original plan had no consumers. The cleanup removed
-those draft files. Each feature should define its domain types alongside its
-implementation, based on its actual storage and event contracts. The draft
-shapes remain in Git at commit `5ba53332fd7582d23a472d1d0895a9c0dc776cc5`
-under `apps/desktop/src/types/` for reference.
+Add to `apps/desktop/src/types/`:
+
+- `meetings.types.ts` with `Meeting`, `MeetingSegment`, `MeetingSpeaker`, and
+  `MeetingSummary`.
+- `automation.types.ts` with `ApiKeyCredential`, `WebhookConfig`, `ApiRequest`,
+  and `ApiResponse`.
+- `translations.types.ts` with `TranslationRequest` and `TranslationResult`.
+- `snippets.types.ts` with `Snippet`, `SnippetVariable`, and
+  `SnippetVariableType`.
+- `workflows.types.ts` with `Workflow`, `WorkflowAction`, `WorkflowRun`,
+  `WorkflowTriggerType`, and `WorkflowStatus`. The `voiceWorkflowsEnabled` flag
+  and the three workflow events need these shapes, and no other module defines
+  them.
+- `expansion-flags.types.ts` with the feature-flag map type.
 
 ## Event contracts
 
@@ -184,12 +191,14 @@ incognito mode is on or an ephemeral session is active.
 2. Redaction helper covers strings, errors, and objects; unit tests cover each.
 3. `isPersistenceAllowed()` returns false when incognito is on or an ephemeral
    session is active; existing incognito behavior is unchanged.
-4. The expansion-flag types compile in `apps/desktop/src/types/`. Feature
-   implementations will add their own domain types.
-5. Event contracts bind each name to its payload through one map. The listener
-   tests cover payload inference, callback replacement, cleanup, and errors. No
-   production component subscribes to an expansion event yet.
-
+4. Shared domain types compile in `apps/desktop/src/types/`.
+5. Event contracts bind each name to its payload through one map, and the typed
+   listener infers that payload at the call site. **The second clause cannot be
+   met yet: there is no call site.** The map is in place, but
+   `useExpansionEventListener` (`apps/desktop/src/hooks/tauri.hooks.ts`) is
+   referenced by nothing else in the tree — not one caller, and not one test
+   (`tauri.hooks.ts` has no sibling `.test.ts`). So the inference is not merely
+   unused, it is unexercised. Waits on the emitters below.
 6. An ephemeral session suppresses persistence, fires its event once per
    transition, and does not survive a restart. **Implemented, and unreachable
    from production.** `ephemeralSessionEnabled` is a real flag, defaulting to
@@ -223,9 +232,7 @@ can build on:
 - `src/features/featureFlags.ts` for the `meetingNotesEnabled` gate.
 - `src/utils/incognito.utils.ts` for persistence suppression, which also covers
   an active ephemeral session.
-- The meeting domain type draft in Git at commit
-  `5ba53332fd7582d23a472d1d0895a9c0dc776cc5`, to review against the feature
-  implementation before adding types.
+- `apps/desktop/src/types/meetings.types.ts` for domain types.
 - `MEETING_STARTED_EVENT`, `MEETING_STOPPED_EVENT`, and
   `MEETING_SUMMARY_GENERATED_EVENT` in
   `packages/desktop-utils/src/tauri-events.ts`, plus their payload types.

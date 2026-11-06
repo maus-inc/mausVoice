@@ -1,19 +1,18 @@
-import { useHotkeyCapture } from "../../hooks/hotkey-capture.hooks";
-import {
-  hasNewHeldKeys,
-  uniqueHeldKeys,
-} from "../../utils/hotkey-capture.utils";
 import { ArrowRight } from "lucide-react";
 import { Box, Button, Stack, Typography } from "@mui/material";
 import { useEffect, useRef, useState } from "react";
 import { FormattedMessage } from "react-intl";
-import { savePrimaryHotkey } from "../../actions/hotkey.actions";
+import { showErrorSnackbar } from "../../actions/app.actions";
 import { goToOnboardingPage } from "../../actions/onboarding.actions";
-import { useAppStore } from "../../store";
+import { getHotkeyRepo } from "../../repos";
+import { produceAppState, useAppStore } from "../../store";
 import { trackButtonClick } from "../../utils/analytics.utils";
+import { registerHotkeys } from "../../utils/app.utils";
+import { createId } from "../../utils/id.utils";
 import {
   DICTATE_HOTKEY,
   getDefaultHotkeyCombosForAction,
+  syncHotkeyCombosToNative,
 } from "../../utils/keyboard.utils";
 import { HotkeyBadge } from "../common/HotkeyBadge";
 import { KeyPressSimulator } from "../common/KeyPressSimulator";
@@ -22,56 +21,6 @@ import {
   DualPaneLayout,
   OnboardingFormLayout,
 } from "./OnboardingCommon";
-
-const KeyCapturePreview = ({
-  isListening,
-  keysHeld,
-  currentKeys,
-}: {
-  isListening: boolean;
-  keysHeld: string[];
-  currentKeys: string[];
-}) => (
-  <Box
-    sx={{
-      bgcolor: "level2",
-      borderRadius: 2,
-      p: 3,
-      display: "flex",
-      justifyContent: "center",
-      alignItems: "center",
-      minHeight: 80,
-      border: "2px solid",
-      borderColor: isListening ? "primary.main" : "transparent",
-    }}
-  >
-    {isListening ? (
-      keysHeld.length > 0 ? (
-        <KeyPressSimulator keys={keysHeld} />
-      ) : (
-        <Box
-          sx={{
-            height: 48,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          <Typography
-            variant="body2"
-            sx={{
-              color: "text.secondary",
-            }}
-          >
-            <FormattedMessage defaultMessage="Press your new key combo..." />
-          </Typography>
-        </Box>
-      )
-    ) : (
-      <KeyPressSimulator keys={currentKeys} />
-    )}
-  </Box>
-);
 
 export const KeybindingsForm = () => {
   const [isListening, setIsListening] = useState(false);
@@ -92,11 +41,10 @@ export const KeybindingsForm = () => {
   const lastEmittedRef = useRef<string[]>(currentKeys);
   const previousKeysHeldRef = useRef<string[]>([]);
 
-  useHotkeyCapture(isListening);
   useEffect(() => {
-    if (!isListening) return;
-    const focusTimer = setTimeout(() => boxRef.current?.focus(), 0);
-    return () => clearTimeout(focusTimer);
+    produceAppState((draft) => {
+      draft.isRecordingHotkey = isListening;
+    });
   }, [isListening]);
 
   useEffect(() => {
@@ -105,7 +53,12 @@ export const KeybindingsForm = () => {
       return;
     }
 
-    const held = uniqueHeldKeys(keysHeld);
+    const seen = new Set<string>();
+    const held = keysHeld.filter((k: string) => {
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
 
     const previousHeld = previousKeysHeldRef.current;
     if (previousHeld.length > 0 && held.length < previousHeld.length) {
@@ -124,20 +77,44 @@ export const KeybindingsForm = () => {
     }
 
     const last = lastEmittedRef.current ?? [];
-    if (hasNewHeldKeys(held, last)) {
+    const lastSet = new Set(last);
+    const anyNewKey = held.some((k) => !lastSet.has(k));
+    if (held.length > last.length || anyNewKey) {
       lastEmittedRef.current = held;
       void saveKey(held);
     }
   }, [keysHeld, isListening]);
 
   const saveKey = async (keys: string[]) => {
-    await savePrimaryHotkey(DICTATE_HOTKEY, keys);
+    const newValue = {
+      id: primaryHotkey?.id ?? createId(),
+      actionName: DICTATE_HOTKEY,
+      keys,
+    };
+
+    try {
+      produceAppState((draft) => {
+        registerHotkeys(draft, [newValue]);
+        if (!draft.settings.hotkeyIds.includes(newValue.id)) {
+          draft.settings.hotkeyIds.push(newValue.id);
+        }
+        draft.settings.hotkeysStatus = "success";
+      });
+      await getHotkeyRepo().saveHotkey(newValue);
+      await syncHotkeyCombosToNative();
+    } catch (error) {
+      console.error("Failed to save hotkey", error);
+      showErrorSnackbar("Failed to save hotkey. Please try again.");
+    }
   };
 
   const handleChangeShortcut = () => {
     trackButtonClick("onboarding_change_hotkey");
     lastEmittedRef.current = [];
     setIsListening(true);
+    setTimeout(() => {
+      boxRef.current?.focus();
+    }, 0);
   };
 
   const handleConfirm = () => {
@@ -212,11 +189,45 @@ export const KeybindingsForm = () => {
         )}
       </Typography>
 
-      <KeyCapturePreview
-        isListening={isListening}
-        keysHeld={keysHeld}
-        currentKeys={currentKeys}
-      />
+      <Box
+        sx={{
+          bgcolor: "level2",
+          borderRadius: 2,
+          p: 3,
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+          minHeight: 80,
+          border: "2px solid",
+          borderColor: isListening ? "primary.main" : "transparent",
+        }}
+      >
+        {isListening ? (
+          keysHeld.length > 0 ? (
+            <KeyPressSimulator keys={keysHeld} />
+          ) : (
+            <Box
+              sx={{
+                height: 48,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <Typography
+                variant="body2"
+                sx={{
+                  color: "text.secondary",
+                }}
+              >
+                <FormattedMessage defaultMessage="Press your new key combo..." />
+              </Typography>
+            </Box>
+          )
+        ) : (
+          <KeyPressSimulator keys={currentKeys} />
+        )}
+      </Box>
 
       <Stack
         direction="row"

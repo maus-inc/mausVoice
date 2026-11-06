@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { createTheme, ThemeProvider } from "@mui/material/styles";
+import { ThemeProvider } from "@mui/material/styles";
 import { StrictMode, act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -113,12 +113,20 @@ afterEach(() => {
   }
 });
 
-const render = async () => {
+const render = async (
+  clampPaddingRight?: number | string,
+  inlineToggleRight?: number | string,
+) => {
   await act(async () => {
     root?.render(
       <StrictMode>
         <ThemeProvider theme={theme}>
-          <TypographyWithMore variant="body2" maxLines={3}>
+          <TypographyWithMore
+            variant="body2"
+            maxLines={3}
+            clampPaddingRight={clampPaddingRight}
+            inlineToggleRight={inlineToggleRight}
+          >
             A long transcription that keeps going well past three lines so the
             clamp engages and the disclosure control appears.
           </TypographyWithMore>
@@ -149,157 +157,51 @@ const requireToggleButton = (): HTMLButtonElement => {
   return found;
 };
 
-describe("TypographyWithMore sx composition", () => {
-  it.each(["function", "array"] as const)(
-    "preserves %s styles while text is clamped",
-    async (shape) => {
-      const callback = () => ({ color: "rgb(255, 0, 0)", fontWeight: 700 });
-      const sx =
-        shape === "function"
-          ? callback
-          : [{ color: "rgb(0, 0, 255)" }, callback];
-      await act(async () => {
-        root?.render(
-          <ThemeProvider theme={theme}>
-            <TypographyWithMore maxLines={3} sx={sx} data-testid="content">
-              A long transcription which exceeds the measurement threshold.
-            </TypographyWithMore>
-          </ThemeProvider>,
-        );
-      });
-      const visible = container.querySelector<HTMLElement>(
-        '[data-testid="content"]',
-      );
-      expect(visible).not.toBeNull();
-      if (!visible) throw new Error("Missing content");
-      expect(window.getComputedStyle(visible).color).toBe("rgb(255, 0, 0)");
-      expect(window.getComputedStyle(visible).fontWeight).toBe("700");
-      const css = styleText();
-      expect(
-        [...visible.classList].some(
-          (name) =>
-            css.includes(`.${name}{`) && css.includes("-webkit-line-clamp:3"),
-        ),
-      ).toBe(true);
-      await act(async () => requireToggleButton().click());
-      expect(window.getComputedStyle(visible).color).toBe("rgb(255, 0, 0)");
-    },
-  );
-
-  it("does not clamp or show a toggle when the text fits", async () => {
-    Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
-      configurable: true,
-      value: 20,
-    });
-    await act(async () => {
-      root?.render(
-        <ThemeProvider theme={theme}>
-          <TypographyWithMore
-            sx={() => ({ color: "rgb(255, 0, 0)" })}
-            data-testid="content"
-          >
-            Short text
-          </TypographyWithMore>
-        </ThemeProvider>,
-      );
-    });
-    const visible = container.querySelector<HTMLElement>(
-      '[data-testid="content"]',
-    );
-    expect(visible).not.toBeNull();
-    if (!visible) throw new Error("Missing content");
-    expect(window.getComputedStyle(visible).color).toBe("rgb(255, 0, 0)");
-    expect(toggleButton()).toBeUndefined();
-  });
-});
-
-describe("TypographyWithMore overflow measurement", () => {
-  it("remeasures on resize and disconnects its observer on unmount", async () => {
-    let notify: ResizeObserverCallback | undefined;
-    const observe = vi.fn();
-    const disconnect = vi.fn();
-    vi.stubGlobal(
-      "ResizeObserver",
-      class {
-        constructor(callback: ResizeObserverCallback) {
-          notify = callback;
-        }
-        observe = observe;
-        disconnect = disconnect;
-      },
-    );
-    try {
-      await act(async () => {
-        root?.render(
-          <ThemeProvider theme={theme}>
-            <TypographyWithMore>Text</TypographyWithMore>
-          </ThemeProvider>,
-        );
-      });
-      expect(observe).toHaveBeenCalledTimes(2);
-      expect(toggleButton()).toBeDefined();
-      Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
-        configurable: true,
-        value: 20,
-      });
-      if (!notify) throw new Error("Resize observer was not created");
-      act(() => notify?.([], {} as ResizeObserver));
-      expect(toggleButton()).toBeUndefined();
-      Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
-        configurable: true,
-        value: 320,
-      });
-      act(() => notify?.([], {} as ResizeObserver));
-      expect(toggleButton()).toBeDefined();
-      act(() => root?.unmount());
-      root = undefined;
-      expect(disconnect).toHaveBeenCalledOnce();
-    } finally {
-      vi.unstubAllGlobals();
-    }
-  });
-
-  it("remeasures when children change without a resize event", async () => {
-    const renderText = async (text: string) => {
-      await act(async () =>
-        root?.render(
-          <ThemeProvider theme={theme}>
-            <TypographyWithMore>{text}</TypographyWithMore>
-          </ThemeProvider>,
-        ),
-      );
-    };
-    await renderText("long");
-    expect(toggleButton()).toBeDefined();
-    Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
-      configurable: true,
-      value: 20,
-    });
-    await renderText("short");
-    expect(toggleButton()).toBeUndefined();
-  });
-});
-
 describe("TypographyWithMore disclosure toggle", () => {
-  it("uses palette fallbacks when the theme has no CSS variables", async () => {
-    const plainTheme = createTheme();
-    await act(async () => {
-      root?.render(
-        <ThemeProvider theme={plainTheme}>
-          <TypographyWithMore>Overflowing content</TypographyWithMore>
-        </ThemeProvider>,
+  it("uses custom clamp padding for both visible and measured text", async () => {
+    await render("12px");
+
+    const paragraphs = Array.from(
+      container.querySelectorAll("p.MuiTypography-root"),
+    );
+    expect(paragraphs).toHaveLength(2);
+    expect(
+      paragraphs.map(
+        (paragraph) => window.getComputedStyle(paragraph).paddingRight,
+      ),
+    ).toEqual(["12px", "12px"]);
+  });
+
+  it("applies the explicit right inset for the inline disclosure control", async () => {
+    await render("56px", "12px");
+    const button = window.getComputedStyle(requireToggleButton());
+    expect(button.right).toBe("12px");
+    expect(button.bottom).toBe("var(--app-spacing)");
+  });
+
+  it("moves the compact disclosure below text and removes reserved insets in narrow containers", async () => {
+    await render("56px", "12px");
+    const styles = styleText().replace(/\s+/g, "");
+    expect(styles).toContain("@containertypography-with-more(max-width:480px)");
+    expect(styles).toContain("position:static");
+
+    const paragraphs = Array.from(
+      container.querySelectorAll("p.MuiTypography-root"),
+    );
+    expect(paragraphs).toHaveLength(2);
+    for (const paragraph of paragraphs) {
+      const emotionClass = Array.from(paragraph.classList).find((className) =>
+        className.startsWith("css-"),
       );
-    });
-    const button = requireToggleButton();
-    const inlineCss = hoverRulesFor(button);
-    expect(inlineCss).toContain(
-      `background-color:${plainTheme.palette.background.paper}`,
-    );
-    await act(async () => button.click());
-    const chipCss = hoverRulesFor(requireToggleButton());
-    expect(chipCss).toContain(
-      `background-color:${plainTheme.palette.action.hover}`,
-    );
+      if (!emotionClass) {
+        throw new Error("Responsive text has no Emotion-generated class");
+      }
+      const narrowRules = styles
+        .split("@containertypography-with-more(max-width:480px){")
+        .filter((rule) => rule.startsWith(`.${emotionClass}{`));
+      expect(narrowRules).toHaveLength(1);
+      expect(narrowRules[0]).toContain("padding-right:0");
+    }
   });
 
   it("renders collapsed with an inline 'Show more' whose hover is a link affordance, not a repaint of the fade", async () => {
@@ -360,14 +262,16 @@ describe("TypographyWithMore disclosure toggle", () => {
     );
   });
 
-  it("paints the affordance at rest where there is no hover to trigger it", async () => {
+  it("paints the affordance at rest for a coarse touch pointer", async () => {
     await render();
     const button = requireToggleButton();
 
-    // A touch device never fires :hover, so a hover-only underline left a
-    // truncated transcript with no affordance at all. The no-hover query
-    // carries the same revealed state.
-    const touch = stateRulesFor(button, "@media (hover: none)");
+    // A touch device never fires :hover, so its resting state must retain
+    // the inline link cue without leaking into no-pointer desktop screenshots.
+    const touch = stateRulesFor(
+      button,
+      "@media (hover: none) and (pointer: coarse)",
+    );
     expect(touch).toContain("text-decoration-color:currentColor");
   });
 

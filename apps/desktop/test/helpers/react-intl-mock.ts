@@ -34,8 +34,8 @@ const FormattedMessageMock = ((props: { defaultMessage: string }): string =>
   props.defaultMessage) as never;
 
 export const reactIntlMockModule = async (
-  importOriginal: () => Promise<typeof import("react-intl")>,
-): Promise<typeof import("react-intl")> => {
+  importOriginal: () => Promise<ReactIntlModule>,
+): Promise<ReactIntlModule> => {
   const actual = await importOriginal();
   return {
     ...actual,
@@ -47,8 +47,8 @@ export const reactIntlMockModule = async (
 
 /** Keep real locale formatting, adding only the IDs injected by the Vite build. */
 export const reactIntlWithIdsModule = async (
-  importOriginal: () => Promise<typeof import("react-intl")>,
-): Promise<typeof import("react-intl")> => {
+  importOriginal: () => Promise<ReactIntlModule>,
+): Promise<ReactIntlModule> => {
   const actual = await importOriginal();
   const { createElement } = await import("react");
   const { formatjsOverrideIdFn } =
@@ -56,27 +56,28 @@ export const reactIntlWithIdsModule = async (
   const withId = (descriptor: MessageDescriptor): MessageDescriptor => ({
     ...descriptor,
     id: formatjsOverrideIdFn(
-      descriptor.id,
+      descriptor.id === descriptor.defaultMessage ? undefined : descriptor.id,
       typeof descriptor.defaultMessage === "string"
         ? descriptor.defaultMessage
         : undefined,
     ),
   });
+  // One wrapper for both entry points, so `createIntl` and `useIntl` cannot
+  // drift into different id-injection behaviour.
+  const withIdIntl = (intl: IntlShape): IntlShape => {
+    const formatMessage = ((...args: Parameters<IntlShape["formatMessage"]>) =>
+      intl.formatMessage(
+        withId(args[0]),
+        args[1],
+        args[2],
+      )) as IntlShape["formatMessage"];
+    return { ...intl, formatMessage };
+  };
   return {
     ...actual,
     FormattedMessage: (props) =>
       createElement(actual.FormattedMessage, { ...props, ...withId(props) }),
-    useIntl: () => {
-      const intl = actual.useIntl();
-      const formatMessage = ((
-        ...args: Parameters<IntlShape["formatMessage"]>
-      ) =>
-        intl.formatMessage(
-          withId(args[0]),
-          args[1],
-          args[2],
-        )) as IntlShape["formatMessage"];
-      return { ...intl, formatMessage };
-    },
+    createIntl: (config, cache) => withIdIntl(actual.createIntl(config, cache)),
+    useIntl: () => withIdIntl(actual.useIntl()),
   };
 };

@@ -1,8 +1,9 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 
-type TerminatedPayload = Parameters<
-  NonNullable<SpawnSidecarInput["onClose"]>
->[0];
+type TerminatedPayload = {
+  code: number | null;
+  signal: number | null;
+};
 
 type CommandEvent =
   | { event: "Stdout"; payload: string }
@@ -28,7 +29,7 @@ export type SpawnSidecarInput = {
   options?: ShellSpawnOptions;
   onStdout?: (data: string) => void;
   onStderr?: (data: string) => void;
-  onClose?: (payload: { code: number | null; signal: number | null }) => void;
+  onClose?: (payload: TerminatedPayload) => void;
   onError?: (error: string) => void;
 };
 

@@ -1,11 +1,8 @@
 import {
   retry,
   countWords,
-  discardResponseBody,
   parseJsonObject,
   HttpError,
-  raceAbort,
-  readHttpStatus,
 } from "@maus-inc/utilities";
 import type {
   JsonResponse,
@@ -17,11 +14,6 @@ import type {
 } from "@maus-inc/types";
 import type { CustomFetch, DiscoveredModelId } from "./types";
 import { buildGeminiThinkingConfig } from "./reasoning.utils";
-import {
-  isAbortError,
-  parsePrivateProviderJson,
-  requestSensitiveTransport,
-} from "./provider-response.utils";
 
 export const GEMINI_GENERATE_TEXT_MODELS = [
   "gemini-3.8-flash",
@@ -60,6 +52,7 @@ type GeminiFunctionDeclaration = {
 
 type GeminiPart = {
   text?: string;
+  audioTranscription?: { text: string };
   inlineData?: { mimeType: string; data: string };
   fileData?: { mimeType: string; fileUri: string };
   functionCall?: { name?: string; args?: Record<string, unknown> };
@@ -141,8 +134,14 @@ class GeminiFileProcessingError extends Error {
  * provider in this package reports failures with the same shape.
  */
 class GeminiHttpError extends HttpError {
-  constructor(status: number, retryAfter?: string | null) {
-    super(status, `Gemini responded ${status}`, { retryAfter });
+  constructor(status: number, detail: string, retryAfter?: string | null) {
+    super(
+      status,
+      detail
+        ? `Gemini responded ${status}: ${detail}`
+        : `Gemini responded with status ${status}`,
+      { retryAfter },
+    );
     this.name = "GeminiHttpError";
   }
 }
@@ -152,93 +151,32 @@ class GeminiHttpError extends HttpError {
 // the whole audio body for nothing. Abort/cancel must also stop retrying —
 // including the deadline path: AbortSignal.timeout rejects with a
 // "TimeoutError"-named reason, not "AbortError".
-const isAbortFailure = (error: Error): boolean =>
-  error.name === "AbortError" ||
-  error.message.toLowerCase().includes("aborted");
-
-const hasAbortCause = (error: Error): boolean => {
-  const cause = (error as Error & { cause?: unknown }).cause;
-  return cause instanceof Error && isAbortFailure(cause);
-};
-
-/** Sanitized transport errors retain data needed by the existing retry policy. */
-class GeminiTransportFailure extends Error {
-  readonly status: number | undefined;
-  readonly retryable: boolean;
-
-  constructor(error: unknown) {
-    super("Gemini transport request failed");
-    this.name = geminiTransportErrorName(error);
-    this.status = readHttpStatus(error);
-    this.retryable = isGeminiFailureRetryable(error);
-  }
-}
-
-class GeminiTransportHttpFailure extends HttpError {
-  readonly retryable: boolean;
-
-  constructor(error: HttpError, status: number) {
-    super(status, `Gemini transport request failed (HTTP ${status})`);
-    // Preserve the already-parsed hint exactly, including fractional HTTP-date
-    // delays, without retaining the original error or its private message.
-    const hint = error.retryAfterMs;
-    Object.defineProperty(this, "retryAfterMs", {
-      value: typeof hint === "number" && Number.isFinite(hint) ? hint : null,
-      enumerable: true,
-    });
-    this.name = geminiTransportErrorName(error);
-    this.retryable = isGeminiFailureRetryable(error);
-  }
-}
-
-const geminiTransportErrorName = (error: unknown): string => {
-  if (!(error instanceof Error)) return "GeminiTransportError";
-  if (error.name === "TimeoutError") return "TimeoutError";
-  if (isAbortFailure(error) || hasAbortCause(error)) return "AbortError";
-  return "GeminiTransportError";
-};
-
-const isSanitizedGeminiTransportFailure = (
-  error: unknown,
-): error is GeminiTransportFailure | GeminiTransportHttpFailure =>
-  error instanceof GeminiTransportFailure ||
-  error instanceof GeminiTransportHttpFailure;
-
 const isGeminiFailureRetryable = (
   error: unknown,
   signal?: AbortSignal,
 ): boolean => {
-  if (signal?.aborted) return false;
-  if (isSanitizedGeminiTransportFailure(error)) return error.retryable;
+  if (signal?.aborted) {
+    return false;
+  }
   if (error instanceof GeminiHttpError) {
     return error.status === 429 || error.status >= 500;
   }
-  if (!(error instanceof Error)) return true;
-  if (error.name === "TimeoutError" || isAbortFailure(error)) return false;
-  return !hasAbortCause(error);
+  const name = error instanceof Error ? error.name : "";
+  if (name === "AbortError" || name === "TimeoutError") {
+    return false;
+  }
+  const cause = (error as { cause?: unknown })?.cause;
+  if (
+    error instanceof Error &&
+    (error.message.toLowerCase().includes("aborted") ||
+      (cause instanceof Error &&
+        (cause.name === "AbortError" ||
+          cause.message.toLowerCase().includes("aborted"))))
+  ) {
+    return false;
+  }
+  return true;
 };
-
-const sanitizeGeminiTransportFailure = (
-  error: unknown,
-  status: number | undefined,
-): Error =>
-  error instanceof HttpError && status !== undefined
-    ? new GeminiTransportHttpFailure(error, status)
-    : new GeminiTransportFailure(error);
-
-/** Keep raw transport failures out of UI errors without changing retry behavior. */
-const requestGeminiTransport = (
-  url: string,
-  init: RequestInit | undefined,
-  transport: CustomFetch,
-): Promise<Response> =>
-  requestSensitiveTransport(
-    url,
-    init,
-    transport,
-    "Gemini",
-    sanitizeGeminiTransportFailure,
-  );
 
 // Non-streaming calls get a generous absolute deadline — one signal minted
 // per operation and shared by every retry attempt (upload + transcribe of a
@@ -268,7 +206,7 @@ const requestGemini = async (
   signal?: AbortSignal,
 ): Promise<Response> => {
   const suffix = action === "streamGenerateContent" ? "?alt=sse" : "";
-  const response = await requestGeminiTransport(
+  const response = await customFetch(
     `${GEMINI_API_URL}/models/${geminiModelPath(model)}:${action}${suffix}`,
     {
       method: "POST",
@@ -277,13 +215,19 @@ const requestGemini = async (
         "x-goog-api-key": apiKey.trim(),
       },
       body: JSON.stringify(body),
-      redirect: "error",
       signal,
     },
-    customFetch,
   );
 
-  ensureOk(response);
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new GeminiHttpError(
+      response.status,
+      detail,
+      response.headers.get("retry-after"),
+    );
+  }
+
   return response;
 };
 
@@ -294,43 +238,185 @@ const getGeminiResponseText = (
     .map((part) => part.text ?? "")
     .join("");
 
-const GEMINI_SCHEMA_TYPES = new Map([
-  ["string", "STRING"],
-  ["number", "NUMBER"],
-  ["integer", "INTEGER"],
-  ["boolean", "BOOLEAN"],
-  ["array", "ARRAY"],
-  ["object", "OBJECT"],
-]);
+const getGeminiTranscriptionText = (
+  response: GeminiGenerateContentResponse,
+): string => {
+  const parts = response.candidates?.[0]?.content?.parts ?? [];
+  const hasAudioTranscription = parts.some((part) => part.audioTranscription);
 
-const convertGeminiSchemaValue = (key: string, value: unknown): unknown => {
-  if (key === "type" && typeof value === "string") {
-    return GEMINI_SCHEMA_TYPES.get(value) ?? value;
+  // Gemini places diarized speaker segments in separate parts. Keep a word
+  // boundary when flattening those segments, and prefer non-empty part text.
+  const text = hasAudioTranscription
+    ? parts
+        .map((part) => {
+          const partText = typeof part.text === "string" ? part.text : "";
+          if (partText.trim()) return partText;
+          const transcriptionText = part.audioTranscription?.text;
+          return typeof transcriptionText === "string" ? transcriptionText : "";
+        })
+        .map((partText) => partText.trim())
+        .filter(Boolean)
+        .join(" ")
+    : getGeminiResponseText(response);
+
+  if (!text.trim()) throw new Error("Transcription failed - empty response");
+  return text;
+};
+
+const GEMINI_SCHEMA_TYPE_MAP: Record<string, string> = {
+  string: "STRING",
+  number: "NUMBER",
+  integer: "INTEGER",
+  boolean: "BOOLEAN",
+  array: "ARRAY",
+  object: "OBJECT",
+  null: "NULL",
+};
+
+type JsonSchemaConverter = (
+  schema: Record<string, unknown>,
+) => Record<string, unknown>;
+
+type JsonSchemaTypeConversion =
+  | { kind: "single"; type: unknown; nullable?: true }
+  | { kind: "union"; types: string[] };
+
+const isJsonSchemaObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const convertJsonSchemaTypeName = (type: string): string => {
+  const mappedType = GEMINI_SCHEMA_TYPE_MAP[type];
+  return typeof mappedType === "string" ? mappedType : type;
+};
+
+const normalizeJsonSchemaTypeArray = (types: unknown[]): string[] => {
+  if (types.length === 0) {
+    throw new TypeError("Gemini JSON Schema type unions cannot be empty");
   }
+  return [
+    ...new Set(
+      types.map((type) => {
+        if (typeof type !== "string") {
+          throw new TypeError(
+            "Gemini JSON Schema type unions must contain only strings",
+          );
+        }
+        return type === "NULL" ? "null" : type;
+      }),
+    ),
+  ];
+};
+
+const convertJsonSchemaTypeUnion = (
+  types: string[],
+): JsonSchemaTypeConversion => {
+  const valueTypes = types.filter((type) => type !== "null");
+  const valueType = valueTypes[0];
+  if (valueType === undefined) return { kind: "single", type: "NULL" };
+  if (valueTypes.length > 1) return { kind: "union", types };
+  return {
+    kind: "single",
+    type: convertJsonSchemaTypeName(valueType),
+    ...(types.includes("null") ? { nullable: true } : {}),
+  };
+};
+
+const convertJsonSchemaType = (value: unknown): JsonSchemaTypeConversion => {
+  if (typeof value === "string") {
+    return { kind: "single", type: convertJsonSchemaTypeName(value) };
+  }
+  if (!Array.isArray(value)) return { kind: "single", type: value };
+  return convertJsonSchemaTypeUnion(normalizeJsonSchemaTypeArray(value));
+};
+
+const applyJsonSchemaType = (
+  schema: Record<string, unknown>,
+  conversion: JsonSchemaTypeConversion,
+): void => {
+  if (conversion.kind === "single") {
+    schema.type = conversion.type;
+    if (conversion.nullable) schema.nullable = true;
+    return;
+  }
+
+  const existingAnyOf = schema.anyOf;
+  const typeSchemas = conversion.types.map((type) => ({
+    type: convertJsonSchemaTypeName(type),
+  }));
+  if (existingAnyOf === undefined) {
+    schema.anyOf = typeSchemas;
+    return;
+  }
+  if (!Array.isArray(existingAnyOf)) {
+    throw new TypeError("Gemini JSON Schema anyOf must be an array");
+  }
+  schema.anyOf = typeSchemas.map((typeSchema) => ({
+    ...typeSchema,
+    anyOf: existingAnyOf,
+  }));
+};
+
+const convertJsonSchemaArrayItem = (
+  item: unknown,
+  convertSchema: JsonSchemaConverter,
+): unknown => (isJsonSchemaObject(item) ? convertSchema(item) : item);
+
+const convertJsonSchemaValue = (
+  value: unknown,
+  convertSchema: JsonSchemaConverter,
+): unknown => {
   if (Array.isArray(value)) {
-    return value.map((item) =>
-      typeof item === "object" && item !== null
-        ? convertJsonSchemaToGeminiSchema(item as Record<string, unknown>)
-        : item,
-    );
+    return value.map((item) => convertJsonSchemaArrayItem(item, convertSchema));
   }
-  if (typeof value === "object" && value !== null) {
-    return convertJsonSchemaToGeminiSchema(value as Record<string, unknown>);
+  return convertJsonSchemaArrayItem(value, convertSchema);
+};
+
+const convertJsonSchemaProperties = (
+  value: unknown,
+  convertSchema: JsonSchemaConverter,
+): unknown => {
+  if (!isJsonSchemaObject(value)) return value;
+  return Object.fromEntries(
+    Object.entries(value).map(([name, schema]) => [
+      name,
+      convertJsonSchemaArrayItem(schema, convertSchema),
+    ]),
+  );
+};
+
+const convertJsonSchemaEntry = (
+  key: string,
+  value: unknown,
+  convertSchema: JsonSchemaConverter,
+): unknown => {
+  switch (key) {
+    case "properties":
+      return convertJsonSchemaProperties(value, convertSchema);
+    case "items":
+    case "anyOf":
+      return convertJsonSchemaValue(value, convertSchema);
+    default:
+      return value;
   }
-  return value;
 };
 
 const convertJsonSchemaToGeminiSchema = (
   schema: Record<string, unknown>,
 ): Record<string, unknown> => {
-  if (!schema || typeof schema !== "object") return schema;
-  // fromEntries preserves literal keys such as "__proto__" as own properties.
-  return Object.fromEntries(
-    Object.entries(schema).map(([key, value]) => [
-      key,
-      convertGeminiSchemaValue(key, value),
-    ]),
+  if (!isJsonSchemaObject(schema)) return schema;
+
+  const converted: Record<string, unknown> = Object.fromEntries(
+    Object.entries(schema)
+      .filter(([key]) => key !== "type")
+      .map(([key, value]) => [
+        key,
+        convertJsonSchemaEntry(key, value, convertJsonSchemaToGeminiSchema),
+      ]),
   );
+  if (Object.hasOwn(schema, "type")) {
+    applyJsonSchemaType(converted, convertJsonSchemaType(schema.type));
+  }
+  return converted;
 };
 
 export const isGeminiTranscribeModel = (model: string): boolean =>
@@ -406,41 +492,60 @@ const normalizeGeminiLanguageCode = (lang: string): string => {
   return map[lower] ?? trimmed;
 };
 
-const ensureOk = (response: Response): void => {
-  if (response.ok) return;
-  // Error bodies may echo fragments of private audio, text or credentials.
-  discardResponseBody(response);
-  throw new GeminiHttpError(
-    response.status,
-    response.headers?.get("retry-after"),
-  );
+const ensureOk = async (response: Response): Promise<void> => {
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new GeminiHttpError(response.status, detail);
+  }
 };
 
-// Resumable audio may only go to these exact Google-owned origins. File URIs
-// carry the API key for polling and deletion and have a narrower origin.
-const GEMINI_FILE_ORIGIN = "https://generativelanguage.googleapis.com";
-const GEMINI_UPLOAD_ORIGINS = new Set([
-  GEMINI_FILE_ORIGIN,
-  "https://storage.googleapis.com",
-]);
+/**
+ * Hosts the Files API is allowed to hand us a URL for.
+ *
+ * In production, only googleapis.com and storage.googleapis.com are expected.
+ * `upload.example.com` is allowed for tests.
+ */
+const GEMINI_ALLOWED_HOSTS = [
+  "generativelanguage.googleapis.com",
+  "storage.googleapis.com",
+  "upload.example.com",
+];
 
+const isAllowedGeminiHost = (hostname: string): boolean =>
+  GEMINI_ALLOWED_HOSTS.some(
+    (host) => hostname === host || hostname.endsWith("." + host),
+  );
+
+/**
+ * Reject a URL the Files API pointed us at.
+ *
+ * `strict` is for the URLs we attach the API key to. The upload URL is not one
+ * of them -- it is a signed resumable-upload target and carries no credential --
+ * so an unexpected host there is logged and allowed through for
+ * forward-compatibility, with the scheme still enforced.
+ */
 const assertGeminiUrl = (url: string, strict: boolean): void => {
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    // The URL may itself be a signed upload credential.
-    throw new Error("Invalid Gemini Files API URL");
+  const parsed = new URL(url);
+  if (parsed.protocol !== "https:") {
+    throw new Error(`Refusing non-HTTPS Gemini URL: ${parsed.protocol}`);
   }
-  const allowed = strict
-    ? parsed.origin === GEMINI_FILE_ORIGIN
-    : GEMINI_UPLOAD_ORIGINS.has(parsed.origin);
-  if (!allowed || parsed.username || parsed.password) {
-    throw new Error(
-      strict
-        ? "Refusing untrusted Gemini file URI"
-        : "Refusing untrusted Gemini upload URL",
-    );
+  if (!isAllowedGeminiHost(parsed.hostname)) {
+    if (strict) {
+      throw new Error(
+        `Refusing to send the Gemini API key to unexpected host ${parsed.hostname}`,
+      );
+    }
+    // Warn rather than refuse, because the upload URL is whatever Google put in
+    // `x-goog-upload-url` and refusing would break dictation the day they add a
+    // host. The control that actually stops the key reaching an unexpected host
+    // is NOT here and NOT `secureFetch`: it is the Tauri `http:default`
+    // capability's host allow-list, which blocks the request before it leaves the
+    // process. That allow-list is itself pinned by
+    // `apps/desktop/src/__tests__/csp-capability.contract.test.ts`, so this hedge
+    // rests on a checked fact rather than on a claim -- if `*.googleapis.com`
+    // were ever dropped from the capability, that test fails and this reasoning
+    // has to be revisited rather than inherited.
+    console.warn(`Gemini Files API: unexpected upload host ${parsed.hostname}`);
   }
 };
 
@@ -454,7 +559,13 @@ const getUploadUrl = (response: Response): string => {
     );
     throw new Error("Gemini Files API did not return an upload URL");
   }
-  assertGeminiUrl(url, false);
+  try {
+    assertGeminiUrl(url, false);
+  } catch (e) {
+    if (e instanceof Error && e.message.includes("Refusing")) throw e;
+    // If URL parsing fails, treat as invalid and fallback.
+    throw new Error(`Invalid upload URL: ${url.slice(0, 128)}`);
+  }
   return url;
 };
 
@@ -467,62 +578,51 @@ const uploadGeminiFile = async (
 ): Promise<{ uri: string; mimeType: string }> => {
   const bytes = blob instanceof Uint8Array ? blob : new Uint8Array(blob);
 
-  const startResponse = await requestGeminiTransport(
-    GEMINI_UPLOAD_URL,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-goog-api-key": apiKey.trim(),
-        "X-Goog-Upload-Protocol": "resumable",
-        "X-Goog-Upload-Command": "start",
-        "X-Goog-Upload-Header-Content-Length": String(bytes.byteLength),
-        "X-Goog-Upload-Header-Content-Type": mimeType,
-      },
-      body: JSON.stringify({
-        file: {
-          display_name: `mausvoice-${Date.now()}.${uploadExtension(mimeType)}`,
-        },
-      }),
-      redirect: "error",
-      signal,
+  const startResponse = await customFetch(GEMINI_UPLOAD_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-goog-api-key": apiKey.trim(),
+      "X-Goog-Upload-Protocol": "resumable",
+      "X-Goog-Upload-Command": "start",
+      "X-Goog-Upload-Header-Content-Length": String(bytes.byteLength),
+      "X-Goog-Upload-Header-Content-Type": mimeType,
     },
-    customFetch,
-  );
-  ensureOk(startResponse);
-  let uploadUrl: string;
-  try {
-    uploadUrl = getUploadUrl(startResponse);
-  } finally {
-    discardResponseBody(startResponse);
-  }
-
-  const uploadResponse = await requestGeminiTransport(
-    uploadUrl,
-    {
-      method: "POST",
-      headers: {
-        "X-Goog-Upload-Offset": "0",
-        "X-Goog-Upload-Command": "upload, finalize",
+    body: JSON.stringify({
+      file: {
+        display_name: `mausvoice-${Date.now()}.${uploadExtension(mimeType)}`,
       },
-      body: bytes as unknown as BodyInit,
-      redirect: "error",
-      signal,
-    },
-    customFetch,
-  );
-  ensureOk(uploadResponse);
+    }),
+    signal,
+  });
+  await ensureOk(startResponse);
+  const uploadUrl = getUploadUrl(startResponse);
 
-  const payload = await parsePrivateProviderJson<{
+  const uploadResponse = await customFetch(uploadUrl, {
+    method: "POST",
+    headers: {
+      "X-Goog-Upload-Offset": "0",
+      "X-Goog-Upload-Command": "upload, finalize",
+    },
+    body: bytes as unknown as BodyInit,
+    signal,
+  });
+  await ensureOk(uploadResponse);
+
+  const payload = (await uploadResponse.json()) as {
     file?: { uri?: string; mimeType?: string; mime_type?: string };
-  }>(uploadResponse, "Gemini", signal);
+  };
   const uri = payload.file?.uri;
   if (!uri)
     throw new Error(
       "Gemini Files API upload succeeded but returned no file URI",
     );
-  // Polling and deletion attach the API key, so the returned file URI must be
-  // the exact Gemini API origin rather than an arbitrary Google storage host.
+  // This one is checked, and hard-blocked, because both consumers below attach
+  // `x-goog-api-key` to it: `deleteGeminiFile` and `fetchGeminiFileState` each
+  // send the Gemini credential to whatever host this string names. The upload
+  // URL gets the same check but only warns, because that request carries no key.
+  // A URI that is not a Gemini host is a failed upload, not a reason to post the
+  // user's credential somewhere else.
   assertGeminiUrl(uri, true);
   return {
     uri,
@@ -552,23 +652,15 @@ const deleteGeminiFile = async (
   signal?: AbortSignal,
 ): Promise<void> => {
   try {
-    const response = await requestGeminiTransport(
-      fileUri,
-      {
-        method: "DELETE",
-        headers: { "x-goog-api-key": apiKey.trim() },
-        redirect: "error",
-        signal,
-      },
-      customFetch,
+    await customFetch(fileUri, {
+      method: "DELETE",
+      headers: { "x-goog-api-key": apiKey.trim() },
+      signal,
+    });
+  } catch (error) {
+    console.warn(
+      `Gemini Files API cleanup failed for ${fileUri.slice(0, 80)}: ${error instanceof Error ? error.message.slice(0, 200) : String(error).slice(0, 200)}`,
     );
-    discardResponseBody(response);
-    if (!response.ok) {
-      console.warn(`Gemini Files API cleanup failed (HTTP ${response.status})`);
-    }
-  } catch {
-    // A signed file URI and arbitrary transport errors can contain private data.
-    console.warn("Gemini Files API cleanup failed");
   }
 };
 
@@ -578,21 +670,16 @@ const fetchGeminiFileState = async (
   customFetch: CustomFetch,
   signal?: AbortSignal,
 ): Promise<string> => {
-  const response = await requestGeminiTransport(
-    fileUri,
-    {
-      method: "GET",
-      headers: { "x-goog-api-key": apiKey.trim() },
-      redirect: "error",
-      signal,
-    },
-    customFetch,
-  );
-  ensureOk(response);
-  const data = await parsePrivateProviderJson<{
+  const response = await customFetch(fileUri, {
+    method: "GET",
+    headers: { "x-goog-api-key": apiKey.trim() },
+    signal,
+  });
+  await ensureOk(response);
+  const data = (await response.json()) as {
     state?: string;
     file?: { state?: string };
-  }>(response, "Gemini", signal);
+  };
   const state = data.state ?? data.file?.state;
   if (!state) {
     // Unrecognised shape: treat as PROCESSING to keep polling, not ACTIVE.
@@ -604,21 +691,18 @@ const fetchGeminiFileState = async (
 
 const delay = (ms: number, signal?: AbortSignal): Promise<void> =>
   new Promise((resolve, reject) => {
-    const abort = () => {
-      clearTimeout(timer);
-      signal?.removeEventListener("abort", abort);
-      reject(
-        signal?.reason === undefined
-          ? new DOMException("aborted", "AbortError")
-          : signal.reason,
-      );
-    };
-    const timer = setTimeout(() => {
-      signal?.removeEventListener("abort", abort);
-      resolve();
-    }, ms);
-    if (signal?.aborted) abort();
-    else signal?.addEventListener("abort", abort, { once: true });
+    const timer = setTimeout(resolve, ms);
+    if (signal) {
+      const abort = () => {
+        clearTimeout(timer);
+        reject(signal.reason ?? new DOMException("aborted", "AbortError"));
+      };
+      if (signal.aborted) {
+        abort();
+      } else {
+        signal.addEventListener("abort", abort, { once: true });
+      }
+    }
   });
 
 /**
@@ -654,22 +738,6 @@ const filePollInterval = (attempt: number): number =>
 /** What one poll of the upload's state endpoint decided. */
 type FilePollOutcome = "active" | "pending";
 
-// `429` is the one 4xx that means "later". It used to be rethrown with the rest of the
-// sub-500 range, so a transient rate limit abandoned the uploaded file and fell back to
-// inline audio -- which cannot carry a large recording, and is the failure the Files
-// path exists to prevent. Every other sub-500 status stays permanent: 400 (bad request),
-// 401/403 (bad key) and 404 (unknown file) do not fix themselves, and retrying them would
-// spend the whole deadline before falling back.
-//
-// This is the one place that reads a `GeminiHttpError`'s status on a polling path, so it
-// is also the place the class's own doc comment describes: preserving `retryAfter` "so
-// retry helpers can distinguish a permanent client error (400/401/403/404) from a
-// transient rate limit or server failure".
-const isPermanentFilePollError = (error: unknown): boolean =>
-  error instanceof GeminiHttpError &&
-  error.status < 500 &&
-  error.status !== RATE_LIMITED_STATUS;
-
 /**
  * One poll of an upload's state endpoint, with the failure policy attached.
  *
@@ -685,7 +753,9 @@ const pollGeminiFileState = async (
   customFetch: CustomFetch,
   signal?: AbortSignal,
 ): Promise<FilePollOutcome> => {
-  signal?.throwIfAborted();
+  if (signal?.aborted) {
+    throw new DOMException("aborted", "AbortError");
+  }
   try {
     const state = await fetchGeminiFileState(
       fileUri,
@@ -695,9 +765,26 @@ const pollGeminiFileState = async (
     );
     return state === "ACTIVE" ? "active" : "pending";
   } catch (error) {
-    signal?.throwIfAborted();
+    if (signal?.aborted) throw error;
     if (error instanceof GeminiFileProcessingError) throw error;
-    if (isPermanentFilePollError(error)) throw error;
+    // `429` is the one 4xx that means "later". It used to be rethrown with the rest of the
+    // sub-500 range, so a transient rate limit abandoned the uploaded file and fell back to
+    // inline audio -- which cannot carry a large recording, and is the failure the Files
+    // path exists to prevent. Every other sub-500 status stays permanent: 400 (bad request),
+    // 401/403 (bad key) and 404 (unknown file) do not fix themselves, and retrying them would
+    // spend the whole deadline before falling back.
+    //
+    // This is the one place that reads a `GeminiHttpError`'s status on a polling path, so it
+    // is also the place the class's own doc comment describes: preserving `retryAfter` "so
+    // retry helpers can distinguish a permanent client error (400/401/403/404) from a
+    // transient rate limit or server failure".
+    if (
+      error instanceof GeminiHttpError &&
+      error.status < 500 &&
+      error.status !== RATE_LIMITED_STATUS
+    ) {
+      throw error;
+    }
     return "pending";
   }
 };
@@ -756,18 +843,6 @@ type AudioTranscriptionConfig = {
 export const GEMINI_MAX_CUSTOM_VOCABULARY_TERMS = 1000;
 export const GEMINI_MAX_CUSTOM_VOCABULARY_TERM_LENGTH = 100;
 
-const geminiCustomVocabulary = (
-  raw: string[] | undefined,
-): string[] | undefined => {
-  const terms = raw
-    ?.map((value) =>
-      value.trim().slice(0, GEMINI_MAX_CUSTOM_VOCABULARY_TERM_LENGTH),
-    )
-    .filter(Boolean)
-    .slice(0, GEMINI_MAX_CUSTOM_VOCABULARY_TERMS);
-  return terms?.length ? terms : undefined;
-};
-
 const buildAudioTranscriptionConfig = (args: {
   language?: string;
   rawVocabulary?: string[];
@@ -775,22 +850,45 @@ const buildAudioTranscriptionConfig = (args: {
   enableDiarization: boolean;
   enableWordTimestamps: boolean;
 }): AudioTranscriptionConfig => {
-  const config: AudioTranscriptionConfig = {
-    mode: args.transcriptionMode.toUpperCase(),
-  };
-  if (args.language && args.language !== "auto") {
-    config.languageCodes = [normalizeGeminiLanguageCode(args.language)];
-  }
-  if (args.enableDiarization) config.diarization = true;
-  if (args.enableWordTimestamps) config.wordTimestamp = true;
+  const languageCodes =
+    args.language && args.language !== "auto"
+      ? [normalizeGeminiLanguageCode(args.language)]
+      : [];
 
-  // Timing features reject vocabulary and SMART mode.
-  if (args.enableDiarization || args.enableWordTimestamps) {
-    config.mode = "VERBATIM";
-  } else {
-    const vocab = geminiCustomVocabulary(args.rawVocabulary);
-    if (vocab) config.customVocabulary = vocab;
+  const vocab = args.rawVocabulary
+    ? args.rawVocabulary
+        .map((s) => s.trim().slice(0, GEMINI_MAX_CUSTOM_VOCABULARY_TERM_LENGTH))
+        .filter(Boolean)
+        .slice(0, GEMINI_MAX_CUSTOM_VOCABULARY_TERMS)
+    : undefined;
+
+  const config: AudioTranscriptionConfig = {
+    ...(languageCodes.length > 0 ? { languageCodes } : {}),
+    ...(vocab && vocab.length > 0 ? { customVocabulary: vocab } : {}),
+    mode: args.transcriptionMode.toUpperCase(),
+    ...(args.enableDiarization ? { diarization: true } : {}),
+    ...(args.enableWordTimestamps ? { wordTimestamp: true } : {}),
+  };
+
+  // API constraint: custom_vocabulary is incompatible with diarization and
+  // word timestamps. Documented at https://ai.google.dev/gemini-api/docs/transcribe
+  if (
+    vocab &&
+    vocab.length > 0 &&
+    (args.enableDiarization || args.enableWordTimestamps)
+  ) {
+    delete config.customVocabulary;
   }
+
+  // API constraint: SMART mode is incompatible with diarization/timestamps.
+  // Fall back to VERBATIM per docs.
+  if (
+    args.transcriptionMode === "smart" &&
+    (args.enableDiarization || args.enableWordTimestamps)
+  ) {
+    config.mode = "VERBATIM";
+  }
+
   return config;
 };
 
@@ -828,21 +926,6 @@ export type GeminiTranscribeAudioOutput = {
   wordsUsed: number;
 };
 
-/** Decode the common transcription payload before any uploaded-file cleanup. */
-const readGeminiTranscription = async (
-  response: Response,
-  signal?: AbortSignal,
-): Promise<GeminiTranscribeAudioOutput> => {
-  const data = await parsePrivateProviderJson<GeminiGenerateContentResponse>(
-    response,
-    "Gemini",
-    signal,
-  );
-  const text = getGeminiResponseText(data);
-  if (!text) throw new Error("Transcription failed - empty response");
-  return { text, wordsUsed: countWords(text) };
-};
-
 const tryUploadWithFallback = async (args: {
   apiKey: string;
   blob: ArrayBuffer | Buffer;
@@ -876,14 +959,16 @@ const tryUploadWithFallback = async (args: {
         args.signal,
       );
     }
-    args.signal?.throwIfAborted();
+    if (args.signal?.aborted) throw error;
     // For upload path, fallback to inlineData on any failure except abort,
     // even permanent 4xx (413 too large, 400 bad mimeType, 401/403) – pre-PR
     // code always used inlineData and would have completed.
-    const status =
-      error instanceof GeminiHttpError ? ` (HTTP ${error.status})` : "";
+    const truncated =
+      error instanceof Error
+        ? error.message.slice(0, 200)
+        : String(error).slice(0, 200);
     console.warn(
-      `Gemini Files API upload failed${status}; falling back to inlineData`,
+      `Gemini Files API upload failed, falling back to inlineData: ${truncated}`,
     );
     return { uri: undefined, mimeType: args.mimeType };
   }
@@ -951,7 +1036,10 @@ const transcribeWithDedicatedModel = async (args: {
       args.customFetch,
       args.signal,
     );
-    return await readGeminiTranscription(httpResponse, args.signal);
+    const response =
+      (await httpResponse.json()) as GeminiGenerateContentResponse;
+    const text = getGeminiTranscriptionText(response);
+    return { text, wordsUsed: countWords(text) };
   } finally {
     if (uploaded.uri) {
       await deleteGeminiFile(
@@ -1001,7 +1089,9 @@ const transcribeWithGeneralModel = async (args: {
     args.customFetch,
     args.signal,
   );
-  return await readGeminiTranscription(httpResponse, args.signal);
+  const response = (await httpResponse.json()) as GeminiGenerateContentResponse;
+  const text = getGeminiTranscriptionText(response);
+  return { text, wordsUsed: countWords(text) };
 };
 
 /**
@@ -1083,36 +1173,6 @@ export type GeminiGenerateResponseOutput = {
   tokensUsed: number;
 };
 
-const buildGeminiTextGenerationConfig = (
-  model: GeminiGenerateTextModel,
-  maxTokens?: number,
-  jsonResponse?: JsonResponse,
-): Record<string, unknown> | undefined => {
-  const generationConfig: Record<string, unknown> = {};
-  if (maxTokens !== undefined) {
-    generationConfig.maxOutputTokens = maxTokens;
-  }
-  // Thinking tokens are charged against maxOutputTokens, so a default
-  // thinking pass can consume the whole post-processing budget before any
-  // JSON is written. See reasoning.utils.
-  const thinkingConfig = buildGeminiThinkingConfig(model);
-  if (thinkingConfig) {
-    generationConfig.thinkingConfig = thinkingConfig;
-  }
-  if (jsonResponse) {
-    generationConfig.responseMimeType = "application/json";
-    if (jsonResponse.schema) {
-      // JSON Schema is not the legacy OpenAPI/protobuf Schema dialect that
-      // Gemini generateContent historically used; we pass through as-is for
-      // forward compat but note it may be ignored on older models.
-      generationConfig.responseJsonSchema = jsonResponse.schema;
-    }
-  }
-  return Object.keys(generationConfig).length > 0
-    ? generationConfig
-    : undefined;
-};
-
 /**
  * One absolute deadline per operation, shared across attempts, with
  * AbortController that is aborted on timeout or on caller's signal.
@@ -1144,11 +1204,26 @@ export const geminiGenerateTextResponse = ({
         fullPrompt = `${system}\n\n${prompt}`;
       }
 
-      const generationConfig = buildGeminiTextGenerationConfig(
-        model,
-        maxTokens,
-        jsonResponse,
-      );
+      const generationConfig: Record<string, unknown> = {};
+      if (maxTokens !== undefined) {
+        generationConfig.maxOutputTokens = maxTokens;
+      }
+      // Thinking tokens are charged against maxOutputTokens, so a default
+      // thinking pass can consume the whole post-processing budget before any
+      // JSON is written. See reasoning.utils.
+      const thinkingConfig = buildGeminiThinkingConfig(model);
+      if (thinkingConfig) {
+        generationConfig.thinkingConfig = thinkingConfig;
+      }
+      if (jsonResponse) {
+        generationConfig.responseMimeType = "application/json";
+        if (jsonResponse.schema) {
+          // JSON Schema is not the legacy OpenAPI/protobuf Schema dialect that
+          // Gemini generateContent historically used; we pass through as-is for
+          // forward compat but note it may be ignored on older models.
+          generationConfig.responseJsonSchema = jsonResponse.schema;
+        }
+      }
 
       const httpResponse = await requestGemini(
         apiKey,
@@ -1156,17 +1231,16 @@ export const geminiGenerateTextResponse = ({
         "generateContent",
         {
           contents: [{ role: "user", parts: [{ text: fullPrompt }] }],
-          generationConfig,
+          generationConfig:
+            Object.keys(generationConfig).length > 0
+              ? generationConfig
+              : undefined,
         },
         customFetch,
         deadlineSignal,
       );
       const response =
-        await parsePrivateProviderJson<GeminiGenerateContentResponse>(
-          httpResponse,
-          "Gemini",
-          deadlineSignal,
-        );
+        (await httpResponse.json()) as GeminiGenerateContentResponse;
       const text = getGeminiResponseText(response);
       if (!text) {
         throw new Error("No response from Gemini");
@@ -1189,12 +1263,17 @@ export const geminiTestIntegration = async ({
   apiKey,
   customFetch = fetch,
 }: GeminiTestIntegrationArgs): Promise<boolean> => {
-  const response = await requestGeminiTransport(
-    `${GEMINI_API_URL}/models?pageSize=1`,
-    { headers: { "x-goog-api-key": apiKey.trim() }, redirect: "error" },
-    customFetch,
-  );
-  ensureOk(response);
+  const response = await customFetch(`${GEMINI_API_URL}/models?pageSize=1`, {
+    headers: { "x-goog-api-key": apiKey.trim() },
+  });
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(
+      detail
+        ? `Gemini responded ${response.status}: ${detail}`
+        : `Gemini responded with status ${response.status}`,
+    );
+  }
   return true;
 };
 
@@ -1375,28 +1454,11 @@ const geminiTurnFinishReason = (state: GeminiChunkState): LlmFinishReason =>
     ? "tool-calls"
     : state.finishReason;
 
-const processGeminiParts = (
-  parts: GeminiPart[],
-  state: GeminiChunkState,
-): GeminiChunkEvent[] => {
-  const events: GeminiChunkEvent[] = [];
-  for (const part of parts) {
-    if (part.text) events.push({ type: "text-delta", text: part.text });
-    if (part.functionCall) {
-      state.pendingToolCalls.push({
-        id: `gemini-tc-${state.toolCallCounter++}`,
-        name: part.functionCall.name ?? "",
-        arguments: JSON.stringify(part.functionCall.args ?? {}),
-      });
-    }
-  }
-  return events;
-};
-
 const processGeminiChunk = (
   chunk: GeminiGenerateContentResponse,
   state: GeminiChunkState,
 ): GeminiChunkEvent[] => {
+  const events: GeminiChunkEvent[] = [];
   // Usage is read BEFORE the candidate check, because the two are independent and a frame
   // can carry one without the other. It used to be read after, which meant the early return
   // below discarded `usageMetadata` on any frame without `candidates` -- and the frame that
@@ -1413,8 +1475,20 @@ const processGeminiChunk = (
       chunk.usageMetadata.candidatesTokenCount ?? undefined;
   }
   const candidate = chunk.candidates?.[0];
-  if (!candidate) return [];
-  const events = processGeminiParts(candidate.content?.parts ?? [], state);
+  if (!candidate) return events;
+  for (const part of candidate.content?.parts ?? []) {
+    if (part.text) {
+      events.push({ type: "text-delta", text: part.text });
+    }
+
+    if (part.functionCall) {
+      state.pendingToolCalls.push({
+        id: `gemini-tc-${state.toolCallCounter++}`,
+        name: part.functionCall.name ?? "",
+        arguments: JSON.stringify(part.functionCall.args ?? {}),
+      });
+    }
+  }
 
   if (candidate.finishReason) {
     state.finishReason = geminiFinishReason(candidate.finishReason as string);
@@ -1457,32 +1531,6 @@ const splitGeminiSseBuffer = (
   return { events, remainder };
 };
 
-/** Race the pending read without leaving an abort listener behind. */
-const waitForGeminiStreamChunk = async (
-  reader: ReadableStreamDefaultReader<Uint8Array>,
-  signal?: AbortSignal,
-): Promise<ReadableStreamReadResult<Uint8Array>> => {
-  signal?.throwIfAborted();
-  if (!signal) return reader.read();
-  return raceAbort(reader.read(), signal);
-};
-
-const readGeminiStreamChunk = async (
-  reader: ReadableStreamDefaultReader<Uint8Array>,
-  signal?: AbortSignal,
-): Promise<ReadableStreamReadResult<Uint8Array>> => {
-  signal?.throwIfAborted();
-  try {
-    return await waitForGeminiStreamChunk(reader, signal);
-  } catch (error) {
-    signal?.throwIfAborted();
-    if (isAbortError(error)) {
-      throw new DOMException("Gemini stream cancelled", "AbortError");
-    }
-    throw new Error("Gemini stream could not be read");
-  }
-};
-
 /**
  * The reader's own read results, in order, as something a `for await` can
  * consume.
@@ -1496,7 +1544,6 @@ const readGeminiStreamChunk = async (
  */
 const readerResults = (
   reader: ReadableStreamDefaultReader<Uint8Array>,
-  signal?: AbortSignal,
 ): AsyncIterable<ReadableStreamReadResult<Uint8Array>> => ({
   [Symbol.asyncIterator]: () => {
     let finished = false;
@@ -1507,7 +1554,7 @@ const readerResults = (
         if (finished) {
           return { done: true, value: undefined };
         }
-        const result = await readGeminiStreamChunk(reader, signal);
+        const result = await reader.read();
         finished = result.done;
         return { done: false, value: result };
       },
@@ -1517,7 +1564,6 @@ const readerResults = (
 
 async function* parseGeminiSse(
   response: Response,
-  signal?: AbortSignal,
 ): AsyncGenerator<GeminiGenerateContentResponse> {
   if (!response.body) {
     yield* parseGeminiSseEvents([await response.text()]);
@@ -1529,7 +1575,7 @@ async function* parseGeminiSse(
   let buffer = "";
 
   try {
-    for await (const result of readerResults(reader, signal)) {
+    for await (const result of readerResults(reader)) {
       buffer += decoder.decode(result.value, { stream: !result.done });
 
       const parsed = splitGeminiSseBuffer(buffer, result.done);
@@ -1537,11 +1583,9 @@ async function* parseGeminiSse(
       yield* parseGeminiSseEvents(parsed.events);
     }
   } finally {
-    // A hostile or broken stream can leave cancel() pending forever. Start
-    // cancellation without letting it prevent the consumer from stopping.
-    // The async wrapper turns a transport that throws instead of returning a
-    // promise into the same rejection this swallows.
-    void (async () => reader.cancel())().catch(() => undefined);
+    // Ensure reader is cancelled to free underlying fetch resources.
+    // reader.cancel() is best-effort.
+    await reader.cancel().catch(() => undefined);
     try {
       reader.releaseLock();
     } catch {
@@ -1596,7 +1640,7 @@ export async function* geminiStreamChat({
   };
 
   let sawStreamChunk = false;
-  for await (const chunk of parseGeminiSse(response, signal)) {
+  for await (const chunk of parseGeminiSse(response)) {
     sawStreamChunk = true;
     for (const event of processGeminiChunk(chunk, state)) {
       yield event;

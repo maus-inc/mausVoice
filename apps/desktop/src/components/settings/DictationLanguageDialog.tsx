@@ -14,16 +14,27 @@ import {
   Stack,
   Typography,
 } from "@mui/material";
-import { useMemo } from "react";
-import { FormattedMessage } from "react-intl";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { FormattedMessage, useIntl } from "react-intl";
 import { produceAppState, useAppStore } from "../../store";
 import { createId } from "../../utils/id.utils";
+import {
+  DICTATE_HOTKEY,
+  getAdditionalLanguageEntries,
+  getHotkeyCombosForAction,
+} from "../../utils/keyboard.utils";
 import {
   DICTATION_LANGUAGE_OPTIONS,
   KEYBOARD_LAYOUT_LANGUAGE,
 } from "../../utils/language.utils";
+import {
+  chromeSelectMenuItemSx,
+  chromeSelectMenuProps,
+} from "../common/chromeMenu";
+import { getDetectedSystemLocale, getMyUser } from "../../utils/user.utils";
 import { HotKey } from "../common/HotKey";
-import { useDictationLanguageDraft } from "./useDictationLanguageDraft";
+import { BusyButtonLabel } from "../common/BusyButtonLabel";
+import { saveDictationLanguageSettings } from "./save-dictation-language-settings";
 
 type DictationLanguageRowProps = {
   language: string;
@@ -32,6 +43,8 @@ type DictationLanguageRowProps = {
   onHotkeyChange: (keys: string[]) => void;
   onDelete?: () => void;
   canDelete: boolean;
+  index: number;
+  disabled: boolean;
 };
 
 const DictationLanguageRow = ({
@@ -41,7 +54,10 @@ const DictationLanguageRow = ({
   onHotkeyChange,
   onDelete,
   canDelete,
+  index,
+  disabled,
 }: DictationLanguageRowProps) => {
+  const intl = useIntl();
   const handleLanguageChange = (event: SelectChangeEvent<string>) => {
     onLanguageChange(event.target.value);
   };
@@ -50,36 +66,55 @@ const DictationLanguageRow = ({
     <Stack
       direction="row"
       spacing={1}
+      useFlexGap
       sx={{
         alignItems: "center",
+        flexWrap: "wrap",
         width: "100%",
       }}
     >
-      <HotKey value={hotkeyKeys} onChange={onHotkeyChange} />
-      <Box sx={{ flex: 1, minWidth: 0 }}>
+      <HotKey
+        value={hotkeyKeys}
+        disabled={disabled}
+        onChange={onHotkeyChange}
+        ariaLabel={intl.formatMessage(
+          { defaultMessage: "Hotkey for language {number}" },
+          { number: index + 1 },
+        )}
+      />
+      <Box sx={{ flex: 1, minWidth: 120 }}>
         <Select
           value={language}
+          disabled={disabled}
           onChange={handleLanguageChange}
+          inputProps={{
+            "aria-label": intl.formatMessage(
+              { defaultMessage: "Language {number}" },
+              { number: index + 1 },
+            ),
+          }}
           size="small"
           variant="outlined"
           fullWidth
-          MenuProps={{
-            slotProps: {
-              paper: {
-                style: { maxHeight: 300 },
-              },
-            },
-          }}
+          MenuProps={chromeSelectMenuProps}
         >
           {DICTATION_LANGUAGE_OPTIONS.map(([value, label]) => (
-            <MenuItem key={value} value={value}>
+            <MenuItem key={value} value={value} sx={chromeSelectMenuItemSx}>
               {label}
             </MenuItem>
           ))}
         </Select>
       </Box>
       {canDelete && (
-        <IconButton size="small" onClick={onDelete}>
+        <IconButton
+          size="small"
+          disabled={disabled}
+          onClick={onDelete}
+          aria-label={intl.formatMessage(
+            { defaultMessage: "Remove language {number}" },
+            { number: index + 1 },
+          )}
+        >
           <X size={16} strokeWidth={1.9} />
         </IconButton>
       )}
@@ -87,24 +122,59 @@ const DictationLanguageRow = ({
   );
 };
 
+type LanguageRow = {
+  rowId: string;
+  language: string;
+  hotkeyKeys: string[];
+};
+
 export const DictationLanguageDialog = () => {
+  const titleId = useId();
+  const descriptionId = useId();
   const open = useAppStore(
     (state) => state.settings.dictationLanguageDialogOpen,
   );
 
-  const {
-    rows,
-    setRows,
-    ready,
-    loadFailed,
-    setAttempt,
-    isSaving,
-    saving,
-    handleSave,
-  } = useDictationLanguageDraft(open);
+  const storePrimaryLanguage = useAppStore((state) => {
+    const user = getMyUser(state);
+    return user?.preferredLanguage ?? getDetectedSystemLocale();
+  });
+
+  const storePrimaryHotkeyKeys = useAppStore((state) => {
+    const combos = getHotkeyCombosForAction(state, DICTATE_HOTKEY);
+    return combos[0] ?? [];
+  });
+
+  const storeAdditionalEntries = useAppStore(getAdditionalLanguageEntries);
+
+  const [rows, setRows] = useState<LanguageRow[]>([]);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveFailed, setSaveFailed] = useState(false);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const saveInFlight = useRef(false);
+  const initialLanguage = useRef(storePrimaryLanguage);
+
+  useEffect(() => {
+    if (!open) return;
+    setSaveFailed(false);
+    initialLanguage.current = storePrimaryLanguage;
+    setRows([
+      {
+        rowId: createId(),
+        language: storePrimaryLanguage,
+        hotkeyKeys: storePrimaryHotkeyKeys,
+      },
+      ...storeAdditionalEntries.map((entry) => ({
+        rowId: createId(),
+        language: entry.language,
+        hotkeyKeys: entry.hotkeyCombos[0] ?? [],
+      })),
+    ]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   const handleClose = () => {
-    if (saving.current) return;
+    if (saveInFlight.current) return;
     produceAppState((draft) => {
       draft.settings.dictationLanguageDialogOpen = false;
     });
@@ -141,6 +211,29 @@ export const DictationLanguageDialog = () => {
     ]);
   };
 
+  const handleSave = async () => {
+    if (saveInFlight.current || rows.length === 0) return;
+    saveInFlight.current = true;
+    setIsSaving(true);
+    try {
+      await saveDictationLanguageSettings(
+        rows,
+        storePrimaryLanguage,
+        initialLanguage.current,
+      );
+      produceAppState((draft) => {
+        draft.settings.dictationLanguageDialogOpen = false;
+      });
+    } catch (error) {
+      console.error("Failed to save dictation language settings", error);
+      setSaveFailed(true);
+      if (contentRef.current) contentRef.current.scrollTop = 0;
+    } finally {
+      saveInFlight.current = false;
+      setIsSaving(false);
+    }
+  };
+
   const hasHotkeyConflict = useMemo(() => {
     const filled = rows.filter((r) => r.hotkeyKeys.length > 0);
     for (let i = 0; i < filled.length; i++) {
@@ -160,38 +253,67 @@ export const DictationLanguageDialog = () => {
   const canDelete = rows.length > 1;
 
   return (
-    <Dialog open={open} onClose={handleClose}>
-      <DialogTitle>
-        <FormattedMessage defaultMessage="Dictation language" />
+    <Dialog
+      open={open}
+      onClose={handleClose}
+      slotProps={{ paper: { sx: { width: 480 } } }}
+      aria-labelledby={titleId}
+      aria-describedby={descriptionId}
+    >
+      <DialogTitle id={`${titleId}-wrapper`}>
+        <span id={titleId}>
+          <FormattedMessage defaultMessage="Dictation language" />
+        </span>
         <Typography
+          id={descriptionId}
           variant="body2"
           sx={{
             color: "text.secondary",
+            "@media (max-height: 400px)": { display: "none" },
           }}
         >
           <FormattedMessage defaultMessage="Configure multiple dictation languages with hotkeys." />
         </Typography>
       </DialogTitle>
-      <DialogContent dividers sx={{ width: 480 }}>
-        <Stack spacing={1} inert={isSaving}>
-          {!ready &&
-            (loadFailed ? (
-              <Button onClick={() => setAttempt((value) => value + 1)}>
-                <FormattedMessage defaultMessage="Retry" />
-              </Button>
-            ) : (
-              <Typography>
-                <FormattedMessage defaultMessage="Loading" />
-              </Typography>
-            ))}
+      <DialogContent
+        ref={contentRef}
+        dividers
+        sx={
+          saveFailed ? { "@media (max-height: 400px)": { pt: 1 } } : undefined
+        }
+      >
+        <Stack spacing={1}>
+          {saveFailed && (
+            <Alert
+              severity="error"
+              variant="outlined"
+              icon={false}
+              sx={{ "@media (max-height: 400px)": { py: 0.5 } }}
+            >
+              <FormattedMessage defaultMessage="Save incomplete. Some changes may be saved. Retry or check settings after closing." />
+            </Alert>
+          )}
+          <Typography
+            aria-hidden
+            variant="body2"
+            color="text.secondary"
+            sx={{
+              display: "none",
+              "@media (max-height: 400px)": { display: "block" },
+            }}
+          >
+            <FormattedMessage defaultMessage="Configure multiple dictation languages with hotkeys." />
+          </Typography>
           {hasHotkeyConflict && (
             <Alert severity="warning" variant="outlined">
               <FormattedMessage defaultMessage="Some hotkeys share overlapping keys, which may cause conflicts." />
             </Alert>
           )}
-          {rows.map((row) => (
+          {rows.map((row, index) => (
             <DictationLanguageRow
               key={row.rowId}
+              disabled={isSaving}
+              index={index}
               language={row.language}
               hotkeyKeys={row.hotkeyKeys}
               onLanguageChange={(lang) => handleLanguageChange(row.rowId, lang)}
@@ -205,7 +327,7 @@ export const DictationLanguageDialog = () => {
             startIcon={<Plus size={16} strokeWidth={1.9} />}
             size="small"
             onClick={handleAddLanguage}
-            disabled={!ready || isSaving}
+            disabled={isSaving}
             sx={{ alignSelf: "flex-end", py: 0.5 }}
           >
             <Typography
@@ -226,9 +348,16 @@ export const DictationLanguageDialog = () => {
         <Button
           variant="contained"
           onClick={() => void handleSave()}
-          disabled={!ready || isSaving}
+          disabled={isSaving}
+          aria-busy={isSaving}
         >
-          <FormattedMessage defaultMessage="Save" />
+          {isSaving ? (
+            <BusyButtonLabel>
+              <FormattedMessage defaultMessage="Save" />
+            </BusyButtonLabel>
+          ) : (
+            <FormattedMessage defaultMessage="Save" />
+          )}
         </Button>
       </DialogActions>
     </Dialog>

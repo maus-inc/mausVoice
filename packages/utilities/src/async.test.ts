@@ -3,57 +3,9 @@ import {
   DEFAULT_MAX_RETRY_DELAY_MS,
   batchAsync,
   delayed,
-  raceAbort,
   retry,
 } from "./async";
 import { HttpError, MAX_RETRY_AFTER_MS, toHttpError } from "./http-error";
-
-describe("raceAbort", () => {
-  it("releases its listener and runs cancellation without waiting for the operation", async () => {
-    const controller = new AbortController();
-    const add = vi.spyOn(controller.signal, "addEventListener");
-    const remove = vi.spyOn(controller.signal, "removeEventListener");
-    const cancel = vi.fn();
-    const pending = raceAbort(new Promise(() => {}), controller.signal, cancel);
-    controller.abort(null);
-    await expect(pending).rejects.toBe(null);
-    expect(cancel).toHaveBeenCalledOnce();
-    expect(remove).toHaveBeenCalledWith("abort", add.mock.calls[0]?.[1]);
-  });
-
-  it("does not run cancellation after a completed operation", async () => {
-    const controller = new AbortController();
-    const cancel = vi.fn();
-    await expect(
-      raceAbort(Promise.resolve("ready"), controller.signal, cancel),
-    ).resolves.toBe("ready");
-    controller.abort();
-    expect(cancel).not.toHaveBeenCalled();
-  });
-
-  it("preserves a pre-aborted null reason and observes a rejected operation", async () => {
-    const controller = new AbortController();
-    controller.abort(null);
-    const cancel = vi.fn();
-    await expect(
-      raceAbort(
-        Promise.reject(new Error("late operation")),
-        controller.signal,
-        cancel,
-      ),
-    ).rejects.toBe(null);
-    expect(cancel).toHaveBeenCalledOnce();
-  });
-
-  it("preserves cancellation even if its cleanup callback throws", async () => {
-    const controller = new AbortController();
-    const pending = raceAbort(new Promise(() => {}), controller.signal, () => {
-      throw new Error("private cleanup");
-    });
-    controller.abort(null);
-    await expect(pending).rejects.toBe(null);
-  });
-});
 
 describe("batchAsync", () => {
   it("returns every result in the order the thunks were given", async () => {
@@ -472,17 +424,6 @@ describe("retry abort handling", () => {
       retry({ fn, delay: 1, retries: 3, signal: controller.signal }),
     ).rejects.toThrow("already gone");
     expect(fn).toHaveBeenCalledTimes(1);
-  });
-
-  it("preserves an explicit null abort reason before and during a wait", async () => {
-    const already = new AbortController();
-    already.abort(null);
-    await expect(delayed(1000, already.signal)).rejects.toBe(null);
-
-    const pending = new AbortController();
-    const wait = delayed(1000, pending.signal);
-    pending.abort(null);
-    await expect(wait).rejects.toBe(null);
   });
 
   it("leaves a wait that no signal watches untouched", async () => {

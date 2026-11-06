@@ -1,11 +1,11 @@
 import { Typography } from "@mui/material";
 import { FormattedMessage } from "react-intl";
 
-export const TermsNotice = ({
-  align = "center",
-}: {
+type TermsNoticeProps = {
   align?: "left" | "center";
-}) => {
+};
+
+export const TermsNotice = ({ align = "center" }: TermsNoticeProps) => {
   return (
     <Typography
       variant="body2"

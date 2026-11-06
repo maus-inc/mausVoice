@@ -184,59 +184,6 @@ const pickNearestAnchor = (
   return side === "lower" ? candidates.at(-1) : candidates[0];
 };
 
-/** Aligned tokens can still be corrections when their casing changes. */
-const collectCaseCorrections = (
-  baseline: string[],
-  field: string[],
-  inSpan: [number, number][],
-): TokenGap[] => {
-  const gaps: TokenGap[] = [];
-  for (const [baselineIndex, fieldIndex] of inSpan) {
-    // `anchors` is only ever filled with `row - 1` / `column - 1`, where `row`
-    // and `column` walk down from `baseline.length` / `field.length` and stop at
-    // 1, so both indices are in range by construction. Reading them through a
-    // guard keeps that fact checked instead of asserted.
-    const baselineToken = baseline[baselineIndex];
-    const fieldToken = field[fieldIndex];
-    if (
-      baselineToken === undefined ||
-      fieldToken === undefined ||
-      changedTokenKey(baselineToken) === changedTokenKey(fieldToken)
-    ) {
-      continue;
-    }
-    gaps.push({
-      baseline: [baselineToken],
-      field: [fieldToken],
-    });
-  }
-  return gaps;
-};
-
-/** Pair each run between anchors with the baseline run it replaced. */
-const collectUnalignedGaps = (
-  baseline: string[],
-  field: string[],
-  boundaries: [number, number][],
-  start: number,
-  fieldStart: number,
-): TokenGap[] => {
-  const gaps: TokenGap[] = [];
-  let baselineCursor = start;
-  let fieldCursor = fieldStart;
-  for (const [baselineEdge, fieldEdge] of boundaries) {
-    const baselineRun = baseline.slice(baselineCursor, baselineEdge);
-    const fieldRun = field.slice(fieldCursor, fieldEdge);
-    if (baselineRun.length > 0 || fieldRun.length > 0) {
-      gaps.push({ baseline: baselineRun, field: fieldRun });
-    }
-    baselineCursor = baselineEdge + 1;
-    fieldCursor = fieldEdge + 1;
-  }
-
-  return gaps;
-};
-
 /**
  * Splits one dictation occurrence into the runs between its surviving tokens,
  * paired with the baseline runs those tokens replaced.
@@ -296,13 +243,39 @@ const collectRegionGaps = (args: {
     ? Math.max(fieldStart, firstInSpan[1] - (firstInSpan[0] - start))
     : fieldStart;
 
-  return collectUnalignedGaps(
-    baseline,
-    field,
-    boundaries,
-    start,
-    regionStart,
-  ).concat(collectCaseCorrections(baseline, field, inSpan));
+  const gaps: TokenGap[] = [];
+  let baselineCursor = start;
+  let fieldCursor = regionStart;
+  for (const [baselineEdge, fieldEdge] of boundaries) {
+    const baselineRun = baseline.slice(baselineCursor, baselineEdge);
+    const fieldRun = field.slice(fieldCursor, fieldEdge);
+    if (baselineRun.length > 0 || fieldRun.length > 0) {
+      gaps.push({ baseline: baselineRun, field: fieldRun });
+    }
+    baselineCursor = baselineEdge + 1;
+    fieldCursor = fieldEdge + 1;
+  }
+
+  for (const [baselineIndex, fieldIndex] of inSpan) {
+    // `anchors` is only ever filled with `row - 1` / `column - 1`, where `row`
+    // and `column` walk down from `baseline.length` / `field.length` and stop at
+    // 1, so both indices are in range by construction. Reading them through a
+    // guard keeps that fact checked instead of asserted.
+    const baselineToken = baseline[baselineIndex];
+    const fieldToken = field[fieldIndex];
+    if (
+      baselineToken === undefined ||
+      fieldToken === undefined ||
+      changedTokenKey(baselineToken) === changedTokenKey(fieldToken)
+    ) {
+      continue;
+    }
+    gaps.push({
+      baseline: [baselineToken],
+      field: [fieldToken],
+    });
+  }
+  return gaps;
 };
 
 const collectRegionTerms = (
@@ -344,9 +317,9 @@ const collectRegionTerms = (
     return [];
   }
 
-  // A pure insertion was already skipped above. Any collected addition has a
-  // corresponding removal; a long removal instead indicates a rewrite.
-  if (removedCount > MAX_EDIT_TOKENS) {
+  // A pure insertion is the user adding their own words, not correcting the
+  // dictation, and a long removal is a rewrite.
+  if (removedCount === 0 || removedCount > MAX_EDIT_TOKENS) {
     return [];
   }
 

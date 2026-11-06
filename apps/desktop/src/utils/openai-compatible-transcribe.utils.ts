@@ -5,7 +5,6 @@ import {
   OPENAI_COMPATIBLE_DEFAULT_TRANSCRIPTION_PATH,
 } from "./openai-compatible.utils";
 import { secureFetch } from "./secure-fetch.utils";
-import { buildTranscriptionForm } from "./transcription-form.utils";
 import {
   toTranscriptionSegments,
   type TranscriptionSegment,
@@ -53,13 +52,16 @@ export const openaiCompatibleTranscribeAudio = async ({
   // deterministic 4xx. We never default to `json`, which would silently disable
   // the silence gate for servers that DO support `verbose_json`.
   const buildBody = (format: "verbose_json" | "json" | null): FormData => {
-    const formData = buildTranscriptionForm({
-      blob,
-      ext,
-      model,
-      prompt,
-      language,
-    });
+    const formData = new FormData();
+    const file = new Blob([blob], { type: `audio/${ext}` });
+    formData.append("file", file, `audio.${ext}`);
+    formData.append("model", model);
+    if (prompt) {
+      formData.append("prompt", prompt);
+    }
+    if (language && language !== "auto") {
+      formData.append("language", language);
+    }
     if (format) {
       formData.append("response_format", format);
     }

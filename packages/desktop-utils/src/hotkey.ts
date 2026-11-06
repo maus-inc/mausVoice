@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import type { ActivationController } from "./activation";
 
-/** One independently tracked hold binding, including its trigger snapshot. */
-export type HotkeyHoldAction = {
+type HoldAction = {
   controller: ActivationController;
   combos: string[][];
   triggerCount: number;
@@ -15,7 +14,7 @@ export type HotkeyHoldAction = {
 };
 
 export type UseHotkeyHoldManyArgs = {
-  actions: HotkeyHoldAction[];
+  actions: HoldAction[];
   keysHeld: string[];
   isDisabled?: boolean;
 };
@@ -34,94 +33,6 @@ export type UseHotkeyFireArgs = {
   keysHeld: string[];
   isDisabled?: boolean;
   onFire?: () => void;
-};
-
-const normalizeHoldKey = (key: string) => key.toLowerCase();
-
-const matchesHoldCombo = (
-  held: string[],
-  combo: string[],
-  allowedAdditionalKeys?: string[],
-) => {
-  if (combo.length === 0) {
-    return false;
-  }
-
-  const uniqueHeld = Array.from(
-    new Set(held.map((key) => normalizeHoldKey(key))),
-  );
-  const required = Array.from(
-    new Set(combo.map((key) => normalizeHoldKey(key))),
-  );
-  const requiredSet = new Set(required);
-  const allowed = new Set(
-    (allowedAdditionalKeys ?? []).map((key) => normalizeHoldKey(key)),
-  );
-
-  const heldSet = new Set(uniqueHeld);
-  // Every required key must be held.
-  if (!required.every((key) => heldSet.has(key))) {
-    return false;
-  }
-  // Every held key must be either required or explicitly allowed; any other
-  // extra key (e.g. Fn+any-key) invalidates the hold-to-talk gesture.
-  for (const key of uniqueHeld) {
-    if (!requiredSet.has(key) && !allowed.has(key)) {
-      return false;
-    }
-  }
-  return true;
-};
-
-/** The hold gesture began: start capture unless this press is ignored. */
-const beginHold = (controller: ActivationController): void => {
-  if (!controller.shouldIgnoreActivation) controller.handlePress();
-};
-
-/** The hold gesture ended: clear any ignore latch and stop capture. */
-const endHold = (controller: ActivationController): void => {
-  controller.clearIgnore();
-  controller.handleRelease();
-};
-
-const updateHoldAction = (
-  action: HotkeyHoldAction,
-  keysHeld: string[],
-  isDisabled: boolean,
-  wasPressedByController: Map<ActivationController, boolean>,
-): void => {
-  const availableCombos = action.combos;
-  const wasPressed = wasPressedByController.get(action.controller) ?? false;
-  const isPressed = availableCombos.some((combo) =>
-    matchesHoldCombo(keysHeld, combo, action.allowedAdditionalKeys),
-  );
-
-  if (isDisabled) {
-    wasPressedByController.set(action.controller, isPressed);
-    action.controller.reset();
-    return;
-  }
-
-  if (
-    action.controller.isActive &&
-    !wasPressed &&
-    !action.controller.hasHadRelease
-  ) {
-    // A stale active controller may already own a recording. Resetting it
-    // without deactivation would leave that capture running after rebinding.
-    action.controller.reset();
-  }
-
-  if (availableCombos.length === 0) {
-    wasPressedByController.set(action.controller, false);
-    action.controller.reset();
-    return;
-  }
-
-  if (isPressed && !wasPressed) beginHold(action.controller);
-  else if (!isPressed && wasPressed) endHold(action.controller);
-
-  wasPressedByController.set(action.controller, isPressed);
 };
 
 /**
@@ -144,15 +55,79 @@ export const useHotkeyHoldMany = (args: UseHotkeyHoldManyArgs): void => {
   const wasPressedRef = useRef<Map<ActivationController, boolean>>(new Map());
 
   useEffect(() => {
-    const current = new Set(actions.map((action) => action.controller));
-    for (const controller of wasPressedRef.current.keys()) {
-      if (!current.has(controller)) {
-        wasPressedRef.current.delete(controller);
-        controller.reset();
+    const normalize = (key: string) => key.toLowerCase();
+
+    const matchesCombo = (
+      held: string[],
+      combo: string[],
+      allowedAdditionalKeys?: string[],
+    ) => {
+      if (combo.length === 0) {
+        return false;
       }
-    }
+
+      const uniqueHeld = Array.from(new Set(held.map((key) => normalize(key))));
+      const required = Array.from(new Set(combo.map((key) => normalize(key))));
+      const requiredSet = new Set(required);
+      const allowed = new Set(
+        (allowedAdditionalKeys ?? []).map((key) => normalize(key)),
+      );
+
+      const heldSet = new Set(uniqueHeld);
+      // Every required key must be held.
+      if (!required.every((key) => heldSet.has(key))) {
+        return false;
+      }
+      // Every held key must be either required or explicitly allowed; any other
+      // extra key (e.g. Fn+any-key) invalidates the hold-to-talk gesture.
+      for (const key of uniqueHeld) {
+        if (!requiredSet.has(key) && !allowed.has(key)) {
+          return false;
+        }
+      }
+      return true;
+    };
+
     for (const action of actions) {
-      updateHoldAction(action, keysHeld, isDisabled, wasPressedRef.current);
+      const availableCombos = action.combos;
+      const wasPressed = wasPressedRef.current.get(action.controller) ?? false;
+      const isPressed = availableCombos.some((combo) =>
+        matchesCombo(keysHeld, combo, action.allowedAdditionalKeys),
+      );
+
+      if (isDisabled) {
+        wasPressedRef.current.set(action.controller, isPressed);
+        action.controller.reset();
+        continue;
+      }
+
+      if (
+        action.controller.isActive &&
+        !wasPressed &&
+        !action.controller.hasHadRelease
+      ) {
+        action.controller.forceReset();
+      }
+
+      if (availableCombos.length === 0) {
+        wasPressedRef.current.set(action.controller, false);
+        action.controller.reset();
+        continue;
+      }
+
+      if (isPressed && !wasPressed) {
+        if (action.controller.shouldIgnoreActivation) {
+          wasPressedRef.current.set(action.controller, isPressed);
+          continue;
+        }
+
+        action.controller.handlePress();
+      } else if (!isPressed && wasPressed) {
+        action.controller.clearIgnore();
+        action.controller.handleRelease();
+      }
+
+      wasPressedRef.current.set(action.controller, isPressed);
     }
   }, [keysHeld, combosSignature, actions, isDisabled]);
 
@@ -160,8 +135,8 @@ export const useHotkeyHoldMany = (args: UseHotkeyHoldManyArgs): void => {
     () => actions.map((a) => a.triggerCount).join(","),
     [actions],
   );
-  const prevTriggerCountsRef = useRef<WeakMap<ActivationController, number>>(
-    new WeakMap(),
+  const prevTriggerCountsRef = useRef<Map<ActivationController, number>>(
+    new Map(),
   );
 
   useEffect(() => {
@@ -201,31 +176,6 @@ export const useHotkeyHold = (args: UseHotkeyHoldArgs): void => {
   });
 };
 
-// A fresh complete press clears old contamination; extra keys and keys held
-// across re-enabling prevent a tap until the combo is released again.
-const fireComboTransition = (
-  required: Set<string>,
-  previous: Set<string>,
-  current: Set<string>,
-  wasDisabled: boolean,
-  contaminated: boolean,
-): FireComboTransition => {
-  const previousIncludesAll = [...required].every((key) => previous.has(key));
-  const currentIncludesAll = [...required].every((key) => current.has(key));
-  const previousExact = previousIncludesAll && previous.size === required.size;
-  const currentExact = currentIncludesAll && current.size === required.size;
-  return {
-    shouldFire: previousExact && !currentIncludesAll && !contaminated,
-    state: {
-      contaminated:
-        currentIncludesAll &&
-        (!currentExact ||
-          (previousIncludesAll && (wasDisabled || contaminated))),
-      previousExact: currentExact,
-    },
-  };
-};
-
 const updateComboState = ({
   combo,
   previousSet,
@@ -239,15 +189,45 @@ const updateComboState = ({
   wasDisabled: boolean;
   comboState: { contaminated: boolean };
 }): boolean => {
-  const transition = fireComboTransition(
-    new Set(combo.map((key) => key.toLowerCase())),
-    previousSet,
-    currentSet,
-    wasDisabled,
-    comboState.contaminated,
+  const requiredSet = new Set(combo.map((key) => key.toLowerCase()));
+  const previousIncludesAll = Array.from(requiredSet).every((key) =>
+    previousSet.has(key),
   );
-  comboState.contaminated = transition.state.contaminated;
-  return transition.shouldFire;
+  const currentIncludesAll = Array.from(requiredSet).every((key) =>
+    currentSet.has(key),
+  );
+  const previousExact =
+    previousIncludesAll && previousSet.size === requiredSet.size;
+  const currentExact =
+    currentIncludesAll && currentSet.size === requiredSet.size;
+
+  if (wasDisabled && currentIncludesAll) {
+    comboState.contaminated = true;
+  }
+
+  if (!previousIncludesAll && currentIncludesAll) {
+    comboState.contaminated = false;
+  }
+
+  if (currentIncludesAll && !currentExact) {
+    comboState.contaminated = true;
+  }
+
+  let shouldFire = false;
+  if (
+    previousExact &&
+    !currentExact &&
+    !currentIncludesAll &&
+    !comboState.contaminated
+  ) {
+    shouldFire = true;
+  }
+
+  if (!currentIncludesAll) {
+    comboState.contaminated = false;
+  }
+
+  return shouldFire;
 };
 
 const evaluateComboRelease = ({
@@ -418,13 +398,25 @@ export const processFireCombo = (args: FireComboArgs): FireComboTransition => {
       contaminated: false,
       previousExact: false,
     };
-  const transition = fireComboTransition(
-    required,
-    previous,
-    current,
-    wasDisabled,
-    previousState.contaminated,
+  const previousIncludesAll = Array.from(required).every((key) =>
+    previous.has(key),
   );
-  states.set(id, transition.state);
-  return transition;
+  const currentIncludesAll = Array.from(required).every((key) =>
+    current.has(key),
+  );
+  const previousExact = previousIncludesAll && previous.size === required.size;
+  const currentExact = currentIncludesAll && current.size === required.size;
+  let contaminated = previousState.contaminated;
+
+  if (wasDisabled && currentIncludesAll) contaminated = true;
+  if (!previousIncludesAll && currentIncludesAll) contaminated = false;
+  if (currentIncludesAll && !currentExact) contaminated = true;
+
+  const shouldFire =
+    previousExact && !currentExact && !currentIncludesAll && !contaminated;
+
+  if (!currentIncludesAll) contaminated = false;
+  const state = { contaminated, previousExact: currentExact };
+  states.set(id, state);
+  return { state, shouldFire };
 };

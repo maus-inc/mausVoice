@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { IntlShape } from "react-intl";
 import type { Transcription } from "@maus-inc/types";
+import { sampleTranscription } from "../test/helpers/transcription-fixture";
 import { INITIAL_APP_STATE } from "../state/app.state";
 import { getAppState, setAppState } from "../store";
 import { createDefaultPreferences } from "./user.actions";
@@ -73,14 +74,6 @@ const rejectionOf = async (run: Promise<unknown>): Promise<Error> => {
   throw new Error("expected the call to reject");
 };
 
-const sampleTranscription = (id: string): Transcription =>
-  ({
-    id,
-    audioDataId: "audio",
-    transcript: "my wife's name is Sonia",
-    createdAt: new Date("2026-01-01T00:00:00Z").toISOString(),
-  }) as unknown as Transcription;
-
 const seed = ({
   incognito = false,
   ephemeral = false,
@@ -109,91 +102,6 @@ afterEach(() => {
 });
 
 describe("saveCorrectedTranscript persistence gate", () => {
-  it("does not publish a previous session's correction or start learning after its write settles", async () => {
-    seed();
-    getMyUserPreferences.mockReturnValue({ autoLearnDictionaryEnabled: true });
-    let finish!: (value: Transcription) => void;
-    updateTranscription.mockReturnValueOnce(
-      new Promise((resolve) => {
-        finish = resolve;
-      }),
-    );
-    const pending = saveCorrectedTranscript({
-      transcriptionId: "tx",
-      correctedText: "Hello Ada",
-    });
-    const oldUpdate = updateTranscription.mock.calls[0][0] as Transcription;
-    const successor = { ...sampleTranscription("tx"), transcript: "successor" };
-    setAppState({ authSessionNonce: 1, transcriptionById: { tx: successor } });
-    finish(oldUpdate);
-    await expect(pending).rejects.toThrow("Correction was retired");
-    expect(getAppState().transcriptionById.tx).toEqual(successor);
-    expect(createGlossaryTerms).not.toHaveBeenCalled();
-    expect(loggerMock.error).not.toHaveBeenCalled();
-  });
-
-  it("does not learn corrected names when privacy activates during the transcript write", async () => {
-    seed();
-    getMyUserPreferences.mockReturnValue({ autoLearnDictionaryEnabled: true });
-    let finish!: (value: Transcription) => void;
-    updateTranscription.mockReturnValueOnce(
-      new Promise((resolve) => {
-        finish = resolve;
-      }),
-    );
-    const pending = saveCorrectedTranscript({
-      transcriptionId: "tx",
-      correctedText: "Hello Ada",
-    });
-    const update = updateTranscription.mock.calls[0][0] as Transcription;
-    setAppState((state) => ({
-      userPrefs: { ...state.userPrefs!, incognitoModeEnabled: true },
-    }));
-    finish(update);
-    expect(await pending).toMatchObject({
-      dictionarySuppressed: true,
-      learnedTerms: [],
-    });
-    expect(createGlossaryTerms).not.toHaveBeenCalled();
-  });
-
-  it("does not undo a saved correction when subsequent glossary learning fails", async () => {
-    seed();
-    getMyUserPreferences.mockReturnValue({ autoLearnDictionaryEnabled: true });
-    createGlossaryTerms.mockRejectedValueOnce(
-      new Error("glossary unavailable"),
-    );
-    const result = await saveCorrectedTranscript({
-      transcriptionId: "tx",
-      correctedText: "Hello Ada",
-    });
-    expect(result.failedTerms).toBeGreaterThan(0);
-    expect(getAppState().transcriptionById.tx.transcript).toBe("Hello Ada");
-    expect(updateTranscription).toHaveBeenCalledOnce();
-  });
-
-  it("does not roll back a newer correction when an older write fails", async () => {
-    seed();
-    let fail!: (error: Error) => void;
-    updateTranscription.mockReturnValueOnce(
-      new Promise((_resolve, reject) => {
-        fail = reject;
-      }),
-    );
-    const old = saveCorrectedTranscript({
-      transcriptionId: "tx",
-      correctedText: "First",
-    });
-    const rejected = expect(old).rejects.toThrow();
-    await saveCorrectedTranscript({
-      transcriptionId: "tx",
-      correctedText: "Second",
-    });
-    fail(new Error("old write failed"));
-    await rejected;
-    expect(getAppState().transcriptionById.tx.transcript).toBe("Second");
-  });
-
   it("persists the correction when persistence is allowed", async () => {
     seed();
 
@@ -207,6 +115,7 @@ describe("saveCorrectedTranscript persistence gate", () => {
         id: "tx",
         transcript: "my wife's name is Soniya",
       }),
+      expect.any(Object),
     );
     expect(getAppState().transcriptionById["tx"]?.transcript).toBe(
       "my wife's name is Soniya",
@@ -243,9 +152,7 @@ describe("saveCorrectedTranscript persistence gate", () => {
       }),
     ).rejects.toThrow("write failed");
 
-    expect(getAppState().transcriptionById["tx"]?.transcript).toBe(
-      "my wife's name is Sonia",
-    );
+    expect(getAppState().transcriptionById["tx"]?.transcript).toBe("hello");
   });
 });
 
@@ -293,10 +200,9 @@ describe("saveCorrectedTranscript glossary gate", () => {
       correctedText: learnable,
     });
 
-    expect(createGlossaryTerms).toHaveBeenCalledWith(
-      ["Soniya"],
-      expect.any(Function),
-    );
+    const lease = updateTranscription.mock.calls[0]?.[1];
+    expect(lease).toBeDefined();
+    expect(createGlossaryTerms).toHaveBeenCalledWith(["Soniya"], lease);
     expect(result.learnedTerms).toEqual(["Soniya"]);
     expect(result.dictionarySuppressed).toBe(false);
   });

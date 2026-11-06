@@ -3,6 +3,16 @@ import { Box, Stack, Tooltip, Typography } from "@mui/material";
 import { FormattedMessage } from "react-intl";
 import { isDefined } from "@maus-inc/utilities";
 
+type SectionProps = {
+  title: React.ReactNode;
+  description?: React.ReactNode;
+  children?: React.ReactNode;
+  enabled?: boolean;
+  onToggleEnable?: () => void;
+  blocked?: boolean;
+  blockedReason?: React.ReactNode;
+};
+
 export const Section = ({
   title,
   description,
@@ -11,15 +21,7 @@ export const Section = ({
   onToggleEnable,
   blocked,
   blockedReason,
-}: {
-  title: React.ReactNode;
-  description?: React.ReactNode;
-  children?: React.ReactNode;
-  enabled?: boolean;
-  onToggleEnable?: () => void;
-  blocked?: boolean;
-  blockedReason?: React.ReactNode;
-}) => {
+}: SectionProps) => {
   const fieldEnabled = !blocked && (enabled ?? true);
   const headerEnabled = !blocked;
 

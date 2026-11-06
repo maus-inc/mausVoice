@@ -11,18 +11,16 @@ import {
   ELEVENLABS_REALTIME_KEYTERMS_BUDGET,
 } from "../utils/prompt.utils";
 import { secureFetch } from "../utils/secure-fetch.utils";
-import {
-  audioChunkSampleBounds,
-  drainSamples,
-  padFinalAudioChunk,
-} from "./audio-buffer.utils";
+import { drainSamples } from "./audio-buffer.utils";
 import { BaseApiTranscriptionSession } from "./base-api-transcription-session";
-import { createStreamingResampler } from "../utils/gladia.utils";
 import { createTranscriptAccumulator } from "./transcript-accumulator.utils";
 import {
-  createWebSocketStartup,
-  MAX_SOCKET_BUFFERED_BYTES,
-} from "./transcription-stream.utils";
+  attachStreamingSocketHandlers,
+  closeStreamingSocket,
+  createFinalizeBookkeeper,
+  createStartupSettler,
+} from "./streaming-session.utils";
+import { getStartupAbortReason } from "./provider-startup.utils";
 
 type ElevenLabsStreamingSession = {
   finalize: () => Promise<string>;
@@ -30,39 +28,9 @@ type ElevenLabsStreamingSession = {
   writeAudioChunk: (chunk: Float32Array) => void;
 };
 
-/** Queue bounds for audio that a stalled socket has not taken yet. */
-const MAX_PENDING_CHUNKS = 1024;
-const MAX_QUEUED_SECONDS = 30;
-
 const ELEVENLABS_WS_URL = "wss://api.elevenlabs.io/v1/speech-to-text/realtime";
 const ELEVENLABS_TOKEN_URL =
   "https://api.elevenlabs.io/v1/single-use-token/realtime_scribe";
-
-const ERROR_MESSAGE_TYPES = new Set([
-  "error",
-  "input_error",
-  "transcriber_error",
-  "auth_error",
-  "quota_exceeded",
-  "invalid_request",
-  "commit_throttled",
-  "chunk_size_exceeded",
-  "insufficient_audio_activity",
-  "rate_limited",
-  "unaccepted_terms",
-  "queue_overflow",
-  "resource_exhausted",
-  "session_time_limit_exceeded",
-]);
-const SERVER_MESSAGE_TYPES = new Set([
-  "committed_transcript",
-  "partial_transcript",
-  "session_started",
-  ...ERROR_MESSAGE_TYPES,
-]);
-
-const safeServerMessageType = (type: string | undefined): string =>
-  type && SERVER_MESSAGE_TYPES.has(type) ? type : "unknown";
 
 const SUPPORTED_SAMPLE_RATES = [8000, 16000, 22050, 24000, 44100, 48000];
 
@@ -81,33 +49,58 @@ const getClosestSupportedSampleRate = (sampleRate: number): number => {
   return closest;
 };
 
-const getElevenLabsToken = async (apiKey: string): Promise<string> => {
+const resampleAudio = (
+  input: Float32Array,
+  inputRate: number,
+  outputRate: number,
+): Float32Array => {
+  if (inputRate === outputRate) return input;
+  const ratio = inputRate / outputRate;
+  const outputLength = Math.ceil(input.length / ratio);
+  const output = new Float32Array(outputLength);
+  for (let i = 0; i < outputLength; i++) {
+    const srcIndex = i * ratio;
+    const srcFloor = Math.floor(srcIndex);
+    const frac = srcIndex - srcFloor;
+    const a = input[srcFloor] ?? 0;
+    const b = input[Math.min(srcFloor + 1, input.length - 1)] ?? 0;
+    output[i] = a + frac * (b - a);
+  }
+  return output;
+};
+
+const getElevenLabsToken = async (
+  apiKey: string,
+  signal?: AbortSignal,
+): Promise<string> => {
   const response = await secureFetch(ELEVENLABS_TOKEN_URL, {
     method: "POST",
     headers: {
       "xi-api-key": apiKey,
     },
+    signal,
   });
 
   if (!response.ok) {
-    // Provider error bodies can echo credentials or other sensitive data.
-    // The status is sufficient for diagnostics and does not require consuming it.
-    getLogger().verbose(
-      `[ElevenLabs] Token request failed with status ${response.status}`,
-    );
+    const textSnippet = await response.text().catch(() => "");
+    if (textSnippet) {
+      const snippet =
+        textSnippet.length > 200
+          ? `${textSnippet.slice(0, 200)}...`
+          : textSnippet;
+      getLogger().verbose(
+        "[ElevenLabs] Token fetch failed, response snippet:",
+        snippet,
+      );
+    } else {
+      getLogger().verbose(
+        `[ElevenLabs] Token request failed with status ${response.status}`,
+      );
+    }
     throw new Error(`Failed to get ElevenLabs token: ${response.status}`);
   }
 
-  const data: unknown = await response.json();
-  if (
-    !data ||
-    typeof data !== "object" ||
-    !("token" in data) ||
-    typeof data.token !== "string" ||
-    !data.token.trim()
-  ) {
-    throw new Error("ElevenLabs token response did not contain a valid token");
-  }
+  const data = await response.json();
   return data.token;
 };
 
@@ -116,6 +109,7 @@ const startElevenLabsStreaming = async (
   inputSampleRate: number,
   keyterms: string[],
   onInterimResult?: (segment: string) => void,
+  signal?: AbortSignal,
 ): Promise<ElevenLabsStreamingSession> => {
   const sampleRate = SUPPORTED_SAMPLE_RATES.includes(inputSampleRate)
     ? inputSampleRate
@@ -135,24 +129,22 @@ const startElevenLabsStreaming = async (
 
   const MIN_CHUNK_DURATION_MS = 20;
   const MAX_CHUNK_DURATION_MS = 100;
-  const { minSamplesPerChunk, maxSamplesPerChunk } = audioChunkSampleBounds(
-    sampleRate,
-    MIN_CHUNK_DURATION_MS,
-    MAX_CHUNK_DURATION_MS,
+  const minSamplesPerChunk = Math.max(
+    1,
+    Math.ceil((sampleRate * MIN_CHUNK_DURATION_MS) / 1000),
+  );
+  const maxSamplesPerChunk = Math.max(
+    minSamplesPerChunk,
+    Math.ceil((sampleRate * MAX_CHUNK_DURATION_MS) / 1000),
   );
 
-  const token = await getElevenLabsToken(apiKey);
+  const token = await getElevenLabsToken(apiKey, signal);
+  if (signal?.aborted) throw getStartupAbortReason(signal);
   getLogger().verbose("[ElevenLabs WebSocket] Got single-use token");
 
   return new Promise((resolve, reject) => {
     let ws: WebSocket | null = null;
     let isFinalized = false;
-    let isFlushingFinalAudio = false;
-    let retired = false;
-    let deliveryFailure: string | null = null;
-    const resampler = needsResample
-      ? createStreamingResampler(inputSampleRate, sampleRate)
-      : null;
     let sentChunkCount = 0;
     let pendingChunks: Float32Array[] = [];
     const pendingSampleCountRef = { value: 0 };
@@ -170,7 +162,7 @@ const startElevenLabsStreaming = async (
 
     const sendAudioChunk = (chunk: Float32Array, commit: boolean) => {
       if (!ws || ws.readyState !== WebSocket.OPEN) {
-        return false;
+        return;
       }
 
       try {
@@ -181,13 +173,6 @@ const startElevenLabsStreaming = async (
           commit,
           sample_rate: sampleRate,
         });
-        if (
-          (ws.bufferedAmount ?? 0) + message.length >
-          MAX_SOCKET_BUFFERED_BYTES
-        ) {
-          deliveryFailure = "ElevenLabs audio queue limit reached";
-          return false;
-        }
         ws.send(message);
         sentChunkCount++;
         if (sentChunkCount <= 3 || sentChunkCount % 10 === 0) {
@@ -196,182 +181,173 @@ const startElevenLabsStreaming = async (
             `[ElevenLabs WebSocket] Sent chunk #${sentChunkCount} (${chunk.length} samples ~${durationMs.toFixed(1)} ms)`,
           );
         }
-        return true;
-      } catch {
-        getLogger().error("[ElevenLabs WebSocket] Error sending chunk");
-        return false;
+      } catch (error) {
+        getLogger().error("[ElevenLabs WebSocket] Error sending chunk:", error);
       }
     };
 
-    // Scribe accepts a commit flag on an input_audio_chunk, not a standalone
-    // "commit" message. Empty audio is valid when no tail samples remain.
-    const sendTerminalCommit = (): boolean =>
-      sendAudioChunk(new Float32Array(0), true);
-
-    /** Drain one provider-sized chunk, restoring it if the send fails. */
-    const sendNextChunk = (force: boolean): boolean => {
-      const available = pendingSampleCountRef.value;
-      if (available === 0 || (available < minSamplesPerChunk && !force))
-        return false;
-      const original = drain(Math.min(available, maxSamplesPerChunk));
-      const chunk = padFinalAudioChunk(original, minSamplesPerChunk, force);
-      if (chunk.length === 0) return false;
-      const isLastChunk = force && pendingSampleCountRef.value === 0;
-      if (sendAudioChunk(chunk, isLastChunk)) return true;
-      pendingChunks.unshift(original);
-      pendingSampleCountRef.value += original.length;
-      return false;
+    const sendTerminalCommit = () => {
+      try {
+        ws?.send(JSON.stringify({ message_type: "commit" }));
+      } catch (error) {
+        getLogger().error(
+          "[ElevenLabs WebSocket] Error sending terminal commit:",
+          error,
+        );
+      }
     };
 
-    const flushPendingSamples = (force = false): boolean => {
-      if (ws?.readyState !== WebSocket.OPEN) return false;
+    const resolveChunkSize = (available: number, force: boolean) => {
+      if (available >= maxSamplesPerChunk) return maxSamplesPerChunk;
+      if (available < minSamplesPerChunk && !force) return 0;
+      return available;
+    };
+
+    const flushPendingSamples = (force = false) => {
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        return;
+      }
+
       if (force && pendingSampleCountRef.value === 0) {
-        // A socket can close after the readyState check, so the terminal send
-        // is guarded independently from normal audio sends.
-        return sendTerminalCommit();
+        // Guard the terminal commit send the same way sendAudioChunk guards a
+        // normal send. A socket that closes between the readyState check and
+        // this send would otherwise reject finalize() instead of degrading to
+        // a transcript.
+        sendTerminalCommit();
+        return;
       }
-      while (sendNextChunk(force)) {
-        // Drain complete chunks until the queue is empty or a send fails.
-      }
-      return pendingSampleCountRef.value === 0;
-    };
 
-    /**
-     * A failed send can be retried, but only while its queue stays bounded: an
-     * unbounded queue would swallow the recording's memory when the socket
-     * stalls.
-     */
-    const queueHasRoom = (incomingSamples: number): boolean =>
-      pendingChunks.length < MAX_PENDING_CHUNKS &&
-      pendingSampleCountRef.value + incomingSamples <=
-        sampleRate * MAX_QUEUED_SECONDS;
+      while (
+        pendingSampleCountRef.value >= minSamplesPerChunk ||
+        (force && pendingSampleCountRef.value > 0)
+      ) {
+        const available = pendingSampleCountRef.value;
+        const chunkSize = resolveChunkSize(available, force);
+        if (chunkSize === 0) {
+          break;
+        }
+
+        let chunk = drain(chunkSize);
+        if (force && chunk.length > 0 && chunk.length < minSamplesPerChunk) {
+          const padded = new Float32Array(minSamplesPerChunk);
+          padded.set(chunk);
+          chunk = padded;
+        }
+
+        if (chunk.length === 0) {
+          break;
+        }
+
+        const isLastChunk = force && pendingSampleCountRef.value === 0;
+        sendAudioChunk(chunk, isLastChunk);
+      }
+    };
 
     const writeAudioChunk = (rawChunk: Float32Array) => {
-      if (isFinalized || retired || deliveryFailure) return;
-      if (!ws || ws.readyState !== WebSocket.OPEN) {
-        failStream("ElevenLabs connection closed before finalization");
+      if (isFinalized) return;
+      // Queue only for a socket that is still able to receive. The test is
+      // `readyState`, not `ws`: `cleanup` only nulls the socket when it is not
+      // already CLOSED, so after a normal close `ws` is still the closed socket,
+      // and a `!ws` guard would have changed nothing at all.
+      //
+      // There is no reconnect to queue for. The comment this replaces spoke of
+      // "reconnecting", but nothing in this session ever opens a second socket,
+      // so `flushPendingSamples` below stayed a no-op for the rest of the
+      // recording while every chunk pushed into `pendingChunks` stayed there
+      // too: hours of audio, retained, never sent, until `finalize` released it.
+      if (
+        !ws ||
+        ws.readyState === WebSocket.CLOSING ||
+        ws.readyState === WebSocket.CLOSED
+      ) {
         return;
       }
       try {
-        const typedChunk = resampler?.process(rawChunk) ?? rawChunk;
-        if (typedChunk.length === 0) return;
-        if (!queueHasRoom(typedChunk.length)) {
-          failStream("ElevenLabs audio queue limit reached");
-          return;
-        }
-        // Failed sends can leave chunks queued beyond this call. Own the
-        // samples rather than retaining a caller-mutable view.
-        pendingChunks.push(typedChunk.slice());
+        const typedChunk = needsResample
+          ? resampleAudio(rawChunk, inputSampleRate, sampleRate)
+          : rawChunk;
+        // Queued unconditionally; `flushPendingSamples` is what decides whether
+        // the socket can take it, and `finalize` drains what is left with
+        // `force`.
+        //
+        // There is no "captured while connecting" case to cover here, which is
+        // what this comment used to promise. `writeAudioChunk` is handed out
+        // from `ws.onopen` and not before, so the socket is OPEN by the time any
+        // caller can reach this; audio written during the handshake never gets
+        // this far, because the base session has no stream session to forward it
+        // to until then. The guard above is the one that earns its keep: a
+        // socket that closed under us leaves this queue with nowhere to go.
+        pendingChunks.push(typedChunk);
         pendingSampleCountRef.value += typedChunk.length;
         flushPendingSamples(false);
-        if (deliveryFailure) failStream(deliveryFailure);
-      } catch {
-        failStream("ElevenLabs audio processing failed");
+      } catch (error) {
+        getLogger().error(
+          "[ElevenLabs WebSocket] Error sending audio chunk:",
+          error,
+        );
       }
-    };
-
-    let resolveFinal: ((text: string) => void) | null = null;
-    let rejectFinal: ((error: Error) => void) | null = null;
-    let finalTimer: ReturnType<typeof setTimeout> | null = null;
-    let finalPromise: Promise<string> | null = null;
-
-    const retire = () => {
-      retired = true;
-      const socket = ws;
-      ws = null;
-      if (socket && socket.readyState !== WebSocket.CLOSED) {
-        try {
-          socket.close();
-        } catch {
-          getLogger().warning("[ElevenLabs WebSocket] Socket cleanup failed");
-        }
-      }
-      resetBuffers();
-      resampler?.reset();
-    };
-
-    const settleFinal = (failure?: string) => {
-      const resolve = resolveFinal;
-      const reject = rejectFinal;
-      if (!resolve || !reject) return;
-      resolveFinal = null;
-      rejectFinal = null;
-      if (finalTimer !== null) clearTimeout(finalTimer);
-      finalTimer = null;
-      retire();
-      if (failure) reject(new Error(failure));
-      else resolve(getText());
     };
 
     const cleanup = () => {
-      if (resolveFinal) settleFinal("ElevenLabs stream was cancelled");
-      else retire();
+      // Detach before closing: a socket that fires `onclose` synchronously
+      // inside close() re-enters cleanup and must observe null here.
+      const socket = ws;
+      ws = null;
+      closeStreamingSocket(socket, resetBuffers, "ElevenLabs WebSocket");
     };
 
-    const failStream = (message: string) => {
-      deliveryFailure ??= message;
-      if (resolveFinal && !isFlushingFinalAudio) settleFinal(deliveryFailure);
-      else if (!isFinalized) retire();
-    };
-
-    /** True while the socket can still take the terminal audio and commit. */
-    const socketAcceptsFinalAudio = (): boolean =>
-      !deliveryFailure && !retired && !!ws && ws.readyState === WebSocket.OPEN;
-
-    /** Send the resampler tail, then the last audio and the terminal commit. */
-    const sendFinalAudioAndCommit = (): string | null => {
-      try {
-        const tail = resampler?.flush();
-        if (tail?.length) {
-          pendingChunks.push(tail);
-          pendingSampleCountRef.value += tail.length;
-        }
-        isFlushingFinalAudio = true;
-        // A failed first attempt can leave the queue drained in part, so the
-        // terminal send is retried once before the recording is called lost.
-        let sent = flushPendingSamples(true);
-        if (!sent) sent = flushPendingSamples(true);
-        isFlushingFinalAudio = false;
-        if (deliveryFailure) return deliveryFailure;
-        return sent
-          ? null
-          : "Unable to send final audio or commit to ElevenLabs";
-      } catch {
-        isFlushingFinalAudio = false;
-        return "Unable to send final audio or commit to ElevenLabs";
-      }
-    };
+    const bookkeeper = createFinalizeBookkeeper({
+      cleanup,
+      getText,
+      loggerPrefix: "ElevenLabs WebSocket",
+    });
 
     const finalize = (): Promise<string> => {
-      if (finalPromise) return finalPromise;
-      finalPromise = new Promise((resolve, reject) => {
-        resolveFinal = resolve;
-        rejectFinal = reject;
+      return new Promise((resolveFinalize) => {
+        getLogger().verbose(
+          "[ElevenLabs WebSocket] Finalize called, isFinalized:",
+          isFinalized,
+          "ws state:",
+          ws?.readyState,
+        );
+        if (isFinalized) {
+          getLogger().verbose(
+            "[ElevenLabs WebSocket] Already finalized, returning transcript",
+          );
+          resolveFinalize(getText());
+          return;
+        }
+
+        isFinalized = true;
+
+        flushPendingSamples(true);
+        getLogger().verbose(
+          "[ElevenLabs WebSocket] Total chunks sent:",
+          sentChunkCount,
+          "- waiting for final transcript...",
+        );
+
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          bookkeeper.begin(resolveFinalize);
+          bookkeeper.armTimeout(
+            6000,
+            "Timeout waiting for final transcript, length:",
+          );
+        } else {
+          cleanup();
+          resolveFinalize(getText());
+        }
       });
-      isFinalized = true;
-      if (!socketAcceptsFinalAudio()) {
-        settleFinal(
-          deliveryFailure ?? "ElevenLabs connection closed before finalization",
-        );
-        return finalPromise;
-      }
-      const sendFailure = sendFinalAudioAndCommit();
-      if (sendFailure) {
-        settleFinal(sendFailure);
-        return finalPromise;
-      }
-      if (resolveFinal) {
-        finalTimer = setTimeout(
-          () => settleFinal("ElevenLabs finalization timed out"),
-          15_000,
-        );
-      }
-      return finalPromise;
     };
 
-    // This is a per-segment event, not a correlated terminal acknowledgement:
-    // a VAD commit already in flight can still arrive after our final commit.
-    const completeFinalize = () => settleFinal();
+    const settler = createStartupSettler<ElevenLabsStreamingSession>({
+      signal,
+      cleanup,
+      resolve,
+      reject,
+      session: { finalize, cleanup, writeAudioChunk },
+    });
+    if (settler.settled) return;
 
     const audioFormat = `pcm_${sampleRate}`;
     // Keyterm prompting: repeated `keyterms` query parameters bias the
@@ -389,89 +365,81 @@ const startElevenLabsStreaming = async (
       "[ElevenLabs WebSocket] Connecting to:",
       redactQueryParamValues(wsUrl, ["token", "keyterms"]),
     );
-    ws = new WebSocket(wsUrl);
+    try {
+      ws = new WebSocket(wsUrl);
+    } catch (error) {
+      settler.rejectStartup(error);
+      return;
+    }
 
-    const startup = createWebSocketStartup(
-      "ElevenLabs WebSocket",
-      cleanup,
-      resolve,
-      reject,
-    );
-    ws.onopen = () =>
-      startup.open(() => {
-        getLogger().verbose("[ElevenLabs WebSocket] Connected");
-        flushPendingSamples(false);
-        getLogger().verbose("[ElevenLabs WebSocket] Session ready");
-        return { finalize, cleanup, writeAudioChunk };
-      });
-
-    const handleCommittedTranscript = (committedText: string) => {
-      transcriptState.appendFinal(committedText);
-      transcriptState.setPartial("");
+    ws.onopen = () => {
       getLogger().verbose(
-        "[ElevenLabs WebSocket] Committed chunk appended, length:",
-        committedText.length,
+        "[ElevenLabs WebSocket] Connected, awaiting session start",
       );
-      try {
-        if (onInterimResult && committedText) onInterimResult(committedText);
-      } finally {
-        if (isFinalized && !isFlushingFinalAudio && !deliveryFailure)
-          completeFinalize();
-      }
-    };
-
-    const handleServerMessage = (data: {
-      message_type?: string;
-      type?: string;
-      text?: string;
-    }) => {
-      const messageType = data.message_type || data.type;
-      // Provider messages can contain dictated text or echoed credentials.
-      // Log only known message kinds, never the payload or an unknown kind.
-      getLogger().verbose(
-        "[ElevenLabs WebSocket] Received message:",
-        safeServerMessageType(messageType),
-      );
-      if (messageType === "committed_transcript") {
-        handleCommittedTranscript(data.text || "");
-      } else if (messageType === "partial_transcript") {
-        transcriptState.setPartial(data.text || "");
-      } else if (messageType === "session_started") {
-        getLogger().verbose("[ElevenLabs WebSocket] Session started");
-      } else if (messageType && ERROR_MESSAGE_TYPES.has(messageType)) {
-        getLogger().error(
-          "[ElevenLabs WebSocket] Error from server:",
-          messageType,
-        );
-        failStream("ElevenLabs reported a streaming error");
-      }
     };
 
     ws.onmessage = (event) => {
-      if (retired || deliveryFailure) return;
       try {
-        handleServerMessage(JSON.parse(event.data));
-      } catch {
-        // Parser and consumer exceptions can contain provider-supplied text.
-        getLogger().error("[ElevenLabs WebSocket] Error processing message");
+        const data = JSON.parse(event.data);
+        const messageType = data.message_type || data.type;
+        getLogger().verbose(
+          "[ElevenLabs WebSocket] Received message:",
+          messageType,
+          data,
+        );
+
+        if (messageType === "committed_transcript") {
+          const committedText = data.text || "";
+          transcriptState.appendFinal(committedText);
+          transcriptState.setPartial("");
+          getLogger().verbose(
+            "[ElevenLabs WebSocket] Committed chunk appended, length:",
+            committedText.length,
+          );
+          if (onInterimResult && committedText) {
+            onInterimResult(committedText);
+          }
+          if (isFinalized) {
+            bookkeeper.complete();
+          }
+        } else if (messageType === "partial_transcript") {
+          transcriptState.setPartial(data.text || "");
+        } else if (messageType === "session_started") {
+          getLogger().verbose("[ElevenLabs WebSocket] Session started:", data);
+          flushPendingSamples(false);
+          settler.resolveStartup();
+        } else if (
+          typeof messageType === "string" &&
+          messageType.toLowerCase().includes("error")
+        ) {
+          getLogger().error("[ElevenLabs WebSocket] Error from server:", data);
+          if (!settler.settled) {
+            settler.rejectStartup(
+              new Error(
+                String(
+                  data.error ??
+                    data.message ??
+                    "ElevenLabs rejected the session",
+                ),
+              ),
+            );
+          }
+        }
+      } catch (error) {
+        getLogger().error(
+          "[ElevenLabs WebSocket] Error parsing message:",
+          error,
+        );
       }
     };
 
-    ws.onerror = (event) => {
-      if (retired) return;
-      failStream("ElevenLabs connection failed");
-      startup.error(event);
-    };
-
-    ws.onclose = (event) => {
-      if (retired) return;
-      getLogger().verbose("[ElevenLabs WebSocket] WebSocket closed:", {
-        code: event.code,
-      });
-      if (startup.closedBeforeOpen()) return;
-      failStream("ElevenLabs connection closed before finalization");
-      if (!isFlushingFinalAudio) retire();
-    };
+    attachStreamingSocketHandlers({
+      socket: ws,
+      settler,
+      cleanup,
+      loggerPrefix: "ElevenLabs WebSocket",
+      earlyCloseErrorMessage: "WebSocket closed before the session started",
+    });
   });
 };
 
@@ -490,8 +458,10 @@ export class ElevenLabsTranscriptionSession extends BaseApiTranscriptionSession 
     return true;
   }
 
-  async onRecordingStart(sampleRate: number): Promise<void> {
-    const generation = this.beginStreamStartup();
+  async onRecordingStart(
+    sampleRate: number,
+    signal?: AbortSignal,
+  ): Promise<void> {
     try {
       getLogger().verbose("[ElevenLabs] Starting streaming session...");
       const keytermsEnabled =
@@ -508,19 +478,19 @@ export class ElevenLabsTranscriptionSession extends BaseApiTranscriptionSession 
         }
         keyterms = computedKeyterms;
       }
-      const session = await startElevenLabsStreaming(
+      this.streamSession = await startElevenLabsStreaming(
         this.apiKey,
         sampleRate,
         keyterms,
-        this.interimForStartup(generation),
+        this.interimCallback ?? undefined,
+        signal,
       );
-      if (!this.adoptStreamSession(generation, session)) return;
       getLogger().verbose(
         "[ElevenLabs] Streaming session started successfully",
       );
-    } catch {
-      if (!this.ownsStreamStartup(generation)) return;
-      getLogger().error("[ElevenLabs] Failed to start streaming");
+    } catch (error) {
+      getLogger().error("[ElevenLabs] Failed to start streaming:", error);
+      throw error;
     }
   }
 }

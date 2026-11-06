@@ -4,28 +4,34 @@ import { INITIAL_APP_STATE } from "../state/app.state";
 import { getAppState, setAppState } from "../store";
 import { LOCAL_USER_ID } from "../utils/user.utils";
 import {
+  beginLocalDataClear,
+  LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY,
+  type LocalDataWriteLease,
+} from "../utils/local-data-write-gate";
+import {
   saveManualStyleForApp,
-  loadManualStyleForCurrentApp,
-  setAppTargetInsertionMethod,
-  setAppTargetPasteKeybind,
+  loadAppTargets,
   setAppTargetTone,
   setAppTargetTypingSpeed,
+  setAppTargetInsertionMethod,
 } from "./app-target.actions";
 
-const { upsertAppTargetMock, getLoggerMock, invokeMock, selectToneMock } =
-  vi.hoisted(() => ({
-    invokeMock: vi.fn(),
-    selectToneMock: vi.fn().mockResolvedValue(undefined),
+const { upsertAppTargetMock, listAppTargetsMock, getLoggerMock } = vi.hoisted(
+  () => ({
+    listAppTargetsMock: vi.fn<() => Promise<AppTarget[]>>(),
     upsertAppTargetMock: vi.fn(
-      (params: {
-        id: string;
-        name: string;
-        toneId: string | null;
-        iconPath: string | null;
-        pasteKeybind: string | null;
-        insertionMethod: string | null;
-        typingSpeedMs: number | null;
-      }) => {
+      (
+        params: {
+          id: string;
+          name: string;
+          toneId: string | null;
+          iconPath: string | null;
+          pasteKeybind: string | null;
+          insertionMethod: string | null;
+          typingSpeedMs: number | null;
+        },
+        _lease?: LocalDataWriteLease,
+      ): AppTarget | Promise<AppTarget> => {
         return {
           id: params.id,
           name: params.name,
@@ -44,19 +50,18 @@ const { upsertAppTargetMock, getLoggerMock, invokeMock, selectToneMock } =
       warning: vi.fn(),
       error: vi.fn(),
     },
-  }));
+  }),
+);
 
 vi.mock("../repos", () => ({
-  getAppTargetRepo: () => ({ upsertAppTarget: upsertAppTargetMock }),
+  getAppTargetRepo: () => ({
+    upsertAppTarget: upsertAppTargetMock,
+    listAppTargets: listAppTargetsMock,
+  }),
   getStorageRepo: () => ({ getString: vi.fn(), setString: vi.fn() }),
 }));
 
 vi.mock("../utils/log.utils", () => ({ getLogger: () => getLoggerMock }));
-vi.mock("@tauri-apps/api/core", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@tauri-apps/api/core")>()),
-  invoke: invokeMock,
-}));
-vi.mock("./user.actions", () => ({ setSelectedToneId: selectToneMock }));
 
 const targetWithTone = (id: string, toneId: string | null): AppTarget => ({
   id,
@@ -106,6 +111,12 @@ const seedAppTarget = (target: AppTarget) => {
   };
   setAppState(state, true);
 };
+beforeEach(() => {
+  listAppTargetsMock.mockImplementation(() =>
+    Promise.resolve(Object.values(getAppState().appTargetById)),
+  );
+});
+
 const seededUser = () => {
   const user = getAppState().userById[LOCAL_USER_ID];
   if (!user) throw new Error("seedAppTarget must run first");
@@ -138,8 +149,11 @@ describe("saveManualStyleForApp", () => {
     await saveManualStyleForApp(appTarget);
 
     expect(upsertAppTargetMock).toHaveBeenCalledTimes(1);
-    expect(upsertAppTargetMock).toHaveBeenCalledWith(
+    expect(upsertAppTargetMock.mock.calls[0]?.[0]).toEqual(
       expect.objectContaining({ id: "app-1", toneId: "email" }),
+    );
+    expect(upsertAppTargetMock.mock.calls[0]?.[1]).toEqual(
+      expect.objectContaining({}),
     );
     expect(getAppState().userById[LOCAL_USER_ID]?.selectedToneId).toBe("email");
   });
@@ -153,72 +167,6 @@ describe("saveManualStyleForApp", () => {
     await saveManualStyleForApp(target);
 
     expect(upsertAppTargetMock).not.toHaveBeenCalled();
-  });
-
-  it("compares the style against the latest queued row, not a stale snapshot", async () => {
-    const target = targetWithTone("app-1", "email");
-    seedAppTarget(target);
-    seededUser().selectedToneId = "email";
-    let finish!: () => void;
-    upsertAppTargetMock.mockImplementationOnce(
-      (params) =>
-        new Promise<AppTarget>((resolve) => {
-          finish = () => resolve({ ...target, ...params });
-        }) as unknown as AppTarget,
-    );
-    const first = setAppTargetTone(target.id, "default");
-    const save = saveManualStyleForApp(target);
-    finish();
-    await Promise.all([first, save]);
-    expect(upsertAppTargetMock).toHaveBeenCalledTimes(2);
-    expect(getAppState().appTargetById[target.id].toneId).toBe("email");
-  });
-
-  it("does not dispatch a queued style save after its recording is retired", async () => {
-    const target = targetWithTone("app-1", "default");
-    seedAppTarget(target);
-    seededUser().selectedToneId = "email";
-    let finish!: () => void;
-    upsertAppTargetMock.mockImplementationOnce(
-      (params) =>
-        new Promise<AppTarget>((resolve) => {
-          finish = () => resolve({ ...target, ...params });
-        }) as unknown as AppTarget,
-    );
-    const first = setAppTargetPasteKeybind(target.id, "Ctrl+V");
-    let current = true;
-    const save = saveManualStyleForApp(target, {
-      toneId: "email",
-      isCurrent: () => current,
-    });
-    current = false;
-    finish();
-    await Promise.all([first, save]);
-    expect(upsertAppTargetMock).toHaveBeenCalledOnce();
-    expect(getAppState().appTargetById[target.id].toneId).toBe("default");
-  });
-
-  it("preserves a newer style selection while an old save is queued", async () => {
-    const target = targetWithTone("app-1", "default");
-    seedAppTarget(target);
-    seededUser().selectedToneId = "email";
-    let finish!: () => void;
-    upsertAppTargetMock.mockImplementationOnce(
-      (params) =>
-        new Promise<AppTarget>((resolve) => {
-          finish = () => resolve({ ...target, ...params });
-        }) as unknown as AppTarget,
-    );
-    const first = setAppTargetPasteKeybind(target.id, "Ctrl+V");
-    const save = saveManualStyleForApp(target, {
-      toneId: "email",
-      isCurrent: () => true,
-    });
-    seededUser().selectedToneId = "default";
-    finish();
-    await Promise.all([first, save]);
-    expect(upsertAppTargetMock).toHaveBeenCalledOnce();
-    expect(getAppState().appTargetById[target.id].toneId).toBe("default");
   });
 
   it("is a no-op in automatic styling mode", async () => {
@@ -253,126 +201,189 @@ describe("setAppTargetTone result", () => {
   });
 });
 
-describe("app target field updates", () => {
+describe("concurrent app target changes", () => {
   beforeEach(() => vi.clearAllMocks());
   afterEach(() => {
-    vi.restoreAllMocks();
+    vi.clearAllMocks();
     setAppState(structuredClone(INITIAL_APP_STATE), true);
   });
 
-  it.each([
-    ["pasteKeybind", setAppTargetPasteKeybind, "Ctrl+V"],
-    ["insertionMethod", setAppTargetInsertionMethod, "paste"],
-    ["typingSpeedMs", setAppTargetTypingSpeed, 50],
-  ] as const)(
-    "updates %s while preserving other fields",
-    async (field, update, value) => {
-      const target = {
-        ...targetWithTone("app", "email"),
-        iconPath: "icon.png",
-        pasteKeybind: "old",
-        insertionMethod: "type",
-        typingSpeedMs: 20,
-      };
-      seedAppTarget(target);
-      // Each table row pairs the setter with its corresponding value.
-      await (
-        update as (id: string, value: string | number | null) => Promise<void>
-      )("app", value);
-      expect(upsertAppTargetMock).toHaveBeenCalledWith({
-        id: target.id,
-        name: target.name,
-        toneId: target.toneId,
-        iconPath: target.iconPath,
-        pasteKeybind: target.pasteKeybind,
-        insertionMethod: target.insertionMethod,
-        typingSpeedMs: target.typingSpeedMs,
-        [field]: value,
-      });
-      expect(getAppState().appTargetById.app[field]).toBe(value);
-    },
-  );
-
-  it("writes null to clear a field instead of retaining the old value", async () => {
-    seedAppTarget({
-      ...targetWithTone("app", "email"),
-      pasteKeybind: "Ctrl+V",
+  it("serializes rapid slider commits and preserves changes to other fields", async () => {
+    const target = targetWithTone("app", "default");
+    seedAppTarget(target);
+    let release!: (target: AppTarget) => void;
+    const firstWrite = new Promise<AppTarget>((resolve) => {
+      release = resolve;
     });
-    await setAppTargetPasteKeybind("app", null);
-    expect(upsertAppTargetMock).toHaveBeenCalledWith(
-      expect.objectContaining({ pasteKeybind: null }),
-    );
-    expect(getAppState().appTargetById.app.pasteKeybind).toBeNull();
-  });
-
-  it("does not persist a missing target or change state on failure", async () => {
-    seedAppTarget(targetWithTone("app", "email"));
-    await setAppTargetTypingSpeed("missing", 10);
-    expect(upsertAppTargetMock).not.toHaveBeenCalled();
-    vi.spyOn(console, "error").mockImplementation(() => undefined);
-    upsertAppTargetMock.mockImplementationOnce(() => {
-      throw new Error("disk failed");
-    });
-    await setAppTargetInsertionMethod("app", "paste");
-    expect(getAppState().appTargetById.app.insertionMethod).toBeNull();
-  });
-});
-
-describe("loadManualStyleForCurrentApp", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    seedAppTarget(targetWithTone("editor", "email"));
-  });
-  afterEach(() => setAppState(structuredClone(INITIAL_APP_STATE), true));
-
-  it("passes a queue-time guard that respects retirement and manual changes", async () => {
-    invokeMock.mockResolvedValueOnce({ appName: "Editor" });
-    let current = true;
-    await loadManualStyleForCurrentApp(() => current);
-    expect(selectToneMock).toHaveBeenCalledOnce();
-    expect(selectToneMock.mock.calls[0]?.[0]).toBe("email");
-    const shouldApply = selectToneMock.mock.calls[0]?.[1] as () => boolean;
-    expect(shouldApply()).toBe(true);
-    seededUser().selectedToneId = "email";
-    expect(shouldApply()).toBe(false);
-    seededUser().selectedToneId = "default";
-    current = false;
-    expect(shouldApply()).toBe(false);
-  });
-
-  it("bounds a stalled app lookup and retires its late result", async () => {
-    vi.useFakeTimers();
+    upsertAppTargetMock.mockImplementationOnce(() => firstWrite);
+    const first = setAppTargetTypingSpeed("app", 10);
+    const second = setAppTargetInsertionMethod("app", "type");
+    const third = setAppTargetTypingSpeed("app", 30);
     try {
-      let finish!: (value: unknown) => void;
-      invokeMock.mockReturnValueOnce(
-        new Promise((resolve) => {
-          finish = resolve;
-        }),
+      await vi.waitFor(() =>
+        expect(upsertAppTargetMock).toHaveBeenCalledTimes(1),
       );
-      const load = loadManualStyleForCurrentApp();
-      await vi.advanceTimersByTimeAsync(2_000);
-      await load;
-      finish({ appName: "Editor" });
-      await Promise.resolve();
-      await Promise.resolve();
-      expect(selectToneMock).not.toHaveBeenCalled();
+      release({ ...target, typingSpeedMs: 10 });
+      await Promise.all([first, second, third]);
+      expect(upsertAppTargetMock).toHaveBeenCalledTimes(3);
+      expect(upsertAppTargetMock.mock.calls[1]?.[0]).toEqual(
+        expect.objectContaining({ typingSpeedMs: 10, insertionMethod: "type" }),
+      );
+      expect(upsertAppTargetMock.mock.calls[2]?.[0]).toEqual(
+        expect.objectContaining({ typingSpeedMs: 30, insertionMethod: "type" }),
+      );
+      expect(getAppState().appTargetById.app).toEqual(
+        expect.objectContaining({ typingSpeedMs: 30, insertionMethod: "type" }),
+      );
     } finally {
-      vi.useRealTimers();
+      release({ ...target, typingSpeedMs: 10 });
+      await Promise.allSettled([first, second, third]);
     }
   });
 
-  it("never queues a style selection when the recording was retired during lookup", async () => {
-    let finish!: (value: unknown) => void;
-    invokeMock.mockReturnValueOnce(
-      new Promise((resolve) => {
-        finish = resolve;
-      }),
+  it("retains queued writes until a local-data clear can safely proceed", async () => {
+    const target = targetWithTone("app", "default");
+    seedAppTarget(target);
+    let releaseWrite!: (target: AppTarget) => void;
+    const pending = new Promise<AppTarget>((resolve) => {
+      releaseWrite = resolve;
+    });
+    let releaseSecond!: (target: AppTarget) => void;
+    const pendingSecond = new Promise<AppTarget>((resolve) => {
+      releaseSecond = resolve;
+    });
+    upsertAppTargetMock
+      .mockImplementationOnce(() => pending)
+      .mockImplementationOnce(() => pendingSecond);
+    const first = setAppTargetTypingSpeed("app", 10);
+    const second = setAppTargetTypingSpeed("app", 20);
+    let clearFinished = false;
+    const clear = beginLocalDataClear().then((release) => {
+      clearFinished = true;
+      return release;
+    });
+    try {
+      await vi.waitFor(() =>
+        expect(upsertAppTargetMock).toHaveBeenCalledTimes(1),
+      );
+      expect(clearFinished).toBe(false);
+      releaseWrite({ ...target, typingSpeedMs: 10 });
+      await vi.waitFor(() =>
+        expect(upsertAppTargetMock).toHaveBeenCalledTimes(2),
+      );
+      expect(clearFinished).toBe(false);
+      releaseSecond({ ...target, typingSpeedMs: 20 });
+      await Promise.all([first, second]);
+      const releaseClear = await clear;
+      expect(upsertAppTargetMock).toHaveBeenCalledTimes(2);
+      localStorage.removeItem(LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY);
+      releaseClear();
+    } finally {
+      releaseWrite({ ...target, typingSpeedMs: 10 });
+      releaseSecond({ ...target, typingSpeedMs: 20 });
+      const releaseClear = await clear;
+      localStorage.removeItem(LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY);
+      releaseClear();
+      await Promise.allSettled([first, second]);
+    }
+  });
+
+  it("discards a refresh that completes after local data is cleared", async () => {
+    const target = targetWithTone("app", "default");
+    seedAppTarget(target);
+    let releaseRead!: (targets: AppTarget[]) => void;
+    const read = new Promise<AppTarget[]>((resolve) => {
+      releaseRead = resolve;
+    });
+    listAppTargetsMock.mockReturnValueOnce(read);
+    const refresh = loadAppTargets();
+    let releaseClear: (() => void) | undefined;
+    try {
+      await vi.waitFor(() =>
+        expect(listAppTargetsMock).toHaveBeenCalledTimes(1),
+      );
+      releaseClear = await beginLocalDataClear();
+      setAppState(structuredClone(INITIAL_APP_STATE), true);
+      localStorage.removeItem(LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY);
+      releaseClear();
+      releaseRead([target]);
+      await refresh;
+      expect(getAppState().appTargetById.app).toBeUndefined();
+    } finally {
+      releaseRead([target]);
+      localStorage.removeItem(LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY);
+      releaseClear?.();
+      await Promise.allSettled([refresh]);
+    }
+  });
+
+  it("waits for an in-flight refresh before deriving a mutation", async () => {
+    const target = targetWithTone("app", "default");
+    seedAppTarget(target);
+    let release!: (targets: AppTarget[]) => void;
+    const read = new Promise<AppTarget[]>((resolve) => {
+      release = resolve;
+    });
+    listAppTargetsMock.mockReturnValueOnce(read);
+    const refresh = loadAppTargets();
+    const save = setAppTargetTypingSpeed("app", 20);
+    try {
+      await vi.waitFor(() =>
+        expect(listAppTargetsMock).toHaveBeenCalledTimes(1),
+      );
+      expect(upsertAppTargetMock).not.toHaveBeenCalled();
+      release([{ ...target, insertionMethod: "type" }]);
+      await Promise.all([refresh, save]);
+      expect(upsertAppTargetMock.mock.calls[0]?.[0]).toEqual(
+        expect.objectContaining({ typingSpeedMs: 20, insertionMethod: "type" }),
+      );
+    } finally {
+      release([target]);
+      await Promise.allSettled([refresh, save]);
+    }
+  });
+
+  it("reconciles an uncertain commit before applying the next field change", async () => {
+    const target = targetWithTone("app", "default");
+    seedAppTarget(target);
+    upsertAppTargetMock.mockImplementationOnce(() =>
+      Promise.reject(new Error("response lost")),
     );
-    let current = true;
-    const load = loadManualStyleForCurrentApp(() => current);
-    current = false;
-    finish({ appName: "Editor" });
-    await load;
-    expect(selectToneMock).not.toHaveBeenCalled();
+    listAppTargetsMock.mockResolvedValueOnce([
+      { ...target, typingSpeedMs: 10 },
+    ]);
+    await setAppTargetTypingSpeed("app", 10);
+    await setAppTargetInsertionMethod("app", "type");
+    expect(upsertAppTargetMock.mock.calls[1]?.[0]).toEqual(
+      expect.objectContaining({ typingSpeedMs: 10, insertionMethod: "type" }),
+    );
+  });
+
+  it("does not write over an uncertain target if the recovery read fails", async () => {
+    seedAppTarget(targetWithTone("app", "default"));
+    upsertAppTargetMock.mockImplementationOnce(() =>
+      Promise.reject(new Error("response lost")),
+    );
+    listAppTargetsMock
+      .mockRejectedValueOnce(new Error("read failed"))
+      .mockRejectedValueOnce(new Error("read failed again"));
+    await setAppTargetTypingSpeed("app", 10);
+    await setAppTargetTypingSpeed("app", 20);
+    expect(upsertAppTargetMock).toHaveBeenCalledTimes(1);
+    await setAppTargetTypingSpeed("app", 30);
+    expect(upsertAppTargetMock).toHaveBeenCalledTimes(2);
+    expect(getAppState().appTargetById.app.typingSpeedMs).toBe(30);
+  });
+
+  it("continues later writes after a failed save", async () => {
+    seedAppTarget(targetWithTone("app", "default"));
+    upsertAppTargetMock.mockImplementationOnce(() =>
+      Promise.reject(new Error("save failed")),
+    );
+    const first = setAppTargetTypingSpeed("app", 10);
+    const second = setAppTargetTypingSpeed("app", 30);
+    await expect(Promise.all([first, second])).resolves.toEqual([false, true]);
+    expect(upsertAppTargetMock).toHaveBeenCalledTimes(2);
+    expect(getAppState().appTargetById.app.typingSpeedMs).toBe(30);
   });
 });

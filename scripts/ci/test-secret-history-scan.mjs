@@ -20,7 +20,6 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { testBoundedRegex } from "./bounded-regex.mjs";
 
 import {
   rulesSection,
@@ -44,6 +43,13 @@ if (rules === null) fail("gitleaks.toml: could not find a [[rules]] section.");
 const rulePattern = updaterRulePattern(rules);
 if (rulePattern === null)
   fail("gitleaks.toml: could not find the updater-key rule regex value.");
+let re;
+try {
+  re = new RegExp(rulePattern);
+} catch (err) {
+  fail(`gitleaks.toml: rule regex is not valid: ${err.message}`);
+}
+
 // ---- Phase 1: offline regex assertions ----
 // What `tauri signer generate` actually writes: the untrusted-comment line in
 // plain text, then base64 of the key payload. The previous fixture was
@@ -54,8 +60,7 @@ const realKeyFixture =
   "untrusted comment: rsign encrypted secret key\n" +
   "RWQ5aGF1c2VmaWtlc2VjcmV0a2V5bWF0ZXJpYWxmb3J1cHRlci0y\n";
 // The same file base64-wrapped whole, as a CI artifact would carry it.
-const wrappedKeyFixture =
-  Buffer.from(realKeyFixture, "utf8").toString("base64") + "\n";
+const wrappedKeyFixture = Buffer.from(realKeyFixture, "utf8").toString("base64") + "\n";
 // A THIRD fixture used to live here, and it was a real key.
 //
 // `fullKeyFixture` was a minisign private key whose decoded bytes are identical -- all 259
@@ -75,32 +80,24 @@ const MATCHES = [
   ["a real key file", realKeyFixture],
   ["a base64-wrapped key file", wrappedKeyFixture],
 ];
-// Use one isolated evaluation for both fixture coverage and the history
-// simulation; a pathological rule must fail the check rather than hang it.
-const commitA = realKeyFixture; // key present
-const finalTree = ""; // commit B removed it
-let results;
-try {
-  results = testBoundedRegex(rulePattern, [
-    ...MATCHES.map(([, value]) => value),
-    commitA,
-    finalTree,
-  ]);
-} catch (error) {
-  fail(`gitleaks.toml: ${error.message}`);
+for (const [label, fixture] of MATCHES) {
+  if (!re.test(fixture))
+    fail(`Rule regex does NOT match ${label}.`);
 }
-for (const [index, [label]] of MATCHES.entries()) {
-  if (!results[index]) fail(`Rule regex does NOT match ${label}.`);
-}
-console.log(
-  `OK (offline): gitleaks.toml rule matches ${MATCHES.map(([l]) => l).join(", ")}.`,
-);
+// Built from the list, not written out. The previous version was a literal naming three
+// fixtures, one of which this change deleted -- so the line reported on something the file
+// no longer carried. Anything derived from the thing it describes cannot say that.
+console.log(`OK (offline): gitleaks.toml rule matches ${MATCHES.map(([l]) => l).join(", ")}.`);
 
 // Add-then-delete simulation (offline): commit A adds the key, commit B deletes
-// it, so the final tree is clean. A tree-only scan cannot catch this.
-if (!results[MATCHES.length])
+// it, so the final tree is clean. A tree-only scan (the old `--no-git`) would
+// see an empty tree and PASS, while a full-history scan sees commit A's content
+// and MUST fail. This is the exact regression M4 fixes.
+const commitA = realKeyFixture; // key present
+const finalTree = ""; // commit B removed it
+if (!re.test(commitA))
   fail("Simulation: history (commit A) did not contain a detectable key.");
-if (results[MATCHES.length + 1])
+if (re.test(finalTree))
   fail("Simulation: clean final tree unexpectedly contained the key.");
 console.log(
   "OK (offline): add-then-delete simulation — history contains the key, clean final tree does not (history scan required).",

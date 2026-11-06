@@ -1,9 +1,11 @@
 import { vi } from "vitest";
 
 const UPLOAD_URL = "https://cdn.assemblyai.com/upload/abc123";
-type Stage = keyof NonNullable<
-  Parameters<typeof mockAssemblyAITranscription>[1]
->;
+type Stage = "upload" | "create" | "status";
+type StageHandler = (
+  init: RequestInit | undefined,
+  attempt: number,
+) => Response | Promise<Response> | undefined;
 
 export const jsonResponse = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status });
@@ -18,15 +20,7 @@ const requestStage = (url: string, init?: RequestInit): Stage => {
 
 export const mockAssemblyAITranscription = (
   text = "hi",
-  overrides: Partial<
-    Record<
-      "upload" | "create" | "status",
-      (
-        init: RequestInit | undefined,
-        attempt: number,
-      ) => Response | Promise<Response> | undefined
-    >
-  > = {},
+  overrides: Partial<Record<Stage, StageHandler>> = {},
 ) => {
   const requests: {
     createBody?: Record<string, unknown>;

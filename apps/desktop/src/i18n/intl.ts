@@ -29,7 +29,7 @@ const LOCALE_MESSAGES: Record<Locale, Record<string, string>> = {
   ko: koMessages,
 };
 
-const matchSupportedLocale = (value?: string | null): Locale | null => {
+export const matchSupportedLocale = (value?: string | null): Locale | null => {
   if (!value) {
     return null;
   }

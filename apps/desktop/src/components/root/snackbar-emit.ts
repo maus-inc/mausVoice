@@ -1,5 +1,7 @@
 import { toast } from "sonner";
-import type { SnackbarMode } from "../../state/app.state";
+import { createElement } from "react";
+import type { SnackbarAction, SnackbarMode } from "../../state/app.state";
+import { TimedSnackbarAction } from "./TimedSnackbarAction";
 
 /** Survives StrictMode remount; instance refs reset to 0 and would re-fire. */
 let lastEmittedSnackbarCounter = 0;
@@ -13,7 +15,7 @@ export type SnackbarEmitPayload = {
   snackbarMessage?: string;
   snackbarDuration?: number;
   snackbarMode?: SnackbarMode;
-  snackbarAction?: { label: string; onClick: () => void };
+  snackbarAction?: SnackbarAction;
 };
 
 export const emitSnackbarIfNew = (payload: SnackbarEmitPayload): boolean => {
@@ -31,14 +33,38 @@ export const emitSnackbarIfNew = (payload: SnackbarEmitPayload): boolean => {
 
   lastEmittedSnackbarCounter = snackbarCounter;
 
+  const action = payload.snackbarAction;
+  const toastId = `snackbar-${snackbarCounter}`;
+  let actionElement: HTMLButtonElement | null = null;
+  let focusReturned = false;
+  const returnFocus = (undone: boolean) => {
+    if (focusReturned) return;
+    focusReturned = true;
+    action?.onFocusReturn?.(undone);
+  };
+  let actionContent:
+    | ReturnType<typeof createElement>
+    | { label: string; onClick: () => void }
+    | undefined;
+  if (action?.expiresAt) {
+    actionContent = createElement(TimedSnackbarAction, {
+      action: { ...action, onFocusReturn: returnFocus },
+      toastId,
+      onMount: (element: HTMLButtonElement | null) => {
+        actionElement = element;
+      },
+    });
+  } else if (action) {
+    actionContent = { label: action.label, onClick: action.onClick };
+  }
   const opts = {
+    id: toastId,
     duration: payload.snackbarDuration,
-    action: payload.snackbarAction
-      ? {
-          label: payload.snackbarAction.label,
-          onClick: payload.snackbarAction.onClick,
-        }
-      : undefined,
+    onDismiss: () => {
+      const toastElement = actionElement?.closest("[data-sonner-toast]");
+      if (toastElement?.contains(document.activeElement)) returnFocus(false);
+    },
+    action: actionContent,
   };
 
   if (payload.snackbarMode === "error") {

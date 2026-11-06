@@ -6,7 +6,6 @@ import {
   mkdirSync,
   readFileSync,
   rmSync,
-  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -14,7 +13,6 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { after, describe, it } from "node:test";
 
-import { collectArtifactFiles } from "./artifact-files.mjs";
 import {
   assetUrl,
   buildPlatforms,
@@ -163,39 +161,6 @@ describe("updater manifest builder", () => {
     );
   });
 
-  it("refuses blank signatures instead of publishing an unverifiable update", () => {
-    const artifacts = makeArtifacts({
-      "linux/app.AppImage": "payload",
-      "linux/app.AppImage.sig": "  \n  ",
-    });
-    const result = runReleaseScript(artifacts);
-    assert.equal(result.ok, false);
-    assert.match(result.stderr, /empty.*signature/i);
-  });
-
-  it("refuses colliding signed release asset basenames", () => {
-    const artifacts = makeArtifacts({
-      "one/app.AppImage": "payload-one",
-      "one/app.AppImage.sig": "signature-one",
-      "two/app.AppImage": "payload-two",
-      "two/app.AppImage.sig": "signature-two",
-    });
-    const result = runReleaseScript(artifacts);
-    assert.equal(result.ok, false);
-    assert.match(result.stderr, /duplicate.*app\.AppImage/i);
-  });
-
-  it("refuses an unsigned asset that collides with a signed bundle", () => {
-    const artifacts = makeArtifacts({
-      "one/app.AppImage": "signed-payload",
-      "one/app.AppImage.sig": "signature-one",
-      "two/app.AppImage": "different-unsigned-payload",
-    });
-    const result = runReleaseScript(artifacts);
-    assert.equal(result.ok, false);
-    assert.match(result.stderr, /duplicate.*app\.AppImage/i);
-  });
-
   it("runs directly from a script path containing spaces", () => {
     const scriptDir = mkdtempSync(join(tmpdir(), "mausvoice updater script "));
     tempDirs.push(scriptDir);
@@ -204,14 +169,6 @@ describe("updater manifest builder", () => {
     copyFileSync(
       join(here, "release-notes.mjs"),
       join(scriptDir, "release-notes.mjs"),
-    );
-    copyFileSync(
-      join(here, "script-entry.mjs"),
-      join(scriptDir, "script-entry.mjs"),
-    );
-    copyFileSync(
-      join(here, "artifact-files.mjs"),
-      join(scriptDir, "artifact-files.mjs"),
     );
 
     const artifacts = fullySignedArtifacts();
@@ -450,18 +407,6 @@ describe("updater manifest builder", () => {
     assert.match(result.stderr, /prerelease/);
   });
 
-  it("rejects prerelease output whose filename only ends in the beta filename", () => {
-    const outputPath = join(makeArtifacts({}), "not-latest-beta.json");
-    const result = runReleaseScript(fullySignedArtifacts(), {
-      RELEASE_VERSION: "0.2.0-beta.1",
-      RELEASE_TAG: "mausVoice-v0.2.0-beta.1",
-      RELEASE_PRERELEASE: "true",
-      OUTPUT_PATH: outputPath,
-    });
-    assert.equal(result.ok, false);
-    assert.match(result.stderr, /prerelease/);
-  });
-
   it("builds the explicit beta-channel manifest for a signed prerelease", () => {
     const outputPath = join(makeArtifacts({}), "latest-beta.json");
     const result = runReleaseScript(fullySignedArtifacts(), {
@@ -550,67 +495,6 @@ describe("updater manifest helpers", () => {
         /app\.tar\.gz/.test(error.message) &&
         /nsis\.zip/.test(error.message) &&
         /AppImage/.test(error.message),
-    );
-  });
-});
-
-describe("artifact traversal", () => {
-  it("finds nested files and treats a missing root as empty", async () => {
-    const root = makeArtifacts({
-      "nested/a.msi": "bundle",
-      "top.txt": "other",
-    });
-    const files = await collectArtifactFiles(root);
-    assert.deepEqual(
-      files.sort(),
-      [join(root, "nested/a.msi"), join(root, "top.txt")].sort(),
-    );
-    assert.deepEqual(await collectArtifactFiles(join(root, "missing")), []);
-  });
-
-  it("does not traverse a symlink as either a child or the artifact root", async (t) => {
-    const outside = makeArtifacts({ "secret.msi": "outside" });
-    const root = makeArtifacts({});
-    const link = join(root, "linked");
-    try {
-      symlinkSync(outside, link, "dir");
-    } catch (error) {
-      if (
-        process.platform === "win32" &&
-        ["EPERM", "EACCES"].includes(error.code)
-      ) {
-        t.skip("Creating directory symlinks requires Windows privileges");
-        return;
-      }
-      throw error;
-    }
-    assert.deepEqual(await collectArtifactFiles(root), []);
-    await assert.rejects(collectArtifactFiles(link), /artifact root.*symlink/i);
-    await assert.rejects(
-      collectArtifactFiles(`${link}/`),
-      /artifact root.*symlink/i,
-    );
-    const release = runReleaseScript(link);
-    assert.equal(release.ok, false);
-    assert.match(release.stderr, /artifact root.*symlink/i);
-    const body = runReleaseScript(
-      link,
-      {},
-      join(here, "generate-release-body.mjs"),
-    );
-    assert.equal(body.ok, false);
-    assert.match(body.stderr, /artifact root.*symlink/i);
-  });
-
-  it("does not hide errors other than a missing directory", async () => {
-    const denied = Object.assign(new Error("access denied"), {
-      code: "EACCES",
-    });
-    await assert.rejects(
-      collectArtifactFiles(makeArtifacts({}), async () => {
-        throw denied;
-      }),
-      denied,
     );
   });
 });

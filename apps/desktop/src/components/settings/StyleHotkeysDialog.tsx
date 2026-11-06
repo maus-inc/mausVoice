@@ -11,17 +11,37 @@ import {
   Stack,
   Typography,
 } from "@mui/material";
-import { useMemo } from "react";
+import type { Hotkey } from "@maus-inc/types";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
-import { useAppStore } from "../../store";
+import { showErrorSnackbar } from "../../actions/app.actions";
+import { getHotkeyRepo } from "../../repos";
+import { produceAppState, useAppStore } from "../../store";
+import { applyReplacedStyleHotkeys } from "../../utils/style-hotkey";
+import { createId } from "../../utils/id.utils";
 import { isStyleSelectionAvailable } from "../../utils/post-processing.utils";
-import { getPrettyKeyName } from "../../utils/keyboard.utils";
+import {
+  getHotkeyCombosForAction,
+  getPrettyKeyName,
+  getSwitchToStyleActionName,
+  SWITCH_TO_STYLE_HOTKEY_PREFIX,
+  syncHotkeyCombosToNative,
+} from "../../utils/keyboard.utils";
 import { HotKey } from "../common/HotKey";
+import { BusyButtonLabel } from "../common/BusyButtonLabel";
 import { PostProcessingDisabledTooltip } from "../styling/PostProcessingDisabledTooltip";
-import { useStyleHotkeyDraft } from "./useStyleHotkeyDraft";
+
+type StyleHotkeyRow = {
+  toneId: string;
+  toneName: string;
+  actionName: string;
+  keys: string[];
+};
 
 /** Assign one optional global shortcut to each writing style. */
 export const StyleHotkeysDialog = () => {
+  const titleId = useId();
+  const descriptionId = useId();
   const open = useAppStore((state) => state.settings.styleHotkeysDialogOpen);
   const toneById = useAppStore((state) => state.toneById);
   const tones = useMemo(
@@ -33,8 +53,37 @@ export const StyleHotkeysDialog = () => {
   );
   const styleSelectionAvailable = useAppStore(isStyleSelectionAvailable);
   const intl = useIntl();
-  const { rows, setRows, ready, failed, retry, isSaving, close, save } =
-    useStyleHotkeyDraft(open, tones, styleSelectionAvailable);
+  const [rows, setRows] = useState<StyleHotkeyRow[]>([]);
+  const [isSaving, setIsSaving] = useState(false);
+  const saveInFlight = useRef(false);
+
+  useEffect(() => {
+    if (!open) return;
+    setRows(
+      tones.map((tone) => {
+        const actionName = getSwitchToStyleActionName(tone.id);
+        return {
+          toneId: tone.id,
+          toneName: tone.name,
+          actionName,
+          keys:
+            getHotkeyCombosForAction(useAppStore.getState(), actionName)[0] ??
+            [],
+        };
+      }),
+    );
+    // Snapshot persisted shortcuts when the dialog opens or the tone list
+    // changes. Do not depend on `hotkeyById`: unrelated store writes would
+    // wipe in-progress edits.
+  }, [open, tones]);
+
+  useEffect(() => {
+    if (open && !styleSelectionAvailable) {
+      produceAppState((draft) => {
+        draft.isRecordingHotkey = false;
+      });
+    }
+  }, [open, styleSelectionAvailable]);
 
   const hasConflict = useMemo(() => {
     const filled = rows.filter((row) => row.keys.length > 0);
@@ -53,18 +102,85 @@ export const StyleHotkeysDialog = () => {
     return false;
   }, [rows]);
 
+  const dismiss = () => {
+    produceAppState((draft) => {
+      draft.settings.styleHotkeysDialogOpen = false;
+    });
+  };
+
+  const close = () => {
+    if (!saveInFlight.current) dismiss();
+  };
+
+  const save = async () => {
+    if (isSaving || saveInFlight.current || !styleSelectionAvailable) return;
+    saveInFlight.current = true;
+    setIsSaving(true);
+    try {
+      const state = useAppStore.getState();
+      const prefix = SWITCH_TO_STYLE_HOTKEY_PREFIX;
+      const existingIdByActionName = new Map(
+        Object.values(state.hotkeyById)
+          .filter((hotkey) => hotkey.actionName.startsWith(prefix))
+          .map((hotkey) => [hotkey.actionName, hotkey.id]),
+      );
+      const next = rows
+        .filter((row) => row.keys.length > 0)
+        .map((row): Hotkey => ({
+          id: existingIdByActionName.get(row.actionName) ?? createId(),
+          actionName: row.actionName,
+          keys: row.keys,
+        }));
+
+      const repo = getHotkeyRepo();
+      const saved = await repo.replaceStyleHotkeys(prefix, next);
+
+      produceAppState((draft) => {
+        applyReplacedStyleHotkeys(draft, prefix, saved);
+      });
+
+      try {
+        await syncHotkeyCombosToNative();
+      } catch (error) {
+        // The database replacement already committed in a single transaction,
+        // so only the in-memory native sync failed. Surface the error and let
+        // the user retry instead of silently reverting SQLite to a stale state.
+        showErrorSnackbar(error);
+        return;
+      }
+      dismiss();
+    } catch (error) {
+      showErrorSnackbar(error);
+    } finally {
+      saveInFlight.current = false;
+      setIsSaving(false);
+    }
+  };
+
   return (
     <Dialog
       open={open}
       onClose={isSaving ? undefined : close}
       maxWidth="sm"
       fullWidth
+      aria-labelledby={titleId}
+      aria-describedby={descriptionId}
     >
-      <DialogTitle>
+      <DialogTitle id={`${titleId}-wrapper`}>
         <Box sx={{ display: "flex", alignItems: "flex-start" }}>
           <Box sx={{ flex: 1 }}>
-            <FormattedMessage defaultMessage="Style hotkeys" />
-            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+            <span id={titleId}>
+              <FormattedMessage defaultMessage="Style hotkeys" />
+            </span>
+            <Typography
+              id={descriptionId}
+              variant="body2"
+              color="text.secondary"
+              sx={{
+                mt: 0.5,
+                "@media (max-height: 400px)": { display: "none" },
+              }}
+            >
               <FormattedMessage defaultMessage="Assign a shortcut to select a style directly. Leave a row empty to disable its shortcut." />
             </Typography>
           </Box>
@@ -80,17 +196,18 @@ export const StyleHotkeysDialog = () => {
         </Box>
       </DialogTitle>
       <DialogContent dividers>
-        <Stack spacing={1.25} inert={isSaving}>
-          {!ready &&
-            (failed ? (
-              <Button onClick={retry}>
-                <FormattedMessage defaultMessage="Retry" />
-              </Button>
-            ) : (
-              <Typography>
-                <FormattedMessage defaultMessage="Loading" />
-              </Typography>
-            ))}
+        <Stack spacing={1.25}>
+          <Typography
+            aria-hidden
+            variant="body2"
+            color="text.secondary"
+            sx={{
+              display: "none",
+              "@media (max-height: 400px)": { display: "block" },
+            }}
+          >
+            <FormattedMessage defaultMessage="Assign a shortcut to select a style directly. Leave a row empty to disable its shortcut." />
+          </Typography>
           {styleSelectionAvailable && hasConflict && (
             <Alert severity="warning" variant="outlined">
               <FormattedMessage defaultMessage="Some style shortcuts overlap and may be difficult to trigger." />
@@ -105,7 +222,12 @@ export const StyleHotkeysDialog = () => {
             >
               {styleSelectionAvailable ? (
                 <HotKey
+                  ariaLabel={intl.formatMessage(
+                    { defaultMessage: "Shortcut for {style}" },
+                    { style: row.toneName },
+                  )}
                   value={row.keys}
+                  disabled={isSaving}
                   onChange={(keys) =>
                     setRows((current) =>
                       current.map((candidate) =>
@@ -137,6 +259,7 @@ export const StyleHotkeysDialog = () => {
               {styleSelectionAvailable && row.keys.length > 0 && (
                 <IconButton
                   size="small"
+                  disabled={isSaving}
                   aria-label={intl.formatMessage({
                     defaultMessage: "Clear style hotkey",
                   })}
@@ -164,9 +287,16 @@ export const StyleHotkeysDialog = () => {
         <Button
           variant="contained"
           onClick={() => void save()}
-          disabled={!ready || isSaving || !styleSelectionAvailable}
+          disabled={isSaving || !styleSelectionAvailable}
+          aria-busy={isSaving || undefined}
         >
-          <FormattedMessage defaultMessage="Save" />
+          {isSaving ? (
+            <BusyButtonLabel>
+              <FormattedMessage defaultMessage="Save" />
+            </BusyButtonLabel>
+          ) : (
+            <FormattedMessage defaultMessage="Save" />
+          )}
         </Button>
       </DialogActions>
     </Dialog>

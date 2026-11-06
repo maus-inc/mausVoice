@@ -173,9 +173,6 @@ const tryCloseFence = (
 const isIndentedLine = (line: string): boolean =>
   line.startsWith("    ") || line.startsWith("\t");
 
-const isIndentedCodeContinuation = (line: string, nextLine: string): boolean =>
-  isIndentedLine(line) || (line.trim() === "" && isIndentedLine(nextLine));
-
 const readIndentedCodeBlock = (
   lines: string[],
   startIndex: number,
@@ -183,18 +180,28 @@ const readIndentedCodeBlock = (
 ): { text: string; nextIndex: number } | null => {
   const line = lines[startIndex];
   if (!isIndentedLine(line)) return null;
-  const prevLine = proseLines.at(-1) ?? lines[startIndex - 1] ?? "";
+  const prevLine =
+    proseLines.length > 0
+      ? (proseLines.at(-1) ?? "")
+      : (lines[startIndex - 1] ?? "");
   if (startIndex > 0 && prevLine.trim() !== "") {
     return null;
   }
   const codeLines = [line];
   let nextIndex = startIndex + 1;
-  while (
-    nextIndex < lines.length &&
-    isIndentedCodeContinuation(lines[nextIndex], lines[nextIndex + 1] ?? "")
-  ) {
-    codeLines.push(lines[nextIndex]);
-    nextIndex++;
+  while (nextIndex < lines.length) {
+    const cur = lines[nextIndex];
+    if (
+      isIndentedLine(cur) ||
+      (cur.trim() === "" &&
+        nextIndex + 1 < lines.length &&
+        isIndentedLine(lines[nextIndex + 1]))
+    ) {
+      codeLines.push(cur);
+      nextIndex++;
+    } else {
+      break;
+    }
   }
   return { text: codeLines.join("\n"), nextIndex };
 };

@@ -3,17 +3,19 @@ import { useEffect, useRef } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { countLabel, MAX_NAME_LEN, MAX_CATEGORY_LEN } from "./tone-form.utils";
 
+type Props = {
+  name: string;
+  category: string;
+  onNameChange: (name: string) => void;
+  onCategoryChange: (category: string) => void;
+};
+
 export const ToneBasicsFields = ({
   name,
   category,
   onNameChange,
   onCategoryChange,
-}: {
-  name: string;
-  category: string;
-  onNameChange: (name: string) => void;
-  onCategoryChange: (category: string) => void;
-}) => {
+}: Props) => {
   const intl = useIntl();
   // Focus the name field explicitly once it has mounted rather than with a DOM
   // `autoFocus` prop: `autoFocus` fires as an attribute and cannot be deferred,

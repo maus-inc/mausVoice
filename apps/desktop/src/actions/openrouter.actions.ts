@@ -30,9 +30,8 @@ export const loadOpenRouterModels = async (): Promise<void> => {
       draft.settings.openRouterModels = models;
       draft.settings.openRouterModelsStatus = "success";
     });
-  } catch {
-    // A transport error may carry credentials or endpoint data.
-    console.error("Failed to load OpenRouter models");
+  } catch (error) {
+    console.error("Failed to load OpenRouter models:", error);
     produceAppState((draft) => {
       draft.settings.openRouterModelsStatus = "error";
     });
@@ -62,8 +61,8 @@ export const loadOpenRouterProviders = async (): Promise<void> => {
       draft.settings.openRouterProviders = providers;
       draft.settings.openRouterProvidersStatus = "success";
     });
-  } catch {
-    console.error("Failed to load OpenRouter providers");
+  } catch (error) {
+    console.error("Failed to load OpenRouter providers:", error);
     produceAppState((draft) => {
       draft.settings.openRouterProvidersStatus = "error";
     });
@@ -76,6 +75,17 @@ export const loadOpenRouterProviders = async (): Promise<void> => {
 export const setOpenRouterSearchQuery = (query: string): void => {
   produceAppState((draft) => {
     draft.settings.openRouterSearchQuery = query;
+  });
+};
+
+/**
+ * Clear the cached OpenRouter models.
+ */
+export const clearOpenRouterModels = (): void => {
+  produceAppState((draft) => {
+    draft.settings.openRouterModels = [];
+    draft.settings.openRouterModelsStatus = "idle";
+    draft.settings.openRouterSearchQuery = "";
   });
 };
 

@@ -16,7 +16,7 @@ import { isEnglishSanitizeLanguage } from "./sanitize-language.utils";
  * words cannot be part of the surrounding sentence.
  */
 
-const isEnglishSpokenCommandLanguage = (
+export const isEnglishSpokenCommandLanguage = (
   language: string | undefined,
 ): boolean =>
   language?.trim().toLowerCase() === "auto" ||
@@ -883,11 +883,24 @@ const applyMatchedCommand = (
   output.push(command.value);
 };
 
-/** Render a parsed utterance while retaining original whitespace around commands. */
-const renderSpokenCommands = (
-  parsed: ParsedSpeech,
-  skipStructural: boolean,
+export const applySpokenCommands = (
+  text: string,
+  language?: string,
+  options?: ApplySpokenCommandsOptions,
 ): string => {
+  if (!text.trim() || !isEnglishSpokenCommandLanguage(language)) {
+    return text;
+  }
+
+  const skipStructural = options?.skipStructuralCommands === true;
+  const parsed = parsePreservingWhitespace(text);
+  if (
+    parsed.words.length === 0 ||
+    !containsSpokenCommand(parsed.words, skipStructural)
+  ) {
+    return text;
+  }
+
   const output: string[] = [];
   let index = 0;
   let pendingOriginalGap: string | null = null;
@@ -924,25 +937,4 @@ const renderSpokenCommands = (
 
   emitOriginalGap();
   return `${parsed.leading}${output.join("")}${parsed.trailing}`;
-};
-
-export const applySpokenCommands = (
-  text: string,
-  language?: string,
-  options?: ApplySpokenCommandsOptions,
-): string => {
-  if (!text.trim() || !isEnglishSpokenCommandLanguage(language)) {
-    return text;
-  }
-
-  const skipStructural = options?.skipStructuralCommands === true;
-  const parsed = parsePreservingWhitespace(text);
-  if (
-    parsed.words.length === 0 ||
-    !containsSpokenCommand(parsed.words, skipStructural)
-  ) {
-    return text;
-  }
-
-  return renderSpokenCommands(parsed, skipStructural);
 };

@@ -10,13 +10,12 @@
  * Badge and instruction styles follow
  *  - components/common/HotkeyBadge.tsx
  *  - components/common/DictationInstruction.tsx
- * Key labels share the desktop mapping, with side suffixes omitted for the
- * compact preview badge.
+ * Key-name mapping copies getPrettyKeyName rules (keyboard.utils.ts:168-200):
+ * KeyX→X, Meta→⌘/⊞, Control→⌃/Ctrl, Shift→⇧/Shift, Alt→⌥/Alt, arrows→glyphs.
  * Platform here is derived from navigator (preview-only shim; the app uses
  * getPlatform() from the window manager).
  */
 import { hotkeyRecorderStyles } from "@desktop/components/common/hotkey-recorder.styles";
-import { formatHotkeyLabel } from "@desktop/utils/hotkey-label.utils";
 import { Box, Typography } from "@mui/material";
 import type { SxProps, Theme } from "@mui/material/styles";
 import { Stack } from "@mui/system";
@@ -32,8 +31,34 @@ const isMac =
       ?.toLowerCase()
       .includes("mac"));
 
-const prettyKeyName = (key: string): string =>
-  formatHotkeyLabel(key, () => Boolean(isMac), false);
+const MODIFIER_PRETTY: ReadonlyArray<
+  [prefix: string, mac: string, other: string]
+> = [
+  ["meta", "⌘", "⊞"],
+  ["control", "⌃", "Ctrl"],
+  ["shift", "⇧", "Shift"],
+];
+
+const ARROW_KEYS: Readonly<Record<string, string>> = {
+  LeftArrow: "←",
+  RightArrow: "→",
+  UpArrow: "↑",
+  DownArrow: "↓",
+};
+
+/** Copy of getPrettyKeyName's mapping rules (side-label suffix omitted:
+ *  appendSideLabel only disambiguates Left/Right variants). */
+export const prettyKeyName = (key: string): string => {
+  const lower = key.toLowerCase();
+  if (lower.startsWith("key")) return key.slice(3).toUpperCase();
+  for (const [prefix, mac, other] of MODIFIER_PRETTY) {
+    if (lower.startsWith(prefix)) return isMac ? mac : other;
+  }
+  if (lower.startsWith("alt") || lower.startsWith("option"))
+    return isMac ? "⌥" : "Alt";
+  if (lower.startsWith("function")) return "Fn";
+  return ARROW_KEYS[key] ?? key;
+};
 
 export const HotkeyBadgePreview = ({
   keys,

@@ -11,8 +11,8 @@ import {
 import { getEffectivePillVisibility } from "./user.utils";
 
 // Behaviour lock for the analytics extraction. `original` is the inline
-// derivation as it stood in AppSideEffects before the refactor, transcribed
-// into focused legacy calculations; helpers must produce identical payloads for every
+// derivation as it stood in AppSideEffects before the refactor, copied
+// verbatim; the helpers must produce byte-identical payloads for every
 // combination of plan, trial, auth, and onboarding state. If a future change
 // alters what we send to Mixpanel, this fails loudly rather than silently
 // corrupting a funnel.
@@ -30,33 +30,6 @@ type Inputs = Pick<AnalyticsIdentitySources, "platform" | "locale"> & {
   auth: { email?: string | null; displayName?: string | null } | null;
 };
 
-const legacyPlan = (
-  member: Inputs["member"],
-  currentUserId: Inputs["currentUserId"],
-) => {
-  const isPro = member?.plan === "pro";
-  const isFree = member?.plan === "free";
-  const isCommunity = !currentUserId;
-  const isTrial = member?.isOnTrial ?? false;
-  const isPaying = !isTrial && isPro;
-  const planStatus = member?.plan ?? "community";
-  return { isPro, isFree, isCommunity, isTrial, isPaying, planStatus };
-};
-
-const legacyOnboarding = (localUser: Inputs["localUser"]) => {
-  const onboardedAt = localUser?.onboardedAt;
-  const daysSinceOnboarded = onboardedAt
-    ? dayjs().diff(dayjs(onboardedAt), "day")
-    : 0;
-  const onboarded = localUser?.onboarded ?? false;
-  return { onboarded, onboardedAt, daysSinceOnboarded };
-};
-
-const legacyContact = (auth: Inputs["auth"]) => ({
-  $email: auth?.email ?? undefined,
-  $name: auth?.displayName ?? undefined,
-});
-
 const original = ({
   currentUserId,
   member,
@@ -66,11 +39,18 @@ const original = ({
   platform,
   locale,
 }: Inputs) => {
-  const { isPro, isFree, isCommunity, isTrial, isPaying, planStatus } =
-    legacyPlan(member, currentUserId);
-  const { onboarded, onboardedAt, daysSinceOnboarded } =
-    legacyOnboarding(localUser);
-  const pillState = getEffectivePillVisibility(prefs?.dictationPillVisibility);
+  const isPro = member?.plan === "pro";
+  const isFree = member?.plan === "free";
+  const isCommunity = !currentUserId;
+  const isTrial = member?.isOnTrial ?? false;
+  const isPaying = !isTrial && isPro;
+  const onboardedAt = localUser?.onboardedAt;
+  const daysSinceOnboarded = onboardedAt
+    ? dayjs().diff(dayjs(onboardedAt), "day")
+    : 0;
+  const onboarded = localUser?.onboarded ?? false;
+  const planStatus = member?.plan ?? "community";
+
   return {
     firstTouch: {
       initialPlatform: platform,
@@ -78,7 +58,8 @@ const original = ({
       initialCohort: CURRENT_COHORT,
     },
     people: {
-      ...legacyContact(auth),
+      $email: auth?.email ?? undefined,
+      $name: auth?.displayName ?? undefined,
       planStatus,
       isPro,
       isFree,
@@ -89,7 +70,7 @@ const original = ({
       onboardedAt: onboardedAt ?? undefined,
       activeSystemCohort: CURRENT_COHORT,
       daysSinceOnboarded,
-      pillState,
+      pillState: getEffectivePillVisibility(prefs?.dictationPillVisibility),
     },
     superProps: {
       userId: currentUserId,
@@ -102,7 +83,7 @@ const original = ({
       onboarded,
       daysSinceOnboarded,
       activeSystemCohort: CURRENT_COHORT,
-      pillState,
+      pillState: getEffectivePillVisibility(prefs?.dictationPillVisibility),
     },
   };
 };
@@ -171,35 +152,6 @@ describe("analytics extraction is behaviour-preserving", () => {
     // 4 plans x 4 trial states x 2 user (signed-in/out) states
     //   x 3 onboardings x 3 contacts
     expect(cases).toBe(288);
-  });
-
-  it("preserves legacy pill, platform and locale properties across supported and unknown values", () => {
-    for (const visibility of [
-      undefined,
-      null,
-      "hidden",
-      "while_active",
-      "persistent",
-      "unknown",
-    ]) {
-      for (const platform of ["darwin", "win32", "linux"]) {
-        for (const locale of ["en", "de", "fr"]) {
-          const input: Inputs = {
-            currentUserId: "user-1",
-            member: { plan: "pro", isOnTrial: false },
-            localUser: {
-              onboarded: true,
-              onboardedAt: "2026-01-15T00:00:00.000Z",
-            },
-            prefs: { dictationPillVisibility: visibility },
-            auth: { email: "a@b.co", displayName: "Ada" },
-            platform,
-            locale,
-          };
-          expect(refactored(input)).toEqual(original(input));
-        }
-      }
-    }
   });
 
   it("matches when member, user, and prefs records have not loaded yet", () => {

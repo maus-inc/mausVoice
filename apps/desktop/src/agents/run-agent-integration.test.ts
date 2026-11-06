@@ -78,11 +78,6 @@ vi.mock("@repo/agent", () => {
   return { AgentLoop };
 });
 
-vi.mock("../repos/chat-message.repo", async () => {
-  const repos = await import("../repos");
-  return { getChatMessageRepo: () => repos.getChatMessageRepo() };
-});
-
 vi.mock("../repos", () => ({
   getAgentRepo: () => getAgentRepoMock(),
   getChatMessageRepo: () => getChatMessageRepoMock(),
@@ -612,10 +607,14 @@ describe("runAgent supersession while a tool result is being written", () => {
     if (!issued) {
       throw new Error("no tool result was persisted");
     }
-    // The mock stands in for the repository method, which `deleteChatMessages`
-    // calls with the id list alone; the conversation id is only used to prune
-    // state.
-    expect(deleteChatMessagesMock).toHaveBeenCalledWith([issued.id]);
+    const createLease = getChatMessageRepoCreateMock.mock.calls[0]?.[1];
+    expect(createLease).toBeDefined();
+    // The repository receives the id list and the same write lease used for
+    // the create; the conversation id is only used to prune in-memory state.
+    expect(deleteChatMessagesMock).toHaveBeenCalledWith(
+      [issued.id],
+      createLease,
+    );
 
     const verbose = loggerMock.verbose.mock.calls.map((c) => String(c[0]));
     expect(
@@ -804,41 +803,6 @@ describe("runAgent immutable-state lifecycle", () => {
     },
   );
 
-  it("retires a deleted conversation before a noncooperative agent emits late events", async () => {
-    let release = () => {};
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    loopRunMock.mockImplementation(async function* () {
-      yield { type: "iteration-start", iteration: 0 };
-      await gate;
-      yield { type: "iteration-start", iteration: 1 };
-      yield { type: "text-delta", text: "late output" };
-      yield { type: "finish", reason: "stop" };
-    });
-    const { runAgent, retireAgentLoop } = await import("./run-agent");
-    const run = runAgent("deleted-run", config);
-    try {
-      await vi.waitFor(() =>
-        expect(live.chatMessageIdsByConversationId["deleted-run"]).toHaveLength(
-          1,
-        ),
-      );
-      const [messageId] = live.chatMessageIdsByConversationId["deleted-run"];
-      retireAgentLoop("deleted-run");
-      expect(live.agentStateByConversationId["deleted-run"]).toBeUndefined();
-      expect(live.chatMessageById[messageId]).toBeUndefined();
-      expect(live.streamingMessageById[messageId]).toBeUndefined();
-      release();
-      await run;
-      expect(live.chatMessageIdsByConversationId["deleted-run"]).toEqual([]);
-      expect(getChatMessageRepoCreateMock).not.toHaveBeenCalled();
-    } finally {
-      release();
-      await run;
-    }
-  });
-
   it("does not let a superseded run finish or erase its replacement", async () => {
     let releaseOld = () => {};
     let releaseNew = () => {};
@@ -972,49 +936,6 @@ describe("runAgent immutable-state lifecycle", () => {
     const [message] = Object.values(live.chatMessageById);
     expect(message.metadata).toEqual({ runOutcome: "error" });
     expect(live.streamingMessageById).toEqual({});
-  });
-
-  it("rolls back an assistant write that completes after its run is superseded", async () => {
-    humanizeScrubMock.mockImplementation((text: string) => text);
-    let releaseWrite = () => {};
-    const writeGate = new Promise<void>((resolve) => {
-      releaseWrite = resolve;
-    });
-    const deleted = vi.fn().mockResolvedValue(undefined);
-    getChatMessageRepoMock.mockReturnValue({
-      createChatMessage: getChatMessageRepoCreateMock,
-      deleteChatMessages: deleted,
-    });
-    getChatMessageRepoCreateMock
-      .mockImplementationOnce(async (message) => {
-        await writeGate;
-        return message;
-      })
-      .mockImplementation(async (message) => message);
-    loopRunMock.mockImplementation(() =>
-      agentLoopRun([
-        { type: "iteration-start", iteration: 0 },
-        { type: "text-delta", text: "old answer" },
-        { type: "finish", reason: "stop" },
-      ]),
-    );
-    const { runAgent } = await import("./run-agent");
-    const oldRun = runAgent("late-assistant-write", config);
-    try {
-      await vi.waitFor(() =>
-        expect(getChatMessageRepoCreateMock).toHaveBeenCalledOnce(),
-      );
-      const oldMessage = getChatMessageRepoCreateMock.mock.calls[0][0];
-      await runAgent("late-assistant-write", config);
-      releaseWrite();
-      await oldRun;
-      expect(deleted).toHaveBeenCalledWith([oldMessage.id]);
-      expect(live.chatMessageById[oldMessage.id]).toBeUndefined();
-      expect(live.streamingMessageById[oldMessage.id]).toBeUndefined();
-    } finally {
-      releaseWrite();
-      await oldRun;
-    }
   });
 
   it("does not include active streaming assistant messages in a replacement run message snapshot", async () => {

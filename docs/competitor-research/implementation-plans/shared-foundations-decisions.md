@@ -49,14 +49,13 @@ because an ephemeral session has to reach those call sites to suppress anything.
 
 ## Decision 5: New domain types in `apps/desktop/src/types/`
 
-**Original choice:** Add app-specific domain types for meetings, automation,
-translations, snippets, workflows, and expansion flags.
+**Choice:** Add `meetings.types.ts`, `automation.types.ts`,
+`translations.types.ts`, `snippets.types.ts`, `workflows.types.ts`,
+`expansion-flags.types.ts` to `apps/desktop/src/types/`.
 
-**Revision:** The app uses the expansion-flag types. The other five files had
-no consumers and described features that do not yet exist. The cleanup removed
-them. The feature implementations should add types when they have concrete
-consumers. The draft shapes remain in Git at commit
-`5ba53332fd7582d23a472d1d0895a9c0dc776cc5`.
+**Rationale:** These types are app-specific, not cross-package. Keeping them
+in the desktop app avoids rebuilding `packages/types/` and is consistent with
+existing app-specific types in the same directory.
 
 ## Decision 6: Bind event contracts to payloads through one map
 

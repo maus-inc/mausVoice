@@ -511,8 +511,6 @@ pub(crate) fn set_expanded_input_region(gdk_window: &gdk::Window, state: &PillSt
         let rect =
             cairo::RectangleInt::new(ox as i32, oy as i32, dw.ceil() as i32, dh.ceil() as i32);
         let region = cairo::Region::create_rectangle(&rect);
-        // The safety prompt can extend beyond a compact assistant panel.
-        union_flash_action(&region, state, ox, oy);
         gdk_window.input_shape_combine_region(&region, 0, 0);
     } else {
         // Use the SAME live geometry as the draw layer (pill_position

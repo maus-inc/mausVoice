@@ -415,10 +415,6 @@ pub(crate) fn is_interactive_at(state: &PillState, x: f64, y: f64) -> bool {
     let dw = state.draw_width.get();
     let dh = state.draw_height.get();
 
-    // An urgent banner can extend outside the compact panel's bounds.
-    if has_flash_action_at(state, x, y) {
-        return true;
-    }
     if state.owns_panel() || state.panel_open_t.get() > 0.1 {
         return x >= 0.0 && x <= dw && y >= 0.0 && y <= dh;
     }
@@ -459,6 +455,11 @@ pub(crate) fn is_interactive_at(state: &PillState, x: f64, y: f64) -> bool {
         if over_side_control(x, y, pill_x, pill_y, pw, ph) {
             return true;
         }
+    }
+
+    // Flash message with action button
+    if has_flash_action_at(state, x, y) {
+        return true;
     }
 
     false

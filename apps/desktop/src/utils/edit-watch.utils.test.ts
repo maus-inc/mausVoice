@@ -216,16 +216,6 @@ describe("findEditCorrections", () => {
     ).toEqual(["Google"]);
   });
 
-  it("learns case and spelling corrections without taking edits outside the dictation", () => {
-    expect(
-      find({
-        insertedText: "contact ralph at google today",
-        baselineText: "heading contact ralph at google today closing",
-        fieldText: "Heading contact Ralf at Google today closing",
-      }),
-    ).toEqual(["Ralf", "Google"]);
-  });
-
   it("does not read a curly quote as a correction", () => {
     // The target app curly-quoted the proper noun on its own. That is not the
     // user editing anything, so it must not be offered as a term to learn. The

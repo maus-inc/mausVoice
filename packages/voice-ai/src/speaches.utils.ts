@@ -1,30 +1,4 @@
-import {
-  countWords,
-  discardResponseBody,
-  readAbortableResponseJson,
-  retry,
-} from "@maus-inc/utilities";
-import { audioToArrayBuffer } from "./audio-convert.utils";
-import {
-  assertPrivateProviderResponseOk,
-  requestPrivateTransport,
-} from "./provider-response.utils";
-
-/** Keep transport failures from echoing configured URLs or private request data. */
-export const requestSpeaches = async (
-  url: string,
-  init?: RequestInit,
-  transport: typeof globalThis.fetch = globalThis.fetch,
-): Promise<Response> => {
-  return requestPrivateTransport(
-    url,
-    // A redirect may replay private audio or prompt text to another origin.
-    { ...init, redirect: "error" },
-    transport,
-    "Speaches",
-    "Unable to connect to Speaches. Make sure Speaches is running.",
-  );
-};
+import { HttpError, retry, countWords } from "@maus-inc/utilities";
 
 export type SpeachesTestIntegrationArgs = {
   baseUrl: string;
@@ -34,8 +8,7 @@ export const speachesTestIntegration = async ({
   baseUrl,
 }: SpeachesTestIntegrationArgs): Promise<boolean> => {
   const url = baseUrl.replace(/\/$/, "");
-  const response = await requestSpeaches(`${url}/health`);
-  discardResponseBody(response);
+  const response = await fetch(`${url}/health`);
   return response.ok;
 };
 
@@ -53,36 +26,6 @@ export type SpeachesTranscribeAudioOutput = {
   wordsUsed: number;
 };
 
-/** Parse a Speaches response consistently for local and hosted transports. */
-export const readSpeachesTranscription = async (
-  response: Response,
-  signal?: AbortSignal,
-): Promise<string> => {
-  if (signal?.aborted) {
-    discardResponseBody(response);
-    signal.throwIfAborted();
-  }
-  // A transcription service can echo arbitrary fragments of private speech or
-  // prompt text in its error body; exact-secret redaction cannot identify them.
-  assertPrivateProviderResponseOk(response, "Speaches transcription failed:");
-
-  let data: { text?: unknown } | null;
-  try {
-    data = await readAbortableResponseJson<{ text?: unknown } | null>(
-      response,
-      signal,
-    );
-  } catch {
-    // JSON parser errors can quote a fragment of the returned transcript.
-    signal?.throwIfAborted();
-    throw new Error("Transcription failed: invalid response");
-  }
-  if (typeof data?.text !== "string" || !data.text) {
-    throw new Error("Transcription failed: no text in response");
-  }
-  return data.text;
-};
-
 export const speachesTranscribeAudio = ({
   baseUrl,
   model,
@@ -95,7 +38,8 @@ export const speachesTranscribeAudio = ({
     retries: 3,
     fn: async () => {
       const formData = new FormData();
-      const arrayBuffer = audioToArrayBuffer(blob);
+      const arrayBuffer =
+        blob instanceof ArrayBuffer ? blob : new Uint8Array(blob).buffer;
       const file = new Blob([arrayBuffer], { type: `audio/${ext}` });
       formData.append("file", file, `audio.${ext}`);
       formData.append("model", model);
@@ -107,13 +51,27 @@ export const speachesTranscribeAudio = ({
       }
 
       const url = baseUrl.replace(/\/$/, "");
-      const response = await requestSpeaches(`${url}/v1/audio/transcriptions`, {
+      const response = await fetch(`${url}/v1/audio/transcriptions`, {
         method: "POST",
         body: formData,
       });
 
-      const text = await readSpeachesTranscription(response);
-      return { text, wordsUsed: countWords(text) };
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => "Unknown error");
+        throw new HttpError(
+          response.status,
+          `Speaches transcription failed: ${response.status} - ${errorText}`,
+          { retryAfter: response.headers.get("retry-after") },
+        );
+      }
+
+      const data = (await response.json()) as { text?: string };
+
+      if (!data.text) {
+        throw new Error("Transcription failed: no text in response");
+      }
+
+      return { text: data.text, wordsUsed: countWords(data.text) };
     },
   });
 };

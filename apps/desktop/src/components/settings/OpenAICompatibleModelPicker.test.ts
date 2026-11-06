@@ -14,7 +14,7 @@ const {
 } = vi.hoisted(() => {
   return {
     checkAvailabilityMock: vi.fn(() => Promise.resolve(true)),
-    getAvailableModelsMock: vi.fn((_signal?: AbortSignal) =>
+    getAvailableModelsMock: vi.fn(() =>
       Promise.resolve(["model-a", "model-b"]),
     ),
     openAICompatibleRepoCalls: [] as string[],
@@ -30,10 +30,6 @@ vi.mock("react-intl", async (importOriginal) => {
     ...actual,
     FormattedMessage: ({ defaultMessage }: { defaultMessage: string }) =>
       defaultMessage,
-    useIntl: () => ({
-      formatMessage: ({ defaultMessage }: { defaultMessage: string }) =>
-        defaultMessage,
-    }),
   };
 });
 
@@ -100,34 +96,6 @@ afterEach(() => {
 });
 
 describe("OpenAICompatibleModelPicker polling", () => {
-  it("forwards a typed model name through the shared autocomplete", async () => {
-    const onModelSelect = vi.fn();
-    await act(async () => {
-      root.render(
-        createElement(OpenAICompatibleModelPicker, {
-          apiKeyId: "key-1",
-          baseUrl: "http://127.0.0.1:8080",
-          selectedModel: null,
-          onModelSelect,
-        }),
-      );
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    const input = container.querySelector<HTMLInputElement>(
-      'input[placeholder="Select or type a model"]',
-    );
-    if (!input) throw new Error("Model autocomplete not found");
-    await act(async () => {
-      Object.getOwnPropertyDescriptor(
-        HTMLInputElement.prototype,
-        "value",
-      )?.set?.call(input, "custom-model");
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-    expect(onModelSelect).toHaveBeenCalledWith("custom-model");
-  });
-
   it("does not start a second probe while one is still in flight", async () => {
     vi.useFakeTimers();
     try {
@@ -289,48 +257,6 @@ describe("OpenAICompatibleModelPicker polling", () => {
     }
   });
 
-  it("times out a stalled model-list request and ignores its late result", async () => {
-    vi.useFakeTimers();
-    try {
-      let resolveAbandoned: ((value: string[]) => void) | undefined;
-      getAvailableModelsMock.mockImplementationOnce(
-        () =>
-          new Promise<string[]>((resolve) => {
-            resolveAbandoned = resolve;
-          }),
-      );
-      renderPicker("http://127.0.0.1:8080");
-      await act(async () => {
-        await Promise.resolve();
-        await Promise.resolve();
-      });
-      const signal = getAvailableModelsMock.mock.calls[0][0];
-      expect(signal?.aborted).toBe(false);
-      checkAvailabilityMock.mockResolvedValue(false);
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(PROBE_TIMEOUT_MS);
-      });
-      expect(signal?.aborted).toBe(true);
-      expect(document.body.textContent).toContain(
-        "doesn't support model listing",
-      );
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(3000);
-      });
-      expect(checkAvailabilityMock).toHaveBeenCalledTimes(2);
-      await act(async () => {
-        resolveAbandoned?.(["stale-model"]);
-        await Promise.resolve();
-      });
-      expect(document.body.textContent).toContain(
-        "doesn't support model listing",
-      );
-      expect(document.body.textContent).not.toContain("stale-model");
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
   it("ignores an abandoned probe that settles after its own deadline", async () => {
     // The deadline has to abandon the run, not just stop waiting on it: a
     // request that answers minutes later still resumes its continuation, and
@@ -407,56 +333,5 @@ describe("OpenAICompatibleModelPicker polling", () => {
 
     expect(savedEndpointFetchArgs).toEqual(["key-1"]);
     expect(openAICompatibleRepoFetches[0]).not.toBe(privateFetch);
-  });
-  it("does not put provider error details or credentials in the console", async () => {
-    const consoleError = vi
-      .spyOn(console, "error")
-      .mockImplementation(() => {});
-    try {
-      getAvailableModelsMock.mockRejectedValueOnce(
-        new Error("opaque-secret-value from provider"),
-      );
-      renderPicker("https://example.test");
-      await act(async () => {
-        await Promise.resolve();
-        await Promise.resolve();
-      });
-      expect(consoleError).toHaveBeenCalledWith(
-        "Failed to fetch OpenAI-compatible models",
-      );
-      expect(JSON.stringify(consoleError.mock.calls)).not.toContain(
-        "opaque-secret-value",
-      );
-    } finally {
-      consoleError.mockRestore();
-    }
-  });
-  it("allows manual model entry when model listing is unavailable", async () => {
-    checkAvailabilityMock.mockResolvedValue(false);
-    const onModelSelect = vi.fn();
-    await act(async () => {
-      root.render(
-        createElement(OpenAICompatibleModelPicker, {
-          apiKeyId: "key-1",
-          baseUrl: "https://example.test",
-          selectedModel: null,
-          onModelSelect,
-        }),
-      );
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    const input = container.querySelector<HTMLInputElement>(
-      'input[placeholder="e.g., gpt-4o-mini"]',
-    )!;
-    expect(input).not.toBeNull();
-    await act(async () => {
-      Object.getOwnPropertyDescriptor(
-        HTMLInputElement.prototype,
-        "value",
-      )!.set!.call(input, "custom-model");
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-    expect(onModelSelect).toHaveBeenCalledWith("custom-model");
   });
 });

@@ -7,11 +7,15 @@ import { sendChatMessage } from "../../actions/chat.actions";
 import { useAppStore } from "../../store";
 import { getLogger } from "../../utils/log.utils";
 import { FadingScrollArea } from "../common/FadingScrollArea";
-import { TipCard } from "../onboarding/TipCard";
 import { AgentLiveAnnouncer } from "./AgentLiveAnnouncer";
 import { ChatMessageBubble } from "./ChatMessageBubble";
 import { ChatPromptBox } from "./ChatPromptBox";
 import { ToolPermissionCard } from "./ToolPermissionCard";
+
+type ConversationLayoutProps = {
+  conversationId: string;
+  compact?: boolean;
+};
 
 const AUTO_SCROLL_THRESHOLD_PX = 32;
 
@@ -19,87 +23,10 @@ const isNearBottom = (node: HTMLDivElement) =>
   node.scrollHeight - node.clientHeight - node.scrollTop <=
   AUTO_SCROLL_THRESHOLD_PX;
 
-/** Keep the viewport following new content only while the reader is at the end. */
-const useConversationScroll = (
-  conversationId: string,
-  messageCount: number,
-) => {
-  const [stuck, setStuck] = useState(true);
-  const scrollViewportRef = useRef<HTMLDivElement | null>(null);
-  const contentRef = useRef<HTMLDivElement | null>(null);
-  const shouldStickToBottomRef = useRef(true);
-
-  const scrollToBottom = useCallback(() => {
-    const node = scrollViewportRef.current;
-    if (!node) return;
-    node.scrollTop = node.scrollHeight;
-  }, []);
-
-  const handleScroll = useCallback(() => {
-    const node = scrollViewportRef.current;
-    if (!node) return;
-    shouldStickToBottomRef.current = isNearBottom(node);
-    setStuck(shouldStickToBottomRef.current);
-  }, []);
-
-  useEffect(() => {
-    shouldStickToBottomRef.current = true;
-    setStuck(true);
-    const frameId = requestAnimationFrame(() => {
-      if (shouldStickToBottomRef.current) scrollToBottom();
-    });
-    return () => cancelAnimationFrame(frameId);
-  }, [conversationId, scrollToBottom]);
-
-  useEffect(() => {
-    if (shouldStickToBottomRef.current) {
-      scrollToBottom();
-    }
-  }, [messageCount, scrollToBottom]);
-
-  useEffect(() => {
-    const contentNode = contentRef.current;
-    const viewportNode = scrollViewportRef.current;
-    if (!contentNode || !viewportNode || typeof ResizeObserver === "undefined")
-      return;
-
-    let pendingFrame: number | undefined;
-    const observer = new ResizeObserver(() => {
-      if (!shouldStickToBottomRef.current || pendingFrame !== undefined) return;
-      pendingFrame = requestAnimationFrame(() => {
-        pendingFrame = undefined;
-        if (shouldStickToBottomRef.current) scrollToBottom();
-      });
-    });
-
-    observer.observe(contentNode);
-    observer.observe(viewportNode);
-
-    return () => {
-      observer.disconnect();
-      if (pendingFrame !== undefined) cancelAnimationFrame(pendingFrame);
-    };
-  }, [conversationId, scrollToBottom]);
-
-  const markStuck = () => {
-    shouldStickToBottomRef.current = true;
-    setStuck(true);
-  };
-  return {
-    stuck,
-    scrollViewportRef,
-    contentRef,
-    scrollToBottom,
-    handleScroll,
-    markStuck,
-  };
-};
-
 export const ConversationLayout = ({
   conversationId,
-}: {
-  conversationId: string;
-}) => {
+  compact = false,
+}: ConversationLayoutProps) => {
   const intl = useIntl();
   const messageIds = useAppStore(
     (s) => s.chatMessageIdsByConversationId[conversationId] ?? [],
@@ -124,32 +51,73 @@ export const ConversationLayout = ({
       ),
     [toolPermissions, conversationId],
   );
-  const sendingRef = useRef(false);
-  const {
-    stuck,
-    scrollViewportRef,
-    contentRef,
-    scrollToBottom,
-    handleScroll,
-    markStuck,
-  } = useConversationScroll(conversationId, messageIds.length);
+  const [sending, setSending] = useState(false);
+  const [stuck, setStuck] = useState(true);
+  const scrollViewportRef = useRef<HTMLDivElement | null>(null);
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  const shouldStickToBottomRef = useRef(true);
+
+  const scrollToBottom = useCallback(() => {
+    const node = scrollViewportRef.current;
+    if (!node) return;
+    node.scrollTop = node.scrollHeight;
+  }, []);
+
+  const handleScroll = useCallback(() => {
+    const node = scrollViewportRef.current;
+    if (!node) return;
+    shouldStickToBottomRef.current = isNearBottom(node);
+    setStuck(shouldStickToBottomRef.current);
+  }, []);
+
+  useEffect(() => {
+    shouldStickToBottomRef.current = true;
+    const frameId = requestAnimationFrame(scrollToBottom);
+    return () => cancelAnimationFrame(frameId);
+  }, [conversationId, scrollToBottom]);
+
+  useEffect(() => {
+    if (shouldStickToBottomRef.current) {
+      scrollToBottom();
+    }
+  }, [messageIds.length, scrollToBottom]);
+
+  useEffect(() => {
+    const contentNode = contentRef.current;
+    const viewportNode = scrollViewportRef.current;
+    if (!contentNode || !viewportNode || typeof ResizeObserver === "undefined")
+      return;
+
+    const observer = new ResizeObserver(() => {
+      if (shouldStickToBottomRef.current) {
+        requestAnimationFrame(scrollToBottom);
+      }
+    });
+
+    observer.observe(contentNode);
+    observer.observe(viewportNode);
+
+    return () => observer.disconnect();
+  }, [conversationId, scrollToBottom]);
 
   const handlePrompt = async (text: string) => {
-    if (sendingRef.current) return;
-    sendingRef.current = true;
-    markStuck();
+    if (sending) return;
+    shouldStickToBottomRef.current = true;
+    setStuck(true);
+    setSending(true);
     try {
       await sendChatMessage(conversationId, text);
     } catch (error) {
       getLogger().error("Failed to send message");
       showErrorSnackbar(error);
     } finally {
-      sendingRef.current = false;
+      setSending(false);
     }
   };
 
   const handleSent = () => {
-    markStuck();
+    shouldStickToBottomRef.current = true;
+    setStuck(true);
   };
 
   return (
@@ -157,13 +125,11 @@ export const ConversationLayout = ({
       sx={{
         flexGrow: 1,
         minWidth: 0,
+        minHeight: 0,
         height: "100%",
         overflow: "hidden",
       }}
     >
-      <Box sx={{ px: 2, pt: 2 }}>
-        <TipCard id="assistant-mode" />
-      </Box>
       <AgentLiveAnnouncer
         agentRunning={agentRunning}
         latestMessageId={messageIds.at(-1) ?? null}
@@ -173,7 +139,7 @@ export const ConversationLayout = ({
         fadeHeight={32}
         viewportRef={scrollViewportRef}
         onScroll={handleScroll}
-        sx={{ pt: 5, pb: 5, px: 2 }}
+        sx={{ pt: compact ? 1 : 5, pb: compact ? 1 : 5, px: 2 }}
       >
         <Stack
           ref={contentRef}
@@ -264,7 +230,8 @@ export const ConversationLayout = ({
             variant="contained"
             startIcon={<ArrowDownwardRounded />}
             onClick={() => {
-              markStuck();
+              shouldStickToBottomRef.current = true;
+              setStuck(true);
               scrollToBottom();
             }}
             sx={{ zIndex: 1 }}

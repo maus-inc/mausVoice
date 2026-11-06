@@ -1,60 +1,34 @@
 import ErrorOutlineIcon from "@mui/icons-material/ErrorOutlined";
-import { Box, CircularProgress, TextField, Typography } from "@mui/material";
+import {
+  Autocomplete,
+  Box,
+  CircularProgress,
+  TextField,
+  Typography,
+} from "@mui/material";
 import { useEffect, useMemo, useState } from "react";
 import { FormattedMessage } from "react-intl";
-import { FreeSoloModelAutocomplete } from "./FreeSoloModelAutocomplete";
-import {
-  OpenAICompatibleRepo,
-  type BaseOllamaRepo,
-} from "../../repos/ollama.repo";
+import { OpenAICompatibleRepo } from "../../repos/ollama.repo";
 import { buildOpenAICompatibleUrl } from "../../utils/openai-compatible.utils";
 import {
   createOpenAICompatibleFetch,
   secureFetch,
 } from "../../utils/secure-fetch.utils";
 
-type OpenAICompatibleModelPickerProps = Parameters<
-  typeof OpenAICompatibleModelPicker
->[0];
-
-/** Manual entry remains usable when an endpoint cannot list its models. */
-const ManualModelInput = ({
-  selectedModel,
-  onModelSelect,
-  disabled,
-}: Pick<
-  OpenAICompatibleModelPickerProps,
-  "selectedModel" | "onModelSelect" | "disabled"
->) => {
-  return (
-    <Box sx={{ display: "flex", flexDirection: "column", gap: 1, py: 1 }}>
-      <Typography
-        variant="body2"
-        sx={{
-          color: "text.secondary",
-        }}
-      >
-        <FormattedMessage defaultMessage="The server doesn't support model listing. Please enter the model name manually." />
-      </Typography>
-      <TextField
-        label={<FormattedMessage defaultMessage="Model name" />}
-        value={selectedModel ?? ""}
-        onChange={(event) =>
-          onModelSelect(event.target.value ? String(event.target.value) : null)
-        }
-        placeholder="e.g., gpt-4o-mini"
-        size="small"
-        fullWidth
-        disabled={disabled}
-      />
-    </Box>
-  );
+type OpenAICompatibleModelPickerProps = {
+  apiKeyId: string;
+  baseUrl: string | null;
+  apiKey?: string | null;
+  includeV1Path?: boolean | null;
+  selectedModel: string | null;
+  onModelSelect: (model: string | null) => void;
+  disabled?: boolean;
 };
 
 /** How long one probe may run before it is abandoned and retried. */
 export const PROBE_TIMEOUT_MS = 10_000;
 /** How long to wait before probing an unavailable endpoint again. */
-const PROBE_RETRY_MS = 3000;
+export const PROBE_RETRY_MS = 3000;
 
 export const OpenAICompatibleModelPicker = ({
   apiKeyId,
@@ -64,12 +38,7 @@ export const OpenAICompatibleModelPicker = ({
   selectedModel,
   onModelSelect,
   disabled = false,
-}: {
-  apiKeyId: string;
-  baseUrl: string | null;
-  apiKey?: string | null;
-  includeV1Path?: boolean | null;
-} & Omit<Parameters<typeof FreeSoloModelAutocomplete>[0], "models">) => {
+}: OpenAICompatibleModelPickerProps) => {
   const [models, setModels] = useState<string[]>([]);
   const [isAvailable, setIsAvailable] = useState<boolean | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -148,24 +117,6 @@ export const OpenAICompatibleModelPicker = ({
       deadline = undefined;
     };
 
-    const createProbeRepo = (): BaseOllamaRepo =>
-      new OpenAICompatibleRepo(
-        effectiveUrl,
-        apiKey || undefined,
-        fetchForEndpoint,
-      );
-
-    const handleProbeFailure = (isCurrent: () => boolean) => {
-      if (!isCurrent()) return;
-      // Provider errors can contain arbitrary credentials or endpoint details.
-      console.error("Failed to fetch OpenAI-compatible models");
-      clearDeadline();
-      setIsAvailable(false);
-      setModels([]);
-      setUseManualInput(true);
-      timer = setTimeout(() => void run(), PROBE_RETRY_MS);
-    };
-
     const run = async () => {
       if (cancelled || inFlight) return;
       inFlight = true;
@@ -191,9 +142,14 @@ export const OpenAICompatibleModelPicker = ({
         timer = setTimeout(() => void run(), PROBE_RETRY_MS);
       }, PROBE_TIMEOUT_MS);
       try {
-        const repo = createProbeRepo();
+        const repo = new OpenAICompatibleRepo(
+          effectiveUrl,
+          apiKey || undefined,
+          fetchForEndpoint,
+        );
         const available = await repo.checkAvailability(controller.signal);
         if (!isCurrent()) return;
+        clearDeadline();
 
         setIsAvailable(available);
         if (available) {
@@ -212,15 +168,20 @@ export const OpenAICompatibleModelPicker = ({
         // construction because the next probe is scheduled only after this
         // run settles).
         timer = setTimeout(() => void run(), PROBE_RETRY_MS);
-      } catch {
-        handleProbeFailure(isCurrent);
+      } catch (error) {
+        console.error("Failed to fetch OpenAI-compatible models", error);
+        if (!isCurrent()) return;
+        clearDeadline();
+        setIsAvailable(false);
+        setModels([]);
+        setUseManualInput(true);
+        timer = setTimeout(() => void run(), PROBE_RETRY_MS);
       } finally {
         // Only the live run owns `inFlight`, the controller and the loading
         // indicator; a retired run must not release the newer run's hold on any of
         // them, which would let a third probe start alongside it.
         if (activeController === controller) activeController = undefined;
         if (isCurrent()) {
-          clearDeadline();
           inFlight = false;
           setIsLoading(false);
         }
@@ -253,17 +214,7 @@ export const OpenAICompatibleModelPicker = ({
     );
   }
 
-  if (useManualInput) {
-    return (
-      <ManualModelInput
-        selectedModel={selectedModel}
-        onModelSelect={onModelSelect}
-        disabled={disabled}
-      />
-    );
-  }
-
-  if (isAvailable === false) {
+  if (isAvailable === false && !useManualInput) {
     return (
       <Box sx={{ display: "flex", alignItems: "center", gap: 1, py: 1 }}>
         <ErrorOutlineIcon color="error" fontSize="small" />
@@ -274,12 +225,61 @@ export const OpenAICompatibleModelPicker = ({
     );
   }
 
+  if (useManualInput) {
+    return (
+      <Box sx={{ display: "flex", flexDirection: "column", gap: 1, py: 1 }}>
+        <Typography
+          variant="body2"
+          sx={{
+            color: "text.secondary",
+          }}
+        >
+          <FormattedMessage defaultMessage="The server doesn't support model listing. Please enter the model name manually." />
+        </Typography>
+        <TextField
+          label={<FormattedMessage defaultMessage="Model name" />}
+          value={selectedModel ?? ""}
+          onChange={(event) =>
+            onModelSelect(
+              event.target.value ? String(event.target.value) : null,
+            )
+          }
+          placeholder="e.g., gpt-4o-mini"
+          size="small"
+          fullWidth
+          disabled={disabled}
+        />
+      </Box>
+    );
+  }
+
   return (
-    <FreeSoloModelAutocomplete
-      models={models}
-      selectedModel={selectedModel}
-      onModelSelect={onModelSelect}
+    <Autocomplete
+      freeSolo
+      options={models}
+      value={selectedModel ?? ""}
+      onChange={(_event, newValue) => {
+        onModelSelect(newValue || null);
+      }}
+      onInputChange={(_event, newInputValue, reason) => {
+        if (reason === "input") {
+          onModelSelect(newInputValue || null);
+        }
+      }}
       disabled={disabled || !isAvailable}
+      size="small"
+      fullWidth
+      renderInput={(params) => (
+        <TextField
+          {...params}
+          label={<FormattedMessage defaultMessage="Model" />}
+          placeholder="Select or type a model"
+          slotProps={{
+            ...params.slotProps,
+            inputLabel: { ...params.slotProps.inputLabel, shrink: true },
+          }}
+        />
+      )}
     />
   );
 };

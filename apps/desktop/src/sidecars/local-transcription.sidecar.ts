@@ -1,9 +1,3 @@
-import { readAbortableResponseJson } from "@maus-inc/utilities";
-import {
-  parsePrivateProviderJson,
-  readBoundedProviderErrorBody,
-  sanitizeProviderError,
-} from "@maus-inc/voice-ai";
 import { appDataDir, join, resolveResource } from "@tauri-apps/api/path";
 import {
   LOCAL_WHISPER_MODELS,
@@ -14,12 +8,14 @@ import type { ShellChildProcess } from "../utils/tauri-shell.utils";
 import { BaseSidecar, type SidecarRuntime } from "./base.sidecar";
 import { fetchWithTimeout, sleep, toErrorMessage } from "./sidecar.utils";
 
+type SidecarMode = "cpu" | "gpu";
+
 type SidecarHealthResponse = {
   status: string;
   mode: string;
 };
 
-export type LocalSidecarModelStatus = {
+type SidecarModelStatusResponse = {
   model: LocalWhisperModel;
   downloaded: boolean;
   valid: boolean;
@@ -27,7 +23,7 @@ export type LocalSidecarModelStatus = {
   validationError: string | null;
 };
 
-export type LocalSidecarDownloadSnapshot = {
+type SidecarDownloadSnapshot = {
   jobId: string;
   model: LocalWhisperModel;
   status:
@@ -38,12 +34,17 @@ export type LocalSidecarDownloadSnapshot = {
   error: string | null;
 };
 
+type SidecarSegment = {
+  text: string;
+  noSpeechProb: number;
+};
+
 type SidecarTranscriptionResponse = {
   text: string;
   model: LocalWhisperModel;
   inferenceDevice: string;
   durationMs: number;
-  segments: LocalSidecarTranscribeOutput["segments"];
+  segments: SidecarSegment[];
 };
 
 type SidecarCreateTranscriptionSessionResponse = {
@@ -59,14 +60,19 @@ type SidecarDeleteTranscriptionSessionResponse = {
   deleted: boolean;
 };
 
-export type LocalSidecarDevice = {
+type SidecarDeviceResponse = {
   id: string;
   name: string;
-  mode: "cpu" | "gpu";
 };
 
 type SidecarDevicesResponse = {
-  devices: Array<Omit<LocalSidecarDevice, "mode">>;
+  devices: SidecarDeviceResponse[];
+};
+
+export type LocalSidecarModelStatus = SidecarModelStatusResponse;
+export type LocalSidecarDownloadSnapshot = SidecarDownloadSnapshot;
+export type LocalSidecarDevice = SidecarDeviceResponse & {
+  mode: SidecarMode;
 };
 
 export type LocalSidecarTranscribeInput = {
@@ -92,8 +98,8 @@ export type LocalSidecarTranscribeOutput = {
   model: LocalWhisperModel;
   inferenceDevice: string;
   durationMs: number;
-  mode: LocalSidecarDevice["mode"];
-  segments: Array<{ text: string; noSpeechProb: number }>;
+  mode: SidecarMode;
+  segments: SidecarSegment[];
 };
 
 export type LocalSidecarStreamingSession = {
@@ -107,12 +113,6 @@ const SIDECAR_BOUND_PORT_PREFIX = "RUST_TRANSCRIPTION_BOUND_PORT=";
 const SIDECAR_REQUEST_TIMEOUT_MS = 120_000;
 const SIDECAR_REQUEST_RETRIES = 2;
 const SIDECAR_REQUEST_RETRY_DELAY_MS = 250;
-/** Shared defaults for runtime-bound and explicit-URL sidecar requests. */
-const requestLimits = (options?: { timeoutMs?: number; retries?: number }) => ({
-  retries: options?.retries ?? SIDECAR_REQUEST_RETRIES,
-  timeoutMs: options?.timeoutMs ?? SIDECAR_REQUEST_TIMEOUT_MS,
-});
-
 const MODEL_DOWNLOAD_TIMEOUT_MS = 45 * 60 * 1_000;
 const MODEL_DOWNLOAD_POLL_INTERVAL_MS = 500;
 const SIDECAR_UPLOAD_CHUNK_SAMPLE_COUNT = 16_000;
@@ -130,63 +130,22 @@ export class SidecarRequestError extends Error {
   }
 }
 
-/** Keep only the code needed for the missing-model retry, never response text. */
-const privateTranscriptionError = (
-  status: number,
-  text: string,
-): SidecarRequestError => {
-  let code: string | undefined;
-  try {
-    const payload = JSON.parse(text) as { error?: { code?: unknown } } | null;
-    const rawCode = payload?.error?.code;
-    if (rawCode === "model_not_downloaded") code = rawCode;
-    else if (rawCode) code = "other_sidecar_error";
-    else code = undefined;
-  } catch {
-    // Invalid private error bodies supply neither trusted text nor a code.
-  }
-  return new SidecarRequestError(
-    `Sidecar request failed (${status})`,
-    status,
-    code,
-  );
-};
-
-/** Preserve useful model-management details without exposing credentials. */
-const diagnosticSidecarError = (
-  status: number,
-  text: string,
-): SidecarRequestError => {
-  const fallbackMessage = `Sidecar request failed (${status})`;
-  try {
-    const payload = JSON.parse(text) as {
-      error?: { code?: unknown; message?: unknown };
-    } | null;
-    const rawCode = payload?.error?.code;
-    const rawMessage = payload?.error?.message;
-    const code =
-      typeof rawCode === "string"
-        ? (sanitizeProviderError(rawCode) ?? undefined)
-        : undefined;
-    const message =
-      typeof rawMessage === "string" ? sanitizeProviderError(rawMessage) : null;
-    return new SidecarRequestError(message || fallbackMessage, status, code);
-  } catch {
-    const detail = sanitizeProviderError(text.trim());
-    return new SidecarRequestError(
-      detail || fallbackMessage,
-      status,
-      undefined,
-    );
-  }
-};
+/**
+ * True when the sidecar reports a 404 `session_not_found` — the streaming
+ * session was lost (process restarted, session evicted) and the caller
+ * should fall back to batch transcription.
+ */
+export const isSessionNotFoundError = (error: unknown): boolean =>
+  error instanceof SidecarRequestError &&
+  error.status === 404 &&
+  error.code === "session_not_found";
 
 export class LocalTranscriptionSidecar extends BaseSidecar {
-  readonly mode: LocalSidecarDevice["mode"];
+  readonly mode: SidecarMode;
   private readyModels = new Map<string, Promise<void>>();
   private modelsDirPromise: Promise<string> | null = null;
 
-  constructor(mode: LocalSidecarDevice["mode"]) {
+  constructor(mode: SidecarMode) {
     const binaryName =
       mode === "gpu"
         ? "binaries/rust-transcription-gpu"
@@ -240,10 +199,7 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
     }
 
     const portValue = line.slice(SIDECAR_BOUND_PORT_PREFIX.length).trim();
-    // parseInt accepts partial values such as "8080garbage". Never probe a
-    // different local service after a malformed readiness announcement.
-    if (!/^\d+$/.test(portValue)) return null;
-    const port = Number(portValue);
+    const port = Number.parseInt(portValue, 10);
     if (!Number.isInteger(port) || port <= 0 || port > 65_535) {
       return null;
     }
@@ -261,14 +217,8 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
 
   protected onError(_message: string): void {}
 
-  protected async checkHealthResponse(
-    response: Response,
-    signal: AbortSignal,
-  ): Promise<boolean> {
-    const payload = await readAbortableResponseJson<SidecarHealthResponse>(
-      response,
-      signal,
-    );
+  protected async checkHealthResponse(response: Response): Promise<boolean> {
+    const payload = (await response.json()) as SidecarHealthResponse;
     return payload.status === "ok" && payload.mode === this.mode;
   }
 
@@ -278,7 +228,7 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
     model: LocalWhisperModel,
     validate = true,
   ): Promise<LocalSidecarModelStatus> {
-    return await this.requestJson<LocalSidecarModelStatus>(
+    return await this.requestJson<SidecarModelStatusResponse>(
       `/v1/models/${model}/status?validate=${validate ? "true" : "false"}`,
     );
   }
@@ -324,14 +274,22 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
       return null;
     }
 
-    const finalStatus = await this.validateDownloadedModel(model);
+    const finalStatus = await this.getModelStatus(model, true);
+    if (!finalStatus.downloaded || !finalStatus.valid) {
+      throw new Error(
+        finalStatus.validationError ||
+          `Model '${model}' failed validation (${this.mode.toUpperCase()})`,
+      );
+    }
+
+    this.markModelReady(model);
     return finalStatus;
   }
 
   async pauseDownload(
     model: LocalWhisperModel,
   ): Promise<LocalSidecarDownloadSnapshot> {
-    return await this.requestJson<LocalSidecarDownloadSnapshot>(
+    return await this.requestJson<SidecarDownloadSnapshot>(
       `/v1/models/${model}/download/pause`,
       { method: "POST" },
     );
@@ -340,7 +298,7 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
   async cancelDownload(
     model: LocalWhisperModel,
   ): Promise<LocalSidecarDownloadSnapshot> {
-    const result = await this.requestJson<LocalSidecarDownloadSnapshot>(
+    const result = await this.requestJson<SidecarDownloadSnapshot>(
       `/v1/models/${model}/download/cancel`,
       { method: "POST" },
     );
@@ -351,7 +309,7 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
   async deleteModel(
     model: LocalWhisperModel,
   ): Promise<LocalSidecarModelStatus> {
-    const status = await this.requestJson<LocalSidecarModelStatus>(
+    const status = await this.requestJson<SidecarModelStatusResponse>(
       `/v1/models/${model}`,
       { method: "DELETE" },
     );
@@ -624,21 +582,15 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
     const download = await this.downloadModelInternal(model);
     this.assertDownloadCompleted(model, download);
 
-    await this.validateDownloadedModel(model);
-  }
-
-  private async validateDownloadedModel(
-    model: LocalWhisperModel,
-  ): Promise<LocalSidecarModelStatus> {
-    const status = await this.getModelStatus(model, true);
-    if (!status.downloaded || !status.valid) {
+    const finalStatus = await this.getModelStatus(model, true);
+    if (!finalStatus.downloaded || !finalStatus.valid) {
       throw new Error(
-        status.validationError ||
+        finalStatus.validationError ||
           `Model '${model}' failed validation (${this.mode.toUpperCase()})`,
       );
     }
+
     this.markModelReady(model);
-    return status;
   }
 
   private markModelReady(model: LocalWhisperModel): void {
@@ -647,7 +599,7 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
 
   private assertDownloadCompleted(
     model: LocalWhisperModel,
-    snapshot: LocalSidecarDownloadSnapshot,
+    snapshot: SidecarDownloadSnapshot,
   ): void {
     if (snapshot.status === "paused") {
       throw new Error(
@@ -667,40 +619,35 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
     }
   }
 
-  /** Classify snapshots consistently whether returned by the start or poll endpoint. */
-  private isDownloadFinished(
-    model: LocalWhisperModel,
-    snapshot: LocalSidecarDownloadSnapshot,
-  ): boolean {
-    if (snapshot.status === "failed") {
-      throw new Error(
-        snapshot.error ||
-          `Model download failed for '${model}' (${this.mode.toUpperCase()})`,
-      );
-    }
-    return (
-      snapshot.status === "completed" ||
-      snapshot.status === "paused" ||
-      snapshot.status === "canceled"
-    );
-  }
-
   private async downloadModelInternal(
     model: LocalWhisperModel,
     onProgress?: (snapshot: LocalSidecarDownloadSnapshot) => void,
-  ): Promise<LocalSidecarDownloadSnapshot> {
-    const job = await this.requestJson<LocalSidecarDownloadSnapshot>(
+  ): Promise<SidecarDownloadSnapshot> {
+    const job = await this.requestJson<SidecarDownloadSnapshot>(
       `/v1/models/${model}/download`,
       { method: "POST" },
     );
 
     onProgress?.(job);
 
-    if (this.isDownloadFinished(model, job)) return job;
+    if (
+      job.status === "completed" ||
+      job.status === "paused" ||
+      job.status === "canceled"
+    ) {
+      return job;
+    }
+
+    if (job.status === "failed") {
+      throw new Error(
+        job.error ||
+          `Model download failed for '${model}' (${this.mode.toUpperCase()})`,
+      );
+    }
 
     const deadline = Date.now() + MODEL_DOWNLOAD_TIMEOUT_MS;
     while (Date.now() < deadline) {
-      const progress = await this.requestJson<LocalSidecarDownloadSnapshot>(
+      const progress = await this.requestJson<SidecarDownloadSnapshot>(
         `/v1/models/${model}/download/${job.jobId}`,
         undefined,
         { retries: 1 },
@@ -708,7 +655,20 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
 
       onProgress?.(progress);
 
-      if (this.isDownloadFinished(model, progress)) return progress;
+      if (
+        progress.status === "completed" ||
+        progress.status === "paused" ||
+        progress.status === "canceled"
+      ) {
+        return progress;
+      }
+
+      if (progress.status === "failed") {
+        throw new Error(
+          progress.error ||
+            `Model download failed for '${model}' (${this.mode.toUpperCase()})`,
+        );
+      }
 
       await sleep(MODEL_DOWNLOAD_POLL_INTERVAL_MS);
     }
@@ -738,7 +698,8 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
       retries?: number;
     },
   ): Promise<T> {
-    const { retries, timeoutMs } = requestLimits(options);
+    const retries = options?.retries ?? SIDECAR_REQUEST_RETRIES;
+    const timeoutMs = options?.timeoutMs ?? SIDECAR_REQUEST_TIMEOUT_MS;
     let lastError: unknown = null;
 
     for (let attempt = 1; attempt <= retries; attempt += 1) {
@@ -790,54 +751,58 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
       retries?: number;
     },
   ): Promise<T> {
-    const { retries, timeoutMs } = requestLimits(options);
+    const retries = options?.retries ?? SIDECAR_REQUEST_RETRIES;
+    const timeoutMs = options?.timeoutMs ?? SIDECAR_REQUEST_TIMEOUT_MS;
     const init = options?.init;
-    if (retries < 1) throw new Error(`Request failed for ${path}`);
+    let lastError: unknown = null;
 
-    // Each retry waits out its own backoff before the next request, so the
-    // attempts cannot overlap; one recursive call states one attempt.
-    const attempt = async (number: number): Promise<T> => {
+    for (let attempt = 1; attempt <= retries; attempt += 1) {
       try {
-        return await this.fetchJson<T>(`${baseUrl}${path}`, init, timeoutMs);
+        const url = `${baseUrl}${path}`;
+        const response = await fetchWithTimeout(url, init, timeoutMs);
+
+        if (!response.ok) {
+          throw await this.buildHttpError(response);
+        }
+
+        return (await response.json()) as T;
       } catch (error) {
-        if (number >= retries || !this.isRetriableError(error)) throw error;
-        await sleep(SIDECAR_REQUEST_RETRY_DELAY_MS * number);
-        return attempt(number + 1);
+        lastError = error;
+        if (attempt < retries && this.isRetriableError(error)) {
+          await sleep(SIDECAR_REQUEST_RETRY_DELAY_MS * attempt);
+          continue;
+        }
+        throw error;
       }
-    };
-
-    return attempt(1);
-  }
-
-  /** Decode one response; retry decisions remain with the request loop. */
-  private async fetchJson<T>(
-    url: string,
-    init: RequestInit | undefined,
-    timeoutMs: number,
-  ): Promise<T> {
-    const response = await fetchWithTimeout(url, init, timeoutMs);
-    const signal = init?.signal ?? undefined;
-    if (!response.ok) {
-      const privateResponse = new URL(url).pathname.startsWith(
-        "/v1/transcriptions",
-      );
-      const error = await this.buildHttpError(response, privateResponse);
-      signal?.throwIfAborted();
-      throw error;
     }
-    return await parsePrivateProviderJson<T>(response, "Sidecar", signal);
+
+    throw lastError instanceof Error
+      ? lastError
+      : new Error(`Request failed for ${path}`);
   }
 
   private async buildHttpError(
     response: Response,
-    privateResponse = false,
   ): Promise<SidecarRequestError> {
-    // Read once, with size and time limits; parsing failures may contain
-    // arbitrary private fragments, so never put parser errors in diagnostics.
-    const text = (await readBoundedProviderErrorBody(response)) ?? "";
-    return privateResponse
-      ? privateTranscriptionError(response.status, text)
-      : diagnosticSidecarError(response.status, text);
+    const status = response.status;
+    const fallbackMessage = `Sidecar request failed (${status})`;
+
+    try {
+      const payload = (await response.json()) as {
+        error?: { code?: string; message?: string };
+      };
+
+      const code = payload.error?.code;
+      const message = payload.error?.message || fallbackMessage;
+      return new SidecarRequestError(message, status, code);
+    } catch {
+      const text = await response.text().catch(() => "");
+      return new SidecarRequestError(
+        text.trim() || fallbackMessage,
+        status,
+        undefined,
+      );
+    }
   }
 
   private isRetriableError(error: unknown): boolean {

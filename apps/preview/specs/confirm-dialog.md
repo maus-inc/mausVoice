@@ -2,7 +2,7 @@
 
 - Status: **reused** — real component from `apps/desktop/src/components/common/ConfirmDialog.tsx`.
 - Source of truth: `apps/desktop/src/components/common/ConfirmDialog.tsx`.
-- Used in: SignInForm, SettingsPage, ManualStylingRow, ToneEditorDialog.
+- Used in: SignInForm, PersonalCredentialsForm, PrivacyDataSettingsPage, UpdateChannelSetting, SystemSettingsPage, ProfileDialog, ManualStylingRow, ToneCreateDiscard, ToneEditConfirmations.
 
 ## Purpose
 
@@ -26,4 +26,4 @@ Inherits dialog semantics; actions are real buttons with localized labels.
 
 ## Live-spec mapping
 
-Patch-only. Persist: edit `ConfirmDialog.tsx` → four call sites. Radii follow the dialog + button specs (live).
+Patch-only. Persist: edit `ConfirmDialog.tsx` → all direct call sites. Radii follow the dialog + button specs (live).

@@ -15,7 +15,6 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import { testBoundedRegex } from "./bounded-regex.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, "..", "..");
@@ -51,20 +50,6 @@ function quoteLengthAt(text, pos) {
   return text.startsWith(text[pos].repeat(3), pos) ? 3 : 1;
 }
 
-// TOML multiline strings may end with one or two literal delimiter characters
-// followed by the closing triple. Consume the complete run (up to five).
-function closingQuoteEnd(text, cursor, quote) {
-  let end = cursor + quote.length;
-  if (quote.length === 3) {
-    while (end < cursor + 5 && text[end] === quote[0]) end += 1;
-  }
-  return end;
-}
-
-function startsBasicStringEscape(text, cursor, escapable) {
-  return escapable && text[cursor] === "\\";
-}
-
 // Index just past the closing delimiter of the string that opens at `pos`,
 // or `text.length` when it never closes. Basic (`"`) strings honour
 // backslash escapes; literal (`'`) strings do not (TOML v1.0 §strings).
@@ -73,9 +58,8 @@ function stringEnd(text, pos) {
   const escapable = quote[0] === '"';
   let cursor = pos + quote.length;
   while (cursor < text.length) {
-    if (startsBasicStringEscape(text, cursor, escapable)) cursor += 2;
-    else if (text.startsWith(quote, cursor))
-      return closingQuoteEnd(text, cursor, quote);
+    if (escapable && text[cursor] === "\\") cursor += 2;
+    else if (text.startsWith(quote, cursor)) return cursor + quote.length;
     else cursor += 1;
   }
   return text.length;
@@ -96,7 +80,7 @@ export function stripTomlComments(text) {
   let cursor = 0;
   while (cursor < text.length) {
     const ch = text[cursor];
-    if (isTomlQuote(ch)) {
+    if (ch === '"' || ch === "'") {
       const end = stringEnd(text, cursor);
       out += text.slice(cursor, end);
       cursor = end;
@@ -118,7 +102,7 @@ export function indexOfOutsideStrings(text, needle, from = 0) {
   let cursor = from;
   while (cursor < text.length) {
     const ch = text[cursor];
-    if (isTomlQuote(ch)) {
+    if (ch === '"' || ch === "'") {
       cursor = stringEnd(text, cursor);
     } else if (text.startsWith(needle, cursor)) {
       return cursor;
@@ -129,66 +113,55 @@ export function indexOfOutsideStrings(text, needle, from = 0) {
   return -1;
 }
 
-// A line starting with a TOML table header, not a nested array item.
-function tableHeaderAt(raw, start) {
-  const lineEnd = indexOfOutsideStrings(raw, "\n", start);
-  const line = raw.slice(start, lineEnd === -1 ? raw.length : lineEnd).trim();
-  return /^\[+[^\]=]+\]+(\s*#.*)?$/.test(line);
-}
-
-// Strings and comments cannot contain structural brackets or table boundaries.
-function nextStructuralCharacter(raw, from) {
-  let cursor = from;
-  while (cursor < raw.length) {
-    const ch = raw[cursor];
-    if (isTomlQuote(ch)) cursor = stringEnd(raw, cursor);
-    else if (ch === "#") cursor = commentEnd(raw, cursor);
-    else return cursor;
-  }
-  return cursor;
-}
-
-function bracketDepth(depth, ch) {
-  if ("[{".includes(ch)) return depth + 1;
-  if ("]}".includes(ch)) return Math.max(0, depth - 1);
-  return depth;
-}
-
-function isTableBoundary(raw, cursor, depth) {
-  return (
-    raw[cursor] === "\n" &&
-    depth === 0 &&
-    tableHeaderAt(raw, skipHorizontalSpace(raw, cursor + 1))
-  );
+function section(text, startMarker, endMarker) {
+  const start = indexOfOutsideStrings(text, startMarker);
+  if (start === -1) return "";
+  const after = start + startMarker.length;
+  const end = endMarker ? indexOfOutsideStrings(text, endMarker, after) : -1;
+  return end === -1 ? text.slice(after) : text.slice(after, end);
 }
 
 function nextTableStart(raw, from) {
   let cursor = from;
-  let depth = 0;
-  while ((cursor = nextStructuralCharacter(raw, cursor)) < raw.length) {
-    if (isTableBoundary(raw, cursor, depth)) return cursor;
-    depth = bracketDepth(depth, raw[cursor]);
-    cursor += 1;
+  while (cursor < raw.length) {
+    const newline = indexOfOutsideStrings(raw, "\n", cursor);
+    if (newline === -1) return -1;
+    cursor = newline + 1;
+    while (raw[cursor] === " " || raw[cursor] === "\t") cursor += 1;
+    if (raw[cursor] === "[") {
+      const lineEnd = indexOfOutsideStrings(raw, "\n", cursor);
+      const line = (
+        lineEnd === -1 ? raw.slice(cursor) : raw.slice(cursor, lineEnd)
+      ).trim();
+      if (/^\[+[^\]=]+\]+(\s*#.*)?$/.test(line)) {
+        return newline;
+      }
+    }
   }
   return -1;
 }
 
-function tableBodyStartAt(text, start, header) {
-  const at = skipHorizontalSpace(text, start);
-  if (!text.startsWith(header, at)) return -1;
-  const after = at + header.length;
-  const lineEnd = text.indexOf("\n", after);
-  const rest = text.slice(after, lineEnd === -1 ? text.length : lineEnd);
-  return rest.trim() === "" ? after : -1;
-}
-
-// Body of an exact structural table header (for example "[extend]"), not a
-// dotted sibling or a mention inside a comment or string.
+// Body of a TOML table whose header is exactly `header` (for example
+// "[extend]"), not a dotted sibling like "[extend.foo]". Empty when the
+// table is absent.
 export function tomlTableBody(raw, header) {
-  const text = stripTomlComments(raw);
-  for (const start of structuralLineStarts(text)) {
-    const after = tableBodyStartAt(text, start, header);
-    if (after !== -1) return sectionUntilNextTable(text, after);
+  let from = 0;
+  while (from <= raw.length) {
+    const at = indexOfOutsideStrings(raw, header, from);
+    if (at === -1) return "";
+    const after = at + header.length;
+    const next = raw[after];
+    if (
+      next !== undefined &&
+      next !== "\r" &&
+      next !== "\n" &&
+      !/[ \t]/.test(next)
+    ) {
+      from = at + 1;
+      continue;
+    }
+    const end = nextTableStart(raw, after);
+    return end === -1 ? raw.slice(after) : raw.slice(after, end);
   }
   return "";
 }
@@ -208,54 +181,98 @@ function quotedKeySpan(text, start) {
   return { end, key: text.slice(start + delim, end - delim) };
 }
 
-/** Find an assignment's value after a bare or quoted key at a structural line start. */
-function assignmentValueStartAt(text, start, key) {
-  if (text.startsWith(key, start))
-    return valueStartAfter(text, start + key.length);
-  if (!isTomlQuote(text[start])) return -1;
-  const span = quotedKeySpan(text, start);
-  return span.key === key ? valueStartAfter(text, span.end) : -1;
+function quotedKeyMatches(text, end, expected) {
+  const rest = text.slice(end);
+  const eq = /^\s*=\s*/.exec(rest);
+  if (!eq) return false;
+  return assignmentMatches(rest, eq[0].length, expected);
 }
 
-/** Structural line starts, skipping newlines inside quoted TOML values. */
-function* structuralLineStarts(text) {
-  let start = 0;
-  while (start < text.length) {
-    yield start;
-    const end = indexOfOutsideStrings(text, "\n", start);
-    if (end === -1) return;
-    start = end + 1;
-  }
-}
-
-function skipHorizontalSpace(text, start) {
-  let cursor = start;
-  while (/[ \t]/.test(text[cursor] ?? "")) cursor += 1;
-  return cursor;
-}
-
-function hasAssignment(text, key) {
-  return findAssignmentOutsideStrings(text, key) !== -1;
-}
-
-// Only an assignment at a structural line start is an option in this table.
-// A nested inline table may contain the same key but cannot enable defaults.
-function hasUseDefaultValue(text, expected) {
-  for (const lineStart of structuralLineStarts(text)) {
-    const valueStart = assignmentValueStartAt(
-      text,
-      skipHorizontalSpace(text, lineStart),
-      "useDefault",
-    );
-    if (valueStart !== -1 && assignmentMatches(text, valueStart, expected)) {
-      return true;
+/**
+ * Whether `text` assigns to a `keywords` key, in any spelling TOML accepts.
+ *
+ * A quoted key IS the bare key as far as a TOML parser is concerned, and gitleaks decodes
+ * the config into a map, so
+ *
+ *     'keywords' = ["untrusted"]
+ *
+ * populates `Rule.Keywords` exactly as `keywords = ["untrusted"]` does. The check this
+ * replaces was `/^\s*keywords\s*=/m`, which matched neither quoted form -- so the guard
+ * printed its success line, `has no 'keywords' pre-filter`, for a config that suppresses
+ * the rule. That is the same class of defect `isBareUseDefaultKey` exists to prevent, two
+ * checks above, and it is the one check here still written as a raw regex.
+ *
+ * Line-anchored on purpose: the surrounding `description` string is free text, and a
+ * presence check that also fired on the word `keywords` appearing in prose would be its own
+ * kind of wrong.
+ */
+function hasKeywordsAssignment(text) {
+  return text.split("\n").some((line) => {
+    let i = 0;
+    while (line[i] === " " || line[i] === "\t") i += 1;
+    if (line.startsWith("keywords", i)) {
+      let j = i + "keywords".length;
+      while (line[j] === " " || line[j] === "\t") j += 1;
+      if (line[j] === "=") return true;
     }
+    if (isTomlQuote(line[i])) {
+      const span = quotedKeySpan(line, i);
+      if (span.key === "keywords") {
+        let j = span.end;
+        while (line[j] === " " || line[j] === "\t") j += 1;
+        if (line[j] === "=") return true;
+      }
+    }
+    return false;
+  });
+}
+
+function isBareUseDefaultKey(text, cursor) {
+  if (!text.startsWith("useDefault", cursor)) return false;
+  const before = text[cursor - 1];
+  const after = text[cursor + "useDefault".length];
+  const boundBefore = before === undefined || /[\s=]/.test(before);
+  const boundAfter = after === undefined || /[\s=]/.test(after);
+  return boundBefore && boundAfter;
+}
+
+function bareUseDefaultAt(text, cursor, expected) {
+  const eq = indexOfOutsideStrings(text, "=", cursor + "useDefault".length);
+  if (eq === -1) return { next: -1, matches: false };
+  return { next: eq + 1, matches: assignmentMatches(text, eq + 1, expected) };
+}
+
+// Match an explicit boolean assignment to the real useDefault key,
+// including quoted keys. Prose like
+// `description = """ ... useDefault = false ... """` is content, not config,
+// and must never trip the guard (a false positive would block CI over a
+// comment).
+function hasUseDefaultValue(text, expected) {
+  let cursor = 0;
+  while (cursor < text.length) {
+    if (isTomlQuote(text[cursor])) {
+      const start = cursor;
+      const { end, key } = quotedKeySpan(text, start);
+      if (key === "useDefault" && quotedKeyMatches(text, end, expected)) {
+        return true;
+      }
+      cursor = Math.max(end, start + 1);
+      continue;
+    }
+    if (isBareUseDefaultKey(text, cursor)) {
+      const { next, matches } = bareUseDefaultAt(text, cursor, expected);
+      if (next === -1) return false;
+      if (matches) return true;
+      cursor = next;
+      continue;
+    }
+    cursor += 1;
   }
   return false;
 }
 
 export const hasUseDefaultFalse = (text) => hasUseDefaultValue(text, "false");
-const hasUseDefaultTrue = (text) => hasUseDefaultValue(text, "true");
+export const hasUseDefaultTrue = (text) => hasUseDefaultValue(text, "true");
 
 export const hasTopLevelUseDefaultFalse = hasUseDefaultFalse;
 
@@ -283,13 +300,17 @@ const UPDATER_RULE_ID = "tauri-minisign-updater-private-key";
  * `regexes` in a free-text value.
  */
 function findAssignmentOutsideStrings(text, key) {
-  for (const lineStart of structuralLineStarts(text)) {
-    const value = assignmentValueStartAt(
-      text,
-      skipHorizontalSpace(text, lineStart),
-      key,
-    );
-    if (value !== -1) return value;
+  let cursor = 0;
+  while (cursor < text.length) {
+    const at = indexOfOutsideStrings(text, key, cursor);
+    if (at === -1) return -1;
+    let indent = text.lastIndexOf("\n", at - 1) + 1;
+    while (text[indent] === " " || text[indent] === "\t") indent += 1;
+    if (indent === at) {
+      const valueStart = valueStartAfter(text, at + key.length);
+      if (valueStart !== -1) return valueStart;
+    }
+    cursor = at + key.length;
   }
   return -1;
 }
@@ -301,10 +322,12 @@ function findAssignmentOutsideStrings(text, key) {
  * both resolve to their value.
  */
 function valueStartAfter(text, keyEnd) {
-  let cursor = skipHorizontalSpace(text, keyEnd);
+  let cursor = keyEnd;
+  while (text[cursor] === " " || text[cursor] === "\t") cursor += 1;
   if (text[cursor] !== "=") return -1;
   cursor += 1;
-  return skipHorizontalSpace(text, cursor);
+  while (text[cursor] === " " || text[cursor] === "\t") cursor += 1;
+  return cursor;
 }
 
 // Offset of the quoted value of an assignment at `valueStart`, or -1 when the
@@ -320,158 +343,45 @@ function quotedValueAt(text, valueStart) {
   return text.slice(valueStart + delimiter, end - delimiter);
 }
 
-function isUpdaterRule(section) {
-  const idValueStart = findAssignmentOutsideStrings(section, "id");
-  return (
-    idValueStart !== -1 &&
-    quotedValueAt(section, idValueStart) === UPDATER_RULE_ID
-  );
-}
-
-function sectionUntilNextTable(text, start) {
-  const end = nextTableStart(text, start);
-  return text.slice(start, end === -1 ? text.length : end);
-}
-
-/** Iterate rule bodies without mixing in child tables or other rules. */
-function* ruleSections(rules) {
-  const marker = "[[rules]]";
-  let start = indexOfOutsideStrings(rules, marker);
-  if (start === -1) {
-    yield sectionUntilNextTable(rules, 0);
-    return;
+function updaterRuleIdValueStart(rules) {
+  let cursor = 0;
+  while (cursor < rules.length) {
+    const at = indexOfOutsideStrings(rules, "id", cursor);
+    if (at === -1) return -1;
+    const valueStart = findAssignmentOutsideStrings(rules.slice(at), "id");
+    if (
+      valueStart !== -1 &&
+      quotedValueAt(rules, at + valueStart) === UPDATER_RULE_ID
+    ) {
+      return at + valueStart;
+    }
+    cursor = at + "id".length;
   }
-  while (start !== -1) {
-    const bodyStart = start + marker.length;
-    yield sectionUntilNextTable(rules, bodyStart);
-    start = indexOfOutsideStrings(rules, marker, bodyStart);
-  }
-}
-
-function updaterRuleSection(rules) {
-  for (const section of ruleSections(rules)) {
-    if (isUpdaterRule(section)) return section;
-  }
-  return null;
-}
-
-function hasUpdaterKeywords(rules) {
-  const section = updaterRuleSection(rules);
-  return section !== null && hasAssignment(section, "keywords");
+  return -1;
 }
 
 export function updaterRulePattern(rules) {
-  const section = updaterRuleSection(rules);
-  if (section === null) return null;
+  // Find the id with the string scanner rather than by trimming lines. An
+  // `id = "..."` line inside a multi-line description is prose, and treating it
+  // as the rule would start the search for `regex` in the middle of that
+  // description: the string still open there would then swallow the real key.
+  const idValueStart = updaterRuleIdValueStart(rules);
+  if (idValueStart === -1) return null;
+  const idLineEnd = rules.indexOf("\n", idValueStart);
+  const afterId = idLineEnd === -1 ? "" : rules.slice(idLineEnd + 1);
+  // The regex must belong to the updater rule itself. Stop at the next
+  // [[rules]] table so a regex from a later rule is never attributed to it.
+  const nextRulesTable = indexOfOutsideStrings(afterId, "[[rules]]");
+  const section =
+    nextRulesTable === -1 ? afterId : afterId.slice(0, nextRulesTable);
+  // Find the key with the same scanner, so a `regex =` line inside a multi-line
+  // description is not mistaken for the key.
   const valueStart = findAssignmentOutsideStrings(section, "regex");
-  // A missing assignment returns -1; indexing a string there is undefined,
-  // which the same quote check rejects as an absent or non-string value.
-  if (!isTomlQuote(section[valueStart])) return null;
+  if (valueStart === -1) return null;
   const delimiter = quoteLengthAt(section, valueStart);
   if (delimiter === 1) return quotedValueAt(section, valueStart);
   const end = stringEnd(section, valueStart);
   return section.slice(valueStart + delimiter, end - delimiter).trim();
-}
-
-/** The global allowlist must not exempt updater keys or misplace useDefault. */
-function checkAllowlist(raw) {
-  // (a) The preamble must NOT be exempted by the global allowlist.
-  const allowlist = tomlTableBody(raw, "[allowlist]");
-  for (const marker of [PREAMBLE, PREAMBLE_B64]) {
-    if (allowlist.includes(marker)) {
-      fail(
-        `gitleaks.toml: the updater private-key preamble (${marker}) is still in ` +
-          "[allowlist] and would be EXEMPTED from scanning. Move it to a [[rules]] detector.",
-      );
-    }
-  }
-
-  // (d) `useDefault` must NOT be nested inside the [allowlist] section.
-  if (hasAssignment(allowlist, "useDefault")) {
-    fail(
-      "gitleaks.toml: `useDefault` is nested inside [allowlist], where Gitleaks " +
-        "ignores it. Remove it from [allowlist].",
-    );
-  }
-}
-
-function hasTopLevelDisabledDefaultRules(raw) {
-  const firstTable = indexOfOutsideStrings(raw, "[");
-  return hasUseDefaultFalse(firstTable === -1 ? raw : raw.slice(0, firstTable));
-}
-
-/** A custom gitleaks config must retain the built-in detection rules. */
-function checkDefaultRules(raw) {
-  // A custom -c config replaces the built-ins unless [extend] explicitly
-  // enables them. Merely omitting useDefault=false is not sufficient.
-  // Gitleaks v8.18.0 README: Configuration / [extend].
-  if (hasTopLevelDisabledDefaultRules(raw)) {
-    fail(
-      "gitleaks.toml: remove the ignored top-level useDefault option; enable built-ins under [extend].",
-    );
-  }
-  const extension = tomlTableBody(raw, "[extend]");
-  if (!hasUseDefaultTrue(extension) || hasUseDefaultFalse(extension)) {
-    fail(
-      "gitleaks.toml: explicitly set [extend] useDefault = true so the custom updater rule supplements the built-in detectors.",
-    );
-  }
-}
-
-/** Both supported updater-key encodings need detection. */
-function checkPatternMarkers(rulePattern) {
-  for (const marker of [PREAMBLE, PREAMBLE_B64]) {
-    if (!rulePattern.includes(marker)) {
-      fail(
-        "gitleaks.toml: the tauri-minisign-updater-private-key regex does not match " +
-          `"${marker}". ` +
-          (marker === PREAMBLE
-            ? "The PLAINTEXT arm is the one that detects a real key: `tauri signer " +
-              "generate` writes the untrusted-comment line as text and base64-encodes only " +
-              "the key payload, so a rule matching the base64 of that text alone matches no " +
-              "real key file."
-            : "Keep the base64 arm too, for a key file embedded whole in a base64-wrapped " +
-              "CI artifact."),
-      );
-    }
-  }
-}
-
-/** Compile the pattern and exercise plaintext and wrapped key fixtures. */
-function checkPatternFixtures(rulePattern) {
-  // Two fixtures, both shaped like something that actually gets committed.
-  //
-  // The first is what `tauri signer generate` writes: a plaintext untrusted-comment
-  // line, then base64 of the key payload. The previous fixture was
-  // `<plaintext line>\n<base64 of the preamble>\n<junk>`, a shape no tool produces
-  // and which the previous rule matched -- so it proved the rule matched the
-  // fixture rather than that it matched a key.
-  const realKey =
-    "untrusted comment: rsign encrypted secret key\n" +
-    "RWQ5aGF1c2VmaWtlc2VjcmV0a2V5bWF0ZXJpYWxmb3J1cHRlci0y\n";
-  // The second is that same file base64-wrapped whole, as a CI artifact carries it.
-  const wrappedKey = Buffer.from(realKey, "utf8").toString("base64") + "\n";
-  const fixtures = [
-    ["a key file", realKey],
-    ["a base64-wrapped key file", wrappedKey],
-  ];
-  let matches;
-  try {
-    matches = testBoundedRegex(
-      rulePattern,
-      fixtures.map(([, value]) => value),
-    );
-  } catch (error) {
-    fail(`gitleaks.toml: ${error.message}`);
-  }
-  for (const [index, [label]] of fixtures.entries()) {
-    if (!matches[index]) {
-      fail(
-        `gitleaks.toml: the configured rule does NOT match ${label} shaped like a ` +
-          "committed Tauri updater signing key — key commits would slip through.",
-      );
-    }
-  }
 }
 
 function main() {
@@ -490,8 +400,41 @@ function main() {
   // itself: changing it takes a change to the base branch, reviewed on its own. The gate
   // this guard backs would not get stronger by second-guessing a list it does not own.
 
-  checkAllowlist(raw);
-  checkDefaultRules(raw);
+  // (a) The preamble must NOT be exempted by the global allowlist.
+  const allowlist = section(raw, "[allowlist]", "[[rules]]");
+  for (const marker of [PREAMBLE, PREAMBLE_B64]) {
+    if (allowlist.includes(marker)) {
+      fail(
+        `gitleaks.toml: the updater private-key preamble (${marker}) is still in ` +
+          "[allowlist] and would be EXEMPTED from scanning. Move it to a [[rules]] detector.",
+      );
+    }
+  }
+
+  // (d) `useDefault` must NOT be nested inside the [allowlist] section.
+  if (allowlist.includes("useDefault")) {
+    fail(
+      "gitleaks.toml: `useDefault` is nested inside [allowlist], where Gitleaks " +
+        "ignores it. Remove it from [allowlist].",
+    );
+  }
+
+  // A custom -c config replaces the built-ins unless [extend] explicitly
+  // enables them. Merely omitting useDefault=false is not sufficient.
+  // Gitleaks v8.18.0 README: Configuration / [extend].
+  const firstTable = indexOfOutsideStrings(raw, "[");
+  const topLevel = firstTable === -1 ? raw : raw.slice(0, firstTable);
+  if (hasUseDefaultFalse(topLevel)) {
+    fail(
+      "gitleaks.toml: remove the ignored top-level useDefault option; enable built-ins under [extend].",
+    );
+  }
+  const extension = tomlTableBody(raw, "[extend]");
+  if (!hasUseDefaultTrue(extension) || hasUseDefaultFalse(extension)) {
+    fail(
+      "gitleaks.toml: explicitly set [extend] useDefault = true so the custom updater rule supplements the built-in detectors.",
+    );
+  }
 
   // (b) The preamble MUST be present as a real detection rule's regex.
   const rules = rulesSection(raw);
@@ -504,13 +447,27 @@ function main() {
       "gitleaks.toml: could not find regex for id tauri-minisign-updater-private-key.",
     );
   }
-  checkPatternMarkers(rulePattern);
+  for (const marker of [PREAMBLE, PREAMBLE_B64]) {
+    if (!rulePattern.includes(marker)) {
+      fail(
+        "gitleaks.toml: the tauri-minisign-updater-private-key regex does not match " +
+          `"${marker}". ` +
+          (marker === PREAMBLE
+            ? "The PLAINTEXT arm is the one that detects a real key: `tauri signer " +
+              "generate` writes the untrusted-comment line as text and base64-encodes only " +
+              "the key payload, so a rule matching the base64 of that text alone matches no " +
+              "real key file."
+            : "Keep the base64 arm too, for a key file embedded whole in a base64-wrapped " +
+              "CI artifact."),
+      );
+    }
+  }
 
-  // (c) The updater rule must have NO `keywords` key. A keyword pre-filter is
+  // (c) The [[rules]] block must have NO `keywords` key. A keyword pre-filter is
   // matched against the file's lowercased text before the regex runs, so a keyword
   // that a real key file does not contain suppresses the rule entirely -- which is
   // the same class of defect as a rule that matches nothing.
-  if (hasUpdaterKeywords(rules)) {
+  if (hasKeywordsAssignment(rules)) {
     fail(
       "gitleaks.toml: the [[rules]] updater-key detector uses `keywords`, which " +
         "pre-filters the file before the regex runs and so can suppress detection " +
@@ -518,7 +475,39 @@ function main() {
     );
   }
 
-  checkPatternFixtures(rulePattern);
+  // Prove the rule regex (captured via the [^']* pattern from the prior
+  // SonarCloud fixes) actually fires on a fixture containing the preamble,
+  // so real Gitleaks would exit non-zero on such a file.
+  let re;
+  try {
+    re = new RegExp(rulePattern);
+  } catch (err) {
+    fail(`gitleaks.toml: rule regex is not valid: ${err.message}`);
+  }
+
+  // Two fixtures, both shaped like something that actually gets committed.
+  //
+  // The first is what `tauri signer generate` writes: a plaintext untrusted-comment
+  // line, then base64 of the key payload. The previous fixture was
+  // `<plaintext line>\n<base64 of the preamble>\n<junk>`, a shape no tool produces
+  // and which the previous rule matched -- so it proved the rule matched the
+  // fixture rather than that it matched a key.
+  const realKey =
+    "untrusted comment: rsign encrypted secret key\n" +
+    "RWQ5aGF1c2VmaWtlc2VjcmV0a2V5bWF0ZXJpYWxmb3J1cHRlci0y\n";
+  // The second is that same file base64-wrapped whole, as a CI artifact carries it.
+  const wrappedKey = Buffer.from(realKey, "utf8").toString("base64") + "\n";
+  for (const [label, fixture] of [
+    ["a key file", realKey],
+    ["a base64-wrapped key file", wrappedKey],
+  ]) {
+    if (!re.test(fixture)) {
+      fail(
+        `gitleaks.toml: the configured rule does NOT match ${label} shaped like a ` +
+          "committed Tauri updater signing key — key commits would slip through.",
+      );
+    }
+  }
 
   console.log(
     "OK: gitleaks.toml config-structure guard passed — the updater private-key " +

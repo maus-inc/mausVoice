@@ -1,12 +1,11 @@
-import { Copy, Download, Info, Send, Trash2 } from "lucide-react";
+import { HistoryRowHeader } from "./HistoryRowHeader";
+import { CheckCircle, Download, Hourglass, RotateCcw } from "lucide-react";
 import {
   Box,
-  Chip,
+  CircularProgress,
   Divider,
   IconButton,
-  Stack,
   Tooltip,
-  Typography,
   useMediaQuery,
 } from "@mui/material";
 import { getRec } from "@maus-inc/utilities";
@@ -20,6 +19,10 @@ import {
   reducedMotionQuery,
 } from "../../styles/motion";
 import { showErrorSnackbar, showSnackbar } from "../../actions/app.actions";
+import {
+  scheduleTranscriptionDelete,
+  undoTranscriptionDelete,
+} from "../../utils/pending-transcription-delete";
 import { sendTextToActiveRemoteTarget } from "../../actions/remote-output.actions";
 import {
   openRetranscribeDialog,
@@ -34,146 +37,17 @@ import {
 import { getActiveRemoteTarget } from "../../utils/device.utils";
 import { TypographyWithMore } from "../common/TypographyWithMore";
 import { AudioPlayerPill } from "./AudioPlayerPill";
-import { RetranscribeAction } from "./RetranscribeAction";
-import { useTranscriptionDeleteUndo } from "./useTranscriptionDeleteUndo";
+import { captureHistoryDeleteFocus } from "./history-delete-focus";
 
 export type TranscriptionRowProps = {
   id: string;
+  compactTranscript?: boolean;
 };
 
-/**
- * One icon button in the row's action cluster, with its tooltip.
- *
- * Extracted so the four row actions read as one line each instead of a
- * Tooltip>IconButton pair nested four JSX levels deep inside the row's
- * Box>Box>Stack>Stack. `label` is passed already formatted by the caller, so
- * every `defaultMessage` literal stays in this module where the extractor can
- * read it, and `title`/`aria-label` stay the same string as before.
- */
-const RowAction = ({
-  label,
-  onClick,
-  icon,
-  color,
-}: {
-  label: string;
-  onClick: () => void;
-  icon: React.ReactNode;
-  color?: "primary" | "default";
-}) => (
-  <Tooltip title={label} placement="top">
-    <IconButton aria-label={label} onClick={onClick} size="small" color={color}>
-      {icon}
-    </IconButton>
-  </Tooltip>
-);
-
-type TranscriptionRowHeaderProps = {
-  createdAt: string | undefined;
-  isRemoteTranscript: boolean;
-  isSentToRemote: boolean;
-  hasMetadata: boolean;
-  activeRemoteTarget: ReturnType<typeof getActiveRemoteTarget>;
-  onDetailsOpen: () => void;
-  onCopy: () => void;
-  onDelete: () => void;
-  onSend: () => void;
-};
-
-const TranscriptionRowHeader = ({
-  createdAt,
-  isRemoteTranscript,
-  isSentToRemote,
-  hasMetadata,
-  activeRemoteTarget,
-  onDetailsOpen,
-  onCopy,
-  onDelete,
-  onSend,
-}: TranscriptionRowHeaderProps) => {
-  const intl = useIntl();
-  return (
-    <Stack
-      direction="row"
-      spacing={1}
-      sx={{
-        justifyContent: "space-between",
-        alignItems: "center",
-      }}
-    >
-      <Stack
-        direction="row"
-        spacing={1}
-        sx={{
-          alignItems: "center",
-          flexWrap: "wrap",
-        }}
-      >
-        <Typography
-          variant="subtitle2"
-          sx={{
-            color: "text.secondary",
-          }}
-        >
-          {createdAt
-            ? new Intl.DateTimeFormat(undefined, {
-                dateStyle: "medium",
-                timeStyle: "short",
-              }).format(new Date(createdAt))
-            : ""}
-        </Typography>
-        {isRemoteTranscript && (
-          <Chip
-            size="small"
-            variant="outlined"
-            label={intl.formatMessage({ defaultMessage: "Remote" })}
-          />
-        )}
-        {isSentToRemote && (
-          <Chip
-            size="small"
-            variant="outlined"
-            label={intl.formatMessage({ defaultMessage: "Sent" })}
-          />
-        )}
-      </Stack>
-      <Stack direction="row" spacing={1}>
-        <RowAction
-          label={intl.formatMessage({
-            defaultMessage: "View transcription details",
-          })}
-          onClick={onDetailsOpen}
-          icon={<Info size={16} strokeWidth={1.9} />}
-          color={hasMetadata ? "primary" : "default"}
-        />
-        <RowAction
-          label={intl.formatMessage({ defaultMessage: "Copy transcript" })}
-          onClick={onCopy}
-          icon={<Copy size={16} strokeWidth={1.9} />}
-        />
-        <RowAction
-          label={intl.formatMessage({
-            defaultMessage: "Delete transcript",
-          })}
-          onClick={onDelete}
-          icon={<Trash2 size={16} strokeWidth={1.9} />}
-        />
-        {!isRemoteTranscript && activeRemoteTarget && (
-          <RowAction
-            label={intl.formatMessage(
-              { defaultMessage: "Send to {name}" },
-              { name: activeRemoteTarget.name },
-            )}
-            onClick={onSend}
-            icon={<Send size={16} strokeWidth={1.9} />}
-          />
-        )}
-      </Stack>
-    </Stack>
-  );
-};
-
-export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
+export const TranscriptionRow = ({
+  id,
+  compactTranscript = false,
+}: TranscriptionRowProps) => {
   const intl = useIntl();
   const prefersReducedMotion = useMediaQuery(reducedMotionQuery);
   const transcription = useAppStore((state) =>
@@ -197,12 +71,48 @@ export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
   const activeRemoteTarget = useAppStore(getActiveRemoteTarget);
   const isRemoteTranscript = transcription?.remoteStatus === "received";
   const isSentToRemote = transcription?.remoteStatus === "sent";
+  const retranscribeTooltip = (() => {
+    if (isRetranscribing) {
+      return intl.formatMessage({
+        defaultMessage: "Retranscribing audio clip",
+      });
+    }
+    if (didRetranscribe) {
+      return intl.formatMessage({ defaultMessage: "Retranscribed audio clip" });
+    }
+    return intl.formatMessage({ defaultMessage: "Retranscribe audio clip" });
+  })();
+
+  const retranscribeIcon = (() => {
+    if (isRetranscribing && prefersReducedMotion) {
+      return (
+        <span data-testid="retranscribe-hourglass">
+          <Hourglass size={16} strokeWidth={1.9} aria-hidden />
+        </span>
+      );
+    }
+    if (isRetranscribing) {
+      return <CircularProgress size={18} color="inherit" aria-hidden />;
+    }
+    if (didRetranscribe) {
+      return (
+        <span data-testid="retranscribe-check">
+          <CheckCircle size={16} strokeWidth={1.9} aria-hidden />
+        </span>
+      );
+    }
+    return (
+      <span data-testid="retranscribe-replay">
+        <RotateCcw size={16} strokeWidth={1.9} aria-hidden />
+      </span>
+    );
+  })();
 
   const handleDetailsOpen = useCallback(() => {
     openTranscriptionDetailsDialog(id);
   }, [id]);
 
-  const handleCopyText = useCallback(
+  const handleCopyTranscript = useCallback(
     async (content: string) => {
       try {
         await navigator.clipboard.writeText(content);
@@ -217,7 +127,52 @@ export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
     [intl],
   );
 
-  const handleDeleteTranscript = useTranscriptionDeleteUndo(transcription);
+  const handleDeleteTranscript = useCallback(
+    (targetId: string) => {
+      const snapshot = transcription;
+      if (!snapshot) {
+        return;
+      }
+      const undoWindowMs = 5000;
+      const expiresAt = Date.now() + undoWindowMs;
+      const focus = captureHistoryDeleteFocus(targetId);
+      try {
+        scheduleTranscriptionDelete(snapshot, undoWindowMs);
+      } catch {
+        showErrorSnackbar(
+          intl.formatMessage({
+            defaultMessage: "Failed to schedule delete.",
+          }),
+        );
+        return;
+      }
+      showSnackbar(
+        intl.formatMessage({
+          defaultMessage: "Transcript removed. Undo available for 5 seconds.",
+        }),
+        {
+          mode: "success",
+          duration: undoWindowMs,
+          action: {
+            label: intl.formatMessage({ defaultMessage: "Undo" }),
+            expiresAt,
+            focusOnShow: focus.focusOnShow,
+            onFocusReturn: focus.returnFocus,
+            onClick: () => {
+              if (!undoTranscriptionDelete(targetId)) {
+                showErrorSnackbar(
+                  intl.formatMessage({
+                    defaultMessage: "Unable to undo delete.",
+                  }),
+                );
+              }
+            },
+          },
+        },
+      );
+    },
+    [intl, transcription],
+  );
 
   const handleExport = useCallback(async () => {
     try {
@@ -243,15 +198,30 @@ export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
 
   const ctxMenu = useContextMenu();
 
+  const handleCopyId = useCallback(
+    async (transcriptionId: string) => {
+      try {
+        await navigator.clipboard.writeText(transcriptionId);
+        showSnackbar(
+          intl.formatMessage({ defaultMessage: "Copied successfully" }),
+          { mode: "success" },
+        );
+      } catch (error) {
+        showErrorSnackbar(error);
+      }
+    },
+    [intl],
+  );
+
   const contextMenuItems = useMemo<ContextMenuItem[]>(
     () => [
       {
         label: intl.formatMessage({ defaultMessage: "Copy text" }),
-        onClick: () => handleCopyText(transcription?.transcript || ""),
+        onClick: () => handleCopyTranscript(transcription?.transcript || ""),
       },
       {
         label: intl.formatMessage({ defaultMessage: "Copy ID" }),
-        onClick: () => handleCopyText(id),
+        onClick: () => handleCopyId(id),
       },
       {
         label: intl.formatMessage({ defaultMessage: "Open details" }),
@@ -269,7 +239,8 @@ export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
       },
     ],
     [
-      handleCopyText,
+      handleCopyTranscript,
+      handleCopyId,
       handleDetailsOpen,
       openRetranscribeDialog,
       handleDeleteTranscript,
@@ -282,6 +253,7 @@ export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
   return (
     <Box
       component="div"
+      data-transcription-row={id}
       onContextMenu={(e) => {
         // Yield right-clicks on editable text to the provider's clipboard menu.
         if (isEditableTarget(e.target)) return;
@@ -305,14 +277,15 @@ export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
           },
         }}
       >
-        <TranscriptionRowHeader
+        <HistoryRowHeader
+          compactTranscript={compactTranscript}
           createdAt={transcription?.createdAt}
-          isRemoteTranscript={isRemoteTranscript}
-          isSentToRemote={isSentToRemote}
+          isRemote={isRemoteTranscript}
+          isSent={isSentToRemote}
+          receiverName={activeRemoteTarget?.name}
           hasMetadata={hasMetadata}
-          activeRemoteTarget={activeRemoteTarget}
-          onDetailsOpen={handleDetailsOpen}
-          onCopy={() => handleCopyText(transcription?.transcript || "")}
+          onDetails={handleDetailsOpen}
+          onCopy={() => handleCopyTranscript(transcription?.transcript || "")}
           onDelete={() => handleDeleteTranscript(id)}
           onSend={handleSendToReceiver}
         />
@@ -320,6 +293,8 @@ export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
           variant="body2"
           color="text.primary"
           maxLines={3}
+          clampPaddingRight={compactTranscript ? "56px" : undefined}
+          inlineToggleRight={compactTranscript ? "12px" : undefined}
           sx={{ my: 1 }}
         >
           {transcription?.transcript}
@@ -331,12 +306,20 @@ export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
             disabled={isRetranscribing}
             actions={
               <>
-                <RetranscribeAction
-                  id={id}
-                  isRetranscribing={isRetranscribing}
-                  didRetranscribe={didRetranscribe}
-                  prefersReducedMotion={prefersReducedMotion}
-                />
+                <Tooltip title={retranscribeTooltip} placement="top">
+                  <span>
+                    <IconButton
+                      aria-label={retranscribeTooltip}
+                      aria-busy={isRetranscribing}
+                      size="small"
+                      onClick={() => openRetranscribeDialog(id)}
+                      disabled={isRetranscribing}
+                      sx={{ p: 0.5 }}
+                    >
+                      {retranscribeIcon}
+                    </IconButton>
+                  </span>
+                </Tooltip>
                 <Tooltip
                   title={intl.formatMessage({
                     defaultMessage: "Export transcription",

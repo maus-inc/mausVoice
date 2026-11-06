@@ -23,10 +23,9 @@ const DRAFT_FIELDS = [
   "outputLength",
   "exampleInputOutput",
 ] as const;
+type ToneDraft = Pick<Tone, (typeof DRAFT_FIELDS)[number]>;
+
 // Optional empty fields have identical editable meaning. Other metadata is
 // preserved from the live record when saving, not copied from an old draft.
-export const sameToneDraft = (
-  left: Pick<Tone, (typeof DRAFT_FIELDS)[number]>,
-  right: Pick<Tone, (typeof DRAFT_FIELDS)[number]>,
-): boolean =>
+export const sameToneDraft = (left: ToneDraft, right: ToneDraft): boolean =>
   DRAFT_FIELDS.every((field) => (left[field] ?? "") === (right[field] ?? ""));

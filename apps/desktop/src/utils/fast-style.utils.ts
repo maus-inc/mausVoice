@@ -15,6 +15,10 @@
  */
 
 import {
+  isSpokenNumberWord,
+  normalizeSpokenForms,
+} from "./inverse-text-normalization.utils";
+import {
   BULLETS_TONE_ID,
   CHAT_TONE_ID,
   CONCISE_TONE_ID,
@@ -66,16 +70,26 @@ const assertWithinChunkSize = (text: string): string => {
  * Three places used to spell this set out separately and two of them listed
  * only `.!?`. A sentence ending in `。` was therefore not recognised as a
  * sentence: it stayed one blob, and then `ensureSentencePunctuation` appended a
- * second, ASCII, full stop to text that already had one. Sentence predicates
- * share this alphabet so that cannot happen again.
+ * second, ASCII, full stop to text that already had one. The regexes below are
+ * built from this list so that cannot happen again.
  */
 const TERMINATOR_CHARS = [".", "!", "?", "…", "。", "！", "？"];
 
 const SENTENCE_TERMINATORS: ReadonlySet<string> = new Set(TERMINATOR_CHARS);
 
-/** Membership and suffix checks share the same sentence boundary alphabet. */
-const endsWithSentenceTerminator = (text: string): boolean =>
-  SENTENCE_TERMINATORS.has(text.at(-1) ?? "");
+const TERMINATOR_CLASS_SOURCE = `[${TERMINATOR_CHARS.map((char) =>
+  char.replace(/[\\^\]-]/g, String.raw`\$&`),
+).join("")}]`;
+
+/** A sentence boundary is whitespace after a terminator and before a capital. */
+const SENTENCE_SPLIT_RE = new RegExp(
+  String.raw`(?<=${TERMINATOR_CLASS_SOURCE})\s+(?=[A-Z0-9])`,
+  "g",
+);
+
+/** Not global, so `.test` carries no `lastIndex` between calls. */
+const CONTAINS_TERMINATOR_RE = new RegExp(TERMINATOR_CLASS_SOURCE);
+const ENDS_SENTENCE_RE = new RegExp(`${TERMINATOR_CLASS_SOURCE}$`);
 
 /** Matches every Unicode space separator, not just ASCII space. */
 const isSpace = (ch: string): boolean => ch.length > 0 && /\s/u.test(ch);
@@ -162,12 +176,6 @@ export const findChunkCut = (
  */
 type Chunk = { text: string; startsSentence: boolean };
 
-/** A boundary after a terminator opens a sentence even when it points at space. */
-const cutStartsSentence = (text: string, start: number, cut: number): boolean =>
-  cut < text.length &&
-  (!isSpace(text[cut] ?? "") ||
-    (cut > start && SENTENCE_TERMINATORS.has(text[cut - 1] ?? "")));
-
 /**
  * Splits a dictation into chunks of at most `MAX_INPUT_CHARS`, each ending on a
  * boundary `findChunkCut` approves, so every transform can run over the whole
@@ -228,7 +236,11 @@ const splitIntoChunks = (text: string): Chunk[] => {
     // The terminator set is the one `findSentenceBoundary` itself tests, so the two agree
     // on what counts; the whitespace vocabulary needs no separate case, because both
     // functions use the same `isSpace`.
-    startsSentence = cutStartsSentence(text, start, nextStart);
+    startsSentence =
+      nextStart < text.length &&
+      (!isSpace(text[nextStart] ?? "") ||
+        (nextStart > start &&
+          SENTENCE_TERMINATORS.has(text[nextStart - 1] ?? "")));
     start = nextStart;
   }
 
@@ -301,11 +313,20 @@ const FILLER_RE = /\b(?:u[hm]+|er+|ah+|h?mm+)\b[,\s]*/gi;
 // pinned by a test.
 const EXTRA_FILLER_LEADING_RE = /^you know\b\s*(?:,\s*|$)/gi;
 const EXTRA_FILLER_MID_RE = /,\s*you know\b\s*(?:,\s*|[.!?]+|$)/gi;
-// Keep leading and mid-clause patterns separate because the first must not
-// fire on a chunk that merely continues a sentence. Their shared vocabulary
-// and behavior are pinned together by the transcription pattern contract tests.
-const EXTRA_FILLER_COMMA_LEADING_RE = /^(?:I mean|so|well)\s*,\s*/gi;
-const EXTRA_FILLER_COMMA_MID_RE = /\s(?:I mean|so|well)\s*,\s*/gi;
+// One list, two patterns. `EXTRA_FILLER_COMMA_LEADING_RE` matches a comma-filled
+// connective that OPENED the text, and `EXTRA_FILLER_COMMA_MID_RE` one that sat inside a
+// clause; together they are the whole of what the single pattern used to do, and they are
+// kept apart because only the first is wrong on a chunk that merely continues a sentence.
+// The marker list is written once so the two cannot drift apart.
+const EXTRA_FILLER_COMMA_MARKERS = "I mean|so|well";
+const EXTRA_FILLER_COMMA_LEADING_RE = new RegExp(
+  String.raw`^(?:${EXTRA_FILLER_COMMA_MARKERS})\s*,\s*`,
+  "gi",
+);
+const EXTRA_FILLER_COMMA_MID_RE = new RegExp(
+  String.raw`\s(?:${EXTRA_FILLER_COMMA_MARKERS})\s*,\s*`,
+  "gi",
+);
 const SO_WELL_LEADING_RE = /^(?:so|well|yeah|okay|ok)\b[,\s]*/i;
 
 const REPEATED_WORD_RE = /\b(\w+)\s+\1\b/gi;
@@ -317,41 +338,81 @@ const REPEATED_WORD_RE = /\b(\w+)\s+\1\b/gi;
 const SELF_CORRECTION_PRECISE_RE =
   /[^.!?]{1,60},\s*(?:actually,|no,|I mean,|or rather,)\s*/gi;
 
-// These literal patterns are kept in replacement order: matches can cross an
-// apostrophe boundary, so combining them into one word-token pass changes the
-// output. Required apostrophes protect real bare words such as `were`, `well`,
-// `ill`, `lets`, and `wont`; the other bare forms are accepted STT typos.
-// Ambiguous 'd and most 's forms are intentionally not guessed at.
-const CONTRACTION_RES: Array<[RegExp, string]> = [
-  [/\bdon'?t\b/gi, "do not"],
-  [/\bdoesn'?t\b/gi, "does not"],
-  [/\bdidn'?t\b/gi, "did not"],
-  [/\bcan'?t\b/gi, "cannot"],
-  [/\bwon't\b/gi, "will not"],
-  [/\bwouldn'?t\b/gi, "would not"],
-  [/\bshouldn'?t\b/gi, "should not"],
-  [/\bcouldn'?t\b/gi, "could not"],
-  [/\bisn'?t\b/gi, "is not"],
-  [/\baren'?t\b/gi, "are not"],
-  [/\bwasn'?t\b/gi, "was not"],
-  [/\bweren'?t\b/gi, "were not"],
-  [/\bhaven'?t\b/gi, "have not"],
-  [/\bhasn'?t\b/gi, "has not"],
-  [/\bhadn'?t\b/gi, "had not"],
-  [/\bI'?m\b/gi, "I am"],
-  [/\byou'?re\b/gi, "you are"],
-  [/\bwe're\b/gi, "we are"],
-  [/\bthey'?re\b/gi, "they are"],
-  [/\bI'?ve\b/gi, "I have"],
-  [/\byou'?ve\b/gi, "you have"],
-  [/\bwe'?ve\b/gi, "we have"],
-  [/\bthey'?ve\b/gi, "they have"],
-  [/\bI'll\b/gi, "I will"],
-  [/\byou'?ll\b/gi, "you will"],
-  [/\bwe'll\b/gi, "we will"],
-  [/\bthey'?ll\b/gi, "they will"],
-  [/\blet's\b/gi, "let us"],
-];
+const CONTRACTION_MAP: Record<string, string> = {
+  "don't": "do not",
+  "doesn't": "does not",
+  "didn't": "did not",
+  "can't": "cannot",
+  "won't": "will not",
+  "wouldn't": "would not",
+  "shouldn't": "should not",
+  "couldn't": "could not",
+  "isn't": "is not",
+  "aren't": "are not",
+  "wasn't": "was not",
+  "weren't": "were not",
+  "haven't": "have not",
+  "hasn't": "has not",
+  "hadn't": "had not",
+  "I'm": "I am",
+  "you're": "you are",
+  "we're": "we are",
+  "they're": "they are",
+  "I've": "I have",
+  "you've": "you have",
+  "we've": "we have",
+  "they've": "they have",
+  "I'll": "I will",
+  "you'll": "you will",
+  "we'll": "we will",
+  "they'll": "they will",
+  "let's": "let us",
+};
+
+// `contraction.replace("'", "'?")` makes the APOSTROPHE optional, so the pattern
+// for `we're` also matched `were`, `it's` matched `its`, and so on. Formal mode
+// rewrote ordinary sentences accordingly: "we were ready" came back as "we we are
+// ready", "the dog wagged its tail" as "the dog wagged it is tail".
+//
+// Making the apostrophe optional is right for most entries, because their bare forms
+// are not words and tolerating them is what catches speech-to-text output like
+// "dont stop". It is wrong for the entries below, whose bare form IS a word, so for those
+// the apostrophe is required. Both directions are deliberate: failing to expand a typo
+// costs something that still reads correctly, whereas matching a bare word rewrites a
+// sentence the speaker did not say.
+//
+// This set arbitrates one thing only: whether the apostrophe must be there. It cannot
+// pick between two readings of an apostrophised form, so the entries whose two
+// readings differ are not in the map at all rather than being resolved here. Those are
+// the four `'d` entries and the four ambiguous `'s` ones -- `it's`, `there's`, `what's`,
+// `who's` -- because `'d` is *would* or *had* and those `'s` are *is* or *has*.
+//
+// Naming them as "the `'d` family and the `'s` family" was wrong and read as though no
+// `'s` form survived, which a grep contradicts: `let's` is still in the map at :289,
+// because it has exactly one reading. It is the bare `lets` that collides, and that is
+// what its entry in this set below is for.
+//
+// The `?` sits between the stem and the final letter, not after the whole word, so
+// `can't` compiles to `\bcan'?t\b` and never matched a bare `can`. That is why `can't`
+// is absent from this list despite `can` being a word.
+// Only membership is ever tested, and the bare form is already written in each
+// entry's comment, so this is a set rather than a map whose values nothing reads.
+const BARE_STEMS_THAT_ARE_WORDS = new Set([
+  "I'll", // "he is ill" became "he is I will"
+  "let's", // "he lets go" became "he let us go"
+  "we'll", // "as well as that" became "as we will as that"
+  "we're", // "we were ready" became "we we are ready"
+  "won't", // "he was wont to nod" became "he was will not to nod"
+]);
+
+const CONTRACTION_RES: Array<[RegExp, string]> = Object.entries(
+  CONTRACTION_MAP,
+).map(([contraction, expansion]) => {
+  const pattern = BARE_STEMS_THAT_ARE_WORDS.has(contraction)
+    ? contraction
+    : contraction.replace("'", "'?");
+  return [new RegExp(String.raw`\b${pattern}\b`, "gi"), expansion];
+});
 
 // Conservative hedging: only clear meta-commentary, not words that change
 // meaning like "rather" in "I would rather not go" or "maybe" as content.
@@ -365,13 +426,89 @@ const REDUNDANT_PHRASES: Array<[RegExp, string]> = [
   [/\bfor the purpose of\b/gi, "for"],
 ];
 
+const SPOKEN_TLD_SOURCE = "com|org|net|io|ai|co|dev|app";
+
 const SYMBOL_MAP: Array<[RegExp, string]> = [
   [/\bhashtag\b\s*/gi, "#"],
   [/\bat sign\b\s*/gi, "@"],
-  [/\bdot com\b/gi, ".com"],
   [/\bnew line\b/gi, "\n"],
   [/\bnew paragraph\b/gi, "\n\n"],
 ];
+
+// Grammar rather than content. In front of "dot" these words make a phrase
+// ("the dot com bubble"), not a domain, and as the local part of a spoken
+// address they are what "at" already said ("look at example.com"), so both
+// address rules refuse them.
+const SPOKEN_ADDRESS_STOPWORDS = new Set([
+  "a",
+  "an",
+  "the",
+  "this",
+  "that",
+  "these",
+  "those",
+  "my",
+  "your",
+  "our",
+  "their",
+  "its",
+  "his",
+  "her",
+  "him",
+  "them",
+  "me",
+  "it",
+  "us",
+  "you",
+  "i",
+  "we",
+  "they",
+  "he",
+  "she",
+  "there",
+  "here",
+  "now",
+  "then",
+  "look",
+  "back",
+  "no",
+  "not",
+  "each",
+  "every",
+  "one",
+  "all",
+  "some",
+  "any",
+]);
+
+// A spoken domain is "<host> dot <tld>". The host is what keeps the space in
+// "example dot com" from becoming "example .com", and it has to be introduced
+// the way an address is: "to", "at", "is", a preposition, or one of the words
+// that name a site. Without that, the host is whatever noun sat in front of
+// "dot" -- the earlier rule that joined the pair on its own wrote
+// "The.com bubble" and "in the.com folder", and matching any two words wrote
+// "we use.com". "dot" is as common as "at", so the frame is the evidence that
+// separates an address from a phrase, exactly as it does for the email rule. A
+// dictation that is only a domain ("example dot com" on its own) therefore keeps
+// its words, which is the price of never inventing one.
+const SPOKEN_DOMAIN_FRAME_SOURCE = "to|is|at|on|from|via|visit|called|named";
+const SPOKEN_DOMAIN_FRAMES: ReadonlySet<string> = new Set(
+  SPOKEN_DOMAIN_FRAME_SOURCE.split("|"),
+);
+const SPOKEN_DOMAIN_RE = new RegExp(
+  String.raw`\b([\p{L}\p{N}][\p{L}\p{N}-]*)\s+dot\s?(${SPOKEN_TLD_SOURCE})\b`,
+  "giu",
+);
+
+// A spoken email address: "<local part> at <domain>.<tld>". "at" is one of the
+// commonest words in English, so the local part must be introduced by a frame
+// that promises an address ("to", "is", "contact"...) and must not itself be a
+// function word, otherwise "look at example.com" would lose its verb.
+const SPOKEN_EMAIL_FRAME_SOURCE = "to|is|contact|reach";
+const SPOKEN_EMAIL_RE = new RegExp(
+  String.raw`\b(${SPOKEN_EMAIL_FRAME_SOURCE})\s+([\p{L}\p{N}._%+-]{2,})\s+at\s+([\p{L}\p{N}-]+\.(?:${SPOKEN_TLD_SOURCE}))\b`,
+  "giu",
+);
 
 const capitalizeFirst = (s: string): string =>
   s.length === 0 ? s : s[0].toUpperCase() + s.slice(1);
@@ -410,25 +547,30 @@ const ensureSentencePunctuation = (
 ): string => {
   const trimmed = sentence.trim();
   if (!trimmed) return "";
-  if (endsWithSentenceTerminator(trimmed)) return trimmed;
+  if (ENDS_SENTENCE_RE.test(trimmed)) return trimmed;
   return isFinal ? `${trimmed}.` : trimmed;
 };
 
 const splitIntoSentences = (text: string): string[] => {
   const normalized = text.replace(/\s+/g, " ").trim();
   if (!normalized) return [];
-  const sentences: string[] = [];
-  let start = 0;
-  for (let i = 1; i < normalized.length - 1; i += 1) {
-    if (normalized[i] !== " " || !SENTENCE_TERMINATORS.has(normalized[i - 1]))
-      continue;
-    if (!/[A-Z0-9]/.test(normalized[i + 1])) continue;
-    sentences.push(normalized.slice(start, i));
-    start = i + 1;
+  if (CONTAINS_TERMINATOR_RE.test(normalized)) {
+    return normalized
+      .split(SENTENCE_SPLIT_RE)
+      .map((s) => s.trim())
+      .filter(Boolean);
   }
-  sentences.push(normalized.slice(start));
-  return sentences;
+  return [normalized];
 };
+
+/**
+ * Sentence count under the same definition the transforms split on: a text
+ * with no sentence terminator is one sentence, not zero. Callers that decide
+ * whether input is short enough for the local path use this rather than a
+ * second, drifting definition of a sentence.
+ */
+export const countFastStyleSentences = (text: string): number =>
+  splitIntoSentences(text).length;
 
 const removeFillerWords = (
   text: string,
@@ -468,7 +610,12 @@ const removeFillerWords = (
     out = out.replace(EXTRA_FILLER_COMMA_MID_RE, " ");
     if (startsSentence) out = out.replace(EXTRA_FILLER_COMMA_LEADING_RE, " ");
   }
-  out = out.replace(REPEATED_WORD_RE, "$1");
+  // A repeated number word is a number, not a stutter: "twenty twenty six" is a
+  // year and "nine nine nine" is what it looks like, and the written-form pass
+  // reads the repetition to tell both apart from a count.
+  out = out.replace(REPEATED_WORD_RE, (match, word: string) =>
+    isSpokenNumberWord(word) ? match : word,
+  );
   out = out.replace(/\s{2,}/g, " ").trim();
   // Only on a chunk that really does open a sentence. `SO_WELL_LEADING_RE` is anchored
   // to `^` and it DELETES, so on a chunk cut at whitespace it would take a connective the
@@ -479,10 +626,133 @@ const removeFillerWords = (
   return out;
 };
 
+// Self-correction markers that do not need the comma the precise pattern
+// requires. "make that" and "wait no" are part of the shape of the sentence, and
+// so is the corrected value itself: only the single token before the marker is
+// dropped, which is what keeps "send the report by friday no wait thursday" as
+// "send the report by thursday" instead of losing the request with the date.
+const SELF_CORRECTION_MARKER_SOURCE =
+  "no wait make that|no wait|wait no|make that|or rather|sorry i meant|i meant";
+
+const SELF_CORRECTION_UNPUNCTUATED_RE = new RegExp(
+  String.raw`(\S+)(\s+(?:${SELF_CORRECTION_MARKER_SOURCE})\s*,?\s+)(\S+)`,
+  "gi",
+);
+
+// The last word of every marker phrase. The pattern matches a marker from the
+// token in front of it, so a marker at the start of the text can hand its own
+// word in as the lead: "no wait make that thursday" put "wait" in front of
+// "make that" and the token before it was deleted, turning the dictation into
+// "No Thursday." A lead that is itself part of a marker is not a value being
+// corrected.
+const SELF_CORRECTION_MARKER_TAILS: ReadonlySet<string> = new Set(
+  SELF_CORRECTION_MARKER_SOURCE.split("|").map(
+    (marker) => marker.split(" ").pop() ?? "",
+  ),
+);
+
+// A token that makes the phrase in front of the marker an ordinary English
+// phrase rather than a value being corrected: "there is no wait at the clinic".
+const SELF_CORRECTION_LEAD_STOPLIST = new Set([
+  "is",
+  "was",
+  "are",
+  "were",
+  "be",
+  "been",
+  "being",
+  "there",
+  "the",
+  "a",
+  "an",
+  "and",
+  "but",
+  "or",
+  "with",
+  "without",
+  "of",
+  "for",
+  "in",
+  "on",
+  "at",
+  "no",
+  "not",
+  "have",
+  "has",
+  "had",
+  "do",
+  "does",
+  "did",
+  "will",
+  "would",
+  "can",
+  "could",
+  "should",
+  "must",
+  "may",
+  "might",
+  "to",
+  "from",
+  "so",
+  "then",
+  "if",
+  "when",
+  "while",
+  "after",
+  "before",
+]);
+
+/**
+ * The word inside a token, for comparing a lead against the stoplists.
+ *
+ * A possessive or contraction is compared as the word it wraps, so "there's no
+ * wait at the clinic" reads as "there" and is recognised as ordinary grammar.
+ */
+const selfCorrectionWord = (text: string): string =>
+  text
+    .toLowerCase()
+    .replace(/[^a-z'\u2019]/gu, "")
+    .replace(/(?:n['\u2019]t|['\u2019]s)$/u, "");
+
+/**
+ * Whether a spoken self-correction should drop the word in front of its marker.
+ *
+ * False when the marker is preceded by grammar rather than a value ("there is
+ * no wait at the clinic"), when the lead is itself part of a marker phrase ("no
+ * wait make that thursday" handed in "wait"), or when an infinitive follows the
+ * marker ("sorry i meant to call you" is an apology, not a correction).
+ */
+const isSelfCorrection = (lead: string, after: string): boolean => {
+  const cleanedLead = selfCorrectionWord(lead);
+  if (!cleanedLead || SELF_CORRECTION_LEAD_STOPLIST.has(cleanedLead)) {
+    return false;
+  }
+  if (SELF_CORRECTION_MARKER_TAILS.has(cleanedLead)) return false;
+  return selfCorrectionWord(after) !== "to";
+};
+
 const fixSelfCorrections = (text: string): string => {
   if (text.length > SELF_CORRECTION_MAX_CHARS) return text;
   let out = text;
   try {
+    out = out.replace(
+      SELF_CORRECTION_UNPUNCTUATED_RE,
+      (
+        match,
+        lead: string,
+        _marker: string,
+        after: string,
+        offset: number,
+        whole: string,
+      ) => {
+        if (!isSelfCorrection(lead, after)) return match;
+        // The deleted span may have opened a sentence, in which case the word
+        // that follows it needs the capital back.
+        const before = whole.slice(0, offset);
+        const opensSentence = before.length === 0 || /[.!?]\s+$/.test(before);
+        return opensSentence ? capitalizeFirst(after) : after;
+      },
+    );
     out = out.replace(SELF_CORRECTION_PRECISE_RE, "");
   } catch {
     return text;
@@ -490,12 +760,38 @@ const fixSelfCorrections = (text: string): string => {
   return out.replace(/\s{2,}/g, " ").trim();
 };
 
+const joinSpokenDomains = (text: string): string =>
+  text.replace(
+    SPOKEN_DOMAIN_RE,
+    (
+      match,
+      host: string,
+      tld: string,
+      offset: number,
+      whole: string,
+    ): string => {
+      if (SPOKEN_ADDRESS_STOPWORDS.has(host.toLowerCase())) return match;
+      const before = /(\S+)\s+$/.exec(whole.slice(0, offset));
+      const frame = before?.[1].toLowerCase().replace(/[^a-z]/g, "") ?? "";
+      return SPOKEN_DOMAIN_FRAMES.has(frame) ? `${host}.${tld}` : match;
+    },
+  );
+
+const joinSpokenEmails = (text: string): string =>
+  text.replace(
+    SPOKEN_EMAIL_RE,
+    (match, frame: string, localPart: string, domain: string) => {
+      if (SPOKEN_ADDRESS_STOPWORDS.has(localPart.toLowerCase())) return match;
+      return `${frame} ${localPart}@${domain}`;
+    },
+  );
+
 const applySymbolReplacements = (text: string): string => {
   let out = text;
   for (const [re, repl] of SYMBOL_MAP) {
     out = out.replace(re, repl);
   }
-  return out;
+  return joinSpokenEmails(joinSpokenDomains(out));
 };
 
 const fixCapitalizationAndPunctuation = (
@@ -648,21 +944,15 @@ const toEmail = (
   return joined || polished;
 };
 
-/** Common preprocessing for styles that retain every meaningful word. */
-const prepareStyleText = (raw: string, startsSentence: boolean): string => {
-  const text = assertWithinChunkSize(raw).trim();
-  return removeFillerWords(
-    fixSelfCorrections(applySymbolReplacements(text)),
-    true,
-    startsSentence,
-  );
-};
-
 const CHAT_CONNECTIVE_RE =
   /\b(?:furthermore|moreover|additionally|consequently)\b[,\s]+(\S)/gi;
 
 const toChat = (raw: string, isFinal = true, startsSentence = true): string => {
-  const text = prepareStyleText(raw, startsSentence);
+  const guarded = assertWithinChunkSize(raw);
+  let text = guarded.trim();
+  text = applySymbolReplacements(text);
+  text = fixSelfCorrections(text);
+  text = removeFillerWords(text, true, startsSentence);
   const sentences = splitIntoSentences(text);
   const cleaned = sentences
     .map((s) => deleteLeadingPhrase(s, CHAT_CONNECTIVE_RE))
@@ -674,9 +964,9 @@ const toChat = (raw: string, isFinal = true, startsSentence = true): string => {
     .trim();
   // Same seam problem as `ensureSentencePunctuation`, and this one appends the stop
   // directly rather than going through the shared helper. The terminator test is
-  // `endsWithSentenceTerminator` rather than a bare `[.!?]`, so a dictation already ending in
+  // `ENDS_SENTENCE_RE` rather than a bare `[.!?]`, so a dictation already ending in
   // `…`, `。`, `！` or `？` does not pick up a second, ASCII, stop on a CJK sentence.
-  if (isFinal && joined && !endsWithSentenceTerminator(joined)) joined += ".";
+  if (isFinal && joined && !ENDS_SENTENCE_RE.test(joined)) joined += ".";
   return joined;
 };
 
@@ -747,7 +1037,11 @@ const toPrompt = (
   isFinal = true,
   startsSentence = true,
 ): string => {
-  let text = prepareStyleText(raw, startsSentence);
+  const guarded = assertWithinChunkSize(raw);
+  let text = guarded.trim();
+  text = applySymbolReplacements(text);
+  text = fixSelfCorrections(text);
+  text = removeFillerWords(text, true, startsSentence);
   // Both are anchored to `^` and both DELETE, and `PROMPT_REQUEST_RE` is the one that
   // takes request words: `Can you send that file over again` at a whitespace seam came
   // back as `Send it again`. Gated for the same reason as `SO_WELL_LEADING_RE` above.
@@ -758,13 +1052,13 @@ const toPrompt = (
   // Every sentence is kept. Condensing the request must not drop a constraint
   // the speaker stated after the opening, such as a deadline or a format
   // requirement, so this strips the politeness framing and nothing else.
-  const out = text.trim() || raw.trim();
+  const out = text.trim() || guarded.trim();
   if (!out) return out;
   const cased = capitalizeFirst(out);
   // This appends directly rather than going through `ensureSentencePunctuation`, so
   // it needs `isFinal` as well, and it needs the same CJK-aware terminator test: a
   // bare `[.!?]` left "第一句。" coming back as "第一句。.".
-  return isFinal && !endsWithSentenceTerminator(cased) ? `${cased}.` : cased;
+  return isFinal && !ENDS_SENTENCE_RE.test(cased) ? `${cased}.` : cased;
 };
 
 const EDGE_PUNCTUATION_RE = /[,.;\s]/;
@@ -790,7 +1084,11 @@ export const stripEdgePunctuation = (text: string): string => {
 };
 
 const toBullets = (raw: string, startsSentence = true): string => {
-  const text = prepareStyleText(raw, startsSentence);
+  const guarded = assertWithinChunkSize(raw);
+  let text = guarded.trim();
+  text = applySymbolReplacements(text);
+  text = fixSelfCorrections(text);
+  text = removeFillerWords(text, true, startsSentence);
 
   const sentences = splitIntoSentences(text);
   if (sentences.length === 0) return text;
@@ -827,7 +1125,11 @@ const toConcise = (
   isFinal = true,
   startsSentence = true,
 ): string => {
-  let text = prepareStyleText(raw, startsSentence);
+  const guarded = assertWithinChunkSize(raw);
+  let text = guarded.trim();
+  text = applySymbolReplacements(text);
+  text = fixSelfCorrections(text);
+  text = removeFillerWords(text, true, startsSentence);
   text = deleteLeadingPhrase(text, HEDGING_RE);
   for (const [re, repl] of REDUNDANT_PHRASES) {
     text = text.replace(re, repl);
@@ -851,7 +1153,11 @@ type NoteBuckets = { notes: string[]; actions: string[] };
  * `applyFastStyle`.
  */
 const classifyForNotes = (raw: string, startsSentence = true): NoteBuckets => {
-  const text = prepareStyleText(raw, startsSentence);
+  const guarded = assertWithinChunkSize(raw);
+  let text = guarded.trim();
+  text = applySymbolReplacements(text);
+  text = fixSelfCorrections(text);
+  text = removeFillerWords(text, true, startsSentence);
   const notes: string[] = [];
   const actions: string[] = [];
   for (const sentence of splitIntoSentences(text)) {
@@ -995,9 +1301,121 @@ const applyStyleToChunk = (
  * tone restructures the WHOLE dictation rather than each chunk, so `applyFastStyle` handles
  * it before `applyStyleToChunk` is reached and there is no `toNotes` to name here.
  */
+// Weekday and month names are proper nouns in written English, and the API
+// styles capitalize them ("Fix grammar, punctuation, and formatting"), so the
+// local path has to as well or a short dictation that routes locally reads
+// worse than the same text sent to the provider. "march", "may" and "august"
+// are left out: they are ordinary words too ("we march first", "you may").
+const CALENDAR_WORD_RE =
+  /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday|january|february|april|june|july|september|october|november|december)\b/gi;
+
+const capitalizeCalendarWords = (text: string): string =>
+  text.replace(CALENDAR_WORD_RE, (match) => capitalizeFirst(match));
+
+// Words whose lowercase spelling is common enough that a dictionary term
+// matching one of them must not be applied case-insensitively.
+const COMMON_WORD_TERMS: ReadonlySet<string> = new Set([
+  "it",
+  "is",
+  "us",
+  "no",
+  "so",
+  "to",
+  "in",
+  "on",
+  "at",
+  "be",
+  "as",
+  "an",
+  "or",
+  "of",
+  "my",
+  "me",
+  "he",
+  "we",
+  "do",
+  "go",
+  "if",
+  "up",
+  "off",
+  "one",
+  "all",
+  "and",
+  "the",
+  "for",
+  "you",
+  "but",
+  "not",
+  "now",
+  "new",
+  "may",
+  "data",
+  "test",
+  "app",
+]);
+
+export type FastStyleOptions = {
+  /**
+   * Canonical spellings from the user's dictionary. A term that appears with a
+   * different casing in the output is rewritten to the dictionary's spelling.
+   */
+  dictionaryTerms?: readonly string[];
+};
+
+const applyDictionaryCasing = (
+  text: string,
+  terms: readonly string[] | undefined,
+): string => {
+  if (!text || !terms || terms.length === 0) return text;
+  // Longest first, so a term that contains another is not half-rewritten.
+  const candidates = terms
+    .filter(
+      (term) =>
+        term.length >= 2 &&
+        // Unicode-aware: "Beyoncé" and "École" carry a capital the ASCII test
+        // could not see.
+        term !== term.toLowerCase() &&
+        /^[\p{L}\p{N}]/u.test(term) &&
+        /[\p{L}\p{N}]$/u.test(term) &&
+        // A term that is an ordinary lowercase word ("IT", "US", "No") would
+        // rewrite every occurrence of that word. The dictionary is there to fix
+        // spelling, not to recase the language.
+        !COMMON_WORD_TERMS.has(term.toLowerCase()),
+    )
+    .sort((a, b) => b.length - a.length);
+  let out = text;
+  for (const term of candidates) {
+    const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    // Lookarounds rather than `\b`: the ASCII word boundary never matched a
+    // term that starts or ends in a non-ASCII letter ("Beyoncé"), so those
+    // terms were silently skipped.
+    const pattern = String.raw`(?<![\p{L}\p{N}])${escaped}(?![\p{L}\p{N}])`;
+    out = out.replace(new RegExp(pattern, "giu"), (match) =>
+      match === term ? match : term,
+    );
+  }
+  return out;
+};
+
+/**
+ * The written-form and dictionary passes run once, on the finished text, so a
+ * phrase split across two chunks is still recognised as one phrase.
+ */
+const finalizeFastStyle = (
+  styled: string,
+  options: FastStyleOptions,
+): string => {
+  const withWrittenForms = normalizeSpokenForms(styled);
+  const withCalendarCasing = capitalizeCalendarWords(withWrittenForms);
+  // Dictionary terms run last, so the user's spelling outranks the built-in
+  // casing rules for anything they have added a term for.
+  return applyDictionaryCasing(withCalendarCasing, options.dictionaryTerms);
+};
+
 export const applyFastStyle = (
   rawTranscript: string,
   toneId: string | null,
+  options: FastStyleOptions = {},
 ): string => {
   const trimmed = rawTranscript.trim();
   if (!trimmed) return trimmed;
@@ -1035,11 +1453,11 @@ export const applyFastStyle = (
           ),
         { notes: [], actions: [] },
       );
-      return renderNotes(buckets);
+      return finalizeFastStyle(renderNotes(buckets), options);
     }
 
     const lastIndex = chunks.length - 1;
-    return chunks
+    const styled = chunks
       .map((chunk, index) =>
         applyStyleToChunk(chunk.text, toneId, {
           isFirst: index === 0,
@@ -1048,6 +1466,7 @@ export const applyFastStyle = (
         }),
       )
       .join(CHUNK_JOIN_BY_TONE[toneId] ?? " ");
+    return finalizeFastStyle(styled, options);
   } catch {
     // A transform threw. The raw transcript is the only answer that cannot lose
     // what was said, so it is what the caller gets.
@@ -1081,6 +1500,21 @@ const FAST_STYLE_TONE_IDS: ReadonlySet<string> = new Set([
   BULLETS_TONE_ID,
   CONCISE_TONE_ID,
   NOTES_TONE_ID,
+]);
+
+/**
+ * The built-in prose styles, the subset of [`FAST_STYLE_TONE_IDS`] whose local
+ * transform only edits prose in place. The structured styles (email, bullets,
+ * notes) are excluded from short-dictation routing because they restructure the
+ * text, and restructuring is the part an LLM does better; they still take the
+ * local transform when no LLM is configured.
+ */
+export const FAST_STYLE_PROSE_TONE_IDS: ReadonlySet<string> = new Set([
+  POLISHED_TONE_ID,
+  CHAT_TONE_ID,
+  FORMAL_TONE_ID,
+  PROMPT_TONE_ID,
+  CONCISE_TONE_ID,
 ]);
 
 /**

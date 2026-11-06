@@ -1,4 +1,3 @@
-import { discardResponseBody, raceAbort } from "@maus-inc/utilities";
 import { invoke } from "@tauri-apps/api/core";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 
@@ -41,25 +40,6 @@ const MAX_PRIVATE_HTTP_REQUEST_BYTES = 128 * 1024 * 1024;
 const privateHttpRequestLimitError = (): RangeError =>
   new RangeError("Private-network request body exceeds the 128 MiB limit");
 
-// Fetch rejects URL userinfo, but some transport errors echo the entire URL.
-const rejectUrlCredentials = (url: URL): void => {
-  if (url.username || url.password) {
-    throw new TypeError("URL credentials are not supported");
-  }
-};
-
-const parseFetchUrl = (input: RequestInfo | URL): URL => {
-  let url: URL;
-  try {
-    url = new URL(requestUrl(input));
-  } catch {
-    // The parser can retain userinfo, query tokens and other private input.
-    throw new TypeError("secureFetch requires an absolute http(s) URL");
-  }
-  rejectUrlCredentials(url);
-  return url;
-};
-
 // The Fetch standard's redirect limit, so a hand-walked chain cannot loop.
 const MAX_HTTPS_REDIRECTS = 20;
 
@@ -69,38 +49,37 @@ const MAX_HTTPS_REDIRECTS = 20;
 // on: `secureFetch` is typed as `typeof globalThis.fetch`, so a caller that
 // passes a bearer token is entitled to the standard's cross-origin strip.
 //
-// Providers also use nonstandard credential headers. Browsers only strip the
-// standard authorization header, but forwarding these provider keys to a new
-// origin would expose them to a server chosen by the redirect response.
+// `proxy-authorization` belongs here too and did not, which made the sentence above
+// untrue: it is on that same non-wildcard list, and it is the same kind of thing -- a
+// value that authenticates the caller to an intermediary rather than to the origin. A
+// caller who set one replayed it to whatever origin a redirect named. `www-authenticate`
+// is on the spec's list as well but is a RESPONSE header name, so it is not reachable
+// from a request header list and is correctly absent.
 const CROSS_ORIGIN_STRIPPED_HEADERS = [
   "authorization",
   "proxy-authorization",
   "cookie",
-  "api-key",
-  "x-api-key",
-  "x-goog-api-key",
-  "xi-api-key",
-  "ocp-apim-subscription-key",
 ];
 // Headers that describe a body. A 301/302/303 rewrite discards the body, and a
 // Content-Type or Content-Length that outlives it describes a request that is
 // no longer being sent.
-const BODY_HEADERS = [
-  "content-length",
-  "content-type",
-  "content-encoding",
-  "content-language",
-  "content-location",
-];
+const BODY_HEADERS = ["content-length", "content-type"];
 
-/** `init.headers` replaces the Request's complete header list when supplied. */
+/** The caller's headers for hop one, whether they arrived as `init` or on a Request. */
 const requestHeaders = (
   input: RequestInfo | URL,
   init: RequestInit | undefined,
-): Headers =>
-  new Headers(
-    init?.headers ?? (input instanceof Request ? input.headers : undefined),
+): Headers => {
+  const headers = new Headers(
+    input instanceof Request ? input.headers : undefined,
   );
+  if (init?.headers) {
+    new Headers(init.headers).forEach((value, name) => {
+      headers.set(name, value);
+    });
+  }
+  return headers;
+};
 
 /** The caller's method for hop one; `init` wins over a Request, as in `fetch`. */
 const requestMethod = (
@@ -127,15 +106,8 @@ const nextHopUrl = (response: Response, currentUrl: URL): URL | null => {
   // A redirect with no Location cannot be followed, so surface it as-is rather
   // than re-issuing the same request against a server that would answer
   // identically.
-  if (location === null) return null;
-  let targetUrl: URL;
-  try {
-    targetUrl = new URL(location, currentUrl);
-  } catch {
-    // URL parser errors can retain the raw Location and base as enumerable
-    // properties, including credentials, even when their message is generic.
-    throw new TypeError("Invalid redirect location");
-  }
+  if (!location) return null;
+  const targetUrl = new URL(location, currentUrl);
   if (targetUrl.protocol !== "https:") {
     throw new TypeError(
       `Refusing redirect from HTTPS to insecure protocol: ${targetUrl.protocol}`,
@@ -150,15 +122,6 @@ type RedirectHop = {
   /** See `followHttpsRedirects` for what `undefined` and `null` mean here. */
   body: BodyInit | null | undefined;
   headers: Headers;
-};
-
-/** Fetch rewrites POST on 301/302 and all but GET/HEAD on 303. */
-const redirectDropsBody = (status: number, method: string): boolean => {
-  const uppercase = method.toUpperCase();
-  return (
-    ((status === 301 || status === 302) && uppercase === "POST") ||
-    (status === 303 && uppercase !== "GET" && uppercase !== "HEAD")
-  );
 };
 
 /**
@@ -187,62 +150,15 @@ const rewriteForRedirect = (
   // A 301 or 302 downgrades a POST to a GET, and a 303 does the same for every
   // method but GET and HEAD, discarding the body in both cases. 307 and 308
   // keep the method and body by definition.
-  if (!redirectDropsBody(status, hop.method)) return hop;
+  const uppercase = hop.method.toUpperCase();
+  const downgrades =
+    ((status === 301 || status === 302) && uppercase === "POST") ||
+    (status === 303 && uppercase !== "GET" && uppercase !== "HEAD");
+  if (!downgrades) return hop;
   // A Content-Type or Content-Length that outlives the discarded body
   // describes a request that is no longer being sent.
   for (const name of BODY_HEADERS) hop.headers.delete(name);
   return { ...hop, method: "GET", body: null };
-};
-
-/** Explicit init signal overrides the Request's inherited signal. */
-const requestAbortSignal = (
-  input: RequestInfo | URL,
-  init: RequestInit | undefined,
-) => init?.signal ?? (input instanceof Request ? input.signal : undefined);
-
-/** Clone a Request body before the transport consumes its own copy. */
-const cloneRequestBodies = (
-  input: RequestInfo | URL,
-  init: RequestInit | undefined,
-) => {
-  const request =
-    input instanceof Request && init?.body === undefined && input.body !== null
-      ? input
-      : null;
-  return {
-    hopOneBody: request?.clone() ?? null,
-    replayBody: request?.clone() ?? null,
-  };
-};
-
-/** Apply the caller's redirect policy before preparing another request. */
-const redirectDestination = (
-  response: Response,
-  current: URL,
-  mode: RequestRedirect,
-): URL | null => {
-  // Manual returns the response as-is, including an insecure Location; only a
-  // destination we are about to follow is checked for an HTTPS downgrade.
-  if (mode === "manual") return null;
-  if (mode === "error" && REDIRECT_STATUSES.has(response.status)) {
-    // Either URL can contain credentials or private query data. The status is
-    // sufficient to explain the failure without putting those values in logs.
-    throw new TypeError(`Redirect not allowed: ${response.status}`);
-  }
-  const target = nextHopUrl(response, current);
-  if (target) rejectUrlCredentials(target);
-  return target;
-};
-
-/** Restore the original Request body only for a hop that preserves it. */
-const replayRedirectBody = async (
-  next: RedirectHop,
-  previous: RedirectHop,
-  replay: Request | null,
-) => {
-  if (next.body === undefined && previous.body === undefined && replay) {
-    next.body = await replay.clone().arrayBuffer();
-  }
 };
 
 /**
@@ -288,10 +204,10 @@ const followHttpsRedirects = async (
   // every replay read the same ArrayBuffer. This does mean a streamed upload is
   // held in memory in full, which the note below explains and now contradicts:
   // the alternative is a spent stream on any 307/308.
-  const signal = requestAbortSignal(input, init);
   if (init?.body instanceof ReadableStream) {
-    chain.body = await readUploadBodyStream(init.body, signal ?? null);
+    chain.body = await new Response(init.body).arrayBuffer();
   }
+  const requestSignal = input instanceof Request ? input.signal : null;
   // A `Request` input carries its body on the object rather than in `init`, and a
   // URL cannot name one. So hop one is issued against that Request and lets the
   // plugin stream it as it always has, and only a redirect needs the bytes spelled
@@ -300,10 +216,35 @@ const followHttpsRedirects = async (
   // is buffered up front whatever the hop count, because that one cannot be cloned
   // after the transport has read it. So the cost is paid only by callers that pass
   // a stream in `init`, and only that path can hit a redirect replay.
-  // The plugin consumes the Request it receives, so preserve two independent
-  // clones: one for hop zero and one for every body-preserving redirect. The
-  // caller retains ownership of the original Request.
-  const { hopOneBody, replayBody } = cloneRequestBodies(input, init);
+  const requestWithBody =
+    input instanceof Request && init?.body === undefined && input.body !== null
+      ? input
+      : null;
+  // Clone BEFORE hop 0 goes out, and hand the CLONE to the transport.
+  //
+  // The plugin does `new Request(input, init)` and then `await req.arrayBuffer()`
+  // (plugin-http/dist-js/index.js:66-67). Constructing a `Request` from another `Request`
+  // inherits its body stream, and `arrayBuffer()` consumes that stream -- so passing the
+  // caller's own object to hop 0 leaves the CALLER's request with `bodyUsed === true`, and
+  // the `clone()` in `walkChain` then throws `TypeError: unusable`. Measured:
+  //
+  //     before hop 0   bodyUsed = false
+  //     after  hop 0   bodyUsed = true      clone() -> TypeError: unusable
+  //
+  // Two clones, not one, and the second is the reason. `clone()` tees rather than consumes,
+  // so each is unread until something reads it -- but the transport is GIVEN a Request and
+  // consumes that one, so a single clone is spent by hop 0 and the replay has nothing left to
+  // clone. With two, the transport spends its own and the replay reads the other, repeatedly:
+  //
+  //     after the transport   caller=false  forTransport=true  forReplay=false
+  //     replay 1              {"a":1}
+  //     replay 2              {"a":1}
+  //
+  // Streaming is unaffected: hop one still receives a `Request` for the plugin to stream, not
+  // a buffered ArrayBuffer. This only duplicates the body when the caller passed a `Request`
+  // carrying one, and a chain that never redirects reads neither.
+  const hopOneBody = requestWithBody ? requestWithBody.clone() : null;
+  const replayBody = requestWithBody ? requestWithBody.clone() : null;
 
   // The chain is walked recursively rather than in a loop, because a hop's own
   // body has to be read before the next request goes out and a loop that awaits
@@ -327,18 +268,43 @@ const followHttpsRedirects = async (
         // A `Request` input's own signal and redirect mode are part of the
         // request; `init` alone would drop them, and an HTTPS request that
         // ignored its abort signal would outlive the screen that started it.
-        signal,
+        signal: init?.signal ?? requestSignal ?? undefined,
       },
     );
-    let targetUrl: URL | null;
-    try {
-      targetUrl = redirectDestination(response, chain.url, redirectMode);
-    } catch (error) {
-      discardResponseBody(response);
-      throw error;
-    }
+    // `manual` is answered BEFORE the target is validated, and the order is the point.
+    //
+    // `nextHopUrl` refuses a target that is not HTTPS, which is right for a hop this
+    // function is about to follow and wrong for one it is about to hand back: `manual`
+    // means the caller reads `Location` itself, so whether that Location downgrades is the
+    // caller's decision to make and not this function's to pre-empt. Validating first made
+    // `redirect: "manual"` throw `TypeError` on an HTTPS -> HTTP redirect -- the one mode
+    // whose entire purpose is to return the response unfollowed.
+    //
+    // A non-redirect answer falls out of this for free: `manual` returns the response
+    // whether or not there was a redirect to follow, which is what the line below did too.
+    if (redirectMode === "manual") return response;
+
+    const targetUrl = nextHopUrl(response, chain.url);
     if (!targetUrl) return response;
-    discardResponseBody(response);
+
+    // The caller's redirect mode is decided here rather than handed to the
+    // plugin, which drops `RequestInit.redirect`. `manual` hands the redirect
+    // response back so the caller can read `Location` itself, above; `error`
+    // refuses it, here. Both used to be forwarded to a plugin that ignored them,
+    // so a caller asking for `redirect: "error"` silently got follow behaviour
+    // instead.
+    //
+    // No shipped caller asks for either mode today -- every `redirect:` in this
+    // repository is in a test or goes to the bare global `fetch`. An earlier
+    // version of this comment cited `gladia.utils.ts` as a caller that needed
+    // this, but that file passes `redirect: "error"` to the engine's own `fetch`
+    // and never reaches here, so it was evidence for nothing. The mode is honoured
+    // because `fetch` promises it, not because a caller was observed needing it.
+    if (redirectMode === "error") {
+      throw new TypeError(
+        `Redirect not allowed: ${response.status} from ${chain.url.href} to ${targetUrl.href}`,
+      );
+    }
 
     const from = chain.url;
     const next = rewriteForRedirect(response.status, from, targetUrl, {
@@ -354,7 +320,9 @@ const followHttpsRedirects = async (
     // cloning it throws. `replayBody` was cloned before hop 0 and the transport was given a
     // different clone, so it is still unread here -- and it is cloned again rather than
     // read, because a second 307 in the same chain needs the bytes a second time.
-    await replayRedirectBody(next, chain, replayBody);
+    if (next.body === undefined && chain.body === undefined && replayBody) {
+      next.body = await replayBody.clone().arrayBuffer();
+    }
     chain.method = next.method;
     chain.body = next.body;
     chain.url = targetUrl;
@@ -365,9 +333,7 @@ const followHttpsRedirects = async (
 };
 
 const abortReason = (signal: AbortSignal): unknown =>
-  signal.reason === undefined
-    ? new DOMException("The operation was aborted", "AbortError")
-    : signal.reason;
+  signal.reason ?? new DOMException("The operation was aborted", "AbortError");
 
 const bytesToBase64 = (bytes: Uint8Array): string => {
   const encodedChunks: string[] = [];
@@ -419,38 +385,6 @@ const readBodyChunk = async (
     // registered. Checking again ties this read to the signal without a timer.
     if (signal.aborted) abort();
   });
-};
-
-/** Buffer a replayable HTTPS upload without ignoring cancellation during reads. */
-const readUploadBodyStream = async (
-  stream: ReadableStream<Uint8Array>,
-  signal: AbortSignal | null,
-): Promise<ArrayBuffer> => {
-  const reader = stream.getReader();
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  let completed = false;
-  try {
-    while (true) {
-      const { done, value } = await readBodyChunk(reader, signal);
-      if (done) break;
-      if (!(value instanceof Uint8Array))
-        throw new TypeError("Upload stream must contain byte chunks");
-      chunks.push(value.slice());
-      size += value.byteLength;
-    }
-    completed = true;
-  } finally {
-    if (!completed) void reader.cancel().catch(() => undefined);
-    reader.releaseLock();
-  }
-  const bytes = new Uint8Array(size);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return bytes.buffer;
 };
 
 /**
@@ -529,6 +463,29 @@ const base64ToBytes = (encoded: string): Uint8Array<ArrayBuffer> => {
   return bytes;
 };
 
+const awaitWithAbort = async <T>(
+  operation: Promise<T>,
+  signal: AbortSignal | null,
+  onAbort: () => void,
+): Promise<T> => {
+  if (!signal) return operation;
+  if (signal.aborted) {
+    onAbort();
+    throw abortReason(signal);
+  }
+
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => {
+      onAbort();
+      reject(abortReason(signal));
+    };
+    signal.addEventListener("abort", abort, { once: true });
+    operation.then(resolve, reject).finally(() => {
+      signal.removeEventListener("abort", abort);
+    });
+  });
+};
+
 // The native bridge validates, caps, and returns the whole body, so SSE/LLM
 // streaming over private or saved endpoints resolves in one burst rather than
 // token by token. This bridge is used for bounded rewrite and model payloads,
@@ -539,8 +496,6 @@ const invokeHttpRequest = async (
   init?: RequestInit,
   apiKeyId?: string,
 ): Promise<Response> => {
-  // Saved-endpoint fetches enter here directly rather than through secureFetch.
-  parseFetchUrl(input);
   const request = new Request(input, init);
   const bodyBase64 =
     request.method === "GET" || request.method === "HEAD"
@@ -561,7 +516,6 @@ const invokeHttpRequest = async (
       requestId,
       url: request.url,
       method: request.method,
-      redirect: request.redirect,
       headers: Object.fromEntries(request.headers.entries()),
       bodyBase64,
     },
@@ -598,7 +552,7 @@ const invokeHttpRequest = async (
       throw new Error(errorText);
     },
   );
-  const response = await raceAbort(operation, request.signal, () => {
+  const response = await awaitWithAbort(operation, request.signal, () => {
     void invoke<boolean>("cancel_private_http_request", { requestId }).catch(
       () => undefined,
     );
@@ -626,7 +580,19 @@ const invokeHttpRequest = async (
  * that unsupported future schemes are rejected by default.
  */
 export const secureFetch: typeof globalThis.fetch = async (input, init) => {
-  const url = parseFetchUrl(input);
+  const raw = requestUrl(input);
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    // A relative URL (e.g. a saved base of "/v1" joined without an origin)
+    // otherwise surfaces as a generic engine "Invalid URL" with no pointer to
+    // which egress boundary rejected it. Echo the input start only — a
+    // relative string cannot contain credentials the caller didn't supply.
+    throw new TypeError(
+      `secureFetch requires an absolute http(s) URL, received: ${raw.slice(0, 128)}`,
+    );
+  }
   if (url.protocol === "http:") {
     return invokeHttpRequest("private_http_request", input, init);
   }

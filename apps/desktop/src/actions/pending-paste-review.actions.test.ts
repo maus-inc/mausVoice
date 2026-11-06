@@ -5,7 +5,7 @@ const createChatMessageMock = vi.hoisted(() => vi.fn());
 const updateChatMessageMock = vi.hoisted(() => vi.fn());
 const invokeMock = vi.hoisted(() => vi.fn());
 
-vi.mock("./chat-message.actions", () => ({
+vi.mock("./chat.actions", () => ({
   createChatMessage: createChatMessageMock,
   updateChatMessage: updateChatMessageMock,
 }));

@@ -1,4 +1,3 @@
-import type { Tone } from "@maus-inc/types";
 import {
   CircleMinus,
   EllipsisVertical,
@@ -16,7 +15,7 @@ import {
   Typography,
 } from "@mui/material";
 import { getRec } from "@maus-inc/utilities";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { deleteTone, openToneEditorDialog } from "../../actions/tone.actions";
 import {
@@ -24,7 +23,6 @@ import {
   setSelectedToneId,
 } from "../../actions/user.actions";
 import { produceAppState, useAppStore } from "../../store";
-import { logOnRejection } from "../../utils/promise.utils";
 import {
   isEditableTarget,
   useContextMenu,
@@ -36,6 +34,7 @@ import {
 } from "../../utils/tone.utils";
 import { ConfirmDialog } from "../common/ConfirmDialog";
 import { ListTile } from "../common/ListTile";
+import { prepareStyleDeleteFocus } from "./style-delete-focus";
 import {
   MenuPopoverBuilder,
   type MenuPopoverItem,
@@ -55,108 +54,6 @@ const formatPromptForPreview = (prompt: string) => {
 
 export type ManualStylingRowProps = {
   id: string;
-};
-
-const stopPropagation = (e: React.MouseEvent) => e.stopPropagation();
-
-/** Compact text shown underneath the style's name. */
-const stylePromptPreview = (tone: Tone | undefined) => (
-  <Typography
-    variant="body2"
-    sx={{
-      color: "text.secondary",
-      display: "-webkit-box",
-      WebkitLineClamp: 2,
-      WebkitBoxOrient: "vertical",
-      overflow: "hidden",
-    }}
-  >
-    {tone?.description || formatPromptForPreview(tone?.promptTemplate ?? "-")}
-  </Typography>
-);
-
-/** Managed-style indicator and menu, isolated from selecting the row. */
-const StyleRowActions = ({
-  isGlobal,
-  menuItems,
-}: {
-  isGlobal: boolean;
-  menuItems: MenuPopoverItem[];
-}) => (
-  <Stack
-    direction="row"
-    spacing={0.5}
-    onClick={stopPropagation}
-    onMouseDown={stopPropagation}
-    sx={{
-      alignItems: "center",
-    }}
-  >
-    {isGlobal && (
-      <Tooltip
-        disableInteractive
-        title={
-          <FormattedMessage defaultMessage="This style is managed by your organization." />
-        }
-      >
-        <span>
-          <IconButton size="small" disabled>
-            <Globe size={16} strokeWidth={1.9} />
-          </IconButton>
-        </span>
-      </Tooltip>
-    )}
-    <MenuPopoverBuilder items={menuItems}>
-      {({ ref, open }) => (
-        <IconButton
-          ref={ref}
-          onClick={(e) => {
-            e.stopPropagation();
-            open();
-          }}
-          size="small"
-        >
-          <EllipsisVertical size={16} strokeWidth={1.9} />
-        </IconButton>
-      )}
-    </MenuPopoverBuilder>
-  </Stack>
-);
-
-/** Manage a delete confirmation without losing the dialog on failure. */
-const useStyleDeletion = (id: string) => {
-  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
-  const [isDeleting, setIsDeleting] = useState(false);
-
-  const handleDeleteRequest = useCallback(() => {
-    setDeleteConfirmOpen(true);
-  }, []);
-
-  const handleDeleteCancel = useCallback(() => {
-    setDeleteConfirmOpen(false);
-  }, []);
-
-  const handleDeleteConfirm = useCallback(async () => {
-    if (isDeleting) return;
-    setIsDeleting(true);
-    try {
-      await deleteTone(id);
-      setDeleteConfirmOpen(false);
-    } catch {
-      // deleteTone already logged and surfaced the snackbar; keep the dialog
-      // open so the user can retry or cancel.
-    } finally {
-      setIsDeleting(false);
-    }
-  }, [id, isDeleting]);
-
-  return {
-    deleteConfirmOpen,
-    isDeleting,
-    handleDeleteRequest,
-    handleDeleteCancel,
-    handleDeleteConfirm,
-  };
 };
 
 export const ManualStylingRow = ({ id }: ManualStylingRowProps) => {
@@ -180,11 +77,11 @@ export const ManualStylingRow = ({ id }: ManualStylingRowProps) => {
   }, [id]);
 
   const handleSelect = useCallback(() => {
-    logOnRejection(setSelectedToneId(id), "style selection");
+    setSelectedToneId(id);
   }, [id]);
 
   const handleDeselect = useCallback(() => {
-    logOnRejection(deselectActiveTone(id), "style deselection");
+    deselectActiveTone(id);
   }, [id]);
 
   const isGlobal = tone?.isGlobal === true;
@@ -193,13 +90,35 @@ export const ManualStylingRow = ({ id }: ManualStylingRowProps) => {
   const hasPrompt = Boolean(tone?.promptTemplate);
   const canDeselect = activeToneCount > 1;
   const ctxMenu = useContextMenu();
-  const {
-    deleteConfirmOpen,
-    isDeleting,
-    handleDeleteRequest,
-    handleDeleteCancel,
-    handleDeleteConfirm,
-  } = useStyleDeletion(id);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const deletePending = useRef(false);
+
+  const handleDeleteRequest = useCallback(() => {
+    setDeleteConfirmOpen(true);
+  }, []);
+
+  const handleDeleteCancel = useCallback(() => {
+    if (!deletePending.current) setDeleteConfirmOpen(false);
+  }, []);
+
+  const handleDeleteConfirm = useCallback(async () => {
+    if (deletePending.current) return;
+    deletePending.current = true;
+    const restoreFocus = prepareStyleDeleteFocus(id);
+    setIsDeleting(true);
+    try {
+      await deleteTone(id);
+      setDeleteConfirmOpen(false);
+      restoreFocus();
+    } catch {
+      // deleteTone already logged and surfaced the snackbar; keep the dialog
+      // open so the user can retry or cancel.
+    } finally {
+      deletePending.current = false;
+      setIsDeleting(false);
+    }
+  }, [id]);
 
   // Context actions must honor the same managed/system-tone restrictions as
   // the overflow menu. The repository deletion command is not a permission
@@ -293,9 +212,64 @@ export const ManualStylingRow = ({ id }: ManualStylingRowProps) => {
     handleDeselect,
   ]);
 
+  const stopPropagation = (e: React.MouseEvent) => e.stopPropagation();
+
+  const trailing = (
+    <Stack
+      direction="row"
+      spacing={0.5}
+      onClick={stopPropagation}
+      onMouseDown={stopPropagation}
+      sx={{
+        alignItems: "center",
+      }}
+    >
+      {isGlobal && (
+        <Tooltip
+          disableInteractive
+          title={
+            <FormattedMessage defaultMessage="This style is managed by your organization." />
+          }
+        >
+          <span>
+            <IconButton size="small" disabled>
+              <Globe size={16} strokeWidth={1.9} />
+            </IconButton>
+          </span>
+        </Tooltip>
+      )}
+      <MenuPopoverBuilder items={menuItems}>
+        {({ ref, open, isOpen }) => (
+          <IconButton
+            ref={ref}
+            aria-label={intl.formatMessage(
+              { defaultMessage: "More options for {title}" },
+              {
+                title:
+                  tone?.name?.trim() ||
+                  intl.formatMessage({ defaultMessage: "Style" }),
+              },
+            )}
+            aria-haspopup="menu"
+            aria-expanded={isOpen}
+            data-manual-style-more=""
+            onClick={(e) => {
+              e.stopPropagation();
+              open();
+            }}
+            size="small"
+          >
+            <EllipsisVertical size={16} strokeWidth={1.9} />
+          </IconButton>
+        )}
+      </MenuPopoverBuilder>
+    </Stack>
+  );
+
   return (
     <Box
       component="div"
+      data-manual-style-row={id}
       onContextMenu={(e) => {
         // Yield right-clicks on editable text to the provider's clipboard menu.
         if (isEditableTarget(e.target)) return;
@@ -318,8 +292,22 @@ export const ManualStylingRow = ({ id }: ManualStylingRowProps) => {
           />
         }
         title={tone?.name}
-        subtitle={stylePromptPreview(tone)}
-        trailing={<StyleRowActions isGlobal={isGlobal} menuItems={menuItems} />}
+        subtitle={
+          <Typography
+            variant="body2"
+            sx={{
+              color: "text.secondary",
+              display: "-webkit-box",
+              WebkitLineClamp: 2,
+              WebkitBoxOrient: "vertical",
+              overflow: "hidden",
+            }}
+          >
+            {tone?.description ||
+              formatPromptForPreview(tone?.promptTemplate ?? "-")}
+          </Typography>
+        }
+        trailing={trailing}
         sx={{ backgroundColor: "level1", mb: 1, borderRadius: 1 }}
       />
       {ctxMenu.renderMenu()}
@@ -332,7 +320,9 @@ export const ManualStylingRow = ({ id }: ManualStylingRowProps) => {
         onCancel={handleDeleteCancel}
         onConfirm={handleDeleteConfirm}
         confirmLabel={<FormattedMessage defaultMessage="Delete" />}
-        confirmButtonProps={{ color: "error", disabled: isDeleting }}
+        cancelButtonProps={{ autoFocus: true }}
+        confirmButtonProps={{ color: "error" }}
+        busy={isDeleting}
       />
     </Box>
   );

@@ -3,7 +3,7 @@
 
 html,
 body,
-.preview-root {
+#root {
   height: 100%;
 }
 
@@ -13,9 +13,6 @@ body {
 }
 
 /* Rendered spec markdown (react-markdown, unstyled by default). */
-.preview-markdown {
-  --mv-preview-prose-size: 13.5px;
-}
 .preview-markdown h1 {
   font-size: 22px;
   font-weight: 600;
@@ -34,7 +31,7 @@ body {
 }
 .preview-markdown p,
 .preview-markdown li {
-  font-size: var(--mv-preview-prose-size);
+  font-size: 13.5px;
   line-height: 1.55;
 }
 .preview-markdown ul,
@@ -44,18 +41,19 @@ body {
 .preview-markdown code {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;
-  background: var(--mv-preview-code-background, var(--app-palette-level2));
+  background: var(--app-palette-level2);
   border-radius: 4px;
-  padding: var(--mv-preview-code-padding, 1px 5px);
+  padding: 1px 5px;
 }
 .preview-markdown pre {
-  /* Its descendant code inherits the block's transparent, unpadded chrome. */
-  --mv-preview-code-background: none;
-  --mv-preview-code-padding: 0;
   background: var(--app-palette-level2);
   border-radius: 8px;
   padding: 12px;
   overflow-x: auto;
+}
+.preview-markdown pre code {
+  background: none;
+  padding: 0;
 }
 .preview-markdown table {
   border-collapse: collapse;

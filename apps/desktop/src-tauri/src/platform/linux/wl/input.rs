@@ -16,9 +16,7 @@ pub(crate) fn clipboard_set(text: &str) -> Result<(), String> {
         arboard::Clipboard::new().map_err(|err| format!("clipboard create failed: {err}"))?;
     cb.set_text(text.to_string())
         .map_err(|err| format!("clipboard set failed: {err}"))?;
-    let mut guard = CLIPBOARD_HOLD
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut guard = CLIPBOARD_HOLD.lock().unwrap_or_else(|p| p.into_inner());
     *guard = Some(cb);
     Ok(())
 }

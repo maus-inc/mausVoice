@@ -1,17 +1,1117 @@
+import { latestVisibleTranscription } from "../../utils/latest-visible-transcription";
+import { getVersion } from "@tauri-apps/api/app";
+import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { commands } from "@maus-inc/desktop-native-apis";
+import { Member, Nullable, User } from "@maus-inc/types";
+import { getRec, listify } from "@maus-inc/utilities";
+import { isEqual } from "lodash-es";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useIntl } from "react-intl";
-import { useAppAnalytics } from "../../hooks/app-analytics.hooks";
-import { useAppAuthBootstrap } from "../../hooks/app-auth-bootstrap.hooks";
-import { useAppChrome } from "../../hooks/app-chrome.hooks";
-import { useAppRuntimeEffects } from "../../hooks/app-runtime-effects.hooks";
+import { combineLatest, from, Observable, of } from "rxjs";
+import { showErrorSnackbar, showSnackbar } from "../../actions/app.actions";
+import { createGlossaryTerms } from "../../actions/dictionary.actions";
+import {
+  pushPillPlacementToNative,
+  restartKeyboardListenerOnResume,
+} from "../../actions/windows-sync.actions";
+import {
+  canRunPostElevationInit,
+  runStartupElevationPreflight,
+} from "../../actions/elevation.actions";
+import { loadPairedRemoteDevices } from "../../actions/paired-remote-device.actions";
+import {
+  refreshRemoteReceiverStatus,
+  startRemoteReceiver,
+} from "../../actions/remote-receiver.actions";
+import { handleRemoteFinalTextReceived } from "../../actions/remote-transcript.actions";
+import {
+  checkForAppUpdates,
+  openUpdateDialog,
+} from "../../actions/updater.actions";
+import { INITIAL_ONBOARDING_STATE } from "../../state/onboarding.state";
+import {
+  refreshCurrentUser,
+  setActiveDictationLanguage,
+  setDictationPillVisibility,
+  setRemoteOutputEnabled,
+  setRemoteTargetDeviceId,
+} from "../../actions/user.actions";
+import { useAsyncData, useAsyncEffect } from "../../hooks/async.hooks";
+import { useElevationStartupReady } from "../../hooks/elevation.hooks";
+import { useIntervalAsync, useKeyDownHandler } from "../../hooks/helper.hooks";
+import { useHotkeyFire } from "../../hooks/hotkey.hooks";
+import { useStreamWithSideEffects } from "../../hooks/stream.hooks";
+import { useTauriListen } from "../../hooks/tauri.hooks";
+import { useToastAction } from "../../hooks/toast.hooks";
+import { detectLocale } from "../../i18n";
+import { getEffectiveStylingMode } from "../../utils/feature.utils";
+import { getAuthRepo, getMemberRepo, getUserRepo } from "../../repos";
+import {
+  AppState,
+  HotkeyStrategy,
+  KeyboardListenerHealth,
+  PasteKeybindSupport,
+} from "../../state/app.state";
+import { getAppState, produceAppState, useAppStore } from "../../store";
+import { AuthUser } from "../../types/auth.types";
+import { OverlayPhase } from "../../types/overlay.types";
+import {
+  buildAnalyticsIdentity,
+  buildFirstTouchProperties,
+  buildPeopleProperties,
+  buildSuperProperties,
+  getMixpanel,
+} from "../../utils/analytics.utils";
+import {
+  collectTermValues,
+  registerMembers,
+  registerUsers,
+} from "../../utils/app.utils";
+import {
+  ensurePillGeometry,
+  setPillGeometry,
+} from "../../utils/composer.utils";
+import { getBrowserRouter } from "../../router";
+import { getIsDevMode, isWindows } from "../../utils/env.utils";
+import {
+  ADD_TO_DICTIONARY_HOTKEY,
+  getStyleSwitchActionNamesForKey,
+  syncHotkeyCombosToNative,
+} from "../../utils/keyboard.utils";
+import { getLogger, initLogging } from "../../utils/log.utils";
+import {
+  syncInteractionChime,
+  syncInteractionFeedbackVolume,
+} from "../../utils/interaction-feedback-sync";
+import { sendPillFlashMessage } from "../../utils/overlay.utils";
+import { isPermissionAuthorized } from "../../utils/permission.utils";
+import { getPlatform } from "../../utils/platform.utils";
+import { hoursToMilliseconds } from "../../utils/time.utils";
+import { getLocalizedDashboardMenuLabels } from "../../utils/tray-dashboard-visibility.utils";
+import { buildTrayLanguageMenuModel } from "../../utils/tray-language.utils";
+import {
+  getLocalizedPillMenuLabel,
+  getNextPillVisibility,
+  getPillMenuLabel,
+} from "../../utils/tray-pill-visibility.utils";
+import {
+  evaluateHotkeyTrigger,
+  releaseHotkey,
+} from "../../utils/hotkey-filter.utils";
+import {
+  getEffectivePillVisibility,
+  getIsDictationUnlocked,
+  getMyUser,
+  getMyUserPreferences,
+  LOCAL_USER_ID,
+} from "../../utils/user.utils";
+import { resumePendingTranscriptionDeletes } from "../../utils/pending-transcription-delete";
+import { isLocalDataClearRequested } from "../../utils/local-data-write-gate";
+import {
+  consumeSurfaceWindowFlag,
+  surfaceMainWindow,
+} from "../../utils/window.utils";
 
-/** Mount the app's window-scoped runtime, account and UI side effects. */
+type StreamRet = Nullable<[Nullable<Member>, Nullable<User>]>;
+
+type KeysHeldPayload = {
+  keys: string[];
+};
+
+type KeyboardListenerHealthPayload = {
+  state: KeyboardListenerHealth;
+};
+
+type OverlayPhasePayload = {
+  phase: OverlayPhase;
+};
+
+type RecordingLevelPayload = {
+  levels?: number[];
+};
+
+type BridgeHotkeyTriggerPayload = {
+  hotkey: string;
+};
+
+type RemoteFinalTextReceivedPayload = {
+  senderDeviceId: string;
+  eventId: string;
+  text: string;
+  mode: string;
+  createdAt: string;
+};
+
+// Timeout for Firebase Auth initialization.
+const AUTH_READY_TIMEOUT_MS = 4_000;
+
+// Cadence of the background update poll.
+const UPDATE_CHECK_INTERVAL_MS = hoursToMilliseconds(6);
+
+// A selected paragraph is not a dictionary term: a giant "term" would eat the
+// recognition-prompt budget for every later dictation.
+const MAX_SELECTED_TERM_LENGTH = 200;
+
+/**
+ * Fingerprint of every state input that decides which combos the native
+ * listener grabs (the combo maps themselves plus everything `isActionGrabbable`
+ * reads). Those inputs load in an arbitrary order — hotkeys repo, onboarding /
+ * user record, strategy probe — so a sync keyed to only one or two of them can
+ * leave the listener running on an empty or stale combo set, which is exactly
+ * how the global hotkey "stops working" after startup.
+ */
+const hotkeyGrabFingerprint = (state: AppState): string => {
+  const hotkeyKey = Object.values(state.hotkeyById)
+    .map((hotkey) => `${hotkey.actionName}:${hotkey.keys.join("+")}`)
+    .sort((a, b) => a.localeCompare(b))
+    .join(",");
+  return [
+    state.hotkeyStrategy ?? "",
+    state.activeRecordingMode ?? "",
+    getIsDictationUnlocked(state) ? "1" : "0",
+    getEffectiveStylingMode(state),
+    hotkeyKey,
+  ].join("|");
+};
+
 export const AppSideEffects = () => {
   const intl = useIntl();
+  // The composer popout is a separate webview that loads the same SPA. The
+  // main window is the only surface that owns dictation input, so it is the
+  // only window that should track held keys for the dictation pipeline.
   const isMainWindow = getCurrentWindow().label === "main";
-  useAppRuntimeEffects({ isMainWindow, intl });
-  useAppAuthBootstrap(isMainWindow);
-  useAppAnalytics();
-  useAppChrome({ isMainWindow, intl });
+  const [authReady, setAuthReady] = useState(false);
+  const [streamReady, setStreamReady] = useState(false);
+  const [initReady, setInitReady] = useState(false);
+  const authReadyRef = useRef(false);
+  const authUidRef = useRef<string | null>(null);
+  // Starts false; flips to true after the very first onAuthStateChanged
+  // callback fires (which can be null). Track this separately from the
+  // uid ref so sign-out (null) → sign-in (X) still counts as a real
+  // transition and bumps authSessionNonce + resets onboarding state,
+  // while the first cold-start callback preserves the persisted resume.
+  //
+  // NOTE: today's PersonalAuthRepo always fires synchronously exactly
+  // once, so the uidChanged branch only executes when a future multi-
+  // callback auth repo is wired in, when the onError handler fires, or
+  // when tests drive the store by bumping authSessionNonce directly.
+  // The existing staleness tests in onboarding.actions.test.ts and
+  // OnboardingPage.test.tsx cover the downstream guards; the branch
+  // definition here is intentionally small.
+  const authResolvedRef = useRef(false);
+  const startupElevationAttemptedRef = useRef(false);
+  // Tracks whether we've already notified about the current listener-failure episode, so the
+  // 30s Rust slow-retry churn (failed -> connected -> failed) doesn't re-toast every cycle.
+  const listenerFailureNotifiedRef = useRef(false);
+  const versionData = useAsyncData(getVersion, []);
+  const userId = useAppStore((state) => state.auth?.uid ?? "");
+  const initialized = useAppStore((state) => state.initialized);
+  // Bumped whenever the signed-in identity changes. Subscribed to here because the
+  // post-elevation init effect below has to re-run for the NEW user; see its deps.
+  const authSessionNonce = useAppStore((state) => state.authSessionNonce);
+  const member = useAppStore((state) => {
+    const uid = state.auth?.uid;
+    return uid ? (state.memberById[uid] ?? null) : null;
+  });
+  const localUser = useAppStore(
+    (state) => state.userById[LOCAL_USER_ID] ?? null,
+  );
+  const prefs = useAppStore((state) => getMyUserPreferences(state));
+  const playInteractionChime = useAppStore(
+    (state) => getMyUser(state)?.playInteractionChime ?? true,
+  );
+  const interactionFeedbackVolume = useAppStore(
+    (state) => getMyUser(state)?.interactionFeedbackVolume ?? 0.35,
+  );
+  const pillPlacement = useAppStore(
+    (state) => getMyUserPreferences(state)?.pillPlacement ?? "bottom",
+  );
+  const keyPermAuthorized = useAppStore((state) =>
+    isPermissionAuthorized(getRec(state.permissions, "accessibility")?.state),
+  );
+
+  const hotkeyStrategy = useAppStore((state) => state.hotkeyStrategy);
+
+  useAsyncEffect(async () => {
+    const [strategy, appDetection, pasteKeybinds] = await Promise.all([
+      invoke<HotkeyStrategy>("get_hotkey_strategy"),
+      invoke<boolean>("supports_app_detection"),
+      invoke<PasteKeybindSupport>("supports_paste_keybinds"),
+    ]);
+    produceAppState((draft) => {
+      draft.hotkeyStrategy = strategy;
+      draft.supportsAppDetection = appDetection;
+      draft.supportsPasteKeybinds = pasteKeybinds;
+    });
+  }, []);
+
+  useAsyncEffect(async () => {
+    if (hotkeyStrategy !== "listener") {
+      return;
+    }
+    // Only the main window owns the global key grab.
+    if (!isMainWindow) {
+      return;
+    }
+
+    if (keyPermAuthorized) {
+      getLogger().info(
+        "Accessibility permission authorized, starting key listener",
+      );
+      await invoke("start_key_listener");
+    } else {
+      getLogger().info(
+        "Accessibility permission not authorized, stopping key listener",
+      );
+      await invoke("stop_key_listener");
+    }
+
+    // Seed health from the current value: transition events emitted before the
+    // `keyboard_listener_health` subscription was registered would otherwise be missed,
+    // leaving the store stuck at its initial "stopped".
+    try {
+      const health = await invoke<KeyboardListenerHealth>(
+        "get_key_listener_health",
+      );
+      produceAppState((draft) => {
+        draft.keyboardListenerHealth = health;
+      });
+    } catch (error) {
+      getLogger().warning(`Failed to read keyboard listener health: ${error}`);
+    }
+  }, [keyPermAuthorized, hotkeyStrategy]);
+
+  // Keep the native grab set in lockstep with the state it derives from. The
+  // push is gated on the strategy being known so the compositor (bridge) branch
+  // of the sync never runs half-configured, and re-runs whenever any
+  // grab-relevant input changes — regardless of data load order.
+  useEffect(() => {
+    // Native hotkey grab sync is owned by the main window only.
+    if (!isMainWindow) {
+      return;
+    }
+    const push = () => {
+      if (getAppState().hotkeyStrategy) {
+        // syncHotkeyCombosToNative rejects if the native grab fails to install
+        // (e.g. bridge not ready); swallow it so it doesn't become an unhandled
+        // promise rejection that crashes the effect's subscription.
+        syncHotkeyCombosToNative().catch((err) => {
+          console.warn("[AppSideEffects] hotkey sync failed", err);
+        });
+      }
+    };
+
+    push();
+
+    let lastFingerprint = hotkeyGrabFingerprint(getAppState());
+    return useAppStore.subscribe((state) => {
+      const next = hotkeyGrabFingerprint(state);
+      if (next === lastFingerprint) {
+        return;
+      }
+      lastFingerprint = next;
+      push();
+    });
+  }, []);
+
+  useEffect(() => {
+    initLogging().catch((error: unknown) => {
+      console.warn("[AppSideEffects] logging init failed", error);
+    });
+  }, []);
+
+  // A23: Keep the native thock gate in sync with the persisted
+  // playInteractionChime preference (initial value + changes). The native
+  // flag is process-global, so only the main window may write it — the
+  // composer popout mounts this component too and would clobber the
+  // setting with its fallback defaults.
+  useEffect(() => {
+    if (!isMainWindow) return;
+    // Best effort: the store value remains authoritative and will be re-sent
+    // on the next change. The synchronizer logs failures.
+    void syncInteractionChime(playInteractionChime);
+  }, [isMainWindow, playInteractionChime]);
+
+  // Mirror the user-chosen thock gain into Rust so the warm path AND the
+  // fallback path apply the live volume. Main-window-only for the same
+  // process-global reason as the chime gate above.
+  useEffect(() => {
+    if (!isMainWindow) return;
+    void syncInteractionFeedbackVolume(interactionFeedbackVolume);
+  }, [isMainWindow, interactionFeedbackVolume]);
+
+  // The native Windows pill starts bottom-anchored in its static cell, so the
+  // persisted pillPlacement must be pushed on mount AND on change. Without
+  // the mount push a "top" user sees the pill fall back to bottom after every
+  // restart until they toggle the setting again. Windows-only: the macOS
+  // overlay ignores placement and the GTK pill protocol has no placement
+  // message. Main-window-only for the same process-global reason as above.
+  useEffect(() => {
+    if (!isMainWindow || !isWindows()) return;
+    pushPillPlacementToNative(pillPlacement).catch((error: unknown) => {
+      getLogger().warning(
+        `Failed to push pill placement to native pill: ${error}`,
+      );
+    });
+  }, [isMainWindow, pillPlacement]);
+
+  // Windows "Always run as administrator" pre-flight. Must stay ahead of
+  // auth / Mixpanel / dashboard init — the gate in elevation.actions owns
+  // the state transitions so AppSideEffects and the decline dialog cannot
+  // diverge. Relaunch is never invoked from Tauri setup().
+  useAsyncEffect(async () => {
+    if (startupElevationAttemptedRef.current) {
+      return;
+    }
+    startupElevationAttemptedRef.current = true;
+    await runStartupElevationPreflight({
+      isMainWindow,
+      platform: getPlatform(),
+    });
+  }, []);
+
+  useAsyncEffect(async () => {
+    if (consumeSurfaceWindowFlag()) {
+      await surfaceMainWindow();
+    }
+  }, []);
+
+  const onAuthStateChanged = (user: AuthUser | null) => {
+    const nextAuthUid = user?.uid ?? null;
+    getLogger().info(`Auth state changed (uid=${nextAuthUid ?? "none"})`);
+    authReadyRef.current = true;
+    setAuthReady(true);
+    const previousUid = authUidRef.current;
+    const firstCallbackSeen = authResolvedRef.current;
+    const uidChanged = firstCallbackSeen && previousUid !== nextAuthUid;
+    authResolvedRef.current = true;
+    produceAppState((draft) => {
+      draft.auth = user;
+      if (uidChanged) {
+        authUidRef.current = nextAuthUid;
+        draft.authSessionNonce += 1;
+        Object.assign(draft.onboarding, INITIAL_ONBOARDING_STATE);
+        draft.local.onboardingResumePage = null;
+        draft.local.onboardingNameDraft = "";
+        draft.local.onboardingNameDraftUserId = null;
+        draft.local.onboardingSessionUserId = nextAuthUid;
+        setInitReady(false);
+        setStreamReady(false);
+      } else if (!firstCallbackSeen) {
+        authUidRef.current = nextAuthUid;
+        if (nextAuthUid) {
+          draft.local.onboardingSessionUserId = nextAuthUid;
+        }
+      }
+      draft.initialized = false;
+    });
+  };
+
+  const elevationReady = useElevationStartupReady();
+
+  useTauriListen<OverlayPhasePayload>("overlay_phase", (payload) => {
+    produceAppState((draft) => {
+      draft.overlayPhase = payload.phase;
+      if (payload.phase !== "recording") {
+        draft.audioLevels = [];
+      }
+    });
+  });
+
+  useTauriListen<RecordingLevelPayload>("recording_level", (payload) => {
+    const raw = Array.isArray(payload.levels) ? payload.levels : [];
+    const sanitized = raw.map((value) =>
+      typeof value === "number" && Number.isFinite(value) ? value : 0,
+    );
+
+    produceAppState((draft) => {
+      draft.audioLevels = sanitized;
+    });
+  });
+
+  useTauriListen<BridgeHotkeyTriggerPayload>(
+    "bridge_hotkey_trigger",
+    (payload) => {
+      // A21: Filter hotkey spam while the pill is in an active recording state.
+      // Repeated identical triggers are debounced; stop/cancel always pass.
+      // This must happen BEFORE the counter increment so consumers never see
+      // a filtered trigger.
+      const isRecording = getAppState().overlayPhase === "recording";
+      const { allowed, reason } = evaluateHotkeyTrigger(
+        payload.hotkey,
+        isRecording,
+      );
+      if (!allowed) {
+        getLogger().verbose(
+          `[hotkey-filter] blocked ${payload.hotkey}: ${reason}`,
+        );
+        return;
+      }
+      produceAppState((draft) => {
+        draft.hotkeyTriggers[payload.hotkey] =
+          (draft.hotkeyTriggers[payload.hotkey] ?? 0) + 1;
+      });
+    },
+  );
+
+  useTauriListen<KeysHeldPayload>("keys_held", (payload) => {
+    // Only the main window owns dictation input; ignore held-key updates in
+    // the composer popout (and any other webview) so its SPA copy can't drive
+    // a duplicate dictation/style-switch pipeline.
+    if (!isMainWindow) {
+      return;
+    }
+    const existing = getAppState().keysHeld;
+    if (isEqual(existing, payload.keys)) {
+      return;
+    }
+
+    // A21: Release a style-switch action's "held" state when its physical key
+    // is released. Releasing only when ALL keys are up would never fire during
+    // hold-to-talk dictation (the dictate key stays held), wedging style
+    // switching after the first press.
+    const releasedKeys = existing.filter(
+      (key) =>
+        !payload.keys.some((held) => held.toLowerCase() === key.toLowerCase()),
+    );
+    if (releasedKeys.length > 0) {
+      for (const key of releasedKeys) {
+        for (const actionName of getStyleSwitchActionNamesForKey(
+          getAppState(),
+          key,
+        )) {
+          releaseHotkey(actionName);
+        }
+      }
+    }
+
+    produceAppState((draft) => {
+      draft.keysHeld = payload.keys;
+    });
+  });
+
+  // Surface listener health (grounded in the child's actual grab/listen outcome). Rust owns
+  // automatic recovery; TS only reflects state here and exposes a manual retry elsewhere — it
+  // must not auto-restart the listener on "failed".
+  useTauriListen<KeyboardListenerHealthPayload>(
+    "keyboard_listener_health",
+    (payload) => {
+      if (getAppState().keyboardListenerHealth === payload.state) {
+        return;
+      }
+      // Reset the failure notification once the listener genuinely recovers, so a later
+      // failure episode can notify again.
+      if (
+        payload.state === "healthy_grab" ||
+        payload.state === "degraded_listen_fallback"
+      ) {
+        listenerFailureNotifiedRef.current = false;
+      }
+      if (payload.state === "failed" && !listenerFailureNotifiedRef.current) {
+        listenerFailureNotifiedRef.current = true;
+        getLogger().warning("Keyboard listener reported failed health");
+        const authorized = isPermissionAuthorized(
+          getRec(getAppState().permissions, "accessibility")?.state,
+        );
+        if (authorized) {
+          showSnackbar(
+            intl.formatMessage({
+              defaultMessage:
+                "Keyboard hotkeys stopped working. Retrying automatically; restart mausVoice if this persists.",
+            }),
+            { mode: "error", duration: 6000 },
+          );
+        }
+      }
+      produceAppState((draft) => {
+        draft.keyboardListenerHealth = payload.state;
+      });
+    },
+  );
+
+  // A23 (Windows): rdev's low-level hook is torn down across sleep/wake and
+  // session-unlock. The Rust lifecycle watcher emits `desktop_resume`; this
+  // listener is the frontend half of that handshake and re-grabs the hook.
+  // State is read at fire time so a stale closure can never restart the
+  // listener after the strategy or permission flips.
+  useTauriListen<void>("desktop_resume", () => {
+    const resumeState = getAppState();
+    restartKeyboardListenerOnResume({
+      hotkeyStrategy: resumeState.hotkeyStrategy,
+      isMainWindow,
+      keyPermAuthorized: isPermissionAuthorized(
+        getRec(resumeState.permissions, "accessibility")?.state,
+      ),
+    })
+      .then((restarted) => {
+        if (restarted) {
+          getLogger().info("Restarted keyboard listener after desktop resume");
+        }
+      })
+      .catch((error: unknown) => {
+        getLogger().warning(
+          `Failed to restart keyboard listener after desktop resume: ${error}`,
+        );
+      });
+  });
+
+  useTauriListen<RemoteFinalTextReceivedPayload>(
+    "remote_final_text_received",
+    async (payload) => {
+      // Inserting the remote transcript is a window-global action; only the
+      // main window must perform it to avoid double-insertion from a popout.
+      if (!isMainWindow) {
+        return;
+      }
+      await handleRemoteFinalTextReceived(payload);
+      if (isLocalDataClearRequested()) return;
+      await refreshRemoteReceiverStatus().catch((error: unknown) => {
+        if (!isLocalDataClearRequested()) {
+          getLogger().warning(
+            `Failed to refresh remote receiver after delivery: ${error}`,
+          );
+        }
+      });
+    },
+  );
+
+  // Auth and the rest of full-app init stay behind the elevation gate so a
+  // declined-or-pending UAC never pays for Firebase / Mixpanel / remote
+  // receiver setup on the unelevated helper surface.
+  useEffect(() => {
+    if (!canRunPostElevationInit(elevationReady)) {
+      return;
+    }
+
+    authReadyRef.current = false;
+
+    const timeoutId = setTimeout(() => {
+      if (!authReadyRef.current) {
+        getLogger().warning("Auth timed out, proceeding without auth");
+        onAuthStateChanged(null);
+      }
+    }, AUTH_READY_TIMEOUT_MS);
+
+    const unsubscribe = getAuthRepo().onAuthStateChanged(
+      onAuthStateChanged,
+      (error) => {
+        showErrorSnackbar(error);
+        onAuthStateChanged(null);
+      },
+    );
+
+    return () => {
+      clearTimeout(timeoutId);
+      unsubscribe();
+    };
+  }, [elevationReady]);
+
+  useStreamWithSideEffects({
+    builder: (): Observable<StreamRet> => {
+      if (!canRunPostElevationInit(elevationReady, authReady)) {
+        return of(null);
+      }
+
+      if (!userId) {
+        return combineLatest([of(null), of(null)]);
+      }
+
+      return combineLatest([
+        from(
+          getMemberRepo()
+            .getMyMember()
+            .catch(() => null),
+        ),
+        from(
+          getUserRepo()
+            .getMyUser()
+            .catch(() => null),
+        ),
+      ]);
+    },
+    onSuccess: (results) => {
+      if (!canRunPostElevationInit(elevationReady)) {
+        return;
+      }
+      setStreamReady(true);
+      if (results === null) {
+        return;
+      }
+
+      const [members, user] = results;
+      produceAppState((draft) => {
+        registerUsers(draft, listify(user));
+        registerMembers(draft, listify(members));
+      });
+    },
+    dependencies: [userId, authReady, elevationReady],
+  });
+
+  useAsyncEffect(async () => {
+    if (!canRunPostElevationInit(elevationReady, authReady)) {
+      return;
+    }
+    // `setInitReady` is what lets the onboarding page render at all
+    // (OnboardingPage returns null until `initialized`). Nothing else writes
+    // `initReady` back to true, so it is set unconditionally after the refresh
+    // rather than on a success path. The catch is defensive: `refreshCurrentUser`
+    // is `enqueueUserMutation(refreshUserAndPreferences)`, whose body already
+    // logs and swallows, so it cannot reject today. It stays so a future change
+    // inside that body cannot turn this into an unhandled rejection and leave
+    // init stuck on `setInitReady` never running.
+    await refreshCurrentUser().catch((error: unknown) => {
+      getLogger().error(`Failed to load the current user: ${error}`);
+    });
+    setInitReady(true);
+    // `authSessionNonce` is in these deps deliberately, and its absence was a trap.
+    //
+    // A uid change takes the branch in `onAuthStateChanged` that calls `setInitReady(false)`
+    // to force onboarding to re-run for the new identity. But that branch also calls
+    // `setAuthReady(true)` -- and `authReady` is ALREADY true by then, so React bails out and
+    // the dep array does not change. With `[authReady, elevationReady]` alone this effect then
+    // never re-ran, `setInitReady(true)` never came back, and since nothing else writes
+    // `initReady` (see the comment above) `OnboardingPage` stayed on its `return null` path --
+    // an app that looks stuck, on exactly the transition that is supposed to reset it.
+    //
+    // The nonce is bumped in that same branch and nothing else in this file re-runs on it,
+    // so subscribing to it is what closes the loop. `OnboardingPage` already depends on it for
+    // the same reason.
+  }, [authReady, elevationReady, authSessionNonce]);
+
+  useAsyncEffect(async () => {
+    if (
+      !canRunPostElevationInit(elevationReady, initReady) ||
+      isLocalDataClearRequested()
+    ) {
+      return;
+    }
+
+    try {
+      await loadPairedRemoteDevices();
+      await refreshRemoteReceiverStatus();
+      if (isLocalDataClearRequested()) return;
+
+      const prefs = getMyUserPreferences(getAppState());
+      if (
+        prefs?.remoteTargetDeviceId &&
+        !getAppState().pairedRemoteDeviceById[prefs.remoteTargetDeviceId]
+      ) {
+        await setRemoteTargetDeviceId(null);
+        await setRemoteOutputEnabled(false);
+      }
+      const receiverStatus = getAppState().remoteReceiverStatus;
+      if (prefs?.remoteReceiverAutoStart && !receiverStatus?.enabled) {
+        await startRemoteReceiver(prefs.remoteReceiverPort ?? null);
+      }
+    } catch (error) {
+      if (!isLocalDataClearRequested()) {
+        getLogger().warning(`Failed to initialize remote receiver: ${error}`);
+      }
+    }
+  }, [initReady, elevationReady]);
+
+  useEffect(() => {
+    if (
+      !canRunPostElevationInit(elevationReady, streamReady, initReady) ||
+      initialized
+    ) {
+      return;
+    }
+    getLogger().info("App fully initialized");
+    produceAppState((draft) => {
+      draft.initialized = true;
+    });
+    if (isMainWindow) {
+      resumePendingTranscriptionDeletes();
+    }
+  }, [streamReady, initReady, initialized, elevationReady, isMainWindow]);
+
+  const auth = useAppStore((state) => state.auth);
+  const prevUserIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!initialized) {
+      return;
+    }
+
+    const mp = getMixpanel();
+    if (!mp) {
+      return;
+    }
+
+    const currentUserId = auth?.uid ?? null;
+    const prevUserId = prevUserIdRef.current;
+    if (prevUserId && !currentUserId) {
+      mp.reset();
+    }
+
+    const identity = buildAnalyticsIdentity({
+      userId: currentUserId,
+      member,
+      localUser,
+      preferences: prefs,
+      platform: getPlatform(),
+      locale: detectLocale(),
+    });
+
+    if (currentUserId && currentUserId !== prevUserId) {
+      mp.identify(currentUserId);
+      const firstTouch = buildFirstTouchProperties(identity);
+      mp.people.set_once({
+        $created: new Date().toISOString(),
+        ...firstTouch,
+      });
+      mp.register_once(firstTouch);
+    }
+
+    mp.people.set(
+      buildPeopleProperties(identity, {
+        email: auth?.email,
+        displayName: auth?.displayName,
+      }),
+    );
+
+    mp.register(buildSuperProperties(identity));
+
+    if (versionData.state === "success") {
+      mp.register({
+        appVersion: versionData.data,
+      });
+    }
+
+    prevUserIdRef.current = currentUserId;
+  }, [initialized, auth, member, localUser, prefs, versionData]);
+
+  const handleAddToDictionary = useCallback(async () => {
+    try {
+      const selectedText = await invoke<string | null>("get_selected_text");
+      if (!selectedText?.trim()) {
+        return;
+      }
+
+      const text = selectedText.trim();
+      if (text.length > MAX_SELECTED_TERM_LENGTH) {
+        sendPillFlashMessage(
+          intl.formatMessage({
+            defaultMessage:
+              "The selection is too long to add to the dictionary.",
+          }),
+        );
+        return;
+      }
+
+      // One term per selection: adding the same word twice would create two
+      // dictionary rows (only the prompt builders dedupe).
+      const existingTerms = collectTermValues(getAppState());
+      if (
+        existingTerms.some(
+          (value) => value.trim().toLowerCase() === text.toLowerCase(),
+        )
+      ) {
+        sendPillFlashMessage(
+          intl.formatMessage(
+            { defaultMessage: '"{text}" is already in your dictionary' },
+            { text },
+          ),
+        );
+        return;
+      }
+
+      // createGlossaryTerms owns the optimistic update with per-term rollback
+      // and ticks the onboarding checklist, so this handler must not hand-roll
+      // another term write that could diverge from it.
+      const { created, failed } = await createGlossaryTerms([text]);
+      if (created.length > 0) {
+        sendPillFlashMessage(
+          intl.formatMessage(
+            { defaultMessage: 'Added "{text}" to dictionary' },
+            { text },
+          ),
+        );
+      } else if (failed > 0) {
+        sendPillFlashMessage(
+          intl.formatMessage({
+            defaultMessage:
+              "Could not add the selection to your dictionary. Please try again.",
+          }),
+        );
+      }
+    } catch (error) {
+      getLogger().error(`Failed to add to dictionary: ${error}`);
+    }
+  }, [intl]);
+
+  useHotkeyFire({
+    actionName: ADD_TO_DICTIONARY_HOTKEY,
+    isDisabled: !isMainWindow,
+    onFire: handleAddToDictionary,
+  });
+
+  // You cannot refresh the page in Tauri, here's a hotkey to help with that
+  useKeyDownHandler({
+    keys: ["r"],
+    ctrl: true,
+    callback: () => {
+      if (getIsDevMode()) {
+        showSnackbar("Refreshing application...");
+        window.location.href = "/welcome";
+      }
+    },
+  });
+
+  // Hotkey to open settings (Cmd+, on macOS). `/dashboard/settings` is the
+  // entry route, which redirects to the page last used, so the shortcut does
+  // not reset the surface to the first page; the prefix check keeps a press
+  // while already in settings from reloading the window.
+  useKeyDownHandler({
+    keys: [","],
+    meta: true,
+    callback: () => {
+      if (!window.location.pathname.startsWith("/dashboard/settings")) {
+        window.location.href = "/dashboard/settings";
+      }
+    },
+  });
+
+  // Background update poll. Releases land a few times a year, so a slow
+  // cadence is plenty; the Settings "Check now" button covers impatience.
+  useIntervalAsync(UPDATE_CHECK_INTERVAL_MS, async () => {
+    if (!isMainWindow) {
+      return;
+    }
+
+    // Dev builds run against an unsigned local bundle the updater endpoint
+    // knows nothing about, so a check can only ever produce noise.
+    if (getIsDevMode()) {
+      return;
+    }
+
+    // The action syncs the tray badge itself, so a manual check from Settings
+    // updates it too rather than waiting for the next poll.
+    await checkForAppUpdates();
+  }, [isMainWindow]);
+
+  useToastAction((payload) => {
+    if (payload.action === "open_agent_settings") {
+      // `surfaceMainWindow` swallows its own errors and coalesces concurrent
+      // calls, so there is nothing to await or recover from here: surfacing is a
+      // side effect, and the dialog state below must not wait on the IPC.
+      void surfaceMainWindow();
+      produceAppState((draft) => {
+        draft.settings.agentModeDialogOpen = true;
+      });
+    } else if (payload.action === "surface_window") {
+      void surfaceMainWindow();
+    } else if (payload.action === "open_transcriptions") {
+      // `getBrowserRouter()` lazily builds the router and is documented as safe
+      // before Router mounts, so navigating does not depend on the window being
+      // up. `navigate` returns a promise that a synchronous try/catch cannot
+      // catch, so the rejection is handled on the promise itself.
+      void surfaceMainWindow();
+      try {
+        void getBrowserRouter()
+          .navigate("/dashboard/transcriptions")
+          .catch((error: unknown) => {
+            getLogger().warning(
+              `Failed to navigate to transcriptions: ${error instanceof Error ? error.message : String(error)}`,
+            );
+          });
+      } catch (error) {
+        getLogger().warning(
+          `Failed to build the router: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+  });
+
+  useTauriListen<void>("tray-install-update", () => {
+    if (!isMainWindow) return;
+    // Route through the dialog rather than installing straight from the tray.
+    // The dialog is the only surface that shows the release notes before an
+    // update applies, so installing from here would make the notes unreachable
+    // for anyone who never opens the update entry point. `openUpdateDialog`
+    // reuses a live offer and falls back to a fresh check when none is held.
+    // Fire-and-forget: the listener body is not async, so it never receives the
+    // promise. The `.catch` is what keeps a failed check from becoming an
+    // unhandled rejection.
+    void surfaceMainWindow();
+    void openUpdateDialog().catch((error: unknown) => {
+      getLogger().error(`Failed to open the update dialog: ${error}`);
+    });
+  });
+
+  useTauriListen<void>("tray-copy-last-transcript", async () => {
+    if (!isMainWindow) return;
+    const latest = await latestVisibleTranscription();
+    if (latest?.transcript) {
+      await invoke("copy_to_clipboard", { text: latest.transcript });
+    }
+  });
+
+  const menuBarIconHidden = prefs?.menuBarIconHidden ?? false;
+  useEffect(() => {
+    if (!isMainWindow) return;
+    invoke("set_tray_visible", { visible: !menuBarIconHidden }).catch(
+      console.error,
+    );
+  }, [menuBarIconHidden]);
+
+  // Re-push the tray Language submenu whenever the Active Dictation Language or
+  // the configured language set changes, keeping the tray correct after both
+  // tray clicks and settings edits.
+  const trayLanguageMenuKey = useAppStore((state) =>
+    JSON.stringify(buildTrayLanguageMenuModel(state)),
+  );
+  useEffect(() => {
+    if (!isMainWindow) return;
+    invoke("set_tray_language_menu", {
+      items: JSON.parse(trayLanguageMenuKey),
+    }).catch(console.error);
+  }, [trayLanguageMenuKey]);
+
+  useTauriListen<string>("tray-set-dictation-language", (code) => {
+    if (!isMainWindow) return;
+    setActiveDictationLanguage(code).catch(console.error);
+  });
+
+  // The native command reads the real window state; these events only trigger
+  // a debounced re-sync after OS-driven minimize, close-to-tray, and surface
+  // transitions. Rust retains both localized labels so a tray click can update
+  // the item synchronously without waiting for the webview.
+  useEffect(() => {
+    if (!isMainWindow) return;
+
+    const appWindow = getCurrentWindow();
+    const labels = getLocalizedDashboardMenuLabels(intl);
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+    const sync = () => {
+      clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => {
+        commands
+          .setDashboardMenuLabels(labels.openLabel, labels.hideLabel)
+          .catch(console.error);
+      }, 50);
+    };
+
+    sync();
+    const listeners = Promise.all([
+      appWindow.onFocusChanged(sync),
+      appWindow.onResized(sync),
+      appWindow.onCloseRequested(sync),
+    ]);
+
+    return () => {
+      clearTimeout(timeoutId);
+      listeners
+        .then((unlisteners) => {
+          unlisteners.forEach((unlisten) => {
+            unlisten();
+          });
+        })
+        .catch((error: unknown) => {
+          console.warn(
+            "[AppSideEffects] window listener cleanup failed",
+            error,
+          );
+        });
+    };
+  }, [intl]);
+
+  // ── Tray pill-visibility toggle ────────────────────────────────────────────
+  // One menu item whose label states the action it performs. The persisted
+  // preference is the source of truth; the tray never holds its own toggle.
+  const effectivePillVisibility = getEffectivePillVisibility(
+    prefs?.dictationPillVisibility,
+  );
+
+  // Read the live value inside async work. A value captured by the render that
+  // registered the listener would be stale by the time a click arrives.
+  const pillVisibilityRef = useRef(effectivePillVisibility);
+  pillVisibilityRef.current = effectivePillVisibility;
+
+  // Serializes tray clicks. `updateUserPreferences` writes the whole
+  // preferences object, so two overlapping writes can clobber each other.
+  // Chaining onto a promise gives real ordering, and each link re-reads the ref
+  // so it acts on the state left by the previous write rather than on what was
+  // current when the user clicked.
+  const pillVisibilityQueueRef = useRef<Promise<void>>(Promise.resolve());
+
+  // Label follows the persisted preference: startup hydration, tray clicks and
+  // Settings edits all flow through here, so the tray cannot drift.
+  useEffect(() => {
+    if (!isMainWindow) return;
+    const label = getLocalizedPillMenuLabel(effectivePillVisibility, intl);
+    invoke("set_pill_visibility_menu_state", {
+      label,
+    }).catch(console.error);
+  }, [effectivePillVisibility, intl]);
+
+  useTauriListen<void>("tray-toggle-pill-visibility", () => {
+    if (!isMainWindow) return;
+    pillVisibilityQueueRef.current = pillVisibilityQueueRef.current
+      .then(async () => {
+        const current = pillVisibilityRef.current;
+        const next = getNextPillVisibility(current);
+        if (next === current) {
+          return;
+        }
+        // On failure setDictationPillVisibility rolls the store back and
+        // surfaces the existing save error, so the effect above restores the
+        // previous label. The menu therefore never claims an unsaved state.
+        await setDictationPillVisibility(next);
+        pillVisibilityRef.current = next;
+        getLogger().info(
+          `Tray pill visibility: ${current} -> ${next} (${getPillMenuLabel(next)})`,
+        );
+      })
+      .catch((error) => {
+        getLogger().error(`Failed to toggle pill visibility: ${error}`);
+      });
+  });
+
+  // ── Tray reset-pill-position ─────────────────────────────────────────────
+  // The native pill tracks whether the user has dragged it away from its
+  // default centre-bottom spawn. When it reports a position change we sync
+  // the tray menu item's enabled state; when the user clicks "Reset Pill
+  // Position" we forward the IPC message and the pill re-homes itself.
+  useTauriListen<void>("tray-reset-pill-position", () => {
+    if (!isMainWindow) return;
+    const strategy =
+      getMyUserPreferences(getAppState())?.pillResetMonitorStrategy ??
+      "current";
+    invoke("reset_pill_position", { strategy }).catch((error) => {
+      getLogger().error(`Failed to reset pill position: ${error}`);
+    });
+  });
+
+  // The pill only publishes its geometry when the user moves it, so the first
+  // window anchored to it opened wherever the OS decided. Ask once at startup;
+  // the `pill-position-changed` listener below caches whatever comes back,
+  // even if the pill answers after the request times out.
+  useEffect(() => {
+    if (!isMainWindow) return;
+    ensurePillGeometry().catch((error: unknown) => {
+      getLogger().error(`Failed to read the pill geometry: ${error}`);
+    });
+  }, [isMainWindow]);
+
+  useTauriListen<{
+    hasSavedPosition: boolean;
+    rect?: { x: number; y: number; width: number; height: number };
+    monitor?: { x: number; y: number; width: number; height: number };
+  }>("pill-position-changed", (event) => {
+    // Pill geometry and tray menu belong to the main window's pill.
+    if (!isMainWindow) return;
+    setPillGeometry(event.rect ?? null, event.monitor ?? null);
+    invoke("set_reset_pill_position_enabled", {
+      enabled: event.hasSavedPosition,
+    }).catch((error) => {
+      getLogger().error(
+        `Failed to update reset-pill-position menu state: ${error}`,
+      );
+    });
+  });
+
   return null;
 };

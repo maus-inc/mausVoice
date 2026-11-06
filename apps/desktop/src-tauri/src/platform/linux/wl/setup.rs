@@ -94,9 +94,7 @@ pub fn ensure_background_services() {
     {
         Ok(child) => {
             log::info!("Spawned ydotoold (pid {})", child.id());
-            let mut guard = YDOTOOLD_CHILD
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let mut guard = YDOTOOLD_CHILD.lock().unwrap_or_else(|p| p.into_inner());
             *guard = Some(child);
         }
         Err(err) => {

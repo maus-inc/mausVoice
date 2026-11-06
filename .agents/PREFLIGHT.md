@@ -8,13 +8,12 @@ This file is the short form. `AGENTS.md` holds the binding rules, and the
 
 ## Required local checks
 
-- [ ] `pnpm install --frozen-lockfile`
+- [ ] `pnpm install --frozen-lockfile`, or `CHROMEDRIVER_SKIP_DOWNLOAD=true pnpm install --frozen-lockfile` on a host that cannot reach `googlechromelabs.github.io`
 - [ ] `pnpm run lint`
 - [ ] `pnpm run check-types`
 - [ ] `pnpm run test`
 - [ ] `pnpm run format:check`
 - [ ] `pnpm run test:secret-scan`
-- [ ] `pnpm --silent run fallow:audit --base <target-ref> --format json --quiet` on the final tree. Record the base, verdict, and exit status
 - [ ] `node scripts/ci/verify-skills.mjs` if you touched `.agents/skills/` or `skills-lock.json`
 - [ ] `pnpm gen:bindings` produced no diff, if you touched a Tauri command or `packages/desktop-native-apis`
 
@@ -27,12 +26,8 @@ Touched-package checks, the ones `AGENTS.md` names:
 - [ ] `pnpm --filter @repo/agent test` all passed
 - [ ] `pnpm --filter @maus-inc/preview test` all passed, if you touched `apps/preview`
 - [ ] `node --test scripts/ci/*.test.mjs` all passed, if you touched `scripts/ci`
+- [ ] `pnpm run check:pr-body -- .github/pull_request_template.md` passes, and `gh pr view <n> --json body -q .body | pnpm run check:pr-body -- -` passes on the live body before you call it ready
 - [ ] After modifying a built TypeScript package under `packages/`, rebuilt it before checking downstream consumers
-
-Two gates read build output rather than source, so they need their build step first:
-`node --test apps/docs/scripts/*.test.mjs` opens `apps/docs/dist/index.html` and fails
-with `ENOENT` until `pnpm --filter docs run build` has run, and `scripts/check-bindings.sh`
-regenerates `bindings.ts` through `cargo run --example gen_bindings`.
 
 ## Rust checks
 
@@ -45,21 +40,22 @@ touched. Full detail and the measured results are in `engineering/rust-toolchain
 - [ ] `CARGO_BUILD_JOBS=1 cargo test --locked --lib` in `apps/desktop/src-tauri`
 - [ ] `CARGO_BUILD_JOBS=1 cargo test --locked --manifest-path packages/rust_transcription/Cargo.toml --lib`
 - [ ] `cargo test --locked --manifest-path packages/rust_pill_shared/Cargo.toml`
-- [ ] `xvfb-run -a cargo test --locked --manifest-path packages/rust_gtk_pill/Cargo.toml`, or the direct `Xvfb` form below when the sandbox has no `xvfb-run`
+- [ ] `xvfb-run -a cargo test --locked --manifest-path packages/rust_gtk_pill/Cargo.toml`
 
 `CARGO_BUILD_JOBS=1` stays on the test steps. Parallel linking peaks above the memory
-a small sandbox has and the linker dies with `signal 9`.
-
-The payload ships `Xvfb` but not `xvfb-run`, so on the vendor toolchain start the
-server yourself and point the test at it. `engineering/rust-toolchain.md` has the
-exact commands.
+a 3.9 GB Arena agent sandbox has and the linker dies with `signal 9`.
 
 The pin is 1.88.0 and no crate in the tree declares a `rust-version` floor, so
 `--ignore-rust-version` is never needed. Do not add it.
 
 ## Blocked sandbox
 
-A restricted sandbox reaches `github.com`, `codeload.github.com`, `api.github.com`,
+This section is about the Arena agent sandbox and nothing else. On a host that reaches
+the wider internet, install the toolchain and go straight to the gates. Decide which
+situation you are in with `command -v cargo` and one `curl -m 8 -o /dev/null -w
+'%{http_code}'` per host, then follow the matching branch below.
+
+That sandbox reaches `github.com`, `codeload.github.com`, `api.github.com`,
 `registry.npmjs.org`, `pypi.org` and `files.pythonhosted.org`. It cannot reach
 `sh.rustup.rs`, `crates.io`, `static.rust-lang.org` or `huggingface.co`, and
 `apt-get update` fails against every Debian mirror even though `sudo` works.
@@ -67,7 +63,9 @@ A restricted sandbox reaches `github.com`, `codeload.github.com`, `api.github.co
 If the Rust toolchain or the crate registry is unreachable, fetch the orphan branch
 `vendor/sandbox-toolchain` on `maus-inc/mausVoice` first and follow its `FETCH.md`. It
 carries the toolchain, the crate registry, the Debian 12 sysroot, the command line
-tools and the two native archives. Then:
+tools, the two native archives, and the second-delivery groups G9 to G13 (media
+tools, model weights, the WebDriver driver chain, the cross-target Rust standard
+libraries and the gitleaks binary). Then:
 
 - [ ] I set `$CARGO_HOME/config.toml` from the shipped `rust/cargo-config.toml`, because `cargo --config <path>` does not reach `cargo clippy`
 - [ ] I exported `CARGO_NET_OFFLINE=true`
@@ -77,12 +75,20 @@ tools and the two native archives. Then:
 - [ ] I set `SHERPA_ONNX_ARCHIVE_DIR` and, where needed, `MAUSVOICE_ORT_DYLIB_PATH` from the pre-seeded `native/` payloads, because the `build.rs` downloads point at GitHub Releases, which redirect to a blocked host
 - [ ] I put `cmake` on `PATH` before building `packages/rust_transcription`
 - [ ] I verified the sysroot before any link step: `find "$GTK_SYSROOT" -xtype l -name "lib*.so*"` and `find "$GTK_SYSROOT" -type l -lname '/*'` both print nothing
+- [ ] I installed with `CHROMEDRIVER_SKIP_DOWNLOAD=true`, or with `--ignore-scripts`, because `chromedriver@152.0.0` is in `onlyBuiltDependencies` and its install script downloads from a blocked host
+- [ ] I checked `system/PKGS.txt` for a tool before calling it missing, and read `engineering/sandbox-coverage-gaps.md` before calling a stage blocked
 - [ ] For every gate that still cannot run, I said so in the PR body with the reason and the substitute command I ran, rather than marking it passed
+
+The gap register in `engineering/sandbox-coverage-gaps.md` names what the current payload cannot close: model weights (G10), audio devices, a Chromium and the media tools `ui-capture` needs (G9), `tauri-driver` (G11), packaging tooling (G14) and the gitleaks binary (G13). G13, G14 and the rest are vendorable, so read the register before calling one impossible. Name the gap number in the PR body when one of them stops a gate.
 
 The `--ignored` tests in
 `packages/rust_transcription/tests/sidecar_integration.rs` download models from
-`huggingface.co`. They cannot run in a sandbox. Record them as unrunnable with the
-reason. Do not report them as passed.
+`huggingface.co`. The whisper weights are overridable with
+`RUST_TRANSCRIPTION_MODEL_URL_<UPPERCASE_ID>`, and the sidecar test injects a loopback URL
+that way, so a local mirror is a valid route for `ggml-tiny` and `ggml-base`. The ONNX
+artifact sets (Parakeet CTC, Parakeet TDT, Canary 1B, SenseVoice) have no such override,
+so those cannot be redirected. Record a test as unrunnable with the G10 reason only after
+checking for a mirror, and do not report it as passed.
 
 ## UI rule
 
@@ -94,6 +100,7 @@ reason. Do not report them as passed.
 - [ ] Both light and dark modes still read correctly. This app ships both
 - [ ] Every new control has a visible focus state, icon-only controls have `aria-label`, toggles have `aria-pressed`
 - [ ] Every new user-visible string goes through `FormattedMessage` or `useIntl`, with no `id` prop, and the i18n extract shows no unexpected diff
+- [ ] I ran `pnpm --filter @maus-inc/preview dev` and inspected the changed surface in light mode and in dark mode, or I ran `pnpm --filter desktop test:webdriver` when the WebDriver driver chain was available
 - [ ] Copy is sentence case, uses `...` rather than the ellipsis character, and passed an `unslop` read
 
 ## Branch and review rules

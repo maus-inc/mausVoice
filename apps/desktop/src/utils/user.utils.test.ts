@@ -1,12 +1,17 @@
-import type { Hotkey, User, UserPreferences } from "@maus-inc/types";
+import type {
+  Hotkey,
+  Transcription,
+  User,
+  UserPreferences,
+} from "@maus-inc/types";
 import { describe, expect, it } from "vitest";
 import { AppState, INITIAL_APP_STATE } from "../state/app.state";
 import {
   getActiveDictationLanguage,
   getConfiguredDictationLanguageCodes,
+  getDictationSpeed,
   getMyDictationLanguage,
-  getGenerativePrefs,
-  getAgentModePrefs,
+  getMyProfileImage,
   getTranscriptionPrefs,
   LOCAL_USER_ID,
   setUserPreferences,
@@ -47,6 +52,12 @@ const makeState = (args: {
     hotkeyById,
   };
 };
+
+it("treats a missing persisted profile image map as no image", () => {
+  const state = makeState({});
+  state.local = { ...state.local, profileImageByUserId: undefined as never };
+  expect(getMyProfileImage(state)).toBeNull();
+});
 
 describe("getConfiguredDictationLanguageCodes", () => {
   it("always includes auto", () => {
@@ -176,6 +187,20 @@ describe("getMyDictationLanguage", () => {
 });
 
 describe("getTranscriptionPrefs stale-selection guard", () => {
+  it("does not resolve an inherited API key as a configured provider", () => {
+    const state = structuredClone(INITIAL_APP_STATE);
+    state.settings.aiTranscription.mode = "api";
+    state.settings.aiTranscription.selectedApiKeyId = "inherited";
+    state.apiKeyById = Object.create({
+      inherited: {
+        id: "inherited",
+        provider: "deepgram",
+        keyFull: "not-an-own-key",
+      },
+    }) as AppState["apiKeyById"];
+    expect(getTranscriptionPrefs(state).mode).toBe("local");
+  });
+
   it("falls back to local mode when the selected provider is not transcription-capable (Ollama)", () => {
     const state = structuredClone(INITIAL_APP_STATE);
     state.settings.aiTranscription.mode = "api";
@@ -244,6 +269,37 @@ describe("getTranscriptionPrefs stale-selection guard", () => {
   });
 });
 
+describe("getDictationSpeed", () => {
+  it("ignores failed transcription markers even when failed audio was retained", () => {
+    const state = structuredClone(INITIAL_APP_STATE);
+    const transcription = (
+      id: string,
+      transcript: string,
+      durationMs: number,
+    ): Transcription => ({
+      id,
+      transcript,
+      createdAt: "2026-10-08T12:00:00.000Z",
+      createdByUserId: LOCAL_USER_ID,
+      isDeleted: false,
+      audio: { filePath: `preview://${id}`, durationMs },
+    });
+    state.transcriptionById.failed = transcription(
+      "failed",
+      "[Transcription Failed]",
+      60_000,
+    );
+    state.transcriptionById.successful = transcription(
+      "successful",
+      "one two",
+      10_000,
+    );
+    state.transcriptions.transcriptionIds = ["failed", "successful"];
+
+    expect(getDictationSpeed(state)).toEqual({ wpm: 14, sampleCount: 1 });
+  });
+});
+
 describe("setUserPreferences realtime/review exclusivity", () => {
   it("normalizes a legacy dual-true pair loaded from disk (realtime wins)", () => {
     const draft = structuredClone(INITIAL_APP_STATE);
@@ -268,86 +324,5 @@ describe("setUserPreferences realtime/review exclusivity", () => {
     } as unknown as UserPreferences);
     expect(draft.userPrefs?.reviewBeforeInsert).toBe(true);
     expect(draft.settings.reviewBeforeInsert).toBe(true);
-  });
-});
-
-describe("generative preferences", () => {
-  const stateWith = (
-    provider: "groq" | "ollama" | "openai-compatible",
-    keyFull: string | null,
-  ): AppState => ({
-    ...INITIAL_APP_STATE,
-    settings: {
-      ...INITIAL_APP_STATE.settings,
-      aiPostProcessing: { mode: "api", selectedApiKeyId: "key" },
-      agentMode: {
-        ...INITIAL_APP_STATE.settings.agentMode,
-        mode: "api",
-        selectedApiKeyId: "key",
-      },
-    },
-    apiKeyById: {
-      key: {
-        id: "key",
-        name: "Example",
-        provider,
-        createdAt: "2024-01-01",
-        keyFull,
-        postProcessingModel: "model",
-      },
-    },
-  });
-
-  it("returns the configured provider, key and model", () => {
-    expect(getGenerativePrefs(stateWith("groq", "secret"))).toEqual({
-      mode: "api",
-      provider: "groq",
-      apiKeyId: "key",
-      apiKeyValue: "secret",
-      postProcessingModel: "model",
-      warnings: [],
-    });
-  });
-
-  it.each(["ollama", "openai-compatible"] as const)(
-    "allows keyless %s",
-    (provider) => {
-      expect(getGenerativePrefs(stateWith(provider, null))).toEqual({
-        mode: "api",
-        provider,
-        apiKeyId: "key",
-        apiKeyValue: "",
-        postProcessingModel: "model",
-        warnings: [],
-      });
-    },
-  );
-
-  it("warns with the caller's context when a required key is missing", () => {
-    const state = stateWith("groq", "");
-    expect(getGenerativePrefs(state)).toEqual({
-      mode: "none",
-      warnings: ["No API key configured for API post-processing."],
-    });
-    expect(getAgentModePrefs(state)).toEqual({
-      mode: "none",
-      warnings: ["No API key configured for API agent mode."],
-    });
-    state.apiKeyById = {};
-    expect(getAgentModePrefs(state)).toEqual({
-      mode: "none",
-      warnings: ["No API key configured for API agent mode."],
-    });
-  });
-
-  it("does not warn when API mode is not selected", () => {
-    expect(getGenerativePrefs(INITIAL_APP_STATE)).toEqual({
-      mode: "none",
-      warnings: [],
-    });
-    expect(getAgentModePrefs(INITIAL_APP_STATE)).toEqual({
-      mode: "none",
-      warnings: [],
-    });
   });
 });
