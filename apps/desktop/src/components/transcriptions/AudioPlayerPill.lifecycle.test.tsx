@@ -94,14 +94,16 @@ it("does not start audio after its row unmounts", async () => {
   expect(play).not.toHaveBeenCalled();
 });
 it("the newest row wins even if an earlier read completes last", async () => {
-  const a = deferred();
-  const b = deferred();
-  load.mockImplementation((id) => (id === "a" ? a.promise : b.promise));
+  const firstRead = deferred();
+  const secondRead = deferred();
+  load.mockImplementation((id) =>
+    id === "a" ? firstRead.promise : secondRead.promise,
+  );
   await render(["a", "b"]);
   await click(0);
   await click(1);
-  await act(() => b.resolve(audio));
-  await act(() => a.resolve(audio));
+  await act(() => secondRead.resolve(audio));
+  await act(() => firstRead.resolve(audio));
   expect(play).toHaveBeenCalledTimes(1);
   expect(play.mock.calls[0][0]).toBe("b");
 });
@@ -172,7 +174,7 @@ it("surfaces a real utility startup rejection after releasing the context", asyn
   const actual = await vi.importActual<
     typeof import("../../utils/audio-playback.utils")
   >("../../utils/audio-playback.utils");
-  const close = vi.fn(async () => undefined);
+  const close = vi.fn(() => Promise.resolve());
   const source = {
     connect: vi.fn(),
     disconnect: vi.fn(),
@@ -184,17 +186,17 @@ it("surfaces a real utility startup rejection after releasing the context", asyn
   };
   vi.stubGlobal(
     "AudioContext",
-    class {
-      state = "running";
-      currentTime = 0;
-      destination = {};
-      close = close;
-      createBufferSource = () => source;
-      createBuffer = () => ({
+    vi.fn(() => ({
+      state: "running",
+      currentTime: 0,
+      destination: {},
+      close,
+      createBufferSource: () => source,
+      createBuffer: () => ({
         duration: 1,
         getChannelData: () => new Float32Array(2),
-      });
-    },
+      }),
+    })),
   );
   try {
     load.mockResolvedValue(audio);

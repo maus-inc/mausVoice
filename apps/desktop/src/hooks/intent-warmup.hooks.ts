@@ -33,7 +33,7 @@ export const useIntentWarmup = (
     cancel();
     timer.current = setTimeout(() => {
       timer.current = undefined;
-      void warm().catch(() => undefined);
+      warm().catch(() => undefined);
     }, delayMs);
   }, [cancel, warm, delayMs]);
   useEffect(() => cancel, [cancel, key, warm]);

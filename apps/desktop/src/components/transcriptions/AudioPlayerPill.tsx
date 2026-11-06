@@ -327,19 +327,19 @@ export const AudioPlayerPill = ({
       const next = getProgressFromClientX(event.clientX);
       if (next != null) previewSeek(next);
 
+      // Listener lifetime is scoped to one AbortController so every exit
+      // path (release, cancel, re-entrant drag, lifecycle cleanup) runs one
+      // teardown and `isDraggingRef` can never outlive its listeners: a
+      // stuck drag flag mutes playback progress for good.
+      const dragListeners = new AbortController();
+      const endDrag = () => {
+        dragListeners.abort();
+        pointerCleanupRef.current = null;
+        isDraggingRef.current = false;
+      };
       const handleMove = (moveEvent: PointerEvent) => {
         const ratio = getProgressFromClientX(moveEvent.clientX);
         if (ratio != null) previewSeek(ratio);
-      };
-      // Every exit path (release, cancel, re-entrant drag, lifecycle cleanup)
-      // runs this one teardown so `isDraggingRef` can never outlive its
-      // listeners: a stuck drag flag mutes playback progress for good.
-      const endDrag = () => {
-        window.removeEventListener("pointermove", handleMove);
-        window.removeEventListener("pointerup", handleUp);
-        window.removeEventListener("pointercancel", handleCancel);
-        pointerCleanupRef.current = null;
-        isDraggingRef.current = false;
       };
       const handleUp = (upEvent: PointerEvent) => {
         endDrag();
@@ -355,9 +355,16 @@ export const AudioPlayerPill = ({
         setPlaybackProgress(progressAtDragStartRef.current);
       };
       pointerCleanupRef.current?.();
-      window.addEventListener("pointermove", handleMove);
-      window.addEventListener("pointerup", handleUp, { once: true });
-      window.addEventListener("pointercancel", handleCancel, { once: true });
+      const listenerOptions = { signal: dragListeners.signal };
+      window.addEventListener("pointermove", handleMove, listenerOptions);
+      window.addEventListener("pointerup", handleUp, {
+        ...listenerOptions,
+        once: true,
+      });
+      window.addEventListener("pointercancel", handleCancel, {
+        ...listenerOptions,
+        once: true,
+      });
       pointerCleanupRef.current = endDrag;
     },
     [disabled, getProgressFromClientX, previewSeek, commitSeek],

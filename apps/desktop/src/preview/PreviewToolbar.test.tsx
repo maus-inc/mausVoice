@@ -50,9 +50,9 @@ afterEach(() => {
 });
 it("seeds popup visibility from ?previewPopup for deterministic captures", async () => {
   const renderAt = async (search: string) => {
-    await act(async () => root.unmount());
+    await act(() => root.unmount());
     root = createRoot(container);
-    await act(async () =>
+    await act(() =>
       root.render(
         <IntlProvider locale="en">
           <MemoryRouter initialEntries={[`/${search}`]}>
