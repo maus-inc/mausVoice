@@ -191,6 +191,19 @@ const getUnusableResponseMessage = (
   return getHistoryUnusableMessage(options);
 };
 
+const getUnsavedFailedMessageDescriptor = (
+  context: PostProcessFeedbackContext,
+  hasSessionRow: boolean,
+): MessageDescriptor => {
+  if (context === "dictation") {
+    return STYLING_FAILED_WITHOUT_HISTORY_DICTATION_MESSAGE;
+  }
+  if (context === "audio-import" && !hasSessionRow) {
+    return STYLING_FAILED_IMPORT_UNSAVED_MESSAGE;
+  }
+  return STYLING_FAILED_WITHOUT_HISTORY_MESSAGE;
+};
+
 const getFailedMessageDescriptor = (
   context: PostProcessFeedbackContext,
   options: { canRecoverFromHistory: boolean; hasSessionRow: boolean },
@@ -198,13 +211,7 @@ const getFailedMessageDescriptor = (
   if (context === "history-details")
     return STYLING_FAILED_HISTORY_DETAILS_MESSAGE;
   if (options.canRecoverFromHistory) return STYLING_FAILED_MESSAGE;
-  if (context === "dictation") {
-    return STYLING_FAILED_WITHOUT_HISTORY_DICTATION_MESSAGE;
-  }
-  if (context === "audio-import" && !options.hasSessionRow) {
-    return STYLING_FAILED_IMPORT_UNSAVED_MESSAGE;
-  }
-  return STYLING_FAILED_WITHOUT_HISTORY_MESSAGE;
+  return getUnsavedFailedMessageDescriptor(context, options.hasSessionRow);
 };
 
 const getFailedFeedback = (
@@ -231,11 +238,32 @@ const getFailedFeedback = (
 
 const getLocalFallbackFeedback = (
   metadata: PostProcessFeedbackMetadata,
+  context: PostProcessFeedbackContext,
+  options: PostProcessFeedbackOptions,
 ): PostProcessFeedback => {
   const intl = getIntl();
   const reason = intl.formatMessage(
     postProcessErrorReason(metadata.postProcessError),
   );
+  // An import whose row the store rejected while persistence was allowed left
+  // no copy of the transcript anywhere, so "your local style was applied
+  // instead" would claim an applied style over a text that is gone. The
+  // dictation and History contexts always have their text: dictation inserts
+  // it, and the retranscription and details contexts run from a stored row.
+  if (
+    context === "audio-import" &&
+    options.canRecoverFromHistory === false &&
+    options.hasSessionRow === false
+  ) {
+    return {
+      kind: "failed",
+      severity: "error",
+      message: intl.formatMessage(STYLING_FAILED_IMPORT_UNSAVED_MESSAGE, {
+        reason,
+      }),
+      action: undefined,
+    };
+  }
   return {
     kind: "local-fallback",
     severity: "info",
@@ -266,7 +294,7 @@ export const getPostProcessFeedback = (
     return getFailedFeedback(metadata, context, options);
   }
   if (metadata.postProcessError) {
-    return getLocalFallbackFeedback(metadata);
+    return getLocalFallbackFeedback(metadata, context, options);
   }
 
   return {

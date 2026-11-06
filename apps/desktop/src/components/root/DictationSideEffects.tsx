@@ -496,6 +496,10 @@ const worseToastType = (
 // The pill shows one toast at a time, so an edit failure and an outcome
 // report from the same run leave as one toast: shown back to back, the second
 // replaced the first mid-read and the user only ever saw one of the two.
+// A toast carries one action, and when both halves want one the edit
+// failure's open-History action wins: a partial edit batch blocked insertion,
+// so History is the only copy of the words and recovering them outranks the
+// settings shortcut, which stays reachable from the app itself.
 const combinePostProcessToasts = (
   first: PostProcessToastOptions | undefined,
   second: PostProcessToastOptions | undefined,

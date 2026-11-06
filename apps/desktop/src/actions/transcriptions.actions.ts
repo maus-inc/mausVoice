@@ -1557,6 +1557,13 @@ export const importAudioFile = async ({
     };
     produceAppState((draft) => {
       draft.transcriptionById[memoryRecord.id] = memoryRecord;
+      // The History page and the recent list render from transcriptionIds,
+      // so a record written only by id is invisible and the session-
+      // availability wording would point at a row the user cannot find.
+      draft.transcriptions.transcriptionIds = [
+        memoryRecord.id,
+        ...draft.transcriptions.transcriptionIds,
+      ];
     });
   }
 

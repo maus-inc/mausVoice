@@ -2393,6 +2393,43 @@ describe("importAudioFile post-processing feedback", () => {
     );
   });
 
+  it("says the transcript is gone when the store rejected a fallback import", async () => {
+    setPostProcessResult({
+      postProcessFailed: false,
+      postProcessFallback: true,
+      postProcessError: POST_PROCESS_ERROR_CATEGORY.providerLimit,
+    });
+    storeTranscription.mockResolvedValue({ transcription: null });
+
+    await runImportAudioFile({ toneId: "default" });
+
+    // Persistence was allowed and the write still produced no row, so the
+    // locally styled text exists nowhere and "applied instead" must not run.
+    expect(showSnackbar).toHaveBeenCalledWith(
+      PROVIDER_LIMIT_UNSAVED_COPY,
+      expect.objectContaining({ mode: "error", action: undefined }),
+    );
+  });
+
+  it("lists the incognito import memory record where History renders", async () => {
+    setPostProcessResult({});
+    const state = structuredClone(INITIAL_APP_STATE);
+    state.userPrefs = createDefaultPreferences();
+    state.userPrefs.incognitoModeEnabled = true;
+    setAppState(state, true);
+    storeTranscription.mockResolvedValue({ transcription: null, wordCount: 0 });
+
+    await runImportAudioFile({ toneId: "default" });
+
+    // The History page and the recent list render from transcriptionIds, so
+    // the memory record must appear there for the session-availability
+    // wording to point at text the user can actually find.
+    const after = getAppState();
+    const [id] = after.transcriptions.transcriptionIds;
+    expect(id).toBeTypeOf("string");
+    expect(after.transcriptionById[id]?.transcript).toBe("Imported transcript");
+  });
+
   it("does not promise History for a failed import in incognito mode", async () => {
     setPostProcessResult({
       postProcessFailed: true,

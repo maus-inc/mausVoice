@@ -782,6 +782,32 @@ describe("postProcessFinalizedTranscript", () => {
     });
   });
 
+  it("keeps the History action when a failed edit combines with a fallback outcome", async () => {
+    const { input, showToast } = buildInput({
+      editFailed: true,
+      postProcessMetadata: {
+        postProcessFailed: false,
+        postProcessFallback: true,
+        postProcessError: POST_PROCESS_ERROR_CATEGORY.quotaOrPayment,
+      },
+    });
+
+    await runPipeline(input);
+
+    expect(showToast).toHaveBeenCalledTimes(1);
+    const call = asToastCall(showToast);
+    expect(call?.message).toContain(
+      "Styling was discarded because not all requested edits could be applied.",
+    );
+    expect(call?.message).toContain(
+      "Online styling failed because the provider reported a quota or billing issue. Your local style was applied instead.",
+    );
+    expect(call?.toastType).toBe("error");
+    // One action per toast: a partial edit batch blocked insertion, so
+    // recovering the words from History outranks the settings shortcut.
+    expect(call?.action).toBe("open_transcriptions");
+  });
+
   it("tells the user the raw transcript is in History once the row is stored", async () => {
     const { input, showToast, storeTranscriptionFn } = buildInput({
       editFailed: true,

@@ -159,6 +159,49 @@ describe("getPostProcessFeedback", () => {
     );
   });
 
+  it("says a rejected import row left nothing when styling fell back locally", () => {
+    const feedback = getPostProcessFeedback(
+      {
+        postProcessFailed: false,
+        postProcessFallback: true,
+        postProcessError: POST_PROCESS_ERROR_CATEGORY.providerLimit,
+      },
+      "audio-import",
+      { canRecoverFromHistory: false, hasSessionRow: false },
+    );
+
+    // "Your local style was applied instead" would claim an applied style
+    // over a transcript that is gone, so the rejected import reports the
+    // failure and the missing save instead.
+    expect(feedback).toMatchObject({
+      kind: "failed",
+      severity: "error",
+      message:
+        "Styling failed because the provider request or usage limit was reached. The transcript could not be saved in History.",
+      action: undefined,
+    });
+  });
+
+  it("keeps the local-fallback report for an incognito import", () => {
+    const feedback = getPostProcessFeedback(
+      {
+        postProcessFailed: false,
+        postProcessFallback: true,
+        postProcessError: POST_PROCESS_ERROR_CATEGORY.providerLimit,
+      },
+      "audio-import",
+      { canRecoverFromHistory: false },
+    );
+
+    // The incognito import keeps a memory row holding the locally styled
+    // text, so the applied-instead claim stays true there.
+    expect(feedback).toMatchObject({
+      kind: "local-fallback",
+      severity: "info",
+      action: "fix",
+    });
+  });
+
   it("says a rejected import row left no transcript anywhere", () => {
     expect(
       getPostProcessFeedback(
