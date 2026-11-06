@@ -3,13 +3,15 @@ import type { SxProps, Theme } from "@mui/material/styles";
 import { getPrettyKeyName } from "../../utils/keyboard.utils";
 import { Keycap } from "./Keycap";
 
-type HotkeyBadgeProps = {
+export const HotkeyBadge = ({
+  keys,
+  onClick,
+  sx,
+}: {
   keys: string[];
   onClick?: () => void;
   sx?: SxProps<Theme>;
-};
-
-export const HotkeyBadge = ({ keys, onClick, sx }: HotkeyBadgeProps) => {
+}) => {
   const comboLabel = keys.map(getPrettyKeyName).join(" + ");
   const occurrences = new Map<string, number>();
   const keycaps = keys.map((key) => {

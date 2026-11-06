@@ -1,8 +1,8 @@
 import { getRec } from "@maus-inc/utilities";
-import { getIntl, matchSupportedLocale } from "../i18n";
-import { DEFAULT_LOCALE, type Locale } from "../i18n/config";
+import { getIntl } from "../i18n";
+import type { Locale } from "../i18n/config";
 
-export const LANGUAGE_DISPLAY_NAMES: Record<Locale, string> = {
+const LANGUAGE_DISPLAY_NAMES: Record<Locale, string> = {
   en: "English",
   es: "Español",
   fr: "Français",
@@ -324,10 +324,6 @@ export const getDisplayNameForLanguage = (code: string): string => {
     LANGUAGE_DISPLAY_NAMES[code as Locale] ??
     code
   );
-};
-
-export const resolveLocaleValue = (value?: string | null): Locale => {
-  return matchSupportedLocale(value) ?? DEFAULT_LOCALE;
 };
 
 export const mapDictationLanguageToWhisperLanguage = (

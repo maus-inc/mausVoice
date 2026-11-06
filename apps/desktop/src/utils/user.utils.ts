@@ -14,13 +14,12 @@ import type {
   TranscriptionMode,
 } from "../types/ai.types";
 import dayjs from "dayjs";
-import { detectLocale, matchSupportedLocale } from "../i18n";
-import { DEFAULT_LOCALE, type Locale } from "../i18n/config";
-import { createTranscriptionSession } from "../sessions";
+import { detectLocale } from "../i18n";
+import { DEFAULT_LOCALE } from "../i18n/config";
 import type { AppState } from "../state/app.state";
 import { applyAiPreferences } from "./ai.utils";
 import { registerUsers } from "./app.utils";
-import { getAdditionalLanguageEntries } from "./keyboard.utils";
+import { getAdditionalLanguageHotkeys } from "./additional-language.utils";
 import {
   AUTO_LANGUAGE,
   coerceToDictationLanguage,
@@ -33,12 +32,6 @@ export const LOCAL_USER_ID = "local-user-id";
 
 export const getIsLoggedIn = (state: AppState): boolean => {
   return !!state.auth;
-};
-
-export const getHasEmailProvider = (state: AppState): boolean => {
-  const auth = state.auth;
-  const providers = auth?.providers ?? [];
-  return providers.includes("password");
 };
 
 export const getIsOnboarded = (state: AppState): boolean => {
@@ -77,15 +70,6 @@ export const getMyUser = (state: AppState): Nullable<User> => {
   return getRec(state.userById, getMyEffectiveUserId(state)) ?? null;
 };
 
-export const getMyPreferredLocale = (state: AppState): Locale => {
-  const user = getMyUser(state);
-  return (
-    matchSupportedLocale(user?.preferredLanguage) ??
-    detectLocale() ??
-    DEFAULT_LOCALE
-  );
-};
-
 export const getDetectedSystemLocale = (): string => {
   return detectLocale() ?? DEFAULT_LOCALE;
 };
@@ -108,7 +92,7 @@ export const getConfiguredDictationLanguageCodes = (
   state: AppState,
 ): Set<string> => {
   const codes = new Set<string>([AUTO_LANGUAGE]);
-  for (const entry of getAdditionalLanguageEntries(state)) {
+  for (const entry of getAdditionalLanguageHotkeys(state)) {
     codes.add(entry.language);
   }
   return codes;
@@ -164,14 +148,6 @@ export const loadMyEffectiveDictationLanguage = async (
   return coerceToDictationLanguage(lang);
 };
 
-export const formatDictationLanguageCode = (language: string): string => {
-  if (language === AUTO_LANGUAGE) {
-    return "AUTO";
-  }
-  const baseCode = language.split("-")[0];
-  return baseCode.toUpperCase().slice(0, 2);
-};
-
 export const getMyUserPreferences = (
   state: AppState,
 ): Nullable<UserPreferences> => {
@@ -211,10 +187,6 @@ export const getMyUserFirstName = (state: AppState): string => {
   return firstName || fullName || "Guest";
 };
 
-export const getIsSignedIn = (state: AppState): boolean => {
-  return !!state.auth;
-};
-
 export const setCurrentUser = (draft: AppState, user: User): void => {
   registerUsers(draft, [user]);
 };
@@ -236,18 +208,16 @@ export const setUserPreferences = (
   applyAiPreferences(draft, normalized);
 };
 
-type BaseTranscriptionPrefs = {
+export type LocalTranscriptionPrefs = {
   warnings: string[];
-};
-
-export type LocalTranscriptionPrefs = BaseTranscriptionPrefs & {
   mode: "local";
   gpuEnumerationEnabled: boolean;
   transcriptionDevice: string | null;
   transcriptionModelSize: string | null;
 };
 
-export type ApiTranscriptionPrefs = BaseTranscriptionPrefs & {
+export type ApiTranscriptionPrefs = {
+  warnings: string[];
   mode: "api";
   provider: ApiKeyProvider;
   apiKeyId: string;
@@ -351,17 +321,8 @@ export const getTranscriptionPrefs = (state: AppState): TranscriptionPrefs => {
   };
 };
 
-export const getTranscriptionSupportsStreaming = (state: AppState): boolean => {
-  const prefs = getTranscriptionPrefs(state);
-  const session = createTranscriptionSession(prefs);
-  return session.supportsStreaming();
-};
-
-type BaseGenerativePrefs = {
+export type ApiGenerativePrefs = {
   warnings: string[];
-};
-
-export type ApiGenerativePrefs = BaseGenerativePrefs & {
   mode: "api";
   provider: ApiKeyProvider;
   apiKeyId: string;
@@ -369,7 +330,8 @@ export type ApiGenerativePrefs = BaseGenerativePrefs & {
   postProcessingModel: string | null;
 };
 
-export type NoneGenerativePrefs = BaseGenerativePrefs & {
+export type NoneGenerativePrefs = {
+  warnings: string[];
   mode: "none";
 };
 
@@ -380,6 +342,11 @@ type GenerativeConfigInput = {
   selectedApiKeyId: string | null;
 };
 
+const KEYLESS_GENERATIVE_PROVIDERS = new Set<ApiKeyProvider>([
+  "ollama",
+  "openai-compatible",
+]);
+
 const getGenPrefsInternal = ({
   state,
   config,
@@ -389,30 +356,29 @@ const getGenPrefsInternal = ({
   config: GenerativeConfigInput;
   context: string;
 }): GenerativePrefs => {
-  const mode = resolveMode(config.mode, "none");
-  const apiKey = getRec(state.apiKeyById, config.selectedApiKeyId)?.keyFull;
-  const warnings: string[] = [];
-
-  if (mode === "api") {
-    const selectedApiKey = getRec(state.apiKeyById, config.selectedApiKeyId);
-    const provider = selectedApiKey?.provider;
-    const noKeyRequired =
-      provider === "ollama" || provider === "openai-compatible";
-    if (apiKey || noKeyRequired) {
-      return {
-        mode: "api",
-        provider: provider ?? "groq",
-        apiKeyId: config.selectedApiKeyId!,
-        apiKeyValue: apiKey ?? "",
-        postProcessingModel: selectedApiKey?.postProcessingModel ?? null,
-        warnings,
-      };
-    } else {
-      warnings.push(`No API key configured for API ${context}.`);
-    }
+  if (resolveMode(config.mode, "none") !== "api") {
+    return { mode: "none", warnings: [] };
   }
 
-  return { mode: "none", warnings };
+  const selectedApiKey = getRec(state.apiKeyById, config.selectedApiKeyId);
+  if (
+    !selectedApiKey ||
+    (!selectedApiKey.keyFull &&
+      !KEYLESS_GENERATIVE_PROVIDERS.has(selectedApiKey.provider))
+  ) {
+    return {
+      mode: "none",
+      warnings: [`No API key configured for API ${context}.`],
+    };
+  }
+  return {
+    mode: "api",
+    provider: selectedApiKey.provider ?? "groq",
+    apiKeyId: config.selectedApiKeyId!,
+    apiKeyValue: selectedApiKey.keyFull ?? "",
+    postProcessingModel: selectedApiKey.postProcessingModel ?? null,
+    warnings: [],
+  };
 };
 
 export const getGenerativePrefs = (state: AppState): GenerativePrefs => {

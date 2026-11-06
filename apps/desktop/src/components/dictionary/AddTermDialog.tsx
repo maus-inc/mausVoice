@@ -15,19 +15,17 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 
-type AddTermDialogProps = {
-  open: boolean;
-  onClose: () => void;
-  onAddGlossaryTerms: (terms: string[]) => void;
-  onAddReplacement: (source: string, destination: string) => void;
-};
-
 export const AddTermDialog = ({
   open,
   onClose,
   onAddGlossaryTerms,
   onAddReplacement,
-}: AddTermDialogProps) => {
+}: {
+  open: boolean;
+  onClose: () => void;
+  onAddGlossaryTerms: (terms: string[]) => void;
+  onAddReplacement: (source: string, destination: string) => void;
+}) => {
   const intl = useIntl();
   const [isReplacement, setIsReplacement] = useState(false);
   const [glossaryText, setGlossaryText] = useState("");

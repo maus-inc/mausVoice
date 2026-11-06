@@ -37,21 +37,6 @@ export const submitSignIn = async (): Promise<void> => {
   }
 };
 
-export const submitSignInWithGoogle = async (): Promise<void> => {
-  try {
-    produceAppState((state) => {
-      state.login.errorMessage = "";
-    });
-    await getAuthRepo().signInWithGoogleTokens("", "");
-    await tryInit();
-    produceAppState((state) => {
-      state.login.status = "success";
-    });
-  } catch {
-    // Personal use signs in with the local profile; nothing to retry.
-  }
-};
-
 export const submitSignUp = async (): Promise<void> => {
   const state = getAppState();
 
@@ -117,8 +102,4 @@ export const setMode = (mode: LoginMode): void => {
     state.login.hasSubmittedRegistration = false;
     state.login.errorMessage = "";
   });
-};
-
-export const signOut = async (): Promise<void> => {
-  await getAuthRepo().signOut();
 };

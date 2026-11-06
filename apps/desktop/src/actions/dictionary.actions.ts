@@ -2,7 +2,7 @@ import { Term } from "@maus-inc/types";
 import dayjs from "dayjs";
 import { setLocalStorageValue } from "./local-storage.actions";
 import { getTermRepo } from "../repos";
-import { produceAppState } from "../store";
+import { getAppState, produceAppState } from "../store";
 import { registerTerms } from "../utils/app.utils";
 import { createId } from "../utils/id.utils";
 import { getLogger } from "../utils/log.utils";
@@ -19,7 +19,49 @@ export const loadDictionary = async (): Promise<void> => {
   });
 };
 
-type GlossaryResult = { created: Term[]; failed: number };
+type GlossaryResult = Awaited<ReturnType<typeof createGlossaryTerms>>;
+
+/** A glossary term carries no replacement value; it only pins a spelling. */
+const buildGlossaryTerm = (sourceValue: string): Term => ({
+  id: createId(),
+  createdAt: dayjs().toISOString(),
+  sourceValue,
+  destinationValue: "",
+  isReplacement: false,
+});
+
+/** Show the term before the database confirms it. */
+const publishOptimisticTerm = (term: Term): void => {
+  produceAppState((draft) => {
+    draft.termById[term.id] = term;
+    draft.dictionary.termIds = [term.id, ...draft.dictionary.termIds];
+  });
+};
+
+/** Undo only our own optimistic insert: a later edit may own the term now. */
+const rollbackGlossaryTerm = (term: Term): void => {
+  if (getAppState().termById[term.id] !== term) return;
+  produceAppState((draft) => {
+    delete draft.termById[term.id];
+    draft.dictionary.termIds = draft.dictionary.termIds.filter(
+      (id) => id !== term.id,
+    );
+  });
+};
+
+/**
+ * Checklist failures must not turn a successful database write into a reported
+ * failure or roll the persisted term out of the dictionary.
+ */
+const markDictionaryChecklistDone = (shouldContinue: () => boolean): void => {
+  try {
+    setLocalStorageValue("mausvoice:checklist-dictionary", true);
+  } catch {
+    if (shouldContinue()) {
+      getLogger().warning("Could not update the dictionary checklist");
+    }
+  }
+};
 
 /**
  * Adds one value as a glossary term (not a replacement rule). Optimistic update
@@ -32,45 +74,42 @@ type GlossaryResult = { created: Term[]; failed: number };
 const addGlossaryTerm = async (
   sourceValue: string,
   result: GlossaryResult,
+  shouldContinue: () => boolean,
 ): Promise<void> => {
+  if (!shouldContinue()) return;
   const normalized = sourceValue.trim();
-  if (!normalized) {
+  if (!normalized) return;
+
+  const newTerm = buildGlossaryTerm(normalized);
+  publishOptimisticTerm(newTerm);
+
+  if (!shouldContinue()) {
+    rollbackGlossaryTerm(newTerm);
     return;
   }
-
-  const newTerm: Term = {
-    id: createId(),
-    createdAt: dayjs().toISOString(),
-    sourceValue: normalized,
-    destinationValue: "",
-    isReplacement: false,
-  };
-
-  produceAppState((draft) => {
-    draft.termById[newTerm.id] = newTerm;
-    draft.dictionary.termIds = [newTerm.id, ...draft.dictionary.termIds];
-  });
-
+  let persisted: Term;
   try {
-    const persisted = await getTermRepo().createTerm(newTerm);
-    produceAppState((draft) => {
-      draft.termById[persisted.id] = persisted;
-    });
-    result.created.push(persisted);
-    // Every path that grows the dictionary satisfies the "add a word to
-    // your dictionary" onboarding item, whether it is auto-learn, an
-    // edit-watch proposal, the add-to-dictionary hotkey or this dialog.
-    setLocalStorageValue("mausvoice:checklist-dictionary", true);
+    persisted = await getTermRepo().createTerm(newTerm);
   } catch (error) {
-    produceAppState((draft) => {
-      delete draft.termById[newTerm.id];
-      draft.dictionary.termIds = draft.dictionary.termIds.filter(
-        (id) => id !== newTerm.id,
-      );
-    });
+    rollbackGlossaryTerm(newTerm);
+    if (!shouldContinue()) return;
     getLogger().warning(`Failed to create glossary term: ${error}`);
     result.failed += 1;
+    return;
   }
+  if (!shouldContinue()) {
+    rollbackGlossaryTerm(newTerm);
+    return;
+  }
+  produceAppState((draft) => {
+    draft.termById[persisted.id] = persisted;
+  });
+  if (!shouldContinue()) {
+    rollbackGlossaryTerm(persisted);
+    return;
+  }
+  result.created.push(persisted);
+  markDictionaryChecklistDone(shouldContinue);
 };
 
 /**
@@ -80,7 +119,8 @@ const addGlossaryTerm = async (
  */
 export const createGlossaryTerms = async (
   sourceValues: string[],
-): Promise<GlossaryResult> => {
+  shouldContinue: () => boolean = () => true,
+): Promise<{ created: Term[]; failed: number }> => {
   const result: GlossaryResult = { created: [], failed: 0 };
 
   // One value at a time, in the order given. Each step prepends its own id to
@@ -90,7 +130,7 @@ export const createGlossaryTerms = async (
   // shape of the code instead of leaving it to look accidental.
   await sourceValues.reduce(
     (chain, sourceValue) =>
-      chain.then(() => addGlossaryTerm(sourceValue, result)),
+      chain.then(() => addGlossaryTerm(sourceValue, result, shouldContinue)),
     Promise.resolve(),
   );
 

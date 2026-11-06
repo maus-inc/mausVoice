@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { drainSamples } from "./audio-buffer.utils";
+import {
+  audioChunkSampleBounds,
+  drainSamples,
+  padFinalAudioChunk,
+} from "./audio-buffer.utils";
 
 const chunk = (...values: number[]) => new Float32Array(values);
 
@@ -66,5 +70,42 @@ describe("drainSamples", () => {
     drainSamples(pending, counter, 3);
 
     expect(counter.value).toBe(0);
+  });
+});
+
+describe("audioChunkSampleBounds", () => {
+  it("rounds up fractional sample counts", () => {
+    expect(audioChunkSampleBounds(44100, 1, 3)).toEqual({
+      minSamplesPerChunk: 45,
+      maxSamplesPerChunk: 133,
+    });
+  });
+
+  it("keeps the minimum positive and the maximum at least the minimum", () => {
+    expect(audioChunkSampleBounds(16000, 0, -1)).toEqual({
+      minSamplesPerChunk: 1,
+      maxSamplesPerChunk: 1,
+    });
+    expect(audioChunkSampleBounds(16000, 100, 50)).toEqual({
+      minSamplesPerChunk: 1600,
+      maxSamplesPerChunk: 1600,
+    });
+  });
+});
+
+describe("padFinalAudioChunk", () => {
+  it("pads a nonempty forced tail with silence", () => {
+    const input = chunk(0.5, -0.5);
+    expect(Array.from(padFinalAudioChunk(input, 4, true))).toEqual([
+      0.5, -0.5, 0, 0,
+    ]);
+    expect(Array.from(input)).toEqual([0.5, -0.5]);
+  });
+  it("keeps empty, unforced, and sufficiently long chunks unchanged", () => {
+    const empty = chunk();
+    const full = chunk(0.5, -0.5);
+    expect(padFinalAudioChunk(empty, 4, true)).toBe(empty);
+    expect(padFinalAudioChunk(full, 4, false)).toBe(full);
+    expect(padFinalAudioChunk(full, 2, true)).toBe(full);
   });
 });

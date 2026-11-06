@@ -9,21 +9,19 @@ import {
   useState,
 } from "react";
 
-type FadingScrollAreaProps = {
-  fadeHeight?: number;
-  children: ReactNode;
-  sx?: SxProps<Theme>;
-  viewportRef?: Ref<HTMLDivElement>;
-  onScroll?: UIEventHandler<HTMLDivElement>;
-};
-
 export const FadingScrollArea = ({
   fadeHeight = 24,
   children,
   sx,
   viewportRef,
   onScroll,
-}: FadingScrollAreaProps) => {
+}: {
+  fadeHeight?: number;
+  children: ReactNode;
+  sx?: SxProps<Theme>;
+  viewportRef?: Ref<HTMLDivElement>;
+  onScroll?: UIEventHandler<HTMLDivElement>;
+}) => {
   const [topOpacity, setTopOpacity] = useState(0);
   const [bottomOpacity, setBottomOpacity] = useState(0);
   const scrollRef = useRef<HTMLDivElement | null>(null);

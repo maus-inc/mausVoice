@@ -65,6 +65,14 @@ const permissionFor = (
 ): ToolPermission | undefined =>
   permissions?.find((p) => p.toolCallId === toolCallId);
 
+const PERSISTED_TOOL_STATUSES: ReadonlySet<unknown> = new Set<ChatToolStatus>([
+  "complete",
+  "failed",
+  "denied",
+  "pending",
+  "unknown",
+]);
+
 const persistedStatusOf = (
   message: ChatMessage,
   permissions: ToolPermission[] | null | undefined,
@@ -75,14 +83,7 @@ const persistedStatusOf = (
     statuses && Object.hasOwn(statuses, toolCallId)
       ? statuses[toolCallId]
       : undefined;
-  switch (status) {
-    case "complete":
-    case "failed":
-    case "denied":
-    case "pending":
-    case "unknown":
-      return status;
-  }
+  if (PERSISTED_TOOL_STATUSES.has(status)) return status as ChatToolStatus;
   const linked = permissionFor(permissions, toolCallId);
   if (linked?.status === "pending") return "approval";
   // Legacy approval only proves consent, not successful execution.

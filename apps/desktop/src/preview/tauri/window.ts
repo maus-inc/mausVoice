@@ -3,7 +3,8 @@ import { emit, listen, type EventCallback, type UnlistenFn } from "./event";
 export type LogicalPosition = { x: number; y: number };
 export type LogicalSize = { width: number; height: number };
 
-class PreviewWindow {
+/** Browser-only stand-in; it does not create or control a native window. */
+export class Window {
   readonly label = "preview";
 
   async show(): Promise<void> {
@@ -101,9 +102,7 @@ class PreviewWindow {
   }
 }
 
-export type Window = PreviewWindow;
-
-const currentWindow = new PreviewWindow();
+const currentWindow = new Window();
 
 export const getCurrentWindow = (): Window => currentWindow;
 export const getAllWindows = (): Promise<Window[]> =>

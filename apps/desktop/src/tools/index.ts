@@ -8,13 +8,7 @@ import { GetAccessibilityInfoTool } from "./get-accessibility-info.tool";
 import { PasteTool } from "./paste.tool";
 import { RunTerminalCommandTool } from "./run-terminal-command.tool";
 
-type ToolFactory = (info: ToolInfo) => BaseTool;
-type ToolRegistryEntry = {
-  id: string;
-  scope?: ToolInfo["scope"];
-  factory: ToolFactory;
-  getInfo: () => ToolInfo | null;
-};
+type ToolRegistryEntry = NonNullable<ReturnType<typeof getToolRegistryEntry>>;
 
 const staticInfo = (
   id: string,
@@ -28,7 +22,7 @@ const staticInfo = (
  * Declarative tool registry.  Adding a tool now means registering its factory
  * and metadata once; the agent and settings surfaces consume the same list.
  */
-export const TOOL_REGISTRY: ReadonlyMap<string, ToolRegistryEntry> = new Map<
+const TOOL_REGISTRY: ReadonlyMap<string, ToolRegistryEntry> = new Map<
   string,
   ToolRegistryEntry
 >([
@@ -119,7 +113,14 @@ export const listRegisteredToolInfos = (): ToolInfo[] =>
 
 export const getToolRegistryEntry = (
   toolId: string,
-): ToolRegistryEntry | undefined => TOOL_REGISTRY.get(toolId);
+):
+  | {
+      id: string;
+      scope?: ToolInfo["scope"];
+      factory: (info: ToolInfo) => BaseTool;
+      getInfo: () => ToolInfo | null;
+    }
+  | undefined => TOOL_REGISTRY.get(toolId);
 
 export function createTool(info: ToolInfo): BaseTool {
   const entry = TOOL_REGISTRY.get(info.id);

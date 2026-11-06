@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { createStreamingFinalize } from "./streaming-session.utils";
+import {
+  createStreamingFinalize,
+  finalizeStreamingSession,
+} from "./streaming-session.utils";
 
 type BuilderArgs = {
   timeoutMs?: number;
@@ -92,5 +95,24 @@ describe("createStreamingFinalize", () => {
     await expect(finalize.finalize()).resolves.toBe("transcript");
     expect(isCleanedUp()).toBe(true);
     expect(finalize.hasPendingFinalize()).toBe(false);
+  });
+});
+
+describe("finalizeStreamingSession privacy", () => {
+  it("does not expose an untrusted provider rejection", async () => {
+    const logError = vi.fn();
+    const result = await finalizeStreamingSession({
+      providerLabel: "Gladia",
+      session: {
+        finalize: () => Promise.reject(new Error("private transcript and key")),
+      },
+      log: vi.fn(),
+      logError,
+    });
+    expect(logError).toHaveBeenCalledExactlyOnceWith(
+      "[Gladia] Failed to finalize session",
+    );
+    expect(result.rawTranscript).toBeNull();
+    expect(result.warnings).toEqual(["Gladia finalization failed"]);
   });
 });

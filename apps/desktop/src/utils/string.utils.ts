@@ -1,10 +1,6 @@
 import { Nullable } from "@maus-inc/types";
 
-export {
-  KNOWN_SILENCE_HALLUCINATIONS,
-  filterKnownSilenceHallucinations,
-  isKnownSilenceHallucination,
-} from "./hallucination.utils";
+export { filterKnownSilenceHallucinations } from "./hallucination.utils";
 
 /**
  * Escapes regular expression metacharacters in `value` so it can be embedded
@@ -192,6 +188,47 @@ const findBestMatchingRule = (
   return bestMatch;
 };
 
+/** Try longest phrases first, preserving punctuation from the matched source. */
+const findPhraseReplacement = ({
+  segments,
+  wordPositions,
+  wordIndex,
+  maxWordCount,
+  preparedRules,
+}: {
+  segments: string[];
+  wordPositions: number[];
+  wordIndex: number;
+  maxWordCount: number;
+  preparedRules: PreparedRule[];
+}): { text: string; endSegment: number; span: number } | null => {
+  const startSegment = wordPositions[wordIndex];
+  const remainingWords = wordPositions.length - wordIndex;
+  for (let span = Math.min(maxWordCount, remainingWords); span >= 1; span--) {
+    const endSegment = wordPositions[wordIndex + span - 1];
+    const candidate = segments.slice(startSegment, endSegment + 1).join("");
+    const { word, leadingPunctuation, trailingPunctuation } =
+      extractPunctuation(candidate);
+    if (!word) continue;
+    const bestMatch = findBestMatchingRule(
+      preparedRules,
+      collapseWhitespace(word).toLowerCase(),
+      span,
+    );
+    if (bestMatch) {
+      const { word: destinationWord } = extractPunctuation(
+        bestMatch.destinationValue,
+      );
+      return {
+        text: leadingPunctuation + destinationWord + trailingPunctuation,
+        endSegment,
+        span,
+      };
+    }
+  }
+  return null;
+};
+
 export const applyReplacements = (
   text: string,
   rules: ReplacementRule[],
@@ -239,40 +276,18 @@ export const applyReplacements = (
       segmentIndex++;
     }
 
-    const remainingWords = wordPositions.length - wordIndex;
-    let matched = false;
-
-    for (
-      let span = Math.min(maxWordCount, remainingWords);
-      span >= 1 && !matched;
-      span--
-    ) {
-      const endSegment = wordPositions[wordIndex + span - 1];
-      const candidate = segments.slice(startSegment, endSegment + 1).join("");
-      const { word, leadingPunctuation, trailingPunctuation } =
-        extractPunctuation(candidate);
-
-      if (!word) continue;
-
-      const normalizedCandidate = collapseWhitespace(word).toLowerCase();
-      const bestMatch = findBestMatchingRule(
-        preparedRules,
-        normalizedCandidate,
-        span,
-      );
-
-      if (bestMatch) {
-        const { word: destinationWord } = extractPunctuation(
-          bestMatch.destinationValue,
-        );
-        result.push(leadingPunctuation + destinationWord + trailingPunctuation);
-        segmentIndex = endSegment + 1;
-        wordIndex += span;
-        matched = true;
-      }
-    }
-
-    if (!matched) {
+    const match = findPhraseReplacement({
+      segments,
+      wordPositions,
+      wordIndex,
+      maxWordCount,
+      preparedRules,
+    });
+    if (match) {
+      result.push(match.text);
+      segmentIndex = match.endSegment + 1;
+      wordIndex += match.span;
+    } else {
       result.push(segments[startSegment]);
       segmentIndex = startSegment + 1;
       wordIndex++;

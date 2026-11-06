@@ -1,17 +1,10 @@
 import { ArrowRight, Globe, Trash2 } from "lucide-react";
 import { IconButton, Stack, TextField, Tooltip } from "@mui/material";
 import { getRec } from "@maus-inc/utilities";
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-  type ChangeEvent,
-} from "react";
+import { useMemo } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
-import { showErrorSnackbar } from "../../actions/app.actions";
-import { getTermRepo } from "../../repos";
-import { getAppState, produceAppState, useAppStore } from "../../store";
+import { useAppStore } from "../../store";
+import { useDictionaryRowEditor } from "./useDictionaryRowEditor";
 import {
   isEditableTarget,
   useContextMenu,
@@ -25,90 +18,15 @@ export type DictionaryRowProps = {
 export const DictionaryRow = ({ id }: DictionaryRowProps) => {
   const intl = useIntl();
   const term = useAppStore((state) => getRec(state.termById, id));
-  const [sourceValue, setSourceValue] = useState(term?.sourceValue ?? "");
-  const [destinationValue, setDestinationValue] = useState(
-    term?.destinationValue ?? "",
-  );
+  const {
+    sourceValue,
+    destinationValue,
+    handleFieldChange,
+    handleCommit,
+    handleDelete,
+  } = useDictionaryRowEditor(id, term);
   const isReplacement = term?.isReplacement ?? true;
   const isGlobal = term?.isGlobal ?? false;
-
-  useEffect(() => {
-    setSourceValue(term?.sourceValue ?? "");
-    setDestinationValue(term?.destinationValue ?? "");
-  }, [term?.sourceValue, term?.destinationValue]);
-
-  const handleFieldChange =
-    (field: "source" | "destination") =>
-    (event: ChangeEvent<HTMLInputElement>) => {
-      if (field === "source") {
-        setSourceValue(event.target.value);
-      } else {
-        setDestinationValue(event.target.value);
-      }
-    };
-
-  const handleCommit = useCallback(async () => {
-    if (!term) {
-      return;
-    }
-
-    if (
-      term.sourceValue === sourceValue &&
-      term.destinationValue === destinationValue
-    ) {
-      return;
-    }
-
-    const previousTerm = term;
-    const updatedTerm = {
-      ...term,
-      sourceValue,
-      destinationValue,
-    };
-
-    produceAppState((draft) => {
-      draft.termById[id] = updatedTerm;
-    });
-
-    try {
-      await getTermRepo().updateTerm(updatedTerm);
-    } catch (error) {
-      produceAppState((draft) => {
-        draft.termById[id] = previousTerm;
-      });
-      setSourceValue(previousTerm.sourceValue);
-      setDestinationValue(previousTerm.destinationValue);
-      showErrorSnackbar(error);
-    }
-  }, [destinationValue, id, sourceValue, term]);
-
-  const handleDelete = useCallback(async () => {
-    if (!term) {
-      return;
-    }
-
-    const previousTerm = term;
-    const previousIds = [...getAppState().dictionary.termIds];
-
-    produceAppState((draft) => {
-      delete draft.termById[id];
-      draft.dictionary.termIds = draft.dictionary.termIds.filter(
-        (termId) => termId !== id,
-      );
-    });
-
-    try {
-      await getTermRepo().deleteTerm(id);
-    } catch (error) {
-      produceAppState((draft) => {
-        draft.termById[id] = previousTerm;
-        draft.dictionary.termIds = previousIds;
-      });
-      setSourceValue(previousTerm.sourceValue);
-      setDestinationValue(previousTerm.destinationValue);
-      showErrorSnackbar(error);
-    }
-  }, [id, term]);
 
   const ctxMenu = useContextMenu();
 

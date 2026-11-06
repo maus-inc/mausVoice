@@ -39,10 +39,12 @@ export interface AppTableProps<T> {
   >;
   footer?: React.ReactNode;
   defaultSortColumnIndex?: number;
-  defaultSortDirection?: SortDirection;
+  defaultSortDirection?: "asc" | "desc";
 }
 
-type SortDirection = "asc" | "desc";
+type SortDirection = NonNullable<
+  AppTableProps<unknown>["defaultSortDirection"]
+>;
 
 export function AppTable<T>({
   rows,

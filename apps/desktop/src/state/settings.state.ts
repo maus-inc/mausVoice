@@ -64,7 +64,6 @@ export type SettingsAgentModeState = Omit<SettingsGenerativeState, "mode"> & {
 };
 
 export type SettingsState = {
-  changePasswordDialogOpen: boolean;
   deleteAccountDialog: boolean;
   microphoneDialogOpen: boolean;
   audioDialogOpen: boolean;
@@ -136,7 +135,6 @@ export const isLocalTranscriptionModelSelectable = (
 };
 
 export const INITIAL_SETTINGS_STATE: SettingsState = {
-  changePasswordDialogOpen: false,
   deleteAccountDialog: false,
   microphoneDialogOpen: false,
   audioDialogOpen: false,

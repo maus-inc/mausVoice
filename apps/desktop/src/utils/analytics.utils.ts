@@ -45,10 +45,6 @@ export function trackAgentStart() {
   getMixpanel()?.track("Activate Agent Mode");
 }
 
-export function trackPaymentComplete() {
-  getMixpanel()?.track("Payment Complete");
-}
-
 export function trackButtonClick(
   name: string,
   props?: Record<string, unknown>,

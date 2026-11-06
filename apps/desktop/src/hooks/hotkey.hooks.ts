@@ -1,7 +1,9 @@
+import { isHotkeyCaptureActive } from "./hotkey-capture.hooks";
 import { ActivationController } from "@maus-inc/desktop-utils";
 import {
   processFireCombo,
   type FireComboState,
+  type HotkeyHoldAction,
   useHotkeyFire as useHotkeyFireGeneric,
   useHotkeyHoldMany as useHotkeyHoldManyGeneric,
 } from "@maus-inc/desktop-utils/react";
@@ -10,15 +12,11 @@ import type { AppState } from "../state/app.state";
 import { getAppState, useAppStore } from "../store";
 import { getHotkeyCombosForAction } from "../utils/keyboard.utils";
 
-type HoldAction = {
-  actionName: string;
-  controller: ActivationController;
-  allowedAdditionalKeys?: string[];
-};
-
-type HotkeyHoldArgs = HoldAction & { isDisabled?: boolean };
-
-export const useHotkeyHold = (args: HotkeyHoldArgs) => {
+export const useHotkeyHold = (
+  args: Parameters<typeof useHotkeyHoldMany>[0]["actions"][number] & {
+    isDisabled?: boolean;
+  },
+) => {
   const actions = useMemo(
     () => [
       {
@@ -33,11 +31,15 @@ export const useHotkeyHold = (args: HotkeyHoldArgs) => {
 };
 
 export const useHotkeyHoldMany = (args: {
-  actions: HoldAction[];
+  actions: Array<{
+    actionName: string;
+    controller: ActivationController;
+    allowedAdditionalKeys?: string[];
+  }>;
   isDisabled?: boolean;
 }) => {
   const keysHeld = useAppStore((s) => s.keysHeld);
-  const isRecordingHotkey = useAppStore((state) => state.isRecordingHotkey);
+  const isRecordingHotkey = useAppStore(isHotkeyCaptureActive);
   const hotkeyById = useAppStore((state) => state.hotkeyById);
   const hotkeyTriggers = useAppStore((state) => state.hotkeyTriggers);
 
@@ -53,7 +55,7 @@ export const useHotkeyHoldMany = (args: {
     return map;
   }, [hotkeyById, args.actions]);
 
-  const genericActions = useMemo(
+  const genericActions = useMemo<HotkeyHoldAction[]>(
     () =>
       args.actions.map((action) => ({
         controller: action.controller,
@@ -85,7 +87,7 @@ export const useHotkeyFire = (args: {
   onFire?: () => void;
 }) => {
   const keysHeld = useAppStore((state) => state.keysHeld);
-  const isRecordingHotkey = useAppStore((state) => state.isRecordingHotkey);
+  const isRecordingHotkey = useAppStore(isHotkeyCaptureActive);
   const combos = useAppStore((state) =>
     getHotkeyCombosForAction(state, args.actionName),
   );
@@ -102,10 +104,9 @@ export const useHotkeyFire = (args: {
   });
 };
 
-type FireManyAction = {
-  actionName: string;
-  onFire: () => void;
-};
+type FireManyAction = Parameters<
+  typeof useHotkeyFireMany
+>[0]["actions"][number];
 
 const processFireManyAction = (args: {
   action: FireManyAction;
@@ -169,13 +170,13 @@ const processBridgeTriggers = (
  * combo semantics as the single-action hook.
  */
 export const useHotkeyFireMany = (args: {
-  actions: FireManyAction[];
+  actions: Array<{ actionName: string; onFire: () => void }>;
   isDisabled?: boolean;
 }) => {
   const keysHeld = useAppStore((state) => state.keysHeld);
   const hotkeyById = useAppStore((state) => state.hotkeyById);
   const hotkeyTriggers = useAppStore((state) => state.hotkeyTriggers);
-  const isRecordingHotkey = useAppStore((state) => state.isRecordingHotkey);
+  const isRecordingHotkey = useAppStore(isHotkeyCaptureActive);
   const previousKeysRef = useRef<string[]>([]);
   const comboStateRef = useRef(new Map<string, FireComboState>());
   const wasDisabledRef = useRef(false);

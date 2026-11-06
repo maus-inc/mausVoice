@@ -11,31 +11,14 @@ import {
   Stack,
   Typography,
 } from "@mui/material";
-import type { Hotkey } from "@maus-inc/types";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
-import { showErrorSnackbar } from "../../actions/app.actions";
-import { getHotkeyRepo } from "../../repos";
-import { produceAppState, useAppStore } from "../../store";
-import { applyReplacedStyleHotkeys } from "../../utils/style-hotkey";
-import { createId } from "../../utils/id.utils";
+import { useAppStore } from "../../store";
 import { isStyleSelectionAvailable } from "../../utils/post-processing.utils";
-import {
-  getHotkeyCombosForAction,
-  getPrettyKeyName,
-  getSwitchToStyleActionName,
-  SWITCH_TO_STYLE_HOTKEY_PREFIX,
-  syncHotkeyCombosToNative,
-} from "../../utils/keyboard.utils";
+import { getPrettyKeyName } from "../../utils/keyboard.utils";
 import { HotKey } from "../common/HotKey";
 import { PostProcessingDisabledTooltip } from "../styling/PostProcessingDisabledTooltip";
-
-type StyleHotkeyRow = {
-  toneId: string;
-  toneName: string;
-  actionName: string;
-  keys: string[];
-};
+import { useStyleHotkeyDraft } from "./useStyleHotkeyDraft";
 
 /** Assign one optional global shortcut to each writing style. */
 export const StyleHotkeysDialog = () => {
@@ -50,36 +33,8 @@ export const StyleHotkeysDialog = () => {
   );
   const styleSelectionAvailable = useAppStore(isStyleSelectionAvailable);
   const intl = useIntl();
-  const [rows, setRows] = useState<StyleHotkeyRow[]>([]);
-  const [isSaving, setIsSaving] = useState(false);
-
-  useEffect(() => {
-    if (!open) return;
-    setRows(
-      tones.map((tone) => {
-        const actionName = getSwitchToStyleActionName(tone.id);
-        return {
-          toneId: tone.id,
-          toneName: tone.name,
-          actionName,
-          keys:
-            getHotkeyCombosForAction(useAppStore.getState(), actionName)[0] ??
-            [],
-        };
-      }),
-    );
-    // Snapshot persisted shortcuts when the dialog opens or the tone list
-    // changes. Do not depend on `hotkeyById`: unrelated store writes would
-    // wipe in-progress edits.
-  }, [open, tones]);
-
-  useEffect(() => {
-    if (open && !styleSelectionAvailable) {
-      produceAppState((draft) => {
-        draft.isRecordingHotkey = false;
-      });
-    }
-  }, [open, styleSelectionAvailable]);
+  const { rows, setRows, ready, failed, retry, isSaving, close, save } =
+    useStyleHotkeyDraft(open, tones, styleSelectionAvailable);
 
   const hasConflict = useMemo(() => {
     const filled = rows.filter((row) => row.keys.length > 0);
@@ -97,55 +52,6 @@ export const StyleHotkeysDialog = () => {
     }
     return false;
   }, [rows]);
-
-  const close = () => {
-    produceAppState((draft) => {
-      draft.settings.styleHotkeysDialogOpen = false;
-    });
-  };
-
-  const save = async () => {
-    if (isSaving || !styleSelectionAvailable) return;
-    setIsSaving(true);
-    try {
-      const state = useAppStore.getState();
-      const prefix = SWITCH_TO_STYLE_HOTKEY_PREFIX;
-      const existingIdByActionName = new Map(
-        Object.values(state.hotkeyById)
-          .filter((hotkey) => hotkey.actionName.startsWith(prefix))
-          .map((hotkey) => [hotkey.actionName, hotkey.id]),
-      );
-      const next = rows
-        .filter((row) => row.keys.length > 0)
-        .map((row): Hotkey => ({
-          id: existingIdByActionName.get(row.actionName) ?? createId(),
-          actionName: row.actionName,
-          keys: row.keys,
-        }));
-
-      const repo = getHotkeyRepo();
-      const saved = await repo.replaceStyleHotkeys(prefix, next);
-
-      produceAppState((draft) => {
-        applyReplacedStyleHotkeys(draft, prefix, saved);
-      });
-
-      try {
-        await syncHotkeyCombosToNative();
-      } catch (error) {
-        // The database replacement already committed in a single transaction,
-        // so only the in-memory native sync failed. Surface the error and let
-        // the user retry instead of silently reverting SQLite to a stale state.
-        showErrorSnackbar(error);
-        return;
-      }
-      close();
-    } catch (error) {
-      showErrorSnackbar(error);
-    } finally {
-      setIsSaving(false);
-    }
-  };
 
   return (
     <Dialog
@@ -174,7 +80,17 @@ export const StyleHotkeysDialog = () => {
         </Box>
       </DialogTitle>
       <DialogContent dividers>
-        <Stack spacing={1.25}>
+        <Stack spacing={1.25} inert={isSaving}>
+          {!ready &&
+            (failed ? (
+              <Button onClick={retry}>
+                <FormattedMessage defaultMessage="Retry" />
+              </Button>
+            ) : (
+              <Typography>
+                <FormattedMessage defaultMessage="Loading" />
+              </Typography>
+            ))}
           {styleSelectionAvailable && hasConflict && (
             <Alert severity="warning" variant="outlined">
               <FormattedMessage defaultMessage="Some style shortcuts overlap and may be difficult to trigger." />
@@ -248,7 +164,7 @@ export const StyleHotkeysDialog = () => {
         <Button
           variant="contained"
           onClick={() => void save()}
-          disabled={isSaving || !styleSelectionAvailable}
+          disabled={!ready || isSaving || !styleSelectionAvailable}
         >
           <FormattedMessage defaultMessage="Save" />
         </Button>

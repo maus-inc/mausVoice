@@ -3,7 +3,16 @@ import { AppState } from "../state/app.state";
 import { useAppStore } from "../store";
 import { getEffectiveStylingMode } from "./feature.utils";
 import { getPlatform } from "./platform.utils";
+import { formatHotkeyLabel } from "./hotkey-label.utils";
 import { getIsDictationUnlocked } from "./user.utils";
+import {
+  ADDITIONAL_LANGUAGE_HOTKEY_PREFIX,
+  getAdditionalLanguageHotkeys,
+} from "./additional-language.utils";
+export {
+  ADDITIONAL_LANGUAGE_HOTKEY_PREFIX,
+  getAdditionalLanguageActionName,
+} from "./additional-language.utils";
 
 export const DICTATE_HOTKEY = "dictate";
 export const AGENT_DICTATE_HOTKEY = "agent-dictate";
@@ -14,7 +23,6 @@ export const SWITCH_WRITING_STYLE_BACKWARD_HOTKEY =
 export const CANCEL_TRANSCRIPTION_HOTKEY = "cancel-transcription";
 export const OPEN_CHAT_HOTKEY = "open-chat";
 export const ADD_TO_DICTIONARY_HOTKEY = "add-to-dictionary";
-export const ADDITIONAL_LANGUAGE_HOTKEY_PREFIX = "additional-language:";
 export const SWITCH_TO_STYLE_HOTKEY_PREFIX = "switch-to-style:";
 
 type CompositorBinding = {
@@ -36,38 +44,15 @@ const isCompositorTriggerAction = (actionName: string): boolean =>
   actionName.startsWith(ADDITIONAL_LANGUAGE_HOTKEY_PREFIX) ||
   actionName.startsWith(SWITCH_TO_STYLE_HOTKEY_PREFIX);
 
-export const getAdditionalLanguageActionName = (language: string): string =>
-  `${ADDITIONAL_LANGUAGE_HOTKEY_PREFIX}${language}`;
-
-export const getAdditionalLanguageCode = (
-  actionName: string,
-): string | null => {
-  if (!actionName.startsWith(ADDITIONAL_LANGUAGE_HOTKEY_PREFIX)) {
-    return null;
-  }
-
-  const raw = actionName.slice(ADDITIONAL_LANGUAGE_HOTKEY_PREFIX.length);
-  return raw.length > 0 ? raw : null;
-};
-
 export const getSwitchToStyleActionName = (toneId: string): string =>
   `${SWITCH_TO_STYLE_HOTKEY_PREFIX}${toneId}`;
-
-export const getSwitchToStyleToneId = (actionName: string): string | null => {
-  if (!actionName.startsWith(SWITCH_TO_STYLE_HOTKEY_PREFIX)) {
-    return null;
-  }
-
-  const raw = actionName.slice(SWITCH_TO_STYLE_HOTKEY_PREFIX.length);
-  return raw.length > 0 ? raw : null;
-};
 
 type PlatformHotkeyCombos = {
   macos: string[][];
   windows: string[][];
 };
 
-export const DEFAULT_HOTKEY_COMBOS: Record<string, PlatformHotkeyCombos> = {
+const DEFAULT_HOTKEY_COMBOS: Record<string, PlatformHotkeyCombos> = {
   [DICTATE_HOTKEY]: {
     macos: [["Function"]],
     windows: [["MetaLeft", "ControlLeft"]],
@@ -84,10 +69,6 @@ export const DEFAULT_HOTKEY_COMBOS: Record<string, PlatformHotkeyCombos> = {
     macos: [["LeftArrow"]],
     windows: [["LeftArrow"]],
   },
-};
-
-export const getHasDefaultHotkeyForAction = (actionName: string): boolean => {
-  return Boolean(DEFAULT_HOTKEY_COMBOS[actionName]);
 };
 
 export const getDefaultHotkeyCombosForAction = (
@@ -190,7 +171,7 @@ export const getStyleSwitchActionNamesForKey = (
   );
 };
 
-export const isHoldActionHotkey = (actionName: string): boolean => {
+const isHoldActionHotkey = (actionName: string): boolean => {
   return (
     actionName === DICTATE_HOTKEY ||
     actionName === AGENT_DICTATE_HOTKEY ||
@@ -214,50 +195,8 @@ export const isModifierOnlyCombo = (combo: string[]): boolean => {
   return combo.length > 0 && combo.every((key) => isModifierLikeKey(key));
 };
 
-const MODIFIER_SIDE_RE = /(Left|Right)$/i;
-
-const appendSideLabel = (base: string, key: string): string => {
-  // `match[1]` is the only capture group and it is non-optional in the pattern,
-  // so a successful `exec` always yields it. Reading it through `?.[1]` and
-  // bailing on `undefined` keeps that fact explicit instead of asserting it.
-  const side = MODIFIER_SIDE_RE.exec(key)?.[1];
-  if (side === undefined) return base;
-  return `${base} ${side.charAt(0).toUpperCase()}`;
-};
-
-export const getPrettyKeyName = (key: string): string => {
-  const lower = key.toLowerCase();
-  if (lower.startsWith("key")) {
-    return key.slice(3).toUpperCase();
-  }
-
-  if (lower.startsWith("meta")) {
-    return appendSideLabel(getPlatform() === "macos" ? "⌘" : "⊞", key);
-  }
-
-  if (lower.startsWith("control")) {
-    return appendSideLabel(getPlatform() === "macos" ? "⌃" : "Ctrl", key);
-  }
-
-  if (lower.startsWith("shift")) {
-    return appendSideLabel(getPlatform() === "macos" ? "⇧" : "Shift", key);
-  }
-
-  if (lower.startsWith("alt") || lower.startsWith("option")) {
-    return appendSideLabel(getPlatform() === "macos" ? "⌥" : "Alt", key);
-  }
-
-  if (lower.startsWith("function")) {
-    return "Fn";
-  }
-
-  if (key === "LeftArrow") return "←";
-  if (key === "RightArrow") return "→";
-  if (key === "UpArrow") return "↑";
-  if (key === "DownArrow") return "↓";
-
-  return key;
-};
+export const getPrettyKeyName = (key: string): string =>
+  formatHotkeyLabel(key, () => getPlatform() === "macos");
 
 export type AdditionalLanguageEntry = {
   actionName: string;
@@ -268,24 +207,13 @@ export type AdditionalLanguageEntry = {
 export const getAdditionalLanguageEntries = (
   state: AppState,
 ): AdditionalLanguageEntry[] => {
-  return Object.values(state.hotkeyById)
-    .filter(
-      (hotkey) =>
-        hotkey &&
-        hotkey.actionName.startsWith(ADDITIONAL_LANGUAGE_HOTKEY_PREFIX),
-    )
-    .map((hotkey) => {
-      const language = getAdditionalLanguageCode(hotkey.actionName);
-      if (!language) {
-        return null;
-      }
-      return {
-        actionName: hotkey.actionName,
-        language,
-        hotkeyCombos: getHotkeyCombosForAction(state, hotkey.actionName),
-      };
-    })
-    .filter((entry): entry is AdditionalLanguageEntry => Boolean(entry));
+  return getAdditionalLanguageHotkeys(state).map(
+    ({ actionName, language }) => ({
+      actionName,
+      language,
+      hotkeyCombos: getHotkeyCombosForAction(state, actionName),
+    }),
+  );
 };
 
 /**

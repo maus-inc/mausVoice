@@ -7,6 +7,7 @@ import { collectTermValues } from "../utils/app.utils";
 import { isPersistenceAllowed } from "../utils/incognito.utils";
 import { getLogger } from "../utils/log.utils";
 import { getMyUserPreferences } from "../utils/user.utils";
+import { captureUserSession } from "../utils/user-session.utils";
 import { createGlossaryTerms } from "./dictionary.actions";
 
 export type SaveCorrectedTranscriptResult = {
@@ -23,9 +24,18 @@ export type SaveCorrectedTranscriptResult = {
   dictionarySuppressed: boolean;
 };
 
+export class CorrectionRetiredError extends Error {
+  constructor() {
+    super("Correction was retired");
+  }
+}
+
+const correctionOwners = new Map<string, symbol>();
+
 const learnTermsFromCorrection = async (
   original: string,
   corrected: string,
+  shouldContinue: () => boolean,
 ): Promise<{ learnedTerms: string[]; failedTerms: number }> => {
   const state = getAppState();
   const existingTerms = collectTermValues(state);
@@ -43,11 +53,20 @@ const learnTermsFromCorrection = async (
   // createGlossaryTerms absorbs per-term persistence errors (it logs and
   // continues) and reports them through `failed`, so a glossary failure is
   // surfaced as partial success rather than thrown here.
-  const { created, failed } = await createGlossaryTerms(learnedTerms);
-  return {
-    learnedTerms: created.map((term) => term.sourceValue),
-    failedTerms: failed,
-  };
+  try {
+    const { created, failed } = await createGlossaryTerms(
+      learnedTerms,
+      shouldContinue,
+    );
+    return {
+      learnedTerms: created.map((term) => term.sourceValue),
+      failedTerms: failed,
+    };
+  } catch {
+    if (!shouldContinue()) return { learnedTerms: [], failedTerms: 0 };
+    getLogger().warning("Failed to learn glossary terms");
+    return { learnedTerms: [], failedTerms: learnedTerms.length };
+  }
 };
 
 /**
@@ -84,21 +103,24 @@ export const saveCorrectedTranscript = async ({
 
   const previous = transcription;
   const updated = { ...transcription, transcript: normalized };
-
-  produceAppState((draft) => {
-    draft.transcriptionById[transcriptionId] = updated;
-  });
+  const isCurrentSession = captureUserSession();
+  const owner = Symbol("correction");
+  correctionOwners.set(transcriptionId, owner);
+  const isCurrent = () =>
+    isCurrentSession() && correctionOwners.get(transcriptionId) === owner;
+  const requireCurrent = () => {
+    if (!isCurrent()) throw new CorrectionRetiredError();
+  };
 
   let learnedTerms: string[] = [];
   let failedTerms = 0;
   let dictionarySuppressed = false;
+  let correctionSaved = false;
   try {
-    // One decision, read once, for both writes below: the history row and the
-    // glossary. Read separately they could disagree if the mode changed while an
-    // await was in flight. It is the first statement inside the `try` rather than
-    // above it so that every path after the optimistic update at line 81 rolls
-    // back through the `catch` -- resting that on statement order is exactly the
-    // kind of invariant that a later edit moves.
+    produceAppState((draft) => {
+      draft.transcriptionById[transcriptionId] = updated;
+    });
+    requireCurrent();
     const persistenceAllowed = isPersistenceAllowed();
 
     // Editing a transcript is a write to the history row like any other, so it
@@ -108,9 +130,12 @@ export const saveCorrectedTranscript = async ({
     const persisted = persistenceAllowed
       ? await getTranscriptionRepo().updateTranscription(updated)
       : updated;
+    correctionSaved = true;
+    requireCurrent();
     produceAppState((draft) => {
       draft.transcriptionById[transcriptionId] = persisted;
     });
+    requireCurrent();
 
     const autoLearnEnabled =
       getMyUserPreferences(getAppState())?.autoLearnDictionaryEnabled ?? true;
@@ -119,11 +144,13 @@ export const saveCorrectedTranscript = async ({
     // the corrected text, so persisting them would leave the sensitive content
     // behind in a table the mode never promised to touch. Gating only the
     // transcript write left the dictionary as the surviving copy.
-    if (autoLearnEnabled && persistenceAllowed) {
+    if (autoLearnEnabled && persistenceAllowed && isPersistenceAllowed()) {
       const result = await learnTermsFromCorrection(
         previous.transcript,
         normalized,
+        () => isCurrent() && isPersistenceAllowed(),
       );
+      requireCurrent();
       learnedTerms = result.learnedTerms;
       failedTerms = result.failedTerms;
     } else if (autoLearnEnabled) {
@@ -133,11 +160,21 @@ export const saveCorrectedTranscript = async ({
       dictionarySuppressed = true;
     }
   } catch (error) {
-    produceAppState((draft) => {
-      draft.transcriptionById[transcriptionId] = previous;
-    });
+    if (!isCurrent()) throw new CorrectionRetiredError();
+    if (
+      !correctionSaved &&
+      getAppState().transcriptionById[transcriptionId] === updated
+    ) {
+      produceAppState((draft) => {
+        draft.transcriptionById[transcriptionId] = previous;
+      });
+    }
     getLogger().error(`Failed to save corrected transcript: ${error}`);
     throw error;
+  } finally {
+    if (correctionOwners.get(transcriptionId) === owner) {
+      correctionOwners.delete(transcriptionId);
+    }
   }
 
   return { learnedTerms, failedTerms, dictionarySuppressed };

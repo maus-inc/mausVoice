@@ -110,6 +110,55 @@ describe("TranscriptionDetailsDialog post-processing model field", () => {
     expect(bodyText()).toContain("Unknown");
   });
 
+  it("wires the editable output to the focused draft and cancel action", async () => {
+    seed({});
+    root = await render(container);
+    const button = (label: string) =>
+      Array.from(document.querySelectorAll("button")).find(
+        (item) => item.textContent?.trim() === label,
+      );
+    await act(async () => button("Edit")?.click());
+    const textarea = document.querySelector("textarea");
+    expect(textarea).not.toBeNull();
+    expect(document.activeElement).toBe(textarea);
+    expect(textarea?.value).toBe("hello world");
+    await act(async () => button("Cancel")?.click());
+    expect(document.querySelector("textarea")).toBeNull();
+    expect(bodyText()).toContain("hello world");
+  });
+
+  it("preserves warnings, prompts, mode labels, and key metadata", async () => {
+    seed({
+      transcriptionMode: "api",
+      postProcessMode: "fast",
+      transcriptionApiKeyId: "key-1",
+      postProcessApiKeyId: "missing",
+      rawTranscript: "raw words",
+      transcriptionPrompt: "  vocabulary  ",
+      postProcessPrompt: "  Correct raw words please  ",
+      warnings: ["  slow provider  ", "  ", "retry used"],
+    });
+    produceAppState((draft) => {
+      draft.apiKeyById["key-1"] = {
+        id: "key-1",
+        name: "Primary",
+        provider: "groq",
+        createdAt: "2026-08-01T12:00:00.000Z",
+        keySuffix: "1234",
+      };
+    });
+    root = await render(container);
+    const text = bodyText();
+    expect(text).toContain("Warnings");
+    expect(text).toContain("slow provider");
+    expect(text).toContain("retry used");
+    expect(text).toContain("Primary (••••1234)");
+    expect(text).toContain("Unknown");
+    expect(text).toContain("Fast (local)");
+    expect(text).toContain("vocabulary");
+    expect(text).toContain("Correct <transcript> please");
+  });
+
   it("still renders every metadata field after the DetailField refactor", async () => {
     seed({
       modelSize: "small",

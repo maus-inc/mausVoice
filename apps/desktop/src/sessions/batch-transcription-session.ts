@@ -14,6 +14,11 @@ import {
   type PauseChunkingConfig,
   type PretranscriptionResult,
 } from "./pause-chunked-pretranscriber";
+import {
+  failedCaptureResult,
+  usableRecordingAudio,
+  wholeRecordingResult,
+} from "./recording-transcription.utils";
 import { SessionAbortScope } from "./session-abort-scope";
 
 /**
@@ -21,7 +26,7 @@ import { SessionAbortScope } from "./session-abort-scope";
  * minimum), so spans stay well above that while keeping the post-stop tail
  * short.
  */
-export const CLOUD_PRETRANSCRIPTION: PauseChunkingConfig = {
+const CLOUD_PRETRANSCRIPTION: PauseChunkingConfig = {
   minChunkSec: 12,
   minPauseMs: 450,
 };
@@ -35,13 +40,6 @@ export const LOCAL_PRETRANSCRIPTION: PauseChunkingConfig = {
   minPauseMs: 450,
 };
 
-type PretranscriptionOptions = {
-  config: PauseChunkingConfig;
-  hallucinationFilterEnabled?: boolean;
-  /** Which transcript field represents a span; mirrors the session's whole-recording path. */
-  selectText: (result: TranscribeAudioResult) => string;
-};
-
 /**
  * Pretranscriber backed by the regular `transcribeAudio` action, so every
  * span goes through the same provider dispatch, prompt, silence gate, and
@@ -49,7 +47,16 @@ type PretranscriptionOptions = {
  */
 export const createActionPretranscriber = (
   sampleRate: number,
-  { config, hallucinationFilterEnabled, selectText }: PretranscriptionOptions,
+  {
+    config,
+    hallucinationFilterEnabled,
+    selectText,
+  }: {
+    config: PauseChunkingConfig;
+    hallucinationFilterEnabled?: boolean;
+    /** Which transcript field represents a span; mirrors the session's whole-recording path. */
+    selectText: (result: TranscribeAudioResult) => string;
+  },
 ): PauseChunkedPretranscriber =>
   new PauseChunkedPretranscriber(
     sampleRate,
@@ -69,7 +76,7 @@ export const createActionPretranscriber = (
     config,
   );
 
-export const logPretranscription = (
+const logPretranscription = (
   label: string,
   result: PretranscriptionResult,
   waitMs: number,
@@ -77,6 +84,25 @@ export const logPretranscription = (
   getLogger().info(
     `[${label}] pretranscribed ${result.chunkCount} spans; post-stop wait ${Math.round(waitMs)}ms (${result.text.length} chars)`,
   );
+};
+
+/** Finish sealed spans once; a missing or unusable result triggers full transcription. */
+export const finishPretranscriber = async (
+  pretranscriber: PauseChunkedPretranscriber | null,
+  audio: StopRecordingResponse,
+  label: string,
+  warning: string,
+): Promise<PretranscriptionResult | null> => {
+  if (!pretranscriber || pretranscriber.chunkCount === 0) return null;
+  // `finish` seals the pretranscriber while its final tail is processed.
+  const started = performance.now();
+  const result = await pretranscriber.finish(audio);
+  if (!result) {
+    getLogger().warning(warning);
+    return null;
+  }
+  logPretranscription(label, result, performance.now() - started);
+  return result;
 };
 
 /**
@@ -100,8 +126,17 @@ export class BatchTranscriptionSession implements TranscriptionSession {
   private pretranscriber: PauseChunkedPretranscriber | null = null;
   /** Per recording, not per session instance: `onRecordingStart` re-arms it. */
   private abortScope = new SessionAbortScope();
+  private finalizing = false;
+  private generation = 0;
+
+  onBeforeRecordingStart(): Promise<void> {
+    this.resetForRecording();
+    this.finalizing = false;
+    return Promise.resolve();
+  }
 
   onRecordingStart(sampleRate: number): Promise<void> {
+    if (this.finalizing) return Promise.resolve();
     this.resetForRecording();
     this.pretranscriber = createActionPretranscriber(sampleRate, {
       config: CLOUD_PRETRANSCRIPTION,
@@ -116,24 +151,31 @@ export class BatchTranscriptionSession implements TranscriptionSession {
    * stream with the final recording.
    */
   writeAudioChunk(chunk: Float32Array, offset: number): void {
-    this.pretranscriber?.push(chunk, offset);
+    if (!this.finalizing) this.pretranscriber?.push(chunk, offset);
   }
 
   async finalize(
     audio: StopRecordingResponse,
     options?: { toneId?: string | null },
   ): Promise<TranscriptionSessionResult> {
+    this.finalizing = true;
+    const generation = this.generation;
+    const scope = this.abortScope;
+    const pretranscriber = this.pretranscriber;
     try {
-      const pretranscriber = this.pretranscriber;
-      const pretranscribed = await this.finishPretranscription(audio);
+      if (scope.isAborted) return emptyResult();
+      if (audio.captureFailed) return failedCaptureResult();
+      const pretranscribed = await this.finishPretranscription(
+        audio,
+        pretranscriber,
+      );
+      if (scope.isAborted) return emptyResult();
       if (pretranscribed) return pretranscribed;
       // Cancelled mid-finalize: don't pay for a whole-recording request nobody reads.
-      if (pretranscriber?.isDisposed || this.abortScope.isAborted) {
-        return emptyResult();
-      }
-      return await this.transcribeWholeRecording(audio, options);
+      if (pretranscriber?.isDisposed) return emptyResult();
+      return await this.transcribeWholeRecording(audio, options, scope);
     } finally {
-      this.cleanup();
+      if (generation === this.generation) this.cleanup();
     }
   }
 
@@ -144,6 +186,7 @@ export class BatchTranscriptionSession implements TranscriptionSession {
   }
 
   cleanup(): void {
+    this.generation += 1;
     this.abortScope.abort();
     this.pretranscriber?.dispose();
     this.pretranscriber = null;
@@ -157,20 +200,15 @@ export class BatchTranscriptionSession implements TranscriptionSession {
 
   private async finishPretranscription(
     audio: StopRecordingResponse,
+    pretranscriber: PauseChunkedPretranscriber | null,
   ): Promise<TranscriptionSessionResult | null> {
-    const pretranscriber = this.pretranscriber;
-    if (!pretranscriber || pretranscriber.chunkCount === 0) return null;
-    // `finish` seals the pretranscriber, so chunks that arrive while the tail
-    // transcribes are ignored without tearing the component's listener down.
-    const started = performance.now();
-    const result = await pretranscriber.finish(audio);
-    if (!result) {
-      getLogger().warning(
-        "Batch session: pretranscription unusable, transcribing the whole recording",
-      );
-      return null;
-    }
-    logPretranscription("batch", result, performance.now() - started);
+    const result = await finishPretranscriber(
+      pretranscriber,
+      audio,
+      "batch",
+      "Batch session: pretranscription unusable, transcribing the whole recording",
+    );
+    if (!result) return null;
     return {
       rawTranscript: result.text,
       metadata: result.metadata,
@@ -180,17 +218,18 @@ export class BatchTranscriptionSession implements TranscriptionSession {
 
   private async transcribeWholeRecording(
     audio: StopRecordingResponse,
-    options?: { toneId?: string | null },
+    options: { toneId?: string | null } | undefined,
+    scope: SessionAbortScope,
   ): Promise<TranscriptionSessionResult> {
-    const payloadSamples = audio.samples ?? [];
-    const rate = audio.sampleRate;
-
-    if (rate == null || rate <= 0 || payloadSamples.length === 0) {
+    const recording = usableRecordingAudio(audio);
+    if (!recording) {
       getLogger().warning(
-        `Batch session: skipping transcription (rate=${rate}, samples=${payloadSamples.length})`,
+        `Batch session: skipping transcription (rate=${audio.sampleRate}, samples=${audio.samples?.length ?? 0})`,
       );
       return emptyResult();
     }
+
+    const { samples: payloadSamples, sampleRate: rate } = recording;
 
     const warnings: string[] = [];
 
@@ -202,35 +241,30 @@ export class BatchTranscriptionSession implements TranscriptionSession {
         samples: payloadSamples,
         sampleRate: rate,
         toneId: options?.toneId ?? null,
-        signal: this.abortScope.signal,
+        signal: scope.signal,
       });
+      if (scope.isAborted) return emptyResult();
 
-      getLogger().info(
+      return wholeRecordingResult(
+        result,
+        warnings,
         `Batch transcription result: ${result.rawTranscript.length} chars`,
       );
-      return {
-        rawTranscript: result.rawTranscript,
-        metadata: result.metadata,
-        warnings: [...warnings, ...result.warnings],
-      };
-    } catch (error) {
+    } catch {
       // A discard aborts the request on purpose. That is not a failure, so it
       // must not reach the user as "Transcription failed".
-      if (this.abortScope.isAborted) {
+      if (scope.isAborted) {
         getLogger().info(
           "Batch transcription cancelled: the dictation was discarded",
         );
         return emptyResult();
       }
-      getLogger().error(`Failed to transcribe audio: ${error}`);
-      const message = String(error);
-      if (message) {
-        warnings.push(`Transcription failed: ${message}`);
-        showToast({
-          message: "Transcription failed",
-          toastType: "error",
-        });
-      }
+      getLogger().error("Failed to transcribe audio");
+      warnings.push("Transcription failed");
+      showToast({
+        message: "Transcription failed",
+        toastType: "error",
+      });
 
       return {
         rawTranscript: null,

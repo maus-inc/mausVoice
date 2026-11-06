@@ -60,6 +60,15 @@ const elapsedRatio = (playback: ActiveWebAudioPlayback): number => {
 export const clampPlaybackProgress = (progress: number): number =>
   Number.isFinite(progress) ? Math.min(Math.max(progress, 0), 1) : 0;
 
+// Progress callbacks may synchronously stop or replace their own playback.
+const reportOwnedProgress = (
+  playback: ActiveWebAudioPlayback,
+  progress: number,
+): boolean => {
+  playback.onProgress(progress);
+  return activePlayback === playback;
+};
+
 const armTick = (playback: ActiveWebAudioPlayback): void => {
   const tick = () => {
     if (activePlayback !== playback) {
@@ -67,9 +76,7 @@ const armTick = (playback: ActiveWebAudioPlayback): void => {
     }
 
     const ratio = elapsedRatio(playback);
-    playback.onProgress(ratio);
-
-    if (ratio >= 1) {
+    if (!reportOwnedProgress(playback, ratio) || ratio >= 1) {
       return;
     }
 
@@ -170,9 +177,36 @@ export const seekPlayback = (progress: number): boolean => {
   }
 
   startSourceAt(playback, offsetSeconds);
-  playback.onProgress(ratio);
-  armTick(playback);
+  if (reportOwnedProgress(playback, ratio)) armTick(playback);
   return true;
+};
+
+// Preserve the original playback error even if a consumer's stop callback fails.
+const releaseFailedPlayback = (): void => {
+  try {
+    stopActivePlayback("stopped");
+  } catch {
+    // Best-effort teardown must not replace the original playback error.
+  }
+};
+
+// Start only while the progress observer still leaves this playback in control.
+const startOwnedPlayback = (
+  playback: ActiveWebAudioPlayback,
+  startProgress: number,
+): void => {
+  const startRatio = clampPlaybackProgress(startProgress);
+  if (playback.buffer.duration <= 0 || startRatio >= 1) {
+    if (reportOwnedProgress(playback, 1)) stopActivePlayback("ended");
+    return;
+  }
+
+  const offset = startRatio * playback.buffer.duration;
+  playback.offsetSeconds = offset;
+  playback.startTime = playback.context.currentTime;
+  if (!reportOwnedProgress(playback, startRatio)) return;
+  playback.source.start(0, offset);
+  armTick(playback);
 };
 
 export const playWebAudio = async (
@@ -259,19 +293,7 @@ export const playWebAudio = async (
       }
     };
 
-    const startRatio = clampPlaybackProgress(startProgress);
-    if (buffer.duration <= 0 || startRatio >= 1) {
-      onProgress(1);
-      stopActivePlayback("ended");
-      return;
-    }
-
-    const offset = startRatio * buffer.duration;
-    playback.offsetSeconds = offset;
-    playback.startTime = context.currentTime;
-    onProgress(startRatio);
-    source.start(0, offset);
-    armTick(playback);
+    startOwnedPlayback(playback, startProgress);
   } catch (error) {
     // The far side of that hand-off. Setting up the playback is also what
     // schedules its teardown, and neither half of that has run on an exit from
@@ -283,13 +305,7 @@ export const playWebAudio = async (
     // caller recovers from the rejection by showing an error snackbar, so
     // nothing else would come back for it.
     if (ownedByActivePlayback) {
-      // Best-effort, like the close below: a teardown that throws must not
-      // replace the failure the caller is about to be told about.
-      try {
-        stopActivePlayback("stopped");
-      } catch {
-        // no-op
-      }
+      releaseFailedPlayback();
     }
     throw error;
   } finally {
@@ -327,4 +343,29 @@ export const buildWaveformOutline = (
     const baseline = 0.12 + random() * 0.2;
     return Math.max(0.12, Math.min(1, envelope * modulation + baseline));
   });
+};
+
+/** Cancel only the playback request this caller started, never a newer owner. */
+export const playWebAudioCancellable = (
+  transcriptionId: string,
+  data: { samples: number[]; sampleRate: number },
+  onProgress: (progress: number) => void,
+  onStop: (reason: PlaybackStopReason) => void,
+  startProgress: number,
+  signal: AbortSignal,
+): Promise<void> => {
+  if (signal.aborted) return Promise.resolve();
+  const playing = playWebAudio(
+    transcriptionId,
+    data,
+    onProgress,
+    onStop,
+    startProgress,
+  );
+  const generation = playbackGeneration;
+  const cancel = () => {
+    if (generation === playbackGeneration) stopActivePlayback("stopped");
+  };
+  signal.addEventListener("abort", cancel, { once: true });
+  return playing.finally(() => signal.removeEventListener("abort", cancel));
 };

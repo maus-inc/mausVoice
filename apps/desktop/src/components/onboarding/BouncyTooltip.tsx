@@ -44,19 +44,17 @@ const fadeOutDown = keyframes`
 
 const NUDGE_ITERATIONS = 2;
 
-type BouncyTooltipProps = {
-  visible: boolean;
-  children: ReactNode;
-  align?: "left" | "center" | "right";
-  delay?: number;
-};
-
 export const BouncyTooltip = ({
   visible,
   children,
   align = "center",
   delay = 0,
-}: BouncyTooltipProps) => {
+}: {
+  visible: boolean;
+  children: ReactNode;
+  align?: "left" | "center" | "right";
+  delay?: number;
+}) => {
   const hasBeenVisible = useRef(false);
   // DESIGN.md: reduced motion is honored everywhere; the attention nudge is
   // the first thing to drop.

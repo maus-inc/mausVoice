@@ -251,6 +251,14 @@ describe("humanizeScrub slop-word variants", () => {
     );
   });
 
+  it("keeps blank lines inside indented code but resumes prose after the block", () => {
+    const input = "Intro\n\n    unlock\n\n    delve\n\nunlock";
+    expect(humanizeScrub(input)).toBe(
+      "Intro\n\n    unlock\n\n    delve\n\nenable",
+    );
+    expect(humanizeScrub("Intro\n\n    unlock\n")).toBe("Intro\n\n    unlock");
+  });
+
   it("leaves en-dashes (range separators) untouched", () => {
     // En-dash (U+2013) is a legitimate range/compound separator, not AI slop.
     expect(humanizeScrub("1–3 sentences")).toBe("1–3 sentences");

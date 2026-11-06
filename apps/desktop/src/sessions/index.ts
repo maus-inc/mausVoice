@@ -17,7 +17,6 @@ export { BatchTranscriptionSession } from "./batch-transcription-session";
 export { DeepgramTranscriptionSession } from "./deepgram-transcription-session";
 export { ElevenLabsTranscriptionSession } from "./elevenlabs-transcription-session";
 export { GladiaTranscriptionSession } from "./gladia-transcription-session";
-export { LocalTranscriptionSession } from "./local-transcription-session";
 
 /**
  * How a session handles the microphone audio, which is the fact the

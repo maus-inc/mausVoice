@@ -12,8 +12,13 @@ export const getPairedRemoteDeviceById = (
     return null;
   }
 
-  return state.pairedRemoteDeviceById[deviceId] ?? null;
+  return Object.hasOwn(state.pairedRemoteDeviceById, deviceId)
+    ? (state.pairedRemoteDeviceById[deviceId] ?? null)
+    : null;
 };
+
+export const canReceiveRemoteOutput = (device: PairedRemoteDevice): boolean =>
+  device.role === "receiver" || device.role === "both";
 
 export const listPairedRemoteDevices = (
   state: AppState,
@@ -23,7 +28,7 @@ export const listPairedRemoteDevices = (
   );
 };
 
-export const getRemoteOutputPreferences = (
+const getRemoteOutputPreferences = (
   state: AppState,
 ): RemoteOutputPreferences => {
   return {

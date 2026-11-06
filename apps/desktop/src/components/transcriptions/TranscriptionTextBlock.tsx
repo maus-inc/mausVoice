@@ -1,19 +1,17 @@
 import { Box, Typography } from "@mui/material";
 import { FormattedMessage } from "react-intl";
 
-type TranscriptionTextBlockProps = {
-  label: React.ReactNode;
-  value: string | null | undefined;
-  placeholder?: React.ReactNode;
-  monospace?: boolean;
-};
-
 export const TranscriptionTextBlock = ({
   label,
   value,
   placeholder,
   monospace,
-}: TranscriptionTextBlockProps) => {
+}: {
+  label: React.ReactNode;
+  value: string | null | undefined;
+  placeholder?: React.ReactNode;
+  monospace?: boolean;
+}) => {
   const normalized = value?.trim();
 
   return (

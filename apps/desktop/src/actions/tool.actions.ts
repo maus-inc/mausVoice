@@ -73,23 +73,6 @@ export const getToolPermissionStatus = (
   return { status: permission.status, token: permission.token };
 };
 
-export const consumeToolToken = (
-  toolId: string,
-  token: string,
-): Record<string, unknown> | undefined => {
-  const state = getAppState();
-  const permission = Object.values(state.toolPermissionById).find(
-    (p) => p.token === token && p.toolId === toolId,
-  );
-  if (!permission) return undefined;
-
-  const params = permission.params;
-  produceAppState((draft) => {
-    delete draft.toolPermissionById[permission.id];
-  });
-  return params;
-};
-
 export const executeTool = async (
   toolId: string,
   params: Record<string, unknown>,

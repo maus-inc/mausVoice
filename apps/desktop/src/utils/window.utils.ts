@@ -1,4 +1,3 @@
-import { Nullable } from "@maus-inc/types";
 import { invoke } from "@tauri-apps/api/core";
 
 const SURFACE_WINDOW_FLAG_KEY = "mausvoice:surface-main-window-on-launch";
@@ -33,14 +32,6 @@ export const surfaceMainWindow = async (): Promise<void> => {
   }
 
   await surfaceWindowPromise;
-};
-
-export const setTrayTitle = async (title: Nullable<string>): Promise<void> => {
-  try {
-    await invoke<void>("set_tray_title", { title });
-  } catch (error) {
-    console.error("Failed to set tray title", error);
-  }
 };
 
 export const markSurfaceWindowForNextLaunch = (): void => {

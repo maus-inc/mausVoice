@@ -14,14 +14,11 @@ export type ChangelogEntry = {
   url: string;
 };
 
-type ChangelogErrorCode =
-  "network" | "http" | "rate-limited" | "invalid-response";
-
 export class ChangelogFetchError extends Error {
-  readonly code: ChangelogErrorCode;
+  readonly code: "network" | "http" | "rate-limited" | "invalid-response";
   readonly status: number | null;
 
-  constructor(code: ChangelogErrorCode, status: number | null = null) {
+  constructor(code: ChangelogFetchError["code"], status: number | null = null) {
     super(`changelog:${code}`);
     this.name = "ChangelogFetchError";
     this.code = code;

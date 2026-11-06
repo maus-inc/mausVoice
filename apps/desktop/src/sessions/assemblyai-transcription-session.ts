@@ -7,15 +7,30 @@ import {
 } from "../utils/prompt.utils";
 import { BaseApiTranscriptionSession } from "./base-api-transcription-session";
 import { createTranscriptAccumulator } from "./transcript-accumulator.utils";
-import { createAudioChunkBuffer } from "./transcription-stream.utils";
-
-type AssemblyAIStreamingSession = {
-  finalize: () => Promise<string>;
-  cleanup: () => void;
-  writeAudioChunk: (chunk: Float32Array) => void;
-};
+import {
+  type SocketStreamControl,
+  type SocketStreamSession,
+  startSocketStreamSession,
+} from "./socket-stream-session";
 
 const LOGGER_PREFIX = "AssemblyAI WebSocket";
+
+/**
+ * A provider frame that ends the stream settles a finalization that is already
+ * in flight, and otherwise marks the live stream unusable. `reason` is null for
+ * the acknowledgement frame and set for an error frame.
+ */
+const settleAtStreamEnd = (
+  control: SocketStreamControl,
+  reason: string | null,
+): void => {
+  if (control.isFinalizing()) {
+    if (reason) control.fail(reason);
+    else control.complete();
+    return;
+  }
+  if (!control.isFinalized()) control.markDeliveryFailed();
+};
 
 /**
  * Opens an AssemblyAI v3 streaming WebSocket. The `speech_model` query
@@ -29,207 +44,81 @@ export const startAssemblyAIStreaming = async (
   sampleRate: number,
   keyterms: string[],
   onInterimResult?: (segment: string) => void,
-): Promise<AssemblyAIStreamingSession> => {
+): Promise<SocketStreamSession> => {
   getLogger().info(`[${LOGGER_PREFIX}] Starting with sample rate:`, sampleRate);
-  return new Promise((resolve, reject) => {
-    let ws: WebSocket | null = null;
-    let isFinalized = false;
-    // Whether the startup handshake below has settled this promise. It has three
-    // outs -- `onopen` resolves, `onerror` rejects -- and a socket that closes
-    // before it ever opens takes neither, because the WebSocket spec delivers
-    // `close` for a failed handshake without promising an `error` first. The
-    // flag is what lets `onclose` tell "the session is up and this is the end of
-    // it" from "the session never started", which need opposite handling.
-    let startupSettled = false;
-    const transcriptState = createTranscriptAccumulator();
+  const transcriptState = createTranscriptAccumulator();
+  let currentTurn = 0;
+  const log = (message: string, ...args: unknown[]) =>
+    getLogger().info(message, ...args);
 
-    const buffer = createAudioChunkBuffer(() => ws, {
-      sampleRate,
-      minChunkDurationMs: 50,
-      maxChunkDurationMs: 100,
-      loggerPrefix: LOGGER_PREFIX,
-    });
+  const handleTurn = (data: {
+    end_of_turn?: boolean;
+    transcript?: string;
+    turn_order?: number;
+  }) => {
+    if (data.end_of_turn) {
+      const turnTranscript = data.transcript || "";
+      transcriptState.appendFinal(turnTranscript);
+      log(
+        `[${LOGGER_PREFIX}] Final formatted transcript received, length:`,
+        transcriptState.finalLength(),
+      );
+      if (currentTurn === data.turn_order) transcriptState.setPartial("");
+      if (onInterimResult && turnTranscript) onInterimResult(turnTranscript);
+      return;
+    }
+    if (typeof data.turn_order === "number" && data.turn_order >= currentTurn) {
+      currentTurn = data.turn_order;
+      transcriptState.setPartial(data.transcript ?? "");
+    }
+  };
 
-    let currentTurn = 0;
+  // Keyterms prompting: a JSON-encoded array of terms (up to 100, each at
+  // most 50 characters) biases the streaming model toward the user's
+  // dictionary vocabulary.
+  const keytermsPrompt =
+    keyterms.length > 0
+      ? `&keyterms_prompt=${encodeURIComponent(JSON.stringify(keyterms))}`
+      : "";
+  const wsUrl = `wss://streaming.assemblyai.com/v3/ws?sample_rate=${sampleRate}&speech_model=universal-3-5-pro&token=${encodeURIComponent(apiKey)}${keytermsPrompt}`;
+  getLogger().info(
+    `[${LOGGER_PREFIX}] Connecting (api key present:`,
+    Boolean(apiKey),
+    "length:",
+    apiKey?.length ?? 0,
+    ")",
+  );
 
-    const getText = () => transcriptState.text();
-
-    const writeAudioChunk = (chunk: Float32Array) => {
-      if (isFinalized) return;
-      try {
-        // Always queue the chunk, even while the socket is still connecting.
-        // flush() is a no-op until the socket is OPEN and onopen drains the
-        // backlog, so speech captured during connect is not lost.
-        buffer.push(chunk);
-        buffer.flush(false);
-      } catch (error) {
-        getLogger().error(
-          `[${LOGGER_PREFIX}] Error sending audio chunk:`,
-          error,
-        );
-      }
-    };
-
-    const cleanup = () => {
-      if (ws && ws.readyState !== WebSocket.CLOSED) {
-        ws.close();
-        ws = null;
-      }
-      buffer.reset();
-    };
-
-    const finalize = (): Promise<string> => {
-      return new Promise((resolveFinalize) => {
-        getLogger().info(
-          `[${LOGGER_PREFIX}] Finalize called, isFinalized:`,
-          isFinalized,
-          "ws state:",
-          ws?.readyState,
-        );
-        if (isFinalized) {
-          getLogger().info(
-            `[${LOGGER_PREFIX}] Already finalized, returning transcript`,
-          );
-          resolveFinalize(getText());
-          return;
-        }
-
-        isFinalized = true;
-        buffer.flush(true);
-        getLogger().info(
-          `[${LOGGER_PREFIX}] Total chunks sent:`,
-          buffer.sentChunkCount(),
-        );
-
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          getLogger().info(`[${LOGGER_PREFIX}] Sending Terminate message...`);
-          ws.send(JSON.stringify({ type: "Terminate" }));
-
-          const timeout = setTimeout(() => {
-            getLogger().info(
-              `[${LOGGER_PREFIX}] Timeout reached, finalizing with transcript length:`,
-              getText().length,
-            );
-            cleanup();
-            resolveFinalize(getText());
-          }, 2000);
-
-          const originalOnClose = ws.onclose;
-          const currentWs = ws;
-          ws.onclose = () => {
-            clearTimeout(timeout);
-            if (originalOnClose && currentWs)
-              originalOnClose.call(currentWs, {} as CloseEvent);
-            cleanup();
-            getLogger().info(
-              `[${LOGGER_PREFIX}] WebSocket closed, finalizing with transcript length:`,
-              getText().length,
-            );
-            resolveFinalize(getText());
-          };
-        } else {
-          cleanup();
-          resolveFinalize(transcriptState.text());
-        }
-      });
-    };
-
-    // Keyterms prompting: a JSON-encoded array of terms (up to 100, each at
-    // most 50 characters) biases the streaming model toward the user's
-    // dictionary vocabulary.
-    const keytermsPrompt =
-      keyterms.length > 0
-        ? `&keyterms_prompt=${encodeURIComponent(JSON.stringify(keyterms))}`
-        : "";
-    const wsUrl = `wss://streaming.assemblyai.com/v3/ws?sample_rate=${sampleRate}&speech_model=universal-3-5-pro&token=${encodeURIComponent(apiKey)}${keytermsPrompt}`;
-    getLogger().info(
-      `[${LOGGER_PREFIX}] Connecting (api key present:`,
-      Boolean(apiKey),
-      "length:",
-      apiKey?.length ?? 0,
-      ")",
-    );
-    ws = new WebSocket(wsUrl);
-
-    // Not `async`, because there is nothing to await. The `async` was doing one
-    // job, though: it turned a throw inside this handler into a rejected promise
-    // rather than an uncaught exception in a WebSocket event callback, where
-    // nothing observes it. That containment is kept explicitly, so it is visible
-    // rather than incidental — an error here is reported instead of vanishing.
-    ws.onopen = () => {
-      try {
-        getLogger().info(`[${LOGGER_PREFIX}] Connected, sending auth...`);
-        buffer.flush(false);
-        getLogger().info(`[${LOGGER_PREFIX}] Session ready`);
-        startupSettled = true;
-        resolve({ finalize, cleanup, writeAudioChunk });
-      } catch (error) {
-        getLogger().error(`[${LOGGER_PREFIX}] onopen handler failed`, error);
-      }
-    };
-
-    ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        getLogger().info(`[${LOGGER_PREFIX}] Received message`, {
-          type: data.type,
-          turnOrder: data.turn_order,
-          endOfTurn: data.end_of_turn,
-          transcriptLength:
-            typeof data.transcript === "string" ? data.transcript.length : 0,
-        });
-
-        if (data.type === "Turn" && data.end_of_turn) {
-          const turnTranscript = data.transcript || "";
-          transcriptState.appendFinal(turnTranscript);
-          getLogger().info(
-            `[${LOGGER_PREFIX}] Final formatted transcript received, length:`,
-            transcriptState.finalLength(),
-          );
-          if (onInterimResult && turnTranscript) {
-            onInterimResult(turnTranscript);
-          }
-          if (currentTurn === data.turn_order) {
-            transcriptState.setPartial("");
-          }
-        } else if (data.type === "Turn") {
-          if (currentTurn != data.turn_order) {
-            currentTurn = data.turn_order;
-
-            transcriptState.setPartial(data.transcript);
-          }
-        }
-      } catch (error) {
-        getLogger().error(`[${LOGGER_PREFIX}] Error parsing message:`, error);
-      }
-    };
-
-    ws.onerror = (error) => {
-      getLogger().error(`[${LOGGER_PREFIX}] WebSocket error:`, error);
-      startupSettled = true;
-      cleanup();
-      reject(new Error("WebSocket connection failed"));
-    };
-
-    ws.onclose = (event) => {
-      getLogger().info(`[${LOGGER_PREFIX}] WebSocket closed:`, {
-        code: event.code,
-        reason: event.reason,
-      });
-      // A close before the handshake finished settles nothing on its own. Left
-      // as it was, `await startAssemblyAIStreaming(...)` never returned:
-      // `onRecordingStart` stayed suspended, so the session never became ready,
-      // `cleanup()` reset the buffer the fallback path was waiting on, and the
-      // caller fell through to no provider at all -- a silent dead microphone
-      // rather than a visible "cannot connect".
-      if (!startupSettled) {
-        startupSettled = true;
-        cleanup();
-        reject(new Error("WebSocket closed before the connection opened"));
+  return startSocketStreamSession({
+    loggerPrefix: LOGGER_PREFIX,
+    sampleRate,
+    minChunkDurationMs: 50,
+    terminationMessage: "Terminate",
+    log,
+    getText: () => transcriptState.text(),
+    createSocket: () => new WebSocket(wsUrl),
+    onConnect: () => {
+      log(`[${LOGGER_PREFIX}] Connected, sending auth...`);
+    },
+    onReady: () => {
+      log(`[${LOGGER_PREFIX}] Session ready`);
+    },
+    onMessage: (data, control) => {
+      if (data.type === "Turn") {
+        handleTurn(data);
         return;
       }
-      cleanup();
-    };
+      if (data.type === "Termination") {
+        settleAtStreamEnd(control, null);
+        return;
+      }
+      if (data.type === "Error") {
+        settleAtStreamEnd(
+          control,
+          "Streaming audio provider returned an error",
+        );
+      }
+    },
   });
 };
 
@@ -249,6 +138,7 @@ export class AssemblyAITranscriptionSession extends BaseApiTranscriptionSession 
   }
 
   async onRecordingStart(sampleRate: number): Promise<void> {
+    const generation = this.beginStreamStartup();
     try {
       getLogger().info("[AssemblyAI] Starting streaming session...");
       const { terms: keyterms, warning } = buildProviderVocabulary(
@@ -261,15 +151,17 @@ export class AssemblyAITranscriptionSession extends BaseApiTranscriptionSession 
       }
       // Must land in the inherited `streamSession` field: the base
       // `finalize()` and `cleanup()` read that field, not any local one.
-      this.streamSession = await startAssemblyAIStreaming(
+      const session = await startAssemblyAIStreaming(
         this.apiKey,
         sampleRate,
         keyterms,
-        this.interimCallback ?? undefined,
+        this.interimForStartup(generation),
       );
+      if (!this.adoptStreamSession(generation, session)) return;
       getLogger().info("[AssemblyAI] Streaming session started successfully");
-    } catch (error) {
-      getLogger().error("[AssemblyAI] Failed to start streaming:", error);
+    } catch {
+      if (!this.ownsStreamStartup(generation)) return;
+      getLogger().error("[AssemblyAI] Failed to start streaming");
     }
   }
 }

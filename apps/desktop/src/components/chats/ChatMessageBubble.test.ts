@@ -282,6 +282,82 @@ describe("ChatMessageBubble edit and resend", () => {
     expect(showErrorSnackbar).toHaveBeenCalledWith(error);
   });
 
+  it("does not send a double click twice while the first resend is pending", async () => {
+    let finish!: () => void;
+    chatActionsMock.editAndResend.mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+    );
+    await openEdit();
+    await setDraft("Changed");
+    const resend = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent === "Resend",
+    );
+    await act(async () => {
+      resend?.click();
+      resend?.click();
+    });
+    expect(chatActionsMock.editAndResend).toHaveBeenCalledTimes(1);
+    await act(async () => finish());
+  });
+
+  it("does not replace a newer draft when an earlier resend fails", async () => {
+    let reject!: (error: Error) => void;
+    chatActionsMock.editAndResend.mockReturnValueOnce(
+      new Promise<void>((_, fail) => {
+        reject = fail;
+      }),
+    );
+    await openEdit();
+    await setDraft("First edit");
+    const resend = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent === "Resend",
+    );
+    await act(async () => {
+      resend?.click();
+    });
+    const edit = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent === "Edit and resend",
+    );
+    await act(async () => {
+      edit?.click();
+    });
+    await setDraft("Newer draft");
+    await act(async () => reject(new Error("First failed")));
+    expect(container.querySelector("textarea")?.value).toBe("Newer draft");
+  });
+
+  it("does not reopen or report an old resend after the bubble changes identity", async () => {
+    vi.mocked(showErrorSnackbar).mockClear();
+    let reject!: (error: Error) => void;
+    chatActionsMock.editAndResend.mockReturnValueOnce(
+      new Promise<void>((_, fail) => {
+        reject = fail;
+      }),
+    );
+    await openEdit();
+    await setDraft("Old message edit");
+    const resend = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent === "Resend",
+    );
+    await act(async () => {
+      resend?.click();
+    });
+    await act(async () => {
+      root?.render(
+        createElement(
+          StrictMode,
+          null,
+          createElement(ChatMessageBubble, { id: "user" }),
+        ),
+      );
+    });
+    await act(async () => reject(new Error("Old message failed")));
+    expect(container.querySelector("textarea")).toBeNull();
+    expect(showErrorSnackbar).not.toHaveBeenCalled();
+  });
+
   it("asks confirmation before dropping later tool activity", async () => {
     chatActionsMock.laterMessagesHaveToolActivity.mockReturnValue(true);
     await openEdit();
@@ -423,6 +499,49 @@ describe("persisted run notes", () => {
         container.remove();
         mocks.state.chatMessageById["msg-1"] = previous;
         delete mocks.state.chatMessageById.tool;
+        mocks.state.chatMessageIdsByConversationId = {};
+        mocks.state.agentStateByConversationId = {};
+      }
+    },
+  );
+});
+
+describe("live run outcome precedence", () => {
+  it.each([
+    ["aborted", "error", true, "Stopped."],
+    ["error", "error", false, "Live failure"],
+    ["error", "done", false, "Something went wrong."],
+    ["aborted", "done", false, "Stopped."],
+  ] as const)(
+    "combines persisted %s and live %s with abort %s",
+    async (persisted, status, aborted, expected) => {
+      const previous = mocks.state.chatMessageById["msg-1"];
+      mocks.state.chatMessageById["msg-1"] = {
+        ...previous,
+        role: "assistant",
+        content: "",
+        metadata: { runOutcome: persisted },
+      };
+      mocks.state.chatMessageIdsByConversationId["conv-1"] = ["user", "msg-1"];
+      mocks.state.agentStateByConversationId["conv-1"] = {
+        status,
+        aborted,
+        toolCalls: [],
+        error: status === "error" ? "Live failure" : undefined,
+      };
+      const container = document.createElement("div");
+      document.body.append(container);
+      const root = createRoot(container);
+      try {
+        await renderMessage(root);
+        expect(container.textContent).toContain(expected);
+        expect(container.textContent?.includes("Retry")).toBe(
+          expected !== "Stopped.",
+        );
+      } finally {
+        act(() => root.unmount());
+        container.remove();
+        mocks.state.chatMessageById["msg-1"] = previous;
         mocks.state.chatMessageIdsByConversationId = {};
         mocks.state.agentStateByConversationId = {};
       }

@@ -2,17 +2,12 @@ import { Tooltip, Typography } from "@mui/material";
 import { Box, type SxProps } from "@mui/system";
 import { forwardRef, useEffect, useRef, useState } from "react";
 
-type OverflowTypographyProps = Omit<
-  React.ComponentProps<typeof Typography>,
-  "noWrap" | "classes" | "sx"
-> & {
-  maxRows?: number;
-  sx?: SxProps;
-};
-
 export const OverflowTypography = forwardRef<
   HTMLDivElement,
-  OverflowTypographyProps
+  Omit<React.ComponentProps<typeof Typography>, "noWrap" | "classes" | "sx"> & {
+    maxRows?: number;
+    sx?: SxProps;
+  }
 >(({ maxRows = 1, sx, ...rest }, ref) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const textRef = useRef<HTMLDivElement>(null);

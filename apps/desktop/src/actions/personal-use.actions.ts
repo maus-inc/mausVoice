@@ -13,6 +13,7 @@ import {
   PERSONAL_GROQ_TRANSCRIPTION_MODEL,
   isPersonalUseEnabled,
   resolvePersonalTranscriptionTarget,
+  shouldConfigurePersonalGeneration,
 } from "../utils/personal-use.utils";
 
 const PREVIOUS_PERSONAL_GROQ_TRANSCRIPTION_MODEL = "whisper-large-v3";
@@ -143,24 +144,16 @@ const applyPersonalGenerationDefaults = async (
   groqApiKey: ApiKey,
 ): Promise<void> => {
   const prefs = getAppState().userPrefs;
-  const ownedGroqIds = new Set([PERSONAL_GROQ_API_KEY_ID, groqApiKey.id]);
-
-  const isOwnedOrUnset = (
-    mode: string | null | undefined,
-    apiKeyId: string | null | undefined,
-  ): boolean => !mode || !apiKeyId || ownedGroqIds.has(apiKeyId);
-
-  const alreadyGroq = (
-    mode: string | null | undefined,
-    apiKeyId: string | null | undefined,
-  ): boolean => mode === "api" && apiKeyId === groqApiKey.id;
-
-  const shouldSetPostProcessing =
-    isOwnedOrUnset(prefs?.postProcessingMode, prefs?.postProcessingApiKeyId) &&
-    !alreadyGroq(prefs?.postProcessingMode, prefs?.postProcessingApiKeyId);
-  const shouldSetAgent =
-    isOwnedOrUnset(prefs?.agentMode, prefs?.agentModeApiKeyId) &&
-    !alreadyGroq(prefs?.agentMode, prefs?.agentModeApiKeyId);
+  const shouldSetPostProcessing = shouldConfigurePersonalGeneration(
+    prefs?.postProcessingMode,
+    prefs?.postProcessingApiKeyId,
+    groqApiKey.id,
+  );
+  const shouldSetAgent = shouldConfigurePersonalGeneration(
+    prefs?.agentMode,
+    prefs?.agentModeApiKeyId,
+    groqApiKey.id,
+  );
 
   if (!shouldSetPostProcessing && !shouldSetAgent) {
     return;

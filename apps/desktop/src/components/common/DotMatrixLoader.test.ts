@@ -65,3 +65,41 @@ it("walks all sixteen ring cells clockwise without duplicate or missing phases",
     container.remove();
   }
 });
+
+it("reduced motion overrides every mode without showing disabled ring cells", async () => {
+  const { readFileSync } = await import("node:fs");
+  const css = readFileSync("src/styles/dotmatrix.css", "utf8");
+  const style = document.createElement("style");
+  style.textContent = css;
+  document.head.append(style);
+  try {
+    const media = [...style.sheet!.cssRules].find(
+      (rule) =>
+        rule instanceof CSSMediaRule &&
+        rule.conditionText.includes("prefers-reduced-motion"),
+    ) as CSSMediaRule;
+    expect(media).toBeDefined();
+    const override = [...media.cssRules].find(
+      (rule) => rule instanceof CSSStyleRule && rule.style.animation === "none",
+    ) as CSSStyleRule;
+    expect(override).toBeDefined();
+    expect(override.selectorText).toBe(".mv-dmx .mv-dmx-dot");
+    // The media rule comes after each equally specific mode rule. Its selector
+    // must match every actual grid/dot pair, including the hidden ring cells.
+    for (const mode of DOT_MATRIX_MODES) {
+      const grid = document.createElement("div");
+      grid.className = `mv-dmx mv-dmx-${mode}`;
+      grid.innerHTML =
+        '<span class="mv-dmx-dot"></span><span class="mv-dmx-dot mv-dmx-off"></span>';
+      expect(grid.querySelectorAll(override.selectorText)).toHaveLength(2);
+    }
+    const off = [...media.cssRules].find(
+      (rule) =>
+        rule instanceof CSSStyleRule &&
+        rule.selectorText.includes("mv-dmx-off"),
+    ) as CSSStyleRule;
+    expect(off.style.opacity).toBe("0");
+  } finally {
+    style.remove();
+  }
+});

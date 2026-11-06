@@ -3,19 +3,19 @@ import { invoke } from "@tauri-apps/api/core";
 import { getIntl } from "../i18n/intl";
 import { createId } from "../utils/id.utils";
 import { nowIso } from "../utils/date.utils";
-import { createChatMessage, updateChatMessage } from "./chat.actions";
+import { createChatMessage, updateChatMessage } from "./chat-message.actions";
 
 export const PENDING_PASTE_REVIEW_TYPE = "pending-paste-review";
-
-type PendingPasteReviewStatus = "pending" | "copied" | "canceled";
 
 export type PendingPasteReviewMetadata = {
   type: typeof PENDING_PASTE_REVIEW_TYPE;
   toolName: "paste";
   toolCallState: "awaiting-manual-paste";
   text: string;
-  status: PendingPasteReviewStatus;
+  status: "pending" | "copied" | "canceled";
 };
+
+type PendingPasteReviewStatus = PendingPasteReviewMetadata["status"];
 
 export const getPendingPasteReview = (
   metadata: Record<string, unknown> | null,
@@ -94,6 +94,20 @@ const updatePendingPasteReview = (
     } satisfies PendingPasteReviewMetadata,
   });
 
+const requirePendingPasteReview = (
+  message: ChatMessage,
+): PendingPasteReviewMetadata => {
+  const pending = getPendingPasteReview(message.metadata);
+  if (pending?.status !== "pending") {
+    throw new Error(
+      getIntl().formatMessage({
+        defaultMessage: "This Paste review is no longer pending",
+      }),
+    );
+  }
+  return pending;
+};
+
 /**
  * Copy the saved text for a manual paste. The latest edit is persisted before
  * touching the clipboard, so a clipboard failure leaves a retryable, durable
@@ -103,14 +117,7 @@ export const copyPendingPasteReview = async (
   message: ChatMessage,
   text: string,
 ): Promise<void> => {
-  const pending = getPendingPasteReview(message.metadata);
-  if (pending?.status !== "pending") {
-    throw new Error(
-      getIntl().formatMessage({
-        defaultMessage: "This Paste review is no longer pending",
-      }),
-    );
-  }
+  const pending = requirePendingPasteReview(message);
   if (!text.trim()) {
     throw new Error(
       getIntl().formatMessage({
@@ -134,14 +141,7 @@ export const cancelPendingPasteReview = async (
   message: ChatMessage,
   text: string,
 ): Promise<void> => {
-  const pending = getPendingPasteReview(message.metadata);
-  if (pending?.status !== "pending") {
-    throw new Error(
-      getIntl().formatMessage({
-        defaultMessage: "This Paste review is no longer pending",
-      }),
-    );
-  }
+  const pending = requirePendingPasteReview(message);
 
   // Cancel dismisses the action, not its durable record. Treat an empty editor
   // as no replacement so a deletion immediately before Cancel cannot erase the

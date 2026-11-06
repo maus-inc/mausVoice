@@ -6,13 +6,7 @@ import {
   attachConsole,
 } from "@tauri-apps/plugin-log";
 import { redactObjectSync, redactStringValue } from "./redaction.utils";
-type Logger = {
-  info(...args: unknown[]): void;
-  warning(...args: unknown[]): void;
-  error(...args: unknown[]): void;
-  verbose(...args: unknown[]): void;
-  stopwatch<T>(label: string, fn: () => Promise<T>): Promise<T>;
-};
+type Logger = ReturnType<typeof getLogger>;
 
 /**
  * Redacts the values of the named query parameters in a URL before it is
@@ -140,7 +134,13 @@ const logger: Logger = {
   },
 };
 
-export const getLogger = (): Logger => logger;
+export const getLogger = (): {
+  info(...args: unknown[]): void;
+  warning(...args: unknown[]): void;
+  error(...args: unknown[]): void;
+  verbose(...args: unknown[]): void;
+  stopwatch<T>(label: string, fn: () => Promise<T>): Promise<T>;
+} => logger;
 
 export const initLogging = async (): Promise<void> => {
   await attachConsole();

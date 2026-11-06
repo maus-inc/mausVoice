@@ -12,6 +12,59 @@ const localesDir = path.join(projectRoot, "src/i18n/locales");
 const defaultLocale = manifest.defaultLocale;
 const supportedLocales = manifest.supportedLocales;
 
+// Manifest identifiers become filenames. Reject path syntax even if a malformed
+// manifest lists it as supported, and refuse symlinked catalog/cache paths.
+const validLocale = (locale) =>
+  typeof locale === "string" &&
+  /^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$/.test(locale);
+if (
+  !Array.isArray(supportedLocales) ||
+  !supportedLocales.every(validLocale) ||
+  !validLocale(defaultLocale) ||
+  !supportedLocales.includes(defaultLocale)
+) {
+  throw new Error("[i18n] Manifest contains an invalid locale identifier.");
+}
+
+const rejectSymlink = (file) => {
+  try {
+    if (fs.lstatSync(file).isSymbolicLink())
+      throw new Error(`[i18n] Refusing symlink: ${file}`);
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+};
+
+const openWithoutSymlinks = (file, flags) =>
+  fs.openSync(file, flags | (fs.constants.O_NOFOLLOW ?? 0), 0o666);
+const readCatalog = (file) => {
+  const fd = openWithoutSymlinks(file, fs.constants.O_RDONLY);
+  try {
+    return fs.readFileSync(fd, "utf8");
+  } finally {
+    fs.closeSync(fd);
+  }
+};
+const writeCatalog = (file, contents) => {
+  const fd = openWithoutSymlinks(
+    file,
+    fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC,
+  );
+  try {
+    fs.writeFileSync(fd, contents);
+  } finally {
+    fs.closeSync(fd);
+  }
+};
+
+for (const directory of [
+  path.join(projectRoot, "src"),
+  path.join(projectRoot, "src/i18n"),
+  localesDir,
+  path.join(localesDir, ".cache"),
+])
+  rejectSymlink(directory);
+
 const args = process.argv.slice(2);
 const sourceLocaleArg = args.find((arg) => arg.startsWith("--source-locale="));
 const sourceLocale = sourceLocaleArg
@@ -26,6 +79,7 @@ if (!supportedLocales.includes(sourceLocale)) {
 }
 
 const baseLocalePath = path.join(localesDir, `${sourceLocale}.json`);
+rejectSymlink(baseLocalePath);
 
 if (!fs.existsSync(baseLocalePath)) {
   console.error(
@@ -34,7 +88,7 @@ if (!fs.existsSync(baseLocalePath)) {
   process.exit(1);
 }
 
-const baseMessages = JSON.parse(fs.readFileSync(baseLocalePath, "utf8"));
+const baseMessages = JSON.parse(readCatalog(baseLocalePath));
 // Deterministic code-unit order: `localeCompare()` without an explicit locale
 // follows the host's ICU collation, so identical sources could produce
 // differently ordered catalogs on machines with different system locales and
@@ -52,7 +106,7 @@ const cacheFilePath = path.join(cacheDir, `${sourceLocale}.json`);
 const readCachedBase = (file) => {
   if (!fs.existsSync(file)) return {};
   try {
-    const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
+    const parsed = JSON.parse(readCatalog(file));
     if (
       parsed === null ||
       typeof parsed !== "object" ||
@@ -115,53 +169,50 @@ const ensureLocale = (locale) => {
   }
 };
 
+const syncMessages = (existingMessages, changedKeys) => {
+  // Message IDs are data, including names such as "__proto__".
+  const messages = Object.create(null);
+  let added = 0;
+  let retained = 0;
+  let reset = 0;
+  for (const key of sortedKeys) {
+    const hasExisting = Object.hasOwn(existingMessages, key);
+    const shouldReset = changedKeys.has(key);
+    if (!hasExisting) added += 1;
+    else if (shouldReset) reset += 1;
+    else retained += 1;
+    messages[key] =
+      hasExisting && !shouldReset ? existingMessages[key] : baseMessages[key];
+  }
+  const removed = Object.keys(existingMessages).filter(
+    (key) => !Object.hasOwn(baseMessages, key),
+  ).length;
+  return { messages, added, retained, reset, removed };
+};
+
 const writeLocaleFile = (locale) => {
   ensureLocale(locale);
   const targetFile = path.join(localesDir, `${locale}.json`);
   let existingMessages = {};
 
   if (fs.existsSync(targetFile)) {
-    existingMessages = JSON.parse(fs.readFileSync(targetFile, "utf8"));
+    existingMessages = JSON.parse(readCatalog(targetFile));
   }
 
-  const changedKeys = changedKeysFor(locale);
-  const nextMessages = {};
-  let added = 0;
-  let retained = 0;
-  let reset = 0;
-
-  for (const key of sortedKeys) {
-    const hasExisting = Object.hasOwn(existingMessages, key);
-    const shouldReset = changedKeys.has(key);
-
-    if (hasExisting && !shouldReset) {
-      nextMessages[key] = existingMessages[key];
-      retained += 1;
-    } else {
-      nextMessages[key] = baseMessages[key];
-
-      if (hasExisting && shouldReset) {
-        reset += 1;
-      } else if (!hasExisting) {
-        added += 1;
-      }
-    }
-  }
-
-  const removedKeys = Object.keys(existingMessages).filter(
-    (key) => !baseMessages[key],
+  const { messages, added, retained, reset, removed } = syncMessages(
+    existingMessages,
+    changedKeysFor(locale),
   );
 
-  fs.writeFileSync(targetFile, `${JSON.stringify(nextMessages, null, 2)}\n`);
+  writeCatalog(targetFile, `${JSON.stringify(messages, null, 2)}\n`);
 
   fs.mkdirSync(cacheDir, { recursive: true });
-  fs.writeFileSync(
+  writeCatalog(
     path.join(cacheDir, `${sourceLocale}--${locale}.json`),
     `${JSON.stringify(baseMessages, null, 2)}\n`,
   );
 
-  const removedLabel =
-    removedKeys.length > 0 ? `, removed ${removedKeys.length}` : "";
+  const removedLabel = removed > 0 ? `, removed ${removed}` : "";
   console.log(
     `[i18n] Synced ${locale}: ${retained} existing, ${added} added${
       reset > 0 ? `, reset ${reset}` : ""
@@ -171,6 +222,11 @@ const writeLocaleFile = (locale) => {
 
 // Validate the whole selection before mutating even the first target.
 localesToSync.forEach(ensureLocale);
+rejectSymlink(cacheFilePath);
+for (const locale of localesToSync) {
+  rejectSymlink(path.join(localesDir, `${locale}.json`));
+  rejectSymlink(path.join(cacheDir, `${sourceLocale}--${locale}.json`));
+}
 localesToSync.forEach(writeLocaleFile);
 
 // Preserve a usable migration baseline for targets not yet synced individually.
@@ -179,5 +235,5 @@ const syncedAll = supportedLocales.every(
 );
 if (syncedAll) {
   fs.mkdirSync(cacheDir, { recursive: true });
-  fs.writeFileSync(cacheFilePath, `${JSON.stringify(baseMessages, null, 2)}\n`);
+  writeCatalog(cacheFilePath, `${JSON.stringify(baseMessages, null, 2)}\n`);
 }

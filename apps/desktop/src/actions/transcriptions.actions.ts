@@ -6,6 +6,7 @@ import { getTranscriptionRepo } from "../repos";
 import { isPersistenceAllowed } from "../utils/incognito.utils";
 import { createId } from "../utils/id.utils";
 import { orFalse } from "../utils/nullable.utils";
+import { toTranscriptionRecordMetadata } from "../utils/transcription-metadata.utils";
 import { POST_PROCESS_TRUNCATED_WARNING } from "../utils/prompt.utils";
 import {
   beginRetranscribe,
@@ -16,6 +17,10 @@ import {
 } from "../state/transcriptions.state";
 import { getAppState, produceAppState } from "../store";
 import { sanitizeTranscriptText } from "../utils/sanitize-transcript.utils";
+import {
+  captureUserSession,
+  requireUserSession,
+} from "../utils/user-session.utils";
 import type { ReplacementRule } from "../utils/string.utils";
 import {
   getMyDictationLanguage,
@@ -71,6 +76,7 @@ type ProcessAudioParams = {
   sampleRate: number;
   toneId?: string | null;
   languageCode?: string | null;
+  isCurrent: () => boolean;
 };
 
 type ProcessedAudio = Awaited<ReturnType<typeof processAudio>>;
@@ -103,12 +109,15 @@ const processAudio = async ({
   sampleRate,
   toneId,
   languageCode,
+  isCurrent,
 }: ProcessAudioParams) => {
+  requireUserSession(isCurrent);
   const transcribeResult = await transcribeAudio({
     samples,
     sampleRate,
     dictationLanguage: languageCode ?? undefined,
   });
+  requireUserSession(isCurrent);
   const sanitizedTranscript = sanitizeImportedTranscript(
     transcribeResult.sanitizedTranscript,
     languageCode,
@@ -118,6 +127,7 @@ const processAudio = async ({
     toneId: toneId ?? null,
     dictationLanguage: languageCode ?? undefined,
   });
+  requireUserSession(isCurrent);
 
   return { transcribeResult, sanitizedTranscript, postProcessResult };
 };
@@ -222,20 +232,44 @@ const isUnstyledPostProcess = (metadata: PostProcessMetadata): boolean =>
   orFalse(metadata.postProcessFailed) ||
   (orFalse(metadata.postProcessFallback) && !metadata.postProcessError);
 
-const updateStoredTranscription = async (
+/** Build the persisted row without discarding raw ASR when styling failed. */
+const buildRetranscriptionPayload = (
   transcription: Transcription,
   processed: ProcessedAudio,
-): Promise<RetranscribeUpdate> => {
+  finalTranscript: string,
+  unstyled: boolean,
+): Transcription => {
   const { transcribeResult, sanitizedTranscript, postProcessResult } =
     processed;
   const warnings = [
     ...transcribeResult.warnings,
     ...postProcessResult.warnings,
   ];
-  const metadata = {
-    ...transcribeResult.metadata,
-    ...postProcessResult.metadata,
+  return {
+    ...transcription,
+    transcript: unstyled
+      ? // Nothing styled came back, so the text this row already holds stays
+        // the best answer. Falling back to the new raw ASR covers a row that
+        // was never styled in the first place.
+        transcription.transcript || finalTranscript
+      : finalTranscript,
+    sanitizedTranscript,
+    ...toTranscriptionRecordMetadata(
+      transcribeResult.metadata,
+      postProcessResult.metadata,
+    ),
+    // The raw ASR from this run is the only record of what was actually said,
+    // so it is stored even when the styled transcript is left untouched.
+    rawTranscript: transcribeResult.rawTranscript || finalTranscript,
+    warnings: warnings.length > 0 ? warnings : null,
   };
+};
+
+const updateStoredTranscription = async (
+  transcription: Transcription,
+  processed: ProcessedAudio,
+): Promise<RetranscribeUpdate> => {
+  const { postProcessResult } = processed;
   const finalTranscript = postProcessResult.transcript;
   if (!finalTranscript) throw new Error("Retranscription produced no text.");
   const unstyled = isUnstyledPostProcess(postProcessResult.metadata);
@@ -246,43 +280,12 @@ const updateStoredTranscription = async (
       )
     : null;
 
-  const payload: Transcription = {
-    ...transcription,
-    transcript: unstyled
-      ? // Nothing styled came back, so the text this row already holds stays
-        // the best answer. Falling back to the new raw ASR covers a row that
-        // was never styled in the first place.
-        transcription.transcript || finalTranscript
-      : finalTranscript,
-    sanitizedTranscript,
-    modelSize: metadata.modelSize ?? null,
-    inferenceDevice: metadata.inferenceDevice ?? null,
-    // The raw ASR from this run is the only record of what was actually said,
-    // so it is stored even when the styled transcript is left untouched.
-    rawTranscript: transcribeResult.rawTranscript || finalTranscript,
-    transcriptionPrompt: metadata.transcriptionPrompt ?? null,
-    postProcessPrompt: metadata.postProcessPrompt ?? null,
-    transcriptionApiKeyId: metadata.transcriptionApiKeyId ?? null,
-    postProcessApiKeyId: metadata.postProcessApiKeyId ?? null,
-    transcriptionMode: metadata.transcriptionMode ?? null,
-    postProcessMode: metadata.postProcessMode ?? null,
-    postProcessDevice: metadata.postProcessDevice ?? null,
-    postProcessModel: metadata.postProcessModel ?? null,
-    // Match create-path sentinels: null = not attempted, true = failed,
-    // false = succeeded (set explicitly on the success path). A failed request
-    // and an unusable answer stay disjoint here: a degraded run leaves this
-    // false because the request itself succeeded, and the reason it was
-    // dropped rides on `warnings`, which the row does persist.
-    postProcessProvider: metadata.postProcessProvider ?? null,
-    postProcessFailed: metadata.postProcessFailed ?? null,
-    postProcessFallback: metadata.postProcessFallback ?? null,
-    postProcessError: metadata.postProcessError ?? null,
-    warnings: warnings.length > 0 ? warnings : null,
-    // Durations must be re-read from the fresh run; spreading the old record
-    // otherwise leaves stale timings in history after a retranscription.
-    transcriptionDurationMs: metadata.transcriptionDurationMs ?? null,
-    postprocessDurationMs: metadata.postprocessDurationMs ?? null,
-  };
+  const payload = buildRetranscriptionPayload(
+    transcription,
+    processed,
+    finalTranscript,
+    unstyled,
+  );
   // During an ephemeral session the update stays memory-only: build the fresh
   // payload for the caller but never write it through to the repository.
   const stored = isPersistenceAllowed()
@@ -296,30 +299,30 @@ const updateStoredTranscription = async (
   };
 };
 
-type RetranscribeTranscriptionParams = {
-  transcriptionId: string;
-  toneId?: string | null;
-  languageCode?: string | null;
-};
+type RetranscribeTranscriptionParams = Parameters<
+  typeof retranscribeTranscription
+>[0];
 
 const RETRANSCRIBE_LOADING_SNACKBAR_MS = 2 * 60 * 1000;
 
-const retranscribeGenerationById = new Map<string, number>();
+const retranscribeGenerationById = new Map<string, symbol>();
 
-const nextRetranscribeGeneration = (transcriptionId: string): number => {
-  const next = (retranscribeGenerationById.get(transcriptionId) ?? 0) + 1;
+const nextRetranscribeGeneration = (transcriptionId: string): symbol => {
+  // Never reuse an identity after a finished generation is removed: an older
+  // asynchronous run can still settle after a later run has completed.
+  const next = Symbol("retranscription");
   retranscribeGenerationById.set(transcriptionId, next);
   return next;
 };
 
 const isCurrentRetranscribeGeneration = (
   transcriptionId: string,
-  generation: number,
+  generation: symbol,
 ): boolean => retranscribeGenerationById.get(transcriptionId) === generation;
 
 const releaseRetranscribeGeneration = (
   transcriptionId: string,
-  generation: number,
+  generation: symbol,
 ): void => {
   if (retranscribeGenerationById.get(transcriptionId) === generation) {
     retranscribeGenerationById.delete(transcriptionId);
@@ -399,11 +402,10 @@ const syncRetranscribeFeedback = (event: "success" | "error" | "abandoned") => {
   dismissRetranscribeLoadingFeedback();
 };
 
-const performRetranscribe = async ({
-  transcriptionId,
-  toneId,
-  languageCode,
-}: RetranscribeTranscriptionParams): Promise<RetranscribeUpdate> => {
+const performRetranscribe = async (
+  { transcriptionId, toneId, languageCode }: RetranscribeTranscriptionParams,
+  isCurrent: () => boolean,
+): Promise<RetranscribeUpdate> => {
   const transcription = getRec(
     getAppState().transcriptionById,
     transcriptionId,
@@ -417,8 +419,11 @@ const performRetranscribe = async ({
     sampleRate: audioData.sampleRate,
     toneId,
     languageCode,
+    isCurrent,
   });
+  requireUserSession(isCurrent);
   const updated = await updateStoredTranscription(transcription, processed);
+  requireUserSession(isCurrent);
 
   produceAppState((draft) => {
     draft.transcriptionById[transcriptionId] = updated.transcription;
@@ -455,7 +460,7 @@ const failRetranscribeRun = ({
   error,
 }: {
   transcriptionId: string;
-  generation: number;
+  generation: symbol;
   message: string;
   reason?: string;
   error?: unknown;
@@ -470,15 +475,70 @@ const failRetranscribeRun = ({
   releaseRetranscribeGeneration(transcriptionId, generation);
 };
 
-export const retranscribeTranscription = async (
-  params: RetranscribeTranscriptionParams,
-): Promise<void> => {
+type RetranscribeGeneration = ReturnType<typeof nextRetranscribeGeneration>;
+
+/** A retired session's generation must be released, a live one keeps its slot. */
+const releaseRetiredGeneration = (
+  transcriptionId: string,
+  generation: RetranscribeGeneration,
+  isCurrentSession: () => boolean,
+): void => {
+  if (!isCurrentSession())
+    releaseRetranscribeGeneration(transcriptionId, generation);
+};
+
+/**
+ * Leave the run without reporting: the session or the row moved on, so the
+ * loading indicator belongs to whoever owns it now.
+ */
+const retireRetranscribeRun = (
+  transcriptionId: string,
+  generation: RetranscribeGeneration,
+  isCurrentSession: () => boolean,
+): void => {
+  releaseRetiredGeneration(transcriptionId, generation, isCurrentSession);
+  abandonRetranscribeRun();
+};
+
+/** Clear the success tick once it has been visible long enough, if still owned. */
+const scheduleRetranscribeSuccessClear = ({
+  transcriptionId,
+  generation,
+  isCurrent,
+  isCurrentSession,
+}: {
+  transcriptionId: string;
+  generation: RetranscribeGeneration;
+  isCurrent: () => boolean;
+  isCurrentSession: () => boolean;
+}): void => {
+  globalThis.setTimeout(() => {
+    if (!isCurrent()) {
+      releaseRetiredGeneration(transcriptionId, generation, isCurrentSession);
+      return;
+    }
+    produceAppState((draft) => {
+      clearRetranscribeSuccess(draft.transcriptions, transcriptionId);
+    });
+    releaseRetranscribeGeneration(transcriptionId, generation);
+  }, RETRANSCRIPTION_SUCCESS_VISIBLE_MS);
+};
+
+export const retranscribeTranscription = async (params: {
+  transcriptionId: string;
+  toneId?: string | null;
+  languageCode?: string | null;
+}): Promise<void> => {
   const { transcriptionId } = params;
   if (isRetranscribingId(getAppState().transcriptions, transcriptionId)) {
     return;
   }
 
+  const isCurrentSession = captureUserSession();
   const generation = nextRetranscribeGeneration(transcriptionId);
+  const isCurrent = () =>
+    isCurrentSession() &&
+    isCurrentRetranscribeGeneration(transcriptionId, generation);
   const wasAnyInFlight =
     getAppState().transcriptions.retranscribingIds.length > 0;
   produceAppState((draft) => {
@@ -489,9 +549,9 @@ export const retranscribeTranscription = async (
   }
 
   try {
-    const update = await performRetranscribe(params);
-    if (!isCurrentRetranscribeGeneration(transcriptionId, generation)) {
-      abandonRetranscribeRun();
+    const update = await performRetranscribe(params, isCurrent);
+    if (!isCurrent()) {
+      retireRetranscribeRun(transcriptionId, generation, isCurrentSession);
       return;
     }
     if (!update.styled) {
@@ -510,18 +570,15 @@ export const retranscribeTranscription = async (
       finishRetranscribe(draft.transcriptions, transcriptionId, true);
     });
     syncRetranscribeFeedback("success");
-    globalThis.setTimeout(() => {
-      if (!isCurrentRetranscribeGeneration(transcriptionId, generation)) {
-        return;
-      }
-      produceAppState((draft) => {
-        clearRetranscribeSuccess(draft.transcriptions, transcriptionId);
-      });
-      releaseRetranscribeGeneration(transcriptionId, generation);
-    }, RETRANSCRIPTION_SUCCESS_VISIBLE_MS);
+    scheduleRetranscribeSuccessClear({
+      transcriptionId,
+      generation,
+      isCurrent,
+      isCurrentSession,
+    });
   } catch (error) {
-    if (!isCurrentRetranscribeGeneration(transcriptionId, generation)) {
-      abandonRetranscribeRun();
+    if (!isCurrent()) {
+      retireRetranscribeRun(transcriptionId, generation, isCurrentSession);
       return;
     }
     failRetranscribeRun({
@@ -547,67 +604,56 @@ export const importAudioFile = async ({
   toneId,
   languageCode,
 }: ImportAudioParams): Promise<boolean> => {
-  const audio = await getTranscriptionRepo().importAudioFile();
-  if (!audio) return false;
-  const processed = await processAudio({
-    samples: audio.samples,
-    sampleRate: audio.sampleRate,
-    toneId,
-    languageCode,
-  });
-  const { transcribeResult, sanitizedTranscript, postProcessResult } =
-    processed;
+  const isCurrent = captureUserSession();
+  try {
+    const audio = await getTranscriptionRepo().importAudioFile();
+    if (!audio || !isCurrent()) return false;
+    const processed = await processAudio({
+      samples: audio.samples,
+      sampleRate: audio.sampleRate,
+      toneId,
+      languageCode,
+      isCurrent,
+    });
+    const { transcribeResult, sanitizedTranscript, postProcessResult } =
+      processed;
 
-  const output = await storeTranscription({
-    audio: { samples: audio.samples, sampleRate: audio.sampleRate },
-    rawTranscript: transcribeResult.rawTranscript ?? null,
-    sanitizedTranscript,
-    transcript: postProcessResult.transcript ?? null,
-    transcriptionMetadata: transcribeResult.metadata,
-    postProcessMetadata: postProcessResult.metadata,
-    warnings: [...transcribeResult.warnings, ...postProcessResult.warnings],
-  });
-
-  if (!output.transcription && !isPersistenceAllowed()) {
-    const memoryRecord: Transcription = {
-      id: createId(),
-      createdAt: dayjs().toISOString(),
-      createdByUserId: getMyEffectiveUserId(getAppState()),
-      transcript: postProcessResult.transcript ?? "",
-      isDeleted: false,
+    const output = await storeTranscription({
+      audio: { samples: audio.samples, sampleRate: audio.sampleRate },
       rawTranscript: transcribeResult.rawTranscript ?? null,
       sanitizedTranscript,
-      modelSize: transcribeResult.metadata?.modelSize ?? null,
-      inferenceDevice: transcribeResult.metadata?.inferenceDevice ?? null,
-      transcriptionPrompt:
-        transcribeResult.metadata?.transcriptionPrompt ?? null,
-      postProcessPrompt: postProcessResult.metadata?.postProcessPrompt ?? null,
-      transcriptionApiKeyId:
-        transcribeResult.metadata?.transcriptionApiKeyId ?? null,
-      postProcessApiKeyId:
-        postProcessResult.metadata?.postProcessApiKeyId ?? null,
-      transcriptionMode: transcribeResult.metadata?.transcriptionMode ?? null,
-      postProcessMode: postProcessResult.metadata?.postProcessMode ?? null,
-      postProcessDevice: postProcessResult.metadata?.postProcessDevice ?? null,
-      postProcessModel: postProcessResult.metadata?.postProcessModel ?? null,
-      postProcessProvider:
-        postProcessResult.metadata?.postProcessProvider ?? null,
-      postProcessFailed: postProcessResult.metadata?.postProcessFailed ?? null,
-      postProcessFallback:
-        postProcessResult.metadata?.postProcessFallback ?? null,
-      postProcessError: postProcessResult.metadata?.postProcessError ?? null,
+      transcript: postProcessResult.transcript ?? null,
+      transcriptionMetadata: transcribeResult.metadata,
+      postProcessMetadata: postProcessResult.metadata,
       warnings: [...transcribeResult.warnings, ...postProcessResult.warnings],
-      audio: undefined,
-      remoteStatus: null,
-      remoteDeviceId: null,
-      transcriptionDurationMs:
-        transcribeResult.metadata?.transcriptionDurationMs ?? null,
-      postprocessDurationMs:
-        postProcessResult.metadata?.postprocessDurationMs ?? null,
-    };
-    produceAppState((draft) => {
-      draft.transcriptionById[memoryRecord.id] = memoryRecord;
     });
+    if (!isCurrent()) return false;
+
+    if (!output.transcription && !isPersistenceAllowed()) {
+      const memoryRecord: Transcription = {
+        id: createId(),
+        createdAt: dayjs().toISOString(),
+        createdByUserId: getMyEffectiveUserId(getAppState()),
+        transcript: postProcessResult.transcript ?? "",
+        isDeleted: false,
+        rawTranscript: transcribeResult.rawTranscript ?? null,
+        sanitizedTranscript,
+        ...toTranscriptionRecordMetadata(
+          transcribeResult.metadata,
+          postProcessResult.metadata,
+        ),
+        warnings: [...transcribeResult.warnings, ...postProcessResult.warnings],
+        audio: undefined,
+        remoteStatus: null,
+        remoteDeviceId: null,
+      };
+      produceAppState((draft) => {
+        draft.transcriptionById[memoryRecord.id] = memoryRecord;
+      });
+    }
+    return true;
+  } catch (error) {
+    if (!isCurrent()) return false;
+    throw error;
   }
-  return true;
 };

@@ -14,13 +14,6 @@ import {
   type ContextMenuItem,
 } from "../common/ContextMenu";
 
-type ConversationListItemProps = {
-  conversation: Conversation;
-  selected: boolean;
-  onSelect: () => void;
-  onDelete: () => void;
-};
-
 type TimestampTextProps = {
   value: string;
   hidden: boolean;
@@ -56,7 +49,12 @@ export const ConversationListItem = ({
   selected,
   onSelect,
   onDelete,
-}: ConversationListItemProps) => {
+}: {
+  conversation: Conversation;
+  selected: boolean;
+  onSelect: () => void;
+  onDelete: () => void;
+}) => {
   const intl = useIntl();
   const [hovered, setHovered] = useState(false);
 

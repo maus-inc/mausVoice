@@ -6,17 +6,15 @@ import { showErrorSnackbar } from "../../actions/app.actions";
 import { abortAgent, sendChatMessage } from "../../actions/chat.actions";
 import { getLogger } from "../../utils/log.utils";
 
-type ChatPromptBoxProps = {
-  conversationId: string;
-  running: boolean;
-  onSend: (text: string) => void;
-};
-
 export const ChatPromptBox = ({
   conversationId,
   running,
   onSend,
-}: ChatPromptBoxProps) => {
+}: {
+  conversationId: string;
+  running: boolean;
+  onSend: (text: string) => void;
+}) => {
   const intl = useIntl();
   const inputLabel = intl.formatMessage({ defaultMessage: "Type a message…" });
   const [input, setInput] = useState("");

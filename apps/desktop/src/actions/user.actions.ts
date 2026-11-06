@@ -11,6 +11,7 @@ import {
 } from "@maus-inc/types";
 import { invoke } from "@tauri-apps/api/core";
 import dayjs from "dayjs";
+import { defineMessages, type MessageDescriptor } from "react-intl";
 import { getIntl } from "../i18n";
 import { getUserPreferencesRepo, getUserRepo } from "../repos";
 import { getAppState, produceAppState } from "../store";
@@ -31,13 +32,19 @@ import {
   isGpuPreferredTranscriptionDevice,
   normalizeLocalWhisperModel,
   normalizeTranscriptionDevice,
-  supportsGpuTranscriptionDevice,
 } from "../utils/local-transcription.utils";
 import { getLogger } from "../utils/log.utils";
+import {
+  captureExpansionFlags,
+  getExpansionFlagsRevision,
+  preserveNewerExpansionFlags,
+} from "../utils/expansion-flags-revision";
+import { getPairedRemoteDeviceById } from "../utils/device.utils";
 import { createMutationQueue } from "../utils/mutation-queue";
 import { pushPillPlacementToNative } from "./windows-sync.actions";
 import { sendPillFireworks, sendPillFlame } from "../utils/overlay.utils";
 import {
+  getEffectivePillVisibility,
   getMyEffectiveUserId,
   getMyUser,
   getMyUserPreferences,
@@ -45,6 +52,11 @@ import {
   setCurrentUser,
   setUserPreferences,
 } from "../utils/user.utils";
+import { getNextPillVisibility } from "../utils/tray-pill-visibility.utils";
+import {
+  captureUserSession,
+  requireUserSession,
+} from "../utils/user-session.utils";
 import { showErrorSnackbar } from "./app.actions";
 import { refreshUpdatesForChannelChange } from "./updater.actions";
 import { setLocalStorageValue } from "./local-storage.actions";
@@ -60,8 +72,14 @@ const updateUser = (
   updateCallback: (user: User) => void,
   errorMessage: string,
   saveErrorMessage: string,
-): Promise<void> =>
-  enqueueUserMutation(async () => {
+  shouldUpdate: () => boolean = () => true,
+): Promise<void> => {
+  const isCurrent = captureUserSession();
+  return enqueueUserMutation(async () => {
+    // Conditional changes must be checked when the serialized mutation starts,
+    // not merely when it was queued behind another user write.
+    if (!shouldUpdate()) return;
+    requireUserSession(isCurrent);
     const state = getAppState();
     const existing = getMyUser(state);
     if (!existing) {
@@ -77,15 +95,21 @@ const updateUser = (
     };
 
     updateCallback(payload);
+    requireUserSession(isCurrent);
     produceAppState((draft) => {
       setCurrentUser(draft, payload);
     });
 
     try {
+      requireUserSession(isCurrent);
       getLogger().verbose(`Saving user (id=${payload.id})`);
       await repo.setMyUser(payload);
+      requireUserSession(isCurrent);
       getLogger().verbose("User saved successfully");
     } catch (error) {
+      // An already-dispatched write cannot be revoked. Do not reload or report
+      // its result into an account that replaced the one that requested it.
+      requireUserSession(isCurrent);
       getLogger().error(`Failed to update user: ${error}`);
       // Re-read instead of restoring the pre-call snapshot. Another task may
       // have committed a change after this one started, and writing the
@@ -94,20 +118,25 @@ const updateUser = (
       const reloaded = await getUserRepo()
         .getMyUser()
         .catch((reloadError: unknown) => {
-          getLogger().error(
-            `Failed to re-read user after a failed save: ${reloadError}`,
-          );
+          if (isCurrent()) {
+            getLogger().error(
+              `Failed to re-read user after a failed save: ${reloadError}`,
+            );
+          }
           return null;
         });
+      requireUserSession(isCurrent);
       produceAppState((draft) => {
         if (reloaded) {
           setCurrentUser(draft, reloaded);
         }
       });
+      requireUserSession(isCurrent);
       showErrorSnackbar(saveErrorMessage);
       throw error;
     }
   });
+};
 
 export const createDefaultPreferences = (): UserPreferences => ({
   userId: LOCAL_USER_ID,
@@ -168,14 +197,21 @@ export const createDefaultPreferences = (): UserPreferences => ({
 // cannot read a stale snapshot and clobber each other's change. Each task reads
 // the latest committed preferences when it actually runs.
 const { enqueue: enqueuePrefsMutation } = createMutationQueue();
+let preferencesRevision = 0;
+let pendingPreferenceMutations = 0;
 
 export const updateUserPreferences = (
   updateCallback: (preferences: UserPreferences) => void,
   saveErrorMessage = getIntl().formatMessage({
     defaultMessage: "Failed to save AI preferences. Please try again.",
   }),
-): Promise<void> =>
-  enqueuePrefsMutation(async () => {
+  shouldUpdate: (preferences: UserPreferences) => boolean = () => true,
+): Promise<void> => {
+  const isCurrent = captureUserSession();
+  preferencesRevision += 1;
+  pendingPreferenceMutations += 1;
+  return enqueuePrefsMutation(async () => {
+    requireUserSession(isCurrent);
     const state = getAppState();
     const myUserId = getMyEffectiveUserId(state);
 
@@ -183,7 +219,9 @@ export const updateUserPreferences = (
     if (!existing) {
       try {
         existing = await getUserPreferencesRepo().getUserPreferences();
+        requireUserSession(isCurrent);
       } catch (error) {
+        requireUserSession(isCurrent);
         getLogger().error(
           `Failed to load existing preferences before update: ${error}`,
         );
@@ -196,21 +234,34 @@ export const updateUserPreferences = (
     // The mutation runs when this task reaches the front of the queue, so it
     // always derives from the most recently committed preferences.
     const payload: UserPreferences = { ...safeExisting, userId: myUserId };
+    // Evaluate conditional repairs only after this task reaches the queue head.
+    if (!shouldUpdate(payload)) return;
     updateCallback(payload);
+    requireUserSession(isCurrent);
 
     try {
+      const flagsSnapshot = captureExpansionFlags(getAppState().userPrefs);
       getLogger().verbose(`Saving user preferences (userId=${myUserId})`);
       const saved = await getUserPreferencesRepo().setUserPreferences(payload);
+      requireUserSession(isCurrent);
       produceAppState((draft) => {
-        setUserPreferences(draft, saved);
+        setUserPreferences(
+          draft,
+          preserveNewerExpansionFlags(saved, draft.userPrefs, flagsSnapshot),
+        );
       });
+      requireUserSession(isCurrent);
       getLogger().verbose("User preferences saved successfully");
     } catch (error) {
+      requireUserSession(isCurrent);
       getLogger().error(`Failed to update user preferences: ${error}`);
       showErrorSnackbar(saveErrorMessage);
       throw error;
     }
+  }).finally(() => {
+    pendingPreferenceMutations -= 1;
   });
+};
 
 const getCurrentUsageMonth = (): string => {
   const now = new Date();
@@ -226,72 +277,39 @@ const getYesterdayDateString = (): string =>
 
 type StreakInfo = ["flame" | "fireworks", string] | null;
 
+const streakMessages = defineMessages({
+  first: { defaultMessage: "Let the streak begin! 🔥" },
+  second: { defaultMessage: "2 days in a row! ✌️" },
+  third: { defaultMessage: "3 days strong! 💪" },
+  fifth: { defaultMessage: "High five! 5 days! 🖐️" },
+  seventh: { defaultMessage: "A full week! 🎉" },
+  tenth: { defaultMessage: "Double digits! 🔥" },
+  thirtieth: { defaultMessage: "One month! Unstoppable! 🚀" },
+  fiftieth: { defaultMessage: "50 days! Legend! 🏆" },
+  hundredth: { defaultMessage: "100 days! 💯" },
+});
+
+const streakMilestones = new Map<
+  number,
+  readonly ["flame" | "fireworks", MessageDescriptor]
+>([
+  [1, ["flame", streakMessages.first]],
+  [2, ["flame", streakMessages.second]],
+  [3, ["flame", streakMessages.third]],
+  [5, ["flame", streakMessages.fifth]],
+  [7, ["fireworks", streakMessages.seventh]],
+  [10, ["fireworks", streakMessages.tenth]],
+  [30, ["fireworks", streakMessages.thirtieth]],
+  [50, ["fireworks", streakMessages.fiftieth]],
+  [100, ["fireworks", streakMessages.hundredth]],
+]);
+
 const getStreakInfo = (streak: number): StreakInfo => {
   const intl = getIntl();
-
-  if (streak === 1) {
-    return [
-      "flame",
-      intl.formatMessage({ defaultMessage: "Let the streak begin! 🔥" }),
-    ];
+  const milestone = streakMilestones.get(streak);
+  if (milestone) {
+    return [milestone[0], intl.formatMessage(milestone[1])];
   }
-
-  if (streak === 2) {
-    return [
-      "flame",
-      intl.formatMessage({ defaultMessage: "2 days in a row! ✌️" }),
-    ];
-  }
-
-  if (streak === 3) {
-    return [
-      "flame",
-      intl.formatMessage({ defaultMessage: "3 days strong! 💪" }),
-    ];
-  }
-
-  if (streak === 5) {
-    return [
-      "flame",
-      intl.formatMessage({ defaultMessage: "High five! 5 days! 🖐️" }),
-    ];
-  }
-
-  if (streak === 7) {
-    return [
-      "fireworks",
-      intl.formatMessage({ defaultMessage: "A full week! 🎉" }),
-    ];
-  }
-
-  if (streak === 10) {
-    return [
-      "fireworks",
-      intl.formatMessage({ defaultMessage: "Double digits! 🔥" }),
-    ];
-  }
-
-  if (streak === 30) {
-    return [
-      "fireworks",
-      intl.formatMessage({ defaultMessage: "One month! Unstoppable! 🚀" }),
-    ];
-  }
-
-  if (streak === 50) {
-    return [
-      "fireworks",
-      intl.formatMessage({ defaultMessage: "50 days! Legend! 🏆" }),
-    ];
-  }
-
-  if (streak === 100) {
-    return [
-      "fireworks",
-      intl.formatMessage({ defaultMessage: "100 days! 💯" }),
-    ];
-  }
-
   if (streak % 100 === 0) {
     return [
       "fireworks",
@@ -301,7 +319,6 @@ const getStreakInfo = (streak: number): StreakInfo => {
       ),
     ];
   }
-
   if (streak % 10 === 0) {
     return [
       "fireworks",
@@ -311,36 +328,37 @@ const getStreakInfo = (streak: number): StreakInfo => {
       ),
     ];
   }
-
   return null;
 };
 
-export const recordStreak = async (): Promise<void> => {
-  const state = getAppState();
-  const user = getMyUser(state);
-  if (!user) {
-    return;
-  }
-
-  const today = getCurrentDateString();
-  if (user.streakRecordedAt === today) {
-    return;
-  }
-
-  const yesterday = getYesterdayDateString();
-  const isConsecutive = user.streakRecordedAt === yesterday;
-  const newStreak = isConsecutive ? (user.streak ?? 0) + 1 : 1;
-
+export const recordStreak = async (
+  isCurrent: () => boolean = () => true,
+): Promise<void> => {
+  const isSameSession = captureUserSession();
+  const ownsUser = () => isCurrent() && isSameSession();
+  const result: { streak?: number } = {};
   await updateUser(
-    (u) => {
-      u.streak = newStreak;
-      u.streakRecordedAt = today;
+    (user) => {
+      // This runs inside the profile mutation queue, so concurrent stops see
+      // the latest committed streak rather than the same stale snapshot.
+      const today = getCurrentDateString();
+      const isConsecutive = user.streakRecordedAt === getYesterdayDateString();
+      const streak = isConsecutive ? (user.streak ?? 0) + 1 : 1;
+      user.streak = streak;
+      user.streakRecordedAt = today;
+      result.streak = streak;
     },
     "Unable to update streak. User not found.",
     "Failed to update streak. Please try again.",
+    () => {
+      if (!ownsUser()) return false;
+      const user = getMyUser(getAppState());
+      return Boolean(user && user.streakRecordedAt !== getCurrentDateString());
+    },
   );
 
-  const info = getStreakInfo(newStreak);
+  if (result.streak === undefined || !ownsUser()) return;
+  const info = getStreakInfo(result.streak);
   const isEnabled = !getAppState().local.disablePillRewards;
   if (info && isEnabled) {
     const [mode, message] = info;
@@ -375,22 +393,82 @@ export const addWordsToCurrentUser = async (
   );
 };
 
-// Runs on the same chain as `updateUser` so a refresh never reads a row that a
-// queued save is halfway through writing. It must never be called from inside
-// a queued task: the chain is already occupied there and the call would wait on
-// itself forever. The failure path in `updateUser` therefore re-reads the row
-// inline rather than calling this.
-const refreshUserAndPreferences = async (): Promise<void> => {
+/**
+ * Adopt what the read produced. A read that lost its revision check must not
+ * touch preferences at all, and a completed read with no row clears them.
+ */
+const applyRefreshedState = (
+  user: ReturnType<typeof getAppState>["userById"][string] | null,
+  preferences: ReturnType<typeof getAppState>["userPrefs"],
+  hasPreferencesResult: boolean,
+): void => {
+  produceAppState((draft) => {
+    if (user) setCurrentUser(draft, user);
+    if (!hasPreferencesResult) return;
+    if (preferences) setUserPreferences(draft, preferences);
+    else draft.userPrefs = null;
+  });
+};
+
+type PreferencesReadGuard = {
+  readRequested: boolean;
+  revision: number;
+  flagsRevision: number;
+  initialPreferences: ReturnType<typeof getAppState>["userPrefs"];
+  result: PromiseSettledResult<unknown>;
+};
+
+/**
+ * A delayed read must not replace a preference value written while it was in
+ * flight, and a failed read must not clear the stored one.
+ */
+const preferencesReadIsCurrent = ({
+  readRequested,
+  revision,
+  flagsRevision,
+  initialPreferences,
+  result,
+}: PreferencesReadGuard): boolean =>
+  readRequested &&
+  pendingPreferenceMutations === 0 &&
+  revision === preferencesRevision &&
+  flagsRevision === getExpansionFlagsRevision() &&
+  getAppState().userPrefs === initialPreferences &&
+  result.status === "fulfilled";
+
+// Refresh shares the user queue with profile saves. Preference mutations use
+// their own queue, so a revision check prevents a delayed refresh from
+// replacing a newer preference value without blocking edits on the read.
+const refreshUserAndPreferences = async (
+  isCurrent: () => boolean,
+): Promise<void> => {
+  if (!isCurrent()) return;
+  const revision = preferencesRevision;
+  const flagsRevision = getExpansionFlagsRevision();
+  const initialPreferences = getAppState().userPrefs;
+  const readPreferences = pendingPreferenceMutations === 0;
   try {
     getLogger().verbose("Refreshing current user and preferences");
     const [userResult, preferencesResult] = await Promise.allSettled([
       getUserRepo().getMyUser(),
-      getUserPreferencesRepo().getUserPreferences(),
+      readPreferences
+        ? getUserPreferencesRepo().getUserPreferences()
+        : Promise.resolve(null),
     ]);
+    if (!isCurrent()) return;
 
     const user = userResult.status === "fulfilled" ? userResult.value : null;
-    const hasPreferencesResult = preferencesResult.status === "fulfilled";
-    const preferences = hasPreferencesResult ? preferencesResult.value : null;
+    const hasPreferencesResult = preferencesReadIsCurrent({
+      readRequested: readPreferences,
+      revision,
+      flagsRevision,
+      initialPreferences,
+      result: preferencesResult,
+    });
+    const preferences =
+      hasPreferencesResult && preferencesResult.status === "fulfilled"
+        ? preferencesResult.value
+        : null;
     if (userResult.status === "rejected") {
       getLogger().warning(`Failed to refresh user: ${userResult.reason}`);
     }
@@ -400,21 +478,7 @@ const refreshUserAndPreferences = async (): Promise<void> => {
       );
     }
 
-    produceAppState((draft) => {
-      if (user) {
-        setCurrentUser(draft, user);
-      }
-
-      if (!hasPreferencesResult) {
-        return;
-      }
-
-      if (preferences) {
-        setUserPreferences(draft, preferences);
-      } else {
-        draft.userPrefs = null;
-      }
-    });
+    applyRefreshedState(user, preferences, hasPreferencesResult);
     getLogger().verbose(
       `User refreshed (hasUser=${!!user}, hasPrefs=${hasPreferencesResult ? !!preferences : "unavailable"})`,
     );
@@ -423,8 +487,10 @@ const refreshUserAndPreferences = async (): Promise<void> => {
   }
 };
 
-export const refreshCurrentUser = (): Promise<void> =>
-  enqueueUserMutation(refreshUserAndPreferences);
+export const refreshCurrentUser = (): Promise<void> => {
+  const isCurrent = captureUserSession();
+  return enqueueUserMutation(() => refreshUserAndPreferences(isCurrent));
+};
 
 export const setPreferredMicrophone = async (
   preferredMicrophone: Nullable<string>,
@@ -598,19 +664,6 @@ export const setPreferredTranscriptionModelSize = async (
   });
 };
 
-export const setGpuEnumerationEnabled = async (
-  enabled: boolean,
-): Promise<void> => {
-  const nextEnabled = supportsGpuTranscriptionDevice() && enabled;
-  produceAppState((draft) => {
-    draft.settings.aiTranscription.gpuEnumerationEnabled = nextEnabled;
-  });
-
-  await updateUserPreferences((preferences) => {
-    preferences.gpuEnumerationEnabled = nextEnabled;
-  });
-};
-
 export const setPreferredPostProcessingMode = async (
   mode: PostProcessingMode,
 ): Promise<void> => {
@@ -715,6 +768,21 @@ export const setDictationPillVisibility = async (
   await updateUserPreferences((preferences) => {
     preferences.dictationPillVisibility = visibility;
   }, "Failed to save dictation pill visibility preference. Please try again.");
+};
+
+/** Toggle against the latest committed preference, inside the shared mutation queue. */
+export const toggleDictationPillVisibility = async (): Promise<{
+  previous: DictationPillVisibility;
+  next: DictationPillVisibility;
+}> => {
+  let previous!: DictationPillVisibility;
+  let next!: DictationPillVisibility;
+  await updateUserPreferences((preferences) => {
+    previous = getEffectivePillVisibility(preferences.dictationPillVisibility);
+    next = getNextPillVisibility(previous);
+    preferences.dictationPillVisibility = next;
+  }, "Failed to save dictation pill visibility preference. Please try again.");
+  return { previous, next };
 };
 
 export const setPillResetMonitorStrategy = async (
@@ -844,6 +912,26 @@ export const setRemoteTargetDeviceId = async (
   }, "Failed to save paired receiver selection. Please try again.");
 };
 
+/** Repair only the still-missing target, without overwriting a newer selection. */
+export const clearUnavailableRemoteTarget = (
+  isCurrent: () => boolean,
+): Promise<void> =>
+  updateUserPreferences(
+    (preferences) => {
+      preferences.remoteTargetDeviceId = null;
+      preferences.remoteOutputEnabled = false;
+    },
+    "Failed to save paired receiver selection. Please try again.",
+    (preferences) => {
+      const target = preferences.remoteTargetDeviceId;
+      return Boolean(
+        isCurrent() &&
+        target &&
+        !getPairedRemoteDeviceById(getAppState(), target),
+      );
+    },
+  );
+
 export const setRemoteReceiverPort = async (
   port: Nullable<number>,
 ): Promise<void> => {
@@ -900,14 +988,6 @@ export const setReviewBeforeInsert = async (
       preferences.realtimeOutputEnabled = false;
     }
   }, "Failed to save review-before-insert preference. Please try again.");
-};
-
-export const setAgentEnabledTools = async (
-  toolIds: string[] | null,
-): Promise<void> => {
-  await updateUserPreferences((preferences) => {
-    preferences.agentEnabledTools = toolIds;
-  }, "Failed to save enabled agent tools. Please try again.");
 };
 
 export const setAgentToolEnabled = (
@@ -973,15 +1053,24 @@ export const setActiveToneIds = async (toneIds: string[]): Promise<void> => {
   );
 };
 
-export const setSelectedToneId = async (toneId: string): Promise<void> => {
+export const setSelectedToneId = async (
+  toneId: string,
+  shouldUpdate: () => boolean = () => true,
+): Promise<void> => {
+  const isCurrentSession = captureUserSession();
+  let applied = false;
   await updateUser(
     (user) => {
       user.selectedToneId = toneId;
+      applied = true;
     },
     "Unable to select style. User not found.",
     "Failed to select style. Please try again.",
+    shouldUpdate,
   );
-  setLocalStorageValue("mausvoice:checklist-writing-style", true);
+  if (applied && isCurrentSession() && shouldUpdate()) {
+    setLocalStorageValue("mausvoice:checklist-writing-style", true);
+  }
 };
 
 export const activateAndSelectTone = async (toneId: string): Promise<void> => {
@@ -1006,15 +1095,5 @@ export const deselectActiveTone = async (toneId: string): Promise<void> => {
     },
     "Unable to deselect style. User not found.",
     "Failed to deselect style. Please try again.",
-  );
-};
-
-export const markUpgradeDialogSeen = async (): Promise<void> => {
-  await updateUser(
-    (user) => {
-      user.shouldShowUpgradeDialog = false;
-    },
-    "Unable to mark upgrade dialog as seen. User not found.",
-    "Failed to mark upgrade dialog as seen. Please try again.",
   );
 };

@@ -1,101 +1,27 @@
 import CheckCircleRoundedIcon from "@mui/icons-material/CheckCircleRounded";
-import CheckRoundedIcon from "@mui/icons-material/CheckRounded";
-import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
-import EditRoundedIcon from "@mui/icons-material/EditRounded";
 import ReplayRoundedIcon from "@mui/icons-material/ReplayRounded";
 import {
-  Box,
   Button,
   CircularProgress,
   Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
-  Divider,
   Stack,
-  TextField,
   Typography,
 } from "@mui/material";
 import { getRec } from "@maus-inc/utilities";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { FormattedMessage, useIntl } from "react-intl";
-import { saveCorrectedTranscript } from "../../actions/auto-learn.actions";
-import { showErrorSnackbar, showSnackbar } from "../../actions/app.actions";
+import { useMemo } from "react";
+import { FormattedMessage } from "react-intl";
 import {
   closeTranscriptionDetailsDialog,
   openRetranscribeDialog,
 } from "../../actions/transcriptions.actions";
-import { AppState } from "../../state/app.state";
 import { useAppStore } from "../../store";
-import { TranscriptionTextBlock } from "./TranscriptionTextBlock";
-
-const formatModelSizeLabel = (modelSize?: string | null): React.ReactNode => {
-  const value = modelSize?.trim();
-  if (!value) {
-    return <FormattedMessage defaultMessage="Unknown" />;
-  }
-
-  return value.charAt(0).toUpperCase() + value.slice(1);
-};
-
-const resolveApiKeyLabel = (
-  records: AppState["apiKeyById"],
-  apiKeyId: string | null | undefined,
-  noneLabel: string,
-  unknownLabel: string,
-): string => {
-  if (!apiKeyId) {
-    return noneLabel;
-  }
-
-  const record = records[apiKeyId];
-  if (!record) {
-    return unknownLabel;
-  }
-
-  const suffix = record.keySuffix?.trim();
-  if (suffix && suffix.length > 0) {
-    return `${record.name} (••••${suffix})`;
-  }
-
-  return record.name;
-};
-
-const DetailField = ({
-  label,
-  value,
-}: {
-  label: React.ReactNode;
-  value: React.ReactNode;
-}) => (
-  <Box>
-    <Typography variant="caption" sx={{ color: "text.secondary" }}>
-      {label}
-    </Typography>
-    <Typography variant="body2" sx={{ fontWeight: 600 }}>
-      {value}
-    </Typography>
-  </Box>
-);
-
-const formatTextOrUnknown = (value?: string | null): React.ReactNode => {
-  const trimmed = value?.trim();
-  return trimmed && trimmed.length > 0 ? (
-    trimmed
-  ) : (
-    <FormattedMessage defaultMessage="Unknown" />
-  );
-};
-
-const formatDurationLabel = (ms?: number | null): string | null => {
-  if (ms == null) {
-    return null;
-  }
-  return ms >= 1000 ? `${(ms / 1000).toFixed(2)}s` : `${ms}ms`;
-};
+import { TranscriptionMetadataDetails } from "./TranscriptionMetadataDetails";
+import { TranscriptionOutputs } from "./TranscriptionOutputs";
 
 export const TranscriptionDetailsDialog = () => {
-  const intl = useIntl();
   const open = useAppStore((state) => state.transcriptions.detailsDialogOpen);
   const transcription = useAppStore((state) => {
     const transcriptionId = state.transcriptions.detailsDialogTranscriptionId;
@@ -105,28 +31,6 @@ export const TranscriptionDetailsDialog = () => {
     return getRec(state.transcriptionById, transcriptionId);
   });
   const apiKeysById = useAppStore((state) => state.apiKeyById);
-
-  const [isEditingFinal, setIsEditingFinal] = useState(false);
-  const [finalDraft, setFinalDraft] = useState("");
-  const [isSavingFinal, setIsSavingFinal] = useState(false);
-
-  // Focus the final-transcription field explicitly once it has mounted rather
-  // than with a DOM `autoFocus` prop: `autoFocus` fires as an attribute and
-  // cannot be deferred, so it races anything that moves focus in the same
-  // commit. This mirrors ContextMenu's own "focus after commit, not via
-  // autoFocus" rule. The field renders only while editing, so the effect is
-  // keyed on `isEditingFinal` rather than `[]` -- this component itself stays
-  // mounted for the whole app lifetime, so a mount-only effect would never fire.
-  // `TextField` forwards `inputRef` to the underlying `<textarea>`.
-  const finalDraftRef = useRef<HTMLTextAreaElement | null>(null);
-  useEffect(() => {
-    if (isEditingFinal) finalDraftRef.current?.focus();
-  }, [isEditingFinal]);
-
-  useEffect(() => {
-    setIsEditingFinal(false);
-    setFinalDraft("");
-  }, [open, transcription?.id]);
 
   const isRetranscribing = useAppStore((state) =>
     transcription?.id
@@ -147,206 +51,10 @@ export const TranscriptionDetailsDialog = () => {
     <ReplayRoundedIcon />
   );
 
-  const transcriptionModeLabel = useMemo(() => {
-    if (transcription?.transcriptionMode === "api") {
-      return <FormattedMessage defaultMessage="API" />;
-    }
-    if (transcription?.transcriptionMode === "local") {
-      return <FormattedMessage defaultMessage="Local" />;
-    }
-    return <FormattedMessage defaultMessage="Unknown" />;
-  }, [transcription?.transcriptionMode]);
-
-  const transcriptionApiKeyLabel = useMemo(
-    () =>
-      resolveApiKeyLabel(
-        apiKeysById,
-        transcription?.transcriptionApiKeyId,
-        "None",
-        "Unknown",
-      ),
-    [apiKeysById, transcription?.transcriptionApiKeyId],
-  );
-
-  const postProcessModeLabel = useMemo(() => {
-    if (transcription?.postProcessMode === "api") {
-      return <FormattedMessage defaultMessage="API" />;
-    }
-    if (transcription?.postProcessMode === "fast") {
-      return <FormattedMessage defaultMessage="Fast (local)" />;
-    }
-    return <FormattedMessage defaultMessage="Disabled" />;
-  }, [transcription?.postProcessDevice, transcription?.postProcessMode]);
-
-  const postProcessApiKeyLabel = useMemo(
-    () =>
-      resolveApiKeyLabel(
-        apiKeysById,
-        transcription?.postProcessApiKeyId,
-        "None",
-        "Unknown",
-      ),
-    [apiKeysById, transcription?.postProcessApiKeyId],
-  );
-
-  const modelSizeLabel = useMemo(
-    () => formatModelSizeLabel(transcription?.modelSize),
-    [transcription?.modelSize],
-  );
-
-  const deviceLabel = useMemo(
-    () => formatTextOrUnknown(transcription?.inferenceDevice),
-    [transcription?.inferenceDevice],
-  );
-
-  const postProcessDeviceLabel = useMemo(
-    () => formatTextOrUnknown(transcription?.postProcessDevice),
-    [transcription?.postProcessDevice],
-  );
-
-  const postProcessModelLabel = useMemo(
-    () => formatTextOrUnknown(transcription?.postProcessModel),
-    [transcription?.postProcessModel],
-  );
-
-  const transcriptionPrompt = useMemo(() => {
-    const prompt = transcription?.transcriptionPrompt?.trim();
-    return prompt && prompt.length > 0 ? prompt : null;
-  }, [transcription?.transcriptionPrompt]);
-
   const rawTranscriptText = useMemo(
     () => transcription?.rawTranscript ?? transcription?.transcript ?? "",
     [transcription?.rawTranscript, transcription?.transcript],
   );
-
-  const sanitizedTranscriptText = useMemo(
-    () => transcription?.sanitizedTranscript ?? null,
-    [transcription?.sanitizedTranscript],
-  );
-
-  const postProcessPrompt = useMemo(() => {
-    let prompt = transcription?.postProcessPrompt?.trim() ?? "";
-    if (rawTranscriptText) {
-      prompt = prompt.replace(rawTranscriptText.trim(), "<transcript>");
-    }
-
-    return prompt && prompt.length > 0 ? prompt : null;
-  }, [transcription?.postProcessPrompt, rawTranscriptText]);
-
-  const finalTranscriptText = transcription?.transcript ?? "";
-
-  const transcriptionDurationLabel = useMemo(
-    () => formatDurationLabel(transcription?.transcriptionDurationMs),
-    [transcription?.transcriptionDurationMs],
-  );
-
-  const postprocessDurationLabel = useMemo(
-    () => formatDurationLabel(transcription?.postprocessDurationMs),
-    [transcription?.postprocessDurationMs],
-  );
-
-  const warnings = useMemo(() => {
-    if (!transcription?.warnings) {
-      return [];
-    }
-    return transcription.warnings
-      .map((warning) => warning.trim())
-      .filter((warning) => warning.length > 0);
-  }, [transcription?.warnings]);
-
-  const startEditingFinal = () => {
-    setFinalDraft(finalTranscriptText);
-    setIsEditingFinal(true);
-  };
-
-  const cancelEditingFinal = () => {
-    setIsEditingFinal(false);
-    setFinalDraft("");
-  };
-
-  const handleSaveFinal = async () => {
-    if (!transcription?.id) {
-      return;
-    }
-
-    // Saving unchanged text would perform a needless DB write and run the
-    // full glossary extraction pipeline for nothing.
-    if (finalDraft.trim() === finalTranscriptText.trim()) {
-      setIsEditingFinal(false);
-      setFinalDraft("");
-      return;
-    }
-
-    setIsSavingFinal(true);
-    try {
-      const { learnedTerms, failedTerms, dictionarySuppressed } =
-        await saveCorrectedTranscript({
-          transcriptionId: transcription.id,
-          correctedText: finalDraft,
-        });
-
-      setIsEditingFinal(false);
-      setFinalDraft("");
-
-      if (learnedTerms.length === 1 && failedTerms === 0) {
-        showSnackbar(
-          intl.formatMessage(
-            { defaultMessage: 'Added "{term}" to your dictionary' },
-            { term: learnedTerms[0] },
-          ),
-          { mode: "success" },
-        );
-      } else if (learnedTerms.length > 0 && failedTerms === 0) {
-        showSnackbar(
-          intl.formatMessage(
-            { defaultMessage: "Added {count} words to your dictionary" },
-            { count: learnedTerms.length },
-          ),
-          { mode: "success" },
-        );
-      } else if (learnedTerms.length > 0 && failedTerms > 0) {
-        showSnackbar(
-          intl.formatMessage(
-            {
-              defaultMessage:
-                "Added {added} words to your dictionary ({failed} failed)",
-            },
-            { added: learnedTerms.length, failed: failedTerms },
-          ),
-          { mode: "success" },
-        );
-      } else if (failedTerms > 0) {
-        showSnackbar(
-          intl.formatMessage({
-            defaultMessage:
-              "Transcript updated, but the corrected words could not be added to your dictionary.",
-          }),
-          { mode: "error" },
-        );
-      } else if (dictionarySuppressed) {
-        // Auto-learn was on and the glossary write was refused, so an empty
-        // `learnedTerms` here is a policy decision rather than a correction that
-        // taught nothing. Saying "Transcript updated" and stopping there leaves
-        // the user reading a promise the mode does not keep.
-        showSnackbar(
-          intl.formatMessage({
-            defaultMessage:
-              "Transcript updated. Nothing was added to your dictionary because Incognito is on.",
-          }),
-          { mode: "success" },
-        );
-      } else {
-        showSnackbar(
-          intl.formatMessage({ defaultMessage: "Transcript updated" }),
-          { mode: "success" },
-        );
-      }
-    } catch (error) {
-      showErrorSnackbar(error);
-    } finally {
-      setIsSavingFinal(false);
-    }
-  };
 
   return (
     <Dialog
@@ -361,269 +69,17 @@ export const TranscriptionDetailsDialog = () => {
       <DialogContent dividers>
         {transcription ? (
           <Stack spacing={3}>
-            <Box>
-              <Typography
-                variant="overline"
-                sx={{
-                  color: "text.secondary",
-                }}
-              >
-                <FormattedMessage defaultMessage="Outputs" />
-              </Typography>
-              <Stack spacing={1.25} sx={{ mt: 1 }}>
-                <TranscriptionTextBlock
-                  label={
-                    <FormattedMessage defaultMessage="Raw transcription" />
-                  }
-                  value={rawTranscriptText}
-                  placeholder={
-                    <FormattedMessage defaultMessage="Raw transcript unavailable." />
-                  }
-                  monospace
-                />
-                {sanitizedTranscriptText && (
-                  <TranscriptionTextBlock
-                    label={
-                      <FormattedMessage defaultMessage="After replacements" />
-                    }
-                    value={sanitizedTranscriptText}
-                    monospace
-                  />
-                )}
-                {isEditingFinal ? (
-                  <Box>
-                    <Typography
-                      variant="caption"
-                      sx={{
-                        color: "text.secondary",
-                      }}
-                    >
-                      <FormattedMessage defaultMessage="Final transcription" />
-                    </Typography>
-                    <TextField
-                      inputRef={finalDraftRef}
-                      fullWidth
-                      multiline
-                      minRows={3}
-                      value={finalDraft}
-                      onChange={(event) => setFinalDraft(event.target.value)}
-                      disabled={isSavingFinal}
-                      sx={{ mt: 0.5 }}
-                    />
-                    <Stack
-                      direction="row"
-                      spacing={1}
-                      sx={{ justifyContent: "flex-end", mt: 1 }}
-                    >
-                      <Button
-                        size="small"
-                        variant="text"
-                        startIcon={<CloseRoundedIcon />}
-                        onClick={cancelEditingFinal}
-                        disabled={isSavingFinal}
-                      >
-                        <FormattedMessage defaultMessage="Cancel" />
-                      </Button>
-                      <Button
-                        size="small"
-                        variant="contained"
-                        startIcon={
-                          isSavingFinal ? (
-                            <CircularProgress size={16} color="inherit" />
-                          ) : (
-                            <CheckRoundedIcon />
-                          )
-                        }
-                        onClick={handleSaveFinal}
-                        disabled={
-                          isSavingFinal || finalDraft.trim().length === 0
-                        }
-                      >
-                        <FormattedMessage defaultMessage="Save" />
-                      </Button>
-                    </Stack>
-                  </Box>
-                ) : (
-                  <Box>
-                    <TranscriptionTextBlock
-                      label={
-                        <FormattedMessage defaultMessage="Final transcription" />
-                      }
-                      value={finalTranscriptText}
-                      placeholder={
-                        <FormattedMessage defaultMessage="Final transcript unavailable." />
-                      }
-                      monospace
-                    />
-                    {finalTranscriptText.trim().length > 0 && (
-                      <Button
-                        size="small"
-                        startIcon={<EditRoundedIcon />}
-                        onClick={startEditingFinal}
-                        sx={{ mt: 0.5 }}
-                      >
-                        <FormattedMessage defaultMessage="Edit" />
-                      </Button>
-                    )}
-                  </Box>
-                )}
-              </Stack>
-            </Box>
+            <TranscriptionOutputs
+              open={open}
+              transcription={transcription}
+              rawTranscriptText={rawTranscriptText}
+            />
 
-            {warnings.length > 0 && (
-              <>
-                <Divider />
-
-                <Box>
-                  <Typography
-                    variant="overline"
-                    sx={{
-                      color: "text.secondary",
-                    }}
-                  >
-                    <FormattedMessage defaultMessage="Warnings" />
-                  </Typography>
-                  <Stack spacing={1} sx={{ mt: 1 }}>
-                    {warnings.map((warning, index) => (
-                      <Box
-                        key={`warning-${index}`}
-                        sx={(theme) => ({
-                          p: 1,
-                          borderRadius: 1,
-                          bgcolor:
-                            theme.vars?.palette.level1 ??
-                            theme.palette.background.default,
-                        })}
-                      >
-                        <Typography
-                          variant="body2"
-                          sx={(theme) => ({
-                            color:
-                              theme.vars?.palette.warning?.main ??
-                              theme.palette.warning.main,
-                          })}
-                        >
-                          {warning}
-                        </Typography>
-                      </Box>
-                    ))}
-                  </Stack>
-                </Box>
-              </>
-            )}
-
-            {(transcriptionDurationLabel || postprocessDurationLabel) && (
-              <>
-                <Divider />
-
-                <Box>
-                  <Typography
-                    variant="overline"
-                    sx={{
-                      color: "text.secondary",
-                    }}
-                  >
-                    <FormattedMessage defaultMessage="Performance" />
-                  </Typography>
-                  <Stack spacing={1.25} sx={{ mt: 1 }}>
-                    {transcriptionDurationLabel && (
-                      <DetailField
-                        label={
-                          <FormattedMessage defaultMessage="Transcription Duration" />
-                        }
-                        value={transcriptionDurationLabel}
-                      />
-                    )}
-                    {postprocessDurationLabel && (
-                      <DetailField
-                        label={
-                          <FormattedMessage defaultMessage="Post-processing Duration" />
-                        }
-                        value={postprocessDurationLabel}
-                      />
-                    )}
-                  </Stack>
-                </Box>
-              </>
-            )}
-
-            <Divider />
-
-            <Box>
-              <Typography
-                variant="overline"
-                sx={{
-                  color: "text.secondary",
-                }}
-              >
-                <FormattedMessage defaultMessage="Transcription Step" />
-              </Typography>
-              <Stack spacing={1.25} sx={{ mt: 1 }}>
-                <DetailField
-                  label={<FormattedMessage defaultMessage="Mode" />}
-                  value={transcriptionModeLabel}
-                />
-                <DetailField
-                  label={<FormattedMessage defaultMessage="Device" />}
-                  value={deviceLabel}
-                />
-                <DetailField
-                  label={<FormattedMessage defaultMessage="Model Size" />}
-                  value={modelSizeLabel}
-                />
-                <DetailField
-                  label={<FormattedMessage defaultMessage="API key" />}
-                  value={transcriptionApiKeyLabel}
-                />
-                <TranscriptionTextBlock
-                  label={<FormattedMessage defaultMessage="Prompt" />}
-                  value={transcriptionPrompt}
-                  placeholder={
-                    <FormattedMessage defaultMessage="No custom prompt applied." />
-                  }
-                  monospace
-                />
-              </Stack>
-            </Box>
-
-            <Divider />
-
-            <Box>
-              <Typography
-                variant="overline"
-                sx={{
-                  color: "text.secondary",
-                }}
-              >
-                <FormattedMessage defaultMessage="Post-processing Step" />
-              </Typography>
-              <Stack spacing={1.25} sx={{ mt: 1 }}>
-                <DetailField
-                  label={<FormattedMessage defaultMessage="Mode" />}
-                  value={postProcessModeLabel}
-                />
-                <DetailField
-                  label={<FormattedMessage defaultMessage="Processor" />}
-                  value={postProcessDeviceLabel}
-                />
-                <DetailField
-                  label={<FormattedMessage defaultMessage="Model" />}
-                  value={postProcessModelLabel}
-                />
-                <DetailField
-                  label={<FormattedMessage defaultMessage="API key" />}
-                  value={postProcessApiKeyLabel}
-                />
-                <TranscriptionTextBlock
-                  label={<FormattedMessage defaultMessage="Prompt" />}
-                  value={postProcessPrompt}
-                  placeholder={
-                    <FormattedMessage defaultMessage="No LLM post-processing was applied." />
-                  }
-                  monospace
-                />
-              </Stack>
-            </Box>
+            <TranscriptionMetadataDetails
+              transcription={transcription}
+              apiKeysById={apiKeysById}
+              rawTranscriptText={rawTranscriptText}
+            />
           </Stack>
         ) : (
           <Typography

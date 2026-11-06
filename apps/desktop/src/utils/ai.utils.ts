@@ -1,4 +1,4 @@
-import type { LlmMessage, UserPreferences } from "@maus-inc/types";
+import type { UserPreferences } from "@maus-inc/types";
 import { unknownToMessage } from "@maus-inc/utilities";
 import { AppState } from "../state/app.state";
 import { CPU_DEVICE_VALUE, DEFAULT_MODEL_SIZE } from "../types/ai.types";
@@ -564,38 +564,3 @@ export const applyAiPreferences = (
   applyGenerativePreferences(draft, preferences);
   applyFeaturePreferences(draft, preferences);
 };
-
-export function formatMessagesAsPrompt(messages: LlmMessage[]): {
-  system: string | undefined;
-  prompt: string;
-} {
-  const systemMsg = messages.find((m) => m.role === "system");
-  const nonSystemMessages = messages.filter((m) => m.role !== "system");
-
-  if (nonSystemMessages.length <= 1) {
-    const lastMsg = nonSystemMessages[0];
-    return {
-      system: systemMsg?.content,
-      prompt:
-        lastMsg?.role === "user"
-          ? lastMsg.content
-          : lastMsg?.role === "assistant"
-            ? (lastMsg.content ?? "")
-            : "",
-    };
-  }
-
-  const formatted = nonSystemMessages
-    .map((m) => {
-      if (m.role === "user") return `User: ${m.content}`;
-      if (m.role === "assistant") return `Assistant: ${m.content ?? ""}`;
-      return "";
-    })
-    .filter(Boolean)
-    .join("\n\n");
-
-  return {
-    system: systemMsg?.content,
-    prompt: formatted,
-  };
-}

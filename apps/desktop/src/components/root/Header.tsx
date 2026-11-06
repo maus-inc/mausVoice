@@ -16,17 +16,13 @@ import {
 import { GpuMigrationDialog } from "./GpuMigrationDialog";
 import { SenderReceiverChip } from "./SenderReceiverChip";
 
-export type BaseHeaderProps = {
+type BaseHeaderProps = {
   logo?: React.ReactNode;
   leftContent?: React.ReactNode;
   rightContent?: React.ReactNode;
 };
 
-export const BaseHeader = ({
-  logo,
-  leftContent,
-  rightContent,
-}: BaseHeaderProps) => {
+const BaseHeader = ({ logo, leftContent, rightContent }: BaseHeaderProps) => {
   const hasContent = logo || leftContent || rightContent;
   if (!hasContent) {
     return null;

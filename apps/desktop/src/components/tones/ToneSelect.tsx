@@ -1,38 +1,36 @@
-import { Add, Edit, Public } from "@mui/icons-material";
+import { Add } from "@mui/icons-material";
 import {
   FormControl,
-  IconButton,
   InputLabel,
   MenuItem,
   Select,
   SelectChangeEvent,
   Stack,
-  Tooltip,
   type SxProps,
   type Theme,
 } from "@mui/material";
 import type { Tone } from "@maus-inc/types";
 import { getRec } from "@maus-inc/utilities";
 import { useCallback, useMemo, useState } from "react";
-import { FormattedMessage, useIntl } from "react-intl";
+import { FormattedMessage } from "react-intl";
 import { setLocalStorageValue } from "../../actions/local-storage.actions";
 import { openToneEditorDialog } from "../../actions/tone.actions";
 import { useAppStore } from "../../store";
 import { getSortedToneIds } from "../../utils/tone.utils";
 import { getMyUserPreferences } from "../../utils/user.utils";
+import { ToneOptionContent } from "./ToneOptionContent";
 
 const ADD_TONE_MENU_VALUE = "__add_tone_option__";
 
-type ToneSelectProps = {
-  value: string | null | undefined;
-  onToneChange: (toneId: string | null) => void;
-  addToneTargetId?: string | null;
-  disabled?: boolean;
-  formControlSx?: SxProps<Theme>;
-  selectSize?: "small" | "medium";
-  label?: string;
-  trueDefault?: boolean;
-};
+const DefaultToneLabel = ({ name }: { name?: string }) =>
+  name !== undefined ? (
+    <FormattedMessage
+      defaultMessage="Default ({toneName})"
+      values={{ toneName: name }}
+    />
+  ) : (
+    <FormattedMessage defaultMessage="Default" />
+  );
 
 export const ToneSelect = ({
   value,
@@ -43,8 +41,16 @@ export const ToneSelect = ({
   selectSize = "small",
   label,
   trueDefault,
-}: ToneSelectProps) => {
-  const intl = useIntl();
+}: {
+  value: string | null | undefined;
+  onToneChange: (toneId: string | null) => void;
+  addToneTargetId?: string | null;
+  disabled?: boolean;
+  formControlSx?: SxProps<Theme>;
+  selectSize?: "small" | "medium";
+  label?: string;
+  trueDefault?: boolean;
+}) => {
   const toneById = useAppStore((state) => state.toneById);
   const defaultTone = useAppStore((state) => {
     const userPreferences = getMyUserPreferences(state);
@@ -77,7 +83,10 @@ export const ToneSelect = ({
   const handleSelectOpen = useCallback(() => setMenuOpen(true), []);
   const handleSelectClose = useCallback(() => setMenuOpen(false), []);
 
-  const resolvedValue = getRec(toneById, value)?.id ?? "default";
+  const resolvedValue = getRec(toneById, value)?.id ?? "";
+  const defaultLabel = (
+    <DefaultToneLabel name={trueDefault ? undefined : defaultTone?.name} />
+  );
 
   return (
     <FormControl size={selectSize} sx={formControlSx}>
@@ -94,14 +103,7 @@ export const ToneSelect = ({
         label={label}
         renderValue={(selected) => {
           if (!selected) {
-            return defaultTone && !trueDefault ? (
-              <FormattedMessage
-                defaultMessage="Default ({toneName})"
-                values={{ toneName: defaultTone.name }}
-              />
-            ) : (
-              <FormattedMessage defaultMessage="Default" />
-            );
+            return defaultLabel;
           }
 
           return toneById[selected]?.name ?? selected;
@@ -121,40 +123,18 @@ export const ToneSelect = ({
             </div>
           </Stack>
         </MenuItem>
+        <MenuItem value="">{defaultLabel}</MenuItem>
         {tones.map((tone) => (
           <MenuItem key={tone.id} value={tone.id}>
-            <Stack
-              direction="row"
-              sx={{
-                alignItems: "center",
-                justifyContent: "space-between",
-                width: "100%",
+            <ToneOptionContent
+              name={tone.name}
+              isGlobal={tone.isGlobal}
+              isSystem={tone.isSystem}
+              onEdit={() => {
+                setMenuOpen(false);
+                openToneEditorDialog({ mode: "edit", toneId: tone.id });
               }}
-            >
-              <div>{tone.name}</div>
-              {tone.isGlobal ? (
-                <Tooltip
-                  title={intl.formatMessage({
-                    defaultMessage:
-                      "This is a global style and cannot be edited",
-                  })}
-                >
-                  <Public fontSize="small" sx={{ color: "text.secondary" }} />
-                </Tooltip>
-              ) : !tone.isSystem ? (
-                <IconButton
-                  size="small"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    event.preventDefault();
-                    setMenuOpen(false);
-                    openToneEditorDialog({ mode: "edit", toneId: tone.id });
-                  }}
-                >
-                  <Edit fontSize="small" />
-                </IconButton>
-              ) : null}
-            </Stack>
+            />
           </MenuItem>
         ))}
       </Select>

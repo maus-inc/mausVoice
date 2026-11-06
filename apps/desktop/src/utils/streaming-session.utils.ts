@@ -166,8 +166,9 @@ export const finalizeStreamingSession = async ({
       },
       warnings: Array.from(new Set(getWarnings())),
     };
-  } catch (error) {
-    logError(`[${providerLabel}] Failed to finalize session:`, error);
+  } catch {
+    // Provider exceptions can contain dictated text or credentials.
+    logError(`[${providerLabel}] Failed to finalize session`);
     return {
       rawTranscript: null,
       metadata: {
@@ -176,12 +177,7 @@ export const finalizeStreamingSession = async ({
         transcriptionMode: "api",
       },
       warnings: Array.from(
-        new Set([
-          ...getWarnings(),
-          `${providerLabel} finalization failed: ${
-            error instanceof Error ? error.message : "Unknown error"
-          }`,
-        ]),
+        new Set([...getWarnings(), `${providerLabel} finalization failed`]),
       ),
     };
   }

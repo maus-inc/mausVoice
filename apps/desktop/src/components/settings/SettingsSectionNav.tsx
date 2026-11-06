@@ -14,7 +14,7 @@ export const sectionAnchorId = (section: SettingSectionId): string =>
   `section-${section}`;
 
 /** Label for a section, switching on the id so each stays an extracted message. */
-export const sectionLabelOf = (section: SettingSectionId) => {
+const sectionLabelOf = (section: SettingSectionId) => {
   switch (section) {
     case "general":
       return <FormattedMessage defaultMessage="General" />;

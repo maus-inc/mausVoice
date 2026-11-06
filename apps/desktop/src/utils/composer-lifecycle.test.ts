@@ -39,9 +39,11 @@ let listeners: Map<string, Array<(event: { payload: unknown }) => void>>;
 const emit = (name: string, payload: unknown) =>
   listeners.get(name)?.forEach((fn) => fn({ payload }));
 const requestId = (index = 0): string =>
-  mocks.invoke.mock.calls.filter(([name]) => name === "composer_register_text")[
-    index
-  ][1].requestId;
+  mocks.invoke.mock.calls.filter(
+    ([name, args]) =>
+      name === "composer_register_text" &&
+      !args.requestId.endsWith(":original"),
+  )[index][1].requestId;
 
 describe("composer setup lifetime", () => {
   beforeEach(() => {

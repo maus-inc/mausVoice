@@ -1,23 +1,11 @@
+import type { ApiKeyView } from "@maus-inc/desktop-native-apis";
 import { ApiKey, ApiKeyProvider, OpenRouterConfig } from "@maus-inc/types";
 import { invoke } from "@tauri-apps/api/core";
 import dayjs from "dayjs";
 import { BaseRepo } from "./base.repo";
 
-type LocalApiKey = {
-  id: string;
-  name: string;
-  provider: ApiKeyProvider;
-  createdAt: number;
-  keySuffix?: string | null;
-  keyFull?: string | null;
-  transcriptionModel?: string | null;
-  postProcessingModel?: string | null;
-  openRouterConfig?: string | null;
-  baseUrl?: string | null;
-  azureRegion?: string | null;
-  includeV1Path?: boolean | null;
-  transcriptionPath?: string | null;
-};
+// Rust carries the provider as a string; the repository exposes the known provider union.
+type LocalApiKey = Omit<ApiKeyView, "provider"> & { provider: ApiKeyProvider };
 
 const parseOpenRouterConfig = (
   configStr: string | null | undefined,

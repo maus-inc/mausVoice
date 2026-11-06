@@ -5,11 +5,11 @@ import {
 } from "../../actions/tool.actions";
 import { ToolPermissionPrompt } from "../common/ToolPermissionPrompt";
 
-type ToolPermissionCardProps = {
+export const ToolPermissionCard = ({
+  permission,
+}: {
   permission: ToolPermission;
-};
-
-export const ToolPermissionCard = ({ permission }: ToolPermissionCardProps) => {
+}) => {
   return (
     <ToolPermissionPrompt
       permission={permission}

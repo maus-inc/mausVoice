@@ -2,21 +2,16 @@ import "./styles/fonts.css";
 import "./styles/tokens.css";
 import "./styles/dotmatrix.css";
 import "./styles/caption.css";
-import { CssBaseline } from "@mui/material";
-import { ThemeProvider } from "@mui/material/styles";
 import { FirebaseOptions, initializeApp } from "firebase/app";
 import mixpanel from "mixpanel-browser";
 import { connectAuthEmulator } from "firebase/auth";
 import { connectDatabaseEmulator, getDatabase } from "firebase/database";
-import React, { useMemo } from "react";
-import ReactDOM from "react-dom/client";
-import { IntlProvider } from "react-intl";
 import { AppWithLoading } from "./components/root/AppWithLoading";
 import { SnackbarEmitter } from "./components/root/SnackbarEmitter";
-import { getIntlConfig } from "./i18n";
-import { THEME_PROVIDER_CONFIG, theme } from "./theme";
 import { createEffectiveAuth } from "./utils/auth.utils";
 import { applyDomMutationGuards } from "./utils/dom-guard.utils";
+import { getOrCreateReactRoot } from "./utils/react-root.utils";
+import { AppProviders } from "./components/root/AppProviders";
 import { flushPendingTranscriptionDeletes } from "./utils/pending-transcription-delete";
 import { getIsEmulators } from "./utils/env.utils";
 import {
@@ -103,39 +98,14 @@ if (mixpanelToken) {
 }
 
 const rootElement = document.getElementById("root") as HTMLElement;
-
-// Prevent HMR from creating multiple React roots.
-// Store the root on the DOM element so we can reuse it across hot reloads.
-const existingRoot = (rootElement as unknown as { _reactRoot?: ReactDOM.Root })
-  ._reactRoot;
-const root = existingRoot ?? ReactDOM.createRoot(rootElement);
-(rootElement as unknown as { _reactRoot?: ReactDOM.Root })._reactRoot = root;
-
-type ChildrenProps = {
-  children: React.ReactNode;
-};
-
-const Main = ({ children }: ChildrenProps) => {
-  const intlConfig = useMemo(() => getIntlConfig(), []);
-
-  return (
-    <React.StrictMode>
-      <IntlProvider {...intlConfig}>
-        <ThemeProvider theme={theme} {...THEME_PROVIDER_CONFIG}>
-          <CssBaseline />
-          {children}
-        </ThemeProvider>
-      </IntlProvider>
-    </React.StrictMode>
-  );
-};
+const root = getOrCreateReactRoot(rootElement);
 
 try {
   root.render(
-    <Main>
+    <AppProviders>
       <SnackbarEmitter />
       <AppWithLoading />
-    </Main>,
+    </AppProviders>,
   );
 } catch (error) {
   paintFatalError("mausVoice failed to start", error);

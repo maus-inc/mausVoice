@@ -314,12 +314,6 @@ const resolveRestoreTarget = (
 
 // ── Component ────────────────────────────────────────────────────────────
 
-interface ContextMenuProps {
-  items: ContextMenuItem[];
-  /** Pass through for adding styling */
-  sx?: SxProps<Theme>;
-}
-
 /**
  * A controlled context menu that renders at the given position.
  * Use `onContextMenu` handler on your surface to set position + items.
@@ -333,7 +327,32 @@ const iconColor = (item: ContextMenuItem): string => {
   return "text.secondary";
 };
 
-export const ContextMenu = ({ items, sx }: ContextMenuProps) => {
+/** Move among enabled rows, wrapping in either direction. */
+const nextMenuIndex = (
+  indices: number[],
+  activeIndex: number,
+  direction: 1 | -1,
+): number => {
+  const position = indices.indexOf(activeIndex);
+  if (position < 0)
+    return direction === 1 ? indices[0] : indices[indices.length - 1];
+  return indices[(position + direction + indices.length) % indices.length];
+};
+
+/** A stale or disabled row is never an actionable keyboard target. */
+const activateMenuItem = (items: ContextMenuItem[], index: number): void => {
+  const item = items[index];
+  if (item && item.kind !== "divider" && !item.disabled) item.onClick();
+};
+
+export const ContextMenu = ({
+  items,
+  sx,
+}: {
+  items: ContextMenuItem[];
+  /** Pass through for adding styling */
+  sx?: SxProps<Theme>;
+}) => {
   const [activeIndex, setActiveIndex] = useState<number>(-1);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -360,43 +379,28 @@ export const ContextMenu = ({ items, sx }: ContextMenuProps) => {
       switch (e.key) {
         case "ArrowDown": {
           e.preventDefault();
-          const currentPos = actionableIndices.indexOf(activeIndex);
-          const nextPos = (currentPos + 1) % actionableIndices.length;
-          setActiveIndex(actionableIndices[nextPos]);
+          setActiveIndex(nextMenuIndex(actionableIndices, activeIndex, 1));
           break;
         }
         case "ArrowUp": {
           e.preventDefault();
-          const currentPos = actionableIndices.indexOf(activeIndex);
-          const prevPos =
-            (currentPos - 1 + actionableIndices.length) %
-            actionableIndices.length;
-          setActiveIndex(actionableIndices[prevPos]);
+          setActiveIndex(nextMenuIndex(actionableIndices, activeIndex, -1));
           break;
         }
         case "Enter":
         case " ": {
           e.preventDefault();
-          if (activeIndex >= 0) {
-            const item = items[activeIndex];
-            if (item.kind !== "divider" && !item.disabled) {
-              item.onClick();
-            }
-          }
+          activateMenuItem(items, activeIndex);
           break;
         }
         case "Home": {
           e.preventDefault();
-          if (actionableIndices.length > 0) {
-            setActiveIndex(actionableIndices[0]);
-          }
+          setActiveIndex(actionableIndices[0]);
           break;
         }
         case "End": {
           e.preventDefault();
-          if (actionableIndices.length > 0) {
-            setActiveIndex(actionableIndices.at(-1) ?? 0);
-          }
+          setActiveIndex(actionableIndices[actionableIndices.length - 1]);
           break;
         }
         default:

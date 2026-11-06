@@ -210,7 +210,7 @@ const rememberDeniedTerm = (term: string): void => {
   }
 };
 
-export const clearAutoLearnProposal = (): void => {
+const clearAutoLearnProposal = (): void => {
   produceAppState((draft) => {
     draft.autoLearn.proposal = null;
   });

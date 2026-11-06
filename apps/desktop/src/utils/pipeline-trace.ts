@@ -35,6 +35,14 @@ export const markPipeline = (
   trace.marks[stage] = now;
 };
 
+/** Mark audio completion without overwriting an earlier transcription event. */
+export const markFinalizedTranscription = (
+  trace: PipelineTrace | null | undefined,
+): void => {
+  markPipeline(trace, "audioFinalized");
+  if (trace?.marks.transcribed == null) markPipeline(trace, "transcribed");
+};
+
 export type PipelineSummary = {
   totalMs: number;
   stages: Record<string, number>;

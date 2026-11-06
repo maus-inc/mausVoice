@@ -1,4 +1,8 @@
 import type { ToolInfo } from "@maus-inc/types";
+import {
+  getToolAlwaysAllow,
+  setToolAlwaysAllow,
+} from "../utils/tool-permission.utils";
 
 export type ToolResult = Record<string, unknown>;
 
@@ -20,14 +24,15 @@ export abstract class BaseTool {
     context?: ToolExecutionContext,
   ): Promise<ToolResult>;
 
-  abstract getAlwaysAllow(
-    params: Record<string, unknown>,
-    scope?: string,
-  ): boolean;
+  getAlwaysAllow(_params: Record<string, unknown>, scope = "global"): boolean {
+    return getToolAlwaysAllow(this.info.id, scope);
+  }
 
-  abstract setAlwaysAllow(
-    params: Record<string, unknown>,
+  setAlwaysAllow(
+    _params: Record<string, unknown>,
     allowed: boolean,
-    scope?: string,
-  ): void;
+    scope = "global",
+  ): void {
+    setToolAlwaysAllow(this.info.id, allowed, scope);
+  }
 }

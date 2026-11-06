@@ -1,12 +1,7 @@
 import "../styles/fonts.css";
-import { CssBaseline } from "@mui/material";
-import { ThemeProvider } from "@mui/material/styles";
-import React, { useMemo } from "react";
-import ReactDOM from "react-dom/client";
-import { IntlProvider } from "react-intl";
-import { getIntlConfig } from "../i18n";
-import { THEME_PROVIDER_CONFIG, theme } from "../theme";
 import { applyDomMutationGuards } from "../utils/dom-guard.utils";
+import { getOrCreateReactRoot } from "../utils/react-root.utils";
+import { AppProviders } from "../components/root/AppProviders";
 import {
   installGlobalErrorOverlay,
   paintFatalError,
@@ -19,30 +14,13 @@ applyDomMutationGuards();
 applyPreviewScenario(previewScenarioFromLocation(window.location));
 
 const rootElement = document.getElementById("root") as HTMLElement;
-const existingRoot = (rootElement as unknown as { _reactRoot?: ReactDOM.Root })
-  ._reactRoot;
-const root = existingRoot ?? ReactDOM.createRoot(rootElement);
-(rootElement as unknown as { _reactRoot?: ReactDOM.Root })._reactRoot = root;
-
-const PreviewProviders = ({ children }: { children: React.ReactNode }) => {
-  const intlConfig = useMemo(() => getIntlConfig(), []);
-  return (
-    <React.StrictMode>
-      <IntlProvider {...intlConfig}>
-        <ThemeProvider theme={theme} {...THEME_PROVIDER_CONFIG}>
-          <CssBaseline />
-          {children}
-        </ThemeProvider>
-      </IntlProvider>
-    </React.StrictMode>
-  );
-};
+const root = getOrCreateReactRoot(rootElement);
 
 try {
   root.render(
-    <PreviewProviders>
+    <AppProviders>
       <PreviewApp />
-    </PreviewProviders>,
+    </AppProviders>,
   );
 } catch (error) {
   paintFatalError("mausVoice preview failed to start", error);

@@ -51,12 +51,6 @@ export const DeleteAccountDialog = () => {
       } catch {
         /* no listener active */
       }
-      try {
-        await invoke("stop_recording");
-      } catch {
-        /* no active recording */
-      }
-
       await invoke("clear_local_data");
       setConfirmationEmail("");
       showSnackbar("You account has been deleted", { duration: 15000 });

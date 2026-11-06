@@ -51,6 +51,9 @@ const ringEdgeOrder = (row: number, col: number): number => {
   return 12 + (4 - row);
 };
 
+const isRingEdge = (row: number, col: number): boolean =>
+  row === 0 || row === SIZE - 1 || col === 0 || col === SIZE - 1;
+
 const delayFor = (
   mode: DotMatrixMode,
   row: number,
@@ -72,7 +75,7 @@ const delayFor = (
     case "ring":
       return {
         delay: ringEdgeOrder(row, col) % 16,
-        off: !(row === 0 || row === 4 || col === 0 || col === 4),
+        off: !isRingEdge(row, col),
       };
     case "core":
       return { delay: radius, off: false };

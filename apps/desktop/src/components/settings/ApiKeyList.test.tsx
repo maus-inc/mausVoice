@@ -14,11 +14,13 @@ const mocks = vi.hoisted(() => ({
   loadApiKeys: vi.fn(() => Promise.resolve()),
   updateApiKey: vi.fn(() => Promise.resolve()),
   showSnackbar: vi.fn(),
-  showErrorSnackbar: vi.fn(),
+  showErrorSnackbar: vi.fn<(message: unknown) => void>(),
   getTranscriptionModels: vi.fn(() => Promise.resolve([] as string[])),
   getGenerativeTextModels: vi.fn(() => Promise.resolve([] as string[])),
   onChange: vi.fn(),
   holdTest: false,
+  overrideTest: false,
+  testIntegration: vi.fn(),
   releaseTest: null as null | (() => void),
 }));
 
@@ -83,6 +85,8 @@ vi.mock("./api-key-provider-config", async (importOriginal) => {
       context: Parameters<typeof actual.getProviderFormConfig>[1],
     ) => {
       const config = actual.getProviderFormConfig(provider, context);
+      if (mocks.overrideTest)
+        return { ...config, testIntegration: mocks.testIntegration };
       if (!mocks.holdTest) return config;
       return {
         ...config,
@@ -165,6 +169,7 @@ describe("ApiKeyList", () => {
     useAppStore.setState(INITIAL_APP_STATE, true);
     setMatchMedia(false);
     vi.clearAllMocks();
+    mocks.overrideTest = false;
     mocks.getTranscriptionModels.mockResolvedValue([]);
     mocks.getGenerativeTextModels.mockResolvedValue([]);
     container = document.createElement("div");
@@ -240,6 +245,132 @@ describe("ApiKeyList", () => {
       expect(container.querySelector("[aria-pressed]")).toBeNull();
     },
   );
+
+  it.each(["loading", "error", "idle", "success"] as const)(
+    "keeps saved keys usable during %s",
+    async (status) => {
+      seedApiKeys([groqKey]);
+      produceAppState((draft) => {
+        draft.settings.apiKeysStatus = status;
+      });
+      await renderList();
+      expect(metaButton("Groq key")).toBeDefined();
+      expect(container.textContent).not.toContain("No API keys yet");
+      expect(container.textContent).not.toContain("Failed to load API keys");
+      expect(container.textContent).not.toContain("Loading API keys…");
+    },
+  );
+
+  it.each(["success", "error"] as const)(
+    "opens the add form from the %s empty state",
+    async (status) => {
+      seedApiKeys([]);
+      produceAppState((draft) => {
+        draft.settings.apiKeysStatus = status;
+      });
+      await renderList("transcription", null);
+      const button = [
+        ...container.querySelectorAll<HTMLButtonElement>("button"),
+      ].find((candidate) => candidate.textContent?.includes("Add"));
+      if (!button) throw new Error("add action missing");
+      await act(async () => button.click());
+      expect(container.textContent).toContain("Key name");
+      expect(container.textContent).not.toContain("No API keys yet");
+      if (status === "error")
+        expect(container.textContent).toContain("Failed to load API keys");
+    },
+  );
+
+  it.each([null, "missing"])(
+    "selects the first available key when the selected key is %s",
+    async (selected) => {
+      seedApiKeys([groqKey, openRouterKey]);
+      await renderList("post-processing", selected);
+      expect(mocks.onChange).toHaveBeenCalledWith(groqKey.id);
+    },
+  );
+
+  it("does not replace a selection made while a new API key is saving", async () => {
+    seedApiKeys([groqKey, openRouterKey]);
+    let finish!: (key: SettingsApiKey) => void;
+    mocks.createApiKey.mockReturnValueOnce(
+      new Promise<SettingsApiKey>((resolve) => {
+        finish = resolve;
+      }) as unknown as Promise<void>,
+    );
+    await renderList();
+    const add = [
+      ...container.querySelectorAll<HTMLButtonElement>("button"),
+    ].find((button) => button.textContent?.includes("Add another key"));
+    if (!add) throw new Error("add button missing");
+    await act(async () => add.click());
+    const name = container.querySelector<HTMLInputElement>(
+      'input[placeholder="e.g., My API Key"]',
+    );
+    const secret = container.querySelector<HTMLInputElement>(
+      'input[type="password"]',
+    );
+    if (!name || !secret) throw new Error("add fields missing");
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )?.set;
+      setter?.call(name, "New key");
+      name.dispatchEvent(new Event("input", { bubbles: true }));
+      setter?.call(secret, "secret");
+      secret.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const save = [
+      ...container.querySelectorAll<HTMLButtonElement>("button"),
+    ].find((button) => button.textContent?.trim() === "Save");
+    if (!save) throw new Error("save button missing");
+    await act(async () => save.click());
+    expect(mocks.createApiKey).toHaveBeenCalledTimes(1);
+    await act(async () => metaButton("OpenRouter key").click());
+    await renderList("post-processing", "key-openrouter");
+    mocks.onChange.mockClear();
+    await act(async () => finish({ ...groqKey, id: "new", name: "New key" }));
+    expect(mocks.onChange).not.toHaveBeenCalledWith("new");
+  });
+
+  it("selects a created key when the selection has not changed", async () => {
+    seedApiKeys([groqKey]);
+    mocks.createApiKey.mockResolvedValueOnce({
+      ...groqKey,
+      id: "new",
+      name: "New key",
+    } as unknown as void);
+    await renderList();
+    const add = [
+      ...container.querySelectorAll<HTMLButtonElement>("button"),
+    ].find((button) => button.textContent?.includes("Add another key"));
+    if (!add) throw new Error("add button missing");
+    await act(async () => add.click());
+    const name = container.querySelector<HTMLInputElement>(
+      'input[placeholder="e.g., My API Key"]',
+    );
+    const secret = container.querySelector<HTMLInputElement>(
+      'input[type="password"]',
+    );
+    if (!name || !secret) throw new Error("add fields missing");
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )?.set;
+      setter?.call(name, "New key");
+      name.dispatchEvent(new Event("input", { bubbles: true }));
+      setter?.call(secret, "secret");
+      secret.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const save = [
+      ...container.querySelectorAll<HTMLButtonElement>("button"),
+    ].find((button) => button.textContent?.trim() === "Save");
+    if (!save) throw new Error("save button missing");
+    await act(async () => save.click());
+    expect(mocks.onChange).toHaveBeenCalledWith("new");
+  });
 
   it("allows long key names to wrap within the selection region", async () => {
     const longName = "long-key-name".repeat(20);
@@ -333,6 +464,351 @@ describe("ApiKeyList", () => {
     mocks.releaseTest = null;
 
     expect(metaButton("Groq key").getAttribute("aria-disabled")).toBe("false");
+  });
+
+  it("keeps each provider test busy until its own request settles", async () => {
+    seedApiKeys([groqKey, openRouterKey]);
+    mocks.overrideTest = true;
+    const finish: Array<(value: boolean) => void> = [];
+    mocks.testIntegration.mockImplementation(
+      () =>
+        new Promise<boolean>((resolve) => {
+          finish.push(resolve);
+        }),
+    );
+    await renderList();
+    const buttonFor = (name: string) => {
+      const button = [
+        ...(metaButton(name)
+          .closest(".MuiPaper-root")
+          ?.querySelectorAll<HTMLButtonElement>("button") ?? []),
+      ].find((candidate) => candidate.textContent?.trim() === "Test");
+      if (!button) throw new Error(`Test button missing for ${name}`);
+      return button;
+    };
+    const first = buttonFor("Groq key");
+    const second = buttonFor("OpenRouter key");
+    await act(async () => {
+      first.click();
+      second.click();
+    });
+    expect(mocks.testIntegration).toHaveBeenCalledTimes(2);
+    expect(metaButton("Groq key").getAttribute("aria-disabled")).toBe("true");
+    expect(metaButton("OpenRouter key").getAttribute("aria-disabled")).toBe(
+      "true",
+    );
+    await act(async () => finish[0](true));
+    expect(metaButton("Groq key").getAttribute("aria-disabled")).toBe("false");
+    expect(metaButton("OpenRouter key").getAttribute("aria-disabled")).toBe(
+      "true",
+    );
+    await act(async () => finish[1](true));
+    expect(metaButton("OpenRouter key").getAttribute("aria-disabled")).toBe(
+      "false",
+    );
+  });
+
+  it("does not start a duplicate test on a double click before the busy state renders", async () => {
+    seedApiKeys([groqKey]);
+    mocks.overrideTest = true;
+    let finish!: (value: boolean) => void;
+    mocks.testIntegration.mockImplementation(
+      () =>
+        new Promise<boolean>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    await renderList();
+    const button = testButton();
+    await act(async () => {
+      button.click();
+      button.click();
+    });
+    expect(mocks.testIntegration).toHaveBeenCalledTimes(1);
+    await act(async () => finish(true));
+  });
+
+  it("ignores late provider-test notifications after the list unmounts", async () => {
+    seedApiKeys([groqKey]);
+    mocks.overrideTest = true;
+    let finish!: (value: boolean) => void;
+    mocks.testIntegration.mockImplementation(
+      () =>
+        new Promise<boolean>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    await renderList();
+    await act(async () => testButton().click());
+    await act(async () => root.unmount());
+    await act(async () => finish(true));
+    expect(mocks.showSnackbar).not.toHaveBeenCalled();
+    expect(mocks.showErrorSnackbar).not.toHaveBeenCalled();
+  });
+
+  it("submits a key deletion only once for a double confirmation", async () => {
+    seedApiKeys([groqKey]);
+    let finish!: () => void;
+    mocks.deleteApiKey.mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+    );
+    await renderList();
+    const deleteButton = container
+      .querySelector("svg.lucide-trash-2")
+      ?.closest("button");
+    if (!deleteButton) throw new Error("delete action missing");
+    await act(async () => deleteButton.click());
+    const confirm = [
+      ...document.querySelectorAll<HTMLButtonElement>("button"),
+    ].find((button) => button.textContent?.trim() === "Delete");
+    if (!confirm) throw new Error("delete confirmation missing");
+    await act(async () => {
+      confirm.click();
+      confirm.click();
+    });
+    expect(mocks.deleteApiKey).toHaveBeenCalledTimes(1);
+    await act(async () => finish());
+  });
+
+  it.each(["card", "editing"])(
+    "reports successful and failed provider checks from %s",
+    async (surface) => {
+      seedApiKeys([groqKey]);
+      mocks.overrideTest = true;
+      mocks.testIntegration
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(false)
+        .mockRejectedValueOnce(new Error("provider unavailable"));
+      await renderList("post-processing", "key-groq");
+      if (surface === "editing") {
+        const edit = container
+          .querySelector("svg.lucide-pencil")
+          ?.closest("button");
+        if (!edit) throw new Error("Edit button not found");
+        await act(async () => edit.click());
+      }
+      await act(async () => testButton().click());
+      await flush();
+      expect(mocks.testIntegration).toHaveBeenCalledWith(
+        expect.objectContaining({ id: groqKey.id, provider: "groq" }),
+        "post-processing",
+      );
+      expect(mocks.showSnackbar).toHaveBeenCalledWith(
+        "Integration successful",
+        { mode: "success" },
+      );
+      await act(async () => testButton().click());
+      await flush();
+      expect(mocks.showErrorSnackbar).toHaveBeenCalledWith(
+        "Integration failed. Provide a valid API key.",
+      );
+      await act(async () => testButton().click());
+      await flush();
+      expect(mocks.showErrorSnackbar).toHaveBeenCalledWith(
+        "provider unavailable",
+      );
+    },
+  );
+
+  it("does not display credentials echoed by a failed provider test", async () => {
+    seedApiKeys([groqKey]);
+    mocks.overrideTest = true;
+    mocks.testIntegration.mockRejectedValueOnce(
+      new Error("Authorization: Bearer sensitive-provider-credential"),
+    );
+    await renderList();
+    await act(async () => testButton().click());
+    expect(mocks.showErrorSnackbar).toHaveBeenCalledOnce();
+    const displayed = String(mocks.showErrorSnackbar.mock.calls[0][0]);
+    expect(displayed).not.toContain("sensitive-provider-credential");
+    expect(displayed).toContain("[redacted]");
+  });
+
+  it("redacts the supplied key even when the provider echoes it without a credential label", async () => {
+    const key = "unlabeled-provider-credential";
+    seedApiKeys([{ ...groqKey, keyFull: key }]);
+    mocks.overrideTest = true;
+    mocks.testIntegration.mockRejectedValueOnce(
+      new Error(`Upstream rejected ${key} at the endpoint`),
+    );
+    await renderList();
+    await act(async () => testButton().click());
+    expect(mocks.showErrorSnackbar).toHaveBeenCalledOnce();
+    const displayed = String(mocks.showErrorSnackbar.mock.calls[0][0]);
+    expect(displayed).not.toContain(key);
+    expect(displayed).toContain("[redacted]");
+  });
+
+  it("does not test an unsaved OpenAI-compatible endpoint change", async () => {
+    const key: SettingsApiKey = {
+      ...groqKey,
+      provider: "openai-compatible",
+      baseUrl: "https://old.example.com",
+    };
+    seedApiKeys([key]);
+    mocks.overrideTest = true;
+    await renderList("post-processing", key.id);
+    const edit = container
+      .querySelector("svg.lucide-pencil")
+      ?.closest("button");
+    if (!edit) throw new Error("Edit button not found");
+    await act(async () => edit.click());
+    const url = Array.from(
+      container.querySelectorAll<HTMLInputElement>("input"),
+    ).find((input) => input.value === key.baseUrl);
+    if (!url) throw new Error("Endpoint input not found");
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )?.set?.call(url, "https://new.example.com");
+      url.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => testButton().click());
+    expect(mocks.testIntegration).not.toHaveBeenCalled();
+    expect(mocks.showErrorSnackbar).toHaveBeenCalledWith(
+      "Save endpoint URL changes before testing them.",
+    );
+  });
+
+  it.each([
+    {
+      provider: "groq" as const,
+      context: "post-processing" as const,
+      expectedModel: undefined,
+      expectedPath: undefined,
+      clearPath: false,
+    },
+    {
+      provider: "openai-compatible" as const,
+      context: "transcription" as const,
+      expectedModel: null,
+      expectedPath: null,
+      clearPath: true,
+    },
+  ])(
+    "preserves unset versus cleared fields when editing $provider",
+    async ({ provider, context, expectedModel, expectedPath, clearPath }) => {
+      const key: SettingsApiKey = {
+        ...groqKey,
+        provider,
+        baseUrl: "https://example.com",
+        transcriptionModel: "old-model",
+        transcriptionPath: "/old-path",
+      };
+      seedApiKeys([key]);
+      await renderList(context, key.id);
+      const edit = container
+        .querySelector("svg.lucide-pencil")
+        ?.closest("button");
+      if (!edit) throw new Error("Edit button not found");
+      await act(async () => edit.click());
+      for (const value of ["old-model", "/old-path"]) {
+        const input = [
+          ...container.querySelectorAll<HTMLInputElement>("input"),
+        ].find((element) => element.value === value);
+        if (provider === "openai-compatible") expect(input).toBeDefined();
+        else expect(input).toBeUndefined();
+        if (input) {
+          await act(async () => {
+            Object.getOwnPropertyDescriptor(
+              HTMLInputElement.prototype,
+              "value",
+            )?.set?.call(input, "");
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+          });
+        }
+      }
+      const save = [
+        ...container.querySelectorAll<HTMLButtonElement>("button"),
+      ].find((button) => button.textContent?.trim() === "Save");
+      if (!save) throw new Error("Save button not found");
+      await act(async () => save.click());
+      await flush();
+      expect(mocks.updateApiKey).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: key.id,
+          transcriptionModel: expectedModel,
+          transcriptionPath: expectedPath,
+          clearTranscriptionPath: clearPath,
+        }),
+      );
+    },
+  );
+
+  it("keeps a newer key editor open when an older save completes", async () => {
+    seedApiKeys([groqKey, openRouterKey]);
+    let finish!: () => void;
+    mocks.updateApiKey.mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+    );
+    await renderList();
+    const editFor = (name: string) =>
+      metaButton(name)
+        .closest(".MuiPaper-root")
+        ?.querySelector("svg.lucide-pencil")
+        ?.closest("button");
+    const first = editFor("Groq key");
+    if (!first) throw new Error("first edit missing");
+    await act(async () => first.click());
+    const save = [
+      ...container.querySelectorAll<HTMLButtonElement>("button"),
+    ].find((button) => button.textContent?.trim() === "Save");
+    if (!save) throw new Error("save missing");
+    await act(async () => save.click());
+    const second = editFor("OpenRouter key");
+    if (!second) throw new Error("second edit missing");
+    await act(async () => second.click());
+    expect(
+      [...container.querySelectorAll<HTMLInputElement>("input")].some(
+        (input) => input.value === "OpenRouter key",
+      ),
+    ).toBe(true);
+    await act(async () => finish());
+    expect(
+      [...container.querySelectorAll<HTMLInputElement>("input")].some(
+        (input) => input.value === "OpenRouter key",
+      ),
+    ).toBe(true);
+  });
+
+  it("keeps a reopened editor for the same key after an earlier save finishes", async () => {
+    seedApiKeys([groqKey, openRouterKey]);
+    let finish!: () => void;
+    mocks.updateApiKey.mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+    );
+    await renderList();
+    const editFor = (name: string) =>
+      metaButton(name)
+        .closest(".MuiPaper-root")
+        ?.querySelector("svg.lucide-pencil")
+        ?.closest("button");
+    await act(async () => editFor("Groq key")?.click());
+    const save = [
+      ...container.querySelectorAll<HTMLButtonElement>("button"),
+    ].find((button) => button.textContent?.trim() === "Save");
+    if (!save) throw new Error("save missing");
+    await act(async () => save.click());
+    await act(async () => editFor("OpenRouter key")?.click());
+    await act(async () => editFor("Groq key")?.click());
+    expect(
+      [...container.querySelectorAll<HTMLInputElement>("input")].some(
+        (input) => input.value === "Groq key",
+      ),
+    ).toBe(true);
+    await act(async () => finish());
+    expect(
+      [...container.querySelectorAll<HTMLInputElement>("input")].some(
+        (input) => input.value === "Groq key",
+      ),
+    ).toBe(true);
   });
 
   it("captions the model section so the input has a real label", async () => {

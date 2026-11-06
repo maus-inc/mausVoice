@@ -780,6 +780,46 @@ describe("CJK sentence terminators are recognised everywhere ASCII ones are", ()
     },
   );
 
+  it.each([".", "!", "?", "…", "。", "！", "？"])(
+    "recognises %s at the end and at a sentence boundary",
+    (mark) => {
+      for (const tone of ["default", "chat", "prompt"]) {
+        expect(applyFastStyle(`Weather today${mark}\n`, tone)).toBe(
+          `Weather today${mark}`,
+        );
+      }
+      const bullets = applyFastStyle(`First${mark} Second`, "bullets");
+      expect(bullets.split("\n")).toHaveLength(2);
+      expect(bullets).toContain("First");
+      expect(bullets).toContain("Second");
+    },
+  );
+
+  it.each([".", "!", "?", "…", "。", "！", "？"])(
+    "splits %s only before a capital or digit after whitespace",
+    (mark) => {
+      for (const whitespace of [" ", "  ", "\t", "\n", "\u00a0"]) {
+        for (const next of ["Next", "2nd"]) {
+          expect(
+            applyFastStyle(`First${mark}${whitespace}${next}`, "bullets").split(
+              "\n",
+            ),
+          ).toHaveLength(2);
+        }
+        for (const next of ["next", "中文", "éclair"]) {
+          expect(
+            applyFastStyle(`First${mark}${whitespace}${next}`, "bullets").split(
+              "\n",
+            ),
+          ).toHaveLength(1);
+        }
+      }
+      expect(
+        applyFastStyle(`First${mark}Next`, "bullets").split("\n"),
+      ).toHaveLength(1);
+    },
+  );
+
   it("still appends a stop when there is no terminator at all", () => {
     // The control. Without it the cases above would also pass if the function had
     // simply stopped appending anything.
@@ -787,7 +827,7 @@ describe("CJK sentence terminators are recognised everywhere ASCII ones are", ()
   });
 
   it("splits a mixed Latin and CJK sentence on the CJK full stop", () => {
-    // `SENTENCE_SPLIT_RE` needs whitespace plus a capital or digit after it, so the
+    // Sentence splitting needs whitespace plus a capital or digit after it, so the
     // next sentence here starts with an ASCII capital. Before the fix the `。` was
     // invisible to it and the whole input stayed one blob.
     const out = applyFastStyle("Mixed Latin 和中文。 Next one", "default");
@@ -1632,7 +1672,7 @@ describe("filler removal keeps words that merely end in a filler", () => {
     }
 
     // `toChat` and `toPrompt` tested for an existing terminator with a bare
-    // `[.!?]` while the rest of the module uses `ENDS_SENTENCE_RE`, which also
+    // `[.!?]` while the rest of the module uses `endsWithSentenceTerminator`, which also
     // recognises `…`, `。`, `！` and `？`. A dictation already ending in one of those
     // came back with a second, ASCII, stop -- "第一句。." on a CJK sentence.
     for (const tone of ["chat", "prompt"]) {
@@ -1663,5 +1703,28 @@ describe("filler removal keeps words that merely end in a filler", () => {
       const out = applyFastStyle(`${fragment}. ${fragment}.`, "default");
       expect(out.match(/\./g) ?? []).toHaveLength(2);
     });
+  });
+});
+
+describe("static transcription pattern contracts", () => {
+  it.each(["I mean", "so", "well"])(
+    "uses the same comma-filler vocabulary for leading and mid-clause %s",
+    (marker) => {
+      expect(applyFastStyle(`${marker}, we proceed`, "default")).toBe(
+        "We proceed.",
+      );
+      expect(applyFastStyle(`we proceed ${marker}, today`, "default")).toBe(
+        "We proceed today.",
+      );
+    },
+  );
+
+  it("preserves independent contraction matches across apostrophe boundaries", () => {
+    expect(applyFastStyle("cant'we're ready", "formal")).toBe(
+      "Cannot'we are ready.",
+    );
+    expect(applyFastStyle("he was wont and we're ready", "formal")).toBe(
+      "He was wont and we are ready.",
+    );
   });
 });

@@ -33,6 +33,8 @@ export type HandleTranscriptParams = {
   transcriptionMetadata: TranscribeAudioMetadata;
   transcriptionWarnings: string[];
   trace?: PipelineTrace | null;
+  /** False after this recording is cancelled, replaced, or times out. */
+  isCurrent?: () => boolean;
   /**
    * Persists a reviewed Open edit and navigates to History. It returns false
    * when persistence is unavailable so the pill keeps the review intact.
@@ -58,17 +60,14 @@ export type HandleTranscriptResult = {
  *
  * A boolean cannot express this, because "nobody persisted it yet" and "the
  * review tried and failed" both read as false while needing opposite handling:
- * the first is the stop path's to write, the second belongs to the pill.
+ * the first is the stop path's to write, the second may have committed despite a lost reply.
  */
 export type HistoryOwner =
   /** Nobody has written the row, so the stop path must. The default. */
   | "stop-path"
   /** The review Open callback already wrote the row. */
   | "review"
-  /**
-   * The review Open callback tried and could not. The failure toast tells the
-   * user the transcript is still on the pill to retry from, so the stop path
-   * must not write it as well: that would contradict the promise and leave the
-   * retry writing a duplicate row.
+  /** A review write was attempted but its outcome could not be confirmed.
+   * Retrying with a fresh ID can duplicate a write whose reply was lost.
    */
-  | "pill";
+  | "review-unconfirmed";

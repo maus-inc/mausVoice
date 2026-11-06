@@ -19,26 +19,58 @@ import {
 } from "./local-transcription.sidecar";
 import { toErrorMessage } from "./sidecar.utils";
 
-export { isSessionNotFoundError } from "./local-transcription.sidecar";
-
 export type {
   LocalSidecarDevice,
   LocalSidecarDownloadSnapshot,
   LocalSidecarModelStatus,
-  LocalSidecarStreamingSession,
-  LocalSidecarStreamingSessionInput,
-  LocalSidecarTranscribeInput,
-  LocalSidecarTranscribeOutput,
 } from "./local-transcription.sidecar";
 
-class LocalTranscriptionSidecarFacade {
+/** Public capability surface of the singleton; construction remains private. */
+export interface LocalTranscriptionSidecarManager {
+  listAvailableDevices(): Promise<LocalSidecarDevice[]>;
+  listModelStatuses(options: {
+    preferGpu: boolean;
+    validate?: boolean;
+    models?: LocalWhisperModel[];
+  }): Promise<Record<LocalWhisperModel, LocalSidecarModelStatus>>;
+  getModelStatus(options: {
+    model: LocalWhisperModel;
+    preferGpu: boolean;
+    validate?: boolean;
+  }): Promise<LocalSidecarModelStatus>;
+  downloadModel(options: {
+    model: LocalWhisperModel;
+    preferGpu: boolean;
+    onProgress?: (snapshot: LocalSidecarDownloadSnapshot) => void;
+  }): Promise<LocalSidecarModelStatus | null>;
+  pauseModelDownload(options: {
+    model: LocalWhisperModel;
+    preferGpu: boolean;
+  }): Promise<LocalSidecarDownloadSnapshot>;
+  cancelModelDownload(options: {
+    model: LocalWhisperModel;
+    preferGpu: boolean;
+  }): Promise<LocalSidecarDownloadSnapshot>;
+  deleteModel(options: {
+    model: LocalWhisperModel;
+    preferGpu: boolean;
+  }): Promise<LocalSidecarModelStatus>;
+  transcribe(
+    input: LocalSidecarTranscribeInput,
+  ): Promise<LocalSidecarTranscribeOutput>;
+  createStreamingSession(
+    input: LocalSidecarStreamingSessionInput,
+  ): Promise<LocalSidecarStreamingSession>;
+}
+
+class LocalTranscriptionSidecarFacade implements LocalTranscriptionSidecarManager {
   private cpuSidecar = new LocalTranscriptionSidecar("cpu");
   private gpuSidecar = new LocalTranscriptionSidecar("gpu");
   private gpuUnavailable = false;
   private gpuDetection: Promise<boolean> | null = null;
   private downloadOwners = new Map<
     LocalWhisperModel,
-    LocalTranscriptionSidecar
+    { sidecar: LocalTranscriptionSidecar }
   >();
 
   /**
@@ -127,17 +159,20 @@ class LocalTranscriptionSidecarFacade {
     onProgress?: (snapshot: LocalSidecarDownloadSnapshot) => void;
   }): Promise<LocalSidecarModelStatus | null> {
     const sidecar =
-      this.downloadOwners.get(model) ?? (await this.resolveRuntime(preferGpu));
-    this.downloadOwners.set(model, sidecar);
+      this.downloadOwners.get(model)?.sidecar ??
+      (await this.resolveRuntime(preferGpu));
+    const owner = { sidecar };
+    this.downloadOwners.set(model, owner);
 
     try {
       const status = await sidecar.downloadModel(model, onProgress);
-      if (status) {
+      if (status && this.downloadOwners.get(model) === owner) {
         this.downloadOwners.delete(model);
       }
       return status;
     } catch (error) {
-      this.downloadOwners.delete(model);
+      if (this.downloadOwners.get(model) === owner)
+        this.downloadOwners.delete(model);
       throw error;
     }
   }
@@ -150,7 +185,8 @@ class LocalTranscriptionSidecarFacade {
     preferGpu: boolean;
   }): Promise<LocalSidecarDownloadSnapshot> {
     const sidecar =
-      this.downloadOwners.get(model) ?? (await this.resolveRuntime(preferGpu));
+      this.downloadOwners.get(model)?.sidecar ??
+      (await this.resolveRuntime(preferGpu));
     return await sidecar.pauseDownload(model);
   }
 
@@ -161,12 +197,13 @@ class LocalTranscriptionSidecarFacade {
     model: LocalWhisperModel;
     preferGpu: boolean;
   }): Promise<LocalSidecarDownloadSnapshot> {
-    const sidecar =
-      this.downloadOwners.get(model) ?? (await this.resolveRuntime(preferGpu));
+    const owner = this.downloadOwners.get(model);
+    const sidecar = owner?.sidecar ?? (await this.resolveRuntime(preferGpu));
     try {
       return await sidecar.cancelDownload(model);
     } finally {
-      this.downloadOwners.delete(model);
+      if (this.downloadOwners.get(model) === owner)
+        this.downloadOwners.delete(model);
       this.cpuSidecar.invalidateModelReadiness(model);
       this.gpuSidecar.invalidateModelReadiness(model);
     }
@@ -270,7 +307,7 @@ class LocalTranscriptionSidecarFacade {
 let localTranscriptionFacade: LocalTranscriptionSidecarFacade | null = null;
 
 export const getLocalTranscriptionSidecarManager =
-  (): LocalTranscriptionSidecarFacade => {
+  (): LocalTranscriptionSidecarManager => {
     localTranscriptionFacade ??= new LocalTranscriptionSidecarFacade();
     return localTranscriptionFacade;
   };

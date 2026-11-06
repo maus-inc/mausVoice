@@ -51,7 +51,7 @@ export const TIP_COPY: Record<
   },
 };
 
-export const useTip = (id: OnboardingTipId): boolean =>
+const useTip = (id: OnboardingTipId): boolean =>
   useAppStore((s) => !(s.local.dismissedTipIds ?? []).includes(id));
 
 /**

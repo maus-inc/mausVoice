@@ -26,15 +26,32 @@ const useMode = () => {
   return queryMode || stateMode;
 };
 
-type LoginFormProps = {
-  hideModeSwitch?: boolean;
-  defaultMode?: LoginMode;
-};
+/** Keep each login mode's heading in step with its rendered form. */
+const LoginModeTitle = ({ mode }: { mode: LoginMode }) => (
+  <Typography
+    variant="body1"
+    sx={{
+      fontWeight: "bold",
+    }}
+  >
+    {mode === "signIn" && <FormattedMessage defaultMessage="Sign in" />}
+    {mode === "signUp" && <FormattedMessage defaultMessage="Sign up" />}
+    {mode === "resetPassword" && (
+      <FormattedMessage defaultMessage="Reset password" />
+    )}
+    {mode === "passwordResetSent" && (
+      <FormattedMessage defaultMessage="Email sent" />
+    )}
+  </Typography>
+);
 
 export const LoginForm = ({
   hideModeSwitch = false,
   defaultMode,
-}: LoginFormProps) => {
+}: {
+  hideModeSwitch?: boolean;
+  defaultMode?: LoginMode;
+}) => {
   useState(() => {
     if (defaultMode) {
       produceAppState((draft) => {
@@ -70,21 +87,7 @@ export const LoginForm = ({
 
   return (
     <Stack spacing={1.5}>
-      <Typography
-        variant="body1"
-        sx={{
-          fontWeight: "bold",
-        }}
-      >
-        {mode === "signIn" && <FormattedMessage defaultMessage="Sign in" />}
-        {mode === "signUp" && <FormattedMessage defaultMessage="Sign up" />}
-        {mode === "resetPassword" && (
-          <FormattedMessage defaultMessage="Reset password" />
-        )}
-        {mode === "passwordResetSent" && (
-          <FormattedMessage defaultMessage="Email sent" />
-        )}
-      </Typography>
+      <LoginModeTitle mode={mode} />
 
       <TransitionGroup>
         {mode === "signIn" && (

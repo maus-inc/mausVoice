@@ -60,43 +60,13 @@ type TranscriptionOptionsPayload = {
   deviceId?: string;
 };
 
-export type TranscribeAudioMetadata = {
-  inferenceDevice?: Nullable<string>;
-  modelSize?: Nullable<string>;
-  transcriptionMode?: Nullable<TranscriptionMode>;
-};
-
-export type TranscribeAudioInput = {
-  samples: AudioSamples;
-  sampleRate: number;
-  prompt?: Nullable<string>;
-  language?: string;
-  /**
-   * When false, the probability-gated silence handling is skipped entirely so
-   * the raw provider transcript is preserved EXACTLY, for both single- and
-   * multi-chunk audio. Defaults to true when omitted.
-   */
-  hallucinationFilterEnabled?: boolean;
-  /**
-   * Cancels in-flight and not-yet-started provider requests. Honored by every
-   * provider that runs batch dictation (where pretranscription happens).
-   *
-   * Gladia is the exception, and it is an exception for the DICTATION path too, not only for
-   * retranscription: `gladia` resolves to `GladiaTranscribeAudioRepo` in
-   * `getTranscribeAudioRepo`, which is the provider every dictation uses. An earlier version of
-   * this comment called the upload "used only for retranscription", which made the gap read as
-   * narrow; it is not. `GladiaTranscribeAudioArgs` (`packages/voice-ai/src/gladia.utils.ts:26`)
-   * carries no signal and the SDK owns its transport, so an upload already in flight cannot be
-   * called off — cancellation takes effect only before the request is issued. The batch job the
-   * upload creates is still deleted in a `finally` (`:950`), so cancelling leaves no remote job
-   * behind, only the bytes already sent.
-   */
-  signal?: AbortSignal;
-};
-
 export type TranscribeAudioOutput = {
   text: string;
-  metadata?: Nullable<TranscribeAudioMetadata>;
+  metadata?: Nullable<{
+    inferenceDevice?: Nullable<string>;
+    modelSize?: Nullable<string>;
+    transcriptionMode?: Nullable<TranscriptionMode>;
+  }>;
   warnings?: string[];
   /** Verbose Whisper segments (with `no_speech_prob`) when the provider returns them. */
   segments?: TranscriptionSegment[];
@@ -150,6 +120,41 @@ export const filterLocalTranscriptionSegments = (
     .map((segment) => segment.text)
     .filter((text) => text.trim().length > 0)
     .join(" ");
+};
+
+/** Merge provider chunks without flattening their overlapping segments. */
+const mergeChunkResults = (
+  results: TranscribeAudioOutput[],
+  filterEnabled: boolean,
+  transcriptionMode: TranscriptionMode,
+): TranscribeAudioOutput => {
+  // Gate each provider chunk by its `no_speech_prob` segments BEFORE merging,
+  // so audio longer than one provider segment still benefits from the
+  // probability-gated silence handling that single-segment audio gets in the
+  // action layer. Chunks without verbose segments fall back to their raw text.
+  // When the user disables the filter, merge every raw chunk text unchanged so
+  // the off switch preserves the provider transcript for long audio too.
+  const transcriptionTexts = results.map((r) => {
+    const gated = filterEnabled ? gateSilentSegments(r.segments) : null;
+    return gated ?? r.text;
+  });
+  const mergedText = mergeTranscriptions(transcriptionTexts);
+
+  // Use metadata from first non-null result (all segments use same provider/device)
+  const metadata = results.find((result) => result.metadata !== null)
+    ?.metadata ?? {
+    transcriptionMode: transcriptionMode,
+  };
+
+  return {
+    text: mergedText,
+    metadata,
+    warnings: Array.from(
+      new Set(results.flatMap((result) => result.warnings ?? [])),
+    ),
+    // Do not flatten overlapping chunk segments: a later join would undo
+    // mergeTranscriptions() and reintroduce duplicated overlap words.
+  };
 };
 
 export abstract class BaseTranscribeAudioRepo extends BaseRepo {
@@ -217,9 +222,33 @@ export abstract class BaseTranscribeAudioRepo extends BaseRepo {
    * Transcribes audio, automatically splitting long audio into segments
    * and merging the results.
    */
-  async transcribeAudio(
-    input: TranscribeAudioInput,
-  ): Promise<TranscribeAudioOutput> {
+  async transcribeAudio(input: {
+    samples: AudioSamples;
+    sampleRate: number;
+    prompt?: Nullable<string>;
+    language?: string;
+    /**
+     * When false, the probability-gated silence handling is skipped entirely so
+     * the raw provider transcript is preserved EXACTLY, for both single- and
+     * multi-chunk audio. Defaults to true when omitted.
+     */
+    hallucinationFilterEnabled?: boolean;
+    /**
+     * Cancels in-flight and not-yet-started provider requests. Honored by every
+     * provider that runs batch dictation (where pretranscription happens).
+     *
+     * Gladia is the exception, and it is an exception for the DICTATION path too, not only for
+     * retranscription: `gladia` resolves to `GladiaTranscribeAudioRepo` in
+     * `getTranscribeAudioRepo`, which is the provider every dictation uses. An earlier version of
+     * this comment called the upload "used only for retranscription", which made the gap read as
+     * narrow; it is not. `GladiaTranscribeAudioArgs` (`packages/voice-ai/src/gladia.utils.ts:26`)
+     * carries no signal and the SDK owns its transport, so an upload already in flight cannot be
+     * called off — cancellation takes effect only before the request is issued. The batch job the
+     * upload creates is still deleted in a `finally` (`:950`), so cancelling leaves no remote job
+     * behind, only the bytes already sent.
+     */
+    signal?: AbortSignal;
+  }): Promise<TranscribeAudioOutput> {
     // Keep one defensive Float32 copy without routing typed input through a
     // temporary number[]; hour-long provider chunks make that extra allocation
     // prohibitively expensive.
@@ -303,33 +332,7 @@ export abstract class BaseTranscribeAudioRepo extends BaseRepo {
       transcriptionTasks,
     );
 
-    // Gate each provider chunk by its `no_speech_prob` segments BEFORE merging,
-    // so audio longer than one provider segment still benefits from the
-    // probability-gated silence handling that single-segment audio gets in the
-    // action layer. Chunks without verbose segments fall back to their raw text.
-    // When the user disables the filter, merge every raw chunk text unchanged so
-    // the off switch preserves the provider transcript for long audio too.
-    const transcriptionTexts = results.map((r) => {
-      const gated = filterEnabled ? gateSilentSegments(r.segments) : null;
-      return gated ?? r.text;
-    });
-    const mergedText = mergeTranscriptions(transcriptionTexts);
-
-    // Use metadata from first non-null result (all segments use same provider/device)
-    const metadata = results.find((result) => result.metadata !== null)
-      ?.metadata ?? {
-      transcriptionMode: this.transcriptionMode,
-    };
-
-    return {
-      text: mergedText,
-      metadata,
-      warnings: Array.from(
-        new Set(results.flatMap((result) => result.warnings ?? [])),
-      ),
-      // Do not flatten overlapping chunk segments: a later join would undo
-      // mergeTranscriptions() and reintroduce duplicated overlap words.
-    };
+    return mergeChunkResults(results, filterEnabled, this.transcriptionMode);
   }
 }
 
@@ -561,7 +564,8 @@ export class ElevenLabsTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       ext: "wav",
       language: input.language,
       keyterms: this.keyterms,
-      customFetch: withAbortSignal(secureFetch, input.signal),
+      signal: input.signal,
+      customFetch: secureFetch,
     });
 
     return {
@@ -606,7 +610,8 @@ export class DeepgramTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       ext: "wav",
       language: input.language,
       keyterms: this.keyterms,
-      customFetch: withAbortSignal(this.customFetch, input.signal),
+      signal: input.signal,
+      customFetch: this.customFetch,
     });
 
     return {
@@ -688,7 +693,8 @@ export class XaiTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       blob: wavBuffer,
       ext: "wav",
       language: input.language,
-      customFetch: withAbortSignal(secureFetch, input.signal),
+      signal: input.signal,
+      customFetch: secureFetch,
     });
 
     return {
@@ -739,6 +745,23 @@ export class AzureTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   }
 }
 
+/** Only model-access failures on the dedicated model qualify for fallback. */
+const geminiFallbackModel = (
+  model: GeminiTranscriptionModel,
+  error: unknown,
+  signal: AbortSignal | undefined,
+): GeminiTranscriptionModel | undefined => {
+  if (signal?.aborted || !isGeminiTranscribeModel(model)) return undefined;
+  const status =
+    error instanceof Error && "status" in error
+      ? (error as { status?: number }).status
+      : undefined;
+  if (status !== 403 && status !== 404) return undefined;
+  return GEMINI_TRANSCRIPTION_MODELS.find(
+    (candidate) => !isGeminiTranscribeModel(candidate),
+  ) as GeminiTranscriptionModel | undefined;
+};
+
 export class GeminiTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   private geminiApiKey: string;
   private model: GeminiTranscriptionModel;
@@ -777,14 +800,9 @@ export class GeminiTranscribeAudioRepo extends BaseTranscribeAudioRepo {
         // would treat localized instructions as vocabulary terms.
         customVocabulary: this.customVocabulary,
         transcriptionMode: "verbatim",
-        customFetch: withAbortSignal(secureFetch, input.signal),
-        // Every sibling provider that takes a signal passes it -- Aldea (:485),
-        // Azure (:728), Speaches (:870), OpenRouter (:963). It is separate from
-        // `customFetch` and not redundant with it: the wrapper binds the abort to the
-        // HTTP requests, while this reaches the poll loop's `delay(...)` between
-        // attempts. Without it a cancel left the loop running to its own
-        // FILE_POLL_DEADLINE_MS -- measured at 31,150ms and 19 polls after an abort at
-        // 300ms, against 302ms and 2 polls with it.
+        // Gemini passes the signal to each request and to its poll loop. Keeping
+        // the transport unwrapped also preserves cancellable native body readers.
+        customFetch: secureFetch,
         signal: input.signal,
       });
       return text;
@@ -801,37 +819,19 @@ export class GeminiTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       transcript = await tryTranscribe(effectiveModel);
       if (!this.resolvedModel) this.resolvedModel = effectiveModel;
     } catch (error) {
-      const isTranscribeModel = isGeminiTranscribeModel(effectiveModel);
-      const status =
-        error instanceof Error && "status" in error
-          ? (error as { status?: number }).status
-          : undefined;
-      const isModelAccessError = status === 403 || status === 404;
-      if (isTranscribeModel && isModelAccessError) {
-        const fallbackModel = GEMINI_TRANSCRIPTION_MODELS.find(
-          (m) => !isGeminiTranscribeModel(m),
-        ) as GeminiTranscriptionModel | undefined;
-        if (fallbackModel) {
-          transcript = await tryTranscribe(fallbackModel);
-          usedModel = fallbackModel;
-          this.resolvedModel = fallbackModel;
-          // `GEMINI_TRANSCRIPTION_MODELS` holds exactly one dedicated
-          // `-transcribe` id, so this find always lands on a general model --
-          // and `transcribeWithGeneralModel` accepts neither `customVocabulary`
-          // nor `transcriptionMode`. The dictionary the user configured was
-          // therefore dropped for the rest of the recording, with no entry in
-          // `warnings` and so nothing on the history row. There is no second
-          // transcribe model to fall back to, so the fallback stays and reports
-          // itself.
-          warnings.push(
-            `${effectiveModel} was unavailable, so this dictation used ${fallbackModel} instead. That model does not accept dictionary terms, so the custom vocabulary was not applied.`,
-          );
-        } else {
-          throw error;
-        }
-      } else {
-        throw error;
-      }
+      const fallbackModel = geminiFallbackModel(
+        effectiveModel,
+        error,
+        input.signal,
+      );
+      if (!fallbackModel) throw error;
+      transcript = await tryTranscribe(fallbackModel);
+      usedModel = fallbackModel;
+      this.resolvedModel = fallbackModel;
+      // The only fallback is a general model that cannot receive dictionary terms.
+      warnings.push(
+        `${effectiveModel} was unavailable, so this dictation used ${fallbackModel} instead. That model does not accept dictionary terms, so the custom vocabulary was not applied.`,
+      );
     }
 
     return {

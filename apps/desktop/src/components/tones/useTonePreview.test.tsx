@@ -1,10 +1,21 @@
 // @vitest-environment jsdom
 import { act, createElement } from "react";
+import {
+  TonePreviewNoProviderError,
+  type TonePreviewFields,
+} from "../../actions/tone-preview.actions";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ensureUiHarness } from "../../../test/helpers/jsdom-ui-harness";
 const { generate } = vi.hoisted(() => ({
-  generate: vi.fn<() => Promise<string>>(),
+  generate:
+    vi.fn<
+      (
+        fields: TonePreviewFields,
+        sample: string,
+        signal: AbortSignal,
+      ) => Promise<string>
+    >(),
 }));
 vi.mock("../../actions/tone-preview.actions", async (importOriginal) => ({
   ...(await importOriginal<
@@ -61,6 +72,40 @@ describe("preview request ownership", () => {
     expect(preview.status).toBe("error");
     expect(preview.error).toBe("");
   });
+  it("redacts provider credentials before rendering an error detail", async () => {
+    const token = ["sensitive", "provider", "credential"].join("-");
+    generate.mockRejectedValueOnce(
+      new Error(`Provider rejected Authorization: Bearer ${token}`),
+    );
+    await act(async () => preview.run({ promptTemplate: "prompt" }, "sample"));
+    expect(preview.status).toBe("error");
+    expect(preview.error).not.toContain(token);
+    expect(preview.error).toContain("[redacted]");
+  });
+
+  it("distinguishes a missing provider from other errors", async () => {
+    generate.mockRejectedValueOnce(new TonePreviewNoProviderError());
+    await act(async () => preview.run({ promptTemplate: "prompt" }, "sample"));
+    expect(preview.status).toBe("unavailable");
+    expect(preview.error).toBe("");
+    expect(preview.output).toBe("");
+  });
+
+  it("aborts the provider request when the component unmounts", async () => {
+    const pending = deferred();
+    generate.mockReturnValueOnce(pending.promise);
+    let run!: Promise<void>;
+    act(() => {
+      run = preview.run({ promptTemplate: "prompt" }, "sample");
+    });
+    const signal = generate.mock.calls[0][2];
+    expect(signal.aborted).toBe(false);
+    act(() => root.unmount());
+    expect(signal.aborted).toBe(true);
+    pending.resolve("late");
+    await run;
+  });
+
   it.each(["done", "error"] as const)(
     "clears a completed %s preview when invalidated",
     async (status) => {
@@ -92,6 +137,8 @@ describe("preview request ownership", () => {
       act(() => {
         newRun = preview.run({ promptTemplate: "new" }, "sample");
       });
+      expect(generate.mock.calls[0][2].aborted).toBe(true);
+      expect(generate.mock.calls[1][2].aborted).toBe(false);
       await act(async () => {
         if (settlement === "reject") old.reject(new Error("aborted"));
         else old.resolve("old result");

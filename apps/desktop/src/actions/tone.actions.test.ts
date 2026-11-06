@@ -56,6 +56,7 @@ vi.mock("../utils/log.utils", () => ({
 }));
 
 vi.mock("./user.actions", () => ({
+  updateUserPreferences: vi.fn(() => Promise.resolve()),
   activateAndSelectTone: vi.fn(),
   setSelectedToneId: (toneId: string) => setSelectedToneIdMock(toneId),
 }));

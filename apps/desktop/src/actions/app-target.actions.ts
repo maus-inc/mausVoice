@@ -9,6 +9,7 @@ import { normalizeAppTargetId } from "../utils/apptarget.utils";
 import { getEffectiveStylingMode } from "../utils/feature.utils";
 import { getLogger } from "../utils/log.utils";
 import { buildAppIconPath, decodeBase64Icon } from "../utils/storage.utils";
+import { withTimeout } from "../utils/timeout.utils";
 import {
   getActiveManualToneIds,
   getManuallySelectedToneId,
@@ -25,7 +26,7 @@ export const loadAppTargets = async (): Promise<void> => {
   });
 };
 
-export const upsertAppTarget = async (
+const upsertAppTarget = async (
   params: AppTargetUpsertParams,
 ): Promise<AppTarget> => {
   const target = await getAppTargetRepo().upsertAppTarget(params);
@@ -37,126 +38,116 @@ export const upsertAppTarget = async (
   return target;
 };
 
-export const setAppTargetTone = async (
+// App-target upserts replace the entire row. Serialize writes per target and
+// construct each row only when its turn starts, after preceding writes have
+// updated the store. Different applications remain independent.
+const targetWrites = new Map<string, Promise<void>>();
+const queueTargetWrite = <T>(
+  id: string,
+  write: () => Promise<T>,
+): Promise<T> => {
+  const previous = targetWrites.get(id);
+  const result = previous ? previous.then(write) : write();
+  const settled = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  targetWrites.set(id, settled);
+  void settled.then(() => {
+    if (targetWrites.get(id) === settled) targetWrites.delete(id);
+  });
+  return result;
+};
+
+type AppTargetPatch = Partial<
+  Pick<
+    AppTargetUpsertParams,
+    "toneId" | "pasteKeybind" | "insertionMethod" | "typingSpeedMs"
+  >
+>;
+
+/** Merge a partial change over the stored row, keeping every other column. */
+const mergeTargetPatch = (
+  id: string,
+  existing: AppTarget,
+  patch: AppTargetPatch,
+): AppTargetUpsertParams => ({
+  id,
+  name: existing.name,
+  toneId: existing.toneId ?? null,
+  iconPath: existing.iconPath ?? null,
+  pasteKeybind: existing.pasteKeybind ?? null,
+  insertionMethod: existing.insertionMethod ?? null,
+  typingSpeedMs: existing.typingSpeedMs ?? null,
+  ...patch,
+});
+
+/** Report a failed field write once, with the provider's message when there is one. */
+const reportTargetUpdateFailure = (
+  error: unknown,
+  fieldDescription: string,
+): void => {
+  console.error(`Failed to update app target ${fieldDescription}`, error);
+  showErrorSnackbar(
+    error instanceof Error
+      ? error.message
+      : `Failed to update app target ${fieldDescription}.`,
+  );
+};
+
+const updateAppTarget = async (
+  id: string,
+  patch: AppTargetPatch,
+  fieldDescription: string,
+  options?: { isCurrent?: () => boolean; skipUnchangedTone?: boolean },
+): Promise<boolean> =>
+  queueTargetWrite(id, async () => {
+    if (options?.isCurrent && !options.isCurrent()) return false;
+    const existing = getAppState().appTargetById[id];
+    if (!existing) {
+      showErrorSnackbar("App target is not registered.");
+      return false;
+    }
+    // A queued write for the tone that is already stored has nothing to send.
+    if (
+      options?.skipUnchangedTone &&
+      (existing.toneId ?? null) === (patch.toneId ?? null)
+    )
+      return true;
+
+    try {
+      await upsertAppTarget(mergeTargetPatch(id, existing, patch));
+      return true;
+    } catch (error) {
+      reportTargetUpdateFailure(error, fieldDescription);
+      return false;
+    }
+  });
+
+export const setAppTargetTone = (
   id: string,
   toneId: string | null,
-): Promise<boolean> => {
-  const existing = getAppState().appTargetById[id];
-  if (!existing) {
-    showErrorSnackbar("App target is not registered.");
-    return false;
-  }
-
-  try {
-    await upsertAppTarget({
-      id,
-      name: existing.name,
-      toneId,
-      iconPath: existing.iconPath ?? null,
-      pasteKeybind: existing.pasteKeybind ?? null,
-      insertionMethod: existing.insertionMethod ?? null,
-      typingSpeedMs: existing.typingSpeedMs ?? null,
-    });
-    return true;
-  } catch (error) {
-    console.error("Failed to update app target tone", error);
-    showErrorSnackbar(
-      error instanceof Error
-        ? error.message
-        : "Failed to update app target tone.",
-    );
-    return false;
-  }
-};
+): Promise<boolean> => updateAppTarget(id, { toneId }, "tone");
 
 export const setAppTargetPasteKeybind = async (
   id: string,
   pasteKeybind: string | null,
 ): Promise<void> => {
-  const existing = getAppState().appTargetById[id];
-  if (!existing) {
-    showErrorSnackbar("App target is not registered.");
-    return;
-  }
-
-  try {
-    await upsertAppTarget({
-      id,
-      name: existing.name,
-      toneId: existing.toneId ?? null,
-      iconPath: existing.iconPath ?? null,
-      pasteKeybind,
-      insertionMethod: existing.insertionMethod ?? null,
-      typingSpeedMs: existing.typingSpeedMs ?? null,
-    });
-  } catch (error) {
-    console.error("Failed to update app target paste keybind", error);
-    showErrorSnackbar(
-      error instanceof Error
-        ? error.message
-        : "Failed to update app target paste keybind.",
-    );
-  }
+  await updateAppTarget(id, { pasteKeybind }, "paste keybind");
 };
 
 export const setAppTargetInsertionMethod = async (
   id: string,
   insertionMethod: string | null,
 ): Promise<void> => {
-  const existing = getAppState().appTargetById[id];
-  if (!existing) {
-    showErrorSnackbar("App target is not registered.");
-    return;
-  }
-
-  try {
-    await upsertAppTarget({
-      id,
-      name: existing.name,
-      toneId: existing.toneId ?? null,
-      iconPath: existing.iconPath ?? null,
-      pasteKeybind: existing.pasteKeybind ?? null,
-      insertionMethod,
-      typingSpeedMs: existing.typingSpeedMs ?? null,
-    });
-  } catch (error) {
-    console.error("Failed to update app target insertion method", error);
-    showErrorSnackbar(
-      error instanceof Error
-        ? error.message
-        : "Failed to update app target insertion method.",
-    );
-  }
+  await updateAppTarget(id, { insertionMethod }, "insertion method");
 };
 
 export const setAppTargetTypingSpeed = async (
   id: string,
   typingSpeedMs: number | null,
 ): Promise<void> => {
-  const existing = getAppState().appTargetById[id];
-  if (!existing) {
-    showErrorSnackbar("App target is not registered.");
-    return;
-  }
-
-  try {
-    await upsertAppTarget({
-      id,
-      name: existing.name,
-      toneId: existing.toneId ?? null,
-      iconPath: existing.iconPath ?? null,
-      pasteKeybind: existing.pasteKeybind ?? null,
-      insertionMethod: existing.insertionMethod ?? null,
-      typingSpeedMs,
-    });
-  } catch (error) {
-    console.error("Failed to update app target typing speed", error);
-    showErrorSnackbar(
-      error instanceof Error
-        ? error.message
-        : "Failed to update app target typing speed.",
-    );
-  }
+  await updateAppTarget(id, { typingSpeedMs }, "typing speed");
 };
 
 type CurrentAppInfoResponse = {
@@ -164,12 +155,96 @@ type CurrentAppInfoResponse = {
   iconBase64: string;
 };
 
-export const tryRegisterCurrentAppTarget = async (): Promise<
-  Nullable<AppTarget>
-> => {
+/** Compose a registration without dropping per-app settings when adding its icon. */
+const registrationParams = (
+  id: string,
+  name: string,
+  uploadedIcon: string | undefined,
+  existing: AppTarget | undefined,
+  defaultPasteKeybind: string | null,
+): AppTargetUpsertParams => {
+  const saved: Partial<AppTarget> = existing ?? {};
+  return {
+    id,
+    name,
+    toneId: saved.toneId ?? null,
+    iconPath: uploadedIcon ?? saved.iconPath ?? null,
+    pasteKeybind: saved.pasteKeybind ?? defaultPasteKeybind,
+    insertionMethod: saved.insertionMethod ?? null,
+    typingSpeedMs: saved.typingSpeedMs ?? null,
+  };
+};
+
+/** The tray label is cosmetic, so a failed update is ignored. */
+const surfaceCurrentAppLabel = (appName: string): void => {
+  invoke<void>("set_register_app_label", { appName: appName || null }).catch(
+    () => {
+      // Best-effort: the user still sees the dialog if this fails.
+    },
+  );
+};
+
+/** Upload the app icon, or `undefined` when there is none or it cannot ship. */
+const uploadAppIcon = async (
+  appTargetId: string,
+  iconBase64: string | undefined,
+): Promise<string | undefined> => {
+  if (!iconBase64) return undefined;
+  const targetPath = buildAppIconPath(getAppState(), appTargetId);
+  try {
+    await getLogger().stopwatch("upload_app_icon", async () => {
+      await getStorageRepo().uploadData({
+        path: targetPath,
+        data: decodeBase64Icon(iconBase64),
+      });
+    });
+    return targetPath;
+  } catch (uploadError) {
+    console.error("Failed to upload app icon", uploadError);
+    return undefined;
+  }
+};
+
+/**
+ * Write the registration. The queued write re-reads the row so it merges with
+ * whatever landed while the icon was uploading.
+ */
+const upsertRegisteredTarget = async (
+  appTargetId: string,
+  appName: string,
+  iconPath: string | undefined,
+  isCurrent: () => boolean,
+): Promise<void> => {
+  try {
+    await getLogger().stopwatch("upsert_app_target", async () => {
+      await queueTargetWrite(appTargetId, async () => {
+        if (!isCurrent()) return;
+        const latest = getRec(getAppState().appTargetById, appTargetId);
+        const defaultPasteKeybind =
+          getMyUserPreferences(getAppState())?.pasteKeybind ?? null;
+        await upsertAppTarget(
+          registrationParams(
+            appTargetId,
+            appName,
+            iconPath,
+            latest,
+            defaultPasteKeybind,
+          ),
+        );
+      });
+    });
+  } catch (error) {
+    console.error("Failed to upsert app target", error);
+  }
+};
+
+export const tryRegisterCurrentAppTarget = async (
+  isCurrent: () => boolean = () => true,
+): Promise<Nullable<AppTarget>> => {
   const appInfo = await getLogger().stopwatch("get_current_app_info", () =>
     invoke<CurrentAppInfoResponse>("get_current_app_info"),
   );
+  if (!isCurrent()) return null;
 
   const appName = appInfo.appName?.trim() ?? "";
   const appTargetId = normalizeAppTargetId(appName);
@@ -177,67 +252,65 @@ export const tryRegisterCurrentAppTarget = async (): Promise<
 
   // Surface the current foreground app on the tray menu so the user knows what
   // "Register current app" will act on before they click it.
-  invoke<void>("set_register_app_label", { appName: appName || null }).catch(
-    () => {
-      // Best-effort: the tray label is cosmetic; ignore failures.
-    },
-  );
+  surfaceCurrentAppLabel(appName);
 
   const shouldRegisterAppTarget = !existingApp || !existingApp.iconPath;
   if (shouldRegisterAppTarget) {
-    let iconPath: string | undefined;
-    if (appInfo.iconBase64) {
-      const targetPath = buildAppIconPath(getAppState(), appTargetId);
-      try {
-        await getLogger().stopwatch("upload_app_icon", async () => {
-          await getStorageRepo().uploadData({
-            path: targetPath,
-            data: decodeBase64Icon(appInfo.iconBase64),
-          });
-        });
-        iconPath = targetPath;
-      } catch (uploadError) {
-        console.error("Failed to upload app icon", uploadError);
-      }
-    }
-
-    try {
-      const defaultPasteKeybind =
-        getMyUserPreferences(getAppState())?.pasteKeybind ?? null;
-      await getLogger().stopwatch("upsert_app_target", async () => {
-        await upsertAppTarget({
-          id: appTargetId,
-          name: appName,
-          toneId: existingApp?.toneId ?? null,
-          iconPath: iconPath ?? existingApp?.iconPath ?? null,
-          pasteKeybind: existingApp?.pasteKeybind ?? defaultPasteKeybind,
-          insertionMethod: existingApp?.insertionMethod ?? null,
-          typingSpeedMs: existingApp?.typingSpeedMs ?? null,
-        });
-      });
-    } catch (error) {
-      console.error("Failed to upsert app target", error);
-    }
+    const iconPath = await uploadAppIcon(appTargetId, appInfo.iconBase64);
+    if (!isCurrent()) return null;
+    await upsertRegisteredTarget(appTargetId, appName, iconPath, isCurrent);
   }
 
-  return getRec(getAppState().appTargetById, appTargetId) ?? null;
+  return isCurrent()
+    ? (getRec(getAppState().appTargetById, appTargetId) ?? null)
+    : null;
 };
 
-export const loadManualStyleForCurrentApp = async (): Promise<void> => {
-  if (getEffectiveStylingMode(getAppState()) !== "manual") return;
+const loadManualStyle = async (isCurrent: () => boolean): Promise<void> => {
+  const initial = getAppState();
+  if (!isCurrent() || getEffectiveStylingMode(initial) !== "manual") return;
+  const initialSelection = getManuallySelectedToneId(initial);
 
   try {
     const appInfo = await invoke<{ appName: string }>("get_current_app_info");
+    if (!isCurrent()) return;
     const appTargetId = normalizeAppTargetId(appInfo.appName?.trim() ?? "");
-    const appTarget = getAppState().appTargetById[appTargetId];
-    if (appTarget?.toneId) {
-      const activeIds = getActiveManualToneIds(getAppState());
-      if (activeIds.includes(appTarget.toneId)) {
-        await setSelectedToneId(appTarget.toneId);
-      }
-    }
+    const toneId = getAppState().appTargetById[appTargetId]?.toneId;
+    if (!toneId) return;
+    // The user mutation may wait behind unrelated writes. Recheck ownership,
+    // the user's selection and the app setting at the head of that queue.
+    const shouldApply = () => {
+      const state = getAppState();
+      return (
+        isCurrent() &&
+        getEffectiveStylingMode(state) === "manual" &&
+        getManuallySelectedToneId(state) === initialSelection &&
+        state.appTargetById[appTargetId]?.toneId === toneId &&
+        getActiveManualToneIds(state).includes(toneId)
+      );
+    };
+    if (shouldApply()) await setSelectedToneId(toneId, shouldApply);
   } catch (error) {
     getLogger().verbose(`Failed to load app style: ${error}`);
+  }
+};
+
+/** Do not let an unresponsive app lookup hold recording activation open. */
+export const loadManualStyleForCurrentApp = async (
+  isCurrent: () => boolean = () => true,
+): Promise<void> => {
+  let expired = false;
+  try {
+    await withTimeout(
+      loadManualStyle(() => !expired && isCurrent()),
+      2_000,
+      "Current app style lookup",
+      () => {
+        expired = true;
+      },
+    );
+  } catch {
+    getLogger().verbose("Current app style lookup timed out");
   }
 };
 
@@ -259,16 +332,23 @@ export const loadManualStyleForCurrentApp = async (): Promise<void> => {
  */
 export const saveManualStyleForApp = async (
   appTarget: AppTarget,
+  options?: { toneId: string; isCurrent: () => boolean },
 ): Promise<void> => {
-  if (getEffectiveStylingMode(getAppState()) !== "manual") {
-    return;
-  }
-
-  const manualToneId = getManuallySelectedToneId(getAppState());
-  if (manualToneId === (appTarget.toneId ?? null)) {
-    return;
-  }
-  await setAppTargetTone(appTarget.id, manualToneId).catch((error) => {
-    getLogger().verbose(`Failed to save app style: ${error}`);
+  if (getEffectiveStylingMode(getAppState()) !== "manual") return;
+  const manualToneId =
+    options?.toneId ?? getManuallySelectedToneId(getAppState());
+  await updateAppTarget(appTarget.id, { toneId: manualToneId }, "tone", {
+    // A queued old stop must not overwrite a later recording or a style the
+    // user selected after stopping. Already-dispatched database writes cannot
+    // be canceled here, but remain ordered with later per-target writes.
+    isCurrent: options
+      ? () =>
+          options.isCurrent() &&
+          getEffectiveStylingMode(getAppState()) === "manual" &&
+          getManuallySelectedToneId(getAppState()) === manualToneId
+      : undefined,
+    skipUnchangedTone: true,
+  }).catch(() => {
+    getLogger().verbose("Failed to save app style");
   });
 };

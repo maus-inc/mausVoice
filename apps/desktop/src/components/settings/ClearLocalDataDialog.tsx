@@ -55,12 +55,6 @@ export const ClearLocalDataDialog = () => {
       } catch {
         /* no listener active */
       }
-      try {
-        await invoke("stop_recording");
-      } catch {
-        /* no active recording */
-      }
-
       await invoke("clear_local_data");
       handleClose();
       // A hard reload is the simplest way to flush every in-memory store

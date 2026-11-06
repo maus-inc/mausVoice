@@ -26,20 +26,16 @@ export const getIsEmulators = (): boolean => {
   );
 };
 
-export type Flavor =
+type Flavor =
   "emulators" | "dev" | "prod" | "enterprise" | "enterprise-dev" | "preview";
-export const getFlavor = (): Flavor =>
+const getFlavor = (): Flavor =>
   (import.meta.env.VITE_FLAVOR ?? "emulators") as Flavor;
 
 export const isEmulators = () => getFlavor() === "emulators";
-export const isDev = () => getFlavor() === "dev";
-export const isProd = () => getFlavor() === "prod";
 
-export type Platform = DesktopPlatform;
-
-export const getPlatform = (): Platform => {
+export const getDesktopPlatform = (): DesktopPlatform => {
   const override = import.meta.env.MAUSVOICE_DESKTOP_PLATFORM as
-    Platform | undefined;
+    DesktopPlatform | undefined;
   if (override) {
     return override;
   }
@@ -47,31 +43,8 @@ export const getPlatform = (): Platform => {
   return detectDesktopPlatform();
 };
 
-export const isMacOS = (): boolean => getPlatform() === "darwin";
-export const isWindows = (): boolean => getPlatform() === "win32";
-export const isLinux = (): boolean => getPlatform() === "linux";
-
-export const isWindows10 = (): boolean => {
-  if (!isWindows()) {
-    return false;
-  }
-
-  const userAgent = navigator.userAgent;
-  const match = userAgent.match(/Windows NT 10\.0.*build[:/\s]*(\d+)/i);
-  if (match) {
-    const build = parseInt(match[1], 10);
-    return build < 22000;
-  }
-
-  const uaData = (
-    navigator as Navigator & { userAgentData?: { platform: string } }
-  ).userAgentData;
-  if (uaData?.platform === "Windows") {
-    return userAgent.includes("Windows NT 10.0");
-  }
-
-  return userAgent.includes("Windows NT 10.0");
-};
+export const isMacOS = (): boolean => getDesktopPlatform() === "darwin";
+export const isWindows = (): boolean => getDesktopPlatform() === "win32";
 
 export const isWindows11 = (): boolean => {
   if (!isWindows()) {

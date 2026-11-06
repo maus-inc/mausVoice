@@ -1,10 +1,11 @@
 import { Transcription, TranscriptionAudioSnapshot } from "@maus-inc/types";
 import { invoke } from "@tauri-apps/api/core";
 import dayjs from "dayjs";
-import { orNull, orUndefined } from "../utils/nullable.utils";
+import { orUndefined } from "../utils/nullable.utils";
 import { getAppState } from "../store";
 import { getMyEffectiveUserId } from "../utils/user.utils";
 import { BaseRepo } from "./base.repo";
+import { transcriptionWireFields } from "./transcription-wire-fields";
 
 const mapAudioSnapshot = (
   audio: TranscriptionAudioSnapshot | null | undefined,
@@ -75,27 +76,7 @@ const toLocalTranscription = (
   transcript: transcription.transcript,
   timestamp: dayjs(transcription.createdAt).valueOf(),
   audio: mapAudioSnapshot(transcription.audio),
-  modelSize: orNull(transcription.modelSize),
-  inferenceDevice: orNull(transcription.inferenceDevice),
-  rawTranscript: orNull(transcription.rawTranscript),
-  sanitizedTranscript: orNull(transcription.sanitizedTranscript),
-  transcriptionPrompt: orNull(transcription.transcriptionPrompt),
-  postProcessPrompt: orNull(transcription.postProcessPrompt),
-  transcriptionApiKeyId: orNull(transcription.transcriptionApiKeyId),
-  postProcessApiKeyId: orNull(transcription.postProcessApiKeyId),
-  transcriptionMode: orNull(transcription.transcriptionMode),
-  postProcessMode: orNull(transcription.postProcessMode),
-  postProcessDevice: orNull(transcription.postProcessDevice),
-  postProcessModel: orNull(transcription.postProcessModel),
-  postProcessProvider: orNull(transcription.postProcessProvider),
-  postProcessFailed: transcription.postProcessFailed ?? null,
-  postProcessFallback: transcription.postProcessFallback ?? null,
-  postProcessError: orNull(transcription.postProcessError),
-  transcriptionDurationMs: orNull(transcription.transcriptionDurationMs),
-  postprocessDurationMs: orNull(transcription.postprocessDurationMs),
-  warnings: orNull(transcription.warnings),
-  remoteStatus: orNull(transcription.remoteStatus),
-  remoteDeviceId: orNull(transcription.remoteDeviceId),
+  ...transcriptionWireFields(transcription),
 });
 
 const fromLocalTranscription = (

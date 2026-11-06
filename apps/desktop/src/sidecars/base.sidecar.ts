@@ -1,9 +1,11 @@
 import type { ShellChildProcess } from "../utils/tauri-shell.utils";
 import { spawnShellSidecar } from "../utils/tauri-shell.utils";
+import { discardResponseBody } from "@maus-inc/utilities";
 import { getLogger } from "../utils/log.utils";
 import {
   createDeferred,
   fetchWithTimeout,
+  raceWithAbort,
   sleep,
   toErrorMessage,
 } from "./sidecar.utils";
@@ -27,7 +29,8 @@ export type SidecarRuntime = {
 export abstract class BaseSidecar {
   private runtime: SidecarRuntime | null = null;
   private startupPromise: Promise<SidecarRuntime> | null = null;
-  private stoppingPid: number | null = null;
+  private startupController: AbortController | null = null;
+  private readonly stoppingChildren = new WeakSet<ShellChildProcess>();
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private activityLeaseCount = 0;
 
@@ -44,8 +47,16 @@ export abstract class BaseSidecar {
       return await this.startupPromise;
     }
 
-    this.startupPromise = this.startInternal()
+    const controller = new AbortController();
+    this.startupController = controller;
+    // The underlying startup continues far enough to kill a late child, while
+    // callers can stop waiting and a successor can start immediately on dispose.
+    this.startupPromise = raceWithAbort(
+      this.startInternal(controller.signal),
+      controller.signal,
+    )
       .catch((error) => {
+        if (controller.signal.aborted) throw error;
         const message = toErrorMessage(error);
         getLogger().error(
           `[${this.config.logPrefix}] Failed to start: ${message}`,
@@ -54,7 +65,10 @@ export abstract class BaseSidecar {
         throw error;
       })
       .finally(() => {
-        this.startupPromise = null;
+        if (this.startupController === controller) {
+          this.startupController = null;
+          this.startupPromise = null;
+        }
       });
 
     return await this.startupPromise;
@@ -62,6 +76,10 @@ export abstract class BaseSidecar {
 
   async dispose(): Promise<void> {
     this.cancelIdleTimer();
+    const controller = this.startupController;
+    this.startupController = null;
+    this.startupPromise = null;
+    controller?.abort(new Error("Sidecar startup cancelled"));
     const runtime = this.runtime;
     this.runtime = null;
 
@@ -70,7 +88,7 @@ export abstract class BaseSidecar {
       return;
     }
 
-    this.stoppingPid = runtime.child.pid;
+    this.stoppingChildren.add(runtime.child);
     this.onStopped();
 
     try {
@@ -79,8 +97,6 @@ export abstract class BaseSidecar {
       getLogger().warning(
         `[${this.config.logPrefix}] Failed to stop pid=${runtime.child.pid}: ${toErrorMessage(error)}`,
       );
-    } finally {
-      this.stoppingPid = null;
     }
   }
 
@@ -88,15 +104,12 @@ export abstract class BaseSidecar {
     return this.runtime;
   }
 
-  isRunning(): boolean {
-    return this.runtime !== null;
-  }
-
   protected async resetRuntime(): Promise<void> {
     this.cancelIdleTimer();
     const runtime = this.runtime;
     this.runtime = null;
     if (runtime) {
+      this.stoppingChildren.add(runtime.child);
       await runtime.child.kill().catch(() => {});
     }
   }
@@ -173,27 +186,44 @@ export abstract class BaseSidecar {
   protected abstract onStarted(runtime: SidecarRuntime): void;
   protected abstract onStopped(): void;
   protected abstract onError(message: string): void;
-  protected abstract checkHealthResponse(response: Response): Promise<boolean>;
+  protected abstract checkHealthResponse(
+    response: Response,
+    signal: AbortSignal,
+  ): Promise<boolean>;
 
-  private async startInternal(): Promise<SidecarRuntime> {
+  private async startInternal(signal: AbortSignal): Promise<SidecarRuntime> {
     this.onStarting();
 
     const env = await this.buildSpawnEnv();
+    if (signal.aborted) throw signal.reason;
     const cwd = await this.buildSpawnCwd();
+    if (signal.aborted) throw signal.reason;
     const ready = createDeferred<number>();
+    // Shell events can arrive before the asynchronous spawn call resolves.
+    // Observe an early rejection now; waitForPort still receives the original promise.
+    void ready.promise.catch(() => {});
     const pendingStdoutLines: string[] = [];
     let stdoutBuffer = "";
     let childPid = -1;
     let child: ShellChildProcess | null = null;
+    let startupError: Error | null = null;
+    let cleaningUp = false;
+    let started = false;
+    const retired = () =>
+      signal.aborted ||
+      cleaningUp ||
+      (child !== null && this.stoppingChildren.has(child));
 
     const failReady = (message: string) => {
-      ready.reject(new Error(message));
+      startupError = new Error(message);
+      ready.reject(startupError);
     };
 
     child = await spawnShellSidecar({
       program: this.config.binaryName,
       options: { env, ...(cwd ? { cwd } : {}) },
       onStdout: (chunk) => {
+        if (retired()) return;
         stdoutBuffer += chunk;
         const lines = stdoutBuffer.split(/\r?\n/);
         stdoutBuffer = lines.pop() ?? "";
@@ -208,50 +238,55 @@ export abstract class BaseSidecar {
         }
       },
       onStderr: (chunk) => {
+        if (retired()) return;
         getLogger().warning(
           `[${this.config.logPrefix}:${childPid}] ${chunk.trimEnd()}`,
         );
       },
       onClose: (payload) => {
-        if (this.stoppingPid === childPid) {
-          this.stoppingPid = null;
-          return;
-        }
-
-        if (this.runtime?.child.pid === childPid) {
-          this.runtime = null;
-        }
+        if (retired()) return;
+        if (started && this.runtime?.child !== child) return;
+        if (started) this.runtime = null;
 
         const message =
           `Sidecar exited (code=${payload.code ?? "unknown"}, ` +
           `signal=${payload.signal ?? "unknown"})`;
         getLogger().warning(`[${this.config.logPrefix}] ${message}`);
-        this.onError(message);
-        failReady(message);
+        if (started) this.onError(message);
+        else failReady(message);
       },
       onError: (message) => {
+        if (retired()) return;
         getLogger().warning(`[${this.config.logPrefix}] ${message}`);
         failReady(`Sidecar failed before startup completed: ${message}`);
       },
     });
     childPid = child.pid;
 
-    for (const line of pendingStdoutLines) {
-      this.processStdoutLine(line, child, ready);
-    }
-
-    const port = await this.waitForPort(ready.promise);
-    const baseUrl = `http://${this.config.host}:${port}`;
-
+    let port: number;
+    let baseUrl: string;
     try {
-      await this.waitUntilHealthy(baseUrl);
+      if (signal.aborted) throw signal.reason;
+      for (const line of pendingStdoutLines) {
+        this.processStdoutLine(line, child, ready);
+      }
+      port = await this.waitForPort(ready.promise, signal);
+      baseUrl = `http://${this.config.host}:${port}`;
+      const assertStartupHealthy = () => {
+        if (signal.aborted) throw signal.reason;
+        if (startupError) throw startupError;
+      };
+      await this.waitUntilHealthy(baseUrl, signal, assertStartupHealthy);
+      assertStartupHealthy();
     } catch (error) {
+      cleaningUp = true;
       await child.kill().catch(() => {});
       throw error;
     }
 
     const runtime: SidecarRuntime = { port, baseUrl, child };
     this.runtime = runtime;
+    started = true;
     this.onStarted(runtime);
 
     getLogger().info(
@@ -282,19 +317,34 @@ export abstract class BaseSidecar {
     this.handleStdoutLine(trimmed, child);
   }
 
-  private async waitForPort(portPromise: Promise<number>): Promise<number> {
+  private async waitForPort(
+    portPromise: Promise<number>,
+    signal: AbortSignal,
+  ): Promise<number> {
+    let timeout: ReturnType<typeof setTimeout> | undefined;
     const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(() => {
+      timeout = setTimeout(() => {
         reject(
           new Error(`Timed out waiting for ${this.config.logPrefix} readiness`),
         );
       }, this.config.startupTimeoutMs);
     });
 
-    return await Promise.race([portPromise, timeoutPromise]);
+    try {
+      return await raceWithAbort(
+        Promise.race([portPromise, timeoutPromise]),
+        signal,
+      );
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 
-  private async waitUntilHealthy(baseUrl: string): Promise<void> {
+  private async waitUntilHealthy(
+    baseUrl: string,
+    signal: AbortSignal,
+    assertStartupHealthy: () => void,
+  ): Promise<void> {
     const deadline = Date.now() + this.config.startupTimeoutMs;
 
     // The probe is one at a time on purpose: each is spaced by the poll
@@ -302,10 +352,11 @@ export abstract class BaseSidecar {
     // endpoint is asked at a fixed rate rather than in a burst. Recursion says
     // that outright, where an await in a loop reads as work that could overlap.
     const probe = async (): Promise<boolean> => {
+      assertStartupHealthy();
       if (Date.now() >= deadline) {
         return false;
       }
-      if (await this.checkHealth(baseUrl)) {
+      if (await this.checkHealth(baseUrl, signal)) {
         return true;
       }
       await sleep(this.config.healthPollIntervalMs);
@@ -319,19 +370,51 @@ export abstract class BaseSidecar {
     throw new Error(`Timed out waiting for ${this.config.logPrefix} health`);
   }
 
-  private async checkHealth(baseUrl: string): Promise<boolean> {
+  private async readHealthResponse(
+    response: Response,
+    signal: AbortSignal,
+  ): Promise<boolean> {
+    const controller = new AbortController();
+    const abort = () => controller.abort(signal.reason);
+    if (signal.aborted) abort();
+    else signal.addEventListener("abort", abort, { once: true });
+    const timeout = setTimeout(
+      () => controller.abort(new Error("Sidecar health response timed out")),
+      this.config.healthTimeoutMs,
+    );
+    try {
+      controller.signal.throwIfAborted();
+      return await raceWithAbort(
+        this.checkHealthResponse(response, controller.signal),
+        controller.signal,
+      );
+    } finally {
+      clearTimeout(timeout);
+      signal.removeEventListener("abort", abort);
+      // Health responses are never returned to callers, regardless of whether
+      // parsing succeeded, failed or was retired by a deadline.
+      discardResponseBody(response);
+    }
+  }
+
+  private async checkHealth(
+    baseUrl: string,
+    signal: AbortSignal,
+  ): Promise<boolean> {
     try {
       const response = await fetchWithTimeout(
         `${baseUrl}/health`,
-        undefined,
+        { signal },
         this.config.healthTimeoutMs,
       );
       if (!response.ok) {
+        discardResponseBody(response);
         return false;
       }
 
-      return await this.checkHealthResponse(response);
+      return await this.readHealthResponse(response, signal);
     } catch {
+      if (signal.aborted) throw signal.reason;
       return false;
     }
   }

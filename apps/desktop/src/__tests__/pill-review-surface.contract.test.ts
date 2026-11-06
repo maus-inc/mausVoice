@@ -136,14 +136,24 @@ describe("native pill review surface", () => {
     expect(sendIndex).toBeLessThan(clearIndex);
   });
 
-  it("reports whether the Windows write actually reached the desktop", () => {
+  it("reports Windows serialization, write and flush failures", () => {
     const ipc = readRepoSource("packages/rust_windows_pill/src/ipc.rs");
     const send = extractRustBlock(ipc, "pub fn send(");
+    const shared = readRepoSource("packages/rust_pill_shared/src/ipc.rs");
+    const stdout = extractRustBlock(shared, "pub fn write_stdout_line(");
+    const write = extractRustBlock(shared, "pub fn write_complete_line<");
 
-    // Swallowing every write error is what made the unconditional clear
-    // invisible: the caller had no way to know nobody had received the text.
-    expect(send).toContain("stdout.flush().is_ok()");
-    expect(send).not.toContain("let _ = stdout.flush()");
+    // A successful pipe write is not a desktop acknowledgement, but detected
+    // serialization, partial-write and flush failures must reach the caller.
+    expect(send).toContain("write_stdout_line(&record).is_ok()");
+    expect(send).toContain("Err(_) => false");
+    expect(stdout).toContain("write_complete_line(&mut stdout, record)");
+    expect(write).toContain(".write_all(record)");
+    expect(write).toContain('.write_all(b"\\n")');
+    expect(write).toContain("writer.flush()");
+    expect(write).toContain("if result.is_err()");
+    expect(write).toContain("*writer = None");
+    expect(write).toMatch(/\bresult\s*\}$/);
   });
 
   it("keeps the Windows entry text when nothing was sent", () => {

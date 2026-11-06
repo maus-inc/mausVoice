@@ -2,12 +2,6 @@ import { Check, OpenInNew } from "@mui/icons-material";
 import { Button } from "@mui/material";
 import { FormattedMessage } from "react-intl";
 
-type PermissionAccessButtonProps = {
-  isAuthorized: boolean;
-  requesting: boolean;
-  onAllow: () => void;
-};
-
 /**
  * Shared grant/denied state button for the permission onboarding steps. When
  * the permission is already granted the button is a disabled confirmation;
@@ -17,7 +11,11 @@ export const PermissionAccessButton = ({
   isAuthorized,
   requesting,
   onAllow,
-}: PermissionAccessButtonProps) => {
+}: {
+  isAuthorized: boolean;
+  requesting: boolean;
+  onAllow: () => void;
+}) => {
   if (isAuthorized) {
     return (
       <Button

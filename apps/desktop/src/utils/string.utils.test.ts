@@ -355,6 +355,24 @@ describe("applyReplacements", () => {
     );
   });
 
+  it("preserves outer punctuation and whitespace while choosing the longest phrase", () => {
+    const rules = [
+      { sourceValue: "New York", destinationValue: "NYC" },
+      { sourceValue: "New York City", destinationValue: "(Big Apple)" },
+    ];
+    expect(applyReplacements("  (New  York City!)\tNew York.", rules)).toBe(
+      "  (Big Apple!)\tNYC.",
+    );
+  });
+
+  it("uses the first rule when equally good matches tie", () => {
+    const rules = [
+      { sourceValue: "hello", destinationValue: "first" },
+      { sourceValue: "HELLO", destinationValue: "second" },
+    ];
+    expect(applyReplacements("hello hello", rules)).toBe("first first");
+  });
+
   it("should replace multiple occurrences of a multi-word source", () => {
     const rules = [{ sourceValue: "foo bar", destinationValue: "baz" }];
     expect(applyReplacements("foo bar and foo bar", rules)).toBe("baz and baz");

@@ -85,6 +85,14 @@ const splitTableRow = (row: string): string[] => {
   return trimmed.split("|").map((cell) => cell.trim());
 };
 
+const tableHeader = (line: string, separator: string): string | undefined => {
+  if (!line.includes("|")) return undefined;
+  const cells = splitTableRow(line);
+  return cells.length >= 2 && isTableSeparator(splitTableRow(separator))
+    ? cells.join(" | ")
+    : undefined;
+};
+
 /**
  * Convert a run of consecutive GFM table lines into one line per data row,
  * each cell separated by " | ". The separator row is dropped. The header row
@@ -96,20 +104,13 @@ const convertTables = (input: string): string => {
 
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i];
-    if (!line.includes("|") || i + 1 >= lines.length) {
+    const header = tableHeader(line, lines[i + 1] ?? "");
+    if (header === undefined) {
       out.push(line);
       continue;
     }
 
-    const headerCells = splitTableRow(line);
-    const sepCells = splitTableRow(lines[i + 1] ?? "");
-    const isTable = headerCells.length >= 2 && isTableSeparator(sepCells);
-    if (!isTable) {
-      out.push(line);
-      continue;
-    }
-
-    out.push(headerCells.join(" | "));
+    out.push(header);
     i += 1;
     while (i + 1 < lines.length && lines[i + 1].includes("|")) {
       const cells = splitTableRow(lines[i + 1]);
@@ -392,6 +393,14 @@ export interface MarkdownToPillOptions {
   preserveEmphasis?: boolean;
 }
 
+const skipHorizontalWhitespace = (line: string, start: number): number => {
+  let index = start;
+  while (index < line.length && (line[index] === " " || line[index] === "\t")) {
+    index += 1;
+  }
+  return index;
+};
+
 /**
  * Convert a markdown string to pill-safe plain text.
  *
@@ -445,13 +454,11 @@ export const markdownToPillText = (
   text = text
     .split("\n")
     .map((line) => {
-      let j = 0;
-      while (j < line.length && (line[j] === " " || line[j] === "\t")) j += 1;
+      let j = skipHorizontalWhitespace(line, 0);
       const marker = line[j];
       if (marker !== "-" && marker !== "*" && marker !== "+") return line;
       const spaceStart = j + 1;
-      let k = spaceStart;
-      while (k < line.length && (line[k] === " " || line[k] === "\t")) k += 1;
+      const k = skipHorizontalWhitespace(line, spaceStart);
       if (k === spaceStart) return line;
       return `\u2022 ${line.slice(k)}`;
     })
@@ -462,8 +469,7 @@ export const markdownToPillText = (
   text = text
     .split("\n")
     .map((line) => {
-      let j = 0;
-      while (j < line.length && (line[j] === " " || line[j] === "\t")) j += 1;
+      let j = skipHorizontalWhitespace(line, 0);
       const digitStart = j;
       while (j < line.length && line[j] >= "0" && line[j] <= "9") j += 1;
       if (j === digitStart) return line;
@@ -471,7 +477,7 @@ export const markdownToPillText = (
       const digitEnd = j;
       j += 1;
       const spaceStart = j;
-      while (j < line.length && (line[j] === " " || line[j] === "\t")) j += 1;
+      j = skipHorizontalWhitespace(line, j);
       if (j === spaceStart) return line;
       const numberText = line.slice(digitStart, digitEnd);
       return `${numberText}. ${line.slice(j)}`;

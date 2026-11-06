@@ -3,16 +3,10 @@ import {
   Dialog,
   DialogActions,
   DialogContent,
-  FormControl,
-  InputLabel,
-  MenuItem,
-  Select,
   Stack,
   Typography,
 } from "@mui/material";
-import type { Tone } from "@maus-inc/types";
-import { getRec } from "@maus-inc/utilities";
-import { Check, FileUp } from "lucide-react";
+import { FileUp } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { showErrorSnackbar } from "../../actions/app.actions";
@@ -24,32 +18,18 @@ import { TipCard } from "../onboarding/TipCard";
 import { TranscriptionRow } from "./TranscriptRow";
 import { ScrollListPage } from "../common/ScrollListPage";
 import {
-  AUTO_LANGUAGE,
-  DICTATION_LANGUAGES,
   type DictationLanguageCode,
-  ORDERED_DICTATION_LANGUAGES,
   toSelectableDictationLanguage,
 } from "../../utils/language.utils";
 import { isStyleSelectionAvailable } from "../../utils/post-processing.utils";
-import { getSortedToneIds } from "../../utils/tone.utils";
+import { getSortedExistingTones } from "../../utils/tone.utils";
 import { getMyDictationLanguage } from "../../utils/user.utils";
-import {
-  chromeDialogPaperSx,
-  chromeMenuItemSx,
-  chromeSelectMenuProps,
-  selectedOptionLabel,
-} from "../common/chromeMenu";
+import { chromeDialogPaperSx } from "../common/chromeMenu";
+import { TranscriptionOptions } from "./TranscriptionOptions";
 import {
   DialogTitleWithClose,
   useDialogTitleId,
 } from "../common/DialogTitleWithClose";
-
-const languageOptions = (
-  [
-    AUTO_LANGUAGE,
-    ...ORDERED_DICTATION_LANGUAGES,
-  ] satisfies DictationLanguageCode[]
-).map((code) => ({ code, label: DICTATION_LANGUAGES[code] }));
 
 export default function TranscriptionsPage() {
   const intl = useIntl();
@@ -63,11 +43,7 @@ export default function TranscriptionsPage() {
   );
   const defaultLanguage = useAppStore((state) => getMyDictationLanguage(state));
   const styleSelectionAvailable = useAppStore(isStyleSelectionAvailable);
-  const tones = useAppStore((state) =>
-    getSortedToneIds(state)
-      .map((id) => getRec(state.toneById, id))
-      .filter((tone): tone is Tone => Boolean(tone)),
-  );
+  const tones = useAppStore(getSortedExistingTones);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const importDialogTitleId = useDialogTitleId();
   const [selectedToneId, setSelectedToneId] = useState<string | null>(null);
@@ -81,9 +57,7 @@ export default function TranscriptionsPage() {
   useEffect(() => {
     if (importDialogOpen && !prevImportDialogOpen.current) {
       const state = useAppStore.getState();
-      const firstTone = getSortedToneIds(state)
-        .map((id) => getRec(state.toneById, id))
-        .find((tone): tone is Tone => Boolean(tone));
+      const firstTone = getSortedExistingTones(state)[0];
       setSelectedToneId(firstTone?.id ?? null);
       setSelectedLanguage(
         toSelectableDictationLanguage(getMyDictationLanguage(state)),
@@ -237,70 +211,14 @@ export default function TranscriptionsPage() {
         </DialogTitleWithClose>
         <DialogContent>
           <Stack spacing={2.5} sx={{ mt: 1 }}>
-            {styleSelectionAvailable && (
-              <FormControl fullWidth size="small">
-                <InputLabel>
-                  <FormattedMessage defaultMessage="Style" />
-                </InputLabel>
-                <Select
-                  label={intl.formatMessage({ defaultMessage: "Style" })}
-                  value={selectedToneId ?? ""}
-                  onChange={(event) =>
-                    setSelectedToneId(event.target.value || null)
-                  }
-                  MenuProps={chromeSelectMenuProps}
-                  renderValue={(value) =>
-                    selectedOptionLabel(
-                      value,
-                      tones,
-                      (tone) => tone.id,
-                      (tone) => tone.name,
-                    )
-                  }
-                >
-                  {tones.map((tone) => (
-                    <MenuItem
-                      key={tone.id}
-                      value={tone.id}
-                      sx={chromeMenuItemSx}
-                    >
-                      {tone.name}
-                      {tone.id === selectedToneId ? (
-                        <Check size={16} strokeWidth={2} />
-                      ) : null}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-            )}
-            <FormControl fullWidth size="small">
-              <InputLabel>
-                <FormattedMessage defaultMessage="Language" />
-              </InputLabel>
-              <Select
-                label={intl.formatMessage({ defaultMessage: "Language" })}
-                value={selectedLanguage}
-                onChange={(event) =>
-                  setSelectedLanguage(
-                    event.target.value as DictationLanguageCode,
-                  )
-                }
-                MenuProps={chromeSelectMenuProps}
-                renderValue={(value) =>
-                  languageOptions.find((option) => option.code === value)
-                    ?.label ?? ""
-                }
-              >
-                {languageOptions.map(({ code, label }) => (
-                  <MenuItem key={code} value={code} sx={chromeMenuItemSx}>
-                    {label}
-                    {code === selectedLanguage ? (
-                      <Check size={16} strokeWidth={2} />
-                    ) : null}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
+            <TranscriptionOptions
+              tones={tones}
+              styleSelectionAvailable={styleSelectionAvailable}
+              selectedToneId={selectedToneId}
+              onToneChange={setSelectedToneId}
+              selectedLanguage={selectedLanguage}
+              onLanguageChange={setSelectedLanguage}
+            />
           </Stack>
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>

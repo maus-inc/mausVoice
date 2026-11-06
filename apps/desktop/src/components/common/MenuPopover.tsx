@@ -183,20 +183,6 @@ function MenuPopoverItemRend({
   return null;
 }
 
-type MenuPopoverProps = {
-  open: boolean;
-  anchorEl?: HTMLElement | null;
-  onClose: () => void;
-  items: MenuPopoverItem[];
-  sx?: SxProps;
-  anchorOrigin?: PopoverOrigin;
-  transformOrigin?: PopoverOrigin;
-  anchorReference?: PopoverReference;
-  anchorPosition?: PopoverPosition;
-};
-
-type SharedProps = Omit<MenuPopoverProps, "open" | "anchorEl" | "onClose">;
-
 export const MenuPopover = ({
   open,
   anchorEl,
@@ -206,7 +192,17 @@ export const MenuPopover = ({
   anchorOrigin,
   transformOrigin,
   ...rest
-}: MenuPopoverProps) => {
+}: {
+  open: boolean;
+  anchorEl?: HTMLElement | null;
+  onClose: () => void;
+  items: MenuPopoverItem[];
+  sx?: SxProps;
+  anchorOrigin?: PopoverOrigin;
+  transformOrigin?: PopoverOrigin;
+  anchorReference?: PopoverReference;
+  anchorPosition?: PopoverPosition;
+}) => {
   const handleClose = (event: React.MouseEvent<HTMLElement>): void => {
     event.stopPropagation();
     onClose?.();
@@ -257,7 +253,10 @@ export type MenuPopoverBuilderArgs = {
   close: () => void;
 };
 
-export type MenuPopoverBuilderProps = SharedProps & {
+export type MenuPopoverBuilderProps = Omit<
+  Parameters<typeof MenuPopover>[0],
+  "open" | "anchorEl" | "onClose"
+> & {
   children?: (args: MenuPopoverBuilderArgs) => React.ReactNode;
 };
 

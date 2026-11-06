@@ -4,7 +4,13 @@ import type { ReactNode } from "react";
 import { useId } from "react";
 import { useIntl } from "react-intl";
 
-type DialogTitleWithCloseProps = {
+export const useDialogTitleId = (): string => useId();
+
+export const DialogTitleWithClose = ({
+  onClose,
+  children,
+  titleId,
+}: {
   onClose: () => void;
   children: ReactNode;
   /**
@@ -17,15 +23,7 @@ type DialogTitleWithCloseProps = {
    * generates the id so each call site wires the two halves together.
    */
   titleId?: string;
-};
-
-export const useDialogTitleId = (): string => useId();
-
-export const DialogTitleWithClose = ({
-  onClose,
-  children,
-  titleId,
-}: DialogTitleWithCloseProps) => {
+}) => {
   const intl = useIntl();
   const generatedId = useId();
   return (

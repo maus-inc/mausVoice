@@ -115,4 +115,35 @@ describe("buildGladiaCustomizations", () => {
     expect(result.vocabulary[0]).toBe("term 0");
     expect(result.warnings).toHaveLength(1);
   });
+  it("preserves prototype-named terms as ordinary serializable spelling keys", () => {
+    const result = buildGladiaCustomizations({
+      sources: [],
+      replacements: [
+        { source: "proto", destination: "__proto__" },
+        { source: "construct", destination: "constructor" },
+      ],
+    });
+    expect(Object.getPrototypeOf(result.spellingDictionary)).toBe(
+      Object.prototype,
+    );
+    expect(Object.keys(result.spellingDictionary)).toEqual([
+      "__proto__",
+      "constructor",
+    ]);
+    expect(JSON.parse(JSON.stringify(result.spellingDictionary))).toEqual(
+      JSON.parse('{"__proto__":["proto"],"constructor":["construct"]}'),
+    );
+  });
+
+  it("budgets the vocabulary before spelling and stops without partial rules", () => {
+    const result = buildGladiaCustomizations({
+      sources: ["a".repeat(9995)],
+      replacements: [{ source: "variant", destination: "term" }],
+    });
+    expect(result.vocabulary).toEqual(["a".repeat(9995), "term"]);
+    expect(result.spellingDictionary).toEqual({});
+    expect(result.warnings).toEqual([
+      "Some Gladia custom-spelling rules were omitted because the safe payload budget was reached.",
+    ]);
+  });
 });

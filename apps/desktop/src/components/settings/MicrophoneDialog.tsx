@@ -10,7 +10,7 @@ import {
   Stack,
 } from "@mui/material";
 import { Nullable } from "@maus-inc/types";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { FormattedMessage } from "react-intl";
 import { setPreferredMicrophone } from "../../actions/user.actions";
 import { useMyPreferredMicrophone } from "../../hooks/user.hooks";
@@ -19,18 +19,22 @@ import { SettingSection } from "../common/SettingSection";
 import { MicrophoneSelector } from "../microphone/MicrophoneSelector";
 import { MicrophoneTester } from "../microphone/MicrophoneTester";
 
-export const MicrophoneDialog = () => {
-  const open = useAppStore((state) => state.settings.microphoneDialogOpen);
-  const savedPreference = useMyPreferredMicrophone();
-
+/** Manage a dialog draft and serialize writes to the saved microphone. */
+const useMicrophonePreference = (
+  open: boolean,
+  savedPreference: Nullable<string>,
+) => {
   const [selected, setSelected] = useState<Nullable<string>>(savedPreference);
   const [hasChanges, setHasChanges] = useState(false);
   const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
+  const dialogSessionRef = useRef(0);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
 
   useEffect(() => {
     if (!open) {
+      dialogSessionRef.current += 1;
       return;
     }
     setSelected(savedPreference);
@@ -50,24 +54,56 @@ export const MicrophoneDialog = () => {
   );
 
   const handleSave = useCallback(async () => {
-    if (!hasChanges || saving) {
+    if (!hasChanges || savingRef.current) {
       return;
     }
 
+    savingRef.current = true;
+    const session = dialogSessionRef.current;
     setSaving(true);
     setSaveError(null);
     setSaveSuccess(false);
 
     try {
       await setPreferredMicrophone(selected ?? null);
-      setHasChanges(false);
-      setSaveSuccess(true);
+      if (dialogSessionRef.current === session) {
+        setHasChanges(false);
+        setSaveSuccess(true);
+      }
     } catch {
-      setSaveError("Failed to save microphone preference. Please try again.");
+      if (dialogSessionRef.current === session) {
+        setSaveError("Failed to save microphone preference. Please try again.");
+      }
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
-  }, [hasChanges, saving, selected]);
+  }, [hasChanges, selected]);
+
+  return {
+    selected,
+    hasChanges,
+    saving,
+    saveError,
+    saveSuccess,
+    handleSelectionChange,
+    handleSave,
+  };
+};
+
+export const MicrophoneDialog = () => {
+  const open = useAppStore((state) => state.settings.microphoneDialogOpen);
+  const savedPreference = useMyPreferredMicrophone();
+
+  const {
+    selected,
+    hasChanges,
+    saving,
+    saveError,
+    saveSuccess,
+    handleSelectionChange,
+    handleSave,
+  } = useMicrophonePreference(open, savedPreference);
 
   const handleClose = useCallback(() => {
     produceAppState((draft) => {

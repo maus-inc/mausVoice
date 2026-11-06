@@ -289,6 +289,29 @@ describe("capVocabularyTerms", () => {
     expect(truncated).toBe(true);
   });
 
+  it("keeps the original entry threshold semantics for fractional limits", () => {
+    expect(
+      capVocabularyTerms(["a", "b"], { maxEntries: 0.5, maxCharacters: 100 }),
+    ).toMatchObject({
+      terms: ["a"],
+      truncated: true,
+    });
+  });
+
+  it("skips empty and invalid terms before applying the shared payload budgets", () => {
+    const result = capVocabularyTerms([" ", "too long phrase", "a b", "c"], {
+      maxEntries: 3,
+      maxCharacters: 6,
+      maxWordsPerTerm: 2,
+      maxWords: 3,
+    });
+    expect(result).toMatchObject({
+      terms: ["a b", "c"],
+      characters: 6,
+      truncated: true,
+    });
+  });
+
   it("caps the character budget and reports truncation", () => {
     const { terms: capped, truncated } = capVocabularyTerms(
       ["aaaaaaaaaa", "bbbbbbbbbb", "cc"],

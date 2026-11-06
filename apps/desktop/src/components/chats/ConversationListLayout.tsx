@@ -15,13 +15,6 @@ import { FadingScrollArea } from "../common/FadingScrollArea";
 import { MetalChrome } from "../common/MetalChrome";
 import { ConversationListItem } from "./ConversationListItem";
 
-type ConversationListLayoutProps = {
-  selectedId: string | null;
-  onSelect: (id: string) => void;
-  onNewChat: () => void;
-  onDelete: (id: string) => void;
-};
-
 const GROUP_ORDER: ThreadDayGroup[] = ["today", "yesterday", "earlier"];
 
 const EmptyListMessage = ({ message }: { message: ReactNode }) => (
@@ -45,7 +38,12 @@ export const ConversationListLayout = ({
   onSelect,
   onNewChat,
   onDelete,
-}: ConversationListLayoutProps) => {
+}: {
+  selectedId: string | null;
+  onSelect: (id: string) => void;
+  onNewChat: () => void;
+  onDelete: (id: string) => void;
+}) => {
   const intl = useIntl();
   const conversationIds = useAppStore((s) => s.chat.conversationIds);
   const conversationById = useAppStore((s) => s.conversationById);

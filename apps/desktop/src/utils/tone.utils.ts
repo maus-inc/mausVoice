@@ -423,6 +423,12 @@ export const getSortedToneIds = (state: AppState): string[] => {
     .map((t) => t.id);
 };
 
+/** Sorted tone records, omitting entries whose ID no longer resolves. */
+export const getSortedExistingTones = (state: AppState): Tone[] =>
+  getSortedToneIds(state)
+    .map((toneId) => getRec(state.toneById, toneId))
+    .filter((tone): tone is Tone => tone != null);
+
 export const getToneIdToUse = (
   state: AppState,
   opts?: {

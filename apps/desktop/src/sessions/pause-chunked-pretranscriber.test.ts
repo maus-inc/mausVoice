@@ -111,6 +111,18 @@ describe("PauseChunkedPretranscriber", () => {
     );
   });
 
+  it("accepts final samples from a plain array without changing audio coverage", async () => {
+    const { spans, transcribe } = recordingTranscriber();
+    const target = new PauseChunkedPretranscriber(RATE, transcribe, CONFIG);
+    feed(target, recording);
+    const result = await target.finish({
+      samples: Array.from(recording),
+      sampleRate: RATE,
+    });
+    expect(result?.text).toBe("span1 span2 span3");
+    expect(coversExactly(spans, recording)).toBe(true);
+  });
+
   it("cuts_committed_by_a_pause_scale_with_its_length", async () => {
     // The cost of cutting at a pause is one billed span per cut, so the rate is
     // worth pinning. An ordinary pause buys exactly one cut: `commit` clears
@@ -374,6 +386,8 @@ describe("PauseChunkedPretranscriber", () => {
     await expect(
       target.finish({ samples: recording, sampleRate: RATE }),
     ).resolves.toBeNull();
+    // Rejection must abort queued requests synchronously, before they can bill.
+    expect(transcribe).not.toHaveBeenCalled();
   });
 
   it("rejects a stream that diverges inside a committed span, not just at its end", async () => {

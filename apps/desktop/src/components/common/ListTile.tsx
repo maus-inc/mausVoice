@@ -9,7 +9,6 @@ import {
   type SxProps,
 } from "@mui/material";
 import { forwardRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { OverflowTypography } from "./OverflowTypography";
 
 type HoverButtonProps = {
@@ -98,7 +97,6 @@ export type ListTileProps<C extends ListTileComponent = "div"> = {
    */
   component?: C;
   sx?: SxProps;
-  href?: string;
   disabled?: boolean;
   disableRipple?: boolean;
   /** Optional indicator slot (e.g. motion layoutId pill) rendered behind content */
@@ -110,41 +108,40 @@ export type ListTileElement<C extends ListTileComponent> = C extends "li"
   ? HTMLLIElement
   : HTMLDivElement;
 
-export const ListTile = forwardRef(function ListTile<
-  C extends ListTileComponent = "div",
->(
-  {
-    title,
-    subtitle,
-    trailing,
-    trailingHover,
-    trailingOnClick,
-    leading,
-    leadingHover,
-    leadingOnClick,
-    onClick,
-    selected = false,
-    ariaCurrent,
-    component = "div" as C,
-    sx,
-    href,
-    disabled,
-    disableRipple = true,
-    indicator,
-  }: ListTileProps<C>,
-  ref: React.Ref<ListTileElement<C>>,
-) {
-  const [hovered, setHovered] = useState(false);
-  const nav = useNavigate();
-
-  const onMouseEnter = () => {
-    setHovered(true);
-  };
-
-  const onMouseLeave = () => {
-    setHovered(false);
-  };
-
+/** Render the interactive contents while the outer ListItem owns hover and its element ref. */
+const ListTileContent = ({
+  title,
+  subtitle,
+  trailing,
+  trailingHover,
+  trailingOnClick,
+  leading,
+  leadingHover,
+  leadingOnClick,
+  onClick,
+  selected = false,
+  ariaCurrent,
+  disabled,
+  disableRipple = true,
+  indicator,
+  hovered,
+}: Pick<
+  ListTileProps,
+  | "title"
+  | "subtitle"
+  | "trailing"
+  | "trailingHover"
+  | "trailingOnClick"
+  | "leading"
+  | "leadingHover"
+  | "leadingOnClick"
+  | "onClick"
+  | "selected"
+  | "ariaCurrent"
+  | "disabled"
+  | "disableRipple"
+  | "indicator"
+> & { hovered: boolean }) => {
   const handleClickLeading = (event: React.MouseEvent<HTMLDivElement>) => {
     event.stopPropagation();
     leadingOnClick?.(event);
@@ -155,34 +152,13 @@ export const ListTile = forwardRef(function ListTile<
     trailingOnClick?.(event);
   };
 
-  const handleClick = (event: React.MouseEvent<HTMLDivElement>) => {
-    if (href) {
-      if (event.metaKey || event.ctrlKey) {
-        window.open(href, "_blank");
-      } else {
-        event.preventDefault();
-        nav(href);
-      }
-    }
-
-    onClick?.(event);
-  };
-
-  // Normalize sx to array form for MUI
-  let normalizedSx: SxProps[] = [];
-  if (Array.isArray(sx)) {
-    normalizedSx = sx as unknown as SxProps[];
-  } else if (sx != null) {
-    normalizedSx = [sx];
-  }
-
-  const body = (
+  return (
     <>
       {indicator}
       <ListItemButton
         selected={selected}
         aria-current={ariaCurrent}
-        onClick={handleClick}
+        onClick={onClick}
         disabled={disabled}
         disableRipple={disableRipple}
         sx={(theme) => ({
@@ -253,6 +229,33 @@ export const ListTile = forwardRef(function ListTile<
       </ListItemButton>
     </>
   );
+};
+
+export const ListTile = forwardRef(function ListTile<
+  C extends ListTileComponent = "div",
+>(
+  { component = "div" as C, sx, ...content }: ListTileProps<C>,
+  ref: React.Ref<ListTileElement<C>>,
+) {
+  const [hovered, setHovered] = useState(false);
+
+  const onMouseEnter = () => {
+    setHovered(true);
+  };
+
+  const onMouseLeave = () => {
+    setHovered(false);
+  };
+
+  // Normalize sx to array form for MUI
+  let normalizedSx: SxProps[] = [];
+  if (Array.isArray(sx)) {
+    normalizedSx = sx as unknown as SxProps[];
+  } else if (sx != null) {
+    normalizedSx = [sx];
+  }
+
+  const body = <ListTileContent {...content} hovered={hovered} />;
 
   const shellProps = {
     disablePadding: true,

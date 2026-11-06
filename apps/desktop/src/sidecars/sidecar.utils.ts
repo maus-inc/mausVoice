@@ -1,3 +1,4 @@
+import { discardResponseBody } from "@maus-inc/utilities";
 import { secureFetch as fetch } from "../utils/secure-fetch.utils";
 
 export type Deferred<T> = {
@@ -23,17 +24,31 @@ export const createDeferred = <T>(): Deferred<T> => {
   return { promise, resolve, reject };
 };
 
-export const isTauriEnvironment = (): boolean => {
-  if (typeof window === "undefined") {
-    return false;
+/** Stop waiting on retired work without abandoning its eventual cleanup. */
+export const raceWithAbort = async <T>(
+  work: Promise<T>,
+  signal: AbortSignal,
+): Promise<T> => {
+  let abort = () => {};
+  const cancelled = new Promise<never>((_, reject) => {
+    abort = () => reject(signal.reason);
+    if (signal.aborted) abort();
+    else signal.addEventListener("abort", abort, { once: true });
+  });
+  try {
+    return await Promise.race([work, cancelled]);
+  } finally {
+    signal.removeEventListener("abort", abort);
   }
+};
 
-  const tauriWindow = window as typeof window & Record<string, unknown>;
-  return (
-    "__TAURI_INTERNALS__" in tauriWindow ||
-    "__TAURI__" in tauriWindow ||
-    "__TAURI_IPC__" in tauriWindow
-  );
+/** Never surface transport details that can echo private sidecar requests. */
+const throwTransportFailure = (error: unknown, signal: AbortSignal): never => {
+  signal.throwIfAborted();
+  if (error instanceof Error && error.name === "AbortError") {
+    throw new DOMException("Sidecar request cancelled", "AbortError");
+  }
+  throw new Error("Sidecar transport failed");
 };
 
 export const fetchWithTimeout = async (
@@ -41,19 +56,52 @@ export const fetchWithTimeout = async (
   init: RequestInit | undefined,
   timeoutMs: number,
 ): Promise<Response> => {
+  const callerSignal = init?.signal;
+  if (callerSignal?.aborted) throw callerSignal.reason;
+  const controller = new AbortController();
+  let abortFromCaller = () => {};
+  const callerCancellation = new Promise<never>((_, reject) => {
+    abortFromCaller = () => {
+      const reason = callerSignal?.reason;
+      controller.abort(reason);
+      reject(reason);
+    };
+    callerSignal?.addEventListener("abort", abortFromCaller, { once: true });
+  });
   let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
 
   const timeoutPromise = new Promise<never>((_, reject) => {
     timeoutHandle = setTimeout(() => {
-      reject(new Error(`Request timed out: ${url}`));
+      const error = new Error("Request timed out");
+      reject(error);
+      controller.abort(error);
     }, timeoutMs);
   });
 
   try {
-    return await Promise.race([fetch(url, init), timeoutPromise]);
-  } finally {
-    if (timeoutHandle) {
-      clearTimeout(timeoutHandle);
+    // Sidecars are bound to their own loopback port and have no redirecting
+    // routes. Never replay private audio to a redirect-selected destination.
+    let request: Promise<Response>;
+    try {
+      request = fetch(url, {
+        ...init,
+        redirect: "error",
+        signal: controller.signal,
+      }).then(
+        (response) => {
+          // Some transports ignore abort. Retire a response that arrives after
+          // we have stopped waiting rather than leaving its stream alive.
+          if (controller.signal.aborted) discardResponseBody(response);
+          return response;
+        },
+        (error: unknown) => throwTransportFailure(error, controller.signal),
+      );
+    } catch (error) {
+      return throwTransportFailure(error, controller.signal);
     }
+    return await Promise.race([request, timeoutPromise, callerCancellation]);
+  } finally {
+    if (timeoutHandle !== null) clearTimeout(timeoutHandle);
+    callerSignal?.removeEventListener("abort", abortFromCaller);
   }
 };

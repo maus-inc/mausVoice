@@ -1,4 +1,5 @@
 import { secureFetch as fetch } from "./secure-fetch.utils";
+import { discardResponseBody } from "@maus-inc/utilities";
 
 export const OLLAMA_DEFAULT_URL = "http://127.0.0.1:11434";
 
@@ -19,12 +20,15 @@ export const ollamaTestIntegration = async ({
   let response: Response;
   try {
     response = await fetch(baseUrl, { headers });
-  } catch (error) {
+  } catch {
+    // A configured endpoint or transport error can contain credentials. Keep
+    // the actionable diagnosis without echoing either into the UI or logs.
     throw new Error(
-      `Unable to connect to Ollama at ${baseUrl}. Make sure Ollama is running. ${error}`,
+      "Unable to connect to Ollama. Make sure Ollama is running.",
     );
   }
 
+  discardResponseBody(response);
   if (!response.ok) {
     if (response.status === 401 || response.status === 403) {
       throw new Error(

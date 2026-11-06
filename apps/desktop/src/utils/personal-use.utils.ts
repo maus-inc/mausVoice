@@ -20,12 +20,17 @@ export const isPersonalUseProEnabled = (): boolean => true;
 
 export const isPersonalUseEnabled = (): boolean => isPersonalUseProEnabled();
 
-type PersonalTranscriptionTargetArgs = {
-  deepgramKeyId: string | null;
-  groqKeyId: string | null;
-  currentMode: TranscriptionMode | null;
-  currentApiKeyId: string | null;
-};
+/** Preserve unrelated user-selected generation keys and avoid rewriting an active preset. */
+export const shouldConfigurePersonalGeneration = (
+  mode: string | null | undefined,
+  apiKeyId: string | null | undefined,
+  personalKeyId: string,
+): boolean =>
+  (!mode ||
+    !apiKeyId ||
+    apiKeyId === PERSONAL_GROQ_API_KEY_ID ||
+    apiKeyId === personalKeyId) &&
+  !(mode === "api" && apiKeyId === personalKeyId);
 
 /**
  * Decides which personal API key transcription should point at. Deepgram (live
@@ -38,7 +43,12 @@ export const resolvePersonalTranscriptionTarget = ({
   groqKeyId,
   currentMode,
   currentApiKeyId,
-}: PersonalTranscriptionTargetArgs): {
+}: {
+  deepgramKeyId: string | null;
+  groqKeyId: string | null;
+  currentMode: TranscriptionMode | null;
+  currentApiKeyId: string | null;
+}): {
   mode: "api";
   apiKeyId: string;
 } | null => {

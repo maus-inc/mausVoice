@@ -8,6 +8,8 @@ export const SPEECH_SAMPLE_RATE = 16_000;
 const ZERO_CROSSINGS = 8;
 const CUTOFF_RATIO = 0.94;
 const MAX_PHASES = 1_024;
+const MAX_FILTER_RADIUS = 2_048;
+const MAX_FILTER_COEFFICIENTS = 1_000_000;
 
 type PolyphaseTable = {
   up: number;
@@ -43,6 +45,12 @@ const buildTable = (
   const cutoff = (0.5 * CUTOFF_RATIO * outputRate) / inputRate;
   const halfWidth = ZERO_CROSSINGS / (2 * cutoff);
   const radius = Math.ceil(halfWidth);
+  if (
+    radius > MAX_FILTER_RADIUS ||
+    (2 * radius + 1) * up > MAX_FILTER_COEFFICIENTS
+  ) {
+    return null;
+  }
   const phases: Float32Array[] = [];
   for (let phase = 0; phase < up; phase += 1) {
     const fraction = phase / up;
@@ -105,6 +113,95 @@ const convolveAt = (
 };
 
 /**
+ * Shared admission for both downsamplers: the rates must be safe integers, the
+ * conversion must actually downsample, and the ratio must fit a filter table.
+ */
+const resolveDownsampleTable = (
+  inputRate: number,
+  outputRate: number,
+): PolyphaseTable | null => {
+  if (
+    !Number.isSafeInteger(inputRate) ||
+    !Number.isSafeInteger(outputRate) ||
+    inputRate <= outputRate ||
+    outputRate <= 0
+  ) {
+    return null;
+  }
+  return getTable(inputRate, outputRate);
+};
+
+/**
+ * Streaming equivalent of the speech downsampler. Keep enough lookahead for
+ * the same band-limited filter, then flush the right edge when capture ends.
+ */
+export const createStreamingSpeechDownsampler = (
+  inputRate: number,
+  outputRate: number = SPEECH_SAMPLE_RATE,
+): {
+  process: (input: Float32Array) => Float32Array;
+  flush: () => Float32Array;
+  reset: () => void;
+} | null => {
+  const table = resolveDownsampleTable(inputRate, outputRate);
+  if (!table) return null;
+  const { up, down, radius, phases } = table;
+  let buffer = new Float32Array(0);
+  let bufferStart = 0;
+  let totalInput = 0;
+  let nextOutput = 0;
+
+  const reset = () => {
+    buffer = new Float32Array(0);
+    bufferStart = 0;
+    totalInput = 0;
+    nextOutput = 0;
+  };
+  const drain = (flush: boolean): Float32Array => {
+    const count = Math.floor((totalInput * up) / down);
+    const output: number[] = [];
+    while (nextOutput < count) {
+      const position = nextOutput * down;
+      const center = Math.floor(position / up);
+      if (!flush && center + radius >= totalInput) break;
+      output.push(
+        convolveAt(
+          buffer,
+          center - radius - bufferStart,
+          phases[position % up],
+        ),
+      );
+      nextOutput += 1;
+    }
+    const nextCenter = Math.floor((nextOutput * down) / up);
+    const consumed = Math.min(
+      buffer.length,
+      Math.max(0, nextCenter - radius - bufferStart),
+    );
+    if (consumed) {
+      buffer = buffer.slice(consumed);
+      bufferStart += consumed;
+    }
+    const result = Float32Array.from(output);
+    if (flush) reset();
+    return result;
+  };
+  return {
+    process: (input) => {
+      if (!input.length) return new Float32Array(0);
+      const combined = new Float32Array(buffer.length + input.length);
+      combined.set(buffer);
+      combined.set(input, buffer.length);
+      buffer = combined;
+      totalInput += input.length;
+      return drain(false);
+    },
+    flush: () => drain(true),
+    reset,
+  };
+};
+
+/**
  * Anti-aliased downsampling to `outputRate`. Returns `null` when the input is
  * already at or below the target rate, or when the rate ratio would need an
  * oversized filter table; callers then keep the original samples.
@@ -114,15 +211,7 @@ export const downsampleForSpeech = (
   inputRate: number,
   outputRate: number = SPEECH_SAMPLE_RATE,
 ): Float32Array | null => {
-  if (
-    !Number.isInteger(inputRate) ||
-    !Number.isInteger(outputRate) ||
-    inputRate <= outputRate ||
-    outputRate <= 0
-  ) {
-    return null;
-  }
-  const table = getTable(inputRate, outputRate);
+  const table = resolveDownsampleTable(inputRate, outputRate);
   if (!table) return null;
 
   const { up, down, radius, phases } = table;

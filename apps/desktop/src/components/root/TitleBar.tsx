@@ -31,6 +31,7 @@ import {
   TRAFFIC_HIT_SIZE,
 } from "./titleBarGeometry";
 import { WindowResizeHandles } from "./WindowResizeHandles";
+import { createWindowListenerGuard } from "./window-listener-guard";
 
 /** Window-control glyphs are 16px so they stay optically level with the 18px
  * theme toggle without crowding the button. */
@@ -68,8 +69,7 @@ const useWindowMetrics = () => {
 
   useEffect(() => {
     if (!isTauriRuntime()) return;
-    let unlisten: (() => void) | undefined;
-    let canceled = false;
+    const listener = createWindowListenerGuard();
     const win = getCurrentWindow();
     // Monotonic ticket per measurement. A response is applied only if no newer
     // measurement has started since, so a late reply for an older size is
@@ -78,7 +78,7 @@ const useWindowMetrics = () => {
 
     const read = async () => {
       const current = ++ticket;
-      const settled = () => !canceled && current === ticket;
+      const settled = () => !listener.isCanceled() && current === ticket;
       try {
         const [size, maximizedNow, scale] = await Promise.all([
           win.outerSize(),
@@ -100,23 +100,10 @@ const useWindowMetrics = () => {
 
     win
       .onResized(read)
-      .then((fn) => {
-        // `onResized` resolves asynchronously. If the effect cleaned up before
-        // it resolved (e.g. React StrictMode double-invoke, or fast navigation),
-        // the unlisten fn must be released immediately instead of being stored
-        // and leaked, since the `return` below would have already run.
-        if (canceled) {
-          fn();
-        } else {
-          unlisten = fn;
-        }
-      })
+      .then(listener.registered)
       .catch(() => undefined);
 
-    return () => {
-      canceled = true;
-      unlisten?.();
-    };
+    return listener.dispose;
   }, []);
 
   // Storing the decision rather than the raw width means a resize drag
@@ -135,34 +122,24 @@ const useWindowFocused = () => {
 
   useEffect(() => {
     if (!isTauriRuntime()) return;
-    let unlisten: (() => void) | undefined;
-    let canceled = false;
+    const listener = createWindowListenerGuard();
     const win = getCurrentWindow();
     let receivedFocusEvent = false;
     win
       .isFocused()
       .then((value) => {
         // The initial snapshot can arrive after a newer native event.
-        if (!canceled && !receivedFocusEvent) setFocused(value);
+        if (!listener.isCanceled() && !receivedFocusEvent) setFocused(value);
       })
       .catch(() => undefined);
     win
       .onFocusChanged(({ payload }) => {
         receivedFocusEvent = true;
-        if (!canceled) setFocused(payload);
+        if (!listener.isCanceled()) setFocused(payload);
       })
-      .then((fn) => {
-        if (canceled) {
-          fn();
-        } else {
-          unlisten = fn;
-        }
-      })
+      .then(listener.registered)
       .catch(() => undefined);
-    return () => {
-      canceled = true;
-      unlisten?.();
-    };
+    return listener.dispose;
   }, []);
 
   return focused;

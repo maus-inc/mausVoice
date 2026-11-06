@@ -10,12 +10,13 @@ import {
 } from "@maus-inc/desktop-utils";
 import { invoke } from "@tauri-apps/api/core";
 import { getIntl } from "../i18n/intl";
+import type { AppState } from "../state/app.state";
 import {
   INITIAL_UPDATER_STATE,
   type UpdaterState,
 } from "../state/updater.state";
 import { getAppState, produceAppState } from "../store";
-import { getPlatform } from "../utils/env.utils";
+import { getDesktopPlatform } from "../utils/env.utils";
 import { daysToMilliseconds } from "../utils/time.utils";
 import { getMyUserPreferences } from "../utils/user.utils";
 import { markSurfaceWindowForNextLaunch } from "../utils/window.utils";
@@ -58,6 +59,23 @@ const isBusy = () => {
   return status === "downloading" || status === "installing";
 };
 
+// Manual checks request the dialog even when background prompts are snoozed
+// or disabled; an already-open dialog needs no new prompt or toast.
+const shouldAutoShowUpdate = (
+  state: AppState,
+  userInitiated: boolean,
+): boolean => {
+  const { updater } = state;
+  const ignoreUpdateDialog =
+    getMyUserPreferences(state)?.ignoreUpdateDialog ?? false;
+  return (
+    !updater.dialogOpen &&
+    (userInitiated ||
+      (!ignoreUpdateDialog &&
+        (!updater.dismissedUntil || Date.now() >= updater.dismissedUntil)))
+  );
+};
+
 /**
  * Checks the updater endpoint. Pass `{ userInitiated: true }` for a check the
  * user asked for: it reports an explicit "up to date" result and bypasses the
@@ -81,7 +99,7 @@ export const checkForAppUpdates = async (
 
   checkingUserInitiated = checkingUserInitiated || userInitiated;
   const generation = checkGeneration;
-  const platform = getPlatform();
+  const platform = getDesktopPlatform();
 
   const run = async (): Promise<boolean> => {
     produceAppState((draft) => {
@@ -128,16 +146,10 @@ export const checkForAppUpdates = async (
     }
 
     const state = getAppState();
-    const { dialogOpen, dismissedUntil } = state.updater;
-    const ignoreUpdateDialog =
-      getMyUserPreferences(state)?.ignoreUpdateDialog ?? false;
-    // A user-initiated check is itself the request to see the dialog, so it
-    // ignores both the snooze window and the auto-show preference.
-    const shouldAutoShowDialog =
-      !dialogOpen &&
-      (checkingUserInitiated ||
-        (!ignoreUpdateDialog &&
-          (!dismissedUntil || Date.now() >= dismissedUntil)));
+    const shouldAutoShowDialog = shouldAutoShowUpdate(
+      state,
+      checkingUserInitiated,
+    );
 
     produceAppState((draft) => {
       draft.updater.status = "ready";
@@ -334,7 +346,7 @@ const installViaBuiltInUpdater = async (): Promise<boolean> => {
     });
   } catch (error) {
     const errorMessage = String(error);
-    const platform = getPlatform();
+    const platform = getDesktopPlatform();
     const shouldUseManualInstaller =
       platform === "darwin" && isReadOnlyFilesystemInstallError(errorMessage);
     console.error("Failed to download or install update", error);

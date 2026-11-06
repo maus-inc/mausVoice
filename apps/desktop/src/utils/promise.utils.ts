@@ -20,9 +20,7 @@ export const logOnRejection = (
   void promise
     .catch((error: unknown) => {
       try {
-        getLogger().warning(
-          `${context} failed after its own error UI: ${error}`,
-        );
+        getLogger().warning(`${context} failed: ${error}`);
       } catch {
         // The native log bridge is unavailable (tests, shutdown): stay silent
         // rather than converting a handled failure into a new rejection.

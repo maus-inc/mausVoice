@@ -5,29 +5,19 @@ import {
   AutoFixHighOutlined,
   DeleteForeverOutlined,
   DescriptionOutlined,
-  Edit,
   GraphicEqOutlined,
   KeyboardAltOutlined,
   KeyOutlined,
-  LanguageOutlined,
   MicOutlined,
-  MoreVertOutlined,
   RocketLaunchOutlined,
   SearchRounded,
   TroubleshootOutlined,
   VolumeUpOutlined,
-  WarningAmberOutlined,
 } from "@mui/icons-material";
 import {
-  Alert,
   Box,
   Button,
   Chip,
-  Dialog,
-  DialogActions,
-  DialogContent,
-  DialogTitle,
-  IconButton,
   InputAdornment,
   Link,
   List,
@@ -39,7 +29,6 @@ import {
   Stack,
   Switch,
   TextField,
-  Tooltip,
   Typography,
 } from "@mui/material";
 import type {
@@ -51,7 +40,6 @@ import { commands, NativeSetupResult } from "@maus-inc/desktop-native-apis";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   ChangeEvent,
-  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -68,7 +56,6 @@ import {
 import { setAutoLaunchEnabled } from "../../actions/settings.actions";
 import { SettingSection } from "../common/SettingSection";
 import { TipCard } from "../onboarding/TipCard";
-import { loadTones } from "../../actions/tone.actions";
 import {
   setAlwaysRequestAdminOnStartup,
   setAutoLearnDictionaryEnabled,
@@ -85,7 +72,6 @@ import {
   setMenuBarIconHidden,
   setPillResetMonitorStrategy,
   setPreserveAudioOnFailure,
-  setPreferredLanguage,
   setRealtimeOutputEnabled,
   setReviewBeforeInsert,
   setSpokenCommandsEnabled,
@@ -93,55 +79,35 @@ import {
 } from "../../actions/user.actions";
 import { logOnRejection } from "../../utils/promise.utils";
 import {
-  getEffectiveDictationLimitMinutes,
   MAX_DICTATION_LIMIT_MINUTES,
   normalizeDictationLimitMinutes,
-  shouldEnableDictationLimit,
 } from "../../utils/dictation-limit.utils";
 import {
-  getEffectiveHandsFreeDelayMs,
   MAX_HANDS_FREE_DELAY_MS,
+  normalizeHandsFreeDelayMs,
 } from "../../utils/hands-free-delay.utils";
-import { getEffectiveStylingMode } from "../../utils/feature.utils";
-import {
-  disclosureIsVisible,
-  getTranscriptionAudioDisclosure,
-} from "../../utils/transcription-privacy.utils";
-import {
-  getDetectedSystemLocale,
-  getGenerativePrefs,
-  getMyUser,
-  getEffectivePillVisibility,
-  getMyUserPreferences,
-  getTranscriptionPrefs,
-} from "../../utils/user.utils";
 import {
   isPillPlacementAvailable,
   PillPlacementSetting,
 } from "./PillPlacementSetting";
 import { UpdateChannelSetting } from "./UpdateChannelSetting";
+import { useSettingsNavigation } from "./useSettingsNavigation";
+import { selectSettingsPageSnapshot } from "./settings-page-snapshot";
 import { AudioTransmissionDisclosure } from "./AudioTransmissionDisclosure";
-import { UpdateSettingSection } from "./UpdateSettingSection";
+import { DictationLanguageSetting } from "./DictationLanguageSetting";
 import {
-  sectionAnchorId,
-  sectionFromScrollTop,
-  SettingsSectionNav,
-} from "./SettingsSectionNav";
+  PersonalApiKeyDialog,
+  usePersonalApiKeyDialog,
+} from "./PersonalApiKeyDialog";
+import { UpdateSettingSection } from "./UpdateSettingSection";
+import { sectionAnchorId, SettingsSectionNav } from "./SettingsSectionNav";
 import { SegmentedControl } from "../common/SegmentedControl";
 import {
   searchSettings,
   SETTING_ENTRIES,
-  SETTING_SECTIONS,
   type SettingAvailability,
-  type SettingSectionId,
 } from "../../utils/settings-registry";
 import { produceAppState, useAppStore } from "../../store";
-import { getAdditionalLanguageEntries } from "../../utils/keyboard.utils";
-import {
-  DICTATION_LANGUAGE_OPTIONS,
-  KEYBOARD_LAYOUT_LANGUAGE,
-  WHISPER_LANGUAGES,
-} from "../../utils/language.utils";
 import {
   PERSONAL_DEEPGRAM_API_KEY_ID,
   PERSONAL_DEEPGRAM_API_KEY_NAME,
@@ -184,107 +150,17 @@ const SettingAnchor = ({
   </Box>
 );
 
-export default function SettingsPage() {
-  const [searchParams] = useSearchParams();
-  const [query, setQuery] = useState("");
-  const [highlight, setHighlight] = useState<string | null>(null);
-  const highlightTimer = useRef<number | null>(null);
-
-  const focusSetting = useCallback((key: string) => {
-    setQuery("");
-    setHighlight(key);
-    if (highlightTimer.current !== null) {
-      window.clearTimeout(highlightTimer.current);
-    }
-    highlightTimer.current = window.setTimeout(() => setHighlight(null), 2400);
-    requestAnimationFrame(() => {
-      document
-        .getElementById(`setting-${key}`)
-        ?.scrollIntoView({ behavior: "smooth", block: "center" });
-    });
-  }, []);
-
-  useEffect(
-    () => () => {
-      if (highlightTimer.current !== null) {
-        window.clearTimeout(highlightTimer.current);
-      }
-    },
-    [],
+const useNativeInputSetup = () => {
+  const alwaysRequestAdminOnStartup = useAppStore(
+    (state) => state.userPrefs?.alwaysRequestAdminOnStartup ?? false,
   );
-
-  const [groqDialogOpen, setGroqDialogOpen] = useState(false);
-  const [groqApiKeyInput, setGroqApiKeyInput] = useState("");
-  const [groqSaving, setGroqSaving] = useState(false);
-  const [groqError, setGroqError] = useState<string | null>(null);
-
-  const [activeSection, setActiveSection] = useState<SettingSectionId | null>(
-    null,
-  );
-
-  const jumpToSection = useCallback((section: SettingSectionId) => {
-    document
-      .getElementById(sectionAnchorId(section))
-      ?.scrollIntoView({ behavior: "smooth", block: "start" });
-    // Set immediately rather than waiting for the scroll to land: the smooth
-    // scroll fires scroll events along the way, and leaving the rail unselected
-    // until then reads as a dropped click.
-    setActiveSection(section);
-  }, []);
-
-  // Track which section the reader is in.
-  //
-  // The scrolling element is the dashboard's `Outlet` Box (`overflow: "auto"`),
-  // NOT the window: `DashboardPage` sets `overflow: "hidden"` on the stack that
-  // fills the viewport, so the window itself never scrolls. A `scroll` event
-  // fired on an element does not bubble, so a listener on `window` in the
-  // bubble phase would never run for settings scrolling at all — which is why
-  // this registers on `window` with the capture flag instead, the same reason
-  // `ContextMenu.tsx` passes `true`. Capture sees the event on its way down to
-  // the scrolling Box regardless of which element scrolls.
-  //
-  // Positions are measured against the viewport (`getBoundingClientRect().top`
-  // with an offset of 0), so the measurement stays correct whichever element
-  // is doing the scrolling. Sampling through rAF keeps a fast scroll from
-  // running layout per event.
-  useEffect(() => {
-    if (query.trim()) return;
-    let frame = 0;
-    const measure = () => {
-      frame = 0;
-      const tops = SETTING_SECTIONS.map(
-        (entry) =>
-          [
-            entry.id,
-            document
-              .getElementById(sectionAnchorId(entry.id))
-              ?.getBoundingClientRect().top ?? Number.POSITIVE_INFINITY,
-          ] as const,
-      );
-      setActiveSection(sectionFromScrollTop(tops, 0));
-    };
-    const onScroll = () => {
-      if (frame === 0) frame = requestAnimationFrame(measure);
-    };
-    measure();
-    // `capture: true` is load-bearing here, not a default: it is what makes a
-    // scroll inside the dashboard's Box reach this listener at all.
-    window.addEventListener("scroll", onScroll, {
-      passive: true,
-      capture: true,
-    });
-    window.addEventListener("resize", onScroll);
-    return () => {
-      if (frame !== 0) cancelAnimationFrame(frame);
-      window.removeEventListener("scroll", onScroll, { capture: true });
-      window.removeEventListener("resize", onScroll);
-    };
-  }, [query]);
-
   const [setupConfirmOpen, setSetupConfirmOpen] = useState(false);
   const [setupRunning, setSetupRunning] = useState(false);
+  const setupInFlight = useRef(false);
 
   const runNativeSetup = async () => {
+    if (setupInFlight.current) return;
+    setupInFlight.current = true;
     setSetupConfirmOpen(false);
     setSetupRunning(true);
     try {
@@ -303,1172 +179,205 @@ export default function SettingsPage() {
     } catch (err) {
       showErrorSnackbar(err);
     } finally {
+      setupInFlight.current = false;
       setSetupRunning(false);
     }
   };
-  const personalGroqApiKey = useAppStore((state) =>
-    state.settings.apiKeys.find(
-      (apiKey) =>
-        apiKey.id === PERSONAL_GROQ_API_KEY_ID ||
-        (apiKey.provider === "groq" &&
-          apiKey.name.trim() === PERSONAL_GROQ_API_KEY_NAME),
-    ),
-  );
-  const [deepgramDialogOpen, setDeepgramDialogOpen] = useState(false);
-  const [deepgramApiKeyInput, setDeepgramApiKeyInput] = useState("");
-  const [deepgramSaving, setDeepgramSaving] = useState(false);
-  const [deepgramError, setDeepgramError] = useState<string | null>(null);
-  const personalDeepgramApiKey = useAppStore((state) =>
-    state.settings.apiKeys.find(
-      (apiKey) =>
-        apiKey.id === PERSONAL_DEEPGRAM_API_KEY_ID ||
-        (apiKey.provider === "deepgram" &&
-          apiKey.name.trim() === PERSONAL_DEEPGRAM_API_KEY_NAME),
-    ),
-  );
-  const [autoLaunchEnabled, autoLaunchStatus] = useAppStore((state) => [
-    state.settings.autoLaunchEnabled,
-    state.settings.autoLaunchStatus,
-  ]);
-  const autoLaunchLoading = autoLaunchStatus === "loading";
-  const intl = useIntl();
-
-  const dictationLanguage = useAppStore((state) => {
-    const user = getMyUser(state);
-    return user?.preferredLanguage ?? getDetectedSystemLocale();
-  });
-
-  const dictationLanguageWarning = useAppStore((state) => {
-    const hasPostProcessingEnabled = getGenerativePrefs(state).mode !== "none";
-    if (hasPostProcessingEnabled) {
-      return null;
-    }
-
-    if (dictationLanguage === KEYBOARD_LAYOUT_LANGUAGE) {
-      return null;
-    }
-
-    const isWhisperLang = dictationLanguage in WHISPER_LANGUAGES;
-    if (!isWhisperLang) {
-      return intl.formatMessage({
-        defaultMessage:
-          "Be sure to enable AI post processing when using this language for the best results.",
-      });
-    }
-
-    return null;
-  });
-
-  const hasAdditionalLanguages = useAppStore(
-    (state) => getAdditionalLanguageEntries(state).length > 0,
-  );
-
-  const openDictationLanguageDialog = () => {
-    produceAppState((draft) => {
-      draft.settings.dictationLanguageDialogOpen = true;
-    });
+  return {
+    setupConfirmOpen,
+    setSetupConfirmOpen,
+    setupRunning,
+    runNativeSetup,
+    alwaysRequestAdminOnStartup,
   };
+};
 
-  const handleDictationLanguageChange = (event: SelectChangeEvent<string>) => {
-    const nextValue = event.target.value;
-    // `logOnRejection` rather than a bare `void`: `updateUser` shows the error snackbar
-    // and then RETHROWS (actions/user.actions.ts), so this chain rejects, and `void`
-    // discards a value without handling a rejection. Every other call site in this file
-    // already went through the helper -- this one was the last, and it predates the import
-    // being added.
+/** A draft stays local until blur; external changes replace the draft. */
+const useNumericSettingInput = ({
+  value,
+  enabled = true,
+  normalize,
+  save,
+  context,
+}: {
+  value: number;
+  enabled?: boolean;
+  normalize: (value: number) => number;
+  save: (value: number) => Promise<void>;
+  context: string;
+}) => {
+  const [input, setInput] = useState(String(value));
+  const lastCommitted = useRef(value);
+  const latestValue = useRef(value);
+  const revision = useRef(0);
+  useEffect(() => {
+    latestValue.current = value;
+    lastCommitted.current = value;
+    setInput(String(value));
+  }, [value]);
+  const onChange = (event: ChangeEvent<HTMLInputElement>) =>
+    setInput(event.target.value);
+  const onBlur = () => {
+    if (!enabled) return;
+    const parsed = Number(input);
+    if (input === "" || !Number.isFinite(parsed) || parsed < 0) {
+      setInput(String(value));
+      return;
+    }
+    const normalized = normalize(parsed);
+    setInput(String(normalized));
+    if (normalized === lastCommitted.current) return;
+    lastCommitted.current = normalized;
+    const attempt = ++revision.current;
     logOnRejection(
-      setPreferredLanguage(nextValue).then(() => {
-        loadTones();
+      save(normalized).catch((error: unknown) => {
+        if (revision.current === attempt)
+          lastCommitted.current = latestValue.current;
+        throw error;
       }),
-      "settings: setPreferredLanguage",
+      context,
     );
   };
+  return { input, onChange, onBlur };
+};
 
-  const openTranscriptionDialog = () => {
-    produceAppState((draft) => {
-      draft.settings.aiTranscriptionDialogOpen = true;
-    });
-  };
+const getInputSetupDescription = (platform: ReturnType<typeof getPlatform>) => {
+  switch (platform) {
+    case "linux":
+      return (
+        <FormattedMessage defaultMessage="Configures global input capture (uinput/udev) so the pill can type for you. Requires administrator privileges." />
+      );
+    case "windows":
+      return (
+        <FormattedMessage defaultMessage="Grants administrator privileges and input-capture access so the pill can type for you. You will see a User Account Control prompt." />
+      );
+    case "macos":
+      return (
+        <FormattedMessage defaultMessage="Requests Accessibility and Microphone access so the pill can type for you. You will be prompted in System Settings." />
+      );
+    default:
+      return null;
+  }
+};
 
-  const openPostProcessingDialog = () => {
-    produceAppState((draft) => {
-      draft.settings.aiPostProcessingDialogOpen = true;
-    });
-  };
+const getSetupConfirmContent = (platform: ReturnType<typeof getPlatform>) => {
+  switch (platform) {
+    case "linux":
+      return (
+        <FormattedMessage defaultMessage="This requires administrator privileges to configure global input capture (uinput/udev). Continue?" />
+      );
+    case "windows":
+      return (
+        <FormattedMessage defaultMessage="This will prompt for administrator privileges (UAC) so the pill can capture and type input globally. Continue?" />
+      );
+    default:
+      return (
+        <FormattedMessage defaultMessage="This will request Accessibility and Microphone access so the pill can capture and type input globally. Continue?" />
+      );
+  }
+};
 
-  const openAppKeybindingsDialog = () => {
-    produceAppState((draft) => {
-      draft.settings.appKeybindingsDialogOpen = true;
-    });
-  };
-
-  const openAgentModeDialog = () => {
-    produceAppState((draft) => {
-      draft.settings.agentModeDialogOpen = true;
-    });
-  };
-
-  const openGroqDialog = () => {
-    setGroqApiKeyInput("");
-    setGroqError(null);
-    setGroqDialogOpen(true);
-  };
-
-  const closeGroqDialog = () => {
-    if (!groqSaving) {
-      setGroqDialogOpen(false);
+const ConfigurationStatusChip = ({ configured }: { configured: boolean }) => (
+  <Chip
+    size="small"
+    color={configured ? "success" : "default"}
+    label={
+      configured ? (
+        <FormattedMessage defaultMessage="Configured" />
+      ) : (
+        <FormattedMessage defaultMessage="Not configured" />
+      )
     }
+  />
+);
+
+const SettingsSearchResults = ({
+  results,
+  focusSetting,
+}: {
+  results: ReturnType<typeof searchSettings>;
+  focusSetting: (key: string) => void;
+}) => (
+  <List>
+    {results.length === 0 ? (
+      <ListItemText
+        primary={
+          <FormattedMessage defaultMessage="No settings match that search." />
+        }
+      />
+    ) : (
+      results.map((hit) => (
+        <ListItemButton
+          key={hit.entry.key}
+          onClick={() => focusSetting(hit.entry.key)}
+        >
+          <ListItemText primary={hit.title} secondary={hit.sectionTitle} />
+        </ListItemButton>
+      ))
+    )}
+  </List>
+);
+
+type PrivacySectionProps = {
+  highlight: string | null;
+  availability: SettingAvailability;
+  values: {
+    showAudioDisclosure: boolean;
+    incognitoModeEnabled: boolean;
+    incognitoIncludeInStats: boolean;
+    preserveAudioOnFailure: boolean;
+    autoLearnDictionaryEnabled: boolean;
+    elevenLabsKeytermsEnabled: boolean;
+    autoLearnFromEditsEnabled: boolean;
   };
-
-  const handleSaveGroqApiKey = async () => {
-    const trimmed = groqApiKeyInput.trim();
-    if (!trimmed || groqSaving) {
-      return;
-    }
-
-    setGroqSaving(true);
-    setGroqError(null);
-    try {
-      await savePersonalGroqApiKey(trimmed);
-      showSnackbar("Groq API key saved", { mode: "success" });
-      setGroqApiKeyInput("");
-      setGroqDialogOpen(false);
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Failed to save Groq API key.";
-      setGroqError(message);
-    } finally {
-      setGroqSaving(false);
-    }
+  actions: {
+    handleToggleIncognitoMode: (event: ChangeEvent<HTMLInputElement>) => void;
+    handleToggleIncognitoIncludeInStats: (
+      event: ChangeEvent<HTMLInputElement>,
+    ) => void;
+    handleTogglePreserveAudioOnFailure: (
+      event: ChangeEvent<HTMLInputElement>,
+    ) => void;
+    handleToggleAutoLearnDictionary: (
+      event: ChangeEvent<HTMLInputElement>,
+    ) => void;
+    handleToggleElevenLabsKeyterms: (
+      event: ChangeEvent<HTMLInputElement>,
+    ) => void;
+    handleToggleAutoLearnFromEdits: (
+      event: ChangeEvent<HTMLInputElement>,
+    ) => void;
+    openMultiDeviceDialog: () => void;
+    openClearLocalDataDialog: () => void;
   };
+};
 
-  const openDeepgramDialog = () => {
-    setDeepgramApiKeyInput("");
-    setDeepgramError(null);
-    setDeepgramDialogOpen(true);
-  };
-
-  const closeDeepgramDialog = () => {
-    if (!deepgramSaving) {
-      setDeepgramDialogOpen(false);
-    }
-  };
-
-  const handleSaveDeepgramApiKey = async () => {
-    const trimmed = deepgramApiKeyInput.trim();
-    if (!trimmed || deepgramSaving) {
-      return;
-    }
-
-    setDeepgramSaving(true);
-    setDeepgramError(null);
-    try {
-      await savePersonalDeepgramApiKey(trimmed);
-      showSnackbar("Deepgram API key saved", { mode: "success" });
-      setDeepgramApiKeyInput("");
-      setDeepgramDialogOpen(false);
-    } catch (error) {
-      const message =
-        error instanceof Error
-          ? error.message
-          : "Failed to save Deepgram API key.";
-      setDeepgramError(message);
-    } finally {
-      setDeepgramSaving(false);
-    }
-  };
-
-  const openMicrophoneDialog = () => {
-    produceAppState((draft) => {
-      draft.settings.microphoneDialogOpen = true;
-    });
-  };
-
-  const openAudioDialog = () => {
-    produceAppState((draft) => {
-      draft.settings.audioDialogOpen = true;
-    });
-  };
-
-  const openDiagnosticsDialog = () => {
-    produceAppState((draft) => {
-      draft.settings.diagnosticsDialogOpen = true;
-    });
-  };
-
-  const openShortcutsDialog = () => {
-    produceAppState((draft) => {
-      draft.settings.shortcutsDialogOpen = true;
-    });
-  };
-
-  const openStyleHotkeysDialog = () => {
-    produceAppState((draft) => {
-      draft.settings.styleHotkeysDialogOpen = true;
-    });
-  };
-
-  const openClearLocalDataDialog = () => {
-    produceAppState((draft) => {
-      draft.settings.clearLocalDataDialogOpen = true;
-    });
-  };
-
-  const handleToggleAutoLaunch = (event: ChangeEvent<HTMLInputElement>) => {
-    const enabled = event.target.checked;
-    void setAutoLaunchEnabled(enabled);
-  };
-
-  const [
-    ignoreUpdateDialog,
+const PrivacySection = ({
+  highlight,
+  availability,
+  values,
+  actions,
+}: PrivacySectionProps) => {
+  const {
+    showAudioDisclosure,
     incognitoModeEnabled,
     incognitoIncludeInStats,
     preserveAudioOnFailure,
-    dictationPillVisibility,
-    pillResetMonitorStrategy,
-    realtimeOutputEnabled,
-    stylingMode,
-    canChangeStylingMode,
-    showDictationLimitSetting,
-    dictationLimitMinutes,
-    disablePillRewards,
-    disableAutoStyleLoading,
-    menuBarIconHidden,
-    handsFreeDelayMs,
     autoLearnDictionaryEnabled,
-    autoLearnFromEditsEnabled,
     elevenLabsKeytermsEnabled,
-    spokenCommandsEnabled,
-    reviewBeforeInsert,
-    hallucinationFilterEnabled,
-    inDictationStyleSwitchingEnabled,
-    transcriptionProvider,
-    showAudioDisclosure,
-  ] = useAppStore((state) => {
-    const prefs = getMyUserPreferences(state);
-    const transcriptionPrefs = getTranscriptionPrefs(state);
-    return [
-      prefs?.ignoreUpdateDialog ?? false,
-      prefs?.incognitoModeEnabled ?? false,
-      prefs?.incognitoModeIncludeInStats ?? false,
-      prefs?.preserveAudioOnFailure ?? true,
-      getEffectivePillVisibility(prefs?.dictationPillVisibility),
-      prefs?.pillResetMonitorStrategy ?? "current",
-      prefs?.realtimeOutputEnabled ?? false,
-      getEffectiveStylingMode(state),
-      true,
-      shouldEnableDictationLimit(transcriptionPrefs.mode),
-      getEffectiveDictationLimitMinutes(prefs),
-      state.local.disablePillRewards,
-      state.local.disableAutoStyleLoading ?? false,
-      prefs?.menuBarIconHidden ?? false,
-      getEffectiveHandsFreeDelayMs(prefs),
-      prefs?.autoLearnDictionaryEnabled ?? true,
-      prefs?.autoLearnFromEditsEnabled ?? false,
-      prefs?.elevenLabsKeytermsEnabled ?? false,
-      prefs?.spokenCommandsEnabled ?? true,
-      prefs?.reviewBeforeInsert ?? false,
-      prefs?.hallucinationFilterEnabled ?? true,
-      prefs?.inDictationStyleSwitchingEnabled ?? false,
-      transcriptionPrefs.mode === "api" ? transcriptionPrefs.provider : null,
-      disclosureIsVisible(getTranscriptionAudioDisclosure(state)),
-    ] as const;
-  });
-  const platform = getPlatform();
-  // Read the same snapshot as the rest of this file. `isMacOS`/`isWindows` test
-  // the raw platform name ("darwin", "win32") while `getPlatform` maps it to
-  // "macos"/"windows", so the pair never matched on either desktop platform and
-  // the correction-watch setting was hidden on both.
-  const supportsCorrectionWatch =
-    platform === "macos" || platform === "windows";
-  // Rendering, search and deep links consume the same availability snapshot.
-  const availability = useMemo<SettingAvailability>(
-    () => ({
-      dictation_limit_minutes: showDictationLimitSetting,
-      automatic_style_loading: stylingMode === "manual",
-      styling_mode: canChangeStylingMode,
-      include_incognito_in_stats: incognitoModeEnabled,
-      learn_from_corrections: supportsCorrectionWatch,
-      always_run_as_administrator: platform === "windows",
-      // Search and `?setting=` deep links read this snapshot, so a control the
-      // platform does not render has to read unavailable here too.
-      pill_placement: isPillPlacementAvailable(),
-      elevenlabs_keyterms: transcriptionProvider === "elevenlabs",
-      where_your_dictation_audio_goes: showAudioDisclosure,
-    }),
-    [
-      showDictationLimitSetting,
-      stylingMode,
-      canChangeStylingMode,
-      incognitoModeEnabled,
-      supportsCorrectionWatch,
-      platform,
-      transcriptionProvider,
-      showAudioDisclosure,
-    ],
-  );
-
-  // Deep links (`settings?section=<id>&setting=<id>`) from tips, error
-  // recovery, and update prompts. A setting link scrolls to the row and
-  // highlights it; a bare section link scrolls to the section.
-  useEffect(() => {
-    const setting = searchParams.get("setting");
-    if (
-      setting &&
-      availability[setting] !== false &&
-      SETTING_ENTRIES.some((entry) => entry.key === setting)
-    ) {
-      focusSetting(setting);
-      return;
-    }
-    const section = searchParams.get("section");
-    if (section) {
-      requestAnimationFrame(() => {
-        document
-          .getElementById(`section-${section}`)
-          ?.scrollIntoView({ behavior: "smooth", block: "start" });
-      });
-    }
-  }, [searchParams, focusSetting, availability]);
-
-  const results = searchSettings(query, {
-    availability,
-    messages: intl.messages,
-  });
-  const [confirmElevenLabsSurcharge, setConfirmElevenLabsSurcharge] =
-    useState(false);
-  const [dictationLimitInput, setDictationLimitInput] = useState(
-    String(dictationLimitMinutes),
-  );
-  const lastCommittedDictationLimitMinutesRef = useRef(dictationLimitMinutes);
-  const [handsFreeDelayInput, setHandsFreeDelayInput] = useState(
-    String(handsFreeDelayMs),
-  );
-  const lastCommittedHandsFreeDelayMsRef = useRef(handsFreeDelayMs);
-
-  useEffect(() => {
-    lastCommittedDictationLimitMinutesRef.current = dictationLimitMinutes;
-    setDictationLimitInput(String(dictationLimitMinutes));
-  }, [dictationLimitMinutes]);
-
-  useEffect(() => {
-    lastCommittedHandsFreeDelayMsRef.current = handsFreeDelayMs;
-    setHandsFreeDelayInput(String(handsFreeDelayMs));
-  }, [handsFreeDelayMs]);
-
-  const commitDictationLimitInput = () => {
-    if (!showDictationLimitSetting) {
-      return;
-    }
-
-    if (dictationLimitInput === "") {
-      setDictationLimitInput(String(dictationLimitMinutes));
-      return;
-    }
-
-    const parsed = Number(dictationLimitInput);
-    if (!Number.isFinite(parsed) || parsed < 0) {
-      setDictationLimitInput(String(dictationLimitMinutes));
-      return;
-    }
-
-    const normalized = normalizeDictationLimitMinutes(parsed);
-    setDictationLimitInput(String(normalized));
-    if (normalized === lastCommittedDictationLimitMinutesRef.current) {
-      return;
-    }
-
-    lastCommittedDictationLimitMinutesRef.current = normalized;
-    logOnRejection(
-      setDictationLimitMinutes(normalized),
-      "settings page: setDictationLimitMinutes",
-    );
-  };
-
-  const handleToggleShowUpdates = (event: ChangeEvent<HTMLInputElement>) => {
-    const showUpdates = event.target.checked;
-    logOnRejection(
-      setIgnoreUpdateDialog(!showUpdates),
-      "settings page: setIgnoreUpdateDialog",
-    );
-  };
-
-  const handleToggleIncognitoMode = (event: ChangeEvent<HTMLInputElement>) => {
-    const enabled = event.target.checked;
-    logOnRejection(
-      setIncognitoModeEnabled(enabled),
-      "settings page: setIncognitoModeEnabled",
-    );
-  };
-
-  const handleToggleIncognitoIncludeInStats = (
-    event: ChangeEvent<HTMLInputElement>,
-  ) => {
-    const enabled = event.target.checked;
-    logOnRejection(
-      setIncognitoModeIncludeInStats(enabled),
-      "settings page: setIncognitoModeIncludeInStats",
-    );
-  };
-
-  const handleTogglePreserveAudioOnFailure = (
-    event: ChangeEvent<HTMLInputElement>,
-  ) => {
-    logOnRejection(
-      setPreserveAudioOnFailure(event.target.checked),
-      "settings page: setPreserveAudioOnFailure",
-    );
-  };
-
-  const handleToggleElevenLabsKeyterms = (
-    event: ChangeEvent<HTMLInputElement>,
-  ) => {
-    // Turning this on adds a 20% ElevenLabs transcription surcharge, so the
-    // opt-in only persists after the user acknowledges the cost.
-    if (event.target.checked) {
-      setConfirmElevenLabsSurcharge(true);
-      return;
-    }
-    logOnRejection(
-      setElevenLabsKeytermsEnabled(false),
-      "settings page: setElevenLabsKeytermsEnabled",
-    );
-  };
-
-  const acknowledgeElevenLabsSurcharge = () => {
-    setConfirmElevenLabsSurcharge(false);
-    logOnRejection(
-      setElevenLabsKeytermsEnabled(true),
-      "settings page: setElevenLabsKeytermsEnabled",
-    );
-  };
-
-  const dismissElevenLabsSurcharge = () => {
-    setConfirmElevenLabsSurcharge(false);
-  };
-
-  const handleDictationPillVisibilityChange = (
-    event: SelectChangeEvent<DictationPillVisibility>,
-  ) => {
-    const visibility = event.target.value as DictationPillVisibility;
-    logOnRejection(
-      setDictationPillVisibility(visibility),
-      "settings page: setDictationPillVisibility",
-    );
-  };
-
-  const handlePillResetMonitorStrategyChange = (
-    strategy: PillResetMonitorStrategy,
-  ) => {
-    logOnRejection(
-      setPillResetMonitorStrategy(strategy),
-      "settings page: setPillResetMonitorStrategy",
-    );
-  };
-
-  const handleToggleRealtimeOutput = (event: ChangeEvent<HTMLInputElement>) => {
-    logOnRejection(
-      setRealtimeOutputEnabled(event.target.checked),
-      "settings page: setRealtimeOutputEnabled",
-    );
-  };
-
-  const handleToggleSpokenCommands = (event: ChangeEvent<HTMLInputElement>) => {
-    logOnRejection(
-      setSpokenCommandsEnabled(event.target.checked),
-      "settings page: setSpokenCommandsEnabled",
-    );
-  };
-
-  const handleToggleReviewBeforeInsert = (
-    event: ChangeEvent<HTMLInputElement>,
-  ) => {
-    logOnRejection(
-      setReviewBeforeInsert(event.target.checked),
-      "settings page: setReviewBeforeInsert",
-    );
-  };
-
-  const handleToggleHallucinationFilter = (
-    event: ChangeEvent<HTMLInputElement>,
-  ) => {
-    logOnRejection(
-      setHallucinationFilterEnabled(event.target.checked),
-      "settings page: setHallucinationFilterEnabled",
-    );
-  };
-
-  const handleToggleInDictationStyleSwitching = (
-    event: ChangeEvent<HTMLInputElement>,
-  ) => {
-    logOnRejection(
-      setInDictationStyleSwitchingEnabled(event.target.checked),
-      "settings page: setInDictationStyleSwitchingEnabled",
-    );
-  };
-
-  const handleToggleAutoLearnDictionary = (
-    event: ChangeEvent<HTMLInputElement>,
-  ) => {
-    logOnRejection(
-      setAutoLearnDictionaryEnabled(event.target.checked),
-      "settings page: setAutoLearnDictionaryEnabled",
-    );
-  };
-
-  const handleToggleAutoLearnFromEdits = (
-    event: ChangeEvent<HTMLInputElement>,
-  ) => {
-    logOnRejection(
-      setAutoLearnFromEditsEnabled(event.target.checked),
-      "settings page: setAutoLearnFromEditsEnabled",
-    );
-  };
-
-  const handleToggleDisablePillRewards = (
-    event: ChangeEvent<HTMLInputElement>,
-  ) => {
-    produceAppState((draft) => {
-      draft.local.disablePillRewards = !event.target.checked;
-    });
-  };
-
-  const handleToggleMenuBarIcon = (event: ChangeEvent<HTMLInputElement>) => {
-    logOnRejection(
-      setMenuBarIconHidden(!event.target.checked),
-      "settings page: setMenuBarIconHidden",
-    );
-  };
-
-  const handleToggleAutoStyleLoading = (
-    event: ChangeEvent<HTMLInputElement>,
-  ) => {
-    produceAppState((draft) => {
-      draft.local.disableAutoStyleLoading = !event.target.checked;
-    });
-  };
-
-  const commitHandsFreeDelayInput = () => {
-    if (handsFreeDelayInput === "") {
-      setHandsFreeDelayInput(String(handsFreeDelayMs));
-      return;
-    }
-
-    const parsed = Number(handsFreeDelayInput);
-    if (!Number.isFinite(parsed) || parsed < 0) {
-      setHandsFreeDelayInput(String(handsFreeDelayMs));
-      return;
-    }
-
-    const normalized = Math.min(
-      MAX_HANDS_FREE_DELAY_MS,
-      Math.max(0, Math.floor(parsed)),
-    );
-    setHandsFreeDelayInput(String(normalized));
-    if (normalized === lastCommittedHandsFreeDelayMsRef.current) {
-      return;
-    }
-
-    lastCommittedHandsFreeDelayMsRef.current = normalized;
-    logOnRejection(
-      setHandsFreeDelayMs(normalized),
-      "settings page: setHandsFreeDelayMs",
-    );
-  };
-
-  const handleHandsFreeDelayChange = (event: ChangeEvent<HTMLInputElement>) => {
-    setHandsFreeDelayInput(event.target.value);
-  };
-
-  const handleHandsFreeDelayBlur = () => {
-    commitHandsFreeDelayInput();
-  };
-
-  const handleDictationLimitChange = (event: ChangeEvent<HTMLInputElement>) => {
-    const value = event.target.value;
-    setDictationLimitInput(value);
-  };
-
-  const handleDictationLimitBlur = () => {
-    commitDictationLimitInput();
-  };
-
-  const handleStylingModeChange = (event: SelectChangeEvent<string>) => {
-    const value = event.target.value;
-    logOnRejection(
-      setStylingMode(value === "" ? null : (value as StylingMode)),
-      "settings page: setStylingMode",
-    );
-  };
-
-  // Intentionally available on every platform: multi-device pairing talks to
-  // LAN peers over the same IPC path on macOS, Windows, and Linux, so unlike
-  // the admin/correction helpers there is no OS-specific capability gate.
-  const openMultiDeviceDialog = () => {
-    produceAppState((draft) => {
-      draft.settings.multiDeviceDialogOpen = true;
-    });
-  };
-
-  const general = (
-    <Section title={<FormattedMessage defaultMessage="General" />}>
-      <SettingAnchor settingKey="start_on_system_startup" highlight={highlight}>
-        <ListTile
-          title={<FormattedMessage defaultMessage="Start on system startup" />}
-          leading={<RocketLaunchOutlined />}
-          disableRipple
-          trailing={
-            <Switch
-              edge="end"
-              checked={autoLaunchEnabled}
-              disabled={autoLaunchLoading}
-              onChange={handleToggleAutoLaunch}
-            />
-          }
-        />
-      </SettingAnchor>
-      <SettingAnchor settingKey="microphone" highlight={highlight}>
-        <ListTile
-          title={<FormattedMessage defaultMessage="Microphone" />}
-          leading={<MicOutlined />}
-          onClick={openMicrophoneDialog}
-        />
-      </SettingAnchor>
-      <SettingAnchor settingKey="audio" highlight={highlight}>
-        <ListTile
-          title={<FormattedMessage defaultMessage="Audio" />}
-          leading={<VolumeUpOutlined />}
-          onClick={openAudioDialog}
-        />
-      </SettingAnchor>
-      <SettingAnchor settingKey="diagnostics" highlight={highlight}>
-        <ListTile
-          title={<FormattedMessage defaultMessage="Diagnostics" />}
-          leading={<TroubleshootOutlined />}
-          onClick={openDiagnosticsDialog}
-        />
-      </SettingAnchor>
-    </Section>
-  );
-
-  const dictationLanguageComp = (
-    <>
-      {hasAdditionalLanguages ? (
-        <ListTile
-          title={<FormattedMessage defaultMessage="Dictation language" />}
-          leading={<LanguageOutlined />}
-          onClick={openDictationLanguageDialog}
-          trailing={
-            <Button
-              variant="outlined"
-              size="small"
-              endIcon={<Edit sx={{ fontSize: 16 }} />}
-              onClick={openDictationLanguageDialog}
-              sx={{ textTransform: "none", py: 0.5, px: 1.5, fontWeight: 400 }}
-            >
-              <FormattedMessage defaultMessage="Multiple languages" />
-            </Button>
-          }
-        />
-      ) : (
-        <ListTile
-          title={<FormattedMessage defaultMessage="Dictation language" />}
-          leading={<LanguageOutlined />}
-          disableRipple
-          trailing={
-            <Box
-              onClick={(event) => event.stopPropagation()}
-              sx={{
-                minWidth: 200,
-                display: "flex",
-                alignItems: "center",
-                gap: 1,
-              }}
-            >
-              {dictationLanguageWarning && (
-                <Tooltip
-                  title={
-                    <Box>
-                      {dictationLanguageWarning}{" "}
-                      <Link
-                        component="button"
-                        color="inherit"
-                        sx={{ verticalAlign: "baseline" }}
-                        onClick={openPostProcessingDialog}
-                      >
-                        <FormattedMessage defaultMessage="Fix issue" />
-                      </Link>
-                    </Box>
-                  }
-                  slotProps={{
-                    popper: {
-                      modifiers: [
-                        { name: "offset", options: { offset: [0, -8] } },
-                      ],
-                    },
-                  }}
-                >
-                  <WarningAmberOutlined color="warning" fontSize="small" />
-                </Tooltip>
-              )}
-              <Tooltip
-                title={
-                  <FormattedMessage defaultMessage="Set up multiple languages with different hotkeys" />
-                }
-              >
-                <IconButton size="small" onClick={openDictationLanguageDialog}>
-                  <MoreVertOutlined fontSize="small" />
-                </IconButton>
-              </Tooltip>
-              <Select
-                value={dictationLanguage}
-                onChange={handleDictationLanguageChange}
-                size="small"
-                variant="outlined"
-                fullWidth
-                inputProps={{ "aria-label": "Dictation language" }}
-                MenuProps={{
-                  slotProps: {
-                    paper: {
-                      style: {
-                        maxHeight: 300,
-                      },
-                    },
-                  },
-                }}
-              >
-                {DICTATION_LANGUAGE_OPTIONS.map(([value, label]) => (
-                  <MenuItem key={value} value={value}>
-                    {label}
-                  </MenuItem>
-                ))}
-              </Select>
-            </Box>
-          }
-        />
-      )}
-    </>
-  );
-
-  const dictation = (
-    <Section title={<FormattedMessage defaultMessage="Dictation" />}>
-      <SettingAnchor settingKey="dictation_language" highlight={highlight}>
-        {dictationLanguageComp}
-      </SettingAnchor>
-      <SettingAnchor settingKey="text_insertion_options" highlight={highlight}>
-        <ListTile
-          title={<FormattedMessage defaultMessage="Text insertion options" />}
-          leading={<AppsOutlined />}
-          onClick={openAppKeybindingsDialog}
-        />
-      </SettingAnchor>
-      {availability.dictation_limit_minutes && (
-        <SettingAnchor
-          settingKey="dictation_limit_minutes"
-          highlight={highlight}
-        >
-          <SettingSection
-            title={
-              <FormattedMessage defaultMessage="Dictation limit (minutes)" />
-            }
-            description={
-              <FormattedMessage defaultMessage="Set the maximum dictation length in minutes. Enter 0 for no limit." />
-            }
-            action={
-              <TextField
-                size="small"
-                type="number"
-                value={dictationLimitInput}
-                onChange={handleDictationLimitChange}
-                onBlur={handleDictationLimitBlur}
-                sx={{ width: 104 }}
-                slotProps={{
-                  htmlInput: {
-                    min: 0,
-                    max: MAX_DICTATION_LIMIT_MINUTES,
-                    step: 1,
-                    inputMode: "numeric",
-                  },
-                }}
-              />
-            }
-          />
-        </SettingAnchor>
-      )}
-      <SettingAnchor
-        settingKey="hands_free_output_delay_ms"
-        highlight={highlight}
-      >
-        <SettingSection
-          title={
-            <FormattedMessage defaultMessage="Hands-free output delay (ms)" />
-          }
-          description={
-            <FormattedMessage defaultMessage="Wait this many milliseconds before inserting the dictated text when you stop recording. Enter 0 to disable." />
-          }
-          action={
-            <TextField
-              size="small"
-              type="number"
-              value={handsFreeDelayInput}
-              onChange={handleHandsFreeDelayChange}
-              onBlur={handleHandsFreeDelayBlur}
-              sx={{ width: 104 }}
-              slotProps={{
-                htmlInput: {
-                  min: 0,
-                  max: MAX_HANDS_FREE_DELAY_MS,
-                  step: 50,
-                  inputMode: "numeric",
-                },
-              }}
-            />
-          }
-        />
-      </SettingAnchor>
-      <SettingAnchor settingKey="spoken_commands" highlight={highlight}>
-        <SettingSection
-          title={<FormattedMessage defaultMessage="Spoken commands" />}
-          description={
-            <FormattedMessage defaultMessage='Turn phrases like "new line", "comma", and "scratch that" into formatting, even in Verbatim. Requires an English dictation language; Auto does not apply these commands.' />
-          }
-          action={
-            <Switch
-              edge="end"
-              checked={spokenCommandsEnabled}
-              onChange={handleToggleSpokenCommands}
-            />
-          }
-        />
-      </SettingAnchor>
-      <SettingAnchor settingKey="real_time_output" highlight={highlight}>
-        <SettingSection
-          title={<FormattedMessage defaultMessage="Real-time output" />}
-          description={
-            <FormattedMessage defaultMessage="Stream dictation text as you speak instead of pasting all at once when you stop. Only applies to Verbatim mode with supported providers." />
-          }
-          action={
-            <Switch
-              edge="end"
-              checked={realtimeOutputEnabled}
-              onChange={handleToggleRealtimeOutput}
-            />
-          }
-        />
-      </SettingAnchor>
-      <SettingAnchor settingKey="review_before_insert" highlight={highlight}>
-        <SettingSection
-          title={<FormattedMessage defaultMessage="Review before insert" />}
-          description={
-            <FormattedMessage defaultMessage="Open an editable composer so you can review or change dictated text before it is inserted. Review pauses streaming, so turning this on turns Real-time output off." />
-          }
-          action={
-            <Switch
-              edge="end"
-              checked={reviewBeforeInsert}
-              onChange={handleToggleReviewBeforeInsert}
-            />
-          }
-        />
-      </SettingAnchor>
-      <SettingAnchor
-        settingKey="silence_hallucination_filter"
-        highlight={highlight}
-      >
-        <SettingSection
-          title={
-            <FormattedMessage defaultMessage="Silence hallucination filter" />
-          }
-          description={
-            <FormattedMessage defaultMessage="Discard common fabricated phrases produced when the microphone hears silence or noise." />
-          }
-          action={
-            <Switch
-              edge="end"
-              checked={hallucinationFilterEnabled}
-              onChange={handleToggleHallucinationFilter}
-            />
-          }
-        />
-      </SettingAnchor>
-      <SettingAnchor
-        settingKey="switch_style_while_dictating"
-        highlight={highlight}
-      >
-        <SettingSection
-          title={
-            <FormattedMessage defaultMessage="Switch style while dictating" />
-          }
-          description={
-            <FormattedMessage defaultMessage="Hold the dictate activation key and press Left or Right Arrow to cycle active styles." />
-          }
-          action={
-            <Switch
-              edge="end"
-              checked={inDictationStyleSwitchingEnabled}
-              onChange={handleToggleInDictationStyleSwitching}
-            />
-          }
-        />
-      </SettingAnchor>
-    </Section>
-  );
-
-  const processing = (
-    <Section
-      title={<FormattedMessage defaultMessage="AI and processing" />}
-      description={
-        <FormattedMessage defaultMessage="How mausVoice should manage your transcriptions." />
-      }
-    >
-      <TipCard id="generative-provider" />
-      <SettingAnchor settingKey="deepgram_api_key" highlight={highlight}>
-        <ListTile
-          title={<FormattedMessage defaultMessage="Deepgram API key" />}
-          subtitle={
-            <FormattedMessage defaultMessage="Used for fast streaming transcription." />
-          }
-          leading={<KeyOutlined />}
-          onClick={openDeepgramDialog}
-          trailing={
-            <Chip
-              size="small"
-              color={personalDeepgramApiKey ? "success" : "default"}
-              label={
-                personalDeepgramApiKey ? (
-                  <FormattedMessage defaultMessage="Configured" />
-                ) : (
-                  <FormattedMessage defaultMessage="Not configured" />
-                )
-              }
-            />
-          }
-        />
-      </SettingAnchor>
-      <SettingAnchor settingKey="groq_api_key" highlight={highlight}>
-        <ListTile
-          title={<FormattedMessage defaultMessage="Groq API key" />}
-          subtitle={
-            <FormattedMessage defaultMessage="Used for AI post processing." />
-          }
-          leading={<KeyOutlined />}
-          onClick={openGroqDialog}
-          trailing={
-            <Chip
-              size="small"
-              color={personalGroqApiKey ? "success" : "default"}
-              label={
-                personalGroqApiKey ? (
-                  <FormattedMessage defaultMessage="Configured" />
-                ) : (
-                  <FormattedMessage defaultMessage="Not configured" />
-                )
-              }
-            />
-          }
-        />
-      </SettingAnchor>
-      <SettingAnchor settingKey="ai_transcription" highlight={highlight}>
-        <ListTile
-          title={<FormattedMessage defaultMessage="AI transcription" />}
-          leading={<GraphicEqOutlined />}
-          onClick={openTranscriptionDialog}
-        />
-      </SettingAnchor>
-      <SettingAnchor settingKey="ai_post_processing" highlight={highlight}>
-        <ListTile
-          title={<FormattedMessage defaultMessage="AI post processing" />}
-          leading={<AutoFixHighOutlined />}
-          onClick={openPostProcessingDialog}
-        />
-      </SettingAnchor>
-      <SettingAnchor settingKey="assistant_mode" highlight={highlight}>
-        <ListTile
-          title={
-            <Stack
-              direction="row"
-              sx={{
-                alignItems: "center",
-              }}
-            >
-              <FormattedMessage defaultMessage="Assistant mode" />
-              <Chip label="Beta" size="small" color="primary" sx={{ ml: 1 }} />
-            </Stack>
-          }
-          leading={<AutoAwesomeOutlined />}
-          onClick={openAgentModeDialog}
-        />
-      </SettingAnchor>
-      {availability.automatic_style_loading && (
-        <SettingAnchor
-          settingKey="automatic_style_loading"
-          highlight={highlight}
-        >
-          <SettingSection
-            title={
-              <FormattedMessage defaultMessage="Automatic style loading" />
-            }
-            description={
-              <FormattedMessage defaultMessage="Automatically load the manual style configured for the current app when starting dictation." />
-            }
-            action={
-              <Switch
-                edge="end"
-                checked={!disableAutoStyleLoading}
-                onChange={handleToggleAutoStyleLoading}
-              />
-            }
-          />
-        </SettingAnchor>
-      )}
-      {availability.styling_mode && (
-        <SettingAnchor settingKey="styling_mode" highlight={highlight}>
-          <SettingSection
-            title={<FormattedMessage defaultMessage="Styling mode" />}
-            description={
-              <FormattedMessage defaultMessage="Choose how to switch between writing styles." />
-            }
-            action={
-              <Select<string>
-                size="small"
-                value={stylingMode}
-                onChange={handleStylingModeChange}
-                sx={{ minWidth: 152 }}
-              >
-                <MenuItem value="app">
-                  {intl.formatMessage({ defaultMessage: "Based on app" })}
-                </MenuItem>
-                <MenuItem value="manual">
-                  {intl.formatMessage({ defaultMessage: "Manual" })}
-                </MenuItem>
-              </Select>
-            }
-          />
-        </SettingAnchor>
-      )}
-    </Section>
-  );
-
-  const pillAppearance = (
-    <Section title={<FormattedMessage defaultMessage="Pill and appearance" />}>
-      <SettingAnchor settingKey="show_menu_bar_icon" highlight={highlight}>
-        <SettingSection
-          title={<FormattedMessage defaultMessage="Show menu bar icon" />}
-          description={
-            <FormattedMessage defaultMessage="Show the mausVoice icon in the menu bar." />
-          }
-          action={
-            <Switch
-              edge="end"
-              checked={!menuBarIconHidden}
-              onChange={handleToggleMenuBarIcon}
-            />
-          }
-        />
-      </SettingAnchor>
-      <SettingAnchor
-        settingKey="dictation_pill_visibility"
-        highlight={highlight}
-      >
-        <SettingSection
-          title={
-            <FormattedMessage defaultMessage="Dictation pill visibility" />
-          }
-          description={
-            <FormattedMessage defaultMessage="Control when the dictation pill is shown on screen." />
-          }
-          action={
-            <Select<DictationPillVisibility>
-              size="small"
-              value={dictationPillVisibility}
-              onChange={handleDictationPillVisibilityChange}
-              sx={{ minWidth: 152 }}
-            >
-              <MenuItem value="persistent">
-                {intl.formatMessage({ defaultMessage: "Persistent" })}
-              </MenuItem>
-              <MenuItem value="while_active">
-                {intl.formatMessage({ defaultMessage: "While active" })}
-              </MenuItem>
-              <MenuItem value="hidden">
-                {intl.formatMessage({ defaultMessage: "Hidden" })}
-              </MenuItem>
-            </Select>
-          }
-        />
-      </SettingAnchor>
-      <SettingAnchor settingKey="pill_placement" highlight={highlight}>
-        <PillPlacementSetting />
-      </SettingAnchor>
-      <SettingAnchor settingKey="reset_pill_position" highlight={highlight}>
-        <SettingSection
-          title={<FormattedMessage defaultMessage="Reset pill position" />}
-          description={
-            <FormattedMessage defaultMessage="Choose which monitor the pill returns to when you reset its position: the monitor the pill is on, or the monitor your mouse is on." />
-          }
-          action={
-            <SegmentedControl<PillResetMonitorStrategy>
-              value={pillResetMonitorStrategy}
-              onChange={handlePillResetMonitorStrategyChange}
-              options={[
-                {
-                  value: "current",
-                  label: intl.formatMessage({
-                    defaultMessage: "Current monitor",
-                  }),
-                },
-                {
-                  value: "cursor",
-                  label: intl.formatMessage({
-                    defaultMessage: "Cursor monitor",
-                  }),
-                },
-              ]}
-              ariaLabel={intl.formatMessage({
-                defaultMessage: "Reset pill position monitor",
-              })}
-            />
-          }
-        />
-      </SettingAnchor>
-      <SettingAnchor settingKey="streak_celebrations" highlight={highlight}>
-        <SettingSection
-          title={<FormattedMessage defaultMessage="Streak celebrations" />}
-          description={
-            <FormattedMessage defaultMessage="Show flame and firework animations on the dictation pill for streak milestones." />
-          }
-          action={
-            <Switch
-              edge="end"
-              checked={!disablePillRewards}
-              onChange={handleToggleDisablePillRewards}
-            />
-          }
-        />
-      </SettingAnchor>
-    </Section>
-  );
-
-  const shortcuts = (
-    <Section title={<FormattedMessage defaultMessage="Shortcuts" />}>
-      <SettingAnchor settingKey="hotkey_shortcuts" highlight={highlight}>
-        <ListTile
-          title={<FormattedMessage defaultMessage="Hotkey shortcuts" />}
-          leading={<KeyboardAltOutlined />}
-          onClick={openShortcutsDialog}
-        />
-      </SettingAnchor>
-      <SettingAnchor settingKey="style_hotkeys" highlight={highlight}>
-        <ListTile
-          title={<FormattedMessage defaultMessage="Style hotkeys" />}
-          leading={<KeyOutlined />}
-          onClick={openStyleHotkeysDialog}
-        />
-      </SettingAnchor>
-    </Section>
-  );
-
-  const privacyData = (
+    autoLearnFromEditsEnabled,
+  } = values;
+  const {
+    handleToggleIncognitoMode,
+    handleToggleIncognitoIncludeInStats,
+    handleTogglePreserveAudioOnFailure,
+    handleToggleAutoLearnDictionary,
+    handleToggleElevenLabsKeyterms,
+    handleToggleAutoLearnFromEdits,
+    openMultiDeviceDialog,
+    openClearLocalDataDialog,
+  } = actions;
+  return (
     <Section title={<FormattedMessage defaultMessage="Privacy and data" />}>
       {showAudioDisclosure && (
         <SettingAnchor
@@ -1621,6 +530,945 @@ export default function SettingsPage() {
       </Section>
     </Section>
   );
+};
+
+const useElevenLabsSurcharge = () => {
+  const [confirmElevenLabsSurcharge, setConfirmElevenLabsSurcharge] =
+    useState(false);
+  const handleToggleElevenLabsKeyterms = (
+    event: ChangeEvent<HTMLInputElement>,
+  ) => {
+    // Turning this on adds a 20% ElevenLabs transcription surcharge, so the
+    // opt-in only persists after the user acknowledges the cost.
+    if (event.target.checked) {
+      setConfirmElevenLabsSurcharge(true);
+      return;
+    }
+    logOnRejection(
+      setElevenLabsKeytermsEnabled(false),
+      "settings page: setElevenLabsKeytermsEnabled",
+    );
+  };
+
+  const acknowledgeElevenLabsSurcharge = () => {
+    setConfirmElevenLabsSurcharge(false);
+    logOnRejection(
+      setElevenLabsKeytermsEnabled(true),
+      "settings page: setElevenLabsKeytermsEnabled",
+    );
+  };
+
+  const dismissElevenLabsSurcharge = () => {
+    setConfirmElevenLabsSurcharge(false);
+  };
+
+  return {
+    confirmElevenLabsSurcharge,
+    handleToggleElevenLabsKeyterms,
+    acknowledgeElevenLabsSurcharge,
+    dismissElevenLabsSurcharge,
+  };
+};
+
+const StyleLoadingSettings = ({
+  highlight,
+  availability,
+  disableAutoStyleLoading,
+  stylingMode,
+  onToggleAutoStyleLoading,
+  onStylingModeChange,
+}: {
+  highlight: string | null;
+  availability: SettingAvailability;
+  disableAutoStyleLoading: boolean;
+  stylingMode: StylingMode;
+  onToggleAutoStyleLoading: (event: ChangeEvent<HTMLInputElement>) => void;
+  onStylingModeChange: (event: SelectChangeEvent<string>) => void;
+}) => {
+  const intl = useIntl();
+  return (
+    <>
+      {availability.automatic_style_loading && (
+        <SettingAnchor
+          settingKey="automatic_style_loading"
+          highlight={highlight}
+        >
+          <SettingSection
+            title={
+              <FormattedMessage defaultMessage="Automatic style loading" />
+            }
+            description={
+              <FormattedMessage defaultMessage="Automatically load the manual style configured for the current app when starting dictation." />
+            }
+            action={
+              <Switch
+                edge="end"
+                checked={!disableAutoStyleLoading}
+                onChange={onToggleAutoStyleLoading}
+              />
+            }
+          />
+        </SettingAnchor>
+      )}
+      {availability.styling_mode && (
+        <SettingAnchor settingKey="styling_mode" highlight={highlight}>
+          <SettingSection
+            title={<FormattedMessage defaultMessage="Styling mode" />}
+            description={
+              <FormattedMessage defaultMessage="Choose how to switch between writing styles." />
+            }
+            action={
+              <Select<string>
+                size="small"
+                value={stylingMode}
+                onChange={onStylingModeChange}
+                sx={{ minWidth: 152 }}
+              >
+                <MenuItem value="app">
+                  {intl.formatMessage({ defaultMessage: "Based on app" })}
+                </MenuItem>
+                <MenuItem value="manual">
+                  {intl.formatMessage({ defaultMessage: "Manual" })}
+                </MenuItem>
+              </Select>
+            }
+          />
+        </SettingAnchor>
+      )}
+    </>
+  );
+};
+
+/** Keeps each provider's key inventory and editor under the same owner. */
+const usePersonalProviderKeys = () => {
+  const groqKeyDialog = usePersonalApiKeyDialog(savePersonalGroqApiKey, "Groq");
+  const deepgramKeyDialog = usePersonalApiKeyDialog(
+    savePersonalDeepgramApiKey,
+    "Deepgram",
+  );
+
+  const personalGroqApiKey = useAppStore((state) =>
+    state.settings.apiKeys.find(
+      (apiKey) =>
+        apiKey.id === PERSONAL_GROQ_API_KEY_ID ||
+        (apiKey.provider === "groq" &&
+          apiKey.name.trim() === PERSONAL_GROQ_API_KEY_NAME),
+    ),
+  );
+  const personalDeepgramApiKey = useAppStore((state) =>
+    state.settings.apiKeys.find(
+      (apiKey) =>
+        apiKey.id === PERSONAL_DEEPGRAM_API_KEY_ID ||
+        (apiKey.provider === "deepgram" &&
+          apiKey.name.trim() === PERSONAL_DEEPGRAM_API_KEY_NAME),
+    ),
+  );
+  return {
+    groqKeyDialog,
+    deepgramKeyDialog,
+    personalGroqApiKey,
+    personalDeepgramApiKey,
+  };
+};
+
+/** Draft and commit timing settings together while keeping their values independent. */
+const useDictationTimingSettings = (
+  dictationLimitMinutes: number,
+  showDictationLimitSetting: boolean,
+  handsFreeDelayMs: number,
+) => {
+  const dictationLimit = useNumericSettingInput({
+    value: dictationLimitMinutes,
+    enabled: showDictationLimitSetting,
+    normalize: normalizeDictationLimitMinutes,
+    save: setDictationLimitMinutes,
+    context: "settings page: setDictationLimitMinutes",
+  });
+  const handsFreeDelay = useNumericSettingInput({
+    value: handsFreeDelayMs,
+    normalize: normalizeHandsFreeDelayMs,
+    save: setHandsFreeDelayMs,
+    context: "settings page: setHandsFreeDelayMs",
+  });
+
+  return { dictationLimit, handsFreeDelay };
+};
+
+export default function SettingsPage() {
+  const [searchParams] = useSearchParams();
+  const {
+    query,
+    setQuery,
+    highlight,
+    focusSetting,
+    activeSection,
+    jumpToSection,
+  } = useSettingsNavigation();
+
+  const {
+    setupConfirmOpen,
+    setSetupConfirmOpen,
+    setupRunning,
+    runNativeSetup,
+    alwaysRequestAdminOnStartup,
+  } = useNativeInputSetup();
+  const {
+    groqKeyDialog,
+    deepgramKeyDialog,
+    personalGroqApiKey,
+    personalDeepgramApiKey,
+  } = usePersonalProviderKeys();
+  const [autoLaunchEnabled, autoLaunchStatus] = useAppStore((state) => [
+    state.settings.autoLaunchEnabled,
+    state.settings.autoLaunchStatus,
+  ]);
+  const autoLaunchLoading = autoLaunchStatus === "loading";
+  const intl = useIntl();
+
+  const openTranscriptionDialog = () => {
+    produceAppState((draft) => {
+      draft.settings.aiTranscriptionDialogOpen = true;
+    });
+  };
+
+  const openPostProcessingDialog = () => {
+    produceAppState((draft) => {
+      draft.settings.aiPostProcessingDialogOpen = true;
+    });
+  };
+
+  const openAppKeybindingsDialog = () => {
+    produceAppState((draft) => {
+      draft.settings.appKeybindingsDialogOpen = true;
+    });
+  };
+
+  const openAgentModeDialog = () => {
+    produceAppState((draft) => {
+      draft.settings.agentModeDialogOpen = true;
+    });
+  };
+
+  const openMicrophoneDialog = () => {
+    produceAppState((draft) => {
+      draft.settings.microphoneDialogOpen = true;
+    });
+  };
+
+  const openAudioDialog = () => {
+    produceAppState((draft) => {
+      draft.settings.audioDialogOpen = true;
+    });
+  };
+
+  const openDiagnosticsDialog = () => {
+    produceAppState((draft) => {
+      draft.settings.diagnosticsDialogOpen = true;
+    });
+  };
+
+  const openShortcutsDialog = () => {
+    produceAppState((draft) => {
+      draft.settings.shortcutsDialogOpen = true;
+    });
+  };
+
+  const openStyleHotkeysDialog = () => {
+    produceAppState((draft) => {
+      draft.settings.styleHotkeysDialogOpen = true;
+    });
+  };
+
+  const openClearLocalDataDialog = () => {
+    produceAppState((draft) => {
+      draft.settings.clearLocalDataDialogOpen = true;
+    });
+  };
+
+  const handleToggleAutoLaunch = (event: ChangeEvent<HTMLInputElement>) => {
+    const enabled = event.target.checked;
+    void setAutoLaunchEnabled(enabled);
+  };
+
+  const [
+    ignoreUpdateDialog,
+    incognitoModeEnabled,
+    incognitoIncludeInStats,
+    preserveAudioOnFailure,
+    dictationPillVisibility,
+    pillResetMonitorStrategy,
+    realtimeOutputEnabled,
+    stylingMode,
+    canChangeStylingMode,
+    showDictationLimitSetting,
+    dictationLimitMinutes,
+    disablePillRewards,
+    disableAutoStyleLoading,
+    menuBarIconHidden,
+    handsFreeDelayMs,
+    autoLearnDictionaryEnabled,
+    autoLearnFromEditsEnabled,
+    elevenLabsKeytermsEnabled,
+    spokenCommandsEnabled,
+    reviewBeforeInsert,
+    hallucinationFilterEnabled,
+    inDictationStyleSwitchingEnabled,
+    transcriptionProvider,
+    showAudioDisclosure,
+  ] = useAppStore(selectSettingsPageSnapshot);
+  const platform = getPlatform();
+  // Read the same snapshot as the rest of this file. `isMacOS`/`isWindows` test
+  // the raw platform name ("darwin", "win32") while `getPlatform` maps it to
+  // "macos"/"windows", so the pair never matched on either desktop platform and
+  // the correction-watch setting was hidden on both.
+  const supportsCorrectionWatch =
+    platform === "macos" || platform === "windows";
+  // Rendering, search and deep links consume the same availability snapshot.
+  const availability = useMemo<SettingAvailability>(
+    () => ({
+      dictation_limit_minutes: showDictationLimitSetting,
+      automatic_style_loading: stylingMode === "manual",
+      styling_mode: canChangeStylingMode,
+      include_incognito_in_stats: incognitoModeEnabled,
+      learn_from_corrections: supportsCorrectionWatch,
+      always_run_as_administrator: platform === "windows",
+      // Search and `?setting=` deep links read this snapshot, so a control the
+      // platform does not render has to read unavailable here too.
+      pill_placement: isPillPlacementAvailable(),
+      elevenlabs_keyterms: transcriptionProvider === "elevenlabs",
+      where_your_dictation_audio_goes: showAudioDisclosure,
+    }),
+    [
+      showDictationLimitSetting,
+      stylingMode,
+      canChangeStylingMode,
+      incognitoModeEnabled,
+      supportsCorrectionWatch,
+      platform,
+      transcriptionProvider,
+      showAudioDisclosure,
+    ],
+  );
+
+  // Deep links (`settings?section=<id>&setting=<id>`) from tips, error
+  // recovery, and update prompts. A setting link scrolls to the row and
+  // highlights it; a bare section link scrolls to the section.
+  useEffect(() => {
+    const setting = searchParams.get("setting");
+    if (
+      setting &&
+      availability[setting] !== false &&
+      SETTING_ENTRIES.some((entry) => entry.key === setting)
+    ) {
+      focusSetting(setting);
+      return;
+    }
+    const section = searchParams.get("section");
+    if (section) {
+      requestAnimationFrame(() => {
+        document
+          .getElementById(`section-${section}`)
+          ?.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    }
+  }, [searchParams, focusSetting, availability]);
+
+  const results = searchSettings(query, {
+    availability,
+    messages: intl.messages,
+  });
+  const {
+    confirmElevenLabsSurcharge,
+    handleToggleElevenLabsKeyterms,
+    acknowledgeElevenLabsSurcharge,
+    dismissElevenLabsSurcharge,
+  } = useElevenLabsSurcharge();
+  const { dictationLimit, handsFreeDelay } = useDictationTimingSettings(
+    dictationLimitMinutes,
+    showDictationLimitSetting,
+    handsFreeDelayMs,
+  );
+
+  const handleToggleShowUpdates = (event: ChangeEvent<HTMLInputElement>) => {
+    const showUpdates = event.target.checked;
+    logOnRejection(
+      setIgnoreUpdateDialog(!showUpdates),
+      "settings page: setIgnoreUpdateDialog",
+    );
+  };
+
+  const handleToggleIncognitoMode = (event: ChangeEvent<HTMLInputElement>) => {
+    const enabled = event.target.checked;
+    logOnRejection(
+      setIncognitoModeEnabled(enabled),
+      "settings page: setIncognitoModeEnabled",
+    );
+  };
+
+  const handleToggleIncognitoIncludeInStats = (
+    event: ChangeEvent<HTMLInputElement>,
+  ) => {
+    const enabled = event.target.checked;
+    logOnRejection(
+      setIncognitoModeIncludeInStats(enabled),
+      "settings page: setIncognitoModeIncludeInStats",
+    );
+  };
+
+  const handleTogglePreserveAudioOnFailure = (
+    event: ChangeEvent<HTMLInputElement>,
+  ) => {
+    logOnRejection(
+      setPreserveAudioOnFailure(event.target.checked),
+      "settings page: setPreserveAudioOnFailure",
+    );
+  };
+
+  const handleDictationPillVisibilityChange = (
+    event: SelectChangeEvent<DictationPillVisibility>,
+  ) => {
+    const visibility = event.target.value as DictationPillVisibility;
+    logOnRejection(
+      setDictationPillVisibility(visibility),
+      "settings page: setDictationPillVisibility",
+    );
+  };
+
+  const handlePillResetMonitorStrategyChange = (
+    strategy: PillResetMonitorStrategy,
+  ) => {
+    logOnRejection(
+      setPillResetMonitorStrategy(strategy),
+      "settings page: setPillResetMonitorStrategy",
+    );
+  };
+
+  const handleToggleRealtimeOutput = (event: ChangeEvent<HTMLInputElement>) => {
+    logOnRejection(
+      setRealtimeOutputEnabled(event.target.checked),
+      "settings page: setRealtimeOutputEnabled",
+    );
+  };
+
+  const handleToggleSpokenCommands = (event: ChangeEvent<HTMLInputElement>) => {
+    logOnRejection(
+      setSpokenCommandsEnabled(event.target.checked),
+      "settings page: setSpokenCommandsEnabled",
+    );
+  };
+
+  const handleToggleReviewBeforeInsert = (
+    event: ChangeEvent<HTMLInputElement>,
+  ) => {
+    logOnRejection(
+      setReviewBeforeInsert(event.target.checked),
+      "settings page: setReviewBeforeInsert",
+    );
+  };
+
+  const handleToggleHallucinationFilter = (
+    event: ChangeEvent<HTMLInputElement>,
+  ) => {
+    logOnRejection(
+      setHallucinationFilterEnabled(event.target.checked),
+      "settings page: setHallucinationFilterEnabled",
+    );
+  };
+
+  const handleToggleInDictationStyleSwitching = (
+    event: ChangeEvent<HTMLInputElement>,
+  ) => {
+    logOnRejection(
+      setInDictationStyleSwitchingEnabled(event.target.checked),
+      "settings page: setInDictationStyleSwitchingEnabled",
+    );
+  };
+
+  const handleToggleAutoLearnDictionary = (
+    event: ChangeEvent<HTMLInputElement>,
+  ) => {
+    logOnRejection(
+      setAutoLearnDictionaryEnabled(event.target.checked),
+      "settings page: setAutoLearnDictionaryEnabled",
+    );
+  };
+
+  const handleToggleAutoLearnFromEdits = (
+    event: ChangeEvent<HTMLInputElement>,
+  ) => {
+    logOnRejection(
+      setAutoLearnFromEditsEnabled(event.target.checked),
+      "settings page: setAutoLearnFromEditsEnabled",
+    );
+  };
+
+  const handleToggleDisablePillRewards = (
+    event: ChangeEvent<HTMLInputElement>,
+  ) => {
+    produceAppState((draft) => {
+      draft.local.disablePillRewards = !event.target.checked;
+    });
+  };
+
+  const handleToggleMenuBarIcon = (event: ChangeEvent<HTMLInputElement>) => {
+    logOnRejection(
+      setMenuBarIconHidden(!event.target.checked),
+      "settings page: setMenuBarIconHidden",
+    );
+  };
+
+  const handleToggleAutoStyleLoading = (
+    event: ChangeEvent<HTMLInputElement>,
+  ) => {
+    produceAppState((draft) => {
+      draft.local.disableAutoStyleLoading = !event.target.checked;
+    });
+  };
+
+  const handleStylingModeChange = (event: SelectChangeEvent<string>) => {
+    const value = event.target.value;
+    logOnRejection(
+      setStylingMode(value === "" ? null : (value as StylingMode)),
+      "settings page: setStylingMode",
+    );
+  };
+
+  // Intentionally available on every platform: multi-device pairing talks to
+  // LAN peers over the same IPC path on macOS, Windows, and Linux, so unlike
+  // the admin/correction helpers there is no OS-specific capability gate.
+  const openMultiDeviceDialog = () => {
+    produceAppState((draft) => {
+      draft.settings.multiDeviceDialogOpen = true;
+    });
+  };
+
+  const general = (
+    <Section title={<FormattedMessage defaultMessage="General" />}>
+      <SettingAnchor settingKey="start_on_system_startup" highlight={highlight}>
+        <ListTile
+          title={<FormattedMessage defaultMessage="Start on system startup" />}
+          leading={<RocketLaunchOutlined />}
+          disableRipple
+          trailing={
+            <Switch
+              edge="end"
+              checked={autoLaunchEnabled}
+              disabled={autoLaunchLoading}
+              onChange={handleToggleAutoLaunch}
+            />
+          }
+        />
+      </SettingAnchor>
+      <SettingAnchor settingKey="microphone" highlight={highlight}>
+        <ListTile
+          title={<FormattedMessage defaultMessage="Microphone" />}
+          leading={<MicOutlined />}
+          onClick={openMicrophoneDialog}
+        />
+      </SettingAnchor>
+      <SettingAnchor settingKey="audio" highlight={highlight}>
+        <ListTile
+          title={<FormattedMessage defaultMessage="Audio" />}
+          leading={<VolumeUpOutlined />}
+          onClick={openAudioDialog}
+        />
+      </SettingAnchor>
+      <SettingAnchor settingKey="diagnostics" highlight={highlight}>
+        <ListTile
+          title={<FormattedMessage defaultMessage="Diagnostics" />}
+          leading={<TroubleshootOutlined />}
+          onClick={openDiagnosticsDialog}
+        />
+      </SettingAnchor>
+    </Section>
+  );
+
+  const dictation = (
+    <Section title={<FormattedMessage defaultMessage="Dictation" />}>
+      <SettingAnchor settingKey="dictation_language" highlight={highlight}>
+        <DictationLanguageSetting
+          openPostProcessingDialog={openPostProcessingDialog}
+        />
+      </SettingAnchor>
+      <SettingAnchor settingKey="text_insertion_options" highlight={highlight}>
+        <ListTile
+          title={<FormattedMessage defaultMessage="Text insertion options" />}
+          leading={<AppsOutlined />}
+          onClick={openAppKeybindingsDialog}
+        />
+      </SettingAnchor>
+      {availability.dictation_limit_minutes && (
+        <SettingAnchor
+          settingKey="dictation_limit_minutes"
+          highlight={highlight}
+        >
+          <SettingSection
+            title={
+              <FormattedMessage defaultMessage="Dictation limit (minutes)" />
+            }
+            description={
+              <FormattedMessage defaultMessage="Set the maximum dictation length in minutes. Enter 0 for no limit." />
+            }
+            action={
+              <TextField
+                size="small"
+                type="number"
+                value={dictationLimit.input}
+                onChange={dictationLimit.onChange}
+                onBlur={dictationLimit.onBlur}
+                sx={{ width: 104 }}
+                slotProps={{
+                  htmlInput: {
+                    min: 0,
+                    max: MAX_DICTATION_LIMIT_MINUTES,
+                    step: 1,
+                    inputMode: "numeric",
+                  },
+                }}
+              />
+            }
+          />
+        </SettingAnchor>
+      )}
+      <SettingAnchor
+        settingKey="hands_free_output_delay_ms"
+        highlight={highlight}
+      >
+        <SettingSection
+          title={
+            <FormattedMessage defaultMessage="Hands-free output delay (ms)" />
+          }
+          description={
+            <FormattedMessage defaultMessage="Wait this many milliseconds before inserting the dictated text when you stop recording. Enter 0 to disable." />
+          }
+          action={
+            <TextField
+              size="small"
+              type="number"
+              value={handsFreeDelay.input}
+              onChange={handsFreeDelay.onChange}
+              onBlur={handsFreeDelay.onBlur}
+              sx={{ width: 104 }}
+              slotProps={{
+                htmlInput: {
+                  min: 0,
+                  max: MAX_HANDS_FREE_DELAY_MS,
+                  step: 50,
+                  inputMode: "numeric",
+                },
+              }}
+            />
+          }
+        />
+      </SettingAnchor>
+      <SettingAnchor settingKey="spoken_commands" highlight={highlight}>
+        <SettingSection
+          title={<FormattedMessage defaultMessage="Spoken commands" />}
+          description={
+            <FormattedMessage defaultMessage='Turn phrases like "new line", "comma", and "scratch that" into formatting, even in Verbatim. Requires an English dictation language; Auto does not apply these commands.' />
+          }
+          action={
+            <Switch
+              edge="end"
+              checked={spokenCommandsEnabled}
+              onChange={handleToggleSpokenCommands}
+            />
+          }
+        />
+      </SettingAnchor>
+      <SettingAnchor settingKey="real_time_output" highlight={highlight}>
+        <SettingSection
+          title={<FormattedMessage defaultMessage="Real-time output" />}
+          description={
+            <FormattedMessage defaultMessage="Stream dictation text as you speak instead of pasting all at once when you stop. Only applies to Verbatim mode with supported providers." />
+          }
+          action={
+            <Switch
+              edge="end"
+              checked={realtimeOutputEnabled}
+              onChange={handleToggleRealtimeOutput}
+            />
+          }
+        />
+      </SettingAnchor>
+      <SettingAnchor settingKey="review_before_insert" highlight={highlight}>
+        <SettingSection
+          title={<FormattedMessage defaultMessage="Review before insert" />}
+          description={
+            <FormattedMessage defaultMessage="Open an editable composer so you can review or change dictated text before it is inserted. Review pauses streaming, so turning this on turns Real-time output off." />
+          }
+          action={
+            <Switch
+              edge="end"
+              checked={reviewBeforeInsert}
+              onChange={handleToggleReviewBeforeInsert}
+            />
+          }
+        />
+      </SettingAnchor>
+      <SettingAnchor
+        settingKey="silence_hallucination_filter"
+        highlight={highlight}
+      >
+        <SettingSection
+          title={
+            <FormattedMessage defaultMessage="Silence hallucination filter" />
+          }
+          description={
+            <FormattedMessage defaultMessage="Discard common fabricated phrases produced when the microphone hears silence or noise." />
+          }
+          action={
+            <Switch
+              edge="end"
+              checked={hallucinationFilterEnabled}
+              onChange={handleToggleHallucinationFilter}
+            />
+          }
+        />
+      </SettingAnchor>
+      <SettingAnchor
+        settingKey="switch_style_while_dictating"
+        highlight={highlight}
+      >
+        <SettingSection
+          title={
+            <FormattedMessage defaultMessage="Switch style while dictating" />
+          }
+          description={
+            <FormattedMessage defaultMessage="Hold the dictate activation key and press Left or Right Arrow to cycle active styles." />
+          }
+          action={
+            <Switch
+              edge="end"
+              checked={inDictationStyleSwitchingEnabled}
+              onChange={handleToggleInDictationStyleSwitching}
+            />
+          }
+        />
+      </SettingAnchor>
+    </Section>
+  );
+
+  const processing = (
+    <Section
+      title={<FormattedMessage defaultMessage="AI and processing" />}
+      description={
+        <FormattedMessage defaultMessage="How mausVoice should manage your transcriptions." />
+      }
+    >
+      <TipCard id="generative-provider" />
+      <SettingAnchor settingKey="deepgram_api_key" highlight={highlight}>
+        <ListTile
+          title={<FormattedMessage defaultMessage="Deepgram API key" />}
+          subtitle={
+            <FormattedMessage defaultMessage="Used for fast streaming transcription." />
+          }
+          leading={<KeyOutlined />}
+          onClick={deepgramKeyDialog.show}
+          trailing={
+            <ConfigurationStatusChip configured={!!personalDeepgramApiKey} />
+          }
+        />
+      </SettingAnchor>
+      <SettingAnchor settingKey="groq_api_key" highlight={highlight}>
+        <ListTile
+          title={<FormattedMessage defaultMessage="Groq API key" />}
+          subtitle={
+            <FormattedMessage defaultMessage="Used for AI post processing." />
+          }
+          leading={<KeyOutlined />}
+          onClick={groqKeyDialog.show}
+          trailing={
+            <ConfigurationStatusChip configured={!!personalGroqApiKey} />
+          }
+        />
+      </SettingAnchor>
+      <SettingAnchor settingKey="ai_transcription" highlight={highlight}>
+        <ListTile
+          title={<FormattedMessage defaultMessage="AI transcription" />}
+          leading={<GraphicEqOutlined />}
+          onClick={openTranscriptionDialog}
+        />
+      </SettingAnchor>
+      <SettingAnchor settingKey="ai_post_processing" highlight={highlight}>
+        <ListTile
+          title={<FormattedMessage defaultMessage="AI post processing" />}
+          leading={<AutoFixHighOutlined />}
+          onClick={openPostProcessingDialog}
+        />
+      </SettingAnchor>
+      <SettingAnchor settingKey="assistant_mode" highlight={highlight}>
+        <ListTile
+          title={
+            <Stack
+              direction="row"
+              sx={{
+                alignItems: "center",
+              }}
+            >
+              <FormattedMessage defaultMessage="Assistant mode" />
+              <Chip label="Beta" size="small" color="primary" sx={{ ml: 1 }} />
+            </Stack>
+          }
+          leading={<AutoAwesomeOutlined />}
+          onClick={openAgentModeDialog}
+        />
+      </SettingAnchor>
+      <StyleLoadingSettings
+        highlight={highlight}
+        availability={availability}
+        disableAutoStyleLoading={disableAutoStyleLoading}
+        stylingMode={stylingMode}
+        onToggleAutoStyleLoading={handleToggleAutoStyleLoading}
+        onStylingModeChange={handleStylingModeChange}
+      />
+    </Section>
+  );
+
+  const pillAppearance = (
+    <Section title={<FormattedMessage defaultMessage="Pill and appearance" />}>
+      <SettingAnchor settingKey="show_menu_bar_icon" highlight={highlight}>
+        <SettingSection
+          title={<FormattedMessage defaultMessage="Show menu bar icon" />}
+          description={
+            <FormattedMessage defaultMessage="Show the mausVoice icon in the menu bar." />
+          }
+          action={
+            <Switch
+              edge="end"
+              checked={!menuBarIconHidden}
+              onChange={handleToggleMenuBarIcon}
+            />
+          }
+        />
+      </SettingAnchor>
+      <SettingAnchor
+        settingKey="dictation_pill_visibility"
+        highlight={highlight}
+      >
+        <SettingSection
+          title={
+            <FormattedMessage defaultMessage="Dictation pill visibility" />
+          }
+          description={
+            <FormattedMessage defaultMessage="Control when the dictation pill is shown on screen." />
+          }
+          action={
+            <Select<DictationPillVisibility>
+              size="small"
+              value={dictationPillVisibility}
+              onChange={handleDictationPillVisibilityChange}
+              sx={{ minWidth: 152 }}
+            >
+              <MenuItem value="persistent">
+                {intl.formatMessage({ defaultMessage: "Persistent" })}
+              </MenuItem>
+              <MenuItem value="while_active">
+                {intl.formatMessage({ defaultMessage: "While active" })}
+              </MenuItem>
+              <MenuItem value="hidden">
+                {intl.formatMessage({ defaultMessage: "Hidden" })}
+              </MenuItem>
+            </Select>
+          }
+        />
+      </SettingAnchor>
+      <SettingAnchor settingKey="pill_placement" highlight={highlight}>
+        <PillPlacementSetting />
+      </SettingAnchor>
+      <SettingAnchor settingKey="reset_pill_position" highlight={highlight}>
+        <SettingSection
+          title={<FormattedMessage defaultMessage="Reset pill position" />}
+          description={
+            <FormattedMessage defaultMessage="Choose which monitor the pill returns to when you reset its position: the monitor the pill is on, or the monitor your mouse is on." />
+          }
+          action={
+            <SegmentedControl<PillResetMonitorStrategy>
+              value={pillResetMonitorStrategy}
+              onChange={handlePillResetMonitorStrategyChange}
+              options={[
+                {
+                  value: "current",
+                  label: intl.formatMessage({
+                    defaultMessage: "Current monitor",
+                  }),
+                },
+                {
+                  value: "cursor",
+                  label: intl.formatMessage({
+                    defaultMessage: "Cursor monitor",
+                  }),
+                },
+              ]}
+              ariaLabel={intl.formatMessage({
+                defaultMessage: "Reset pill position monitor",
+              })}
+            />
+          }
+        />
+      </SettingAnchor>
+      <SettingAnchor settingKey="streak_celebrations" highlight={highlight}>
+        <SettingSection
+          title={<FormattedMessage defaultMessage="Streak celebrations" />}
+          description={
+            <FormattedMessage defaultMessage="Show flame and firework animations on the dictation pill for streak milestones." />
+          }
+          action={
+            <Switch
+              edge="end"
+              checked={!disablePillRewards}
+              onChange={handleToggleDisablePillRewards}
+            />
+          }
+        />
+      </SettingAnchor>
+    </Section>
+  );
+
+  const shortcuts = (
+    <Section title={<FormattedMessage defaultMessage="Shortcuts" />}>
+      <SettingAnchor settingKey="hotkey_shortcuts" highlight={highlight}>
+        <ListTile
+          title={<FormattedMessage defaultMessage="Hotkey shortcuts" />}
+          leading={<KeyboardAltOutlined />}
+          onClick={openShortcutsDialog}
+        />
+      </SettingAnchor>
+      <SettingAnchor settingKey="style_hotkeys" highlight={highlight}>
+        <ListTile
+          title={<FormattedMessage defaultMessage="Style hotkeys" />}
+          leading={<KeyOutlined />}
+          onClick={openStyleHotkeysDialog}
+        />
+      </SettingAnchor>
+    </Section>
+  );
+
+  const privacyData = (
+    <PrivacySection
+      highlight={highlight}
+      availability={availability}
+      values={{
+        showAudioDisclosure,
+        incognitoModeEnabled,
+        incognitoIncludeInStats,
+        preserveAudioOnFailure,
+        autoLearnDictionaryEnabled,
+        elevenLabsKeytermsEnabled,
+        autoLearnFromEditsEnabled,
+      }}
+      actions={{
+        handleToggleIncognitoMode,
+        handleToggleIncognitoIncludeInStats,
+        handleTogglePreserveAudioOnFailure,
+        handleToggleAutoLearnDictionary,
+        handleToggleElevenLabsKeyterms,
+        handleToggleAutoLearnFromEdits,
+        openMultiDeviceDialog,
+        openClearLocalDataDialog,
+      }}
+    />
+  );
 
   const updates = (
     <Section title={<FormattedMessage defaultMessage="Updates" />}>
@@ -1656,50 +1504,16 @@ export default function SettingsPage() {
   const inputSetupTitle = (
     <FormattedMessage defaultMessage="Input permissions" />
   );
-  const inputSetupDescription = (() => {
-    switch (platform) {
-      case "linux":
-        return (
-          <FormattedMessage defaultMessage="Configures global input capture (uinput/udev) so the pill can type for you. Requires administrator privileges." />
-        );
-      case "windows":
-        return (
-          <FormattedMessage defaultMessage="Grants administrator privileges and input-capture access so the pill can type for you. You will see a User Account Control prompt." />
-        );
-      case "macos":
-        return (
-          <FormattedMessage defaultMessage="Requests Accessibility and Microphone access so the pill can type for you. You will be prompted in System Settings." />
-        );
-      default:
-        return null;
-    }
-  })();
-
-  const setupConfirmContent = (() => {
-    switch (platform) {
-      case "linux":
-        return (
-          <FormattedMessage defaultMessage="This requires administrator privileges to configure global input capture (uinput/udev). Continue?" />
-        );
-      case "windows":
-        return (
-          <FormattedMessage defaultMessage="This will prompt for administrator privileges (UAC) so the pill can capture and type input globally. Continue?" />
-        );
-      default:
-        return (
-          <FormattedMessage defaultMessage="This will request Accessibility and Microphone access so the pill can capture and type input globally. Continue?" />
-        );
-    }
-  })();
-
-  const alwaysRequestAdminOnStartup = useAppStore(
-    (state) => state.userPrefs?.alwaysRequestAdminOnStartup ?? false,
-  );
+  const inputSetupDescription = getInputSetupDescription(platform);
+  const setupConfirmContent = getSetupConfirmContent(platform);
 
   const handleToggleAlwaysRequestAdmin = (
     event: ChangeEvent<HTMLInputElement>,
   ) => {
-    void setAlwaysRequestAdminOnStartup(event.target.checked);
+    logOnRejection(
+      setAlwaysRequestAdminOnStartup(event.target.checked),
+      "admin startup preference",
+    );
   };
 
   const inputPermissionsSetup = (
@@ -1802,27 +1616,10 @@ export default function SettingsPage() {
           sx={{ mb: 3 }}
         />
         {query.trim() ? (
-          <List>
-            {results.length === 0 ? (
-              <ListItemText
-                primary={
-                  <FormattedMessage defaultMessage="No settings match that search." />
-                }
-              />
-            ) : (
-              results.map((hit) => (
-                <ListItemButton
-                  key={hit.entry.key}
-                  onClick={() => focusSetting(hit.entry.key)}
-                >
-                  <ListItemText
-                    primary={hit.title}
-                    secondary={hit.sectionTitle}
-                  />
-                </ListItemButton>
-              ))
-            )}
-          </List>
+          <SettingsSearchResults
+            results={results}
+            focusSetting={focusSetting}
+          />
         ) : (
           <Stack direction="row" spacing={4} sx={{ alignItems: "flex-start" }}>
             <SettingsSectionNav
@@ -1903,161 +1700,27 @@ export default function SettingsPage() {
         onConfirm={acknowledgeElevenLabsSurcharge}
       />
 
-      <Dialog
-        open={deepgramDialogOpen}
-        onClose={closeDeepgramDialog}
-        maxWidth="xs"
-        fullWidth
-      >
-        <DialogTitle>
-          <FormattedMessage defaultMessage="Deepgram API key" />
-        </DialogTitle>
-        <DialogContent dividers>
-          <Stack spacing={2}>
-            <Typography
-              variant="body2"
-              sx={{
-                color: "text.secondary",
-              }}
-            >
-              <FormattedMessage defaultMessage="Store your Deepgram API key locally for fast streaming transcription. The key is encrypted before it is saved." />
-            </Typography>
-            {personalDeepgramApiKey?.keySuffix && (
-              <Typography
-                variant="body2"
-                sx={{
-                  color: "text.secondary",
-                }}
-              >
-                <FormattedMessage
-                  defaultMessage="Current key ends with {suffix}."
-                  values={{ suffix: personalDeepgramApiKey.keySuffix }}
-                />
-              </Typography>
-            )}
-            {deepgramError && <Alert severity="error">{deepgramError}</Alert>}
-            <TextField
-              autoFocus
-              fullWidth
-              size="small"
-              type="password"
-              label={<FormattedMessage defaultMessage="API key" />}
-              value={deepgramApiKeyInput}
-              disabled={deepgramSaving}
-              onChange={(event) => setDeepgramApiKeyInput(event.target.value)}
-              autoComplete="off"
-              slotProps={{
-                inputLabel: { shrink: true },
-                htmlInput: {
-                  "data-mausvoice-ignore": "true",
-                },
-              }}
-            />
-            <Link
-              component="button"
-              variant="body2"
-              onClick={() => openUrl("https://console.deepgram.com/")}
-              sx={{ alignSelf: "flex-start" }}
-            >
-              <FormattedMessage defaultMessage="Open Deepgram API keys" />
-            </Link>
-          </Stack>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={closeDeepgramDialog} disabled={deepgramSaving}>
-            <FormattedMessage defaultMessage="Cancel" />
-          </Button>
-          <Button
-            variant="contained"
-            onClick={handleSaveDeepgramApiKey}
-            disabled={!deepgramApiKeyInput.trim() || deepgramSaving}
-          >
-            {deepgramSaving ? (
-              <FormattedMessage defaultMessage="Saving..." />
-            ) : (
-              <FormattedMessage defaultMessage="Save" />
-            )}
-          </Button>
-        </DialogActions>
-      </Dialog>
-      <Dialog
-        open={groqDialogOpen}
-        onClose={closeGroqDialog}
-        maxWidth="xs"
-        fullWidth
-      >
-        <DialogTitle>
-          <FormattedMessage defaultMessage="Groq API key" />
-        </DialogTitle>
-        <DialogContent dividers>
-          <Stack spacing={2}>
-            <Typography
-              variant="body2"
-              sx={{
-                color: "text.secondary",
-              }}
-            >
-              <FormattedMessage defaultMessage="Store your Groq API key locally for transcription and AI post processing. The key is encrypted before it is saved." />
-            </Typography>
-            {personalGroqApiKey?.keySuffix && (
-              <Typography
-                variant="body2"
-                sx={{
-                  color: "text.secondary",
-                }}
-              >
-                <FormattedMessage
-                  defaultMessage="Current key ends with {suffix}."
-                  values={{ suffix: personalGroqApiKey.keySuffix }}
-                />
-              </Typography>
-            )}
-            {groqError && <Alert severity="error">{groqError}</Alert>}
-            <TextField
-              autoFocus
-              fullWidth
-              size="small"
-              type="password"
-              label={<FormattedMessage defaultMessage="API key" />}
-              placeholder={intl.formatMessage({ defaultMessage: "gsk_..." })}
-              value={groqApiKeyInput}
-              disabled={groqSaving}
-              onChange={(event) => setGroqApiKeyInput(event.target.value)}
-              autoComplete="off"
-              slotProps={{
-                inputLabel: { shrink: true },
-                htmlInput: {
-                  "data-mausvoice-ignore": "true",
-                },
-              }}
-            />
-            <Link
-              component="button"
-              variant="body2"
-              onClick={() => openUrl("https://console.groq.com/keys")}
-              sx={{ alignSelf: "flex-start" }}
-            >
-              <FormattedMessage defaultMessage="Open Groq API keys" />
-            </Link>
-          </Stack>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={closeGroqDialog} disabled={groqSaving}>
-            <FormattedMessage defaultMessage="Cancel" />
-          </Button>
-          <Button
-            variant="contained"
-            onClick={handleSaveGroqApiKey}
-            disabled={!groqApiKeyInput.trim() || groqSaving}
-          >
-            {groqSaving ? (
-              <FormattedMessage defaultMessage="Saving..." />
-            ) : (
-              <FormattedMessage defaultMessage="Save" />
-            )}
-          </Button>
-        </DialogActions>
-      </Dialog>
+      <PersonalApiKeyDialog
+        state={deepgramKeyDialog}
+        suffix={personalDeepgramApiKey?.keySuffix}
+        title={<FormattedMessage defaultMessage="Deepgram API key" />}
+        description={
+          <FormattedMessage defaultMessage="Store your Deepgram API key locally for fast streaming transcription. The key is encrypted before it is saved." />
+        }
+        keyUrl="https://console.deepgram.com/"
+        linkLabel={<FormattedMessage defaultMessage="Open Deepgram API keys" />}
+      />
+      <PersonalApiKeyDialog
+        state={groqKeyDialog}
+        suffix={personalGroqApiKey?.keySuffix}
+        title={<FormattedMessage defaultMessage="Groq API key" />}
+        description={
+          <FormattedMessage defaultMessage="Store your Groq API key locally for transcription and AI post processing. The key is encrypted before it is saved." />
+        }
+        placeholder={intl.formatMessage({ defaultMessage: "gsk_..." })}
+        keyUrl="https://console.groq.com/keys"
+        linkLabel={<FormattedMessage defaultMessage="Open Groq API keys" />}
+      />
     </DashboardEntryLayout>
   );
 }

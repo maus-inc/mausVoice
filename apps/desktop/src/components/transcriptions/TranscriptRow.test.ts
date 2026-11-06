@@ -10,13 +10,16 @@ import { setMatchMedia as stubMatchMedia } from "../../../test/helpers/jsdom-ui-
 import { createRoot } from "react-dom/client";
 import type { Transcription } from "@maus-inc/types";
 import { INITIAL_APP_STATE } from "../../state/app.state";
-import { produceAppState, setAppState } from "../../store";
+import { getAppState, produceAppState, setAppState } from "../../store";
 import { ThemeProvider } from "@mui/material/styles";
 import { theme } from "../../theme";
 
 const mocks = vi.hoisted(() => ({
   deleteTranscription: vi.fn(),
   scheduleTranscriptionDelete: vi.fn(),
+  undoTranscriptionDelete: vi.fn(),
+  send: vi.fn(),
+  target: null as { id: string; name: string } | null,
 }));
 
 vi.mock("@tauri-apps/api/core", async (importOriginal) => {
@@ -28,7 +31,12 @@ vi.mock("@tauri-apps/api/core", async (importOriginal) => {
 });
 
 vi.mock("../../actions/remote-output.actions", () => ({
-  sendTextToActiveRemoteTarget: vi.fn(),
+  sendTextToActiveRemoteTarget: mocks.send,
+}));
+
+vi.mock("../../utils/device.utils", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../utils/device.utils")>()),
+  getActiveRemoteTarget: () => mocks.target,
 }));
 
 vi.mock("../../repos", () => ({
@@ -39,7 +47,7 @@ vi.mock("../../repos", () => ({
 
 vi.mock("../../utils/pending-transcription-delete", () => ({
   scheduleTranscriptionDelete: mocks.scheduleTranscriptionDelete,
-  undoTranscriptionDelete: vi.fn(),
+  undoTranscriptionDelete: mocks.undoTranscriptionDelete,
 }));
 
 vi.mock("react-intl", async (importOriginal) => {
@@ -103,6 +111,8 @@ let container: HTMLDivElement;
 let root: ReturnType<typeof createRoot> | null = null;
 
 beforeEach(() => {
+  vi.resetAllMocks();
+  mocks.target = null;
   resetState();
   seedRow();
   container = document.createElement("div");
@@ -278,6 +288,89 @@ describe("TranscriptionRow context menu", () => {
     expect(items[items.length - 1].textContent).toBe("Delete");
   });
 
+  it("copies transcript text and ID with consistent success and failure feedback", async () => {
+    const originalClipboard = Object.getOwnPropertyDescriptor(
+      navigator,
+      "clipboard",
+    );
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    try {
+      let menu = await openMenu();
+      const item = (label: string) =>
+        Array.from(
+          menu?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [],
+        ).find((el) => el.textContent === label);
+      await act(async () => {
+        item("Copy text")?.click();
+      });
+      expect(writeText).toHaveBeenLastCalledWith("hello world");
+      expect(getAppState().snackbarMessage).toBe("Copied successfully");
+      expect(getAppState().snackbarMode).toBe("success");
+
+      menu = await openContextMenu(container);
+      await act(async () => {
+        item("Copy ID")?.click();
+      });
+      expect(writeText).toHaveBeenLastCalledWith("row-1");
+      expect(getAppState().snackbarMode).toBe("success");
+
+      writeText.mockRejectedValueOnce(new Error("clipboard unavailable"));
+      const button = container.querySelector<HTMLButtonElement>(
+        'button[aria-label="Copy transcript"]',
+      );
+      expect(button).not.toBeNull();
+      await act(async () => {
+        button?.click();
+      });
+      expect(getAppState().snackbarMessage).toBe(
+        "Error: clipboard unavailable",
+      );
+      expect(getAppState().snackbarMode).toBe("error");
+    } finally {
+      if (originalClipboard)
+        Object.defineProperty(navigator, "clipboard", originalClipboard);
+      else Reflect.deleteProperty(navigator, "clipboard");
+    }
+  });
+
+  it("offers undo for a scheduled delete and reports a failed undo", async () => {
+    const menu = await openMenu();
+    const deleteItem = Array.from(
+      menu?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [],
+    ).find((el) => el.textContent === "Delete");
+    await act(async () => {
+      deleteItem?.click();
+    });
+    expect(getAppState().snackbarMessage).toBe("Delete successful");
+    expect(getAppState().snackbarDuration).toBe(5000);
+    expect(getAppState().snackbarAction?.label).toBe("Undo");
+    mocks.undoTranscriptionDelete.mockReturnValue(false);
+    act(() => getAppState().snackbarAction?.onClick());
+    expect(mocks.undoTranscriptionDelete).toHaveBeenCalledWith("row-1");
+    expect(getAppState().snackbarMessage).toBe("Unable to undo delete.");
+    expect(getAppState().snackbarMode).toBe("error");
+  });
+
+  it("reports scheduling failures without offering undo", async () => {
+    mocks.scheduleTranscriptionDelete.mockImplementation(() => {
+      throw new Error("failure");
+    });
+    const menu = await openMenu();
+    const deleteItem = Array.from(
+      menu?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [],
+    ).find((el) => el.textContent === "Delete");
+    await act(async () => {
+      deleteItem?.click();
+    });
+    expect(getAppState().snackbarMessage).toBe("Failed to schedule delete.");
+    expect(getAppState().snackbarMode).toBe("error");
+    expect(getAppState().snackbarAction).toBeUndefined();
+  });
+
   it("deletes the transcription when the Delete item is clicked", async () => {
     const menu = await openMenu();
     const deleteItem = Array.from(
@@ -294,5 +387,77 @@ describe("TranscriptionRow context menu", () => {
       5000,
     );
     expect(document.querySelector('[role="menu"]')).toBeNull();
+  });
+});
+
+describe("TranscriptionRow metadata and remote actions", () => {
+  it("highlights details only when nonblank metadata exists and hides audio actions without audio", async () => {
+    produceAppState((draft) => {
+      draft.transcriptionById["row-1"].modelSize = "   ";
+      draft.transcriptionById["row-1"].audio = undefined;
+    });
+    root = await renderRow(container);
+    let details = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="View transcription details"]',
+    );
+    expect(details?.classList.contains("MuiIconButton-colorPrimary")).toBe(
+      false,
+    );
+    expect(retranscribeButton(container)).toBeNull();
+    await act(async () =>
+      produceAppState((draft) => {
+        draft.transcriptionById["row-1"].inferenceDevice = " GPU ";
+      }),
+    );
+    details = container.querySelector(
+      'button[aria-label="View transcription details"]',
+    );
+    expect(details?.classList.contains("MuiIconButton-colorPrimary")).toBe(
+      true,
+    );
+  });
+
+  it("offers sending only for local transcripts and sends their current text", async () => {
+    mocks.target = { id: "receiver", name: "Workstation" };
+    mocks.send.mockResolvedValue(undefined);
+    root = await renderRow(container);
+    const send = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Send to {name}"]',
+    );
+    expect(send).not.toBeNull();
+    await act(async () => {
+      send?.click();
+    });
+    expect(mocks.send).toHaveBeenCalledWith("hello world");
+    await act(async () =>
+      produceAppState((draft) => {
+        draft.transcriptionById["row-1"].transcript = "updated text";
+      }),
+    );
+    mocks.send.mockRejectedValueOnce(new Error("receiver unavailable"));
+    await act(async () => {
+      send?.click();
+    });
+    expect(mocks.send).toHaveBeenLastCalledWith("updated text");
+    expect(getAppState().snackbarMode).toBe("error");
+    expect(getAppState().snackbarMessage).toBe("Error: receiver unavailable");
+    await act(async () =>
+      produceAppState((draft) => {
+        draft.transcriptionById["row-1"].remoteStatus = "received";
+      }),
+    );
+    expect(
+      container.querySelector('button[aria-label="Send to {name}"]'),
+    ).toBeNull();
+    expect(container.textContent).toContain("Remote");
+    await act(async () =>
+      produceAppState((draft) => {
+        draft.transcriptionById["row-1"].remoteStatus = "sent";
+      }),
+    );
+    expect(container.textContent).toContain("Sent");
+    expect(
+      container.querySelector('button[aria-label="Send to {name}"]'),
+    ).not.toBeNull();
   });
 });

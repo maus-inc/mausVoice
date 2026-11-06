@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import { createIntl } from "react-intl";
 import manifest from "./manifest.json";
 import { PREVIEW_SAMPLE_MESSAGE } from "../components/tones/tone-form.utils";
+import { HOTKEY_CONFLICT_MESSAGE } from "../utils/hotkey-conflict";
+import { createMessageId } from "../../scripts/formatjs-id.mjs";
 
 /**
  * Localization completeness contract: a message that is copied verbatim into
@@ -24,6 +26,13 @@ const UNIVERSAL_SAFE = [
 const FAILURE_AUDIO_MESSAGES = [
   "keep_the_audio_snapshot_with_a_failed_transcription_so_you_c",
   "preserve_audio_on_failure",
+  "transcription_failed_your_recording_is_saved_so_you_can_retr",
+  "transcription_failed_your_recording_was_not_saved",
+  "the_recording_may_be_incomplete_a_partial_recording_was_save",
+  "the_recording_may_be_incomplete_the_partial_recording_was_no",
+  "the_microphone_may_still_be_in_use_if_its_indicator_stays_on",
+  "the_recording_may_be_incomplete_the_microphone_may_still_be",
+  "could_not_pause_dictation_recording_may_continue",
 ] as const;
 
 type Messages = Record<string, string>;
@@ -81,6 +90,8 @@ describe("i18n catalogs", () => {
         "allowed",
         "denied",
         "basics",
+        "could_not_start_recording_please_try_again",
+        "shortcuts_changed_elsewhere_reopen_this_dialog_and_try_again",
         "fix_the_grammar_in_my_last_dictation",
         "summarize_my_last_dictation_briefly",
         "preview_failed",
@@ -142,6 +153,12 @@ describe("i18n catalogs", () => {
       expect(intl.formatMessage(PREVIEW_SAMPLE_MESSAGE)).toBe(
         messagesFor(locales, locale)[messageId(PREVIEW_SAMPLE_MESSAGE)],
       );
+      const conflictId = createMessageId(
+        HOTKEY_CONFLICT_MESSAGE.defaultMessage,
+      );
+      expect(
+        intl.formatMessage({ ...HOTKEY_CONFLICT_MESSAGE, id: conflictId }),
+      ).toBe(messagesFor(locales, locale)[conflictId]);
       const dualKey =
         "use_backwardhotkey_or_forwardhotkey_while_dictating_to_switc";
       const singleKey =
@@ -168,6 +185,54 @@ describe("i18n catalogs", () => {
       }
     },
   );
+
+  it.each([
+    "Fast styling omitted the last {droppedChars} characters. The full transcript is in History.",
+    "The last {droppedChars} characters were omitted by fast styling. Saving this dictation in History could not be confirmed.",
+  ])(
+    "localizes the fast-styling warning %s in every locale",
+    (defaultMessage) => {
+      const locales = loadLocales();
+      const id = createMessageId(defaultMessage);
+      for (const locale of manifest.supportedLocales) {
+        const messages = messagesFor(locales, locale);
+        expect(messages[id]?.trim(), locale).toBeTruthy();
+        if (locale !== "en") expect(messages[id]).not.toBe(locales.en[id]);
+        const intl = createIntl({
+          locale,
+          messages,
+          onError: (error) => {
+            throw error;
+          },
+        });
+        expect(
+          intl.formatMessage({ id, defaultMessage }, { droppedChars: 42 }),
+        ).toContain("42");
+      }
+    },
+  );
+
+  it("localizes the styling-failure warning in every locale", () => {
+    const locales = loadLocales();
+    const defaultMessage =
+      "Styling failed: {reason}. The final text was not inserted.";
+    const id = createMessageId(defaultMessage);
+    for (const locale of manifest.supportedLocales) {
+      const messages = messagesFor(locales, locale);
+      expect(messages[id]?.trim(), locale).toBeTruthy();
+      if (locale !== "en") expect(messages[id]).not.toBe(locales.en[id]);
+      const intl = createIntl({
+        locale,
+        messages,
+        onError: (error) => {
+          throw error;
+        },
+      });
+      expect(
+        intl.formatMessage({ id, defaultMessage }, { reason: "REASON" }),
+      ).toContain("REASON");
+    }
+  });
 
   it("localizes the dashboard navigation landmark and page list", () => {
     const locales = loadLocales();
@@ -293,10 +358,10 @@ describe("i18n catalogs", () => {
     // And the four that carried it are covered, so the guard above cannot pass
     // by those keys falling out of the catalog.
     for (const key of [
-      "could_not_open_the_review_window_your_transcript_was_saved_t",
-      "review_expired_the_transcript_is_kept_in_your_history",
-      "styling_failed_reason_the_raw_transcript_is_saved_in_history",
-      "could_not_copy_the_transcript_it_is_saved_in_your_history",
+      "could_not_open_the_review_window_the_transcript_was_not_inse",
+      "review_expired_the_transcript_was_not_inserted",
+      "styling_failed_reason_the_final_text_was_not_inserted",
+      "could_not_copy_the_transcript_please_try_again",
     ]) {
       expect(korean[key], `ko:${key} must exist`).toBeTypeOf("string");
       expect(korean[key], `ko:${key}`).not.toMatch(audioWording);

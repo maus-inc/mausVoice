@@ -31,6 +31,77 @@ export type ConfirmDialogProps = {
   busyLabel?: string;
 };
 
+type ConfirmDialogActionsProps = Pick<
+  ConfirmDialogProps,
+  | "onCancel"
+  | "onConfirm"
+  | "confirmButtonProps"
+  | "cancelButtonProps"
+  | "destructive"
+  | "busy"
+> & {
+  progressLabel: string;
+  confirmContent: ReactNode;
+  cancelContent: ReactNode;
+};
+
+/** Actions stay independently named and disabled while the dialog is busy. */
+const ConfirmDialogActions = ({
+  onCancel,
+  onConfirm,
+  confirmContent,
+  cancelContent,
+  confirmButtonProps,
+  cancelButtonProps,
+  destructive,
+  busy,
+  progressLabel,
+}: ConfirmDialogActionsProps) => {
+  return (
+    <DialogActions sx={{ px: 3, pb: 2 }}>
+      <Button
+        variant="text"
+        onClick={onCancel}
+        {...cancelButtonProps}
+        disabled={busy || cancelButtonProps?.disabled}
+      >
+        {cancelContent}
+      </Button>
+      <Button
+        variant="contained"
+        color={destructive ? "error" : "primary"}
+        onClick={onConfirm}
+        {...confirmButtonProps}
+        disabled={busy || confirmButtonProps?.disabled}
+        // The label stays in the DOM while the button is busy. Replacing it
+        // with a bare spinner left the button with no accessible name at all,
+        // so a screen reader announced an unlabelled disabled control and the
+        // user could not tell what was being confirmed. `aria-busy` and the
+        // named progressbar carry the in-flight state instead.
+        aria-busy={busy || undefined}
+      >
+        {busy ? (
+          <Stack
+            direction="row"
+            spacing={1}
+            sx={{ alignItems: "center", justifyContent: "center" }}
+          >
+            <CircularProgress
+              size={16}
+              color="inherit"
+              role="progressbar"
+              aria-label={progressLabel}
+            />
+            <span>{confirmContent}</span>
+          </Stack>
+        ) : (
+          confirmContent
+        )}
+      </Button>
+    </DialogActions>
+  );
+};
+
 export const ConfirmDialog = ({
   isOpen,
   title,
@@ -71,47 +142,17 @@ export const ConfirmDialog = ({
       <DialogContent dividers>
         <DialogContentText id={contentId}>{content}</DialogContentText>
       </DialogContent>
-      <DialogActions sx={{ px: 3, pb: 2 }}>
-        <Button
-          variant="text"
-          onClick={onCancel}
-          {...cancelButtonProps}
-          disabled={busy || cancelButtonProps?.disabled}
-        >
-          {cancelContent}
-        </Button>
-        <Button
-          variant="contained"
-          color={destructive ? "error" : "primary"}
-          onClick={onConfirm}
-          {...confirmButtonProps}
-          disabled={busy || confirmButtonProps?.disabled}
-          // The label stays in the DOM while the button is busy. Replacing it
-          // with a bare spinner left the button with no accessible name at all,
-          // so a screen reader announced an unlabelled disabled control and the
-          // user could not tell what was being confirmed. `aria-busy` and the
-          // named progressbar carry the in-flight state instead.
-          aria-busy={busy || undefined}
-        >
-          {busy ? (
-            <Stack
-              direction="row"
-              spacing={1}
-              sx={{ alignItems: "center", justifyContent: "center" }}
-            >
-              <CircularProgress
-                size={16}
-                color="inherit"
-                role="progressbar"
-                aria-label={progressLabel}
-              />
-              <span>{confirmContent}</span>
-            </Stack>
-          ) : (
-            confirmContent
-          )}
-        </Button>
-      </DialogActions>
+      <ConfirmDialogActions
+        onCancel={onCancel}
+        onConfirm={onConfirm}
+        confirmContent={confirmContent}
+        cancelContent={cancelContent}
+        confirmButtonProps={confirmButtonProps}
+        cancelButtonProps={cancelButtonProps}
+        destructive={destructive}
+        busy={busy}
+        progressLabel={progressLabel}
+      />
     </Dialog>
   );
 };

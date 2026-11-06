@@ -1,3 +1,4 @@
+import type { User as LocalUser } from "@maus-inc/desktop-native-apis";
 import { Nullable, User } from "@maus-inc/types";
 import { invoke } from "@tauri-apps/api/core";
 import { nowIso } from "../utils/date.utils";
@@ -118,32 +119,6 @@ const parseActiveToneIds = (
   }
 };
 
-type LocalUser = {
-  id: string;
-  name: string;
-  bio: string;
-  company?: string | null;
-  title?: string | null;
-  onboarded: boolean;
-  preferredMicrophone: string | null;
-  preferredLanguage: string | null;
-  wordsThisMonth: number;
-  wordsThisMonthMonth: string | null;
-  wordsTotal: number;
-  playInteractionChime?: boolean;
-  interactionFeedbackVolume?: number | null;
-  hasFinishedTutorial?: boolean;
-  cohort?: string | null;
-  stylingMode?: string | null;
-  selectedToneId?: string | null;
-  activeToneIds?: string | null;
-  streak?: number | null;
-  streakRecordedAt?: string | null;
-  referralSource?: string | null;
-  createdAt?: string | null;
-  onboardedAt?: string | null;
-};
-
 const fromLocalUser = (localUser: LocalUser): User => {
   const bio = localUser.bio;
   const isOnboarded = localUser.onboarded;
@@ -200,26 +175,26 @@ export const toLocalUser = (user: User): LocalUser => {
     id: LOCAL_USER_ID,
     name: user.name,
     bio: user.bio ?? "",
-    company: user.company ?? null,
-    title: user.title ?? null,
+    company: orNull(user.company),
+    title: orNull(user.title),
     onboarded: user.onboarded,
-    preferredMicrophone: user.preferredMicrophone ?? null,
-    preferredLanguage: user.preferredLanguage ?? null,
+    preferredMicrophone: orNull(user.preferredMicrophone),
+    preferredLanguage: orNull(user.preferredLanguage),
     wordsThisMonth: user.wordsThisMonth,
-    wordsThisMonthMonth: user.wordsThisMonthMonth ?? null,
+    wordsThisMonthMonth: orNull(user.wordsThisMonthMonth),
     wordsTotal: user.wordsTotal,
     playInteractionChime: user.playInteractionChime,
-    interactionFeedbackVolume: user.interactionFeedbackVolume ?? null,
+    interactionFeedbackVolume: orNull(user.interactionFeedbackVolume),
     hasFinishedTutorial: user.hasFinishedTutorial,
-    cohort: user.cohort ?? null,
-    stylingMode: user.stylingMode ?? null,
-    selectedToneId: user.selectedToneId ?? null,
+    cohort: orNull(user.cohort),
+    stylingMode: orNull(user.stylingMode),
+    selectedToneId: orNull(user.selectedToneId),
     activeToneIds: user.activeToneIds
       ? JSON.stringify(user.activeToneIds)
       : null,
-    streak: user.streak ?? null,
-    streakRecordedAt: user.streakRecordedAt ?? null,
-    referralSource: user.referralSource ?? null,
+    streak: orNull(user.streak),
+    streakRecordedAt: orNull(user.streakRecordedAt),
+    referralSource: orNull(user.referralSource),
     createdAt: observed,
     onboardedAt,
   };

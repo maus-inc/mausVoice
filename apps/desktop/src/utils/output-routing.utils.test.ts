@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   insertLocalTranscriptOutputViaTyping,
+  drainDictationBacklog,
   routeTranscriptOutput,
 } from "./output-routing.utils";
+import { sendPillFlashMessage } from "./overlay.utils";
 
 const { invokeMock, reviewTranscriptBeforeInsertMock } = vi.hoisted(() => ({
   invokeMock: vi.fn(),
@@ -54,6 +56,52 @@ vi.mock("../i18n/intl", () => ({
   }),
 }));
 
+describe("auth-scoped backlog delivery", () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+    produceAppStateMock.mockClear();
+    vi.mocked(sendPillFlashMessage).mockClear();
+    getAppStateMock.mockReturnValue({
+      dictationBacklog: ["old words"],
+      dictationBacklogNonce: 1,
+      appTargetById: {},
+      supportsPasteKeybinds: "none",
+    });
+    getPrefsMock.mockReturnValue({ insertionMethod: "paste" });
+  });
+
+  it("does not dispatch a retired backlog", async () => {
+    await expect(
+      drainDictationBacklog(undefined, null, () => false),
+    ).resolves.toEqual({
+      delivered: false,
+      copiedToClipboard: false,
+    });
+    expect(invokeMock).not.toHaveBeenCalled();
+    expect(produceAppStateMock).not.toHaveBeenCalled();
+  });
+
+  it("does not clear or flash a successor after an in-flight paste resolves", async () => {
+    let finish!: (value: string) => void;
+    invokeMock.mockReturnValue(
+      new Promise<string>((resolve) => {
+        finish = resolve;
+      }),
+    );
+    let current = true;
+    const result = drainDictationBacklog(undefined, null, () => current);
+    expect(invokeMock).toHaveBeenCalledOnce();
+    current = false;
+    finish("copied_to_clipboard");
+    await expect(result).resolves.toEqual({
+      delivered: false,
+      copiedToClipboard: false,
+    });
+    expect(produceAppStateMock).not.toHaveBeenCalled();
+    expect(sendPillFlashMessage).not.toHaveBeenCalled();
+  });
+});
+
 describe("routeTranscriptOutput hands-free delay", () => {
   const baseState = {
     appTargetById: {},
@@ -98,6 +146,35 @@ describe("routeTranscriptOutput hands-free delay", () => {
     });
   });
 
+  it.each([
+    ["global", "global-key"],
+    ["per-app", "app-key"],
+  ])(
+    "routes a %s platform to the resolved paste keybind",
+    async (support, expected) => {
+      getAppStateMock.mockReturnValue({
+        appTargetById: {
+          editor: { pasteKeybind: "app-key", insertionMethod: "paste" },
+        },
+        supportsPasteKeybinds: support,
+      });
+      getPrefsMock.mockReturnValue({
+        insertionMethod: "paste",
+        pasteKeybind: "global-key",
+        handsFreeDelayMs: 0,
+      });
+      await routeTranscriptOutput({
+        text: "words",
+        mode: "dictation",
+        currentAppId: "editor",
+      });
+      expect(invokeMock).toHaveBeenCalledWith("paste", {
+        text: "words",
+        keybind: expected,
+      });
+    },
+  );
+
   it("pastes realtime interim segments immediately, bypassing the delay", async () => {
     const routing = routeTranscriptOutput({
       text: "interim ",
@@ -113,6 +190,72 @@ describe("routeTranscriptOutput hands-free delay", () => {
       text: "interim ",
       keybind: null,
     });
+  });
+
+  it("does not flash or start an edit watch when a native paste settles after retirement", async () => {
+    vi.mocked(sendPillFlashMessage).mockClear();
+    produceAppStateMock.mockClear();
+    let finish!: (outcome: string) => void;
+    invokeMock.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    );
+    getPrefsMock.mockReturnValue({
+      insertionMethod: "paste",
+      handsFreeDelayMs: 0,
+    });
+    let current = true;
+    const routing = routeTranscriptOutput(
+      { text: "old words", mode: "dictation", currentAppId: null },
+      null,
+      () => current,
+    );
+    await vi.waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith("paste", expect.anything()),
+    );
+    current = false;
+    finish("copied_to_clipboard");
+    await routing;
+    expect(sendPillFlashMessage).not.toHaveBeenCalled();
+    expect(produceAppStateMock).not.toHaveBeenCalled();
+  });
+
+  it("does not paste after ownership is retired during the hands-free delay", async () => {
+    let current = true;
+    const routing = routeTranscriptOutput(
+      { text: "old words", mode: "dictation", currentAppId: null },
+      null,
+      () => current,
+    );
+    await vi.advanceTimersByTimeAsync(1_000);
+    current = false;
+    await vi.advanceTimersByTimeAsync(2_000);
+    await expect(routing).resolves.toMatchObject({ delivered: false });
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it("does not deliver reviewed text after ownership is retired", async () => {
+    let finish!: (value: string) => void;
+    getPrefsMock.mockReturnValue({
+      reviewBeforeInsert: true,
+      insertionMethod: "paste",
+    });
+    reviewTranscriptBeforeInsertMock.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    );
+    let current = true;
+    const routing = routeTranscriptOutput(
+      { text: "old words", mode: "dictation", currentAppId: null },
+      null,
+      () => current,
+    );
+    current = false;
+    finish("edited old words");
+    await expect(routing).resolves.toMatchObject({ delivered: false });
+    expect(invokeMock).not.toHaveBeenCalled();
   });
 
   it("delivers nothing when the review is cancelled", async () => {

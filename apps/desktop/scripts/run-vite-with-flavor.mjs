@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
+import { forwardChildOutcome } from "./child-process-lifecycle.mjs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 
@@ -47,16 +48,4 @@ const child = spawn(process.execPath, [viteBin, ...finalArgs], {
   stdio: "inherit",
 });
 
-child.on("exit", (code, signal) => {
-  if (signal) {
-    process.kill(process.pid, signal);
-    return;
-  }
-
-  process.exit(code ?? 0);
-});
-
-child.on("error", (error) => {
-  console.error("Unable to start Vite:", error);
-  process.exit(1);
-});
+forwardChildOutcome(child, "Unable to start Vite:");

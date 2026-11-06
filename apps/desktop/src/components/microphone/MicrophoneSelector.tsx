@@ -1,7 +1,7 @@
+import { MicrophoneOptionContent } from "./MicrophoneOptionContent";
 import {
   Alert,
   Button,
-  Box,
   Chip,
   CircularProgress,
   Divider,
@@ -158,76 +158,7 @@ export const MicrophoneSelector = ({
           <Divider sx={{ my: 0.5 }} />
           {options.map((option) => (
             <MenuItem key={option.value} value={option.value}>
-              <Stack
-                direction="row"
-                spacing={2}
-                sx={{
-                  justifyContent: "space-between",
-                  width: "100%",
-                }}
-              >
-                <Box
-                  sx={{
-                    display: "flex",
-                    flexDirection: "column",
-                  }}
-                >
-                  <Typography>
-                    {option.unavailable ? (
-                      <FormattedMessage
-                        defaultMessage="{microphone} (unavailable)"
-                        values={{ microphone: option.label }}
-                      />
-                    ) : (
-                      option.label
-                    )}
-                  </Typography>
-                  {option.unavailable && (
-                    <Typography
-                      variant="caption"
-                      sx={{
-                        color: "warning.main",
-                      }}
-                    >
-                      <FormattedMessage defaultMessage="Currently unavailable" />
-                    </Typography>
-                  )}
-                  {option.caution && !option.unavailable && (
-                    <Typography
-                      variant="caption"
-                      sx={{
-                        color: "text.secondary",
-                      }}
-                    >
-                      <FormattedMessage defaultMessage="May provide lower audio quality" />
-                    </Typography>
-                  )}
-                </Box>
-                <Stack
-                  direction="row"
-                  spacing={0.75}
-                  sx={{
-                    alignItems: "center",
-                  }}
-                >
-                  {option.isDefault && (
-                    <Chip
-                      size="small"
-                      label={<FormattedMessage defaultMessage="Default" />}
-                      color="primary"
-                      variant="outlined"
-                    />
-                  )}
-                  {option.caution && !option.unavailable && (
-                    <Chip
-                      size="small"
-                      label={<FormattedMessage defaultMessage="Caution" />}
-                      color="warning"
-                      variant="outlined"
-                    />
-                  )}
-                </Stack>
-              </Stack>
+              <MicrophoneOptionContent option={option} />
             </MenuItem>
           ))}
         </Select>

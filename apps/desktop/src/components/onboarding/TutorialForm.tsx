@@ -31,6 +31,7 @@ import {
   getHotkeyCombosForAction,
 } from "../../utils/keyboard.utils";
 import { POLISHED_TONE_ID, EMAIL_TONE_ID } from "../../utils/tone.utils";
+import { captureUserSession } from "../../utils/user-session.utils";
 import { getMyUser } from "../../utils/user.utils";
 import { DictationInstruction } from "../common/DictationInstruction";
 import { HotkeyBadge } from "../common/HotkeyBadge";
@@ -495,6 +496,15 @@ const TutorialStepper = ({
   );
 };
 
+type SetTutorialTone = (
+  toneId: string,
+  force?: boolean,
+  shouldUpdate?: () => boolean,
+) => Promise<void>;
+
+// A later tutorial in this webview owns the shared checklist and override.
+let tutorialGeneration = 0;
+
 /**
  * Runs the onboarding submission once on mount and keeps the dictation
  * override enabled for the tutorial session, restoring it on unmount.
@@ -502,10 +512,14 @@ const TutorialStepper = ({
 const useTutorialSubmission = ({
   setChatTone,
 }: {
-  setChatTone: (toneId: string, force?: boolean) => Promise<void>;
+  setChatTone: SetTutorialTone;
 }) => {
   const submittedRef = useRef(false);
+  const submissionRef = useRef<ReturnType<typeof submitOnboarding> | null>(
+    null,
+  );
   const submissionCompleteRef = useRef(false);
+  const retryPending = useRef(false);
   const [initializing, setInitializing] = useState(true);
   const [submissionFailed, setSubmissionFailed] = useState(false);
   const setChatToneRef = useRef(setChatTone);
@@ -515,28 +529,46 @@ const useTutorialSubmission = ({
     setChatToneRef.current = setChatTone;
   }, [setChatTone]);
 
+  const getSubmission = async () => {
+    const submission = submissionRef.current ?? submitOnboarding();
+    submissionRef.current = submission;
+    try {
+      return await submission;
+    } finally {
+      if (submissionRef.current === submission) submissionRef.current = null;
+    }
+  };
+
   useEffect(() => {
     let cancelled = false;
+    const generation = ++tutorialGeneration;
+    const isCurrentSession = captureUserSession();
+    const ownsCleanup = () =>
+      generation === tutorialGeneration && isCurrentSession();
+    const isLive = () => !cancelled && ownsCleanup();
     const init = async () => {
+      if (!isLive()) return;
       setInitializing(true);
       setSubmissionFailed(false);
       try {
         if (!submittedRef.current) {
-          submittedRef.current = true;
-          const savedUser = await submitOnboarding();
+          // Strict Mode can remount this effect while the first request is in
+          // flight. Both effect generations await the same work, but only the
+          // live generation is allowed to update the tutorial.
+          const savedUser = await getSubmission();
+          if (!isLive()) return;
           if (savedUser === null) {
-            submittedRef.current = false;
-            if (cancelled) return;
             produceAppState((draft) => {
               draft.onboarding.dictationOverrideEnabled = true;
             });
             setSubmissionFailed(true);
             return;
           }
+          submittedRef.current = true;
           submissionCompleteRef.current = Boolean(savedUser);
         }
 
-        if (cancelled) return;
+        if (!isLive()) return;
 
         produceAppState((draft) => {
           draft.onboarding.dictationOverrideEnabled = true;
@@ -545,7 +577,7 @@ const useTutorialSubmission = ({
         // submitOnboarding wraps all awaits in its own try/catch and
         // returns null, so this branch is defensive. It still needs
         // to surface a retry path rather than leaving the page inert.
-        if (cancelled) return;
+        if (!isLive()) return;
         submittedRef.current = false;
         produceAppState((draft) => {
           draft.onboarding.dictationOverrideEnabled = true;
@@ -553,7 +585,7 @@ const useTutorialSubmission = ({
         setSubmissionFailed(true);
         showErrorSnackbar(error);
       } finally {
-        if (!cancelled) {
+        if (isLive()) {
           setInitializing(false);
         }
       }
@@ -563,15 +595,18 @@ const useTutorialSubmission = ({
     void init();
     return () => {
       cancelled = true;
-      // Unmount-only cleanup (tone reset, checklist clear, override
-      // disable). Not run on retry.
+      if (!ownsCleanup()) return;
       void setChatToneRef
-        .current(POLISHED_TONE_ID, submissionCompleteRef.current)
+        .current(POLISHED_TONE_ID, submissionCompleteRef.current, ownsCleanup)
         .catch((error) => {
-          console.error("Failed to reset tutorial tone on unmount", error);
+          if (ownsCleanup()) {
+            console.error("Failed to reset tutorial tone on unmount", error);
+          }
         })
         .finally(() => {
-          clearLocalStorageValue("mausvoice:checklist-writing-style");
+          if (ownsCleanup()) {
+            clearLocalStorageValue("mausvoice:checklist-writing-style");
+          }
         });
       produceAppState((draft) => {
         draft.onboarding.dictationOverrideEnabled = false;
@@ -583,9 +618,13 @@ const useTutorialSubmission = ({
   // cleanup does not run between retries and no tone/checklist/dictation
   // state is lost mid-session).
   const retry = useCallback(() => {
+    if (retryPending.current) return;
+    retryPending.current = true;
     submittedRef.current = false;
     submissionCompleteRef.current = false;
-    void initRef.current();
+    void initRef.current().finally(() => {
+      retryPending.current = false;
+    });
   }, []);
 
   return { initializing, submissionFailed, retry };
@@ -635,7 +674,7 @@ const useTutorialToneSync = ({
 }: {
   stepIndex: number;
   userExists: boolean;
-  setChatTone: (toneId: string, force?: boolean) => Promise<void>;
+  setChatTone: SetTutorialTone;
 }) => {
   const setChatToneRef = useRef(setChatTone);
 
@@ -643,40 +682,124 @@ const useTutorialToneSync = ({
     setChatToneRef.current = setChatTone;
   }, [setChatTone]);
 
-  // `setChatTone` rejects when the tone cannot be persisted: it awaits
-  // `setSelectedToneId`, which awaits `updateUser`, whose own catch rethrows after
-  // showing the snackbar. Nothing in between catches, so a failed tone write
-  // surfaces as a rejection on the promise this effect discards. The `userExists`
-  // guard does not help -- it gates this effect to `true`, which is the one case
-  // where `setChatTone` does not return early. The unmount cleanup earlier in this
-  // file already handles this for the same function; this effect did not, which is
-  // why a save failure during onboarding became an unhandled rejection rather than
-  // a logged one.
-  const reportToneFailure = (error: unknown): void => {
-    console.error("Failed to apply the tutorial writing style", error);
-  };
-
   useEffect(() => {
-    if (!userExists) {
-      return;
-    }
-    if (stepIndex === 0) {
-      // Notes step
-      void setChatToneRef.current(POLISHED_TONE_ID).catch(reportToneFailure);
-    } else if (stepIndex === 1) {
-      // Email step
-      void setChatToneRef.current(EMAIL_TONE_ID).catch(reportToneFailure);
-    }
+    if (!userExists || (stepIndex !== 0 && stepIndex !== 1)) return;
+    const isCurrentSession = captureUserSession();
+    const generation = tutorialGeneration;
+    let active = true;
+    const isCurrent = () =>
+      active && generation === tutorialGeneration && isCurrentSession();
+    const toneId = stepIndex === 0 ? POLISHED_TONE_ID : EMAIL_TONE_ID;
+    void setChatToneRef.current(toneId, false, isCurrent).catch((error) => {
+      if (isCurrent()) {
+        console.error("Failed to apply the tutorial writing style", error);
+      }
+    });
+    return () => {
+      active = false;
+    };
   }, [stepIndex, userExists]);
 };
 
-export const TutorialForm = () => {
-  const intl = useIntl();
-  const [stepIndex, setStepIndex] = useState(0);
-  const [dictationValue, setDictationValue] = useState("");
+/** Skip and Finish share one completion operation, even before React renders busy state. */
+const useTutorialFinish = () => {
   const [submitting, setSubmitting] = useState(false);
-  const [isFieldFocused, setIsFieldFocused] = useState(false);
-  const [hasStartedDictating, setHasStartedDictating] = useState(false);
+  const pending = useRef(false);
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  const handleFinish = async () => {
+    if (pending.current) return;
+    pending.current = true;
+    const isCurrentSession = captureUserSession();
+    const generation = tutorialGeneration;
+    const isCurrent = () =>
+      generation === tutorialGeneration && isCurrentSession();
+    setSubmitting(true);
+    try {
+      const savedUser = await finishOnboarding();
+      if (!savedUser || !isCurrent()) {
+        if (mounted.current) setSubmitting(false);
+        return;
+      }
+      showConfetti();
+    } catch (err) {
+      if (isCurrent()) showErrorSnackbar(err);
+      if (mounted.current) setSubmitting(false);
+    } finally {
+      pending.current = false;
+    }
+  };
+
+  return { submitting, handleFinish };
+};
+
+type TutorialPreviewProps = {
+  stepIndex: number;
+  fieldProps: Omit<TutorialFieldProps, "overlay">;
+  tooltips: React.ReactNode;
+  initializing: boolean;
+  submissionFailed: boolean;
+  retry: () => void;
+  onSelect: (index: number) => void;
+};
+
+const TutorialPreview = ({
+  stepIndex,
+  fieldProps,
+  tooltips,
+  initializing,
+  submissionFailed,
+  retry,
+  onSelect,
+}: TutorialPreviewProps) => {
+  const stepContent =
+    stepIndex === 0 ? (
+      <NotesStep {...fieldProps} overlay={tooltips} />
+    ) : (
+      <EmailStep {...fieldProps} overlay={tooltips} />
+    );
+
+  const rightContent = (
+    <Stack sx={{ width: "100%", maxWidth: 400, alignItems: "stretch" }}>
+      {!initializing && (
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4, ease: "easeOut" }}
+        >
+          {submissionFailed ? (
+            <Stack spacing={2} sx={{ alignItems: "center", py: 2 }}>
+              <Typography variant="body1" sx={{ textAlign: "center" }}>
+                <FormattedMessage defaultMessage="Something went wrong." />
+              </Typography>
+              <Button
+                variant="contained"
+                onClick={retry}
+                startIcon={<Refresh />}
+              >
+                <FormattedMessage defaultMessage="Try again" />
+              </Button>
+            </Stack>
+          ) : (
+            stepContent
+          )}
+          {!submissionFailed && (
+            <TutorialStepper stepIndex={stepIndex} onSelect={onSelect} />
+          )}
+        </motion.div>
+      )}
+    </Stack>
+  );
+  return rightContent;
+};
+
+/** The practice surface uses the current user's name and dictation hotkey. */
+const useTutorialIdentity = () => {
   const userExists = useAppStore((state) => Boolean(getMyUser(state)));
 
   const hotkeyCombos = useAppStore((state) =>
@@ -699,12 +822,29 @@ export const TutorialForm = () => {
   });
   const userName = onboardingFullName;
 
-  const setChatTone = async (toneId: string, force = false): Promise<void> => {
+  return { userExists, primaryHotkey, keysHeld, userName };
+};
+
+export const TutorialForm = () => {
+  const intl = useIntl();
+  const [stepIndex, setStepIndex] = useState(0);
+  const [dictationValue, setDictationValue] = useState("");
+  const { submitting, handleFinish } = useTutorialFinish();
+  const [isFieldFocused, setIsFieldFocused] = useState(false);
+  const [hasStartedDictating, setHasStartedDictating] = useState(false);
+  const { userExists, primaryHotkey, keysHeld, userName } =
+    useTutorialIdentity();
+
+  const setChatTone: SetTutorialTone = async (
+    toneId,
+    force = false,
+    shouldUpdate,
+  ) => {
     if (!userExists && !force) {
       return;
     }
 
-    await setSelectedToneId(toneId);
+    await setSelectedToneId(toneId, shouldUpdate);
   };
 
   const { initializing, submissionFailed, retry } = useTutorialSubmission({
@@ -725,21 +865,6 @@ export const TutorialForm = () => {
     event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
   ) => {
     setDictationValue(event.target.value);
-  };
-
-  const handleFinish = async () => {
-    setSubmitting(true);
-    try {
-      const savedUser = await finishOnboarding();
-      if (!savedUser) {
-        setSubmitting(false);
-        return;
-      }
-      showConfetti();
-    } catch (err) {
-      showErrorSnackbar(err);
-      setSubmitting(false);
-    }
   };
 
   const handleContinue = async () => {
@@ -820,53 +945,21 @@ ${userName}`;
     />
   );
 
-  const stepContent =
-    stepIndex === 0 ? (
-      <NotesStep {...fieldProps} overlay={tooltips} />
-    ) : (
-      <EmailStep {...fieldProps} overlay={tooltips} />
-    );
-
   const rightContent = (
-    <Stack sx={{ width: "100%", maxWidth: 400, alignItems: "stretch" }}>
-      {!initializing && (
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.4, ease: "easeOut" }}
-        >
-          {submissionFailed ? (
-            <Stack spacing={2} sx={{ alignItems: "center", py: 2 }}>
-              <Typography variant="body1" sx={{ textAlign: "center" }}>
-                <FormattedMessage defaultMessage="Something went wrong." />
-              </Typography>
-              <Button
-                variant="contained"
-                onClick={retry}
-                startIcon={<Refresh />}
-              >
-                <FormattedMessage defaultMessage="Try again" />
-              </Button>
-            </Stack>
-          ) : (
-            stepContent
-          )}
-          {!submissionFailed && (
-            <TutorialStepper
-              stepIndex={stepIndex}
-              onSelect={(index) => {
-                if (index === stepIndex) {
-                  return;
-                }
-                setStepIndex(index);
-                setDictationValue("");
-                setHasStartedDictating(false);
-              }}
-            />
-          )}
-        </motion.div>
-      )}
-    </Stack>
+    <TutorialPreview
+      stepIndex={stepIndex}
+      fieldProps={fieldProps}
+      tooltips={tooltips}
+      initializing={initializing}
+      submissionFailed={submissionFailed}
+      retry={retry}
+      onSelect={(index) => {
+        if (index === stepIndex) return;
+        setStepIndex(index);
+        setDictationValue("");
+        setHasStartedDictating(false);
+      }}
+    />
   );
 
   return (

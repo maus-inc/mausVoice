@@ -224,7 +224,7 @@ describe("partsForMessage", () => {
   it("returns nothing for an empty assistant stub with no activity", () => {
     expect(partsForMessage({ message: message() })).toEqual([]);
   });
-  it.each(["complete", "failed", "denied", "unknown"] as const)(
+  it.each(["complete", "failed", "denied", "pending", "unknown"] as const)(
     "uses stored %s status instead of a stale permission with the same tool id",
     (status) => {
       const parts = partsForMessage({

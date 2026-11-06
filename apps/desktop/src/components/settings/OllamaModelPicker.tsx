@@ -2,7 +2,7 @@ import ErrorOutlineIcon from "@mui/icons-material/ErrorOutlined";
 import { Box, CircularProgress, Typography } from "@mui/material";
 import { useEffect, useState } from "react";
 import { FormattedMessage } from "react-intl";
-import { OllamaRepo } from "../../repos/ollama.repo";
+import { OllamaRepo, type BaseOllamaRepo } from "../../repos/ollama.repo";
 import { OLLAMA_DEFAULT_URL } from "../../utils/ollama.utils";
 import { withTimeout } from "../../utils/timeout.utils";
 import { FreeSoloModelAutocomplete } from "./FreeSoloModelAutocomplete";
@@ -17,13 +17,6 @@ const PROBE_TIMEOUT_MS = 10_000;
 // OpenAICompatibleModelPicker instead (which carries the authorized
 // saved-endpoint fetch and /v1 handling). Keeping a dormant compat branch
 // here would probe the wrong transport if it were ever revived.
-type OllamaModelPickerProps = {
-  baseUrl: string | null;
-  apiKey?: string | null;
-  selectedModel: string | null;
-  onModelSelect: (model: string | null) => void;
-  disabled?: boolean;
-};
 
 export const OllamaModelPicker = ({
   baseUrl,
@@ -31,7 +24,10 @@ export const OllamaModelPicker = ({
   selectedModel,
   onModelSelect,
   disabled = false,
-}: OllamaModelPickerProps) => {
+}: {
+  baseUrl: string | null;
+  apiKey?: string | null;
+} & Omit<Parameters<typeof FreeSoloModelAutocomplete>[0], "models">) => {
   const [models, setModels] = useState<string[]>([]);
   const [isAvailable, setIsAvailable] = useState<boolean | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -68,6 +64,18 @@ export const OllamaModelPicker = ({
     setIsAvailable(null);
     setModels([]);
 
+    const createProbeRepo = (): BaseOllamaRepo =>
+      new OllamaRepo(effectiveUrl, apiKey || undefined);
+
+    const handleProbeFailure = () => {
+      if (cancelled) return;
+      // Provider errors can contain arbitrary credentials or endpoint details.
+      console.error("Failed to fetch Ollama models");
+      setIsAvailable(false);
+      setModels([]);
+      timer = setTimeout(() => void run(), 3000);
+    };
+
     const run = async () => {
       if (cancelled || inFlight) return;
       inFlight = true;
@@ -76,8 +84,8 @@ export const OllamaModelPicker = ({
       const controller = new AbortController();
       activeController = controller;
       try {
-        const repo = new OllamaRepo(effectiveUrl, apiKey || undefined);
-        // Bounded, because `OllamaRepo` has no timeout and no AbortSignal. A host that accepts
+        const repo = createProbeRepo();
+        // Bounded, because `OllamaRepo` has no built-in timeout. A host that accepts
         // the connection and then stalls -- a wrong address behind a firewall that DROPs, a
         // tunnel that never answers -- left the `await` pending forever: `inFlight` stayed true
         // so no retry was armed, `finally` never ran, and the probe could not be recovered
@@ -105,13 +113,8 @@ export const OllamaModelPicker = ({
         }
         setModels([]);
         timer = setTimeout(() => void run(), 3000);
-      } catch (error) {
-        console.error("Failed to fetch Ollama models", error);
-        if (!cancelled) {
-          setIsAvailable(false);
-          setModels([]);
-          timer = setTimeout(() => void run(), 3000);
-        }
+      } catch {
+        handleProbeFailure();
       } finally {
         // Only clear it if it is still this run's, so a retired run cannot disown a
         // newer run's controller.

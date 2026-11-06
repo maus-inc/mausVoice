@@ -4,9 +4,9 @@ import type { Hotkey } from "@maus-inc/types";
 import type { ReactNode } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { showErrorSnackbar } from "../../actions/app.actions";
+import { saveHotkey, savePrimaryHotkey } from "../../actions/hotkey.actions";
 import { getHotkeyRepo } from "../../repos";
 import { produceAppState, useAppStore } from "../../store";
-import { registerHotkeys } from "../../utils/app.utils";
 import { createId } from "../../utils/id.utils";
 import {
   getDefaultHotkeyCombosForAction,
@@ -33,29 +33,14 @@ const isSubsetOrEqualCombo = (a: string[], b: string[]) => {
   return a.every((k) => bSet.has(k.toLowerCase()));
 };
 
-const HotkeyControls = ({
-  primaryValue,
-  primaryHotkey,
-  additionalHotkeys,
-  hasEnabledToggle,
-  isPrimaryUsingDefault,
-  defaultCombos,
-  hasConflict,
-  hotkeysCount,
-  buttonLabel,
-  buttonSize,
-  onChangePrimary,
-  onUpdateHotkey,
-  onDeleteHotkey,
-  onRevertPrimary,
-  onDisable,
-  onAdd,
-}: {
-  primaryValue: string[];
-  primaryHotkey: Hotkey | undefined;
+type HotkeyControlsProps = {
+  primary: {
+    value: string[];
+    hotkey: Hotkey | undefined;
+    isUsingDefault: boolean;
+  };
   additionalHotkeys: Hotkey[];
   hasEnabledToggle: boolean;
-  isPrimaryUsingDefault: boolean;
   defaultCombos: string[][];
   hasConflict: boolean;
   hotkeysCount: number;
@@ -67,8 +52,125 @@ const HotkeyControls = ({
   onRevertPrimary: () => void;
   onDisable: () => void;
   onAdd: () => void;
+};
+
+const PrimaryHotkeyAction = ({
+  hasEnabledToggle,
+  primaryHotkey,
+  defaultCombos,
+  isPrimaryUsingDefault,
+  onDisable,
+  onDeleteHotkey,
+  onRevertPrimary,
+}: {
+  hasEnabledToggle: boolean;
+  primaryHotkey: Hotkey | undefined;
+  defaultCombos: string[][];
+  isPrimaryUsingDefault: boolean;
+  onDisable: () => void;
+  onDeleteHotkey: (id: string) => void;
+  onRevertPrimary: () => void;
 }) => {
   const intl = useIntl();
+  return (
+    <>
+      {hasEnabledToggle ? (
+        <IconButton
+          size="small"
+          onClick={onDisable}
+          aria-label={intl.formatMessage({
+            defaultMessage: "Disable hotkey",
+          })}
+        >
+          <CancelOutlined color="disabled" />
+        </IconButton>
+      ) : (
+        <>
+          {primaryHotkey && defaultCombos.length === 0 && (
+            <IconButton
+              size="small"
+              aria-label={intl.formatMessage({
+                defaultMessage: "Delete hotkey",
+              })}
+              onClick={() => onDeleteHotkey(primaryHotkey.id)}
+            >
+              <Close color="disabled" />
+            </IconButton>
+          )}
+          {primaryHotkey &&
+            defaultCombos.length > 0 &&
+            !isPrimaryUsingDefault && (
+              <IconButton
+                size="small"
+                aria-label={intl.formatMessage({
+                  defaultMessage: "Revert to default hotkey",
+                })}
+                onClick={onRevertPrimary}
+              >
+                <RestartAlt color="disabled" />
+              </IconButton>
+            )}
+        </>
+      )}
+    </>
+  );
+};
+
+const AdditionalHotkeys = ({
+  additionalHotkeys,
+  onUpdateHotkey,
+  onDeleteHotkey,
+}: Pick<
+  HotkeyControlsProps,
+  "additionalHotkeys" | "onUpdateHotkey" | "onDeleteHotkey"
+>) => {
+  const intl = useIntl();
+  return (
+    <>
+      {additionalHotkeys.map((hotkey) => (
+        <Stack
+          key={hotkey.id}
+          direction="row"
+          spacing={1}
+          sx={{
+            alignItems: "center",
+          }}
+        >
+          <HotKey
+            value={hotkey.keys}
+            onChange={(keys) => onUpdateHotkey(hotkey.id, keys)}
+          />
+          <IconButton
+            size="small"
+            aria-label={intl.formatMessage({
+              defaultMessage: "Delete hotkey",
+            })}
+            onClick={() => onDeleteHotkey(hotkey.id)}
+          >
+            <Close color="disabled" />
+          </IconButton>
+        </Stack>
+      ))}
+    </>
+  );
+};
+
+const HotkeyControls = ({
+  primary,
+  additionalHotkeys,
+  hasEnabledToggle,
+  defaultCombos,
+  hasConflict,
+  hotkeysCount,
+  buttonLabel,
+  buttonSize,
+  onChangePrimary,
+  onUpdateHotkey,
+  onDeleteHotkey,
+  onRevertPrimary,
+  onDisable,
+  onAdd,
+}: HotkeyControlsProps) => {
   return (
     <Stack
       spacing={1}
@@ -83,71 +185,24 @@ const HotkeyControls = ({
           alignItems: "center",
         }}
       >
-        <HotKey value={primaryValue} onChange={onChangePrimary} />
-        {hasEnabledToggle ? (
-          <IconButton
-            size="small"
-            onClick={onDisable}
-            aria-label={intl.formatMessage({
-              defaultMessage: "Disable hotkey",
-            })}
-          >
-            <CancelOutlined color="disabled" />
-          </IconButton>
-        ) : (
-          <>
-            {primaryHotkey && defaultCombos.length === 0 && (
-              <IconButton
-                size="small"
-                aria-label={intl.formatMessage({
-                  defaultMessage: "Delete hotkey",
-                })}
-                onClick={() => onDeleteHotkey(primaryHotkey.id)}
-              >
-                <Close color="disabled" />
-              </IconButton>
-            )}
-            {primaryHotkey &&
-              defaultCombos.length > 0 &&
-              !isPrimaryUsingDefault && (
-                <IconButton
-                  size="small"
-                  aria-label={intl.formatMessage({
-                    defaultMessage: "Revert to default hotkey",
-                  })}
-                  onClick={onRevertPrimary}
-                >
-                  <RestartAlt color="disabled" />
-                </IconButton>
-              )}
-          </>
-        )}
+        <HotKey value={primary.value} onChange={onChangePrimary} />
+        <PrimaryHotkeyAction
+          hasEnabledToggle={hasEnabledToggle}
+          primaryHotkey={primary.hotkey}
+          defaultCombos={defaultCombos}
+          isPrimaryUsingDefault={primary.isUsingDefault}
+          onDisable={onDisable}
+          onDeleteHotkey={onDeleteHotkey}
+          onRevertPrimary={onRevertPrimary}
+        />
       </Stack>
-      {!hasEnabledToggle &&
-        additionalHotkeys.map((hotkey) => (
-          <Stack
-            key={hotkey.id}
-            direction="row"
-            spacing={1}
-            sx={{
-              alignItems: "center",
-            }}
-          >
-            <HotKey
-              value={hotkey.keys}
-              onChange={(keys) => onUpdateHotkey(hotkey.id, keys)}
-            />
-            <IconButton
-              size="small"
-              aria-label={intl.formatMessage({
-                defaultMessage: "Delete hotkey",
-              })}
-              onClick={() => onDeleteHotkey(hotkey.id)}
-            >
-              <Close color="disabled" />
-            </IconButton>
-          </Stack>
-        ))}
+      {!hasEnabledToggle && (
+        <AdditionalHotkeys
+          additionalHotkeys={additionalHotkeys}
+          onUpdateHotkey={onUpdateHotkey}
+          onDeleteHotkey={onDeleteHotkey}
+        />
+      )}
       {hasConflict && (
         <Typography
           variant="caption"
@@ -235,20 +290,7 @@ export const HotkeySetting = ({
       keys: keys ?? [],
     };
 
-    try {
-      produceAppState((draft) => {
-        registerHotkeys(draft, [newValue]);
-        if (!draft.settings.hotkeyIds.includes(newValue.id)) {
-          draft.settings.hotkeyIds.push(newValue.id);
-        }
-        draft.settings.hotkeysStatus = "success";
-      });
-      await getHotkeyRepo().saveHotkey(newValue);
-      await syncHotkeyCombosToNative();
-    } catch (error) {
-      console.error("Failed to save hotkey", error);
-      showErrorSnackbar("Failed to save hotkey. Please try again.");
-    }
+    await saveHotkey(newValue);
   };
 
   const handleDeleteHotkey = async (id: string) => {
@@ -276,11 +318,7 @@ export const HotkeySetting = ({
     defaultCombos.some((combo) => areCombosEqual(combo, primaryHotkey.keys));
 
   const handlePrimaryChange = (keys: string[]) => {
-    if (primaryHotkey) {
-      void saveKey(primaryHotkey.id, keys);
-      return;
-    }
-    void saveKey(undefined, keys);
+    void savePrimaryHotkey(actionName, keys);
   };
 
   const handleRevertPrimary = () => {
@@ -303,7 +341,7 @@ export const HotkeySetting = ({
 
     // When enabling, set up a default hotkey if none exists
     if (newEnabled && !primaryHotkey && defaultCombos.length > 0) {
-      void saveKey(undefined, defaultCombos[0]);
+      void savePrimaryHotkey(actionName, defaultCombos[0]);
     }
   };
 
@@ -357,11 +395,13 @@ export const HotkeySetting = ({
       </Stack>
       {isEnabled && (
         <HotkeyControls
-          primaryValue={primaryValue}
-          primaryHotkey={primaryHotkey}
+          primary={{
+            value: primaryValue,
+            hotkey: primaryHotkey,
+            isUsingDefault: isPrimaryUsingDefault,
+          }}
           additionalHotkeys={additionalHotkeys}
           hasEnabledToggle={hasEnabledToggle}
-          isPrimaryUsingDefault={isPrimaryUsingDefault}
           defaultCombos={defaultCombos}
           hasConflict={hasConflict}
           hotkeysCount={hotkeys.length}

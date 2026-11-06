@@ -117,7 +117,7 @@ export const analyzeSilence = (
  * `packages/rust_transcription`), which is set low enough to keep a soft
  * "yes" at the end of a long pause. Room tone sits well below it.
  */
-export const SPEECH_FLOOR_RMS = 0.0025;
+const SPEECH_FLOOR_RMS = 0.0025;
 
 /** True when some 300 ms window reaches the speech floor. */
 export const hasSpeechEnergy = (

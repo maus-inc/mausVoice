@@ -1,3 +1,9 @@
+import { discardResponseBody } from "@maus-inc/utilities";
+import {
+  fetchModelResponse,
+  parseModelResponse,
+} from "../utils/model-discovery.utils";
+import { resolveServiceUrl } from "../utils/service-url.utils";
 import {
   ASSEMBLYAI_TRANSCRIPTION_MODELS,
   AZURE_OPENAI_MODELS,
@@ -80,11 +86,8 @@ const logModelDiscoveryResponseFailure = (
   provider: string,
   response: Response,
 ): void => {
-  const statusText = response.statusText.trim();
-  const reason = [`HTTP ${response.status}`, statusText]
-    .filter(Boolean)
-    .join(" ");
-  logModelDiscoveryFailure(provider, reason);
+  // Reason phrases are controlled by the server and may echo request data.
+  logModelDiscoveryFailure(provider, `HTTP ${response.status}`);
 };
 
 // Shared tail of every OpenAI-shaped /models fetch: log a non-OK response,
@@ -94,10 +97,14 @@ const readModelListResponse = async (
   response: Response,
 ): Promise<string[]> => {
   if (!response.ok) {
+    discardResponseBody(response);
     logModelDiscoveryResponseFailure(provider, response);
     return [];
   }
-  const payload = (await response.json()) as OpenAIListResponse;
+  const payload = await parseModelResponse<OpenAIListResponse>(
+    provider,
+    response,
+  );
   return (payload.data ?? [])
     .map((m) => (m.id ?? "").trim())
     .filter(Boolean)
@@ -390,6 +397,7 @@ export class GeminiModelProviderRepo extends BaseModelProviderRepo {
         { headers: { "x-goog-api-key": options.apiKey } },
       );
       if (!response.ok) {
+        discardResponseBody(response);
         logModelDiscoveryResponseFailure("Gemini", response);
         return [];
       }
@@ -447,11 +455,11 @@ export class AzureModelProviderRepo extends BaseModelProviderRepo {
   private async fetchModels(options: FetchModelsOptions): Promise<string[]> {
     if (!options.apiKey || !options.baseUrl) return [];
     const baseUrl = options.baseUrl.replace(/\/$/, "");
-    const response = await fetch(
+    const response = await fetchModelResponse(
+      "Azure OpenAI",
+      fetch,
       `${baseUrl}/openai/models?api-version=2024-10-21`,
-      {
-        headers: { "api-key": options.apiKey },
-      },
+      { headers: { "api-key": options.apiKey } },
     );
     return readModelListResponse("Azure OpenAI", response);
   }
@@ -482,16 +490,18 @@ export class OllamaModelProviderRepo extends BaseModelProviderRepo {
 
   private async fetchModels(options: FetchModelsOptions): Promise<string[]> {
     if (!options.baseUrl) return [];
-    const response = await fetch(new URL("/api/tags", options.baseUrl).href, {
+    const url = resolveServiceUrl(options.baseUrl, "/api/tags");
+    const response = await fetchModelResponse("Ollama", fetch, url, {
       headers: getOllamaHeaders(options.apiKey),
     });
     if (!response.ok) {
+      discardResponseBody(response);
       logModelDiscoveryResponseFailure("Ollama", response);
       return [];
     }
-    const payload = (await response.json()) as {
+    const payload = await parseModelResponse<{
       models?: Array<{ name?: string }>;
-    };
+    }>("Ollama", response);
     return (payload.models ?? [])
       .map((m) => (m.name ?? "").trim())
       .filter(Boolean);
@@ -522,7 +532,9 @@ export class OpenAICompatibleModelProviderRepo extends BaseModelProviderRepo {
       options.includeV1Path,
     );
     const customFetch = createOpenAICompatibleFetch(options.apiKeyId);
-    const response = await customFetch(
+    const response = await fetchModelResponse(
+      "OpenAI-compatible",
+      customFetch,
       appendOpenAICompatiblePath(apiBaseUrl, "models"),
       { headers: getOllamaHeaders(options.apiKey) },
     );
@@ -545,7 +557,8 @@ export class SpeachesModelProviderRepo extends BaseModelProviderRepo {
 
   async getTranscriptionModels(options: FetchModelsOptions): Promise<string[]> {
     if (!options.baseUrl) return [];
-    const response = await fetch(new URL("/v1/models", options.baseUrl).href);
+    const url = resolveServiceUrl(options.baseUrl, "/v1/models");
+    const response = await fetchModelResponse("Speaches", fetch, url);
     return readModelListResponse("Speaches", response);
   }
 }

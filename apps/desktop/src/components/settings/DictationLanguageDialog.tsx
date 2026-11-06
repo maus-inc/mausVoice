@@ -14,30 +14,16 @@ import {
   Stack,
   Typography,
 } from "@mui/material";
-import type { Hotkey } from "@maus-inc/types";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import { FormattedMessage } from "react-intl";
-import { showErrorSnackbar } from "../../actions/app.actions";
-import { loadTones } from "../../actions/tone.actions";
-import { setPreferredLanguage } from "../../actions/user.actions";
-import { getHotkeyRepo } from "../../repos";
 import { produceAppState, useAppStore } from "../../store";
-import { registerHotkeys } from "../../utils/app.utils";
 import { createId } from "../../utils/id.utils";
-import {
-  ADDITIONAL_LANGUAGE_HOTKEY_PREFIX,
-  DICTATE_HOTKEY,
-  getAdditionalLanguageActionName,
-  getAdditionalLanguageEntries,
-  getHotkeyCombosForAction,
-  syncHotkeyCombosToNative,
-} from "../../utils/keyboard.utils";
 import {
   DICTATION_LANGUAGE_OPTIONS,
   KEYBOARD_LAYOUT_LANGUAGE,
 } from "../../utils/language.utils";
-import { getDetectedSystemLocale, getMyUser } from "../../utils/user.utils";
 import { HotKey } from "../common/HotKey";
+import { useDictationLanguageDraft } from "./useDictationLanguageDraft";
 
 type DictationLanguageRowProps = {
   language: string;
@@ -101,49 +87,24 @@ const DictationLanguageRow = ({
   );
 };
 
-type LanguageRow = {
-  rowId: string;
-  language: string;
-  hotkeyKeys: string[];
-};
-
 export const DictationLanguageDialog = () => {
   const open = useAppStore(
     (state) => state.settings.dictationLanguageDialogOpen,
   );
 
-  const storePrimaryLanguage = useAppStore((state) => {
-    const user = getMyUser(state);
-    return user?.preferredLanguage ?? getDetectedSystemLocale();
-  });
-
-  const storePrimaryHotkeyKeys = useAppStore((state) => {
-    const combos = getHotkeyCombosForAction(state, DICTATE_HOTKEY);
-    return combos[0] ?? [];
-  });
-
-  const storeAdditionalEntries = useAppStore(getAdditionalLanguageEntries);
-
-  const [rows, setRows] = useState<LanguageRow[]>([]);
-
-  useEffect(() => {
-    if (!open) return;
-    setRows([
-      {
-        rowId: createId(),
-        language: storePrimaryLanguage,
-        hotkeyKeys: storePrimaryHotkeyKeys,
-      },
-      ...storeAdditionalEntries.map((entry) => ({
-        rowId: createId(),
-        language: entry.language,
-        hotkeyKeys: entry.hotkeyCombos[0] ?? [],
-      })),
-    ]);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
+  const {
+    rows,
+    setRows,
+    ready,
+    loadFailed,
+    setAttempt,
+    isSaving,
+    saving,
+    handleSave,
+  } = useDictationLanguageDraft(open);
 
   const handleClose = () => {
+    if (saving.current) return;
     produceAppState((draft) => {
       draft.settings.dictationLanguageDialogOpen = false;
     });
@@ -180,69 +141,6 @@ export const DictationLanguageDialog = () => {
     ]);
   };
 
-  const handleSave = async () => {
-    try {
-      const [primaryRow, ...additionalRows] = rows;
-
-      if (primaryRow.language !== storePrimaryLanguage) {
-        await setPreferredLanguage(primaryRow.language);
-        await loadTones();
-      }
-
-      const state = useAppStore.getState();
-      const existingPrimaryHotkey = Object.values(state.hotkeyById).find(
-        (h) => h.actionName === DICTATE_HOTKEY,
-      );
-      const primaryHotkey: Hotkey = {
-        id: existingPrimaryHotkey?.id ?? createId(),
-        actionName: DICTATE_HOTKEY,
-        keys: primaryRow.hotkeyKeys,
-      };
-
-      const existingAdditionalIds = Object.values(state.hotkeyById)
-        .filter((h) =>
-          h.actionName.startsWith(ADDITIONAL_LANGUAGE_HOTKEY_PREFIX),
-        )
-        .map((h) => h.id);
-
-      const newAdditionalHotkeys: Hotkey[] = additionalRows.map((row) => ({
-        id: createId(),
-        actionName: getAdditionalLanguageActionName(row.language),
-        keys: row.hotkeyKeys,
-      }));
-
-      produceAppState((draft) => {
-        for (const id of existingAdditionalIds) {
-          delete draft.hotkeyById[id];
-          draft.settings.hotkeyIds = draft.settings.hotkeyIds.filter(
-            (hid) => hid !== id,
-          );
-        }
-
-        registerHotkeys(draft, [primaryHotkey, ...newAdditionalHotkeys]);
-        for (const hotkey of [primaryHotkey, ...newAdditionalHotkeys]) {
-          if (!draft.settings.hotkeyIds.includes(hotkey.id)) {
-            draft.settings.hotkeyIds.push(hotkey.id);
-          }
-        }
-      });
-
-      const repo = getHotkeyRepo();
-      for (const id of existingAdditionalIds) {
-        await repo.deleteHotkey(id);
-      }
-      await repo.saveHotkey(primaryHotkey);
-      for (const hotkey of newAdditionalHotkeys) {
-        await repo.saveHotkey(hotkey);
-      }
-      await syncHotkeyCombosToNative();
-    } catch (error) {
-      showErrorSnackbar(error);
-    }
-
-    handleClose();
-  };
-
   const hasHotkeyConflict = useMemo(() => {
     const filled = rows.filter((r) => r.hotkeyKeys.length > 0);
     for (let i = 0; i < filled.length; i++) {
@@ -275,7 +173,17 @@ export const DictationLanguageDialog = () => {
         </Typography>
       </DialogTitle>
       <DialogContent dividers sx={{ width: 480 }}>
-        <Stack spacing={1}>
+        <Stack spacing={1} inert={isSaving}>
+          {!ready &&
+            (loadFailed ? (
+              <Button onClick={() => setAttempt((value) => value + 1)}>
+                <FormattedMessage defaultMessage="Retry" />
+              </Button>
+            ) : (
+              <Typography>
+                <FormattedMessage defaultMessage="Loading" />
+              </Typography>
+            ))}
           {hasHotkeyConflict && (
             <Alert severity="warning" variant="outlined">
               <FormattedMessage defaultMessage="Some hotkeys share overlapping keys, which may cause conflicts." />
@@ -297,6 +205,7 @@ export const DictationLanguageDialog = () => {
             startIcon={<Plus size={16} strokeWidth={1.9} />}
             size="small"
             onClick={handleAddLanguage}
+            disabled={!ready || isSaving}
             sx={{ alignSelf: "flex-end", py: 0.5 }}
           >
             <Typography
@@ -311,10 +220,14 @@ export const DictationLanguageDialog = () => {
         </Stack>
       </DialogContent>
       <DialogActions>
-        <Button onClick={handleClose}>
+        <Button onClick={handleClose} disabled={isSaving}>
           <FormattedMessage defaultMessage="Cancel" />
         </Button>
-        <Button variant="contained" onClick={() => void handleSave()}>
+        <Button
+          variant="contained"
+          onClick={() => void handleSave()}
+          disabled={!ready || isSaving}
+        >
           <FormattedMessage defaultMessage="Save" />
         </Button>
       </DialogActions>

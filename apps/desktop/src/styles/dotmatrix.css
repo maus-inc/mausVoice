@@ -81,8 +81,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .mv-dmx-dot {
-    animation: none !important;
+  .mv-dmx .mv-dmx-dot {
+    animation: none;
     opacity: 0.55;
   }
   .mv-dmx-dot.mv-dmx-off {

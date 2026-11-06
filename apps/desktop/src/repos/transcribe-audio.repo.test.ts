@@ -11,16 +11,21 @@ vi.mock("../utils/openai-compatible-transcribe.utils", () => ({
     transcribeUtilMock(...args),
 }));
 import {
+  AldeaTranscribeAudioRepo,
   AssemblyAITranscribeAudioRepo,
+  AzureTranscribeAudioRepo,
   BaseTranscribeAudioRepo,
   DeepgramTranscribeAudioRepo,
   ElevenLabsTranscribeAudioRepo,
   GladiaTranscribeAudioRepo,
+  GeminiTranscribeAudioRepo,
   GroqTranscribeAudioRepo,
   LocalTranscribeAudioRepo,
   OpenAICompatibleTranscribeAudioRepo,
   OpenAITranscribeAudioRepo,
   OpenRouterTranscribeAudioRepo,
+  SpeachesTranscribeAudioRepo,
+  XaiTranscribeAudioRepo,
   TranscribeAudioOutput,
   TranscribeSegmentInput,
 } from "./transcribe-audio.repo";
@@ -311,6 +316,68 @@ describe("BaseTranscribeAudioRepo", () => {
     });
   });
 
+  describe("chunk result aggregation", () => {
+    class ChunkResultsRepo extends BaseTranscribeAudioRepo {
+      private index = 0;
+      constructor(private readonly results: TranscribeAudioOutput[]) {
+        super();
+      }
+      protected getSegmentDurationSec() {
+        return 1;
+      }
+      protected getOverlapDurationSec() {
+        return 0;
+      }
+      protected async transcribeSegment(): Promise<TranscribeAudioOutput> {
+        const result = this.results[this.index++];
+        if (!result) throw new Error("Unexpected segment");
+        return result;
+      }
+    }
+
+    it("merges text, picks the first metadata and deduplicates warnings in order", async () => {
+      const repo = new ChunkResultsRepo([
+        { text: "Alpha.", metadata: null, warnings: ["first", "shared"] },
+        {
+          text: "Beta.",
+          metadata: { transcriptionMode: "local", modelSize: "chosen" },
+          warnings: ["shared", "second"],
+        },
+        {
+          text: "Gamma.",
+          metadata: { transcriptionMode: "api", modelSize: "later" },
+          warnings: ["first"],
+        },
+      ]);
+      const result = await repo.transcribeAudio({
+        samples: createSamples(3, 1000),
+        sampleRate: 1000,
+        hallucinationFilterEnabled: false,
+      });
+      expect(result.text).toBe("Alpha. Beta. Gamma.");
+      expect(result.metadata).toEqual({
+        transcriptionMode: "local",
+        modelSize: "chosen",
+      });
+      expect(result.warnings).toEqual(["first", "shared", "second"]);
+      expect(result.segments).toBeUndefined();
+    });
+
+    it("provides the repo mode when every chunk has null metadata", async () => {
+      const repo = new ChunkResultsRepo([
+        { text: "Alpha.", metadata: null },
+        { text: "Beta.", metadata: null },
+      ]);
+      const result = await repo.transcribeAudio({
+        samples: createSamples(2, 1000),
+        sampleRate: 1000,
+        hallucinationFilterEnabled: false,
+      });
+      expect(result.metadata).toEqual({ transcriptionMode: "api" });
+      expect(result.warnings).toEqual([]);
+    });
+  });
+
   describe("batching behavior", () => {
     it("should respect batch size for concurrent calls", async () => {
       const repo = new MockTranscribeAudioRepo(10, 2, 2); // batch size = 2
@@ -465,6 +532,41 @@ describe("BaseTranscribeAudioRepo", () => {
 });
 
 describe("DeepgramTranscribeAudioRepo", () => {
+  it("cancels a stalled native response body when transcription is aborted", async () => {
+    const controller = new AbortController();
+    const cancel = vi.fn();
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    const response = new Response(
+      new ReadableStream({
+        pull() {
+          markStarted();
+          return new Promise(() => {});
+        },
+        cancel,
+      }),
+    );
+    const transport = vi.fn<typeof fetch>(async () => response);
+    const repo = new DeepgramTranscribeAudioRepo("key", null, transport);
+    const result = repo.transcribeAudio({
+      samples: createSamples(1, 16000),
+      sampleRate: 16000,
+      signal: controller.signal,
+    });
+    const outcome = result.then(
+      () => "resolved",
+      () => "rejected",
+    );
+    await started;
+    await vi.waitFor(() => expect(response.body?.locked).toBe(true));
+    controller.abort("cancelled");
+    await expect(outcome).resolves.toBe("rejected");
+    await vi.waitFor(() => expect(cancel).toHaveBeenCalledOnce());
+    expect(transport.mock.calls[0][1]?.signal).toBe(controller.signal);
+  });
+
   it("requests Deepgram language detection for automatic language", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
@@ -725,6 +827,45 @@ describe("AssemblyAITranscribeAudioRepo", () => {
       transcriptionMode: "api",
     });
   });
+});
+
+describe("transcription provider factories", () => {
+  it.each([
+    ["openai", OpenAITranscribeAudioRepo],
+    ["assemblyai", AssemblyAITranscribeAudioRepo],
+    ["aldea", AldeaTranscribeAudioRepo],
+    ["azure", AzureTranscribeAudioRepo],
+    ["gemini", GeminiTranscribeAudioRepo],
+    ["openai-compatible", OpenAICompatibleTranscribeAudioRepo],
+    ["speaches", SpeachesTranscribeAudioRepo],
+    ["elevenlabs", ElevenLabsTranscribeAudioRepo],
+    ["deepgram", DeepgramTranscribeAudioRepo],
+    ["gladia", GladiaTranscribeAudioRepo],
+    ["xai", XaiTranscribeAudioRepo],
+    ["groq", GroqTranscribeAudioRepo],
+    ["openrouter", OpenRouterTranscribeAudioRepo],
+  ] as const)(
+    "selects the %s repository for its API key",
+    (provider, expected) => {
+      const state = structuredClone(INITIAL_APP_STATE);
+      state.settings.aiTranscription.mode = "api";
+      state.settings.aiTranscription.selectedApiKeyId = "selected";
+      state.apiKeyById.selected = {
+        id: "selected",
+        name: provider,
+        provider,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        keyFull: "secret",
+        baseUrl: "https://example.com",
+        azureRegion: "westus",
+        transcriptionModel: "model",
+      };
+      setAppState(state, true);
+      const result = getTranscribeAudioRepo();
+      expect(result.repo).toBeInstanceOf(expected);
+      expect(result.apiKeyId).toBe("selected");
+    },
+  );
 });
 
 describe("provider capability and transcription dispatch agreement", () => {
@@ -1180,6 +1321,32 @@ describe("every transcription provider goes through the app's fetch", () => {
 });
 
 describe("provider requests honor the abort signal", () => {
+  it("passes native transports and signals to ElevenLabs and xAI", async () => {
+    const { secureFetch } = await import("../utils/secure-fetch.utils");
+    const eleven = vi
+      .spyOn(voiceAi, "elevenlabsTranscribeAudio")
+      .mockResolvedValue({ text: "hello", wordsUsed: 1 });
+    const xai = vi
+      .spyOn(voiceAi, "xaiTranscribeAudio")
+      .mockResolvedValue({ text: "hello", wordsUsed: 1 });
+    const controller = new AbortController();
+    const input = {
+      samples: createSamples(1, 16000),
+      sampleRate: 16000,
+      signal: controller.signal,
+    };
+    await new ElevenLabsTranscribeAudioRepo("key").transcribeAudio(input);
+    await new XaiTranscribeAudioRepo("key").transcribeAudio(input);
+    expect(eleven.mock.calls[0][0]).toMatchObject({
+      customFetch: secureFetch,
+      signal: controller.signal,
+    });
+    expect(xai.mock.calls[0][0]).toMatchObject({
+      customFetch: secureFetch,
+      signal: controller.signal,
+    });
+  });
+
   it("binds the caller's signal into every provider fetch", async () => {
     const baseFetch = vi.fn<typeof fetch>(() =>
       Promise.resolve(new Response("{}")),
@@ -1243,10 +1410,10 @@ describe("Gemini is handed the abort signal, not just a wrapped fetch", () => {
 
     const args = geminiMock.mock.calls[0]?.[0];
     expect(args?.signal).toBe(controller.signal);
-    // The wrapped fetch is still there and still separate: it is what binds the
-    // abort to the SDK-style fetches inside the util, so removing it would regress
-    // those even with the signal threaded through.
-    expect(typeof args?.customFetch).toBe("function");
+    // The provider itself passes the signal to every request; no body-reader
+    // wrapper should interfere with native stream cancellation.
+    const { secureFetch } = await import("../utils/secure-fetch.utils");
+    expect(args?.customFetch).toBe(secureFetch);
   });
 });
 
@@ -1372,6 +1539,27 @@ describe("GeminiTranscribeAudioRepo fallback", () => {
     expect(geminiMock).toHaveBeenCalledTimes(1);
     const model = geminiMock.mock.calls[0]?.[0]?.model;
     expect(model).not.toContain("-transcribe");
+  });
+
+  it("does not start a fallback if the caller aborts before a model-access error arrives", async () => {
+    const controller = new AbortController();
+    const accessError = Object.assign(new Error("forbidden"), { status: 403 });
+    const geminiMock = vi
+      .spyOn(voiceAi, "geminiTranscribeAudio")
+      .mockImplementationOnce(async () => {
+        controller.abort();
+        throw accessError;
+      })
+      .mockResolvedValue({ text: "fallback", wordsUsed: 1 });
+    const repo = new GeminiTranscribeAudioRepo("key", "gemini-3.5-transcribe");
+    await expect(
+      repo.transcribeAudio({
+        samples: createSamples(1, 16000),
+        sampleRate: 16000,
+        signal: controller.signal,
+      }),
+    ).rejects.toBe(accessError);
+    expect(geminiMock).toHaveBeenCalledTimes(1);
   });
 
   it("does not fallback for non-transcribe model 404", async () => {

@@ -1,15 +1,11 @@
 import { Tooltip } from "@mui/material";
 import type { TooltipProps } from "@mui/material";
 
-interface ConditionalTooltipProps extends TooltipProps {
-  enabled?: boolean;
-}
-
 export const ConditionalTooltip = ({
   enabled = true,
   children,
   ...props
-}: ConditionalTooltipProps) => {
+}: TooltipProps & { enabled?: boolean }) => {
   if (!enabled) {
     return <>{children}</>;
   }

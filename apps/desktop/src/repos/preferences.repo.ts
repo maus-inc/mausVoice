@@ -19,7 +19,8 @@ import { orFalse, orNull, orTrue, orValue } from "../utils/nullable.utils";
 import { getEffectivePillVisibility, LOCAL_USER_ID } from "../utils/user.utils";
 import { BaseRepo } from "./base.repo";
 
-type LocalUserPreferences = {
+/** SQLite wire representation, including legacy values normalized on read. */
+export type LocalUserPreferences = {
   userId: string;
   // AI modes arrive as raw strings: SQLite rows written by older builds can
   // hold values that no longer exist in the mode unions (e.g. the removed
@@ -189,6 +190,22 @@ const fromLocalAiPreferences = (preferences: LocalUserPreferences) => ({
   openclawToken: orNull(preferences.openclawToken),
 });
 
+/** Fields with identical conversion on both sides of the SQLite boundary. */
+const mapSharedOutputPreferences = (
+  preferences: LocalUserPreferences | UserPreferences,
+) => ({
+  dictationPillVisibility: getEffectivePillVisibility(
+    preferences.dictationPillVisibility,
+  ),
+  realtimeOutputEnabled: orFalse(preferences.realtimeOutputEnabled),
+  remoteOutputEnabled: orFalse(preferences.remoteOutputEnabled),
+  remoteTargetDeviceId: orNull(preferences.remoteTargetDeviceId),
+  remoteReceiverPort: orNull(preferences.remoteReceiverPort),
+  remoteReceiverAutoStart: orFalse(preferences.remoteReceiverAutoStart),
+  dictationAudioDim: orValue(preferences.dictationAudioDim, 1.0),
+  pasteKeybind: orNull(preferences.pasteKeybind),
+});
+
 const fromLocalOutputPreferences = (preferences: LocalUserPreferences) => ({
   gotStartedAt: orNull(preferences.gotStartedAt),
   lastSeenFeature: preferences.lastSeenFeature,
@@ -200,16 +217,7 @@ const fromLocalOutputPreferences = (preferences: LocalUserPreferences) => ({
   dictationLimitMinutes: normalizeDictationLimitMinutes(
     preferences.dictationLimitMinutes,
   ),
-  dictationPillVisibility: getEffectivePillVisibility(
-    preferences.dictationPillVisibility,
-  ),
-  realtimeOutputEnabled: orFalse(preferences.realtimeOutputEnabled),
-  remoteOutputEnabled: orFalse(preferences.remoteOutputEnabled),
-  remoteTargetDeviceId: orNull(preferences.remoteTargetDeviceId),
-  remoteReceiverPort: orNull(preferences.remoteReceiverPort),
-  remoteReceiverAutoStart: orFalse(preferences.remoteReceiverAutoStart),
-  dictationAudioDim: orValue(preferences.dictationAudioDim, 1.0),
-  pasteKeybind: orNull(preferences.pasteKeybind),
+  ...mapSharedOutputPreferences(preferences),
   menuBarIconHidden: orFalse(preferences.menuBarIconHidden),
   insertionMethod: orNull(preferences.insertionMethod),
   typingSpeedMs: orNull(preferences.typingSpeedMs),
@@ -285,16 +293,7 @@ const toLocalOutputPreferences = (preferences: UserPreferences) => ({
   dictationLimitMinutes: normalizeDictationLimitMinutes(
     orValue(preferences.dictationLimitMinutes, DEFAULT_DICTATION_LIMIT_MINUTES),
   ),
-  dictationPillVisibility: getEffectivePillVisibility(
-    preferences.dictationPillVisibility,
-  ),
-  realtimeOutputEnabled: orFalse(preferences.realtimeOutputEnabled),
-  remoteOutputEnabled: orFalse(preferences.remoteOutputEnabled),
-  remoteTargetDeviceId: orNull(preferences.remoteTargetDeviceId),
-  remoteReceiverPort: orNull(preferences.remoteReceiverPort),
-  remoteReceiverAutoStart: orFalse(preferences.remoteReceiverAutoStart),
-  dictationAudioDim: orValue(preferences.dictationAudioDim, 1.0),
-  pasteKeybind: orNull(preferences.pasteKeybind),
+  ...mapSharedOutputPreferences(preferences),
   useNewBackend: true,
   menuBarIconHidden: orFalse(preferences.menuBarIconHidden),
   insertionMethod: orNull(preferences.insertionMethod),
@@ -342,7 +341,6 @@ export abstract class BaseUserPreferencesRepo extends BaseRepo {
     preferences: UserPreferences,
   ): Promise<UserPreferences>;
   abstract getUserPreferences(): Promise<Nullable<UserPreferences>>;
-  abstract setExpansionFlags(flags: string): Promise<UserPreferences>;
   abstract compareAndSetExpansionFlags(
     expected: string,
     flags: string,
@@ -380,16 +378,5 @@ export class LocalUserPreferencesRepo extends BaseUserPreferencesRepo {
       { args: { expected, flags } },
     );
     return saved ? fromLocalPreferences(saved) : null;
-  }
-
-  async setExpansionFlags(flags: string): Promise<UserPreferences> {
-    const saved = await invoke<LocalUserPreferences>(
-      "user_preferences_set_expansion_flags",
-      {
-        args: { flags },
-      },
-    );
-
-    return fromLocalPreferences(saved);
   }
 }

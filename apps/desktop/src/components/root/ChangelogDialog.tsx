@@ -19,6 +19,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { GITHUB_RELEASES_PAGE_URL } from "@maus-inc/desktop-utils";
 import { useCallback, useEffect, useState } from "react";
 import { FormattedMessage } from "react-intl";
+import { formatReleaseDate } from "./release-date.utils";
 import { ReleaseNotesMarkdown } from "./ReleaseNotesMarkdown";
 import {
   ChangelogEntry,
@@ -55,19 +56,6 @@ const ChangelogErrorMessage = ({ error }: { error: unknown }) => {
 
 const normalizeVersion = (value: string): string =>
   value.replace(/^mausvoice[\s\-_]*v?/i, "").trim();
-
-const formatReleaseDate = (isoDate: string | null) => {
-  if (!isoDate) {
-    return null;
-  }
-  const parsed = new Date(isoDate);
-  if (Number.isNaN(parsed.getTime())) {
-    return null;
-  }
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-  }).format(parsed);
-};
 
 const ReleaseRow = ({
   entry,

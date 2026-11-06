@@ -1,17 +1,15 @@
 import { InfoOutlined } from "@mui/icons-material";
 import { Box, Tooltip } from "@mui/material";
 
-type ToolParamsTooltipProps = {
-  params: Record<string, unknown>;
-  iconColor?: string;
-  iconSize?: number;
-};
-
 export const ToolParamsTooltip = ({
   params,
   iconColor = "text.secondary",
   iconSize = 16,
-}: ToolParamsTooltipProps) => {
+}: {
+  params: Record<string, unknown>;
+  iconColor?: string;
+  iconSize?: number;
+}) => {
   const { reason: _, ...displayParams } = params;
   const hasParams = Object.keys(displayParams).length > 0;
   if (!hasParams) return null;

@@ -195,4 +195,37 @@ describe("PasteTool review", () => {
       keybind: null,
     });
   });
+
+  it.each([undefined, null, 123, "", "   "])(
+    "cancels invalid or whitespace input when review is disabled (%s)",
+    async (text) => {
+      state.userPrefs = { reviewBeforeInsert: false };
+      await expect(new PasteTool(toolInfo).execute({ text })).resolves.toEqual({
+        canceled: true,
+      });
+      expect(invokeMock).not.toHaveBeenCalled();
+      expect(createPendingPasteReviewMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it("propagates review failures without attempting to paste or saving a review", async () => {
+    reviewTranscriptBeforeInsertMock.mockRejectedValueOnce(
+      new Error("review unavailable"),
+    );
+    await expect(
+      new PasteTool(toolInfo).execute({ text: "draft" }),
+    ).rejects.toThrow("review unavailable");
+    expect(invokeMock).not.toHaveBeenCalled();
+    expect(createPendingPasteReviewMock).not.toHaveBeenCalled();
+  });
+
+  it("starts direct insertion synchronously when review is disabled", async () => {
+    state.userPrefs = { reviewBeforeInsert: false };
+    const pending = new PasteTool(toolInfo).execute({ text: "text" });
+    expect(invokeMock).toHaveBeenCalledWith("paste", {
+      text: "text",
+      keybind: null,
+    });
+    await pending;
+  });
 });

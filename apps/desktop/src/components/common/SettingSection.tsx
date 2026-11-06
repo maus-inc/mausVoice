@@ -7,7 +7,14 @@ import {
 } from "@mui/material";
 import { ReactNode } from "react";
 
-type SettingSectionProps = {
+export const SettingSection = ({
+  title,
+  titleComponent,
+  description,
+  descriptionSlot,
+  action,
+  sx,
+}: {
   title: ReactNode;
   /**
    * Heading element for the title. MUI `body1` maps to a `<p>`, so without this
@@ -26,16 +33,7 @@ type SettingSectionProps = {
   descriptionSlot?: ReactNode;
   action?: ReactNode;
   sx?: SxProps;
-};
-
-export const SettingSection = ({
-  title,
-  titleComponent,
-  description,
-  descriptionSlot,
-  action,
-  sx,
-}: SettingSectionProps) => {
+}) => {
   return (
     <Stack
       direction="row"

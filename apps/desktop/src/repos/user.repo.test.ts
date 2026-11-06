@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { INITIAL_APP_STATE } from "../state/app.state";
 import { setAppState } from "../store";
 import { LOCAL_USER_ID } from "../utils/user.utils";
-import { LocalUserRepo } from "./user.repo";
+import { LocalUserRepo, toLocalUser } from "./user.repo";
 
 /**
  * Regression tests for the IPC boundary between the TS user payload and
@@ -92,6 +92,33 @@ describe("user repo IPC boundary for interactionFeedbackVolume", () => {
       interactionFeedbackVolume?: number | null;
     };
     expect(userArg.interactionFeedbackVolume).toBe(0.42);
+  });
+});
+
+describe("local user wire defaults", () => {
+  it("normalizes absent values to null without losing empty strings and zero", () => {
+    const local = toLocalUser({
+      ...minimalUser,
+      company: "",
+      preferredLanguage: "",
+      interactionFeedbackVolume: 0,
+      streak: 0,
+      selectedToneId: "",
+    });
+    expect(local).toMatchObject({
+      company: "",
+      title: null,
+      preferredMicrophone: null,
+      preferredLanguage: "",
+      wordsThisMonthMonth: null,
+      interactionFeedbackVolume: 0,
+      cohort: null,
+      stylingMode: null,
+      selectedToneId: "",
+      streak: 0,
+      streakRecordedAt: null,
+      referralSource: null,
+    });
   });
 });
 

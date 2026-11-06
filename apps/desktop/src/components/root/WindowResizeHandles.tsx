@@ -19,12 +19,6 @@ import {
  */
 type ResizeDirection = Parameters<TauriWindow["startResizeDragging"]>[0];
 
-type Grip = {
-  direction: ResizeDirection;
-  cursor: string;
-  position: Record<string, number>;
-};
-
 /**
  * Grip layout for the frameless window.
  *
@@ -40,7 +34,13 @@ type Grip = {
  * Without right-side caption buttons (macOS, traffic lights on the left) the
  * right edge keeps the full-height East grip and the regular square corner.
  */
-export const getGrips = (rightCaptionButtons: boolean): readonly Grip[] => {
+export const getGrips = (
+  rightCaptionButtons: boolean,
+): readonly {
+  direction: Parameters<TauriWindow["startResizeDragging"]>[0];
+  cursor: string;
+  position: Record<string, number>;
+}[] => {
   const eastTop = rightCaptionButtons ? TITLE_BAR_HEIGHT : CORNER;
   const northEastHeight = rightCaptionButtons ? EDGE : CORNER;
   return [

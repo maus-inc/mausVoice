@@ -25,6 +25,10 @@ const repoMocks = vi.hoisted(() => ({
   rejectNextDelete: false,
   rejectNextList: false,
   rejectNextMessageDelete: false,
+  listWait: null as Promise<void> | null,
+  createWait: null as Promise<void> | null,
+  listCalls: 0,
+  createCalls: 0,
 }));
 
 const abortAgentLoopMock = vi.hoisted(() => vi.fn());
@@ -32,6 +36,7 @@ const abortAgentLoopMock = vi.hoisted(() => vi.fn());
 vi.mock("../agents", () => ({
   runAgent: runAgentMock,
   abortAgentLoop: abortAgentLoopMock,
+  retireAgentLoop: abortAgentLoopMock,
   CHAT_AGENT_CONFIG: { agentType: "chat" },
 }));
 
@@ -59,6 +64,11 @@ const messageStorage = new Map<string, ChatMessage>();
 // failure-path test.
 vi.mock("../utils/log.utils", () => ({ getLogger: () => getLoggerMock }));
 
+vi.mock("../repos/chat-message.repo", async () => {
+  const repos = await import("../repos");
+  return { getChatMessageRepo: () => repos.getChatMessageRepo() };
+});
+
 vi.mock("../repos", () => ({
   getConversationRepo: () => ({
     updateConversation: (conversation: Conversation) => {
@@ -80,24 +90,34 @@ vi.mock("../repos", () => ({
   }),
   getChatMessageRepo: () => ({
     createChatMessage: (message: ChatMessage) => {
+      repoMocks.createCalls += 1;
       if (repoMocks.rejectNextCreate) {
         repoMocks.rejectNextCreate = false;
         return Promise.reject(new Error("persist rejected"));
+      }
+      if (repoMocks.createWait) {
+        return repoMocks.createWait.then(() => {
+          messageStorage.set(message.id, message);
+          return message;
+        });
       }
       messageStorage.set(message.id, message);
       return Promise.resolve(message);
     },
     listChatMessages: (conversationId: string) => {
+      repoMocks.listCalls += 1;
       if (repoMocks.rejectNextList) {
         repoMocks.rejectNextList = false;
         repoMocks.rejectNextMessageDelete = false;
         return Promise.reject(new Error("list rejected"));
       }
-      return Promise.resolve(
+      const list = () =>
         [...messageStorage.values()].filter(
           (message) => message.conversationId === conversationId,
-        ),
-      );
+        );
+      return repoMocks.listWait
+        ? repoMocks.listWait.then(list)
+        : Promise.resolve(list());
     },
     updateChatMessage: (message: ChatMessage) => {
       messageStorage.set(message.id, message);
@@ -164,9 +184,96 @@ describe("sendChatMessage", () => {
     repoMocks.rejectNextDelete = false;
     repoMocks.rejectNextList = false;
     repoMocks.rejectNextMessageDelete = false;
+    repoMocks.listWait = null;
+    repoMocks.createWait = null;
+    repoMocks.listCalls = 0;
+    repoMocks.createCalls = 0;
     conversationStorage.clear();
     messageStorage.clear();
     seed();
+  });
+
+  it("does not persist a send whose owner retires during the first-message lookup", async () => {
+    let release!: () => void;
+    repoMocks.listWait = new Promise((resolve) => {
+      release = resolve;
+    });
+    let current = true;
+    const pending = sendChatMessage(
+      "conv-1",
+      "private",
+      undefined,
+      () => current,
+    );
+    await vi.waitFor(() => expect(repoMocks.listCalls).toBe(1));
+    current = false;
+    release();
+    await pending;
+    expect(repoMocks.createCalls).toBe(0);
+    expect(messageStorage.size).toBe(0);
+    expect(runAgentMock).not.toHaveBeenCalled();
+  });
+
+  it("does not dispatch a retired send waiting behind another conversation write", async () => {
+    let release!: () => void;
+    repoMocks.listWait = new Promise((resolve) => {
+      release = resolve;
+    });
+    const first = sendChatMessage("conv-1", "first");
+    await vi.waitFor(() => expect(repoMocks.listCalls).toBe(1));
+    let current = true;
+    const second = sendChatMessage(
+      "conv-1",
+      "private",
+      undefined,
+      () => current,
+    );
+    current = false;
+    release();
+    await Promise.all([first, second]);
+    expect(
+      [...messageStorage.values()].map((message) => message.content),
+    ).toEqual(["first"]);
+    expect(repoMocks.createCalls).toBe(1);
+    expect(runAgentMock).toHaveBeenCalledOnce();
+  });
+
+  it("does not publish or run a send retired during an already-dispatched write", async () => {
+    let release!: () => void;
+    repoMocks.createWait = new Promise((resolve) => {
+      release = resolve;
+    });
+    let current = true;
+    const acknowledge = vi.fn();
+    const pending = sendChatMessage(
+      "conv-1",
+      "private",
+      acknowledge,
+      () => current,
+    );
+    await vi.waitFor(() => expect(repoMocks.createCalls).toBe(1));
+    current = false;
+    release();
+    await pending;
+    // A native write already dispatched cannot be revoked here.
+    expect(messageStorage.size).toBe(1);
+    expect(getAppState().chatMessageIdsByConversationId["conv-1"]).toEqual([]);
+    expect(acknowledge).not.toHaveBeenCalled();
+    expect(runAgentMock).not.toHaveBeenCalled();
+  });
+
+  it("does not persist a send after its auth session changes", async () => {
+    let release!: () => void;
+    repoMocks.listWait = new Promise((resolve) => {
+      release = resolve;
+    });
+    const pending = sendChatMessage("conv-1", "private");
+    await vi.waitFor(() => expect(repoMocks.listCalls).toBe(1));
+    setAppState({ authSessionNonce: getAppState().authSessionNonce + 1 });
+    release();
+    await pending;
+    expect(repoMocks.createCalls).toBe(0);
+    expect(runAgentMock).not.toHaveBeenCalled();
   });
 
   it("acknowledges persistence before generation and despite a title-write failure", async () => {

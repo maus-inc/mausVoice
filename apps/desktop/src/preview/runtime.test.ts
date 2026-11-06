@@ -1,5 +1,7 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getAppState } from "../store";
+import { BrowserRecordingLease } from "../utils/browser-recording-lease";
+import { NativeRecordingLease } from "../utils/native-recording-lease";
 import {
   applyPreviewScenario,
   getActivePreviewScenario,
@@ -10,6 +12,399 @@ import {
 describe("browser preview transport", () => {
   beforeEach(() => {
     applyPreviewScenario("populated");
+  });
+
+  const reserve = (ownerId: string) =>
+    invokePreviewCommand<number>("recording_generation", { ownerId });
+
+  it("keeps recordings owned in preview", async () => {
+    const a = await reserve("a");
+    const b = await reserve("b");
+    await expect(
+      invokePreviewCommand("start_recording", { ownerId: "a", generation: a }),
+    ).resolves.toEqual({ sampleRate: 16000 });
+    await expect(
+      invokePreviewCommand("start_recording", { ownerId: "b", generation: b }),
+    ).rejects.toThrow("already in progress");
+    await expect(
+      invokePreviewCommand("pause_recording", { ownerId: "b", generation: b }),
+    ).rejects.toThrow("no longer owned");
+    await expect(
+      invokePreviewCommand("stop_recording", { ownerId: "b", generation: b }),
+    ).rejects.toThrow("no longer owned");
+    await expect(
+      invokePreviewCommand("pause_recording", { ownerId: "a", generation: a }),
+    ).resolves.toBeUndefined();
+    await expect(
+      invokePreviewCommand("resume_recording", { ownerId: "a", generation: a }),
+    ).resolves.toBeUndefined();
+    await expect(
+      invokePreviewCommand("stop_recording", { ownerId: "a", generation: a }),
+    ).resolves.toEqual({ samples: [], sampleRate: 16000 });
+    const bAgain = await reserve("b");
+    await expect(
+      invokePreviewCommand("start_recording", {
+        ownerId: "b",
+        generation: bAgain,
+      }),
+    ).resolves.toEqual({ sampleRate: 16000 });
+    const old = await reserve("old");
+    await expect(
+      invokePreviewCommand("force_stop_recording"),
+    ).resolves.toBeUndefined();
+    await expect(
+      invokePreviewCommand("stop_recording", { ownerId: "b", generation: b }),
+    ).rejects.toThrow("no longer owned");
+    await expect(
+      invokePreviewCommand("start_recording", {
+        ownerId: "old",
+        generation: old,
+      }),
+    ).rejects.toThrow("cancelled");
+  });
+
+  it("replays a stop until its exact owner acknowledges it", async () => {
+    const token = await reserve("old");
+    await invokePreviewCommand("start_recording", {
+      ownerId: "old",
+      generation: token,
+    });
+    await expect(
+      invokePreviewCommand("stop_recording", {
+        ownerId: "old",
+        generation: token,
+      }),
+    ).resolves.toEqual({ samples: [], sampleRate: 16000 });
+    const next = await reserve("next");
+    await invokePreviewCommand("start_recording", {
+      ownerId: "next",
+      generation: next,
+    });
+    await invokePreviewCommand("acknowledge_recording", {
+      ownerId: "wrong",
+      generation: token,
+    });
+    await expect(
+      invokePreviewCommand("stop_recording", {
+        ownerId: "old",
+        generation: token,
+      }),
+    ).resolves.toEqual({ samples: [], sampleRate: 16000 });
+    await invokePreviewCommand("acknowledge_recording", {
+      ownerId: "old",
+      generation: token,
+    });
+    await expect(
+      invokePreviewCommand("stop_recording", {
+        ownerId: "old",
+        generation: token,
+      }),
+    ).rejects.toThrow("no longer owned");
+    await expect(
+      invokePreviewCommand("pause_recording", {
+        ownerId: "next",
+        generation: next,
+      }),
+    ).resolves.toBeUndefined();
+    await invokePreviewCommand("discard_recording", {
+      ownerId: "next",
+      generation: next,
+    });
+  });
+
+  it("bounds replay requests without deleting the recoverable result", async () => {
+    const token = await reserve("bounded");
+    await invokePreviewCommand("start_recording", {
+      ownerId: "bounded",
+      generation: token,
+    });
+    await invokePreviewCommand("stop_recording", {
+      ownerId: "bounded",
+      generation: token,
+    });
+    for (let index = 0; index < 4; index += 1) {
+      await expect(
+        invokePreviewCommand("stop_recording", {
+          ownerId: "bounded",
+          generation: token,
+        }),
+      ).resolves.toEqual({ samples: [], sampleRate: 16000 });
+    }
+    await expect(
+      invokePreviewCommand("stop_recording", {
+        ownerId: "bounded",
+        generation: token,
+      }),
+    ).rejects.toThrow("replay limit");
+    await invokePreviewCommand("acknowledge_recording", {
+      ownerId: "bounded",
+      generation: token,
+    });
+    await expect(
+      invokePreviewCommand("stop_recording", {
+        ownerId: "bounded",
+        generation: token,
+      }),
+    ).rejects.toThrow("no longer owned");
+  });
+
+  it("recovers a stop that completed in the transport but lost its reply", async () => {
+    let stops = 0;
+    const transport = vi.fn(
+      async (command: string, args?: Record<string, unknown>) => {
+        const result = await invokePreviewCommand(command, args);
+        if (command === "stop_recording" && ++stops === 1)
+          throw new Error("reply lost");
+        return result;
+      },
+    );
+    const lease = new NativeRecordingLease(transport, "lost-preview-reply");
+    await lease.start(null);
+    const token = lease.generation;
+    expect(await lease.stop()).toEqual({
+      samples: new Float32Array(),
+      sampleRate: 16000,
+    });
+    expect(stops).toBe(2);
+    expect(transport).toHaveBeenCalledWith("acknowledge_recording", {
+      ownerId: "lost-preview-reply",
+      generation: token,
+    });
+    await expect(
+      invokePreviewCommand("stop_recording", {
+        ownerId: "lost-preview-reply",
+        generation: token,
+      }),
+    ).rejects.toThrow("no longer owned");
+  });
+
+  it("holds browser ownership across windows and rejects reset until release", async () => {
+    const browser = await reserve("browser");
+    await invokePreviewCommand("claim_browser_recording", {
+      ownerId: "browser",
+      generation: browser,
+    });
+    const native = await reserve("native");
+    await expect(
+      invokePreviewCommand("start_recording", {
+        ownerId: "native",
+        generation: native,
+      }),
+    ).rejects.toThrow("already in progress");
+    await expect(invokePreviewCommand("force_stop_recording")).rejects.toThrow(
+      "not ended",
+    );
+    await invokePreviewCommand("release_browser_recording", {
+      ownerId: "other",
+      generation: browser,
+    });
+    const again = await reserve("again");
+    await expect(
+      invokePreviewCommand("start_recording", {
+        ownerId: "again",
+        generation: again,
+      }),
+    ).rejects.toThrow("already in progress");
+    await invokePreviewCommand("release_browser_recording", {
+      ownerId: "browser",
+      generation: browser,
+    });
+    const successor = await reserve("successor");
+    await expect(
+      invokePreviewCommand("start_recording", {
+        ownerId: "successor",
+        generation: successor,
+      }),
+    ).resolves.toEqual({ sampleRate: 16000 });
+    await invokePreviewCommand("discard_recording", {
+      ownerId: "successor",
+      generation: successor,
+    });
+  });
+
+  it("coordinates browser and native leases using independent window transports", async () => {
+    const browserTransport = (cmd: string, args?: Record<string, unknown>) =>
+      invokePreviewCommand(cmd, args);
+    const nativeTransport = (cmd: string, args?: Record<string, unknown>) =>
+      invokePreviewCommand(cmd, args);
+    const browser = new BrowserRecordingLease(browserTransport);
+    await browser.acquire();
+    const native = new NativeRecordingLease(nativeTransport, "separate-window");
+    await expect(native.start(null)).rejects.toThrow("already in progress");
+    await native.ensureReleasedAfterFailure();
+    await browser.release();
+    const next = new NativeRecordingLease(nativeTransport, "next-window");
+    await expect(next.start(null)).resolves.toEqual({ sampleRate: 16000 });
+    await next.cancel();
+  });
+
+  it("hands capture to a waiting dictation after the current test stops", async () => {
+    const test = await reserve("test");
+    await invokePreviewCommand("start_recording", {
+      ownerId: "test",
+      generation: test,
+    });
+    const dictation = await reserve("dictation");
+    const waiting = invokePreviewCommand("start_recording", {
+      ownerId: "dictation",
+      generation: dictation,
+      args: { waitForRelease: true },
+    });
+    await Promise.resolve();
+    await invokePreviewCommand("stop_recording", {
+      ownerId: "test",
+      generation: test,
+    });
+    await expect(waiting).resolves.toEqual({ sampleRate: 16000 });
+    await expect(
+      invokePreviewCommand("stop_recording", {
+        ownerId: "dictation",
+        generation: dictation,
+      }),
+    ).resolves.toBeDefined();
+  });
+
+  it("stops a waiting admission without touching the current recording", async () => {
+    const current = await reserve("current");
+    await invokePreviewCommand("start_recording", {
+      ownerId: "current",
+      generation: current,
+    });
+    const pending = await reserve("pending");
+    const waiting = invokePreviewCommand("start_recording", {
+      ownerId: "pending",
+      generation: pending,
+      args: { waitForRelease: true },
+    });
+    const rejected = expect(waiting).rejects.toThrow("cancelled");
+    await expect(
+      invokePreviewCommand("stop_recording", {
+        ownerId: "pending",
+        generation: pending,
+      }),
+    ).resolves.toEqual({ samples: [], sampleRate: 0 });
+    await rejected;
+    await expect(
+      invokePreviewCommand("pause_recording", {
+        ownerId: "current",
+        generation: current,
+      }),
+    ).resolves.toBeUndefined();
+    await invokePreviewCommand("stop_recording", {
+      ownerId: "current",
+      generation: current,
+    });
+  });
+
+  it("cancels a waiting capture when recording is reset", async () => {
+    const test = await reserve("test");
+    await invokePreviewCommand("start_recording", {
+      ownerId: "test",
+      generation: test,
+    });
+    const dictation = await reserve("dictation");
+    const waiting = invokePreviewCommand("start_recording", {
+      ownerId: "dictation",
+      generation: dictation,
+      args: { waitForRelease: true },
+    });
+    const rejected = expect(waiting).rejects.toThrow("cancelled");
+    await Promise.resolve();
+    await invokePreviewCommand("force_stop_recording");
+    await rejected;
+  });
+
+  it("discards an admission before a delayed start without stopping a different owner", async () => {
+    const late = await reserve("late");
+    const other = await reserve("other");
+    await invokePreviewCommand("start_recording", {
+      ownerId: "other",
+      generation: other,
+    });
+    await invokePreviewCommand("discard_recording", {
+      ownerId: "late",
+      generation: late,
+    });
+    await expect(
+      invokePreviewCommand("start_recording", {
+        ownerId: "late",
+        generation: late,
+      }),
+    ).rejects.toThrow("cancelled");
+    await expect(
+      invokePreviewCommand("stop_recording", {
+        ownerId: "other",
+        generation: other,
+      }),
+    ).resolves.toBeDefined();
+  });
+
+  it("rejects stale admissions and controls when an owner ID is reused", async () => {
+    const old = await reserve("reused");
+    await invokePreviewCommand("discard_recording", {
+      ownerId: "reused",
+      generation: old,
+    });
+    const current = await reserve("reused");
+    expect(current).not.toBe(old);
+    await expect(
+      invokePreviewCommand("start_recording", {
+        ownerId: "reused",
+        generation: old,
+      }),
+    ).rejects.toThrow("cancelled");
+    await invokePreviewCommand("discard_recording", {
+      ownerId: "reused",
+      generation: old,
+    });
+    await invokePreviewCommand("start_recording", {
+      ownerId: "reused",
+      generation: current,
+    });
+    await invokePreviewCommand("discard_recording", {
+      ownerId: "reused",
+      generation: old,
+    });
+    await expect(
+      invokePreviewCommand("pause_recording", {
+        ownerId: "reused",
+        generation: old,
+      }),
+    ).rejects.toThrow("no longer owned");
+    await expect(
+      invokePreviewCommand("stop_recording", {
+        ownerId: "reused",
+        generation: current,
+      }),
+    ).resolves.toBeDefined();
+  });
+
+  it("does not release a newer browser capture with an old token", async () => {
+    const old = await reserve("browser-reused");
+    await invokePreviewCommand("claim_browser_recording", {
+      ownerId: "browser-reused",
+      generation: old,
+    });
+    await invokePreviewCommand("release_browser_recording", {
+      ownerId: "browser-reused",
+      generation: old,
+    });
+    const current = await reserve("browser-reused");
+    await invokePreviewCommand("claim_browser_recording", {
+      ownerId: "browser-reused",
+      generation: current,
+    });
+    await invokePreviewCommand("release_browser_recording", {
+      ownerId: "browser-reused",
+      generation: old,
+    });
+    await expect(invokePreviewCommand("force_stop_recording")).rejects.toThrow(
+      "not ended",
+    );
+    await invokePreviewCommand("release_browser_recording", {
+      ownerId: "browser-reused",
+      generation: current,
+    });
   });
 
   it("retains the selected scenario when a route omits its query parameter", () => {
@@ -51,6 +446,43 @@ describe("browser preview transport", () => {
     ).resolves.toMatchObject({ expansionFlags: "{}" });
   });
 
+  it("validates expansion-flag values before updating preferences", async () => {
+    for (const [command, args] of [
+      ["user_preferences_set_expansion_flags", {}],
+      ["user_preferences_set_expansion_flags", { args: { flags: 42 } }],
+      [
+        "user_preferences_compare_set_expansion_flags",
+        { args: { flags: "{}" } },
+      ],
+    ] as const) {
+      await expect(invokePreviewCommand(command, args)).rejects.toThrow(
+        "Expected string expansion flag arguments",
+      );
+    }
+    const updated = await invokePreviewCommand<Record<string, unknown>>(
+      "user_preferences_set_expansion_flags",
+      { args: { flags: "new" } },
+    );
+    updated.expansionFlags = "mutated";
+    await expect(
+      invokePreviewCommand("user_preferences_get"),
+    ).resolves.toMatchObject({ expansionFlags: "new" });
+  });
+
+  it("distinguishes a missing preference row for compare-and-set and set", async () => {
+    applyPreviewScenario("welcome");
+    await expect(
+      invokePreviewCommand("user_preferences_compare_set_expansion_flags", {
+        args: { expected: "{}", flags: "new" },
+      }),
+    ).resolves.toBeNull();
+    await expect(
+      invokePreviewCommand("user_preferences_set_expansion_flags", {
+        args: { flags: "new" },
+      }),
+    ).rejects.toThrow("Preferences not found");
+  });
+
   it("returns independent local records for repository-backed pages", async () => {
     const first = await invokePreviewCommand<Record<string, unknown>[]>(
       "transcription_list",
@@ -66,6 +498,87 @@ describe("browser preview transport", () => {
     expect(second).toHaveLength(3);
     expect(second[0].transcript).not.toBe("Changed outside the mock database");
     expect(getAppState().transcriptions.transcriptionIds).toHaveLength(3);
+  });
+
+  it("routes transcription writes, audio stand-ins, and removal through preview history", async () => {
+    const transcription = {
+      id: "new",
+      timestamp: 987654321,
+      transcript: "first",
+    };
+    await expect(
+      invokePreviewCommand("transcription_create", { transcription }),
+    ).resolves.toEqual(transcription);
+    const update = { ...transcription, transcript: "changed" };
+    await expect(
+      invokePreviewCommand("transcription_update", { transcription: update }),
+    ).resolves.toEqual(update);
+    expect(
+      await invokePreviewCommand("transcription_list", {
+        limit: 100,
+        offset: 0,
+      }),
+    ).toContainEqual(update);
+    for (const command of [
+      "transcription_audio_load",
+      "transcription_load_audio",
+    ]) {
+      await expect(
+        invokePreviewCommand(command, { id: "new" }),
+      ).resolves.toMatchObject({
+        sampleRate: 16000,
+        samples: expect.any(Array),
+      });
+    }
+    await expect(
+      invokePreviewCommand("transcription_import_audio"),
+    ).resolves.toBeNull();
+    await expect(
+      invokePreviewCommand("purge_stale_transcription_audio"),
+    ).resolves.toEqual([]);
+    await invokePreviewCommand("transcription_delete", { id: "new" });
+    expect(
+      await invokePreviewCommand("transcription_list", {
+        limit: 100,
+        offset: 0,
+      }),
+    ).not.toContainEqual(update);
+  });
+
+  it("routes conversations and messages, cascading deletion only for the selected conversation", async () => {
+    const conversation = { id: "c", title: "first", updatedAt: 100 };
+    await invokePreviewCommand("conversation_create", { conversation });
+    await invokePreviewCommand("conversation_update", {
+      conversation: { ...conversation, title: "updated" },
+    });
+    const a = { id: "a", conversationId: "c", createdAt: 20, content: "a" };
+    const b = { id: "b", conversationId: "c", createdAt: 10, content: "b" };
+    const other = {
+      id: "other",
+      conversationId: "another",
+      createdAt: 1,
+      content: "other",
+    };
+    for (const message of [a, b, other])
+      await invokePreviewCommand("chat_message_create", { message });
+    expect(
+      await invokePreviewCommand("chat_message_list", { conversationId: "c" }),
+    ).toEqual([b, a]);
+    const updated = { ...a, content: "changed" };
+    await invokePreviewCommand("chat_message_update", { message: updated });
+    await invokePreviewCommand("chat_message_delete_many", { ids: ["b"] });
+    expect(
+      await invokePreviewCommand("chat_message_list", { conversationId: "c" }),
+    ).toEqual([updated]);
+    await invokePreviewCommand("conversation_delete", { id: "c" });
+    expect(
+      await invokePreviewCommand("chat_message_list", { conversationId: "c" }),
+    ).toEqual([]);
+    expect(
+      await invokePreviewCommand("chat_message_list", {
+        conversationId: "another",
+      }),
+    ).toEqual([other]);
   });
 
   it("persists supported dictionary mutations until the scenario is reset", async () => {
@@ -97,6 +610,42 @@ describe("browser preview transport", () => {
         expect.objectContaining({ id: "term-preview-new" }),
       ]),
     );
+  });
+
+  it("routes user, tone, hotkey, and app-target operations without swallowing unknown commands", async () => {
+    const user = { id: "u", name: "Preview" };
+    await expect(
+      invokePreviewCommand("user_set_one", { user }),
+    ).resolves.toEqual(user);
+    await expect(invokePreviewCommand("user_get_one")).resolves.toEqual(user);
+    const tone = { id: "tone-new", name: "New" };
+    await invokePreviewCommand("tone_upsert", { tone });
+    await expect(
+      invokePreviewCommand("tone_get", { id: tone.id }),
+    ).resolves.toEqual(tone);
+    expect(await invokePreviewCommand("tone_list")).toContainEqual(tone);
+    await invokePreviewCommand("tone_delete", { id: tone.id });
+    await expect(
+      invokePreviewCommand("tone_get", { id: tone.id }),
+    ).resolves.toBeNull();
+    const hotkey = { id: "key-new", actionName: "test" };
+    await invokePreviewCommand("hotkey_save", { hotkey });
+    expect(await invokePreviewCommand("hotkey_list")).toContainEqual(hotkey);
+    await invokePreviewCommand("hotkey_delete", { id: hotkey.id });
+    expect(await invokePreviewCommand("hotkey_list")).not.toContainEqual(
+      hotkey,
+    );
+    await expect(
+      invokePreviewCommand("app_target_upsert", {
+        args: { id: "target", name: "Target" },
+      }),
+    ).resolves.toMatchObject({ id: "target", name: "Target" });
+    expect(await invokePreviewCommand("app_target_list")).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "target" })]),
+    );
+    await expect(
+      invokePreviewCommand("tone_unrecognized"),
+    ).rejects.toBeInstanceOf(PreviewOperationError);
   });
 
   it("never retains a key pasted into the mock API-key form", async () => {
@@ -251,13 +800,73 @@ describe("browser preview transport", () => {
   ])(
     "preserves saved shortcuts when replacement fails for %j",
     async (args) => {
-      const before = await invokePreviewCommand("hotkey_list");
+      const before =
+        await invokePreviewCommand<
+          { id: string; actionName: string; keys: string[] }[]
+        >("hotkey_list");
+      const expected = before.filter((hotkey) =>
+        hotkey.actionName.startsWith("style-"),
+      );
       await expect(
-        invokePreviewCommand("hotkey_replace_style_hotkeys", args),
+        invokePreviewCommand("hotkey_replace_style_hotkeys", {
+          ...args,
+          expected,
+        }),
       ).rejects.toThrow();
       expect(await invokePreviewCommand("hotkey_list")).toEqual(before);
     },
   );
+
+  it("replaces language hotkeys atomically and rejects collisions", async () => {
+    const primary = { id: "dictate", actionName: "dictate", keys: ["Control"] };
+    const old = {
+      id: "language-fr",
+      actionName: "additional-language:fr",
+      keys: ["F"],
+    };
+    await invokePreviewCommand("hotkey_save", { hotkey: old });
+    const before =
+      await invokePreviewCommand<(typeof primary)[]>("hotkey_list");
+    const expected = before.filter(
+      (hotkey) =>
+        hotkey.actionName === "dictate" ||
+        hotkey.actionName.startsWith("additional-language:"),
+    );
+    await expect(
+      invokePreviewCommand("hotkey_replace_dictation_language_hotkeys", {
+        primary,
+        expected,
+        additional: [
+          { id: "agent", actionName: "additional-language:es", keys: ["E"] },
+        ],
+      }),
+    ).rejects.toThrow();
+    expect(await invokePreviewCommand("hotkey_list")).toEqual(before);
+    await invokePreviewCommand("hotkey_replace_dictation_language_hotkeys", {
+      primary,
+      expected,
+      additional: [
+        {
+          id: "language-es",
+          actionName: "additional-language:es",
+          keys: ["E"],
+        },
+      ],
+    });
+    const after = await invokePreviewCommand<(typeof primary)[]>("hotkey_list");
+    expect(after).toContainEqual(primary);
+    expect(after.some((hotkey) => hotkey.id === "language-fr")).toBe(false);
+    expect(after.some((hotkey) => hotkey.id === "language-es")).toBe(true);
+    expect(after.some((hotkey) => hotkey.id === "agent")).toBe(true);
+    await expect(
+      invokePreviewCommand("hotkey_replace_dictation_language_hotkeys", {
+        primary,
+        expected,
+        additional: [],
+      }),
+    ).rejects.toThrow("DICTATION_HOTKEYS_CHANGED");
+    expect(await invokePreviewCommand("hotkey_list")).toEqual(after);
+  });
 
   it("replaces only matching hotkeys and returns independent records", async () => {
     const hotkey = {
@@ -269,6 +878,9 @@ describe("browser preview transport", () => {
       "hotkey_replace_style_hotkeys",
       {
         prefix: "style-",
+        expected: [
+          { id: "style-email", actionName: "style-email", keys: ["Alt", "E"] },
+        ],
         hotkeys: [hotkey],
       },
     );
@@ -282,6 +894,43 @@ describe("browser preview transport", () => {
     expect(saved.find(({ id }) => id === "style-note")).toEqual(hotkey);
   });
 
+  it("rejects stale and colliding style replacements without altering saved data", async () => {
+    const before =
+      await invokePreviewCommand<
+        { id: string; actionName: string; keys: string[] }[]
+      >("hotkey_list");
+    const expected = before.filter((hotkey) =>
+      hotkey.actionName.startsWith("style-"),
+    );
+    await invokePreviewCommand("hotkey_save", {
+      hotkey: { id: "style-new", actionName: "style-new", keys: ["N"] },
+    });
+    const after = await invokePreviewCommand<typeof before>("hotkey_list");
+    await expect(
+      invokePreviewCommand("hotkey_replace_style_hotkeys", {
+        prefix: "style-",
+        expected,
+        hotkeys: [],
+      }),
+    ).rejects.toThrow("STYLE_HOTKEYS_CHANGED");
+    const current = after.filter((hotkey) =>
+      hotkey.actionName.startsWith("style-"),
+    );
+    for (const hotkey of [
+      { id: "agent", actionName: "style-collision", keys: [] },
+      { id: "x", actionName: "other", keys: [] },
+    ]) {
+      await expect(
+        invokePreviewCommand("hotkey_replace_style_hotkeys", {
+          prefix: "style-",
+          expected: current,
+          hotkeys: [hotkey],
+        }),
+      ).rejects.toThrow();
+      expect(await invokePreviewCommand("hotkey_list")).toEqual(after);
+    }
+  });
+
   it("routes remote commands independently of history and system commands", async () => {
     expect(await invokePreviewCommand("remote_receiver_start")).toMatchObject({
       enabled: true,
@@ -293,6 +942,43 @@ describe("browser preview transport", () => {
       enabled: false,
     });
     expect(await invokePreviewCommand("get_version")).toBe("0.1.6-preview");
+  });
+
+  it("returns independent receiver snapshots and resets the receiver with its scenario", async () => {
+    const started = await invokePreviewCommand<Record<string, unknown>>(
+      "remote_receiver_start",
+    );
+    expect(started).toEqual({
+      enabled: true,
+      deviceId: "preview-browser",
+      deviceName: "Browser preview",
+      devicePlatform: "macos",
+      listenAddress: null,
+      port: null,
+      pairingCode: "PREVIEW",
+      lastSenderDeviceId: null,
+      lastEventId: null,
+      lastDeliveryStatus: null,
+      lastDeliveryAt: null,
+      lastError: null,
+      lastTargetClassName: null,
+      lastTargetTitle: null,
+      lastTargetEditable: null,
+    });
+    started.enabled = false;
+    expect(await invokePreviewCommand("remote_receiver_status")).toMatchObject({
+      enabled: true,
+    });
+    applyPreviewScenario("empty");
+    expect(await invokePreviewCommand("remote_receiver_status")).toMatchObject({
+      enabled: false,
+    });
+    expect(await invokePreviewCommand("remote_receiver_stop")).toMatchObject({
+      enabled: false,
+    });
+    expect(await invokePreviewCommand("remote_receiver_start")).toMatchObject({
+      enabled: true,
+    });
   });
 
   it("echoes back the pairing payload the real command receives", async () => {
@@ -320,6 +1006,57 @@ describe("browser preview transport", () => {
     expect(echoed).toMatchObject({ id: "device-7", name: "Studio" });
   });
 
+  it.each([
+    [
+      "request_microphone_permission",
+      { kind: "microphone", state: "authorized", promptShown: true },
+    ],
+    [
+      "request_accessibility_permission",
+      { kind: "accessibility", state: "authorized", promptShown: true },
+    ],
+    ["get_version", "0.1.6-preview"],
+    ["get_identifier", "com.mausvoice.preview"],
+    ["get_hotkey_strategy", "bridge"],
+    ["get_key_listener_health", "healthy_grab"],
+    ["supports_app_detection", true],
+    ["supports_paste_keybinds", "per-app"],
+    ["get_system_capabilities", { ramGb: 8, cpuCores: 8, gpus: [] }],
+    ["get_system_volume", 0.7],
+    ["set_system_volume", undefined],
+    ["check_app_location_writable", true],
+    ["get_keyboard_language", "en"],
+    [
+      "list_microphones",
+      [{ label: "Preview microphone", isDefault: true, caution: false }],
+    ],
+    ["list_gpus", []],
+    ["run_native_setup", "success"],
+    ["export_diagnostics", true],
+    ["export_transcription", true],
+  ])(
+    "returns the deterministic system response for %s",
+    async (command, expected) => {
+      await expect(invokePreviewCommand(command)).resolves.toEqual(expected);
+    },
+  );
+
+  it("returns independent system response objects and refuses prototype-like command names", async () => {
+    const first = await invokePreviewCommand<{ gpus: string[] }>(
+      "get_system_capabilities",
+    );
+    first.gpus.push("corruption");
+    await expect(
+      invokePreviewCommand("get_system_capabilities"),
+    ).resolves.toEqual({ ramGb: 8, cpuCores: 8, gpus: [] });
+    await expect(invokePreviewCommand("__proto__")).rejects.toBeInstanceOf(
+      PreviewOperationError,
+    );
+    await expect(
+      invokePreviewCommand("storage_get_download_url"),
+    ).resolves.toMatch(/^data:image\/svg\+xml,/);
+  });
+
   it("does not silently emulate unsupported privileged operations", async () => {
     await expect(invokePreviewCommand("simulate_type")).rejects.toMatchObject({
       name: "PreviewOperationError",
@@ -334,14 +1071,12 @@ describe("browser preview transport", () => {
     const accepted = [
       "notify_pill_style_info",
       "open_app_settings",
-      "pause_recording",
       "quit_app",
       "remote_sender_disconnect",
       "reset_key_listener_state",
       "reset_native_setup",
       "restart_app",
       "restart_key_listener",
-      "resume_recording",
       "retry_key_listener",
       "set_auto_launch",
       "set_dashboard_menu_labels",

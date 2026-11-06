@@ -1,6 +1,6 @@
 import { Box } from "@mui/material";
 import { useTheme } from "@mui/material/styles";
-import type { CSSProperties } from "react";
+import type { CSSProperties, RefObject } from "react";
 import { useEffect, useRef } from "react";
 
 const TAU = Math.PI * 2;
@@ -54,6 +54,184 @@ const createWavePath = (
   return path;
 };
 
+const resetWavePaths = (
+  paths: (SVGPathElement | null)[],
+  width: number,
+  baseline: number,
+): void => {
+  const defaultPath = `M 0 ${baseline} L ${width} ${baseline}`;
+  paths.forEach((path, index) => {
+    if (!path) return;
+    path.setAttribute("d", defaultPath);
+    path.setAttribute("opacity", (WAVE_CONFIG[index]?.opacity ?? 1).toString());
+  });
+};
+
+/** Advance and render one frame without owning the requestAnimationFrame loop. */
+const drawWaveFrame = (
+  state: AnimationState,
+  phaseState: { active: boolean; processing: boolean },
+  paths: (SVGPathElement | null)[],
+  width: number,
+  height: number,
+  baselineOffset: number,
+): void => {
+  state.currentLevel +=
+    (state.targetLevel - state.currentLevel) * LEVEL_SMOOTHING;
+  if (state.currentLevel < 0.0002) {
+    state.currentLevel = 0;
+  }
+  state.targetLevel *= TARGET_DECAY_PER_FRAME;
+  if (state.targetLevel < 0.0005) {
+    state.targetLevel = 0;
+  }
+
+  const baseLevel =
+    phaseState.processing && !phaseState.active ? PROCESSING_BASE_LEVEL : 0;
+  const level = Math.max(baseLevel, state.currentLevel);
+  state.phase =
+    (state.phase + WAVE_BASE_PHASE_STEP + WAVE_PHASE_GAIN * level) % TAU;
+  const baseline = height / 2 + baselineOffset;
+
+  paths.forEach((path, index) => {
+    if (!path) return;
+    const config = WAVE_CONFIG[index] ?? WAVE_CONFIG[WAVE_CONFIG.length - 1];
+    const amplitudeFactor = Math.min(
+      MAX_AMPLITUDE,
+      Math.max(MIN_AMPLITUDE, level * config.multiplier),
+    );
+    const amplitude = Math.max(1, height * 0.75 * amplitudeFactor);
+    path.setAttribute(
+      "d",
+      createWavePath(
+        width,
+        baseline,
+        amplitude,
+        config.frequency,
+        state.phase + config.phaseOffset,
+      ),
+    );
+    path.setAttribute("opacity", config.opacity.toString());
+  });
+};
+
+const cancelWaveFrame = (frame: RefObject<number | null>): void => {
+  if (frame.current !== null) {
+    cancelAnimationFrame(frame.current);
+    frame.current = null;
+  }
+};
+
+/** Update the smoothed animation target as microphone and processing state change. */
+const useWaveTarget = (
+  stateRef: RefObject<AnimationState>,
+  levels: number[],
+  active: boolean,
+  processing: boolean,
+): void => {
+  useEffect(() => {
+    const state = stateRef.current;
+    if (!active) {
+      state.targetLevel = processing
+        ? Math.max(state.targetLevel, PROCESSING_BASE_LEVEL)
+        : 0;
+      if (!processing) {
+        state.currentLevel *= 0.4;
+        if (state.currentLevel < 0.0002) {
+          state.currentLevel = 0;
+        }
+      }
+    }
+  }, [active, processing, stateRef]);
+
+  useEffect(() => {
+    if (!active || levels.length === 0) {
+      return;
+    }
+
+    const sum = levels.reduce((acc, value) => acc + value, 0);
+    const average = sum / levels.length;
+    const peak = levels.reduce((acc, value) => (value > acc ? value : acc), 0);
+    const combined = Math.min(1, average * 0.9 + peak * 0.85);
+    const boosted = Math.min(1, Math.sqrt(combined) * 1.35);
+
+    const state = stateRef.current;
+    state.targetLevel = Math.min(1, state.targetLevel * 0.25 + boosted * 0.75);
+  }, [levels, active, stateRef]);
+};
+
+/** Own the SVG paths, animation state and lifecycle independently of markup. */
+const useWaveform = (
+  levels: number[],
+  active: boolean,
+  processing: boolean,
+  width: number,
+  height: number,
+  baselineOffset: number,
+) => {
+  const waveRefs = useRef<(SVGPathElement | null)[]>([]);
+  const animationFrameRef = useRef<number | null>(null);
+  const animationStateRef = useRef<AnimationState>({
+    phase: 0,
+    currentLevel: 0,
+    targetLevel: 0,
+  });
+  const phaseStateRef = useRef({ active, processing });
+
+  phaseStateRef.current.active = active;
+  phaseStateRef.current.processing = processing;
+  waveRefs.current.length = WAVE_CONFIG.length;
+
+  useEffect(() => {
+    resetWavePaths(waveRefs.current, width, height / 2 + baselineOffset);
+  }, [width, height, baselineOffset]);
+
+  useWaveTarget(animationStateRef, levels, active, processing);
+
+  useEffect(() => {
+    if (!(active || processing)) {
+      const state = animationStateRef.current;
+      state.targetLevel = 0;
+      state.currentLevel = 0;
+      state.phase = 0;
+
+      resetWavePaths(waveRefs.current, width, height / 2 + baselineOffset);
+
+      cancelWaveFrame(animationFrameRef);
+
+      return;
+    }
+
+    const step = () => {
+      drawWaveFrame(
+        animationStateRef.current,
+        phaseStateRef.current,
+        waveRefs.current,
+        width,
+        height,
+        baselineOffset,
+      );
+
+      animationFrameRef.current = requestAnimationFrame(step);
+    };
+
+    animationFrameRef.current = requestAnimationFrame(step);
+
+    return () => {
+      cancelWaveFrame(animationFrameRef);
+    };
+  }, [active, processing, width, height, baselineOffset]);
+
+  useEffect(
+    () => () => {
+      cancelWaveFrame(animationFrameRef);
+    },
+    [],
+  );
+
+  return waveRefs;
+};
+
 export type AudioWaveformProps = {
   levels: number[];
   active: boolean;
@@ -81,163 +259,13 @@ export const AudioWaveform = ({
 }: AudioWaveformProps) => {
   const theme = useTheme();
   const resolvedColor = strokeColor ?? theme.vars?.palette.primary.main;
-  const waveRefs = useRef<(SVGPathElement | null)[]>([]);
-  const animationFrameRef = useRef<number | null>(null);
-  const animationStateRef = useRef<AnimationState>({
-    phase: 0,
-    currentLevel: 0,
-    targetLevel: 0,
-  });
-  const phaseStateRef = useRef({ active, processing });
-
-  phaseStateRef.current.active = active;
-  phaseStateRef.current.processing = processing;
-  waveRefs.current.length = WAVE_CONFIG.length;
-
-  useEffect(() => {
-    const baseline = height / 2 + baselineOffset;
-    const defaultPath = `M 0 ${baseline} L ${width} ${baseline}`;
-    waveRefs.current.forEach((path, index) => {
-      if (!path) {
-        return;
-      }
-      path.setAttribute("d", defaultPath);
-      path.setAttribute(
-        "opacity",
-        (WAVE_CONFIG[index]?.opacity ?? 1).toString(),
-      );
-    });
-  }, [width, height]);
-
-  useEffect(() => {
-    const state = animationStateRef.current;
-    if (!active) {
-      state.targetLevel = processing
-        ? Math.max(state.targetLevel, PROCESSING_BASE_LEVEL)
-        : 0;
-      if (!processing) {
-        state.currentLevel *= 0.4;
-        if (state.currentLevel < 0.0002) {
-          state.currentLevel = 0;
-        }
-      }
-    }
-  }, [active, processing]);
-
-  useEffect(() => {
-    if (!active || levels.length === 0) {
-      return;
-    }
-
-    const sum = levels.reduce((acc, value) => acc + value, 0);
-    const average = sum / levels.length;
-    const peak = levels.reduce((acc, value) => (value > acc ? value : acc), 0);
-    const combined = Math.min(1, average * 0.9 + peak * 0.85);
-    const boosted = Math.min(1, Math.sqrt(combined) * 1.35);
-
-    const state = animationStateRef.current;
-    state.targetLevel = Math.min(1, state.targetLevel * 0.25 + boosted * 0.75);
-  }, [levels, active]);
-
-  useEffect(() => {
-    if (!(active || processing)) {
-      const state = animationStateRef.current;
-      state.targetLevel = 0;
-      state.currentLevel = 0;
-      state.phase = 0;
-
-      const baseline = height / 2 + baselineOffset;
-      const defaultPath = `M 0 ${baseline} L ${width} ${baseline}`;
-
-      waveRefs.current.forEach((path, index) => {
-        if (!path) {
-          return;
-        }
-        path.setAttribute("d", defaultPath);
-        path.setAttribute(
-          "opacity",
-          (WAVE_CONFIG[index]?.opacity ?? 1).toString(),
-        );
-      });
-
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current);
-        animationFrameRef.current = null;
-      }
-
-      return;
-    }
-
-    const step = () => {
-      const state = animationStateRef.current;
-
-      state.currentLevel +=
-        (state.targetLevel - state.currentLevel) * LEVEL_SMOOTHING;
-      if (state.currentLevel < 0.0002) {
-        state.currentLevel = 0;
-      }
-
-      state.targetLevel *= TARGET_DECAY_PER_FRAME;
-      if (state.targetLevel < 0.0005) {
-        state.targetLevel = 0;
-      }
-
-      const phaseState = phaseStateRef.current;
-      const baseLevel =
-        phaseState.processing && !phaseState.active ? PROCESSING_BASE_LEVEL : 0;
-      const level = Math.max(baseLevel, state.currentLevel);
-
-      const advance = WAVE_BASE_PHASE_STEP + WAVE_PHASE_GAIN * level;
-      state.phase = (state.phase + advance) % TAU;
-
-      const baseline = height / 2 + baselineOffset;
-      const waveHeight = height;
-      const waveWidth = width;
-
-      waveRefs.current.forEach((path, index) => {
-        if (!path) {
-          return;
-        }
-        const config =
-          WAVE_CONFIG[index] ?? WAVE_CONFIG[WAVE_CONFIG.length - 1];
-        const amplitudeFactor = Math.min(
-          MAX_AMPLITUDE,
-          Math.max(MIN_AMPLITUDE, level * config.multiplier),
-        );
-        const amplitude = Math.max(1, waveHeight * 0.75 * amplitudeFactor);
-        const phase = state.phase + config.phaseOffset;
-        const pathD = createWavePath(
-          waveWidth,
-          baseline,
-          amplitude,
-          config.frequency,
-          phase,
-        );
-        path.setAttribute("d", pathD);
-        path.setAttribute("opacity", config.opacity.toString());
-      });
-
-      animationFrameRef.current = requestAnimationFrame(step);
-    };
-
-    animationFrameRef.current = requestAnimationFrame(step);
-
-    return () => {
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current);
-        animationFrameRef.current = null;
-      }
-    };
-  }, [active, processing, width, height]);
-
-  useEffect(
-    () => () => {
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current);
-        animationFrameRef.current = null;
-      }
-    },
-    [],
+  const waveRefs = useWaveform(
+    levels,
+    active,
+    processing,
+    width,
+    height,
+    baselineOffset,
   );
 
   return (

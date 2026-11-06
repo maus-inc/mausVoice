@@ -1,8 +1,15 @@
+import { discardResponseBody } from "@maus-inc/utilities";
+import {
+  fetchModelResponse,
+  parseModelResponse,
+} from "../utils/model-discovery.utils";
+import { resolveServiceUrl } from "../utils/service-url.utils";
 import { secureFetch as fetch } from "../utils/secure-fetch.utils";
 import { getOllamaHeaders } from "../utils/ollama.utils";
 import { appendOpenAICompatiblePath } from "../utils/openai-compatible.utils";
 import { BaseRepo } from "./base.repo";
 
+/** Shared discovery contract for the two compatible endpoint pickers. */
 export abstract class BaseOllamaRepo extends BaseRepo {
   // `signal` is optional so existing callers are unaffected, and both pickers that
   // poll these do pass one -- `OllamaModelPicker` and `OpenAICompatibleModelPicker`
@@ -26,10 +33,11 @@ export class OllamaRepo extends BaseOllamaRepo {
 
   override async checkAvailability(signal?: AbortSignal): Promise<boolean> {
     try {
-      const health = await fetch(`${this.ollamaUrl}`, {
+      const health = await fetchModelResponse("Ollama", fetch, this.ollamaUrl, {
         headers: getOllamaHeaders(this.apiKey),
         signal,
       });
+      discardResponseBody(health);
       return health.ok;
     } catch {
       return false;
@@ -37,19 +45,21 @@ export class OllamaRepo extends BaseOllamaRepo {
   }
 
   async getAvailableModels(signal?: AbortSignal): Promise<string[]> {
-    const response = await fetch(new URL("/api/tags", this.ollamaUrl).href, {
+    const url = resolveServiceUrl(this.ollamaUrl, "/api/tags");
+    const response = await fetchModelResponse("Ollama", fetch, url, {
       headers: getOllamaHeaders(this.apiKey),
       signal,
     });
     if (!response.ok) {
+      discardResponseBody(response);
       throw new Error(
         `Unable to fetch Ollama models (status ${response.status})`,
       );
     }
 
-    const payload = (await response.json()) as {
+    const payload = await parseModelResponse<{
       models?: Array<{ name?: string }>;
-    };
+    }>("Ollama", response, signal);
 
     if (!payload.models) {
       return [];
@@ -79,13 +89,16 @@ export class OpenAICompatibleRepo extends BaseOllamaRepo {
 
   override async checkAvailability(signal?: AbortSignal): Promise<boolean> {
     try {
-      const health = await this.fetchFn(
+      const health = await fetchModelResponse(
+        "OpenAI-compatible",
+        this.fetchFn,
         appendOpenAICompatiblePath(this.baseUrl, "models"),
         {
           headers: getOllamaHeaders(this.apiKey),
           signal,
         },
       );
+      discardResponseBody(health);
       return health.ok;
     } catch {
       return false;
@@ -93,20 +106,20 @@ export class OpenAICompatibleRepo extends BaseOllamaRepo {
   }
 
   async getAvailableModels(signal?: AbortSignal): Promise<string[]> {
-    const response = await this.fetchFn(
+    const response = await fetchModelResponse(
+      "OpenAI-compatible",
+      this.fetchFn,
       appendOpenAICompatiblePath(this.baseUrl, "models"),
-      {
-        headers: getOllamaHeaders(this.apiKey),
-        signal,
-      },
+      { headers: getOllamaHeaders(this.apiKey), signal },
     );
     if (!response.ok) {
+      discardResponseBody(response);
       throw new Error(`Unable to fetch models (status ${response.status})`);
     }
 
-    const payload = (await response.json()) as {
+    const payload = await parseModelResponse<{
       data?: Array<{ id?: string }>;
-    };
+    }>("OpenAI-compatible", response, signal);
 
     if (!payload.data) {
       return [];

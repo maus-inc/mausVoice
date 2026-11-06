@@ -9,16 +9,15 @@ let cachedPromise: Promise<SystemCapabilities | null> | null = null;
  * Values are static per boot, so the first caller warms the cache for
  * everyone else.
  */
-export const loadSystemCapabilities =
-  (): Promise<SystemCapabilities | null> => {
-    cachedPromise ??= invoke<SystemCapabilities>(
-      "get_system_capabilities",
-    ).catch((error) => {
+const loadSystemCapabilities = (): Promise<SystemCapabilities | null> => {
+  cachedPromise ??= invoke<SystemCapabilities>("get_system_capabilities").catch(
+    (error) => {
       console.error("Failed to load system capabilities:", error);
       return null;
-    });
-    return cachedPromise;
-  };
+    },
+  );
+  return cachedPromise;
+};
 
 export const useSystemCapabilities = (active = true) => {
   const [capabilities, setCapabilities] = useState<SystemCapabilities | null>(

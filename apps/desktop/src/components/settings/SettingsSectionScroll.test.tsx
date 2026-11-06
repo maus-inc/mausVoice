@@ -31,7 +31,6 @@ vi.mock("../../utils/env.utils", async (importOriginal) => {
     ...actual,
     isWindows: () => platform.name === "windows",
     isMacOS: () => platform.name === "macos",
-    isLinux: () => false,
   };
 });
 

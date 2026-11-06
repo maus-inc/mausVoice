@@ -44,7 +44,12 @@ if (tauriCommand === "build" || tauriCommand === "dev") {
       delete prepareEnv.CARGO_BUILD_TARGET;
     }
 
-    run("node", ["scripts/prepare-sidecars.mjs"], prepareEnv);
+    run(
+      process.execPath,
+      ["scripts/prepare-sidecars.mjs"],
+      prepareEnv,
+      "sidecar preparation",
+    );
   }
 
   if (requestedTarget === "universal-apple-darwin") {
@@ -61,7 +66,12 @@ if (tauriCommand === "build") {
   // never cached, so regenerate here, immediately before every Tauri
   // bundle. `--windows-only` keeps non-Windows hosts, which never bundle
   // NSIS, a fast no-op.
-  run("node", [sidebarGenerator, "--windows-only"], process.env);
+  run(
+    process.execPath,
+    [sidebarGenerator, "--windows-only"],
+    process.env,
+    "installer sidebar generation",
+  );
 }
 
 // §5.7: `CI=false` is a truthy string, so bare truthiness would misclassify
@@ -94,7 +104,7 @@ if (tauriCommand === "build" && !inCi && !isReleaseBuild) {
 // Invoke Tauri's JavaScript entry point with Node rather than its package-manager
 // shim. This works on Windows too (where the shim is a .cmd file) without
 // starting a shell, so user-supplied Tauri arguments remain literal arguments.
-run(process.execPath, [tauriCli, ...tauriArgs], process.env);
+run(process.execPath, [tauriCli, ...tauriArgs], process.env, "Tauri CLI");
 
 function resolveTargets(requestedTarget) {
   if (!requestedTarget) {
@@ -152,6 +162,7 @@ function composeUniversalMacSidecars() {
       "lipo",
       ["-create", "-output", universalPath, arm64Path, x64Path],
       process.env,
+      "universal sidecar composition",
     );
     chmodSync(universalPath, 0o755);
 
@@ -161,7 +172,7 @@ function composeUniversalMacSidecars() {
   }
 }
 
-function run(command, args, env) {
+function run(command, args, env, label) {
   const result = spawnSync(command, args, {
     cwd: process.cwd(),
     stdio: "inherit",
@@ -172,9 +183,10 @@ function run(command, args, env) {
   });
 
   if (result.status !== 0) {
-    const rendered = [command, ...args].join(" ");
+    // CLI arguments can contain inline configuration or credentials. The
+    // fixed operation label remains actionable without echoing private input.
     process.stderr.write(
-      `[tauri-sidecar] Command failed (${result.status ?? "unknown"}): ${rendered}\n`,
+      `[tauri-sidecar] Command failed (${result.status ?? "unknown"}): ${label}\n`,
     );
     process.exit(result.status ?? 1);
   }

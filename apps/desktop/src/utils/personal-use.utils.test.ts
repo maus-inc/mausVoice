@@ -6,6 +6,7 @@ import {
   PERSONAL_DEEPGRAM_TRANSCRIPTION_MODEL,
   PERSONAL_GROQ_API_KEY_ID,
   resolvePersonalTranscriptionTarget,
+  shouldConfigurePersonalGeneration,
 } from "./personal-use.utils";
 
 describe("PERSONAL_DEEPGRAM_TRANSCRIPTION_MODEL", () => {
@@ -36,6 +37,33 @@ describe("PERSONAL_DEEPGRAM_TRANSCRIPTION_MODEL", () => {
     ).getTranscriptionModels({});
 
     expect(offered).toContain(PERSONAL_DEEPGRAM_TRANSCRIPTION_MODEL);
+  });
+});
+
+describe("shouldConfigurePersonalGeneration", () => {
+  it("does not rewrite the preset when the selected key has the canonical id", () => {
+    expect(
+      shouldConfigurePersonalGeneration(
+        "api",
+        PERSONAL_GROQ_API_KEY_ID,
+        PERSONAL_GROQ_API_KEY_ID,
+      ),
+    ).toBe(false);
+  });
+
+  it.each([
+    { mode: null, id: null, expected: true },
+    { mode: "", id: "external", expected: true },
+    { mode: "api", id: "", expected: true },
+    { mode: "api", id: PERSONAL_GROQ_API_KEY_ID, expected: true },
+    { mode: "local", id: "selected", expected: true },
+    { mode: "api", id: "selected", expected: false },
+    { mode: "api", id: "external", expected: false },
+    { mode: "local", id: "external", expected: false },
+  ])("decides whether to set mode=$mode key=$id", ({ mode, id, expected }) => {
+    expect(shouldConfigurePersonalGeneration(mode, id, "selected")).toBe(
+      expected,
+    );
   });
 });
 

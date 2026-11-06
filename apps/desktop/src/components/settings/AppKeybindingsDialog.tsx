@@ -23,6 +23,7 @@ import {
 } from "../../actions/app-target.actions";
 import { updateUserPreferences } from "../../actions/user.actions";
 import { produceAppState, useAppStore } from "../../store";
+import { logOnRejection } from "../../utils/promise.utils";
 import { getMyUserPreferences } from "../../utils/user.utils";
 import { ElasticSlider } from "../common/ElasticSlider";
 import { StorageImage } from "../common/StorageImage";
@@ -56,24 +57,33 @@ export const AppKeybindingsDialog = () => {
 
   const handleDefaultChange = (event: SelectChangeEvent<string>) => {
     const value = event.target.value;
-    void updateUserPreferences((prefs) => {
-      prefs.pasteKeybind = value === "shift+insert" ? null : value;
-    });
+    logOnRejection(
+      updateUserPreferences((prefs) => {
+        prefs.pasteKeybind = value === "shift+insert" ? null : value;
+      }),
+      "default paste shortcut",
+    );
   };
 
   const handleDefaultInsertionMethodChange = (
     event: SelectChangeEvent<string>,
   ) => {
     const value = event.target.value;
-    void updateUserPreferences((prefs) => {
-      prefs.insertionMethod = value === "paste" ? null : value;
-    });
+    logOnRejection(
+      updateUserPreferences((prefs) => {
+        prefs.insertionMethod = value === "paste" ? null : value;
+      }),
+      "default insertion method",
+    );
   };
 
   const handleDefaultTypingSpeedCommit = (num: number) => {
-    void updateUserPreferences((prefs) => {
-      prefs.typingSpeedMs = num;
-    });
+    logOnRejection(
+      updateUserPreferences((prefs) => {
+        prefs.typingSpeedMs = num;
+      }),
+      "default typing speed",
+    );
   };
 
   return (
@@ -284,6 +294,101 @@ const pasteKeybindLabel = (keybind: string) => {
   }
 };
 
+const AppTypingSpeedControl = ({
+  target,
+  defaultTypingSpeedMs,
+}: {
+  target: AppTarget;
+  defaultTypingSpeedMs: number;
+}) => {
+  const typingSpeedValue = target.typingSpeedMs ?? defaultTypingSpeedMs;
+  const useDefaultTypingSpeed = target.typingSpeedMs == null;
+  const handleTypingSpeedCommit = (num: number) => {
+    void setAppTargetTypingSpeed(target.id, num);
+  };
+  const handleUseDefaultTypingSpeedChange = (
+    event: ChangeEvent<HTMLInputElement>,
+  ) => {
+    void setAppTargetTypingSpeed(
+      target.id,
+      event.target.checked ? null : defaultTypingSpeedMs,
+    );
+  };
+  return (
+    <Stack sx={{ mt: 1 }}>
+      <Stack
+        direction="row"
+        sx={{
+          alignItems: "center",
+          justifyContent: "space-between",
+          mb: 0.5,
+        }}
+      >
+        <Typography
+          variant="caption"
+          sx={{
+            color: "text.secondary",
+          }}
+        >
+          <FormattedMessage defaultMessage="Simulated typing speed" />
+        </Typography>
+        <Stack
+          direction="row"
+          spacing={0.5}
+          sx={{
+            alignItems: "center",
+          }}
+        >
+          <Typography
+            variant="caption"
+            sx={{
+              color: "text.secondary",
+            }}
+          >
+            <FormattedMessage
+              defaultMessage="Use default ({speed}ms)"
+              values={{ speed: defaultTypingSpeedMs }}
+            />
+          </Typography>
+          <Switch
+            size="small"
+            checked={useDefaultTypingSpeed}
+            onChange={handleUseDefaultTypingSpeedChange}
+          />
+        </Stack>
+      </Stack>
+      {!useDefaultTypingSpeed && (
+        <Stack
+          direction="row"
+          spacing={2}
+          sx={{
+            alignItems: "center",
+          }}
+        >
+          <Typography
+            variant="caption"
+            sx={{
+              color: "text.secondary",
+              minWidth: 80,
+            }}
+          >
+            <FormattedMessage defaultMessage="Speed" />
+          </Typography>
+          <ElasticSlider
+            value={typingSpeedValue}
+            onCommit={handleTypingSpeedCommit}
+            min={1}
+            max={40}
+            step={1}
+            valueLabelDisplay="auto"
+            valueLabelFormat={(value) => `${value}ms`}
+          />
+        </Stack>
+      )}
+    </Stack>
+  );
+};
+
 const AppKeybindingRow = ({
   target,
   defaultInsertionMethod,
@@ -295,8 +400,6 @@ const AppKeybindingRow = ({
   const insertionMethodValue = target.insertionMethod ?? "default";
   const effectiveInsertionMethod =
     target.insertionMethod ?? defaultInsertionMethod;
-  const typingSpeedValue = target.typingSpeedMs ?? defaultTypingSpeedMs;
-  const useDefaultTypingSpeed = target.typingSpeedMs == null;
   const defaultInsertionMethodLabel =
     defaultInsertionMethod === "type"
       ? intl.formatMessage({ defaultMessage: "Simulated typing" })
@@ -315,19 +418,6 @@ const AppKeybindingRow = ({
     void setAppTargetInsertionMethod(
       target.id,
       value === "default" ? null : value,
-    );
-  };
-
-  const handleTypingSpeedCommit = (num: number) => {
-    void setAppTargetTypingSpeed(target.id, num);
-  };
-
-  const handleUseDefaultTypingSpeedChange = (
-    event: ChangeEvent<HTMLInputElement>,
-  ) => {
-    void setAppTargetTypingSpeed(
-      target.id,
-      event.target.checked ? null : defaultTypingSpeedMs,
     );
   };
 
@@ -460,77 +550,10 @@ const AppKeybindingRow = ({
         </Stack>
       )}
       {showSpeedSlider && (
-        <Stack sx={{ mt: 1 }}>
-          <Stack
-            direction="row"
-            sx={{
-              alignItems: "center",
-              justifyContent: "space-between",
-              mb: 0.5,
-            }}
-          >
-            <Typography
-              variant="caption"
-              sx={{
-                color: "text.secondary",
-              }}
-            >
-              <FormattedMessage defaultMessage="Simulated typing speed" />
-            </Typography>
-            <Stack
-              direction="row"
-              spacing={0.5}
-              sx={{
-                alignItems: "center",
-              }}
-            >
-              <Typography
-                variant="caption"
-                sx={{
-                  color: "text.secondary",
-                }}
-              >
-                <FormattedMessage
-                  defaultMessage="Use default ({speed}ms)"
-                  values={{ speed: defaultTypingSpeedMs }}
-                />
-              </Typography>
-              <Switch
-                size="small"
-                checked={useDefaultTypingSpeed}
-                onChange={handleUseDefaultTypingSpeedChange}
-              />
-            </Stack>
-          </Stack>
-          {!useDefaultTypingSpeed && (
-            <Stack
-              direction="row"
-              spacing={2}
-              sx={{
-                alignItems: "center",
-              }}
-            >
-              <Typography
-                variant="caption"
-                sx={{
-                  color: "text.secondary",
-                  minWidth: 80,
-                }}
-              >
-                <FormattedMessage defaultMessage="Speed" />
-              </Typography>
-              <ElasticSlider
-                value={typingSpeedValue}
-                onCommit={handleTypingSpeedCommit}
-                min={1}
-                max={40}
-                step={1}
-                valueLabelDisplay="auto"
-                valueLabelFormat={(value) => `${value}ms`}
-              />
-            </Stack>
-          )}
-        </Stack>
+        <AppTypingSpeedControl
+          target={target}
+          defaultTypingSpeedMs={defaultTypingSpeedMs}
+        />
       )}
     </Stack>
   );

@@ -30,14 +30,14 @@ const toLocalChatMessage = (message: ChatMessage): LocalChatMessage => ({
   metadata: message.metadata ? JSON.stringify(message.metadata) : null,
 });
 
-export abstract class BaseChatMessageRepo extends BaseRepo {
+abstract class BaseChatMessageRepo extends BaseRepo {
   abstract listChatMessages(conversationId: string): Promise<ChatMessage[]>;
   abstract createChatMessage(message: ChatMessage): Promise<ChatMessage>;
   abstract updateChatMessage(message: ChatMessage): Promise<ChatMessage>;
   abstract deleteChatMessages(ids: string[]): Promise<void>;
 }
 
-export class LocalChatMessageRepo extends BaseChatMessageRepo {
+class LocalChatMessageRepo extends BaseChatMessageRepo {
   async listChatMessages(conversationId: string): Promise<ChatMessage[]> {
     const locals = await invoke<LocalChatMessage[]>("chat_message_list", {
       conversationId,
@@ -63,3 +63,11 @@ export class LocalChatMessageRepo extends BaseChatMessageRepo {
     await invoke("chat_message_delete_many", { ids });
   }
 }
+
+/** Returns the local chat-message persistence implementation. */
+export const getChatMessageRepo = (): {
+  listChatMessages: (conversationId: string) => Promise<ChatMessage[]>;
+  createChatMessage: (message: ChatMessage) => Promise<ChatMessage>;
+  updateChatMessage: (message: ChatMessage) => Promise<ChatMessage>;
+  deleteChatMessages: (ids: string[]) => Promise<void>;
+} => new LocalChatMessageRepo();

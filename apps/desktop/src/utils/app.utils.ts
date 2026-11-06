@@ -144,7 +144,10 @@ export const registerPairedRemoteDevices = (
   draft: AppState,
   devices: PairedRemoteDevice[],
 ): void => {
-  for (const device of devices) {
-    draft.pairedRemoteDeviceById[device.id] = device;
-  }
+  // Object.fromEntries creates own data properties even for IDs such as
+  // "__proto__", rather than invoking Object.prototype's legacy setter.
+  draft.pairedRemoteDeviceById = Object.fromEntries([
+    ...Object.entries(draft.pairedRemoteDeviceById),
+    ...devices.map((device) => [device.id, device]),
+  ]);
 };

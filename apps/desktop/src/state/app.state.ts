@@ -80,7 +80,7 @@ export type AppState = {
   auth: Nullable<AuthUser>;
   authSessionNonce: number;
   keysHeld: string[];
-  isRecordingHotkey: boolean;
+  hotkeyCaptureOwnerIds: string[];
   activeRecordingMode: Nullable<RecordingMode>;
   dictationLanguageOverride: Nullable<string>;
   overlayPhase: OverlayPhase;
@@ -157,7 +157,7 @@ export type AppState = {
 
 export const INITIAL_APP_STATE: AppState = {
   userPrefs: null,
-  isRecordingHotkey: false,
+  hotkeyCaptureOwnerIds: [],
   activeRecordingMode: null,
   dictationLanguageOverride: null,
   localStorageCache: {},

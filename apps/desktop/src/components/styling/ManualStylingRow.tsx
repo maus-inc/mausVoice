@@ -1,3 +1,4 @@
+import type { Tone } from "@maus-inc/types";
 import {
   CircleMinus,
   EllipsisVertical,
@@ -23,6 +24,7 @@ import {
   setSelectedToneId,
 } from "../../actions/user.actions";
 import { produceAppState, useAppStore } from "../../store";
+import { logOnRejection } from "../../utils/promise.utils";
 import {
   isEditableTarget,
   useContextMenu,
@@ -55,40 +57,74 @@ export type ManualStylingRowProps = {
   id: string;
 };
 
-export const ManualStylingRow = ({ id }: ManualStylingRowProps) => {
-  const intl = useIntl();
-  const tone = useAppStore((state) => getRec(state.toneById, id));
-  const isSelected = useAppStore(
-    (state) => getManuallySelectedToneId(state) === id,
-  );
-  const activeToneCount = useAppStore(
-    (state) => getActiveManualToneIds(state).length,
-  );
-  const handleEdit = useCallback(() => {
-    openToneEditorDialog({ mode: "edit", toneId: id });
-  }, [id]);
+const stopPropagation = (e: React.MouseEvent) => e.stopPropagation();
 
-  const handleViewPrompt = useCallback(() => {
-    produceAppState((draft) => {
-      draft.tones.viewingToneId = id;
-      draft.tones.viewingToneOpen = true;
-    });
-  }, [id]);
+/** Compact text shown underneath the style's name. */
+const stylePromptPreview = (tone: Tone | undefined) => (
+  <Typography
+    variant="body2"
+    sx={{
+      color: "text.secondary",
+      display: "-webkit-box",
+      WebkitLineClamp: 2,
+      WebkitBoxOrient: "vertical",
+      overflow: "hidden",
+    }}
+  >
+    {tone?.description || formatPromptForPreview(tone?.promptTemplate ?? "-")}
+  </Typography>
+);
 
-  const handleSelect = useCallback(() => {
-    setSelectedToneId(id);
-  }, [id]);
+/** Managed-style indicator and menu, isolated from selecting the row. */
+const StyleRowActions = ({
+  isGlobal,
+  menuItems,
+}: {
+  isGlobal: boolean;
+  menuItems: MenuPopoverItem[];
+}) => (
+  <Stack
+    direction="row"
+    spacing={0.5}
+    onClick={stopPropagation}
+    onMouseDown={stopPropagation}
+    sx={{
+      alignItems: "center",
+    }}
+  >
+    {isGlobal && (
+      <Tooltip
+        disableInteractive
+        title={
+          <FormattedMessage defaultMessage="This style is managed by your organization." />
+        }
+      >
+        <span>
+          <IconButton size="small" disabled>
+            <Globe size={16} strokeWidth={1.9} />
+          </IconButton>
+        </span>
+      </Tooltip>
+    )}
+    <MenuPopoverBuilder items={menuItems}>
+      {({ ref, open }) => (
+        <IconButton
+          ref={ref}
+          onClick={(e) => {
+            e.stopPropagation();
+            open();
+          }}
+          size="small"
+        >
+          <EllipsisVertical size={16} strokeWidth={1.9} />
+        </IconButton>
+      )}
+    </MenuPopoverBuilder>
+  </Stack>
+);
 
-  const handleDeselect = useCallback(() => {
-    deselectActiveTone(id);
-  }, [id]);
-
-  const isGlobal = tone?.isGlobal === true;
-  const isSystem = tone?.isSystem === true;
-  const canEdit = !isGlobal && !isSystem;
-  const hasPrompt = Boolean(tone?.promptTemplate);
-  const canDeselect = activeToneCount > 1;
-  const ctxMenu = useContextMenu();
+/** Manage a delete confirmation without losing the dialog on failure. */
+const useStyleDeletion = (id: string) => {
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
@@ -113,6 +149,57 @@ export const ManualStylingRow = ({ id }: ManualStylingRowProps) => {
       setIsDeleting(false);
     }
   }, [id, isDeleting]);
+
+  return {
+    deleteConfirmOpen,
+    isDeleting,
+    handleDeleteRequest,
+    handleDeleteCancel,
+    handleDeleteConfirm,
+  };
+};
+
+export const ManualStylingRow = ({ id }: ManualStylingRowProps) => {
+  const intl = useIntl();
+  const tone = useAppStore((state) => getRec(state.toneById, id));
+  const isSelected = useAppStore(
+    (state) => getManuallySelectedToneId(state) === id,
+  );
+  const activeToneCount = useAppStore(
+    (state) => getActiveManualToneIds(state).length,
+  );
+  const handleEdit = useCallback(() => {
+    openToneEditorDialog({ mode: "edit", toneId: id });
+  }, [id]);
+
+  const handleViewPrompt = useCallback(() => {
+    produceAppState((draft) => {
+      draft.tones.viewingToneId = id;
+      draft.tones.viewingToneOpen = true;
+    });
+  }, [id]);
+
+  const handleSelect = useCallback(() => {
+    logOnRejection(setSelectedToneId(id), "style selection");
+  }, [id]);
+
+  const handleDeselect = useCallback(() => {
+    logOnRejection(deselectActiveTone(id), "style deselection");
+  }, [id]);
+
+  const isGlobal = tone?.isGlobal === true;
+  const isSystem = tone?.isSystem === true;
+  const canEdit = !isGlobal && !isSystem;
+  const hasPrompt = Boolean(tone?.promptTemplate);
+  const canDeselect = activeToneCount > 1;
+  const ctxMenu = useContextMenu();
+  const {
+    deleteConfirmOpen,
+    isDeleting,
+    handleDeleteRequest,
+    handleDeleteCancel,
+    handleDeleteConfirm,
+  } = useStyleDeletion(id);
 
   // Context actions must honor the same managed/system-tone restrictions as
   // the overflow menu. The repository deletion command is not a permission
@@ -206,49 +293,6 @@ export const ManualStylingRow = ({ id }: ManualStylingRowProps) => {
     handleDeselect,
   ]);
 
-  const stopPropagation = (e: React.MouseEvent) => e.stopPropagation();
-
-  const trailing = (
-    <Stack
-      direction="row"
-      spacing={0.5}
-      onClick={stopPropagation}
-      onMouseDown={stopPropagation}
-      sx={{
-        alignItems: "center",
-      }}
-    >
-      {isGlobal && (
-        <Tooltip
-          disableInteractive
-          title={
-            <FormattedMessage defaultMessage="This style is managed by your organization." />
-          }
-        >
-          <span>
-            <IconButton size="small" disabled>
-              <Globe size={16} strokeWidth={1.9} />
-            </IconButton>
-          </span>
-        </Tooltip>
-      )}
-      <MenuPopoverBuilder items={menuItems}>
-        {({ ref, open }) => (
-          <IconButton
-            ref={ref}
-            onClick={(e) => {
-              e.stopPropagation();
-              open();
-            }}
-            size="small"
-          >
-            <EllipsisVertical size={16} strokeWidth={1.9} />
-          </IconButton>
-        )}
-      </MenuPopoverBuilder>
-    </Stack>
-  );
-
   return (
     <Box
       component="div"
@@ -274,22 +318,8 @@ export const ManualStylingRow = ({ id }: ManualStylingRowProps) => {
           />
         }
         title={tone?.name}
-        subtitle={
-          <Typography
-            variant="body2"
-            sx={{
-              color: "text.secondary",
-              display: "-webkit-box",
-              WebkitLineClamp: 2,
-              WebkitBoxOrient: "vertical",
-              overflow: "hidden",
-            }}
-          >
-            {tone?.description ||
-              formatPromptForPreview(tone?.promptTemplate ?? "-")}
-          </Typography>
-        }
-        trailing={trailing}
+        subtitle={stylePromptPreview(tone)}
+        trailing={<StyleRowActions isGlobal={isGlobal} menuItems={menuItems} />}
         sx={{ backgroundColor: "level1", mb: 1, borderRadius: 1 }}
       />
       {ctxMenu.renderMenu()}

@@ -49,7 +49,6 @@ const mergeSystemTones = (userTones: Tone[]): Tone[] => {
 
 export abstract class BaseToneRepo extends BaseRepo {
   protected abstract listTonesInternal(): Promise<Tone[]>;
-  protected abstract getToneInternal(id: string): Promise<Tone | null>;
   protected abstract upsertToneInternal(tone: Tone): Promise<Tone>;
   protected abstract deleteToneInternal(id: string): Promise<void>;
 
@@ -64,14 +63,6 @@ export abstract class BaseToneRepo extends BaseRepo {
     });
 
     return mergeSystemTones(userTones);
-  }
-
-  async getTone(id: string): Promise<Tone | null> {
-    const systemTone = getSystemToneById(id);
-    if (systemTone) {
-      return systemTone;
-    }
-    return this.getToneInternal(id);
   }
 
   async upsertTone(tone: Tone): Promise<Tone> {
@@ -93,11 +84,6 @@ export class LocalToneRepo extends BaseToneRepo {
   protected async listTonesInternal(): Promise<Tone[]> {
     const tones = await invoke<LocalTone[]>("tone_list");
     return tones.map(fromLocalTone);
-  }
-
-  protected async getToneInternal(id: string): Promise<Tone | null> {
-    const tone = await invoke<LocalTone | null>("tone_get", { id });
-    return tone ? fromLocalTone(tone) : null;
   }
 
   protected async upsertToneInternal(tone: Tone): Promise<Tone> {

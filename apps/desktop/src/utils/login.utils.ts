@@ -14,7 +14,7 @@ export const validateEmail = (state: AppState): string | null => {
   return null;
 };
 
-export const validatePassword = (state: AppState): string | null => {
+const validatePassword = (state: AppState): string | null => {
   const password = state.login.password;
   if (password.length < 6) {
     return getIntl().formatMessage({

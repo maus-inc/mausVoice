@@ -6,15 +6,12 @@ import {
   setPreferredPostProcessingMode,
 } from "../../actions/user.actions";
 import { useAppStore } from "../../store";
+import { logOnRejection } from "../../utils/promise.utils";
 import { getEffectivePostProcessingMode } from "../../utils/user.utils";
 import { type PostProcessingMode } from "../../types/ai.types";
 import { AnimateSwitch } from "../common/AnimateIn";
 import { SegmentedControl } from "../common/SegmentedControl";
 import { ApiKeyList } from "./ApiKeyList";
-
-export function maybeArrayElements<T>(visible: boolean, values: T[]): T[] {
-  return visible ? values : [];
-}
 
 export const AIPostProcessingConfiguration = () => {
   const postProcessing = useAppStore(
@@ -23,11 +20,17 @@ export const AIPostProcessingConfiguration = () => {
   const effectiveMode = useAppStore(getEffectivePostProcessingMode);
 
   const handleModeChange = useCallback((mode: PostProcessingMode) => {
-    void setPreferredPostProcessingMode(mode);
+    logOnRejection(
+      setPreferredPostProcessingMode(mode),
+      "post-processing mode",
+    );
   }, []);
 
   const handleApiKeyChange = useCallback((id: string | null) => {
-    void setPreferredPostProcessingApiKeyId(id);
+    logOnRejection(
+      setPreferredPostProcessingApiKeyId(id),
+      "post-processing API key",
+    );
   }, []);
 
   return (

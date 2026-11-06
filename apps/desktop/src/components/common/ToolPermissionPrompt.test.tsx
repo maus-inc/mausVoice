@@ -102,6 +102,11 @@ describe.each(["default", "overlay"] as const)(
           expect(container.textContent).toContain(
             status === "allowed" ? "Erlaubt" : "Abgelehnt",
           );
+          expect(container.querySelector(".MuiChip-root")?.className).toContain(
+            status === "allowed"
+              ? "MuiChip-colorSuccess"
+              : "MuiChip-colorError",
+          );
         } else {
           expect(container.querySelector(".MuiChip-root")).toBeNull();
         }

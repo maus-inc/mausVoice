@@ -15,6 +15,7 @@ import {
   goToOnboardingPage,
   setDidSignUpWithAccount,
 } from "../../actions/onboarding.actions";
+import type { AppState } from "../../state/app.state";
 import {
   applyOnboardingNameDraft,
   clearOnboardingLastName,
@@ -37,6 +38,43 @@ import {
   OnboardingFormLayout,
 } from "./OnboardingCommon";
 
+// Only changes of identity or prefill source should replace editable input;
+// the draft text itself changes on every keystroke and is deliberately not a key.
+const getNamePrefill = (
+  auth: NonNullable<AppState["auth"]>,
+  draftName: string,
+  draftUserId: string | null,
+) => {
+  const draftBelongsToUser = isOnboardingNameDraftOwnedByAuth(
+    draftUserId,
+    auth.uid,
+  );
+  const hasUsableDraft = draftBelongsToUser && Boolean(draftName);
+  const providerName = auth.providers.includes("personal")
+    ? ""
+    : (auth.displayName ?? "");
+  const prefillName = hasUsableDraft ? draftName : providerName;
+  // Key by (uid, kind, providerName) only — NOT on the draft value itself,
+  // because the draft is mutated by user typing and would otherwise
+  // re-trigger this effect on every keystroke and clobber input.
+  let prefillSource: string;
+  if (hasUsableDraft) {
+    prefillSource =
+      draftUserId === auth.uid
+        ? `owned-draft:${auth.uid}`
+        : `ownerless-draft:${auth.uid}`;
+  } else {
+    prefillSource = `provider:${auth.uid}:${providerName}`;
+  }
+  return {
+    draftBelongsToUser,
+    hasUsableDraft,
+    providerName,
+    prefillName,
+    prefillSource,
+  };
+};
+
 export const SignInForm = () => {
   const intl = useIntl();
   const [emailDialogOpen, setEmailDialogOpen] = useState(false);
@@ -53,60 +91,50 @@ export const SignInForm = () => {
     firstNameRef.current?.focus();
   }, []);
 
-  const auth = useAppStore((state) => state.auth);
+  // A single equality-checked snapshot keeps these related onboarding fields
+  // coherent without subscribing separately to every field.
+  const {
+    auth,
+    loginStatus,
+    onboardingNameDraft,
+    onboardingNameDraftUserId,
+    onboardingResumePage,
+    initialized,
+    showEmailButton,
+    existingName,
+    autoAdvancedForSessionUserId,
+    firstName,
+    lastName,
+    lastNameEnabled,
+  } = useAppStore((state) => ({
+    auth: state.auth,
+    loginStatus: state.login.status,
+    onboardingNameDraft: state.local.onboardingNameDraft,
+    onboardingNameDraftUserId: state.local.onboardingNameDraftUserId,
+    onboardingResumePage: state.local.onboardingResumePage,
+    initialized: state.initialized,
+    showEmailButton: getShouldShowEmailForm(state),
+    existingName: getMyUser(state)?.name?.trim() ?? "",
+    autoAdvancedForSessionUserId: state.onboarding.autoAdvancedForSessionUserId,
+    firstName: state.onboarding.firstName,
+    lastName: state.onboarding.lastName,
+    lastNameEnabled: state.onboarding.lastNameEnabled,
+  }));
   const isPersonalUse = isPersonalUseEnabled();
-  const loginStatus = useAppStore((state) => state.login.status);
-  const onboardingNameDraft = useAppStore(
-    (state) => state.local.onboardingNameDraft,
-  );
-  const onboardingNameDraftUserId = useAppStore(
-    (state) => state.local.onboardingNameDraftUserId,
-  );
-  const onboardingResumePage = useAppStore(
-    (state) => state.local.onboardingResumePage,
-  );
   const isSignedIn = Boolean(auth);
-  const initialized = useAppStore((state) => state.initialized);
-  const showEmailButton = useAppStore((state) => getShouldShowEmailForm(state));
-
-  const existingUser = useAppStore((state) => getMyUser(state));
-  const existingName = existingUser?.name?.trim() ?? "";
-  const autoAdvancedForSessionUserId = useAppStore(
-    (state) => state.onboarding.autoAdvancedForSessionUserId,
-  );
-
-  const firstName = useAppStore((state) => state.onboarding.firstName);
-  const lastName = useAppStore((state) => state.onboarding.lastName);
-  const lastNameEnabled = useAppStore(
-    (state) => state.onboarding.lastNameEnabled,
-  );
 
   useEffect(() => {
     if (!isSignedIn || !auth) {
       prefilledNameSource.current = null;
       return;
     }
-    const draftBelongsToUser = isOnboardingNameDraftOwnedByAuth(
-      onboardingNameDraftUserId,
-      auth.uid,
-    );
-    const hasUsableDraft = draftBelongsToUser && Boolean(onboardingNameDraft);
-    const providerName = auth.providers.includes("personal")
-      ? ""
-      : (auth.displayName ?? "");
-    const prefillName = hasUsableDraft ? onboardingNameDraft : providerName;
-    // Key by (uid, kind, providerName) only — NOT on the draft value itself,
-    // because the draft is mutated by user typing and would otherwise
-    // re-trigger this effect on every keystroke and clobber input.
-    let prefillSource: string;
-    if (hasUsableDraft) {
-      prefillSource =
-        onboardingNameDraftUserId === auth.uid
-          ? `owned-draft:${auth.uid}`
-          : `ownerless-draft:${auth.uid}`;
-    } else {
-      prefillSource = `provider:${auth.uid}:${providerName}`;
-    }
+    const {
+      draftBelongsToUser,
+      hasUsableDraft,
+      providerName,
+      prefillName,
+      prefillSource,
+    } = getNamePrefill(auth, onboardingNameDraft, onboardingNameDraftUserId);
     if (prefilledNameSource.current === prefillSource) return;
     prefilledNameSource.current = prefillSource;
     produceAppState((draft) => {

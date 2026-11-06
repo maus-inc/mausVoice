@@ -1,12 +1,9 @@
 import { getRec } from "@maus-inc/utilities";
 import z from "zod";
-import { Locale } from "../i18n/config";
-import { getIntl } from "../i18n/intl";
 import { AppState } from "../state/app.state";
 import {
   DictationLanguageCode,
   getDisplayNameForLanguage,
-  LANGUAGE_DISPLAY_NAMES,
 } from "./language.utils";
 import { ToneConfig } from "./tone.utils";
 import { getMyUserName } from "./user.utils";
@@ -189,6 +186,31 @@ export const estimateTokenCount = (value: string): number => {
   return tokens;
 };
 
+type VocabularyUsage = {
+  entries: number;
+  characters: number;
+  words: number;
+  estimatedTokens: number;
+};
+
+const fitsVocabularyTermLimits = (
+  length: number,
+  words: number,
+  budget: VocabularyBudget,
+): boolean =>
+  length > 0 &&
+  length <= (budget.maxTermLength ?? Infinity) &&
+  words <= (budget.maxWordsPerTerm ?? Infinity);
+
+const exceedsVocabularyBudget = (
+  usage: VocabularyUsage,
+  budget: VocabularyBudget,
+): boolean =>
+  usage.entries >= budget.maxEntries ||
+  usage.characters > budget.maxCharacters ||
+  usage.words > (budget.maxWords ?? Infinity) ||
+  usage.estimatedTokens > (budget.maxEstimatedTokens ?? Infinity);
+
 export const capVocabularyTerms = (
   terms: string[],
   budget: VocabularyBudget,
@@ -209,11 +231,8 @@ export const capVocabularyTerms = (
   for (const term of terms) {
     const trimmed = term.trim();
     const length = codePointLength(trimmed);
-    const fitsTermLimits =
-      length > 0 &&
-      length <= (budget.maxTermLength ?? Infinity) &&
-      wordCount(trimmed) <= (budget.maxWordsPerTerm ?? Infinity);
-    if (!fitsTermLimits) {
+    const termWords = wordCount(trimmed);
+    if (!fitsVocabularyTermLimits(length, termWords, budget)) {
       truncated = truncated || length > 0;
       continue;
     }
@@ -221,18 +240,22 @@ export const capVocabularyTerms = (
     const separatorTokens = capped.length > 0 ? estimateTokenCount(", ") : 0;
     const termTokens = estimateTokenCount(trimmed);
     if (
-      capped.length >= budget.maxEntries ||
-      characters + separator + length > budget.maxCharacters ||
-      words + wordCount(trimmed) > (budget.maxWords ?? Infinity) ||
-      estimatedTokens + separatorTokens + termTokens >
-        (budget.maxEstimatedTokens ?? Infinity)
+      exceedsVocabularyBudget(
+        {
+          entries: capped.length,
+          characters: characters + separator + length,
+          words: words + termWords,
+          estimatedTokens: estimatedTokens + separatorTokens + termTokens,
+        },
+        budget,
+      )
     ) {
       truncated = true;
       break;
     }
     capped.push(trimmed);
     characters += separator + length;
-    words += wordCount(trimmed);
+    words += termWords;
     estimatedTokens += separatorTokens + termTokens;
   }
 
@@ -513,15 +536,12 @@ ${buildGlossaryGuidance(input.glossary)}
   );
 };
 
-type ReplacementRule = {
-  source: string;
-  destination: string;
-};
-
 export type DictionaryEntries = {
   sources: string[];
-  replacements: ReplacementRule[];
+  replacements: Array<{ source: string; destination: string }>;
 };
+
+type ReplacementRule = DictionaryEntries["replacements"][number];
 
 /**
  * It is necessary to provide a transcription prompt per language. Some whisper models are biased by
@@ -657,7 +677,7 @@ const transcriptionPromptByCode: Record<DictationLanguageCode, string> = {
 // this heuristic budget, so the rendered initial_prompt (terms plus
 // instruction) stays within the heuristic. An oversized prompt also raises
 // the risk of leaking into near-silent transcriptions.
-export const TRANSCRIPTION_GLOSSARY_BUDGET: VocabularyBudget = {
+const TRANSCRIPTION_GLOSSARY_BUDGET: VocabularyBudget = {
   maxEntries: 100,
   maxCharacters: 650,
 };
@@ -895,7 +915,7 @@ const PROCESSED_TRANSCRIPTION_EDITS_SCHEMA = z
 export const POST_PROCESS_TRUNCATED_WARNING =
   "The styling response was cut off at the model's output limit, so its partial reply was discarded.";
 
-export const PROCESSED_TRANSCRIPTION_SCHEMA = z.object({
+const PROCESSED_TRANSCRIPTION_SCHEMA = z.object({
   edits: PROCESSED_TRANSCRIPTION_EDITS_SCHEMA,
   result: z
     .string()
@@ -914,69 +934,4 @@ export const PROCESSED_TRANSCRIPTION_JSON_RESPONSE = {
   description:
     "JSON response with the edits that clean the transcription, or a full cleaned transcription in result",
   schema: PROCESSED_TRANSCRIPTION_JSON_SCHEMA,
-};
-
-export const buildSystemAgentPrompt = (): string => {
-  return "You are a helpful AI assistant that executes user commands. The user will dictate instructions via voice, and you will execute those instructions and return the output. Your job is to understand what the user wants and produce it. Examples: 'write a poem about cats' → write the poem; 'summarize this article' → provide the summary; 'create a shopping list' → create the list; 'draft an email to my boss' → draft the email. Always return just the requested output, ready to be pasted.";
-};
-
-export const buildLocalizedAgentPrompt = (
-  transcript: string,
-  locale: Locale,
-  toneTemplate?: string | null,
-): string => {
-  const intl = getIntl(locale);
-  const languageName = LANGUAGE_DISPLAY_NAMES[locale];
-
-  // Use tone template if provided to adjust the agent's response style
-  let base: string;
-  if (toneTemplate) {
-    base = `
-The user has dictated the following command or request. Follow it precisely.
-
-Style instructions to apply to your response:
-\`\`\`
-${toneTemplate}
-\`\`\`
-
-Here is what the user dictated:
--------
-${transcript}
--------
-
-Execute the command and provide your response in ${languageName}.
-`;
-    console.log(
-      "[Agent Prompt] Using tone template, result length:",
-      base.length,
-    );
-  } else {
-    console.log("[Agent Prompt] Using default prompt (no tone template)");
-    base = intl.formatMessage(
-      {
-        defaultMessage: `
-The user has dictated the following command:
--------
-{transcript}
--------
-
-Execute this command and provide the output in {languageName}.
-
-Instructions:
-- If the user asks you to write, create, draft, or compose something → produce that content
-- If the user asks you to summarize, analyze, or explain something → provide the summary/analysis/explanation
-- If the user asks you to transform or rewrite something → apply the transformation
-- If the user provides a statement without a clear command → clean it up and present it clearly
-
-Return ONLY the requested output, nothing else. The output will be pasted directly into the user's application.
-        `,
-      },
-      {
-        languageName,
-        transcript,
-      },
-    );
-  }
-
-  return base;
 };

@@ -42,7 +42,6 @@ const createRepoMock = () =>
       .fn<BaseUserPreferencesRepo["getUserPreferences"]>()
       .mockResolvedValue(withFlags("{}")),
     setUserPreferences: vi.fn<BaseUserPreferencesRepo["setUserPreferences"]>(),
-    setExpansionFlags: vi.fn<BaseUserPreferencesRepo["setExpansionFlags"]>(),
     compareAndSetExpansionFlags:
       vi.fn<BaseUserPreferencesRepo["compareAndSetExpansionFlags"]>(),
   }) satisfies BaseUserPreferencesRepo;
@@ -202,11 +201,6 @@ describe("featureFlags", () => {
       mockRepo.getUserPreferences.mockImplementation(() =>
         Promise.resolve(withFlags(stored)),
       );
-      mockRepo.setExpansionFlags.mockImplementation((flags) => {
-        externalWrite();
-        stored = flags;
-        return Promise.resolve(withFlags(stored));
-      });
       mockRepo.compareAndSetExpansionFlags.mockImplementation(
         (expected, flags) => {
           if (externalWrite() || expected !== stored)
@@ -222,7 +216,6 @@ describe("featureFlags", () => {
         meetingNotesEnabled: true,
       });
       expect(mockRepo.compareAndSetExpansionFlags).toHaveBeenCalledTimes(2);
-      expect(mockRepo.setExpansionFlags).not.toHaveBeenCalled();
     });
 
     it("bounds repeated conflicts and leaves the queue usable", async () => {

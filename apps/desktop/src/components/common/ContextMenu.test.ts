@@ -15,6 +15,7 @@ vi.mock("react-intl", async (importOriginal) => {
 });
 
 import {
+  ContextMenu,
   ContextMenuProvider,
   isEditableTarget,
   useContextMenu,
@@ -208,6 +209,98 @@ describe("isEditableTarget", () => {
     child.textContent = "x";
     host.appendChild(child);
     expect(isEditableTarget(child)).toBe(true);
+  });
+});
+
+describe("ContextMenu keyboard navigation", () => {
+  it("starts at the last enabled item on ArrowUp and wraps around disabled rows", () => {
+    const first = vi.fn();
+    const last = vi.fn();
+    act(() =>
+      root.render(
+        createElement(ContextMenu, {
+          items: [
+            { label: "First", onClick: first },
+            { label: "Disabled", disabled: true, onClick: vi.fn() },
+            { kind: "divider" },
+            { label: "Last", onClick: last },
+          ],
+        }),
+      ),
+    );
+    const menu = queryRequired(container, '[role="menu"]');
+    const press = (key: string) =>
+      act(() => {
+        menu.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            key,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+      });
+    press("ArrowUp");
+    expect(menu.getAttribute("aria-activedescendant")).toBe(
+      "context-menu-item-3",
+    );
+    press("ArrowUp");
+    expect(menu.getAttribute("aria-activedescendant")).toBe(
+      "context-menu-item-0",
+    );
+    press("ArrowDown");
+    expect(menu.getAttribute("aria-activedescendant")).toBe(
+      "context-menu-item-3",
+    );
+    press("ArrowDown");
+    expect(menu.getAttribute("aria-activedescendant")).toBe(
+      "context-menu-item-0",
+    );
+    press("Home");
+    expect(menu.getAttribute("aria-activedescendant")).toBe(
+      "context-menu-item-0",
+    );
+    press("Enter");
+    expect(first).toHaveBeenCalledOnce();
+    press("End");
+    expect(menu.getAttribute("aria-activedescendant")).toBe(
+      "context-menu-item-3",
+    );
+    press(" ");
+    expect(last).toHaveBeenCalledOnce();
+  });
+
+  it("leaves unrelated keys and menus without enabled items alone", () => {
+    const onClick = vi.fn();
+    act(() =>
+      root.render(
+        createElement(ContextMenu, {
+          items: [
+            { kind: "divider" },
+            { label: "Disabled", disabled: true, onClick },
+          ],
+        }),
+      ),
+    );
+    const menu = queryRequired(container, '[role="menu"]');
+    for (const key of [
+      "ArrowDown",
+      "ArrowUp",
+      "Home",
+      "End",
+      "Enter",
+      " ",
+      "Tab",
+    ]) {
+      const event = new KeyboardEvent("keydown", {
+        key,
+        bubbles: true,
+        cancelable: true,
+      });
+      act(() => menu.dispatchEvent(event));
+      expect(event.defaultPrevented).toBe(false);
+    }
+    expect(menu.hasAttribute("aria-activedescendant")).toBe(false);
+    expect(onClick).not.toHaveBeenCalled();
   });
 });
 

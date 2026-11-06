@@ -33,7 +33,7 @@ import {
 import { BaseApiKeyRepo, LocalApiKeyRepo } from "./api-key.repo";
 import { BaseAppTargetRepo, LocalAppTargetRepo } from "./app-target.repo";
 import { BaseAuthRepo, PersonalAuthRepo } from "./auth.repo";
-import { BaseChatMessageRepo, LocalChatMessageRepo } from "./chat-message.repo";
+export { getChatMessageRepo } from "./chat-message.repo";
 import {
   BaseConversationRepo,
   LocalConversationRepo,
@@ -112,7 +112,6 @@ import {
   LocalTranscriptionRepo,
 } from "./transcription.repo";
 import { BaseUserRepo, LocalUserRepo } from "./user.repo";
-export { BaseModelProviderRepo } from "./model-provider.repo";
 
 // The mausVoice Cloud backend (hosted AI, membership, billing) and the
 // enterprise self-hosted gateway were both deprecated and removed in 0.1.6.
@@ -172,10 +171,6 @@ export const getStorageRepo = (): BaseStorageRepo => {
 
 export const getConversationRepo = (): BaseConversationRepo => {
   return new LocalConversationRepo();
-};
-
-export const getChatMessageRepo = (): BaseChatMessageRepo => {
-  return new LocalChatMessageRepo();
 };
 
 export const getToolRepo = (): ToolRepo => {
@@ -442,29 +437,77 @@ const buildGroqFallbackTranscribeRepo = (
   return { repo, apiKeyId: groqRecord.id };
 };
 
-export const getTranscribeAudioRepo = (): TranscribeAudioRepoOutput => {
-  const prefs = getTranscriptionPrefs(getAppState());
+const buildAzureTranscribeRepo = (
+  prefs: ApiTranscriptionPrefs,
+): BaseTranscribeAudioRepo => {
+  const apiKeyRecord = getRec(getAppState().apiKeyById, prefs.apiKeyId);
+  const region = apiKeyRecord?.azureRegion || "eastus";
+  return new AzureTranscribeAudioRepo(
+    prefs.apiKeyValue,
+    region,
+    providerVocabulary(AZURE_PHRASE_LIST_BUDGET, "Azure", prefs.warnings),
+  );
+};
 
-  if (prefs.mode !== "api") {
-    return {
-      repo: new LocalTranscribeAudioRepo(),
-      apiKeyId: null,
-      warnings: prefs.warnings,
-    };
+const buildGeminiTranscribeRepo = (
+  prefs: ApiTranscriptionPrefs,
+): BaseTranscribeAudioRepo => {
+  // General Gemini models do not accept the dedicated transcription vocabulary.
+  const honoursVocabulary =
+    !prefs.transcriptionModel ||
+    isGeminiTranscribeModel(prefs.transcriptionModel);
+  if (!honoursVocabulary) {
+    prefs.warnings.push(
+      `${prefs.transcriptionModel} does not accept dictionary terms, so the custom vocabulary was not sent with this dictation. Choose a dedicated transcribe model to have it applied.`,
+    );
   }
+  return new GeminiTranscribeAudioRepo(
+    prefs.apiKeyValue,
+    prefs.transcriptionModel,
+    honoursVocabulary
+      ? providerVocabulary(
+          GEMINI_CUSTOM_VOCABULARY_BUDGET,
+          "Gemini",
+          prefs.warnings,
+        )
+      : [],
+  );
+};
 
-  let repo: BaseTranscribeAudioRepo;
-  let apiKeyId = prefs.apiKeyId;
+const buildElevenLabsTranscribeRepo = (
+  prefs: ApiTranscriptionPrefs,
+): BaseTranscribeAudioRepo => {
+  // Keyterms carry a surcharge and are sent only with explicit consent.
+  const keytermsEnabled =
+    getMyUserPreferences(getAppState())?.elevenLabsKeytermsEnabled ?? false;
+  return new ElevenLabsTranscribeAudioRepo(
+    prefs.apiKeyValue,
+    keytermsEnabled
+      ? providerVocabulary(
+          ELEVENLABS_BATCH_KEYTERMS_BUDGET,
+          "ElevenLabs",
+          prefs.warnings,
+        )
+      : [],
+  );
+};
 
-  switch (prefs.provider) {
-    case "openai":
-      repo = new OpenAITranscribeAudioRepo(
+const transcribeFactories = new Map<
+  ApiKeyProvider,
+  (prefs: ApiTranscriptionPrefs) => BaseTranscribeAudioRepo
+>([
+  [
+    "openai",
+    (prefs) =>
+      new OpenAITranscribeAudioRepo(
         prefs.apiKeyValue,
         prefs.transcriptionModel,
-      );
-      break;
-    case "assemblyai":
-      repo = new AssemblyAITranscribeAudioRepo(
+      ),
+  ],
+  [
+    "assemblyai",
+    (prefs) =>
+      new AssemblyAITranscribeAudioRepo(
         prefs.apiKeyValue,
         prefs.transcriptionModel,
         secureFetch,
@@ -473,118 +516,56 @@ export const getTranscribeAudioRepo = (): TranscribeAudioRepoOutput => {
           "AssemblyAI",
           prefs.warnings,
         ),
-      );
-      break;
-    case "aldea":
-      repo = new AldeaTranscribeAudioRepo(prefs.apiKeyValue);
-      break;
-    case "azure": {
-      const state = getAppState();
-      const apiKeyRecord = getRec(state.apiKeyById, prefs.apiKeyId);
-      const region = apiKeyRecord?.azureRegion || "eastus";
-      repo = new AzureTranscribeAudioRepo(
-        prefs.apiKeyValue,
-        region,
-        providerVocabulary(AZURE_PHRASE_LIST_BUDGET, "Azure", prefs.warnings),
-      );
-      break;
-    }
-    case "gemini": {
-      // Only a dedicated `-transcribe` model accepts a custom vocabulary:
-      // `geminiTranscribeAudio` routes a general model to
-      // `transcribeWithGeneralModel`, which takes neither `customVocabulary`
-      // nor `transcriptionMode`.
-      //
-      // `getTranscriptionModels` offers general Gemini models as valid
-      // transcription choices, so this gate used to disagree with the picker:
-      // a user who picked one got an empty vocabulary and nothing said about it.
-      // The warning is what makes the difference visible, and the action layer
-      // already propagates `prefs.warnings` onto the history row.
-      const honoursVocabulary =
-        !prefs.transcriptionModel ||
-        isGeminiTranscribeModel(prefs.transcriptionModel);
-      if (!honoursVocabulary) {
-        prefs.warnings.push(
-          `${prefs.transcriptionModel} does not accept dictionary terms, so the custom vocabulary was not sent with this dictation. Choose a dedicated transcribe model to have it applied.`,
-        );
-      }
-      repo = new GeminiTranscribeAudioRepo(
-        prefs.apiKeyValue,
-        prefs.transcriptionModel,
-        honoursVocabulary
-          ? providerVocabulary(
-              GEMINI_CUSTOM_VOCABULARY_BUDGET,
-              "Gemini",
-              prefs.warnings,
-            )
-          : [],
-      );
-      break;
-    }
-    case "openai-compatible":
-      repo = buildOpenAICompatibleTranscribeRepo(prefs);
-      break;
-    case "speaches":
-      repo = buildSpeachesTranscribeRepo(prefs);
-      break;
-    case "elevenlabs": {
-      // ElevenLabs keyterms add a 20% transcription surcharge, so they are
-      // sent only when the user has explicitly opted in. Off by default, so
-      // the dictionary never reaches ElevenLabs without consent.
-      const keytermsEnabled =
-        getMyUserPreferences(getAppState())?.elevenLabsKeytermsEnabled ?? false;
-      repo = new ElevenLabsTranscribeAudioRepo(
-        prefs.apiKeyValue,
-        keytermsEnabled
-          ? providerVocabulary(
-              ELEVENLABS_BATCH_KEYTERMS_BUDGET,
-              "ElevenLabs",
-              prefs.warnings,
-            )
-          : [],
-      );
-      break;
-    }
-    case "deepgram":
-      repo = new DeepgramTranscribeAudioRepo(
+      ),
+  ],
+  ["aldea", (prefs) => new AldeaTranscribeAudioRepo(prefs.apiKeyValue)],
+  ["azure", buildAzureTranscribeRepo],
+  ["gemini", buildGeminiTranscribeRepo],
+  ["openai-compatible", buildOpenAICompatibleTranscribeRepo],
+  ["speaches", buildSpeachesTranscribeRepo],
+  ["elevenlabs", buildElevenLabsTranscribeRepo],
+  [
+    "deepgram",
+    (prefs) =>
+      new DeepgramTranscribeAudioRepo(
         prefs.apiKeyValue,
         prefs.transcriptionModel,
         secureFetch,
         providerVocabulary(DEEPGRAM_KEYTERM_BUDGET, "Deepgram", prefs.warnings),
-      );
-      break;
-    case "gladia":
-      repo = new GladiaTranscribeAudioRepo(
+      ),
+  ],
+  [
+    "gladia",
+    (prefs) =>
+      new GladiaTranscribeAudioRepo(
         prefs.apiKeyValue,
         prefs.transcriptionModel,
         buildGladiaCustomizations(collectDictionaryEntries(getAppState())),
-      );
-      break;
-    case "xai":
-      repo = new XaiTranscribeAudioRepo(prefs.apiKeyValue);
-      break;
-    case "groq":
-      repo = new GroqTranscribeAudioRepo(
-        prefs.apiKeyValue,
-        prefs.transcriptionModel,
-      );
-      break;
-    case "openrouter":
-      repo = buildOpenRouterTranscribeRepo(prefs);
-      break;
-    default: {
-      const fallback = buildGroqFallbackTranscribeRepo(prefs);
-      repo = fallback.repo;
-      apiKeyId = fallback.apiKeyId;
-      break;
-    }
-  }
+      ),
+  ],
+  ["xai", (prefs) => new XaiTranscribeAudioRepo(prefs.apiKeyValue)],
+  [
+    "groq",
+    (prefs) =>
+      new GroqTranscribeAudioRepo(prefs.apiKeyValue, prefs.transcriptionModel),
+  ],
+  ["openrouter", buildOpenRouterTranscribeRepo],
+]);
 
-  return {
-    repo,
-    apiKeyId,
-    warnings: prefs.warnings,
-  };
+export const getTranscribeAudioRepo = (): TranscribeAudioRepoOutput => {
+  const prefs = getTranscriptionPrefs(getAppState());
+  if (prefs.mode !== "api") {
+    return {
+      repo: new LocalTranscribeAudioRepo(),
+      apiKeyId: null,
+      warnings: prefs.warnings,
+    };
+  }
+  const factory = transcribeFactories.get(prefs.provider);
+  const selected = factory
+    ? { repo: factory(prefs), apiKeyId: prefs.apiKeyId }
+    : buildGroqFallbackTranscribeRepo(prefs);
+  return { ...selected, warnings: prefs.warnings };
 };
 
 export const getModelProviderRepo = (

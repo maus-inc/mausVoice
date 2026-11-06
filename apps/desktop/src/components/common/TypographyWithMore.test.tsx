@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { ThemeProvider } from "@mui/material/styles";
+import { createTheme, ThemeProvider } from "@mui/material/styles";
 import { StrictMode, act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -149,7 +149,159 @@ const requireToggleButton = (): HTMLButtonElement => {
   return found;
 };
 
+describe("TypographyWithMore sx composition", () => {
+  it.each(["function", "array"] as const)(
+    "preserves %s styles while text is clamped",
+    async (shape) => {
+      const callback = () => ({ color: "rgb(255, 0, 0)", fontWeight: 700 });
+      const sx =
+        shape === "function"
+          ? callback
+          : [{ color: "rgb(0, 0, 255)" }, callback];
+      await act(async () => {
+        root?.render(
+          <ThemeProvider theme={theme}>
+            <TypographyWithMore maxLines={3} sx={sx} data-testid="content">
+              A long transcription which exceeds the measurement threshold.
+            </TypographyWithMore>
+          </ThemeProvider>,
+        );
+      });
+      const visible = container.querySelector<HTMLElement>(
+        '[data-testid="content"]',
+      );
+      expect(visible).not.toBeNull();
+      if (!visible) throw new Error("Missing content");
+      expect(window.getComputedStyle(visible).color).toBe("rgb(255, 0, 0)");
+      expect(window.getComputedStyle(visible).fontWeight).toBe("700");
+      const css = styleText();
+      expect(
+        [...visible.classList].some(
+          (name) =>
+            css.includes(`.${name}{`) && css.includes("-webkit-line-clamp:3"),
+        ),
+      ).toBe(true);
+      await act(async () => requireToggleButton().click());
+      expect(window.getComputedStyle(visible).color).toBe("rgb(255, 0, 0)");
+    },
+  );
+
+  it("does not clamp or show a toggle when the text fits", async () => {
+    Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
+      configurable: true,
+      value: 20,
+    });
+    await act(async () => {
+      root?.render(
+        <ThemeProvider theme={theme}>
+          <TypographyWithMore
+            sx={() => ({ color: "rgb(255, 0, 0)" })}
+            data-testid="content"
+          >
+            Short text
+          </TypographyWithMore>
+        </ThemeProvider>,
+      );
+    });
+    const visible = container.querySelector<HTMLElement>(
+      '[data-testid="content"]',
+    );
+    expect(visible).not.toBeNull();
+    if (!visible) throw new Error("Missing content");
+    expect(window.getComputedStyle(visible).color).toBe("rgb(255, 0, 0)");
+    expect(toggleButton()).toBeUndefined();
+  });
+});
+
+describe("TypographyWithMore overflow measurement", () => {
+  it("remeasures on resize and disconnects its observer on unmount", async () => {
+    let notify: ResizeObserverCallback | undefined;
+    const observe = vi.fn();
+    const disconnect = vi.fn();
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(callback: ResizeObserverCallback) {
+          notify = callback;
+        }
+        observe = observe;
+        disconnect = disconnect;
+      },
+    );
+    try {
+      await act(async () => {
+        root?.render(
+          <ThemeProvider theme={theme}>
+            <TypographyWithMore>Text</TypographyWithMore>
+          </ThemeProvider>,
+        );
+      });
+      expect(observe).toHaveBeenCalledTimes(2);
+      expect(toggleButton()).toBeDefined();
+      Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
+        configurable: true,
+        value: 20,
+      });
+      if (!notify) throw new Error("Resize observer was not created");
+      act(() => notify?.([], {} as ResizeObserver));
+      expect(toggleButton()).toBeUndefined();
+      Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
+        configurable: true,
+        value: 320,
+      });
+      act(() => notify?.([], {} as ResizeObserver));
+      expect(toggleButton()).toBeDefined();
+      act(() => root?.unmount());
+      root = undefined;
+      expect(disconnect).toHaveBeenCalledOnce();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("remeasures when children change without a resize event", async () => {
+    const renderText = async (text: string) => {
+      await act(async () =>
+        root?.render(
+          <ThemeProvider theme={theme}>
+            <TypographyWithMore>{text}</TypographyWithMore>
+          </ThemeProvider>,
+        ),
+      );
+    };
+    await renderText("long");
+    expect(toggleButton()).toBeDefined();
+    Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
+      configurable: true,
+      value: 20,
+    });
+    await renderText("short");
+    expect(toggleButton()).toBeUndefined();
+  });
+});
+
 describe("TypographyWithMore disclosure toggle", () => {
+  it("uses palette fallbacks when the theme has no CSS variables", async () => {
+    const plainTheme = createTheme();
+    await act(async () => {
+      root?.render(
+        <ThemeProvider theme={plainTheme}>
+          <TypographyWithMore>Overflowing content</TypographyWithMore>
+        </ThemeProvider>,
+      );
+    });
+    const button = requireToggleButton();
+    const inlineCss = hoverRulesFor(button);
+    expect(inlineCss).toContain(
+      `background-color:${plainTheme.palette.background.paper}`,
+    );
+    await act(async () => button.click());
+    const chipCss = hoverRulesFor(requireToggleButton());
+    expect(chipCss).toContain(
+      `background-color:${plainTheme.palette.action.hover}`,
+    );
+  });
+
   it("renders collapsed with an inline 'Show more' whose hover is a link affordance, not a repaint of the fade", async () => {
     await render();
     const button = toggleButton();

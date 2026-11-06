@@ -12,10 +12,13 @@ const logger = vi.hoisted(() => ({ warning: vi.fn(), error: vi.fn() }));
 
 let constructCount = 0;
 let disposeCount = 0;
+let recorderDeps: { onResetLevels: () => void } | undefined;
+let storeDraft: Record<string, unknown> = {};
 
 vi.mock("./voiceInstructionRecorder", () => ({
   VoiceInstructionRecorder: class {
-    constructor() {
+    constructor(deps: { onResetLevels: () => void }) {
+      recorderDeps = deps;
       constructCount++;
     }
     dispose() {
@@ -85,7 +88,8 @@ let fakeState = {
 vi.mock("../../store", () => ({
   useAppStore: (selector: (s: unknown) => unknown) => selector(fakeState),
   getAppState: () => fakeState,
-  produceAppState: (fn: (draft: Record<string, unknown>) => void) => fn({}),
+  produceAppState: (fn: (draft: Record<string, unknown>) => void) =>
+    fn(storeDraft),
 }));
 
 import { ComposerPage } from "./ComposerPage";
@@ -144,6 +148,24 @@ describe("ComposerPage VoiceInstructionRecorder lifecycle", () => {
   afterEach(() => {
     teardownComposerContainer(root, container);
     root = null;
+  });
+
+  it.each(["recording", "loading", "paused"])(
+    "does not erase a newer %s dictation waveform after transcription",
+    async (phase) => {
+      root = await mountComposerPage(container);
+      storeDraft = { overlayPhase: phase, audioLevels: [0.75] };
+      expect(recorderDeps).toBeDefined();
+      recorderDeps?.onResetLevels();
+      expect(storeDraft.audioLevels).toEqual([0.75]);
+    },
+  );
+
+  it("clears the voice-edit waveform when the global recorder is idle", async () => {
+    root = await mountComposerPage(container);
+    storeDraft = { overlayPhase: "idle", audioLevels: [0.75] };
+    recorderDeps?.onResetLevels();
+    expect(storeDraft.audioLevels).toEqual([]);
   });
 
   it("builds exactly one live recorder under StrictMode (no render-phase leak)", async () => {
@@ -249,16 +271,20 @@ describe("ComposerPage review session", () => {
       apiKeyById: {},
       userPrefs: { hasProvider: true },
     };
-    mockInvoke.mockImplementation((command: string) =>
-      Promise.resolve(
-        command === "composer_peek_text" ? "hello world edited" : null,
-      ),
-    );
-    window.history.replaceState(
-      {},
-      "",
-      `/?requestId=r1&original=${encodeURIComponent("hello world")}`,
-    );
+    mockInvoke.mockImplementation((command: string, args?: unknown) => {
+      const requestId =
+        args && typeof args === "object" && "requestId" in args
+          ? args.requestId
+          : undefined;
+      return Promise.resolve(
+        command === "composer_peek_text"
+          ? requestId === "r1:original"
+            ? "hello world"
+            : "hello world edited"
+          : null,
+      );
+    });
+    window.history.replaceState({}, "", "/?requestId=r1");
     container = document.createElement("div");
     document.body.appendChild(container);
   });
@@ -282,6 +308,30 @@ describe("ComposerPage review session", () => {
       await Promise.resolve();
     });
   };
+
+  it("does not overwrite user edits when the initial transcript arrives late", async () => {
+    let finishPeek: (text: string) => void = () => undefined;
+    const pending = new Promise<string>((resolve) => {
+      finishPeek = resolve;
+    });
+    mockInvoke.mockImplementation((command: string) =>
+      command === "composer_peek_text" ? pending : Promise.resolve(null),
+    );
+    await renderPage();
+    const field = transcriptField()!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(
+        HTMLTextAreaElement.prototype,
+        "value",
+      )!.set!.call(field, "my text");
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => {
+      finishPeek("late original");
+      await Promise.resolve();
+    });
+    expect(transcriptField()?.value).toBe("my text");
+  });
 
   it("marks edited text dirty against the session original", async () => {
     await renderPage();
@@ -307,6 +357,26 @@ describe("ComposerPage review session", () => {
       await Promise.resolve();
     });
   };
+
+  it("applies an instruction on Ctrl+Enter", async () => {
+    await renderPage();
+    await enterInstruction("Make it formal");
+    await act(async () => {
+      instructionField()?.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Enter",
+          ctrlKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+      await Promise.resolve();
+    });
+    expect(vi.mocked(applyVoiceEditInstruction)).toHaveBeenCalledWith({
+      text: "hello world edited",
+      instruction: "Make it formal",
+    });
+  });
 
   it("offers Undo after a voice edit and restores the prior text", async () => {
     await renderPage();
@@ -369,6 +439,126 @@ describe("ComposerPage review session", () => {
     expect(buttonByText("Undo edit")?.disabled).toBe(false);
     await act(async () => buttonByText("Undo edit")?.click());
     expect(transcriptField()?.value).toBe("edited");
+  });
+
+  it("starts at most one edit for two clicks in the same React batch", async () => {
+    await renderPage();
+    let finishEdit: (value: string) => void = () => undefined;
+    vi.mocked(applyVoiceEditInstruction)
+      .mockClear()
+      .mockReturnValueOnce(
+        new Promise<string>((resolve) => {
+          finishEdit = resolve;
+        }),
+      );
+    await enterInstruction("Make it formal");
+    const button = buttonByText("Apply")!;
+    await act(async () => {
+      button.click();
+      button.click();
+    });
+    expect(applyVoiceEditInstruction).toHaveBeenCalledOnce();
+    await act(async () => {
+      finishEdit("formal");
+      await Promise.resolve();
+    });
+    expect(transcriptField()?.value).toBe("formal");
+  });
+
+  it("releases the edit latch after a failed request so the user can retry", async () => {
+    await renderPage();
+    vi.mocked(applyVoiceEditInstruction)
+      .mockClear()
+      .mockRejectedValueOnce(new Error("provider unavailable"))
+      .mockResolvedValueOnce("retried edit");
+    await enterInstruction("Make it formal");
+    await act(async () => {
+      buttonByText("Apply")?.click();
+      await Promise.resolve();
+    });
+    expect(container.textContent).toContain("provider unavailable");
+    expect(buttonByText("Apply")?.disabled).toBe(false);
+    await act(async () => {
+      buttonByText("Apply")?.click();
+      await Promise.resolve();
+    });
+    expect(applyVoiceEditInstruction).toHaveBeenCalledTimes(2);
+    expect(transcriptField()?.value).toBe("retried edit");
+  });
+
+  it("does not install a stale AI edit or undo point after the transcript changes", async () => {
+    await renderPage();
+    let finishEdit: (value: string) => void = () => undefined;
+    vi.mocked(applyVoiceEditInstruction).mockReturnValueOnce(
+      new Promise<string>((resolve) => {
+        finishEdit = resolve;
+      }),
+    );
+    await enterInstruction("Make it formal");
+    await act(async () => {
+      buttonByText("Apply")?.click();
+    });
+    const field = transcriptField()!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(
+        HTMLTextAreaElement.prototype,
+        "value",
+      )!.set!.call(field, "new manual text");
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => {
+      finishEdit("stale result");
+      await Promise.resolve();
+    });
+    expect(transcriptField()?.value).toBe("new manual text");
+    expect(buttonByText("Undo edit")).toBeNull();
+  });
+
+  it("does not erase a new instruction typed while an edit is pending", async () => {
+    await renderPage();
+    let finishEdit: (value: string) => void = () => undefined;
+    vi.mocked(applyVoiceEditInstruction).mockReturnValueOnce(
+      new Promise<string>((resolve) => {
+        finishEdit = resolve;
+      }),
+    );
+    await enterInstruction("Make it formal");
+    await act(async () => {
+      buttonByText("Apply")?.click();
+    });
+    await enterInstruction("Make it shorter next");
+    await act(async () => {
+      finishEdit("formal text");
+      await Promise.resolve();
+    });
+    expect(transcriptField()?.value).toBe("formal text");
+    expect(instructionField()?.value).toBe("Make it shorter next");
+  });
+
+  it("inserts the current transcript and cancels with Escape", async () => {
+    await renderPage();
+    const { emit } = await import("@tauri-apps/api/event");
+    const emitMock = vi.mocked(emit);
+    emitMock.mockClear();
+    await act(async () => {
+      buttonByText("Insert")?.click();
+      await Promise.resolve();
+    });
+    expect(emitMock).toHaveBeenCalledWith("composer-result", {
+      requestId: "r1",
+      accepted: true,
+      text: "hello world edited",
+    });
+    emitMock.mockClear();
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+      await Promise.resolve();
+    });
+    expect(emitMock).toHaveBeenCalledWith("composer-result", {
+      requestId: "r1",
+      accepted: false,
+      text: "",
+    });
   });
 
   it("reports a failed composer result without logging the submitted content", async () => {

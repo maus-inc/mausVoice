@@ -73,6 +73,21 @@ describe("createGlossaryTerms", () => {
     ]);
   });
 
+  it("keeps persisted terms when the onboarding checklist update fails", async () => {
+    termMocks.createTerm.mockImplementation(persistAs);
+    termMocks.setLocalStorageValue.mockImplementationOnce(() => {
+      throw new Error("checklist unavailable");
+    });
+    const result = await createGlossaryTerms(["Ada", "Lagos"]);
+    expect(result.created.map((term) => term.sourceValue)).toEqual([
+      "Ada",
+      "Lagos",
+    ]);
+    expect(result.failed).toBe(0);
+    expect(sources()).toEqual(["Lagos", "Ada"]);
+    expect(termMocks.warning).toHaveBeenCalledOnce();
+  });
+
   it("skips a value that is only whitespace", async () => {
     termMocks.createTerm.mockImplementation(persistAs);
 
@@ -109,6 +124,34 @@ describe("createGlossaryTerms", () => {
     expect(termMocks.warning).toHaveBeenCalledTimes(1);
     expect(termMocks.setLocalStorageValue).toHaveBeenCalledTimes(2);
   });
+
+  it.each(["resolve", "reject"] as const)(
+    "retires an in-flight guarded term when the write %ss",
+    async (outcome) => {
+      let finish!: (value: Term) => void;
+      let fail!: (error: Error) => void;
+      termMocks.createTerm.mockReturnValueOnce(
+        new Promise((resolve, reject) => {
+          finish = resolve;
+          fail = reject;
+        }),
+      );
+      let active = true;
+      const pending = createGlossaryTerms(["Ada", "Lagos"], () => active);
+      await vi.waitFor(() =>
+        expect(termMocks.createTerm).toHaveBeenCalledOnce(),
+      );
+      const term = termMocks.createTerm.mock.calls[0][0] as Term;
+      active = false;
+      if (outcome === "resolve") finish(term);
+      else fail(new Error("retired"));
+      await expect(pending).resolves.toEqual({ created: [], failed: 0 });
+      expect(termMocks.createTerm).toHaveBeenCalledOnce();
+      expect(sources()).toEqual([]);
+      expect(termMocks.setLocalStorageValue).not.toHaveBeenCalled();
+      expect(termMocks.warning).not.toHaveBeenCalled();
+    },
+  );
 
   it("adds one value at a time, in the order given", async () => {
     const inFlight: string[] = [];

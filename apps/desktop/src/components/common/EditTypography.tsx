@@ -7,39 +7,14 @@ import {
   type TextFieldProps,
 } from "@mui/material";
 
-type EditTypographyProps = {
-  value: string | number;
-  onChange: (next: string | number) => void;
-  /** Force input mode. Defaults from typeof value. */
-  type?: "number" | "text";
-  /** Called when editing starts. */
-  onEditStart?: () => void;
-  /** Called when editing ends. accepted=true if committed. */
-  onEditEnd?: (accepted: boolean, next: string | number) => void;
-  /** Validate parsed value before commit. Return false to block commit. */
-  validate?: (next: string | number) => boolean;
-  /** Custom parse. Defaults: number=>finite(float), text=>raw string. */
-  parse?: (raw: string, mode: "number" | "text") => string | number;
-  /** Render display value. Defaults to String(value). */
-  renderValue?: (value: string | number) => React.ReactNode;
-  /** Function to render children when not editing. Receives value as parameter. */
-  children?: (value: string | number) => React.ReactNode;
-  /** Click to edit. Disable to manage mode externally. */
-  editable?: boolean;
-  /** Auto select text on enter edit. */
-  autoSelect?: boolean;
-  /** Props passthroughs */
-  typographyProps?: TypographyProps;
-  textFieldProps?: Omit<
-    TextFieldProps,
-    "value" | "onChange" | "onBlur" | "onKeyDown"
-  >;
-  /** Optional className and sx on wrapper */
-  className?: string;
-  sx?: TypographyProps["sx"];
-};
+type EditTypographyProps = Parameters<typeof EditTypography>[0];
 
-export const EditTypography: React.FC<EditTypographyProps> = ({
+/** Compose MUI's object, callback and ordered-array sx forms without flattening them. */
+const sxLayers = (sx: TypographyProps["sx"]) =>
+  Array.isArray(sx) ? sx : sx ? [sx] : [];
+
+/** Own edit state and keyboard commits separately from the display markup. */
+const useEditableTypography = ({
   value,
   onChange,
   type,
@@ -47,15 +22,18 @@ export const EditTypography: React.FC<EditTypographyProps> = ({
   onEditEnd,
   validate,
   parse,
-  renderValue,
-  children,
-  editable = true,
-  autoSelect = true,
-  typographyProps,
-  textFieldProps,
-  className,
-  sx,
-}) => {
+  editable,
+  autoSelect,
+}: Pick<
+  EditTypographyProps,
+  | "value"
+  | "onChange"
+  | "type"
+  | "onEditStart"
+  | "onEditEnd"
+  | "validate"
+  | "parse"
+> & { editable: boolean; autoSelect: boolean }) => {
   const mode: "number" | "text" =
     type ?? (typeof value === "number" ? "number" : "text");
   const [editing, setEditing] = React.useState(false);
@@ -135,34 +113,101 @@ export const EditTypography: React.FC<EditTypographyProps> = ({
     return Math.max(textWidth + 20, 50); // minimum width of 50px, plus 20px padding
   }, [draft, value]);
 
+  return {
+    editing,
+    draft,
+    setDraft,
+    inputRef,
+    measureRef,
+    tryCommit,
+    handleKeyDown,
+    startEdit,
+    getTextWidth,
+  };
+};
+
+export const EditTypography: React.FC<{
+  value: string | number;
+  onChange: (next: string | number) => void;
+  /** Force input mode. Defaults from typeof value. */
+  type?: "number" | "text";
+  /** Called when editing starts. */
+  onEditStart?: () => void;
+  /** Called when editing ends. accepted=true if committed. */
+  onEditEnd?: (accepted: boolean, next: string | number) => void;
+  /** Validate parsed value before commit. Return false to block commit. */
+  validate?: (next: string | number) => boolean;
+  /** Custom parse. Defaults: number=>finite(float), text=>raw string. */
+  parse?: (raw: string, mode: "number" | "text") => string | number;
+  /** Render display value. Defaults to String(value). */
+  renderValue?: (value: string | number) => React.ReactNode;
+  /** Function to render children when not editing. Receives value as parameter. */
+  children?: (value: string | number) => React.ReactNode;
+  /** Click to edit. Disable to manage mode externally. */
+  editable?: boolean;
+  /** Auto select text on enter edit. */
+  autoSelect?: boolean;
+  /** Props passthroughs */
+  typographyProps?: TypographyProps;
+  textFieldProps?: Omit<
+    TextFieldProps,
+    "value" | "onChange" | "onBlur" | "onKeyDown"
+  >;
+  /** Optional className and sx on wrapper */
+  className?: string;
+  sx?: TypographyProps["sx"];
+}> = (props) => {
+  const {
+    value,
+    renderValue,
+    children,
+    editable = true,
+    autoSelect = true,
+    typographyProps,
+    textFieldProps,
+    className,
+    sx,
+  } = props;
+  const {
+    editing,
+    draft,
+    setDraft,
+    inputRef,
+    measureRef,
+    tryCommit,
+    handleKeyDown,
+    startEdit,
+    getTextWidth,
+  } = useEditableTypography({ ...props, editable, autoSelect });
+
   return (
     <Box
       component="span"
       className={className}
-      sx={{
-        display: "inline-flex",
-        alignItems: "center",
-        ...(editable &&
-          !editing && {
-            "&:hover": {
-              backgroundColor: "action.hover",
-              borderRadius: 1,
-            },
-          }),
-        ...sx,
-      }}
+      sx={[
+        {
+          display: "inline-flex",
+          alignItems: "center",
+          ...(editable &&
+            !editing && {
+              "&:hover": {
+                backgroundColor: "action.hover",
+                borderRadius: 1,
+              },
+            }),
+        },
+        ...sxLayers(sx),
+      ]}
       onClick={startEdit}
     >
       {/* Hidden span for measuring text width */}
       <Typography
-        ref={measureRef}
-        sx={{
-          position: "absolute",
-          visibility: "hidden",
-          whiteSpace: "nowrap",
-          ...typographyProps?.sx,
-        }}
         {...typographyProps}
+        ref={measureRef}
+        sx={[
+          ...sxLayers(typographyProps?.sx),
+          { position: "absolute", visibility: "hidden", whiteSpace: "nowrap" },
+        ]}
       >
         {draft || String(value)}
       </Typography>
@@ -177,12 +222,11 @@ export const EditTypography: React.FC<EditTypographyProps> = ({
           onKeyDown={handleKeyDown}
           type="text"
           size="small"
-          sx={{
-            width: getTextWidth(),
-            minWidth: "50px",
-            ...textFieldProps?.sx,
-          }}
           {...textFieldProps}
+          sx={[
+            { width: getTextWidth(), minWidth: "50px" },
+            ...sxLayers(textFieldProps?.sx),
+          ]}
         />
       ) : (
         <Typography
@@ -196,13 +240,15 @@ export const EditTypography: React.FC<EditTypographyProps> = ({
             }
           }}
           {...typographyProps}
-          sx={{
-            cursor: editable ? "text" : "default",
-            px: 0.5,
-            py: 0.25,
-            borderRadius: 1,
-            ...typographyProps?.sx,
-          }}
+          sx={[
+            {
+              cursor: editable ? "text" : "default",
+              px: 0.5,
+              py: 0.25,
+              borderRadius: 1,
+            },
+            ...sxLayers(typographyProps?.sx),
+          ]}
         >
           {children
             ? children(value)

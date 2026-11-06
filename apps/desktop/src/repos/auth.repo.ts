@@ -12,19 +12,7 @@ export abstract class BaseAuthRepo extends BaseRepo {
   abstract signOut(): Promise<void>;
   abstract signInWithEmail(email: string, password: string): Promise<void>;
   abstract sendPasswordResetRequest(email: string): Promise<void>;
-  abstract signInWithGoogleTokens(
-    idToken: string,
-    accessToken: string,
-  ): Promise<void>;
-  abstract signInWithSsoTokens(payload: {
-    token: string;
-    refreshToken: string;
-    authId: string;
-    email: string;
-  }): Promise<void>;
-  abstract getCurrentUser(): AuthUser | null;
   abstract deleteMyAccount(): Promise<void>;
-  abstract refreshTokens(): Promise<void>;
   abstract onAuthStateChanged(
     callback: (user: AuthUser | null) => void,
     onError: (error: Error) => void,
@@ -64,23 +52,7 @@ export class PersonalAuthRepo extends BaseAuthRepo {
     // noop
   }
 
-  async signInWithGoogleTokens(): Promise<void> {
-    // noop
-  }
-
-  async signInWithSsoTokens(): Promise<void> {
-    // noop
-  }
-
-  getCurrentUser(): AuthUser {
-    return personalAuthUser;
-  }
-
   async deleteMyAccount(): Promise<void> {
-    // noop
-  }
-
-  async refreshTokens(): Promise<void> {
     // noop
   }
 

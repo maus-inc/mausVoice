@@ -139,3 +139,141 @@ describe("native pill review localization", () => {
     expect(lastPayload().review).toBeNull();
   });
 });
+
+describe("native pill assistant snapshots", () => {
+  it("sends the current conversation, its pending permissions and latest stream", async () => {
+    const message = (
+      id: string,
+      role: "user" | "assistant" | "system",
+      content: string,
+      metadata: Record<string, unknown> | null = null,
+    ) => ({
+      id,
+      conversationId: "conv-1",
+      role,
+      content,
+      metadata,
+      createdAt: "2026-01-01T00:00:00Z",
+    });
+    produceAppState((draft) => {
+      draft.pendingPillReview = null;
+      draft.activeRecordingMode = "agent";
+      draft.pillConversationId = "conv-1";
+      draft.chatMessageIdsByConversationId["conv-1"] = [
+        "user",
+        "answer",
+        "empty",
+        "stream",
+        "tool",
+      ];
+      draft.chatMessageById = {
+        user: message(
+          "user",
+          "user",
+          "one two three four five six seven eight nine ten",
+        ),
+        answer: message("answer", "assistant", "**Hello** world"),
+        empty: message("empty", "assistant", "   "),
+        stream: message("stream", "assistant", ""),
+        tool: message("tool", "system", "done", {
+          type: "tool-result",
+          toolName: "search",
+          reason: "requested",
+        }),
+      };
+      draft.streamingMessageById = {
+        stream: {
+          toolCalls: [
+            { toolCallId: "call-1", toolName: "search", done: false },
+          ],
+          reasoning: "thinking",
+          isStreaming: true,
+        },
+      };
+      draft.toolInfoById = {
+        search: {
+          id: "search",
+          description: "Search docs",
+          instructions: "",
+          schema: { type: "object", properties: {} },
+        },
+      };
+      draft.toolPermissionById = {
+        pending: {
+          id: "pending",
+          conversationId: "conv-1",
+          toolId: "search",
+          status: "pending",
+          params: {},
+          createdAt: 0,
+        },
+        other: {
+          id: "other",
+          conversationId: "elsewhere",
+          toolId: "search",
+          status: "pending",
+          params: {},
+          createdAt: 0,
+        },
+        resolved: {
+          id: "resolved",
+          conversationId: "conv-1",
+          toolId: "search",
+          status: "allowed",
+          params: {},
+          createdAt: 0,
+        },
+      };
+    });
+    await renderLocale("en");
+    expect(lastPayload()).toMatchObject({
+      active: true,
+      compact: false,
+      conversation_id: "conv-1",
+      user_prompt: "one two three four ... six seven eight nine ten",
+      messages: [
+        { id: "answer", content: "Hello world", is_error: false },
+        { id: "stream", content: null, is_error: false },
+        {
+          id: "tool",
+          content: "done",
+          is_error: true,
+          is_tool_result: true,
+          tool_name: "search",
+          tool_description: "Search docs",
+          reason: "requested",
+        },
+      ],
+      streaming: {
+        message_id: "stream",
+        reasoning: "thinking",
+        is_streaming: true,
+        tool_calls: [{ id: "call-1", name: "search", done: false }],
+      },
+      permissions: [
+        {
+          id: "pending",
+          tool_name: "search",
+          description: "Search docs",
+          reason: null,
+        },
+      ],
+      review: null,
+    });
+  });
+
+  it("keeps an empty typed assistant expanded and makes an empty voice assistant compact", async () => {
+    produceAppState((draft) => {
+      draft.pendingPillReview = null;
+      draft.assistantInputMode = "type";
+    });
+    await renderLocale("en");
+    expect(lastPayload().compact).toBe(false);
+    await act(() =>
+      produceAppState((draft) => {
+        draft.assistantInputMode = "voice";
+      }),
+    );
+    expect(lastPayload().compact).toBe(true);
+  });
+});

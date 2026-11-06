@@ -1,8 +1,13 @@
 import { toLocalUser } from "../repos/user.repo";
 import { toLocalPreferences } from "../repos/preferences.repo";
+import { transcriptionWireFields } from "../repos/transcription-wire-fields";
 import { getAppState, setAppState } from "../store";
 import { LOCAL_USER_ID } from "../utils/user.utils";
 import { PreviewOperationError } from "./PreviewOperationError";
+import {
+  replaceDictationHotkeys,
+  replaceStyleHotkeys,
+} from "./hotkey-replacement";
 import {
   createPreviewScenario,
   isPreviewScenarioId,
@@ -37,14 +42,12 @@ export { PreviewOperationError };
 const SYSTEM_NO_OP_COMMANDS = new Set([
   "notify_pill_style_info",
   "open_app_settings",
-  "pause_recording",
   "quit_app",
   "remote_sender_disconnect",
   "reset_key_listener_state",
   "reset_native_setup",
   "restart_app",
   "restart_key_listener",
-  "resume_recording",
   "retry_key_listener",
   "set_auto_launch",
   "set_dashboard_menu_labels",
@@ -57,6 +60,7 @@ const SYSTEM_NO_OP_COMMANDS = new Set([
   "set_pill_visibility_menu_state",
   "set_pill_window_size",
   "set_register_app_label",
+  "set_system_volume",
   "set_reset_pill_position_enabled",
   "set_tray_language_menu",
   "set_tray_title",
@@ -86,7 +90,6 @@ type PreviewDatabase = {
 
 const clone = <T>(value: T): T => structuredClone(value);
 const asRecord = (value: unknown): WireRecord => value as WireRecord;
-
 const toLocalTerm = (term: PreviewData["terms"][number]): WireRecord => ({
   id: term.id,
   createdAt: new Date(term.createdAt).valueOf(),
@@ -108,6 +111,14 @@ const toLocalTone = (tone: PreviewData["customTones"][number]): WireRecord => ({
   exampleInputOutput: tone.exampleInputOutput ?? null,
 });
 
+/** Provider endpoint options use the native API's nullable wire representation. */
+const apiKeyEndpointFields = (apiKey: PreviewData["apiKeys"][number]) => ({
+  baseUrl: apiKey.baseUrl ?? null,
+  azureRegion: apiKey.azureRegion ?? null,
+  includeV1Path: apiKey.includeV1Path ?? null,
+  transcriptionPath: apiKey.transcriptionPath ?? null,
+});
+
 const toLocalApiKey = (apiKey: PreviewData["apiKeys"][number]): WireRecord => ({
   id: apiKey.id,
   name: apiKey.name,
@@ -120,10 +131,7 @@ const toLocalApiKey = (apiKey: PreviewData["apiKeys"][number]): WireRecord => ({
   openRouterConfig: apiKey.openRouterConfig
     ? JSON.stringify(apiKey.openRouterConfig)
     : null,
-  baseUrl: apiKey.baseUrl ?? null,
-  azureRegion: apiKey.azureRegion ?? null,
-  includeV1Path: apiKey.includeV1Path ?? null,
-  transcriptionPath: apiKey.transcriptionPath ?? null,
+  ...apiKeyEndpointFields(apiKey),
 });
 
 const toLocalTranscription = (
@@ -133,27 +141,7 @@ const toLocalTranscription = (
   transcript: transcription.transcript,
   timestamp: new Date(transcription.createdAt).valueOf(),
   audio: transcription.audio ?? null,
-  modelSize: transcription.modelSize ?? null,
-  inferenceDevice: transcription.inferenceDevice ?? null,
-  rawTranscript: transcription.rawTranscript ?? null,
-  sanitizedTranscript: transcription.sanitizedTranscript ?? null,
-  transcriptionPrompt: transcription.transcriptionPrompt ?? null,
-  postProcessPrompt: transcription.postProcessPrompt ?? null,
-  transcriptionApiKeyId: transcription.transcriptionApiKeyId ?? null,
-  postProcessApiKeyId: transcription.postProcessApiKeyId ?? null,
-  transcriptionMode: transcription.transcriptionMode ?? null,
-  postProcessMode: transcription.postProcessMode ?? null,
-  postProcessDevice: transcription.postProcessDevice ?? null,
-  postProcessModel: transcription.postProcessModel ?? null,
-  postProcessProvider: transcription.postProcessProvider ?? null,
-  postProcessFailed: transcription.postProcessFailed ?? null,
-  postProcessFallback: transcription.postProcessFallback ?? null,
-  postProcessError: transcription.postProcessError ?? null,
-  transcriptionDurationMs: transcription.transcriptionDurationMs ?? null,
-  postprocessDurationMs: transcription.postprocessDurationMs ?? null,
-  warnings: transcription.warnings ?? null,
-  remoteStatus: transcription.remoteStatus ?? null,
-  remoteDeviceId: transcription.remoteDeviceId ?? null,
+  ...transcriptionWireFields(transcription),
 });
 
 const toLocalConversation = (
@@ -231,13 +219,82 @@ const iconSvg = encodeURIComponent(
   '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80"><rect width="80" height="80" rx="18" fill="#6264a7"/><path d="M18 30h44v22H18z" fill="#fff" opacity=".9"/><circle cx="30" cy="41" r="5" fill="#6264a7"/></svg>',
 );
 
+/** Deterministic system replies; clone before returning so callers cannot mutate the fixtures. */
+const SYSTEM_RESPONSES = new Map<string, unknown>([
+  [
+    "request_microphone_permission",
+    { kind: "microphone", state: "authorized", promptShown: true },
+  ],
+  [
+    "request_accessibility_permission",
+    { kind: "accessibility", state: "authorized", promptShown: true },
+  ],
+  ["get_version", "0.1.6-preview"],
+  ["get_identifier", "com.mausvoice.preview"],
+  ["get_hotkey_strategy", "bridge"],
+  ["get_key_listener_health", "healthy_grab"],
+  ["supports_app_detection", true],
+  ["supports_paste_keybinds", "per-app"],
+  ["get_system_capabilities", { ramGb: 8, cpuCores: 8, gpus: [] }],
+  ["get_system_volume", 0.7],
+  ["check_app_location_writable", true],
+  ["get_keyboard_language", "en"],
+  [
+    "list_microphones",
+    [{ label: "Preview microphone", isDefault: true, caution: false }],
+  ],
+  ["list_gpus", []],
+  ["storage_get_download_url", `data:image/svg+xml,${iconSvg}`],
+  ["run_native_setup", "success"],
+  ["export_diagnostics", true],
+  ["export_transcription", true],
+]);
+
+const parseExpansionFlagInput = (
+  args: WireRecord,
+  compare: boolean,
+): { flags: string; expected: unknown } => {
+  const input = asRecord(args.args);
+  const flags = input?.flags;
+  const expected = input?.expected;
+  if (typeof flags !== "string" || (compare && typeof expected !== "string")) {
+    throw new TypeError("Expected string expansion flag arguments");
+  }
+  return { flags, expected };
+};
+
+/** Returned by a command group that does not handle the command. */
+const UNHANDLED = Symbol("preview-unhandled");
+
 class PreviewRuntime {
+  private recordingOwner: string | null = null;
+  private recordingOwnerToken: number | null = null;
+  private recordingIsExternal = false;
+  private recordingGeneration = 0;
+  private nextRecordingToken = 0;
+  private recordingAdmissions = new Map<
+    string,
+    { generation: number; epoch: number; claimed: boolean }
+  >();
+  private recordingResults = new Map<
+    number,
+    { ownerId: string; created: number; replays: number }
+  >();
+  private recordingWaiters = new Set<() => void>();
   private database: PreviewDatabase = toDatabase(
     createPreviewScenario("populated").data,
   );
   private scenario: PreviewScenarioId = "populated";
 
   reset(scenario: PreviewScenarioId): void {
+    if (!this.recordingIsExternal) {
+      this.recordingOwner = null;
+      this.recordingOwnerToken = null;
+    }
+    this.recordingGeneration += 1;
+    this.recordingAdmissions.clear();
+    this.recordingResults.clear();
+    this.notifyRecordingWaiters();
     const snapshot = createPreviewScenario(scenario);
     this.scenario = scenario;
     this.database = toDatabase(snapshot.data);
@@ -304,6 +361,18 @@ class PreviewRuntime {
   }
 
   private dispatch(command: string, args: WireRecord): unknown {
+    if (command.startsWith("user_")) return this.invokeUser(command, args);
+    if (command.startsWith("term_")) return this.invokeTerms(command, args);
+    if (command.startsWith("tone_")) return this.invokeTones(command, args);
+    if (command.startsWith("hotkey_")) return this.invokeHotkeys(command, args);
+    if (command.startsWith("api_key_"))
+      return this.invokeApiKeys(command, args);
+    if (command.startsWith("app_target_"))
+      return this.invokeAppTargets(command, args);
+    return this.invokeHistory(command, args);
+  }
+
+  private invokeUser(command: string, args: WireRecord): unknown {
     switch (command) {
       case "user_get_one":
         return clone(this.database.user);
@@ -325,6 +394,13 @@ class PreviewRuntime {
       case "user_preferences_compare_set_expansion_flags":
         return this.updateExpansionFlags(args, true);
 
+      default:
+        return this.invokeHistory(command, args);
+    }
+  }
+
+  private invokeTerms(command: string, args: WireRecord): unknown {
+    switch (command) {
       case "term_list":
         return getList(this.database.terms).filter(
           (term) => term.isDeleted !== true,
@@ -341,6 +417,13 @@ class PreviewRuntime {
         return undefined;
       }
 
+      default:
+        return this.invokeHistory(command, args);
+    }
+  }
+
+  private invokeTones(command: string, args: WireRecord): unknown {
+    switch (command) {
       case "tone_list":
         return getList(this.database.tones);
       case "tone_get":
@@ -354,6 +437,13 @@ class PreviewRuntime {
         this.database.tones.delete(String(args.id));
         return undefined;
 
+      default:
+        return this.invokeHistory(command, args);
+    }
+  }
+
+  private invokeHotkeys(command: string, args: WireRecord): unknown {
+    switch (command) {
       case "hotkey_list":
         return getList(this.database.hotkeys);
       case "hotkey_save": {
@@ -366,7 +456,16 @@ class PreviewRuntime {
         return undefined;
       case "hotkey_replace_style_hotkeys":
         return this.replaceStyleHotkeys(args);
+      case "hotkey_replace_dictation_language_hotkeys":
+        return this.replaceDictationLanguageHotkeys(args);
 
+      default:
+        return this.invokeHistory(command, args);
+    }
+  }
+
+  private invokeApiKeys(command: string, args: WireRecord): unknown {
+    switch (command) {
       case "api_key_list":
         return getList(this.database.apiKeys);
       case "api_key_create": {
@@ -391,6 +490,13 @@ class PreviewRuntime {
         this.database.apiKeys.delete(String(args.id));
         return undefined;
 
+      default:
+        return this.invokeHistory(command, args);
+    }
+  }
+
+  private invokeAppTargets(command: string, args: WireRecord): unknown {
+    switch (command) {
       case "app_target_list":
         return getList(this.database.appTargets);
       case "app_target_upsert": {
@@ -411,15 +517,7 @@ class PreviewRuntime {
     args: WireRecord,
     compare: boolean,
   ): WireRecord | null {
-    const input = asRecord(args.args);
-    const flags = input?.flags;
-    const expected = input?.expected;
-    if (
-      typeof flags !== "string" ||
-      (compare && typeof expected !== "string")
-    ) {
-      throw new TypeError("Expected string expansion flag arguments");
-    }
+    const { flags, expected } = parseExpansionFlagInput(args, compare);
     const preferences = this.database.preferences;
     if (!preferences) {
       if (compare) return null;
@@ -431,28 +529,38 @@ class PreviewRuntime {
     return clone(preferences);
   }
 
+  private replaceDictationLanguageHotkeys(args: WireRecord): void {
+    this.database.hotkeys = replaceDictationHotkeys(
+      this.database.hotkeys,
+      args,
+    );
+  }
+
   private replaceStyleHotkeys(args: WireRecord): WireRecord[] {
-    if (
-      typeof args.prefix !== "string" ||
-      !args.prefix ||
-      !Array.isArray(args.hotkeys)
-    ) {
-      throw new TypeError("Expected a hotkey prefix and replacement list");
-    }
-    const prefix = args.prefix;
-    const hotkeys = (args.hotkeys as WireRecord[]).map(clone);
-    const next = new Map(this.database.hotkeys);
-    for (const [id, hotkey] of next) {
-      if (String(hotkey.actionName).startsWith(prefix)) {
-        next.delete(id);
-      }
-    }
-    for (const hotkey of hotkeys) next.set(String(hotkey.id), hotkey);
+    const { next, hotkeys } = replaceStyleHotkeys(this.database.hotkeys, args);
     this.database.hotkeys = next;
-    return clone(hotkeys);
+    return hotkeys;
   }
 
   private invokeHistory(command: string, args: WireRecord): unknown {
+    if (command.startsWith("chat_message_")) {
+      return this.invokeChatMessages(command, args);
+    }
+    if (
+      command.startsWith("transcription_audio_") ||
+      command === "transcription_load_audio" ||
+      command === "transcription_import_audio" ||
+      command === "purge_stale_transcription_audio"
+    ) {
+      return this.invokeTranscriptionAudio(command, args);
+    }
+    if (command.startsWith("transcription_")) {
+      return this.invokeTranscription(command, args);
+    }
+    return this.invokeConversations(command, args);
+  }
+
+  private invokeTranscription(command: string, args: WireRecord): unknown {
     switch (command) {
       case "transcription_list": {
         const limit = Number(args.limit ?? 20);
@@ -473,6 +581,13 @@ class PreviewRuntime {
       case "transcription_delete":
         this.database.transcriptions.delete(String(args.id));
         return undefined;
+      default:
+        return this.invokeRemote(command, args);
+    }
+  }
+
+  private invokeTranscriptionAudio(command: string, args: WireRecord): unknown {
+    switch (command) {
       case "transcription_audio_load":
       case "transcription_load_audio":
         return {
@@ -487,6 +602,13 @@ class PreviewRuntime {
       case "purge_stale_transcription_audio":
         return [];
 
+      default:
+        return this.invokeRemote(command, args);
+    }
+  }
+
+  private invokeConversations(command: string, args: WireRecord): unknown {
+    switch (command) {
       case "conversation_list":
         return getList(this.database.conversations).sort(
           (a, b) => Number(b.updatedAt) - Number(a.updatedAt),
@@ -504,6 +626,13 @@ class PreviewRuntime {
             this.database.chatMessages.delete(id);
         }
         return undefined;
+      default:
+        return this.invokeRemote(command, args);
+    }
+  }
+
+  private invokeChatMessages(command: string, args: WireRecord): unknown {
+    switch (command) {
       case "chat_message_list":
         return getList(this.database.chatMessages)
           .filter((message) => message.conversationId === args.conversationId)
@@ -540,103 +669,333 @@ class PreviewRuntime {
         return undefined;
       case "remote_receiver_status":
       case "remote_receiver_start":
-      case "remote_receiver_stop": {
-        if (command === "remote_receiver_start")
-          this.database.receiverEnabled = true;
-        if (command === "remote_receiver_stop")
-          this.database.receiverEnabled = false;
-        return {
-          enabled: this.database.receiverEnabled,
-          deviceId: "preview-browser",
-          deviceName: "Browser preview",
-          devicePlatform: "macos",
-          listenAddress: null,
-          port: null,
-          pairingCode: "PREVIEW",
-          lastSenderDeviceId: null,
-          lastEventId: null,
-          lastDeliveryStatus: null,
-          lastDeliveryAt: null,
-          lastError: null,
-          lastTargetClassName: null,
-          lastTargetTitle: null,
-          lastTargetEditable: null,
-        };
-      }
+      case "remote_receiver_stop":
+        return this.invokeReceiver(command);
+
       case "remote_sender_deliver_final_text":
         return undefined;
 
       default:
-        return this.invokeSystem(command);
+        return this.invokeSystem(command, args);
     }
   }
 
-  private invokeSystem(command: string): unknown {
-    // These 32 commands exist only so a page can drive the same call sequence
-    // the desktop does. None of them reports anything back, so they share one
-    // `undefined` answer; naming them in one list says what they are instead of
-    // spending a case arm each.
-    if (SYSTEM_NO_OP_COMMANDS.has(command)) return undefined;
-    switch (command) {
-      // Safe, deterministic desktop-information and configuration responses.
-      case "check_microphone_permission":
-        return clone(getAppState().permissions.microphone);
-      case "check_accessibility_permission":
-        return clone(getAppState().permissions.accessibility);
-      case "request_microphone_permission":
-        return { kind: "microphone", state: "authorized", promptShown: true };
-      case "request_accessibility_permission":
-        return {
-          kind: "accessibility",
-          state: "authorized",
-          promptShown: true,
-        };
-      case "get_version":
-        return "0.1.6-preview";
-      case "get_identifier":
-        return "com.mausvoice.preview";
-      case "get_hotkey_strategy":
-        return "bridge";
-      case "get_key_listener_health":
-        return "healthy_grab";
-      case "supports_app_detection":
-        return true;
-      case "supports_paste_keybinds":
-        return "per-app";
-      case "get_system_capabilities":
-        return { ramGb: 8, cpuCores: 8, gpus: [] };
-      case "get_system_volume":
-        return 0.7;
-      case "set_system_volume":
-        return undefined;
-      case "check_app_location_writable":
-        return true;
-      case "get_keyboard_language":
-        return "en";
-      case "list_microphones":
-        return [
-          {
-            label: "Preview microphone",
-            isDefault: true,
-            caution: false,
-          },
-        ];
-      case "list_gpus":
-        return [];
-      case "storage_get_download_url":
-        return `data:image/svg+xml,${iconSvg}`;
-      case "start_recording":
-        return { sampleRate: 16_000 };
-      case "stop_recording":
-        return { samples: [], sampleRate: 16_000 };
-      case "run_native_setup":
-        return "success";
-      case "export_diagnostics":
-      case "export_transcription":
-        return true;
-      default:
-        throw new PreviewOperationError(command);
+  /** Return a fresh receiver snapshot after applying a lifecycle command. */
+  private invokeReceiver(command: string): WireRecord {
+    if (command === "remote_receiver_start")
+      this.database.receiverEnabled = true;
+    if (command === "remote_receiver_stop")
+      this.database.receiverEnabled = false;
+    return {
+      enabled: this.database.receiverEnabled,
+      deviceId: "preview-browser",
+      deviceName: "Browser preview",
+      devicePlatform: "macos",
+      listenAddress: null,
+      port: null,
+      pairingCode: "PREVIEW",
+      lastSenderDeviceId: null,
+      lastEventId: null,
+      lastDeliveryStatus: null,
+      lastDeliveryAt: null,
+      lastError: null,
+      lastTargetClassName: null,
+      lastTargetTitle: null,
+      lastTargetEditable: null,
+    };
+  }
+
+  private notifyRecordingWaiters(): void {
+    for (const wake of Array.from(this.recordingWaiters)) wake();
+  }
+
+  private waitForPreviewRecorder(
+    args: WireRecord,
+    admission: { generation: number; epoch: number; claimed: boolean },
+  ): Promise<unknown> {
+    return new Promise((resolve, reject) => {
+      const finish = () => {
+        clearTimeout(timer);
+        this.recordingWaiters.delete(wake);
+      };
+      const wake = () => {
+        if (
+          admission.epoch !== this.recordingGeneration ||
+          this.recordingAdmissions.get(args.ownerId as string) !== admission
+        ) {
+          finish();
+          reject(new Error("Recording start was cancelled"));
+        } else if (this.recordingOwner === null) {
+          finish();
+          this.recordingOwner = args.ownerId as string;
+          this.recordingOwnerToken = admission.generation;
+          resolve({ sampleRate: 16_000 });
+        }
+      };
+      const timer = setTimeout(() => {
+        finish();
+        reject(new Error("A recording is already in progress"));
+      }, 2_000);
+      this.recordingWaiters.add(wake);
+    });
+  }
+
+  private previewOwnerId(args: WireRecord): string {
+    const id = args.ownerId;
+    if (typeof id !== "string" || !id || id.length > 128)
+      throw new Error("Invalid recording owner");
+    return id;
+  }
+
+  private reservePreviewRecording(args: WireRecord): number {
+    const id = this.previewOwnerId(args);
+    if (this.recordingAdmissions.has(id))
+      throw new Error("Recording owner is already admitted");
+    if (this.nextRecordingToken >= Number.MAX_SAFE_INTEGER)
+      throw new Error("Recording admission tokens are exhausted");
+    const generation = ++this.nextRecordingToken;
+    this.recordingAdmissions.set(id, {
+      generation,
+      epoch: this.recordingGeneration,
+      claimed: false,
+    });
+    return generation;
+  }
+
+  private claimPreviewAdmission(args: WireRecord) {
+    const ownerId = this.previewOwnerId(args);
+    const admission = this.recordingAdmissions.get(ownerId);
+    if (
+      !admission ||
+      admission.claimed ||
+      admission.generation !== args.generation ||
+      admission.epoch !== this.recordingGeneration
+    )
+      throw new Error("Recording start was cancelled");
+    admission.claimed = true;
+    return { ownerId, admission };
+  }
+
+  private startPreviewRecording(args: WireRecord): unknown {
+    const { ownerId, admission } = this.claimPreviewAdmission(args);
+    const finish = () => {
+      if (this.recordingAdmissions.get(ownerId) === admission)
+        this.recordingAdmissions.delete(ownerId);
+    };
+    if (this.recordingOwner !== null) {
+      if (asRecord(args.args)?.waitForRelease === true)
+        return this.waitForPreviewRecorder(args, admission).finally(finish);
+      finish();
+      throw new Error("A recording is already in progress");
     }
+    this.recordingOwner = ownerId;
+    this.recordingOwnerToken = admission.generation;
+    finish();
+    return { sampleRate: 16_000 };
+  }
+
+  private claimPreviewBrowserRecording(args: WireRecord): void {
+    const { ownerId, admission } = this.claimPreviewAdmission(args);
+    if (this.recordingAdmissions.get(ownerId) === admission)
+      this.recordingAdmissions.delete(ownerId);
+    if (this.recordingOwner !== null)
+      throw new Error("A recording is already in progress");
+    this.recordingOwner = ownerId;
+    this.recordingOwnerToken = admission.generation;
+    this.recordingIsExternal = true;
+  }
+
+  private releasePreviewBrowserRecording(args: WireRecord): void {
+    if (typeof args.ownerId !== "string") return;
+    if (
+      this.recordingAdmissions.get(args.ownerId)?.generation === args.generation
+    )
+      this.recordingAdmissions.delete(args.ownerId);
+    if (
+      this.recordingIsExternal &&
+      this.recordingOwner === args.ownerId &&
+      this.recordingOwnerToken === args.generation
+    ) {
+      this.recordingOwner = null;
+      this.recordingOwnerToken = null;
+      this.recordingIsExternal = false;
+    }
+    this.notifyRecordingWaiters();
+  }
+
+  private discardPreviewRecording(args: WireRecord): void {
+    if (typeof args.ownerId !== "string") return;
+    if (
+      typeof args.generation === "number" &&
+      this.recordingResults.get(args.generation)?.ownerId === args.ownerId
+    )
+      this.recordingResults.delete(args.generation);
+    if (
+      this.recordingAdmissions.get(args.ownerId)?.generation === args.generation
+    )
+      this.recordingAdmissions.delete(args.ownerId);
+    if (
+      this.recordingOwner === args.ownerId &&
+      this.recordingOwnerToken === args.generation
+    ) {
+      if (this.recordingIsExternal)
+        throw new Error("Browser recording has not ended");
+      this.recordingOwner = null;
+      this.recordingOwnerToken = null;
+    }
+    this.notifyRecordingWaiters();
+  }
+
+  /** Drop replay copies past their retention window. */
+  private pruneExpiredRecordingResults(): void {
+    for (const [token, result] of this.recordingResults) {
+      if (Date.now() - result.created >= 60_000)
+        this.recordingResults.delete(token);
+    }
+  }
+
+  /** Replay a retained copy once, bounded so a caller cannot loop forever. */
+  private replayRecordedResult(args: WireRecord): unknown {
+    const result =
+      typeof args.generation === "number"
+        ? this.recordingResults.get(args.generation)
+        : undefined;
+    if (!result || result.ownerId !== args.ownerId) return undefined;
+    if (result.replays >= 4)
+      throw new Error("Recording recovery replay limit reached");
+    result.replays += 1;
+    return { samples: [], sampleRate: 16_000 };
+  }
+
+  /**
+   * A stop for an admission this session never claimed: release the reservation
+   * instead of reporting ownership it does not have.
+   */
+  private releaseUnclaimedAdmission(args: WireRecord): unknown {
+    if (
+      typeof args.ownerId !== "string" ||
+      (this.recordingOwner === args.ownerId &&
+        this.recordingOwnerToken === args.generation) ||
+      this.recordingAdmissions.get(args.ownerId)?.generation !== args.generation
+    )
+      return undefined;
+    this.recordingAdmissions.delete(args.ownerId);
+    this.notifyRecordingWaiters();
+    return { samples: [], sampleRate: 0 };
+  }
+
+  private assertRecordingOwned(args: WireRecord): void {
+    if (
+      typeof args.ownerId !== "string" ||
+      this.recordingOwner !== args.ownerId ||
+      this.recordingOwnerToken !== args.generation ||
+      this.recordingIsExternal
+    )
+      throw new Error("Recording is no longer owned by this session");
+  }
+
+  /** Retain this stop's audio for a later replay, within the replay budget. */
+  private rememberRecordingResult(args: WireRecord): void {
+    if (typeof args.generation === "number" && this.recordingResults.size < 8) {
+      this.recordingResults.set(args.generation, {
+        ownerId: this.recordingOwner as string,
+        created: Date.now(),
+        replays: 0,
+      });
+    }
+  }
+
+  private controlPreviewRecording(command: string, args: WireRecord): unknown {
+    if (command === "stop_recording") {
+      this.pruneExpiredRecordingResults();
+      const replayed = this.replayRecordedResult(args);
+      if (replayed) return replayed;
+      const releasedAdmission = this.releaseUnclaimedAdmission(args);
+      if (releasedAdmission) return releasedAdmission;
+    }
+    this.assertRecordingOwned(args);
+    if (command !== "stop_recording") return undefined;
+    this.rememberRecordingResult(args);
+    this.recordingOwner = null;
+    this.recordingOwnerToken = null;
+    this.notifyRecordingWaiters();
+    return { samples: [], sampleRate: 16_000 };
+  }
+
+  private invokeRecording(command: string, args: WireRecord): unknown {
+    const lifecycle = this.invokeRecordingLifecycle(command, args);
+    if (lifecycle !== UNHANDLED) return lifecycle;
+    const browser = this.invokeBrowserRecording(command, args);
+    if (browser !== UNHANDLED) return browser;
+    return this.controlPreviewRecording(command, args);
+  }
+
+  /** Admission and start, which every other recording command builds on. */
+  private invokeRecordingLifecycle(command: string, args: WireRecord): unknown {
+    if (command === "recording_generation")
+      return this.reservePreviewRecording(args);
+    if (command === "start_recording") return this.startPreviewRecording(args);
+    if (command !== "force_stop_recording") return UNHANDLED;
+    // Force stop is a reset: it invalidates every admission and result, then
+    // refuses while a browser recording still owns the microphone.
+    this.recordingGeneration += 1;
+    this.recordingAdmissions.clear();
+    this.recordingResults.clear();
+    this.notifyRecordingWaiters();
+    if (this.recordingIsExternal)
+      throw new Error("Browser recording has not ended");
+    this.recordingOwner = null;
+    this.recordingOwnerToken = null;
+    this.notifyRecordingWaiters();
+    return undefined;
+  }
+
+  /** Browser capture handoff plus the release commands that follow it. */
+  private invokeBrowserRecording(command: string, args: WireRecord): unknown {
+    if (command === "claim_browser_recording")
+      return this.claimPreviewBrowserRecording(args);
+    if (command === "release_browser_recording")
+      return this.releasePreviewBrowserRecording(args);
+    if (command === "discard_recording")
+      return this.discardPreviewRecording(args);
+    if (command !== "acknowledge_recording") return UNHANDLED;
+    // Only the owner of an admission may drop its retained result.
+    if (
+      typeof args.generation === "number" &&
+      this.recordingResults.get(args.generation)?.ownerId === args.ownerId
+    )
+      this.recordingResults.delete(args.generation);
+    return undefined;
+  }
+
+  private invokeSystem(command: string, args: WireRecord): unknown {
+    if (
+      [
+        "start_recording",
+        "recording_generation",
+        "claim_browser_recording",
+        "release_browser_recording",
+        "stop_recording",
+        "acknowledge_recording",
+        "discard_recording",
+        "pause_recording",
+        "resume_recording",
+        "force_stop_recording",
+      ].includes(command)
+    ) {
+      return this.invokeRecording(command, args);
+    }
+    if (SYSTEM_NO_OP_COMMANDS.has(command)) return undefined;
+    // Permissions reflect the current scenario, unlike the static replies.
+    if (command === "check_microphone_permission") {
+      return clone(getAppState().permissions.microphone);
+    }
+    if (command === "check_accessibility_permission") {
+      return clone(getAppState().permissions.accessibility);
+    }
+    if (SYSTEM_RESPONSES.has(command))
+      return clone(SYSTEM_RESPONSES.get(command));
+    throw new PreviewOperationError(command);
   }
 }
 
@@ -651,7 +1010,7 @@ export const getActivePreviewScenario = (): PreviewScenarioId =>
 
 export const invokePreviewCommand = <T>(
   command: string,
-  args?: WireRecord,
+  args?: Record<string, unknown>,
 ): Promise<T> => runtime.invoke(command, args).then((value) => value as T);
 
 export const previewScenarioFromLocation = (

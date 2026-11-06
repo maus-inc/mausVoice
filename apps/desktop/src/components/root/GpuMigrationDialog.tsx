@@ -11,15 +11,13 @@ import {
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { FormattedMessage } from "react-intl";
 
-type GpuMigrationDialogProps = {
-  open: boolean;
-  onClose: () => void;
-};
-
 export const GpuMigrationDialog = ({
   open,
   onClose,
-}: GpuMigrationDialogProps) => {
+}: {
+  open: boolean;
+  onClose: () => void;
+}) => {
   const handleOpenDownloadPage = () => {
     openUrl("https://maus-inc.github.io/mausVoice/");
   };

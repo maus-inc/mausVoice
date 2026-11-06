@@ -4,13 +4,12 @@ import type {
   RemoteReceiverStatus,
 } from "@maus-inc/types";
 import { invoke } from "@tauri-apps/api/core";
-import { getAppState, produceAppState } from "../store";
+import { getAppState, produceAppState, useAppStore } from "../store";
 import { registerPairedRemoteDevices } from "../utils/app.utils";
+import { getPairedRemoteDeviceById } from "../utils/device.utils";
 import { getPlatform } from "../utils/platform.utils";
-import {
-  setRemoteOutputEnabled,
-  setRemoteTargetDeviceId,
-} from "./user.actions";
+import { enqueuePairedDeviceMutation } from "./paired-remote-device.actions";
+import { updateUserPreferences } from "./user.actions";
 
 const INVITE_PREFIX = "mausvoice-pair:";
 
@@ -75,9 +74,7 @@ export const buildRemotePairingInvite = (
   return `${INVITE_PREFIX}${encodeBase64Url(JSON.stringify(invite))}`;
 };
 
-export const parseRemotePairingInvite = (
-  value: string,
-): RemotePairingInvite => {
+const parseRemotePairingInvite = (value: string): RemotePairingInvite => {
   const trimmed = value.trim();
   if (!trimmed.startsWith(INVITE_PREFIX)) {
     throw new Error("Pair code is not a valid mausVoice remote invite.");
@@ -103,27 +100,61 @@ export const pairWithRemoteInvite = async (
   inviteCode: string,
 ): Promise<PairedRemoteDevice> => {
   const invite = parseRemotePairingInvite(inviteCode);
-  const previousTargetId =
-    getAppState().userPrefs?.remoteTargetDeviceId ?? null;
-  const device = await invoke<PairedRemoteDevice>(
-    "remote_sender_pair_with_receiver",
-    {
-      args: {
-        receiverDeviceId: invite.receiverDeviceId,
-        receiverName: invite.receiverDeviceName,
-        receiverPlatform: invite.receiverPlatform,
-        receiverAddress: invite.receiverAddress,
-        pairingCode: invite.pairingCode,
-      },
-    },
-  );
-
-  produceAppState((draft) => {
-    registerPairedRemoteDevices(draft, [device]);
+  const preferences = getAppState().userPrefs;
+  const previousTargetId = preferences?.remoteTargetDeviceId ?? null;
+  const previousEnabled = preferences?.remoteOutputEnabled ?? false;
+  let selectionChanged = false;
+  const unsubscribe = useAppStore.subscribe((current, previous) => {
+    if (
+      current.userPrefs?.remoteTargetDeviceId !==
+        previous.userPrefs?.remoteTargetDeviceId ||
+      current.userPrefs?.remoteOutputEnabled !==
+        previous.userPrefs?.remoteOutputEnabled
+    )
+      selectionChanged = true;
   });
-  await setRemoteTargetDeviceId(device.id);
-  if (previousTargetId === invite.receiverDeviceId) {
-    await setRemoteOutputEnabled(true);
+  try {
+    const device = await enqueuePairedDeviceMutation(
+      invite.receiverDeviceId,
+      async () => {
+        const paired = await invoke<PairedRemoteDevice>(
+          "remote_sender_pair_with_receiver",
+          {
+            args: {
+              receiverDeviceId: invite.receiverDeviceId,
+              receiverName: invite.receiverDeviceName,
+              receiverPlatform: invite.receiverPlatform,
+              receiverAddress: invite.receiverAddress,
+              pairingCode: invite.pairingCode,
+            },
+          },
+        );
+        produceAppState((draft) => {
+          registerPairedRemoteDevices(draft, [paired]);
+        });
+        return paired;
+      },
+    );
+    await updateUserPreferences(
+      (prefs) => {
+        prefs.remoteTargetDeviceId = device.id;
+        prefs.remoteOutputEnabled = true;
+      },
+      "Failed to save paired receiver selection. Please try again.",
+      (prefs) => {
+        const current = getPairedRemoteDeviceById(getAppState(), device.id);
+        return (
+          !selectionChanged &&
+          prefs.remoteTargetDeviceId === previousTargetId &&
+          prefs.remoteOutputEnabled === previousEnabled &&
+          current?.sharedSecret === device.sharedSecret &&
+          current.trusted &&
+          (current.role === "receiver" || current.role === "both")
+        );
+      },
+    );
+    return device;
+  } finally {
+    unsubscribe();
   }
-  return device;
 };

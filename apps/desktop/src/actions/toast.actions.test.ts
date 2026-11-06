@@ -15,8 +15,14 @@ import {
   encodeToastActionToken,
 } from "../types/toast.types";
 
-const { dismissToast, showPersistentToast, showToast } =
-  await import("./toast.actions");
+const {
+  dismissMicrophoneSafetyToast,
+  dismissToast,
+  dismissToastForAction,
+  runToast,
+  showPersistentToast,
+  showToast,
+} = await import("./toast.actions");
 
 const payloadTypes = () =>
   invoke.mock.calls.map(
@@ -41,6 +47,19 @@ const deferred = <T>() => {
 describe("native toast IPC ordering", () => {
   beforeEach(() => {
     invoke.mockReset();
+  });
+
+  it("swallows a toast rejection even if the diagnostic sink throws", async () => {
+    const logger = vi.spyOn(console, "error").mockImplementation(() => {
+      throw new Error("diagnostic unavailable");
+    });
+    try {
+      runToast(Promise.reject(new Error("toast unavailable")));
+      await Promise.resolve();
+      expect(logger).toHaveBeenCalledOnce();
+    } finally {
+      logger.mockRestore();
+    }
   });
 
   it("delivers a slow show before a later dismiss", async () => {
@@ -68,6 +87,83 @@ describe("native toast IPC ordering", () => {
     // Without serialization the dismiss lands first and the loading toast
     // stays on screen for its full duration.
     expect(delivered).toEqual(["toast", "dismiss_toast"]);
+  });
+
+  it("drops a queued toast whose owner retires before dispatch", async () => {
+    const entered = deferred<undefined>();
+    const release = deferred<undefined>();
+    invoke.mockImplementationOnce(async () => {
+      entered.resolve();
+      await release.promise;
+    });
+    invoke.mockResolvedValue(undefined);
+    const first = showToast({ message: "first" });
+    await entered.promise;
+    let current = true;
+    const stale = showToast({ message: "old", isCurrent: () => current });
+    current = false;
+    const next = showToast({ message: "next" });
+    release.resolve();
+    await Promise.all([first, stale, next]);
+    expect(invoke).toHaveBeenCalledTimes(2);
+    const messages = invoke.mock.calls.map(
+      (call) => JSON.parse((call[1] as { payload: string }).payload).message,
+    );
+    expect(messages).toEqual(["first", "next"]);
+  });
+
+  it("sends the scoped dismissal after its queued toast with the exact action token", async () => {
+    const entered = deferred<undefined>();
+    const release = deferred<undefined>();
+    invoke.mockImplementationOnce(async () => {
+      entered.resolve();
+      await release.promise;
+    });
+    invoke.mockResolvedValue(undefined);
+    const showing = showToast({
+      message: "Finalizing audio",
+      action: "cancel_recording_stop",
+      proposalId: "owner-1",
+    });
+    await entered.promise;
+    const dismissing = dismissToastForAction(
+      "cancel_recording_stop",
+      "owner-1",
+    );
+    release.resolve();
+    await Promise.all([showing, dismissing]);
+    const payloads = invoke.mock.calls.map((call) =>
+      JSON.parse((call[1] as { payload: string }).payload),
+    );
+    expect(payloads[0].action).toBe("cancel_recording_stop#owner-1");
+    expect(payloads[1]).toEqual({
+      type: "dismiss_toast",
+      expected_action: "cancel_recording_stop#owner-1",
+    });
+  });
+
+  it("scopes microphone warning dismissal to its owner", async () => {
+    await showToast({
+      message: "Microphone may still be in use",
+      microphoneSafetyOwner: "owner-1",
+    });
+    await dismissMicrophoneSafetyToast("owner-1");
+    const payloads = invoke.mock.calls.map((call) =>
+      JSON.parse((call[1] as { payload: string }).payload),
+    );
+    expect(payloads[0].microphone_safety_owner).toBe("owner-1");
+    expect(payloads[1]).toEqual({
+      type: "dismiss_toast",
+      expected_safety_owner: "owner-1",
+    });
+  });
+
+  it("rejects missing scope instead of sending an unscoped dismissal", async () => {
+    await expect(dismissMicrophoneSafetyToast("")).rejects.toThrow();
+    await expect(
+      dismissToastForAction("cancel_recording_stop", ""),
+    ).rejects.toThrow();
+    expect(invoke).not.toHaveBeenCalled();
   });
 
   it("keeps serving later toasts after one fails", async () => {

@@ -50,7 +50,6 @@ vi.mock("./toast.actions", () => ({
 vi.mock("../utils/native-pill.utils", () => ({
   isNativePillAvailable: (...args: unknown[]) =>
     mocks.isNativePillAvailable(...args),
-  resetNativePillAvailability: vi.fn(),
 }));
 vi.mock("../utils/log.utils", () => ({
   getLogger: () => mocks.logger,
@@ -63,7 +62,7 @@ import {
   reviewTranscriptBeforeInsert,
   reviewTranscriptOnPill,
 } from "./pill-review.actions";
-import { getAppState } from "../store";
+import { getAppState, setAppState, useAppStore } from "../store";
 
 type DecisionListener = (event: { payload: unknown }) => void;
 
@@ -444,7 +443,10 @@ describe("reviewTranscriptOnPill", () => {
     );
     // Nothing was queued, so the next review can still use the pill.
     expect(getAppState().pendingPillReview).toBeNull();
-    expect(mocks.reviewTextInComposer).toHaveBeenCalledWith("stranded");
+    expect(mocks.reviewTextInComposer).toHaveBeenCalledWith(
+      "stranded",
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
   });
 
   it("gives up on a review nobody answers instead of blocking the insert", async () => {
@@ -641,9 +643,12 @@ describe("reviewTranscriptOnPill", () => {
     });
     await expect(pending).resolves.toBe("composed take");
 
-    expect(mocks.reviewTextInComposer).toHaveBeenCalledWith("pill edit", {
-      originalText: "rough take",
-    });
+    expect(mocks.reviewTextInComposer).toHaveBeenCalledWith(
+      "pill edit",
+      expect.objectContaining({
+        originalText: "rough take",
+      }),
+    );
     const session = getReviewSession(id);
     expect(session?.status).toBe("decided");
     expect(session?.decision).toBe("edit");
@@ -662,9 +667,12 @@ describe("reviewTranscriptOnPill", () => {
     });
     await expect(pending).resolves.toBe("composed from open");
 
-    expect(mocks.reviewTextInComposer).toHaveBeenCalledWith("pill draft", {
-      originalText: "rough take",
-    });
+    expect(mocks.reviewTextInComposer).toHaveBeenCalledWith(
+      "pill draft",
+      expect.objectContaining({
+        originalText: "rough take",
+      }),
+    );
     const session = getReviewSession(id);
     expect(session?.status).toBe("decided");
     expect(session?.decision).toBe("open");
@@ -682,9 +690,12 @@ describe("reviewTranscriptOnPill", () => {
     });
     await expect(pending).resolves.toBe("composed take");
 
-    expect(mocks.reviewTextInComposer).toHaveBeenCalledWith("rough take", {
-      originalText: "rough take",
-    });
+    expect(mocks.reviewTextInComposer).toHaveBeenCalledWith(
+      "rough take",
+      expect.objectContaining({
+        originalText: "rough take",
+      }),
+    );
   });
 
   it("expires unanswered reviews and offers the history route", async () => {
@@ -700,11 +711,69 @@ describe("reviewTranscriptOnPill", () => {
       expect(getAppState().pendingPillReview).toBeNull();
       expect(getReviewSession(id)?.status).toBe("expired");
       expect(mocks.showToast).toHaveBeenCalledWith(
-        expect.objectContaining({ action: "open_transcriptions" }),
+        expect.objectContaining({
+          action: "open_transcriptions",
+          message: "Review expired. The transcript was not inserted.",
+        }),
       );
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("settles an expired review even when its notification throws", async () => {
+    vi.useFakeTimers();
+    try {
+      mocks.showToast.mockImplementationOnce(() => {
+        throw new Error("pill unavailable");
+      });
+      const pending = reviewTranscriptOnPill("ignored");
+      await flush(() => getAppState().pendingPillReview !== null);
+      const id = currentReviewId();
+      await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+      await expect(pending).resolves.toBeNull();
+      expect(getReviewSession(id)?.status).toBe("expired");
+      expect(getAppState().pendingPillReview).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not expire a successor when timeout feedback reenters review decisions", async () => {
+    vi.useFakeTimers();
+    try {
+      const first = startPillReview("first");
+      await flush(() => getAppState().pendingPillReview !== null);
+      const firstId = currentReviewId();
+      const second = startPillReview("second");
+      await flush(() => getQueuedSessions().length === 2);
+      mocks.showToast.mockImplementationOnce(() => {
+        decide?.({ payload: { reviewId: firstId, action: "cancel" } });
+        return Promise.resolve();
+      });
+      await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+      await expect(first).resolves.toBeNull();
+      expect(getAppState().pendingPillReview?.text).toBe("second");
+      await cancelPillReview(second);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not strand or misreport a successful copy when its toast throws", async () => {
+    mocks.showToast.mockImplementationOnce(() => {
+      throw new Error("pill unavailable");
+    });
+    const pending = startPillReview("copied text");
+    await flush(() => getAppState().pendingPillReview !== null);
+    decide?.({ payload: { reviewId: currentReviewId(), action: "copy" } });
+    await expect(pending).resolves.toBeNull();
+    expect(mocks.invoke).toHaveBeenCalledWith("copy_to_clipboard", {
+      text: "copied text",
+    });
+    expect(mocks.logger.error).not.toHaveBeenCalledWith(
+      "Failed to copy the reviewed transcript",
+    );
   });
 
   it("marks queued reviews cancelled on teardown", async () => {
@@ -723,6 +792,33 @@ describe("reviewTranscriptOnPill", () => {
     }
   });
 
+  it("does not cancel a successor created reentrantly during teardown", async () => {
+    const first = startPillReview("old");
+    await flush(() => getAppState().pendingPillReview !== null);
+    let successor: Promise<string | null> | undefined;
+    const unsubscribe = useAppStore.subscribe((state, previous) => {
+      if (
+        previous.pendingPillReview &&
+        !state.pendingPillReview &&
+        !successor
+      ) {
+        successor = startPillReview("new");
+      }
+    });
+    try {
+      cancelAllPillReviews();
+      await expect(first).resolves.toBeNull();
+      await flush(() => getAppState().pendingPillReview?.text === "new");
+      expect(successor).toBeDefined();
+      expect(getAppState().pendingPillReview?.text).toBe("new");
+      unsubscribe();
+      await cancelPillReview(successor!);
+    } finally {
+      unsubscribe();
+      cancelAllPillReviews();
+    }
+  });
+
   it("returns null for an unknown session id", () => {
     expect(getReviewSession("never-enqueued")).toBeNull();
   });
@@ -735,9 +831,124 @@ describe("reviewTranscriptOnPill", () => {
       reviewTranscriptBeforeInsert("rough take", "assistant-tool"),
     ).resolves.toBe("composed take");
 
-    expect(mocks.reviewTextInComposer).toHaveBeenCalledWith("rough take");
+    expect(mocks.reviewTextInComposer).toHaveBeenCalledWith(
+      "rough take",
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
     expect(mocks.listen).not.toHaveBeenCalled();
     expect(getAppState().pendingPillReview).toBeNull();
+    expect(getQueuedSessions()).toEqual([]);
+  });
+
+  it("clears completed review text when the account changes", async () => {
+    const pending = reviewTranscriptBeforeInsert("old private transcript");
+    await flush(() => getAppState().pendingPillReview !== null);
+    const id = currentReviewId();
+    decide?.({
+      payload: { reviewId: id, action: "insert", text: "old private edit" },
+    });
+    await expect(pending).resolves.toBe("old private edit");
+    expect(getReviewSession(id)?.draftText).toBe("old private edit");
+    setAppState({ authSessionNonce: getAppState().authSessionNonce + 1 });
+    expect(getReviewSession(id)).toMatchObject({
+      originalText: "",
+      draftText: null,
+    });
+  });
+
+  it("retires old reviews on an auth change without cancelling the new account's review", async () => {
+    mocks.isNativePillAvailable.mockResolvedValue(true);
+    const first = reviewTranscriptBeforeInsert("old first");
+    await flush(() => getAppState().pendingPillReview !== null);
+    const oldId = currentReviewId();
+    const second = reviewTranscriptBeforeInsert("old second");
+    await flush(() => getQueuedSessions().length === 2);
+    const oldQueuedId = getQueuedSessions()[1].id;
+    setAppState({ authSessionNonce: getAppState().authSessionNonce + 1 });
+    const successor = reviewTranscriptBeforeInsert("new account");
+    await expect(first).resolves.toBeNull();
+    await expect(second).resolves.toBeNull();
+    await flush(() => getAppState().pendingPillReview?.text === "new account");
+    expect(getAppState().pendingPillReview?.text).toBe("new account");
+    expect(getReviewSession(oldId)).toMatchObject({
+      status: "cancelled",
+      originalText: "",
+      draftText: null,
+    });
+    expect(getReviewSession(oldQueuedId)).toMatchObject({
+      status: "cancelled",
+      originalText: "",
+      draftText: null,
+    });
+    await cancelPillReview(successor);
+  });
+
+  it("aborts a handed-off composer when the review's account changes", async () => {
+    let signal!: AbortSignal;
+    mocks.reviewTextInComposer.mockImplementationOnce(
+      (_text: string, options: { signal: AbortSignal }) => {
+        signal = options.signal;
+        return new Promise((resolve) =>
+          signal.addEventListener("abort", () => resolve(null), { once: true }),
+        );
+      },
+    );
+    const pending = reviewTranscriptBeforeInsert("old private text");
+    await flush(() => getAppState().pendingPillReview !== null);
+    const id = currentReviewId();
+    decide?.({
+      payload: { reviewId: id, action: "edit", text: "private draft" },
+    });
+    await flush(() => Boolean(signal));
+    setAppState({ authSessionNonce: getAppState().authSessionNonce + 1 });
+    await expect(pending).resolves.toBeNull();
+    expect(signal.aborted).toBe(true);
+    expect(getReviewSession(id)).toMatchObject({
+      status: "cancelled",
+      originalText: "",
+      draftText: null,
+    });
+  });
+
+  it("cancels a composer-only review on global teardown", async () => {
+    mocks.isNativePillAvailable.mockResolvedValue(false);
+    let signal!: AbortSignal;
+    mocks.reviewTextInComposer.mockImplementationOnce(
+      (_text: string, options: { signal: AbortSignal }) => {
+        signal = options.signal;
+        return new Promise((resolve) =>
+          signal.addEventListener("abort", () => resolve(null), { once: true }),
+        );
+      },
+    );
+    const pending = reviewTranscriptBeforeInsert("old private text");
+    await flush(() => Boolean(signal));
+    cancelAllPillReviews();
+    await expect(pending).resolves.toBeNull();
+    expect(signal.aborted).toBe(true);
+  });
+
+  it("cancels a request still waiting for native-pill availability", async () => {
+    let finish!: (value: boolean) => void;
+    mocks.isNativePillAvailable.mockReturnValueOnce(
+      new Promise<boolean>((resolve) => {
+        finish = resolve;
+      }),
+    );
+    const pending = reviewTranscriptBeforeInsert("old private text");
+    cancelAllPillReviews();
+    await expect(pending).resolves.toBeNull();
+    finish(true);
+    await Promise.resolve();
+    expect(getQueuedSessions()).toEqual([]);
+  });
+
+  it("retires a review while native pill availability is stalled", async () => {
+    mocks.isNativePillAvailable.mockReturnValueOnce(new Promise(() => {}));
+    const pending = reviewTranscriptBeforeInsert("old private text");
+    setAppState({ authSessionNonce: getAppState().authSessionNonce + 1 });
+    await expect(pending).resolves.toBeNull();
+    expect(mocks.reviewTextInComposer).not.toHaveBeenCalled();
     expect(getQueuedSessions()).toEqual([]);
   });
 

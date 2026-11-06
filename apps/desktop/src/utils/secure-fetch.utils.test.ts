@@ -8,6 +8,8 @@ const { invokeMock, pluginFetchMock } = vi.hoisted(() => ({
 vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock }));
 vi.mock("@tauri-apps/plugin-http", () => ({ fetch: pluginFetchMock }));
 
+import { fetchWithTimeout } from "../sidecars/sidecar.utils";
+
 import {
   createOpenAICompatibleFetch,
   encodePrivateHttpBodyStream,
@@ -135,6 +137,89 @@ describe("secureFetch", () => {
     expect(canceled).toBe(true);
   });
 
+  it("preserves an explicit null reason while cancelling an upload", async () => {
+    const cancel = vi.fn();
+    const body = new ReadableStream<Uint8Array>({ cancel });
+    const controller = new AbortController();
+    const pending = encodePrivateHttpBodyStream(body, controller.signal);
+    controller.abort(null);
+    await expect(pending).rejects.toBe(null);
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
+  it("cancels an HTTPS upload stream if its signal aborts while buffering", async () => {
+    const cancel = vi.fn();
+    const body = new ReadableStream<Uint8Array>({ cancel });
+    const controller = new AbortController();
+    const request = secureFetch("https://api.openai.com/v1/upload", {
+      method: "POST",
+      body,
+      signal: controller.signal,
+    });
+    controller.abort();
+    const timed = Promise.race([
+      request,
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("body read did not abort")), 100),
+      ),
+    ]);
+    await expect(timed).rejects.toMatchObject({ name: "AbortError" });
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(pluginFetchMock).not.toHaveBeenCalled();
+  });
+
+  it("honours an inherited Request signal during HTTPS upload buffering", async () => {
+    const controller = new AbortController();
+    const reason = new Error("upload cancelled");
+    const cancel = vi.fn();
+    const body = new ReadableStream<Uint8Array>({ cancel });
+    const request = new Request("https://api.openai.com/v1/upload", {
+      signal: controller.signal,
+    });
+    const pending = secureFetch(request, { method: "POST", body });
+    controller.abort(reason);
+    await expect(pending).rejects.toBe(reason);
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(pluginFetchMock).not.toHaveBeenCalled();
+  });
+
+  it("honours an explicit signal instead of an aborted Request signal", async () => {
+    const inherited = new AbortController();
+    inherited.abort();
+    const request = new Request("https://api.openai.com/v1/upload", {
+      signal: inherited.signal,
+    });
+    const body = streamFromChunks([
+      Uint8Array.from([1, 2]),
+      Uint8Array.from([3, 4]),
+    ]);
+    const explicit = new AbortController();
+    pluginFetchMock.mockResolvedValue(new Response("ok"));
+    await secureFetch(request, {
+      method: "POST",
+      body,
+      signal: explicit.signal,
+    });
+    const options = pluginFetchMock.mock.calls[0][1];
+    expect(options.signal).toBe(explicit.signal);
+    expect([...new Uint8Array(options.body as ArrayBuffer)]).toEqual([
+      1, 2, 3, 4,
+    ]);
+  });
+
+  it("rejects a non-byte upload stream without starting the transport", async () => {
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue("not bytes");
+        controller.close();
+      },
+    });
+    await expect(
+      secureFetch("https://api.openai.com/v1/upload", { method: "POST", body }),
+    ).rejects.toThrow("Upload stream must contain byte chunks");
+    expect(pluginFetchMock).not.toHaveBeenCalled();
+  });
+
   it("keeps curated HTTPS requests in plugin-http", async () => {
     const expected = new Response("ok");
     pluginFetchMock.mockResolvedValue(expected);
@@ -189,6 +274,44 @@ describe("secureFetch", () => {
     ).rejects.toThrow(/Redirect not allowed: 302/);
     // One hop, not two: the whole point is that the chain was not walked.
     expect(pluginFetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["error", "follow"] as const)(
+    "retires an unreturned redirect body in %s mode",
+    async (redirect) => {
+      const first = new Response("redirect body", {
+        status: 307,
+        headers: { location: "/next" },
+      });
+      const cancel = vi
+        .spyOn(first.body!, "cancel")
+        .mockReturnValue(new Promise(() => {}));
+      pluginFetchMock
+        .mockResolvedValueOnce(first)
+        .mockResolvedValueOnce(new Response("final"));
+      const pending = secureFetch("https://api.openai.com/v1/models", {
+        redirect,
+      });
+      if (redirect === "error")
+        await expect(pending).rejects.toThrow(/Redirect not allowed/);
+      else await expect(pending).resolves.toMatchObject({ status: 200 });
+      expect(cancel).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("leaves a manually returned redirect body to its caller", async () => {
+    const first = new Response("redirect body", {
+      status: 307,
+      headers: { location: "/next" },
+    });
+    const cancel = vi.spyOn(first.body!, "cancel");
+    pluginFetchMock.mockResolvedValueOnce(first);
+    const response = await secureFetch("https://api.openai.com/v1/models", {
+      redirect: "manual",
+    });
+    expect(response).toBe(first);
+    expect(cancel).not.toHaveBeenCalled();
+    await expect(response.text()).resolves.toBe("redirect body");
   });
 
   it("hands a redirect back to the caller who asked to handle it", async () => {
@@ -374,6 +497,49 @@ describe("secureFetch", () => {
   // The positive control. Without it the two above would also pass if `error`
   // and `manual` were treated exactly like `follow` and the walker simply threw
   // on every response, so this is what makes them mean what they say.
+  it.each([301, 302, 303, 307, 308])(
+    "rejects a %s without Location in error mode",
+    async (status) => {
+      const response = new Response("redirect body", { status });
+      const cancel = vi.spyOn(response.body!, "cancel");
+      pluginFetchMock.mockResolvedValue(response);
+
+      await expect(
+        secureFetch("https://api.openai.com/v1/models", { redirect: "error" }),
+      ).rejects.toThrow(`Redirect not allowed: ${status}`);
+      expect(cancel).toHaveBeenCalledOnce();
+      expect(pluginFetchMock).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each(["follow", "manual"] as const)(
+    "returns a redirect without Location in %s mode",
+    async (redirect) => {
+      const response = new Response("redirect body", { status: 302 });
+      pluginFetchMock.mockResolvedValue(response);
+
+      const result = await secureFetch("https://api.openai.com/v1/models", {
+        redirect,
+      });
+      expect(result).toBe(response);
+      expect(await result.text()).toBe("redirect body");
+      expect(pluginFetchMock).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("resolves an empty Location against the current URL", async () => {
+    serveHops([
+      new Response(null, { status: 302, headers: { location: "" } }),
+      new Response("followed"),
+    ]);
+    const response = await secureFetch("https://api.openai.com/v1/models");
+    expect(await response.text()).toBe("followed");
+    expect(hops.map((item) => item.url)).toEqual([
+      "https://api.openai.com/v1/models",
+      "https://api.openai.com/v1/models",
+    ]);
+  });
+
   it("still follows a redirect when the caller asks to follow it", async () => {
     pluginFetchMock
       .mockResolvedValueOnce(
@@ -445,6 +611,37 @@ describe("secureFetch", () => {
     expect(pluginFetchMock.mock.calls.length).toBeLessThanOrEqual(21);
   });
 
+  it.each([
+    [{ "x-new": "new" }, { "x-new": "new" }],
+    [{}, {}],
+  ] as const)(
+    "replaces Request headers when init supplies %s",
+    async (replacement, expected) => {
+      serveHops([
+        new Response(null, { status: 307, headers: { location: "/follow" } }),
+        new Response("ok"),
+      ]);
+      const request = new Request("https://api.openai.com/v1/models", {
+        headers: { authorization: "Bearer secret", "x-original": "old" },
+      });
+      await secureFetch(request, { headers: replacement });
+      expect(hop(0).headers).toEqual(expected);
+      expect(hop(1).headers).toEqual(expected);
+    },
+  );
+
+  it("inherits Request headers if init does not provide headers", async () => {
+    serveHops([new Response("ok")]);
+    const request = new Request("https://api.openai.com/v1/models", {
+      headers: { authorization: "Bearer secret", "x-original": "old" },
+    });
+    await secureFetch(request, {});
+    expect(hop(0).headers).toEqual({
+      authorization: "Bearer secret",
+      "x-original": "old",
+    });
+  });
+
   it("drops the credential when a redirect hop crosses origins", async () => {
     // The Fetch standard deletes `Authorization` when a redirect leaves the
     // origin the request was issued to, and `secureFetch` is declared as
@@ -481,6 +678,55 @@ describe("secureFetch", () => {
     expect(second.headers).not.toHaveProperty("proxy-authorization");
     // Only the credentials that identify the caller to that origin go.
     expect(second.headers["x-request-id"]).toBe("req-1");
+  });
+
+  it("never forwards provider API-key headers after a cross-origin redirect", async () => {
+    const credentials = {
+      "api-key": "azure-secret",
+      "x-api-key": "anthropic-secret",
+      "x-goog-api-key": "gemini-secret",
+      "xi-api-key": "elevenlabs-secret",
+      "ocp-apim-subscription-key": "azure-speech-secret",
+    };
+    serveHops([
+      new Response(null, {
+        status: 307,
+        headers: { location: "https://other.example/hop" },
+      }),
+      new Response(null, {
+        status: 307,
+        headers: { location: "https://api.example.com/back" },
+      }),
+      new Response("ok"),
+    ]);
+    await secureFetch("https://api.example.com/start", {
+      headers: { ...credentials, "x-request-id": "request-1" },
+    });
+    expect(hop(0).headers).toMatchObject(credentials);
+    for (const index of [1, 2]) {
+      for (const header of Object.keys(credentials)) {
+        expect(hop(index).headers).not.toHaveProperty(header);
+      }
+      expect(hop(index).headers["x-request-id"]).toBe("request-1");
+    }
+  });
+
+  it("retains provider API-key headers for same-origin redirects", async () => {
+    const credentials = {
+      "api-key": "azure-secret",
+      "x-api-key": "anthropic-secret",
+      "x-goog-api-key": "gemini-secret",
+      "xi-api-key": "elevenlabs-secret",
+      "ocp-apim-subscription-key": "azure-speech-secret",
+    };
+    serveHops([
+      new Response(null, { status: 307, headers: { location: "/next" } }),
+      new Response("ok"),
+    ]);
+    await secureFetch("https://api.example.com/start", {
+      headers: credentials,
+    });
+    expect(hop(1).headers).toMatchObject(credentials);
   });
 
   it("keeps the credential on a redirect hop that stays on the same origin", async () => {
@@ -524,6 +770,33 @@ describe("secureFetch", () => {
     // A Content-Type describing a body that is no longer sent misleads the next
     // server about the request.
     expect(hop(1).headers).not.toHaveProperty("content-type");
+  });
+
+  it("removes all request-body metadata when a redirect discards the body", async () => {
+    serveHops([
+      new Response(null, { status: 303, headers: { location: "/next" } }),
+      new Response("ok"),
+    ]);
+    await secureFetch("https://api.example.com/start", {
+      method: "POST",
+      headers: {
+        "content-type": "text/plain",
+        "content-encoding": "gzip",
+        "content-language": "en",
+        "content-location": "/original",
+        "x-request-id": "req-1",
+      },
+      body: "payload",
+    });
+    for (const name of [
+      "content-type",
+      "content-encoding",
+      "content-language",
+      "content-location",
+    ]) {
+      expect(hop(1).headers).not.toHaveProperty(name);
+    }
+    expect(hop(1).headers["x-request-id"]).toBe("req-1");
   });
 
   it("replays the method and body unchanged on a 307", async () => {
@@ -813,10 +1086,175 @@ describe("secureFetch", () => {
 
   it("rejects relative URLs with a contextual error instead of bare Invalid URL", async () => {
     await expect(secureFetch("/v1/models")).rejects.toThrow(
-      /secureFetch requires an absolute http\(s\) URL.*\/v1\/models/,
+      /secureFetch requires an absolute http\(s\) URL/,
     );
     expect(pluginFetchMock).not.toHaveBeenCalled();
     expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it("does not disclose malformed URL contents in diagnostics", async () => {
+    const secret = "sensitive-query-value";
+    await expect(secureFetch(`/v1/models?token=${secret}`)).rejects.not.toThrow(
+      secret,
+    );
+    await expect(
+      secureFetch(`https://user:${secret}@[invalid`),
+    ).rejects.not.toThrow(secret);
+  });
+
+  it.each(["http", "https"])(
+    "rejects %s URL userinfo without leaking it",
+    async (protocol) => {
+      const secret = "private-url-password";
+      const error = await secureFetch(
+        `${protocol}://user:${secret}@127.0.0.1/endpoint`,
+      ).catch((failure: unknown) => failure);
+      expect(error).toBeInstanceOf(TypeError);
+      expect(String(error)).not.toContain(secret);
+      expect(JSON.stringify(error)).not.toContain(secret);
+      expect(pluginFetchMock).not.toHaveBeenCalled();
+      expect(invokeMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rejects userinfo in saved-endpoint requests without exposing it", async () => {
+    const secret = "saved-url-password";
+    const savedFetch = createOpenAICompatibleFetch("saved-endpoint");
+    const error = await savedFetch(
+      `https://user:${secret}@model.example/endpoint`,
+    ).catch((failure: unknown) => failure);
+    expect(error).toBeInstanceOf(TypeError);
+    expect(String(error)).not.toContain(secret);
+    expect(JSON.stringify(error)).not.toContain(secret);
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it("does not expose a malformed saved-endpoint URL", async () => {
+    const secret = "saved-query-value";
+    const savedFetch = createOpenAICompatibleFetch("saved-endpoint");
+    const error = await savedFetch(`/models?token=${secret}`).catch(
+      (failure: unknown) => failure,
+    );
+    expect(error).toBeInstanceOf(TypeError);
+    expect(String(error)).not.toContain(secret);
+    expect(JSON.stringify(error)).not.toContain(secret);
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects credential-bearing redirect locations without disclosing them", async () => {
+    serveHops([
+      new Response(null, {
+        status: 307,
+        headers: {
+          location: "https://user:private-redirect-password@other.example/next",
+        },
+      }),
+    ]);
+    const error = await secureFetch("https://api.example.com/start").catch(
+      (failure: unknown) => failure,
+    );
+    expect(error).toBeInstanceOf(TypeError);
+    expect(String(error)).not.toContain("private-redirect-password");
+    expect(JSON.stringify(error)).not.toContain("private-redirect-password");
+    expect(pluginFetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not disclose an invalid redirect location", async () => {
+    pluginFetchMock.mockResolvedValue(
+      new Response(null, {
+        status: 302,
+        headers: { location: "https://user:redirect-password@[invalid" },
+      }),
+    );
+    const error = await secureFetch("https://api.openai.com/v1/models").catch(
+      (reason: unknown) => reason,
+    );
+    expect(error).toBeInstanceOf(TypeError);
+    expect(String(error)).not.toContain("redirect-password");
+    expect(JSON.stringify(error)).not.toContain("redirect-password");
+  });
+
+  it("does not disclose redirect URL credentials or query parameters", async () => {
+    pluginFetchMock.mockResolvedValue(
+      new Response(null, {
+        status: 302,
+        headers: {
+          location:
+            "https://user:redirect-secret@example.com/next?token=redirect-query",
+        },
+      }),
+    );
+    const pending = secureFetch(
+      "https://api.openai.com/v1/models?token=source-query",
+      { redirect: "error" },
+    );
+    const error = await pending.catch((reason: unknown) => reason);
+    expect(String(error)).toContain("Redirect not allowed: 302");
+    expect(String(error)).not.toMatch(
+      /source-query|redirect-secret|redirect-query/,
+    );
+  });
+
+  it.each([
+    [
+      "private",
+      () => secureFetch,
+      "http://127.0.0.1:11434/models",
+      "private_http_request",
+    ],
+    [
+      "saved",
+      () => createOpenAICompatibleFetch("saved-key"),
+      "https://model.example/models",
+      "openai_compatible_http_request",
+    ],
+  ])(
+    "forwards a %s request's redirect mode to the native transport",
+    async (_name, getFetch, url, command) => {
+      invokeMock.mockResolvedValue({
+        status: 200,
+        headers: {},
+        bodyBase64: "",
+      });
+      const request = new Request(url, { redirect: "manual" });
+      await getFetch()(request);
+      expect(invokeMock).toHaveBeenLastCalledWith(
+        command,
+        expect.objectContaining({
+          request: expect.objectContaining({ redirect: "manual" }),
+        }),
+      );
+      await getFetch()(request, { redirect: "error" });
+      expect(invokeMock).toHaveBeenLastCalledWith(
+        command,
+        expect.objectContaining({
+          request: expect.objectContaining({ redirect: "error" }),
+        }),
+      );
+    },
+  );
+
+  it("forwards the sidecar no-redirect policy with private audio to Rust", async () => {
+    invokeMock.mockResolvedValue({ status: 200, headers: {}, bodyBase64: "" });
+    await fetchWithTimeout(
+      "http://127.0.0.1:1234/v1/transcriptions/sessions/s1/chunks",
+      {
+        method: "POST",
+        body: new Uint8Array([1, 2, 3]),
+        redirect: "follow",
+      },
+      1000,
+    );
+    expect(invokeMock).toHaveBeenCalledWith(
+      "private_http_request",
+      expect.objectContaining({
+        request: expect.objectContaining({
+          method: "POST",
+          redirect: "error",
+          bodyBase64: "AQID",
+        }),
+      }),
+    );
   });
 
   it("routes plaintext requests through the Rust host validator", async () => {
@@ -838,6 +1276,7 @@ describe("secureFetch", () => {
         requestId: expect.any(String),
         url: "http://10.0.0.5:11434/api/tags",
         method: "POST",
+        redirect: "follow",
         headers: {
           authorization: "Bearer local",
           "content-type": "text/plain;charset=UTF-8",
@@ -913,6 +1352,7 @@ describe("secureFetch", () => {
         requestId: expect.any(String),
         url: "https://llm.example.com/proxy/openai/v1/models",
         method: "GET",
+        redirect: "follow",
         headers: { authorization: "Bearer secret" },
         bodyBase64: null,
       },

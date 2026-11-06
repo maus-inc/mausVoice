@@ -49,6 +49,37 @@ describe("browser preview scenarios", () => {
     expect(snapshot.state.settings.apiKeys).toHaveLength(1);
   });
 
+  it("indexes populated collections and isolates state from fixture data", () => {
+    const { state, data } = createPreviewScenario("populated");
+    for (const term of data.terms) {
+      expect(state.termById[term.id]).toEqual(term);
+      expect(state.termById[term.id]).not.toBe(term);
+    }
+    for (const key of data.apiKeys)
+      expect(state.apiKeyById[key.id]).toEqual(key);
+    for (const tone of data.customTones)
+      expect(state.toneById[tone.id]).toEqual(tone);
+    for (const hotkey of data.hotkeys)
+      expect(state.hotkeyById[hotkey.id]).toEqual(hotkey);
+    for (const target of data.appTargets)
+      expect(state.appTargetById[target.id]).toEqual(target);
+    for (const transcription of data.transcriptions)
+      expect(state.transcriptionById[transcription.id]).toEqual(transcription);
+    for (const conversation of data.conversations) {
+      expect(state.conversationById[conversation.id]).toEqual(conversation);
+      expect(state.chatMessageIdsByConversationId[conversation.id]).toEqual(
+        data.chatMessages
+          .filter((message) => message.conversationId === conversation.id)
+          .map((message) => message.id),
+      );
+    }
+    for (const message of data.chatMessages)
+      expect(state.chatMessageById[message.id]).toEqual(message);
+    const firstTerm = data.terms[0];
+    state.termById[firstTerm.id].sourceValue = "changed only in state";
+    expect(firstTerm.sourceValue).not.toBe("changed only in state");
+  });
+
   it("exposes an explicit denied-permission workspace", () => {
     const snapshot = createPreviewScenario("permission-denied");
 

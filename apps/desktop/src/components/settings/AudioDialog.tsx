@@ -17,6 +17,7 @@ import {
 } from "../../actions/user.actions";
 import { produceAppState, useAppStore } from "../../store";
 import { getMyUser } from "../../utils/user.utils";
+import { logOnRejection } from "../../utils/promise.utils";
 import { ElasticSlider } from "../common/ElasticSlider";
 import { SettingSection } from "../common/SettingSection";
 
@@ -105,7 +106,7 @@ export const AudioDialog = () => {
 
   const handleToggle = (event: ChangeEvent<HTMLInputElement>) => {
     const enabled = event.target.checked;
-    void setInteractionChimeEnabled(enabled);
+    logOnRejection(setInteractionChimeEnabled(enabled), "interaction chime");
   };
 
   // Live display value while dragging; the persisted value updates on commit.
@@ -157,7 +158,7 @@ export const AudioDialog = () => {
             <ElasticSlider
               value={dictationAudioDim}
               onCommit={(v) => {
-                void setDictationAudioDim(v);
+                logOnRejection(setDictationAudioDim(v), "dictation audio dim");
               }}
               onChangeDisplay={setDisplayDim}
               min={0}

@@ -114,6 +114,35 @@ const hasStyleField = (): boolean =>
     (label) => label.textContent?.trim() === "Style",
   );
 
+const selectOption = async (fieldIndex: number, label: string) => {
+  const fields =
+    document.body.querySelectorAll<HTMLElement>('[role="combobox"]');
+  expect(fields[fieldIndex]).toBeDefined();
+  await act(async () => {
+    fields[fieldIndex].dispatchEvent(
+      new MouseEvent("mousedown", { bubbles: true, button: 0 }),
+    );
+  });
+  const option = [
+    ...document.body.querySelectorAll<HTMLElement>('[role="option"]'),
+  ].find((element) => element.textContent?.trim() === label);
+  expect(option).toBeDefined();
+  await act(async () => {
+    option?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+};
+
+const seedAnotherTone = () => {
+  produceAppState((draft) => {
+    draft.toneById["tone-2"] = {
+      ...tone,
+      id: "tone-2",
+      name: "Another style",
+      createdAt: 0,
+    };
+  });
+};
+
 const settle = async () => {
   await act(async () => {
     await Promise.resolve();
@@ -161,6 +190,21 @@ describe("Import audio style availability", () => {
       button?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
   };
+
+  it("imports with the chosen style and language", async () => {
+    seedAnotherTone();
+    await renderPage();
+    await openImportDialog();
+    await selectOption(0, "Another style");
+    await selectOption(1, "Español");
+    await act(async () => {
+      findButton("Choose file")?.click();
+    });
+    expect(mocks.importAudioFile).toHaveBeenCalledWith({
+      toneId: "tone-2",
+      languageCode: "es",
+    });
+  });
 
   it("shows styles even while post-processing is disabled via fast path", async () => {
     await renderPage();
@@ -232,6 +276,19 @@ describe("Retranscribe style availability", () => {
       root?.render(createElement(RetranscribeDialog));
     });
   };
+
+  it("retranscribes with the chosen style and language", async () => {
+    seedAnotherTone();
+    await renderDialog();
+    await selectOption(0, "Another style");
+    await selectOption(1, "Español");
+    act(() => findButton("Transcribe")?.click());
+    expect(mocks.retranscribeTranscription).toHaveBeenCalledWith({
+      transcriptionId: "transcription-1",
+      toneId: "tone-2",
+      languageCode: "es",
+    });
+  });
 
   it("shows styles even while post-processing is disabled via fast path", async () => {
     await renderDialog();

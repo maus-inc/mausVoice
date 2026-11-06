@@ -184,6 +184,114 @@ describe("retranscribeTranscription feedback", () => {
     resetState();
   });
 
+  it("does not transcribe or update a recording after its session changes during audio loading", async () => {
+    seedTranscription("a");
+    let finish!: (audio: { samples: number[]; sampleRate: number }) => void;
+    loadTranscriptionAudio.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    );
+    const pending = retranscribeTranscription({ transcriptionId: "a" });
+    setAppState({ authSessionNonce: 1, transcriptionById: {} });
+    finish({ samples: [1], sampleRate: 16000 });
+    await pending;
+    expect(transcribeAudio).not.toHaveBeenCalled();
+    expect(updateTranscription).not.toHaveBeenCalled();
+    expect(getAppState().transcriptionById["a"]).toBeUndefined();
+    expect(showErrorSnackbar).not.toHaveBeenCalled();
+  });
+
+  it("does not post-process a retranscription after the auth session changes", async () => {
+    seedTranscription("a");
+    let finish!: (value: unknown) => void;
+    transcribeAudio.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    );
+    const pending = retranscribeTranscription({ transcriptionId: "a" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(transcribeAudio).toHaveBeenCalledOnce();
+    setAppState({ authSessionNonce: 1, transcriptionById: {} });
+    finish({
+      rawTranscript: "old",
+      sanitizedTranscript: "old",
+      warnings: [],
+      metadata: {},
+    });
+    await pending;
+    expect(postProcessTranscript).not.toHaveBeenCalled();
+    expect(updateTranscription).not.toHaveBeenCalled();
+  });
+
+  it("does not overwrite a successor row after an old database update settles", async () => {
+    seedTranscription("a");
+    let finish!: (value: Transcription) => void;
+    updateTranscription.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const pending = retranscribeTranscription({ transcriptionId: "a" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(updateTranscription).toHaveBeenCalledOnce();
+    const oldUpdate = updateTranscription.mock.calls[0][0];
+    const successor = { ...sampleTranscription("a"), transcript: "successor" };
+    setAppState({ authSessionNonce: 1, transcriptionById: { a: successor } });
+    finish(oldUpdate);
+    await pending;
+    expect(getAppState().transcriptionById.a).toEqual(successor);
+    expect(showCompletionToast).not.toHaveBeenCalled();
+    expect(showErrorSnackbar).not.toHaveBeenCalled();
+  });
+
+  it("does not start post-processing or a database write for a superseded run", async () => {
+    seedTranscription("a");
+    let finish!: (value: { samples: number[]; sampleRate: number }) => void;
+    loadTranscriptionAudio.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    );
+    const old = retranscribeTranscription({ transcriptionId: "a" });
+    produceAppState((draft) => {
+      draft.transcriptions.retranscribingIds = [];
+    });
+    loadTranscriptionAudio.mockReturnValueOnce(neverSettles());
+    startIgnoredRun("a");
+    finish({ samples: [1], sampleRate: 16000 });
+    await old;
+    expect(transcribeAudio).not.toHaveBeenCalled();
+    expect(updateTranscription).not.toHaveBeenCalled();
+  });
+
+  it("never reuses a retired generation while an older run is still pending", async () => {
+    seedTranscription("a");
+    let finishOld!: (value: { samples: number[]; sampleRate: number }) => void;
+    loadTranscriptionAudio.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finishOld = resolve;
+      }),
+    );
+    const old = retranscribeTranscription({ transcriptionId: "a" });
+    produceAppState((draft) => {
+      draft.transcriptions.retranscribingIds = [];
+    });
+    await retranscribeTranscription({ transcriptionId: "a" });
+    await vi.advanceTimersByTimeAsync(RETRANSCRIPTION_SUCCESS_VISIBLE_MS);
+    loadTranscriptionAudio.mockReturnValueOnce(neverSettles());
+    startIgnoredRun("a");
+    transcribeAudio.mockClear();
+    updateTranscription.mockClear();
+    finishOld({ samples: [1], sampleRate: 16000 });
+    await old;
+    expect(transcribeAudio).not.toHaveBeenCalled();
+    expect(updateTranscription).not.toHaveBeenCalled();
+    expect(getAppState().transcriptions.retranscribingIds).toContain("a");
+  });
+
   it("marks a row in-flight, then success, then clears the check", async () => {
     seedTranscription("a");
 
@@ -645,6 +753,30 @@ describe("retranscribeTranscription persistence gate", () => {
     );
     expect(getAppState().transcriptionById["tx-gate"]?.transcript).toBe(
       "retranscribed text",
+    );
+  });
+
+  it("stores both warning sources and falls back when raw ASR is empty", async () => {
+    seedGated(false);
+    transcribeAudio.mockResolvedValue({
+      rawTranscript: "",
+      sanitizedTranscript: "sanitized",
+      warnings: ["asr warning"],
+      metadata: {},
+    });
+    postProcessTranscript.mockResolvedValue({
+      transcript: "styled result",
+      warnings: ["styling warning"],
+      metadata: {},
+    });
+    await retranscribeTranscription({ transcriptionId: "tx-gate" });
+    expect(updateTranscription).toHaveBeenCalledWith(
+      expect.objectContaining({
+        transcript: "styled result",
+        rawTranscript: "styled result",
+        sanitizedTranscript: "sanitized",
+        warnings: ["asr warning", "styling warning"],
+      }),
     );
   });
 

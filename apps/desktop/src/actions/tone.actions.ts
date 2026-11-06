@@ -1,6 +1,6 @@
 import { Tone } from "@maus-inc/types";
 import { getIntl } from "../i18n/intl";
-import { getToneRepo, getUserPreferencesRepo } from "../repos";
+import { getToneRepo } from "../repos";
 import { ToneEditorMode } from "../state/tone-editor.state";
 import { getAppState, produceAppState } from "../store";
 import { registerTones } from "../utils/app.utils";
@@ -17,7 +17,11 @@ import {
 import { getMyUser } from "../utils/user.utils";
 import { showErrorSnackbar, showSnackbar } from "./app.actions";
 import { showToast } from "./toast.actions";
-import { activateAndSelectTone, setSelectedToneId } from "./user.actions";
+import {
+  activateAndSelectTone,
+  setSelectedToneId,
+  updateUserPreferences,
+} from "./user.actions";
 
 export const loadTones = async (): Promise<void> => {
   const tones = await getToneRepo().listTones();
@@ -53,9 +57,11 @@ export const upsertTone = async (
 };
 
 export const deleteTone = async (id: string): Promise<void> => {
+  let syncingPreferences = false;
   try {
     await getToneRepo().deleteTone(id);
 
+    const clearedActiveTone = getAppState().userPrefs?.activeToneId === id;
     produceAppState((draft) => {
       delete draft.toneById[id];
       // Remove the record and its editor in one state transition, before any
@@ -76,61 +82,60 @@ export const deleteTone = async (id: string): Promise<void> => {
       }
     });
 
-    // Sync preferences if we cleared the active tone
-    const prefs = getAppState().userPrefs;
-    if (prefs && prefs.activeToneId === null) {
-      await getUserPreferencesRepo().setUserPreferences(prefs);
-    }
+    // A queued preference write may still contain the deleted tone. Repair it
+    // at the head of the shared queue without overwriting a newer selection.
+    syncingPreferences = true;
+    await updateUserPreferences(
+      (prefs) => {
+        prefs.activeToneId = null;
+      },
+      "Failed to save tone.",
+      (prefs) =>
+        prefs.activeToneId === id ||
+        (clearedActiveTone && prefs.activeToneId === null),
+    );
+    syncingPreferences = false;
 
     showSnackbar("Tone deleted successfully", { mode: "success" });
   } catch (error) {
     console.error("Failed to delete tone", error);
-    showErrorSnackbar(
-      error instanceof Error ? error.message : "Failed to delete tone.",
-    );
+    if (!syncingPreferences) {
+      showErrorSnackbar(
+        error instanceof Error ? error.message : "Failed to delete tone.",
+      );
+    }
     throw error;
   }
 };
 
 export const setActiveTone = async (toneId: string | null): Promise<void> => {
+  let queued = false;
+  let invalidTone = false;
   try {
-    const currentPrefs = getAppState().userPrefs;
-    if (!currentPrefs) {
+    if (!getAppState().userPrefs) {
       throw new Error("User preferences not found");
     }
-
-    const updatedPrefs = {
-      ...currentPrefs,
-      activeToneId: toneId,
-    };
-
-    await getUserPreferencesRepo().setUserPreferences(updatedPrefs);
-    produceAppState((draft) => {
-      draft.userPrefs = updatedPrefs;
-    });
+    queued = true;
+    await updateUserPreferences((prefs) => {
+      if (toneId !== null && !getAppState().toneById[toneId]) {
+        invalidTone = true;
+        throw new Error("Failed to save tone.");
+      }
+      prefs.activeToneId = toneId;
+    }, "Failed to save tone.");
 
     showSnackbar(toneId ? "Default tone set" : "Default tone cleared", {
       mode: "success",
     });
   } catch (error) {
     console.error("Failed to set active tone", error);
-    showErrorSnackbar(
-      error instanceof Error ? error.message : "Failed to set active tone.",
-    );
+    if (!queued || invalidTone) {
+      showErrorSnackbar(
+        error instanceof Error ? error.message : "Failed to set active tone.",
+      );
+    }
     throw error;
   }
-};
-
-export const getActiveTone = (): Tone | null => {
-  const state = getAppState();
-  const prefs = state.userPrefs;
-  const activeToneId = prefs?.activeToneId;
-
-  if (!activeToneId) {
-    return null;
-  }
-
-  return state.toneById[activeToneId] ?? null;
 };
 
 export const openToneEditorDialog = (options: {
@@ -157,7 +162,7 @@ export const openToneEditorDialog = (options: {
  *
  * Does not touch `updatedAt` — that stays owned by `setSelectedToneId`.
  */
-export const applyWritingStyleSelectionNow = (toneId: string): boolean => {
+const applyWritingStyleSelectionNow = (toneId: string): boolean => {
   const existing = getMyUser(getAppState());
   if (!existing) {
     return false;

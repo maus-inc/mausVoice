@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
+import { forwardChildOutcome } from "./child-process-lifecycle.mjs";
 
 import { resolveDesktopDevScript } from "./platform-dev-config.mjs";
 
@@ -33,15 +34,4 @@ const child = npmExecPath
       shell: process.platform === "win32",
     });
 
-child.on("exit", (code, signal) => {
-  if (signal) {
-    process.kill(process.pid, signal);
-    return;
-  }
-  process.exit(code ?? 0);
-});
-
-child.on("error", (error) => {
-  console.error(`Failed to start ${selectedScript}:`, error);
-  process.exit(1);
-});
+forwardChildOutcome(child, `Failed to start ${selectedScript}:`);

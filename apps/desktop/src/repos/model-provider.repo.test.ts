@@ -16,11 +16,15 @@ vi.mock("../utils/log.utils", () => ({
 }));
 
 import {
+  AzureModelProviderRepo,
+  ClaudeModelProviderRepo,
   GeminiModelProviderRepo,
   GroqModelProviderRepo,
   OpenAICompatibleModelProviderRepo,
   OpenAIModelProviderRepo,
   OpenRouterModelProviderRepo,
+  OllamaModelProviderRepo,
+  SpeachesModelProviderRepo,
   XaiModelProviderRepo,
 } from "./model-provider.repo";
 
@@ -198,6 +202,28 @@ describe("provider model discovery", () => {
     });
   });
 
+  it.each([
+    ["Gemini", () => new GeminiModelProviderRepo(), "generative"],
+    ["OpenAI", () => new OpenAIModelProviderRepo(), "generative"],
+    ["Azure", () => new AzureModelProviderRepo(), "generative"],
+    ["Ollama", () => new OllamaModelProviderRepo(), "generative"],
+    ["Speaches", () => new SpeachesModelProviderRepo(), "transcription"],
+  ] as const)(
+    "%s discards an unused error body during discovery",
+    async (_provider, build, kind) => {
+      const response = new Response("private diagnostic", { status: 503 });
+      const cancel = vi
+        .spyOn(response.body!, "cancel")
+        .mockReturnValue(new Promise(() => {}));
+      pluginFetchMock.mockResolvedValue(response);
+      const repo = build();
+      const options = { apiKey: "key", baseUrl: "https://endpoint.example" };
+      if (kind === "generative") await repo.getGenerativeTextModels(options);
+      else await repo.getTranscriptionModels(options);
+      expect(cancel).toHaveBeenCalledOnce();
+    },
+  );
+
   it("logs provider HTTP failures before using a fallback catalog", async () => {
     pluginFetchMock.mockResolvedValue(
       new Response(null, { status: 401, statusText: "Unauthorized" }),
@@ -210,11 +236,200 @@ describe("provider model discovery", () => {
       }),
     ).resolves.not.toEqual([]);
     expect(loggerVerboseMock).toHaveBeenCalledWith(
-      "Gemini model discovery failed (HTTP 401 Unauthorized)",
+      "Gemini model discovery failed (HTTP 401)",
     );
     expect(JSON.stringify(loggerVerboseMock.mock.calls)).not.toContain(
       mockGeminiKey,
     );
+  });
+
+  it.each([
+    ["Gemini", () => new GeminiModelProviderRepo(), "x-goog-api-key"],
+    ["Claude", () => new ClaudeModelProviderRepo(), "x-api-key"],
+    ["Azure", () => new AzureModelProviderRepo(), "api-key"],
+  ])(
+    "%s model discovery does not forward credentials to a redirect origin",
+    async (_provider, repo, header) => {
+      const receivedHeaders: Record<string, string>[] = [];
+      const responses = [
+        new Response(null, {
+          status: 307,
+          headers: { location: "https://other-provider.example/models" },
+        }),
+        new Response(JSON.stringify({ data: [] }), { status: 200 }),
+      ];
+      pluginFetchMock.mockImplementation((_url: string, init: RequestInit) => {
+        receivedHeaders.push(
+          Object.fromEntries(new Headers(init.headers).entries()),
+        );
+        return Promise.resolve(responses.shift());
+      });
+      const secret = "credential-only-for-first-provider";
+      await repo().getGenerativeTextModels({
+        apiKey: secret,
+        baseUrl: "https://azure.example",
+      });
+      expect(receivedHeaders).toHaveLength(2);
+      expect(receivedHeaders[0][header]).toBe(secret);
+      expect(receivedHeaders[1]).not.toHaveProperty(header);
+    },
+  );
+
+  it.each([
+    ["Ollama", () => new OllamaModelProviderRepo(), "generative"],
+    ["Speaches", () => new SpeachesModelProviderRepo(), "transcription"],
+  ])("%s does not expose a malformed endpoint", async (_name, build, kind) => {
+    const secret = "private-endpoint-value";
+    const repo = build();
+    const options = { baseUrl: `https://user:${secret}@[invalid` };
+    const request =
+      kind === "generative"
+        ? repo.getGenerativeTextModels(options)
+        : repo.getTranscriptionModels(options);
+    const error = await request.then(
+      () => null,
+      (failure: unknown) => failure,
+    );
+    expect(error).toBeInstanceOf(TypeError);
+    expect(String(error)).not.toContain(secret);
+    expect(JSON.stringify(error)).not.toContain(secret);
+  });
+
+  it.each([
+    ["Azure", () => new AzureModelProviderRepo(), "generative"],
+    ["Ollama", () => new OllamaModelProviderRepo(), "generative"],
+    ["Speaches", () => new SpeachesModelProviderRepo(), "transcription"],
+    [
+      "OpenAI-compatible",
+      () => new OpenAICompatibleModelProviderRepo(),
+      "generative",
+    ],
+  ])(
+    "%s hides transport errors in model discovery",
+    async (_name, build, kind) => {
+      const secret = "transport-private-fragment";
+      pluginFetchMock.mockRejectedValue(new Error(secret));
+      invokeMock.mockRejectedValue(new Error(secret));
+      const repo = build();
+      const options = {
+        baseUrl: "https://provider.example",
+        apiKey: "test-key",
+        apiKeyId: "saved-key",
+      };
+      const request =
+        kind === "generative"
+          ? repo.getGenerativeTextModels(options)
+          : repo.getTranscriptionModels(options);
+      const error = await request.then(
+        () => null,
+        (failure: unknown) => failure,
+      );
+      expect(error).toBeInstanceOf(Error);
+      expect(String(error)).toContain(_name);
+      expect(String(error)).toContain("model discovery request failed");
+      expect(String(error)).not.toContain(secret);
+      expect(JSON.stringify(error)).not.toContain(secret);
+    },
+  );
+
+  it.each([
+    ["Azure", () => new AzureModelProviderRepo(), "generative"],
+    ["Ollama", () => new OllamaModelProviderRepo(), "generative"],
+    ["Speaches", () => new SpeachesModelProviderRepo(), "transcription"],
+    [
+      "OpenAI-compatible",
+      () => new OpenAICompatibleModelProviderRepo(),
+      "generative",
+    ],
+  ])(
+    "%s does not leak malformed model response fragments",
+    async (_name, build, kind) => {
+      const secret = "s3cr3t";
+      pluginFetchMock.mockResolvedValue(new Response(secret, { status: 200 }));
+      invokeMock.mockResolvedValue({
+        status: 200,
+        headers: {},
+        bodyBase64: btoa(secret),
+      });
+      const repo = build();
+      const options = {
+        baseUrl: "https://provider.example",
+        apiKey: "test-key",
+        apiKeyId: "saved-key",
+      };
+      const request =
+        kind === "generative"
+          ? repo.getGenerativeTextModels(options)
+          : repo.getTranscriptionModels(options);
+      const error = await request.then(
+        () => null,
+        (failure: unknown) => failure,
+      );
+      expect(error).toBeInstanceOf(Error);
+      expect(String(error)).toContain(_name);
+      expect(String(error)).toContain("model discovery returned invalid JSON");
+      expect(String(error)).not.toContain(secret);
+      expect(JSON.stringify(error)).not.toContain(secret);
+    },
+  );
+
+  it.each([
+    [
+      "Azure",
+      () => new AzureModelProviderRepo(),
+      "generative",
+      "/openai/models?api-version=2024-10-21",
+      { data: [{ id: "latest-model" }] },
+    ],
+    [
+      "Ollama",
+      () => new OllamaModelProviderRepo(),
+      "generative",
+      "/api/tags",
+      { models: [{ name: "latest-model" }] },
+    ],
+    [
+      "Speaches",
+      () => new SpeachesModelProviderRepo(),
+      "transcription",
+      "/v1/models",
+      { data: [{ id: "latest-model" }] },
+    ],
+  ])(
+    "%s preserves successful catalog requests",
+    async (_name, build, kind, path, payload) => {
+      pluginFetchMock.mockResolvedValue(
+        new Response(JSON.stringify(payload), { status: 200 }),
+      );
+      const repo = build();
+      const options = {
+        baseUrl: "https://provider.example",
+        apiKey: "test-key",
+      };
+      const models =
+        kind === "generative"
+          ? await repo.getGenerativeTextModels(options)
+          : await repo.getTranscriptionModels(options);
+      expect(models).toEqual(["latest-model"]);
+      expect(pluginFetchMock.mock.calls[0][0]).toBe(
+        `https://provider.example${path}`,
+      );
+    },
+  );
+
+  it("never logs a provider-controlled HTTP reason phrase", async () => {
+    const secret = ["private", "credential", "fragment"].join("-");
+    pluginFetchMock.mockResolvedValue(
+      new Response(null, { status: 401, statusText: `failure ${secret}` }),
+    );
+
+    await new GeminiModelProviderRepo().getGenerativeTextModels({
+      apiKey: secret,
+    });
+    expect(loggerVerboseMock).toHaveBeenCalledWith(
+      "Gemini model discovery failed (HTTP 401)",
+    );
+    expect(JSON.stringify(loggerVerboseMock.mock.calls)).not.toContain(secret);
   });
 
   it("logs caught discovery errors without leaking transport details", async () => {

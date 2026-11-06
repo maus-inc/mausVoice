@@ -1,10 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { ToolInfo } from "@maus-inc/types";
 import { BaseTool, type ToolResult } from "./base.tool";
-import {
-  getToolAlwaysAllow,
-  setToolAlwaysAllow,
-} from "../utils/tool-permission.utils";
 
 type RunTerminalCommandResponse = {
   stdout: string;
@@ -28,17 +24,5 @@ export class RunTerminalCommandTool extends BaseTool {
       stderr: result.stderr,
       exitCode: result.exitCode,
     };
-  }
-
-  getAlwaysAllow(_params: Record<string, unknown>, scope = "global"): boolean {
-    return getToolAlwaysAllow(this.info.id, scope);
-  }
-
-  setAlwaysAllow(
-    _params: Record<string, unknown>,
-    allowed: boolean,
-    scope = "global",
-  ): void {
-    setToolAlwaysAllow(this.info.id, allowed, scope);
   }
 }

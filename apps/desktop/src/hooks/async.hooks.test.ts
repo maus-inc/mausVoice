@@ -90,6 +90,22 @@ describe("useAsyncData lifecycle (AsyncDataController)", () => {
     expect(getState()).toEqual({ kind: "success", data: "second" });
   });
 
+  it("clears a timer even when its valid browser handle is zero", () => {
+    const timer = vi
+      .spyOn(globalThis, "setTimeout")
+      .mockReturnValue(0 as unknown as ReturnType<typeof setTimeout>);
+    const clear = vi.spyOn(globalThis, "clearTimeout");
+    try {
+      const { controller } = createController<void>();
+      void controller.run(() => new Promise<void>(() => {}));
+      controller.cancelInFlight();
+      expect(clear).toHaveBeenCalledWith(0);
+    } finally {
+      timer.mockRestore();
+      clear.mockRestore();
+    }
+  });
+
   it("cancel clears the safety timeout so a late timeout cannot flip state", () => {
     const { controller, getState } = createController<void>(500);
     void controller.run(() => new Promise<void>(() => {}));

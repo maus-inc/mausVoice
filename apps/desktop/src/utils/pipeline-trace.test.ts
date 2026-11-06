@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   appendTimingSample,
   markPipeline,
+  markFinalizedTranscription,
   medianTiming,
   type PipelineSummary,
   startPipelineTrace,
@@ -21,6 +22,18 @@ describe("pipeline trace", () => {
   it("ignores marks on a missing trace", () => {
     expect(() => markPipeline(null, "stopped", 1100)).not.toThrow();
     expect(() => markPipeline(undefined, "stopped", 1100)).not.toThrow();
+  });
+
+  it("marks finalized audio without overwriting an existing zero-time transcription mark", () => {
+    const trace = startPipelineTrace(0);
+    markPipeline(trace, "transcribed", 0);
+    markFinalizedTranscription(trace);
+    expect(trace.marks.transcribed).toBe(0);
+    expect(trace.marks.audioFinalized).toEqual(expect.any(Number));
+    const unmarked = startPipelineTrace(0);
+    markFinalizedTranscription(unmarked);
+    expect(unmarked.marks.transcribed).toEqual(expect.any(Number));
+    expect(() => markFinalizedTranscription(null)).not.toThrow();
   });
 
   it("summarizes per-stage durations from the stopped mark", () => {

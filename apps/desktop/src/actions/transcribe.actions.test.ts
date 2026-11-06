@@ -1,7 +1,8 @@
 import type { UserPreferences } from "@maus-inc/types";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { INITIAL_APP_STATE } from "../state/app.state";
-import { setAppState } from "../store";
+import { getAppState, setAppState } from "../store";
+import { startPipelineTrace } from "../utils/pipeline-trace";
 import {
   storeTranscription,
   transcribeAudio,
@@ -155,10 +156,25 @@ describe("transcribeAudio warning logging and failure-path cause preservation", 
     expect(result).toBeDefined();
   });
 
-  it("preserves a non-Error rejection as the cause on the failure path", async () => {
-    // A transcription-capable provider whose repository fails: Deepgram with
-    // a key, but the network request rejects with a non-Error value. The
-    // action must wrap it with the warning and preserve the original value.
+  it("preserves a non-Error repository rejection as the cause on the failure path", async () => {
+    const provider = vi
+      .spyOn(LocalTranscribeAudioRepo.prototype, "transcribeAudio")
+      .mockRejectedValue("local failure");
+    try {
+      const error = await transcribeAudio({
+        samples: makeToneSamples(),
+        sampleRate: 16000,
+      }).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).cause).toBe("local failure");
+      expect((error as Error).message).toMatch(/local failure/);
+    } finally {
+      provider.mockRestore();
+    }
+  });
+
+  it("does not expose a private provider transport rejection through the action or its cause", async () => {
     const state = structuredClone(INITIAL_APP_STATE);
     state.settings.aiTranscription.mode = "api";
     state.settings.aiTranscription.selectedApiKeyId = "deepgram-key";
@@ -172,17 +188,28 @@ describe("transcribeAudio warning logging and failure-path cause preservation", 
     };
     setAppState(state, true);
 
-    // The Deepgram repo's fetch rejects with a non-Error primitive.
-    vi.spyOn(globalThis, "fetch").mockRejectedValue("socket exploded");
+    const fetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockRejectedValue("private transcript and dg-key");
+    try {
+      const error = await transcribeAudio({
+        samples: makeToneSamples(),
+        sampleRate: 16000,
+      }).catch((e: unknown) => e);
 
-    const error = await transcribeAudio({
-      samples: makeToneSamples(),
-      sampleRate: 16000,
-    }).catch((e: unknown) => e);
-
-    expect(error).toBeInstanceOf(Error);
-    expect((error as Error).cause).toBe("socket exploded");
-    expect((error as Error).message).toMatch(/socket exploded/);
+      expect(error).toBeInstanceOf(Error);
+      const cause = (error as Error).cause;
+      expect(cause).toBeInstanceOf(Error);
+      expect((cause as Error).message).toBe(
+        "Deepgram transport request failed",
+      );
+      expect((error as Error).message).toBe(
+        "Deepgram transport request failed",
+      );
+      expect((cause as Error).cause).toBeUndefined();
+    } finally {
+      fetch.mockRestore();
+    }
   });
 
   it("logs dispatch warnings before the provider call on the failure path", async () => {
@@ -248,6 +275,111 @@ describe("storeTranscription audio retention", () => {
   afterEach(() => {
     vi.clearAllMocks();
     setAppState(structuredClone(INITIAL_APP_STATE), true);
+  });
+
+  it("records timing under the provider key only after successful storage", async () => {
+    setPrefs({});
+    invokeMock.mockResolvedValue({
+      filePath: "/tmp/audio.wav",
+      durationMs: 100,
+    });
+    const trace = startPipelineTrace();
+    await storeTranscription(
+      buildInput({
+        trace,
+        transcriptionMetadata: {
+          transcriptionMode: "api",
+          modelSize: "model",
+          inferenceDevice: "gpu",
+        },
+        postProcessMetadata: { postProcessMode: "fast" },
+      }),
+    );
+    expect(trace.marks.persisted).toEqual(expect.any(Number));
+    expect(
+      getAppState().local.providerTiming["api|model|gpu|fast"],
+    ).toMatchObject({ samples: 1 });
+    createTranscriptionMock.mockRejectedValueOnce(new Error("save failed"));
+    const failedTrace = startPipelineTrace();
+    await storeTranscription(buildInput({ trace: failedTrace }));
+    expect(failedTrace.marks.persisted).toBeUndefined();
+    expect(
+      getAppState().local.providerTiming["api|model|gpu|fast"].samples,
+    ).toBe(1);
+  });
+
+  it("does not publish or meter a transcript after its auth session retires", async () => {
+    setPrefs({});
+    invokeMock.mockResolvedValue({
+      filePath: "/tmp/audio.wav",
+      durationMs: 100,
+    });
+    let resolveWrite!: (value: unknown) => void;
+    createTranscriptionMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveWrite = resolve;
+        }),
+    );
+    const trace = startPipelineTrace();
+    const pending = storeTranscription(buildInput({ trace }));
+    await vi.waitFor(() => expect(createTranscriptionMock).toHaveBeenCalled());
+    const stored = createTranscriptionMock.mock.calls[0][0];
+    setAppState({ authSessionNonce: 1 });
+    resolveWrite(stored);
+    expect(await pending).toEqual({ transcription: null, wordCount: 0 });
+    expect(getAppState().transcriptionById[stored.id]).toBeUndefined();
+    expect(addWordsMock).not.toHaveBeenCalled();
+    expect(purgeStaleAudioMock).not.toHaveBeenCalled();
+    expect(trace.marks.persisted).toBeUndefined();
+  });
+
+  it("does not show a retired transcript write failure to a successor", async () => {
+    setPrefs({});
+    invokeMock.mockResolvedValue({
+      filePath: "/tmp/audio.wav",
+      durationMs: 100,
+    });
+    let rejectWrite!: (error: Error) => void;
+    createTranscriptionMock.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectWrite = reject;
+        }),
+    );
+    const pending = storeTranscription(buildInput());
+    await vi.waitFor(() => expect(createTranscriptionMock).toHaveBeenCalled());
+    setAppState({ authSessionNonce: 1 });
+    rejectWrite(new Error("old session write failed"));
+    expect(await pending).toEqual({ transcription: null, wordCount: 0 });
+    expect(getAppState().snackbarCounter).toBe(0);
+    expect(addWordsMock).not.toHaveBeenCalled();
+    expect(purgeStaleAudioMock).not.toHaveBeenCalled();
+  });
+
+  it("does not apply a late audio retention sweep to a successor session", async () => {
+    setPrefs({});
+    invokeMock.mockResolvedValue({
+      filePath: "/tmp/audio.wav",
+      durationMs: 100,
+    });
+    let finishSweep!: (ids: string[]) => void;
+    purgeStaleAudioMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishSweep = resolve;
+        }),
+    );
+    const result = await storeTranscription(buildInput());
+    const id = result.transcription!.id;
+    const successor = { ...result.transcription!, transcript: "successor" };
+    setAppState({
+      authSessionNonce: 1,
+      transcriptionById: { [id]: successor },
+    });
+    finishSweep([id]);
+    await Promise.resolve();
+    expect(getAppState().transcriptionById[id].audio).toEqual(successor.audio);
   });
 
   it("does not hold the stop path open on usage metering or the audio sweep", async () => {
@@ -347,6 +479,28 @@ describe("storeTranscription audio retention", () => {
     });
     expect(stored.transcript).toBe("[Transcription Failed]");
     expect(result.transcription).not.toBeNull();
+  });
+
+  it("does not copy discarded audio before storing a failure marker", async () => {
+    setPrefs({ preserveAudioOnFailure: false });
+    const samples = new Float32Array([0.1, 0.2]);
+    const iterate = vi.fn(() => {
+      throw new Error("discarded audio must not be copied");
+    });
+    Object.defineProperty(samples, Symbol.iterator, { value: iterate });
+    const result = await storeTranscription(
+      buildInput({
+        audio: { samples, sampleRate: 16000 },
+        rawTranscript: null,
+        warnings: ["provider failed"],
+      }),
+    );
+    expect(iterate).not.toHaveBeenCalled();
+    expect(result.transcription).not.toBeNull();
+    expect(invokeMock).not.toHaveBeenCalledWith(
+      "store_transcription_audio",
+      expect.anything(),
+    );
   });
 
   it("does not write the audio file outside incognito on failure when preserveAudioOnFailure is false (no orphan WAV)", async () => {

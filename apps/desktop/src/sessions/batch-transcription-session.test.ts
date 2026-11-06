@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   transcribeAudio: vi.fn(),
   showToast: vi.fn(),
+  error: vi.fn(),
 }));
 
 vi.mock("../actions/toast.actions", () => ({ showToast: mocks.showToast }));
@@ -13,7 +14,7 @@ vi.mock("../utils/log.utils", () => ({
   getLogger: () => ({
     info: vi.fn(),
     warning: vi.fn(),
-    error: vi.fn(),
+    error: mocks.error,
     verbose: vi.fn(),
   }),
 }));
@@ -88,6 +89,20 @@ beforeEach(() => {
 });
 
 describe("BatchTranscriptionSession pretranscription wiring", () => {
+  it("does not transcribe a partial recording after capture failure", async () => {
+    const session = new BatchTranscriptionSession();
+    await session.onRecordingStart(RATE);
+    const result = await session.finalize({
+      samples: [0.5],
+      sampleRate: RATE,
+      captureFailed: true,
+    });
+    expect(result.rawTranscript).toBeNull();
+    expect(result.warnings).toContain(
+      "Audio capture stopped unexpectedly; recording may be incomplete",
+    );
+    expect(mocks.transcribeAudio).not.toHaveBeenCalled();
+  });
   it("prefers pretranscription over the whole recording and never requests the whole recording", async () => {
     const session = new BatchTranscriptionSession();
     await session.onRecordingStart(RATE);
@@ -268,7 +283,9 @@ describe("BatchTranscriptionSession pretranscription wiring", () => {
   it("reports a failed whole-recording request as a warning instead of throwing", async () => {
     const session = new BatchTranscriptionSession();
     await session.onRecordingStart(RATE);
-    mocks.transcribeAudio.mockRejectedValue(new Error("provider down"));
+    mocks.transcribeAudio.mockRejectedValue(
+      new Error("private dictation and provider secret"),
+    );
 
     const result = await session.finalize({
       samples: recording,
@@ -276,9 +293,11 @@ describe("BatchTranscriptionSession pretranscription wiring", () => {
     });
 
     expect(result.rawTranscript).toBeNull();
-    expect(result.warnings).toEqual([
-      "Transcription failed: Error: provider down",
-    ]);
+    expect(result.warnings).toEqual(["Transcription failed"]);
+    expect(mocks.error).toHaveBeenCalledWith("Failed to transcribe audio");
+    expect(JSON.stringify(mocks.error.mock.calls)).not.toContain(
+      "private dictation",
+    );
     expect(mocks.showToast).toHaveBeenCalledWith({
       message: "Transcription failed",
       toastType: "error",
@@ -317,6 +336,62 @@ describe("BatchTranscriptionSession pretranscription wiring", () => {
     const result = await pending;
     expect(result.rawTranscript).toBeNull();
     expect(result.warnings).toEqual([]);
+    expect(mocks.showToast).not.toHaveBeenCalled();
+  });
+
+  it("does not let late startup abort a whole-recording request", async () => {
+    let release!: (result: ReturnType<typeof transcriptionResult>) => void;
+    mocks.transcribeAudio.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    const session = new BatchTranscriptionSession();
+    await session.onBeforeRecordingStart();
+    const pending = session.finalize({ samples: recording, sampleRate: RATE });
+    await vi.waitFor(() =>
+      expect(mocks.transcribeAudio).toHaveBeenCalledOnce(),
+    );
+    const signal = mocks.transcribeAudio.mock.calls[0][0].signal as AbortSignal;
+    await session.onRecordingStart(RATE);
+    streamRecording(session, recording);
+    expect(signal.aborted).toBe(false);
+    release(transcriptionResult("whole"));
+    expect((await pending).rawTranscript).toBe("whole");
+    expect(requestedAudio()).toEqual([recording.length]);
+  });
+
+  it("does not let a retired finalizer cancel a replacement recording", async () => {
+    const releases: Array<
+      (result: ReturnType<typeof transcriptionResult>) => void
+    > = [];
+    mocks.transcribeAudio.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          releases.push(resolve);
+        }),
+    );
+    const session = new BatchTranscriptionSession();
+    await session.onBeforeRecordingStart();
+    await session.onRecordingStart(RATE);
+    const first = session.finalize({ samples: recording, sampleRate: RATE });
+    await vi.waitFor(() => expect(releases).toHaveLength(1));
+    const firstSignal = mocks.transcribeAudio.mock.calls[0][0]
+      .signal as AbortSignal;
+
+    await session.onBeforeRecordingStart();
+    await session.onRecordingStart(RATE);
+    const second = session.finalize({ samples: recording, sampleRate: RATE });
+    await vi.waitFor(() => expect(releases).toHaveLength(2));
+    const secondSignal = mocks.transcribeAudio.mock.calls[1][0]
+      .signal as AbortSignal;
+    expect(firstSignal.aborted).toBe(true);
+    releases[0](transcriptionResult("retired"));
+    expect((await first).rawTranscript).toBeNull();
+    expect(secondSignal.aborted).toBe(false);
+    releases[1](transcriptionResult("current"));
+    expect((await second).rawTranscript).toBe("current");
     expect(mocks.showToast).not.toHaveBeenCalled();
   });
 

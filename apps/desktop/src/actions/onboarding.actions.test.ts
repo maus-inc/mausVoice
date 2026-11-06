@@ -65,6 +65,9 @@ import {
   trackOnboardingStep,
 } from "../utils/analytics.utils";
 import { showErrorSnackbar } from "./app.actions";
+import { createDefaultPreferences } from "./user.actions";
+import { markExpansionFlagsChanged } from "../utils/expansion-flags-revision";
+import { LOCAL_USER_ID } from "../utils/user.utils";
 
 const seed = () => {
   const state = structuredClone(INITIAL_APP_STATE);
@@ -246,6 +249,53 @@ describe("onboarding flow migration", () => {
     expect(trackOnboardingOutcome).not.toHaveBeenCalled();
   });
 
+  it("does not restore or clear a signed-in session before initialization", () => {
+    const next = structuredClone(getAppState());
+    next.initialized = false;
+    next.auth = {
+      uid: "new-user",
+      email: "new@example.com",
+      displayName: null,
+      providers: ["password"],
+    };
+    next.local.onboardingSessionUserId = "previous-user";
+    next.local.onboardingResumePage = "tutorial";
+    next.onboarding.company = "previous company";
+    setAppState(next, true);
+
+    resumeOnboardingPage();
+
+    expect(getAppState().onboarding.company).toBe("previous company");
+    expect(getAppState().local.onboardingResumePage).toBe("tutorial");
+    expect(getAppState().local.onboardingSessionUserId).toBe("previous-user");
+  });
+
+  it.each(["foreign session", "unowned completed session"])(
+    "clears stale data from a %s for a signed-in user",
+    (scenario) => {
+      const next = structuredClone(getAppState());
+      next.auth = {
+        uid: "new-user",
+        email: "new@example.com",
+        displayName: null,
+        providers: ["password"],
+      };
+      next.onboarding.company = "previous company";
+      if (scenario === "foreign session") {
+        next.local.onboardingSessionUserId = "previous-user";
+        next.local.onboardingResumePage = "tutorial";
+      }
+      setAppState(next, true);
+
+      resumeOnboardingPage();
+
+      expect(getAppState().onboarding.company).toBe("");
+      expect(getAppState().onboarding.currentPage).toBe("signIn");
+      expect(getAppState().local.onboardingResumePage).toBeNull();
+      expect(getAppState().local.onboardingSessionUserId).toBe("new-user");
+    },
+  );
+
   it("rejects a signed-in submission without a first name", async () => {
     const state = getAppState();
     const next = structuredClone(state);
@@ -271,6 +321,145 @@ describe("onboarding flow migration", () => {
     // when firstName is empty) rather than surfacing an English snackbar.
     expect(showErrorSnackbar).not.toHaveBeenCalled();
     expect(getAppState().onboarding.submitting).toBe(false);
+  });
+
+  it("keeps onboarding pending until both dispatched writes settle after a failure", async () => {
+    let resolvePreferences!: (value: unknown) => void;
+    actionMocks.setMyUser.mockRejectedValueOnce(new Error("user write failed"));
+    actionMocks.setUserPreferences.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolvePreferences = resolve;
+        }),
+    );
+    const submission = submitOnboarding();
+    const pendingPreferences = actionMocks.setUserPreferences.mock.calls[0][0];
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(getAppState().onboarding.submitting).toBe(true);
+    expect(showErrorSnackbar).not.toHaveBeenCalled();
+    resolvePreferences(pendingPreferences);
+    expect(await submission).toBeNull();
+    expect(getAppState().onboarding.submitting).toBe(false);
+    expect(showErrorSnackbar).toHaveBeenCalledOnce();
+  });
+
+  it("preserves a flag published while onboarding writes are pending", async () => {
+    const next = structuredClone(getAppState());
+    next.auth = {
+      uid: "user-id",
+      email: "user@example.com",
+      displayName: "Maria Garcia",
+      providers: ["password"],
+    };
+    Object.assign(next.onboarding, {
+      name: "Maria Garcia",
+      firstName: "Maria",
+      lastName: "Garcia",
+      lastNameEnabled: true,
+    });
+    next.local.onboardingNameDraft = "Maria Garcia";
+    next.local.onboardingNameDraftUserId = "user-id";
+    next.userPrefs = createDefaultPreferences();
+    setAppState(next, true);
+    let resolveUser: (value: unknown) => void = () => undefined;
+    actionMocks.setMyUser.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveUser = resolve;
+        }),
+    );
+    const submission = submitOnboarding();
+    const pendingUser = actionMocks.setMyUser.mock.calls[0]?.[0];
+    const current = structuredClone(getAppState().userPrefs!);
+    current.expansionFlags = '{"meetingNotesEnabled":true}';
+    markExpansionFlagsChanged();
+    setAppState({ userPrefs: current });
+    resolveUser(pendingUser);
+    await submission;
+    expect(getAppState().userPrefs?.expansionFlags).toBe(
+      current.expansionFlags,
+    );
+  });
+
+  it.each(["resolve", "reject"] as const)(
+    "does not clear a successor's submission when the old write %ss",
+    async (outcome) => {
+      const next = structuredClone(getAppState());
+      next.auth = {
+        uid: "first-user-id",
+        email: null,
+        displayName: "Maria Garcia",
+        providers: ["password"],
+      };
+      Object.assign(next.onboarding, {
+        name: "Maria Garcia",
+        firstName: "Maria",
+        lastName: "Garcia",
+        lastNameEnabled: true,
+      });
+      next.local.onboardingNameDraft = "Maria Garcia";
+      next.local.onboardingNameDraftUserId = "first-user-id";
+      setAppState(next, true);
+      let resolveWrite!: (value: unknown) => void;
+      let rejectWrite!: (error: Error) => void;
+      actionMocks.setMyUser.mockImplementationOnce(
+        () =>
+          new Promise((resolve, reject) => {
+            resolveWrite = resolve;
+            rejectWrite = reject;
+          }),
+      );
+      const oldSubmission = submitOnboarding();
+      const pendingUser = actionMocks.setMyUser.mock.calls[0][0];
+      const successor = structuredClone(getAppState());
+      successor.auth = {
+        uid: "second-user-id",
+        email: null,
+        displayName: "Bob",
+        providers: ["password"],
+      };
+      successor.authSessionNonce += 1;
+      successor.onboarding.submitting = true;
+      successor.onboarding.name = "Bob";
+      setAppState(successor, true);
+      if (outcome === "resolve") resolveWrite(pendingUser);
+      else rejectWrite(new Error("old submission failed"));
+      expect(await oldSubmission).toBeNull();
+      expect(getAppState().onboarding.submitting).toBe(true);
+      expect(getAppState().onboarding.name).toBe("Bob");
+      expect(showErrorSnackbar).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not publish a local submission after initial auth resolves without a nonce change", async () => {
+    const state = structuredClone(getAppState());
+    state.auth = null;
+    state.onboarding.name = "Local";
+    setAppState(state, true);
+    let resolveWrite!: (value: unknown) => void;
+    actionMocks.setMyUser.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveWrite = resolve;
+        }),
+    );
+    const submission = submitOnboarding();
+    const pendingUser = actionMocks.setMyUser.mock.calls[0][0];
+    const successor = structuredClone(getAppState());
+    successor.auth = {
+      uid: "alice",
+      email: null,
+      displayName: "Alice",
+      providers: ["password"],
+    };
+    successor.onboarding.name = "Alice";
+    successor.onboarding.submitting = false;
+    setAppState(successor, true);
+    resolveWrite(pendingUser);
+    expect(await submission).toBeNull();
+    expect(getAppState().onboarding.name).toBe("Alice");
+    expect(actionMocks.refreshMember).not.toHaveBeenCalled();
   });
 
   it("does not apply a completed submission to a different auth user", async () => {
@@ -397,6 +586,45 @@ describe("onboarding flow migration", () => {
     expect(getAppState().onboarding.name).toBe("Maria New");
     expect(getAppState().onboarding.submitting).toBe(false);
     expect(getAppState().local.onboardingNameDraft).toBe("Maria New");
+  });
+
+  it("does not finish local onboarding after initial auth resolution without a nonce change", async () => {
+    const state = structuredClone(getAppState());
+    state.auth = null;
+    state.userById[LOCAL_USER_ID] = {
+      id: LOCAL_USER_ID,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      name: "Local",
+      onboarded: false,
+      playInteractionChime: true,
+      hasFinishedTutorial: false,
+      wordsThisMonth: 0,
+      wordsTotal: 0,
+    };
+    setAppState(state, true);
+    let resolveWrite!: (value: unknown) => void;
+    actionMocks.setMyUser.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveWrite = resolve;
+        }),
+    );
+    const completion = finishOnboarding();
+    const pendingUser = actionMocks.setMyUser.mock.calls[0][0];
+    const successor = structuredClone(getAppState());
+    successor.auth = {
+      uid: "alice",
+      email: null,
+      displayName: "Alice",
+      providers: ["password"],
+    };
+    successor.local.onboardingNameDraft = "Alice";
+    setAppState(successor, true);
+    resolveWrite(pendingUser);
+    expect(await completion).toBeNull();
+    expect(getAppState().local.onboardingNameDraft).toBe("Alice");
+    expect(actionMocks.setAutoLaunchEnabled).not.toHaveBeenCalled();
   });
 
   it("does not finish shared onboarding state for a different auth user", async () => {

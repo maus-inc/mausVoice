@@ -16,11 +16,23 @@ import { TranscribeAudioOutput } from "../repos/transcribe-audio.repo";
 import type { AppState } from "../state/app.state";
 import { getAppState, produceAppState } from "../store";
 import { classifyPostProcessErrorCategory } from "./post-process-error-category";
-import { PostProcessingRunMode, TranscriptionMode } from "../types/ai.types";
 import { AudioSamples } from "../types/audio.types";
+import {
+  buildTranscriptionMetadata,
+  toTranscriptionRecordMetadata,
+} from "../utils/transcription-metadata.utils";
+import type {
+  PostProcessMetadata,
+  TranscribeAudioMetadata,
+} from "../types/transcription-metadata.types";
+export type {
+  PostProcessMetadata,
+  TranscribeAudioMetadata,
+} from "../types/transcription-metadata.types";
 import { StopRecordingResponse } from "../types/transcription-session.types";
 import { resolveProcessedTranscription } from "../utils/ai.utils";
 import { createId } from "../utils/id.utils";
+import { captureUserSession } from "../utils/user-session.utils";
 import {
   isEphemeralSessionActive,
   isPersistenceAllowed,
@@ -68,28 +80,6 @@ import { getIntl } from "../i18n/intl";
 import { showErrorSnackbar } from "./app.actions";
 import { addWordsToCurrentUser } from "./user.actions";
 
-export type TranscribeAudioInput = {
-  samples: AudioSamples;
-  sampleRate: number;
-  dictationLanguage?: string;
-  /** Preserve the recording's filter snapshot when retrying streamed audio. */
-  hallucinationFilterEnabled?: boolean;
-  trace?: PipelineTrace | null;
-  /** Optional style id for fast transcription-time styling (no LLM). */
-  toneId?: string | null;
-  /** Cancels the provider request(s), e.g. when the dictation is cancelled. */
-  signal?: AbortSignal;
-};
-
-export type TranscribeAudioMetadata = {
-  modelSize?: string | null;
-  inferenceDevice?: string | null;
-  transcriptionPrompt?: string | null;
-  transcriptionApiKeyId?: string | null;
-  transcriptionMode?: TranscriptionMode | null;
-  transcriptionDurationMs?: number | null;
-};
-
 export type TranscribeAudioResult = {
   /**
    * Provider output before replacements or hallucination filtering.
@@ -115,45 +105,38 @@ export type PostProcessInput = {
   onPolishStart?: () => void;
 };
 
-export type PostProcessMetadata = {
-  postProcessPrompt?: string | null;
-  postProcessApiKeyId?: string | null;
-  postProcessProvider?: string | null;
-  postProcessMode?: PostProcessingRunMode | null;
-  postProcessDevice?: string | null;
-  /** Resolved model id used for post-processing (e.g. "openai/gpt-oss-20b"). */
-  postProcessModel?: string | null;
-  postprocessDurationMs?: number | null;
-  /** True when a post-processing request was attempted and failed. */
-  postProcessFailed?: boolean | null;
-  /**
-   * True when post-processing failed and the deterministic local style produced
-   * the output instead. The transcript is still delivered; this marks the row
-   * as degraded so the UI can say so.
-   */
-  postProcessFallback?: boolean | null;
-  /** Sanitized, non-secret error message from a failed post-processing request. */
-  postProcessError?: string | null;
-  /**
-   * Characters the fast local style path dropped from the end of an
-   * over-length dictation, or null when nothing was dropped. The durable
-   * record is the localized warning in `warnings`; this is the in-memory
-   * signal the post-processing callers branch on.
-   */
-  fastStyleTruncatedChars?: number | null;
-};
-
 export type PostProcessResult = {
   transcript: string;
   warnings: string[];
   metadata: PostProcessMetadata;
 };
 
-// Combined metadata type for storage compatibility
-export type TranscriptionMetadata = TranscribeAudioMetadata &
-  PostProcessMetadata & {
-    rawTranscript?: string | null;
-  };
+const runProviderTranscription = async (
+  repo: ReturnType<typeof getTranscribeAudioRepo>["repo"],
+  input: Parameters<typeof repo.transcribeAudio>[0],
+  warnings: string[],
+): Promise<{ output: TranscribeAudioOutput; durationMs: number }> => {
+  const start = performance.now();
+  let output: TranscribeAudioOutput;
+  try {
+    output = await repo.transcribeAudio(input);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    // Preserve dispatch warnings and the original rejection on the failure path.
+    throw new Error(
+      warnings.length > 0 ? `${message} (${warnings.join("; ")})` : message,
+      { cause: error },
+    );
+  }
+  const durationMs = performance.now() - start;
+  warnings.push(...(output.warnings ?? []));
+  if (output.warnings && output.warnings.length > 0) {
+    getLogger().warning(
+      `Provider transcription warnings: ${output.warnings.join("; ")}`,
+    );
+  }
+  return { output, durationMs };
+};
 
 /**
  * Transcribe audio samples to text.
@@ -167,12 +150,22 @@ export const transcribeAudio = async ({
   trace,
   toneId,
   signal,
-}: TranscribeAudioInput): Promise<TranscribeAudioResult> => {
+}: {
+  samples: AudioSamples;
+  sampleRate: number;
+  dictationLanguage?: string;
+  /** Preserve the recording's filter snapshot when retrying streamed audio. */
+  hallucinationFilterEnabled?: boolean;
+  trace?: PipelineTrace | null;
+  /** Optional style id for fast transcription-time styling (no LLM). */
+  toneId?: string | null;
+  /** Cancels the provider request(s), e.g. when the dictation is cancelled. */
+  signal?: AbortSignal;
+}): Promise<TranscribeAudioResult> => {
   const state = getAppState();
   const hallucinationFilterEnabled =
     filterOverride ?? state.userPrefs?.hallucinationFilterEnabled ?? true;
 
-  const metadata: TranscribeAudioMetadata = {};
   const warnings: string[] = [];
 
   const {
@@ -213,35 +206,19 @@ export const transcribeAudio = async ({
     `Transcription prompt: ${transcriptionPrompt.length} chars, apiKeyId=${transcriptionApiKeyId ?? "none"}`,
   );
 
-  const transcribeStart = performance.now();
-  let transcribeOutput: TranscribeAudioOutput;
-  try {
-    transcribeOutput = await transcribeRepo.transcribeAudio({
-      samples,
-      sampleRate,
-      prompt: transcriptionPrompt,
-      language: whisperLanguage,
-      hallucinationFilterEnabled,
-      signal,
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    // Keep dispatch warnings visible on the failure path: the batch session
-    // surfaces this message to the user, so append the warnings to it. The
-    // original rejection is preserved verbatim as the cause, including
-    // non-Error rejections.
-    throw new Error(
-      warnings.length > 0 ? `${message} (${warnings.join("; ")})` : message,
-      { cause: error },
+  const { output: transcribeOutput, durationMs: transcribeDuration } =
+    await runProviderTranscription(
+      transcribeRepo,
+      {
+        samples,
+        sampleRate,
+        prompt: transcriptionPrompt,
+        language: whisperLanguage,
+        hallucinationFilterEnabled,
+        signal,
+      },
+      warnings,
     );
-  }
-  const transcribeDuration = performance.now() - transcribeStart;
-  warnings.push(...(transcribeOutput.warnings ?? []));
-  if (transcribeOutput.warnings && transcribeOutput.warnings.length > 0) {
-    getLogger().warning(
-      `Provider transcription warnings: ${transcribeOutput.warnings.join("; ")}`,
-    );
-  }
   const rawTranscript = hallucinationFilterEnabled
     ? transcribeOutput.text.trim()
     : transcribeOutput.text;
@@ -272,16 +249,13 @@ export const transcribeAudio = async ({
     `Transcription complete in ${Math.round(transcribeDuration)}ms (${rawTranscript.length} raw chars, ${sanitizedTranscript.length} sanitized chars, mode=${transcribeOutput.metadata?.transcriptionMode ?? "unknown"})`,
   );
 
-  metadata.modelSize =
-    transcribeOutput.metadata?.modelSize ||
-    state.settings.aiTranscription.modelSize ||
-    null;
-  metadata.inferenceDevice = transcribeOutput.metadata?.inferenceDevice || null;
-  metadata.transcriptionDurationMs = Math.round(transcribeDuration);
-  metadata.transcriptionPrompt = transcriptionPrompt;
-  metadata.transcriptionApiKeyId = transcriptionApiKeyId;
-  metadata.transcriptionMode =
-    transcribeOutput.metadata?.transcriptionMode || null;
+  const metadata = buildTranscriptionMetadata({
+    provider: transcribeOutput.metadata,
+    modelSize: state.settings.aiTranscription.modelSize,
+    durationMs: transcribeDuration,
+    prompt: transcriptionPrompt,
+    apiKeyId: transcriptionApiKeyId,
+  });
 
   markPipeline(trace, "transcribed");
 
@@ -427,10 +401,7 @@ const applyPostProcessSuccess = (
   return nextTranscript;
 };
 
-export const redactTranscriptContent = (
-  text: string,
-  transcript?: string,
-): string => {
+const redactTranscriptContent = (text: string, transcript?: string): string => {
   if (!transcript?.trim()) {
     return text;
   }
@@ -848,11 +819,19 @@ export type StoreTranscriptionOutput = {
 const getSampleCount = (samples: StopRecordingResponse["samples"]): number =>
   samples ? samples.length : 0;
 
+/** Materialize PCM only when a snapshot will actually be persisted. */
+const serializeRecordingSamples = (
+  samples: StopRecordingResponse["samples"],
+): number[] => (Array.isArray(samples) ? samples : Array.from(samples ?? []));
+
 const getWordsAdded = (transcript: string | null): number =>
   transcript ? countWords(transcript) : 0;
 
-const recordUsageWords = async (wordsAdded: number): Promise<void> => {
-  if (wordsAdded <= 0) {
+const recordUsageWords = async (
+  wordsAdded: number,
+  isCurrent: () => boolean,
+): Promise<void> => {
+  if (wordsAdded <= 0 || !isCurrent()) {
     return;
   }
   try {
@@ -882,6 +861,28 @@ const persistAudioSnapshot = async (
   }
 };
 
+/** Never serialize or persist failed audio when the user opted out of retention. */
+const persistEligibleAudio = (
+  transcriptionId: string,
+  samples: StopRecordingResponse["samples"],
+  rate: number,
+  sampleCount: number,
+  transcriptionFailed: boolean,
+  preserveAudioOnFailure: boolean,
+): Promise<TranscriptionAudioSnapshot | undefined> | undefined => {
+  if (
+    !(rate > 0) ||
+    !(sampleCount > 0) ||
+    (transcriptionFailed && !preserveAudioOnFailure)
+  )
+    return undefined;
+  return persistAudioSnapshot(
+    transcriptionId,
+    serializeRecordingSamples(samples),
+    rate,
+  );
+};
+
 const buildTranscriptionRecord = ({
   input,
   transcriptionId,
@@ -905,30 +906,12 @@ const buildTranscriptionRecord = ({
   createdByUserId,
   isDeleted: false,
   audio: audioSnapshot,
-  modelSize: orNull(input.transcriptionMetadata.modelSize),
-  inferenceDevice: orNull(input.transcriptionMetadata.inferenceDevice),
+  ...toTranscriptionRecordMetadata(
+    input.transcriptionMetadata,
+    input.postProcessMetadata,
+  ),
   rawTranscript: input.rawTranscript ?? input.transcript ?? "",
   sanitizedTranscript: orNull(input.sanitizedTranscript),
-  transcriptionPrompt: orNull(input.transcriptionMetadata.transcriptionPrompt),
-  postProcessPrompt: orNull(input.postProcessMetadata.postProcessPrompt),
-  transcriptionApiKeyId: orNull(
-    input.transcriptionMetadata.transcriptionApiKeyId,
-  ),
-  postProcessApiKeyId: orNull(input.postProcessMetadata.postProcessApiKeyId),
-  transcriptionMode: orNull(input.transcriptionMetadata.transcriptionMode),
-  postProcessMode: orNull(input.postProcessMetadata.postProcessMode),
-  postProcessDevice: orNull(input.postProcessMetadata.postProcessDevice),
-  postProcessModel: orNull(input.postProcessMetadata.postProcessModel),
-  postProcessProvider: orNull(input.postProcessMetadata.postProcessProvider),
-  postProcessFailed: input.postProcessMetadata.postProcessFailed ?? null,
-  postProcessFallback: input.postProcessMetadata.postProcessFallback ?? null,
-  postProcessError: orNull(input.postProcessMetadata.postProcessError),
-  transcriptionDurationMs: orNull(
-    input.transcriptionMetadata.transcriptionDurationMs,
-  ),
-  postprocessDurationMs: orNull(
-    input.postProcessMetadata.postprocessDurationMs,
-  ),
   warnings: input.warnings.length > 0 ? input.warnings : null,
   remoteStatus: orNull(input.remoteStatus),
   remoteDeviceId: orNull(input.remoteDeviceId),
@@ -936,10 +919,12 @@ const buildTranscriptionRecord = ({
 
 const persistTranscription = async (
   transcription: Transcription,
+  isCurrent: () => boolean,
 ): Promise<Transcription | null> => {
   try {
     const stored =
       await getTranscriptionRepo().createTranscription(transcription);
+    if (!isCurrent()) return null;
     produceAppState((draft) => {
       draft.transcriptionById[stored.id] = stored;
       const existingIds = draft.transcriptions.transcriptionIds.filter(
@@ -949,16 +934,20 @@ const persistTranscription = async (
     });
     return stored;
   } catch (error) {
+    if (!isCurrent()) return null;
     console.error("Failed to store transcription", error);
     showErrorSnackbar("Unable to save transcription. Please try again.");
     return null;
   }
 };
 
-const purgeStaleAudioSnapshots = async (): Promise<void> => {
+const purgeStaleAudioSnapshots = async (
+  isCurrent: () => boolean,
+): Promise<void> => {
+  if (!isCurrent()) return;
   try {
     const purgedIds = await getTranscriptionRepo().purgeStaleAudio();
-    if (purgedIds.length === 0) {
+    if (!isCurrent() || purgedIds.length === 0) {
       return;
     }
     produceAppState((draft) => {
@@ -999,111 +988,7 @@ const shouldStoreRecording = (
   return true;
 };
 
-export const storeTranscription = async (
-  input: StoreTranscriptionInput,
-): Promise<StoreTranscriptionOutput> => {
-  getLogger().verbose("Storing transcription record");
-  const rate = input.audio.sampleRate;
-  const sampleCount = getSampleCount(input.audio.samples);
-
-  if (rate == null || !Number.isFinite(rate)) {
-    getLogger().error("Received audio payload without sample rate");
-    showErrorSnackbar("Recording missing sample rate. Please try again.");
-    return { transcription: null, wordCount: 0 };
-  }
-
-  const hasText = Boolean(
-    input.rawTranscript && input.rawTranscript.length > 0,
-  );
-  const transcriptionFailed =
-    input.rawTranscript === null && input.warnings.length > 0;
-
-  if (!shouldStoreRecording(rate, sampleCount, hasText, transcriptionFailed)) {
-    return { transcription: null, wordCount: 0 };
-  }
-
-  const state = getAppState();
-  const incognitoEnabled = orFalse(state.userPrefs?.incognitoModeEnabled);
-  const includeInStats = orFalse(state.userPrefs?.incognitoModeIncludeInStats);
-  const preserveAudioOnFailure =
-    state.userPrefs?.preserveAudioOnFailure ?? true;
-  const wordsAdded = getWordsAdded(input.transcript);
-  const transcriptionId = createId();
-
-  if (!isPersistenceAllowed()) {
-    getLogger().verbose(
-      `Persistence suppressed: skipping storage (incognito=${incognitoEnabled}, includeInStats=${includeInStats}, words=${wordsAdded})`,
-    );
-    // Counting words is an incognito-only option. An ephemeral session never
-    // opted into usage statistics.
-    //
-    // `void`, not `await`, and for the same reason its non-incognito sibling is
-    // `void`: the session stays locked until this function returns, so awaiting a
-    // queued profile write holds the lock across an IPC and a pill click that lands
-    // in the gap is accepted by the pill and then dropped by the app. Commit
-    // 9a638fa40 applied that to the sibling and left this branch awaiting.
-    // `recordUsageWords` owns its own error handling, so discarding the promise
-    // cannot produce an unhandled rejection, and the cost of being late is one
-    // dictation's word count.
-    if (
-      wordsAdded > 0 &&
-      includeInStats &&
-      incognitoEnabled &&
-      !isEphemeralSessionActive()
-    ) {
-      void recordUsageWords(wordsAdded);
-    }
-
-    return { transcription: null, wordCount: wordsAdded };
-  }
-
-  // Skip the audio write entirely when the user has opted out of retaining
-  // failed recordings, so we don't leak a WAV on disk with no DB pointer to
-  // ever purge it from.
-  const shouldPersistAudio =
-    rate > 0 &&
-    sampleCount > 0 &&
-    !(transcriptionFailed && !preserveAudioOnFailure);
-  const payloadSamples = Array.isArray(input.audio.samples)
-    ? input.audio.samples
-    : Array.from(input.audio.samples ?? []);
-  const audioSnapshot = shouldPersistAudio
-    ? await persistAudioSnapshot(transcriptionId, payloadSamples, rate)
-    : undefined;
-
-  const transcription = buildTranscriptionRecord({
-    input,
-    transcriptionId,
-    audioSnapshot,
-    transcriptionFailed,
-    createdAt: dayjs().toISOString(),
-    createdByUserId: getMyEffectiveUserId(state),
-  });
-
-  const storedTranscription = await persistTranscription(transcription);
-  if (!storedTranscription) {
-    if (audioSnapshot) {
-      // Housekeeping, deliberately not awaited. The pill goes idle as soon as
-      // the transcript is inserted, so it accepts clicks while the stop path is
-      // still unwinding; a click in that gap is taken natively and then dropped.
-      // A sweep that hangs would hold the session locked for as long as it
-      // takes, so it runs on its own and the row is already durable.
-      void purgeStaleAudioSnapshots();
-    }
-    return { transcription: null, wordCount: 0 };
-  }
-
-  // Usage metering and the audio retention sweep are housekeeping, not the save
-  // the user is waiting on. The pill is already told to go idle by the time we
-  // get here, so it looks clickable, but this session stays locked until the
-  // stop path returns. Awaiting two slow calls here held that lock across a
-  // queued profile write and a disk scan, so a click landing in that gap was
-  // accepted by the pill and then dropped by the app. Both calls own their error
-  // handling, and both are safe to land late: a missed word count is one
-  // dictation of statistics, and a missed sweep runs again on the next one.
-  void recordUsageWords(wordsAdded);
-  void purgeStaleAudioSnapshots();
-
+const recordPersistedPipeline = (input: StoreTranscriptionInput): void => {
   markPipeline(input.trace, "persisted");
   const summary = summarizePipeline(input.trace);
   if (summary) {
@@ -1120,6 +1005,146 @@ export const storeTranscription = async (
       );
     });
   }
+};
+
+/** The one empty result: nothing durable was written, or nothing was counted. */
+const emptyStoreResult = (): StoreTranscriptionOutput => ({
+  transcription: null,
+  wordCount: 0,
+});
+
+const suppressPersistence = ({
+  incognitoEnabled,
+  includeInStats,
+  wordsAdded,
+  isCurrentSession,
+}: {
+  incognitoEnabled: boolean;
+  includeInStats: boolean;
+  wordsAdded: number;
+  isCurrentSession: () => boolean;
+}): void => {
+  getLogger().verbose(
+    `Persistence suppressed: skipping storage (incognito=${incognitoEnabled}, includeInStats=${includeInStats}, words=${wordsAdded})`,
+  );
+  // Counting words is an incognito-only option. An ephemeral session never
+  // opted into usage statistics.
+  //
+  // `void`, not `await`, and for the same reason its non-incognito sibling is
+  // `void`: the session stays locked until this function returns, so awaiting a
+  // queued profile write holds the lock across an IPC and a pill click that lands
+  // in the gap is accepted by the pill and then dropped by the app. Commit
+  // 9a638fa40 applied that to the sibling and left this branch awaiting.
+  // `recordUsageWords` owns its own error handling, so discarding the promise
+  // cannot produce an unhandled rejection, and the cost of being late is one
+  // dictation's word count.
+  if (wordsAdded > 0 && includeInStats && incognitoEnabled) {
+    if (!isEphemeralSessionActive()) {
+      void recordUsageWords(wordsAdded, isCurrentSession);
+    }
+  }
+};
+
+/**
+ * Persist the row and keep an orphaned audio snapshot out of the way. A failed
+ * create leaves a detached snapshot; the regular sweep only handles marked rows.
+ */
+const persistOrPurgeAudio = async (
+  transcription: Transcription,
+  audioSnapshot: TranscriptionAudioSnapshot | undefined,
+  isCurrentSession: () => boolean,
+): Promise<Transcription | null> => {
+  const stored = await persistTranscription(transcription, isCurrentSession);
+  if (!stored || !isCurrentSession()) {
+    if (!stored && audioSnapshot && isCurrentSession()) {
+      // It remains detached so a slow sweep cannot hold the recording session
+      // open.
+      void purgeStaleAudioSnapshots(isCurrentSession);
+    }
+    return null;
+  }
+  return stored;
+};
+
+export const storeTranscription = async (
+  input: StoreTranscriptionInput,
+): Promise<StoreTranscriptionOutput> => {
+  getLogger().verbose("Storing transcription record");
+  const rate = input.audio.sampleRate;
+  const sampleCount = getSampleCount(input.audio.samples);
+
+  if (rate == null || !Number.isFinite(rate)) {
+    getLogger().error("Received audio payload without sample rate");
+    showErrorSnackbar("Recording missing sample rate. Please try again.");
+    return emptyStoreResult();
+  }
+
+  const hasText = Boolean(
+    input.rawTranscript && input.rawTranscript.length > 0,
+  );
+  const transcriptionFailed =
+    input.rawTranscript === null && input.warnings.length > 0;
+
+  if (!shouldStoreRecording(rate, sampleCount, hasText, transcriptionFailed)) {
+    return emptyStoreResult();
+  }
+
+  const state = getAppState();
+  const isCurrentSession = captureUserSession();
+  const incognitoEnabled = orFalse(state.userPrefs?.incognitoModeEnabled);
+  const includeInStats = orFalse(state.userPrefs?.incognitoModeIncludeInStats);
+  const preserveAudioOnFailure =
+    state.userPrefs?.preserveAudioOnFailure ?? true;
+  const wordsAdded = getWordsAdded(input.transcript);
+  const transcriptionId = createId();
+
+  if (!isPersistenceAllowed()) {
+    suppressPersistence({
+      incognitoEnabled,
+      includeInStats,
+      wordsAdded,
+      isCurrentSession,
+    });
+    return { transcription: null, wordCount: wordsAdded };
+  }
+
+  const pendingAudio = persistEligibleAudio(
+    transcriptionId,
+    input.audio.samples,
+    rate,
+    sampleCount,
+    transcriptionFailed,
+    preserveAudioOnFailure,
+  );
+  const audioSnapshot = pendingAudio ? await pendingAudio : undefined;
+
+  const storedTranscription = await persistOrPurgeAudio(
+    buildTranscriptionRecord({
+      input,
+      transcriptionId,
+      audioSnapshot,
+      transcriptionFailed,
+      createdAt: dayjs().toISOString(),
+      createdByUserId: getMyEffectiveUserId(state),
+    }),
+    audioSnapshot,
+    isCurrentSession,
+  );
+  if (!storedTranscription) return emptyStoreResult();
+
+  // Usage metering and the audio retention sweep are housekeeping, not the save
+  // the user is waiting on. The pill is already told to go idle by the time we
+  // get here, so it looks clickable, but this session stays locked until the
+  // stop path returns. Awaiting two slow calls here held that lock across a
+  // queued profile write and a disk scan, so a click landing in that gap was
+  // accepted by the pill and then dropped by the app. Both calls own their error
+  // handling, and both are safe to land late: a missed word count is one
+  // dictation of statistics, and a missed sweep runs again on the next one.
+  void recordUsageWords(wordsAdded, isCurrentSession);
+  void purgeStaleAudioSnapshots(isCurrentSession);
+
+  if (!isCurrentSession()) return emptyStoreResult();
+  recordPersistedPipeline(input);
 
   return { transcription: storedTranscription, wordCount: wordsAdded };
 };

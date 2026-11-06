@@ -6,12 +6,12 @@ import {
 import type { OpenRouterModel } from "@maus-inc/types";
 import { BaseRepo } from "./base.repo";
 
-export abstract class BaseOpenRouterRepo extends BaseRepo {
+abstract class BaseOpenRouterRepo extends BaseRepo {
   abstract fetchModels(): Promise<OpenRouterModel[]>;
   abstract testConnection(): Promise<boolean>;
 }
 
-export class OpenRouterRepo extends BaseOpenRouterRepo {
+class OpenRouterRepo extends BaseOpenRouterRepo {
   private apiKey: string;
 
   constructor(apiKey: string) {
@@ -39,6 +39,11 @@ export class OpenRouterRepo extends BaseOpenRouterRepo {
   }
 }
 
-export const getOpenRouterRepo = (apiKey: string): BaseOpenRouterRepo => {
+export const getOpenRouterRepo = (
+  apiKey: string,
+): {
+  fetchModels: () => Promise<OpenRouterModel[]>;
+  testConnection: () => Promise<boolean>;
+} => {
   return new OpenRouterRepo(apiKey);
 };

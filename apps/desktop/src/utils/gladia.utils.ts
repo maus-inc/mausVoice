@@ -1,7 +1,7 @@
 import type { GladiaCustomizations } from "@maus-inc/voice-ai";
 import type { DictionaryEntries } from "./prompt.utils";
 
-export const GLADIA_SUPPORTED_SAMPLE_RATES = [
+const GLADIA_SUPPORTED_SAMPLE_RATES = [
   8000, 16000, 32000, 44100, 48000,
 ] as const;
 export type GladiaSampleRate = (typeof GLADIA_SUPPORTED_SAMPLE_RATES)[number];
@@ -36,9 +36,8 @@ export const getGladiaSampleRate = (
   );
 };
 
-export const buildGladiaCustomizations = (
-  entries: DictionaryEntries,
-): GladiaCustomizations => {
+/** Collect deduplicated vocabulary and spelling variants before applying budgets. */
+const collectGladiaTerms = (entries: DictionaryEntries) => {
   const replacementSources = new Set(
     entries.replacements.map((rule) =>
       sanitizeValue(rule.source).toLowerCase(),
@@ -81,6 +80,13 @@ export const buildGladiaCustomizations = (
     spellingByDestination.set(key, current);
   }
 
+  return { values, spellingByDestination };
+};
+
+export const buildGladiaCustomizations = (
+  entries: DictionaryEntries,
+): GladiaCustomizations => {
+  const { values, spellingByDestination } = collectGladiaTerms(entries);
   const warnings: string[] = [];
   const vocabulary: string[] = [];
   let characterCount = 0;
@@ -99,13 +105,14 @@ export const buildGladiaCustomizations = (
   }
 
   const spellingDictionary: Record<string, string[]> = {};
+  let spellingCount = 0;
   for (const { destination, variants } of spellingByDestination.values()) {
     const variantValues = Array.from(variants.values());
     const additionalCharacters =
       destination.length +
       variantValues.reduce((sum, value) => sum + value.length, 0);
     if (
-      Object.keys(spellingDictionary).length >= MAX_VOCABULARY_ENTRIES ||
+      spellingCount >= MAX_VOCABULARY_ENTRIES ||
       characterCount + additionalCharacters > MAX_DICTIONARY_CHARACTERS
     ) {
       warnings.push(
@@ -113,7 +120,15 @@ export const buildGladiaCustomizations = (
       );
       break;
     }
-    spellingDictionary[destination] = variantValues;
+    // A dictionary term can be "__proto__". Assignment to that name would
+    // mutate the object's prototype and silently omit the spelling rule.
+    Object.defineProperty(spellingDictionary, destination, {
+      value: variantValues,
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
+    spellingCount += 1;
     characterCount += additionalCharacters;
   }
 
@@ -156,7 +171,7 @@ export const createStreamingResampler = (
   }
 
   const ratio = inputRate / outputRate;
-  let buffer = new Float32Array(0);
+  let buffer: Float32Array = new Float32Array(0);
   let bufferStartSample = 0;
   let totalInputSamples = 0;
   let nextOutputSample = 0;

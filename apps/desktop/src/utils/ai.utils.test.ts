@@ -570,6 +570,20 @@ describe("applyTranscriptionEdits", () => {
     });
   };
 
+  // Include the empty span at every offset, just like the legacy matrix.
+  function* wordSpans(word: string): Generator<string> {
+    for (let start = 0; start <= word.length; start += 1) {
+      for (let end = start; end <= word.length; end += 1) {
+        yield word.slice(start, end);
+      }
+    }
+  }
+
+  it("enumerates every span, including all empty offsets", () => {
+    expect([...wordSpans("ab")]).toEqual(["", "a", "ab", "", "b", ""]);
+    expect([...wordSpans("")]).toEqual([""]);
+  });
+
   it("reads the same word edges off every script it did before", () => {
     // Every script the check has an opinion on, plus the shapes that decide
     // whether a character counts as part of a word at all: a combining mark is
@@ -604,13 +618,10 @@ describe("applyTranscriptionEdits", () => {
     let compared = 0;
     for (const word of WORDS) {
       // Every span of the word, so every interior landing is covered.
-      for (let start = 0; start <= word.length; start += 1) {
-        for (let end = start; end <= word.length; end += 1) {
-          const find = word.slice(start, end);
-          for (const text of CONTEXTS(word)) {
-            compared += 1;
-            expectSameDecisionAsPatterns(text, find);
-          }
+      for (const find of wordSpans(word)) {
+        for (const text of CONTEXTS(word)) {
+          compared += 1;
+          expectSameDecisionAsPatterns(text, find);
         }
       }
     }
@@ -645,18 +656,21 @@ describe("applyTranscriptionEdits", () => {
     for (const word of WORDS) {
       for (const before of EDGES) {
         for (const after of EDGES) {
-          for (let start = 0; start <= word.length; start += 1) {
-            for (let end = start; end <= word.length; end += 1) {
-              const find = `${before}${word.slice(start, end)}${after}`;
-              for (const text of [`${word}`, `a ${word} a`]) {
-                compared += 1;
-                expectSameDecisionAsPatterns(text, find);
-              }
+          for (const span of wordSpans(word)) {
+            const find = `${before}${span}${after}`;
+            for (const text of [word, `a ${word} a`]) {
+              compared += 1;
+              expectSameDecisionAsPatterns(text, find);
             }
           }
         }
       }
     }
+    const spans = WORDS.reduce(
+      (total, word) => total + ((word.length + 1) * (word.length + 2)) / 2,
+      0,
+    );
+    expect(compared).toBe(spans * EDGES.length ** 2 * 2);
     expect(compared).toBeGreaterThan(1_000);
   });
 

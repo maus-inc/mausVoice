@@ -1,7 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getIntl } from "../i18n/intl";
-import { produceAppState } from "../store";
+import { produceAppState, useAppStore } from "../store";
+import { captureUserSession } from "../utils/user-session.utils";
 import { reviewTextInComposer } from "../utils/composer.utils";
 import { isNativePillAvailable } from "../utils/native-pill.utils";
 import { createId } from "../utils/id.utils";
@@ -17,9 +18,9 @@ import { runToast, showToast } from "./toast.actions";
  * transcript at a time, so concurrent ones queue here and are presented in
  * arrival order; the queue never drops one silently.
  */
-export type PillReviewAction = "insert" | "copy" | "cancel" | "edit" | "open";
+type PillReviewAction = "insert" | "copy" | "cancel" | "edit" | "open";
 
-export type PendingPillReview = {
+type PendingPillReview = {
   id: string;
   text: string;
 };
@@ -62,6 +63,7 @@ type QueuedReview = {
   resolve: (text: string | null) => void;
   /** Set while a decision runs, so a second click cannot start it twice. */
   busy: boolean;
+  signal?: AbortSignal;
 };
 
 type ReviewAnswer = {
@@ -71,8 +73,15 @@ type ReviewAnswer = {
 
 /** Decided sessions stay readable for history and reopen; the live queue is separate. */
 const sessions = new Map<string, ReviewSession>();
+const sessionOwners = new Map<string, () => boolean>();
+const retiredSessionIds = new Set<string>();
+let stopWatchingSessionOwners: (() => void) | null = null;
 const queue: QueuedReview[] = [];
 const pendingRegistrations = new Map<string, () => void>();
+// Includes composer handoffs, whose windows also need to close on cancellation.
+const reviewAborters = new Map<string, AbortController>();
+// Covers requests still waiting for native-pill availability, before they have an ID.
+const reviewRequests = new Set<AbortController>();
 let reviewGeneration = 0;
 let listenerGeneration = 0;
 const MAX_RETAINED_SESSIONS = 20;
@@ -86,8 +95,45 @@ const touchSession = (
     return null;
   }
   const next = { ...session, ...patch, updatedAt: Date.now() };
+  if (retiredSessionIds.has(id)) {
+    next.originalText = "";
+    next.draftText = null;
+  }
   sessions.set(id, next);
   return next;
+};
+
+/**
+ * Drop every review whose owning auth session is gone, including its queued
+ * copy and its dictated text, and stop watching once nothing is left.
+ */
+const retireStaleSessionOwners = (): void => {
+  for (const [id, isCurrent] of sessionOwners) {
+    if (isCurrent()) continue;
+    retiredSessionIds.add(id);
+    const cleared = touchSession(id, { originalText: "", draftText: null });
+    const queued = queue.find((entry) => entry.session.id === id);
+    if (queued && cleared) queued.session = cleared;
+    sessionOwners.delete(id);
+  }
+  if (sessionOwners.size === 0) {
+    stopWatchingSessionOwners?.();
+    stopWatchingSessionOwners = null;
+  }
+};
+
+const rememberSession = (session: ReviewSession): void => {
+  sessions.set(session.id, session);
+  sessionOwners.set(session.id, captureUserSession());
+  if (stopWatchingSessionOwners) return;
+  stopWatchingSessionOwners = useAppStore.subscribe((state, previous) => {
+    if (
+      state.auth?.uid === previous.auth?.uid &&
+      state.authSessionNonce === previous.authSessionNonce
+    )
+      return;
+    retireStaleSessionOwners();
+  });
 };
 
 const pruneSessions = (): void => {
@@ -100,6 +146,12 @@ const pruneSessions = (): void => {
     index += 1
   ) {
     sessions.delete(settled[index].id);
+    sessionOwners.delete(settled[index].id);
+    retiredSessionIds.delete(settled[index].id);
+  }
+  if (sessionOwners.size === 0) {
+    stopWatchingSessionOwners?.();
+    stopWatchingSessionOwners = null;
   }
 };
 
@@ -126,7 +178,7 @@ export const getQueuedSessions = (): ReviewSession[] =>
 /**
  * How long a card may sit unanswered on the pill. Same cap as the composer
  * window: an ignored review must not block the dictation output path forever.
- * The transcript stays in history, so nothing is lost when it expires.
+ * The stop path can attempt History storage after the review expires.
  */
 const REVIEW_TIMEOUT_MS = 5 * 60 * 1000;
 
@@ -188,6 +240,35 @@ const openNextReview = (): ReviewSession | null => {
 };
 
 /**
+ * Skip the insert for a review the user never answered. The head check makes a
+ * timer that fires after the queue moved harmless.
+ */
+const expireUnansweredReview = (id: string, queuedHead: QueuedReview): void => {
+  if (head() !== queuedHead) return;
+  touchSession(id, { status: "expired", decidedAt: Date.now() });
+  pruneSessions();
+  try {
+    getLogger().warning(
+      `Pill review ${id} went unanswered; skipping the insert`,
+    );
+    runToast(
+      showToast({
+        message: getIntl().formatMessage({
+          defaultMessage: "Review expired. The transcript was not inserted.",
+        }),
+        toastType: "info",
+        duration: 8000,
+        action: "open_transcriptions",
+      }),
+    );
+  } catch {
+    // Presentation must not strand an expired review or its stop pipeline.
+  }
+  // Notification can reenter teardown and replace the queue head.
+  if (head() === queuedHead) advanceQueue({ text: null });
+};
+
+/**
  * Move the queue on and show whatever is left at its head.
  *
  * `answer` finishes the review currently on the pill and is only passed by
@@ -210,7 +291,10 @@ const advanceQueue = (answer?: ReviewAnswer): void => {
   produceAppState((draft) => {
     draft.pendingPillReview =
       current?.presentation === "pill"
-        ? { id: current.id, text: current.draftText ?? current.originalText }
+        ? ({
+            id: current.id,
+            text: current.draftText ?? current.originalText,
+          } satisfies PendingPillReview)
         : null;
   });
   answered?.resolve(answer ? answer.text : null);
@@ -220,26 +304,12 @@ const advanceQueue = (answer?: ReviewAnswer): void => {
   // The composer owns its own readiness/decision timeout. Enqueuing another
   // transcript must not republish or expire a review handed to that surface.
   if (current.presentation === "composer") return;
+  const queuedHead = head();
+  if (!queuedHead || queuedHead.session.id !== current.id) return;
   const { id } = current;
   timeoutId = setTimeout(() => {
     timeoutId = null;
-    getLogger().warning(
-      `Pill review ${id} went unanswered; skipping the insert and keeping the transcript in history`,
-    );
-    touchSession(id, { status: "expired", decidedAt: Date.now() });
-    pruneSessions();
-    runToast(
-      showToast({
-        message: getIntl().formatMessage({
-          defaultMessage:
-            "Review expired — the transcript is kept in your history.",
-        }),
-        toastType: "info",
-        duration: 8000,
-        action: "open_transcriptions",
-      }),
-    );
-    advanceQueue({ text: null });
+    expireUnansweredReview(id, queuedHead);
   }, REVIEW_TIMEOUT_MS);
 };
 
@@ -278,34 +348,44 @@ const settle = (
   advanceQueue({ text, decision });
 };
 
-const copyReviewToClipboard = async (text: string): Promise<boolean> => {
+const copyReviewToClipboard = async (
+  text: string,
+  isCurrent: () => boolean,
+): Promise<boolean> => {
+  let copied = false;
   try {
     await invoke("copy_to_clipboard", { text });
-    runToast(
-      showToast({
-        message: getIntl().formatMessage({
-          defaultMessage: "Transcript copied to clipboard",
-        }),
-        toastType: "info",
-        duration: 3000,
-      }),
-    );
-    return true;
+    copied = true;
   } catch {
-    getLogger().error("Failed to copy the reviewed transcript");
-    runToast(
-      showToast({
-        message: getIntl().formatMessage({
-          defaultMessage:
-            "Could not copy the transcript. It is saved in your history.",
-        }),
-        toastType: "error",
-        duration: 8000,
-        action: "open_transcriptions",
-      }),
-    );
-    return false;
+    try {
+      if (isCurrent())
+        getLogger().error("Failed to copy the reviewed transcript");
+    } catch {
+      // Clipboard ownership does not depend on logging.
+    }
   }
+  try {
+    if (isCurrent()) {
+      runToast(
+        showToast({
+          message: copied
+            ? getIntl().formatMessage({
+                defaultMessage: "Transcript copied to clipboard",
+              })
+            : getIntl().formatMessage({
+                defaultMessage:
+                  "Could not copy the transcript. Please try again.",
+              }),
+          toastType: copied ? "info" : "error",
+          duration: copied ? 3000 : 8000,
+          isCurrent,
+        }),
+      );
+    }
+  } catch {
+    // A toast is cosmetic: the clipboard result must remain authoritative.
+  }
+  return copied;
 };
 
 const reviewInComposer = async (
@@ -318,8 +398,11 @@ const reviewInComposer = async (
     touchSession(id, { presentation: "composer" }) ?? current.session;
   advanceQueue();
   try {
-    const composed = await reviewTextInComposer(text, { originalText });
-    settle(id, composed, action);
+    const composed = await reviewTextInComposer(text, {
+      originalText,
+      signal: current.signal,
+    });
+    if (head() === current) settle(id, composed, action);
   } catch (error) {
     // Restore only this still-owned head, never a newer review after teardown.
     if (head() === current) {
@@ -356,7 +439,10 @@ const applyDecision = async (
   updateReviewDraft(current, editedText);
 
   try {
-    if (action === "copy" && !(await copyReviewToClipboard(text))) {
+    if (
+      action === "copy" &&
+      !(await copyReviewToClipboard(text, () => head() === current))
+    ) {
       if (head() === current) advanceQueue();
       return;
     }
@@ -443,26 +529,52 @@ const markSessionCancelled = (id: string): void => {
   }
 };
 
+const cancelReview = (id: string): void => {
+  if (sessions.has(id)) retiredSessionIds.add(id);
+  markSessionCancelled(id);
+  // A retired account must not leave its dictated text in the review registry.
+  touchSession(id, { originalText: "", draftText: null });
+  pendingRegistrations.get(id)?.();
+  const index = queue.findIndex((entry) => entry.session.id === id);
+  if (index === 0) {
+    advanceQueue({ text: null });
+  } else if (index > 0) {
+    const [cancelled] = queue.splice(index, 1);
+    cancelled.resolve(null);
+    queue.forEach((entry, position) => {
+      const updated = touchSession(entry.session.id, {
+        queuePosition: position,
+      });
+      if (updated) entry.session = updated;
+    });
+    pruneSessions();
+  }
+};
+
 const cancelUnpublishedReview = (id: string): null => {
   markSessionCancelled(id);
   pruneSessions();
   return null;
 };
 
-/**
- * Show `text` on the pill for review and resolve with the text to insert, or
- * null when the user cancelled or copied. Edit waits for the composer result.
- * Reviews queue: a transcript that arrives while another is on the pill waits
- * its turn instead of replacing it.
- */
-export const reviewTranscriptOnPill = async (
+type OpenReview = {
+  id: string;
+  generation: number;
+  controller: AbortController;
+  onAbort: () => void;
+  onExternalAbort: () => void;
+};
+
+/** Register the review and wire both abort paths before anything is shown. */
+const openReviewSession = (
   text: string,
-  source: ReviewSource = "dictation",
-): Promise<string | null> => {
+  source: ReviewSource,
+  signal: AbortSignal | undefined,
+): OpenReview => {
   const generation = reviewGeneration;
   const id = createId();
   const now = Date.now();
-  sessions.set(id, {
+  rememberSession({
     id,
     originalText: text,
     draftText: null,
@@ -475,42 +587,111 @@ export const reviewTranscriptOnPill = async (
     updatedAt: now,
     decidedAt: null,
   });
+  const controller = new AbortController();
+  reviewAborters.set(id, controller);
+  const onAbort = () => cancelReview(id);
+  const onExternalAbort = () => controller.abort();
+  controller.signal.addEventListener("abort", onAbort, { once: true });
+  signal?.addEventListener("abort", onExternalAbort, { once: true });
+  if (signal?.aborted) controller.abort();
+  return { id, generation, controller, onAbort, onExternalAbort };
+};
+
+/** True once either the module generation or the caller's signal retired it. */
+const isReviewRetired = (
+  generation: number,
+  controller: AbortController,
+): boolean => generation !== reviewGeneration || controller.signal.aborted;
+
+/**
+ * Without a listener the user could never answer, so fall back to the composer
+ * window rather than queueing a review nobody can resolve.
+ */
+const reviewInComposerAfterListenerFailure = async (
+  review: OpenReview,
+  text: string,
+): Promise<string | null> => {
+  if (isReviewRetired(review.generation, review.controller))
+    return cancelUnpublishedReview(review.id);
+  getLogger().error(
+    "Could not listen for pill review decisions; reviewing in the composer instead",
+  );
+  touchSession(review.id, {
+    status: "failed",
+    presentation: "composer",
+    decidedAt: Date.now(),
+  });
+  const result = await reviewTextInComposer(text, {
+    signal: review.controller.signal,
+  });
+  if (isReviewRetired(review.generation, review.controller))
+    return cancelUnpublishedReview(review.id);
+  return decideSession(review.id, result);
+};
+
+/**
+ * Wait for the pill decision. A session that vanished between registration and
+ * publish goes to the composer, which can still show the text.
+ */
+const awaitReviewDecision = async (
+  review: OpenReview,
+  text: string,
+): Promise<string | null> => {
+  const session = sessions.get(review.id);
+  if (!session) {
+    const result = await reviewTextInComposer(text, {
+      signal: review.controller.signal,
+    });
+    return isReviewRetired(review.generation, review.controller)
+      ? null
+      : result;
+  }
+  const decision = new Promise<string | null>((resolve) => {
+    queue.push({
+      session,
+      resolve,
+      busy: false,
+      signal: review.controller.signal,
+    });
+  });
+  advanceQueue();
+  return await decision;
+};
+
+/**
+ * Show `text` on the pill for review and resolve with the text to insert, or
+ * null when the user cancelled or copied. Edit waits for the composer result.
+ * Reviews queue: a transcript that arrives while another is on the pill waits
+ * its turn instead of replacing it.
+ */
+export const reviewTranscriptOnPill = async (
+  text: string,
+  source: ReviewSource = "dictation",
+  signal?: AbortSignal,
+): Promise<string | null> => {
+  if (signal?.aborted) return null;
+  const review = openReviewSession(text, source, signal);
+  const { id, controller, onAbort, onExternalAbort } = review;
 
   try {
+    if (controller.signal.aborted) return cancelUnpublishedReview(id);
     // Listen before the card is published, so a very fast click cannot land
-    // before we can hear it. Without a listener the user could never answer, so
-    // a failure here falls back to the composer window rather than queueing a
-    // review nobody can resolve.
+    // before we can hear it.
     let listening: boolean;
     try {
       listening = await waitForDecisionListener(id);
     } catch {
-      if (generation !== reviewGeneration) return cancelUnpublishedReview(id);
-      getLogger().error(
-        "Could not listen for pill review decisions; reviewing in the composer instead",
-      );
-      touchSession(id, {
-        status: "failed",
-        presentation: "composer",
-        decidedAt: Date.now(),
-      });
-      return decideSession(id, await reviewTextInComposer(text));
+      return await reviewInComposerAfterListenerFailure(review, text);
     }
 
-    if (!listening || generation !== reviewGeneration)
+    if (!listening || isReviewRetired(review.generation, controller))
       return cancelUnpublishedReview(id);
 
-    const session = sessions.get(id);
-    if (!session) {
-      return reviewTextInComposer(text);
-    }
-    const decision = new Promise<string | null>((resolve) => {
-      queue.push({ session, resolve, busy: false });
-    });
-    advanceQueue();
-
-    return decision;
+    return await awaitReviewDecision(review, text);
   } finally {
+    signal?.removeEventListener("abort", onExternalAbort);
+    controller.signal.removeEventListener("abort", onAbort);
+    reviewAborters.delete(id);
     pendingRegistrations.delete(id);
     stopUnusedListener();
   }
@@ -518,23 +699,29 @@ export const reviewTranscriptOnPill = async (
 
 /** Cancel every queued review, e.g. when the window is tearing down. */
 export const cancelAllPillReviews = (): void => {
+  const aborters = [...reviewAborters];
+  const requests = [...reviewRequests];
+  const registrations = [...pendingRegistrations];
+  const queued = [...queue];
   reviewGeneration += 1;
-  for (const [id, cancel] of pendingRegistrations) {
+  for (const request of requests) request.abort();
+  for (const [id, controller] of aborters) {
+    if (sessions.has(id)) retiredSessionIds.add(id);
     markSessionCancelled(id);
+    touchSession(id, { originalText: "", draftText: null });
+    controller.abort();
+  }
+  for (const [id, cancel] of registrations) {
+    if (pendingRegistrations.get(id) !== cancel) continue;
+    markSessionCancelled(id);
+    pendingRegistrations.delete(id);
     cancel();
   }
-  pendingRegistrations.clear();
-  while (queue.length > 0) {
-    const pending = queue.shift();
-    if (pending) {
-      markSessionCancelled(pending.session.id);
-      pending.resolve(null);
-    }
+  for (const entry of queued) {
+    if (queue.includes(entry)) cancelReview(entry.session.id);
   }
   pruneSessions();
-  // Clears the pill, drops the timer and stops listening, since the queue is
-  // now empty.
-  advanceQueue();
+  stopUnusedListener();
 };
 
 /**
@@ -548,25 +735,78 @@ export const reviewTranscriptBeforeInsert = async (
   text: string,
   source: ReviewSource = "dictation",
 ): Promise<string | null> => {
-  if (await isNativePillAvailable()) {
-    return reviewTranscriptOnPill(text, source);
-  }
-  // No pill surface: the composer owns the review directly, but it still gets
-  // a session so history and audit see the same shape as a pill review.
-  const id = createId();
-  const now = Date.now();
-  sessions.set(id, {
-    id,
-    originalText: text,
-    draftText: null,
-    source,
-    presentation: "composer",
-    status: "open",
-    decision: null,
-    queuePosition: 0,
-    createdAt: now,
-    updatedAt: now,
-    decidedAt: null,
+  const isCurrent = captureUserSession();
+  const controller = new AbortController();
+  reviewRequests.add(controller);
+  let retirementScheduled = false;
+  const unsubscribe = useAppStore.subscribe(() => {
+    if (!isCurrent() && !retirementScheduled) {
+      retirementScheduled = true;
+      // Store subscribers run during publication. Retire only this review on
+      // the next microtask, without re-entering the store or cancelling a new
+      // account's review.
+      queueMicrotask(() => {
+        retirementScheduled = false;
+        if (!isCurrent()) controller.abort();
+      });
+    }
   });
-  return decideSession(id, await reviewTextInComposer(text));
+  let resolveAbort!: (value: false) => void;
+  const aborted = new Promise<false>((resolve) => {
+    resolveAbort = resolve;
+  });
+  const onAbort = () => resolveAbort(false);
+  controller.signal.addEventListener("abort", onAbort, { once: true });
+  try {
+    if (!isCurrent()) return null;
+    const nativeAvailable = await Promise.race([
+      isNativePillAvailable(),
+      aborted,
+    ]);
+    if (!isCurrent() || controller.signal.aborted) return null;
+    if (nativeAvailable) {
+      const result = await reviewTranscriptOnPill(
+        text,
+        source,
+        controller.signal,
+      );
+      return isCurrent() ? result : null;
+    }
+    // No pill surface: the composer owns the review directly, but it still
+    // gets a session so audit sees the same shape as a pill review.
+    const id = createId();
+    const now = Date.now();
+    rememberSession({
+      id,
+      originalText: text,
+      draftText: null,
+      source,
+      presentation: "composer",
+      status: "open",
+      decision: null,
+      queuePosition: 0,
+      createdAt: now,
+      updatedAt: now,
+      decidedAt: null,
+    });
+    reviewAborters.set(id, controller);
+    try {
+      const result = await reviewTextInComposer(text, {
+        signal: controller.signal,
+      });
+      if (!isCurrent() || controller.signal.aborted) {
+        markSessionCancelled(id);
+        touchSession(id, { originalText: "", draftText: null });
+        pruneSessions();
+        return null;
+      }
+      return decideSession(id, result);
+    } finally {
+      reviewAborters.delete(id);
+    }
+  } finally {
+    reviewRequests.delete(controller);
+    controller.signal.removeEventListener("abort", onAbort);
+    unsubscribe();
+  }
 };

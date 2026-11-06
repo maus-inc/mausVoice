@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type DependencyList } from "react";
+import { useEffect, useMemo, useState, type DependencyList } from "react";
 import type { Observable, Subscription } from "rxjs";
 
 export type SuccessStreamResult<R> = {
@@ -18,45 +18,57 @@ export type LoadingStreamResult = {
 export type StreamResult<R> =
   SuccessStreamResult<R> | ErrorStreamResult | LoadingStreamResult;
 
-export function useStream<R>(
-  builder: () => Promise<Observable<R>> | Observable<R>,
-  dependencies?: DependencyList,
-): StreamResult<R> {
-  const [result, setResult] = useState<StreamResult<R>>({
-    status: "loading",
-  });
+const LOADING: LoadingStreamResult = { status: "loading" };
 
-  const subscriptionRef = useRef<Subscription | null>(null);
+function useStream<R>(
+  builder: () => Promise<Observable<R>> | Observable<R>,
+  dependencies: DependencyList,
+): StreamResult<R> {
+  // Tag every result with the dependency generation that produced it. An old
+  // emission can already be queued when React renders the next owner, before
+  // the old passive effect has had a chance to unsubscribe.
+  const owner = useMemo(() => ({}), dependencies);
+  const [result, setResult] = useState<{
+    owner: object;
+    value: StreamResult<R>;
+  }>({ owner, value: LOADING });
 
   useEffect(() => {
     let subscription: Subscription | null = null;
+    let cancelled = false;
 
     async function setupStream() {
       try {
         const stream$ = await builder();
+        if (cancelled) return;
         subscription = stream$.subscribe(
-          (data) => setResult({ status: "success", data }),
-          (error) => setResult({ status: "error", error }),
+          (data) => {
+            if (!cancelled)
+              setResult({ owner, value: { status: "success", data } });
+          },
+          (error) => {
+            if (!cancelled)
+              setResult({ owner, value: { status: "error", error } });
+          },
         );
-        subscriptionRef.current = subscription;
       } catch (error) {
-        setResult({ status: "error", error });
+        if (!cancelled) setResult({ owner, value: { status: "error", error } });
       }
     }
 
-    setupStream();
-
+    void setupStream();
     return () => {
+      cancelled = true;
       subscription?.unsubscribe();
     };
-  }, dependencies);
+  }, [owner]);
 
-  return result;
+  return result.owner === owner ? result.value : LOADING;
 }
 
 export function useStreamWithSideEffects<R>(args: {
   builder: () => Promise<Observable<R>> | Observable<R>;
-  dependencies?: DependencyList;
+  dependencies: DependencyList;
   onInit?: () => void;
   onSuccess?: (data: R) => void;
   onError?: (error: unknown) => void;

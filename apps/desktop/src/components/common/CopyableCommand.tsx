@@ -12,10 +12,6 @@ import { useIntl } from "react-intl";
 import { showErrorSnackbar } from "../../actions/app.actions";
 import { springPop } from "../../styles/motion";
 
-type CopyableCommandProps = {
-  command: string;
-};
-
 const BoxMotion = ({
   children,
   reduceMotion,
@@ -91,7 +87,7 @@ const useCopyFeedback = (command: string) => {
   return { copied, copying, handleCopy, label };
 };
 
-export const CopyableCommand = ({ command }: CopyableCommandProps) => {
+export const CopyableCommand = ({ command }: { command: string }) => {
   const { copied, copying, handleCopy, label } = useCopyFeedback(command);
   const reduceMotion = useReducedMotion();
 

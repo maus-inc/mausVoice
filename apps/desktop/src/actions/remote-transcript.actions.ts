@@ -21,13 +21,15 @@ const storeRemoteTranscription = async ({
   senderDeviceId,
   rawTranscript,
   transcript,
+  isCurrent,
 }: {
   senderDeviceId: string;
   rawTranscript: string;
   transcript: string;
+  isCurrent: () => boolean;
 }): Promise<void> => {
   const state = getAppState();
-  if (!isPersistenceAllowed()) {
+  if (!isCurrent() || !isPersistenceAllowed()) {
     return;
   }
 
@@ -57,6 +59,7 @@ const storeRemoteTranscription = async ({
 
   const stored =
     await getTranscriptionRepo().createTranscription(transcription);
+  if (!isCurrent()) return;
   produceAppState((draft) => {
     draft.transcriptionById[stored.id] = stored;
     draft.transcriptions.transcriptionIds = [
@@ -68,21 +71,29 @@ const storeRemoteTranscription = async ({
 
 export const handleRemoteFinalTextReceived = async (
   payload: RemoteFinalTextReceivedPayload,
+  isCurrent: () => boolean = () => true,
 ): Promise<void> => {
   const finalText = payload.text.trim();
-  if (!finalText) {
+  if (!finalText || !isCurrent()) {
     return;
   }
 
   await new Promise<void>((resolve) => setTimeout(resolve, 20));
+  if (!isCurrent()) return;
   await insertLocalTranscriptOutputViaPaste(`${finalText} `, null);
+  // Insertion may already be in flight when ownership changes. Do not then
+  // attach the old transcript or its success notification to the new account.
+  if (!isCurrent()) return;
   await storeRemoteTranscription({
     senderDeviceId: payload.senderDeviceId,
     rawTranscript: finalText,
     transcript: finalText,
+    isCurrent,
   }).catch((error) => {
     getLogger().warning(`Failed to store remote transcript: ${error}`);
   });
 
-  showSnackbar("Remote transcript inserted.", { mode: "success" });
+  if (isCurrent()) {
+    showSnackbar("Remote transcript inserted.", { mode: "success" });
+  }
 };

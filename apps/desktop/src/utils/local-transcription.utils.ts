@@ -22,7 +22,7 @@ export type LocalModelOption = {
   category: LocalModelCategory;
 };
 
-export const DEFAULT_LOCAL_WHISPER_MODEL: LocalWhisperModel = "tiny";
+const DEFAULT_LOCAL_WHISPER_MODEL: LocalWhisperModel = "tiny";
 
 export const LOCAL_WHISPER_MODELS: LocalWhisperModel[] = [
   "parakeet-ctc-0.6b",

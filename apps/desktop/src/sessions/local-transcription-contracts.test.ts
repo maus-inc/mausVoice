@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   getModelStatus: vi.fn(),
   downloadModel: vi.fn(),
   unlisten: vi.fn(),
+  warning: vi.fn(),
 }));
 vi.mock("../sidecars", () => ({
   getLocalTranscriptionSidecarManager: () => mocks,
@@ -32,7 +33,7 @@ vi.mock("../utils/prompt.utils", () => ({
   buildLocalizedTranscriptionPrompt: () => "",
 }));
 vi.mock("../utils/log.utils", () => ({
-  getLogger: () => ({ info: vi.fn(), warning: vi.fn(), error: vi.fn() }),
+  getLogger: () => ({ info: vi.fn(), warning: mocks.warning, error: vi.fn() }),
 }));
 
 const samples = new Float32Array(16000).fill(0.1);
@@ -106,6 +107,21 @@ describe("local batch transcription contracts", () => {
 });
 
 describe("local filter ownership", () => {
+  it("does not transcribe a partial recording after capture failure", async () => {
+    const session = new LocalTranscriptionSession();
+    await session.onRecordingStart(16000);
+    const result = await session.finalize({
+      samples,
+      sampleRate: 16000,
+      captureFailed: true,
+    });
+    expect(result.rawTranscript).toBeNull();
+    expect(result.warnings).toContain(
+      "Audio capture stopped unexpectedly; recording may be incomplete",
+    );
+    expect(mocks.transcribeAudio).not.toHaveBeenCalled();
+    expect(mocks.unlisten).toHaveBeenCalledOnce();
+  });
   it.each([false, true])(
     "keeps a recording's disabled filter when the later preference is %s",
     async (later) => {
@@ -133,7 +149,7 @@ describe("local filter ownership", () => {
   });
   it("transcribes the whole recording when the model cannot be prepared", async () => {
     mocks.getModelStatus.mockRejectedValueOnce(
-      new Error("sidecar unreachable"),
+      new Error("private sidecar path and secret details"),
     );
     const session = new LocalTranscriptionSession();
     await session.onRecordingStart(16000);
@@ -143,6 +159,10 @@ describe("local filter ownership", () => {
       expect.stringContaining("Local pretranscription unavailable"),
     ]);
     expect(mocks.transcribeAudio).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(output.warnings)).not.toContain("private sidecar");
+    expect(JSON.stringify(mocks.warning.mock.calls)).not.toContain(
+      "private sidecar",
+    );
   });
 });
 

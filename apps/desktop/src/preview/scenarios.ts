@@ -15,7 +15,7 @@ import { createDefaultPreferences } from "../actions/user.actions";
 import { getDefaultSystemTones } from "../utils/tone.utils";
 import { LOCAL_USER_ID } from "../utils/user.utils";
 
-export const PREVIEW_SCENARIOS = [
+const PREVIEW_SCENARIOS = [
   "populated",
   "empty",
   "welcome",
@@ -309,26 +309,26 @@ const previewChatMessages: ChatMessage[] = [
 
 const clone = <T>(value: T): T => structuredClone(value);
 
+/** Copy fixture records into the store without sharing mutable objects. */
+const indexClonedRecords = <T extends { id: string }>(
+  target: Record<string, T>,
+  records: readonly T[],
+): void => {
+  for (const record of records) target[record.id] = clone(record);
+};
+
 const setCollectionsOnState = (state: AppState, data: PreviewData): void => {
   if (data.user) {
     state.userById[data.user.id] = clone(data.user);
   }
-  for (const term of data.terms) state.termById[term.id] = clone(term);
-  for (const apiKey of data.apiKeys)
-    state.apiKeyById[apiKey.id] = clone(apiKey);
-  for (const tone of getDefaultSystemTones())
-    state.toneById[tone.id] = clone(tone);
-  for (const tone of data.customTones) state.toneById[tone.id] = clone(tone);
-  for (const hotkey of data.hotkeys)
-    state.hotkeyById[hotkey.id] = clone(hotkey);
-  for (const target of data.appTargets)
-    state.appTargetById[target.id] = clone(target);
-  for (const transcription of data.transcriptions) {
-    state.transcriptionById[transcription.id] = clone(transcription);
-  }
-  for (const conversation of data.conversations) {
-    state.conversationById[conversation.id] = clone(conversation);
-  }
+  indexClonedRecords(state.termById, data.terms);
+  indexClonedRecords(state.apiKeyById, data.apiKeys);
+  indexClonedRecords(state.toneById, getDefaultSystemTones());
+  indexClonedRecords(state.toneById, data.customTones);
+  indexClonedRecords(state.hotkeyById, data.hotkeys);
+  indexClonedRecords(state.appTargetById, data.appTargets);
+  indexClonedRecords(state.transcriptionById, data.transcriptions);
+  indexClonedRecords(state.conversationById, data.conversations);
   for (const message of data.chatMessages) {
     state.chatMessageById[message.id] = clone(message);
     const ids =

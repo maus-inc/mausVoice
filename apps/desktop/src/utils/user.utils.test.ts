@@ -5,6 +5,8 @@ import {
   getActiveDictationLanguage,
   getConfiguredDictationLanguageCodes,
   getMyDictationLanguage,
+  getGenerativePrefs,
+  getAgentModePrefs,
   getTranscriptionPrefs,
   LOCAL_USER_ID,
   setUserPreferences,
@@ -266,5 +268,86 @@ describe("setUserPreferences realtime/review exclusivity", () => {
     } as unknown as UserPreferences);
     expect(draft.userPrefs?.reviewBeforeInsert).toBe(true);
     expect(draft.settings.reviewBeforeInsert).toBe(true);
+  });
+});
+
+describe("generative preferences", () => {
+  const stateWith = (
+    provider: "groq" | "ollama" | "openai-compatible",
+    keyFull: string | null,
+  ): AppState => ({
+    ...INITIAL_APP_STATE,
+    settings: {
+      ...INITIAL_APP_STATE.settings,
+      aiPostProcessing: { mode: "api", selectedApiKeyId: "key" },
+      agentMode: {
+        ...INITIAL_APP_STATE.settings.agentMode,
+        mode: "api",
+        selectedApiKeyId: "key",
+      },
+    },
+    apiKeyById: {
+      key: {
+        id: "key",
+        name: "Example",
+        provider,
+        createdAt: "2024-01-01",
+        keyFull,
+        postProcessingModel: "model",
+      },
+    },
+  });
+
+  it("returns the configured provider, key and model", () => {
+    expect(getGenerativePrefs(stateWith("groq", "secret"))).toEqual({
+      mode: "api",
+      provider: "groq",
+      apiKeyId: "key",
+      apiKeyValue: "secret",
+      postProcessingModel: "model",
+      warnings: [],
+    });
+  });
+
+  it.each(["ollama", "openai-compatible"] as const)(
+    "allows keyless %s",
+    (provider) => {
+      expect(getGenerativePrefs(stateWith(provider, null))).toEqual({
+        mode: "api",
+        provider,
+        apiKeyId: "key",
+        apiKeyValue: "",
+        postProcessingModel: "model",
+        warnings: [],
+      });
+    },
+  );
+
+  it("warns with the caller's context when a required key is missing", () => {
+    const state = stateWith("groq", "");
+    expect(getGenerativePrefs(state)).toEqual({
+      mode: "none",
+      warnings: ["No API key configured for API post-processing."],
+    });
+    expect(getAgentModePrefs(state)).toEqual({
+      mode: "none",
+      warnings: ["No API key configured for API agent mode."],
+    });
+    state.apiKeyById = {};
+    expect(getAgentModePrefs(state)).toEqual({
+      mode: "none",
+      warnings: ["No API key configured for API agent mode."],
+    });
+  });
+
+  it("does not warn when API mode is not selected", () => {
+    expect(getGenerativePrefs(INITIAL_APP_STATE)).toEqual({
+      mode: "none",
+      warnings: [],
+    });
+    expect(getAgentModePrefs(INITIAL_APP_STATE)).toEqual({
+      mode: "none",
+      warnings: [],
+    });
   });
 });
