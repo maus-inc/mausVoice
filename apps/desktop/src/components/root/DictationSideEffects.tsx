@@ -133,7 +133,6 @@ import {
 } from "../../utils/pipeline-trace";
 import { resolvePillBodyClickIntent } from "../../utils/pill-click.utils";
 import { resolvePillWindowSize } from "../../utils/pill-window-size.utils";
-import { invokeStopRecording } from "../../utils/native-recording-session";
 import {
   getActiveManualToneIds,
   getManuallySelectedToneId,
@@ -156,6 +155,7 @@ import { surfaceMainWindow } from "../../utils/window.utils";
 import { resetHotkeyFilter } from "../../utils/hotkey-filter.utils";
 import {
   discardNativeRecording,
+  invokeStopRecording,
   pauseNativeRecording,
   resumeNativeRecording,
 } from "../../utils/native-recording-session";

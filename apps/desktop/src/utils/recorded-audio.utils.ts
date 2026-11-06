@@ -7,8 +7,8 @@ const HEADER_BYTES = 4;
  * through and the samples are what was recorded before it did. Native sets it
  * in `encode_recording_result`; the rate itself never reaches this bit.
  */
-const CAPTURE_FAILED_FLAG = 0x8000_0000;
-const SAMPLE_RATE_MASK = 0x7fff_ffff;
+const CAPTURE_FAILED_FLAG = 0x80000000;
+const SAMPLE_RATE_MASK = 0x7fffffff;
 
 const readCaptureFailed = (value: unknown): boolean =>
   value === true ||
