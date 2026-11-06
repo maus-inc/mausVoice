@@ -435,6 +435,29 @@ describe("browser preview transport", () => {
     );
   });
 
+  // The composer's browser fallback claims the recorder's one slot before it
+  // starts the webview's own speech recognition. The preview has no native
+  // recorder, so both halves of that claim have to answer instead of throwing.
+  it("answers the browser-recording claim the composer makes", async () => {
+    await expect(
+      invokePreviewCommand("recording_generation", {
+        ownerId: "preview-owner",
+      }),
+    ).resolves.toBe(1);
+    await expect(
+      invokePreviewCommand("claim_browser_recording", {
+        ownerId: "preview-owner",
+        generation: 1,
+      }),
+    ).resolves.toBeUndefined();
+    await expect(
+      invokePreviewCommand("release_browser_recording", {
+        ownerId: "preview-owner",
+        generation: 1,
+      }),
+    ).resolves.toBeUndefined();
+  });
+
   // The settings page drives stop_key_listener, stop_recording and
   // clear_local_data, then reloads. Without a handler the wipe rejected and the
   // dialog reported an error, so "Clear local data" could not be exercised in
