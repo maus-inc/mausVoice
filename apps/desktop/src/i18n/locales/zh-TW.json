@@ -218,7 +218,7 @@
   "could_not_reach_the_release_history": "無法存取版本記錄。",
   "could_not_resume_dictation": "無法繼續口述",
   "could_not_save_app_settings_please_try_again": "無法儲存應用程式設定。請再試一次。",
-  "could_not_save_that_dictation_to_history_because_earlier_rec": "Could not save that dictation to History because earlier recordings are still writing.",
+  "could_not_save_that_dictation_to_history_because_earlier_rec": "無法將該段聽寫存到歷程記錄，因為較早的錄音仍在寫入。",
   "could_not_save_the_api_key": "無法儲存 API 金鑰。",
   "could_not_save_the_edited_transcript_it_remains_on_the_pill": "無法儲存已編輯的轉錄內容。內容會保留在膠囊視窗中，方便您重試。",
   "could_not_save_your_profile_please_try_again": "無法儲存您的個人資料。請再試一次。",

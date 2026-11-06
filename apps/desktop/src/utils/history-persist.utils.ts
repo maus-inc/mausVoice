@@ -54,7 +54,9 @@ export const enqueueHistoryPersist = <T>(
       `History persist queue full (${queueDepth}): ${context}`,
     );
     getLogger().warning(error.message);
-    throw error;
+    // Reject, do not throw: persistTranscriptNow is chained with .catch in the
+    // strategy. A sync throw skips delivery for a take that only failed to save.
+    return Promise.reject(error);
   }
   queueDepth += 1;
   if (queueDepth > 1) {

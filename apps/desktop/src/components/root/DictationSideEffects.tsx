@@ -234,24 +234,28 @@ const enqueueTranscriptionHistory = (
   const createdAt = input.createdAt ?? dayjs().toISOString();
   const persistAllowedAtCapture =
     input.persistAllowedAtCapture ?? isPersistenceAllowed();
-  return enqueueHistoryPersist(async () => {
-    // Do not race this store with a timeout. persistTail must wait until the
-    // native WAV write settles, or the next job overlaps store_transcription_audio.
-    const stored = await store({
-      ...input,
-      audio,
-      createdAt,
-      persistAllowedAtCapture,
-    });
-    try {
-      options?.onStored?.(stored);
-    } catch (error) {
-      getLogger().warning(
-        `History persist callback failed after a durable write: ${error}`,
-      );
-    }
-    return stored;
-  }, context);
+  return enqueueHistoryPersist(
+    async () => {
+      // Do not race this store with a timeout. persistTail must wait until the
+      // native WAV write settles, or the next job overlaps store_transcription_audio.
+      const stored = await store({
+        ...input,
+        audio,
+        createdAt,
+        persistAllowedAtCapture,
+      });
+      try {
+        options?.onStored?.(stored);
+      } catch (error) {
+        getLogger().warning(
+          `History persist callback failed after a durable write: ${error}`,
+        );
+      }
+      return stored;
+    },
+    context,
+    { awaited: true },
+  );
 };
 
 const fireAndForgetToast = (
@@ -692,23 +696,38 @@ const scheduleStopPathHistory = ({
     return;
   }
 
-  const wantsStopPathStore =
-    strategy.shouldStoreTranscript() &&
-    owner === "stop-path" &&
-    persistAllowedAtStop;
-  if (wantsStopPathStore && !isHistoryPersistQueueFull()) {
-    enqueueStopPathHistory(ctx, {
-      transcript,
-      sanitizedTranscript,
-      postProcessMetadata,
-      postProcessWarnings,
-      remoteStatus,
-      remoteDeviceId,
-    });
+  writeOrMissStopPathHistory(ctx, {
+    shouldStore:
+      strategy.shouldStoreTranscript() &&
+      owner === "stop-path" &&
+      persistAllowedAtStop,
+    transcript,
+    sanitizedTranscript,
+    postProcessMetadata,
+    postProcessWarnings,
+    remoteStatus,
+    remoteDeviceId,
+  });
+};
+
+const writeOrMissStopPathHistory = (
+  ctx: StopPathHistoryContext,
+  args: {
+    shouldStore: boolean;
+    transcript: HandleTranscriptResult["transcript"];
+    sanitizedTranscript: HandleTranscriptResult["sanitizedTranscript"];
+    postProcessMetadata: HandleTranscriptResult["postProcessMetadata"];
+    postProcessWarnings: HandleTranscriptResult["postProcessWarnings"];
+    remoteStatus: HandleTranscriptResult["remoteStatus"];
+    remoteDeviceId: HandleTranscriptResult["remoteDeviceId"];
+  },
+): void => {
+  if (args.shouldStore && !isHistoryPersistQueueFull()) {
+    enqueueStopPathHistory(ctx, args);
     return;
   }
-  if (wantsStopPathStore) {
-    notifyHistoryQueueFull(input.showToast);
+  if (args.shouldStore) {
+    notifyHistoryQueueFull(ctx.input.showToast);
   }
   onHistoryMissed(ctx);
 };

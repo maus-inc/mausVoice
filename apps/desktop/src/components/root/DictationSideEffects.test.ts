@@ -762,25 +762,6 @@ describe("postProcessFinalizedTranscript", () => {
     expect(storedAudio?.samples[0]).toBeCloseTo(0.25);
   });
 
-  it("returns faster than a delayed History write (measured)", async () => {
-    const { input, storeTranscriptionFn } = buildInput();
-    storeTranscriptionFn.mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          setTimeout(
-            () =>
-              resolve({ transcription: { id: "t1" } as never, wordCount: 0 }),
-            40,
-          );
-        }),
-    );
-    const started = Date.now();
-    await postProcessFinalizedTranscript(input);
-    const elapsed = Date.now() - started;
-    expect(elapsed).toBeLessThan(40);
-    await flushHistoryPersist();
-  });
-
   it("returns to idle without waiting for history persistence", async () => {
     // A pending WAV/DB write used to keep this function (and therefore the
     // stop path's `isStopping` lock and transcribing pill) alive until History

@@ -218,7 +218,7 @@
   "could_not_reach_the_release_history": "Não foi possível acessar o histórico de versões.",
   "could_not_resume_dictation": "Não foi possível retomar a ditado",
   "could_not_save_app_settings_please_try_again": "Não foi possível salvar as configurações do aplicativo. Tente novamente.",
-  "could_not_save_that_dictation_to_history_because_earlier_rec": "Could not save that dictation to History because earlier recordings are still writing.",
+  "could_not_save_that_dictation_to_history_because_earlier_rec": "Não foi possível salvar essa ditação no histórico porque gravações anteriores ainda estão sendo gravadas.",
   "could_not_save_the_api_key": "Não foi possível salvar a chave de API.",
   "could_not_save_the_edited_transcript_it_remains_on_the_pill": "Não foi possível salvar a transcrição editada. Ela permanece no indicador para você tentar novamente.",
   "could_not_save_your_profile_please_try_again": "Não foi possível salvar seu perfil. Tente novamente.",

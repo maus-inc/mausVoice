@@ -218,7 +218,7 @@
   "could_not_reach_the_release_history": "릴리스 기록에 연결할 수 없습니다.",
   "could_not_resume_dictation": "받아쓰기를 다시 시작할 수 없습니다",
   "could_not_save_app_settings_please_try_again": "앱 설정을 저장하지 못했습니다. 다시 시도해 주세요.",
-  "could_not_save_that_dictation_to_history_because_earlier_rec": "Could not save that dictation to History because earlier recordings are still writing.",
+  "could_not_save_that_dictation_to_history_because_earlier_rec": "이전 녹음이 아직 저장 중이라 그 받아쓰기를 기록에 저장하지 못했습니다.",
   "could_not_save_the_api_key": "API 키를 저장하지 못했습니다.",
   "could_not_save_the_edited_transcript_it_remains_on_the_pill": "수정한 받아쓰기를 저장하지 못했습니다. 다시 시도할 수 있도록 알약 창에 그대로 유지됩니다.",
   "could_not_save_your_profile_please_try_again": "프로필을 저장하지 못했습니다. 다시 시도하세요.",

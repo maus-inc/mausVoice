@@ -218,7 +218,7 @@
   "could_not_reach_the_release_history": "Der Veröffentlichungsverlauf konnte nicht erreicht werden.",
   "could_not_resume_dictation": "Diktat konnte nicht fortgesetzt werden",
   "could_not_save_app_settings_please_try_again": "Die App-Einstellungen konnten nicht gespeichert werden. Bitte versuche es erneut.",
-  "could_not_save_that_dictation_to_history_because_earlier_rec": "Could not save that dictation to History because earlier recordings are still writing.",
+  "could_not_save_that_dictation_to_history_because_earlier_rec": "Diese Diktataufnahme konnte nicht in der Historie gespeichert werden, weil frühere Aufnahmen noch geschrieben werden.",
   "could_not_save_the_api_key": "Der API-Schlüssel konnte nicht gespeichert werden.",
   "could_not_save_the_edited_transcript_it_remains_on_the_pill": "Die bearbeitete Transkription konnte nicht gespeichert werden. Sie bleibt in der Pille, damit Sie es erneut versuchen können.",
   "could_not_save_your_profile_please_try_again": "Dein Profil konnte nicht gespeichert werden. Bitte versuche es erneut.",
