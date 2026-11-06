@@ -108,6 +108,13 @@ export type SettingsState = {
   openRouterSearchQuery: string;
   openRouterProviders: OpenRouterProvider[];
   openRouterProvidersStatus: ActionStatus;
+  /**
+   * Whether the backend reports a capture stream held right now.
+   *
+   * `null` until it has been read. The switch reflects the preference; this
+   * reflects the device, and the two disagree whenever an open failed.
+   */
+  microphoneHeld: boolean | null;
 };
 
 export const createEmptyLocalTranscriptionModelStatusMap =
@@ -198,4 +205,5 @@ export const INITIAL_SETTINGS_STATE: SettingsState = {
   openRouterSearchQuery: "",
   openRouterProviders: [],
   openRouterProvidersStatus: "idle",
+  microphoneHeld: null,
 };

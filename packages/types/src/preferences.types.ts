@@ -78,6 +78,20 @@ export type UserPreferences = {
   elevenLabsKeytermsEnabled: boolean;
   /** JSON object of expansion feature-name -> boolean flag. */
   expansionFlags: string;
+  /**
+   * Hold the microphone open between dictations.
+   *
+   * Opening a capture device is the delay between a press and the first captured
+   * sample, so a held device is what makes a press feel instant. The cost is the
+   * operating system's microphone-in-use indicator, which stays lit for as long
+   * as the device is held, so this is opt-in.
+   */
+  keepMicrophoneReady: boolean;
+  /**
+   * Seconds of audio from before the press to keep, so a word started early is
+   * not clipped. Bounded to the range the recorder accepts.
+   */
+  microphonePrerollSeconds: number;
 
   // deprecated
 };

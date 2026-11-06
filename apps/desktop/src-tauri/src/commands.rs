@@ -3468,6 +3468,137 @@ pub async fn start_recording(
     .await
 }
 
+/// The longest pre-roll the recorder accepts, in seconds.
+///
+/// The slider tops out here and the command layer clamps to it, so a stored or
+/// hand-edited value can never ask the ring for more audio than the setting is
+/// documented to keep. The frontend's copy of this cap is asserted against this
+/// line by a contract test, because two caps that drift make the slider lie.
+const MAX_PREROLL_SECONDS: f64 = 2.0;
+
+/// Clamps a requested pre-roll into the accepted window.
+///
+/// A missing, infinite or NaN value lands on zero rather than the default: this
+/// is the last stop before the device, and the caller has already applied its
+/// own default, so anything nonsense reaching here is better read as "keep
+/// nothing" than as "keep half a second the user did not ask for".
+fn preroll_duration(seconds: f64) -> std::time::Duration {
+    let clamped = if seconds.is_finite() {
+        seconds.clamp(0.0, MAX_PREROLL_SECONDS)
+    } else {
+        0.0
+    };
+    std::time::Duration::from_secs_f64(clamped)
+}
+
+/// Converts a hold policy in milliseconds into a duration.
+///
+/// The frontend sends `Number.MAX_SAFE_INTEGER` for "hold until released", and
+/// that has to become the sentinel the backend treats as no timer. Clamping it
+/// to a plausible window instead would make an always-ready microphone close
+/// itself after a fraction of a millisecond.
+fn linger_millis(linger_ms: f64) -> u64 {
+    // NaN is checked on its own: every comparison against it is false, so
+    // letting it through would fall to the final conversion, which saturates to
+    // zero and closes a device the caller asked to hold.
+    if linger_ms.is_nan() || linger_ms <= 0.0 {
+        // A hold of zero or less is still a hold: the caller only reaches this
+        // command when it wants the device open, so the smallest usable window
+        // is used rather than closing it immediately.
+        return 1;
+    }
+    // This covers an infinite request and the `Number.MAX_SAFE_INTEGER`
+    // sentinel in one test. Both mean "until released"; neither is a window.
+    if linger_ms >= 9.0e15 {
+        return u64::MAX;
+    }
+    linger_ms.round().min(u64::MAX as f64) as u64
+}
+
+/// One stage of a capture start, as the UI reads it.
+#[derive(Clone, Debug, serde::Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct CaptureStartupStage {
+    pub stage: String,
+    pub micros: u64,
+}
+
+/// Opens the microphone and holds it, without recording.
+///
+/// `prerollSeconds` is how much audio from before the press to keep, so a word
+/// that starts as the user presses is not clipped. Zero keeps the device ready
+/// without retaining audio.
+///
+/// `lingerMs` is how long the device stays open after a recording stops.
+/// `Number.MAX_SAFE_INTEGER` means "until the user releases it", which is what
+/// the keep-ready preference sends; anything smaller is a real window.
+#[tauri::command]
+#[specta::specta]
+pub fn warm_microphone(
+    warm: State<'_, Arc<dyn crate::platform::WarmCapture>>,
+    preroll_seconds: f64,
+    linger_ms: f64,
+) -> Result<(), String> {
+    // Stopping has to leave the stream open, otherwise this open is paid again
+    // on the very next press. A linger of MAX means "hold it until closed".
+    warm.set_linger(linger_millis(linger_ms));
+    let preroll = preroll_duration(preroll_seconds);
+    warm.set_preroll(preroll);
+    warm.warm_open(preroll)
+}
+
+/// Closes a microphone held open by [`warm_microphone`], and returns to opening
+/// the device on each press.
+#[tauri::command]
+#[specta::specta]
+pub fn close_microphone(warm: State<'_, Arc<dyn crate::platform::WarmCapture>>) {
+    warm.set_linger(0);
+    warm.warm_close();
+}
+
+/// Whether a capture stream is held open right now.
+#[tauri::command]
+#[specta::specta]
+pub fn microphone_ready(warm: State<'_, Arc<dyn crate::platform::WarmCapture>>) -> bool {
+    warm.is_ready()
+}
+
+/// Resolves the device a press would use, without opening a capture stream.
+///
+/// Returns the device label it settled on, which the next start then tries
+/// first. No microphone indicator appears, because nothing is capturing.
+#[tauri::command]
+#[specta::specta]
+pub fn prepare_microphone(
+    warm: State<'_, Arc<dyn crate::platform::WarmCapture>>,
+) -> Result<String, String> {
+    warm.prepare()
+}
+
+/// One readable line describing the capture path: whether a stream is held, the
+/// linger policy, the pre-roll length, and whether the last start reused a
+/// stream or opened a device.
+#[tauri::command]
+#[specta::specta]
+pub fn microphone_readiness_report(
+    warm: State<'_, Arc<dyn crate::platform::WarmCapture>>,
+) -> String {
+    warm.status_line()
+}
+
+/// The stage timing of the most recent capture start, oldest stage first.
+#[tauri::command]
+#[specta::specta]
+pub fn capture_startup_timing(
+    warm: State<'_, Arc<dyn crate::platform::WarmCapture>>,
+) -> Vec<CaptureStartupStage> {
+    warm.last_startup()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(stage, micros)| CaptureStartupStage { stage, micros })
+        .collect()
+}
+
 /// Raw-body command, so it is registered in `app.rs` but kept out of the
 /// Specta bindings (Specta cannot describe `ipc::Response`). The frontend
 /// decodes it with `decodeStopRecordingPayload`.
@@ -6592,6 +6723,64 @@ mod tests {
 
     static PRIVATE_HTTP_CANCELLATION_TEST_LOCK: once_cell::sync::Lazy<tokio::sync::Mutex<()>> =
         once_cell::sync::Lazy::new(|| tokio::sync::Mutex::new(()));
+
+    /// The pre-roll the command layer hands the recorder.
+    ///
+    /// Two caps exist, one here and one in the slider, and a contract test
+    /// asserts they match. What this pins is the behaviour at the edges: a
+    /// stored value from before the setting existed, a hand-edited database
+    /// row, and a NaN all have to reach the device as something sane.
+    #[test]
+    fn pre_roll_seconds_are_clamped_to_the_accepted_window() {
+        assert_eq!(
+            super::preroll_duration(0.5),
+            std::time::Duration::from_millis(500)
+        );
+        assert_eq!(
+            super::preroll_duration(2.0),
+            std::time::Duration::from_secs(2)
+        );
+        // Above the cap the slider cannot go, so a larger stored value is
+        // reduced rather than passed through to a ring that would hold more
+        // audio than the setting promises.
+        assert_eq!(
+            super::preroll_duration(30.0),
+            std::time::Duration::from_secs(2)
+        );
+        assert_eq!(super::preroll_duration(-1.0), std::time::Duration::ZERO);
+        assert_eq!(super::preroll_duration(0.0), std::time::Duration::ZERO);
+        assert_eq!(super::preroll_duration(f64::NAN), std::time::Duration::ZERO);
+        assert_eq!(
+            super::preroll_duration(f64::INFINITY),
+            std::time::Duration::ZERO
+        );
+    }
+
+    /// A hold policy that arrives as a number has to become the sentinel the
+    /// backend treats as "no timer".
+    ///
+    /// The frontend sends `Number.MAX_SAFE_INTEGER` for "hold until released".
+    /// Treating that as a window would close an always-ready microphone after a
+    /// fraction of a millisecond, which is the failure mode where the preference
+    /// looks on and the device is shut.
+    #[test]
+    fn linger_millis_keeps_a_usable_window_and_reads_the_sentinel() {
+        assert_eq!(super::linger_millis(5_000.0), 5_000);
+        assert_eq!(super::linger_millis(1.0), 1);
+        assert_eq!(super::linger_millis(9_007_199_254_740_991.0), u64::MAX);
+        assert_eq!(super::linger_millis(f64::INFINITY), u64::MAX);
+        // Asking for a hold of zero or less is still asking to hold, so the
+        // smallest real window is used instead of closing the device.
+        assert_eq!(super::linger_millis(0.0), 1);
+        assert_eq!(super::linger_millis(-5.0), 1);
+        assert_eq!(super::linger_millis(f64::NAN), 1);
+    }
+
+    /// The pre-roll cap the slider uses is the one this layer clamps to.
+    #[test]
+    fn the_pre_roll_cap_is_two_seconds() {
+        assert_eq!(super::MAX_PREROLL_SECONDS, 2.0);
+    }
 
     /// The wire contract for the raw `stop_recording` body: a `u32` sample
     /// rate then the samples, both little-endian, with no padding between

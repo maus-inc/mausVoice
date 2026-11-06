@@ -15,6 +15,10 @@ import {
   normalizeDictationLimitMinutes,
 } from "../utils/dictation-limit.utils";
 import { PRIMARY_LANGUAGE_SENTINEL } from "../utils/language.utils";
+import {
+  DEFAULT_MICROPHONE_PREROLL_SECONDS,
+  MAX_MICROPHONE_PREROLL_SECONDS,
+} from "../utils/microphone-readiness.utils";
 import { orFalse, orNull, orTrue, orValue } from "../utils/nullable.utils";
 import { getEffectivePillVisibility, LOCAL_USER_ID } from "../utils/user.utils";
 import type { LocalDataWriteLease } from "../utils/local-data-write-gate";
@@ -86,6 +90,8 @@ type LocalUserPreferences = {
   agentPermissionTimeoutMs?: number;
   spokenCommandsEnabled?: boolean;
   expansionFlags?: Nullable<string>;
+  keepMicrophoneReady?: boolean;
+  microphonePrerollSeconds?: Nullable<number>;
 };
 
 const normalizePillResetMonitorStrategy = (
@@ -114,6 +120,21 @@ const normalizeAgentPermissionTimeout = (
   value: number | null | undefined,
 ): number =>
   Math.min(10 * 60_000, Math.max(5_000, Math.trunc(value ?? 60_000)));
+
+/**
+ * Clamps a stored pre-roll into the range the recorder accepts.
+ *
+ * A profile written before this setting existed has no value, and a hand-edited
+ * one can hold anything. Both land on the default so no call site has to repeat
+ * that decision. The cap mirrors the slider and the Rust command layer, and a
+ * contract test asserts all three agree.
+ */
+const normalizePrerollSeconds = (value: number | null | undefined): number => {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return DEFAULT_MICROPHONE_PREROLL_SECONDS;
+  }
+  return Math.min(MAX_MICROPHONE_PREROLL_SECONDS, Math.max(0, value));
+};
 
 const parseAgentEnabledTools = (
   value: Nullable<string[]> | string | undefined,
@@ -245,6 +266,10 @@ const fromLocalFeaturePreferences = (preferences: LocalUserPreferences) => ({
     preferences.agentPermissionTimeoutMs,
   ),
   spokenCommandsEnabled: orTrue(preferences.spokenCommandsEnabled),
+  keepMicrophoneReady: preferences.keepMicrophoneReady ?? false,
+  microphonePrerollSeconds: normalizePrerollSeconds(
+    preferences.microphonePrerollSeconds,
+  ),
 });
 
 export const fromLocalPreferences = (
@@ -331,6 +356,8 @@ const toLocalFeaturePreferences = (preferences: UserPreferences) => ({
     preferences.agentPermissionTimeoutMs,
   ),
   spokenCommandsEnabled: orTrue(preferences.spokenCommandsEnabled),
+  keepMicrophoneReady: preferences.keepMicrophoneReady,
+  microphonePrerollSeconds: preferences.microphonePrerollSeconds,
 });
 
 export const toLocalPreferences = (

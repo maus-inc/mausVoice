@@ -6,7 +6,10 @@ import {
   DialogContent,
   DialogTitle,
   Divider,
+  FormControlLabel,
   Stack,
+  Switch,
+  Typography,
 } from "@mui/material";
 import { Nullable } from "@maus-inc/types";
 import {
@@ -18,18 +21,35 @@ import {
 } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { toast } from "sonner";
-import { setPreferredMicrophone } from "../../actions/user.actions";
+import {
+  setKeepMicrophoneReady,
+  setMicrophonePrerollSeconds,
+  setPreferredMicrophone,
+} from "../../actions/user.actions";
 import { useMyPreferredMicrophone } from "../../hooks/user.hooks";
 import { produceAppState, useAppStore } from "../../store";
 import { SettingSection } from "../common/SettingSection";
 import { BusyButtonLabel } from "../common/BusyButtonLabel";
 import { MicrophoneSelector } from "../microphone/MicrophoneSelector";
 import { MicrophoneTester } from "../microphone/MicrophoneTester";
+import { ElasticSlider } from "../common/ElasticSlider";
+import {
+  MAX_MICROPHONE_PREROLL_SECONDS,
+  describeHeldState,
+} from "../../utils/microphone-readiness.utils";
 
 export const MicrophoneDialog = () => {
   const open = useAppStore((state) => state.settings.microphoneDialogOpen);
   const savedPreference = useMyPreferredMicrophone();
   const intl = useIntl();
+  const keepReady = useAppStore(
+    (state) => state.userPrefs?.keepMicrophoneReady === true,
+  );
+  const prerollSeconds = useAppStore(
+    (state) => state.userPrefs?.microphonePrerollSeconds ?? 0.5,
+  );
+  const microphoneHeld = useAppStore((state) => state.settings.microphoneHeld);
+  const heldState = describeHeldState(microphoneHeld);
 
   const [selected, setSelected] = useState<Nullable<string>>(savedPreference);
   const [hasChanges, setHasChanges] = useState(false);
@@ -157,6 +177,58 @@ export const MicrophoneDialog = () => {
                 <FormattedMessage defaultMessage="Preference saved." />
               )}
             </span>
+          </Stack>
+
+          <Divider />
+
+          <Stack spacing={1.5}>
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={keepReady}
+                  onChange={(event) =>
+                    void setKeepMicrophoneReady(event.target.checked)
+                  }
+                />
+              }
+              label={
+                <FormattedMessage defaultMessage="Keep the microphone ready" />
+              }
+            />
+            <Typography variant="body2" color="text.secondary">
+              <FormattedMessage defaultMessage="Start dictating instantly by opening the microphone ahead of time. Your system shows its microphone-in-use indicator the whole time this is on." />
+            </Typography>
+            {keepReady && (
+              <>
+                <Typography variant="body2" color="text.secondary">
+                  {heldState === "held" ? (
+                    <FormattedMessage defaultMessage="Held open now." />
+                  ) : heldState === "not_held" ? (
+                    <FormattedMessage defaultMessage="Not holding the microphone yet. It opens with your next recording, and stays open after." />
+                  ) : null}
+                </Typography>
+                <Stack spacing={0.5}>
+                  <Typography variant="body2">
+                    <FormattedMessage defaultMessage="Audio kept before the press" />
+                  </Typography>
+                  <ElasticSlider
+                    value={prerollSeconds}
+                    min={0}
+                    max={MAX_MICROPHONE_PREROLL_SECONDS}
+                    step={0.1}
+                    valueLabelDisplay="auto"
+                    valueLabelFormat={(value) => `${value.toFixed(1)} s`}
+                    ariaLabel={intl.formatMessage({
+                      defaultMessage: "Audio kept before the press",
+                    })}
+                    onCommit={(value) => setMicrophonePrerollSeconds(value)}
+                  />
+                  <Typography variant="caption" color="text.secondary">
+                    <FormattedMessage defaultMessage="How much speech to keep from just before you press, so a word you start early is not cut off." />
+                  </Typography>
+                </Stack>
+              </>
+            )}
           </Stack>
 
           <Divider />

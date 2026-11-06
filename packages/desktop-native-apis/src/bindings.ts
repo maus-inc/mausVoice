@@ -101,6 +101,12 @@ async chatMessageUpdate(message: ChatMessage) : Promise<Result<ChatMessage, stri
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * The stage timing of the most recent capture start, oldest stage first.
+ */
+async captureStartupTiming() : Promise<CaptureStartupStage[]> {
+    return await TAURI_INVOKE("capture_startup_timing");
+},
 async checkAccessibilityPermission() : Promise<Result<PermissionStatus, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("check_accessibility_permission") };
@@ -165,6 +171,13 @@ async clearLocalData() : Promise<Result<null, string>> {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+/**
+ * Closes a microphone held open by [`warm_microphone`], and returns to opening
+ * the device on each press.
+ */
+async closeMicrophone() : Promise<void> {
+    await TAURI_INVOKE("close_microphone");
 },
 async completeLocalDataClear() : Promise<Result<null, string>> {
     try {
@@ -477,6 +490,20 @@ async listGpus() : Promise<GpuAdapterInfo[]> {
 async listMicrophones() : Promise<InputDeviceDescriptor[]> {
     return await TAURI_INVOKE("list_microphones");
 },
+/**
+ * One readable line describing the capture path: whether a stream is held, the
+ * linger policy, the pre-roll length, and whether the last start reused a
+ * stream or opened a device.
+ */
+async microphoneReadinessReport() : Promise<string> {
+    return await TAURI_INVOKE("microphone_readiness_report");
+},
+/**
+ * Whether a capture stream is held open right now.
+ */
+async microphoneReady() : Promise<boolean> {
+    return await TAURI_INVOKE("microphone_ready");
+},
 async notifyPillStyleInfo(count: number, name: string) : Promise<void> {
     await TAURI_INVOKE("notify_pill_style_info", { count, name });
 },
@@ -547,6 +574,20 @@ async playAudio(clip: AudioClip) : Promise<Result<null, string>> {
 async purgeStaleTranscriptionAudio() : Promise<Result<string[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("purge_stale_transcription_audio") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Resolves the device a press would use, without opening a capture stream.
+ * 
+ * Returns the device label it settled on, which the next start then tries
+ * first. No microphone indicator appears, because nothing is capturing.
+ */
+async prepareMicrophone() : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("prepare_microphone") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1121,6 +1162,25 @@ async writeAccessibilityFields(entries: AccessibilityWriteEntry[]) : Promise<Res
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+/**
+ * Opens the microphone and holds it, without recording.
+ * 
+ * `prerollSeconds` is how much audio from before the press to keep, so a word
+ * that starts as the user presses is not clipped. Zero keeps the device ready
+ * without retaining audio.
+ * 
+ * `lingerMs` is how long the device stays open after a recording stops.
+ * `Number.MAX_SAFE_INTEGER` means "until the user releases it", which is what
+ * the keep-ready preference sends; anything smaller is a real window.
+ */
+async warmMicrophone(prerollSeconds: number, lingerMs: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("warm_microphone", { prerollSeconds, lingerMs }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 
@@ -1197,6 +1257,10 @@ export type AppProcessMatch = { pid: number; exePath: string | null; appName: st
 export type AppTarget = { id: string; name: string; createdAt: string; toneId: string | null; iconPath: string | null; pasteKeybind?: string | null; insertionMethod?: string | null; typingSpeedMs?: number | null }
 export type AppTargetUpsertArgs = { id: string; name: string; toneId?: string | null; iconPath?: string | null; pasteKeybind?: string | null; insertionMethod?: string | null; typingSpeedMs?: number | null }
 export type AudioClip = "start_recording_clip" | "stop_recording_clip" | "alert_macos_clip" | "alert_windows_10_clip" | "alert_windows_11_clip"
+/**
+ * One stage of a capture start, as the UI reads it.
+ */
+export type CaptureStartupStage = { stage: string; micros: number }
 /**
  * Update metadata for a channel check. Mirrors the updater plugin's own
  * metadata shape so the frontend reuses the stock install path; `rawJson`

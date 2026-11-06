@@ -552,9 +552,12 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 
         let app_handle = app.handle();
 
-        let recorder = crate::platform::audio::new_recorder();
-
+        // One manager, registered under two capabilities. The press adopts the
+        // held stream inside the recorder's start path, so a second manager
+        // would open a second device and defeat the hold entirely.
+        let (recorder, warm) = crate::platform::audio::new_audio_backends();
         app.manage(recorder);
+        app.manage(warm);
 
         // Pre-warm audio output for instant chime playback
         crate::system::audio_feedback::warm_audio_output();
@@ -784,6 +787,12 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             crate::commands::check_app_location_writable,
             crate::commands::check_for_channel_update,
             crate::commands::download_and_open_mac_installer,
+            crate::commands::warm_microphone,
+            crate::commands::close_microphone,
+            crate::commands::microphone_ready,
+            crate::commands::prepare_microphone,
+            crate::commands::microphone_readiness_report,
+            crate::commands::capture_startup_timing,
             crate::commands::get_system_volume,
             crate::commands::set_system_volume,
             crate::commands::composer_register_text,

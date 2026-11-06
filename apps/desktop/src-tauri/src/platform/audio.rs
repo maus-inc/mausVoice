@@ -13,9 +13,21 @@ pub struct InputDeviceDescriptor {
     pub caution: bool,
 }
 
-/// Creates the shared recorder used by the Tauri commands.
-pub fn new_recorder() -> Arc<dyn Recorder> {
-    Arc::new(cpal_impl::RecordingManager::new())
+/// Creates the recorder and the pre-warm handle, backed by one manager.
+///
+/// They must be the same object. The whole point of holding a device open is
+/// that the press adopts the stream that is already running, and adoption
+/// happens inside the recorder's own start path: two managers would each hold
+/// their own slot, the press would open a second stream, and the hold would have
+/// bought nothing but a microphone indicator.
+///
+/// They are registered as two state types because they are two capabilities. A
+/// command that starts a recording asks for the recorder; a command that holds a
+/// device asks for the warm handle, and neither has to claim the other's
+/// methods.
+pub fn new_audio_backends() -> (Arc<dyn Recorder>, Arc<dyn crate::platform::WarmCapture>) {
+    let manager = Arc::new(cpal_impl::RecordingManager::new());
+    ((manager.clone() as Arc<dyn Recorder>), manager)
 }
 
 /// Every input device across all hosts, deduplicated by label, with default
