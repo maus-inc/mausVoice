@@ -16,7 +16,7 @@ const repo = new LocalTranscriptionRepo();
 beforeEach(() => {
   transcriptionAudioCache.invalidate();
   invoke.mockReset();
-  invoke.mockImplementation(async (command) =>
+  invoke.mockImplementation((command) =>
     command === "transcription_audio_load"
       ? audio
       : command === "purge_stale_transcription_audio"
@@ -81,12 +81,12 @@ it("deletion cannot release preload capacity before native reads settle", async 
   const reading = new Promise<typeof audio>((resolve) => {
     finish = resolve;
   });
-  invoke.mockImplementation(async (command) =>
+  invoke.mockImplementation((command) =>
     command === "transcription_audio_load" ? reading : undefined,
   );
-  const a = repo.loadTranscriptionAudio("a");
-  const b = repo.loadTranscriptionAudio("b");
-  const settled = Promise.allSettled([a, b]);
+  const firstLoad = repo.loadTranscriptionAudio("a");
+  const secondLoad = repo.loadTranscriptionAudio("b");
+  const settled = Promise.allSettled([firstLoad, secondLoad]);
   try {
     await repo.deleteTranscription("a");
     expect(transcriptionAudioCache.canWarm()).toBe(false);
@@ -127,6 +127,7 @@ it.each(["createTranscription", "updateTranscription"] as const)(
         await mutation;
         return args.transcription;
       }
+      return undefined;
     });
     await repo.loadTranscriptionAudio("a");
     const updating = repo[method](transcription);

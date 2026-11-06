@@ -34,7 +34,7 @@ beforeEach(async () => {
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
-  await act(async () =>
+  await act(() =>
     root.render(
       <IntlProvider locale="en">
         <MemoryRouter>

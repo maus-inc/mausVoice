@@ -148,8 +148,8 @@ describe("audio source cleanup", () => {
     expect(activePlayback).toBeNull();
   });
   it("releases a context when cancellation interrupts a resume that never settles", async () => {
-    const close = vi.fn(async () => {});
-    const resume = vi.fn(() => new Promise<void>(() => {}));
+    const close = vi.fn(() => Promise.resolve());
+    const resume = vi.fn(() => new Promise<void>(() => undefined));
     vi.stubGlobal(
       "AudioContext",
       class {
