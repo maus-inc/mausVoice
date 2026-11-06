@@ -195,6 +195,53 @@ pub type LevelCallback = Arc<dyn Fn(Vec<f32>) + Send + Sync>;
 /// timeline instead of assuming every batch is contiguous.
 pub type ChunkCallback = Arc<dyn Fn(Vec<f32>, u64) + Send + Sync>;
 
+/// The pre-warm surface: holding a capture device open between dictations.
+///
+/// Separate from [`Recorder`] rather than folded into it, because recording and
+/// holding are different lifetimes. A recorder is asked to capture and then to
+/// stop; this asks for a device to be opened and left open. Folding them would
+/// put "open without recording" on every recorder implementation, including any
+/// that cannot express it, and every recorder would have to answer for a policy
+/// it does not implement.
+pub trait WarmCapture: Send + Sync {
+    /// Opens a capture device and holds it, without recording.
+    ///
+    /// `preroll` is how much audio from before a press to keep.
+    fn warm_open(&self, preroll: std::time::Duration) -> Result<(), String>;
+
+    /// Changes how much pre-press audio is kept, resizing a held ring rather
+    /// than reopening the device.
+    fn set_preroll(&self, preroll: std::time::Duration);
+
+    /// Resolves the device a press would use, without opening it.
+    fn prepare(&self) -> Result<String, String>;
+
+    /// Reopens the held stream if a better device appeared.
+    ///
+    /// A stream is bound to the device it was built on, so it cannot follow a
+    /// headset being plugged in; the only way to use the new device is to close
+    /// and reopen.
+    fn refresh_device(&self) {}
+
+    /// Closes the held stream.
+    fn warm_close(&self);
+
+    /// Whether a stream is held right now.
+    fn is_ready(&self) -> bool;
+
+    /// Sets the hold policy, in milliseconds: 0 closes at stop, a finite value
+    /// is a window, and `u64::MAX` holds until closed.
+    fn set_linger(&self, linger_ms: u64);
+
+    /// One readable line of policy and last-start state.
+    fn status_line(&self) -> String;
+
+    /// The stage timing of the most recent capture start, oldest first.
+    fn last_startup(&self) -> Option<Vec<(String, u64)>> {
+        None
+    }
+}
+
 pub trait Recorder: Send + Sync {
     fn start(
         &self,
