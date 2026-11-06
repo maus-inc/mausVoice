@@ -1,5 +1,6 @@
+import { getRec } from "@maus-inc/utilities";
 import { getTranscriptionRepo } from "../repos";
-import { produceAppState } from "../store";
+import { getAppState, produceAppState } from "../store";
 import {
   getLocalDataClearGeneration,
   isLocalDataClearRequested,
@@ -17,6 +18,7 @@ export const refreshVisibleTranscriptions = async (
   const generation = getLocalDataClearGeneration();
   while (isCurrent() && !isLocalDataClearRequested()) {
     const revision = getTranscriptionDeletionRevision();
+    const before = getAppState().transcriptionById;
     const rows = await getTranscriptionRepo().listTranscriptions();
     if (
       !isCurrent() ||
@@ -26,8 +28,14 @@ export const refreshVisibleTranscriptions = async (
       return;
     if (revision !== getTranscriptionDeletionRevision()) continue;
     const visible = rows.filter((row) => !isTranscriptionPendingDelete(row.id));
+    // A retry or edit can finish while the list request is in flight. Do not
+    // replace its newer row with the list request’s earlier snapshot.
+    const current = getAppState().transcriptionById;
+    const unchanged = visible.filter(
+      (row) => getRec(before, row.id) === getRec(current, row.id),
+    );
     produceAppState((draft) => {
-      registerTranscriptions(draft, visible);
+      registerTranscriptions(draft, unchanged);
       draft.transcriptions.transcriptionIds = visible.map((row) => row.id);
     });
     return;

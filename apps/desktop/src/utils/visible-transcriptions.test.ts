@@ -17,6 +17,7 @@ vi.mock("../repos", () => ({
   }),
 }));
 vi.mock("../store", () => ({
+  getAppState: () => mocks.state,
   produceAppState: (fn: (state: typeof mocks.state) => void) => fn(mocks.state),
 }));
 vi.mock("../actions/app.actions", () => ({ showErrorSnackbar: mocks.error }));
@@ -73,6 +74,23 @@ describe("visible transcription loads", () => {
     expect(pending.undoTranscriptionDelete("one")).toBe(true);
     await refreshVisibleTranscriptions(() => true);
     expect(mocks.state.transcriptions.transcriptionIds).toEqual(["one", "two"]);
+  });
+
+  it("preserves a newer recovery result when an older list returns", async () => {
+    const { refreshVisibleTranscriptions } =
+      await import("./visible-transcriptions");
+    const pending = deferred<Transcription[]>();
+    const old = row("one");
+    mocks.state.transcriptionById = { one: old };
+    mocks.list.mockReturnValueOnce(pending.promise);
+    const refresh = refreshVisibleTranscriptions(() => true);
+    mocks.state.transcriptionById = {
+      one: { ...old, transcript: "recovered" },
+    };
+    pending.resolve([old]);
+    await refresh;
+    expect(mocks.state.transcriptionById.one.transcript).toBe("recovered");
+    expect(mocks.state.transcriptions.transcriptionIds).toEqual(["one"]);
   });
 
   it("discards a list that returns after local data was cleared", async () => {
