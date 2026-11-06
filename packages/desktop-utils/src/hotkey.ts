@@ -73,17 +73,15 @@ const matchesHoldCombo = (
   return true;
 };
 
-const applyHoldTransition = (
-  controller: ActivationController,
-  isPressed: boolean,
-  wasPressed: boolean,
-): void => {
-  if (isPressed && !wasPressed) {
-    if (!controller.shouldIgnoreActivation) controller.handlePress();
-  } else if (!isPressed && wasPressed) {
-    controller.clearIgnore();
-    controller.handleRelease();
-  }
+/** The hold gesture began: start capture unless this press is ignored. */
+const beginHold = (controller: ActivationController): void => {
+  if (!controller.shouldIgnoreActivation) controller.handlePress();
+};
+
+/** The hold gesture ended: clear any ignore latch and stop capture. */
+const endHold = (controller: ActivationController): void => {
+  controller.clearIgnore();
+  controller.handleRelease();
 };
 
 const updateHoldAction = (
@@ -120,7 +118,8 @@ const updateHoldAction = (
     return;
   }
 
-  applyHoldTransition(action.controller, isPressed, wasPressed);
+  if (isPressed && !wasPressed) beginHold(action.controller);
+  else if (!isPressed && wasPressed) endHold(action.controller);
 
   wasPressedByController.set(action.controller, isPressed);
 };
