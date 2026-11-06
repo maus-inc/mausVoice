@@ -15,6 +15,8 @@ Open the information action for the full pipeline record. Depending on what was 
 
 A row with saved audio includes playback plus **Retranscribe** and **Export** actions. Retranscription runs the stored clip through the _currently selected_ transcription and post-processing configuration; you choose a language and one of the available styles, and the existing row is updated. It is not a read-only comparison, so export first if the old result matters.
 
+Playback shows a loading indicator while it reads the clip. Activate the same control again to cancel. Starting another clip or leaving the page cancels the previous playback request. Hovering or focusing a clip can prepare its audio without playing it. Recent samples stay in a small memory cache, which deletion and local-data clearing invalidate.
+
 Export opens a file picker and writes a ZIP named from the record ID. It contains `processed.txt`, includes `raw.txt` when raw text is present, and includes the managed clip as `audio.wav`. Treat that archive as sensitive.
 
 ## Edit and auto-learn

@@ -47,6 +47,22 @@ export type ActiveWebAudioPlayback = {
 export let activePlayback: ActiveWebAudioPlayback | null = null;
 let closingContext: Promise<void> | null = null;
 let playbackGeneration = 0;
+let playbackRequest: AbortController | null = null;
+
+export const cancelAudioPlaybackRequest = (request: AbortController): void => {
+  request.abort();
+  if (playbackRequest === request) {
+    playbackRequest = null;
+    stopActivePlayback("stopped");
+  }
+};
+
+export const createAudioPlaybackRequest = (): AbortController => {
+  if (playbackRequest) cancelAudioPlaybackRequest(playbackRequest);
+  stopActivePlayback("replaced");
+  playbackRequest = new AbortController();
+  return playbackRequest;
+};
 
 const elapsedRatio = (playback: ActiveWebAudioPlayback): number => {
   const elapsed =
@@ -175,13 +191,43 @@ export const seekPlayback = (progress: number): boolean => {
   return true;
 };
 
+const resumeAudioContext = (
+  context: AudioContext,
+  signal?: AbortSignal,
+): Promise<void> => {
+  if (!signal) return context.resume();
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      signal.removeEventListener("abort", onAbort);
+      reject(new DOMException("Audio playback cancelled", "AbortError"));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) {
+      onAbort();
+      return;
+    }
+    context.resume().then(
+      () => {
+        signal.removeEventListener("abort", onAbort);
+        resolve();
+      },
+      (error: unknown) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
+};
+
 export const playWebAudio = async (
   transcriptionId: string,
   data: { samples: number[]; sampleRate: number },
   onProgress: (progress: number) => void,
   onStop: (reason: PlaybackStopReason) => void,
   startProgress = 0,
+  signal?: AbortSignal,
 ): Promise<void> => {
+  if (signal?.aborted) return;
   // Replacing the previous playback first, and reading the generation after it,
   // because that stop advances the generation itself. Capturing it beforehand
   // would make every call supersede its own request.
@@ -194,11 +240,8 @@ export const playWebAudio = async (
     }
   }
 
-  // Superseded while awaiting `closingContext`. `onStop` still has to fire: the caller sets
-  // `isPlaying` true BEFORE awaiting this function, and `activePlayback` only takes ownership
-  // further down, so a newer `stopActivePlayback("replaced")` finds nothing to stop and never
-  // reaches this call's `onStop`. Returning quietly leaves the row showing "playing" forever.
-  if (generation !== playbackGeneration) {
+  // Pending callers do not own activePlayback yet, so notify them explicitly.
+  if (generation !== playbackGeneration || signal?.aborted) {
     onStop("replaced");
     return;
   }
@@ -216,11 +259,11 @@ export const playWebAudio = async (
   let ownedByActivePlayback = false;
   try {
     if (context.state === "suspended") {
-      await context.resume();
+      await resumeAudioContext(context, signal);
     }
 
     // Same reasoning as the exit above: superseded after `resume()`, before ownership.
-    if (generation !== playbackGeneration) {
+    if (generation !== playbackGeneration || signal?.aborted) {
       onStop("replaced");
       return;
     }

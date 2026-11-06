@@ -1,4 +1,11 @@
-import { Box, List, Stack } from "@mui/material";
+import { useIntentWarmup } from "../../hooks/intent-warmup.hooks";
+import {
+  dashboardRouteLoaders,
+  type DashboardRoute,
+} from "../../utils/route-prefetch";
+import { getVersion } from "@tauri-apps/api/app";
+import { useAsyncData } from "../../hooks/async.hooks";
+import { Box, List, Stack, Typography } from "@mui/material";
 import { motion, useReducedMotion } from "framer-motion";
 import {
   BookMarked,
@@ -24,15 +31,24 @@ import {
   raisedEdge,
 } from "../../styles/shadows";
 import { getIsAssistantModeEnabled } from "../../utils/assistant-mode.utils";
-import { ListTile } from "../common/ListTile";
+import { ListTile, type ListTileProps } from "../common/ListTile";
 import { MorphNavIcon } from "../common/MorphNavIcon";
 import { UpdateListTile } from "./UpdateListTile";
+
+const SidebarTile = ({
+  path,
+  ...props
+}: ListTileProps<"li"> & { path: DashboardRoute }) => {
+  const location = useLocation();
+  const intent = useIntentWarmup(dashboardRouteLoaders[path], location.key);
+  return <ListTile {...props} {...intent} />;
+};
 
 const settingsPath = "/dashboard/settings";
 
 type NavItem = {
   label: React.ReactNode;
-  path: string;
+  path: DashboardRoute;
   icon: IconNode;
 };
 
@@ -41,6 +57,7 @@ export type DashboardMenuProps = {
 };
 
 export const DashboardMenu = ({ onChoose }: DashboardMenuProps) => {
+  const version = useAsyncData(getVersion, []);
   const location = useLocation();
   const intl = useIntl();
   const nav = useNavigate();
@@ -83,7 +100,7 @@ export const DashboardMenu = ({ onChoose }: DashboardMenuProps) => {
         ? [
             {
               label: <FormattedMessage defaultMessage="Chats" />,
-              path: "/dashboard/chats",
+              path: "/dashboard/chats" as const,
               icon: MessageSquare,
             },
           ]
@@ -153,7 +170,8 @@ export const DashboardMenu = ({ onChoose }: DashboardMenuProps) => {
       {navItems.map(({ label, path, icon }) => {
         const selected = isSelected(path);
         return (
-          <ListTile
+          <SidebarTile
+            path={path}
             key={path}
             component="li"
             onClick={() => onChooseHandler(path)}
@@ -212,14 +230,17 @@ export const DashboardMenu = ({ onChoose }: DashboardMenuProps) => {
         background: dark ? chromeWash.dark : chromeWash.light,
       }}
     >
-      <Box sx={{ flexGrow: 1, overflowY: "auto", pt: 0.5 }}>{list}</Box>
-      <Box sx={{ mt: 1, p: 1.5, pt: 0 }}>
+      <Box sx={{ flexGrow: 1, minHeight: 0, overflowY: "auto", pt: 0.5 }}>
+        {list}
+      </Box>
+      <Box sx={{ mt: 1, p: 1.5, pt: 0, flexShrink: 0 }}>
         {isUpdateAvailable && <UpdateListTile />}
         <List
           aria-label={intl.formatMessage({ defaultMessage: "Settings" })}
           disablePadding
         >
-          <ListTile
+          <SidebarTile
+            path={settingsPath}
             key={settingsPath}
             component="li"
             onClick={() => onChooseHandler(settingsPath)}
@@ -242,6 +263,18 @@ export const DashboardMenu = ({ onChoose }: DashboardMenuProps) => {
             }}
           />
         </List>
+        {version.state === "success" && (
+          <Typography
+            variant="caption"
+            sx={{
+              display: "block",
+              mt: 1,
+              px: 2,
+              color: "text.secondary",
+              overflowWrap: "anywhere",
+            }}
+          >{`v${version.data}`}</Typography>
+        )}
       </Box>
     </Stack>
   );

@@ -1,6 +1,7 @@
 import { useReducedMotion } from "framer-motion";
 import { MetalFx, type MetalFxProps } from "metal-fx";
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useState, type ReactNode } from "react";
+import { ErrorBoundary } from "react-error-boundary";
 import { useIsDarkMode } from "../../hooks/color-scheme.hooks";
 import { getLogger } from "../../utils/log.utils";
 import "./MetalChrome.css";
@@ -148,20 +149,47 @@ export const MetalChrome = ({
     .filter(Boolean)
     .join(" ");
 
-  return (
-    <MetalFx
-      preset="silver"
-      theme={dark ? "dark" : "light"}
-      strength={0.22}
-      glowGain={0}
-      disableGlow
-      paused={Boolean(reduceMotion)}
-      variant={variant}
-      {...rest}
+  // metal-fx's own "renders plain when unsupported" guard probes a bare
+  // getContext("webgl2"), while the engine then creates its real context with
+  // a full attribute set. On stacks where only the probe succeeds the engine
+  // THROWS ("metal-fx: WebGL2 not supported") during render, which would take
+  // the whole page down behind the root error boundary. The effect is fenced:
+  // on failure the control falls back to the same first-frame rescue as a
+  // wrapper that never paints — hidden at first, rescued to visible by the
+  // hook above once the rescue delay elapses.
+  const rescueFallback: ReactNode = (
+    <div
       {...{ [METAL_CHROME_ATTR]: id }}
       className={classes || undefined}
+      style={{ visibility: "hidden" }}
     >
       {children}
-    </MetalFx>
+    </div>
+  );
+
+  return (
+    <ErrorBoundary
+      fallback={rescueFallback}
+      onError={(error) => {
+        getLogger().warning(
+          `[MetalChrome] metal-fx failed to render; rescuing the control: ${String(error)}`,
+        );
+      }}
+    >
+      <MetalFx
+        preset="silver"
+        theme={dark ? "dark" : "light"}
+        strength={0.22}
+        glowGain={0}
+        disableGlow
+        paused={Boolean(reduceMotion)}
+        variant={variant}
+        {...rest}
+        {...{ [METAL_CHROME_ATTR]: id }}
+        className={classes || undefined}
+      >
+        {children}
+      </MetalFx>
+    </ErrorBoundary>
   );
 };

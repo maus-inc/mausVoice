@@ -147,6 +147,35 @@ describe("audio source cleanup", () => {
     expect(start).not.toHaveBeenCalled();
     expect(activePlayback).toBeNull();
   });
+  it("releases a context when cancellation interrupts a resume that never settles", async () => {
+    const close = vi.fn(async () => {});
+    const resume = vi.fn(() => new Promise<void>(() => {}));
+    vi.stubGlobal(
+      "AudioContext",
+      class {
+        state = "suspended";
+        close = close;
+        resume = resume;
+      },
+    );
+    const controller = new AbortController();
+    const playing = playWebAudio(
+      "cancelled",
+      { samples: [0, 0], sampleRate: 16000 },
+      vi.fn(),
+      vi.fn(),
+      0,
+      controller.signal,
+    );
+    const rejection = expect(playing).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    await vi.waitFor(() => expect(resume).toHaveBeenCalled());
+    controller.abort();
+    await rejection;
+    expect(close).toHaveBeenCalledOnce();
+    expect(activePlayback).toBeNull();
+  });
 });
 
 // `playWebAudio` allocates an AudioContext, which holds an OS audio handle, and

@@ -921,6 +921,14 @@ export default function SettingsPage() {
             <Switch
               edge="end"
               checked={autoLaunchEnabled}
+              slotProps={{
+                input: {
+                  role: "switch",
+                  "aria-label": intl.formatMessage({
+                    defaultMessage: "Start on system startup",
+                  }),
+                },
+              }}
               disabled={autoLaunchLoading}
               onChange={handleToggleAutoLaunch}
             />

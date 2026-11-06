@@ -1,8 +1,6 @@
-import { Box, Stack, Typography } from "@mui/material";
-import { getVersion } from "@tauri-apps/api/app";
+import { Box, Stack } from "@mui/material";
 import { motion, useReducedMotion } from "framer-motion";
 import { Outlet, useLocation } from "react-router-dom";
-import { useAsyncData } from "../../hooks/async.hooks";
 import { easeOutQuint } from "../../styles/motion";
 import { TranscriptionDetailsDialog } from "../transcriptions/TranscriptionDetailsDialog";
 import { DashboardMenu } from "./DashboardMenu";
@@ -12,7 +10,7 @@ import { PermissionsDialog } from "./PermissionsDialog";
 /**
  * Authenticated app shell: sidebar navigation, routed content area, and the
  * global dialogs (feature release, permissions, trial ended, transcription
- * details). Also reports the app version into the layout.
+ * details). The app version reads from the sidebar footer in `DashboardMenu`.
  *
  * The content area is deliberately flat. It carries no fill, border, radius or
  * cast of its own, so the routed page reads as the window's canvas rather than
@@ -21,7 +19,6 @@ import { PermissionsDialog } from "./PermissionsDialog";
  * does need its own material, such as the rail, paints it on the rail.
  */
 export default function DashboardPage() {
-  const data = useAsyncData(getVersion, []);
   const { pathname } = useLocation();
   const reduceMotion = useReducedMotion();
 
@@ -79,21 +76,6 @@ export default function DashboardPage() {
             <Outlet />
           </Box>
         </Box>
-        <Typography
-          variant="caption"
-          sx={{
-            position: "fixed",
-            bottom: 6,
-            left: 10,
-            fontSize: "0.55rem",
-            color: "text.secondary",
-            opacity: 0.35,
-            pointerEvents: "none",
-            zIndex: 5,
-          }}
-        >
-          {data.state === "success" ? `v${data.data}` : ""}
-        </Typography>
       </Stack>
     </>
   );
