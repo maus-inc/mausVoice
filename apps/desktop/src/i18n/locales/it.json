@@ -403,7 +403,7 @@
   "failed_to_save_receiver_auto_start_preference_please_try_aga": "Impossibile salvare la preferenza di avvio automatico del ricevitore. Riprova.",
   "failed_to_save_remote_receiver_port_please_try_again": "Impossibile salvare la porta del ricevitore remoto. Riprova.",
   "failed_to_save_review_before_insert_preference_please_try_ag": "Impossibile salvare la preferenza di revisione prima dell'inserimento. Riprova.",
-  "failed_to_save_short_dictation_preference_please_try_again": "Failed to save short dictation preference. Please try again.",
+  "failed_to_save_short_dictation_preference_please_try_again": "Impossibile salvare la preferenza di dettatura breve. Riprova.",
   "failed_to_save_silence_filtering_preference_please_try_again": "Impossibile salvare la preferenza di filtro del silenzio. Riprova.",
   "failed_to_save_spoken_commands_preference_please_try_again": "Impossibile salvare la preferenza dei comandi vocali. Riprova.",
   "failed_to_save_styling_mode_preference_please_try_again": "Impossibile salvare la preferenza della modalità di stile. Riprova.",

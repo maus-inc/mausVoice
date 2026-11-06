@@ -403,7 +403,7 @@
   "failed_to_save_receiver_auto_start_preference_please_try_aga": "Die Einstellung zum automatischen Empfängerstart konnte nicht gespeichert werden. Bitte erneut versuchen.",
   "failed_to_save_remote_receiver_port_please_try_again": "Der Port des Remote-Empfängers konnte nicht gespeichert werden. Bitte erneut versuchen.",
   "failed_to_save_review_before_insert_preference_please_try_ag": "Die Einstellung zum Prüfen vor dem Einfügen konnte nicht gespeichert werden. Bitte erneut versuchen.",
-  "failed_to_save_short_dictation_preference_please_try_again": "Failed to save short dictation preference. Please try again.",
+  "failed_to_save_short_dictation_preference_please_try_again": "Die Einstellung für kurzes Diktat konnte nicht gespeichert werden. Bitte erneut versuchen.",
   "failed_to_save_silence_filtering_preference_please_try_again": "Die Einstellung zur Stillefilterung konnte nicht gespeichert werden. Bitte erneut versuchen.",
   "failed_to_save_spoken_commands_preference_please_try_again": "Die Einstellung für Sprachbefehle konnte nicht gespeichert werden. Bitte erneut versuchen.",
   "failed_to_save_styling_mode_preference_please_try_again": "Die Einstellung für den Stilmodus konnte nicht gespeichert werden. Bitte erneut versuchen.",

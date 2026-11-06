@@ -403,7 +403,7 @@
   "failed_to_save_receiver_auto_start_preference_please_try_aga": "수신기 자동 시작 환경설정을 저장하지 못했습니다. 다시 시도해 주세요.",
   "failed_to_save_remote_receiver_port_please_try_again": "원격 수신기 포트를 저장하지 못했습니다. 다시 시도해 주세요.",
   "failed_to_save_review_before_insert_preference_please_try_ag": "입력 전 검토 환경설정을 저장하지 못했습니다. 다시 시도해 주세요.",
-  "failed_to_save_short_dictation_preference_please_try_again": "Failed to save short dictation preference. Please try again.",
+  "failed_to_save_short_dictation_preference_please_try_again": "짧은 받아쓰기 환경설정을 저장하지 못했습니다. 다시 시도해 주세요.",
   "failed_to_save_silence_filtering_preference_please_try_again": "무음 필터링 환경설정을 저장하지 못했습니다. 다시 시도해 주세요.",
   "failed_to_save_spoken_commands_preference_please_try_again": "음성 명령 환경설정을 저장하지 못했습니다. 다시 시도해 주세요.",
   "failed_to_save_styling_mode_preference_please_try_again": "스타일 모드 환경설정을 저장하지 못했습니다. 다시 시도해 주세요.",

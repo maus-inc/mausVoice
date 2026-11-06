@@ -403,7 +403,7 @@
   "failed_to_save_receiver_auto_start_preference_please_try_aga": "No se pudo guardar la preferencia de inicio automático del receptor. Inténtalo de nuevo.",
   "failed_to_save_remote_receiver_port_please_try_again": "No se pudo guardar el puerto del receptor remoto. Inténtalo de nuevo.",
   "failed_to_save_review_before_insert_preference_please_try_ag": "No se pudo guardar la preferencia de revisar antes de insertar. Inténtalo de nuevo.",
-  "failed_to_save_short_dictation_preference_please_try_again": "Failed to save short dictation preference. Please try again.",
+  "failed_to_save_short_dictation_preference_please_try_again": "No se pudo guardar la preferencia de dictado corto. Inténtalo de nuevo.",
   "failed_to_save_silence_filtering_preference_please_try_again": "No se pudo guardar la preferencia de filtrado de silencio. Inténtalo de nuevo.",
   "failed_to_save_spoken_commands_preference_please_try_again": "No se pudo guardar la preferencia de comandos por voz. Inténtalo de nuevo.",
   "failed_to_save_styling_mode_preference_please_try_again": "No se pudo guardar la preferencia del modo de estilo. Inténtalo de nuevo.",

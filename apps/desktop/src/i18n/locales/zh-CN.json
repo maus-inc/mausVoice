@@ -403,7 +403,7 @@
   "failed_to_save_receiver_auto_start_preference_please_try_aga": "无法保存接收端自动启动偏好设置，请重试。",
   "failed_to_save_remote_receiver_port_please_try_again": "无法保存远程接收端端口，请重试。",
   "failed_to_save_review_before_insert_preference_please_try_ag": "无法保存插入前审阅偏好设置，请重试。",
-  "failed_to_save_short_dictation_preference_please_try_again": "Failed to save short dictation preference. Please try again.",
+  "failed_to_save_short_dictation_preference_please_try_again": "无法保存短听写偏好设置，请重试。",
   "failed_to_save_silence_filtering_preference_please_try_again": "无法保存静音过滤偏好设置，请重试。",
   "failed_to_save_spoken_commands_preference_please_try_again": "无法保存语音命令偏好设置，请重试。",
   "failed_to_save_styling_mode_preference_please_try_again": "无法保存风格模式偏好设置，请重试。",
