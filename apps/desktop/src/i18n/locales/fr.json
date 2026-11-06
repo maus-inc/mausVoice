@@ -1171,5 +1171,6 @@
   "your_profile_name_and_photo": "Votre nom et votre photo de profil",
   "your_profile_your_sign_in_and_your_account": "Votre profil, votre connexion et votre compte.",
   "your_recording_is_sent_to_provider_in_pieces_as_you_pause_an": "Votre enregistrement est envoyé à {provider} par morceaux pendant vos pauses, et le reste une fois que vous vous arrêtez. L’audio déjà envoyé ne peut pas être récupéré.",
-  "your_saved_recordings_and_history_were_removed_but_mausvoice": "Vos enregistrements et votre historique ont été supprimés, mais mausVoice n’a pas pu accéder au stockage de cet ordinateur : certains réglages peuvent donc subsister. Vérifiez que l’application est autorisée à stocker des données, puis réessayez."
+  "your_saved_recordings_and_history_were_removed_but_mausvoice": "Vos enregistrements et votre historique ont été supprimés, mais mausVoice n’a pas pu accéder au stockage de cet ordinateur : certains réglages peuvent donc subsister. Vérifiez que l’application est autorisée à stocker des données, puis réessayez.",
+  "your_style_shortcuts_changed_in_another_window_review_them_a": "Vos raccourcis de style ont changé dans une autre fenêtre. Vérifiez-les et enregistrez à nouveau."
 }

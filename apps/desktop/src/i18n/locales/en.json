@@ -1171,5 +1171,6 @@
   "your_profile_name_and_photo": "Your profile name and photo",
   "your_profile_your_sign_in_and_your_account": "Your profile, your sign-in, and your account.",
   "your_recording_is_sent_to_provider_in_pieces_as_you_pause_an": "Your recording is sent to {provider} in pieces as you pause, and the rest once you stop. Audio already sent cannot be recalled.",
-  "your_saved_recordings_and_history_were_removed_but_mausvoice": "Your saved recordings and history were removed, but mausVoice could not reach this computer’s storage, so some preferences may remain. Check that the app is allowed to store data, then try again."
+  "your_saved_recordings_and_history_were_removed_but_mausvoice": "Your saved recordings and history were removed, but mausVoice could not reach this computer’s storage, so some preferences may remain. Check that the app is allowed to store data, then try again.",
+  "your_style_shortcuts_changed_in_another_window_review_them_a": "Your style shortcuts changed in another window. Review them and save again."
 }

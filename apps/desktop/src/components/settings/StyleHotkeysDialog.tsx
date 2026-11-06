@@ -15,6 +15,7 @@ import type { Hotkey } from "@maus-inc/types";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { showErrorSnackbar } from "../../actions/app.actions";
+import { loadHotkeys } from "../../actions/hotkey.actions";
 import { getHotkeyRepo } from "../../repos";
 import { produceAppState, useAppStore } from "../../store";
 import { applyReplacedStyleHotkeys } from "../../utils/style-hotkey";
@@ -54,11 +55,21 @@ export const StyleHotkeysDialog = () => {
   const styleSelectionAvailable = useAppStore(isStyleSelectionAvailable);
   const intl = useIntl();
   const [rows, setRows] = useState<StyleHotkeyRow[]>([]);
+  // The style group as it was read when the dialog opened. Native compares it
+  // against the group it is about to replace, so a shortcut another dialog
+  // saved meanwhile is reported instead of being deleted here.
+  const [snapshot, setSnapshot] = useState<Hotkey[]>([]);
   const [isSaving, setIsSaving] = useState(false);
   const saveInFlight = useRef(false);
 
   useEffect(() => {
     if (!open) return;
+    const styleGroup = Object.values(useAppStore.getState().hotkeyById).filter(
+      (hotkey) => hotkey.actionName.startsWith(SWITCH_TO_STYLE_HOTKEY_PREFIX),
+    );
+    setSnapshot(
+      styleGroup.map((hotkey) => ({ ...hotkey, keys: [...hotkey.keys] })),
+    );
     setRows(
       tones.map((tone) => {
         const actionName = getSwitchToStyleActionName(tone.id);
@@ -133,7 +144,12 @@ export const StyleHotkeysDialog = () => {
         }));
 
       const repo = getHotkeyRepo();
-      const saved = await repo.replaceStyleHotkeys(prefix, next);
+      const saved = await repo.replaceStyleHotkeys(
+        prefix,
+        next,
+        undefined,
+        snapshot,
+      );
 
       produceAppState((draft) => {
         applyReplacedStyleHotkeys(draft, prefix, saved);
@@ -150,6 +166,37 @@ export const StyleHotkeysDialog = () => {
       }
       dismiss();
     } catch (error) {
+      if (String(error).includes("STYLE_HOTKEYS_CHANGED")) {
+        // Another window saved the group first. Reload what it wrote and
+        // re-snapshot, so the user edits the shortcuts that actually exist
+        // instead of silently overwriting them on the next save.
+        await loadHotkeys();
+        const styleGroup = Object.values(
+          useAppStore.getState().hotkeyById,
+        ).filter((hotkey) =>
+          hotkey.actionName.startsWith(SWITCH_TO_STYLE_HOTKEY_PREFIX),
+        );
+        setSnapshot(
+          styleGroup.map((hotkey) => ({ ...hotkey, keys: [...hotkey.keys] })),
+        );
+        setRows((current) =>
+          current.map((row) => ({
+            ...row,
+            keys:
+              getHotkeyCombosForAction(
+                useAppStore.getState(),
+                row.actionName,
+              )[0] ?? [],
+          })),
+        );
+        showErrorSnackbar(
+          intl.formatMessage({
+            defaultMessage:
+              "Your style shortcuts changed in another window. Review them and save again.",
+          }),
+        );
+        return;
+      }
       showErrorSnackbar(error);
     } finally {
       saveInFlight.current = false;

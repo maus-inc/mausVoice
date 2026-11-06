@@ -1171,5 +1171,6 @@
   "your_profile_name_and_photo": "O teu nome e a tua foto de perfil",
   "your_profile_your_sign_in_and_your_account": "O seu perfil, a sua sessão e a sua conta.",
   "your_recording_is_sent_to_provider_in_pieces_as_you_pause_an": "A sua gravação é enviada para {provider} por partes durante as pausas, e o resto depois de parar. O áudio já enviado não pode ser recuperado.",
-  "your_saved_recordings_and_history_were_removed_but_mausvoice": "As tuas gravações e o teu histórico guardados foram removidos, mas o mausVoice não conseguiu aceder ao armazenamento deste computador, por isso algumas preferências podem permanecer. Verifica se a aplicação pode guardar dados e tenta novamente."
+  "your_saved_recordings_and_history_were_removed_but_mausvoice": "As tuas gravações e o teu histórico guardados foram removidos, mas o mausVoice não conseguiu aceder ao armazenamento deste computador, por isso algumas preferências podem permanecer. Verifica se a aplicação pode guardar dados e tenta novamente.",
+  "your_style_shortcuts_changed_in_another_window_review_them_a": "Os teus atalhos de estilo mudaram noutra janela. Revê-os e guarda novamente."
 }
