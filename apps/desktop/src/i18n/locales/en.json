@@ -1010,6 +1010,7 @@
   "this_will_prompt_for_administrator_privileges_uac_so_the_pil": "This will prompt for administrator privileges (UAC) so the pill can capture and type input globally. Continue?",
   "this_will_request_accessibility_and_microphone_access_so_the": "This will request Accessibility and Microphone access so the pill can capture and type input globally. Continue?",
   "thought_process": "Thought process",
+  "tip": "Tip:",
   "tip_choose_a_stronger_model_for_better_results_smaller_or_we": "Tip: Choose a stronger model for better results. Smaller or weaker models may produce lower quality output.",
   "tip_run_agent_mode_multiple_times_to_keep_refining_it_rememb": "Tip: Run Agent Mode multiple times to keep refining! It remembers what's in the text box.",
   "title": "Title",
