@@ -33,8 +33,6 @@ export type SpeechRecognitionLike = {
   abort?: () => void;
 };
 
-export type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
-
 export type VoiceInstructionRecorderDeps = {
   invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
   transcribe: (audio: {
@@ -312,10 +310,14 @@ export class VoiceInstructionRecorder {
     if (wasListening) this.deps.onListeningChange(false);
   }
 
-  private abortForClear(): void {
-    if (this.disposed) return;
-    this.opGen++;
-    this.busy = false;
+  /**
+   * Stop every live capture path and return to idle.
+   *
+   * Both the local-data clear and `dispose` need exactly this sequence, and a
+   * copy that gets one step wrong leaves a recorder running or a browser
+   * recognition attached. The caller owns the invalidation counters.
+   */
+  private releaseCapture(): void {
     const recognition = this.detachBrowserRecognition();
     if (recognition && this.state === "browser") {
       this.stopBrowserRecognition(recognition);
@@ -326,6 +328,13 @@ export class VoiceInstructionRecorder {
     if (this.state !== "idle") {
       this.setIdle();
     }
+  }
+
+  private abortForClear(): void {
+    if (this.disposed) return;
+    this.opGen++;
+    this.busy = false;
+    this.releaseCapture();
   }
 
   /**
@@ -339,15 +348,6 @@ export class VoiceInstructionRecorder {
     this.unsubscribeClear?.();
     this.unsubscribeClear = null;
     this.opGen++;
-    const recognition = this.detachBrowserRecognition();
-    if (recognition && this.state === "browser") {
-      this.stopBrowserRecognition(recognition);
-    }
-    if (this.state === "provider" && !this.stopInFlight) {
-      void discardNativeRecording();
-    }
-    if (this.state !== "idle") {
-      this.setIdle();
-    }
+    this.releaseCapture();
   }
 }

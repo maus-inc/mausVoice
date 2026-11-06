@@ -4,6 +4,7 @@ import { Nullable } from "@maus-inc/types";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { FormattedMessage } from "react-intl";
 import { produceAppState, useAppStore } from "../../store";
+import type { StopRecordingResponse } from "../../types/transcription-session.types";
 import {
   getLocalDataClearGeneration,
   isLocalDataClearRequested,
@@ -260,6 +261,33 @@ export const MicrophoneTester = ({
     setSyncedTestState,
   ]);
 
+  /** Publish what the test captured, and say why when it is not a clean take.
+   *
+   * A device that stops delivering audio partway through still yields usable
+   * samples, so the preview plays them and the message explains the short
+   * result instead of reporting a clean test. */
+  const showPreviewOutcome = useCallback(
+    (response: StopRecordingResponse) => {
+      const url = createPreviewUrl(response.samples, response.sampleRate ?? 0);
+      if (response.captureFailed) {
+        updatePreviewUrl(url ?? null);
+        setTestError(
+          "The microphone stopped partway through. The preview is shorter than the test.",
+        );
+        return;
+      }
+      if (url) {
+        updatePreviewUrl(url);
+        return;
+      }
+      updatePreviewUrl(null);
+      setTestError(
+        "We didn't detect any audio. Try speaking while the test is running.",
+      );
+    },
+    [createPreviewUrl, setTestError, updatePreviewUrl],
+  );
+
   const handleStopTest = useCallback(
     async (opts?: { silent?: boolean }) => {
       const currentState = testStateRef.current;
@@ -272,26 +300,9 @@ export const MicrophoneTester = ({
 
       try {
         const response = await invokeStopRecording();
-        const rate = response.sampleRate ?? 0;
 
         if (!opts?.silent && !isLocalDataClearRequested()) {
-          const url = createPreviewUrl(response.samples, rate);
-          if (response.captureFailed) {
-            // The device stopped delivering audio partway through the test. The
-            // preview still plays what was captured, and the test says why it
-            // is short instead of reporting a clean result.
-            updatePreviewUrl(url ?? null);
-            setTestError(
-              "The microphone stopped partway through. The preview is shorter than the test.",
-            );
-          } else if (url) {
-            updatePreviewUrl(url);
-          } else {
-            updatePreviewUrl(null);
-            setTestError(
-              "We didn't detect any audio. Try speaking while the test is running.",
-            );
-          }
+          showPreviewOutcome(response);
         } else {
           updatePreviewUrl(null);
         }

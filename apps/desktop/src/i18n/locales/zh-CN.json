@@ -774,6 +774,7 @@
   "recommended_with_gpu_acceleration": "推荐搭配 GPU 加速使用",
   "record": "录音",
   "recording_failed": "录制失败",
+  "recording_failed_partway_transcribing_what_was_captured": "Recording failed partway. Transcribing what was captured.",
   "recording_keys": "正在记录按键...",
   "recording_stopped_duration_limit_reached": "录音已停止：已达到时长限制",
   "recording_stopped_provider_duration_limit_reached": "录音已停止：已达到服务商时长限制",

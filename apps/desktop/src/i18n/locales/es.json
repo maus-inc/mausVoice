@@ -774,6 +774,7 @@
   "recommended_with_gpu_acceleration": "Recomendado con aceleración por GPU",
   "record": "Grabar",
   "recording_failed": "Error al grabar",
+  "recording_failed_partway_transcribing_what_was_captured": "Recording failed partway. Transcribing what was captured.",
   "recording_keys": "Grabando teclas...",
   "recording_stopped_duration_limit_reached": "Grabación detenida: se alcanzó el límite de duración",
   "recording_stopped_provider_duration_limit_reached": "Grabación detenida: se alcanzó el límite de duración del proveedor",

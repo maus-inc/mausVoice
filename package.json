@@ -13,7 +13,7 @@
     "skills:verify": "node scripts/ci/verify-skills.mjs",
     "check:pr-body": "node scripts/ci/check-pr-body.mjs",
     "gen:bindings": "pnpm --filter @maus-inc/desktop-native-apis gen:bindings",
-    "fallow:audit": "fallow audit --gate new-only",
+    "fallow:audit": "fallow audit --gate new-only --skip architecture",
     "fallow:health": "fallow --format json --quiet",
     "test:fallow": "node --test scripts/ci/fallow.test.mjs"
   },

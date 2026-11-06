@@ -74,6 +74,22 @@ const SYSTEM_NO_OP_COMMANDS = new Set([
   "sync_hotkey_combos",
 ]);
 
+/**
+ * Answers for the recorder admission commands the preview has to accept so the
+ * dictation and microphone pages can run their real call sequence. None of them
+ * produces audio in a browser, and the desktop contract only requires that the
+ * admission handshake completes.
+ */
+const RECORDING_COMMAND_RESULTS: Record<string, unknown> = {
+  recording_generation: 1,
+  start_recording: { sampleRate: 16_000 },
+  stop_recording: { samples: [], sampleRate: 16_000 },
+  acknowledge_recording: undefined,
+  discard_recording: undefined,
+  pause_recording: undefined,
+  resume_recording: undefined,
+};
+
 type WireRecord = Record<string, unknown>;
 type PreviewUsageEvent = {
   localDate: string;
@@ -504,6 +520,11 @@ class PreviewRuntime {
   }
 
   private dispatch(command: string, args: WireRecord): unknown {
+    // The hotkey commands share one row store and one entry point, so they are
+    // routed by prefix instead of spending five case arms here.
+    if (command.startsWith("hotkey_")) {
+      return this.invokeHotkeyCommand(command, args);
+    }
     switch (command) {
       case "user_get_one":
         return clone(this.database.user);
@@ -568,19 +589,11 @@ class PreviewRuntime {
         return undefined;
 
       case "hotkey_list":
-        return getList(this.database.hotkeys);
-      case "hotkey_save": {
-        const hotkey = clone(asRecord(args.hotkey));
-        this.database.hotkeys.set(String(hotkey.id), hotkey);
-        return clone(hotkey);
-      }
+      case "hotkey_save":
       case "hotkey_delete":
-        this.database.hotkeys.delete(String(args.id));
-        return undefined;
       case "hotkey_replace_style_hotkeys":
-        return this.replaceStyleHotkeys(args);
       case "hotkey_replace_dictation_language_hotkeys":
-        return this.replaceDictationLanguageHotkeys(args);
+        return this.invokeHotkeyCommand(command, args);
 
       case "api_key_list":
         return getList(this.database.apiKeys);
@@ -855,6 +868,48 @@ class PreviewRuntime {
     }
   }
 
+  /** The hotkey commands share one row store, so they share one entry point. */
+  /** Reject a replacement the native command would reject, before it is written. */
+  private assertDictationReplacement(
+    primary: WireRecord,
+    additional: WireRecord[],
+  ): void {
+    if (primary.actionName !== "dictate") {
+      throw new Error("Invalid dictation hotkey");
+    }
+    for (const hotkey of additional) {
+      const actionName = String(hotkey.actionName);
+      const languageName =
+        actionName.startsWith(ADDITIONAL_LANGUAGE_HOTKEY_PREFIX) &&
+        actionName.length > ADDITIONAL_LANGUAGE_HOTKEY_PREFIX.length;
+      if (actionName !== "dictate" && !languageName) {
+        throw new Error("Invalid replacement hotkey");
+      }
+      if (hotkey.id === primary.id) {
+        throw new Error("Duplicate dictation hotkey id");
+      }
+    }
+  }
+
+  private invokeHotkeyCommand(command: string, args: WireRecord): unknown {
+    switch (command) {
+      case "hotkey_list":
+        return getList(this.database.hotkeys);
+      case "hotkey_save": {
+        const hotkey = clone(asRecord(args.hotkey));
+        this.database.hotkeys.set(String(hotkey.id), hotkey);
+        return clone(hotkey);
+      }
+      case "hotkey_delete":
+        this.database.hotkeys.delete(String(args.id));
+        return undefined;
+      case "hotkey_replace_style_hotkeys":
+        return this.replaceStyleHotkeys(args);
+      default:
+        return this.replaceDictationLanguageHotkeys(args);
+    }
+  }
+
   private replaceStyleHotkeys(args: WireRecord): WireRecord[] {
     if (
       typeof args.prefix !== "string" ||
@@ -883,27 +938,10 @@ class PreviewRuntime {
    * reinserted as a whole, in the order the native command uses. */
   private replaceDictationLanguageHotkeys(args: WireRecord): null {
     const primary = clone(asRecord(args.primary));
-    if (primary.actionName !== "dictate") {
-      throw new Error("Invalid dictation hotkey");
-    }
     const additional = Array.isArray(args.additional)
       ? (args.additional as WireRecord[]).map(clone)
       : [];
-    for (const hotkey of additional) {
-      const actionName = String(hotkey.actionName);
-      if (
-        actionName !== "dictate" &&
-        !(
-          actionName.startsWith(ADDITIONAL_LANGUAGE_HOTKEY_PREFIX) &&
-          actionName.length > ADDITIONAL_LANGUAGE_HOTKEY_PREFIX.length
-        )
-      ) {
-        throw new Error("Invalid replacement hotkey");
-      }
-      if (hotkey.id === primary.id) {
-        throw new Error("Duplicate dictation hotkey id");
-      }
-    }
+    this.assertDictationReplacement(primary, additional);
     this.assertHotkeyGroupUnchanged(
       ADDITIONAL_LANGUAGE_HOTKEY_PREFIX,
       true,
@@ -1051,6 +1089,11 @@ class PreviewRuntime {
     // `undefined` answer; naming them in one list says what they are instead of
     // spending a case arm each.
     if (SYSTEM_NO_OP_COMMANDS.has(command)) return undefined;
+    // The recorder admission commands answer the same way on every call, so
+    // they share one lookup instead of a case arm each.
+    if (command in RECORDING_COMMAND_RESULTS) {
+      return clone(RECORDING_COMMAND_RESULTS[command]);
+    }
     switch (command) {
       // Safe, deterministic desktop-information and configuration responses.
       case "check_microphone_permission":
@@ -1099,17 +1142,6 @@ class PreviewRuntime {
         return [];
       case "storage_get_download_url":
         return `data:image/svg+xml,${iconSvg}`;
-      case "recording_generation":
-        return 1;
-      case "start_recording":
-        return { sampleRate: 16_000 };
-      case "stop_recording":
-        return { samples: [], sampleRate: 16_000 };
-      case "acknowledge_recording":
-      case "discard_recording":
-      case "pause_recording":
-      case "resume_recording":
-        return undefined;
       case "run_native_setup":
         return "success";
       case "export_diagnostics":

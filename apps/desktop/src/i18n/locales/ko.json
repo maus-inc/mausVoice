@@ -774,6 +774,7 @@
   "recommended_with_gpu_acceleration": "GPU 가속 권장",
   "record": "녹음",
   "recording_failed": "녹음에 실패했습니다",
+  "recording_failed_partway_transcribing_what_was_captured": "Recording failed partway. Transcribing what was captured.",
   "recording_keys": "키를 기록 중...",
   "recording_stopped_duration_limit_reached": "녹음이 중지되었습니다: 제한 시간에 도달했습니다",
   "recording_stopped_provider_duration_limit_reached": "녹음 중지됨: 제공자 길이 제한에 도달했습니다",

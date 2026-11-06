@@ -12,6 +12,7 @@ import {
 } from "../../utils/keyboard.utils";
 import type { LocalDataWriteLease } from "../../utils/local-data-write-gate";
 import { withLocalDataWrite } from "../../utils/local-data-write-gate";
+import { applyReplacedHotkeys } from "../../utils/style-hotkey";
 
 type LanguageRow = { language: string; hotkeyKeys: string[] };
 
@@ -32,19 +33,10 @@ const applyReplacedDictationHotkeys = (
   removedIds: Iterable<string>,
   lease: LocalDataWriteLease | undefined,
 ): void => {
-  produceAppState((draft) => {
-    const removed = new Set(removedIds);
-    for (const id of removed) delete draft.hotkeyById[id];
-    draft.settings.hotkeyIds = draft.settings.hotkeyIds.filter(
-      (id) => !removed.has(id),
-    );
-    for (const hotkey of saved) {
-      draft.hotkeyById[hotkey.id] = hotkey;
-      if (!draft.settings.hotkeyIds.includes(hotkey.id)) {
-        draft.settings.hotkeyIds.push(hotkey.id);
-      }
-    }
-  }, lease);
+  produceAppState(
+    (draft) => applyReplacedHotkeys(draft, removedIds, saved),
+    lease,
+  );
 };
 
 /** The language preference, primary hotkey and additional group are separate

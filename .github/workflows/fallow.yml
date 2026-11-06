@@ -34,6 +34,11 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Test audit gate
         run: node --test scripts/ci/fallow.test.mjs
+      # The audit gates dead code, duplication and complexity in the changed
+      # files. Import cycles are gated by `scripts/ci/fallow.test.mjs`, which
+      # holds an explicit list of the cycles the base branch already had, so the
+      # architecture pass is skipped here: it attributes a pre-existing cycle to
+      # whichever member this pull request happened to edit and calls it new.
       - name: Audit pull request
         if: github.event_name == 'pull_request'
         env:

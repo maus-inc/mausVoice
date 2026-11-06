@@ -774,6 +774,7 @@
   "recommended_with_gpu_acceleration": "Consigliato con accelerazione GPU",
   "record": "Registra",
   "recording_failed": "Registrazione fallita",
+  "recording_failed_partway_transcribing_what_was_captured": "Recording failed partway. Transcribing what was captured.",
   "recording_keys": "Registrazione dei tasti...",
   "recording_stopped_duration_limit_reached": "Registrazione interrotta: limite di durata raggiunto",
   "recording_stopped_provider_duration_limit_reached": "Registrazione interrotta: raggiunto il limite di durata del provider",
