@@ -38,6 +38,9 @@ on:
       - "scripts/ci/check-workspace-hygiene.test.mjs"
       - "scripts/ci/dev-surface-contracts.test.mjs"
       - "scripts/ci/dev-surface-config.mjs"
+      - "scripts/ci/alsa-fault-tests.test.mjs"
+      - "scripts/ci/run-alsa-fault-tests.sh"
+      - "apps/desktop/src-tauri/tests/fixtures/**"
       - "scripts/ci/package-exports.test.mjs"
       - "scripts/ci/validate-release-inputs.test.mjs"
       - "scripts/ci/release-notes.test.mjs"
@@ -226,6 +229,26 @@ jobs:
         shell: bash
         run: |
           bash "$GITHUB_WORKSPACE/scripts/ci/run-with-diagnostics.sh" rust-unit cargo test --locked --lib
+      - name: Run ALSA fault-injection tests
+        # The `#[ignore]`d half of the recorder suite. It needs a null ALSA PCM
+        # and an `LD_PRELOAD` shim per test, which `cargo test --lib` gives it
+        # neither of, so without this step the 33 tests and the 15 fixtures in
+        # `apps/desktop/src-tauri/tests/fixtures/` run nowhere. That is where
+        # the ownership rules are actually proven: failed open, start, stop,
+        # pause, resume, uncertain close, disconnect, XRUN, short and stalled
+        # reads. The runner builds each shim with `cc` and runs one test per
+        # process, ~40 seconds in total.
+        working-directory: apps/desktop/src-tauri
+        env:
+          TAURI_CONFIG: '{"bundle":{"externalBin":[]}}'
+        shell: bash
+        run: |
+          bash "$GITHUB_WORKSPACE/scripts/ci/run-alsa-fault-tests.sh"
+      - name: Test the ALSA fault-test runner's coverage table
+        # Static only: no compiler, no ALSA, no preload. It fails when a test is
+        # `#[ignore]`d in `audio.rs` without a row in the runner, or when a
+        # fixture exists that no row can load.
+        run: node --test scripts/ci/alsa-fault-tests.test.mjs
       - name: Lint every Rust target
         # `--all-targets` rather than the library alone. A test or bench is not
         # linted by a `--lib` invocation, which is how six `assert!(true)` calls

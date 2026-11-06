@@ -206,3 +206,29 @@ Remove this patch only after upgrading CPAL and verifying named-device capture,
 disconnection, and teardown on macOS and Windows. The desktop crate also receives
 CPAL through `rodio`, so the Cargo patch applies to both users of the dependency.
 Source-contract tests do not replace platform or physical-device testing.
+
+## Running the ALSA fault tests
+
+The `#[ignore]`d Linux tests in `apps/desktop/src-tauri/src/platform/audio.rs`
+need two things a plain `cargo test --lib` does not supply: an ALSA null PCM to
+talk to, and an `LD_PRELOAD` shim that makes the driver fail on purpose. Each
+shim in `apps/desktop/src-tauri/tests/fixtures/` covers one fault, and two of
+them also read an environment variable to select a variant.
+
+`scripts/ci/run-alsa-fault-tests.sh` is the whole recipe. It writes an
+`ALSA_CONFIG_PATH` configuration whose `pcm.!default` is `type null`, builds
+every shim with `cc -shared -fPIC`, builds the test binary once, and then runs
+one `--exact --ignored` test per process with the matching `LD_PRELOAD`. A
+per-row table names the fixture and any environment, and
+`scripts/ci/alsa-fault-tests.test.mjs` fails when a test in `audio.rs` has no
+row, or a fixture has no row that loads it, so the table cannot rot.
+
+```bash
+sudo apt-get install -y build-essential libasound2-dev
+scripts/ci/run-alsa-fault-tests.sh          # all 33
+scripts/ci/run-alsa-fault-tests.sh overrun  # only matching test names
+```
+
+It takes about 40 seconds, and `Test Desktop Unit` runs it on Linux so the
+faults stay covered rather than only documented. These tests drive an injected
+null device, not a physical microphone.
