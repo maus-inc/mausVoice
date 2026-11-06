@@ -468,13 +468,13 @@ describe("postProcessFinalizedTranscript", () => {
         transcript: "hello world",
         sanitizedTranscript: "hello world",
         postProcessMetadata: {
-          ...(options.postProcessMetadata ?? {}),
+          ...options.postProcessMetadata,
           ...(options.droppedChars === undefined
-            ? {}
+            ? undefined
             : { fastStyleTruncatedChars: options.droppedChars }),
           ...(options.editFailed === true
             ? { postProcessEditFailed: true }
-            : {}),
+            : undefined),
         },
         postProcessWarnings: [],
         remoteStatus: null,
