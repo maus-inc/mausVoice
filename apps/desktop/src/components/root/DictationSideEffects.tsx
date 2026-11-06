@@ -649,6 +649,27 @@ const persistAllowedAtStop = (input: PostTranscriptInput): boolean =>
   (input.persistAllowedAtCapture ?? isPersistenceAllowed()) &&
   isPersistenceAllowed();
 
+const makeStopPathHistoryContext = (
+  input: PostTranscriptInput,
+  historyOwner: HandleTranscriptResult["historyOwner"],
+  postProcessMetadata: HandleTranscriptResult["postProcessMetadata"],
+): StopPathHistoryContext => ({
+  input,
+  owner: historyOwner ?? "stop-path",
+  droppedChars: postProcessMetadata?.fastStyleTruncatedChars ?? undefined,
+  postProcessEditFailed:
+    postProcessMetadata?.postProcessEditFailed ?? undefined,
+});
+
+const shouldStoreOnStopPath = (
+  strategy: PostTranscriptInput["strategy"],
+  owner: StopPathHistoryContext["owner"],
+  input: PostTranscriptInput,
+): boolean =>
+  strategy.shouldStoreTranscript() &&
+  owner === "stop-path" &&
+  persistAllowedAtStop(input);
+
 const followConcurrentWrite = (
   ctx: StopPathHistoryContext,
   pendingPersistence: HandleTranscriptResult["pendingPersistence"],
@@ -715,22 +736,16 @@ const scheduleStopPathHistory = ({
   // review that reported an owner already wrote it, or is holding it on the
   // pill after a failure it told the user to retry from. Writing here in that
   // last case would contradict the toast and duplicate the row on the retry.
-  const owner = historyOwner ?? "stop-path";
-  const ctx: StopPathHistoryContext = {
+  const ctx = makeStopPathHistoryContext(
     input,
-    owner,
-    droppedChars: postProcessMetadata?.fastStyleTruncatedChars ?? undefined,
-    postProcessEditFailed:
-      postProcessMetadata?.postProcessEditFailed ?? undefined,
-  };
+    historyOwner,
+    postProcessMetadata,
+  );
   if (followConcurrentWrite(ctx, pendingPersistence)) {
     return;
   }
   writeOrMissStopPathHistory(ctx, {
-    shouldStore:
-      strategy.shouldStoreTranscript() &&
-      owner === "stop-path" &&
-      persistAllowedAtStop(input),
+    shouldStore: shouldStoreOnStopPath(strategy, ctx.owner, input),
     transcript,
     sanitizedTranscript,
     postProcessMetadata,
