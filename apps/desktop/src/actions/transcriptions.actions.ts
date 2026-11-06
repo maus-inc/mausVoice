@@ -1573,11 +1573,13 @@ export const importAudioFile = async ({
   // An incognito import keeps a memory row, so its transcript stays available
   // for this session. An import the store rejected while persistence was
   // allowed leaves no row anywhere, and the wording must not claim otherwise.
-  const hasSessionRow = canRecoverFromHistory || !persistenceAllowed;
+  // The feedback module only reads hasSessionRow when canRecoverFromHistory
+  // is false, where the two forms agree, so the plain persistence flag keeps
+  // one decision point out of this function.
   const feedback = getPostProcessFeedback(
     postProcessResult.metadata,
     "audio-import",
-    { canRecoverFromHistory, hasSessionRow },
+    { canRecoverFromHistory, hasSessionRow: !persistenceAllowed },
   );
   const truncationMessage = getFastStyleTruncationMessage(
     postProcessResult.metadata.fastStyleTruncatedChars,
