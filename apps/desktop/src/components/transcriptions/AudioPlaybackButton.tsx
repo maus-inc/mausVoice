@@ -20,8 +20,10 @@ const VISUALS: Record<VisualKey, { Icon: LucideIcon }> = {
   play: { Icon: Play },
 };
 
-const visualFor = (isLoading: boolean, isPlaying: boolean): VisualKey =>
-  isLoading ? "loading" : isPlaying ? "pause" : "play";
+const visualFor = (isLoading: boolean, isPlaying: boolean): VisualKey => {
+  if (isLoading) return "loading";
+  return isPlaying ? "pause" : "play";
+};
 
 const labelFor = (
   intl: IntlShape,

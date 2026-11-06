@@ -11,7 +11,7 @@ type Entry = {
 };
 
 export class TranscriptionAudioCache {
-  private entries = new Map<string, Entry>();
+  private readonly entries = new Map<string, Entry>();
   private pendingLoads = 0;
 
   constructor(

@@ -231,21 +231,23 @@ export const ListTile = forwardRef(function ListTile<
     </Stack>
   );
 
+  // Pass role only when the caller names one: an explicit undefined role
+  // overrides ButtonBase's implicit "button" role on non-native buttons and
+  // silently strips the row's actionability semantics. Menu-item rows leave
+  // roving tabindex management to the menu.
+  const roleProps: { role?: React.AriaRole; tabIndex?: number } = {};
+  if (itemRole) {
+    roleProps.role = itemRole;
+    if (itemRole.startsWith("menuitem")) roleProps.tabIndex = -1;
+  }
+
   const body = (
     <>
       {indicator}
       {onClick || href ? (
         <ListItemButton
           selected={selected}
-          // Pass role only when the caller names one: an explicit undefined
-          // role overrides ButtonBase's implicit "button" role on non-native
-          // buttons and silently strips the row's actionability semantics.
-          {...(itemRole
-            ? {
-                role: itemRole,
-                tabIndex: itemRole.startsWith("menuitem") ? -1 : undefined,
-              }
-            : {})}
+          {...roleProps}
           aria-checked={ariaChecked}
           aria-current={ariaCurrent}
           onClick={handleClick}
