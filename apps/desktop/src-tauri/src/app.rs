@@ -1,5 +1,5 @@
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{
     LogicalSize, Manager, PhysicalPosition, PhysicalSize, RunEvent, WebviewWindow, Window,
@@ -373,20 +373,81 @@ fn sanitize_restored_main_window(main_window: &WebviewWindow) {
     }
 }
 
+/// The warm capture handle, if the app has one.
+fn warm_capture(app_handle: &tauri::AppHandle) -> Option<Arc<dyn crate::platform::WarmCapture>> {
+    app_handle
+        .try_state::<Arc<dyn crate::platform::WarmCapture>>()
+        .map(|warm| warm.inner().clone())
+}
+
+/// Releases a held microphone before the process tears down.
+///
+/// A held stream keeps the OS microphone indicator lit. Dropping the stream at
+/// process exit is not enough on macOS, where the audio unit only stops in its
+/// own drop and the process can be killed before it runs, so the device is
+/// released explicitly and the indicator goes out with the window rather than a
+/// moment later, or not at all.
+///
+/// Only a stream that is actually held is released. Closing one that is merely
+/// inside a linger window would throw away the pre-roll the linger exists to
+/// keep, and the process is exiting anyway.
+fn release_held_microphone(app_handle: &tauri::AppHandle) {
+    let Some(warm) = warm_capture(app_handle) else {
+        return;
+    };
+    if warm.status_line().contains("ready=true") {
+        log::info!("releasing the held microphone before exit");
+        warm.warm_close();
+    }
+}
+
+/// Reopens a held microphone after the device set may have changed.
+///
+/// Plugging in a headset while the microphone is held is the common case: the
+/// old stream is still running on the old device, so without this the next press
+/// records from the device that is no longer the default. This runs when the
+/// window gains focus, which is the moment a user has most likely just come back
+/// from plugging something in, and it costs one device enumeration.
+///
+/// The work happens on its own thread because focus is delivered on the event
+/// loop and enumeration can take tens of milliseconds.
+fn refresh_warm_device(app_handle: &tauri::AppHandle) {
+    let Some(warm) = warm_capture(app_handle) else {
+        return;
+    };
+    if !warm.status_line().contains("ready=true") {
+        // Nothing is held, so there is nothing to follow. A cold press always
+        // resolves the device fresh.
+        return;
+    }
+    let spawned = std::thread::Builder::new()
+        .name("warm-refresh".to_string())
+        .spawn(move || warm.refresh_device());
+    if let Err(err) = spawned {
+        log::warn!("could not check the held device after focus: {err}");
+    }
+}
+
 /// Handles application lifecycle events.
 ///
-/// On exit the window size/position are persisted and the global keyboard
-/// listener is stopped; on macOS `Reopen` the main window is surfaced again.
+/// On exit the window size/position are persisted, the global keyboard listener
+/// is stopped, and a held microphone is released; on macOS `Reopen` the main
+/// window is surfaced again.
 fn handle_run_event(app_handle: &tauri::AppHandle, event: RunEvent) {
     match &event {
         RunEvent::ExitRequested { .. } => {
             save_main_window_state(app_handle);
+            release_held_microphone(app_handle);
             if let Err(err) = crate::platform::keyboard::stop_key_listener() {
                 log::error!("Failed to stop keyboard listener on exit: {err}");
             }
         }
         RunEvent::Exit => {
             save_main_window_state(app_handle);
+            // Belt and braces: `ExitRequested` may never fire on a hard quit,
+            // and a stream still open here would keep the device lit until the
+            // process is gone.
+            release_held_microphone(app_handle);
         }
         #[cfg(target_os = "macos")]
         RunEvent::Reopen { .. } => {
@@ -399,6 +460,9 @@ fn handle_run_event(app_handle: &tauri::AppHandle, event: RunEvent) {
 }
 
 fn handle_window_event(window: &Window, event: &WindowEvent) {
+    if let WindowEvent::Focused(true) = event {
+        refresh_warm_device(window.app_handle());
+    }
     match event {
         WindowEvent::CloseRequested { api, .. } if window.label() == "main" => {
             api.prevent_close();
