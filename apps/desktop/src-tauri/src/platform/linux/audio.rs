@@ -363,6 +363,83 @@ fn record_loop(
     ))
 }
 
+/// One step of the capture loop, so the loop body itself stays a flat match
+/// instead of nesting the buffer, callback, and shutdown cases together.
+enum CaptureStep {
+    Samples(Vec<f32>),
+    /// No samples were ready yet; the caller should poll again.
+    Idle,
+    /// The recorder is stopping and the source has nothing left to hand over.
+    Stopped,
+    Failed(String),
+}
+
+fn read_capture_step(
+    read: &mut impl FnMut(bool) -> Result<Option<Vec<f32>>, String>,
+    stopping: bool,
+) -> CaptureStep {
+    match read(stopping) {
+        Ok(Some(samples)) => CaptureStep::Samples(samples),
+        Ok(None) if stopping => CaptureStep::Stopped,
+        Ok(None) => {
+            std::thread::sleep(Duration::from_millis(5));
+            CaptureStep::Idle
+        }
+        Err(error) => CaptureStep::Failed(error),
+    }
+}
+
+fn emit_level_bins(callback: Option<&LevelCallback>, samples: &[f32], last_emit: &mut Instant) {
+    let Some(callback) = callback else {
+        return;
+    };
+    let now = Instant::now();
+    if now.duration_since(*last_emit) < LEVEL_DISPATCH_INTERVAL {
+        return;
+    }
+    *last_emit = now;
+    callback(compute_level_bins(samples));
+}
+
+fn emit_audio_chunks(
+    callback: Option<&ChunkCallback>,
+    chunk_buffer: &mut Vec<f32>,
+    emitted_samples: &mut u64,
+    last_emit: &mut Instant,
+    samples: &[f32],
+) {
+    let Some(callback) = callback else {
+        return;
+    };
+    chunk_buffer.extend_from_slice(samples);
+    let now = Instant::now();
+    if now.duration_since(*last_emit) < CHUNK_DISPATCH_INTERVAL {
+        return;
+    }
+    *last_emit = now;
+    if chunk_buffer.is_empty() {
+        return;
+    }
+    let offset = *emitted_samples;
+    let batch = std::mem::take(chunk_buffer);
+    *emitted_samples += batch.len() as u64;
+    callback(batch, offset);
+}
+
+fn flush_audio_chunks(
+    callback: Option<&ChunkCallback>,
+    chunk_buffer: &mut Vec<f32>,
+    emitted_samples: u64,
+) {
+    let Some(callback) = callback else {
+        return;
+    };
+    if chunk_buffer.is_empty() {
+        return;
+    }
+    callback(std::mem::take(chunk_buffer), emitted_samples);
+}
+
 fn capture_samples(
     sample_rate: u32,
     stop_signal: &AtomicBool,
@@ -380,14 +457,11 @@ fn capture_samples(
 
     loop {
         let stopping = stop_signal.load(Ordering::Acquire);
-        let mut samples = match read(stopping) {
-            Ok(Some(samples)) => samples,
-            Ok(None) if stopping => break,
-            Ok(None) => {
-                std::thread::sleep(Duration::from_millis(5));
-                continue;
-            }
-            Err(error) => {
+        let mut samples = match read_capture_step(&mut read, stopping) {
+            CaptureStep::Samples(samples) => samples,
+            CaptureStep::Idle => continue,
+            CaptureStep::Stopped => break,
+            CaptureStep::Failed(error) => {
                 log::error!("PulseAudio read failed: {error}");
                 capture_failed = true;
                 break;
@@ -395,48 +469,23 @@ fn capture_samples(
         };
 
         let finite = retain_finite_prefix(&mut samples);
-        if !finite {
-            capture_failed = true;
-        }
+        capture_failed |= !finite;
         // Accumulate for final result
         all_samples.extend_from_slice(&samples);
-
-        // Emit level bins
-        if let Some(ref cb) = level_callback {
-            let now = Instant::now();
-            if now.duration_since(last_level_emit) >= LEVEL_DISPATCH_INTERVAL {
-                last_level_emit = now;
-                let levels = compute_level_bins(&samples);
-                cb(levels);
-            }
-        }
-
-        // Emit audio chunks
-        if let Some(ref cb) = chunk_callback {
-            chunk_buffer.extend_from_slice(&samples);
-            let now = Instant::now();
-            if now.duration_since(last_chunk_emit) >= CHUNK_DISPATCH_INTERVAL {
-                last_chunk_emit = now;
-                if !chunk_buffer.is_empty() {
-                    let offset = emitted_samples;
-                    let batch = std::mem::take(&mut chunk_buffer);
-                    emitted_samples += batch.len() as u64;
-                    cb(batch, offset);
-                }
-            }
-        }
+        emit_level_bins(level_callback.as_ref(), &samples, &mut last_level_emit);
+        emit_audio_chunks(
+            chunk_callback.as_ref(),
+            &mut chunk_buffer,
+            &mut emitted_samples,
+            &mut last_chunk_emit,
+            &samples,
+        );
         if !finite {
             break;
         }
     }
 
-    // Flush remaining chunk buffer
-    if let Some(ref cb) = chunk_callback {
-        if !chunk_buffer.is_empty() {
-            let batch = std::mem::take(&mut chunk_buffer);
-            cb(batch, emitted_samples);
-        }
-    }
+    flush_audio_chunks(chunk_callback.as_ref(), &mut chunk_buffer, emitted_samples);
 
     if capture_failed {
         for sample in &mut all_samples {
@@ -485,137 +534,77 @@ fn poll_pulse_before(mainloop: &mut Mainloop, deadline: Instant) -> bool {
     true
 }
 
-fn enumerate_pulse_sources() -> Vec<PulseSource> {
-    let deadline = Instant::now() + Duration::from_secs(3);
-    let mut ml = match Mainloop::new() {
-        Some(ml) => ml,
-        None => {
-            log::error!("failed to create PulseAudio mainloop");
-            return Vec::new();
-        }
-    };
+fn read_flag(flag: &Mutex<bool>) -> bool {
+    flag.lock().map(|done| *done).unwrap_or(false)
+}
 
-    let mut ctx = match pulse::context::Context::new(&ml, "mausVoice Enumerate") {
-        Some(ctx) => ctx,
-        None => {
-            log::error!("failed to create PulseAudio context");
-            return Vec::new();
-        }
-    };
+fn set_flag(flag: &Mutex<bool>) {
+    if let Ok(mut done) = flag.lock() {
+        *done = true;
+    }
+}
+
+/// Pump the mainloop until `done` is set or the deadline passes. Both callers
+/// treat a timeout and a mainloop failure the same way: take whatever was
+/// collected and move on.
+fn wait_for_pulse_flag(mainloop: &mut Mainloop, done: &Mutex<bool>, deadline: Instant) {
+    while !read_flag(done) && poll_pulse_before(mainloop, deadline) {}
+}
+
+fn connect_pulse_context(
+    mainloop: &mut Mainloop,
+    deadline: Instant,
+) -> Option<pulse::context::Context> {
+    let mut ctx = pulse::context::Context::new(mainloop, "mausVoice Enumerate")?;
 
     if ctx
         .connect(None, pulse::context::FlagSet::NOFLAGS, None)
         .is_err()
     {
         log::error!("failed to connect PulseAudio context");
-        return Vec::new();
+        return None;
     }
 
-    // Wait for context to be ready
     loop {
-        if !poll_pulse_before(&mut ml, deadline) {
+        if !poll_pulse_before(mainloop, deadline) {
             log::error!("PulseAudio mainloop failed or timed out during connect");
-            return Vec::new();
+            return None;
         }
         match ctx.get_state() {
-            pulse::context::State::Ready => break,
+            pulse::context::State::Ready => return Some(ctx),
             pulse::context::State::Failed | pulse::context::State::Terminated => {
                 log::error!("PulseAudio context failed to connect");
-                return Vec::new();
+                return None;
             }
             _ => {}
         }
     }
+}
 
-    // Get the default source name from server info
-    let default_source: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
-    let default_source_clone = Arc::clone(&default_source);
-    let server_done = Arc::new(Mutex::new(false));
-    let server_done_clone = Arc::clone(&server_done);
-
-    let introspect = ctx.introspect();
-    introspect.get_server_info(move |info| {
-        if let Some(ref name) = info.default_source_name {
-            if let Ok(mut guard) = default_source_clone.lock() {
-                *guard = Some(name.to_string());
-            }
-        }
-        if let Ok(mut done) = server_done_clone.lock() {
-            *done = true;
-        }
-    });
-
-    // Wait for server info callback
-    loop {
-        if let Ok(done) = server_done.lock() {
-            if *done {
-                break;
-            }
-        }
-        if !poll_pulse_before(&mut ml, deadline) {
-            break;
-        }
-    }
-
-    let default_name = default_source
-        .lock()
-        .ok()
-        .and_then(|g| g.clone())
+fn pulse_source_from_info(
+    info: &pulse::context::introspect::SourceInfo<'_>,
+    default_name: &str,
+) -> PulseSource {
+    let name = info
+        .name
+        .as_ref()
+        .map(|n| n.to_string())
         .unwrap_or_default();
-
-    // Enumerate sources
-    let sources: Arc<Mutex<Vec<PulseSource>>> = Arc::new(Mutex::new(Vec::new()));
-    let sources_clone = Arc::clone(&sources);
-    let default_name_clone = default_name.clone();
-    let list_done = Arc::new(Mutex::new(false));
-    let list_done_clone = Arc::clone(&list_done);
-
-    introspect.get_source_info_list(move |result| match result {
-        pulse::callbacks::ListResult::Item(info) => {
-            let name = info
-                .name
-                .as_ref()
-                .map(|n| n.to_string())
-                .unwrap_or_default();
-            let description = info
-                .description
-                .as_ref()
-                .map(|d| d.to_string())
-                .unwrap_or_else(|| name.clone());
-            let is_monitor = info.monitor_of_sink.is_some();
-
-            let sample_rate = info.sample_spec.rate;
-            if let Ok(mut guard) = sources_clone.lock() {
-                guard.push(PulseSource {
-                    is_default: name == default_name_clone,
-                    name,
-                    description,
-                    is_monitor,
-                    sample_rate,
-                });
-            }
-        }
-        pulse::callbacks::ListResult::End | pulse::callbacks::ListResult::Error => {
-            if let Ok(mut done) = list_done_clone.lock() {
-                *done = true;
-            }
-        }
-    });
-
-    // Wait for source list callback
-    loop {
-        if let Ok(done) = list_done.lock() {
-            if *done {
-                break;
-            }
-        }
-        if !poll_pulse_before(&mut ml, deadline) {
-            break;
-        }
+    let description = info
+        .description
+        .as_ref()
+        .map(|d| d.to_string())
+        .unwrap_or_else(|| name.clone());
+    PulseSource {
+        is_default: name == default_name,
+        name,
+        description,
+        is_monitor: info.monitor_of_sink.is_some(),
+        sample_rate: info.sample_spec.rate,
     }
+}
 
-    ctx.disconnect();
-
+fn take_pulse_sources(sources: Arc<Mutex<Vec<PulseSource>>>) -> Vec<PulseSource> {
     match Arc::try_unwrap(sources) {
         Ok(mutex) => mutex.into_inner().unwrap_or_default(),
         Err(arc) => arc
@@ -623,6 +612,61 @@ fn enumerate_pulse_sources() -> Vec<PulseSource> {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone(),
     }
+}
+
+fn enumerate_pulse_sources() -> Vec<PulseSource> {
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let Some(mut ml) = Mainloop::new() else {
+        log::error!("failed to create PulseAudio mainloop");
+        return Vec::new();
+    };
+    let Some(mut ctx) = connect_pulse_context(&mut ml, deadline) else {
+        return Vec::new();
+    };
+    let introspect = ctx.introspect();
+
+    // Get the default source name from server info.
+    let default_source: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    let default_source_clone = Arc::clone(&default_source);
+    let server_done = Arc::new(Mutex::new(false));
+    let server_done_clone = Arc::clone(&server_done);
+    introspect.get_server_info(move |info| {
+        if let Some(ref name) = info.default_source_name {
+            if let Ok(mut guard) = default_source_clone.lock() {
+                *guard = Some(name.to_string());
+            }
+        }
+        set_flag(&server_done_clone);
+    });
+    wait_for_pulse_flag(&mut ml, &server_done, deadline);
+
+    let default_name = default_source
+        .lock()
+        .ok()
+        .and_then(|g| g.clone())
+        .unwrap_or_default();
+
+    // Enumerate sources.
+    let sources: Arc<Mutex<Vec<PulseSource>>> = Arc::new(Mutex::new(Vec::new()));
+    let sources_clone = Arc::clone(&sources);
+    let default_name_clone = default_name.clone();
+    let list_done = Arc::new(Mutex::new(false));
+    let list_done_clone = Arc::clone(&list_done);
+    introspect.get_source_info_list(move |result| match result {
+        pulse::callbacks::ListResult::Item(info) => {
+            if let Ok(mut guard) = sources_clone.lock() {
+                guard.push(pulse_source_from_info(info, &default_name_clone));
+            }
+        }
+        pulse::callbacks::ListResult::End | pulse::callbacks::ListResult::Error => {
+            set_flag(&list_done_clone);
+        }
+    });
+    wait_for_pulse_flag(&mut ml, &list_done, deadline);
+
+    ctx.disconnect();
+
+    take_pulse_sources(sources)
 }
 
 /// List microphone sources via PulseAudio, filtering out monitors.

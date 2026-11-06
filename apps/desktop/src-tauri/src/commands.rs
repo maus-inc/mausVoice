@@ -1475,6 +1475,141 @@ pub fn cancel_private_http_request(request_id: String) -> Result<bool, String> {
     }
 }
 
+/// Header names that must never be forwarded from a renderer-supplied request:
+/// the transport owns framing, and proxy credentials are filtered at intake.
+fn is_hop_by_hop_header(name: &str) -> bool {
+    matches!(
+        name,
+        "host"
+            | "content-length"
+            | "connection"
+            | "proxy-authorization"
+            | "proxy-connection"
+            | "transfer-encoding"
+            | "upgrade"
+    )
+}
+
+/// Provider API keys are also credentials, even when their header names are not
+/// part of the Fetch standard's authorization list. Keep this list aligned with
+/// secure-fetch.utils.ts. Proxy auth is filtered at intake and included here as
+/// defense in depth.
+fn is_credential_header(name: &str) -> bool {
+    matches!(
+        name,
+        "authorization"
+            | "cookie"
+            | "proxy-authorization"
+            | "api-key"
+            | "x-api-key"
+            | "x-goog-api-key"
+            | "xi-api-key"
+            | "ocp-apim-subscription-key"
+    )
+}
+
+/// Request-framing headers that no longer describe a body once a redirect
+/// rewrites the method to GET.
+fn is_body_header(name: &str) -> bool {
+    matches!(
+        name,
+        "content-length"
+            | "content-type"
+            | "content-encoding"
+            | "content-language"
+            | "content-location"
+    )
+}
+
+fn forwarded_request_headers(
+    headers: std::collections::HashMap<String, String>,
+) -> Result<Vec<(reqwest::header::HeaderName, reqwest::header::HeaderValue)>, String> {
+    let mut forwarded = Vec::with_capacity(headers.len());
+    for (name, value) in headers {
+        let normalized = name.trim().to_ascii_lowercase();
+        if is_hop_by_hop_header(normalized.as_str()) {
+            continue;
+        }
+        let name = reqwest::header::HeaderName::from_bytes(normalized.as_bytes())
+            .map_err(|_| "Private-network request contains an invalid header".to_string())?;
+        let value = reqwest::header::HeaderValue::from_str(&value)
+            .map_err(|_| "Private-network request contains an invalid header".to_string())?;
+        forwarded.push((name, value));
+    }
+    Ok(forwarded)
+}
+
+/// Build a client that dials only the addresses that already passed policy
+/// validation, so a DNS flip between validation and connect cannot land
+/// elsewhere.
+fn pinned_http_client(
+    url: &Url,
+    addrs: &[std::net::SocketAddr],
+    bypass_proxy: bool,
+) -> Result<reqwest::Client, String> {
+    let mut client_builder = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10 * 60))
+        .redirect(reqwest::redirect::Policy::none());
+    if bypass_proxy {
+        client_builder = client_builder.no_proxy();
+    }
+    if let url::Host::Domain(domain) = url
+        .host()
+        .ok_or_else(|| "HTTP request URL has no host".to_string())?
+    {
+        client_builder = client_builder.resolve_to_addrs(&domain.to_ascii_lowercase(), addrs);
+    }
+    client_builder
+        .build()
+        .map_err(|_| "Unable to initialize the HTTP client".to_string())
+}
+
+/// Fetch rewrites POST on 301/302 and non-GET/HEAD methods on 303. Every other
+/// method and status keeps the original method and body.
+fn redirect_discards_body(status: u16, method: &reqwest::Method) -> bool {
+    if matches!(status, 301 | 302) {
+        return *method == reqwest::Method::POST;
+    }
+    if status == 303 {
+        return *method != reqwest::Method::GET && *method != reqwest::Method::HEAD;
+    }
+    false
+}
+
+async fn read_private_http_response_body(
+    mut response: reqwest::Response,
+    initial_capacity: usize,
+    cancellation: &mut tokio::sync::oneshot::Receiver<()>,
+) -> Result<Vec<u8>, String> {
+    let mut body = Vec::new();
+    reserve_private_http_response_body(&mut body, initial_capacity)?;
+    loop {
+        let chunk = tokio::select! {
+            _ = &mut *cancellation => {
+                return Err(PRIVATE_HTTP_CANCELLED_ERROR.to_string());
+            }
+            result = response.chunk() => result
+                .map_err(|_| "Unable to read the private-network response".to_string())?,
+        };
+        let Some(chunk) = chunk else {
+            break;
+        };
+        if body
+            .len()
+            .checked_add(chunk.len())
+            .is_none_or(|length| length > MAX_PRIVATE_HTTP_RESPONSE_BYTES as usize)
+        {
+            return Err(format!(
+                "Private-network response exceeds the {} MiB limit",
+                MAX_PRIVATE_HTTP_RESPONSE_BYTES / (1024 * 1024)
+            ));
+        }
+        reserve_private_http_response_body(&mut body, chunk.len())?;
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
+}
+
 async fn execute_http_request(
     request: PrivateHttpRequest,
     policy: HttpRequestPolicy,
@@ -1524,28 +1659,7 @@ async fn execute_http_request(
 
     // Normalize header forwarding once; the redirect loop below reapplies the
     // same list to every hop.
-    let mut forwarded_headers: Vec<(reqwest::header::HeaderName, reqwest::header::HeaderValue)> =
-        Vec::new();
-    for (name, value) in request.headers {
-        let normalized = name.trim().to_ascii_lowercase();
-        if matches!(
-            normalized.as_str(),
-            "host"
-                | "content-length"
-                | "connection"
-                | "proxy-authorization"
-                | "proxy-connection"
-                | "transfer-encoding"
-                | "upgrade"
-        ) {
-            continue;
-        }
-        let name = reqwest::header::HeaderName::from_bytes(normalized.as_bytes())
-            .map_err(|_| "Private-network request contains an invalid header".to_string())?;
-        let value = reqwest::header::HeaderValue::from_str(&value)
-            .map_err(|_| "Private-network request contains an invalid header".to_string())?;
-        forwarded_headers.push((name, value));
-    }
+    let mut forwarded_headers = forwarded_request_headers(request.headers)?;
 
     // Manual redirect loop. reqwest's redirect closure can validate the next
     // URL string but cannot pin DNS for a host it has not seen yet, so every
@@ -1578,50 +1692,18 @@ async fn execute_http_request(
     // hop back) would leak them to whatever origin bounced the request. This
     // mirrors curl/reqwest, which remove and never re-add these headers.
     let mut credentials_stripped = false;
-    let mut response = loop {
+    let response = loop {
         validate_http_request_url(&current_url, &policy)?;
         let addrs = resolve_and_validate_url(&current_url, &policy).await?;
 
-        let mut client_builder = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(10 * 60))
-            .redirect(reqwest::redirect::Policy::none());
-        if bypass_proxy {
-            client_builder = client_builder.no_proxy();
-        }
-        if let url::Host::Domain(domain) = current_url
-            .host()
-            .ok_or_else(|| "HTTP request URL has no host".to_string())?
-        {
-            // Pin the dial to the validated answers so a DNS flip between
-            // validation and connect cannot land elsewhere.
-            client_builder = client_builder.resolve_to_addrs(&domain.to_ascii_lowercase(), &addrs);
-        }
-        let client = client_builder
-            .build()
-            .map_err(|_| "Unable to initialize the HTTP client".to_string())?;
+        let client = pinned_http_client(&current_url, &addrs, bypass_proxy)?;
 
         let mut builder = client.request(current_method.clone(), current_url.clone());
         if !urls_share_origin(&credential_origin, &current_url) {
             credentials_stripped = true;
         }
         for (name, value) in &forwarded_headers {
-            // Provider API keys are also credentials, even when their header
-            // names are not part of the Fetch standard's authorization list.
-            // Keep this list aligned with secure-fetch.utils.ts. Proxy auth is
-            // filtered at intake and included here as defense in depth.
-            if credentials_stripped
-                && matches!(
-                    name.as_str(),
-                    "authorization"
-                        | "cookie"
-                        | "proxy-authorization"
-                        | "api-key"
-                        | "x-api-key"
-                        | "x-goog-api-key"
-                        | "xi-api-key"
-                        | "ocp-apim-subscription-key"
-                )
-            {
+            if credentials_stripped && is_credential_header(name.as_str()) {
                 continue;
             }
             builder = builder.header(name.clone(), value.clone());
@@ -1665,24 +1747,10 @@ async fn execute_http_request(
             .map_err(|_| "HTTP redirect location is invalid".to_string())?;
         // Fetch rewrites POST on 301/302 and non-GET/HEAD methods on 303.
         // Every other method and status keeps the original method and body.
-        let drop_body = matches!(status.as_u16(), 301 | 302)
-            && current_method == reqwest::Method::POST
-            || status.as_u16() == 303
-                && current_method != reqwest::Method::GET
-                && current_method != reqwest::Method::HEAD;
-        if drop_body {
+        if redirect_discards_body(status.as_u16(), &current_method) {
             current_method = reqwest::Method::GET;
             current_body = None;
-            forwarded_headers.retain(|(name, _)| {
-                !matches!(
-                    name.as_str(),
-                    "content-length"
-                        | "content-type"
-                        | "content-encoding"
-                        | "content-language"
-                        | "content-location"
-                )
-            });
+            forwarded_headers.retain(|(name, _)| !is_body_header(name.as_str()));
         }
         current_url = next_url;
     };
@@ -1712,32 +1780,8 @@ async fn execute_http_request(
         .content_length()
         .unwrap_or_default()
         .min(MAX_PRIVATE_HTTP_RESPONSE_BYTES) as usize;
-    let mut body = Vec::new();
-    reserve_private_http_response_body(&mut body, initial_capacity)?;
-    loop {
-        let chunk = tokio::select! {
-            _ = &mut cancellation => {
-                return Err(PRIVATE_HTTP_CANCELLED_ERROR.to_string());
-            }
-            result = response.chunk() => result
-                .map_err(|_| "Unable to read the private-network response".to_string())?,
-        };
-        let Some(chunk) = chunk else {
-            break;
-        };
-        if body
-            .len()
-            .checked_add(chunk.len())
-            .is_none_or(|length| length > MAX_PRIVATE_HTTP_RESPONSE_BYTES as usize)
-        {
-            return Err(format!(
-                "Private-network response exceeds the {} MiB limit",
-                MAX_PRIVATE_HTTP_RESPONSE_BYTES / (1024 * 1024)
-            ));
-        }
-        reserve_private_http_response_body(&mut body, chunk.len())?;
-        body.extend_from_slice(&chunk);
-    }
+    let body =
+        read_private_http_response_body(response, initial_capacity, &mut cancellation).await?;
 
     Ok(PrivateHttpResponse {
         status,

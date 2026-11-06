@@ -907,10 +907,7 @@ impl RecordingOwnership {
                 std::panic::resume_unwind(panic);
             }
         };
-        if owner
-            .as_ref()
-            .is_some_and(|owner| owner.normal_stop_pending())
-        {
+        if owner.as_ref().is_some_and(Owner::normal_stop_pending) {
             // A normal stop, unlike cancellation, is entitled to captured
             // audio, including when the start reply was lost or cancelled.
             return result;
