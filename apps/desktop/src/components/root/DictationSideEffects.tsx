@@ -676,8 +676,9 @@ const scheduleStopPathHistory = ({
   const ctx: StopPathHistoryContext = {
     input,
     owner,
-    droppedChars: postProcessMetadata?.fastStyleTruncatedChars,
-    postProcessEditFailed: postProcessMetadata?.postProcessEditFailed,
+    droppedChars: postProcessMetadata?.fastStyleTruncatedChars ?? undefined,
+    postProcessEditFailed:
+      postProcessMetadata?.postProcessEditFailed ?? undefined,
   };
   const concurrentWrite =
     owner === "concurrent" ? pendingPersistence : undefined;
