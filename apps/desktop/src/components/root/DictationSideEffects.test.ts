@@ -740,6 +740,8 @@ describe("postProcessFinalizedTranscript", () => {
       toneId: null,
       languageCode: "fr",
     });
+  });
+
   it("awaits the strategy's concurrent write instead of storing again", async () => {
     // The strategy persisted during delivery. The stop path must settle that
     // write (keeping the session locked until the row is durable) without
