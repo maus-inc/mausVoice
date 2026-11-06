@@ -218,6 +218,7 @@
   "could_not_reach_the_release_history": "Impossibile accedere alla cronologia delle versioni.",
   "could_not_resume_dictation": "Impossibile riprendere la dettatura",
   "could_not_save_app_settings_please_try_again": "Impossibile salvare le impostazioni dell’app. Riprova.",
+  "could_not_save_that_dictation_to_history_because_earlier_rec": "Could not save that dictation to History because earlier recordings are still writing.",
   "could_not_save_the_api_key": "Impossibile salvare la chiave API.",
   "could_not_save_the_edited_transcript_it_remains_on_the_pill": "Non è stato possibile salvare la trascrizione modificata. Rimane nella pillola così puoi riprovare.",
   "could_not_save_your_profile_please_try_again": "Impossibile salvare il profilo. Riprova.",

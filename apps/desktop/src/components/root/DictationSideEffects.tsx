@@ -287,36 +287,103 @@ const toastEmptyTranscriptionOutcome = (
   );
 };
 
+const notifyHistoryQueueFull = (showToast: ShowDictationToast): void => {
+  getLogger().warning("History persist queue full; skipping stop-path save");
+  fireAndForgetToast(
+    showToast,
+    {
+      message: getIntl().formatMessage({
+        defaultMessage:
+          "Could not save that dictation to History because earlier recordings are still writing.",
+      }),
+      toastType: "error",
+      duration: 8_000,
+    },
+    "history queue-full toast",
+  );
+};
+
+const liveIntakeRecoveryWarning =
+  "Live audio could not be sent to the transcription provider because the audio-chunk subscription failed.";
+
+const recoveryWarningsForEmptyResult = (
+  sessionKind: TranscriptionSessionKind,
+  audioIntakeSubscriptionFailed: boolean,
+  transcriptionWarnings: string[],
+): string[] => {
+  if (!requiresLiveIntakeRecovery(sessionKind, audioIntakeSubscriptionFailed)) {
+    return transcriptionWarnings;
+  }
+  return [...transcriptionWarnings, liveIntakeRecoveryWarning];
+};
+
+const queueFailedTranscriptionHistory = (
+  input: HandleEmptyResultInput,
+  recoveryWarnings: string[],
+): void => {
+  const persistAllowedAtCapture =
+    input.persistAllowedAtCapture ?? isPersistenceAllowed();
+  const canPersist =
+    input.strategy.shouldStoreTranscript() &&
+    persistAllowedAtCapture &&
+    isPersistenceAllowed();
+  if (!canPersist || isHistoryPersistQueueFull()) {
+    toastEmptyTranscriptionOutcome(input.showToast, input.formatMessage, false);
+    return;
+  }
+  enqueueTranscriptionHistory(
+    input.storeTranscriptionFn,
+    {
+      audio: input.audio,
+      rawTranscript: null,
+      sanitizedTranscript: null,
+      transcript: null,
+      transcriptionMetadata: input.transcribeResult?.metadata ?? {},
+      postProcessMetadata: {},
+      warnings: recoveryWarnings,
+      remoteStatus: null,
+      remoteDeviceId: null,
+      createdAt: input.createdAt,
+      persistAllowedAtCapture,
+    },
+    "storing failed-transcription history",
+    {
+      onStored: (stored) => {
+        toastEmptyTranscriptionOutcome(
+          input.showToast,
+          input.formatMessage,
+          stored.transcription?.audio != null,
+        );
+      },
+    },
+  ).catch((error) => {
+    getLogger().warning(
+      `Could not preserve the failed recording: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    toastEmptyTranscriptionOutcome(input.showToast, input.formatMessage, false);
+  });
+};
+
 export const handleEmptyTranscriptionResult = async (
   input: HandleEmptyResultInput,
 ): Promise<{ handled: boolean }> => {
   const {
-    audio,
     transcribeResult,
     sessionKind,
     audioIntakeSubscriptionFailed = false,
-    strategy,
-    formatMessage,
-    showToast,
   } = input;
-  const rawTranscript = transcribeResult?.rawTranscript;
-  const transcriptionWarnings = transcribeResult?.warnings ?? [];
-  if (rawTranscript) {
+  if (transcribeResult?.rawTranscript) {
     return { handled: false };
   }
   // A failed intake subscription costs a live-streaming provider its whole
   // transcript, so only that kind earns the recovery warning. Batch/after-stop
   // and local sessions still transcribe the captured recording, so a warning
   // here would mark their honest empty results as live-provider failures.
-  const recoveryWarnings = requiresLiveIntakeRecovery(
+  const recoveryWarnings = recoveryWarningsForEmptyResult(
     sessionKind,
     audioIntakeSubscriptionFailed,
-  )
-    ? [
-        ...transcriptionWarnings,
-        "Live audio could not be sent to the transcription provider because the audio-chunk subscription failed.",
-      ]
-    : transcriptionWarnings;
+    transcribeResult?.warnings ?? [],
+  );
   if (recoveryWarnings.length === 0) {
     return { handled: false };
   }
@@ -327,48 +394,7 @@ export const handleEmptyTranscriptionResult = async (
   if (input.sendIdle) {
     await input.sendIdle();
   }
-  const persistAllowedAtCapture =
-    input.persistAllowedAtCapture ?? isPersistenceAllowed();
-  const canPersist =
-    strategy.shouldStoreTranscript() &&
-    persistAllowedAtCapture &&
-    isPersistenceAllowed();
-  if (canPersist && !isHistoryPersistQueueFull()) {
-    enqueueTranscriptionHistory(
-      input.storeTranscriptionFn,
-      {
-        audio,
-        rawTranscript: null,
-        sanitizedTranscript: null,
-        transcript: null,
-        transcriptionMetadata: transcribeResult?.metadata ?? {},
-        postProcessMetadata: {},
-        warnings: recoveryWarnings,
-        remoteStatus: null,
-        remoteDeviceId: null,
-        createdAt: input.createdAt,
-        persistAllowedAtCapture,
-      },
-      "storing failed-transcription history",
-      {
-        onStored: (stored) => {
-          toastEmptyTranscriptionOutcome(
-            showToast,
-            formatMessage,
-            stored.transcription?.audio != null,
-          );
-        },
-      },
-    ).catch((error) => {
-      getLogger().warning(
-        `Could not preserve the failed recording: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      toastEmptyTranscriptionOutcome(showToast, formatMessage, false);
-    });
-  } else {
-    toastEmptyTranscriptionOutcome(showToast, formatMessage, false);
-  }
-
+  queueFailedTranscriptionHistory(input, recoveryWarnings);
   input.refreshMember();
   return { handled: true };
 };
@@ -521,6 +547,100 @@ export type PostTranscriptInput = {
   persistAllowedAtCapture?: boolean;
 };
 
+type StopPathHistoryContext = {
+  input: PostTranscriptInput;
+  owner: NonNullable<HandleTranscriptResult["historyOwner"]>;
+  droppedChars: number | undefined;
+  postProcessEditFailed: boolean | undefined;
+};
+
+const notifyDroppedEnding = (
+  ctx: StopPathHistoryContext,
+  kind: "history" | "not-saved",
+): void => {
+  const droppedChars = ctx.droppedChars;
+  if (typeof droppedChars !== "number" || droppedChars <= 0) {
+    return;
+  }
+  fireAndForgetToast(
+    ctx.input.showToast,
+    {
+      message: formatDroppedEndingMessage(kind, droppedChars),
+      toastType: "info",
+      duration: 8_000,
+    },
+    "fast-style truncation toast",
+  );
+};
+
+const onHistoryStored = (
+  ctx: StopPathHistoryContext,
+  stored: StoreTranscriptionOutput,
+): void => {
+  const saved = Boolean(stored.transcription);
+  if (saved && stored.transcription) {
+    logOnRejection(
+      Promise.resolve(
+        scheduleAutomaticPostProcessEditRetry({
+          transcription: stored.transcription,
+          toneId: ctx.input.toneId,
+          languageCode: ctx.input.languageCode,
+        }),
+      ),
+      "automatic post-process edit retry",
+    );
+  }
+  if (ctx.postProcessEditFailed) {
+    notifyPostProcessEditFailed(ctx.input.showToast, saved);
+  }
+  notifyDroppedEnding(ctx, saved ? "history" : "not-saved");
+};
+
+const onHistoryMissed = (ctx: StopPathHistoryContext): void => {
+  if (ctx.postProcessEditFailed) {
+    notifyPostProcessEditFailed(ctx.input.showToast, ctx.owner === "review");
+  }
+  notifyDroppedEnding(ctx, ctx.owner === "review" ? "history" : "not-saved");
+};
+
+const enqueueStopPathHistory = (
+  ctx: StopPathHistoryContext,
+  args: {
+    transcript: HandleTranscriptResult["transcript"];
+    sanitizedTranscript: HandleTranscriptResult["sanitizedTranscript"];
+    postProcessMetadata: HandleTranscriptResult["postProcessMetadata"];
+    postProcessWarnings: HandleTranscriptResult["postProcessWarnings"];
+    remoteStatus: HandleTranscriptResult["remoteStatus"];
+    remoteDeviceId: HandleTranscriptResult["remoteDeviceId"];
+  },
+): void => {
+  getLogger().verbose("Storing transcription");
+  enqueueTranscriptionHistory(
+    ctx.input.storeTranscriptionFn,
+    {
+      audio: ctx.input.audio,
+      rawTranscript: ctx.input.rawTranscript ?? null,
+      sanitizedTranscript: args.sanitizedTranscript,
+      transcript: args.transcript,
+      transcriptionMetadata: ctx.input.transcribeResult.metadata,
+      postProcessMetadata: args.postProcessMetadata,
+      warnings: [
+        ...ctx.input.transcribeResult.warnings,
+        ...args.postProcessWarnings,
+      ],
+      remoteStatus: args.remoteStatus,
+      remoteDeviceId: args.remoteDeviceId,
+      trace: ctx.input.trace ?? null,
+      createdAt: ctx.input.createdAt,
+      persistAllowedAtCapture: ctx.input.persistAllowedAtCapture,
+    },
+    "storing transcription history",
+    { onStored: (stored) => onHistoryStored(ctx, stored) },
+  ).catch(() => {
+    onHistoryMissed(ctx);
+  });
+};
+
 const scheduleStopPathHistory = ({
   input,
   strategy,
@@ -553,99 +673,43 @@ const scheduleStopPathHistory = ({
   const persistAllowedAtStop =
     (input.persistAllowedAtCapture ?? isPersistenceAllowed()) &&
     isPersistenceAllowed();
+  const ctx: StopPathHistoryContext = {
+    input,
+    owner,
+    droppedChars: postProcessMetadata?.fastStyleTruncatedChars,
+    postProcessEditFailed: postProcessMetadata?.postProcessEditFailed,
+  };
   const concurrentWrite =
     owner === "concurrent" ? pendingPersistence : undefined;
-  const droppedChars = postProcessMetadata?.fastStyleTruncatedChars;
-  const notifyDroppedEnding = (kind: "history" | "not-saved"): void => {
-    if (typeof droppedChars !== "number" || droppedChars <= 0) {
-      return;
-    }
-    fireAndForgetToast(
-      input.showToast,
-      {
-        message: formatDroppedEndingMessage(kind, droppedChars),
-        toastType: "info",
-        duration: 8_000,
-      },
-      "fast-style truncation toast",
-    );
-  };
-  const onHistoryStored = (stored: StoreTranscriptionOutput): void => {
-    const saved = Boolean(stored.transcription);
-    if (saved && stored.transcription) {
-      logOnRejection(
-        Promise.resolve(
-          scheduleAutomaticPostProcessEditRetry({
-            transcription: stored.transcription,
-            toneId: input.toneId,
-            languageCode: input.languageCode,
-          }),
-        ),
-        "automatic post-process edit retry",
-      );
-    }
-    if (postProcessMetadata?.postProcessEditFailed) {
-      notifyPostProcessEditFailed(input.showToast, saved);
-    }
-    if (saved) {
-      notifyDroppedEnding("history");
-    } else {
-      notifyDroppedEnding("not-saved");
-    }
-  };
-  const onHistoryMissed = (): void => {
-    if (postProcessMetadata?.postProcessEditFailed) {
-      notifyPostProcessEditFailed(input.showToast, owner === "review");
-    }
-    notifyDroppedEnding(owner === "review" ? "history" : "not-saved");
-  };
-
   if (concurrentWrite !== undefined) {
-    concurrentWrite.then(onHistoryStored).catch((error) => {
-      getLogger().warning(`Concurrent history persist failed: ${error}`);
-      onHistoryMissed();
-    });
+    concurrentWrite
+      .then((stored) => onHistoryStored(ctx, stored))
+      .catch((error) => {
+        getLogger().warning(`Concurrent history persist failed: ${error}`);
+        onHistoryMissed(ctx);
+      });
     return;
   }
 
-  const canEnqueue =
+  const wantsStopPathStore =
     strategy.shouldStoreTranscript() &&
     owner === "stop-path" &&
-    persistAllowedAtStop &&
-    !isHistoryPersistQueueFull();
-  if (canEnqueue) {
-    getLogger().verbose("Storing transcription");
-    enqueueTranscriptionHistory(
-      input.storeTranscriptionFn,
-      {
-        audio: input.audio,
-        rawTranscript: input.rawTranscript ?? null,
-        sanitizedTranscript,
-        transcript,
-        transcriptionMetadata: input.transcribeResult.metadata,
-        postProcessMetadata,
-        warnings: [...input.transcribeResult.warnings, ...postProcessWarnings],
-        remoteStatus,
-        remoteDeviceId,
-        trace: input.trace ?? null,
-        createdAt: input.createdAt,
-        persistAllowedAtCapture: input.persistAllowedAtCapture,
-      },
-      "storing transcription history",
-      { onStored: onHistoryStored },
-    ).catch(() => {
-      onHistoryMissed();
+    persistAllowedAtStop;
+  if (wantsStopPathStore && !isHistoryPersistQueueFull()) {
+    enqueueStopPathHistory(ctx, {
+      transcript,
+      sanitizedTranscript,
+      postProcessMetadata,
+      postProcessWarnings,
+      remoteStatus,
+      remoteDeviceId,
     });
     return;
   }
-  if (
-    strategy.shouldStoreTranscript() &&
-    owner === "stop-path" &&
-    persistAllowedAtStop
-  ) {
-    getLogger().warning("History persist queue full; skipping stop-path save");
+  if (wantsStopPathStore) {
+    notifyHistoryQueueFull(input.showToast);
   }
-  onHistoryMissed();
+  onHistoryMissed(ctx);
 };
 
 export const postProcessFinalizedTranscript = async (

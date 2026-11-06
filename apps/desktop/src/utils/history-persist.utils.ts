@@ -13,7 +13,10 @@ import { logOnRejection } from "./promise.utils";
 
 let persistTail: Promise<void> = Promise.resolve();
 let queueDepth = 0;
-/** Bound copied PCM payloads waiting behind a slow WAV write. */
+/**
+ * Bound on copied PCM payloads, including the in-flight WAV write.
+ * A cap of four is four jobs total, not four waiters behind one writer.
+ */
 export const MAX_HISTORY_PERSIST_QUEUE = 4;
 
 export const isHistoryPersistQueueFull = (): boolean =>
