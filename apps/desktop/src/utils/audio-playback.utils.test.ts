@@ -396,4 +396,33 @@ describe("audio context release after ownership", () => {
     // it unstarted is the correct teardown for a playback that never played.
     expect(source.start).not.toHaveBeenCalled();
   });
+
+  it("notifies the caller when entered with an already-aborted signal", async () => {
+    stubIdleWindow();
+    const close = vi.fn(() => Promise.resolve());
+    const source = {
+      stop: vi.fn(),
+      disconnect: vi.fn(),
+      connect: vi.fn(),
+      start: vi.fn(),
+      onended: null,
+    };
+    stubContext(close, source);
+    const onStop = vi.fn();
+    const controller = new AbortController();
+    controller.abort();
+    await playWebAudio(
+      "t1",
+      { samples: [0], sampleRate: 16000 },
+      vi.fn(),
+      onStop,
+      0,
+      controller.signal,
+    );
+    // An abandoned attempt still reports, or a caller parked on the promise
+    // keeps showing "playing". No context is created for it either.
+    expect(onStop).toHaveBeenCalledExactlyOnceWith("replaced");
+    expect(close).not.toHaveBeenCalled();
+    expect(activePlayback).toBeNull();
+  });
 });

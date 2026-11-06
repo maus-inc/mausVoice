@@ -64,6 +64,19 @@ async function appReady() {
  * "root has children" does not mean the app is routed. Wait for the router to
  * leave `/` before reading state.
  */
+/**
+ * Route equality with one deliberate relaxation: the Settings index hands off
+ * to its default sub-tab (/dashboard/settings -> .../settings/home), so any
+ * settings sub-route satisfies a request for /dashboard/settings.
+ */
+function routeMatches(pathname: string, current: string): boolean {
+  if (current === pathname) return true;
+  return (
+    pathname === "/dashboard/settings" &&
+    current.startsWith("/dashboard/settings/")
+  );
+}
+
 async function settleRoute() {
   await browser.waitUntil(
     async () => (await browser.execute(() => window.location.pathname)) !== "/",
@@ -127,17 +140,20 @@ async function resolveTile(tile: TileLocator, name: string) {
  */
 async function ensureOn(pathname: string) {
   let current = await browser.execute(() => window.location.pathname);
-  if (current !== pathname) {
+  if (!routeMatches(pathname, current)) {
     await browser.url("tauri://localhost/");
     await appReady();
     await settleRoute();
     await dismissFeatureDialog();
     current = await browser.execute(() => window.location.pathname);
-    if (current !== pathname) {
+    if (!routeMatches(pathname, current)) {
       await realClick($(TILE_XPATH[pathname]), pathname);
       await browser.waitUntil(
         async () =>
-          (await browser.execute(() => window.location.pathname)) === pathname,
+          routeMatches(
+            pathname,
+            await browser.execute(() => window.location.pathname),
+          ),
         {
           timeout: PAGE_LOAD,
           timeoutMsg: `static: tile for ${pathname} did not navigate`,
@@ -145,7 +161,7 @@ async function ensureOn(pathname: string) {
       );
     }
     current = await browser.execute(() => window.location.pathname);
-    if (current !== pathname) {
+    if (!routeMatches(pathname, current)) {
       throw new Error(
         `static: navigate to ${pathname} failed | path=${current}`,
       );
@@ -200,7 +216,11 @@ async function seedUser(): Promise<boolean> {
       }
     },
     JSON.stringify({
-      id: "ec2f6bbd-72e8-4a12-a344-5fb69c48e0c3",
+      // The app's canonical identity: onboarding creates the profile with
+      // `getMyEffectiveUserId` (LOCAL_USER_ID / PERSONAL_USER_ID), and
+      // `getMyUser(state)` looks the row up by exactly that id. A foreign
+      // UUID would be stored but never resolved as the current user.
+      id: "local-user-id",
       name: "MausAgent",
       bio: "Verified native session",
       onboarded: true,
@@ -224,7 +244,11 @@ describe("MausAgent native deliverable contract", () => {
       if (!seeded) {
         throw new Error("static: user_set_one seed upsert failed");
       }
-      await browser.refresh();
+      // Full re-entry, not `browser.refresh()`: the packaged asset protocol
+      // only reliably serves the app root, and a WebDriver refresh does not
+      // re-run the SPA boot the way a root navigation does (the retry loop
+      // otherwise re-checks stale in-memory state and never retries at all).
+      await browser.url("tauri://localhost/");
       await appReady();
       await settleRoute();
       await dismissFeatureDialog();
@@ -240,7 +264,7 @@ describe("MausAgent native deliverable contract", () => {
             };
           }
         ).__TAURI_INTERNALS__.invoke("user_get_one", {});
-        return row ? "row" : "null";
+        return row ? JSON.stringify(row).slice(0, 400) : "null";
       } catch (error) {
         return `err:${error instanceof Error ? error.message : String(error)}`;
       }
@@ -481,39 +505,102 @@ describe("MausAgent native deliverable contract", () => {
           'input[role="switch"]',
         )!;
         input.focus();
+        const w = window as unknown as { __k299?: Record<string, number> };
+        w.__k299 = { keydown: 0, keyup: 0, click: 0, change: 0 };
+        for (const type of ["keydown", "keyup", "click", "change"] as const) {
+          input.addEventListener(
+            type,
+            () => {
+              (w.__k299 as Record<string, number>)[type] += 1;
+            },
+            { capture: true },
+          );
+        }
         const row = input.closest("label")!;
         const r = row.getBoundingClientRect();
         return {
           checked: input.checked,
           rect: { x: r.x, y: r.y, width: r.width, height: r.height },
+          active: document.activeElement === input,
         };
       });
+      if (!toggleState.active) {
+        throw new Error("static: switch input did not take focus");
+      }
       await browser.keys("Space");
+      // Settings writes are persistence-gated (state commits after the queued
+      // save resolves), so await the flip instead of sampling synchronously.
+      await browser.waitUntil(
+        async () =>
+          (await browser.execute(
+            () =>
+              document.querySelector<HTMLInputElement>('input[role="switch"]')!
+                .checked,
+          )) !== toggleState.checked,
+        {
+          timeout: 3_000,
+          timeoutMsg: "static: Space did not flip the switch row",
+        },
+      );
       const afterSpace = await browser.execute(() => {
         const input = document.querySelector<HTMLInputElement>(
           'input[role="switch"]',
         )!;
         const row = input.closest("label")!;
         const r = row.getBoundingClientRect();
-        let transformed = false;
+        const transformedAncestors: string[] = [];
         let node: Element | null = row;
         while (node) {
           const t = getComputedStyle(node).transform;
-          if (t && t !== "none") transformed = true;
+          if (t && t !== "none") {
+            transformedAncestors.push(
+              `${node.tagName}.${node.className || "-"}:${t}`,
+            );
+          }
           node = node.parentElement;
         }
         return {
           checked: input.checked,
           rect: { x: r.x, y: r.y, width: r.width, height: r.height },
-          transformed,
+          transformedAncestors,
+          counts: (window as unknown as { __k299?: Record<string, number> })
+            .__k299,
         };
       });
-      // Exactly once: the checked state flipped, the row did not move or scale.
+      // Exactly once per Space: one keydown, one synthesized click, one
+      // change event, and the checked state flipped once. A double-toggle
+      // would surface as change: 2 (or a stuck checked state).
       expect(afterSpace.checked).toBe(!toggleState.checked);
-      expect(afterSpace.rect).toEqual(toggleState.rect);
-      expect(afterSpace.transformed).toBe(false);
+      expect(afterSpace.counts).toEqual({
+        keydown: 1,
+        keyup: 1,
+        click: 1,
+        change: 1,
+      });
+      // The row did not move or scale (0.1px tolerance absorbs compositor
+      // subpixel jitter; a press scale or layout shift exceeds it by orders).
+      const snap = (r: {
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+      }) => [r.x, r.y, r.width, r.height].map((v) => Math.round(v * 10) / 10);
+      expect(snap(afterSpace.rect)).toEqual(snap(toggleState.rect));
+      expect(afterSpace.transformedAncestors).toEqual([]);
       // Restore the setting so the profile is left as found.
       await browser.keys("Space");
+      await browser.waitUntil(
+        async () =>
+          (await browser.execute(
+            () =>
+              document.querySelector<HTMLInputElement>('input[role="switch"]')!
+                .checked,
+          )) === toggleState.checked,
+        {
+          timeout: 3_000,
+          timeoutMsg: "static: restore Space did not flip the switch row back",
+        },
+      );
     } catch (error) {
       throw new Error(
         `static: ${error instanceof Error ? error.message : String(error)} | ${await stateSnapshot("#299")}`,
