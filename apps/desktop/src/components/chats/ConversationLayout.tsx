@@ -7,7 +7,6 @@ import { sendChatMessage } from "../../actions/chat.actions";
 import { useAppStore } from "../../store";
 import { getLogger } from "../../utils/log.utils";
 import { FadingScrollArea } from "../common/FadingScrollArea";
-import { TipCard } from "../onboarding/TipCard";
 import { AgentLiveAnnouncer } from "./AgentLiveAnnouncer";
 import { ChatMessageBubble } from "./ChatMessageBubble";
 import { ChatPromptBox } from "./ChatPromptBox";
@@ -131,11 +130,6 @@ export const ConversationLayout = ({
         overflow: "hidden",
       }}
     >
-      {!compact && (
-        <Box sx={{ px: 2, pt: 2 }}>
-          <TipCard id="assistant-mode" />
-        </Box>
-      )}
       <AgentLiveAnnouncer
         agentRunning={agentRunning}
         latestMessageId={messageIds.at(-1) ?? null}
@@ -151,11 +145,6 @@ export const ConversationLayout = ({
           ref={contentRef}
           sx={{ minHeight: "100%", justifyContent: "flex-end" }}
         >
-          {compact && (
-            <Box sx={{ pb: 2 }}>
-              <TipCard id="assistant-mode" />
-            </Box>
-          )}
           {messageIds.length === 0 ? (
             <Box
               sx={{

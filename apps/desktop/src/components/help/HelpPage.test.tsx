@@ -78,14 +78,14 @@ describe("HelpPage tip cards", () => {
     );
     const heading = container.querySelector("h3");
     expect(heading?.textContent).toBe("Tip");
-    expect(heading?.classList.contains("MuiTypography-subtitle2")).toBe(true);
+    expect(heading?.classList.contains("MuiTypography-titleSmall")).toBe(true);
   });
 
   it("does not invent a heading level for a standalone tip", () => {
     act(() =>
       root.render(createElement(TipCardFrame, { title: "Tip", body: "Body" })),
     );
-    expect(container.querySelector(".MuiTypography-subtitle2")?.tagName).toBe(
+    expect(container.querySelector(".MuiTypography-titleSmall")?.tagName).toBe(
       "P",
     );
   });

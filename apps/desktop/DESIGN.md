@@ -62,7 +62,7 @@ The two schemes have their own temperature rather than being inversions of each 
 
 ## Anti-patterns
 
-- Side-stripe borders >1px; gradient text; decorative glass; `transition-all`; pure black/white; lucide-only generic icon (once stroke); ceil matching radius. See `craft-floor`.
+- Side-stripe borders >1px; gradient text; decorative glass; `transition-all`; pure black/white; lucide-only generic icon (once stroke); ceil matching radius; drop-shadowed in-flow cards; icon tiles behind neutral glyphs; arrows on secondary actions. See `craft-floor`.
 - Native endonyms in pickers for scripts the font stack cannot render (tofu). Outside Latin/Cyrillic coverage, menus fall back to English exonyms.
 - Emoji‑as‑icons. No.
 
@@ -114,6 +114,69 @@ The Windows and Linux caption buttons are three square targets inset from the ba
 
 - sonner, bottom-right, themed via GlobalStyles bridge (`SonnerToaster.tsx`).
 - Destructive actions ship UNDO. Max 4 visible; group repeats.
+
+## Tips & inline notifications
+
+Onboarding tips are quiet notification _rows_ that float in the app's toast
+corner, not banners anchored to a page. A live tip renders in the bottom-right
+tip stack (`components/onboarding/TipToaster.tsx`), the same corner the
+Sonner toasts occupy, and it shows only on the route the feature lives on
+(`ONBOARDING_TIPS.href`) until dismissed. The Help page keeps the in-flow
+listing of all of them (`TipCardFrame`), dimmed for the dismissed, each with a
+"Show again" control.
+
+Why the corner and not the page. A tip anchored at the top of a page reads as
+a banner pinned over the content — it competes with the page's own heading and
+forces the reader to scroll around it to use the page. A nudge that can be
+dismissed belongs with the other dismissible things, in the corner, out of the
+reading path. The row itself is unchanged from the in-flow version, so the two
+surfaces share one source of copy, icons, and layout.
+
+The reference for the row is Linear's inbox rows, the closest published work
+for this exact component; the reference for the placement is the toast stacks
+of Linear, Vercel, and Raycast, all of which float transient and advisory
+messages in a corner rather than in the content flow. Each choice below names
+what it rules out.
+
+- **One stack, one corner, aligned with the toasts.** The tip stack anchors at
+  `right: 16px; bottom: 16px`, fixed, and every row holds the Sonner toast
+  column width (356px) so the two stacks line up in the corner. Live tips sit
+  under the transient toasts and the MUI overlays (`z-index: 1100`): a
+  confirmation toast may sit on a tip for a few seconds, a tip must never sit
+  on a toast. A tip is never anchored in the page flow, and there is no second
+  corner.
+- **Floating face for the live tip, flat face for the listing.** A live tip
+  floats over the page, so it takes the floating-layer material the toasts
+  use: a `background.paper` face, a 1px `divider` hairline, the standard card
+  radius, and the `premiumSurface` lift. The Help listing is in flow, so its
+  rows keep the flat `level1` face with hairline and no cast — there, the row
+  separates on its luminance step, per the "borders over shadows" rule (Raycast
+  states it; Linear's rows carry no cast at all). The same `TipCardFrame`
+  serves both; the face is an override, not a second component.
+- **Bare glyph, no tile.** One 16px lucide glyph (stroke 1.9) at
+  `text.secondary`, aligned with the title, the same size as the dismiss X it
+  sits opposite. No icon chip or tile behind it. A solid square backing is the
+  stock "notification card" of template UIs, and a tip is neutral, so it has
+  no status hue to justify a tinted chip. Tinted chips like Atera's serve
+  status-bearing alerts, which tips are not.
+- **Type and measure.** `titleSmall` (-0.01em) states the claim. `body2` at
+  `text.secondary` supplies the reason. Both cap at 60ch. The
+  decision-relevant detail comes first. In-app cards do their job in roughly
+  ten words.
+- **One quiet action, one dismiss.** Each tip carries at most one outlined
+  pill (999) with no arrow. An arrow reads as a marketing CTA, and tips are
+  not marketing. Vercel's secondary actions are quiet pills, and none carry
+  arrows. Dismiss is a bare 16px X at `text.secondary`. More than one primary
+  action makes it a modal, never a notification. Where a tip has an in-page
+  action, the handler lives on the tip's own route page (the
+  `tip-actions` registry), so the action completes the task in place and
+  never dismisses the tip.
+- **Motion.** Reveal and exit run 160ms / 180ms ease-out with a 6px rise, and
+  a sibling reflows with `layout` when one clears. No scale, no spring.
+  Springs stay with shared-layout indicators (see Motion). Reduced motion
+  drops the rise.
+- **Dismissal is a choice that persists**, including when navigation
+  interrupts the exit. See the `TipCard` unmount guard.
 
 ## Recording state machine (pill + composer)
 

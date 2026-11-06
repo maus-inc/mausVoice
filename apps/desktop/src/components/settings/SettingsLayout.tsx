@@ -32,7 +32,10 @@ import {
   settingsPagePath,
   SETTINGS_BASE_PATH,
 } from "./settings-routes";
-import { SettingsHighlightContext } from "./settings-highlight";
+import {
+  SettingsFocusContext,
+  SettingsHighlightContext,
+} from "./settings-highlight";
 import { revealCurrentSettingsPage } from "./settings-rail-scroll";
 import { useSettingsAnchor } from "./use-settings-anchor";
 import { SettingsSearchResults } from "./SettingsSearchResults";
@@ -203,168 +206,170 @@ export const SettingsLayout = () => {
   const searching = query.trim().length > 0;
 
   return (
-    <SettingsHighlightContext.Provider value={highlight}>
-      <Stack
-        direction={{ xs: "column", md: "row" }}
-        spacing={{ xs: 2, md: 4 }}
-        sx={{
-          alignItems: "flex-start",
-          // The scroll box above this is a definite height, so the surface can
-          // claim the rest of it. That is what gives the block below a free
-          // space to be centred in instead of the content sitting at the top of
-          // an otherwise empty window.
-          minHeight: "100%",
-        }}
-      >
+    <SettingsFocusContext.Provider value={focusSetting}>
+      <SettingsHighlightContext.Provider value={highlight}>
         <Stack
-          spacing={2}
+          direction={{ xs: "column", md: "row" }}
+          spacing={{ xs: 2, md: 4 }}
           sx={{
-            width: { xs: "100%", md: 232 },
-            flexShrink: 0,
-            position: "sticky",
-            top: 0,
-            // Selected segmented buttons can have their own stacking order;
-            // the sticky rail must remain above the scrolled page controls.
-            zIndex: 10,
-            bgcolor: "background.default",
-            alignSelf: "flex-start",
+            alignItems: "flex-start",
+            // The scroll box above this is a definite height, so the surface can
+            // claim the rest of it. That is what gives the block below a free
+            // space to be centred in instead of the content sitting at the top of
+            // an otherwise empty window.
+            minHeight: "100%",
           }}
         >
-          <TextField
-            inputRef={searchInput}
-            fullWidth
-            size="small"
-            value={query}
-            onChange={(event) => {
-              cancelPendingFocus();
-              setQuery(event.target.value);
-            }}
-            onKeyDown={(event) => {
-              // A key pressed while an input method editor is composing belongs
-              // to the IME, not to the search box: for Korean and Chinese that
-              // is how a candidate list is confirmed, and for Japanese how a
-              // conversion is committed. Chrome reports the boundary as key
-              // code 229 with an empty `key`, and the composing flag stays true
-              // on the event that ends the composition, so both are checked
-              // before anything acts on the key.
-              if (isComposingKey(event.nativeEvent)) {
-                return;
-              }
-              if (event.key === "Escape") {
-                setQuery("");
-                return;
-              }
-              // Enter opens the first result, the way a search box behaves
-              // everywhere else: the panel is one Tab away for anyone who
-              // would rather pick a different row.
-              if (event.key === "Enter" && hits.length > 0) {
-                event.preventDefault();
-                openHit(hits[0]);
-              }
-            }}
-            placeholder={intl.formatMessage({
-              defaultMessage: "Search settings",
-            })}
-            slotProps={{
-              htmlInput: {
-                "aria-label": intl.formatMessage({
-                  defaultMessage: "Search settings",
-                }),
-              },
-              input: {
-                startAdornment: (
-                  <InputAdornment position="start">
-                    <SearchRounded fontSize="small" />
-                  </InputAdornment>
-                ),
-              },
-            }}
-          />
           <Stack
-            component="nav"
-            ref={rail}
-            aria-label={intl.formatMessage({
-              defaultMessage: "Settings sections",
-            })}
-            direction={{ xs: "row", md: "column" }}
-            spacing={0.25}
+            spacing={2}
             sx={{
-              overflowX: { xs: "auto", md: "visible" },
-              pb: { xs: 0.5, md: 0 },
+              width: { xs: "100%", md: 232 },
+              flexShrink: 0,
+              position: "sticky",
+              top: 0,
+              // Selected segmented buttons can have their own stacking order;
+              // the sticky rail must remain above the scrolled page controls.
+              zIndex: 10,
+              bgcolor: "background.default",
+              alignSelf: "flex-start",
             }}
           >
-            {SETTINGS_PAGES.map((page) => (
-              <SettingsRailLink
-                key={page.id}
-                pageId={page.id}
-                selected={page.id === activePage?.id}
-              />
-            ))}
-          </Stack>
-        </Stack>
-        <Box component="span" role="status" sx={visuallyHidden}>
-          {searching && (
-            <FormattedMessage
-              defaultMessage="{count, plural, =0 {No settings found.} one {# setting found.} other {# settings found.}}"
-              values={{ count: hits.length }}
+            <TextField
+              inputRef={searchInput}
+              fullWidth
+              size="small"
+              value={query}
+              onChange={(event) => {
+                cancelPendingFocus();
+                setQuery(event.target.value);
+              }}
+              onKeyDown={(event) => {
+                // A key pressed while an input method editor is composing belongs
+                // to the IME, not to the search box: for Korean and Chinese that
+                // is how a candidate list is confirmed, and for Japanese how a
+                // conversion is committed. Chrome reports the boundary as key
+                // code 229 with an empty `key`, and the composing flag stays true
+                // on the event that ends the composition, so both are checked
+                // before anything acts on the key.
+                if (isComposingKey(event.nativeEvent)) {
+                  return;
+                }
+                if (event.key === "Escape") {
+                  setQuery("");
+                  return;
+                }
+                // Enter opens the first result, the way a search box behaves
+                // everywhere else: the panel is one Tab away for anyone who
+                // would rather pick a different row.
+                if (event.key === "Enter" && hits.length > 0) {
+                  event.preventDefault();
+                  openHit(hits[0]);
+                }
+              }}
+              placeholder={intl.formatMessage({
+                defaultMessage: "Search settings",
+              })}
+              slotProps={{
+                htmlInput: {
+                  "aria-label": intl.formatMessage({
+                    defaultMessage: "Search settings",
+                  }),
+                },
+                input: {
+                  startAdornment: (
+                    <InputAdornment position="start">
+                      <SearchRounded fontSize="small" />
+                    </InputAdornment>
+                  ),
+                },
+              }}
             />
-          )}
-        </Box>
-        <Box
-          sx={{
-            flexGrow: 1,
-            minWidth: 0,
-            width: "100%",
-            // Stretched to the surface rather than to its own content, and a
-            // column, so the heading-and-page block below has free space to be
-            // centred in: see `minHeight` above.
-            alignSelf: "stretch",
-            display: "flex",
-            flexDirection: "column",
-          }}
-        >
-          {searching ? (
-            <>
-              <Box component="h1" sx={visuallyHidden}>
-                <FormattedMessage defaultMessage="Search settings" />
-              </Box>
-              <SettingsSearchResults hits={hits} onSelect={openHit} />
-            </>
-          ) : (
-            // The heading travels with the page it names. Centring the page
-            // alone left the heading stranded at the top of the surface with
-            // the free space halved into two gaps — one under the heading, one
-            // under the content — which read as a broken composition rather
-            // than a centred one. As one block, the spare space becomes the
-            // margin above and below the whole thing.
-            //
-            // `auto` margins are what make that safe: they absorb free space
-            // when there is some, and resolve to zero when the page is taller
-            // than the surface, so a long page is laid out exactly as before.
-            <Box sx={{ my: "auto", width: "100%" }}>
-              {activePage && (
-                <Box sx={{ mb: 4 }}>
-                  <Typography
-                    variant="h4"
-                    component="h1"
-                    sx={{ fontWeight: 700 }}
-                  >
-                    {SETTINGS_PAGE_COPY[activePage.id].title}
-                  </Typography>
-                  <Typography
-                    variant="body1"
-                    sx={{ color: "text.secondary", mt: 1, maxWidth: "72ch" }}
-                  >
-                    {SETTINGS_PAGE_COPY[activePage.id].description}
-                  </Typography>
+            <Stack
+              component="nav"
+              ref={rail}
+              aria-label={intl.formatMessage({
+                defaultMessage: "Settings sections",
+              })}
+              direction={{ xs: "row", md: "column" }}
+              spacing={0.25}
+              sx={{
+                overflowX: { xs: "auto", md: "visible" },
+                pb: { xs: 0.5, md: 0 },
+              }}
+            >
+              {SETTINGS_PAGES.map((page) => (
+                <SettingsRailLink
+                  key={page.id}
+                  pageId={page.id}
+                  selected={page.id === activePage?.id}
+                />
+              ))}
+            </Stack>
+          </Stack>
+          <Box component="span" role="status" sx={visuallyHidden}>
+            {searching && (
+              <FormattedMessage
+                defaultMessage="{count, plural, =0 {No settings found.} one {# setting found.} other {# settings found.}}"
+                values={{ count: hits.length }}
+              />
+            )}
+          </Box>
+          <Box
+            sx={{
+              flexGrow: 1,
+              minWidth: 0,
+              width: "100%",
+              // Stretched to the surface rather than to its own content, and a
+              // column, so the heading-and-page block below has free space to be
+              // centred in: see `minHeight` above.
+              alignSelf: "stretch",
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
+            {searching ? (
+              <>
+                <Box component="h1" sx={visuallyHidden}>
+                  <FormattedMessage defaultMessage="Search settings" />
                 </Box>
-              )}
-              <Outlet />
-            </Box>
-          )}
-        </Box>
-      </Stack>
-    </SettingsHighlightContext.Provider>
+                <SettingsSearchResults hits={hits} onSelect={openHit} />
+              </>
+            ) : (
+              // The heading travels with the page it names. Centring the page
+              // alone left the heading stranded at the top of the surface with
+              // the free space halved into two gaps — one under the heading, one
+              // under the content — which read as a broken composition rather
+              // than a centred one. As one block, the spare space becomes the
+              // margin above and below the whole thing.
+              //
+              // `auto` margins are what make that safe: they absorb free space
+              // when there is some, and resolve to zero when the page is taller
+              // than the surface, so a long page is laid out exactly as before.
+              <Box sx={{ my: "auto", width: "100%" }}>
+                {activePage && (
+                  <Box sx={{ mb: 4 }}>
+                    <Typography
+                      variant="h4"
+                      component="h1"
+                      sx={{ fontWeight: 700 }}
+                    >
+                      {SETTINGS_PAGE_COPY[activePage.id].title}
+                    </Typography>
+                    <Typography
+                      variant="body1"
+                      sx={{ color: "text.secondary", mt: 1, maxWidth: "72ch" }}
+                    >
+                      {SETTINGS_PAGE_COPY[activePage.id].description}
+                    </Typography>
+                  </Box>
+                )}
+                <Outlet />
+              </Box>
+            )}
+          </Box>
+        </Stack>
+      </SettingsHighlightContext.Provider>
+    </SettingsFocusContext.Provider>
   );
 };
 

@@ -5,6 +5,7 @@ import { useLayoutEffect, useRef } from "react";
 import { Outlet, useLocation, useMatch } from "react-router-dom";
 import { useAsyncData } from "../../hooks/async.hooks";
 import { easeOutQuint } from "../../styles/motion";
+import { TipToaster } from "../onboarding/TipToaster";
 import { TranscriptionDetailsDialog } from "../transcriptions/TranscriptionDetailsDialog";
 import { DashboardMenu } from "./DashboardMenu";
 import { FeatureReleaseDialog } from "./FeatureReleaseDialog";
@@ -49,6 +50,7 @@ export default function DashboardPage() {
       <FeatureReleaseDialog />
       <PermissionsDialog />
       <TranscriptionDetailsDialog />
+      <TipToaster />
       <Stack
         direction="row"
         sx={{ height: "100%", width: "100%", overflow: "hidden" }}

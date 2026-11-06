@@ -20,7 +20,6 @@ import { importAudioFile } from "../../actions/transcriptions.actions";
 import { useAppStore } from "../../store";
 import { threadDayGroup, type ThreadDayGroup } from "../../utils/date.utils";
 import { TranscriptionsSideEffects } from "./TranscriptionsSideEffects";
-import { TipCard } from "../onboarding/TipCard";
 import { TranscriptionRow } from "./TranscriptRow";
 import { ScrollListPage } from "../common/ScrollListPage";
 import {
@@ -161,7 +160,6 @@ export default function TranscriptionsPage() {
     <>
       <TranscriptionsSideEffects />
       <Stack spacing={2} sx={{ height: "100%" }}>
-        <TipCard id="review-before-insert" />
         <ScrollListPage
           title={<FormattedMessage defaultMessage="History" />}
           subtitle={

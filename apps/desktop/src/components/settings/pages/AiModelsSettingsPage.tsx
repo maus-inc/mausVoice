@@ -2,7 +2,7 @@ import { AudioLines, Bot, KeyRound, WandSparkles } from "lucide-react";
 import { Chip } from "@mui/material";
 import type { StylingMode } from "@maus-inc/types";
 import type { ChangeEvent } from "react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { produceAppState, useAppStore } from "../../../store";
 import { getMyUserPreferences } from "../../../utils/user.utils";
@@ -13,9 +13,10 @@ import {
 import { logOnRejection } from "../../../utils/promise.utils";
 import { getEffectiveStylingMode } from "../../../utils/feature.utils";
 import { findPersonalApiKey } from "../../../utils/personal-use.utils";
-import { TipCard } from "../../onboarding/TipCard";
 import { SegmentedControl } from "../../common/SegmentedControl";
 import { SettingGroup, SettingRow, SettingToggleRow } from "../SettingRow";
+import { setTipAction } from "../../onboarding/tip-actions";
+import { useSettingsFocus } from "../settings-highlight";
 import { useSettingsAvailability } from "../settings-availability";
 import {
   PersonalApiKeyDialog,
@@ -50,8 +51,23 @@ const ConfiguredChip = ({ configured }: { configured: boolean }) => (
 export default function AiModelsSettingsPage() {
   const intl = useIntl();
   const availability = useSettingsAvailability();
+  const focusSetting = useSettingsFocus();
   const [keyDialog, setKeyDialog] = useState<PersonalApiKeyProvider | null>(
     null,
+  );
+
+  // The generative-provider tip floats in the corner stack (TipToaster) while
+  // this page is open, and its Add API key action completes the task in place:
+  // it reveals the Groq key row (the layout scrolls it into view and lights it
+  // up) and opens the key dialog, whose input takes focus once it has entered.
+  // The page owns the handler because it mutates this page's dialog state.
+  useEffect(
+    () =>
+      setTipAction("generative-provider", () => {
+        focusSetting("groq_api_key");
+        setKeyDialog("groq");
+      }),
+    [focusSetting],
   );
 
   const [
@@ -93,8 +109,6 @@ export default function AiModelsSettingsPage() {
 
   return (
     <>
-      <TipCard id="generative-provider" headingLevel="h2" />
-
       <SettingGroup title={<FormattedMessage defaultMessage="Transcription" />}>
         <SettingRow
           settingKey="deepgram_api_key"
