@@ -2142,6 +2142,7 @@ describe("retranscribeTranscription unstyled post-processing", () => {
 
   it("does not record a failure while another caller's pass is in flight", async () => {
     vi.useFakeTimers();
+    let failLoad: ((error: Error) => void) | undefined;
     try {
       const row = {
         ...sampleTranscription("duplicate-resume"),
@@ -2156,8 +2157,15 @@ describe("retranscribeTranscription unstyled post-processing", () => {
         draft.transcriptions.transcriptionIds = [row.id];
       });
       // The first resume starts a pass that stays in flight, which is the
-      // window a second surface loading the same claimed row lands in.
-      loadTranscriptionAudio.mockImplementationOnce(neverSettles);
+      // window a second surface loading the same claimed row lands in. The
+      // load runs under a write lease, so teardown rejects it to release the
+      // lease; a lease left held would stall every later clear-gated test.
+      loadTranscriptionAudio.mockImplementationOnce(
+        () =>
+          new Promise((_resolve, reject) => {
+            failLoad = () => reject(new Error("test teardown"));
+          }),
+      );
 
       resumeInterruptedPostProcessEditRetries([row]);
       await vi.advanceTimersByTimeAsync(0);
@@ -2172,6 +2180,7 @@ describe("retranscribeTranscription unstyled post-processing", () => {
         expect.objectContaining({ postProcessFailed: true }),
       );
     } finally {
+      failLoad?.(new Error("test teardown"));
       vi.useRealTimers();
     }
   });
@@ -2409,6 +2418,49 @@ describe("importAudioFile post-processing feedback", () => {
       PROVIDER_LIMIT_UNSAVED_COPY,
       expect.objectContaining({ mode: "error", action: undefined }),
     );
+  });
+
+  it("leaves no session row when a local-data clear blocks the memory write", async () => {
+    setPostProcessResult({
+      postProcessFailed: true,
+      postProcessFallback: false,
+      postProcessError: POST_PROCESS_ERROR_CATEGORY.providerLimit,
+    });
+    const state = structuredClone(INITIAL_APP_STATE);
+    state.userPrefs = createDefaultPreferences();
+    state.userPrefs.incognitoModeEnabled = true;
+    setAppState(state, true);
+    storeTranscription.mockResolvedValue({ transcription: null, wordCount: 0 });
+
+    let releaseClear: (() => void) | undefined;
+    const clearing = beginLocalDataClear().then((release) => {
+      releaseClear = release;
+      return release;
+    });
+
+    try {
+      await vi.waitFor(
+        () => {
+          expect(releaseClear).toBeDefined();
+        },
+        { timeout: 1500 },
+      );
+
+      await runImportAudioFile({ toneId: "default" });
+
+      // The clear owns the write gate, so the memory row is never created,
+      // the list stays empty, and the wording cannot claim the transcript
+      // for this session.
+      expect(getAppState().transcriptions.transcriptionIds).toEqual([]);
+      expect(showSnackbar).toHaveBeenCalledWith(
+        PROVIDER_LIMIT_UNSAVED_COPY,
+        expect.objectContaining({ mode: "error", action: undefined }),
+      );
+    } finally {
+      if (!releaseClear) releaseClear = await clearing;
+      localStorage.removeItem(LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY);
+      releaseClear();
+    }
   });
 
   it("lists the incognito import memory record where History renders", async () => {

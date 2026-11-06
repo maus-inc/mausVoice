@@ -38,6 +38,7 @@ import {
   getLocalDataClearGeneration,
   isLocalDataClearRequested,
   withLocalDataWrite,
+  withLocalDataWriteSync,
 } from "../utils/local-data-write-gate";
 import { sanitizeTranscriptText } from "../utils/sanitize-transcript.utils";
 import {
@@ -1510,6 +1511,7 @@ export const importAudioFile = async ({
   }
 
   const persistenceAllowed = isPersistenceAllowed();
+  let memoryRowRecorded = false;
   if (!output.transcription && !persistenceAllowed) {
     const memoryRecord: Transcription = {
       id: createId(),
@@ -1556,30 +1558,37 @@ export const importAudioFile = async ({
       postprocessDurationMs:
         postProcessResult.metadata.postprocessDurationMs ?? null,
     };
-    markTranscriptionSessionOnly(memoryRecord.id);
-    produceAppState((draft) => {
-      draft.transcriptionById[memoryRecord.id] = memoryRecord;
-      // The History page and the recent list render from transcriptionIds,
-      // so a record written only by id is invisible and the session-
-      // availability wording would point at a row the user cannot find.
-      draft.transcriptions.transcriptionIds = [
-        memoryRecord.id,
-        ...draft.transcriptions.transcriptionIds,
-      ];
+    // A local-data clear can open while an import is in flight. The row is
+    // written under a synchronous write lease, which the clear gate blocks,
+    // so a clearing session is never repopulated, and the row counts as
+    // present only when the write actually ran.
+    withLocalDataWriteSync((lease) => {
+      markTranscriptionSessionOnly(memoryRecord.id);
+      produceAppState((draft) => {
+        draft.transcriptionById[memoryRecord.id] = memoryRecord;
+        // The History page and the recent list render from transcriptionIds,
+        // so a record written only by id is invisible and the session-
+        // availability wording would point at a row the user cannot find.
+        draft.transcriptions.transcriptionIds = [
+          memoryRecord.id,
+          ...draft.transcriptions.transcriptionIds,
+        ];
+      }, lease);
+      memoryRowRecorded = true;
     });
   }
 
   const canRecoverFromHistory = output.transcription !== null;
   // An incognito import keeps a memory row, so its transcript stays available
   // for this session. An import the store rejected while persistence was
-  // allowed leaves no row anywhere, and the wording must not claim otherwise.
-  // The feedback module only reads hasSessionRow when canRecoverFromHistory
-  // is false, where the two forms agree, so the plain persistence flag keeps
-  // one decision point out of this function.
+  // allowed, or one whose memory write the clear gate blocked, leaves no row
+  // anywhere, and the wording must not claim otherwise. The feedback module
+  // only reads hasSessionRow when canRecoverFromHistory is false, which is
+  // exactly when memoryRowRecorded says whether a session row exists.
   const feedback = getPostProcessFeedback(
     postProcessResult.metadata,
     "audio-import",
-    { canRecoverFromHistory, hasSessionRow: !persistenceAllowed },
+    { canRecoverFromHistory, hasSessionRow: memoryRowRecorded },
   );
   const truncationMessage = getFastStyleTruncationMessage(
     postProcessResult.metadata.fastStyleTruncatedChars,

@@ -1,7 +1,10 @@
 import type { Transcription } from "@maus-inc/types";
 import { getRec } from "@maus-inc/utilities";
 import { getTranscriptionRepo } from "../repos";
-import { getSessionOnlyTranscriptionIds } from "./session-only-transcriptions";
+import {
+  getSessionOnlyTranscriptionIds,
+  unmarkTranscriptionSessionOnly,
+} from "./session-only-transcriptions";
 import { getAppState, produceAppState } from "../store";
 import {
   getLocalDataClearGeneration,
@@ -38,7 +41,16 @@ const withSessionOnlyRows = (
   const merged = [...persistedIds];
   for (const id of getSessionOnlyTranscriptionIds()) {
     const record = getRec(byId, id);
-    if (!record || merged.includes(id)) {
+    if (!record) {
+      // Prune ids whose record left the state, except while a delete is
+      // still undoable: the undo restores the record and the row must
+      // survive later refreshes until the pending window closes.
+      if (!isTranscriptionPendingDelete(id)) {
+        unmarkTranscriptionSessionOnly(id);
+      }
+      continue;
+    }
+    if (merged.includes(id)) {
       continue;
     }
     merged.splice(

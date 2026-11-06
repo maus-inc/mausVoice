@@ -148,6 +148,46 @@ describe("visible transcription loads", () => {
     expect(mocks.state.transcriptions.transcriptionIds).toEqual([]);
   });
 
+  it("prunes a session-only id whose record left the state", async () => {
+    const sessionOnly = await import("./session-only-transcriptions");
+    const { refreshVisibleTranscriptions } =
+      await import("./visible-transcriptions");
+    sessionOnly.markTranscriptionSessionOnly("gone");
+    mocks.list.mockResolvedValue([row("one")]);
+
+    await refreshVisibleTranscriptions(() => true);
+
+    // The record is not in the state and no delete is pending, so the stale
+    // id is unmarked instead of being rescanned on every later refresh.
+    expect(sessionOnly.getSessionOnlyTranscriptionIds()).toEqual([]);
+    expect(mocks.state.transcriptions.transcriptionIds).toEqual(["one"]);
+  });
+
+  it("keeps a session-only id while its delete is still undoable", async () => {
+    const sessionOnly = await import("./session-only-transcriptions");
+    const pending = await import("./pending-transcription-delete");
+    const { refreshVisibleTranscriptions } =
+      await import("./visible-transcriptions");
+    const memory = row("memory");
+    mocks.state.transcriptionById = { memory };
+    sessionOnly.markTranscriptionSessionOnly("memory");
+    mocks.list.mockResolvedValue([]);
+
+    await refreshVisibleTranscriptions(() => true);
+    expect(mocks.state.transcriptions.transcriptionIds).toEqual(["memory"]);
+
+    pending.scheduleTranscriptionDelete(memory, 5000);
+    await refreshVisibleTranscriptions(() => true);
+    // Pending delete: the registry keeps the id so the undo can restore the
+    // row, while the list itself hides it like any pending deletion.
+    expect(sessionOnly.getSessionOnlyTranscriptionIds()).toEqual(["memory"]);
+    expect(mocks.state.transcriptions.transcriptionIds).toEqual([]);
+
+    expect(pending.undoTranscriptionDelete("memory")).toBe(true);
+    await refreshVisibleTranscriptions(() => true);
+    expect(mocks.state.transcriptions.transcriptionIds).toEqual(["memory"]);
+  });
+
   it("preserves a newer recovery result when an older list returns", async () => {
     const { refreshVisibleTranscriptions } =
       await import("./visible-transcriptions");
