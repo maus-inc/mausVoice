@@ -23,7 +23,10 @@ import {
   resolveToolPermission,
   setToolAlwaysAllow,
 } from "../../actions/tool.actions";
-import { storeTranscription } from "../../actions/transcribe.actions";
+import {
+  storeTranscription,
+  type StoreTranscriptionOutput,
+} from "../../actions/transcribe.actions";
 import { scheduleAutomaticPostProcessEditRetry } from "../../actions/transcriptions.actions";
 import type { ToastAction } from "../../types/toast.types";
 import { recordStreak } from "../../actions/user.actions";
@@ -137,6 +140,7 @@ import {
   getMyUserPreferences,
   getTranscriptionPrefs,
 } from "../../utils/user.utils";
+import { isPersistenceAllowed } from "../../utils/incognito.utils";
 import { hasDictationBacklog } from "../../utils/output-routing.utils";
 import { surfaceMainWindow } from "../../utils/window.utils";
 import { resetHotkeyFilter } from "../../utils/hotkey-filter.utils";
@@ -355,6 +359,13 @@ export type PostTranscriptInput = {
   persistReviewedTranscript?: (
     input: ReviewedTranscriptPersistenceInput,
   ) => Promise<boolean>;
+  /**
+   * Writes the History row concurrently with delivery; forwarded to the
+   * strategy, which starts it the moment the transcript is final.
+   */
+  persistTranscriptNow?: (
+    input: ReviewedTranscriptPersistenceInput,
+  ) => Promise<StoreTranscriptionOutput>;
   /** Pipeline timing marks threaded through to History storage. */
   trace?: PipelineTrace | null;
 };
@@ -380,6 +391,7 @@ export const postProcessFinalizedTranscript = async (
       transcriptionMetadata: input.transcribeResult.metadata,
       transcriptionWarnings: input.transcribeResult.warnings,
       persistReviewedTranscript: input.persistReviewedTranscript,
+      persistTranscriptNow: input.persistTranscriptNow,
       trace: input.trace ?? null,
     }),
     input.handleTranscriptTimeoutMs,
@@ -398,11 +410,33 @@ export const postProcessFinalizedTranscript = async (
   // review that reported an owner already wrote it, or is holding it on the
   // pill after a failure it told the user to retry from. Writing here in that
   // last case would contradict the toast and duplicate the row on the retry.
-  const willStore =
-    strategy.shouldStoreTranscript() &&
-    (result.historyOwner ?? "stop-path") === "stop-path";
+  // A "concurrent" owner already started the write during delivery; settling
+  // its promise here keeps the session locked exactly as long as the serial
+  // path would, without writing a second row.
+  const owner = result.historyOwner ?? "stop-path";
+  const willStore = strategy.shouldStoreTranscript() && owner === "stop-path";
+  const persistedConcurrently =
+    owner === "concurrent" && result.pendingPersistence !== undefined;
   let savedInHistory = false;
-  if (willStore) {
+  const recordStoredHistory = async (
+    stored: StoreTranscriptionOutput,
+  ): Promise<void> => {
+    if (!stored.transcription) {
+      return;
+    }
+    savedInHistory = true;
+    // The scheduler returns once its claim is written and the delivery is
+    // timed, so waiting here only covers the durable marker, never the pass.
+    await scheduleAutomaticPostProcessEditRetry({
+      transcription: stored.transcription,
+      toneId: input.toneId,
+      languageCode: input.languageCode,
+    });
+  };
+  if (persistedConcurrently && result.pendingPersistence) {
+    getLogger().verbose("Awaiting concurrent history persistence");
+    await recordStoredHistory(await result.pendingPersistence);
+  } else if (willStore) {
     getLogger().verbose("Storing transcription");
     const stored = await input.storeTranscriptionFn({
       audio: input.audio,
@@ -416,16 +450,7 @@ export const postProcessFinalizedTranscript = async (
       remoteDeviceId: result.remoteDeviceId,
       trace: input.trace ?? null,
     });
-    if (stored.transcription) {
-      savedInHistory = true;
-      // The scheduler returns once its claim is written and the delivery is
-      // timed, so waiting here only covers the durable marker, never the pass.
-      await scheduleAutomaticPostProcessEditRetry({
-        transcription: stored.transcription,
-        toneId: input.toneId,
-        languageCode: input.languageCode,
-      });
-    }
+    await recordStoredHistory(stored);
   }
   if (postProcessMetadata?.postProcessEditFailed) {
     // A partial edit batch blocks insertion, so this row is the only copy of
@@ -476,21 +501,26 @@ export const postProcessFinalizedTranscript = async (
     // Two calls rather than one call with a conditional descriptor, because the
     // extractor needs `id` and `defaultMessage` as string literals in the
     // argument and cannot follow a ternary.
-    const message = willStore
-      ? getIntl().formatMessage(
-          {
-            defaultMessage:
-              "Fast styling left the last {droppedChars} characters of that dictation unstyled. The unstyled ending is in History.",
-          },
-          { droppedChars },
-        )
-      : getIntl().formatMessage(
-          {
-            defaultMessage:
-              "That dictation outran fast styling, so its last {droppedChars} characters were left unstyled, and incognito mode is on, so that ending was not saved.",
-          },
-          { droppedChars },
-        );
+    //
+    // `isPersistenceAllowed()` is part of the condition because the store call
+    // suppresses itself under incognito and ephemeral sessions: without it the
+    // stored-wording fired for a row that was never written.
+    const message =
+      (willStore || persistedConcurrently) && isPersistenceAllowed()
+        ? getIntl().formatMessage(
+            {
+              defaultMessage:
+                "Fast styling left the last {droppedChars} characters of that dictation unstyled. The unstyled ending is in History.",
+            },
+            { droppedChars },
+          )
+        : getIntl().formatMessage(
+            {
+              defaultMessage:
+                "That dictation outran fast styling, so its last {droppedChars} characters were left unstyled, and incognito mode is on, so that ending was not saved.",
+            },
+            { droppedChars },
+          );
     await input.showToast({
       message,
       toastType: "info",
@@ -1044,6 +1074,28 @@ export const DictationSideEffects = () => {
         return false;
       };
 
+      // Writes the History row with the same arguments the stop path would,
+      // so the strategy can start it during delivery. No navigation here:
+      // surfacing History belongs to the review's Open action alone.
+      const persistTranscriptNow = ({
+        transcript: nowTranscript,
+        sanitizedTranscript: nowSanitizedTranscript,
+        postProcessMetadata: nowPostProcessMetadata,
+        postProcessWarnings: nowPostProcessWarnings,
+      }: ReviewedTranscriptPersistenceInput) =>
+        storeTranscription({
+          audio,
+          rawTranscript: rawTranscript ?? null,
+          sanitizedTranscript: nowSanitizedTranscript,
+          transcript: nowTranscript,
+          transcriptionMetadata: transcribeResult.metadata,
+          postProcessMetadata: nowPostProcessMetadata,
+          warnings: [...transcribeResult.warnings, ...nowPostProcessWarnings],
+          remoteStatus: null,
+          remoteDeviceId: null,
+          trace: pipelineTraceRef.current,
+        });
+
       return postProcessFinalizedTranscript({
         audio,
         a11yInfo,
@@ -1063,6 +1115,7 @@ export const DictationSideEffects = () => {
         refreshMember,
         showToast,
         persistReviewedTranscript,
+        persistTranscriptNow,
         trace: pipelineTraceRef.current,
       });
     },
