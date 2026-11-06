@@ -645,6 +645,48 @@ const enqueueStopPathHistory = (
   });
 };
 
+const persistAllowedAtStop = (input: PostTranscriptInput): boolean =>
+  (input.persistAllowedAtCapture ?? isPersistenceAllowed()) &&
+  isPersistenceAllowed();
+
+const followConcurrentWrite = (
+  ctx: StopPathHistoryContext,
+  pendingPersistence: HandleTranscriptResult["pendingPersistence"],
+): boolean => {
+  if (ctx.owner !== "concurrent" || pendingPersistence === undefined) {
+    return false;
+  }
+  pendingPersistence
+    .then((stored) => onHistoryStored(ctx, stored))
+    .catch((error) => {
+      getLogger().warning(`Concurrent history persist failed: ${error}`);
+      onHistoryMissed(ctx);
+    });
+  return true;
+};
+
+const writeOrMissStopPathHistory = (
+  ctx: StopPathHistoryContext,
+  args: {
+    shouldStore: boolean;
+    transcript: HandleTranscriptResult["transcript"];
+    sanitizedTranscript: HandleTranscriptResult["sanitizedTranscript"];
+    postProcessMetadata: HandleTranscriptResult["postProcessMetadata"];
+    postProcessWarnings: HandleTranscriptResult["postProcessWarnings"];
+    remoteStatus: HandleTranscriptResult["remoteStatus"];
+    remoteDeviceId: HandleTranscriptResult["remoteDeviceId"];
+  },
+): void => {
+  if (args.shouldStore && !isHistoryPersistQueueFull()) {
+    enqueueStopPathHistory(ctx, args);
+    return;
+  }
+  if (args.shouldStore) {
+    notifyHistoryQueueFull(ctx.input.showToast);
+  }
+  onHistoryMissed(ctx);
+};
+
 const scheduleStopPathHistory = ({
   input,
   strategy,
@@ -674,9 +716,6 @@ const scheduleStopPathHistory = ({
   // pill after a failure it told the user to retry from. Writing here in that
   // last case would contradict the toast and duplicate the row on the retry.
   const owner = historyOwner ?? "stop-path";
-  const persistAllowedAtStop =
-    (input.persistAllowedAtCapture ?? isPersistenceAllowed()) &&
-    isPersistenceAllowed();
   const ctx: StopPathHistoryContext = {
     input,
     owner,
@@ -684,23 +723,14 @@ const scheduleStopPathHistory = ({
     postProcessEditFailed:
       postProcessMetadata?.postProcessEditFailed ?? undefined,
   };
-  const concurrentWrite =
-    owner === "concurrent" ? pendingPersistence : undefined;
-  if (concurrentWrite !== undefined) {
-    concurrentWrite
-      .then((stored) => onHistoryStored(ctx, stored))
-      .catch((error) => {
-        getLogger().warning(`Concurrent history persist failed: ${error}`);
-        onHistoryMissed(ctx);
-      });
+  if (followConcurrentWrite(ctx, pendingPersistence)) {
     return;
   }
-
   writeOrMissStopPathHistory(ctx, {
     shouldStore:
       strategy.shouldStoreTranscript() &&
       owner === "stop-path" &&
-      persistAllowedAtStop,
+      persistAllowedAtStop(input),
     transcript,
     sanitizedTranscript,
     postProcessMetadata,
@@ -708,28 +738,6 @@ const scheduleStopPathHistory = ({
     remoteStatus,
     remoteDeviceId,
   });
-};
-
-const writeOrMissStopPathHistory = (
-  ctx: StopPathHistoryContext,
-  args: {
-    shouldStore: boolean;
-    transcript: HandleTranscriptResult["transcript"];
-    sanitizedTranscript: HandleTranscriptResult["sanitizedTranscript"];
-    postProcessMetadata: HandleTranscriptResult["postProcessMetadata"];
-    postProcessWarnings: HandleTranscriptResult["postProcessWarnings"];
-    remoteStatus: HandleTranscriptResult["remoteStatus"];
-    remoteDeviceId: HandleTranscriptResult["remoteDeviceId"];
-  },
-): void => {
-  if (args.shouldStore && !isHistoryPersistQueueFull()) {
-    enqueueStopPathHistory(ctx, args);
-    return;
-  }
-  if (args.shouldStore) {
-    notifyHistoryQueueFull(ctx.input.showToast);
-  }
-  onHistoryMissed(ctx);
 };
 
 export const postProcessFinalizedTranscript = async (
