@@ -15,7 +15,7 @@ import {
   Typography,
 } from "@mui/material";
 import { getRec } from "@maus-inc/utilities";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { deleteTone, openToneEditorDialog } from "../../actions/tone.actions";
 import {
@@ -34,6 +34,7 @@ import {
 } from "../../utils/tone.utils";
 import { ConfirmDialog } from "../common/ConfirmDialog";
 import { ListTile } from "../common/ListTile";
+import { prepareStyleDeleteFocus } from "./style-delete-focus";
 import {
   MenuPopoverBuilder,
   type MenuPopoverItem,
@@ -91,28 +92,33 @@ export const ManualStylingRow = ({ id }: ManualStylingRowProps) => {
   const ctxMenu = useContextMenu();
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const deletePending = useRef(false);
 
   const handleDeleteRequest = useCallback(() => {
     setDeleteConfirmOpen(true);
   }, []);
 
   const handleDeleteCancel = useCallback(() => {
-    setDeleteConfirmOpen(false);
+    if (!deletePending.current) setDeleteConfirmOpen(false);
   }, []);
 
   const handleDeleteConfirm = useCallback(async () => {
-    if (isDeleting) return;
+    if (deletePending.current) return;
+    deletePending.current = true;
+    const restoreFocus = prepareStyleDeleteFocus(id);
     setIsDeleting(true);
     try {
       await deleteTone(id);
       setDeleteConfirmOpen(false);
+      restoreFocus();
     } catch {
       // deleteTone already logged and surfaced the snackbar; keep the dialog
       // open so the user can retry or cancel.
     } finally {
+      deletePending.current = false;
       setIsDeleting(false);
     }
-  }, [id, isDeleting]);
+  }, [id]);
 
   // Context actions must honor the same managed/system-tone restrictions as
   // the overflow menu. The repository deletion command is not a permission
@@ -233,9 +239,20 @@ export const ManualStylingRow = ({ id }: ManualStylingRowProps) => {
         </Tooltip>
       )}
       <MenuPopoverBuilder items={menuItems}>
-        {({ ref, open }) => (
+        {({ ref, open, isOpen }) => (
           <IconButton
             ref={ref}
+            aria-label={intl.formatMessage(
+              { defaultMessage: "More options for {title}" },
+              {
+                title:
+                  tone?.name?.trim() ||
+                  intl.formatMessage({ defaultMessage: "Style" }),
+              },
+            )}
+            aria-haspopup="menu"
+            aria-expanded={isOpen}
+            data-manual-style-more=""
             onClick={(e) => {
               e.stopPropagation();
               open();
@@ -252,6 +269,7 @@ export const ManualStylingRow = ({ id }: ManualStylingRowProps) => {
   return (
     <Box
       component="div"
+      data-manual-style-row={id}
       onContextMenu={(e) => {
         // Yield right-clicks on editable text to the provider's clipboard menu.
         if (isEditableTarget(e.target)) return;
@@ -302,7 +320,9 @@ export const ManualStylingRow = ({ id }: ManualStylingRowProps) => {
         onCancel={handleDeleteCancel}
         onConfirm={handleDeleteConfirm}
         confirmLabel={<FormattedMessage defaultMessage="Delete" />}
-        confirmButtonProps={{ color: "error", disabled: isDeleting }}
+        cancelButtonProps={{ autoFocus: true }}
+        confirmButtonProps={{ color: "error" }}
+        busy={isDeleting}
       />
     </Box>
   );

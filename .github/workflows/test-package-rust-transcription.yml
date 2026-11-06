@@ -47,8 +47,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Pinned, not `ubuntu-latest`: the 26.04 image's glibc headers make
+          # bindgen emit layout assertions for `_IO_FILE` and
+          # `whisper_full_params` that underflow (E0080) inside
+          # `whisper-rs-sys`, which has failed every run on this branch since
+          # the image rolled out.
           - label: Ubuntu
-            os: ubuntu-latest
+            os: ubuntu-24.04
           - label: Windows
             os: windows-latest
           - label: macOS
@@ -92,7 +97,7 @@ jobs:
           workspaces: |
             packages/rust_transcription -> packages/rust_transcription/target
       - name: Install system dependencies (Linux)
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-24.04'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -110,7 +115,7 @@ jobs:
           "CLANG_PATH=C:\Program Files\LLVM\bin\clang.exe" >> $env:GITHUB_ENV
           "C:\Program Files\LLVM\bin" >> $env:GITHUB_PATH
       - name: Configure whisper build flags (Linux)
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-24.04'
         run: |
           echo "CMAKE_TOOLCHAIN_FILE=${GITHUB_WORKSPACE}/packages/rust_transcription/cmake/linux-ci-toolchain.cmake" >> "$GITHUB_ENV"
       - name: Configure whisper build flags (macOS)

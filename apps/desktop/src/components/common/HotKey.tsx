@@ -1,7 +1,7 @@
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
 import { hotkeyRecorderStyles } from "./hotkey-recorder.styles";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useIntl } from "react-intl";
 import { produceAppState, useAppStore } from "../../store";
 import { setSnackbar } from "../../utils/app.utils";
@@ -10,14 +10,28 @@ import {
   isModifierOnlyCombo,
 } from "../../utils/keyboard.utils";
 
+// Only the recorder that owns focus may release the global shortcut guard.
+let activeRecorder: symbol | null = null;
+
 type HotKeyProps = {
   value?: string[];
   onChange?: (value: string[]) => void;
+  disabled?: boolean;
+  ariaLabel?: string;
+  ariaLabelledBy?: string;
 };
 
-export const HotKey = ({ value, onChange }: HotKeyProps) => {
+export const HotKey = ({
+  value,
+  onChange,
+  disabled = false,
+  ariaLabel,
+  ariaLabelledBy,
+}: HotKeyProps) => {
   const intl = useIntl();
+  const valueId = useId();
   const boxRef = useRef<HTMLDivElement | null>(null);
+  const recorderId = useRef(Symbol("hotkey recorder"));
   const [focused, setFocused] = useState(false);
   const [hasInteracted, setHasInteracted] = useState(false);
   const keysHeld = useAppStore((s) => s.keysHeld);
@@ -31,10 +45,19 @@ export const HotKey = ({ value, onChange }: HotKeyProps) => {
   }, [value]);
 
   useEffect(() => {
-    produceAppState((draft) => {
-      draft.isRecordingHotkey = focused;
-    });
-  }, [focused]);
+    const owner = recorderId.current;
+    return () => {
+      if (activeRecorder !== owner) return;
+      activeRecorder = null;
+      produceAppState((draft) => {
+        draft.isRecordingHotkey = false;
+      });
+    };
+  }, []);
+
+  useEffect(() => {
+    if (disabled) boxRef.current?.blur();
+  }, [disabled]);
 
   const previousKeysHeldRef = useRef<string[]>([]);
 
@@ -131,19 +154,44 @@ export const HotKey = ({ value, onChange }: HotKeyProps) => {
   return (
     <Box
       ref={boxRef}
-      tabIndex={0}
-      onClick={() => boxRef.current?.focus()}
+      tabIndex={disabled ? -1 : 0}
+      role={ariaLabel || ariaLabelledBy ? "textbox" : undefined}
+      aria-label={ariaLabel}
+      aria-labelledby={ariaLabelledBy}
+      aria-describedby={ariaLabel || ariaLabelledBy ? valueId : undefined}
+      aria-disabled={disabled || undefined}
+      onClick={() => {
+        if (!disabled) boxRef.current?.focus();
+      }}
+      onKeyDown={(event) => {
+        if (event.key !== "Escape" || event.nativeEvent.isComposing) return;
+        event.preventDefault();
+        event.stopPropagation();
+        boxRef.current?.blur();
+      }}
       onFocus={() => {
+        if (disabled) return;
+        activeRecorder = recorderId.current;
+        produceAppState((draft) => {
+          draft.isRecordingHotkey = true;
+        });
         valueBeforeRecordingRef.current = value;
         setFocused(true);
       }}
       onBlur={() => {
+        if (activeRecorder === recorderId.current) {
+          activeRecorder = null;
+          produceAppState((draft) => {
+            draft.isRecordingHotkey = false;
+          });
+        }
         setFocused(false);
         setHasInteracted(false);
       }}
-      sx={hotkeyRecorderStyles(focused)}
+      sx={hotkeyRecorderStyles(focused, 200, disabled)}
     >
       <Typography
+        id={ariaLabel || ariaLabelledBy ? valueId : undefined}
         variant="body2"
         color={empty ? "text.secondary" : "text.primary"}
       >

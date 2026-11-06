@@ -52,6 +52,7 @@ type GeminiFunctionDeclaration = {
 
 type GeminiPart = {
   text?: string;
+  audioTranscription?: { text: string };
   inlineData?: { mimeType: string; data: string };
   fileData?: { mimeType: string; fileUri: string };
   functionCall?: { name?: string; args?: Record<string, unknown> };
@@ -237,45 +238,184 @@ const getGeminiResponseText = (
     .map((part) => part.text ?? "")
     .join("");
 
+const getGeminiTranscriptionText = (
+  response: GeminiGenerateContentResponse,
+): string => {
+  const parts = response.candidates?.[0]?.content?.parts ?? [];
+  const hasAudioTranscription = parts.some((part) => part.audioTranscription);
+
+  // Gemini places diarized speaker segments in separate parts. Keep a word
+  // boundary when flattening those segments, and prefer non-empty part text.
+  const text = hasAudioTranscription
+    ? parts
+        .map((part) => {
+          const partText = typeof part.text === "string" ? part.text : "";
+          if (partText.trim()) return partText;
+          const transcriptionText = part.audioTranscription?.text;
+          return typeof transcriptionText === "string" ? transcriptionText : "";
+        })
+        .map((partText) => partText.trim())
+        .filter(Boolean)
+        .join(" ")
+    : getGeminiResponseText(response);
+
+  if (!text.trim()) throw new Error("Transcription failed - empty response");
+  return text;
+};
+
+const GEMINI_SCHEMA_TYPE_MAP: Record<string, string> = {
+  string: "STRING",
+  number: "NUMBER",
+  integer: "INTEGER",
+  boolean: "BOOLEAN",
+  array: "ARRAY",
+  object: "OBJECT",
+  null: "NULL",
+};
+
+type JsonSchemaConverter = (
+  schema: Record<string, unknown>,
+) => Record<string, unknown>;
+
+type JsonSchemaTypeConversion =
+  | { kind: "single"; type: unknown; nullable?: true }
+  | { kind: "union"; types: string[] };
+
+const isJsonSchemaObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const convertJsonSchemaTypeName = (type: string): string => {
+  const mappedType = GEMINI_SCHEMA_TYPE_MAP[type];
+  return typeof mappedType === "string" ? mappedType : type;
+};
+
+const normalizeJsonSchemaTypeArray = (types: unknown[]): string[] => {
+  if (types.length === 0) {
+    throw new TypeError("Gemini JSON Schema type unions cannot be empty");
+  }
+  return [
+    ...new Set(
+      types.map((type) => {
+        if (typeof type !== "string") {
+          throw new TypeError(
+            "Gemini JSON Schema type unions must contain only strings",
+          );
+        }
+        return type === "NULL" ? "null" : type;
+      }),
+    ),
+  ];
+};
+
+const convertJsonSchemaTypeUnion = (
+  types: string[],
+): JsonSchemaTypeConversion => {
+  const valueTypes = types.filter((type) => type !== "null");
+  const valueType = valueTypes[0];
+  if (valueType === undefined) return { kind: "single", type: "NULL" };
+  if (valueTypes.length > 1) return { kind: "union", types };
+  return {
+    kind: "single",
+    type: convertJsonSchemaTypeName(valueType),
+    ...(types.includes("null") ? { nullable: true } : {}),
+  };
+};
+
+const convertJsonSchemaType = (value: unknown): JsonSchemaTypeConversion => {
+  if (typeof value === "string") {
+    return { kind: "single", type: convertJsonSchemaTypeName(value) };
+  }
+  if (!Array.isArray(value)) return { kind: "single", type: value };
+  return convertJsonSchemaTypeUnion(normalizeJsonSchemaTypeArray(value));
+};
+
+const applyJsonSchemaType = (
+  schema: Record<string, unknown>,
+  conversion: JsonSchemaTypeConversion,
+): void => {
+  if (conversion.kind === "single") {
+    schema.type = conversion.type;
+    if (conversion.nullable) schema.nullable = true;
+    return;
+  }
+
+  const existingAnyOf = schema.anyOf;
+  const typeSchemas = conversion.types.map((type) => ({
+    type: convertJsonSchemaTypeName(type),
+  }));
+  if (existingAnyOf === undefined) {
+    schema.anyOf = typeSchemas;
+    return;
+  }
+  if (!Array.isArray(existingAnyOf)) {
+    throw new TypeError("Gemini JSON Schema anyOf must be an array");
+  }
+  schema.anyOf = typeSchemas.map((typeSchema) => ({
+    ...typeSchema,
+    anyOf: existingAnyOf,
+  }));
+};
+
+const convertJsonSchemaArrayItem = (
+  item: unknown,
+  convertSchema: JsonSchemaConverter,
+): unknown => (isJsonSchemaObject(item) ? convertSchema(item) : item);
+
+const convertJsonSchemaValue = (
+  value: unknown,
+  convertSchema: JsonSchemaConverter,
+): unknown => {
+  if (Array.isArray(value)) {
+    return value.map((item) => convertJsonSchemaArrayItem(item, convertSchema));
+  }
+  return convertJsonSchemaArrayItem(value, convertSchema);
+};
+
+const convertJsonSchemaProperties = (
+  value: unknown,
+  convertSchema: JsonSchemaConverter,
+): unknown => {
+  if (!isJsonSchemaObject(value)) return value;
+  return Object.fromEntries(
+    Object.entries(value).map(([name, schema]) => [
+      name,
+      convertJsonSchemaArrayItem(schema, convertSchema),
+    ]),
+  );
+};
+
+const convertJsonSchemaEntry = (
+  key: string,
+  value: unknown,
+  convertSchema: JsonSchemaConverter,
+): unknown => {
+  switch (key) {
+    case "properties":
+      return convertJsonSchemaProperties(value, convertSchema);
+    case "items":
+    case "anyOf":
+      return convertJsonSchemaValue(value, convertSchema);
+    default:
+      return value;
+  }
+};
+
 const convertJsonSchemaToGeminiSchema = (
   schema: Record<string, unknown>,
 ): Record<string, unknown> => {
-  if (!schema || typeof schema !== "object") {
-    return schema;
+  if (!isJsonSchemaObject(schema)) return schema;
+
+  const converted: Record<string, unknown> = Object.fromEntries(
+    Object.entries(schema)
+      .filter(([key]) => key !== "type")
+      .map(([key, value]) => [
+        key,
+        convertJsonSchemaEntry(key, value, convertJsonSchemaToGeminiSchema),
+      ]),
+  );
+  if (Object.hasOwn(schema, "type")) {
+    applyJsonSchemaType(converted, convertJsonSchemaType(schema.type));
   }
-
-  const converted: Record<string, unknown> = {};
-
-  for (const [key, value] of Object.entries(schema)) {
-    if (key === "type" && typeof value === "string") {
-      const typeMap: Record<string, unknown> = {
-        string: "STRING",
-        number: "NUMBER",
-        integer: "INTEGER",
-        boolean: "BOOLEAN",
-        array: "ARRAY",
-        object: "OBJECT",
-      };
-      converted[key] = typeMap[value] ?? value;
-    } else if (
-      typeof value === "object" &&
-      value !== null &&
-      !Array.isArray(value)
-    ) {
-      converted[key] = convertJsonSchemaToGeminiSchema(
-        value as Record<string, unknown>,
-      );
-    } else if (Array.isArray(value)) {
-      converted[key] = value.map((item) =>
-        typeof item === "object" && item !== null
-          ? convertJsonSchemaToGeminiSchema(item as Record<string, unknown>)
-          : item,
-      );
-    } else {
-      converted[key] = value;
-    }
-  }
-
   return converted;
 };
 
@@ -898,8 +1038,7 @@ const transcribeWithDedicatedModel = async (args: {
     );
     const response =
       (await httpResponse.json()) as GeminiGenerateContentResponse;
-    const text = getGeminiResponseText(response);
-    if (!text) throw new Error("Transcription failed - empty response");
+    const text = getGeminiTranscriptionText(response);
     return { text, wordsUsed: countWords(text) };
   } finally {
     if (uploaded.uri) {
@@ -951,8 +1090,7 @@ const transcribeWithGeneralModel = async (args: {
     args.signal,
   );
   const response = (await httpResponse.json()) as GeminiGenerateContentResponse;
-  const text = getGeminiResponseText(response);
-  if (!text) throw new Error("Transcription failed - empty response");
+  const text = getGeminiTranscriptionText(response);
   return { text, wordsUsed: countWords(text) };
 };
 
@@ -1110,8 +1248,6 @@ export const geminiGenerateTextResponse = ({
 
       const usageMetadata = response.usageMetadata;
       const tokensUsed = usageMetadata?.totalTokenCount ?? countWords(text);
-
-      console.log("gemini llm usage:", usageMetadata);
 
       return { text, tokensUsed };
     },

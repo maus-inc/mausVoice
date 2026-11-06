@@ -17,7 +17,7 @@ The two schemes have their own temperature rather than being inversions of each 
 
 - **Never pure `#000` / `#fff`** for surfaces or text. Light tints from the warm ink `ink(α)` = `rgba(26,23,18,α)`; dark tints from `highlight(α)` / `onDark(α)`. The one sanctioned `#FFFFFF` is the inverted CTA fill in dark (`chalkSolid`).
 - **Borders over shadows.** Cards/surfaces separated by 1px translucent hairlines. Use `hairline.light(α)` / `hairline.dark(α)` from `styles/shadows.ts` (0.04-0.08). Elevation shadows (`premiumSurface`) only on layered/floating surfaces (cards, hover), not every face.
-- `premiumSurface` = `insetRim` (2px inner top highlight, emboss) + multi‑stop soft drop shadow; distinct rest/hover/active/selected. This is the "machined keycap" treatment (Raycast class). `insetRim` is exported separately so a surface that has to read as a different _plane_ can borrow the rim without also borrowing the lift.
+- `premiumSurface` = `insetRim` (2px inner top highlight, emboss) + multi‑stop soft drop shadow; distinct rest/hover/active/selected. This is the "machined keycap" treatment (Raycast class). `insetRim` is exported separately so a surface that has to read as a different _plane_ can borrow the rim without also borrowing the lift. Settings groups use the resting surface in each scheme, with their hairlines and destructive tint intact. Individual rows keep their existing interaction states rather than lifting the whole group.
 - Backdrop-filtered chrome uses `surfaceAlpha(tier, α)` so the translucent face can never drift from its opaque tier.
 
 ## Color (restrained, one accent)
@@ -40,6 +40,11 @@ The two schemes have their own temperature rather than being inversions of each 
 - Border radius 14 for cards; controls handled via MUI components symmetric. Keep consistent. Don't mix pill/soft/hard per component.
 - 4px base spacing rhythm; generous separation around content, compact inside rows.
 
+## Home analytics
+
+- The daily-word heatmap uses warm ember intensity ramps in `styles/palette.ts`, matching the Home reference. Its cell and grid dimensions live in `styles/activity-heatmap.ts`. It is a compact, Monday-first 53-week calendar in the Home flow, not a separate side panel. Its legend, per-day tooltips, aggregate summary, and screen-reader list expose the counts without relying on color alone. Empty and future days use distinct styling. Dated cells get a 150ms transform-only scale and outline on hover-capable fine pointers; touch has no hover state, and reduced-motion users get no scale animation. Cells are informational rather than controls, so the metric cards and count changes do not gain decorative hover, focus, or entrance motion. This keeps the reference layout still at rest and avoids animating values changed by keyboard-driven dictation.
+- On wide desktop windows, the Home overview places the heatmap between two vertical metric stacks. Smaller windows put the metrics in two columns above the heatmap. The dashboard uses the available routed canvas without adding a shell-side panel or a duplicate hotkey card.
+
 ## Motion
 
 - Settings/deleted: 120–180ms ease‑out, exponential absorb. No **bounce** (damping < 20); snappy springs (damping ≥ 28) sanctioned for shared-layout indicators only. Reduced-motion honored everywhere (global kill-switch in `theme.ts`); keyboard‑invoked actions never animate.
@@ -49,6 +54,7 @@ The two schemes have their own temperature rather than being inversions of each 
 
 - Everything interactive: default/hover/focus‑visible/active/disabled/loading. Press feedback `scale(0.97)` (or inset press).
 - Focus rings are designed, brand‑tinted, 2px offset 2.
+- Outlined inputs are the exception: they signal focus with the 2px charcoal border swap at the field's own radius, not a ring. That swap is the sanctioned treatment; it reads as the app's machined chrome. Do not replace it with a ring or a thinner hairline.
 
 ## Themed browser surfaces
 
@@ -57,7 +63,18 @@ The two schemes have their own temperature rather than being inversions of each 
 ## Anti-patterns
 
 - Side-stripe borders >1px; gradient text; decorative glass; `transition-all`; pure black/white; lucide-only generic icon (once stroke); ceil matching radius; drop-shadowed in-flow cards; icon tiles behind neutral glyphs; arrows on secondary actions. See `craft-floor`.
+- Native endonyms in pickers for scripts the font stack cannot render (tofu). Outside Latin/Cyrillic coverage, menus fall back to English exonyms.
 - Emoji‑as‑icons. No.
+
+## Mandatory process for UI work
+
+Every change that touches `apps/desktop` or `apps/preview` UI runs this before the first edit. Small polish is not exempt; the generic defaults slip in on the one-line edits.
+
+1. **Load the world.** Read this file and the design-system baseline (`docs/design-system-baseline.md`) fully into context.
+2. **Load the skill sets.** The design skill sets named in the AGENTS.md skill index, currently impeccable and antislopui, including each set's floor or bans document (`craft-floor.md` for impeccable), immediately before the edit. Fetch them from their upstream sources when not vendored.
+3. **Recon spree.** Gather current references for the component at hand from premium design sources and comparable shipped product UI (Dribbble, Pinterest, Attio/Linear-class pickers and the like), and pull the before/after QA-artifact screenshots for the touched surface.
+4. **Weigh, then ship.** Measure every radius, slope, density, state, and label against the gathered references and this file. The committed world wins over habit.
+5. **Cite.** The PR description lists the references consulted. A UI diff without them is not reviewable.
 
 ## Window surfaces
 
@@ -100,15 +117,88 @@ The Windows and Linux caption buttons are three square targets inset from the ba
 
 ## Tips & inline notifications
 
-A tip is a corner toast, not an in-page row. It is a small card in the same bottom-right stack as every other toast, with a pattern image strip on top, an icon-plus-copy body below, and a corner dismiss. `components/onboarding/TipToast.tsx` renders it. `components/onboarding/TipCard.tsx` keeps the copy, icons, and the flat `TipCardFrame` row Help still lists every tip in. Dismissed tips dim there and carry a "Show again" action instead of a dismiss control. Each Help row's icon sits inside a 40px thumbnail cropped from the same pattern art, a preview of the toast it stands in for, not the bare glyph the toast itself uses next to its own title.
+Onboarding tips are quiet notification cards that float in the app's toast
+corner, not banners anchored to a page and not plain rows either. A live tip
+renders in the bottom-right tip stack (`components/onboarding/TipToaster.tsx`),
+the same corner the Sonner toasts occupy, and shows only on the route the
+feature lives on (`ONBOARDING_TIPS.href`) until dismissed. The Help page keeps
+the in-flow listing of all five (`components/onboarding/TipCard.tsx`'s
+`TipCardFrame`), dimmed for the dismissed, each with a "Show again" control in
+place of a dismiss.
 
-This replaces the first revision of this section, which put tips inline on the page as flat Linear-style rows. The owner judged that pattern too easy to mistake for page content worth reading closely and asked for the feature-announcement toast pattern instead, a small floating card, anchored to a corner, that announces itself and gets out of the way. This revision draws on three references. The owner's own Paper.design board shows an image-header, icon-plus-title-plus-body card anchored to the window's bottom-right corner. Attio's popover and picker work at `dribbble.com/shots/14651427` shows restrained floating-card geometry. This app's own `MuiDialog` and `MuiPopover` overrides in `theme.ts` already pair a hairline with a `premiumSurface` shadow for every floating layer in the app, the precedent this toast's own chrome follows. Each choice below names what it rules out.
+Why the corner and not the page. A tip anchored at the top of a page reads as
+a banner pinned over the content. It competes with the page's own heading and
+forces the reader to scroll around it to use the page. A nudge that can be
+dismissed belongs with the other dismissible things, in the corner, out of the
+reading path.
 
-- **One floating-layer recipe, not a new one.** `level1` + `hairline` + `premiumSurface.hover`, radius `theme.shape.borderRadius`. It uses the same hairline and `premiumSurface` tokens as `MuiDialog`, `MuiPopover`, and the styled toasts in `SonnerToaster.tsx`. A border stacked under a soft shadow reads as redundant elevation on a page element, but a toast, a dialog, and a popover are the one surface class this app deliberately gives both to, so a new toast matching that class is consistency, not a new exception.
-- **One pattern image, not five.** All five tips share one abstract monochrome ink pattern (`assets/tip-toast-pattern.png`), generated from the app's own ink/onyx/silver tokens (`palette.ts`) rather than a stock photo, evoking a voice waveform caught mid-motion, the app's actual subject. A header image is brand recognition, not per-tip illustration. The icon, title, and one-line body directly below still carry what makes this tip different from the other four. The image fades into the card's own `level1` face at its bottom edge, built with `surfaceAlpha` against the same hex as the opaque tier, so the art reads as part of the card, not a clipped photo pasted on top of it.
-- **Click the body, not a labelled button.** The icon-and-copy block is one activatable region (`role="button"`, Enter/Space wired). It performs the tip's in-place action if it has one. The generative-provider tip still jumps to and focuses the Groq key field, same as before. A tip with no action simply counts as read once its body is clicked. Four of the five tips have no action; they are anchored on the very page they introduce and have nothing further to point to. No "Open settings" / "Browse styles" labelled pill. The image strip and its corner dismiss button are a separate region from the body, not nested inside it, so a screen reader's accessible name for the clickable body stays "title, body", not "title, body, Dismiss tip".
-- **Dismissal persists the instant it happens.** Both the corner X and the body click call `dismissTip` synchronously, before sonner's own exit animation starts, not after it finishes. This is a deliberate simplification over the row version's unmount guard. There is no "interrupted exit" to race against when the store write already landed before any animation began. Sonner's own pointer-driven swipe-to-dismiss gesture is turned off (`dismissible: false`) because it is the one removal path this card does not render its own control for. Left on, a swipe would delete the toast without ever calling `dismissTip`, so the tip would read as gone but reappear on the next visit. Every dismissal instead goes through this card's own click and keyboard handlers, the one path that calls it.
-- **Lifecycle matches the page, not the session.** `TipToastTrigger` shows a tip toast for as long as its owning page is mounted and not yet dismissed, and clears it, without persisting a dismissal, the moment the page unmounts. Leaving the page is not the same choice as dismissing the tip. The toast reuses sonner's own `duration: Infinity`, slide, stacking, and bottom-right position, including sonner's own reduced-motion handling, so it does not invent a second toast system or a second motion exception.
+This design went through two revisions before this one. The first put tips
+inline on the page as flat Linear-style rows; the owner judged that pattern
+too easy to mistake for page content worth reading closely. The second moved
+the row into the toast corner (the stack, the route gating, and the
+`tip-actions` registry below all date from that revision and still stand).
+The owner's own Paper.design board then asked for a feature-announcement
+card for the live tip specifically. That card adds a header image on top of
+the icon-title-body block, replacing the bare-glyph row the toast and the
+Help listing had shared until now. This revision gives the live card that face
+while keeping every toast-corner mechanic the second revision already proved.
+The reference for the stack and the corner is Linear, Vercel, and Raycast,
+which all float transient messages in a corner rather than in the content
+flow. The reference for the card face is the owner's Paper.design board and
+Attio's popover and picker work at `dribbble.com/shots/14651427`, both
+restrained floating-card geometry with a header strip over a body. Each
+choice below names what it rules out.
+
+- **One stack, one corner, aligned with the toasts.** The tip stack anchors at
+  `right: 16px; bottom: 16px`, fixed, and every card holds the Sonner toast
+  column width (356px) so the two stacks line up in the corner. Live tips sit
+  under the transient toasts and the MUI overlays (`z-index: 1100`): a
+  confirmation toast may sit on a tip for a few seconds, a tip must never sit
+  on a toast. A tip is never anchored in the page flow, and there is no second
+  corner.
+- **Pattern-image header on the live card, bare glyph on the listing.** One
+  abstract monochrome ink pattern (`assets/tip-toast-pattern.png`), shared by
+  all five tips and generated from the app's own ink/onyx/silver tokens
+  (`palette.ts`), evokes a voice waveform caught mid-motion, the app's actual
+  subject, rather than a stock photo or a per-tip illustration. It sits above
+  the icon, title, and body, fades into the card's own `background.paper` face
+  at its lower edge (built with `surfaceAlpha` against the same hex the paper
+  token resolves to, so the translucent fade and the opaque body can never
+  drift apart), and carries the dismiss control in a scrim chip at its
+  top-right corner. The icon, title, and one-line body below keep the bare
+  16px lucide glyph (stroke 1.9) at `text.secondary` with no tile, the same
+  row the Help listing uses. The Help listing stays without the header image.
+  The art is the live card's one moment of surprise, not something spent
+  again on a list the user opens on purpose.
+- **Floating face for the live tip, flat face for the listing.** A live tip
+  floats over the page, so its outer card takes the floating-layer material
+  the toasts use: a `background.paper` face, a 1px hairline, the standard card
+  radius, and the `premiumSurface` lift, with `TipCardFrame` rendered
+  transparent and borderless inside it. The Help listing is in flow, so
+  `TipCardFrame` carries that flat `level1` face itself, hairline and no cast.
+  There the row separates on its luminance step, per the "borders over
+  shadows" rule (Raycast states it; Linear's rows carry no cast at all). One
+  component supplies the copy, icons, and layout either way; only the face
+  around it changes.
+- **Type and measure.** `titleSmall` (-0.01em) states the claim. `body2` at
+  `text.secondary` supplies the reason. Both cap at 60ch. The decision-relevant
+  detail comes first. In-app cards do their job in roughly ten words.
+- **One quiet action, one dismiss, now off the row.** Each tip carries at most
+  one outlined pill (999) with no arrow. An arrow reads as a marketing CTA,
+  and tips are not marketing. Vercel's secondary actions are quiet pills, and
+  none carry arrows. More than one primary action makes it a modal, never a
+  notification. Where a tip has an in-page action, the handler lives on the
+  tip's own route page (the `tip-actions` registry), so the action completes
+  the task in place and never dismisses the tip. Dismiss is a bare 16px X at
+  `text.secondary`, now a scrim chip over the header image instead of a
+  control inline in the row, so the row below stays exactly as quiet as the
+  Help listing's.
+- **Motion.** Reveal and exit run 160ms / 180ms ease-out with a 6px rise, and
+  a sibling reflows with `layout` when one clears. No scale, no spring.
+  Springs stay with shared-layout indicators (see Motion). Reduced motion
+  drops the rise.
+- **Dismissal is a choice that persists**, including when navigation
+  interrupts the exit. See the `TipCard` unmount guard.
 
 ## Recording state machine (pill + composer)
 
@@ -126,4 +216,4 @@ This replaces the first revision of this section, which put tips inline on the p
 
 ## Radius
 
-- 7 chips/inputs · 14 cards/rows/dialogs (MUI radius 1) · 28 large dialogs · 999 pills only.
+- 7 chips · 14 cards/rows/dialogs/inputs (MUI radius 1) · 28 large dialogs · 999 pills only.

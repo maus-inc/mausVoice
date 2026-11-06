@@ -44,15 +44,6 @@ export const SonnerToaster = () => {
               boxShadow: `${premiumSurface.dark.hover} !important`,
             }),
           },
-          // A `toast.custom` tip toast (TipToast.tsx) ships `data-styled`
-          // false, so it skips every rule above and supplies its own card
-          // chrome. It still needs the stack's own width, which otherwise
-          // only `data-styled='true'` toasts receive, or it shrinks to fit
-          // its content and reads as a different width than its neighbours.
-          "[data-sonner-toast]:not([data-styled='true'])": {
-            width: "var(--width) !important",
-            boxSizing: "border-box !important",
-          },
           "[data-sonner-toast][data-type='success'] [data-icon]": {
             color: `${theme.vars.palette.success.main} !important`,
           },
@@ -85,6 +76,11 @@ export const SonnerToaster = () => {
             transition: `background-color ${duration.fast}s !important`,
             "&:hover": {
               background: `${theme.vars.palette.level3} !important`,
+            },
+            "&:focus-visible": {
+              outline: `2px solid ${theme.vars.palette.text.primary} !important`,
+              outlineOffset: 2,
+              boxShadow: "none !important",
             },
             ...theme.applyStyles("dark", {
               border: `${hairline.dark(0.06)} !important`,

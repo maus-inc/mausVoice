@@ -22,8 +22,9 @@ const UNIVERSAL_SAFE = [
 // preservation setting. Unlike a model identifier, they must not fall back to
 // English in any supported locale.
 const FAILURE_AUDIO_MESSAGES = [
-  "keep_the_audio_snapshot_with_a_failed_transcription_so_you_c",
+  "keeps_the_audio_of_a_failed_transcription_so_you_can_replay",
   "preserve_audio_on_failure",
+  "transcription_failed_the_recording_audio_was_not_saved",
 ] as const;
 
 type Messages = Record<string, string>;
@@ -234,6 +235,43 @@ describe("i18n catalogs", () => {
     );
   });
 
+  it("formats heatmap activity counts in every locale", () => {
+    const locales = loadLocales();
+    const activeDaysMessage = {
+      id: "count_plural_one_active_day_other_active_days",
+      defaultMessage:
+        "{count, plural, one {# active day} other {# active days}}",
+    };
+    const activitySummaryMessage = {
+      id: "daily_word_activity_activedays_plural_one_active_day_other_a",
+      defaultMessage:
+        "Daily word activity: {activeDays, plural, one {# active day} other {# active days}} and {totalWords, number} words in the past year.",
+    };
+
+    for (const locale of manifest.supportedLocales as string[]) {
+      const intl = createIntl({
+        locale,
+        messages: locales[locale],
+        onError: (error) => {
+          throw error;
+        },
+      });
+      for (const count of [0, 1, 2]) {
+        const label = intl.formatMessage(activeDaysMessage, { count });
+        const summary = intl.formatMessage(activitySummaryMessage, {
+          activeDays: count,
+          totalWords: 42,
+        });
+        expect(label, `${locale}:${count}`).toBeTruthy();
+        expect(label, `${locale}:${count}`).not.toContain("{count");
+        expect(summary, `${locale}:${count}`).toContain(intl.formatNumber(42));
+        expect(summary, `${locale}:${count}`).not.toMatch(
+          /\{(?:activeDays|totalWords)/,
+        );
+      }
+    }
+  });
+
   it("flags messages still English in every translated locale", () => {
     const locales = loadLocales();
     const keyedEnglish = messagesFor(locales, manifest.defaultLocale);
@@ -300,6 +338,21 @@ describe("i18n catalogs", () => {
     ]) {
       expect(korean[key], `ko:${key} must exist`).toBeTypeOf("string");
       expect(korean[key], `ko:${key}`).not.toMatch(audioWording);
+    }
+  });
+
+  it("translates the live-provider Connecting status in every locale", () => {
+    const locales = loadLocales();
+    const english = messagesFor(locales, manifest.defaultLocale);
+    expect(english.connecting).toBe("Connecting");
+
+    for (const locale of (manifest.supportedLocales as string[]).filter(
+      (code) => code !== manifest.defaultLocale,
+    )) {
+      expect(locales[locale]?.connecting, `${locale}:connecting`).toBeTruthy();
+      expect(locales[locale]?.connecting, `${locale}:connecting`).not.toBe(
+        english.connecting,
+      );
     }
   });
 

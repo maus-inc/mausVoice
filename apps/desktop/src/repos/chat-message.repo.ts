@@ -1,7 +1,8 @@
 import { ChatMessage, ChatMessageRole, Nullable } from "@maus-inc/types";
 import { invoke } from "@tauri-apps/api/core";
 import dayjs from "dayjs";
-import { BaseRepo } from "./base.repo";
+import type { LocalDataWriteLease } from "../utils/local-data-write-gate";
+import { BaseRepo, withLocalDataWrite } from "./base.repo";
 
 type LocalChatMessage = {
   id: string;
@@ -32,9 +33,18 @@ const toLocalChatMessage = (message: ChatMessage): LocalChatMessage => ({
 
 export abstract class BaseChatMessageRepo extends BaseRepo {
   abstract listChatMessages(conversationId: string): Promise<ChatMessage[]>;
-  abstract createChatMessage(message: ChatMessage): Promise<ChatMessage>;
-  abstract updateChatMessage(message: ChatMessage): Promise<ChatMessage>;
-  abstract deleteChatMessages(ids: string[]): Promise<void>;
+  abstract createChatMessage(
+    message: ChatMessage,
+    lease?: LocalDataWriteLease,
+  ): Promise<ChatMessage>;
+  abstract updateChatMessage(
+    message: ChatMessage,
+    lease?: LocalDataWriteLease,
+  ): Promise<ChatMessage>;
+  abstract deleteChatMessages(
+    ids: string[],
+    lease?: LocalDataWriteLease,
+  ): Promise<void>;
 }
 
 export class LocalChatMessageRepo extends BaseChatMessageRepo {
@@ -45,21 +55,37 @@ export class LocalChatMessageRepo extends BaseChatMessageRepo {
     return locals.map(fromLocalChatMessage);
   }
 
-  async createChatMessage(message: ChatMessage): Promise<ChatMessage> {
-    const created = await invoke<LocalChatMessage>("chat_message_create", {
-      message: toLocalChatMessage(message),
-    });
-    return fromLocalChatMessage(created);
+  createChatMessage(
+    message: ChatMessage,
+    lease?: LocalDataWriteLease,
+  ): Promise<ChatMessage> {
+    return withLocalDataWrite(async () => {
+      const created = await invoke<LocalChatMessage>("chat_message_create", {
+        message: toLocalChatMessage(message),
+      });
+      return fromLocalChatMessage(created);
+    }, lease);
   }
 
-  async updateChatMessage(message: ChatMessage): Promise<ChatMessage> {
-    const updated = await invoke<LocalChatMessage>("chat_message_update", {
-      message: toLocalChatMessage(message),
-    });
-    return fromLocalChatMessage(updated);
+  updateChatMessage(
+    message: ChatMessage,
+    lease?: LocalDataWriteLease,
+  ): Promise<ChatMessage> {
+    return withLocalDataWrite(async () => {
+      const updated = await invoke<LocalChatMessage>("chat_message_update", {
+        message: toLocalChatMessage(message),
+      });
+      return fromLocalChatMessage(updated);
+    }, lease);
   }
 
-  async deleteChatMessages(ids: string[]): Promise<void> {
-    await invoke("chat_message_delete_many", { ids });
+  deleteChatMessages(
+    ids: string[],
+    lease?: LocalDataWriteLease,
+  ): Promise<void> {
+    return withLocalDataWrite(
+      () => invoke<void>("chat_message_delete_many", { ids }),
+      lease,
+    );
   }
 }

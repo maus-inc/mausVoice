@@ -2,14 +2,27 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Transcription } from "@maus-inc/types";
 import type { IntlShape } from "react-intl";
 import { INITIAL_APP_STATE } from "../state/app.state";
-import { RETRANSCRIPTION_SUCCESS_VISIBLE_MS } from "../state/transcriptions.state";
+import {
+  INITIAL_TRANSCRIPTIONS_STATE,
+  RETRANSCRIPTION_SUCCESS_VISIBLE_MS,
+} from "../state/transcriptions.state";
 import type { PostProcessMetadata } from "./transcribe.actions";
 import { createDefaultPreferences } from "./user.actions";
 import { getAppState, produceAppState, setAppState } from "../store";
+import {
+  beginLocalDataClear,
+  getLocalDataClearGeneration,
+  isLocalDataClearRequested,
+  LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY,
+} from "../utils/local-data-write-gate";
+import { sampleTranscription } from "../test/helpers/transcription-fixture";
 
 const {
   loadTranscriptionAudio,
+  importAudioFile: importAudioFileMock,
+  listTranscriptions,
   updateTranscription,
+  storeTranscription: storeTranscriptionMock,
   transcribeAudio,
   postProcessTranscript,
   generateText,
@@ -20,7 +33,10 @@ const {
   dismissToast,
 } = vi.hoisted(() => ({
   loadTranscriptionAudio: vi.fn(),
+  importAudioFile: vi.fn(),
+  listTranscriptions: vi.fn(),
   updateTranscription: vi.fn(),
+  storeTranscription: vi.fn(),
   transcribeAudio: vi.fn(),
   postProcessTranscript: vi.fn(),
   generateText: vi.fn(),
@@ -34,6 +50,8 @@ const {
 vi.mock("../repos", () => ({
   getTranscriptionRepo: () => ({
     loadTranscriptionAudio,
+    importAudioFile: importAudioFileMock,
+    listTranscriptions,
     updateTranscription,
   }),
   // Only the unparseable-response test below reaches the real post-processing
@@ -49,7 +67,7 @@ vi.mock("../repos", () => ({
 vi.mock("./transcribe.actions", () => ({
   transcribeAudio,
   postProcessTranscript,
-  storeTranscription: vi.fn(),
+  storeTranscription: storeTranscriptionMock,
 }));
 
 vi.mock("./app.actions", () => ({
@@ -108,8 +126,14 @@ vi.mock("../i18n/intl", async () => {
   };
 });
 
-const { retranscribeTranscription, openRetranscribeDialog } =
-  await import("./transcriptions.actions");
+const {
+  importAudioFile,
+  resumeAllInterruptedPostProcessEditRetries,
+  resumeInterruptedPostProcessEditRetries,
+  retranscribeTranscription,
+  retranscribeTranscriptionWithRecovery,
+  openRetranscribeDialog,
+} = await import("./transcriptions.actions");
 const { POST_PROCESS_TRUNCATED_WARNING } =
   await import("../utils/prompt.utils");
 
@@ -121,14 +145,20 @@ const startIgnoredRun = (transcriptionId: string): void => {
   retranscribeTranscription({ transcriptionId }).catch(() => undefined);
 };
 
-const sampleTranscription = (id: string): Transcription => ({
-  id,
-  createdAt: "2026-08-01T00:00:00.000Z",
-  createdByUserId: "user-1",
-  transcript: "hello",
-  isDeleted: false,
-  audio: { filePath: `/tmp/${id}.wav`, durationMs: 1000 },
-});
+/**
+ * Pin the jitter source to its maximum, which is one tick under the first cap.
+ * The recovery pass draws its delay from the platform crypto generator rather
+ * than `Math.random`, so this spy is what makes the wait deterministic.
+ */
+const pinJitterToMaximum = () =>
+  vi
+    .spyOn(globalThis.crypto, "getRandomValues")
+    .mockImplementation(<T extends ArrayBufferView | null>(array: T): T => {
+      if (array instanceof Uint32Array) {
+        array[0] = 0xffffffff;
+      }
+      return array;
+    });
 
 const seedTranscription = (id: string) => {
   produceAppState((draft) => {
@@ -260,6 +290,27 @@ describe("retranscribeTranscription feedback", () => {
     ]);
   });
 
+  it("reports whether the call actually started a run", async () => {
+    seedTranscription("a");
+    let release:
+      ((value: { samples: number[]; sampleRate: number }) => void) | undefined;
+    loadTranscriptionAudio.mockReturnValue(
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+    );
+
+    const first = retranscribeTranscription({ transcriptionId: "a" });
+    const second = retranscribeTranscription({ transcriptionId: "a" });
+    // The row is still in flight, so the second call must report that it did
+    // not start anything rather than leave its outcome unreadable.
+    await expect(second).resolves.toEqual({ started: false, update: null });
+    expect(loadTranscriptionAudio).toHaveBeenCalledTimes(1);
+
+    release?.({ samples: [0], sampleRate: 16000 });
+    await expect(first).resolves.toMatchObject({ started: true });
+  });
+
   it("does not let one row's success timer clear another row or a newer run", async () => {
     seedTranscription("a");
     seedTranscription("b");
@@ -386,6 +437,7 @@ describe("retranscribeTranscription feedback", () => {
         postprocessDurationMs: 45,
         postProcessModel: "openai/gpt-oss-20b",
       }),
+      expect.any(Object),
     );
   });
 
@@ -410,6 +462,7 @@ describe("retranscribeTranscription feedback", () => {
         postprocessDurationMs: null,
         postProcessModel: null,
       }),
+      expect.any(Object),
     );
   });
 
@@ -543,7 +596,7 @@ describe("retranscribeTranscription feedback", () => {
     produceAppState((draft) => {
       draft.transcriptions.retranscribingIds = [];
     });
-    loadTranscriptionAudio.mockReturnValueOnce(neverSettles());
+    transcribeAudio.mockReturnValueOnce(neverSettles());
     startIgnoredRun("a");
     await vi.advanceTimersByTimeAsync(0);
     produceAppState((draft) => {
@@ -580,7 +633,7 @@ describe("retranscribeTranscription feedback", () => {
 
     // A newer run starts and shows its own loading toast while the previous
     // run's dismiss is still pending. It hangs, so it never completes itself.
-    loadTranscriptionAudio.mockReturnValueOnce(neverSettles());
+    transcribeAudio.mockReturnValueOnce(neverSettles());
     startIgnoredRun("b");
     await vi.advanceTimersByTimeAsync(0);
     showCompletionToast.mockClear();
@@ -642,6 +695,7 @@ describe("retranscribeTranscription persistence gate", () => {
         id: "tx-gate",
         transcript: "retranscribed text",
       }),
+      expect.any(Object),
     );
     expect(getAppState().transcriptionById["tx-gate"]?.transcript).toBe(
       "retranscribed text",
@@ -657,6 +711,62 @@ describe("retranscribeTranscription persistence gate", () => {
     expect(getAppState().transcriptionById["tx-gate"]?.transcript).toBe(
       "retranscribed text",
     );
+  });
+
+  it("releases the read lease during provider calls and rejects a late result after clear", async () => {
+    seedGated(false);
+    const initialClearGeneration = getLocalDataClearGeneration();
+    let finishTranscribe: (() => void) | undefined;
+    transcribeAudio.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishTranscribe = () =>
+            resolve({
+              rawTranscript: "late raw transcript",
+              sanitizedTranscript: "late raw transcript",
+              warnings: [],
+              metadata: {},
+            });
+        }),
+    );
+
+    const retranscribing = retranscribeTranscription({
+      transcriptionId: "tx-gate",
+    });
+    await vi.waitFor(() => {
+      expect(transcribeAudio).toHaveBeenCalledTimes(1);
+    });
+    let releaseClear: (() => void) | undefined;
+    const clearing = beginLocalDataClear().then((release) => {
+      releaseClear = release;
+      return release;
+    });
+
+    try {
+      await vi.waitFor(
+        () => {
+          expect(releaseClear).toBeDefined();
+        },
+        { timeout: 1500 },
+      );
+      expect(isLocalDataClearRequested()).toBe(true);
+      expect(getLocalDataClearGeneration()).toBe(initialClearGeneration + 1);
+
+      finishTranscribe?.();
+      await retranscribing;
+
+      expect(updateTranscription).not.toHaveBeenCalled();
+      expect(getAppState().transcriptionById["tx-gate"]?.transcript).toBe(
+        "original text",
+      );
+      expect(showErrorSnackbar).not.toHaveBeenCalled();
+    } finally {
+      finishTranscribe?.();
+      await retranscribing;
+      if (!releaseClear) releaseClear = await clearing;
+      localStorage.removeItem(LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY);
+      releaseClear();
+    }
   });
 });
 
@@ -751,6 +861,7 @@ describe("retranscribeTranscription unstyled post-processing", () => {
         warnings: [QUOTA_CATEGORY],
         postProcessFailed: true,
       }),
+      expect.any(Object),
     );
     expect(getAppState().transcriptionById["unstyled"]?.transcript).toBe(
       POLISHED,
@@ -795,6 +906,7 @@ describe("retranscribeTranscription unstyled post-processing", () => {
         // The provider answered, so the failure sentinel must stay false.
         postProcessFailed: false,
       }),
+      expect.any(Object),
     );
     // The stored warning stays English because it lives on the row, but the
     // toast resolves a localized sentence for it and logs the raw reason.
@@ -849,6 +961,7 @@ describe("retranscribeTranscription unstyled post-processing", () => {
         // The request came back, so the failure sentinel stays false.
         postProcessFailed: false,
       }),
+      expect.any(Object),
     );
     expect(getAppState().transcriptionById["unparseable"]?.transcript).toBe(
       POLISHED,
@@ -888,6 +1001,7 @@ describe("retranscribeTranscription unstyled post-processing", () => {
         warnings: [VALIDATION_WARNING],
         postProcessFailed: false,
       }),
+      expect.any(Object),
     );
     // The recorded reason is not shown. The toast describes the outcome, and a
     // validation failure must not borrow the cut-off copy any more than the
@@ -981,6 +1095,7 @@ describe("retranscribeTranscription unstyled post-processing", () => {
         transcript: "Freshly styled summary.",
         postProcessFailed: false,
       }),
+      expect.any(Object),
     );
     expect(getAppState().transcriptions.retranscriptionSuccessIds).toEqual([
       "styled",
@@ -1005,6 +1120,11 @@ describe("retranscribeTranscription unstyled post-processing", () => {
       }
     }
     generateText.mockRejectedValueOnce(new Cerebras402());
+    // This case is about a provider failure, so it must reach the provider:
+    // short dictations in a prose style are styled locally by default.
+    produceAppState((draft) => {
+      draft.settings.fastStyleShortDictationsEnabled = false;
+    });
     const { postProcessTranscript: runPostProcessing } = await vi.importActual<
       typeof import("./transcribe.actions")
     >("./transcribe.actions");
@@ -1032,6 +1152,7 @@ describe("retranscribeTranscription unstyled post-processing", () => {
         postProcessFallback: true,
         postProcessFailed: false,
       }),
+      expect.any(Object),
     );
     expect(getAppState().transcriptionById["degraded"]?.transcript).toBe(
       degraded.transcript,
@@ -1040,6 +1161,743 @@ describe("retranscribeTranscription unstyled post-processing", () => {
     expect(getAppState().transcriptions.retranscriptionSuccessIds).toEqual([
       "degraded",
     ]);
+  });
+
+  it("retranscribes the same History row once after the third partial-edit failure", async () => {
+    vi.useFakeTimers();
+    const random = pinJitterToMaximum();
+    try {
+      const row = {
+        ...sampleTranscription("partial-chain"),
+        postProcessEditFailed: true,
+        postProcessEditFailureCount: 2,
+        postProcessEditAutoRetryUsed: null,
+      };
+      produceAppState((draft) => {
+        draft.transcriptionById[row.id] = row;
+        draft.transcriptions.transcriptionIds = [row.id];
+      });
+      transcribeAudio.mockResolvedValue({
+        rawTranscript: RAW_ASR,
+        sanitizedTranscript: RAW_ASR,
+        warnings: [],
+        metadata: {},
+      });
+      postProcessTranscript
+        .mockResolvedValueOnce({
+          transcript: RAW_ASR,
+          warnings: ["one edit could not be applied"],
+          metadata: {
+            postProcessFailed: false,
+            postProcessFallback: true,
+            postProcessEditFailed: true,
+            postProcessEditFailureCount: 3,
+          },
+        })
+        .mockResolvedValueOnce({
+          transcript: RAW_ASR,
+          warnings: ["another edit could not be applied"],
+          metadata: {
+            postProcessFailed: false,
+            postProcessFallback: true,
+            postProcessEditFailed: true,
+            postProcessEditFailureCount: 4,
+          },
+        });
+
+      await retranscribeTranscriptionWithRecovery({
+        transcriptionId: row.id,
+        toneId: "custom-tone",
+      });
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(updateTranscription).toHaveBeenCalledTimes(2);
+      expect(getAppState().transcriptionById[row.id]).toMatchObject({
+        postProcessEditFailureCount: 3,
+        postProcessEditAutoRetryUsed: true,
+        postProcessEditRetryClaimCount: 3,
+      });
+
+      // The pinned jitter maximum is 999ms, one tick under the one-second cap.
+      // The automatic pass uses the same row id and therefore produces a third
+      // repository update, not a new create call.
+      await vi.advanceTimersByTimeAsync(998);
+      expect(transcribeAudio).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(transcribeAudio).toHaveBeenCalledTimes(2);
+      expect(updateTranscription).toHaveBeenCalledTimes(3);
+      expect(updateTranscription.mock.calls[2]?.[0]).toMatchObject({
+        id: row.id,
+        postProcessEditFailureCount: 4,
+        postProcessEditAutoRetryUsed: true,
+        // The claim count stays at the value the claim was written for, which
+        // is what keeps the delivered-and-failed row from reading as a claim
+        // that never reported back.
+        postProcessEditRetryClaimCount: 3,
+      });
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      random.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not let a manual retry race the automatic recovery pass", async () => {
+    vi.useFakeTimers();
+    const random = pinJitterToMaximum();
+    try {
+      const row = {
+        ...sampleTranscription("automatic-ownership"),
+        postProcessEditFailed: true,
+        postProcessEditFailureCount: 2,
+        postProcessEditAutoRetryUsed: null,
+      };
+      produceAppState((draft) => {
+        draft.transcriptionById[row.id] = row;
+        draft.transcriptions.transcriptionIds = [row.id];
+      });
+      transcribeAudio.mockResolvedValue({
+        rawTranscript: RAW_ASR,
+        sanitizedTranscript: RAW_ASR,
+        warnings: [],
+        metadata: {},
+      });
+      postProcessTranscript
+        .mockResolvedValueOnce({
+          transcript: RAW_ASR,
+          warnings: ["one edit could not be applied"],
+          metadata: {
+            postProcessFailed: false,
+            postProcessFallback: true,
+            postProcessEditFailed: true,
+            postProcessEditFailureCount: 3,
+          },
+        })
+        .mockResolvedValueOnce({
+          transcript: "Fully styled audio",
+          warnings: [],
+          metadata: { postProcessFailed: false },
+        });
+
+      await retranscribeTranscriptionWithRecovery({
+        transcriptionId: row.id,
+      });
+      await retranscribeTranscriptionWithRecovery({
+        transcriptionId: row.id,
+      });
+
+      expect(transcribeAudio).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(transcribeAudio).toHaveBeenCalledTimes(2);
+      expect(updateTranscription).toHaveBeenCalledTimes(3);
+      expect(updateTranscription.mock.calls[2]?.[0]).toMatchObject({
+        id: row.id,
+        transcript: "Fully styled audio",
+      });
+    } finally {
+      random.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it("schedules imported-audio recovery after storing the durable row", async () => {
+    vi.useFakeTimers();
+    const random = pinJitterToMaximum();
+    try {
+      const row = {
+        ...sampleTranscription("imported-partial"),
+        postProcessEditFailed: true,
+        postProcessEditFailureCount: 3,
+        postProcessEditAutoRetryUsed: null,
+      };
+      produceAppState((draft) => {
+        draft.transcriptionById[row.id] = row;
+        draft.transcriptions.transcriptionIds = [row.id];
+      });
+      importAudioFileMock.mockResolvedValue({
+        samples: [0.1, 0.2],
+        sampleRate: 16000,
+      });
+      transcribeAudio.mockResolvedValue({
+        rawTranscript: RAW_ASR,
+        sanitizedTranscript: RAW_ASR,
+        warnings: [],
+        metadata: {},
+      });
+      postProcessTranscript
+        .mockResolvedValueOnce({
+          transcript: RAW_ASR,
+          warnings: ["one edit could not be applied"],
+          metadata: {
+            postProcessFailed: false,
+            postProcessFallback: true,
+            postProcessEditFailed: true,
+            postProcessEditFailureCount: 3,
+          },
+        })
+        // The delivered pass fails again, which is what a higher count
+        // records: the claim is spent by its own outcome, not by a settle.
+        .mockResolvedValueOnce({
+          transcript: RAW_ASR,
+          warnings: ["another edit could not be applied"],
+          metadata: {
+            postProcessFailed: false,
+            postProcessFallback: true,
+            postProcessEditFailed: true,
+            postProcessEditFailureCount: 4,
+          },
+        });
+      storeTranscriptionMock.mockResolvedValue({
+        transcription: row,
+        wordCount: 4,
+      });
+      updateTranscription.mockImplementation((payload: Transcription) =>
+        Promise.resolve(payload),
+      );
+
+      await expect(
+        importAudioFile({ toneId: "custom-tone", languageCode: "en" }),
+      ).resolves.toBe(true);
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(storeTranscriptionMock).toHaveBeenCalledTimes(1);
+      expect(updateTranscription).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: row.id,
+          postProcessEditAutoRetryUsed: true,
+          postProcessEditRetryToneId: "custom-tone",
+          postProcessEditRetryLanguageCode: "en",
+        }),
+      );
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(transcribeAudio).toHaveBeenCalledTimes(2);
+      expect(storeTranscriptionMock).toHaveBeenCalledTimes(1);
+      expect(updateTranscription).toHaveBeenCalledTimes(2);
+      expect(updateTranscription).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          id: row.id,
+          postProcessEditFailureCount: 4,
+        }),
+        expect.any(Object),
+      );
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      random.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it("resumes the automatic pass a previous process claimed and never ran", async () => {
+    vi.useFakeTimers();
+    try {
+      const row = {
+        ...sampleTranscription("interrupted-claim"),
+        postProcessEditFailed: true,
+        postProcessEditFailureCount: 3,
+        postProcessEditAutoRetryUsed: true,
+        postProcessEditRetryToneId: "",
+        postProcessEditRetryLanguageCode: "",
+      };
+      produceAppState((draft) => {
+        draft.transcriptionById[row.id] = row;
+        draft.transcriptions.transcriptionIds = [row.id];
+      });
+
+      resumeInterruptedPostProcessEditRetries([row]);
+      await vi.advanceTimersByTimeAsync(0);
+
+      // The pass runs against the row the claim names, so History is updated
+      // rather than appended to.
+      expect(transcribeAudio).toHaveBeenCalledTimes(1);
+      expect(updateTranscription).toHaveBeenCalledWith(
+        expect.objectContaining({ id: row.id, transcript: "Hello there" }),
+        expect.any(Object),
+      );
+      // The claim recorded no tone and no language override, so the pass runs
+      // under those defaults rather than whatever the user has selected since.
+      expect(postProcessTranscript).toHaveBeenCalledWith(
+        expect.objectContaining({ toneId: null, dictationLanguage: undefined }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("resumes the automatic pass with the style and language the claim recorded", async () => {
+    vi.useFakeTimers();
+    try {
+      const row = {
+        ...sampleTranscription("recorded-context"),
+        postProcessEditFailed: true,
+        postProcessEditFailureCount: 3,
+        postProcessEditAutoRetryUsed: true,
+        postProcessEditRetryToneId: "custom-tone",
+        postProcessEditRetryLanguageCode: "fr",
+      };
+      produceAppState((draft) => {
+        draft.transcriptionById[row.id] = row;
+        draft.transcriptions.transcriptionIds = [row.id];
+      });
+
+      resumeInterruptedPostProcessEditRetries([row]);
+      await vi.advanceTimersByTimeAsync(0);
+
+      // The pass restyles under the claim's own selections, not whatever the
+      // user has selected by the time the resume runs.
+      expect(postProcessTranscript).toHaveBeenCalledWith(
+        expect.objectContaining({
+          toneId: "custom-tone",
+          dictationLanguage: "fr",
+        }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("resumes a claim written at a later failure count", async () => {
+    vi.useFakeTimers();
+    try {
+      // A claim can land past the first failure after the threshold, for
+      // instance when the marker write failed earlier in the chain. Its
+      // recorded claim count is what makes it deliverable after a restart.
+      const row = {
+        ...sampleTranscription("late-claim"),
+        postProcessEditFailed: true,
+        postProcessEditFailureCount: 4,
+        postProcessEditAutoRetryUsed: true,
+        postProcessEditRetryClaimCount: 4,
+        postProcessEditRetryToneId: "",
+        postProcessEditRetryLanguageCode: "",
+      };
+      produceAppState((draft) => {
+        draft.transcriptionById[row.id] = row;
+        draft.transcriptions.transcriptionIds = [row.id];
+      });
+
+      resumeInterruptedPostProcessEditRetries([row]);
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(transcribeAudio).toHaveBeenCalledTimes(1);
+      expect(updateTranscription).toHaveBeenCalledWith(
+        expect.objectContaining({ id: row.id }),
+        expect.any(Object),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not resume a claim whose pass already ran and failed", async () => {
+    vi.useFakeTimers();
+    try {
+      // The count has moved past the claim's recorded value, which is how a
+      // delivered pass that failed styling says it reported back.
+      const row = {
+        ...sampleTranscription("spent-claim"),
+        postProcessEditFailed: true,
+        postProcessEditFailureCount: 4,
+        postProcessEditAutoRetryUsed: true,
+        postProcessEditRetryClaimCount: 3,
+      };
+      produceAppState((draft) => {
+        draft.transcriptionById[row.id] = row;
+        draft.transcriptions.transcriptionIds = [row.id];
+      });
+
+      resumeInterruptedPostProcessEditRetries([row]);
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(transcribeAudio).not.toHaveBeenCalled();
+      expect(updateTranscription).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not start a second resumed pass after the History exit reset", async () => {
+    vi.useFakeTimers();
+    try {
+      const row = {
+        ...sampleTranscription("remount-claim"),
+        postProcessEditFailed: true,
+        postProcessEditFailureCount: 3,
+        postProcessEditAutoRetryUsed: true,
+        postProcessEditRetryToneId: "",
+        postProcessEditRetryLanguageCode: "",
+      };
+      produceAppState((draft) => {
+        draft.transcriptionById[row.id] = row;
+        draft.transcriptions.transcriptionIds = [row.id];
+      });
+      // The first resumed pass reaches the provider and stays in flight.
+      transcribeAudio.mockImplementationOnce(neverSettles);
+
+      resumeInterruptedPostProcessEditRetries([row]);
+      await vi.advanceTimersByTimeAsync(0);
+
+      // Leaving History clears the in-flight markers from app state, but the
+      // pass keeps running behind it.
+      produceAppState((draft) => {
+        Object.assign(draft.transcriptions, INITIAL_TRANSCRIPTIONS_STATE);
+      });
+
+      resumeInterruptedPostProcessEditRetries([row]);
+      await vi.advanceTimersByTimeAsync(0);
+
+      // Returning to History must not start a second pass for the same claim
+      // while the first is still running.
+      expect(transcribeAudio).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("discards a recovery page returned after a completed local-data clear", async () => {
+    let resolvePage!: (rows: Transcription[]) => void;
+    listTranscriptions.mockReturnValueOnce(
+      new Promise<Transcription[]>((resolve) => {
+        resolvePage = resolve;
+      }),
+    );
+    resumeAllInterruptedPostProcessEditRetries();
+    const release = await beginLocalDataClear();
+    localStorage.removeItem(LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY);
+    release();
+    resolvePage([sampleTranscription("stale-scan")]);
+    await vi.waitFor(() => expect(listTranscriptions).toHaveBeenCalledTimes(1));
+    await Promise.resolve();
+    expect(getAppState().transcriptionById["stale-scan"]).toBeUndefined();
+    expect(transcribeAudio).not.toHaveBeenCalled();
+  });
+
+  it("does not replace a newer in-memory row with a recovery scan snapshot", async () => {
+    const stale = sampleTranscription("scan-existing");
+    const current = { ...stale, transcript: "newer edit" };
+    produceAppState((draft) => {
+      draft.transcriptionById[current.id] = current;
+    });
+    listTranscriptions.mockResolvedValueOnce([stale]);
+    resumeAllInterruptedPostProcessEditRetries();
+    await vi.waitFor(() => expect(listTranscriptions).toHaveBeenCalledTimes(1));
+    await Promise.resolve();
+    expect(getAppState().transcriptionById[current.id]?.transcript).toBe(
+      "newer edit",
+    );
+  });
+
+  it("delivers an interrupted claim that sits beyond the first History page", async () => {
+    vi.useFakeTimers();
+    try {
+      const claimed = {
+        ...sampleTranscription("old-claim"),
+        postProcessEditFailed: true,
+        postProcessEditFailureCount: 3,
+        postProcessEditAutoRetryUsed: true,
+        postProcessEditRetryToneId: "",
+        postProcessEditRetryLanguageCode: "",
+      };
+      // The newest hundred rows carry no claim, so the claim only appears on
+      // the second page an explicit scan has to walk.
+      listTranscriptions.mockImplementation((params?: { offset?: number }) =>
+        (params?.offset ?? 0) === 0
+          ? Array.from({ length: 100 }, (_, index) =>
+              sampleTranscription(`filler-${index}`),
+            )
+          : [claimed],
+      );
+
+      resumeAllInterruptedPostProcessEditRetries();
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(listTranscriptions).toHaveBeenCalledTimes(2);
+      expect(listTranscriptions).toHaveBeenNthCalledWith(2, {
+        limit: 100,
+        offset: 100,
+      });
+      expect(transcribeAudio).toHaveBeenCalledTimes(1);
+      expect(updateTranscription).toHaveBeenCalledWith(
+        expect.objectContaining({ id: claimed.id }),
+        expect.any(Object),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("records the attempt without running when the claim lost its style context", async () => {
+    vi.useFakeTimers();
+    try {
+      // A claim written before the context columns existed cannot say which
+      // tone or language its pass was owed under.
+      const row = {
+        ...sampleTranscription("context-free-claim"),
+        postProcessEditFailed: true,
+        postProcessEditFailureCount: 3,
+        postProcessEditAutoRetryUsed: true,
+      };
+      produceAppState((draft) => {
+        draft.transcriptionById[row.id] = row;
+        draft.transcriptions.transcriptionIds = [row.id];
+      });
+
+      resumeInterruptedPostProcessEditRetries([row]);
+      await vi.advanceTimersByTimeAsync(0);
+
+      // Restyling with the currently selected style would write a different
+      // style over the raw transcript, so the claim is settled without a run.
+      expect(transcribeAudio).not.toHaveBeenCalled();
+      expect(updateTranscription).toHaveBeenCalledWith(
+        expect.objectContaining({ id: row.id, postProcessFailed: true }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("settles a claim whose recorded context is gone by the back-off", async () => {
+    vi.useFakeTimers();
+    const random = pinJitterToMaximum();
+    try {
+      const row = {
+        ...sampleTranscription("context-lost-claim"),
+        postProcessEditFailed: true,
+        postProcessEditFailureCount: 2,
+        postProcessEditAutoRetryUsed: null,
+      };
+      produceAppState((draft) => {
+        draft.transcriptionById[row.id] = row;
+        draft.transcriptions.transcriptionIds = [row.id];
+      });
+      transcribeAudio.mockResolvedValue({
+        rawTranscript: RAW_ASR,
+        sanitizedTranscript: RAW_ASR,
+        warnings: [],
+        metadata: {},
+      });
+      postProcessTranscript.mockResolvedValue({
+        transcript: RAW_ASR,
+        warnings: ["one edit could not be applied"],
+        metadata: {
+          postProcessFailed: false,
+          postProcessFallback: true,
+          postProcessEditFailed: true,
+          postProcessEditFailureCount: 3,
+        },
+      });
+
+      // A third failure claims the row with the run's style context recorded.
+      await retranscribeTranscriptionWithRecovery({
+        transcriptionId: row.id,
+      });
+      await vi.advanceTimersByTimeAsync(0);
+
+      // The claimed row then reads back without its recorded context, which
+      // is the state a claim written before the context columns existed is
+      // stuck in: the columns never carry a value to restore.
+      const claimed = getAppState().transcriptionById[row.id];
+      if (!claimed) throw new Error("claim must be registered in state");
+      produceAppState((draft) => {
+        draft.transcriptionById[row.id] = {
+          ...claimed,
+          postProcessEditRetryToneId: null,
+          postProcessEditRetryLanguageCode: null,
+        };
+      });
+
+      // The delivery must not restyle under whatever is selected by then. It
+      // settles the claim instead, so the raw transcript survives and no
+      // later launch delivers the same claim again.
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(transcribeAudio).toHaveBeenCalledTimes(1);
+      expect(updateTranscription).toHaveBeenCalledTimes(3);
+      expect(updateTranscription.mock.calls[2]?.[0]).toMatchObject({
+        id: row.id,
+        postProcessFailed: true,
+      });
+    } finally {
+      random.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it("leaves a claimed row alone once its pass has reported back", async () => {
+    vi.useFakeTimers();
+    try {
+      const row = {
+        ...sampleTranscription("claim-reported"),
+        postProcessEditFailed: true,
+        // The pass that claimed this row already failed again, which is what a
+        // higher count records. Resuming it here would be a second pass.
+        postProcessEditFailureCount: 4,
+        postProcessEditAutoRetryUsed: true,
+      };
+      produceAppState((draft) => {
+        draft.transcriptionById[row.id] = row;
+        draft.transcriptions.transcriptionIds = [row.id];
+      });
+
+      resumeInterruptedPostProcessEditRetries([row]);
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(transcribeAudio).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("records an interrupted attempt that never reached post-processing", async () => {
+    vi.useFakeTimers();
+    try {
+      const row = {
+        ...sampleTranscription("interrupted-audio"),
+        postProcessEditFailed: true,
+        postProcessEditFailureCount: 3,
+        postProcessEditAutoRetryUsed: true,
+        postProcessEditRetryToneId: "",
+        postProcessEditRetryLanguageCode: "",
+      };
+      produceAppState((draft) => {
+        draft.transcriptionById[row.id] = row;
+        draft.transcriptions.transcriptionIds = [row.id];
+      });
+      // The audio itself is gone, so the pass fails before post-processing has
+      // anything to write. Without the record below, every later launch would
+      // deliver the same claim again.
+      loadTranscriptionAudio.mockRejectedValueOnce(new Error("no audio"));
+
+      resumeInterruptedPostProcessEditRetries([row]);
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(transcribeAudio).not.toHaveBeenCalled();
+      expect(updateTranscription).toHaveBeenCalledWith(
+        expect.objectContaining({ id: row.id, postProcessFailed: true }),
+      );
+      expect(getAppState().transcriptionById[row.id]?.postProcessFailed).toBe(
+        true,
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not deliver a claim whose attempt is already recorded", async () => {
+    vi.useFakeTimers();
+    try {
+      const row = {
+        ...sampleTranscription("attempt-recorded"),
+        postProcessEditFailed: true,
+        postProcessEditFailureCount: 3,
+        postProcessEditAutoRetryUsed: true,
+        postProcessFailed: true,
+      };
+      produceAppState((draft) => {
+        draft.transcriptionById[row.id] = row;
+        draft.transcriptions.transcriptionIds = [row.id];
+      });
+
+      resumeInterruptedPostProcessEditRetries([row]);
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(transcribeAudio).not.toHaveBeenCalled();
+      expect(updateTranscription).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not record a failure while another caller's pass is in flight", async () => {
+    vi.useFakeTimers();
+    try {
+      const row = {
+        ...sampleTranscription("duplicate-resume"),
+        postProcessEditFailed: true,
+        postProcessEditFailureCount: 3,
+        postProcessEditAutoRetryUsed: true,
+        postProcessEditRetryToneId: "",
+        postProcessEditRetryLanguageCode: "",
+      };
+      produceAppState((draft) => {
+        draft.transcriptionById[row.id] = row;
+        draft.transcriptions.transcriptionIds = [row.id];
+      });
+      // The first resume starts a pass that stays in flight, which is the
+      // window a second surface loading the same claimed row lands in.
+      loadTranscriptionAudio.mockImplementationOnce(neverSettles);
+
+      resumeInterruptedPostProcessEditRetries([row]);
+      await vi.advanceTimersByTimeAsync(0);
+      resumeInterruptedPostProcessEditRetries([row]);
+      await vi.advanceTimersByTimeAsync(0);
+
+      // Only the first caller started a pass. The second must not mark the
+      // row failed while that pass is still running: if the app quits in that
+      // window the claim reads as delivered and the pass is lost for good.
+      expect(loadTranscriptionAudio).toHaveBeenCalledTimes(1);
+      expect(updateTranscription).not.toHaveBeenCalledWith(
+        expect.objectContaining({ postProcessFailed: true }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not record a failure for a claim the scheduler is still waiting on", async () => {
+    vi.useFakeTimers();
+    const random = pinJitterToMaximum();
+    try {
+      const row = {
+        ...sampleTranscription("scheduler-owned-claim"),
+        postProcessEditFailed: true,
+        postProcessEditFailureCount: 2,
+        postProcessEditAutoRetryUsed: null,
+      };
+      produceAppState((draft) => {
+        draft.transcriptionById[row.id] = row;
+        draft.transcriptions.transcriptionIds = [row.id];
+      });
+      transcribeAudio.mockResolvedValue({
+        rawTranscript: RAW_ASR,
+        sanitizedTranscript: RAW_ASR,
+        warnings: [],
+        metadata: {},
+      });
+      postProcessTranscript.mockResolvedValue({
+        transcript: RAW_ASR,
+        warnings: ["one edit could not be applied"],
+        metadata: {
+          postProcessFailed: false,
+          postProcessFallback: true,
+          postProcessEditFailed: true,
+          postProcessEditFailureCount: 3,
+        },
+      });
+
+      // A third failure claims the row and enters its back-off wait.
+      await retranscribeTranscriptionWithRecovery({
+        transcriptionId: row.id,
+      });
+      await vi.advanceTimersByTimeAsync(0);
+
+      // The claim is durable but the pass has not run. A History refresh
+      // must not spend it while the scheduler owns the row.
+      const claimed = getAppState().transcriptionById[row.id];
+      if (!claimed) throw new Error("claim must be registered in state");
+      resumeInterruptedPostProcessEditRetries([claimed]);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(updateTranscription).not.toHaveBeenCalledWith(
+        expect.objectContaining({ postProcessFailed: true }),
+      );
+
+      // The scheduler still owns the row and delivers after the wait.
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(transcribeAudio).toHaveBeenCalledTimes(2);
+    } finally {
+      random.mockRestore();
+      vi.useRealTimers();
+    }
   });
 
   it("still keeps the polished transcript when a reply came back unusable", async () => {
@@ -1060,6 +1918,7 @@ describe("retranscribeTranscription unstyled post-processing", () => {
         rawTranscript: RAW_ASR,
         postProcessFallback: true,
       }),
+      expect.any(Object),
     );
     expect(showErrorSnackbar).toHaveBeenCalledWith(UNREADABLE_COPY);
   });

@@ -385,4 +385,54 @@ describe("final insertion stage", () => {
       expect(trace.marks.inserted).toBeUndefined();
     },
   );
+
+  it("announces Inserting before the hands-free delay and skips marking inserted if superseded", async () => {
+    vi.useFakeTimers();
+    try {
+      const { sendPillStageText } = await import("./overlay.utils");
+      const { startPipelineTrace } = await import("./pipeline-trace");
+      vi.mocked(sendPillStageText).mockClear();
+      getAppStateMock.mockReturnValue({
+        appTargetById: {},
+        supportsPasteKeybinds: "none",
+      });
+      getPrefsMock.mockReturnValue({
+        remoteOutputEnabled: false,
+        remoteTargetDeviceId: null,
+        handsFreeDelayMs: 500,
+      });
+      invokeMock.mockResolvedValue("pasted");
+
+      const firstTrace = startPipelineTrace();
+      const firstPromise = routeTranscriptOutput(
+        { text: "first", mode: "dictation", currentAppId: null },
+        firstTrace,
+      );
+
+      // "Inserting" must already be on the pill while the hands-free delay is counting down.
+      await vi.advanceTimersByTimeAsync(100);
+      expect(sendPillStageText).toHaveBeenCalledWith("Inserting");
+      expect(firstTrace.marks.inserted).toBeUndefined();
+
+      // Supersede the first session with a second one before the delay finishes.
+      const secondTrace = startPipelineTrace();
+      const secondPromise = routeTranscriptOutput(
+        { text: "second", mode: "dictation", currentAppId: null },
+        secondTrace,
+      );
+
+      await vi.advanceTimersByTimeAsync(600);
+      const [firstResult, secondResult] = await Promise.all([
+        firstPromise,
+        secondPromise,
+      ]);
+
+      expect(firstResult.delivered).toBe(false);
+      expect(firstTrace.marks.inserted).toBeUndefined();
+      expect(secondResult.delivered).toBe(true);
+      expect(secondTrace.marks.inserted).toEqual(expect.any(Number));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

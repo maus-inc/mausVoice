@@ -1,10 +1,17 @@
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
-use tauri::{Manager, PhysicalPosition, RunEvent, Window, WindowEvent};
+use tauri::{
+    LogicalSize, Manager, PhysicalPosition, PhysicalSize, RunEvent, WebviewWindow, Window,
+    WindowEvent,
+};
 use tauri_plugin_log::{RotationStrategy, Target, TargetKind, TimezoneStrategy};
 use tauri_plugin_window_state::{AppHandleExt, StateFlags};
 
 const AUTOSTART_HIDDEN_ARG: &str = "--mausvoice-autostart-hidden";
+/// Default logical dimensions for the main window (matches `tauri.conf.json`).
+const DEFAULT_MAIN_WIDTH: f64 = 1100.0;
+const DEFAULT_MAIN_HEIGHT: f64 = 700.0;
 /// Opt-in env var that opens the webview devtools on startup. Only read by
 /// debug-assist builds, so it is gated the same way to keep release clippy clean.
 #[cfg(feature = "debug-assist")]
@@ -57,6 +64,12 @@ const MOVE_LOG_THROTTLE: Duration = Duration::from_millis(250);
 fn log_main_window_move(window: &Window, position: &PhysicalPosition<i32>) {
     static LAST_LOG: Mutex<Option<Instant>> = Mutex::new(None);
 
+    // Minimizing a window moves it to `(-32000, -32000)` on Windows and emits a
+    // synthetic `Moved` event on Linux; skip logging move geometry while minimized.
+    if window.is_minimized().unwrap_or(false) {
+        return;
+    }
+
     let Ok(mut last) = LAST_LOG.lock() else {
         return;
     };
@@ -69,14 +82,16 @@ fn log_main_window_move(window: &Window, position: &PhysicalPosition<i32>) {
     *last = Some(now);
     drop(last);
 
+    let window_size = window.inner_size().ok();
     match window.current_monitor() {
         Ok(Some(monitor)) => {
             let origin = monitor.position();
             let size = monitor.size();
             log::debug!(
-                "main window moved to ({}, {}) | monitor {:?} origin ({}, {}) size {}x{} scale {}",
+                "main window moved to ({}, {}) window_size {:?} | monitor {:?} origin ({}, {}) size {}x{} scale {}",
                 position.x,
                 position.y,
+                window_size,
                 monitor.name(),
                 origin.x,
                 origin.y,
@@ -86,10 +101,275 @@ fn log_main_window_move(window: &Window, position: &PhysicalPosition<i32>) {
             );
         }
         _ => log::debug!(
-            "main window moved to ({}, {}) | monitor unavailable",
+            "main window moved to ({}, {}) window_size {:?} | monitor unavailable",
             position.x,
-            position.y
+            position.y,
+            window_size
         ),
+    }
+}
+
+/// Flags persisted by `tauri-plugin-window-state`.
+///
+/// Only size and maximized state are persisted; launch position is left to
+/// the window configuration so a saved off-screen coordinate does not strand
+/// the window. Including `MAXIMIZED` alongside `SIZE` ensures that closing the
+/// app while maximized does not restore the full-screen dimensions as the
+/// window's unmaximized size.
+const WINDOW_STATE_FLAGS: StateFlags = StateFlags::SIZE.union(StateFlags::MAXIMIZED);
+
+/// Last known unmaximized, unminimized physical inner size of the main window.
+///
+/// `tauri-plugin-window-state` 2.4.1 overwrites `state.width`/`state.height`
+/// during `WindowEvent::Resized` on undecorated macOS windows (`!is_decorated()`
+/// forces `is_maximized = false`) and on Linux (`configure-event` arrives
+/// before `window-state-event` sets `is_maximized = true`). Keeping the last
+/// normal size here lets `save_main_window_state` and startup sanitization
+/// preserve a real unmaximized restore size across sessions.
+static LAST_NORMAL_MAIN_SIZE: Mutex<Option<PhysicalSize<u32>>> = Mutex::new(None);
+/// Tracks whether the main window's latest non-minimized resize was maximized or
+/// filled the monitor work area, so closing/hiding on undecorated macOS or
+/// exiting after `tauri-plugin-window-state`'s `RunEvent::Exit` callback does
+/// not lose the maximized state.
+static LAST_MAIN_MAXIMIZED: AtomicBool = AtomicBool::new(false);
+
+/// Returns `true` for unminimized normal restore dimensions that fit within
+/// the monitor work area without covering the entire work area. Near-work-area
+/// dimensions (such as 1919x1039 on a 1920x1040 work area) remain valid.
+fn is_normal_window_size(size: PhysicalSize<u32>, work_area: Option<PhysicalSize<u32>>) -> bool {
+    if size.width == 0 || size.height == 0 {
+        return false;
+    }
+    let Some(work) = work_area else {
+        return true;
+    };
+    size.width <= work.width
+        && size.height <= work.height
+        && !is_work_area_window_size(size, work_area)
+}
+
+/// Returns `true` when `size` equals the monitor work area on both axes (the
+/// geometry produced when the window is maximized on that monitor),
+/// distinguishing it from near-work-area normal windows and oversized windows
+/// saved on a larger monitor.
+///
+/// Exact equality (`==`) is intentional: `tao` derives both the borderless
+/// maximize frame and `monitor.work_area().size` from the same native work-area
+/// rect (`NSScreen.visibleFrame` / `_NET_WORKAREA`), whereas a pixel tolerance
+/// would misclassify manually sized near-work-area windows (for example
+/// `1919×1039` on a `1920×1040` work area) and discard the user's restore size.
+fn is_work_area_window_size(size: PhysicalSize<u32>, work_area: Option<PhysicalSize<u32>>) -> bool {
+    if size.width == 0 || size.height == 0 {
+        return false;
+    }
+    let Some(work) = work_area else {
+        return false;
+    };
+    size.width == work.width && size.height == work.height
+}
+
+/// Returns `true` on undecorated macOS windows where `tauri-plugin-window-state`
+/// hardcodes `is_maximized = false` during `WindowEvent::Resized`.
+fn infer_maximized_from_work_area(decorated: bool) -> bool {
+    cfg!(target_os = "macos") && !decorated
+}
+
+/// Determines whether the restored main window came from a maximized session.
+/// When `infer_from_work_area` is `true` (undecorated macOS), a saved or
+/// restored size matching the monitor work area also counts as maximized.
+fn is_maximized_session(
+    saved: (PhysicalSize<u32>, bool),
+    live: (PhysicalSize<u32>, bool),
+    work_area: Option<PhysicalSize<u32>>,
+    infer_from_work_area: bool,
+) -> bool {
+    saved.1
+        || live.1
+        || (infer_from_work_area
+            && (is_work_area_window_size(saved.0, work_area)
+                || is_work_area_window_size(live.0, work_area)))
+}
+
+fn current_work_area_size(window: &Window) -> Option<PhysicalSize<u32>> {
+    window
+        .current_monitor()
+        .ok()
+        .flatten()
+        .map(|monitor| monitor.work_area().size)
+}
+
+fn default_main_physical_size(scale_factor: f64) -> PhysicalSize<u32> {
+    let scale = if scale_factor > 0.0 {
+        scale_factor
+    } else {
+        1.0
+    };
+    LogicalSize::new(DEFAULT_MAIN_WIDTH, DEFAULT_MAIN_HEIGHT).to_physical(scale)
+}
+
+fn record_main_window_resize(window: &Window, size: PhysicalSize<u32>) {
+    if window.is_minimized().unwrap_or(false) || size.width == 0 || size.height == 0 {
+        return;
+    }
+    let work_area = current_work_area_size(window);
+    let decorated = window.is_decorated().unwrap_or(false);
+    let infer_max = infer_maximized_from_work_area(decorated);
+    let live_maximized = window.is_maximized().unwrap_or(false);
+    let maximized = live_maximized || (infer_max && is_work_area_window_size(size, work_area));
+    LAST_MAIN_MAXIMIZED.store(maximized, Ordering::SeqCst);
+    if maximized || !is_normal_window_size(size, work_area) {
+        return;
+    }
+    if let Ok(mut slot) = LAST_NORMAL_MAIN_SIZE.lock() {
+        *slot = Some(size);
+    }
+}
+
+fn window_state_file_path(app_handle: &tauri::AppHandle) -> Option<std::path::PathBuf> {
+    let app_dir = app_handle.path().app_config_dir().ok()?;
+    Some(app_dir.join(app_handle.filename()))
+}
+
+fn read_saved_main_window_entry(app_handle: &tauri::AppHandle) -> (PhysicalSize<u32>, bool) {
+    let Some(root) = window_state_file_path(app_handle)
+        .and_then(|path| std::fs::read(path).ok())
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+    else {
+        return (PhysicalSize::new(0, 0), false);
+    };
+    let Some(entry) = root.get("main") else {
+        return (PhysicalSize::new(0, 0), false);
+    };
+    let width = entry.get("width").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+    let height = entry.get("height").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+    let maximized = entry
+        .get("maximized")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    (PhysicalSize::new(width, height), maximized)
+}
+
+/// Ensures that the persisted `.window-state.json` entry for `"main"` retains
+/// a normal unmaximized `width` and `height` and accurate `maximized` flag even
+/// when the window was closed while maximized on macOS or Linux.
+fn save_main_window_state(app_handle: &tauri::AppHandle) {
+    let _ = app_handle.save_window_state(WINDOW_STATE_FLAGS);
+    let Some(main_window) = app_handle.get_webview_window("main") else {
+        return;
+    };
+    let work_area = main_window
+        .current_monitor()
+        .ok()
+        .flatten()
+        .map(|monitor| monitor.work_area().size);
+    let scale = main_window.scale_factor().unwrap_or(1.0);
+    let fallback_size = LAST_NORMAL_MAIN_SIZE
+        .lock()
+        .ok()
+        .and_then(|slot| *slot)
+        .filter(|&size| is_normal_window_size(size, work_area))
+        .unwrap_or_else(|| default_main_physical_size(scale));
+    let Some(state_path) = window_state_file_path(app_handle) else {
+        return;
+    };
+    let Ok(bytes) = std::fs::read(&state_path) else {
+        return;
+    };
+    let Ok(mut root) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        return;
+    };
+    let Some(main_entry) = root.get_mut("main").and_then(|v| v.as_object_mut()) else {
+        return;
+    };
+    let saved_width = main_entry
+        .get("width")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u32;
+    let saved_height = main_entry
+        .get("height")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u32;
+    let saved_maximized = main_entry
+        .get("maximized")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let saved_size = PhysicalSize::new(saved_width, saved_height);
+    let decorated = main_window.is_decorated().unwrap_or(false);
+    let infer_max = infer_maximized_from_work_area(decorated);
+    let is_maximized = main_window.is_maximized().unwrap_or(false)
+        || LAST_MAIN_MAXIMIZED.load(Ordering::SeqCst)
+        || (infer_max && is_work_area_window_size(saved_size, work_area));
+    let needs_size_fix = !is_normal_window_size(saved_size, work_area);
+    let needs_max_fix = saved_maximized != is_maximized;
+    if needs_size_fix || needs_max_fix {
+        if needs_size_fix {
+            let width = serde_json::Value::from(fallback_size.width);
+            let height = serde_json::Value::from(fallback_size.height);
+            main_entry.insert("width".to_string(), width);
+            main_entry.insert("height".to_string(), height);
+        }
+        if needs_max_fix {
+            let max_val = serde_json::Value::from(is_maximized);
+            main_entry.insert("maximized".to_string(), max_val);
+        }
+        if let Ok(updated) = serde_json::to_vec_pretty(&root) {
+            let _ = std::fs::write(&state_path, updated);
+        }
+    }
+}
+
+/// Repairs the main window's normal restore geometry if `tauri-plugin-window-state`
+/// restored work-area / full-screen dimensions as the window's unmaximized size.
+fn sanitize_restored_main_window(main_window: &WebviewWindow) {
+    let Ok(inner_size) = main_window.inner_size() else {
+        return;
+    };
+    let work_area = main_window
+        .current_monitor()
+        .ok()
+        .flatten()
+        .map(|monitor| monitor.work_area().size);
+    let scale = main_window.scale_factor().unwrap_or(1.0);
+    let saved = read_saved_main_window_entry(main_window.app_handle());
+    let (saved_size, _) = saved;
+    let live_maximized = main_window.is_maximized().unwrap_or(false);
+    let live = (inner_size, live_maximized);
+    let decorated = main_window.is_decorated().unwrap_or(false);
+    let infer_max = infer_maximized_from_work_area(decorated);
+    let was_maximized = is_maximized_session(saved, live, work_area, infer_max);
+    LAST_MAIN_MAXIMIZED.store(was_maximized, Ordering::SeqCst);
+
+    if is_normal_window_size(inner_size, work_area) {
+        if let Ok(mut slot) = LAST_NORMAL_MAIN_SIZE.lock() {
+            *slot = Some(inner_size);
+        }
+        if was_maximized && !live_maximized {
+            let _ = main_window.maximize();
+        }
+        return;
+    }
+
+    if was_maximized && is_normal_window_size(saved_size, work_area) {
+        if let Ok(mut slot) = LAST_NORMAL_MAIN_SIZE.lock() {
+            *slot = Some(saved_size);
+        }
+        if !live_maximized {
+            let _ = main_window.maximize();
+        }
+        return;
+    }
+
+    let default_physical = default_main_physical_size(scale);
+    if let Ok(mut slot) = LAST_NORMAL_MAIN_SIZE.lock() {
+        *slot = Some(default_physical);
+    }
+
+    let default_logical = LogicalSize::new(DEFAULT_MAIN_WIDTH, DEFAULT_MAIN_HEIGHT);
+    let _ = main_window.unmaximize();
+    let _ = main_window.set_size(default_logical);
+    let _ = main_window.center();
+    if was_maximized {
+        let _ = main_window.maximize();
     }
 }
 
@@ -100,10 +380,13 @@ fn log_main_window_move(window: &Window, position: &PhysicalPosition<i32>) {
 fn handle_run_event(app_handle: &tauri::AppHandle, event: RunEvent) {
     match &event {
         RunEvent::ExitRequested { .. } => {
-            let _ = app_handle.save_window_state(StateFlags::SIZE);
+            save_main_window_state(app_handle);
             if let Err(err) = crate::platform::keyboard::stop_key_listener() {
                 log::error!("Failed to stop keyboard listener on exit: {err}");
             }
+        }
+        RunEvent::Exit => {
+            save_main_window_state(app_handle);
         }
         #[cfg(target_os = "macos")]
         RunEvent::Reopen { .. } => {
@@ -113,6 +396,190 @@ fn handle_run_event(app_handle: &tauri::AppHandle, event: RunEvent) {
         }
         _ => {}
     }
+}
+
+fn handle_window_event(window: &Window, event: &WindowEvent) {
+    match event {
+        WindowEvent::CloseRequested { api, .. } if window.label() == "main" => {
+            api.prevent_close();
+            save_main_window_state(window.app_handle());
+            // Use the webview window for hide_main_window (which
+            // needs &WebviewWindow, not &Window from on_window_event).
+            if let Some(main_ww) = window.app_handle().get_webview_window("main") {
+                if let Err(err) = crate::platform::window::hide_main_window(&main_ww) {
+                    log::error!("Failed to hide main window: {err}");
+                }
+            }
+        }
+        WindowEvent::Resized(size) if window.label() == "main" => {
+            record_main_window_resize(window, *size);
+        }
+        // On Windows, WebView2 automatically freezes JS execution when the
+        // hosting window is occluded (fully covered by another window) or
+        // minimized. This breaks global hotkey detection via keys_held events.
+        // Counter this by re-asserting WebView visibility whenever focus is lost,
+        // and running a periodic keepalive to defeat ongoing occlusion detection.
+        WindowEvent::Moved(position) if window.label() == "main" => {
+            log_main_window_move(window, position);
+        }
+        #[cfg(target_os = "windows")]
+        WindowEvent::Focused(focused) => {
+            if window.label() == "main" && !focused {
+                crate::platform::window::keep_webview_active(window.app_handle(), "main");
+                crate::platform::window::set_webview_keepalive(true);
+            }
+            if window.label() == "main" && *focused {
+                crate::platform::window::set_webview_keepalive(false);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    // Chained rather than replaced. The previous hook wrote only to the log
+    // file, and a setup failure exits without a console on Windows and
+    // when launched from Finder or a desktop entry, so the reason was
+    // invisible everywhere except a log nothing points the user at.
+    let previous_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        log::error!("PANIC: {info}");
+        previous_hook(info);
+    }));
+
+    log::info!("Starting application setup...");
+
+    // A clear can be interrupted after this process has deleted some
+    // local data. Restore the native barrier before opening the DB or
+    // accepting renderer commands; the clear dialog will retry and
+    // remove the marker only after both native and browser cleanup.
+    let clear_recovery_pending =
+        match crate::system::local_data_clear_marker::is_pending(app.handle()) {
+            Ok(true) => {
+                log::warn!("Recovering an interrupted local-data clear");
+                crate::db::local_data_write_gate::recover_pending_local_data_clear();
+                true
+            }
+            Ok(false) => false,
+            Err(error) => {
+                log::error!("Unable to inspect the local-data clear marker: {error}");
+                crate::db::local_data_write_gate::recover_pending_local_data_clear();
+                // A marker we cannot inspect must fail closed just like a
+                // marker confirmed to be pending.
+                true
+            }
+        };
+
+    // Preserve GGML files from the old app-data/models location before
+    // the desktop sidecars start using app-data/transcription-models.
+    if let Err(err) = crate::system::paths::migrate_legacy_models(app.handle()) {
+        log::error!("Failed to migrate legacy transcription models: {err}");
+    }
+
+    // Record the Windows elevation state once. An unelevated low-level
+    // keyboard hook cannot observe input delivered to a higher-integrity
+    // window (UIPI), so this is the first thing to check when a user
+    // reports hotkeys failing over an elevated app.
+    //
+    // Spin up the OS-level sleep/wake and session-unlock watcher so
+    // the global keyboard hook can be re-armed after resume. Without
+    // this the hotkey stops firing after a laptop sleep or a fast
+    // user-switch unlock.
+    #[cfg(target_os = "windows")]
+    {
+        crate::platform::windows::permissions::log_elevation_state();
+        crate::platform::windows::lifecycle::start_watcher(app.handle());
+    }
+
+    // Purge old log files, keeping the latest 10
+    crate::system::diagnostics::purge_old_logs(app.handle());
+
+    // Write startup diagnostics for debugging
+    crate::system::diagnostics::write_startup_diagnostics(app.handle());
+
+    // `database_path` may copy a legacy database, and `open_app_database`
+    // runs data-moving SQL migrations. Hold the native write mutex across
+    // both. During clear recovery, this special startup lease does not open
+    // the gate: it only lets setup reach the retry dialog, while all normal
+    // renderer and remote writes remain rejected.
+    let _startup_database_write_guard = tauri::async_runtime::block_on(
+        crate::db::local_data_write_gate::lock_startup_database_migration(clear_recovery_pending),
+    )
+    .map_err(|error| -> Box<dyn std::error::Error> { Box::new(error) })?;
+
+    let db_path = {
+        let handle = app.handle();
+        crate::system::paths::database_path(handle)
+            .map_err(|err| -> Box<dyn std::error::Error> { Box::new(err) })?
+    };
+
+    // The path belongs in the failure. A database that cannot be opened leaves the
+    // app unable to start, so this error is the only account of what
+    // happened, and without the path neither the log nor a crash report
+    // says which file to look at.
+    let pool = tauri::async_runtime::block_on(crate::db::open::open_app_database(&db_path))
+        .map_err(|err| -> Box<dyn std::error::Error> {
+            let message = format!(
+                "could not open the database at {}: {err}",
+                db_path.display()
+            );
+            log::error!("{message}");
+            message.into()
+        })?;
+    drop(_startup_database_write_guard);
+
+    app.manage(crate::state::OptionKeyDatabase::new(pool.clone()));
+    app.manage(crate::state::OverlayState::new());
+    app.manage(crate::state::RemoteReceiverState::new());
+    app.manage(crate::state::FloatingWindowState::new());
+
+    #[cfg(desktop)]
+    {
+        if let Some(main_window) = app.get_webview_window("main") {
+            sanitize_restored_main_window(&main_window);
+            if std::env::args().any(|arg| arg == AUTOSTART_HIDDEN_ARG) {
+                if let Err(err) = crate::platform::window::hide_main_window(&main_window) {
+                    log::error!("Failed to hide main window on autostart: {err}");
+                }
+            }
+        }
+
+        #[cfg(target_os = "windows")]
+        crate::platform::window::start_webview_keepalive(app.handle());
+
+        crate::system::tray::setup_tray(app)
+            .map_err(|err| -> Box<dyn std::error::Error> { Box::new(err) })?;
+
+        let app_handle = app.handle();
+
+        let recorder = crate::platform::audio::new_recorder();
+
+        app.manage(recorder);
+
+        // Pre-warm audio output for instant chime playback
+        crate::system::audio_feedback::warm_audio_output();
+
+        crate::overlay::try_create_native_overlays(app_handle);
+    }
+
+    if crate::platform::get_hotkey_strategy() == "bridge" {
+        crate::platform::init::ensure_background_services();
+        crate::system::bridge_server::start(app.handle().clone());
+        crate::platform::compositor::deploy_trigger_script(app.handle());
+    }
+
+    // The capability itself is omitted from stable binaries. Keeping this
+    // behind the same compile-time feature makes the environment variable
+    // intentionally ineffective if it is set for a release build.
+    #[cfg(feature = "debug-assist")]
+    if std::env::var(DEVTOOLS_ENV_VAR).is_ok() {
+        log::info!("{DEVTOOLS_ENV_VAR} detected, opening dev tools...");
+        if let Some(main_window) = app.get_webview_window("main") {
+            main_window.open_devtools();
+        }
+    }
+
+    Ok(())
 }
 
 /// Builds the Tauri application: plugins (logging, single instance, autostart,
@@ -175,161 +642,22 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
         .plugin(tauri_plugin_shell::init())
         .plugin(
             tauri_plugin_window_state::Builder::new()
-                // Only persist/restore the window SIZE. The launch position is
-                // owned by `center: true` in tauri.conf.json — restoring a
-                // saved position used to spawn the window wherever it last sat
-                // (and defaulted to the top-left corner on a fresh install).
-                .with_state_flags(StateFlags::SIZE)
+                // Only persist/restore the window SIZE and MAXIMIZED state. The
+                // launch position is owned by `center: true` in tauri.conf.json
+                // — restoring a saved position used to spawn the window wherever
+                // it last sat (and defaulted to the top-left corner on a fresh
+                // install).
+                .with_state_flags(WINDOW_STATE_FLAGS)
+                .with_denylist(&["pill"])
+                .with_filter(|label| label == "main")
                 .build(),
         )
-        .on_window_event(|window, event| {
-            match event {
-                WindowEvent::CloseRequested { api, .. } if window.label() == "main" => {
-                    api.prevent_close();
-                    let _ = window.app_handle().save_window_state(StateFlags::SIZE);
-                    // Use the webview window for hide_main_window (which
-                    // needs &WebviewWindow, not &Window from on_window_event).
-                    if let Some(main_ww) = window.app_handle().get_webview_window("main") {
-                        if let Err(err) = crate::platform::window::hide_main_window(&main_ww) {
-                            log::error!("Failed to hide main window: {err}");
-                        }
-                    }
-                }
-                // On Windows, WebView2 automatically freezes JS execution when the
-                // hosting window is occluded (fully covered by another window) or
-                // minimized. This breaks global hotkey detection via keys_held events.
-                // Counter this by re-asserting WebView visibility whenever focus is lost,
-                // and running a periodic keepalive to defeat ongoing occlusion detection.
-                WindowEvent::Moved(position) if window.label() == "main" => {
-                    log_main_window_move(window, position);
-                }
-                #[cfg(target_os = "windows")]
-                WindowEvent::Focused(focused) => {
-                    if window.label() == "main" && !focused {
-                        crate::platform::window::keep_webview_active(window.app_handle(), "main");
-                        crate::platform::window::set_webview_keepalive(true);
-                    }
-                    if window.label() == "main" && *focused {
-                        crate::platform::window::set_webview_keepalive(false);
-                    }
-                }
-                _ => {}
-            }
-        })
-        .setup(|app| {
-            // Chained rather than replaced. The previous hook wrote only to the log
-            // file, and a setup failure exits without a console on Windows and
-            // when launched from Finder or a desktop entry, so the reason was
-            // invisible everywhere except a log nothing points the user at.
-            let previous_hook = std::panic::take_hook();
-            std::panic::set_hook(Box::new(move |info| {
-                log::error!("PANIC: {info}");
-                previous_hook(info);
-            }));
-
-            log::info!("Starting application setup...");
-
-            // Preserve GGML files from the old app-data/models location before
-            // the desktop sidecars start using app-data/transcription-models.
-            if let Err(err) = crate::system::paths::migrate_legacy_models(app.handle()) {
-                log::error!("Failed to migrate legacy transcription models: {err}");
-            }
-
-            // Record the Windows elevation state once. An unelevated low-level
-            // keyboard hook cannot observe input delivered to a higher-integrity
-            // window (UIPI), so this is the first thing to check when a user
-            // reports hotkeys failing over an elevated app.
-            //
-            // Spin up the OS-level sleep/wake and session-unlock watcher so
-            // the global keyboard hook can be re-armed after resume. Without
-            // this the hotkey stops firing after a laptop sleep or a fast
-            // user-switch unlock.
-            #[cfg(target_os = "windows")]
-            {
-                crate::platform::windows::permissions::log_elevation_state();
-                crate::platform::windows::lifecycle::start_watcher(app.handle());
-            }
-
-            // Purge old log files, keeping the latest 10
-            crate::system::diagnostics::purge_old_logs(app.handle());
-
-            // Write startup diagnostics for debugging
-            crate::system::diagnostics::write_startup_diagnostics(app.handle());
-
-            let db_path = {
-                let handle = app.handle();
-                crate::system::paths::database_path(handle)
-                    .map_err(|err| -> Box<dyn std::error::Error> { Box::new(err) })?
-            };
-
-            // The path belongs in the failure. A database that cannot be opened leaves the
-            // app unable to start, so this error is the only account of what
-            // happened, and without the path neither the log nor a crash report
-            // says which file to look at.
-            let pool = tauri::async_runtime::block_on(crate::db::open::open_app_database(&db_path))
-                .map_err(|err| -> Box<dyn std::error::Error> {
-                    let message = format!(
-                        "could not open the database at {}: {err}",
-                        db_path.display()
-                    );
-                    log::error!("{message}");
-                    message.into()
-                })?;
-
-            app.manage(crate::state::OptionKeyDatabase::new(pool.clone()));
-            app.manage(crate::state::OverlayState::new());
-            app.manage(crate::state::RemoteReceiverState::new());
-            app.manage(crate::state::FloatingWindowState::new());
-
-            #[cfg(desktop)]
-            {
-                if std::env::args().any(|arg| arg == AUTOSTART_HIDDEN_ARG) {
-                    if let Some(main_window) = app.get_webview_window("main") {
-                        if let Err(err) = crate::platform::window::hide_main_window(&main_window) {
-                            log::error!("Failed to hide main window on autostart: {err}");
-                        }
-                    }
-                }
-
-                #[cfg(target_os = "windows")]
-                crate::platform::window::start_webview_keepalive(app.handle());
-
-                crate::system::tray::setup_tray(app)
-                    .map_err(|err| -> Box<dyn std::error::Error> { Box::new(err) })?;
-
-                let app_handle = app.handle();
-
-                let recorder = crate::platform::audio::new_recorder();
-
-                app.manage(recorder);
-
-                // Pre-warm audio output for instant chime playback
-                crate::system::audio_feedback::warm_audio_output();
-
-                crate::overlay::try_create_native_overlays(app_handle);
-            }
-
-            if crate::platform::get_hotkey_strategy() == "bridge" {
-                crate::platform::init::ensure_background_services();
-                crate::system::bridge_server::start(app.handle().clone());
-                crate::platform::compositor::deploy_trigger_script(app.handle());
-            }
-
-            // The capability itself is omitted from stable binaries. Keeping this
-            // behind the same compile-time feature makes the environment variable
-            // intentionally ineffective if it is set for a release build.
-            #[cfg(feature = "debug-assist")]
-            if std::env::var(DEVTOOLS_ENV_VAR).is_ok() {
-                log::info!("{DEVTOOLS_ENV_VAR} detected, opening dev tools...");
-                if let Some(main_window) = app.get_webview_window("main") {
-                    main_window.open_devtools();
-                }
-            }
-
-            Ok(())
-        })
+        .on_window_event(handle_window_event)
+        .setup(setup_app)
         .invoke_handler(tauri::generate_handler![
             crate::commands::user_get_one,
+            crate::commands::user_record_usage,
+            crate::commands::daily_activity_list,
             crate::commands::user_set_one,
             crate::commands::user_preferences_get,
             crate::commands::user_preferences_set,
@@ -407,6 +735,7 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             crate::commands::tone_get,
             crate::commands::tone_delete,
             crate::commands::clear_local_data,
+            crate::commands::complete_local_data_clear,
             crate::commands::set_phase,
             crate::commands::set_pill_visibility,
             crate::commands::set_pill_placement,
@@ -478,4 +807,89 @@ pub fn run(context: tauri::Context) -> Result<(), tauri::Error> {
     let app = build().build(context)?;
     app.run(handle_run_event);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        default_main_physical_size, infer_maximized_from_work_area, is_maximized_session,
+        is_normal_window_size, is_work_area_window_size, WINDOW_STATE_FLAGS,
+    };
+    use tauri::PhysicalSize;
+    use tauri_plugin_window_state::StateFlags;
+
+    #[test]
+    fn window_state_flags_persist_both_size_and_maximized() {
+        assert!(WINDOW_STATE_FLAGS.contains(StateFlags::SIZE));
+        assert!(WINDOW_STATE_FLAGS.contains(StateFlags::MAXIMIZED));
+        assert!(!WINDOW_STATE_FLAGS.contains(StateFlags::POSITION));
+    }
+
+    #[test]
+    fn normal_window_size_preserves_near_work_area_and_rejects_full_work_area() {
+        let work_area = Some(PhysicalSize::new(1920, 1040));
+        let zero = PhysicalSize::new(0, 0);
+        let full = PhysicalSize::new(1920, 1040);
+        let almost_full = PhysicalSize::new(1919, 1039);
+        let normal = PhysicalSize::new(1100, 700);
+
+        assert!(!is_normal_window_size(zero, work_area));
+        assert!(!is_normal_window_size(full, work_area));
+        assert!(is_normal_window_size(almost_full, work_area));
+        assert!(is_normal_window_size(normal, work_area));
+        assert!(is_normal_window_size(normal, None));
+    }
+
+    #[test]
+    fn work_area_inference_is_limited_to_undecorated_macos_windows() {
+        assert!(!infer_maximized_from_work_area(true));
+        assert_eq!(
+            infer_maximized_from_work_area(false),
+            cfg!(target_os = "macos")
+        );
+    }
+
+    #[test]
+    fn is_maximized_session_detects_work_area_size_when_flags_are_false() {
+        let work = Some(PhysicalSize::new(1920, 1040));
+        let small = Some(PhysicalSize::new(1280, 720));
+        let zero = PhysicalSize::new(0, 0);
+        let full = PhysicalSize::new(1920, 1040);
+        let near = PhysicalSize::new(1919, 1039);
+        let norm = PhysicalSize::new(1100, 700);
+        let over = PhysicalSize::new(1600, 900);
+
+        assert!(!is_work_area_window_size(zero, work));
+        assert!(is_work_area_window_size(full, work));
+        assert!(!is_work_area_window_size(near, work));
+        assert!(!is_work_area_window_size(norm, work));
+        assert!(!is_work_area_window_size(over, small));
+        assert!(!is_normal_window_size(over, small));
+
+        let full_s = (full, false);
+        let near_s = (near, false);
+        let norm_s = (norm, false);
+        let zero_s = (zero, false);
+        let over_s = (over, false);
+        let flag_s = (norm, true);
+
+        assert!(is_maximized_session(full_s, full_s, work, true));
+        assert!(is_maximized_session(norm_s, full_s, work, true));
+        assert!(is_maximized_session(full_s, norm_s, work, true));
+        assert!(!is_maximized_session(full_s, full_s, work, false));
+        assert!(!is_maximized_session(near_s, near_s, work, true));
+        assert!(is_maximized_session(flag_s, norm_s, work, false));
+        assert!(!is_maximized_session(norm_s, norm_s, work, true));
+        assert!(!is_maximized_session(zero_s, zero_s, work, true));
+        assert!(!is_maximized_session(over_s, over_s, small, true));
+    }
+
+    #[test]
+    fn default_main_physical_size_scales_logical_dimensions() {
+        let one_x = PhysicalSize::new(1100, 700);
+        let two_x = PhysicalSize::new(2200, 1400);
+
+        assert_eq!(default_main_physical_size(1.0), one_x);
+        assert_eq!(default_main_physical_size(2.0), two_x);
+    }
 }

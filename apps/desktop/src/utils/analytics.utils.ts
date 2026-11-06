@@ -2,13 +2,14 @@ import dayjs from "dayjs";
 import mixpanel from "mixpanel-browser";
 import type { MemberPlan } from "@maus-inc/types";
 import { getEffectivePillVisibility } from "./user.utils";
+import { isLocalDataClearRequested } from "./local-data-write-gate";
 
 export const CURRENT_COHORT = "2025-02-a";
 
 export function getMixpanel() {
   const mixpanelToken = import.meta.env.VITE_MIXPANEL_TOKEN;
-  if (!mixpanelToken) {
-    // Mixpanel token is not set, do not initialize Mixpanel
+  if (!mixpanelToken || isLocalDataClearRequested()) {
+    // Do not queue new telemetry while app-owned local state is being cleared.
     return null;
   }
 

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, createElement } from "react";
+import { act, createElement, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { ThemeProvider } from "@mui/material/styles";
 import { MemoryRouter } from "react-router-dom";
@@ -9,6 +9,7 @@ import {
   setMatchMedia,
 } from "../../../test/helpers/jsdom-ui-harness";
 import { THEME_PROVIDER_CONFIG, theme } from "../../theme";
+import { setTipAction } from "./tip-actions";
 
 vi.mock("react-intl", async (importOriginal) => {
   const { reactIntlMockModule } =
@@ -16,7 +17,74 @@ vi.mock("react-intl", async (importOriginal) => {
   return reactIntlMockModule(importOriginal);
 });
 
-import { TipCardFrame } from "./TipCard";
+const mocks = vi.hoisted(() => ({
+  state: { local: { dismissedTipIds: [] as string[] } },
+  dismissTip: vi.fn(),
+}));
+
+vi.mock("../../store", () => ({
+  useAppStore: (selector: (s: unknown) => unknown) => selector(mocks.state),
+}));
+
+vi.mock("../../actions/onboarding.actions", () => ({
+  dismissTip: mocks.dismissTip,
+}));
+
+// jsdom cannot play the real exit animation, so the presence wrapper keeps the
+// removed child mounted (as the real library does while it exits) and reports
+// completion one tick later — the same contract `TipCard`'s deferred
+// `dismissTip` relies on.
+vi.mock("framer-motion", async () => {
+  const React = await import("react");
+  const AnimatePresence = ({
+    children,
+    onExitComplete,
+  }: {
+    children: ReactNode;
+    onExitComplete?: () => void;
+  }) => {
+    const [exiting, setExiting] = React.useState<ReactNode | null>(null);
+    const previous = React.useRef<ReactNode | null>(null);
+    const timerId = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+    const live = children ?? null;
+    React.useEffect(() => {
+      if (live) {
+        previous.current = live;
+        setExiting((current) => (current === null ? current : null));
+        return;
+      }
+      if (previous.current === null || timerId.current !== null) return;
+      setExiting(previous.current);
+      previous.current = null;
+      // No per-render cleanup: the re-render caused by `setExiting` would
+      // cancel the very completion it is waiting for.
+      timerId.current = globalThis.setTimeout(() => {
+        timerId.current = null;
+        onExitComplete?.();
+      }, 0);
+    });
+    React.useEffect(
+      () => () => {
+        if (timerId.current !== null) {
+          globalThis.clearTimeout(timerId.current);
+          timerId.current = null;
+        }
+      },
+      [],
+    );
+    return live ?? exiting ?? null;
+  };
+  return {
+    useReducedMotion: () => true,
+    AnimatePresence,
+    motion: {
+      div: ({ children }: { children: ReactNode }) =>
+        React.createElement("div", null, children),
+    },
+  };
+});
+
+import { TipCard, TipCardFrame } from "./TipCard";
 
 ensureUiHarness();
 setMatchMedia(false);
@@ -24,7 +92,40 @@ setMatchMedia(false);
 let container: HTMLDivElement;
 let root: Root;
 
+const dismissButton = (): HTMLButtonElement => {
+  const button = container.querySelector('button[aria-label="Dismiss tip"]');
+  if (!(button instanceof HTMLButtonElement)) {
+    throw new Error("Dismiss control not found");
+  }
+  return button;
+};
+
+const buttonWithText = (text: string): HTMLButtonElement => {
+  const button = [
+    ...container.querySelectorAll<HTMLButtonElement>("button"),
+  ].find((candidate) => candidate.textContent === text);
+  if (!button) {
+    throw new Error(`Button "${text}" not found`);
+  }
+  return button;
+};
+
+const renderCard = (
+  props: Parameters<typeof TipCard>[0] = { id: "review-before-insert" },
+) =>
+  act(() => {
+    root.render(
+      createElement(
+        ThemeProvider,
+        { theme, ...THEME_PROVIDER_CONFIG },
+        createElement(MemoryRouter, null, createElement(TipCard, props)),
+      ),
+    );
+  });
+
 beforeEach(() => {
+  vi.clearAllMocks();
+  mocks.state.local.dismissedTipIds = [];
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
@@ -33,6 +134,154 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount());
   container.remove();
+});
+
+describe("TipCard", () => {
+  const cardChrome = (): HTMLElement => {
+    const card = container.querySelector('[data-tip-card="true"]');
+    if (!(card instanceof HTMLElement)) {
+      throw new Error("Card chrome not found");
+    }
+    return card;
+  };
+
+  it("renders the icon, copy, pattern image, and dismiss control for a live tip", async () => {
+    await renderCard();
+
+    expect(container.textContent).toContain("Review before it inserts");
+    expect(container.textContent).toContain(
+      "Review mode holds each transcript on the pill first",
+    );
+    // The lucide glyph carries the icon family class the theme styles.
+    expect(container.querySelector(".lucide")).toBeTruthy();
+    // The header art sits above the icon, copy, and dismiss control.
+    expect(container.querySelector('img[alt=""]')).toBeTruthy();
+    expect(dismissButton()).toBeTruthy();
+  });
+
+  it("carries the floating-layer face: paper, hairline, premium lift", async () => {
+    await renderCard();
+
+    const style = getComputedStyle(cardChrome());
+    // Live tips float over the page, so they take the floating-layer
+    // material the toasts use: a 1px hairline and the `premiumSurface` lift
+    // (its inset emboss is the marker — no other app shadow carries one).
+    // The paper face resolves through a theme CSS variable, which jsdom
+    // reports unresolved, so it is asserted by its variable reference.
+    expect(style.borderTopWidth).toBe("1px");
+    expect(style.backgroundColor).toBe("var(--app-palette-background-paper)");
+    expect(style.boxShadow).toContain("inset");
+  });
+
+  it("holds the toast column width so the two corner stacks align", async () => {
+    await renderCard();
+
+    // Sonner's default toast width; the tip stack must share the column.
+    expect(getComputedStyle(cardChrome()).width).toBe("356px");
+  });
+
+  it("moves the dismiss control onto the pattern image, out of the row below", async () => {
+    await renderCard();
+
+    const image = container.querySelector('img[alt=""]');
+    if (!(image instanceof HTMLElement)) {
+      throw new Error("Pattern image not found");
+    }
+    // The dismiss control sits in the image's own header section, not in
+    // the row `TipCardFrame` renders below it for the icon, title, and body.
+    const header = image.parentElement;
+    expect(header?.contains(dismissButton())).toBe(true);
+    const row = container.querySelector('[role="note"]');
+    expect(row?.contains(dismissButton())).toBe(false);
+  });
+
+  it("renders no action for a tip anchored on its own feature page", async () => {
+    await renderCard();
+
+    // `review-before-insert` has no entry in `TIP_LIVE_ACTIONS`, so only
+    // the dismiss control is present — the page the tip floats over is the
+    // feature itself.
+    expect(container.querySelectorAll("button")).toHaveLength(1);
+    expect(dismissButton()).toBeTruthy();
+  });
+
+  it("renders nothing for a dismissed tip", async () => {
+    mocks.state.local.dismissedTipIds = ["review-before-insert"];
+    await renderCard();
+
+    expect(container.querySelector(".lucide")).toBeNull();
+    expect(container.querySelectorAll("button")).toHaveLength(0);
+  });
+
+  it("persists the dismissal once the exit animation finishes", async () => {
+    await renderCard();
+
+    expect(mocks.dismissTip).not.toHaveBeenCalled();
+    act(() => {
+      dismissButton().click();
+    });
+
+    // The click only starts the exit; the store update waits for it.
+    expect(mocks.dismissTip).not.toHaveBeenCalled();
+    await vi.waitFor(() => {
+      expect(mocks.dismissTip).toHaveBeenCalledWith("review-before-insert");
+    });
+  });
+
+  it("persists the dismissal if the tip unmounts mid-exit", async () => {
+    // Navigating away during the exit animation interrupts it, so the
+    // exit-completion path never runs. The dismissal is a deliberate choice
+    // and must still persist, or the tip reappears on the next visit.
+    await renderCard();
+
+    act(() => {
+      dismissButton().click();
+    });
+    expect(mocks.dismissTip).not.toHaveBeenCalled();
+
+    act(() => {
+      root.unmount();
+    });
+
+    expect(mocks.dismissTip).toHaveBeenCalledTimes(1);
+    expect(mocks.dismissTip).toHaveBeenCalledWith("review-before-insert");
+  });
+
+  it("does not persist the dismissal twice on repeated clicks", async () => {
+    await renderCard();
+
+    act(() => {
+      dismissButton().click();
+      dismissButton().click();
+    });
+
+    await vi.waitFor(() => {
+      expect(mocks.dismissTip).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("runs the in-page action through the route page's handler", async () => {
+    // The handler lives on the tip's route page (see `tip-actions`); the
+    // card looks it up at click time.
+    const onAction = vi.fn();
+    const unregister = setTipAction("generative-provider", onAction);
+    try {
+      await renderCard({ id: "generative-provider" });
+
+      expect(container.textContent).toContain(
+        "Add an AI provider for polishing",
+      );
+      act(() => {
+        buttonWithText("Add API key").click();
+      });
+
+      expect(onAction).toHaveBeenCalledTimes(1);
+      // The action performs an in-page jump; it must not consume the tip.
+      expect(mocks.dismissTip).not.toHaveBeenCalled();
+    } finally {
+      unregister();
+    }
+  });
 });
 
 describe("TipCardFrame", () => {
@@ -57,35 +306,6 @@ describe("TipCardFrame", () => {
         ),
       );
     });
-
-  it("renders the title, body, icon, and dismiss control", async () => {
-    const onDismiss = vi.fn();
-    await renderFrame({
-      title: "Title",
-      body: "Body",
-      icon: createElement("span", { className: "lucide" }),
-      onDismiss,
-    });
-
-    expect(container.textContent).toContain("Title");
-    expect(container.textContent).toContain("Body");
-    expect(container.querySelector(".lucide")).toBeTruthy();
-
-    const dismiss = container.querySelector('button[aria-label="Dismiss tip"]');
-    if (!(dismiss instanceof HTMLButtonElement)) {
-      throw new Error("Dismiss control not found");
-    }
-    act(() => dismiss.click());
-    expect(onDismiss).toHaveBeenCalledTimes(1);
-  });
-
-  it("renders no dismiss control when onDismiss is omitted", async () => {
-    await renderFrame({ title: "Title", body: "Body" });
-
-    expect(
-      container.querySelector('button[aria-label="Dismiss tip"]'),
-    ).toBeNull();
-  });
 
   it("applies plain-object sx overrides on top of the base card", async () => {
     await renderFrame({

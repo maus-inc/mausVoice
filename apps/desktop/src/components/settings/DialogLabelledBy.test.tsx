@@ -21,10 +21,11 @@ vi.mock("../../actions/transcriptions.actions", () => ({
 vi.mock("../transcriptions/TranscriptionsSideEffects", () => ({
   TranscriptionsSideEffects: () => null,
 }));
-vi.mock("../onboarding/TipCard", () => ({ useTip: () => false }));
 vi.mock("../transcriptions/TranscriptRow", () => ({
   TranscriptionRow: () => null,
 }));
+
+vi.mock("@tauri-apps/plugin-os", () => ({ platform: () => "macos" }));
 
 vi.mock("react-intl", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react-intl")>();
@@ -39,6 +40,10 @@ vi.mock("react-intl", async (importOriginal) => {
   };
 });
 
+import { ShortcutsDialog } from "./ShortcutsDialog";
+import { DictationLanguageDialog } from "./DictationLanguageDialog";
+import { DiagnosticsDialog } from "./DiagnosticsDialog";
+import { StyleHotkeysDialog } from "./StyleHotkeysDialog";
 import { AIAgentModeDialog } from "./AIAgentModeDialog";
 import { AIPostProcessingDialog } from "./AIPostProcessingDialog";
 import TranscriptionsPage from "../transcriptions/TranscriptionsPage";
@@ -87,6 +92,53 @@ const render = async (node: ReactNode) => {
 };
 
 describe("settings dialogs announce their title", () => {
+  it.each([
+    [
+      "dictationLanguageDialogOpen",
+      DictationLanguageDialog,
+      "Dictation language",
+      "Configure multiple dictation languages with hotkeys.",
+    ],
+    [
+      "styleHotkeysDialogOpen",
+      StyleHotkeysDialog,
+      "Style hotkeys",
+      "Assign a shortcut to select a style directly. Leave a row empty to disable its shortcut.",
+    ],
+    ["diagnosticsDialogOpen", DiagnosticsDialog, "Diagnostics", null],
+  ] as const)(
+    "names %s independently of other title content",
+    async (key, Component, name, description) => {
+      produceAppState((draft) => {
+        draft.settings[key] = true;
+      });
+      await render(createElement(Component));
+      expect(accessibleNameOf()).toBe(name);
+      const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
+      const descriptionId = dialog?.getAttribute("aria-describedby");
+      if (description)
+        expect(document.getElementById(descriptionId ?? "")?.textContent).toBe(
+          description,
+        );
+      else expect(descriptionId).toBeNull();
+    },
+  );
+
+  it("names the shortcuts dialog without folding its explanation into the title", async () => {
+    produceAppState((draft) => {
+      draft.settings.shortcutsDialogOpen = true;
+    });
+    await render(createElement(ShortcutsDialog));
+    expect(accessibleNameOf()).toBe("Keyboard shortcuts");
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
+    expect(
+      document.getElementById(dialog?.getAttribute("aria-describedby") ?? "")
+        ?.textContent,
+    ).toBe(
+      "Customize your keyboard shortcuts. Keyboard shortcuts can be triggered from within any app.",
+    );
+  });
+
   it("names the AI post-processing dialog", async () => {
     produceAppState((draft) => {
       draft.settings.aiPostProcessingDialogOpen = true;
@@ -119,5 +171,10 @@ describe("settings dialogs announce their title", () => {
     });
 
     expect(accessibleNameOf()).toBe("Import audio");
+    const dialog = document.body.querySelector('[role="dialog"]')!;
+    const labelledBy = dialog.getAttribute("aria-labelledby")!;
+    const label = document.getElementById(labelledBy)!;
+    expect(label.querySelector("button")).toBeNull();
+    expect(document.querySelectorAll(`[id="${labelledBy}"]`)).toHaveLength(1);
   });
 });

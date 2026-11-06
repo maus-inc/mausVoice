@@ -473,7 +473,11 @@ const ModelDownloadActionButtons = ({
   );
 };
 
-export const AITranscriptionConfiguration = () => {
+export const AITranscriptionConfiguration = ({
+  compactCards = false,
+}: {
+  compactCards?: boolean;
+}) => {
   const intl = useIntl();
   const transcription = useAppStore((state) => state.settings.aiTranscription);
   const effectiveMode = useAppStore(getEffectiveTranscriptionMode);
@@ -534,7 +538,7 @@ export const AITranscriptionConfiguration = () => {
       return;
     }
 
-    void setPreferredTranscriptionModelSize(fallbackModel);
+    void setPreferredTranscriptionModelSize(fallbackModel).catch(() => {});
   }, [
     transcription,
     localTranscriptionConfig.modelStatusesLoaded,
@@ -543,11 +547,11 @@ export const AITranscriptionConfiguration = () => {
   ]);
 
   const handleModeChange = useCallback((mode: TranscriptionMode) => {
-    void setPreferredTranscriptionMode(mode);
+    void setPreferredTranscriptionMode(mode).catch(() => {});
   }, []);
 
   const handleDeviceChange = useCallback((device: string) => {
-    void setPreferredTranscriptionDevice(device);
+    void setPreferredTranscriptionDevice(device).catch(() => {});
   }, []);
 
   const handleModelSizeChange = useCallback(
@@ -558,13 +562,13 @@ export const AITranscriptionConfiguration = () => {
         return;
       }
 
-      void setPreferredTranscriptionModelSize(modelSize);
+      void setPreferredTranscriptionModelSize(modelSize).catch(() => {});
     },
     [transcription],
   );
 
   const handleApiKeyChange = useCallback((id: string | null) => {
-    void setPreferredTranscriptionApiKeyId(id);
+    void setPreferredTranscriptionApiKeyId(id).catch(() => {});
   }, []);
 
   const handleDownloadModel = useCallback(
@@ -985,6 +989,7 @@ export const AITranscriptionConfiguration = () => {
             selectedApiKeyId={transcription.selectedApiKeyId}
             onChange={handleApiKeyChange}
             context="transcription"
+            compactCards={compactCards}
           />
         )}
       </AnimateSwitch>

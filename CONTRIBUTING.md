@@ -46,6 +46,33 @@ If the change depends on motion, timing, transitions, or interaction details, in
 
 If we have to guess what changed, we are much less likely to review it.
 
+## Commit and Pull Request Conventions
+
+Commit subjects use `area: what changed`, with the areas and examples in `COMMIT.md`. The
+`commit-msg` job in `lefthook.yml` enforces the shape, and `.gitmessage` is the template git
+shows you. Turn it on with:
+
+```bash
+git config commit.template .gitmessage
+npx lefthook@2.2.2 install   # pinned; lefthook stays out of the manifest so installs stay light
+```
+
+The hooks are a convenience, not a gate. `lefthook` is deliberately not a repository
+dependency, so every `pnpm install` in CI stays small. Pin the version when you run it, as
+above, so onboarding never executes an unreviewed future release.
+
+Pull requests fill `.github/pull_request_template.md`, and `pnpm run check:pr-body -- <file>` checks the
+shape of the body. Every record of a review round, a babysit poll or a CI log goes inside a
+collapsible block, so a long-running PR stays one screen of summary. The `PR Body Fold Check`
+workflow runs that command on every pull request open, edit, reopen and push. Every section is used, including the
+verification gate with the head SHA, and a section is never deleted to avoid answering it. A UI
+change either carries a recording of the change or says which surface was inspected in
+`apps/preview` and what that inspection showed.
+
+Bugs and feature requests use the issue forms in `.github/ISSUE_TEMPLATE/`. The bug form asks
+for the model, the platform and the log, because a dictation bug without those three cannot be
+reproduced.
+
 ## Issues First
 
 If you are thinking about a non-trivial change, open an issue first.

@@ -28,7 +28,10 @@ export abstract class BaseApiTranscriptionSession implements TranscriptionSessio
     this.inferenceDevice = options.inferenceDevice;
   }
 
-  abstract onRecordingStart(sampleRate: number): Promise<void>;
+  abstract onRecordingStart(
+    sampleRate: number,
+    signal?: AbortSignal,
+  ): Promise<void>;
   abstract supportsStreaming(): boolean;
 
   writeAudioChunk(chunk: Float32Array): void {

@@ -56,27 +56,28 @@ export const reactIntlWithIdsModule = async (
   const withId = (descriptor: MessageDescriptor): MessageDescriptor => ({
     ...descriptor,
     id: formatjsOverrideIdFn(
-      descriptor.id,
+      descriptor.id === descriptor.defaultMessage ? undefined : descriptor.id,
       typeof descriptor.defaultMessage === "string"
         ? descriptor.defaultMessage
         : undefined,
     ),
   });
+  // One wrapper for both entry points, so `createIntl` and `useIntl` cannot
+  // drift into different id-injection behaviour.
+  const withIdIntl = (intl: IntlShape): IntlShape => {
+    const formatMessage = ((...args: Parameters<IntlShape["formatMessage"]>) =>
+      intl.formatMessage(
+        withId(args[0]),
+        args[1],
+        args[2],
+      )) as IntlShape["formatMessage"];
+    return { ...intl, formatMessage };
+  };
   return {
     ...actual,
     FormattedMessage: (props) =>
       createElement(actual.FormattedMessage, { ...props, ...withId(props) }),
-    useIntl: () => {
-      const intl = actual.useIntl();
-      const formatMessage = ((
-        ...args: Parameters<IntlShape["formatMessage"]>
-      ) =>
-        intl.formatMessage(
-          withId(args[0]),
-          args[1],
-          args[2],
-        )) as IntlShape["formatMessage"];
-      return { ...intl, formatMessage };
-    },
+    createIntl: (config, cache) => withIdIntl(actual.createIntl(config, cache)),
+    useIntl: () => withIdIntl(actual.useIntl()),
   };
 };

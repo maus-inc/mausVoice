@@ -12,7 +12,7 @@ import {
   Typography,
 } from "@mui/material";
 import type { Hotkey } from "@maus-inc/types";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { showErrorSnackbar } from "../../actions/app.actions";
 import { getHotkeyRepo } from "../../repos";
@@ -28,6 +28,7 @@ import {
   syncHotkeyCombosToNative,
 } from "../../utils/keyboard.utils";
 import { HotKey } from "../common/HotKey";
+import { BusyButtonLabel } from "../common/BusyButtonLabel";
 import { PostProcessingDisabledTooltip } from "../styling/PostProcessingDisabledTooltip";
 
 type StyleHotkeyRow = {
@@ -39,6 +40,8 @@ type StyleHotkeyRow = {
 
 /** Assign one optional global shortcut to each writing style. */
 export const StyleHotkeysDialog = () => {
+  const titleId = useId();
+  const descriptionId = useId();
   const open = useAppStore((state) => state.settings.styleHotkeysDialogOpen);
   const toneById = useAppStore((state) => state.toneById);
   const tones = useMemo(
@@ -52,6 +55,7 @@ export const StyleHotkeysDialog = () => {
   const intl = useIntl();
   const [rows, setRows] = useState<StyleHotkeyRow[]>([]);
   const [isSaving, setIsSaving] = useState(false);
+  const saveInFlight = useRef(false);
 
   useEffect(() => {
     if (!open) return;
@@ -98,14 +102,19 @@ export const StyleHotkeysDialog = () => {
     return false;
   }, [rows]);
 
-  const close = () => {
+  const dismiss = () => {
     produceAppState((draft) => {
       draft.settings.styleHotkeysDialogOpen = false;
     });
   };
 
+  const close = () => {
+    if (!saveInFlight.current) dismiss();
+  };
+
   const save = async () => {
-    if (isSaving || !styleSelectionAvailable) return;
+    if (isSaving || saveInFlight.current || !styleSelectionAvailable) return;
+    saveInFlight.current = true;
     setIsSaving(true);
     try {
       const state = useAppStore.getState();
@@ -139,10 +148,11 @@ export const StyleHotkeysDialog = () => {
         showErrorSnackbar(error);
         return;
       }
-      close();
+      dismiss();
     } catch (error) {
       showErrorSnackbar(error);
     } finally {
+      saveInFlight.current = false;
       setIsSaving(false);
     }
   };
@@ -153,12 +163,24 @@ export const StyleHotkeysDialog = () => {
       onClose={isSaving ? undefined : close}
       maxWidth="sm"
       fullWidth
+      aria-labelledby={titleId}
+      aria-describedby={descriptionId}
     >
-      <DialogTitle>
+      <DialogTitle id={`${titleId}-wrapper`}>
         <Box sx={{ display: "flex", alignItems: "flex-start" }}>
           <Box sx={{ flex: 1 }}>
-            <FormattedMessage defaultMessage="Style hotkeys" />
-            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+            <span id={titleId}>
+              <FormattedMessage defaultMessage="Style hotkeys" />
+            </span>
+            <Typography
+              id={descriptionId}
+              variant="body2"
+              color="text.secondary"
+              sx={{
+                mt: 0.5,
+                "@media (max-height: 400px)": { display: "none" },
+              }}
+            >
               <FormattedMessage defaultMessage="Assign a shortcut to select a style directly. Leave a row empty to disable its shortcut." />
             </Typography>
           </Box>
@@ -175,6 +197,17 @@ export const StyleHotkeysDialog = () => {
       </DialogTitle>
       <DialogContent dividers>
         <Stack spacing={1.25}>
+          <Typography
+            aria-hidden
+            variant="body2"
+            color="text.secondary"
+            sx={{
+              display: "none",
+              "@media (max-height: 400px)": { display: "block" },
+            }}
+          >
+            <FormattedMessage defaultMessage="Assign a shortcut to select a style directly. Leave a row empty to disable its shortcut." />
+          </Typography>
           {styleSelectionAvailable && hasConflict && (
             <Alert severity="warning" variant="outlined">
               <FormattedMessage defaultMessage="Some style shortcuts overlap and may be difficult to trigger." />
@@ -189,7 +222,12 @@ export const StyleHotkeysDialog = () => {
             >
               {styleSelectionAvailable ? (
                 <HotKey
+                  ariaLabel={intl.formatMessage(
+                    { defaultMessage: "Shortcut for {style}" },
+                    { style: row.toneName },
+                  )}
                   value={row.keys}
+                  disabled={isSaving}
                   onChange={(keys) =>
                     setRows((current) =>
                       current.map((candidate) =>
@@ -221,6 +259,7 @@ export const StyleHotkeysDialog = () => {
               {styleSelectionAvailable && row.keys.length > 0 && (
                 <IconButton
                   size="small"
+                  disabled={isSaving}
                   aria-label={intl.formatMessage({
                     defaultMessage: "Clear style hotkey",
                   })}
@@ -249,8 +288,15 @@ export const StyleHotkeysDialog = () => {
           variant="contained"
           onClick={() => void save()}
           disabled={isSaving || !styleSelectionAvailable}
+          aria-busy={isSaving || undefined}
         >
-          <FormattedMessage defaultMessage="Save" />
+          {isSaving ? (
+            <BusyButtonLabel>
+              <FormattedMessage defaultMessage="Save" />
+            </BusyButtonLabel>
+          ) : (
+            <FormattedMessage defaultMessage="Save" />
+          )}
         </Button>
       </DialogActions>
     </Dialog>

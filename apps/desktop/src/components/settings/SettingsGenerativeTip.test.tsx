@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, createElement, Fragment } from "react";
+import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { INITIAL_APP_STATE } from "../../state/app.state";
 import { setAppState } from "../../store";
+import { getTipAction } from "../onboarding/tip-actions";
 
 vi.mock("@tauri-apps/api/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@tauri-apps/api/core")>();
@@ -49,43 +50,39 @@ vi.mock("react-intl", async (importOriginal) => {
   };
 });
 
-import { ThemeProvider } from "@mui/material/styles";
-import {
-  ensureUiHarness,
-  setMatchMedia,
-} from "../../../test/helpers/jsdom-ui-harness";
-import { SonnerToaster } from "../root/SonnerToaster";
-import { THEME_PROVIDER_CONFIG, theme } from "../../theme";
-import SettingsPage from "./SettingsPage";
+import { ensureUiHarness } from "../../../test/helpers/jsdom-ui-harness";
+import AiModelsSettingsPage from "./pages/AiModelsSettingsPage";
+import { SettingsFocusContext } from "./settings-highlight";
 
 ensureUiHarness();
 
 /**
- * The generative-provider tip's click action must complete the task in
- * place. It opens the Groq key dialog with keyboard focus on its input (the
- * dialog's TextField carries autoFocus), and reveals the Groq row (smooth
- * scroll + highlight) so the user lands there if they close the dialog
- * without saving.
+ * The generative-provider tip floats in the bottom-right stack (TipToaster)
+ * and its Add API key action is owned by the page the tip sits on. The page
+ * must register the handler on mount, and the handler must complete the task
+ * in place: ask the settings layout to reveal the Groq key row (the layout
+ * owns the scroll and highlight) and open the key dialog, whose input takes
+ * focus once it has entered.
  *
- * The tip itself now renders into sonner's toast layer rather than into
- * `SettingsPage`'s own tree, so this test mounts the real `SonnerToaster`
- * alongside the page, the same pairing `main.tsx` mounts them in. The
- * toaster mounts first, so it has subscribed to the store before the page's
- * mount effect calls `showTipToast`.
+ * The focus helper is injected through `SettingsFocusContext`, so this test
+ * pins the page's half of the contract — the key it asks to reveal — while
+ * `use-settings-anchor-focus.test.tsx` pins the layout's half (the scroll and
+ * the highlight).
  */
-describe("generative-provider tip action", () => {
+describe("AiModels page generative-provider tip action", () => {
   let container: HTMLDivElement;
   let root: ReturnType<typeof createRoot> | null = null;
+  let focusSetting: ReturnType<typeof vi.fn>;
   /** jsdom does not run rAF, so queued frames are driven explicitly. */
   let frames: Array<FrameRequestCallback>;
-  /** scrollIntoView calls with their receiver, recorded from the prototype. */
-  let scrollCalls: Array<{ el: Element; options?: ScrollIntoViewOptions }>;
 
   beforeEach(() => {
-    // The plain stub this file used before `ThemeProvider` needed it lacks
-    // `addListener`/`removeListener`, which MUI's cssVars scheme watcher
-    // still calls; the shared harness stub implements the full legacy API.
-    setMatchMedia(false);
+    window.matchMedia = ((query: string) => ({
+      matches: false,
+      media: query,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    })) as unknown as typeof window.matchMedia;
     frames = [];
     vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
       frames.push(cb);
@@ -94,37 +91,15 @@ describe("generative-provider tip action", () => {
     vi.stubGlobal("cancelAnimationFrame", (handle: number) => {
       frames[handle - 1] = () => undefined;
     });
-    // jsdom has no layout, so scrollIntoView is absent; the action calls it
-    // on the revealed row via requestAnimationFrame.
-    scrollCalls = [];
-    Element.prototype.scrollIntoView = vi.fn(function (
-      this: Element,
-      options?: ScrollIntoViewOptions | boolean,
-    ) {
-      scrollCalls.push({
-        el: this,
-        options: options as ScrollIntoViewOptions | undefined,
-      });
-    });
+    focusSetting = vi.fn();
     setAppState(structuredClone(INITIAL_APP_STATE), true);
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
   });
 
-  afterEach(async () => {
-    await act(() => root?.unmount());
-    // Unmounting clears each tip's toast, and sonner's own dismissal is
-    // itself debounced through a `requestAnimationFrame` it schedules on a
-    // *module-level* store that outlives this test. Draining now, while
-    // this test's rAF stub is still installed, flushes that debounce before
-    // the stub is restored, so the next test does not inherit a pending
-    // callback queued against sonner's shared store.
-    for (let round = 0; round < 5 && frames.length > 0; round += 1) {
-      await act(() => {
-        for (const frame of frames.splice(0)) frame(0);
-      });
-    }
+  afterEach(() => {
+    act(() => root?.unmount());
     root = null;
     container.remove();
     document.body.innerHTML = "";
@@ -144,37 +119,36 @@ describe("generative-provider tip action", () => {
     await act(() => {
       root?.render(
         createElement(
-          ThemeProvider,
-          { theme, ...THEME_PROVIDER_CONFIG },
-          createElement(Fragment, null, [
-            createElement(SonnerToaster, { key: "toaster" }),
-            createElement(SettingsPage, { key: "page" }),
-          ]),
+          SettingsFocusContext.Provider,
+          { value: focusSetting },
+          createElement(AiModelsSettingsPage),
         ),
       );
     });
     await drainFrames();
   };
 
-  const clickTipAction = async () => {
-    // This page also anchors the `update-channel` tip (UpdateChannelSetting
-    // further down), so both toasts are on screen at once; find the card by
-    // its own title rather than assuming toast stacking order.
-    const card = Array.from(
-      document.querySelectorAll('[data-tip-toast="true"]'),
-    ).find((candidate) =>
-      candidate.textContent?.includes("Add an AI provider for polishing"),
-    );
-    const tipBody = card?.querySelector('[role="button"]');
-    expect(tipBody).toBeTruthy();
-    await act(() => {
-      tipBody?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-  };
-
-  it("opens the Groq key dialog and focuses the key input", async () => {
+  it("registers the Add API key handler while the page is mounted", async () => {
     await renderPage();
-    await clickTipAction();
+
+    const handler = getTipAction("generative-provider");
+    expect(handler).toBeTypeOf("function");
+  });
+
+  it("reveals the Groq key row and opens the focused dialog", async () => {
+    await renderPage();
+
+    const handler = getTipAction("generative-provider");
+    if (typeof handler !== "function") {
+      throw new Error("Generative-provider tip handler is not registered");
+    }
+    act(() => {
+      handler();
+    });
+    await drainFrames();
+
+    // The layout owns the scroll and the highlight; the page only names the row.
+    expect(focusSetting).toHaveBeenCalledWith("groq_api_key");
 
     // The dialog body copy is unique to the dialog (the row's title shares
     // the "Groq API key" wording).
@@ -183,87 +157,27 @@ describe("generative-provider tip action", () => {
     ).some(
       (node) =>
         node.textContent ===
-        "Store your Groq API key locally for transcription and AI post processing. The key is encrypted before it is saved.",
+        "Used for transcription and AI post processing. Encrypted and stored on this computer before it is saved.",
     );
     expect(dialogCopy).toBe(true);
 
+    // The dialog content mounts when the enter transition runs, so the field
+    // takes focus a beat after open, not synchronously.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    });
     const keyInput = document.querySelector("input[type='password']");
     expect(keyInput).toBeTruthy();
     expect(document.activeElement).toBe(keyInput);
   });
 
-  it("reveals the Groq row with a smooth centered scroll", async () => {
+  it("unregisters the handler on unmount", async () => {
     await renderPage();
-    await clickTipAction();
-    await drainFrames();
+    expect(getTipAction("generative-provider")).toBeTypeOf("function");
 
-    const row = document.getElementById("setting-groq_api_key");
-    expect(row).not.toBeNull();
-    expect(
-      scrollCalls.some(
-        (call) =>
-          call.el === row &&
-          call.options?.block === "center" &&
-          call.options?.behavior === "smooth",
-      ),
-    ).toBe(true);
-  });
+    act(() => root?.unmount());
+    root = null;
 
-  it("keeps both tip toasts mounted while the Settings search box has a query", async () => {
-    // Both TipToastTrigger calls live outside the search-results branch in
-    // SettingsPage for exactly this reason. Before that, a trigger inside a
-    // section the search hid would unmount, and its cleanup called
-    // hideTipToast, which schedules sonner's own dismiss through a single
-    // requestAnimationFrame rather than removing the toast synchronously.
-    // Clearing the search then remounted the trigger and showed the toast
-    // again, so typing in an unrelated field made a tip flicker.
-    await renderPage();
-
-    const toastsBefore = Array.from(
-      document.querySelectorAll('[data-tip-toast="true"]'),
-    );
-    expect(toastsBefore).toHaveLength(2);
-
-    const searchField = Array.from(
-      document.querySelectorAll<HTMLInputElement>("input"),
-    ).find((input) => input.getAttribute("aria-label") === "Search settings");
-    if (!searchField) throw new Error("settings search field must be rendered");
-    await act(() => {
-      const setter = Object.getOwnPropertyDescriptor(
-        HTMLInputElement.prototype,
-        "value",
-      )?.set;
-      // A query no real setting matches, so the only way the search-results
-      // branch can render its "no match" copy is if SettingsPage actually
-      // swapped to that branch, which is the state change this test needs.
-      setter?.call(searchField, "zzz-no-such-setting-zzz");
-      searchField.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-    // A regression's hideTipToast call would only land once the
-    // requestAnimationFrame sonner's dismiss schedules actually runs, not
-    // within the synchronous input event above, so it must be drained
-    // before checking either toast.
-    await drainFrames();
-
-    expect(document.body.textContent).toContain(
-      "No settings match that search.",
-    );
-
-    const toastsDuringSearch = Array.from(
-      document.querySelectorAll('[data-tip-toast="true"]'),
-    );
-    expect(toastsDuringSearch).toHaveLength(2);
-    // Same DOM nodes, not merely the same count, so a full unmount and
-    // remount cycle during the search would fail this.
-    expect(toastsDuringSearch[0]).toBe(toastsBefore[0]);
-    expect(toastsDuringSearch[1]).toBe(toastsBefore[1]);
-    // The node-identity check above would still pass if sonner marked the
-    // toast for removal without React ever unmounting its wrapper, so the
-    // dismiss signal itself has to be checked too.
-    for (const toastEl of toastsDuringSearch) {
-      const sonnerToast = toastEl.closest("[data-sonner-toast]");
-      expect(sonnerToast).not.toBeNull();
-      expect(sonnerToast?.getAttribute("data-removed")).toBe("false");
-    }
+    expect(getTipAction("generative-provider")).toBeUndefined();
   });
 });

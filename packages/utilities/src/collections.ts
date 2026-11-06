@@ -3,13 +3,14 @@ export function getRec<K extends number | string, V>(
   key?: K | null,
   fallback?: V,
 ): V | undefined {
-  const missingKey = key === null || key === undefined;
-  const inner = map ?? ({} as Record<K, V>);
-  return missingKey
-    ? fallback
-    : inner[key] !== undefined
-      ? inner[key]
-      : fallback;
+  if (key === null || key === undefined || !map || !Object.hasOwn(map, key)) {
+    return fallback;
+  }
+  const value = map[key];
+  if (value === undefined) {
+    return fallback;
+  }
+  return value;
 }
 
 export const listify = <T>(values?: T | T[] | null): T[] => {

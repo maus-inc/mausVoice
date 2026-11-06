@@ -584,7 +584,7 @@ describe("GladiaTranscribeAudioRepo", () => {
 
     expect(repo).toBeInstanceOf(GladiaTranscribeAudioRepo);
     expect(apiKeyId).toBe("gladia-key");
-    expect(getModelProviderRepo("gladia").supportsTranscriptionModels()).toBe(
+    expect(getModelProviderRepo("gladia").supportsTranscriptionModels).toBe(
       true,
     );
   });
@@ -735,12 +735,12 @@ describe("provider capability and transcription dispatch agreement", () => {
     // should one still reach the dispatch (defense-in-depth), it falls back
     // to Groq only when a configured Groq key is available, otherwise it
     // throws a configuration error — never an unconditional fallback.
-    expect(getModelProviderRepo("ollama").supportsTranscriptionModels()).toBe(
+    expect(getModelProviderRepo("ollama").supportsTranscriptionModels).toBe(
       false,
     );
-    expect(
-      getModelProviderRepo("assemblyai").supportsTranscriptionModels(),
-    ).toBe(true);
+    expect(getModelProviderRepo("assemblyai").supportsTranscriptionModels).toBe(
+      true,
+    );
   });
 
   it("never routes an unsupported provider (Ollama) to the transcription dispatch", () => {
@@ -784,9 +784,9 @@ describe("provider capability and transcription dispatch agreement", () => {
 
 describe("OpenRouter transcription support", () => {
   it("advertises OpenRouter as transcription-capable", () => {
-    expect(
-      getModelProviderRepo("openrouter").supportsTranscriptionModels(),
-    ).toBe(true);
+    expect(getModelProviderRepo("openrouter").supportsTranscriptionModels).toBe(
+      true,
+    );
   });
 
   it("dispatches an OpenRouter-selected key to OpenRouterTranscribeAudioRepo", () => {

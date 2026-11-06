@@ -5,6 +5,10 @@ export type LogicalSize = { width: number; height: number };
 
 class PreviewWindow {
   readonly label = "preview";
+  private maximized = false;
+  private readonly minimized = false;
+  private readonly focused = true;
+  private readonly scale = 1;
 
   async show(): Promise<void> {
     /* preview stub: no native window to drive */
@@ -21,14 +25,17 @@ class PreviewWindow {
   async focus(): Promise<void> {
     /* preview stub: no native window to drive */
   }
-  async maximize(): Promise<void> {
-    /* preview stub: no native window to drive */
+  maximize(): Promise<void> {
+    this.maximized = true;
+    return Promise.resolve();
   }
-  async unmaximize(): Promise<void> {
-    /* preview stub: no native window to drive */
+  unmaximize(): Promise<void> {
+    this.maximized = false;
+    return Promise.resolve();
   }
-  async toggleMaximize(): Promise<void> {
-    /* preview stub: no native window to drive */
+  toggleMaximize(): Promise<void> {
+    this.maximized = !this.maximized;
+    return Promise.resolve();
   }
   async minimize(): Promise<void> {
     /* preview stub: no native window to drive */
@@ -78,8 +85,22 @@ class PreviewWindow {
   isVisible(): Promise<boolean> {
     return Promise.resolve(true);
   }
+  isFocused(): Promise<boolean> {
+    return Promise.resolve(
+      typeof document !== "undefined" ? document.hasFocus() : this.focused,
+    );
+  }
   isMaximized(): Promise<boolean> {
-    return Promise.resolve(false);
+    return Promise.resolve(this.maximized);
+  }
+  isMinimized(): Promise<boolean> {
+    return Promise.resolve(this.minimized);
+  }
+  scaleFactor(): Promise<number> {
+    // `innerSize()` and `outerSize()` in the browser preview return CSS
+    // logical pixels (`window.innerWidth`/`innerHeight`), so a scale factor of
+    // 1 keeps `size.width / scaleFactor` in CSS pixels on HiDPI screens.
+    return Promise.resolve(this.scale);
   }
   innerSize(): Promise<LogicalSize> {
     return Promise.resolve().then(() => ({
@@ -88,10 +109,47 @@ class PreviewWindow {
     }));
   }
   outerSize(): Promise<LogicalSize> {
+    // The preview simulates a frameless (`decorations: false`) desktop window
+    // inside a browser viewport or iframe. `window.outerWidth` is the host
+    // browser's outer chrome width, which stays at the full screen width even
+    // when the preview viewport is narrowed.
     return Promise.resolve().then(() => ({
-      width: window.outerWidth,
-      height: window.outerHeight,
+      width: window.innerWidth,
+      height: window.innerHeight,
     }));
+  }
+  onResized(handler: EventCallback<LogicalSize>): Promise<UnlistenFn> {
+    const scale = this.scale;
+    const onResize = () => {
+      handler({
+        event: "tauri://resize",
+        id: 0,
+        payload: {
+          width: window.innerWidth * scale,
+          height: window.innerHeight * scale,
+        },
+      });
+    };
+    window.addEventListener("resize", onResize);
+    return Promise.resolve(() =>
+      window.removeEventListener("resize", onResize),
+    );
+  }
+  onFocusChanged(handler: EventCallback<boolean>): Promise<UnlistenFn> {
+    const payloadOnFocus = this.focused;
+    const onFocus = () =>
+      handler({ event: "tauri://focus", id: 0, payload: payloadOnFocus });
+    const onBlur = () =>
+      handler({ event: "tauri://blur", id: 0, payload: false });
+    window.addEventListener("focus", onFocus);
+    window.addEventListener("blur", onBlur);
+    return Promise.resolve(() => {
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("blur", onBlur);
+    });
+  }
+  onCloseRequested(handler: EventCallback<unknown>): Promise<UnlistenFn> {
+    return this.listen("tauri://close-requested", handler);
   }
   emit<T>(event: string, payload?: T): Promise<void> {
     return emit(event, payload);

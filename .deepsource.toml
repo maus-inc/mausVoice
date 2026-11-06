@@ -23,3 +23,21 @@ paths = ["marketing/assets/vendor/**"]
   [[overrides.analyzers]]
   name = "javascript"
   enabled = false
+
+# The vendored agent skills are the same trade for a different reason. `.agents/skills`
+# holds 56 third-party skill trees, byte for byte as published, and `skills-lock.json`
+# records a folder hash for each one. Sixteen of their files are `.js`, `.cjs` or
+# `.mjs`, including a minified UMD bundle of 29 KB on 14 lines and a 547 KB
+# hand-written one. None of it is written here and none of it may be edited: a single
+# reformat changes the folder hash and fails `scripts/ci/verify-skills.mjs`, which is
+# the guard that keeps the set honest. An analyzer reading them would report style
+# findings in code this repository is not allowed to change, which is exactly the
+# noisy gate the override above exists to prevent. `.claude/**` is listed because
+# `.claude/skills` is a symlink onto the same tree, so a checkout that follows
+# symlinks would otherwise analyse it twice.
+[[overrides]]
+paths = [".agents/**", ".claude/**"]
+
+  [[overrides.analyzers]]
+  name = "javascript"
+  enabled = false
