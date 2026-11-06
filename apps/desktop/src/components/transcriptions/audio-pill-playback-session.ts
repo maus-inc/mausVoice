@@ -49,6 +49,7 @@ export const createAudioPillPlaybackSession = (): AudioPillPlaybackSession => {
     beginRequest(): AudioPillPlaybackAttempt {
       controller?.abort();
       controller = new AbortController();
+      const ownController = controller;
       const requestNonce = ++nonce;
       const requestOwner = Symbol("audio-pill-playback");
       owner = requestOwner;
@@ -92,6 +93,9 @@ export const createAudioPillPlaybackSession = (): AudioPillPlaybackSession => {
             if (owner === requestOwner) {
               owner = null;
             }
+            // The attempt is spent once ownership is released: abort settles
+            // any setup still in flight behind it.
+            ownController.abort();
           }
           return true;
         },
@@ -102,6 +106,7 @@ export const createAudioPillPlaybackSession = (): AudioPillPlaybackSession => {
           activePlaybackOwner = null;
           owner = null;
           setupPending = false;
+          ownController.abort();
           return true;
         },
       };

@@ -237,8 +237,15 @@ export const ListTile = forwardRef(function ListTile<
       {onClick || href ? (
         <ListItemButton
           selected={selected}
-          role={itemRole}
-          tabIndex={itemRole?.startsWith("menuitem") ? -1 : undefined}
+          // Pass role only when the caller names one: an explicit undefined
+          // role overrides ButtonBase's implicit "button" role on non-native
+          // buttons and silently strips the row's actionability semantics.
+          {...(itemRole
+            ? {
+                role: itemRole,
+                tabIndex: itemRole.startsWith("menuitem") ? -1 : undefined,
+              }
+            : {})}
           aria-checked={ariaChecked}
           aria-current={ariaCurrent}
           onClick={handleClick}

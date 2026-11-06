@@ -7,6 +7,7 @@ type TileLocator = ReturnType<typeof $>;
  *
  * Implementation map:
  *   k5.9.9.1  #299 switch row press transform — apps/desktop/src/components/common/ListTile.tsx
+ *             (switch semantics: apps/desktop/src/components/settings/SettingRow.tsx)
  *   m3.0.0.1  #300 saved-audio startup latency   — apps/desktop/src/utils/transcription-audio-cache.ts
  *   r7.3.0.2  #301 sidebar route prefetch        — apps/desktop/src/utils/route-prefetch.ts
  *   v2.0.7.0  #307 version tag overlap           — apps/desktop/src/components/dashboard/DashboardMenu.tsx

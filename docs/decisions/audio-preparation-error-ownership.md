@@ -10,7 +10,7 @@ The utility also invokes that callback when it cleans up a startup failure. A ca
 
 `AudioPlayerPill` retains request identity until `playWebAudio` settles. A stop during preparation records that playback has already stopped. Successful settlement then leaves the control idle. Rejection still reaches the existing localized error notification.
 
-Once preparation succeeds, ordinary stop callbacks clear the request immediately. Clearing the request also aborts its controller, removes its one-shot listener, and releases global ownership. Cancellation from another row or unmount still prevents stale errors and late playback.
+Once preparation succeeds, ordinary stop callbacks clear the request immediately. Releasing an attempt aborts its `AbortController` (tearing down in-flight Web Audio setup) and releases global ownership; `AudioPillPlaybackSession` is the request owner that carries this controller. Cancellation from another row or unmount still prevents stale errors and late playback.
 
 Do not suppress every error following a stop callback. Distinguish cancellation from cleanup caused by failure.
 

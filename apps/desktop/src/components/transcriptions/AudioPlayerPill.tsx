@@ -123,6 +123,16 @@ export const AudioPlayerPill = ({
       getPlaybackSession().stopOwned();
     };
   }, [transcriptionId]);
+  // A row that re-renders with a new transcription id is a different clip:
+  // drop the old clip's playback/scrub state so the next click plays the new
+  // read and the scrub bar cannot commit a seek against the old session.
+  useEffect(() => {
+    isPlayingRef.current = false;
+    setIsPlaying(false);
+    loadingRef.current = false;
+    setIsLoading(false);
+    setPlaybackProgress(0);
+  }, [transcriptionId]);
   useEffect(() => {
     if (!disabled || !getPlaybackSession().stopOwned()) return;
     isPlayingRef.current = false;
@@ -300,12 +310,18 @@ export const AudioPlayerPill = ({
         const ratio = getProgressFromClientX(moveEvent.clientX);
         if (ratio != null) previewSeek(ratio);
       };
-      const handleUp = (upEvent: PointerEvent) => {
+      // Every exit path (release, cancel, re-entrant drag, lifecycle cleanup)
+      // runs this one teardown so `isDraggingRef` can never outlive its
+      // listeners: a stuck drag flag mutes playback progress for good.
+      const endDrag = () => {
         window.removeEventListener("pointermove", handleMove);
         window.removeEventListener("pointerup", handleUp);
         window.removeEventListener("pointercancel", handleCancel);
         pointerCleanupRef.current = null;
         isDraggingRef.current = false;
+      };
+      const handleUp = (upEvent: PointerEvent) => {
+        endDrag();
         const ratio = getProgressFromClientX(upEvent.clientX);
         if (ratio != null) {
           commitSeek(ratio);
@@ -314,23 +330,14 @@ export const AudioPlayerPill = ({
         }
       };
       const handleCancel = () => {
-        window.removeEventListener("pointermove", handleMove);
-        window.removeEventListener("pointerup", handleUp);
-        window.removeEventListener("pointercancel", handleCancel);
-        pointerCleanupRef.current = null;
-        isDraggingRef.current = false;
-        playbackProgressRef.current = progressAtDragStartRef.current;
+        endDrag();
         setPlaybackProgress(progressAtDragStartRef.current);
       };
       pointerCleanupRef.current?.();
       window.addEventListener("pointermove", handleMove);
       window.addEventListener("pointerup", handleUp, { once: true });
       window.addEventListener("pointercancel", handleCancel, { once: true });
-      pointerCleanupRef.current = () => {
-        window.removeEventListener("pointermove", handleMove);
-        window.removeEventListener("pointerup", handleUp);
-        window.removeEventListener("pointercancel", handleCancel);
-      };
+      pointerCleanupRef.current = endDrag;
     },
     [disabled, getProgressFromClientX, previewSeek, commitSeek],
   );
