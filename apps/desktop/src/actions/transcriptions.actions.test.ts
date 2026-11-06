@@ -2163,7 +2163,7 @@ describe("retranscribeTranscription unstyled post-processing", () => {
       loadTranscriptionAudio.mockImplementationOnce(
         () =>
           new Promise((_resolve, reject) => {
-            failLoad = () => reject(new Error("test teardown"));
+            failLoad = (error) => reject(error);
           }),
       );
 
