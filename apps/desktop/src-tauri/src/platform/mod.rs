@@ -35,6 +35,8 @@ pub mod common;
 // `cargo test` on Windows, so it lives where it is tested on every platform.
 pub mod power_broadcast;
 
+pub mod audio_stage;
+
 #[cfg(target_os = "linux")]
 pub mod linux;
 #[cfg(target_os = "linux")]
