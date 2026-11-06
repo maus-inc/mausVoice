@@ -37,8 +37,10 @@ const REQUIRED_TRANSLATION_MESSAGES = [
   "styling_failed_because_reason_the_app_did_not_insert_the_tra",
   "styling_failed_because_reason_the_raw_transcript_is_availabl",
   "styling_failed_because_reason_the_raw_transcript_is_saved_in",
+  "styling_failed_because_reason_the_transcript_could_not_be_sa",
   "the_incomplete_styling_reply_was_discarded_at_the_model_s_ou",
   "the_invalid_styling_reply_was_discarded_and_the_raw_transcri",
+  "the_online_styling_reply_was_unusable_and_the_transcript_cou",
   "the_online_styling_reply_was_unusable_the_original_transcrip",
   "the_original_transcript_was_saved_because_the_online_styling",
   "the_post_processing_provider_returned_an_error",
@@ -69,6 +71,7 @@ const REQUIRED_MESSAGE_PLACEHOLDERS: Record<string, readonly string[]> = {
   styling_failed_because_reason_the_app_did_not_insert_the_tra: ["reason"],
   styling_failed_because_reason_the_raw_transcript_is_availabl: ["reason"],
   styling_failed_because_reason_the_raw_transcript_is_saved_in: ["reason"],
+  styling_failed_because_reason_the_transcript_could_not_be_sa: ["reason"],
 };
 
 type Messages = Record<string, string>;
@@ -380,6 +383,8 @@ describe("i18n catalogs", () => {
       "styling_failed_because_reason_the_raw_transcript_is_saved_in",
       "styling_failed_because_reason_the_app_did_not_insert_the_tra",
       "styling_failed_because_reason_the_raw_transcript_is_availabl",
+      "styling_failed_because_reason_the_transcript_could_not_be_sa",
+      "the_online_styling_reply_was_unusable_and_the_transcript_cou",
       "the_online_styling_reply_was_unusable_the_original_transcrip",
       "the_provider_reply_was_unusable_the_raw_transcript_is_availa",
       "could_not_copy_the_transcript_it_is_saved_in_your_history",
