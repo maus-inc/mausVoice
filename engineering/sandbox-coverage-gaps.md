@@ -90,7 +90,7 @@ Status is what an agent gets here after following `FETCH.md`, not what CI gets o
 | Desktop bundle, `tauri build --bundles`  | blocked                           | Tauri downloads linuxdeploy and the AppImage runtime at bundle time. Gap G14                                                                            |
 | WebDriver end to end                     | works with the second delivery    | G11 delivers `tauri-driver` 2.0.6 and `chromedriver`, wired by `FETCH.md` step 7c; `WebKitWebDriver` comes from the sysroot. Needs a built debug binary |
 | Visual verification with the preview app | works                             | `pnpm --filter @maus-inc/preview dev` on port 5193                                                                                                      |
-| Visual capture, `ui-capture`             | partial with the second delivery  | G9 delivers `ffmpeg`, `ffprobe` and `gifsicle` (step 7d). A Chromium is still absent, and the spec group G6 declines to build one                       |
+| Visual capture, `ui-capture`             | works, browser included           | G9 delivers `ffmpeg`, `ffprobe` and `gifsicle` (step 7d). A usable Chromium is obtained from npm, see the G9 section; `scripts/verify/` drives it       |
 | Secret scan over history                 | works with the second delivery    | G13 delivers `gitleaks` 8.18.0 in `system/tools/bin`, on `PATH` from step 6                                                                             |
 | Secret scan over config only             | works                             | `pnpm run test:secret-scan` and `node --test scripts/ci/*.test.mjs`                                                                                     |
 | Docs site build                          | works                             | astro, sharp arrives from npm                                                                                                                           |
@@ -110,9 +110,16 @@ Measured before the second delivery. `ffmpeg`, `ffprobe`, `gifsicle` and `tesser
 
 Delivered. The second delivery ships `system/tools/bin/ffmpeg` 7.0.2-static, `ffprobe` 7.0.2-static and `gifsicle` 1.95, each run under `env -i`. `system/tools/UIPIPE.txt` records the upstream URL and the sha256 for each. They sit beside `cmake` and `file`, so `FETCH.md` step 6 puts them on `PATH`; step 7d checks them. `tesseract` and its `eng.traineddata` are not vendored, and the `ui-capture` validation step skips the OCR round-trip and says so when tesseract is absent.
 
-Still blocked. A Chromium. The spec group G6 records the decision not to build one, so a recording that needs a browser still cannot run. The preview app remains the rendered surface.
+A Chromium is available after all, from a host the payload does not need. Measured on the Arena agent sandbox on 2026-11-07. `cdn.playwright.dev`, `storage.googleapis.com`, `dl.google.com` and `deb.debian.org` are still unroutable, so `playwright install` and every Google-hosted download still fail. `registry.npmjs.org` is routable, and the `@sparticuz/chromium` package (153.0.0, 67 MB) ships a brotli-compressed browser plus its shared libraries:
 
-Substitute when no browser is available. Inspect `apps/preview` in both themes and write down the inspection rather than claiming a recording.
+1. `npm install @sparticuz/chromium@153.0.0`
+2. Brotli-decompress `bin/chromium.br` to an executable (209,022,176 bytes, reports `Chromium 153.0.8010.0`).
+3. Brotli-decompress and untar `lib/al2023.tar.br` (12 shared libraries), `swiftshader.tar.br` and `fonts.tar.br`.
+4. Launch under `LD_LIBRARY_PATH=<libdir>:<dir>` with `--headless=new --no-sandbox --disable-gpu --no-zygote --single-process --disable-dev-shm-usage --remote-debugging-port=<port>`.
+
+The package's own `executablePath()` extracts nothing here, so the `.br` files are decompressed directly. One-shot `--dump-dom` and `--screenshot` hang even with a 90 s budget; the DevTools protocol socket is the only reliable interface, which is what `scripts/verify/cdp.mjs` uses. The extracted files live under `/tmp` and are wiped between turns, so the extraction has to be scripted rather than done once.
+
+With that browser, `scripts/verify/shot-mic-dialog.mjs` renders the real `MicrophoneDialog` and the real `MicrophoneReadinessSideEffects` against a fake Tauri bridge, measures structure, hit targets, contrast and overflow, captures light, dark and narrow screenshots, and exits non-zero on a problem.
 
 ### G10: model weights, delivered
 

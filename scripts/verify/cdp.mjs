@@ -1,0 +1,225 @@
+// Minimal Chrome DevTools Protocol driver.
+//
+// The sandbox blocks cdn.playwright.dev and storage.googleapis.com, so no
+// Playwright browser can be downloaded. It does reach registry.npmjs.org, and
+// @sparticuz/chromium ships a full Chromium inside the npm tarball. This file
+// drives that binary directly over CDP, which needs no client library.
+import { execFileSync, spawn } from "node:child_process";
+import { mkdtempSync, existsSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import http from "node:http";
+
+// Both the browser and its libraries live under /tmp, which this environment
+// wipes between turns. Rather than fail with a confusing spawn error, extract
+// them on demand the first time a driver runs. install-chromium.mjs is
+// idempotent, so a warm directory costs one directory check.
+const CHR_DIR = process.env.CHROMIUM_DIR || "/tmp/chr";
+const CHROME = process.env.CHROMIUM_PATH || join(CHR_DIR, "chromium");
+const LIB = join(CHR_DIR, "lib");
+
+if (!existsSync(CHROME)) {
+  const installer = join(import.meta.dirname, "install-chromium.mjs");
+  console.error(`No Chromium at ${CHROME}; extracting one …`);
+  execFileSync(process.execPath, [installer, "--dir", CHR_DIR], {
+    stdio: "inherit",
+  });
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function httpJson(port, path) {
+  return new Promise((resolve, reject) => {
+    const req = http.get(
+      { host: "127.0.0.1", port, path, timeout: 4000 },
+      (res) => {
+        let body = "";
+        res.on("data", (c) => (body += c));
+        res.on("end", () => {
+          try {
+            resolve(JSON.parse(body));
+          } catch (error) {
+            reject(new Error(`bad json from ${path}: ${error.message}`));
+          }
+        });
+      },
+    );
+    req.on("error", reject);
+    req.on("timeout", () => req.destroy(new Error("timeout")));
+  });
+}
+
+export async function launch({ port = 9333, width = 1280, height = 900 } = {}) {
+  if (!existsSync(CHROME)) {
+    throw new Error(`no chromium at ${CHROME}`);
+  }
+  const profile = mkdtempSync(join(tmpdir(), "cdp-"));
+  const proc = spawn(
+    CHROME,
+    [
+      "--headless=new",
+      "--no-sandbox",
+      "--disable-gpu",
+      "--no-zygote",
+      "--single-process",
+      "--disable-dev-shm-usage",
+      "--disable-software-rasterizer",
+      "--hide-scrollbars",
+      "--force-color-profile=srgb",
+      `--window-size=${width},${height}`,
+      `--remote-debugging-port=${port}`,
+      `--user-data-dir=${profile}`,
+      "about:blank",
+    ],
+    {
+      env: {
+        ...process.env,
+        LD_LIBRARY_PATH: `${LIB}:${process.env.LD_LIBRARY_PATH ?? ""}`,
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+
+  let logs = "";
+  proc.stdout.on("data", (d) => (logs += d));
+  proc.stderr.on("data", (d) => (logs += d));
+
+  // Wait for the debugging endpoint rather than sleeping a guessed interval.
+  const deadline = Date.now() + 30_000;
+  let version = null;
+  while (Date.now() < deadline) {
+    try {
+      version = await httpJson(port, "/json/version");
+      if (version?.webSocketDebuggerUrl) break;
+    } catch {
+      // not up yet
+    }
+    await sleep(250);
+  }
+  if (!version?.webSocketDebuggerUrl) {
+    proc.kill("SIGKILL");
+    throw new Error(
+      `chromium never opened its debugging port\n${logs.slice(-2000)}`,
+    );
+  }
+  return { proc, port, version, logs: () => logs };
+}
+
+/** A tab with a request/response CDP session over the raw WebSocket. */
+export async function newPage(port) {
+  const tab = await httpJson(port, "/json/new?about:blank").catch(async () => {
+    // Older builds need PUT for /json/new.
+    return new Promise((resolve, reject) => {
+      const req = http.request(
+        {
+          host: "127.0.0.1",
+          port,
+          path: "/json/new?about:blank",
+          method: "PUT",
+        },
+        (res) => {
+          let body = "";
+          res.on("data", (c) => (body += c));
+          res.on("end", () => resolve(JSON.parse(body)));
+        },
+      );
+      req.on("error", reject);
+      req.end();
+    });
+  });
+
+  const ws = new WebSocket(tab.webSocketDebuggerUrl);
+  await new Promise((resolve, reject) => {
+    ws.addEventListener("open", resolve, { once: true });
+    ws.addEventListener("error", () => reject(new Error("cdp socket failed")), {
+      once: true,
+    });
+  });
+
+  let nextId = 1;
+  const pending = new Map();
+  const listeners = new Map();
+  ws.addEventListener("message", (event) => {
+    const msg = JSON.parse(event.data);
+    if (msg.id && pending.has(msg.id)) {
+      const { resolve, reject } = pending.get(msg.id);
+      pending.delete(msg.id);
+      if (msg.error) reject(new Error(JSON.stringify(msg.error)));
+      else resolve(msg.result);
+      return;
+    }
+    if (msg.method) {
+      for (const fn of listeners.get(msg.method) ?? []) fn(msg.params);
+    }
+  });
+
+  const send = (method, params = {}) =>
+    new Promise((resolve, reject) => {
+      const id = nextId++;
+      pending.set(id, { resolve, reject });
+      ws.send(JSON.stringify({ id, method, params }));
+      setTimeout(() => {
+        if (pending.has(id)) {
+          pending.delete(id);
+          reject(new Error(`cdp timeout: ${method}`));
+        }
+      }, 30_000);
+    });
+
+  const on = (method, fn) => {
+    if (!listeners.has(method)) listeners.set(method, []);
+    listeners.get(method).push(fn);
+  };
+
+  const evaluate = async (expression) => {
+    const result = await send("Runtime.evaluate", {
+      expression,
+      awaitPromise: true,
+      returnByValue: true,
+      userGesture: true,
+    });
+    if (result.exceptionDetails) {
+      throw new Error(
+        `eval failed: ${result.exceptionDetails.exception?.description ?? result.exceptionDetails.text}`,
+      );
+    }
+    return result.result.value;
+  };
+
+  const goto = async (url) => {
+    await send("Page.enable");
+    await send("Runtime.enable");
+    await send("Page.navigate", { url });
+  };
+
+  const screenshot = async () => {
+    const { data } = await send("Page.captureScreenshot", {
+      format: "png",
+      captureBeyondViewport: false,
+    });
+    return Buffer.from(data, "base64");
+  };
+
+  const setViewport = async (width, height, scale = 1) =>
+    send("Emulation.setDeviceMetricsOverride", {
+      width,
+      height,
+      deviceScaleFactor: scale,
+      mobile: false,
+    });
+
+  const close = () => ws.close();
+
+  return {
+    send,
+    on,
+    evaluate,
+    goto,
+    screenshot,
+    setViewport,
+    close,
+    pageId: tab.id,
+  };
+}
+
+export { sleep };
