@@ -13,6 +13,7 @@ import {
   closeStreamingSocket,
   createBufferedChunkWriter,
   createStartupSettler,
+  describeProviderError,
 } from "./streaming-session.utils";
 import { getStartupAbortReason } from "./provider-startup.utils";
 
@@ -189,7 +190,7 @@ export const startAssemblyAIStreaming = async (
 
     const handleProviderError = (data: AssemblyAIMessage) => {
       const error = new Error(
-        String(data.error ?? data.message ?? "AssemblyAI rejected the session"),
+        describeProviderError(data, "AssemblyAI rejected the session"),
       );
       getLogger().error(`[${LOGGER_PREFIX}] Error from server:`, data);
       if (!settler.settled) {

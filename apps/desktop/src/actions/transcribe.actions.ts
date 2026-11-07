@@ -1118,27 +1118,32 @@ const getAppendedWarnings = (
   );
 };
 
-const appendWarningOccurrence = (
-  merged: string[],
-  currentCounts: Map<string, number>,
-  appendedCounts: Map<string, number>,
-  warning: string,
-): void => {
-  const count = (appendedCounts.get(warning) ?? 0) + 1;
-  appendedCounts.set(warning, count);
-  if (count > (currentCounts.get(warning) ?? 0)) merged.push(warning);
-};
+const getUnappliedWarningCount = (
+  previousCount: number,
+  currentCount: number,
+  appendedCount: number,
+): number =>
+  Math.max(0, appendedCount - Math.max(0, currentCount - previousCount));
 
 const mergeAppendedWarnings = (
+  previousWarnings: readonly string[],
   currentWarnings: readonly string[] | null | undefined,
   appendedWarnings: readonly string[],
 ): string[] => {
   const merged = [...(currentWarnings ?? [])];
+  const previousCounts = countWarnings(previousWarnings);
   const currentCounts = countWarnings(merged);
-  const appendedCounts = new Map<string, number>();
+  const appendedCounts = countWarnings(appendedWarnings);
 
-  for (const warning of appendedWarnings) {
-    appendWarningOccurrence(merged, currentCounts, appendedCounts, warning);
+  for (const [warning, appendedCount] of appendedCounts) {
+    const missingCount = getUnappliedWarningCount(
+      previousCounts.get(warning) ?? 0,
+      currentCounts.get(warning) ?? 0,
+      appendedCount,
+    );
+    for (let occurrence = 0; occurrence < missingCount; occurrence += 1) {
+      merged.push(warning);
+    }
   }
   return merged;
 };
@@ -1175,6 +1180,7 @@ export const appendTranscriptionWarnings = async (
       const current = draft.transcriptionById[transcriptionId];
       if (!current) return;
       current.warnings = mergeAppendedWarnings(
+        previousWarnings,
         current.warnings,
         appendedWarnings,
       );

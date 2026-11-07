@@ -850,6 +850,47 @@ describe("appendTranscriptionWarnings", () => {
     ]);
   });
 
+  it("preserves an appended warning that matches an existing occurrence", async () => {
+    seedRow(["delivery failed"]);
+
+    await appendTranscriptionWarnings("row-1", ["delivery failed"]);
+
+    expect(getAppState().transcriptionById["row-1"]?.warnings).toEqual([
+      "delivery failed",
+      "delivery failed",
+    ]);
+  });
+
+  it("preserves concurrent duplicate warnings when replies arrive out of order", async () => {
+    seedRow(["existing"]);
+    let resolveFirst!: (warnings: string[]) => void;
+    let resolveSecond!: (warnings: string[]) => void;
+    appendTranscriptionWarningsMock
+      .mockReturnValueOnce(
+        new Promise<string[]>((resolve) => {
+          resolveFirst = resolve;
+        }),
+      )
+      .mockReturnValueOnce(
+        new Promise<string[]>((resolve) => {
+          resolveSecond = resolve;
+        }),
+      );
+
+    const first = appendTranscriptionWarnings("row-1", ["delivery failed"]);
+    const second = appendTranscriptionWarnings("row-1", ["delivery failed"]);
+    resolveSecond(["existing", "delivery failed", "delivery failed"]);
+    await second;
+    resolveFirst(["existing", "delivery failed"]);
+    await first;
+
+    expect(getAppState().transcriptionById["row-1"]?.warnings).toEqual([
+      "existing",
+      "delivery failed",
+      "delivery failed",
+    ]);
+  });
+
   it("merges returned warnings without replacing a newer state row", async () => {
     seedRow(["existing"]);
     let resolveWrite!: (warnings: string[]) => void;

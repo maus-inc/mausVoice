@@ -19,6 +19,7 @@ import {
   closeStreamingSocket,
   createFinalizeBookkeeper,
   createStartupSettler,
+  describeProviderError,
 } from "./streaming-session.utils";
 import { getStartupAbortReason } from "./provider-startup.utils";
 
@@ -426,7 +427,7 @@ const startElevenLabsStreaming = async (
     const handleProviderError = (data: ElevenLabsMessage) => {
       getLogger().error("[ElevenLabs WebSocket] Error from server:", data);
       const error = new Error(
-        String(data.error ?? data.message ?? "ElevenLabs rejected the session"),
+        describeProviderError(data, "ElevenLabs rejected the session"),
       );
       if (!settler.settled) {
         settler.rejectStartup(error);
