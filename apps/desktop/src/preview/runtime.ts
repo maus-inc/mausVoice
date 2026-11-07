@@ -141,6 +141,24 @@ const isDenseStringArray = (value: unknown): value is string[] => {
   }
   return true;
 };
+
+const getWarningAppendArgs = (
+  args: WireRecord,
+): { id: string; warnings: string[] } => {
+  if (typeof args.id !== "string") {
+    throw new TypeError("transcription_append_warnings requires a string id");
+  }
+  if (!isDenseStringArray(args.warnings)) {
+    throw new TypeError(
+      "transcription_append_warnings requires an array of strings",
+    );
+  }
+  return { id: args.id, warnings: args.warnings };
+};
+
+const getStoredWarnings = (transcription: WireRecord): string[] =>
+  isDenseStringArray(transcription.warnings) ? transcription.warnings : [];
+
 const isValidLocalDateKey = (value: string): boolean => {
   try {
     dateFromLocalDateKey(value);
@@ -923,37 +941,13 @@ class PreviewRuntime {
     return handler ? handler() : this.invokeRemote(command, args);
   }
 
-  private getWarningAppendArgs(args: WireRecord): {
-    id: string;
-    warnings: string[];
-  } {
-    if (typeof args.id !== "string") {
-      throw new TypeError("transcription_append_warnings requires a string id");
-    }
-    if (!isDenseStringArray(args.warnings)) {
-      throw new TypeError(
-        "transcription_append_warnings requires an array of strings",
-      );
-    }
-    return { id: args.id, warnings: args.warnings };
-  }
-
-  private getStoredWarnings(transcription: WireRecord): string[] {
-    return isDenseStringArray(transcription.warnings)
-      ? transcription.warnings
-      : [];
-  }
-
   private appendTranscriptionWarnings(args: WireRecord): string[] {
-    const { id, warnings } = this.getWarningAppendArgs(args);
+    const { id, warnings } = getWarningAppendArgs(args);
     if (warnings.length === 0) return [];
 
     const transcription = this.database.transcriptions.get(id);
     if (!transcription) throw new Error("Transcription not found");
-    const updatedWarnings = [
-      ...this.getStoredWarnings(transcription),
-      ...warnings,
-    ];
+    const updatedWarnings = [...getStoredWarnings(transcription), ...warnings];
     this.database.transcriptions.set(id, {
       ...transcription,
       warnings: updatedWarnings,

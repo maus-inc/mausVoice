@@ -404,6 +404,9 @@ const startElevenLabsStreaming = async (
       message?: unknown;
     };
 
+    const getMessageType = (data: ElevenLabsMessage): string | undefined =>
+      data.message_type || data.type;
+
     const handleCommittedTranscript = (data: ElevenLabsMessage) => {
       const committedText = data.text || "";
       transcriptState.appendFinal(committedText);
@@ -450,7 +453,7 @@ const startElevenLabsStreaming = async (
     };
 
     const handleMessageData = (data: ElevenLabsMessage) => {
-      const messageType = data.message_type || data.type;
+      const messageType = getMessageType(data);
       getLogger().verbose(
         "[ElevenLabs WebSocket] Received message:",
         messageType,
