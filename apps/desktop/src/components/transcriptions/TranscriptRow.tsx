@@ -213,8 +213,8 @@ export const TranscriptionRow = ({
     [intl],
   );
 
-  const contextMenuItems = useMemo<ContextMenuItem[]>(
-    () => [
+  const contextMenuItems = useMemo<ContextMenuItem[]>(() => {
+    const items: ContextMenuItem[] = [
       {
         label: intl.formatMessage({ defaultMessage: "Copy text" }),
         onClick: () => handleCopyTranscript(transcription?.transcript || ""),
@@ -227,28 +227,37 @@ export const TranscriptionRow = ({
         label: intl.formatMessage({ defaultMessage: "Open details" }),
         onClick: handleDetailsOpen,
       },
-      {
+    ];
+    // Retranscribe replays the row's stored audio, so it is offered only
+    // where an audio snapshot exists. Incognito import memory records and
+    // failure rows stored with audio retention off have nothing to replay;
+    // the audio pill already gates its own retranscribe button the same way.
+    if (transcription?.audio) {
+      items.push({
         label: intl.formatMessage({ defaultMessage: "Retranscribe" }),
         onClick: () => openRetranscribeDialog(id),
-      },
+      });
+    }
+    items.push(
       { kind: "divider" },
       {
         label: intl.formatMessage({ defaultMessage: "Delete" }),
         danger: true,
         onClick: () => handleDeleteTranscript(id),
       },
-    ],
-    [
-      handleCopyTranscript,
-      handleCopyId,
-      handleDetailsOpen,
-      openRetranscribeDialog,
-      handleDeleteTranscript,
-      id,
-      intl,
-      transcription?.transcript,
-    ],
-  );
+    );
+    return items;
+  }, [
+    handleCopyTranscript,
+    handleCopyId,
+    handleDetailsOpen,
+    openRetranscribeDialog,
+    handleDeleteTranscript,
+    id,
+    intl,
+    transcription?.audio,
+    transcription?.transcript,
+  ]);
 
   return (
     <Box

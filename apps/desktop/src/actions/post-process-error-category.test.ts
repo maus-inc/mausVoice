@@ -115,6 +115,22 @@ describe("classifyPostProcessErrorCategory", () => {
     ).toBe(POST_PROCESS_ERROR_CATEGORY.rateLimit);
   });
 
+  it("classifies the axios timeout code as a timeout, not an abort", () => {
+    // axios reports its own `timeout` expiry as ECONNABORTED, and the abort
+    // rule substring-matches "aborted" inside that code. Without the timeout
+    // set claiming it first, users were told the request was cancelled when
+    // it actually ran out of clock.
+    expect(
+      classifyPostProcessErrorCategory({
+        code: "ECONNABORTED",
+        message: "timeout of 15000ms exceeded",
+      }),
+    ).toBe(POST_PROCESS_ERROR_CATEGORY.timedOut);
+    expect(classifyPostProcessErrorCategory({ code: "ECONNABORTED" })).toBe(
+      POST_PROCESS_ERROR_CATEGORY.timedOut,
+    );
+  });
+
   it("keeps an unexplained 429 neutral instead of calling it a rate limit", () => {
     expect(classifyPostProcessErrorCategory({ status: 429 })).toBe(
       POST_PROCESS_ERROR_CATEGORY.providerLimit,

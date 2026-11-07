@@ -64,7 +64,9 @@ above, so onboarding never executes an unreviewed future release.
 Pull requests fill `.github/pull_request_template.md`, and `pnpm run check:pr-body -- <file>` checks the
 shape of the body. Every record of a review round, a babysit poll or a CI log goes inside a
 collapsible block, so a long-running PR stays one screen of summary. The `PR Body Fold Check`
-workflow runs that command on every pull request open, edit, reopen and push. Every section is used, including the
+workflow runs that command on every pull request open, edit, reopen and push. The check judges the
+authored body and stops at the footer line; review bots append their summaries below the footer,
+and that text is exempt from every rule except the duplicate-footer count. Every section is used, including the
 verification gate with the head SHA, and a section is never deleted to avoid answering it. A UI
 change either carries a recording of the change or says which surface was inspected in
 `apps/preview` and what that inspection showed.
