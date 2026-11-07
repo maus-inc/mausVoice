@@ -56,6 +56,9 @@ export const MicrophoneDialog = () => {
     (state) => state.userPrefs?.microphoneLingerMs ?? 0,
   );
   const lingerOn = lingerMs > 0;
+  // A zero pre-roll is a deliberate choice: the user asked for a recording that
+  // starts exactly at the press. Hiding the slider then would leave no way back.
+  const prerollOn = prerollSeconds > 0;
 
   const [selected, setSelected] = useState<Nullable<string>>(savedPreference);
   const [hasChanges, setHasChanges] = useState(false);
@@ -204,36 +207,47 @@ export const MicrophoneDialog = () => {
             <Typography variant="body2" color="text.secondary">
               <FormattedMessage defaultMessage="Start dictating instantly by opening the microphone ahead of time. Your system shows its microphone-in-use indicator the whole time this is on." />
             </Typography>
-            {keepReady && (
-              <>
-                <Typography variant="body2" color="text.secondary">
-                  {heldState === "held" ? (
-                    <FormattedMessage defaultMessage="Held open now." />
-                  ) : heldState === "not_held" ? (
-                    <FormattedMessage defaultMessage="Not holding the microphone yet. It opens with your next recording, and stays open after." />
-                  ) : null}
+            {keepReady && heldState === "held" && (
+              <Typography variant="body2" color="text.secondary">
+                <FormattedMessage defaultMessage="Held open now." />
+              </Typography>
+            )}
+            {keepReady && heldState === "not_held" && (
+              <Typography variant="body2" color="text.secondary">
+                <FormattedMessage defaultMessage="Not holding the microphone yet, so a press still has to open it. The setting applies as soon as the device opens." />
+              </Typography>
+            )}
+            {keepReady && heldState === "unknown" && (
+              <Typography variant="body2" color="text.secondary">
+                <FormattedMessage defaultMessage="Checking the microphone..." />
+              </Typography>
+            )}
+            {/* Offered outside the keep-ready branch because it is not a
+                keep-ready setting. The pre-roll is what the next press keeps
+                from before it, which matters most when the device is opened at
+                that press: hiding it here left the control unreachable for
+                exactly the case where it does the most work. */}
+            {prerollOn && (
+              <Stack spacing={0.5}>
+                <Typography variant="body2">
+                  <FormattedMessage defaultMessage="Audio kept before the press" />
                 </Typography>
-                <Stack spacing={0.5}>
-                  <Typography variant="body2">
-                    <FormattedMessage defaultMessage="Audio kept before the press" />
-                  </Typography>
-                  <ElasticSlider
-                    value={prerollSeconds}
-                    min={0}
-                    max={MAX_MICROPHONE_PREROLL_SECONDS}
-                    step={0.1}
-                    valueLabelDisplay="auto"
-                    valueLabelFormat={(value) => `${value.toFixed(1)} s`}
-                    ariaLabel={intl.formatMessage({
-                      defaultMessage: "Audio kept before the press",
-                    })}
-                    onCommit={(value) => setMicrophonePrerollSeconds(value)}
-                  />
-                  <Typography variant="caption" color="text.secondary">
-                    <FormattedMessage defaultMessage="How much speech to keep from just before you press, so a word you start early is not cut off." />
-                  </Typography>
-                </Stack>
-              </>
+                <ElasticSlider
+                  value={prerollSeconds}
+                  min={0}
+                  max={MAX_MICROPHONE_PREROLL_SECONDS}
+                  step={0.1}
+                  valueLabelDisplay="auto"
+                  valueLabelFormat={(value) => `${value.toFixed(1)} s`}
+                  ariaLabel={intl.formatMessage({
+                    defaultMessage: "Audio kept before the press",
+                  })}
+                  onCommit={(value) => setMicrophonePrerollSeconds(value)}
+                />
+                <Typography variant="caption" color="text.secondary">
+                  <FormattedMessage defaultMessage="How much speech to keep from just before you press, so a word you start early is not cut off." />
+                </Typography>
+              </Stack>
             )}
           </Stack>
 

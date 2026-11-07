@@ -189,10 +189,31 @@ describe("MicrophoneDialog readiness settings", () => {
     );
   });
 
-  it("shows the pre-roll and the real held state only while keeping ready", async () => {
+  it("offers the pre-roll even when keeping ready is off", async () => {
     await renderDialog();
 
+    // The pre-roll matters most with keep-ready off: the device is opened at the
+    // press, so anything spoken before it is otherwise lost. Hiding the control
+    // here left it unreachable for the case where it does the most work.
+    expect(text()).toContain("Audio kept before the press");
+  });
+
+  it("hides the pre-roll when the user set it to zero", async () => {
+    await renderDialog();
+
+    await act(async () => {
+      produceAppState((draft) => {
+        draft.userPrefs = prefs({ microphonePrerollSeconds: 0 });
+      });
+    });
+
+    // A zero is a choice, and the switch that brings it back lives in the same
+    // place the slider was.
     expect(text()).not.toContain("Audio kept before the press");
+  });
+
+  it("shows the real held state only while keeping ready", async () => {
+    await renderDialog();
 
     await act(async () => {
       produceAppState((draft) => {
@@ -227,7 +248,7 @@ describe("MicrophoneDialog readiness settings", () => {
       });
     });
 
-    expect(text()).toContain("Not holding the microphone yet.");
+    expect(text()).toContain("Not holding the microphone yet");
     expect(text()).not.toContain("Held open now.");
   });
 
