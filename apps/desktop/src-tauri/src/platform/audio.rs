@@ -182,7 +182,9 @@ mod cpal_impl {
     ///
     /// The returned ring is a zero-capacity stand-in rather than a clone of the
     /// shared one, so `warm_ring` can decide afterwards whether this stream
-    /// should stay open at all without the caller having to thread a flag.
+    /// should stay open at all without the caller having to thread a flag. The
+    /// ring a cold start actually collects into is the manager's shared one,
+    /// sized by `try_start_on_device` from the device's own rate.
     fn cold_start_seed() -> (Vec<f32>, Arc<Mutex<Preroll>>) {
         (Vec::new(), Arc::new(Mutex::new(Preroll::new(0))))
     }
@@ -198,6 +200,21 @@ mod cpal_impl {
         } else {
             None
         }
+    }
+
+    /// Where a recording's audio should go once it stops.
+    ///
+    /// Holding and the pre-roll are separate decisions that always travel
+    /// together, and both need the shared ring, so they are passed as one value
+    /// rather than as three arguments every call site has to keep in step.
+    struct HoldPlan<'a> {
+        /// Whether the stream should stay open after this recording stops.
+        hold_after_stop: bool,
+        /// How much audio from before the press to keep.
+        preroll: Duration,
+        /// The ring a held stream collects into, sized by the start itself from
+        /// the device's own rate.
+        ring: &'a Arc<Mutex<Preroll>>,
     }
 
     /// Stops a stream and drops it.
@@ -825,6 +842,11 @@ mod cpal_impl {
         }
 
         /// Whether a stopping recording should leave its stream open.
+        /// The pre-roll the settings ask for, as a duration.
+        fn preroll_requested(&self) -> Duration {
+            Duration::from_micros(self.preroll_micros.load(Ordering::SeqCst))
+        }
+
         fn hold_after_stop(&self) -> bool {
             self.linger_millis() > 0
         }
@@ -1057,7 +1079,11 @@ mod cpal_impl {
                 Some(&cached.device_label),
                 level_emitter,
                 chunk_emitter,
-                hold_after_stop,
+                HoldPlan {
+                    hold_after_stop,
+                    preroll: self.preroll_requested(),
+                    ring: &self.preroll,
+                },
                 trace,
             );
 
@@ -1176,7 +1202,11 @@ mod cpal_impl {
                     chunk_emitter.clone(),
                     preferred_trimmed.as_deref(),
                     preferred_normalized.as_deref(),
-                    hold_after_stop,
+                    HoldPlan {
+                        hold_after_stop,
+                        preroll: self.preroll_requested(),
+                        ring: &self.preroll,
+                    },
                     &mut trace,
                 ) {
                     Ok((active, device_name)) => {
@@ -2211,7 +2241,7 @@ mod cpal_impl {
         device_name: Option<&str>,
         level_emitter: Option<Arc<LevelEmitter>>,
         chunk_emitter: Option<Arc<ChunkEmitter>>,
-        hold_after_stop: bool,
+        hold: HoldPlan<'_>,
         trace: &mut AudioStartupTrace,
     ) -> Result<ActiveRecording, RecordingError> {
         let label = device_name.unwrap_or(UNKNOWN_DEVICE_LABEL);
@@ -2225,7 +2255,22 @@ mod cpal_impl {
         let channels = cmp::max(stream_config.channels as usize, 1);
         trace.mark(AudioStartupStage::DeviceResolved);
 
-        let (seed, ring) = cold_start_seed();
+        let (seed, _unused_ring) = cold_start_seed();
+
+        // The ring has to be ready before the stream starts, not after the
+        // recording stops. It was sized only on the warm path, so a cold start
+        // left it at zero capacity: nothing accumulated during the recording, and
+        // the "leave the stream warm" step handed the next press a ring that
+        // could never hold anything. The next recording then started with no
+        // pre-roll, and so did every recording after it, which made the setting
+        // do nothing at all for anyone who had not turned on keep-ready.
+        //
+        // Its capacity is a sample count, so it is sized from this device's rate.
+        if let Ok(mut ring) = hold.ring.lock() {
+            ring.cap = preroll_capacity(hold.preroll, sample_rate);
+            ring.clear();
+        }
+
         let sink = StreamSink::new(SinkMode::Discard);
         let stream = build_sink_stream(
             device,
@@ -2246,7 +2291,7 @@ mod cpal_impl {
         Ok(ActiveRecording {
             stream: Some(stream),
             sink: Some(sink),
-            preroll_after_stop: warm_ring(&ring, hold_after_stop),
+            preroll_after_stop: warm_ring(hold.ring, hold.hold_after_stop),
             start: Instant::now(),
             buffer: Some(buffer),
             sample_rate,
@@ -2272,7 +2317,7 @@ mod cpal_impl {
         chunk_emitter: Option<Arc<ChunkEmitter>>,
         preferred_label: Option<&str>,
         preferred_normalized: Option<&str>,
-        hold_after_stop: bool,
+        hold: HoldPlan<'_>,
         trace: &mut AudioStartupTrace,
     ) -> Result<(ActiveRecording, String), RecordingError> {
         let default_output_name = host
@@ -2314,7 +2359,11 @@ mod cpal_impl {
                 Some(label),
                 level_emitter.clone(),
                 chunk_emitter.clone(),
-                hold_after_stop,
+                HoldPlan {
+                    hold_after_stop: hold.hold_after_stop,
+                    preroll: hold.preroll,
+                    ring: hold.ring,
+                },
                 trace,
             ) {
                 Ok(active) => active,
@@ -3067,6 +3116,49 @@ mod cpal_impl {
             assert!(manager.hold_after_stop());
             assert_eq!(manager.pending_linger(), None);
             assert_eq!(manager.linger_ms.load(Ordering::SeqCst), WARM_FOREVER_MS);
+        }
+
+        /// The ring a cold start collects into is sized from the device rate.
+        ///
+        /// Regression: only the warm path sized it, so a cold start left the
+        /// shared ring at capacity zero. Nothing accumulated, so the stream that
+        /// was left warm at stop handed the next press an empty ring: the
+        /// pre-roll silently did nothing for anyone who had not turned on
+        /// keep-ready, and the setting looked like it worked because the slider
+        /// moved.
+        #[test]
+        fn a_cold_start_sizes_the_ring_it_collects_into() {
+            let manager = RecordingManager::new();
+            manager.set_preroll(Duration::from_millis(500));
+
+            // What a cold start does before its stream starts capturing.
+            let sample_rate = 48_000;
+            {
+                let mut ring = manager.preroll.lock().unwrap();
+                ring.cap = preroll_capacity(manager.preroll_requested(), sample_rate);
+                ring.clear();
+            }
+
+            // Half a second at 48 kHz is 24 000 samples, and the ring accepts
+            // them: with capacity zero `push` drops everything and the count
+            // stays at zero.
+            manager.preroll.lock().unwrap().push(&vec![0.1; 24_000]);
+            assert_eq!(manager.preroll.lock().unwrap().len(), 24_000);
+
+            // Past the cap the oldest samples go, not the whole ring.
+            manager.preroll.lock().unwrap().push(&vec![0.2; 1_000]);
+            assert_eq!(manager.preroll.lock().unwrap().len(), 24_000);
+        }
+
+        #[test]
+        fn a_zero_pre_roll_keeps_nothing_even_after_a_cold_start() {
+            let manager = RecordingManager::new();
+            manager.set_preroll(Duration::ZERO);
+
+            let mut ring = manager.preroll.lock().unwrap();
+            ring.cap = preroll_capacity(manager.preroll_requested(), 48_000);
+            ring.push(&[0.1; 100]);
+            assert_eq!(ring.len(), 0);
         }
 
         #[test]
