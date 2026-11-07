@@ -1,151 +1,232 @@
-import { BuildRounded } from "@mui/icons-material";
-import { Box, Stack, Typography } from "@mui/material";
-import { keyframes, useTheme } from "@mui/material/styles";
-import Markdown from "react-markdown";
-import { FormattedMessage } from "react-intl";
-import remarkGfm from "remark-gfm";
+import { useCallback, useMemo, useState } from "react";
+import { Button, Stack } from "@mui/material";
+import { useIntl } from "react-intl";
+import { showErrorSnackbar, showSnackbar } from "../../actions/app.actions";
+import {
+  editAndResend,
+  laterMessagesHaveToolActivity,
+} from "../../actions/chat.actions";
+import { getPendingPasteReview } from "../../actions/pending-paste-review.actions";
+import { useNoHoverPointer } from "../../styles/motion";
+import { getLogger } from "../../utils/log.utils";
 import { useAppStore } from "../../store";
-import { OverflowTypography } from "../common/OverflowTypography";
-import { AgentActivity } from "./AgentActivity";
+import {
+  isEditableTarget,
+  useContextMenu,
+  type ContextMenuItem,
+} from "../common/ContextMenu";
+import { PendingPasteReviewBubble } from "./PendingPasteReviewBubble";
+import { ToolResultPart, useMessageParts } from "./ChatMessageParts";
+import {
+  ChatMessageContent,
+  MessageEditForm,
+  shouldRenderMessage,
+} from "./ChatMessageContent";
 
-const thinkingShimmer = keyframes`
-  0% { background-position: 200% 50%; }
-  100% { background-position: -200% 50%; }
-`;
-
-type ChatMessageBubbleProps = {
-  id: string;
-};
-
-export const ChatMessageBubble = ({ id }: ChatMessageBubbleProps) => {
-  const theme = useTheme();
-  const message = useAppStore((s) => s.chatMessageById[id]);
-  const isStreaming = useAppStore((s) => !!s.streamingMessageById[id]);
-  if (!message) {
-    return null;
-  }
-
-  const metadata = message.metadata as Record<string, unknown> | null;
-
-  if (metadata?.type === "tool-result") {
-    return (
-      <ToolResultBubble
-        toolName={metadata.toolName as string}
-        reason={metadata.reason as string | undefined}
-      />
-    );
-  }
-
-  const isEmpty = !message.content?.trim();
-  if (message.role === "assistant" && isEmpty && !isStreaming) return null;
-
-  const isMe = message.role === "user";
-
+/**
+ * Visible per-message actions.
+ *
+ * These used to live only in the right-click menu, which made them
+ * undiscoverable and unreachable without a pointer. The context menu is kept
+ * for the same actions, but this row is the primary affordance: it appears on
+ * hover, on keyboard focus, and at rest under `noHoverQuery` so a touch device
+ * is not left with an invisible control.
+ */
+const MessageActions = ({
+  items,
+  visible,
+}: {
+  items: ReadonlyArray<{ key: string; label: string; run: () => void }>;
+  visible: boolean;
+}) => {
+  const noHover = useNoHoverPointer();
   return (
-    <Stack>
-      <AgentActivity messageId={id} />
-      <Stack
-        direction="row"
-        sx={{
-          justifyContent: isMe ? "flex-end" : "flex-start",
-        }}
-      >
-        <Box
-          sx={{
-            maxWidth: "75%",
-            px: 2,
-            py: 1,
-            borderRadius: 1,
-            bgcolor: isMe ? "primary.main" : "action.hover",
-            color: isMe ? "primary.contrastText" : "text.primary",
-            "& p": { m: 0 },
-            "& p + p": { mt: 1 },
-            "& pre": {
-              my: 1,
-              p: 1,
-              borderRadius: 0.5,
-              bgcolor: "action.selected",
-              overflow: "auto",
-            },
-            "& code": {
-              fontSize: "0.85em",
-            },
-            "& ul, & ol": { my: 0.5, pl: 2.5 },
-            "& table": {
-              borderCollapse: "collapse",
-              my: 1,
-              width: "100%",
-            },
-            "& th, & td": {
-              border: 1,
-              borderColor: "divider",
-              px: 1,
-              py: 0.5,
-              textAlign: "left",
-            },
-            "& th": {
-              bgcolor: "action.selected",
-              fontWeight: 600,
-            },
-            fontSize: "0.875rem",
-          }}
+    <Stack
+      direction="row"
+      spacing={0.25}
+      sx={{
+        mt: 0.5,
+        // Faded, never hidden. `visibility: hidden` removes the element's hit
+        // box, which makes the row impossible to hover, impossible to focus,
+        // and invisible to assistive technology. Fading keeps the row laid out
+        // and focusable; only the pointer path is closed while it is idle.
+        opacity: visible || noHover ? 1 : 0,
+        pointerEvents: visible || noHover ? "auto" : "none",
+        transition: "opacity 120ms ease",
+      }}
+    >
+      {items.map((item) => (
+        <Button
+          key={item.key}
+          size="small"
+          variant="text"
+          sx={{ minWidth: 0, px: 0.75, py: 0.25, color: "text.secondary" }}
+          onClick={item.run}
         >
-          {isEmpty ? (
-            <Typography
-              variant="body2"
-              sx={{
-                width: "fit-content",
-                fontWeight: 500,
-                color: "transparent",
-                backgroundImage: `linear-gradient(90deg, rgb(${theme.vars?.palette.text.primaryChannel} / 0.35) 0%, rgb(${theme.vars?.palette.text.primaryChannel} / 0.9) 50%, rgb(${theme.vars?.palette.text.primaryChannel} / 0.35) 100%)`,
-                backgroundSize: "200% 100%",
-                WebkitBackgroundClip: "text",
-                backgroundClip: "text",
-                animation: `${thinkingShimmer} 1.6s linear infinite`,
-              }}
-            >
-              <FormattedMessage defaultMessage="Thinking" />
-            </Typography>
-          ) : (
-            <Markdown remarkPlugins={[remarkGfm]}>{message.content}</Markdown>
-          )}
-        </Box>
-      </Stack>
+          {item.label}
+        </Button>
+      ))}
     </Stack>
   );
 };
 
-const ToolResultBubble = ({
-  toolName,
-  reason,
-}: {
-  toolName: string;
-  reason?: string;
-}) => {
-  const toolInfo = useAppStore((s) => s.toolInfoById[toolName]);
+type ChatMessageBubbleProps = { id: string };
+
+export const ChatMessageBubble = ({ id }: ChatMessageBubbleProps) => {
+  const intl = useIntl();
+  const ctxMenu = useContextMenu();
+  const { message, parts, permissions, canRetry } = useMessageParts(id);
+  const isStreaming = useAppStore((s) => Boolean(s.streamingMessageById[id]));
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [confirmDrop, setConfirmDrop] = useState(false);
+
+  const content = message?.content ?? "";
+  const copyAction = useMemo(() => {
+    if (!content.trim()) return null;
+    return async () => {
+      try {
+        await navigator.clipboard.writeText(content);
+        showSnackbar(
+          intl.formatMessage({ defaultMessage: "Copied successfully" }),
+          { mode: "success" },
+        );
+      } catch (error) {
+        showErrorSnackbar(error);
+      }
+    };
+  }, [content, intl]);
+
+  const startEdit = useCallback(() => {
+    setDraft(content);
+    setConfirmDrop(false);
+    setEditing(true);
+  }, [content]);
+
+  const actions = useMemo(
+    () =>
+      [
+        copyAction
+          ? {
+              key: "copy",
+              label: intl.formatMessage({ defaultMessage: "Copy message" }),
+              run: copyAction,
+            }
+          : null,
+        message?.role === "user"
+          ? {
+              key: "edit",
+              label: intl.formatMessage({ defaultMessage: "Edit and resend" }),
+              run: startEdit,
+            }
+          : null,
+      ].filter((item): item is NonNullable<typeof item> => item !== null),
+    [copyAction, intl, message?.role, startEdit],
+  );
+
+  // Both affordances read from one list, so they cannot drift apart.
+  // Hover and focus are tracked on the bubble, not on the action row. An idle
+  // row has no pointer events, so a handler attached to it could never fire;
+  // the bubble is always a hit target.
+  const [actionsVisible, setActionsVisible] = useState(false);
+  // The row would fight the open editor for the same space, and an empty
+  // message has nothing to copy or resend.
+  const showActions = !editing && actions.length > 0;
+
+  const contextMenuItems = useMemo<ContextMenuItem[]>(
+    () =>
+      actions.map((action) => ({
+        label: action.label,
+        onClick: () => void action.run(),
+      })),
+    [actions],
+  );
+
+  if (!message) {
+    return null;
+  }
+
+  const onlyPart = parts.length === 1 ? parts[0] : undefined;
+  if (onlyPart?.kind === "tool-result") {
+    return <ToolResultPart part={onlyPart} />;
+  }
+
+  // The saved Paste review owns its whole row: it is stored as an empty system
+  // message, so both the empty-message guards below and the generic content
+  // renderer would leave it invisible. Routed ahead of both, and before the
+  // context menu, which offers nothing meaningful for a message the user cannot
+  // edit and whose content is empty.
+  const pendingPasteReview = getPendingPasteReview(message.metadata);
+  if (pendingPasteReview) {
+    return <PendingPasteReviewBubble message={message} />;
+  }
+
+  if (!shouldRenderMessage(message, parts, isStreaming, canRetry)) return null;
+
+  const saveEdit = () => {
+    const text = draft.trim();
+    if (!text) return;
+    if (
+      !confirmDrop &&
+      laterMessagesHaveToolActivity(message.conversationId, id)
+    ) {
+      setConfirmDrop(true);
+      return;
+    }
+    setEditing(false);
+    setConfirmDrop(false);
+    void editAndResend(message.conversationId, id, text).catch((error) => {
+      // The edit already left the UI; surface the failure instead of a silent
+      // rejection, and reopen the editor so the text is not lost.
+      getLogger().error("Failed to edit and resend message");
+      showErrorSnackbar(error);
+      setDraft(text);
+      setEditing(true);
+    });
+  };
 
   return (
     <Stack
-      direction="row"
-      spacing={0.75}
-      sx={{
-        alignItems: "center",
-        px: 0.5,
-        minWidth: 0,
-        overflow: "hidden",
+      onMouseEnter={() => setActionsVisible(true)}
+      onMouseLeave={() => setActionsVisible(false)}
+      onFocus={() => setActionsVisible(true)}
+      onBlur={() => setActionsVisible(false)}
+      onContextMenu={(e) => {
+        // Yield right-clicks on editable text to the provider's clipboard menu.
+        if (isEditableTarget(e.target)) return;
+        if (contextMenuItems.length === 0) return;
+        ctxMenu.handleContextMenu(e.nativeEvent, contextMenuItems);
       }}
     >
-      <BuildRounded
-        sx={{ fontSize: 14, color: "text.secondary", flexShrink: 0 }}
+      <ChatMessageContent
+        parts={parts}
+        permissions={permissions}
+        isStreaming={isStreaming}
+        isMe={message.role === "user"}
+        canRetry={canRetry}
+        conversationId={message.conversationId}
+        editor={
+          editing ? (
+            <MessageEditForm
+              draft={draft}
+              confirmDrop={confirmDrop}
+              onChange={(value) => {
+                setDraft(value);
+                setConfirmDrop(false);
+              }}
+              onCancel={() => {
+                setEditing(false);
+                setConfirmDrop(false);
+              }}
+              onSave={saveEdit}
+            />
+          ) : null
+        }
       />
-      <OverflowTypography
-        variant="caption"
-        color="text.secondary"
-        sx={{ minWidth: 0 }}
-      >
-        {toolInfo?.description ?? toolName}
-        {reason ? ` — ${reason}` : ""}
-      </OverflowTypography>
+      {showActions ? (
+        <MessageActions items={actions} visible={actionsVisible} />
+      ) : null}
+      {ctxMenu.renderMenu()}
     </Stack>
   );
 };

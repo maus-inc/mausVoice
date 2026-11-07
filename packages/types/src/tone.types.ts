@@ -2,7 +2,21 @@ import { FiremixTimestamp } from "@firemix/core";
 import z from "zod";
 import { Replace } from "./common.types";
 
-export type DatabaseTone = {
+/**
+ * Optional structured hints for a style.  They are deliberately additive so
+ * tones created by older versions (which only contain a free-form prompt) keep
+ * working without a migration at the API boundary.
+ */
+export type ToneStructuredFields = {
+  /** A human-readable grouping such as "writing", "developer", or "notes". */
+  category?: string;
+  /** A short output-size hint, for example "1-3 sentences" or "5 bullets". */
+  outputLength?: string;
+  /** Optional few-shot example shown to the post-processing model. */
+  exampleInputOutput?: string;
+};
+
+export type DatabaseTone = ToneStructuredFields & {
   id: string;
   name: string;
   description?: string;
@@ -39,5 +53,8 @@ export const ToneZod = z
     shouldDisablePostProcessing: z.boolean().optional(),
     systemPromptTemplate: z.string().optional(),
     isTemplateTone: z.boolean().optional(),
+    category: z.string().optional(),
+    outputLength: z.string().optional(),
+    exampleInputOutput: z.string().optional(),
   })
   .strict() satisfies z.ZodType<Tone>;

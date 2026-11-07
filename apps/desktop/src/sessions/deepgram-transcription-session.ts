@@ -1,317 +1,257 @@
-import { convertFloat32ToPCM16 } from "@maus-inc/voice-ai";
-import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { getAppState } from "../store";
-import {
-  StopRecordingResponse,
-  TranscriptionSession,
-  TranscriptionSessionResult,
-} from "../types/transcription-session.types";
 import { buildDeepgramWebSocketUrl } from "../utils/deepgram.utils";
+import { getLogger, redactQueryParamValues } from "../utils/log.utils";
+import {
+  buildProviderVocabulary,
+  collectDictionaryEntries,
+  DEEPGRAM_KEYTERM_BUDGET,
+} from "../utils/prompt.utils";
 import { loadMyEffectiveDictationLanguage } from "../utils/user.utils";
+import { BaseApiTranscriptionSession } from "./base-api-transcription-session";
+import { createTranscriptAccumulator } from "./transcript-accumulator.utils";
+import { createAudioChunkBuffer } from "./transcription-stream.utils";
+import {
+  attachStreamingSocketHandlers,
+  closeStreamingSocket,
+  createBufferedChunkWriter,
+  createFinalizeBookkeeper,
+  createStartupSettler,
+} from "./streaming-session.utils";
+import { getStartupAbortReason } from "./provider-startup.utils";
 
 type DeepgramStreamingSession = {
   finalize: () => Promise<string>;
   cleanup: () => void;
+  writeAudioChunk: (chunk: Float32Array) => void;
 };
+
+const LOGGER_PREFIX = "Deepgram WebSocket";
 
 const startDeepgramStreaming = async (
   apiKey: string,
   sampleRate: number,
   language: string,
+  keyterms: string[],
   onInterimResult?: (segment: string) => void,
+  signal?: AbortSignal,
 ): Promise<DeepgramStreamingSession> => {
-  console.log("[Deepgram WebSocket] Starting with sample rate:", sampleRate);
-  const MIN_CHUNK_DURATION_MS = 20;
-  const MAX_CHUNK_DURATION_MS = 100;
-  const minSamplesPerChunk = Math.max(
-    1,
-    Math.ceil((sampleRate * MIN_CHUNK_DURATION_MS) / 1000),
-  );
-  const maxSamplesPerChunk = Math.max(
-    minSamplesPerChunk,
-    Math.ceil((sampleRate * MAX_CHUNK_DURATION_MS) / 1000),
+  getLogger().verbose(
+    `[${LOGGER_PREFIX}] Starting with sample rate:`,
+    sampleRate,
   );
 
   let ws: WebSocket | null = null;
-  let unlisten: UnlistenFn | null = null;
-  let finalTranscript = "";
-  let partialTranscript = "";
   let isFinalized = false;
-  let receivedChunkCount = 0;
-  let sentChunkCount = 0;
-  let pendingSampleCount = 0;
-  let pendingChunks: Float32Array[] = [];
+  // A server rejection that arrives after startup has settled, remembered so
+  // finalize can surface it as a failure instead of returning a warning-free
+  // empty transcript.
+  let sessionError: Error | null = null;
+  const transcriptState = createTranscriptAccumulator();
 
-  const getText = () => {
-    return (
-      finalTranscript +
-      (partialTranscript
-        ? (finalTranscript ? " " : "") + partialTranscript
-        : "")
-    );
-  };
+  const buffer = createAudioChunkBuffer(() => ws, {
+    sampleRate,
+    minChunkDurationMs: 20,
+    maxChunkDurationMs: 100,
+    loggerPrefix: LOGGER_PREFIX,
+  });
 
-  const resetBuffers = () => {
-    pendingChunks = [];
-    pendingSampleCount = 0;
-  };
-
-  const drainSamples = (targetCount: number): Float32Array => {
-    if (targetCount <= 0) {
-      return new Float32Array(0);
-    }
-    const output = new Float32Array(targetCount);
-    let filled = 0;
-
-    while (filled < targetCount && pendingChunks.length > 0) {
-      const current = pendingChunks[0];
-      const remaining = targetCount - filled;
-      if (current.length <= remaining) {
-        output.set(current, filled);
-        filled += current.length;
-        pendingChunks.shift();
-      } else {
-        output.set(current.subarray(0, remaining), filled);
-        pendingChunks[0] = current.subarray(remaining);
-        filled += remaining;
-      }
-    }
-
-    pendingSampleCount = Math.max(0, pendingSampleCount - filled);
-    return filled === targetCount ? output : output.subarray(0, filled);
-  };
-
-  const flushPendingSamples = (force = false) => {
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-      return;
-    }
-
-    while (
-      pendingSampleCount >= minSamplesPerChunk ||
-      (force && pendingSampleCount > 0)
-    ) {
-      const available = pendingSampleCount;
-      let chunkSize = available;
-      if (available >= maxSamplesPerChunk) {
-        chunkSize = maxSamplesPerChunk;
-      } else if (available < minSamplesPerChunk && !force) {
-        break;
-      }
-
-      let chunk = drainSamples(chunkSize);
-      if (force && chunk.length > 0 && chunk.length < minSamplesPerChunk) {
-        const padded = new Float32Array(minSamplesPerChunk);
-        padded.set(chunk);
-        chunk = padded;
-      }
-
-      if (chunk.length === 0) {
-        break;
-      }
-
-      try {
-        const pcm16 = convertFloat32ToPCM16(chunk);
-        ws.send(pcm16);
-        sentChunkCount++;
-        if (sentChunkCount <= 3 || sentChunkCount % 10 === 0) {
-          const durationMs = (chunk.length / sampleRate) * 1000;
-          console.log(
-            `[Deepgram WebSocket] Sent chunk #${sentChunkCount} (${chunk.length} samples ~${durationMs.toFixed(1)} ms, ${pcm16.byteLength} bytes)`,
-          );
-        }
-      } catch (error) {
-        console.error(
-          "[Deepgram WebSocket] Error sending buffered chunk:",
-          error,
-        );
-        break;
-      }
-    }
-  };
+  const getText = () => transcriptState.text();
 
   const cleanup = () => {
-    if (unlisten) {
-      unlisten();
-      unlisten = null;
-    }
-    if (ws && ws.readyState !== WebSocket.CLOSED) {
-      ws.close();
-      ws = null;
-    }
-    resetBuffers();
+    // Detach before closing: a socket that fires `onclose` synchronously
+    // inside close() re-enters cleanup and must observe null here.
+    const socket = ws;
+    ws = null;
+    closeStreamingSocket(socket, () => buffer.reset(), LOGGER_PREFIX);
   };
 
-  let finalizeResolver: ((text: string) => void) | null = null;
-  let finalizeTimeout: ReturnType<typeof setTimeout> | null = null;
+  const bookkeeper = createFinalizeBookkeeper({
+    cleanup,
+    getText,
+    loggerPrefix: LOGGER_PREFIX,
+  });
 
   const finalize = (): Promise<string> => {
-    return new Promise((resolveFinalize) => {
-      console.log(
-        "[Deepgram WebSocket] Finalize called, isFinalized:",
+    return new Promise((resolveFinalize, rejectFinalize) => {
+      // A rejection that landed after startup left the socket unable to
+      // deliver a transcript. Settling such a finalize with "" would produce a
+      // warning-free empty result that bypasses failed-audio recovery, so a
+      // rejected session with no transcript settles as a failure instead.
+      // Transcript text already accumulated is still returned.
+      const settleFinalize = () => {
+        const text = getText();
+        if (sessionError && !text) {
+          rejectFinalize(sessionError);
+          return;
+        }
+        resolveFinalize(text);
+      };
+
+      getLogger().verbose(
+        `[${LOGGER_PREFIX}] Finalize called, isFinalized:`,
         isFinalized,
         "ws state:",
         ws?.readyState,
       );
       if (isFinalized) {
-        console.log(
-          "[Deepgram WebSocket] Already finalized, returning transcript",
+        getLogger().verbose(
+          `[${LOGGER_PREFIX}] Already finalized, returning transcript`,
         );
-        resolveFinalize(getText());
+        settleFinalize();
         return;
       }
 
       isFinalized = true;
-      finalizeResolver = resolveFinalize;
-      flushPendingSamples(true);
-      console.log("[Deepgram WebSocket] Total chunks sent:", sentChunkCount);
+      buffer.flush(true);
+      getLogger().verbose(
+        `[${LOGGER_PREFIX}] Total chunks sent:`,
+        buffer.sentChunkCount(),
+      );
 
       if (ws && ws.readyState === WebSocket.OPEN) {
-        console.log("[Deepgram WebSocket] Sending CloseStream message...");
+        getLogger().verbose(
+          `[${LOGGER_PREFIX}] Sending CloseStream message...`,
+        );
         ws.send(JSON.stringify({ type: "CloseStream" }));
-
-        finalizeTimeout = setTimeout(() => {
-          console.log(
-            "[Deepgram WebSocket] Timeout reached, finalizing with transcript length:",
-            getText().length,
-          );
-          cleanup();
-          if (finalizeResolver) {
-            finalizeResolver(getText());
-            finalizeResolver = null;
-          }
-        }, 3000);
+        bookkeeper.begin(settleFinalize);
+        bookkeeper.armTimeout(
+          3000,
+          "Timeout reached, finalizing with transcript length:",
+        );
       } else {
         cleanup();
-        resolveFinalize(getText());
+        settleFinalize();
       }
     });
   };
 
-  const completeFinalize = () => {
-    if (finalizeTimeout) {
-      clearTimeout(finalizeTimeout);
-      finalizeTimeout = null;
-    }
-    if (finalizeResolver) {
-      console.log(
-        "[Deepgram WebSocket] Completing finalize with transcript length:",
-        getText().length,
-      );
-      cleanup();
-      finalizeResolver(getText());
-      finalizeResolver = null;
-    }
-  };
-
-  // Start listening for audio chunks IMMEDIATELY, before the WebSocket connects.
-  // This buffers audio so nothing is lost during the connection handshake.
-  console.log("[Deepgram WebSocket] Setting up audio_chunk listener...");
-  unlisten = await listen<{ samples: number[] }>("audio_chunk", (event) => {
-    receivedChunkCount++;
-    if (receivedChunkCount <= 3 || receivedChunkCount % 10 === 0) {
-      console.log(
-        `[Deepgram WebSocket] Received chunk #${receivedChunkCount}, samples:`,
-        event.payload.samples.length,
-      );
-    }
-    if (!isFinalized) {
-      try {
-        const typedChunk =
-          event.payload.samples instanceof Float32Array
-            ? event.payload.samples
-            : Float32Array.from(event.payload.samples);
-        pendingChunks.push(typedChunk);
-        pendingSampleCount += typedChunk.length;
-        flushPendingSamples(false);
-      } catch (error) {
-        console.error("[Deepgram WebSocket] Error sending audio chunk:", error);
-      }
-    }
+  const writeAudioChunk = createBufferedChunkWriter({
+    buffer,
+    isFinalized: () => isFinalized,
+    loggerPrefix: LOGGER_PREFIX,
   });
-  console.log("[Deepgram WebSocket] Audio listener attached, connecting...");
 
   return new Promise((resolve, reject) => {
+    const settler = createStartupSettler<DeepgramStreamingSession>({
+      signal,
+      cleanup,
+      resolve,
+      reject,
+      session: { finalize, cleanup, writeAudioChunk },
+    });
+    if (settler.settled) return;
+
     const wsUrl = buildDeepgramWebSocketUrl({
       sampleRate,
       language,
+      keyterms,
     });
-    console.log("[Deepgram WebSocket] Connecting to:", wsUrl);
-    ws = new WebSocket(wsUrl, ["token", apiKey]);
+    getLogger().verbose(
+      `[${LOGGER_PREFIX}] Connecting to:`,
+      redactQueryParamValues(wsUrl, ["keyterm"]),
+    );
+    try {
+      ws = new WebSocket(wsUrl, ["token", apiKey]);
+    } catch (error) {
+      settler.rejectStartup(error);
+      return;
+    }
 
     ws.onopen = () => {
-      console.log("[Deepgram WebSocket] Connected, flushing buffered audio...");
-      flushPendingSamples(false);
-      console.log("[Deepgram WebSocket] Session ready");
-      resolve({ finalize, cleanup });
+      if (signal?.aborted) {
+        settler.rejectStartup(getStartupAbortReason(signal));
+        return;
+      }
+      getLogger().verbose(
+        `[${LOGGER_PREFIX}] Connected, flushing buffered audio...`,
+      );
+      buffer.flush(false);
+      getLogger().verbose(`[${LOGGER_PREFIX}] Session ready`);
+      settler.resolveStartup();
     };
 
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
         const messageType = data.type;
-        console.log(
-          "[Deepgram WebSocket] Received message:",
+        getLogger().verbose(
+          `[${LOGGER_PREFIX}] Received message:`,
           messageType,
           data,
         );
 
         if (messageType === "Results") {
-          const transcript = data.channel?.alternatives?.[0]?.transcript || "";
+          const transcriptText =
+            data.channel?.alternatives?.[0]?.transcript || "";
           const isFinal = data.is_final === true;
           const speechFinal = data.speech_final === true;
 
-          if (isFinal && transcript) {
-            finalTranscript += (finalTranscript ? " " : "") + transcript;
-            partialTranscript = "";
-            console.log(
-              "[Deepgram WebSocket] Final transcript received, length:",
-              finalTranscript.length,
+          if (isFinal && transcriptText) {
+            transcriptState.appendFinal(transcriptText);
+            transcriptState.setPartial("");
+            getLogger().verbose(
+              `[${LOGGER_PREFIX}] Final transcript received, length:`,
+              transcriptState.finalLength(),
             );
             if (onInterimResult) {
-              onInterimResult(transcript);
+              onInterimResult(transcriptText);
             }
             if (speechFinal && isFinalized) {
-              completeFinalize();
+              bookkeeper.complete();
             }
-          } else if (!isFinal && transcript) {
-            partialTranscript = transcript;
+          } else if (!isFinal && transcriptText) {
+            transcriptState.setPartial(transcriptText);
           }
         } else if (messageType === "Metadata") {
-          console.log("[Deepgram WebSocket] Metadata received:", data);
+          getLogger().verbose(`[${LOGGER_PREFIX}] Metadata received:`, data);
         } else if (messageType === "Error" || data.error) {
-          console.error("[Deepgram WebSocket] Error from server:", data);
+          getLogger().error(`[${LOGGER_PREFIX}] Error from server:`, data);
+          if (!settler.settled) {
+            settler.rejectStartup(
+              new Error("Deepgram rejected the streaming session"),
+            );
+          } else {
+            // Deepgram can reject a session that already opened (for example
+            // when the key loses access mid-recording). The socket will not
+            // deliver further transcripts, so the recording's empty result
+            // must carry this failure, not pass as warning-free.
+            sessionError = new Error(
+              String(
+                data.message ??
+                  data.error ??
+                  "Deepgram rejected the streaming session",
+              ),
+            );
+            cleanup();
+          }
         }
       } catch (error) {
-        console.error("[Deepgram WebSocket] Error parsing message:", error);
+        getLogger().error(`[${LOGGER_PREFIX}] Error parsing message:`, error);
       }
     };
 
-    ws.onerror = (error) => {
-      console.error("[Deepgram WebSocket] WebSocket error:", error);
-      cleanup();
-      reject(new Error("WebSocket connection failed"));
-    };
-
-    ws.onclose = (event) => {
-      console.log("[Deepgram WebSocket] WebSocket closed:", {
-        code: event.code,
-        reason: event.reason,
-      });
-      if (isFinalized && finalizeResolver) {
-        completeFinalize();
-      }
-      cleanup();
-    };
+    attachStreamingSocketHandlers({
+      socket: ws,
+      settler,
+      cleanup,
+      loggerPrefix: LOGGER_PREFIX,
+      earlyCloseErrorMessage: "WebSocket closed before the connection opened",
+      onSettledClose: () => {
+        if (isFinalized) bookkeeper.complete();
+      },
+    });
   });
 };
 
-export class DeepgramTranscriptionSession implements TranscriptionSession {
-  private session: DeepgramStreamingSession | null = null;
+export class DeepgramTranscriptionSession extends BaseApiTranscriptionSession {
   private startupPromise: Promise<void> | null = null;
-  private apiKey: string;
-  private interimCallback: ((segment: string) => void) | null = null;
+  private readonly apiKey: string;
 
   constructor(apiKey: string) {
+    super({
+      providerLabel: "Deepgram",
+      inferenceDevice: "API • Deepgram (Streaming)",
+    });
     this.apiKey = apiKey;
   }
 
@@ -319,89 +259,50 @@ export class DeepgramTranscriptionSession implements TranscriptionSession {
     return true;
   }
 
-  setInterimResultCallback(callback: (segment: string) => void): void {
-    this.interimCallback = callback;
-  }
-
-  async onRecordingStart(sampleRate: number): Promise<void> {
+  async onRecordingStart(
+    sampleRate: number,
+    signal?: AbortSignal,
+  ): Promise<void> {
     this.startupPromise = (async () => {
       try {
         const state = getAppState();
         const deepgramLanguage = await loadMyEffectiveDictationLanguage(state);
+        if (signal?.aborted) throw getStartupAbortReason(signal);
+        const { terms: keyterms, warning } = buildProviderVocabulary(
+          collectDictionaryEntries(state),
+          DEEPGRAM_KEYTERM_BUDGET,
+          "Deepgram",
+        );
+        if (warning) {
+          getLogger().warning(warning);
+        }
 
-        console.log("[Deepgram] Starting streaming session...");
-        this.session = await startDeepgramStreaming(
+        getLogger().verbose("[Deepgram] Starting streaming session...");
+        this.streamSession = await startDeepgramStreaming(
           this.apiKey,
           sampleRate,
           deepgramLanguage,
+          keyterms,
           this.interimCallback ?? undefined,
+          signal,
         );
-        console.log("[Deepgram] Streaming session started successfully");
+        getLogger().verbose(
+          "[Deepgram] Streaming session started successfully",
+        );
       } catch (error) {
-        console.error("[Deepgram] Failed to start streaming:", error);
+        getLogger().error("[Deepgram] Failed to start streaming:", error);
+        throw error;
       }
     })();
     await this.startupPromise;
   }
 
   async finalize(
-    _audio: StopRecordingResponse,
-  ): Promise<TranscriptionSessionResult> {
+    audio: Parameters<BaseApiTranscriptionSession["finalize"]>[0],
+  ) {
     if (this.startupPromise) {
-      await this.startupPromise;
+      await this.startupPromise.catch(() => undefined);
     }
-
-    if (!this.session) {
-      return {
-        rawTranscript: null,
-        metadata: {
-          inferenceDevice: "API • Deepgram (Streaming)",
-          transcriptionMode: "api",
-        },
-        warnings: ["Deepgram streaming session was not established"],
-      };
-    }
-
-    try {
-      console.log("[Deepgram] Finalizing streaming session...");
-      const finalizeStart = performance.now();
-      const transcript = await this.session.finalize();
-      const durationMs = Math.round(performance.now() - finalizeStart);
-
-      console.log("[Deepgram] Transcript timing:", { durationMs });
-      console.log(
-        "[Deepgram] Received transcript, length:",
-        transcript?.length ?? 0,
-      );
-
-      return {
-        rawTranscript: transcript || null,
-        metadata: {
-          inferenceDevice: "API • Deepgram (Streaming)",
-          transcriptionMode: "api",
-          transcriptionDurationMs: durationMs,
-        },
-        warnings: [],
-      };
-    } catch (error) {
-      console.error("[Deepgram] Failed to finalize session:", error);
-      return {
-        rawTranscript: null,
-        metadata: {
-          inferenceDevice: "API • Deepgram (Streaming)",
-          transcriptionMode: "api",
-        },
-        warnings: [
-          `Deepgram finalization failed: ${error instanceof Error ? error.message : "Unknown error"}`,
-        ],
-      };
-    }
-  }
-
-  cleanup(): void {
-    if (this.session) {
-      this.session.cleanup();
-      this.session = null;
-    }
+    return super.finalize(audio);
   }
 }

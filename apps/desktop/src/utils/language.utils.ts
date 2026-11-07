@@ -272,18 +272,104 @@ export const coerceToDictationLanguage = (
 };
 
 export const KEYBOARD_LAYOUT_LANGUAGE = "keyboard-layout";
+
+/**
+ * The code a language Select can actually hold. A stored preference and the
+ * detected system locale are both locale-shaped (`en-US`), and neither
+ * `AUTO_LANGUAGE` nor any language key is: a Select given one renders blank and
+ * a submit sends a value no provider accepts. Anything that cannot be narrowed
+ * to a supported language falls back to auto-detect, which the user can see and
+ * change.
+ */
+/**
+ * `DICTATION_LANGUAGES` is a plain object, so `catalog[input]` finds anything on
+ * `Object.prototype` as readily as a language: `toString` and `constructor` are
+ * truthy there, and a Select given one renders blank just as it would for an
+ * unknown locale. The own-property check is what makes the answer a language.
+ */
+const asLanguageCode = (candidate: string): DictationLanguageCode | null =>
+  Object.hasOwn(DICTATION_LANGUAGES, candidate)
+    ? (candidate as DictationLanguageCode)
+    : null;
+
+export const toSelectableDictationLanguage = (
+  language: string,
+): DictationLanguageCode => {
+  if (language === AUTO_LANGUAGE || language === KEYBOARD_LAYOUT_LANGUAGE) {
+    return AUTO_LANGUAGE;
+  }
+  const exact = asLanguageCode(language);
+  if (exact) return exact;
+  return asLanguageCode(language.split("-")[0]) ?? AUTO_LANGUAGE;
+};
 const getKeyboardLayoutTranslation = () =>
   getIntl().formatMessage({
     id: "keyboard_layout",
     defaultMessage: "Keyboard layout",
   });
 
+/**
+ * Endonyms written in a script the app cannot guarantee to render fall back
+ * to their English exonym. QA showed the raw endonyms turning into tofu
+ * boxes on systems without CJK/Arabic/Devanagari/Greek/Hebrew/Thai fonts —
+ * a picker must not gamble on client font coverage, so those languages use
+ * exonyms (the same call VS Code and GitHub make in their language
+ * pickers). Latin and Cyrillic endonyms render everywhere the app runs, so
+ * they stay native.
+ */
+const LANGUAGE_EXONYMS: Partial<Record<DictationLanguageCode, string>> = {
+  el: "Greek",
+  he: "Hebrew",
+  yi: "Yiddish",
+  ar: "Arabic",
+  ur: "Urdu",
+  ps: "Pashto",
+  sd: "Sindhi",
+  fa: "Persian",
+  hi: "Hindi",
+  ne: "Nepali",
+  mr: "Marathi",
+  sa: "Sanskrit",
+  bn: "Bengali",
+  as: "Assamese",
+  pa: "Punjabi",
+  gu: "Gujarati",
+  ta: "Tamil",
+  te: "Telugu",
+  kn: "Kannada",
+  ml: "Malayalam",
+  si: "Sinhala",
+  th: "Thai",
+  lo: "Lao",
+  km: "Khmer",
+  my: "Burmese",
+  bo: "Tibetan",
+  am: "Amharic",
+  hy: "Armenian",
+  ka: "Georgian",
+  ja: "Japanese",
+  ko: "Korean",
+  zh: "Chinese",
+  "zh-TW": "Chinese (Taiwan)",
+  "zh-HK": "Chinese (Hong Kong)",
+  "zh-CN": "Chinese (Simplified)",
+  yue: "Cantonese",
+};
+
+/**
+ * The label a language menu shows for a code: the native endonym when its
+ * script is guaranteed to render, the English exonym otherwise.
+ */
+export const getRenderSafeLanguageLabel = (
+  code: DictationLanguageCode,
+): string => LANGUAGE_EXONYMS[code] ?? DICTATION_LANGUAGES[code];
+
 export const DICTATION_LANGUAGE_OPTIONS: [string, string][] = [
   [AUTO_LANGUAGE, DICTATION_LANGUAGES[AUTO_LANGUAGE]],
   [KEYBOARD_LAYOUT_LANGUAGE, getKeyboardLayoutTranslation()],
   ...ORDERED_DICTATION_LANGUAGES.map<[string, string]>((code) => [
     code,
-    DICTATION_LANGUAGES[code],
+    getRenderSafeLanguageLabel(code),
   ]),
 ];
 

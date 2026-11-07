@@ -30,9 +30,12 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
 
     let target = env::var("TARGET").expect("Cargo did not provide TARGET");
+    if target.contains("apple-darwin") {
+        link_clang_runtime_for_metal_availability_checks();
+    }
     let library_name = runtime_library_name(&target);
-    let runtime_path = configured_runtime()
-        .unwrap_or_else(|| provision_runtime(&target, library_name));
+    let runtime_path =
+        configured_runtime().unwrap_or_else(|| provision_runtime(&target, library_name));
 
     // Keep a copy beside normal binaries and test executables. This makes the
     // standalone sidecar useful outside the Tauri bundle and gives Cargo tests
@@ -46,6 +49,35 @@ fn main() {
         "cargo:rustc-env=MAUSVOICE_BUILD_ORT_DYLIB={}",
         runtime_path.display()
     );
+}
+
+/// ggml-metal's `@available` checks compile to calls to
+/// `__isPlatformVersionAtLeast` whenever the deployment target is older than
+/// the check, and that symbol lives in clang's runtime library, which rustc
+/// does not link on its own. The Xcode 16.4 toolchain on the macos-15 runners
+/// lowers those checks where the macos-14 toolchain constant-folded them, so
+/// the sidecar link failed with the symbol undefined. Name the archive
+/// explicitly; the file is universal, so it serves both halves of the
+/// universal-apple-darwin build.
+fn link_clang_runtime_for_metal_availability_checks() {
+    let Ok(output) = std::process::Command::new("clang")
+        .arg("-print-resource-dir")
+        .output()
+    else {
+        return;
+    };
+    if !output.status.success() {
+        return;
+    }
+    let resource_dir = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if resource_dir.is_empty() {
+        return;
+    }
+    let darwin_dir = Path::new(&resource_dir).join("lib").join("darwin");
+    if darwin_dir.join("libclang_rt.osx.a").is_file() {
+        println!("cargo:rustc-link-search=native={}", darwin_dir.display());
+        println!("cargo:rustc-link-lib=static=clang_rt.osx");
+    }
 }
 
 fn configured_runtime() -> Option<PathBuf> {

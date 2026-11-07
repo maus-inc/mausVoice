@@ -2,12 +2,13 @@ import { Edit, PublicOutlined } from "@mui/icons-material";
 import Add from "@mui/icons-material/Add";
 import CheckBoxIcon from "@mui/icons-material/CheckBox";
 import CheckBoxOutlineBlankIcon from "@mui/icons-material/CheckBoxOutlineBlank";
-import { Button, IconButton, Stack, Tooltip, Typography } from "@mui/material";
+import { Button, IconButton, Tooltip, Typography } from "@mui/material";
 import type { Tone } from "@maus-inc/types";
 import { useCallback, useMemo } from "react";
-import { FormattedMessage } from "react-intl";
+import { FormattedMessage, useIntl } from "react-intl";
 import { openToneEditorDialog } from "../../actions/tone.actions";
-import { setActiveToneIds } from "../../actions/user.actions";
+import { toggleActiveTone } from "../../actions/user.actions";
+import { logOnRejection } from "../../utils/promise.utils";
 import { useAppStore } from "../../store";
 import {
   getActiveManualToneIds,
@@ -18,7 +19,31 @@ import {
   type MenuPopoverItem,
 } from "../common/MenuPopover";
 
+const StyleSelectionIcon = ({
+  active,
+  lastActive,
+}: {
+  active: boolean;
+  lastActive: boolean;
+}) => {
+  if (lastActive) {
+    return (
+      <Tooltip
+        disableInteractive
+        title={
+          <FormattedMessage defaultMessage="At least one style must be selected." />
+        }
+      >
+        <CheckBoxIcon fontSize="small" sx={{ color: "text.disabled" }} />
+      </Tooltip>
+    );
+  }
+  if (active) return <CheckBoxIcon fontSize="small" color="primary" />;
+  return <CheckBoxOutlineBlankIcon fontSize="small" />;
+};
+
 export function ManualAddStyle() {
+  const intl = useIntl();
   const toneById = useAppStore((state) => state.toneById);
   const sortedToneIds = useAppStore((state) => getSortedToneIds(state));
   const activeToneIds = useAppStore((state) => getActiveManualToneIds(state));
@@ -30,40 +55,33 @@ export function ManualAddStyle() {
 
   const activeSet = useMemo(() => new Set(activeToneIds), [activeToneIds]);
 
-  const handleToggle = useCallback(
-    (toneId: string) => {
-      const isActive = activeSet.has(toneId);
-      if (isActive) {
-        if (activeSet.size <= 1) return;
-        const next = allTones
-          .filter((t) => activeSet.has(t.id) && t.id !== toneId)
-          .map((t) => t.id);
-        setActiveToneIds(next);
-      } else {
-        const next = allTones
-          .filter((t) => activeSet.has(t.id) || t.id === toneId)
-          .map((t) => t.id);
-        setActiveToneIds(next);
-      }
-    },
-    [activeSet, allTones],
+  const handleToggle = useCallback((toneId: string) => {
+    logOnRejection(toggleActiveTone(toneId), "toggle active style");
+  }, []);
+
+  const openEditorAfterMenu = useCallback(
+    (toneId: string, closeThen: (action: () => void) => void) =>
+      (event: React.MouseEvent) => {
+        event.stopPropagation();
+        closeThen(() => openToneEditorDialog({ mode: "edit", toneId }));
+      },
+    [],
   );
 
   const menuItems = useMemo((): MenuPopoverItem[] => {
     const items: MenuPopoverItem[] = [];
 
     items.push({
+      id: "create-style",
       kind: "listItem",
       leading: <Add fontSize="small" />,
       title: <FormattedMessage defaultMessage="New style" />,
-      onClick: ({ close }) => {
-        close();
-        openToneEditorDialog({ mode: "create" });
+      onClick: ({ closeThen }) => {
+        closeThen(() => openToneEditorDialog({ mode: "create" }));
       },
     });
-    items.push({ kind: "divider" });
-
     items.push(
+      { id: "available-styles", kind: "divider" },
       ...allTones.map((tone): MenuPopoverItem => {
         const isActive = activeSet.has(tone.id);
         const isGlobal = tone.isGlobal === true;
@@ -73,79 +91,62 @@ export function ManualAddStyle() {
         const isLastActive = isActive && !canDeselect;
 
         return {
+          id: `style-${tone.id}`,
           kind: "listItem",
-          leading: isLastActive ? (
-            <Tooltip
-              disableInteractive
-              title={
-                <FormattedMessage defaultMessage="At least one style must be selected." />
-              }
-            >
-              <CheckBoxIcon fontSize="small" sx={{ color: "text.disabled" }} />
-            </Tooltip>
-          ) : isActive ? (
-            <CheckBoxIcon fontSize="small" color="primary" />
-          ) : (
-            <CheckBoxOutlineBlankIcon fontSize="small" />
+          leading: (
+            <StyleSelectionIcon active={isActive} lastActive={isLastActive} />
           ),
           title: (
             <Typography variant="body2" noWrap>
               {tone.name}
             </Typography>
           ),
-          trailing: (
-            <Stack
-              direction="row"
-              spacing={0.5}
-              sx={{
-                alignItems: "center",
-                mr: -1,
-              }}
+          checked: isActive,
+          trailing: isGlobal ? (
+            <Tooltip
+              disableInteractive
+              title={
+                <FormattedMessage defaultMessage="This style is managed by your organization." />
+              }
             >
-              {isGlobal && (
-                <Tooltip
-                  disableInteractive
-                  title={
-                    <FormattedMessage defaultMessage="This style is managed by your organization." />
-                  }
-                >
-                  <span>
-                    <IconButton size="small" disabled>
-                      <PublicOutlined fontSize="small" />
-                    </IconButton>
-                  </span>
-                </Tooltip>
-              )}
-              {canEdit && (
+              <span>
+                <IconButton size="small" disabled>
+                  <PublicOutlined fontSize="small" />
+                </IconButton>
+              </span>
+            </Tooltip>
+          ) : undefined,
+          endAction: canEdit
+            ? ({ closeThen }) => (
                 <IconButton
+                  role="menuitem"
+                  tabIndex={-1}
+                  aria-label={`${intl.formatMessage({ defaultMessage: "Edit style" })}: ${tone.name}`}
                   size="small"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    openToneEditorDialog({ mode: "edit", toneId: tone.id });
-                  }}
+                  onClick={openEditorAfterMenu(tone.id, closeThen)}
                 >
                   <Edit fontSize="small" />
                 </IconButton>
-              )}
-            </Stack>
-          ),
+              )
+            : undefined,
           onClick: () => {
-            if (!isActive || canDeselect) {
-              handleToggle(tone.id);
-            }
+            if (!isActive || canDeselect) handleToggle(tone.id);
           },
         };
       }),
     );
 
     return items;
-  }, [allTones, activeSet, handleToggle]);
+  }, [allTones, activeSet, handleToggle, intl, openEditorAfterMenu]);
 
   return (
     <MenuPopoverBuilder items={menuItems}>
-      {({ ref, open }) => (
+      {({ ref, open, isOpen }) => (
         <Button
           ref={ref}
+          aria-haspopup="menu"
+          aria-expanded={isOpen}
+          data-manual-style-add=""
           onClick={open}
           variant="contained"
           startIcon={<Add />}

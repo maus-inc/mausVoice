@@ -41,8 +41,13 @@ export const useParamSyncer = <V extends Nullable<string>[]>({
           const next = new URLSearchParams(prev);
           queryParamNames.forEach((k, i) => {
             const v = storeVals[i];
-            if (v && v !== "") next.set(k, v);
-            else next.delete(k);
+            // Only `null` and `undefined` delete the param. An empty string is
+            // a value the store holds, so writing it to the URL is what makes
+            // the two converge; the old `if (v)` form deleted it, which left
+            // `""` in the store and no param in the URL permanently unequal, so
+            // the sync below could never settle.
+            if (v === null || v === undefined) next.delete(k);
+            else next.set(k, v);
           });
           return next;
         },

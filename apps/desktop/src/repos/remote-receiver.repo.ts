@@ -1,13 +1,17 @@
 import type { RemoteReceiverStatus } from "@maus-inc/types";
 import { invoke } from "@tauri-apps/api/core";
-import { BaseRepo } from "./base.repo";
+import type { LocalDataWriteLease } from "../utils/local-data-write-gate";
+import { BaseRepo, withLocalDataWrite } from "./base.repo";
 
 export abstract class BaseRemoteReceiverRepo extends BaseRepo {
   abstract getRemoteReceiverStatus(): Promise<RemoteReceiverStatus>;
   abstract startRemoteReceiver(
     port?: number | null,
+    lease?: LocalDataWriteLease,
   ): Promise<RemoteReceiverStatus>;
-  abstract stopRemoteReceiver(): Promise<RemoteReceiverStatus>;
+  abstract stopRemoteReceiver(
+    lease?: LocalDataWriteLease,
+  ): Promise<RemoteReceiverStatus>;
 }
 
 export class LocalRemoteReceiverRepo extends BaseRemoteReceiverRepo {
@@ -15,18 +19,27 @@ export class LocalRemoteReceiverRepo extends BaseRemoteReceiverRepo {
     return invoke<RemoteReceiverStatus>("remote_receiver_status");
   }
 
-  async startRemoteReceiver(
+  startRemoteReceiver(
     port?: number | null,
+    lease?: LocalDataWriteLease,
   ): Promise<RemoteReceiverStatus> {
-    return invoke<RemoteReceiverStatus>("remote_receiver_start", {
-      args: {
-        port: port ?? null,
-      },
-    });
+    return withLocalDataWrite(
+      () =>
+        invoke<RemoteReceiverStatus>("remote_receiver_start", {
+          args: {
+            port: port ?? null,
+          },
+        }),
+      lease,
+    );
   }
 
-  async stopRemoteReceiver(): Promise<RemoteReceiverStatus> {
-    await invoke<void>("remote_receiver_stop");
-    return this.getRemoteReceiverStatus();
+  stopRemoteReceiver(
+    lease?: LocalDataWriteLease,
+  ): Promise<RemoteReceiverStatus> {
+    return withLocalDataWrite(async () => {
+      await invoke<void>("remote_receiver_stop");
+      return this.getRemoteReceiverStatus();
+    }, lease);
   }
 }

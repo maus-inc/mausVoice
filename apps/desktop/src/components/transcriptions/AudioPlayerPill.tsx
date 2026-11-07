@@ -1,12 +1,15 @@
-import PauseRoundedIcon from "@mui/icons-material/PauseRounded";
-import PlayArrowRoundedIcon from "@mui/icons-material/PlayArrowRounded";
-import { Box, IconButton, Typography } from "@mui/material";
+import { Box, Typography } from "@mui/material";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useIntl } from "react-intl";
+import { AudioPlaybackButton } from "./AudioPlaybackButton";
+import { AudioWaveformBars } from "./AudioWaveformBars";
+import {
+  type AudioPillPlaybackSession,
+  createAudioPillPlaybackSession,
+} from "./audio-pill-playback-session";
 import { showErrorSnackbar } from "../../actions/app.actions";
 import { getTranscriptionRepo } from "../../repos";
 import {
-  activePlayback,
   buildWaveformOutline,
   DEFAULT_WAVEFORM_BAR_COUNT,
   formatDuration,
@@ -14,7 +17,7 @@ import {
   MIN_COMPUTED_BAR_COUNT,
   MIN_WAVEFORM_BAR_VALUE,
   playWebAudio,
-  stopActivePlayback,
+  seekPlayback,
   WAVEFORM_BAR_GAP,
   WAVEFORM_BAR_MAX_WIDTH,
   WAVEFORM_BAR_MIN_WIDTH,
@@ -34,23 +37,30 @@ export const AudioPlayerPill = ({
   actions,
 }: AudioPlayerPillProps) => {
   const intl = useIntl();
-
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackProgress, setPlaybackProgress] = useState(0);
   const [waveformWidth, setWaveformWidth] = useState(0);
   const waveformContainerRef = useRef<HTMLDivElement | null>(null);
-  const playbackNonceRef = useRef(0);
+  const pointerCleanupRef = useRef<(() => void) | null>(null);
+  const playbackSessionRef = useRef<AudioPillPlaybackSession | null>(null);
+  const getPlaybackSession = () => {
+    playbackSessionRef.current ??= createAudioPillPlaybackSession();
+    return playbackSessionRef.current;
+  };
   const isPlayingRef = useRef(false);
+  const playbackProgressRef = useRef(0);
   const transcriptionIdRef = useRef(transcriptionId);
-
+  const isDraggingRef = useRef(false);
+  const progressAtDragStartRef = useRef(0);
   useEffect(() => {
     isPlayingRef.current = isPlaying;
   }, [isPlaying]);
-
+  useEffect(() => {
+    playbackProgressRef.current = playbackProgress;
+  }, [playbackProgress]);
   useEffect(() => {
     transcriptionIdRef.current = transcriptionId;
   }, [transcriptionId]);
-
   const desiredWaveformBarCount = useMemo(() => {
     if (waveformWidth <= 0) {
       return DEFAULT_WAVEFORM_BAR_COUNT;
@@ -67,7 +77,6 @@ export const AudioPlayerPill = ({
       Math.min(MAX_COMPUTED_BAR_COUNT, approximateCount),
     );
   }, [waveformWidth]);
-
   const waveformValues = useMemo(
     () =>
       buildWaveformOutline(
@@ -77,7 +86,6 @@ export const AudioPlayerPill = ({
       ),
     [durationMs, desiredWaveformBarCount, transcriptionId],
   );
-
   const waveformBars = useMemo(() => {
     if (!waveformValues.length) {
       return Array.from(
@@ -88,7 +96,6 @@ export const AudioPlayerPill = ({
 
     return waveformValues;
   }, [desiredWaveformBarCount, waveformValues]);
-
   const computedBarWidth = useMemo(() => {
     if (waveformWidth <= 0 || waveformBars.length === 0) {
       return WAVEFORM_BAR_MIN_WIDTH;
@@ -103,18 +110,19 @@ export const AudioPlayerPill = ({
       Math.min(WAVEFORM_BAR_MAX_WIDTH, widthPerBar),
     );
   }, [waveformBars.length, waveformWidth]);
-
   const progressPercent = Math.min(Math.max(playbackProgress, 0), 1) * 100;
-
   useEffect(() => {
     return () => {
-      if (activePlayback?.transcriptionId === transcriptionIdRef.current) {
-        stopActivePlayback("stopped");
-      }
-      setPlaybackProgress(0);
+      pointerCleanupRef.current?.();
+      pointerCleanupRef.current = null;
+      getPlaybackSession().stopOwned();
     };
-  }, []);
-
+  }, [transcriptionId]);
+  useEffect(() => {
+    if (!disabled || !getPlaybackSession().stopOwned()) return;
+    isPlayingRef.current = false;
+    setIsPlaying(false);
+  }, [disabled]);
   useEffect(() => {
     const element = waveformContainerRef.current;
     if (!element) {
@@ -145,44 +153,58 @@ export const AudioPlayerPill = ({
     observer.observe(element);
     return () => observer.disconnect();
   }, [transcriptionId]);
-
   const handlePlaybackToggle = useCallback(async () => {
-    const currentNonce = playbackNonceRef.current + 1;
-    playbackNonceRef.current = currentNonce;
+    const session = getPlaybackSession();
+    if (isPlayingRef.current) {
+      session.stopOwned();
+      isPlayingRef.current = false;
+      setIsPlaying(false);
+      return;
+    }
 
+    const attempt = session.beginRequest();
     try {
-      if (isPlayingRef.current) {
-        stopActivePlayback("stopped");
-        return;
-      }
-
       const audioData =
         await getTranscriptionRepo().loadTranscriptionAudio(transcriptionId);
 
-      if (playbackNonceRef.current !== currentNonce) {
+      if (!attempt.isCurrent()) {
         return;
       }
 
+      isPlayingRef.current = true;
       setIsPlaying(true);
+      attempt.beginSetup();
       await playWebAudio(
         transcriptionId,
         audioData,
         (progress) => {
-          if (transcriptionIdRef.current === transcriptionId) {
+          if (
+            transcriptionIdRef.current === transcriptionId &&
+            attempt.isNonceCurrent() &&
+            !isDraggingRef.current
+          ) {
             setPlaybackProgress(progress);
           }
         },
         (reason) => {
-          if (transcriptionIdRef.current !== transcriptionId) {
+          if (
+            transcriptionIdRef.current !== transcriptionId ||
+            !attempt.handleStopCallback(reason)
+          ) {
             return;
           }
+          isPlayingRef.current = false;
           setIsPlaying(false);
           if (reason === "ended") {
             setPlaybackProgress(0);
           }
         },
+        playbackProgressRef.current,
       );
+      attempt.completeSetup();
     } catch (error) {
+      if (!attempt.releaseOnError()) return;
+      isPlayingRef.current = false;
       console.error("Failed to toggle audio playback", error);
       setIsPlaying(false);
       setPlaybackProgress(0);
@@ -191,9 +213,76 @@ export const AudioPlayerPill = ({
       );
     }
   }, [transcriptionId, intl]);
-
   const durationLabel = formatDuration(durationMs);
 
+  /** Scrub mapping from client X (same idea as elevenlabs-ui scrub-bar). Bars are a seeded silhouette, not live PCM. */
+  const getProgressFromClientX = useCallback((clientX: number) => {
+    const track = waveformContainerRef.current;
+    if (!track) return null;
+    const rect = track.getBoundingClientRect();
+    if (rect.width <= 0) return null;
+    const ratio = (clientX - rect.left) / rect.width;
+    return Math.min(Math.max(ratio, 0), 1);
+  }, []);
+  const previewSeek = useCallback((ratio: number) => {
+    playbackProgressRef.current = ratio;
+    setPlaybackProgress(ratio);
+  }, []);
+  const commitSeek = useCallback((ratio: number) => {
+    playbackProgressRef.current = ratio;
+    setPlaybackProgress(ratio);
+    if (isPlayingRef.current) {
+      seekPlayback(ratio);
+    }
+  }, []);
+  const handlePointerDown = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      if (disabled) return;
+      event.preventDefault();
+      event.currentTarget.focus();
+      isDraggingRef.current = true;
+      progressAtDragStartRef.current = playbackProgressRef.current;
+      const next = getProgressFromClientX(event.clientX);
+      if (next != null) previewSeek(next);
+
+      const handleMove = (moveEvent: PointerEvent) => {
+        const ratio = getProgressFromClientX(moveEvent.clientX);
+        if (ratio != null) previewSeek(ratio);
+      };
+      const handleUp = (upEvent: PointerEvent) => {
+        window.removeEventListener("pointermove", handleMove);
+        window.removeEventListener("pointerup", handleUp);
+        window.removeEventListener("pointercancel", handleCancel);
+        pointerCleanupRef.current = null;
+        isDraggingRef.current = false;
+        const ratio = getProgressFromClientX(upEvent.clientX);
+        if (ratio != null) {
+          commitSeek(ratio);
+        } else {
+          commitSeek(playbackProgressRef.current);
+        }
+      };
+      const handleCancel = () => {
+        window.removeEventListener("pointermove", handleMove);
+        window.removeEventListener("pointerup", handleUp);
+        window.removeEventListener("pointercancel", handleCancel);
+        pointerCleanupRef.current = null;
+        isDraggingRef.current = false;
+        playbackProgressRef.current = progressAtDragStartRef.current;
+        setPlaybackProgress(progressAtDragStartRef.current);
+      };
+      pointerCleanupRef.current?.();
+      window.addEventListener("pointermove", handleMove);
+      window.addEventListener("pointerup", handleUp, { once: true });
+      window.addEventListener("pointercancel", handleCancel, { once: true });
+      pointerCleanupRef.current = () => {
+        window.removeEventListener("pointermove", handleMove);
+        window.removeEventListener("pointerup", handleUp);
+        window.removeEventListener("pointercancel", handleCancel);
+      };
+    },
+    [disabled, getProgressFromClientX, previewSeek, commitSeek],
+  );
   return (
     <Box
       sx={{
@@ -210,23 +299,11 @@ export const AudioPlayerPill = ({
         alignSelf: "flex-start",
       }}
     >
-      <IconButton
-        aria-label={
-          isPlaying
-            ? intl.formatMessage({ defaultMessage: "Pause audio" })
-            : intl.formatMessage({ defaultMessage: "Play audio" })
-        }
-        size="small"
-        onClick={handlePlaybackToggle}
+      <AudioPlaybackButton
+        isPlaying={isPlaying}
         disabled={disabled}
-        sx={{ p: 0.5 }}
-      >
-        {isPlaying ? (
-          <PauseRoundedIcon fontSize="small" />
-        ) : (
-          <PlayArrowRoundedIcon fontSize="small" />
-        )}
-      </IconButton>
+        onClick={handlePlaybackToggle}
+      />
       <Typography
         variant="body2"
         sx={{
@@ -239,6 +316,30 @@ export const AudioPlayerPill = ({
       </Typography>
       <Box
         ref={waveformContainerRef}
+        role="slider"
+        tabIndex={disabled ? -1 : 0}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={Math.round(progressPercent)}
+        aria-disabled={disabled || undefined}
+        aria-label={intl.formatMessage({ defaultMessage: "Playback position" })}
+        onPointerDown={handlePointerDown}
+        onKeyDown={(event) => {
+          if (disabled) return;
+          if (event.key === " ") {
+            event.preventDefault();
+            void handlePlaybackToggle();
+          } else if (event.key === "ArrowRight" || event.key === "ArrowUp") {
+            event.preventDefault();
+            commitSeek(Math.min(1, playbackProgressRef.current + 0.05));
+          } else if (event.key === "ArrowLeft" || event.key === "ArrowDown") {
+            event.preventDefault();
+            commitSeek(Math.max(0, playbackProgressRef.current - 0.05));
+          } else if (event.key === "Home" || event.key === "End") {
+            event.preventDefault();
+            commitSeek(event.key === "Home" ? 0 : 1);
+          }
+        }}
         sx={{
           display: "flex",
           alignItems: "center",
@@ -248,42 +349,22 @@ export const AudioPlayerPill = ({
           mx: 0.5,
           position: "relative",
           overflow: "hidden",
+          cursor: "pointer",
+          touchAction: "none",
+          userSelect: "none",
+          borderRadius: 0.5,
+          "&:focus-visible": {
+            outline: "2px solid",
+            outlineColor: "primary.main",
+            outlineOffset: 2,
+          },
         }}
       >
-        <Box
-          sx={{
-            position: "absolute",
-            inset: 0,
-            pointerEvents: "none",
-          }}
-        >
-          <Box
-            sx={(theme) => ({
-              position: "absolute",
-              top: 0,
-              bottom: 0,
-              left: `${progressPercent}%`,
-              right: 0,
-              backgroundColor:
-                theme.vars?.palette.level1 ?? theme.palette.background.paper,
-              opacity: 0.5,
-              transition: "left 140ms linear",
-            })}
-          />
-        </Box>
-        {waveformBars.map((value, index) => (
-          <Box
-            key={`wave-bar-${index}`}
-            sx={(theme) => ({
-              flex: "0 0 auto",
-              width: `${computedBarWidth}px`,
-              borderRadius: theme.spacing(0.25),
-              backgroundColor: theme.vars?.palette.primary.main,
-              height: `${Math.round(35 + value * 55)}%`,
-              transition: "opacity 140ms ease",
-            })}
-          />
-        ))}
+        <AudioWaveformBars
+          values={waveformBars}
+          barWidth={computedBarWidth}
+          progressPercent={progressPercent}
+        />
       </Box>
       {actions}
     </Box>

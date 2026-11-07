@@ -1,7 +1,8 @@
 /*
   Type hierarchy
   - TAN-PARADISO: logo wordmark (near icon) + "Welcome back" / user name only
-  - Satoshi: all normal UI text (variable weights from bundled face)
+  - Satoshi: normal UI text (variable weights from bundled face)
+  - Geist Mono: compact heatmap data labels and cell tooltips
   - No Jakarta
 */
 
@@ -13,6 +14,17 @@
     url("../assets/fonts/tan-paradiso/TAN-PARADISO-Regular.woff2")
       format("woff2");
   font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Geist Mono from vercel/geist-font@b5d164a0c066c2c9bfcd5ab65dd8244551f0ac06.
+   Licensed under SIL OFL 1.1; see assets/fonts/geist-mono/OFL.txt. */
+@font-face {
+  font-family: "Geist Mono";
+  src: url("../assets/fonts/geist-mono/GeistMono-Variable.woff2")
+    format("woff2");
+  font-weight: 100 900;
   font-style: normal;
   font-display: swap;
 }
@@ -40,6 +52,7 @@
 
   --font-display: "TAN-PARADISO", "Satoshi", system-ui, sans-serif;
   --font-ui: "Satoshi", system-ui, -apple-system, sans-serif;
+  --font-data: "Geist Mono", "SFMono-Regular", Consolas, monospace;
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -1,8 +1,9 @@
 use crate::domain::{RecordedAudio, RecordingMetrics, RecordingResult};
 use crate::errors::RecordingError;
-use crate::platform::audio::InputDeviceDescriptor;
+use crate::platform::audio::{
+    compute_level_bins, InputDeviceDescriptor, CHUNK_DISPATCH_INTERVAL, LEVEL_DISPATCH_INTERVAL,
+};
 use crate::platform::{ChunkCallback, LevelCallback, Recorder};
-use std::cmp;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -11,9 +12,6 @@ use libpulse_binding::mainloop::standard::Mainloop;
 use libpulse_simple_binding as psimple;
 
 const FALLBACK_SAMPLE_RATE: u32 = 44_100;
-const LEVEL_BIN_COUNT: usize = 12;
-const LEVEL_DISPATCH_INTERVAL: Duration = Duration::from_millis(48);
-const CHUNK_DISPATCH_INTERVAL: Duration = Duration::from_millis(100);
 const READ_CHUNK_FRAMES: usize = 1024;
 
 pub struct PulseRecorder {
@@ -207,6 +205,8 @@ fn query_source_native_rate(source_name: Option<&str>) -> u32 {
 }
 
 /// The actual blocking recording loop. Runs on a dedicated thread.
+#[allow(unknown_lints)]
+#[allow(clippy::chunks_exact_to_as_chunks)]
 fn record_loop(
     source_name: Option<&str>,
     sample_rate: u32,
@@ -235,7 +235,7 @@ fn record_loop(
         .map(|c| c.as_c_str().to_str().unwrap_or_default());
 
     let simple = match psimple::Simple::new(
-        None,      // server (default)
+        None,        // server (default)
         "mausVoice", // app name
         pulse::stream::Direction::Record,
         source_ref,  // source (None = default)
@@ -261,6 +261,10 @@ fn record_loop(
     let mut last_level_emit = Instant::now();
     let mut last_chunk_emit = Instant::now();
     let mut chunk_buffer: Vec<f32> = Vec::new();
+    // Samples already handed to `chunk_callback`, so each dispatch reports the
+    // absolute index of its first sample. The loop is single threaded, so a
+    // plain counter is enough here.
+    let mut emitted_samples: u64 = 0;
 
     let mut read_buf = vec![0u8; READ_CHUNK_FRAMES * std::mem::size_of::<f32>()];
 
@@ -306,8 +310,10 @@ fn record_loop(
             if now.duration_since(last_chunk_emit) >= CHUNK_DISPATCH_INTERVAL {
                 last_chunk_emit = now;
                 if !chunk_buffer.is_empty() {
-                    cb(chunk_buffer.clone());
-                    chunk_buffer.clear();
+                    let offset = emitted_samples;
+                    let batch = std::mem::take(&mut chunk_buffer);
+                    emitted_samples += batch.len() as u64;
+                    cb(batch, offset);
                 }
             }
         }
@@ -316,7 +322,8 @@ fn record_loop(
     // Flush remaining chunk buffer
     if let Some(ref cb) = chunk_callback {
         if !chunk_buffer.is_empty() {
-            cb(chunk_buffer);
+            let batch = std::mem::take(&mut chunk_buffer);
+            cb(batch, emitted_samples);
         }
     }
 
@@ -350,30 +357,6 @@ fn empty_result() -> RecordingResult {
             sample_rate: FALLBACK_SAMPLE_RATE,
         },
     }
-}
-
-fn compute_level_bins(samples: &[f32]) -> Vec<f32> {
-    if samples.is_empty() {
-        return vec![0.0; LEVEL_BIN_COUNT];
-    }
-
-    let frames_per_bin = cmp::max(1, samples.len() / LEVEL_BIN_COUNT);
-    let mut bins = vec![0.0f32; LEVEL_BIN_COUNT];
-    let mut counts = vec![0u32; LEVEL_BIN_COUNT];
-
-    for (index, sample) in samples.iter().enumerate() {
-        let bin_index = cmp::min(index / frames_per_bin, LEVEL_BIN_COUNT - 1);
-        bins[bin_index] += sample.abs();
-        counts[bin_index] += 1;
-    }
-
-    for (value, count) in bins.iter_mut().zip(counts) {
-        if count > 0 {
-            *value = (*value / count as f32).clamp(0.0, 1.0);
-        }
-    }
-
-    bins
 }
 
 // ── PulseAudio source enumeration ──────────────────────────────────────

@@ -1,4 +1,4 @@
-import { ArrowForward } from "@mui/icons-material";
+import { ArrowRight } from "lucide-react";
 import { Box, Button, Stack, Typography } from "@mui/material";
 import { useEffect, useRef, useState } from "react";
 import { FormattedMessage } from "react-intl";
@@ -200,18 +200,6 @@ export const KeybindingsForm = () => {
           minHeight: 80,
           border: "2px solid",
           borderColor: isListening ? "primary.main" : "transparent",
-          ...(isListening && {
-            animation: "borderPulse 1s ease-in-out infinite",
-          }),
-          "@keyframes borderPulse": {
-            "0%, 100%": {
-              borderColor: "var(--app-palette-blue)",
-            },
-            "50%": {
-              borderColor:
-                "color-mix(in srgb, var(--app-palette-blue) 45%, transparent)",
-            },
-          },
         }}
       >
         {isListening ? (
@@ -258,7 +246,7 @@ export const KeybindingsForm = () => {
         <Button
           variant="contained"
           onClick={handleConfirm}
-          endIcon={<ArrowForward />}
+          endIcon={<ArrowRight size={18} strokeWidth={1.9} />}
           disabled={isListening}
         >
           <FormattedMessage defaultMessage="It works" />

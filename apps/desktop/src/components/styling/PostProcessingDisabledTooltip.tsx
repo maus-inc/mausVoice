@@ -1,8 +1,7 @@
 import { Box, Link } from "@mui/material";
 import type { ReactElement } from "react";
-import { useCallback } from "react";
 import { FormattedMessage } from "react-intl";
-import { produceAppState } from "../../store";
+import { openPostProcessingSettings } from "../../actions/settings.actions";
 import { ConditionalTooltip } from "../common/ConditionalTooltip";
 
 type PostProcessingDisabledTooltipProps = {
@@ -14,12 +13,6 @@ export const PostProcessingDisabledTooltip = ({
   disabled,
   children,
 }: PostProcessingDisabledTooltipProps) => {
-  const openPostProcessingSettings = useCallback(() => {
-    produceAppState((draft) => {
-      draft.settings.aiPostProcessingDialogOpen = true;
-    });
-  }, []);
-
   return (
     <ConditionalTooltip
       enabled={disabled}

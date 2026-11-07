@@ -1,5 +1,7 @@
 use serde::Serialize;
+use std::cmp;
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::platform::Recorder;
 
@@ -22,10 +24,53 @@ pub fn list_input_devices() -> Vec<InputDeviceDescriptor> {
     cpal_impl::list_input_devices()
 }
 
+// ── Level metering, shared by every backend ─────────────────────────────
+
+/// Bins in the level meter. Fixed so the webview's meter renders the same
+/// number of bars whichever backend produced the samples.
+pub(crate) const LEVEL_BIN_COUNT: usize = 12;
+
+/// How often level bins reach the webview. The callbacks arrive at buffer
+/// rate, far faster than a meter can be read.
+pub(crate) const LEVEL_DISPATCH_INTERVAL: Duration = Duration::from_millis(48);
+
+/// How often buffered audio reaches the webview, as audio rather than levels.
+pub(crate) const CHUNK_DISPATCH_INTERVAL: Duration = Duration::from_millis(100);
+
+/// Fold samples into [`LEVEL_BIN_COUNT`] mean-absolute-amplitude bins.
+///
+/// Every backend meters the same way, so the meter means the same thing on
+/// every platform; only the sample delivery differs.
+pub(crate) fn compute_level_bins(samples: &[f32]) -> Vec<f32> {
+    if samples.is_empty() {
+        return vec![0.0; LEVEL_BIN_COUNT];
+    }
+
+    let frames_per_bin = cmp::max(1, samples.len() / LEVEL_BIN_COUNT);
+    let mut bins = vec![0.0f32; LEVEL_BIN_COUNT];
+    let mut counts = vec![0u32; LEVEL_BIN_COUNT];
+
+    for (index, sample) in samples.iter().enumerate() {
+        let bin_index = cmp::min(index / frames_per_bin, LEVEL_BIN_COUNT - 1);
+        bins[bin_index] += sample.abs();
+        counts[bin_index] += 1;
+    }
+
+    for (value, count) in bins.iter_mut().zip(counts) {
+        if count > 0 {
+            *value = (*value / count as f32).clamp(0.0, 1.0);
+        }
+    }
+
+    bins
+}
+
 // ── CPAL backend (macOS, Windows) ──────────────────────────────────────
 
 mod cpal_impl {
-    use super::InputDeviceDescriptor;
+    use super::{
+        compute_level_bins, InputDeviceDescriptor, CHUNK_DISPATCH_INTERVAL, LEVEL_DISPATCH_INTERVAL,
+    };
     use crate::domain::{RecordedAudio, RecordingMetrics, RecordingResult};
     use crate::errors::RecordingError;
     use crate::platform::{ChunkCallback, LevelCallback, Recorder};
@@ -33,6 +78,7 @@ mod cpal_impl {
     use cpal::{Device, HostId, SampleFormat, Stream, StreamConfig};
     use std::cmp;
     use std::collections::HashMap;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::{Arc, Mutex, MutexGuard};
     use std::time::{Duration, Instant};
 
@@ -59,22 +105,53 @@ mod cpal_impl {
         _chunk_emitter: Option<Arc<ChunkEmitter>>,
     }
 
-    const LEVEL_BIN_COUNT: usize = 12;
-    const LEVEL_DISPATCH_INTERVAL_MS: u64 = 48;
-    const CHUNK_DISPATCH_INTERVAL_MS: u64 = 100;
+    /// Rate limiter shared by the level and chunk emitters.
+    ///
+    /// Both callbacks arrive at buffer rate and must not reach the webview at
+    /// that rate, so each keeps its own window. Deciding and advancing the
+    /// window happen under the same lock: taking the timestamp twice would let
+    /// two callers in the same window both be told they could emit.
+    struct Throttle {
+        interval: Duration,
+        last_emit: Mutex<Option<Instant>>,
+    }
+
+    impl Throttle {
+        fn new(interval: Duration) -> Self {
+            Self {
+                interval,
+                last_emit: Mutex::new(None),
+            }
+        }
+
+        /// Whether the caller may emit now, consuming one slot of the window.
+        fn should_emit(&self) -> bool {
+            let now = Instant::now();
+            let mut guard = match self.last_emit.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            let should_send = match *guard {
+                Some(last) => now.duration_since(last) >= self.interval,
+                None => true,
+            };
+            if should_send {
+                *guard = Some(now);
+            }
+            should_send
+        }
+    }
 
     struct LevelEmitter {
         callback: LevelCallback,
-        throttle: Duration,
-        last_emit: Mutex<Option<Instant>>,
+        throttle: Throttle,
     }
 
     impl LevelEmitter {
         fn new(callback: LevelCallback) -> Arc<Self> {
             Arc::new(Self {
                 callback,
-                throttle: Duration::from_millis(LEVEL_DISPATCH_INTERVAL_MS),
-                last_emit: Mutex::new(None),
+                throttle: Throttle::new(LEVEL_DISPATCH_INTERVAL),
             })
         }
 
@@ -83,23 +160,7 @@ mod cpal_impl {
                 return;
             }
 
-            let now = Instant::now();
-            let should_emit = {
-                let mut guard = match self.last_emit.lock() {
-                    Ok(guard) => guard,
-                    Err(poisoned) => poisoned.into_inner(),
-                };
-                let should_send = match *guard {
-                    Some(last) => now.duration_since(last) >= self.throttle,
-                    None => true,
-                };
-                if should_send {
-                    *guard = Some(now);
-                }
-                should_send
-            };
-
-            if !should_emit {
+            if !self.throttle.should_emit() {
                 return;
             }
 
@@ -110,18 +171,32 @@ mod cpal_impl {
 
     struct ChunkEmitter {
         callback: ChunkCallback,
-        throttle: Duration,
-        last_emit: Mutex<Option<Instant>>,
+        throttle: Throttle,
         buffer: Mutex<Vec<f32>>,
+        /// Serialises claiming an offset with handing the chunk to the
+        /// callback, so two dispatches cannot reach the callback in the
+        /// opposite order to the one their offsets were claimed in.
+        ///
+        /// `buffer` alone is not enough. Taking the index and advancing the
+        /// counter inside the buffer lock makes each index unique, but the
+        /// callback was invoked after that lock was released, so a thread
+        /// that had already claimed the next index could deliver first. The
+        /// webview appends each chunk at the offset it is handed, so it saw
+        /// a gap in a stream with no gap in it. This lock is separate from
+        /// `buffer` so the audio callback keeps buffering while a chunk is
+        /// in flight; it is only ever taken by a dispatch.
+        dispatch: Mutex<()>,
+        emitted_samples: AtomicU64,
     }
 
     impl ChunkEmitter {
         fn new(callback: ChunkCallback) -> Arc<Self> {
             Arc::new(Self {
                 callback,
-                throttle: Duration::from_millis(CHUNK_DISPATCH_INTERVAL_MS),
-                last_emit: Mutex::new(None),
+                throttle: Throttle::new(CHUNK_DISPATCH_INTERVAL),
                 buffer: Mutex::new(Vec::new()),
+                dispatch: Mutex::new(()),
+                emitted_samples: AtomicU64::new(0),
             })
         }
 
@@ -136,56 +211,49 @@ mod cpal_impl {
                 return;
             }
 
-            let now = Instant::now();
-            let should_emit = {
-                let mut guard = match self.last_emit.lock() {
-                    Ok(guard) => guard,
-                    Err(poisoned) => poisoned.into_inner(),
-                };
-                let should_send = match *guard {
-                    Some(last) => now.duration_since(last) >= self.throttle,
-                    None => true,
-                };
-                if should_send {
-                    *guard = Some(now);
+            if self.throttle.should_emit() {
+                self.dispatch_buffered_chunk();
+            }
+        }
+
+        /// Hand the buffered samples to the callback together with the
+        /// absolute index of their first sample in the recording.
+        ///
+        /// Taking the index and advancing the counter under the same lock the
+        /// buffer is drained with is what makes the index unique. Doing the
+        /// `fetch_add` after releasing the lock would let a second dispatch
+        /// read the pre-advance value and hand out a duplicate index, and a
+        /// duplicate makes the webview treat the stream as discontinuous.
+        ///
+        /// The callback runs while `dispatch` is still held, so the order the
+        /// offsets were claimed in is the order the webview receives them in.
+        /// A dispatch takes `dispatch` before `buffer` and never the other way
+        /// round, so the two cannot deadlock against each other.
+        fn dispatch_buffered_chunk(&self) {
+            let _in_order = self
+                .dispatch
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let (chunk, offset) = {
+                let mut buffer = self
+                    .buffer
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                if buffer.is_empty() {
+                    return;
                 }
-                should_send
+                let chunk = std::mem::take(&mut *buffer);
+                let offset = self.emitted_samples.load(Ordering::Relaxed);
+                self.emitted_samples
+                    .fetch_add(chunk.len() as u64, Ordering::Relaxed);
+                (chunk, offset)
             };
-
-            if should_emit {
-                if let Ok(mut buffer) = self.buffer.lock() {
-                    if !buffer.is_empty() {
-                        let chunk = buffer.clone();
-                        buffer.clear();
-                        (self.callback)(chunk);
-                    }
-                }
-            }
-        }
-    }
-
-    fn compute_level_bins(samples: &[f32]) -> Vec<f32> {
-        if samples.is_empty() {
-            return vec![0.0; LEVEL_BIN_COUNT];
+            (self.callback)(chunk, offset);
         }
 
-        let frames_per_bin = cmp::max(1, samples.len() / LEVEL_BIN_COUNT);
-        let mut bins = vec![0.0f32; LEVEL_BIN_COUNT];
-        let mut counts = vec![0u32; LEVEL_BIN_COUNT];
-
-        for (index, sample) in samples.iter().enumerate() {
-            let bin_index = cmp::min(index / frames_per_bin, LEVEL_BIN_COUNT - 1);
-            bins[bin_index] += sample.abs();
-            counts[bin_index] += 1;
+        fn flush(&self) {
+            self.dispatch_buffered_chunk();
         }
-
-        for (value, count) in bins.iter_mut().zip(counts) {
-            if count > 0 {
-                *value = (*value / count as f32).clamp(0.0, 1.0);
-            }
-        }
-
-        bins
     }
 
     impl Drop for ActiveRecording {
@@ -397,14 +465,23 @@ mod cpal_impl {
                 .lock()
                 .map_err(|_| RecordingError::NotRecording)?;
             let recording = guard.take().ok_or(RecordingError::NotRecording)?;
+            let sample_rate = recording.sample_rate;
+            let fallback_duration = recording.start.elapsed();
+            let buffer = Arc::clone(&recording.buffer);
+            let chunk_emitter = recording._chunk_emitter.clone();
 
-            let samples = recording
-                .buffer
+            if let Err(err) = recording._stream.pause() {
+                log::error!("failed to pause input stream before final flush: {err}");
+            }
+            drop(recording);
+            if let Some(chunk_emitter) = chunk_emitter {
+                chunk_emitter.flush();
+            }
+
+            let samples = buffer
                 .lock()
                 .map(|buffer| buffer.clone())
                 .unwrap_or_default();
-            let sample_rate = recording.sample_rate;
-            let fallback_duration = recording.start.elapsed();
             let duration = if !samples.is_empty() && sample_rate > 0 {
                 let duration_secs = samples.len() as f64 / f64::from(sample_rate);
                 std::time::Duration::from_secs_f64(duration_secs)
@@ -412,8 +489,6 @@ mod cpal_impl {
                 fallback_duration
             };
             let size_bytes = samples.len() as u64 * std::mem::size_of::<f32>() as u64;
-
-            drop(recording);
 
             Ok(RecordingResult {
                 metrics: RecordingMetrics {
@@ -1109,12 +1184,16 @@ mod cpal_impl {
                         level_emitter.emit(&mono_samples);
                     }
 
-                    if let Some(ref chunk_emitter) = chunk_emitter_ref {
-                        chunk_emitter.emit(&mono_samples);
-                    }
-
+                    // Append to the retained buffer before emitting the live
+                    // chunk. stop_recording clones this buffer after flushing
+                    // the emitter, so emitting first could deliver audio that
+                    // the returned RecordingResult does not contain.
                     if let Ok(mut shared_buffer) = callback_buffer.lock() {
                         shared_buffer.extend_from_slice(&mono_samples);
+                    }
+
+                    if let Some(ref chunk_emitter) = chunk_emitter_ref {
+                        chunk_emitter.emit(&mono_samples);
                     }
                 },
                 |err| log::error!("stream error: {err}"),
@@ -1125,7 +1204,193 @@ mod cpal_impl {
 
     #[cfg(test)]
     mod tests {
-        use super::{device_matches_preferred, disambiguated_label, is_preferred_input_device_name};
+        use super::{
+            device_matches_preferred, disambiguated_label, is_preferred_input_device_name,
+            ChunkEmitter,
+        };
+        use std::collections::HashSet;
+        use std::sync::{Arc, Mutex};
+
+        #[test]
+        fn chunk_emitter_flushes_the_final_partial_chunk() {
+            let chunks = Arc::new(Mutex::new(Vec::<(Vec<f32>, u64)>::new()));
+            let callback_chunks = chunks.clone();
+            let emitter = ChunkEmitter::new(Arc::new(move |chunk, offset| {
+                callback_chunks.lock().unwrap().push((chunk, offset));
+            }));
+
+            emitter.emit(&[0.1f32, 0.2f32]);
+            emitter.emit(&[0.3f32]);
+            emitter.flush();
+
+            assert_eq!(
+                *chunks.lock().unwrap(),
+                vec![(vec![0.1f32, 0.2f32], 0), (vec![0.3f32], 2)]
+            );
+        }
+
+        #[test]
+        fn chunk_offsets_stay_contiguous_when_dispatches_are_throttled() {
+            let seen = Arc::new(Mutex::new(Vec::<(usize, u64)>::new()));
+            let recorded = seen.clone();
+            let emitter = ChunkEmitter::new(Arc::new(move |chunk, offset| {
+                recorded.lock().unwrap().push((chunk.len(), offset));
+            }));
+
+            // Five batches arrive inside one throttle window, so the throttle
+            // coalesces them and the first batch leaves immediately. The exact
+            // split is a timing detail, so the contract asserted here is that
+            // the offsets tile the stream: each one starts where the previous
+            // batch ended, whatever the throttle decided.
+            for _ in 0..5 {
+                emitter.emit(&[0.0f32; 128]);
+            }
+            emitter.flush();
+
+            let seen = seen.lock().unwrap();
+            let mut expected_offset = 0u64;
+            for (len, offset) in seen.iter() {
+                assert_eq!(*offset, expected_offset);
+                expected_offset += *len as u64;
+            }
+            assert_eq!(expected_offset, 5 * 128);
+        }
+
+        /// The throttle was one inline block in each emitter, with the decide
+        /// and the advance under one lock. That pairing is the load-bearing
+        /// part: if the timestamp were taken twice, two callers inside one
+        /// window would both be told they could emit.
+        #[test]
+        fn chunk_offset_keeps_counting_when_a_dispatch_is_skipped() {
+            let seen = Arc::new(Mutex::new(Vec::<(usize, u64)>::new()));
+            let recorded = seen.clone();
+            let emitter = ChunkEmitter::new(Arc::new(move |chunk, offset| {
+                recorded.lock().unwrap().push((chunk.len(), offset));
+            }));
+
+            emitter.emit(&[0.0f32; 4]);
+            // An empty batch contributes no samples, so it must not consume an
+            // index either.
+            emitter.emit(&[]);
+            emitter.flush();
+
+            assert_eq!(*seen.lock().unwrap(), vec![(4, 0)]);
+        }
+
+        #[test]
+        fn concurrent_chunk_dispatch_never_reuses_a_starting_index() {
+            let seen = Arc::new(Mutex::new(Vec::<u64>::new()));
+            let recorded = seen.clone();
+            let emitter = ChunkEmitter::new(Arc::new(move |_chunk, offset| {
+                recorded.lock().unwrap().push(offset);
+            }));
+
+            let mut threads = Vec::new();
+            for _ in 0..8 {
+                let emitter = emitter.clone();
+                threads.push(std::thread::spawn(move || {
+                    for _ in 0..200 {
+                        emitter.emit(&[0.0f32; 16]);
+                        emitter.flush();
+                    }
+                }));
+            }
+            for thread in threads {
+                thread.join().expect("emitter thread panicked");
+            }
+
+            let seen = seen.lock().unwrap();
+            let unique: HashSet<u64> = seen.iter().copied().collect();
+            assert_eq!(
+                unique.len(),
+                seen.len(),
+                "two dispatches claimed the same starting index"
+            );
+        }
+
+        /// Uniqueness is not enough. The webview places each chunk at the
+        /// offset it is handed, so a callback that runs *after* a later
+        /// offset has been delivered leaves a hole in a stream whose samples
+        /// were contiguous. The offset was claimed under `buffer` but the
+        /// callback ran after that lock was released, which is the window
+        /// this closes.
+        ///
+        /// The first callback is held inside the callback so a second
+        /// dispatch has to get past it to be delivered. Samples are pushed
+        /// straight into the buffer rather than through `emit`, so the
+        /// throttle window cannot turn the second dispatch into a no-op and
+        /// make the test pass for the wrong reason.
+        #[test]
+        fn a_dispatch_in_flight_is_delivered_before_the_next_one() {
+            use std::sync::atomic::{AtomicBool, Ordering};
+            use std::sync::Barrier;
+            use std::time::Duration;
+
+            let first_entered = Arc::new(Barrier::new(2));
+            let release_first = Arc::new(Barrier::new(2));
+            let second_started = Arc::new(AtomicBool::new(false));
+            let seen = Arc::new(Mutex::new(Vec::<u64>::new()));
+
+            let entered = first_entered.clone();
+            let release = release_first.clone();
+            let seen_in_callback = seen.clone();
+            let emitter = ChunkEmitter::new(Arc::new(move |_chunk, offset| {
+                if offset == 0 {
+                    // Park inside the first callback. Everything recorded
+                    // after this point is a delivery that overtook it.
+                    entered.wait();
+                    release.wait();
+                }
+                seen_in_callback.lock().unwrap().push(offset);
+            }));
+
+            let first = {
+                let emitter = emitter.clone();
+                std::thread::spawn(move || {
+                    emitter
+                        .buffer
+                        .lock()
+                        .unwrap()
+                        .extend_from_slice(&[0.0f32; 4]);
+                    emitter.flush();
+                })
+            };
+            first_entered.wait();
+
+            let second_started_in_thread = second_started.clone();
+            let second = {
+                let emitter = emitter.clone();
+                std::thread::spawn(move || {
+                    second_started_in_thread.store(true, Ordering::SeqCst);
+                    emitter
+                        .buffer
+                        .lock()
+                        .unwrap()
+                        .extend_from_slice(&[0.0f32; 4]);
+                    emitter.flush();
+                })
+            };
+            while !second_started.load(Ordering::SeqCst) {
+                std::thread::yield_now();
+            }
+            // Long enough for the second dispatch to have been delivered if
+            // nothing serialises it.
+            std::thread::sleep(Duration::from_millis(200));
+            assert!(
+                seen.lock().unwrap().is_empty(),
+                "a second dispatch reached the callback while the first was still in it"
+            );
+
+            release_first.wait();
+            first.join().expect("first dispatch thread panicked");
+            second.join().expect("second dispatch thread panicked");
+
+            assert_eq!(
+                *seen.lock().unwrap(),
+                vec![0, 4],
+                "chunks must reach the callback in the order their offsets were claimed"
+            );
+        }
 
         #[test]
         fn first_device_keeps_its_bare_name() {
@@ -1137,14 +1402,26 @@ mod cpal_impl {
 
         #[test]
         fn repeated_names_get_an_ordinal_suffix() {
-            assert_eq!(disambiguated_label("USB Microphone", 1), "USB Microphone (2)");
-            assert_eq!(disambiguated_label("USB Microphone", 2), "USB Microphone (3)");
+            assert_eq!(
+                disambiguated_label("USB Microphone", 1),
+                "USB Microphone (2)"
+            );
+            assert_eq!(
+                disambiguated_label("USB Microphone", 2),
+                "USB Microphone (3)"
+            );
         }
 
         #[test]
         fn preferences_match_labels_case_insensitively() {
-            assert!(device_matches_preferred("USB Microphone (2)", "usb microphone (2)"));
-            assert!(!device_matches_preferred("USB Microphone", "usb microphone (2)"));
+            assert!(device_matches_preferred(
+                "USB Microphone (2)",
+                "usb microphone (2)"
+            ));
+            assert!(!device_matches_preferred(
+                "USB Microphone",
+                "usb microphone (2)"
+            ));
         }
 
         #[test]

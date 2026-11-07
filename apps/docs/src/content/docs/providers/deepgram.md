@@ -5,7 +5,7 @@ sidebar:
   order: 4
 ---
 
-Deepgram is a transcription-only provider in mausVoice. Get a key from the [Deepgram console](https://console.deepgram.com/), then save it through **Settings → Processing → Deepgram API key** or add a named record in **AI transcription**.
+Deepgram is a transcription-only provider in mausVoice. Get a key from the [Deepgram console](https://console.deepgram.com/), then save it through **Settings → AI and processing → Deepgram API key** or add a named record in **AI transcription**.
 
 The quick row creates or updates **Personal Deepgram** and prefers it for transcription when the current choice is unset, Local, or already one of the managed personal records. It does not replace an unrelated provider you deliberately selected.
 

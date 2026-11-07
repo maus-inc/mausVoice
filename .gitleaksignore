@@ -1,0 +1,24 @@
+# This file is used as a Gitleaks *baseline* (fingerprint allowlist). Entries
+# MUST be finding FINGERPRINTS, not path globs. Path-based exclusions live in
+# gitleaks.toml under [allowlist].paths (node_modules / dist / target), which
+# Gitleaks actually honors, and it does not silently mask real findings -- but
+# only for a reader who checks. So to be plain about what this file is: it ships
+# exactly one fingerprint, and the entry below is not a secret. The honest
+# version of "leave this empty" is "every entry here must be justifiable in one
+# sentence", which is what the note under the entry does. An empty file would be
+# tidier and would fail the scan, because the finding it suppresses is real to
+# gitleaks.
+#
+# The fingerprint format is the one the pinned Gitleaks emits and matches,
+# `<commit>:<path>:<ruleID>:<line>`, taken from its own report. An earlier
+# version of this header documented `<ruleID>:<commit>:<email>:<path>:<line>`,
+# which the tool does not match: an entry written in that form is silently inert
+# and the finding still fails the scan. The commit's author is not part of it.
+#
+# One entry, and it is a test fixture rather than a secret. The F13 redaction case
+# needs an `api_key=<value>` string to assert on, and gitleaks reads that shape as
+# `generic-api-key` on sight. The literal is split at the label boundary in the
+# working tree, but the commit that first introduced it is still inside the pull
+# request's range and the range scan reads every commit in that range, so the
+# finding comes back from history however the current tree is written.
+f4a3d740f750313e25fd549246fe2bbf7eeef83b:packages/voice-ai/src/provider-error.utils.test.ts:generic-api-key:115

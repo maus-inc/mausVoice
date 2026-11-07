@@ -1,0 +1,180 @@
+// @vitest-environment jsdom
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, createElement, type ReactNode } from "react";
+import { createRoot } from "react-dom/client";
+import { INITIAL_APP_STATE } from "../../state/app.state";
+import { produceAppState, setAppState } from "../../store";
+
+// The heavy children are not what this file is about: each one would drag in
+// its own repo and IPC surface, and the assertion only reads the `Dialog` and
+// the title it is labelled by.
+vi.mock("./AIPostProcessingConfiguration", () => ({
+  AIPostProcessingConfiguration: () => null,
+}));
+vi.mock("./AIAgentModeConfiguration", () => ({
+  AIAgentModeConfiguration: () => null,
+}));
+vi.mock("./HotkeySetting", () => ({ HotkeySetting: () => null }));
+vi.mock("../../actions/transcriptions.actions", () => ({
+  importAudioFile: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock("../transcriptions/TranscriptionsSideEffects", () => ({
+  TranscriptionsSideEffects: () => null,
+}));
+vi.mock("../transcriptions/TranscriptRow", () => ({
+  TranscriptionRow: () => null,
+}));
+
+vi.mock("@tauri-apps/plugin-os", () => ({ platform: () => "macos" }));
+
+vi.mock("react-intl", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("react-intl")>();
+  return {
+    ...actual,
+    FormattedMessage: ({ defaultMessage }: { defaultMessage: string }) =>
+      defaultMessage,
+    useIntl: () => ({
+      formatMessage: ({ defaultMessage }: { defaultMessage: string }) =>
+        defaultMessage,
+    }),
+  };
+});
+
+import { ShortcutsDialog } from "./ShortcutsDialog";
+import { DictationLanguageDialog } from "./DictationLanguageDialog";
+import { DiagnosticsDialog } from "./DiagnosticsDialog";
+import { StyleHotkeysDialog } from "./StyleHotkeysDialog";
+import { AIAgentModeDialog } from "./AIAgentModeDialog";
+import { AIPostProcessingDialog } from "./AIPostProcessingDialog";
+import TranscriptionsPage from "../transcriptions/TranscriptionsPage";
+
+(
+  globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
+).IS_REACT_ACT_ENVIRONMENT = true;
+
+const resetState = () => setAppState(structuredClone(INITIAL_APP_STATE), true);
+
+/**
+ * MUI renders the dialog into a portal, so it is looked up on `document.body`
+ * rather than in the container. An unnamed dialog announces nothing useful to
+ * a screen reader, so the assertion is that `aria-labelledby` resolves to an
+ * element holding the visible title.
+ */
+const accessibleNameOf = (): string | null => {
+  const dialog = document.body.querySelector<HTMLElement>('[role="dialog"]');
+  const labelledBy = dialog?.getAttribute("aria-labelledby");
+  if (!dialog || !labelledBy) return null;
+  return document.getElementById(labelledBy)?.textContent ?? null;
+};
+
+let container: HTMLDivElement;
+let root: ReturnType<typeof createRoot> | null = null;
+
+beforeEach(() => {
+  resetState();
+  container = document.createElement("div");
+  document.body.appendChild(container);
+  root = createRoot(container);
+});
+
+afterEach(() => {
+  act(() => root?.unmount());
+  root = null;
+  container.remove();
+  document.body.innerHTML = "";
+  resetState();
+});
+
+const render = async (node: ReactNode) => {
+  await act(async () => {
+    root?.render(node);
+  });
+};
+
+describe("settings dialogs announce their title", () => {
+  it.each([
+    [
+      "dictationLanguageDialogOpen",
+      DictationLanguageDialog,
+      "Dictation language",
+      "Configure multiple dictation languages with hotkeys.",
+    ],
+    [
+      "styleHotkeysDialogOpen",
+      StyleHotkeysDialog,
+      "Style hotkeys",
+      "Assign a shortcut to select a style directly. Leave a row empty to disable its shortcut.",
+    ],
+    ["diagnosticsDialogOpen", DiagnosticsDialog, "Diagnostics", null],
+  ] as const)(
+    "names %s independently of other title content",
+    async (key, Component, name, description) => {
+      produceAppState((draft) => {
+        draft.settings[key] = true;
+      });
+      await render(createElement(Component));
+      expect(accessibleNameOf()).toBe(name);
+      const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
+      const descriptionId = dialog?.getAttribute("aria-describedby");
+      if (description)
+        expect(document.getElementById(descriptionId ?? "")?.textContent).toBe(
+          description,
+        );
+      else expect(descriptionId).toBeNull();
+    },
+  );
+
+  it("names the shortcuts dialog without folding its explanation into the title", async () => {
+    produceAppState((draft) => {
+      draft.settings.shortcutsDialogOpen = true;
+    });
+    await render(createElement(ShortcutsDialog));
+    expect(accessibleNameOf()).toBe("Keyboard shortcuts");
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
+    expect(
+      document.getElementById(dialog?.getAttribute("aria-describedby") ?? "")
+        ?.textContent,
+    ).toBe(
+      "Customize your keyboard shortcuts. Keyboard shortcuts can be triggered from within any app.",
+    );
+  });
+
+  it("names the AI post-processing dialog", async () => {
+    produceAppState((draft) => {
+      draft.settings.aiPostProcessingDialogOpen = true;
+    });
+
+    await render(createElement(AIPostProcessingDialog));
+
+    expect(accessibleNameOf()).toBe("AI post processing");
+  });
+
+  it("names the assistant-mode dialog", async () => {
+    produceAppState((draft) => {
+      draft.settings.agentModeDialogOpen = true;
+    });
+
+    await render(createElement(AIAgentModeDialog));
+
+    expect(accessibleNameOf()).toBe("Assistant modeBeta");
+  });
+
+  it("names the import-audio dialog on the transcriptions page", async () => {
+    await render(createElement(TranscriptionsPage));
+
+    const openImport = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>("button"),
+    ).find((button) => button.textContent?.trim() === "Import audio");
+    if (!openImport) throw new Error("Import audio button must be rendered");
+    await act(async () => {
+      openImport.click();
+    });
+
+    expect(accessibleNameOf()).toBe("Import audio");
+    const dialog = document.body.querySelector('[role="dialog"]')!;
+    const labelledBy = dialog.getAttribute("aria-labelledby")!;
+    const label = document.getElementById(labelledBy)!;
+    expect(label.querySelector("button")).toBeNull();
+    expect(document.querySelectorAll(`[id="${labelledBy}"]`)).toHaveLength(1);
+  });
+});

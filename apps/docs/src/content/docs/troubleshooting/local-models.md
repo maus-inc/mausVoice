@@ -5,11 +5,11 @@ sidebar:
   order: 6
 ---
 
-Start in **Settings → Processing → AI transcription → Local**. A usable row must report **Downloaded** after validation; a file merely existing under app data is not enough.
+Start in **Settings → AI and processing → AI transcription → Local**. A usable row must report **Downloaded** after validation; a file merely existing under app data is not enough.
 
 ## Download or validation fails
 
-Use the row's **Delete** and **Download** actions rather than renaming files. Confirm the model origin is reachable, security software is not quarantining the sidecar or model artifacts (`.bin` for Whisper, `.onnx`/companion files for Parakeet/Canary), and free space exceeds the displayed size. Downloads are polled for up to 45 minutes. An interrupted partial file should be replaced through the UI.
+Use the row's **Delete** and **Download** actions rather than renaming files. Confirm the model origin is reachable, security software is not quarantining the sidecar or model artifacts (`.bin` for Whisper, `.onnx`/companion files for Parakeet/Canary/SenseVoice), and free space exceeds the displayed size. Downloads are polled for up to 45 minutes. An interrupted partial file should be replaced through the UI.
 
 ## No device appears
 

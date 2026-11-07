@@ -26,7 +26,16 @@ export const createMessageId = (defaultMessage = "") => {
   return truncated || "message";
 };
 
-export const formatjsOverrideIdFn = (id, defaultMessage) => {
+// The formatjs babel plugin always passes four arguments
+// (id, defaultMessage, description, filePath); only the first two are
+// needed for deterministic id derivation, but the signature must accept
+// the full arity the plugin invokes with.
+export const formatjsOverrideIdFn = (
+  id,
+  defaultMessage,
+  _description,
+  _filePath,
+) => {
   if (id || !defaultMessage) {
     return id;
   }

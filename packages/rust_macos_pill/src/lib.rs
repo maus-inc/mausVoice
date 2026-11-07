@@ -6,11 +6,12 @@ extern crate objc;
 pub mod ipc;
 
 mod app;
-mod font;
 mod constants;
 mod draw;
+mod font;
 mod gfx;
 mod input;
+mod nsstring;
 mod state;
 
 use std::sync::mpsc::{Receiver, Sender};

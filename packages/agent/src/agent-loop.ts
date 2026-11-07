@@ -4,119 +4,200 @@ import type {
   LlmMessage,
   LlmToolCall,
 } from "@maus-inc/types";
-import type { AgentConfig, AgentEvent } from "./types";
+import type {
+  AgentConfig,
+  AgentEvent,
+  AgentFinishReason,
+  AgentTool,
+  AgentToolOutput,
+} from "./types";
+import { parseJsonObject, unknownToMessage } from "@maus-inc/utilities";
 
+/** Render a tool's successful result to a string. */
+const stringifyToolResult = (result: unknown): string => {
+  if (typeof result === "string") return result;
+  // `JSON.stringify` throws on a BigInt and returns `undefined` for a function
+  // or a symbol, and `AgentToolOutput.result` is typed `unknown`, so nothing in
+  // the type system rules those out. A tool must never abort the whole loop over
+  // its own return value, so the known throwers are each handled. That is not a
+  // guarantee that nothing can throw -- `String` still throws for an object whose
+  // `toString` does -- so `run()` is what has to tolerate a throw, not this.
+  if (typeof result === "bigint") return result.toString();
+  if (typeof result === "function" || typeof result === "symbol") {
+    return String(result);
+  }
+  const serialized = JSON.stringify(result ?? {});
+  // Also reachable for values JSON cannot represent at all, e.g. an object
+  // whose `toJSON` throws or returns undefined.
+  return serialized ?? String(result);
+};
+
+/**
+ * The result a tool call reports when the caller aborts before it answers.
+ *
+ * A tool call is only ever omitted when it never started; one that started is
+ * always paired with a result, or the next provider turn carries an assistant
+ * tool call with no matching tool message and the conversation is rejected.
+ */
+const ABORTED_TOOL_OUTPUT: AgentToolOutput = {
+  success: false,
+  failureReason: "Tool execution aborted",
+};
+
+/**
+ * One conversation with a provider: stream a reply, run the tools it asks for,
+ * feed the results back, until the model stops asking, the iteration budget runs
+ * out, or `abort()` is called.
+ *
+ * `abort()` means "stop this run". It is scoped to the run rather than to the
+ * instance, so the controller and the flag are reset when `run()` starts: a
+ * permanently aborted `AbortSignal` handed to a second run is a request that
+ * silently does nothing, and the caller sees an empty conversation with no
+ * error.
+ *
+ * One loop carries one run at a time, and a second `run()` while the first is
+ * still going is refused rather than interleaved. The abort state is a pair of
+ * fields, not a parameter threaded through fifteen frames, so two runs sharing
+ * them would mean `abort()` cancelling whichever started last while the first
+ * kept waiting on a provider that was never cancelled. Refusing says that plainly
+ * at the call site; every caller constructs a loop per conversation anyway.
+ */
 export class AgentLoop {
   private config: AgentConfig;
   private aborted = false;
-
+  private abortController = new AbortController();
+  private running = false;
   constructor(config: AgentConfig) {
     this.config = config;
   }
 
   abort(): void {
     this.aborted = true;
+    this.abortController.abort();
   }
 
   async *run(messages: LlmMessage[]): AsyncGenerator<AgentEvent> {
+    if (this.running) {
+      throw new Error(
+        "AgentLoop.run: this loop is already running a conversation. One loop " +
+          "carries one run at a time; construct another for a second one rather " +
+          "than sharing this one, or abort this run first.",
+      );
+    }
+    this.running = true;
+    // A run starts live. An abort left over from a previous run describes that
+    // run, and a signal that is already aborted is one the provider and every
+    // tool will refuse before doing any work.
+    this.aborted = false;
+    this.abortController = new AbortController();
+    try {
+      yield* this.runConversation(messages);
+    } finally {
+      // `finally` rather than a success path: a consumer that stops iterating
+      // early -- `break` out of a `for await` -- disposes the generator, and a
+      // loop stuck "running" would refuse every later conversation.
+      this.running = false;
+    }
+  }
+
+  private async *runConversation(
+    messages: LlmMessage[],
+  ): AsyncGenerator<AgentEvent> {
     const history: LlmMessage[] = [...messages];
     const maxIterations = this.config.maxIterations ?? 30;
 
     for (let i = 0; i < maxIterations; i++) {
       if (this.aborted) {
-        yield {
-          type: "finish",
-          reason: "aborted",
-          text: "",
-          messages: history,
-        };
+        yield this.finishEvent(history, "aborted");
         return;
       }
-
       yield { type: "iteration-start", iteration: i };
+      const turn = yield* this.streamTurn(history);
+      if (!turn) return;
 
-      const input = this.buildInput(history);
-      let content = "";
-      const toolCalls: LlmToolCall[] = [];
-
-      try {
-        for await (const event of this.config.provider.streamChat(input)) {
-          if (this.aborted) break;
-
-          if (event.type === "text-delta") {
-            content += event.text;
-            yield { type: "text-delta", text: event.text };
-          }
-
-          if (event.type === "tool-call") {
-            toolCalls.push({
-              id: event.id,
-              name: event.name,
-              arguments: event.arguments,
-            });
-          }
-
-          if (event.type === "error") {
-            yield {
-              type: "finish",
-              reason: "error",
-              text: "",
-              messages: history,
-              error: event.error,
-            };
-            return;
-          }
-        }
-      } catch (err) {
-        yield {
-          type: "finish",
-          reason: "error",
-          text: "",
-          messages: history,
-          error: err instanceof Error ? err.message : String(err),
-        };
-        return;
-      }
-
-      if (this.aborted) {
-        yield {
-          type: "finish",
-          reason: "aborted",
-          text: "",
-          messages: history,
-        };
-        return;
-      }
-
+      const { content, toolCalls } = turn;
       history.push({
         role: "assistant",
         content: content || undefined,
         toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
       });
-
       if (toolCalls.length === 0) {
-        yield {
-          type: "finish",
-          reason: "stop",
-          text: content,
-          messages: history,
-        };
+        yield this.finishEvent(history, "stop", content);
         return;
       }
-
       yield* this.processToolCalls(history, toolCalls);
     }
+    yield this.finishEvent(
+      history,
+      this.aborted ? "aborted" : "max-iterations",
+    );
+  }
 
-    yield {
+  private finishEvent(
+    history: LlmMessage[],
+    reason: AgentFinishReason,
+    text = "",
+    error?: string,
+  ): AgentEvent {
+    return {
       type: "finish",
-      reason: "max-iterations",
-      text: "",
+      reason,
+      text,
       messages: history,
+      ...(error === undefined ? {} : { error }),
     };
+  }
+
+  private async *streamTurn(
+    history: LlmMessage[],
+  ): AsyncGenerator<
+    AgentEvent,
+    { content: string; toolCalls: LlmToolCall[] } | null
+  > {
+    let content = "";
+    const toolCalls: LlmToolCall[] = [];
+    try {
+      for await (const event of this.config.provider.streamChat(
+        this.buildInput(history),
+      )) {
+        if (this.aborted) break;
+        switch (event.type) {
+          case "text-delta":
+            content += event.text;
+            yield { type: "text-delta", text: event.text };
+            break;
+          case "tool-call":
+            toolCalls.push({
+              id: event.id,
+              name: event.name,
+              arguments: event.arguments,
+            });
+            break;
+          case "error":
+            yield this.finishEvent(history, "error", "", event.error);
+            return null;
+        }
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      yield this.finishEvent(
+        history,
+        this.aborted ? "aborted" : "error",
+        "",
+        this.aborted ? undefined : message,
+      );
+      return null;
+    }
+    if (this.aborted) {
+      yield this.finishEvent(history, "aborted");
+      return null;
+    }
+    return { content, toolCalls };
   }
 
   private buildInput(history: LlmMessage[]): LlmChatInput {
     return {
+      signal: this.abortController.signal,
       messages: [
         { role: "system", content: this.config.systemPrompt },
         ...history,
@@ -145,62 +226,162 @@ export class AgentLoop {
     return { ...schema, properties, required };
   }
 
+  /**
+   * Run a tool, or give the wait up when the caller aborts.
+   *
+   * `abort()` sets the flag every other part of the loop reads, but this await
+   * was not one of them: a tool that never settles held the generator open, so
+   * no `finish` event was ever emitted and whoever was driving the loop waited
+   * forever on a stop it had already asked for. The tool's own promise is not
+   * cancellable — `AgentToolInput` carries no signal — so racing the abort is
+   * what releases the loop. A tool that ignores the cancellation keeps running
+   * in the background, which is no worse than before, and the call is still
+   * paired with a result so the provider's context stays valid.
+   */
+  private async executeTool(
+    tool: AgentTool,
+    toolCallId: string,
+    toolParams: Record<string, unknown>,
+    reason: unknown,
+  ): Promise<AgentToolOutput> {
+    if (this.aborted) {
+      return ABORTED_TOOL_OUTPUT;
+    }
+    try {
+      // `execute` is typed as returning a promise, but a tool that throws before
+      // returning one would escape this frame with no tool-result and no finish
+      // event, so the awaited call is inside the same `try` that reports a tool
+      // failure. A tool that never settles is released by the race below.
+      const run = Promise.resolve(
+        tool.execute({
+          params: toolParams,
+          reason: typeof reason === "string" ? reason : "",
+          toolCallId,
+        }),
+      ).catch((err: unknown) => {
+        // A tool must never abort the whole agent loop. Surface the failure
+        // as a tool-result message so the model can recover or end cleanly.
+        return { success: false, failureReason: unknownToMessage(err) };
+      });
+
+      // The abort waiter is per call, not per loop: a shared promise resolves once
+      // and its reaction then sits on every result this loop ever produced, which
+      // keeps each tool's output alive until the run ends.
+      const waitForAbort = (): Promise<AgentToolOutput> =>
+        new Promise<AgentToolOutput>((resolve) => {
+          if (this.aborted) {
+            resolve(ABORTED_TOOL_OUTPUT);
+            return;
+          }
+          this.abortController.signal.addEventListener(
+            "abort",
+            () => resolve(ABORTED_TOOL_OUTPUT),
+            { once: true },
+          );
+        });
+
+      // Whichever settles first wins; the loser stops mattering because nothing
+      // here holds a reference to it once this frame returns.
+      return await Promise.race([run, waitForAbort()]);
+    } catch (err) {
+      return { success: false, failureReason: unknownToMessage(err) };
+    }
+  }
+
   private async *processToolCalls(
     history: LlmMessage[],
     toolCalls: LlmToolCall[],
   ): AsyncGenerator<AgentEvent> {
-    for (const tc of toolCalls) {
-      if (this.aborted) return;
+    yield* this.processToolCallsFrom(history, toolCalls, 0);
+  }
 
-      let params: Record<string, unknown>;
-      try {
-        params = JSON.parse(tc.arguments);
-      } catch {
-        params = {};
-      }
+  /**
+   * Walks the tool calls in the order the model emitted them, one at a time.
+   *
+   * The order is the contract, not an accident of scheduling: every call's
+   * result is pushed onto the same history, the provider reads that history
+   * back on the next turn, and a consumer pairing a start with its result sees
+   * them interleaved in this order. Running two at once would let a tool read
+   * state another tool is midway through writing. So the walk recurses from the
+   * call after the current one rather than looping over an await.
+   *
+   * Each step delegates to the next with `yield*`, which keeps a frame per call
+   * until the sequence drains. That is bounded well past anything a model emits
+   * in one message (the V8 delegation chain holds roughly three thousand), and
+   * the whole batch is bounded by the response that produced it.
+   */
+  private async *processToolCallsFrom(
+    history: LlmMessage[],
+    toolCalls: LlmToolCall[],
+    index: number,
+  ): AsyncGenerator<AgentEvent> {
+    const tc = toolCalls[index];
+    if (!tc) {
+      return;
+    }
+
+    if (this.aborted) {
+      // Once an assistant message emits tool calls, every tool call must be paired
+      // with a tool result message in history to keep provider conversational context valid.
+      yield this.toolResult(tc, "Tool execution aborted", history, true);
+    } else {
+      const params = parseJsonObject(tc.arguments);
 
       yield {
         type: "tool-call-start",
         toolCallId: tc.id,
         toolName: tc.name,
-        args: params,
+        args: params ?? {},
       };
 
-      const { reason, ...toolParams } = params;
-      const tool = this.config.tools.find((t) => t.name === tc.name);
+      // Once tool-call-start is emitted, always pair it with a tool-call-result
+      // (and history entry) even if abort wins mid-flight. Skipping the result
+      // leaves the assistant tool-call without a matching tool message.
+      if (!params) {
+        yield this.toolResult(
+          tc,
+          "Tool arguments must be a JSON object",
+          history,
+          true,
+        );
+      } else {
+        const { reason, ...toolParams } = params;
+        const tool = this.config.tools.find((t) => t.name === tc.name);
 
-      if (!tool) {
-        const error = `Unknown tool: ${tc.name}`;
-        history.push({ role: "tool", toolCallId: tc.id, content: error });
-        yield {
-          type: "tool-call-result",
-          toolCallId: tc.id,
-          toolName: tc.name,
-          result: error,
-          isError: true,
-        };
-        continue;
+        if (!tool) {
+          yield this.toolResult(tc, `Unknown tool: ${tc.name}`, history, true);
+        } else {
+          const output = await this.executeTool(
+            tool,
+            tc.id,
+            toolParams,
+            reason,
+          );
+          const resultStr = output.success
+            ? stringifyToolResult(output.result)
+            : (output.failureReason ?? "Tool execution failed");
+
+          yield this.toolResult(tc, resultStr, history, !output.success);
+        }
       }
-
-      const output = await tool.execute({
-        params: toolParams,
-        reason: (reason as string) ?? "",
-      });
-
-      const resultStr = output.success
-        ? typeof output.result === "string"
-          ? output.result
-          : JSON.stringify(output.result ?? {})
-        : (output.failureReason ?? "Tool execution failed");
-
-      history.push({ role: "tool", toolCallId: tc.id, content: resultStr });
-      yield {
-        type: "tool-call-result",
-        toolCallId: tc.id,
-        toolName: tc.name,
-        result: resultStr,
-        isError: !output.success,
-      };
     }
+
+    yield* this.processToolCallsFrom(history, toolCalls, index + 1);
+  }
+
+  private toolResult(
+    tc: LlmToolCall,
+    result: string,
+    history: LlmMessage[],
+    isError: boolean,
+  ): AgentEvent {
+    history.push({ role: "tool", toolCallId: tc.id, content: result });
+    return {
+      type: "tool-call-result",
+      toolCallId: tc.id,
+      toolName: tc.name,
+      result,
+      isError,
+    };
   }
 }

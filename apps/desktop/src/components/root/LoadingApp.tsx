@@ -1,4 +1,5 @@
-import { Box, CircularProgress } from "@mui/material";
+import { Box } from "@mui/material";
+import { DotMatrixLoader } from "../common/DotMatrixLoader";
 
 export const LoadingApp = () => {
   return (
@@ -11,7 +12,7 @@ export const LoadingApp = () => {
         alignItems: "center",
       }}
     >
-      <CircularProgress />
+      <DotMatrixLoader size={32} dotSize={4} />
     </Box>
   );
 };

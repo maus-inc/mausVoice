@@ -1,19 +1,32 @@
+import type { ReactNode } from "react";
 import { createBrowserRouter, Outlet, RouterProvider } from "react-router-dom";
 import AppsPage from "./components/apps/AppsPage.tsx";
 import ChatsPage from "./components/chats/ChatsPage.tsx";
+import { ComposerPage } from "./components/composer/ComposerPage.tsx";
 import { PageLayout } from "./components/common/PageLayout.tsx";
 import DashboardPage from "./components/dashboard/DashboardPage.tsx";
 import DictionaryPage from "./components/dictionary/DictionaryPage.tsx";
+import HelpPage from "./components/help/HelpPage.tsx";
 import HomePage from "./components/home/HomePage.tsx";
 import LoginPage from "./components/login/LoginPage.tsx";
 import OnboardingPage from "./components/onboarding/OnboardingPage.tsx";
 import ErrorBoundary from "./components/root/ErrorBoundary.tsx";
 import { AppHeader } from "./components/root/Header.tsx";
-import { HeaderPortalProvider } from "./components/root/HeaderPortalContext.tsx";
 import Root from "./components/root/Root.tsx";
 import { Guard } from "./components/routing/Guard.tsx";
 import { Redirect } from "./components/routing/Redirectors.tsx";
-import SettingsPage from "./components/settings/SettingsPage.tsx";
+import {
+  SettingsEntryRedirect,
+  SettingsLayout,
+} from "./components/settings/SettingsLayout.tsx";
+import AccountSettingsPage from "./components/settings/pages/AccountSettingsPage.tsx";
+import AiModelsSettingsPage from "./components/settings/pages/AiModelsSettingsPage.tsx";
+import AppearanceSettingsPage from "./components/settings/pages/AppearanceSettingsPage.tsx";
+import DictationSettingsPage from "./components/settings/pages/DictationSettingsPage.tsx";
+import HomeSettingsPage from "./components/settings/pages/HomeSettingsPage.tsx";
+import PrivacyDataSettingsPage from "./components/settings/pages/PrivacyDataSettingsPage.tsx";
+import ShortcutsSettingsPage from "./components/settings/pages/ShortcutsSettingsPage.tsx";
+import SystemSettingsPage from "./components/settings/pages/SystemSettingsPage.tsx";
 import StylingPage from "./components/styling/StylingPage.tsx";
 import TranscriptionsPage from "./components/transcriptions/TranscriptionsPage.tsx";
 import WelcomePage from "./components/welcome/WelcomePage.tsx";
@@ -26,15 +39,19 @@ const AppWrapper = () => {
   );
 };
 
-export const browserRouter = createBrowserRouter([
+const appRoutes = (root: ReactNode) => [
   {
     path: "/",
-    element: <Root />,
+    element: root,
     errorElement: <ErrorBoundary />,
     children: [
       {
         index: true,
         element: <Redirect to="/dashboard" />,
+      },
+      {
+        path: "composer",
+        element: <ComposerPage />,
       },
       {
         element: (
@@ -92,7 +109,51 @@ export const browserRouter = createBrowserRouter([
               },
               {
                 path: "settings",
-                element: <SettingsPage />,
+                element: <SettingsLayout />,
+                children: [
+                  {
+                    index: true,
+                    element: <SettingsEntryRedirect />,
+                  },
+                  {
+                    path: "home",
+                    element: <HomeSettingsPage />,
+                  },
+                  {
+                    path: "dictation",
+                    element: <DictationSettingsPage />,
+                  },
+                  {
+                    path: "ai-models",
+                    element: <AiModelsSettingsPage />,
+                  },
+                  {
+                    path: "shortcuts",
+                    element: <ShortcutsSettingsPage />,
+                  },
+                  {
+                    path: "appearance",
+                    element: <AppearanceSettingsPage />,
+                  },
+                  {
+                    path: "privacy-data",
+                    element: <PrivacyDataSettingsPage />,
+                  },
+                  {
+                    path: "system",
+                    element: <SystemSettingsPage />,
+                  },
+                  {
+                    path: "account",
+                    element: <AccountSettingsPage />,
+                  },
+                  {
+                    // An unknown page name, including an old one, resolves to
+                    // the page the person last used rather than a blank pane.
+                    path: "*",
+                    element: <SettingsEntryRedirect />,
+                  },
+                ],
               },
               {
                 path: "transcriptions",
@@ -114,18 +175,27 @@ export const browserRouter = createBrowserRouter([
                 path: "apps",
                 element: <AppsPage />,
               },
+              {
+                path: "help",
+                element: <HelpPage />,
+              },
             ],
           },
         ],
       },
     ],
   },
-]);
+];
+
+export const createAppRouter = (root: ReactNode = <Root />) =>
+  createBrowserRouter(appRoutes(root));
+
+// Shared deliberately with native Tauri navigation handlers, even if they
+// fire before Router mounts. Do not make this eager: the browser preview also
+// imports this route factory and must not create an unused history listener.
+let desktopRouter: ReturnType<typeof createAppRouter> | undefined;
+export const getBrowserRouter = () => (desktopRouter ??= createAppRouter());
 
 export default function Router() {
-  return (
-    <HeaderPortalProvider>
-      <RouterProvider router={browserRouter} />
-    </HeaderPortalProvider>
-  );
+  return <RouterProvider router={getBrowserRouter()} />;
 }

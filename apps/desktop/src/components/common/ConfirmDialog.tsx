@@ -7,8 +7,9 @@ import {
   DialogContentText,
   DialogTitle,
 } from "@mui/material";
-import { ReactNode } from "react";
-import { FormattedMessage } from "react-intl";
+import { ReactNode, useId } from "react";
+import { FormattedMessage, useIntl } from "react-intl";
+import { BusyButtonLabel } from "./BusyButtonLabel";
 
 export type ConfirmDialogProps = {
   isOpen: boolean;
@@ -20,6 +21,15 @@ export type ConfirmDialogProps = {
   cancelLabel?: ReactNode;
   confirmButtonProps?: ButtonProps;
   cancelButtonProps?: ButtonProps;
+  destructive?: boolean;
+  busy?: boolean;
+  /** Called after the closing transition, when focus has returned. */
+  onExited?: () => void;
+  /**
+   * Names the progress indicator shown while `busy`. A string because it lands
+   * in `aria-label`; `FormattedMessage` would render a node there.
+   */
+  busyLabel?: string;
 };
 
 export const ConfirmDialog = ({
@@ -32,19 +42,67 @@ export const ConfirmDialog = ({
   cancelLabel,
   confirmButtonProps,
   cancelButtonProps,
+  destructive,
+  busy,
+  busyLabel,
+  onExited,
 }: ConfirmDialogProps) => {
+  const intl = useIntl();
+  const confirmContent = confirmLabel ?? (
+    <FormattedMessage defaultMessage="Confirm" />
+  );
+  const cancelContent = cancelLabel ?? (
+    <FormattedMessage defaultMessage="Cancel" />
+  );
+  const progressLabel =
+    busyLabel ?? intl.formatMessage({ defaultMessage: "Working" });
+
+  const titleId = useId();
+  const contentId = useId();
+
   return (
-    <Dialog open={isOpen} onClose={onCancel} maxWidth="xs" fullWidth>
-      <DialogTitle>{title}</DialogTitle>
+    <Dialog
+      open={isOpen}
+      onClose={busy ? undefined : onCancel}
+      maxWidth="xs"
+      fullWidth
+      aria-labelledby={titleId}
+      aria-describedby={contentId}
+      slotProps={{ transition: { onExited } }}
+    >
+      <DialogTitle id={titleId}>{title}</DialogTitle>
       <DialogContent dividers>
-        <DialogContentText>{content}</DialogContentText>
+        <DialogContentText id={contentId}>{content}</DialogContentText>
       </DialogContent>
       <DialogActions sx={{ px: 3, pb: 2 }}>
-        <Button variant="text" onClick={onCancel} {...cancelButtonProps}>
-          {cancelLabel ?? <FormattedMessage defaultMessage="Cancel" />}
+        <Button
+          variant="text"
+          onClick={onCancel}
+          {...cancelButtonProps}
+          disabled={busy || cancelButtonProps?.disabled}
+        >
+          {cancelContent}
         </Button>
-        <Button variant="contained" onClick={onConfirm} {...confirmButtonProps}>
-          {confirmLabel ?? <FormattedMessage defaultMessage="Confirm" />}
+        <Button
+          variant="contained"
+          color={destructive ? "error" : "primary"}
+          onClick={onConfirm}
+          {...confirmButtonProps}
+          disabled={busy || confirmButtonProps?.disabled}
+          // The label stays in the DOM while the button is busy. Replacing it
+          // with a bare spinner left the button with no accessible name at all,
+          // so a screen reader announced an unlabelled disabled control and the
+          // user could not tell what was being confirmed. `aria-busy` and the
+          // named progressbar carry the in-flight state instead.
+          aria-busy={busy || undefined}
+        >
+          {busy ? (
+            <BusyButtonLabel label={progressLabel}>
+              {confirmContent}
+            </BusyButtonLabel>
+          ) : (
+            confirmContent
+          )}
         </Button>
       </DialogActions>
     </Dialog>
