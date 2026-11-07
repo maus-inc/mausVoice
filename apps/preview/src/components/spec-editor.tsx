@@ -223,7 +223,14 @@ const SpecFieldRow = ({
       <Typography
         variant="bodySmall"
         color="text.secondary"
-        sx={{ mt: 0.5, fontFamily: "monospace", fontSize: 11.5 }}
+        sx={{
+          mt: 0.5,
+          fontFamily: "monospace",
+          fontSize: 11.5,
+          // Same reason as the provenance list: a path has no break
+          // opportunity, so it would run past the panel edge.
+          overflowWrap: "anywhere",
+        }}
       >
         → {field.mapsTo}
       </Typography>
@@ -272,7 +279,14 @@ export const SpecEditor = ({ entry }: { entry: RegistryEntry }) => {
           <Typography
             key={p}
             variant="bodySmall"
-            sx={{ fontFamily: "monospace", fontSize: 11.5, display: "block" }}
+            sx={{
+              fontFamily: "monospace",
+              fontSize: 11.5,
+              display: "block",
+              // A path is one long word; without a break opportunity it runs
+              // past the panel and is cut off by the window edge.
+              overflowWrap: "anywhere",
+            }}
           >
             {p}
           </Typography>

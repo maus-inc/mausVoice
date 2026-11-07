@@ -9,6 +9,7 @@ import { mkdtempSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import http from "node:http";
+import net from "node:net";
 
 // Both the browser and its libraries live under /tmp, which this environment
 // wipes between turns. Rather than fail with a confusing spawn error, extract
@@ -49,7 +50,24 @@ function httpJson(port, path) {
   });
 }
 
-export async function launch({ port = 9333, width = 1280, height = 900 } = {}) {
+/** A port nobody is listening on, asked for and then released. */
+async function freePort() {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.unref();
+    server.on("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const { port } = server.address();
+      server.close(() => resolve(port));
+    });
+  });
+}
+
+export async function launch({ port, width = 1280, height = 900 } = {}) {
+  // A fixed port collides with a browser left over from an earlier run, and the
+  // symptom is a misleading "never opened its debugging port" rather than an
+  // address-in-use error. Ask the OS instead.
+  port = port ?? (await freePort());
   if (!existsSync(CHROME)) {
     throw new Error(`no chromium at ${CHROME}`);
   }
