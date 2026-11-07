@@ -216,6 +216,7 @@
   "could_not_load_provider_settings": "Anbietereinstellungen konnten nicht geladen werden.",
   "could_not_load_shortcuts": "Tastenkürzel konnten nicht geladen werden",
   "could_not_load_the_changelog": "Das Änderungsprotokoll konnte nicht geladen werden.",
+  "could_not_open_the_microphone_in_advance_dictation_still_wor": "Das Mikrofon konnte nicht im Voraus geöffnet werden. Diktieren funktioniert weiterhin, aber der erste Tastendruck dauert länger.",
   "could_not_open_the_review_window_your_transcript_was_saved_t": "Das Überprüfungsfenster konnte nicht geöffnet werden. Dein Transkript wurde im Verlauf gespeichert.",
   "could_not_reach_the_release_history": "Der Veröffentlichungsverlauf konnte nicht erreicht werden.",
   "could_not_resume_dictation": "Diktat konnte nicht fortgesetzt werden",

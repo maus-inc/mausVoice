@@ -216,6 +216,7 @@
   "could_not_load_provider_settings": "Impossible de charger les paramètres du fournisseur.",
   "could_not_load_shortcuts": "Impossible de charger les raccourcis",
   "could_not_load_the_changelog": "Impossible de charger le journal des modifications.",
+  "could_not_open_the_microphone_in_advance_dictation_still_wor": "Impossible d'ouvrir le microphone à l'avance. La dictée fonctionne toujours, mais la première pression sera plus lente.",
   "could_not_open_the_review_window_your_transcript_was_saved_t": "Impossible d'ouvrir la fenêtre de révision. Votre transcription a été enregistrée dans l'historique.",
   "could_not_reach_the_release_history": "Impossible d’accéder à l’historique des versions.",
   "could_not_resume_dictation": "Impossible de reprendre la dictée",

@@ -134,3 +134,50 @@ export const describeHeldState = (
   if (held === null) return "unknown";
   return held ? "held" : "not_held";
 };
+
+/**
+ * How visible a failed hold should be.
+ *
+ * A hold is a background promise: the user turned on a setting and expects the
+ * microphone to be open. When it is not, that has to be said once and quietly,
+ * because the failure is usually recoverable and the app keeps working. Saying
+ * nothing leaves the user pressing a key and waiting, which is the exact
+ * experience the setting was meant to remove.
+ */
+export type HoldFailureVisibility =
+  /** Nothing to say. */
+  | { kind: "silent" }
+  /** Worth a message, once. */
+  | { kind: "notify" }
+  /** Worth a message and a retry, because the device may simply be busy. */
+  | { kind: "notify_and_retry" };
+
+/**
+ * Decides what a failed hold is worth telling the user.
+ *
+ * `granted` is what the OS says about the microphone permission. A refusal is
+ * the user's own decision made in a dialog outside this app, so it is not an
+ * error to announce: the settings screen already shows the permission state and
+ * the path to change it.
+ *
+ * `transient` is the caller's read on whether the device looked temporarily
+ * unavailable rather than absent, which is the case a retry fixes.
+ */
+export const describeHoldFailure = ({
+  granted,
+  transient,
+  alreadyNotified,
+}: {
+  granted: boolean;
+  transient: boolean;
+  /**
+   * Whether the user has already been told about this same failure. A device
+   * that stays unplugged must not produce a message on every focus event.
+   */
+  alreadyNotified: boolean;
+}): HoldFailureVisibility => {
+  if (!granted || alreadyNotified) {
+    return { kind: "silent" };
+  }
+  return transient ? { kind: "notify_and_retry" } : { kind: "notify" };
+};

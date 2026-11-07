@@ -216,6 +216,7 @@
   "could_not_load_provider_settings": "無法載入供應商設定。",
   "could_not_load_shortcuts": "無法載入快捷鍵",
   "could_not_load_the_changelog": "無法載入更新日誌。",
+  "could_not_open_the_microphone_in_advance_dictation_still_wor": "無法提前開啟麥克風。聽寫仍可正常使用，但第一次按下會更慢。",
   "could_not_open_the_review_window_your_transcript_was_saved_t": "無法開啟審閱視窗。你的轉錄文本已儲存到歷史記錄。",
   "could_not_reach_the_release_history": "無法存取版本記錄。",
   "could_not_resume_dictation": "無法繼續口述",

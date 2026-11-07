@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useRef } from "react";
 import { commands } from "@maus-inc/desktop-native-apis";
+import { emit, listen } from "@tauri-apps/api/event";
+import { MICROPHONE_READINESS_EVENT } from "@maus-inc/desktop-utils";
+import { refreshCurrentUser } from "../../actions/user-activity.actions";
+import { isMainLocalDataWindow } from "../../utils/local-data-write-gate";
 import { produceAppState, useAppStore } from "../../store";
 import { getAppState } from "../../store";
+import { showSnackbar } from "../../actions/app.actions";
+import { getIntl } from "../../i18n/intl";
 import { getLogger } from "../../utils/log.utils";
 import {
   isLocalDataClearRequested,
@@ -56,10 +62,22 @@ export const MicrophoneReadinessSideEffects = () => {
   const publishHeld = useCallback(async () => {
     try {
       const held = await commands.microphoneReady();
-      if (getAppState().settings.microphoneHeld !== held) {
-        produceAppState((draft) => {
-          draft.settings.microphoneHeld = held;
-        });
+      if (getAppState().settings.microphoneHeld === held) {
+        return;
+      }
+      produceAppState((draft) => {
+        draft.settings.microphoneHeld = held;
+      });
+      // Only the main window broadcasts: several windows each emitting would
+      // multiply the traffic, and every listener would then re-read N times.
+      if (isMainLocalDataWindow()) {
+        void emit(MICROPHONE_READINESS_EVENT, { held }).catch(
+          (error: unknown) => {
+            getLogger().verbose(
+              `Could not broadcast the microphone state: ${error}`,
+            );
+          },
+        );
       }
     } catch (error) {
       getLogger().warning(`Could not read the microphone state: ${error}`);
@@ -75,6 +93,39 @@ export const MicrophoneReadinessSideEffects = () => {
   // drop the very pre-roll the user is adjusting.
   const openedPrerollRef = useRef<number | null>(null);
 
+  // Whether the last attempt failed, so a retry that succeeds can clear the
+  // message and a repeat failure does not announce itself on every focus.
+  const holdFailedRef = useRef<boolean | null>(null);
+
+  /**
+   * Tells the user the hold could not be opened, once per failure.
+   *
+   * Silence was the old behaviour and it is the worst of the options: the switch
+   * says on, nothing is held, and the press the setting promised to make instant
+   * is slow again for a reason the user cannot see.
+   */
+  const reportHoldFailure = useCallback((error: unknown) => {
+    if (holdFailedRef.current === true) {
+      return;
+    }
+    holdFailedRef.current = true;
+    getLogger().warning(`Could not hold the microphone ready: ${error}`);
+    const intl = getIntl();
+    showSnackbar(
+      intl.formatMessage({
+        defaultMessage:
+          "Could not open the microphone in advance. Dictation still works, but the first press will be slower.",
+      }),
+      // Warning, not error: dictation still works, it is just slower than the
+      // user was promised. An error styling would overstate it.
+      { mode: "info" },
+    );
+  }, []);
+
+  const clearHoldFailure = useCallback(() => {
+    holdFailedRef.current = null;
+  }, []);
+
   /** Opens or resizes the hold, depending on whether one is already applied. */
   const hold = useCallback(
     (seconds: number) => {
@@ -87,22 +138,22 @@ export const MicrophoneReadinessSideEffects = () => {
             // press opens it the normal way and reports the real problem. The
             // preference stays on, because the user asked for it and it may work
             // once the device comes back.
-            getLogger().warning(
-              `Could not hold the microphone ready: ${result.error}`,
-            );
+            reportHoldFailure(result.error);
             // The ring did not take the request, so the next attempt must not
             // believe a stream is held.
             openedPrerollRef.current = null;
             appliedRef.current = null;
+            return;
           }
+          clearHoldFailure();
         })
         .catch((error: unknown) => {
-          getLogger().warning(`Could not hold the microphone ready: ${error}`);
+          reportHoldFailure(error);
           openedPrerollRef.current = null;
           appliedRef.current = null;
         });
     },
-    [publishHeld],
+    [clearHoldFailure, publishHeld, reportHoldFailure],
   );
 
   const release = useCallback(() => {
@@ -182,6 +233,51 @@ export const MicrophoneReadinessSideEffects = () => {
     void publishHeld();
   }, [publishHeld]);
 
+  // The preference can be changed in another window, and a window whose copy
+  // says "off" would leave its device open after the user turned the feature
+  // off in the main window. Re-reading on mount and on focus is the cheapest
+  // thing that makes the preference global: the read hits the local database,
+  // and the write path is a single row.
+  useEffect(() => {
+    const reread = () => {
+      void refreshCurrentUser().catch((error: unknown) => {
+        getLogger().verbose(`Could not re-read preferences: ${error}`);
+      });
+    };
+    window.addEventListener("focus", reread);
+    return () => window.removeEventListener("focus", reread);
+  }, []);
+
+  // A hold that was released while this window was hidden, or a preference
+  // changed elsewhere, is only noticed when this window looks. The main window
+  // publishes the event; every window re-reads rather than trusting a payload,
+  // so one window cannot push another into a state the database does not
+  // support.
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void listen(MICROPHONE_READINESS_EVENT, () => {
+      void publishHeld();
+      void refreshCurrentUser().catch(() => undefined);
+    })
+      .then((cleanup) => {
+        // The listener may resolve after the component unmounted, which happens
+        // in tests and on a fast route change.
+        if (disposed) {
+          cleanup();
+          return;
+        }
+        unlisten = cleanup;
+      })
+      .catch((error: unknown) => {
+        getLogger().verbose(`Could not watch microphone readiness: ${error}`);
+      });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [publishHeld]);
+
   // A hold that failed has no state change to retry on: the preference did not
   // change, the device did. Coming back to the window is the moment a user has
   // most likely just plugged something in, so that is when the attempt is made
@@ -189,6 +285,12 @@ export const MicrophoneReadinessSideEffects = () => {
   useEffect(() => {
     const retryOnFocus = () => {
       void publishHeld();
+      // Enumerating devices is a real cost and the answer is the same for every
+      // window, because the backend shares one device. The main window owns the
+      // retry so N windows do not each open a stream in turn.
+      if (!isMainLocalDataWindow()) {
+        return;
+      }
       const state = getAppState();
       if (
         state.userPrefs?.keepMicrophoneReady !== true ||

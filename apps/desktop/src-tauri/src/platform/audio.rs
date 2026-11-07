@@ -1463,6 +1463,20 @@ mod cpal_impl {
         /// honest answer is to close it and open the newly best device. Called
         /// when the window is focused, not on a timer.
         pub fn refresh_warm_device(&self) {
+            // A recording is using its own stream, and that stream is not in the
+            // warm slot, so the checks below would see nothing and return. The
+            // guard is explicit anyway, because the close path in this function
+            // would otherwise be one refactor away from shutting a live
+            // microphone mid-recording.
+            if self
+                .inner
+                .lock()
+                .map(|guard| guard.is_some())
+                .unwrap_or(true)
+            {
+                log::debug!("a recording owns the device; not refreshing it");
+                return;
+            }
             if !self.has_warm_stream() {
                 return;
             }
@@ -1485,9 +1499,22 @@ mod cpal_impl {
                         "held device '{current}' is no longer the best ('{best}'); reopening"
                     );
                     let preroll = Duration::from_micros(self.preroll_micros.load(Ordering::SeqCst));
+                    let policy = self.linger_millis();
                     self.close_warm();
+                    // Reopening is only right when the policy holds a device. A
+                    // finite window that had already expired, or a policy that
+                    // was turned off between the check above and here, would
+                    // otherwise open a stream nothing is going to close.
+                    if policy == 0 {
+                        log::debug!("hold policy is off; not reopening after the device change");
+                        return;
+                    }
                     if let Err(err) = self.open_warm(preroll) {
                         log::warn!("could not reopen the warm stream after a device change: {err}");
+                    } else if policy != WARM_FOREVER_MS {
+                        // A finite window restarts from this open, so the device
+                        // still closes when the policy said it would.
+                        self.linger_then_close(Duration::from_millis(policy));
                     }
                 }
                 None => {

@@ -216,6 +216,7 @@
   "could_not_load_provider_settings": "Could not load provider settings.",
   "could_not_load_shortcuts": "Could not load shortcuts",
   "could_not_load_the_changelog": "Could not load the changelog.",
+  "could_not_open_the_microphone_in_advance_dictation_still_wor": "Could not open the microphone in advance. Dictation still works, but the first press will be slower.",
   "could_not_open_the_review_window_your_transcript_was_saved_t": "Could not open the review window. Your transcript was saved to history.",
   "could_not_reach_the_release_history": "Could not reach the release history.",
   "could_not_resume_dictation": "Could not resume dictation",

@@ -46,6 +46,9 @@ export const WORKFLOW_TRIGGERED_EVENT = "workflow_triggered";
 export const WORKFLOW_COMPLETED_EVENT = "workflow_completed";
 export const WORKFLOW_FAILED_EVENT = "workflow_failed";
 
+/** Emitted by the main window when the held-microphone state changes. */
+export const MICROPHONE_READINESS_EVENT = "microphone_readiness_changed";
+
 export const EPHEMERAL_SESSION_STARTED_EVENT = "ephemeral_session_started";
 export const EPHEMERAL_SESSION_ENDED_EVENT = "ephemeral_session_ended";
 

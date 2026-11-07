@@ -26,6 +26,10 @@ const mocks = vi.hoisted(() => {
     microphoneReady: vi.fn(async () => false),
     prepareMicrophone: vi.fn(async () => ({ status: "ok", data: "mic" })),
     setMicrophoneLinger: vi.fn(async () => undefined),
+    showSnackbar: vi.fn(),
+    emit: vi.fn(async () => undefined),
+    listen: vi.fn(async () => () => undefined),
+    refreshCurrentUser: vi.fn(async () => undefined),
     clearListeners: new Set<() => void>(),
   };
 });
@@ -56,6 +60,9 @@ vi.mock("../../utils/local-data-write-gate", async (importOriginal) => ({
     typeof import("../../utils/local-data-write-gate")
   >()),
   isLocalDataClearRequested: () => mocks.state.__clearing === true,
+  // Every test runs as the main window unless it says otherwise, because that is
+  // the window that owns the hold.
+  isMainLocalDataWindow: () => mocks.state.__mainWindow !== false,
   subscribeToLocalDataClearRequested: (listener: () => void) => {
     mocks.clearListeners.add(listener);
     return () => {
@@ -64,6 +71,19 @@ vi.mock("../../utils/local-data-write-gate", async (importOriginal) => ({
   },
 }));
 
+vi.mock("@tauri-apps/api/event", () => ({
+  emit: mocks.emit,
+  listen: mocks.listen,
+}));
+vi.mock("@maus-inc/desktop-utils", () => ({
+  MICROPHONE_READINESS_EVENT: "microphone_readiness_changed",
+}));
+vi.mock("../../actions/user-activity.actions", () => ({
+  refreshCurrentUser: mocks.refreshCurrentUser,
+}));
+vi.mock("../../actions/app.actions", () => ({
+  showSnackbar: mocks.showSnackbar,
+}));
 vi.mock("../../utils/log.utils", () => ({
   getLogger: () => ({
     info: vi.fn(),
@@ -225,6 +245,136 @@ describe("MicrophoneReadinessSideEffects", () => {
     // The switch reflects the preference; this reflects the device. They differ
     // whenever an open failed, which is the case the user notices.
     expect(mocks.state.settings).toMatchObject({ microphoneHeld: true });
+  });
+
+  it("broadcasts a state change so other windows do not keep a stale copy", async () => {
+    mocks.microphoneReady.mockResolvedValue(true);
+    setState({});
+    await render();
+
+    expect(mocks.emit).toHaveBeenCalledWith("microphone_readiness_changed", {
+      held: true,
+    });
+  });
+
+  it("does not broadcast from a window that is not the main one", async () => {
+    mocks.microphoneReady.mockResolvedValue(true);
+    setState({ __mainWindow: false });
+    await render();
+
+    // N windows each emitting would multiply the traffic and make every
+    // listener re-read N times, for one shared device.
+    expect(mocks.emit).not.toHaveBeenCalled();
+  });
+
+  it("does not broadcast when the state has not changed", async () => {
+    mocks.microphoneReady.mockResolvedValue(false);
+    setState({ settings: { microphoneHeld: false } });
+    await render();
+
+    expect(mocks.emit).not.toHaveBeenCalled();
+  });
+
+  it("retries a failed hold on focus only from the main window", async () => {
+    mocks.warmMicrophone.mockResolvedValue({
+      status: "error",
+      error: "device busy",
+    });
+    setState({ __mainWindow: false });
+    await render();
+
+    const attempts = mocks.warmMicrophone.mock.calls.length;
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+      await Promise.resolve();
+    });
+
+    // Every window enumerating the same device on focus is N times the work for
+    // one answer, and the retry opens a real stream.
+    expect(mocks.warmMicrophone.mock.calls.length).toBe(attempts);
+  });
+
+  it("tells the user once when the hold cannot open, and does not repeat it", async () => {
+    mocks.warmMicrophone.mockResolvedValue({
+      status: "error",
+      error: "device busy",
+    });
+    setState({
+      userPrefs: {
+        keepMicrophoneReady: true,
+        microphonePrerollSeconds: 0.5,
+        microphoneLingerMs: 0,
+      },
+    });
+    await render();
+
+    // The switch says on and nothing is held. Without this the press the setting
+    // promised to make instant is slow again for a reason the user cannot see.
+    expect(mocks.showSnackbar).toHaveBeenCalledTimes(1);
+
+    // A second attempt fails the same way; the user has already been told.
+    await act(async () => {
+      setState({
+        userPrefs: {
+          keepMicrophoneReady: true,
+          microphonePrerollSeconds: 1,
+          microphoneLingerMs: 0,
+        },
+      });
+      await Promise.resolve();
+    });
+
+    expect(mocks.showSnackbar).toHaveBeenCalledTimes(1);
+  });
+
+  it("says nothing when the hold succeeds", async () => {
+    setState({
+      userPrefs: {
+        keepMicrophoneReady: true,
+        microphonePrerollSeconds: 0.5,
+        microphoneLingerMs: 0,
+      },
+    });
+    await render();
+
+    expect(mocks.showSnackbar).not.toHaveBeenCalled();
+  });
+
+  it("re-announces a failure that follows a successful hold", async () => {
+    setState({
+      userPrefs: {
+        keepMicrophoneReady: true,
+        microphonePrerollSeconds: 0.5,
+        microphoneLingerMs: 0,
+      },
+    });
+    await render();
+    expect(mocks.showSnackbar).not.toHaveBeenCalled();
+
+    // Turn it off and back on: that is a new attempt at a new hold, so its
+    // failure is a new fact rather than a repeat of one already reported.
+    setState({
+      userPrefs: {
+        keepMicrophoneReady: false,
+        microphonePrerollSeconds: 0.5,
+        microphoneLingerMs: 0,
+      },
+    });
+    await rerender();
+    mocks.warmMicrophone.mockResolvedValue({
+      status: "error",
+      error: "device busy",
+    });
+    setState({
+      userPrefs: {
+        keepMicrophoneReady: true,
+        microphonePrerollSeconds: 0.5,
+        microphoneLingerMs: 0,
+      },
+    });
+    await rerender();
+
+    expect(mocks.showSnackbar).toHaveBeenCalledTimes(1);
   });
 
   it("never pushes the linger window while the device is held", async () => {

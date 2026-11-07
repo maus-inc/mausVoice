@@ -216,6 +216,7 @@
   "could_not_load_provider_settings": "Impossibile caricare le impostazioni del provider.",
   "could_not_load_shortcuts": "Impossibile caricare le scorciatoie",
   "could_not_load_the_changelog": "Impossibile caricare il registro delle modifiche.",
+  "could_not_open_the_microphone_in_advance_dictation_still_wor": "Impossibile aprire il microfono in anticipo. La dettatura funziona ancora, ma la prima pressione sarà più lenta.",
   "could_not_open_the_review_window_your_transcript_was_saved_t": "Impossibile aprire la finestra di revisione. La trascrizione è stata salvata nella cronologia.",
   "could_not_reach_the_release_history": "Impossibile accedere alla cronologia delle versioni.",
   "could_not_resume_dictation": "Impossibile riprendere la dettatura",

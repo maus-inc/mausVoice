@@ -216,6 +216,7 @@
   "could_not_load_provider_settings": "无法加载提供商设置。",
   "could_not_load_shortcuts": "无法加载快捷键",
   "could_not_load_the_changelog": "无法加载更新日志。",
+  "could_not_open_the_microphone_in_advance_dictation_still_wor": "无法提前打开麦克风。听写仍可正常使用，但第一次按下会更慢。",
   "could_not_open_the_review_window_your_transcript_was_saved_t": "无法打开审阅窗口。你的转录文本已保存到历史记录。",
   "could_not_reach_the_release_history": "无法访问版本历史。",
   "could_not_resume_dictation": "无法恢复听写",

@@ -216,6 +216,7 @@
   "could_not_load_provider_settings": "Não foi possível carregar as configurações do provedor.",
   "could_not_load_shortcuts": "Não foi possível carregar os atalhos",
   "could_not_load_the_changelog": "Não foi possível carregar o registro de alterações.",
+  "could_not_open_the_microphone_in_advance_dictation_still_wor": "Não foi possível abrir o microfone antecipadamente. O ditado continua funcionando, mas o primeiro toque será mais lento.",
   "could_not_open_the_review_window_your_transcript_was_saved_t": "Não foi possível abrir a janela de revisão. Sua transcrição foi salva no histórico.",
   "could_not_reach_the_release_history": "Não foi possível acessar o histórico de versões.",
   "could_not_resume_dictation": "Não foi possível retomar a ditado",
