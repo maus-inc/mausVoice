@@ -785,6 +785,24 @@ mod cpal_impl {
             }
         }
 
+        /// Applies a hold to a stream that is already open.
+        ///
+        /// Deliberately not [`set_linger`]: a zero there closes the stream, and a
+        /// caller that has just opened one would close it and then wait for an
+        /// open that is no longer held. The stream is already running when this
+        /// is called; this only says it must not stop.
+        ///
+        /// This is the whole of turning keep-ready on. Going through
+        /// `set_linger` first closed the stream the previous policy had left
+        /// warm, reopened it, and paid the cold start the feature exists to
+        /// remove, on the switch that asks for the opposite.
+        pub fn promote_to_hold(&self) {
+            self.linger_ms.store(WARM_FOREVER_MS, Ordering::SeqCst);
+            // A pending linger would close this stream at its window, which is
+            // later than never but still wrong for a hold.
+            self.cancel_linger();
+        }
+
         /// Sets how much audio from before a press to keep, and resizes the ring
         /// an already-held stream is collecting into.
         pub fn set_preroll(&self, preroll: Duration) {
@@ -1696,6 +1714,10 @@ mod cpal_impl {
             self.refresh_warm_device();
         }
 
+        fn promote_to_hold(&self) {
+            self.promote_to_hold();
+        }
+
         fn warm_close(&self) {
             self.close_warm();
         }
@@ -2569,6 +2591,37 @@ mod cpal_impl {
             // open with no policy behind it.
             assert!(warm_ring(&ring, false).is_none());
             assert!(ring.lock().unwrap().cap == 0);
+        }
+
+        #[test]
+        fn promoting_a_stream_keeps_it_open_without_closing_it() {
+            let manager = RecordingManager::new();
+
+            // After a stop under a finite window: the stream is open and a
+            // timer is due to close it.
+            manager.set_linger(Duration::from_millis(5_000));
+            // Stand in for the timer `set_linger` would have scheduled: a
+            // generation already out there, waiting to close the stream.
+            let scheduled = manager.linger_generation.load(Ordering::SeqCst);
+            assert!(manager.status_line().contains("policy=linger-5000ms"));
+
+            manager.promote_to_hold();
+
+            // The policy moved to the hold sentinel...
+            assert!(manager.status_line().contains("policy=ready-forever"));
+            assert_eq!(manager.linger_ms.load(Ordering::SeqCst), WARM_FOREVER_MS);
+            // ...and the scheduled close was invalidated, so the thread that
+            // holds `scheduled` sees it is stale and leaves the stream alone.
+            assert_ne!(manager.linger_generation.load(Ordering::SeqCst), scheduled);
+        }
+
+        #[test]
+        fn promoting_does_not_touch_a_stream_that_is_not_open() {
+            let manager = RecordingManager::new();
+            manager.promote_to_hold();
+
+            assert!(!manager.has_warm_stream());
+            assert!(manager.status_line().contains("ready=false"));
         }
 
         #[test]

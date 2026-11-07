@@ -3515,6 +3515,28 @@ fn linger_millis(linger_ms: f64) -> u64 {
     linger_ms.round().min(u64::MAX as f64) as u64
 }
 
+/// The policy to apply before opening, and whether the open should be held.
+///
+/// Split out from the command because it is the decision that regressed: a zero
+/// sent through `set_linger` closes a stream, so applying it before an open
+/// closed the open the user had just asked for, and the hold was undone before
+/// the stream existed. Returns `None` when nothing should be applied up front.
+/// The check is on the value that arrived, not on the clamped one. The clamp
+/// floors at a millisecond, so a zero would come back as a one-millisecond
+/// window: harmless in effect, but it is not what the caller asked for, and
+/// treating the two as the same is how the zero got forwarded in the first place.
+fn warm_policy_to_apply(linger_ms: f64) -> Option<u64> {
+    if linger_ms.is_nan() || linger_ms <= 0.0 {
+        return None;
+    }
+    Some(linger_millis(linger_ms))
+}
+
+/// Whether an opened stream should be kept until it is released.
+fn warm_policy_holds(linger_ms: f64) -> bool {
+    !linger_ms.is_nan() && linger_ms > 0.0 && linger_millis(linger_ms) == u64::MAX
+}
+
 /// One stage of a capture start, as the UI reads it.
 #[derive(Clone, Debug, serde::Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -3540,11 +3562,26 @@ pub fn warm_microphone(
     linger_ms: f64,
 ) -> Result<(), String> {
     // Stopping has to leave the stream open, otherwise this open is paid again
-    // on the very next press. A linger of MAX means "hold it until closed".
-    warm.set_linger(linger_millis(linger_ms));
+    // on the very next press.
+    //
+    // A zero is not sent here: it would close a stream, and the stop path
+    // reads the policy itself when a recording ends. Only a real window or the
+    // hold sentinel is applied up front.
+    if let Some(policy) = warm_policy_to_apply(linger_ms) {
+        warm.set_linger(policy);
+    }
     let preroll = preroll_duration(preroll_seconds);
     warm.set_preroll(preroll);
-    warm.warm_open(preroll)
+
+    // The hold is applied after the open, not before it. Setting it first meant
+    // that switching this option on closed the stream the previous option had
+    // left warm, reopened it, and paid the cold start the option exists to
+    // remove.
+    let result = warm.warm_open(preroll);
+    if result.is_ok() && warm_policy_holds(linger_ms) {
+        warm.promote_to_hold();
+    }
+    result
 }
 
 /// How long the device stays open after a dictation stops, in milliseconds.
@@ -6799,6 +6836,44 @@ mod tests {
         assert_eq!(super::linger_millis(0.0), 1);
         assert_eq!(super::linger_millis(-5.0), 1);
         assert_eq!(super::linger_millis(f64::NAN), 1);
+    }
+
+    /// Turning on the hold must never apply a close first.
+    ///
+    /// This is the regression in isolation: `linger_millis(0.0)` is `1`, which
+    /// the manager reads as "close", so anything that forwards the raw value
+    /// before opening closes the warm stream the user already had and pays the
+    /// cold start again.
+    #[test]
+    fn a_zero_is_never_applied_before_an_open() {
+        assert_eq!(super::warm_policy_to_apply(0.0), None);
+        assert!(!super::warm_policy_holds(0.0));
+    }
+
+    #[test]
+    fn the_hold_sentinel_survives_the_round_trip_from_javascript() {
+        // `Number.MAX_SAFE_INTEGER` is what the frontend actually sends.
+        let max_safe = 9_007_199_254_740_991.0_f64;
+        assert_eq!(super::linger_millis(max_safe), u64::MAX);
+        assert!(super::warm_policy_holds(max_safe));
+        assert_eq!(super::warm_policy_to_apply(max_safe), Some(u64::MAX));
+    }
+
+    #[test]
+    fn a_finite_window_is_applied_before_the_open_and_does_not_hold() {
+        assert_eq!(super::warm_policy_to_apply(5_000.0), Some(5_000));
+        assert!(!super::warm_policy_holds(5_000.0));
+    }
+
+    #[test]
+    fn an_unreadable_window_is_left_to_the_stop_path() {
+        // None of these is a window a user asked for, and none may read as the
+        // hold sentinel: that would leave a device held forever because a value
+        // could not be read.
+        for value in [f64::NAN, -1.0, f64::NEG_INFINITY, -0.0] {
+            assert_eq!(super::warm_policy_to_apply(value), None, "{value}");
+            assert!(!super::warm_policy_holds(value), "{value}");
+        }
     }
 
     /// A zero linger is a real instruction, not a missing value.

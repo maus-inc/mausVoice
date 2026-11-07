@@ -223,6 +223,13 @@ pub trait WarmCapture: Send + Sync {
     /// and reopen.
     fn refresh_device(&self) {}
 
+    /// Keeps the stream that is already open until it is closed.
+    ///
+    /// Separate from `set_linger` because a linger of zero closes a stream. A
+    /// caller that has just opened one, or has just been handed one by a stop,
+    /// needs to keep it without passing through the value that would close it.
+    fn promote_to_hold(&self) {}
+
     /// Closes the held stream.
     fn warm_close(&self);
 
