@@ -316,6 +316,89 @@ describe("insertLocalTranscriptOutputViaTyping", () => {
   });
 });
 
+describe("simulated typing route hooks", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    invokeMock.mockReset();
+    getAppStateMock.mockReturnValue({
+      appTargetById: {},
+      supportsPasteKeybinds: "none",
+    });
+    getPrefsMock.mockReturnValue({
+      insertionMethod: "type",
+      typingSpeedMs: 5,
+      handsFreeDelayMs: 500,
+      remoteOutputEnabled: false,
+      remoteTargetDeviceId: null,
+    });
+    installWindowMock();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    delete (globalThis as { window?: unknown }).window;
+  });
+
+  it("announces the pending typing route before delays and settles after native typing", async () => {
+    let finishTyping: (() => void) | undefined;
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "simulate_type") {
+        return new Promise<void>((resolve) => {
+          finishTyping = resolve;
+        });
+      }
+      return Promise.resolve(undefined);
+    });
+    const onStart = vi.fn();
+    const onEnd = vi.fn();
+
+    const routing = routeTranscriptOutput(
+      { text: "long transcript", mode: "dictation", currentAppId: null },
+      null,
+      {
+        onSimulatedTypingStart: onStart,
+        onSimulatedTypingEnd: onEnd,
+      },
+    );
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(onStart).toHaveBeenCalledOnce();
+    expect(onEnd).not.toHaveBeenCalled();
+    expect(invokeMock).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(500);
+    expect(invokeMock).toHaveBeenCalledWith("simulate_type", {
+      text: "long transcript",
+      delayMs: 5,
+    });
+    expect(onEnd).not.toHaveBeenCalled();
+
+    finishTyping?.();
+    await expect(routing).resolves.toMatchObject({ delivered: true });
+    expect(onEnd).toHaveBeenCalledOnce();
+  });
+
+  it("settles the typing hook even when native delivery rejects", async () => {
+    invokeMock.mockRejectedValueOnce(new Error("native typing failed"));
+    const onStart = vi.fn();
+    const onEnd = vi.fn();
+    const routing = routeTranscriptOutput(
+      { text: "failed transcript", mode: "dictation", currentAppId: null },
+      null,
+      {
+        onSimulatedTypingStart: onStart,
+        onSimulatedTypingEnd: onEnd,
+      },
+    );
+    const rejection = expect(routing).rejects.toThrow("native typing failed");
+
+    await vi.advanceTimersByTimeAsync(500);
+    await rejection;
+    expect(onStart).toHaveBeenCalledOnce();
+    expect(onEnd).toHaveBeenCalledOnce();
+  });
+});
+
 describe("final insertion stage", () => {
   it.each([false, true])(
     "announces before delivery and marks completion (remote=%s)",

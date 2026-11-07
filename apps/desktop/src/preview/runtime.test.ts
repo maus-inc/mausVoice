@@ -10,6 +10,12 @@ import {
 } from "./runtime";
 import { createPreviewScenario } from "./scenarios";
 
+const createSparseWarningArray = (): string[] => {
+  const warnings: string[] = [];
+  warnings.length = 1;
+  return warnings;
+};
+
 describe("browser preview transport", () => {
   beforeEach(() => {
     applyPreviewScenario("populated");
@@ -133,17 +139,19 @@ describe("browser preview transport", () => {
     );
     const row = before[0];
     expect(row).toBeDefined();
+
     const expectedWarnings = [
       ...((row?.warnings as string[] | null) ?? []),
       "delivery failed",
     ];
-
-    await expect(
-      invokePreviewCommand<string[]>("transcription_append_warnings", {
+    const warnings = await invokePreviewCommand<string[]>(
+      "transcription_append_warnings",
+      {
         id: row?.id,
         warnings: ["delivery failed"],
-      }),
-    ).resolves.toEqual(expectedWarnings);
+      },
+    );
+    expect(warnings).toEqual(expectedWarnings);
 
     const after = await invokePreviewCommand<Record<string, unknown>[]>(
       "transcription_list",
@@ -158,7 +166,14 @@ describe("browser preview transport", () => {
     });
   });
 
-  it("treats empty warning appends as no-ops and validates their payload", async () => {
+  it("keeps empty appends as no-ops and rejects invalid or sparse payloads", async () => {
+    const before = await invokePreviewCommand<Record<string, unknown>[]>(
+      "transcription_list",
+      { limit: 20, offset: 0 },
+    );
+    const row = before[0];
+    expect(row).toBeDefined();
+
     await expect(
       invokePreviewCommand("transcription_append_warnings", {
         id: "missing-row",
@@ -168,15 +183,47 @@ describe("browser preview transport", () => {
     await expect(
       invokePreviewCommand("transcription_append_warnings", {
         id: "missing-row",
-        warnings: ["new warning"],
-      }),
-    ).rejects.toThrow("Transcription not found");
-    await expect(
-      invokePreviewCommand("transcription_append_warnings", {
-        id: "missing-row",
         warnings: ["valid", 1],
       }),
     ).rejects.toThrow(TypeError);
+
+    const sparseWarnings = createSparseWarningArray();
+    await expect(
+      invokePreviewCommand("transcription_append_warnings", {
+        id: row?.id,
+        warnings: sparseWarnings,
+      }),
+    ).rejects.toThrow(TypeError);
+
+    const after = await invokePreviewCommand<Record<string, unknown>[]>(
+      "transcription_list",
+      { limit: 20, offset: 0 },
+    );
+    expect(
+      after.find((transcription) => transcription.id === row?.id),
+    ).toMatchObject({
+      warnings: row?.warnings,
+    });
+  });
+
+  it("replaces malformed stored warning data instead of copying holes", async () => {
+    const transcriptions = await invokePreviewCommand<
+      Record<string, unknown>[]
+    >("transcription_list", { limit: 20, offset: 0 });
+    const row = transcriptions[0];
+    expect(row).toBeDefined();
+
+    const sparseWarnings = createSparseWarningArray();
+    await invokePreviewCommand("transcription_update", {
+      transcription: { ...row, warnings: sparseWarnings },
+    });
+
+    await expect(
+      invokePreviewCommand<string[]>("transcription_append_warnings", {
+        id: row?.id,
+        warnings: ["recovered"],
+      }),
+    ).resolves.toEqual(["recovered"]);
   });
 
   it("does not backfill seeded history twice in the populated scenario", async () => {

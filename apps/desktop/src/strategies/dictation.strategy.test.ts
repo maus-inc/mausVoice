@@ -17,11 +17,20 @@ const {
   incrementDictationBacklogNonceMock,
 } = vi.hoisted(() => ({
   invokeMock: vi.fn(),
-  routeTranscriptOutputMock: vi.fn(async (args: { text: string }) => ({
-    delivered: true,
-    remote: false,
-    deliveredText: args.text.length > 0 ? args.text : null,
-  })),
+  routeTranscriptOutputMock: vi.fn(
+    async (
+      args: { text: string },
+      _trace?: unknown,
+      _hooks?: {
+        onSimulatedTypingStart?: () => void;
+        onSimulatedTypingEnd?: () => void;
+      },
+    ) => ({
+      delivered: true,
+      remote: false,
+      deliveredText: args.text.length > 0 ? args.text : null,
+    }),
+  ),
   appendToDictationBacklogMock: vi.fn(),
   clearDictationBacklogMock: vi.fn(),
   drainDictationBacklogMock: vi.fn(async () => ({
@@ -255,6 +264,8 @@ describe("DictationStrategy backlog lifecycle", () => {
     await vi.waitFor(() => {
       expect(routeTranscriptOutputMock).toHaveBeenCalledWith(
         expect.objectContaining({ isInterim: true }),
+        null,
+        expect.any(Object),
       );
     });
 
@@ -297,6 +308,8 @@ describe("DictationStrategy backlog lifecycle", () => {
 
     expect(routeTranscriptOutputMock).toHaveBeenCalledWith(
       expect.objectContaining({ text: "second " }),
+      null,
+      expect.any(Object),
     );
   });
 
@@ -403,6 +416,71 @@ describe("DictationStrategy backlog lifecycle", () => {
     );
 
     expect(result).toMatchObject({ historyOwner: "stop-path" });
+  });
+
+  it("signals an in-flight streamed typing route when final handling begins", async () => {
+    const state = getAppState();
+    setAppState(
+      {
+        userPrefs: {
+          ...(state.userPrefs ?? createDefaultPreferences()),
+          insertionMethod: "type",
+        },
+      },
+      false,
+    );
+    const routeResult = deferred<{
+      delivered: boolean;
+      remote: boolean;
+      deliveredText: string;
+    }>();
+    routeTranscriptOutputMock.mockImplementationOnce((_args, _trace, hooks) => {
+      hooks?.onSimulatedTypingStart?.();
+      return routeResult.promise.finally(() => hooks?.onSimulatedTypingEnd?.());
+    });
+    const strategy = new DictationStrategy();
+    strategy.handleInterimSegment("streamed words");
+    await vi.waitFor(() =>
+      expect(routeTranscriptOutputMock).toHaveBeenCalledTimes(1),
+    );
+
+    const onSimulatedTypingStart = vi.fn();
+    const finalHandling = strategy.handleTranscript(
+      createHandleTranscriptParams({
+        rawTranscript: "streamed words",
+        onSimulatedTypingStart,
+      }),
+    );
+    expect(onSimulatedTypingStart).toHaveBeenCalledOnce();
+
+    routeResult.resolve({
+      delivered: true,
+      remote: false,
+      deliveredText: "streamed words ",
+    });
+    await finalHandling;
+  });
+
+  it("forwards the simulated-typing route lifecycle to the stop handler", async () => {
+    const onSimulatedTypingStart = vi.fn();
+    routeTranscriptOutputMock.mockImplementationOnce((args, _trace, hooks) => {
+      hooks?.onSimulatedTypingStart?.();
+      hooks?.onSimulatedTypingEnd?.();
+      return Promise.resolve({
+        delivered: true,
+        remote: false,
+        deliveredText: args.text,
+      });
+    });
+
+    await new DictationStrategy().handleTranscript(
+      createHandleTranscriptParams({
+        processedTranscript: "clean transcript",
+        onSimulatedTypingStart,
+      }),
+    );
+
+    expect(onSimulatedTypingStart).toHaveBeenCalledOnce();
   });
 
   describe("concurrent history persistence", () => {
@@ -599,13 +677,6 @@ describe("DictationStrategy backlog lifecycle", () => {
       // the row records the remote delivery instead of racing it.
       const { postProcessTranscript } =
         await import("../actions/transcribe.actions");
-      routeTranscriptOutputMock.mockImplementationOnce(
-        async (args: { text: string }) => ({
-          delivered: true,
-          remote: true,
-          deliveredText: args.text,
-        }),
-      );
       vi.mocked(postProcessTranscript).mockImplementationOnce(async () => {
         await Promise.resolve();
         const state = getAppState();
@@ -620,6 +691,11 @@ describe("DictationStrategy backlog lifecycle", () => {
           false,
         );
         return { transcript: "clean transcript", warnings: [], metadata: {} };
+      });
+      routeTranscriptOutputMock.mockResolvedValueOnce({
+        delivered: true,
+        remote: true,
+        deliveredText: "clean transcript ",
       });
       const persistTranscriptNow = vi.fn();
 
@@ -860,6 +936,7 @@ describe("DictationStrategy backlog lifecycle", () => {
     expect(routeTranscriptOutputMock).toHaveBeenCalledWith(
       expect.objectContaining({ text: "clean transcript " }),
       null,
+      expect.any(Object),
     );
     await expect(completion).resolves.toMatchObject({
       transcript: "clean transcript",

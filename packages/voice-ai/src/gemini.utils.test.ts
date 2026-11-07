@@ -103,6 +103,42 @@ const turnAt = <T>(turns: readonly T[], index: number, what: string): T => {
   return turn;
 };
 
+const createDedicatedModelFetch = (fileId: string, responseBody: unknown) =>
+  vi.fn(
+    (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.includes("/upload/v1beta/files") && init?.method === "POST") {
+        return Promise.resolve(
+          new Response(JSON.stringify({}), {
+            status: 200,
+            headers: {
+              "x-goog-upload-url": "https://upload.example.com/resumable",
+            },
+          }),
+        );
+      }
+      if (url.includes("upload.example.com")) {
+        return Promise.resolve(
+          jsonResponse({
+            file: {
+              uri: `https://generativelanguage.googleapis.com/v1beta/files/${fileId}`,
+              mimeType: "audio/wav",
+            },
+          }),
+        );
+      }
+      if (url.includes(`/v1beta/files/${fileId}`)) {
+        if (init?.method === "GET") {
+          return Promise.resolve(jsonResponse({ state: "ACTIVE" }));
+        }
+        if (init?.method === "DELETE") {
+          return Promise.resolve(new Response(null, { status: 200 }));
+        }
+      }
+      return Promise.resolve(jsonResponse(responseBody));
+    },
+  );
+
 describe("Gemini native transport", () => {
   it("sends full JSON response schemas through the JSON Schema field", async () => {
     const customFetch = vi.fn().mockResolvedValue(
@@ -223,41 +259,9 @@ describe("Gemini native transport", () => {
   );
 
   it("does not re-upload a dedicated-model file after a blank response", async () => {
-    const customFetch = vi
-      .fn()
-      .mockImplementation((url: string, init?: RequestInit) => {
-        if (url.includes("/upload/v1beta/files") && init?.method === "POST") {
-          return Promise.resolve(
-            new Response(JSON.stringify({}), {
-              status: 200,
-              headers: {
-                "x-goog-upload-url": "https://upload.example.com/resumable",
-              },
-            }),
-          );
-        }
-        if (url.includes("upload.example.com")) {
-          return Promise.resolve(
-            jsonResponse({
-              file: {
-                uri: "https://generativelanguage.googleapis.com/v1beta/files/empty",
-                mimeType: "audio/wav",
-              },
-            }),
-          );
-        }
-        if (url.includes("/v1beta/files/empty") && init?.method === "GET") {
-          return Promise.resolve(jsonResponse({ state: "ACTIVE" }));
-        }
-        if (url.includes("/v1beta/files/empty") && init?.method === "DELETE") {
-          return Promise.resolve(new Response(null, { status: 200 }));
-        }
-        return Promise.resolve(
-          jsonResponse({
-            candidates: [{ content: { parts: [{ text: "  \n" }] } }],
-          }),
-        );
-      });
+    const customFetch = createDedicatedModelFetch("empty", {
+      candidates: [{ content: { parts: [{ text: "  \n" }] } }],
+    });
 
     await expect(
       geminiTranscribeAudio({
@@ -293,58 +297,18 @@ describe("Gemini native transport", () => {
   });
 
   it("uses Files API and extracts audioTranscription text for the dedicated model", async () => {
-    const customFetch = vi
-      .fn()
-      .mockImplementation((url: string, init?: RequestInit) => {
-        if (url.includes("/upload/v1beta/files") && init?.method === "POST") {
-          return Promise.resolve(
-            new Response(JSON.stringify({}), {
-              status: 200,
-              headers: {
-                "x-goog-upload-url": "https://upload.example.com/resumable",
-              },
-            }),
-          );
-        }
-        if (url.includes("upload.example.com")) {
-          return Promise.resolve(
-            jsonResponse({
-              file: {
-                uri: "https://generativelanguage.googleapis.com/v1beta/files/abc",
-                mimeType: "audio/wav",
-              },
-            }),
-          );
-        }
-        if (url.includes("/v1beta/files/abc") && init?.method === "GET") {
-          return Promise.resolve(
-            jsonResponse({
-              state: "ACTIVE",
-            }),
-          );
-        }
-        if (url.includes("/v1beta/files/abc") && init?.method === "DELETE") {
-          return Promise.resolve(new Response(null, { status: 200 }));
-        }
-        return Promise.resolve(
-          jsonResponse({
-            candidates: [
-              {
-                content: {
-                  parts: [
-                    { text: "" },
-                    {
-                      audioTranscription: {
-                        text: "transcript via transcribe",
-                      },
-                    },
-                  ],
-                },
-              },
+    const customFetch = createDedicatedModelFetch("abc", {
+      candidates: [
+        {
+          content: {
+            parts: [
+              { text: "" },
+              { audioTranscription: { text: "transcript via transcribe" } },
             ],
-          }),
-        );
-      });
+          },
+        },
+      ],
+    });
 
     await expect(
       geminiTranscribeAudio({

@@ -1090,38 +1090,42 @@ const persistTranscription = async (
   }
 };
 
+const countWarnings = (warnings: readonly string[]): Map<string, number> => {
+  const counts = new Map<string, number>();
+  for (const warning of warnings) {
+    counts.set(warning, (counts.get(warning) ?? 0) + 1);
+  }
+  return counts;
+};
+
+const consumeWarningCount = (
+  counts: Map<string, number>,
+  warning: string,
+): boolean => {
+  const count = counts.get(warning) ?? 0;
+  if (count === 0) return false;
+  counts.set(warning, count - 1);
+  return true;
+};
+
 const getAppendedWarnings = (
   previousWarnings: readonly string[],
   storedWarnings: readonly string[],
 ): string[] => {
-  const previousCounts = new Map<string, number>();
-  for (const warning of previousWarnings) {
-    previousCounts.set(warning, (previousCounts.get(warning) ?? 0) + 1);
-  }
-
-  const appended: string[] = [];
-  for (const warning of storedWarnings) {
-    const count = previousCounts.get(warning) ?? 0;
-    if (count > 0) {
-      previousCounts.set(warning, count - 1);
-    } else {
-      appended.push(warning);
-    }
-  }
-  return appended;
+  const previousCounts = countWarnings(previousWarnings);
+  return storedWarnings.filter(
+    (warning) => !consumeWarningCount(previousCounts, warning),
+  );
 };
 
 const mergeAppendedWarnings = (
-  currentWarnings: string[] | null | undefined,
+  currentWarnings: readonly string[] | null | undefined,
   appendedWarnings: readonly string[],
 ): string[] => {
   const merged = [...(currentWarnings ?? [])];
-  const currentCounts = new Map<string, number>();
-  for (const warning of merged) {
-    currentCounts.set(warning, (currentCounts.get(warning) ?? 0) + 1);
-  }
-
+  const currentCounts = countWarnings(merged);
   const appendedCounts = new Map<string, number>();
+
   for (const warning of appendedWarnings) {
     const count = (appendedCounts.get(warning) ?? 0) + 1;
     appendedCounts.set(warning, count);

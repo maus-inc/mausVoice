@@ -396,57 +396,80 @@ const startElevenLabsStreaming = async (
       );
     };
 
-    ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        const messageType = data.message_type || data.type;
-        getLogger().verbose(
-          "[ElevenLabs WebSocket] Received message:",
-          messageType,
-          data,
-        );
+    type ElevenLabsMessage = {
+      message_type?: string;
+      type?: string;
+      text?: string;
+      error?: unknown;
+      message?: unknown;
+    };
 
-        if (messageType === "committed_transcript") {
-          const committedText = data.text || "";
-          transcriptState.appendFinal(committedText);
-          transcriptState.setPartial("");
-          getLogger().verbose(
-            "[ElevenLabs WebSocket] Committed chunk appended, length:",
-            committedText.length,
-          );
-          if (onInterimResult && committedText) {
-            onInterimResult(committedText);
-          }
-          if (isFinalized) {
-            bookkeeper.complete();
-          }
-        } else if (messageType === "partial_transcript") {
+    const handleCommittedTranscript = (data: ElevenLabsMessage) => {
+      const committedText = data.text || "";
+      transcriptState.appendFinal(committedText);
+      transcriptState.setPartial("");
+      getLogger().verbose(
+        "[ElevenLabs WebSocket] Committed chunk appended, length:",
+        committedText.length,
+      );
+      if (onInterimResult && committedText) {
+        onInterimResult(committedText);
+      }
+      if (isFinalized) {
+        bookkeeper.complete();
+      }
+    };
+
+    const handleProviderError = (data: ElevenLabsMessage) => {
+      getLogger().error("[ElevenLabs WebSocket] Error from server:", data);
+      const error = new Error(
+        String(data.error ?? data.message ?? "ElevenLabs rejected the session"),
+      );
+      if (!settler.settled) {
+        settler.rejectStartup(error);
+        return;
+      }
+      sessionError = error;
+      if (isFinalized) {
+        bookkeeper.complete();
+      } else {
+        cleanup();
+      }
+    };
+
+    const handleMessageData = (data: ElevenLabsMessage) => {
+      const messageType = data.message_type || data.type;
+      getLogger().verbose(
+        "[ElevenLabs WebSocket] Received message:",
+        messageType,
+        data,
+      );
+
+      switch (messageType) {
+        case "committed_transcript":
+          handleCommittedTranscript(data);
+          return;
+        case "partial_transcript":
           transcriptState.setPartial(data.text || "");
-        } else if (messageType === "session_started") {
+          return;
+        case "session_started":
           getLogger().verbose("[ElevenLabs WebSocket] Session started:", data);
           flushPendingSamples(false);
           settler.resolveStartup();
-        } else if (
-          typeof messageType === "string" &&
-          messageType.toLowerCase().includes("error")
-        ) {
-          getLogger().error("[ElevenLabs WebSocket] Error from server:", data);
-          const error = new Error(
-            String(
-              data.error ?? data.message ?? "ElevenLabs rejected the session",
-            ),
-          );
-          if (!settler.settled) {
-            settler.rejectStartup(error);
-          } else {
-            sessionError = error;
-            if (isFinalized) {
-              bookkeeper.complete();
-            } else {
-              cleanup();
-            }
+          return;
+        default:
+          if (
+            typeof messageType === "string" &&
+            messageType.toLowerCase().includes("error")
+          ) {
+            handleProviderError(data);
           }
-        }
+      }
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        handleMessageData(JSON.parse(event.data));
       } catch (error) {
         getLogger().error(
           "[ElevenLabs WebSocket] Error parsing message:",

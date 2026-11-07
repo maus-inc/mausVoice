@@ -820,10 +820,13 @@ describe("appendTranscriptionWarnings", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     appendTranscriptionWarningsMock.mockImplementation(
-      async (transcriptionId: string, warnings: string[]) => {
+      (transcriptionId: string, warnings: string[]) => {
         const transcription = getAppState().transcriptionById[transcriptionId];
         if (!transcription) throw new Error("Transcription not found");
-        return [...(transcription.warnings ?? []), ...warnings];
+        return Promise.resolve([
+          ...(transcription.warnings ?? []),
+          ...warnings,
+        ]);
       },
     );
   });

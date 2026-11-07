@@ -53,6 +53,7 @@ import {
 } from "./DictationSideEffects";
 import { POST_PROCESS_ERROR_CATEGORY } from "../../actions/post-process-error-category";
 import type { PostProcessMetadata } from "../../actions/transcribe.actions";
+import type { HandleTranscriptResult } from "../../types/strategy.types";
 import type {
   HandleEmptyResultInput,
   PostTranscriptInput,
@@ -87,6 +88,16 @@ const asToastCall = (spy: ReturnType<typeof vi.fn>, index = 0): ToastCall =>
 
 const asStoreCall = (spy: ReturnType<typeof vi.fn>, index = 0): StoreCall =>
   spy.mock.calls[index]?.[0] as StoreCall;
+
+const deferred = <T>() => {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+};
 
 describe("formatReviewPersistenceFailure", () => {
   it.each([
@@ -1041,6 +1052,105 @@ describe("postProcessFinalizedTranscript", () => {
 
     const call = asToastCall(showToast);
     expect(call.message).toContain("History");
+  });
+
+  it("defers History until simulated typing settles after the handler timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      const {
+        input,
+        handleTranscript,
+        storeTranscriptionFn,
+        sendIdle,
+        refreshMember,
+        showToast,
+      } = buildInput();
+      const eventualResult = deferred<HandleTranscriptResult>();
+      handleTranscript.mockImplementationOnce((params) => {
+        params.onSimulatedTypingStart?.();
+        return eventualResult.promise;
+      });
+      input.handleTranscriptTimeoutMs = 50;
+
+      let incognitoEnabled = false;
+      storeTranscriptionFn.mockImplementation(() =>
+        Promise.resolve({
+          transcription: incognitoEnabled ? null : ({} as Transcription),
+          wordCount: 2,
+        }),
+      );
+
+      const stopping = postProcessFinalizedTranscript(input);
+      await vi.advanceTimersByTimeAsync(50);
+      const response = await stopping;
+
+      expect(response.shouldContinue).toBe(false);
+      expect(storeTranscriptionFn).not.toHaveBeenCalled();
+      expect(refreshMember).not.toHaveBeenCalled();
+
+      // The user can switch to Incognito while typing continues; the serial
+      // store must consult that live preference only after delivery settles.
+      incognitoEnabled = true;
+      let persisted = false;
+      const persistence = response.persist?.().then(() => {
+        persisted = true;
+      });
+      await Promise.resolve();
+      expect(persisted).toBe(false);
+      expect(storeTranscriptionFn).not.toHaveBeenCalled();
+
+      eventualResult.resolve({
+        shouldContinue: false,
+        transcript: "hello world",
+        sanitizedTranscript: "hello world",
+        postProcessMetadata: {},
+        postProcessWarnings: [],
+        remoteStatus: null,
+        remoteDeviceId: null,
+        historyOwner: "stop-path",
+      });
+      await persistence;
+
+      expect(persisted).toBe(true);
+      expect(storeTranscriptionFn).toHaveBeenCalledOnce();
+      expect(asStoreCall(storeTranscriptionFn)).toMatchObject({
+        transcript: "hello world",
+      });
+      expect(refreshMember).toHaveBeenCalledOnce();
+      expect(sendIdle).not.toHaveBeenCalled();
+      expect(showToast).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps a handler timeout fatal when simulated typing has not started", async () => {
+    vi.useFakeTimers();
+    try {
+      const { input, handleTranscript, storeTranscriptionFn } = buildInput();
+      const eventualResult = deferred<HandleTranscriptResult>();
+      handleTranscript.mockReturnValueOnce(eventualResult.promise);
+      input.handleTranscriptTimeoutMs = 25;
+
+      const stopping = postProcessFinalizedTranscript(input);
+      const timeout = expect(stopping).rejects.toThrow(
+        "Transcript post-processing timed out after 25ms",
+      );
+      await vi.advanceTimersByTimeAsync(25);
+      await timeout;
+      expect(storeTranscriptionFn).not.toHaveBeenCalled();
+      eventualResult.resolve({
+        shouldContinue: false,
+        transcript: "hello world",
+        sanitizedTranscript: "hello world",
+        postProcessMetadata: {},
+        postProcessWarnings: [],
+        remoteStatus: null,
+        remoteDeviceId: null,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("propagates a post-processing failure without sending idle or persisting", async () => {

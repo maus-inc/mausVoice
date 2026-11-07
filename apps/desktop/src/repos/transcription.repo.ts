@@ -236,6 +236,9 @@ export class LocalTranscriptionRepo extends BaseTranscriptionRepo {
     }, lease);
   }
 
+  // This stays an instance method to implement BaseTranscriptionRepo's shared
+  // repository contract; making the stateless command wrapper static would break
+  // the repo factory's instance API.
   appendWarnings(
     id: string,
     warnings: string[],

@@ -24,6 +24,11 @@ type OutputContext = {
   currentApp: ReturnType<typeof getAppState>["appTargetById"][string] | null;
 };
 
+export type RouteTranscriptOutputHooks = {
+  onSimulatedTypingStart?: () => void;
+  onSimulatedTypingEnd?: () => void;
+};
+
 const getOutputContext = (args: RouteTranscriptOutputArgs): OutputContext => {
   const state = getAppState();
   return {
@@ -146,16 +151,42 @@ export const insertLocalTranscriptOutputViaTyping = async (
   }
 };
 
+const getInsertionMethod = (context: OutputContext): string =>
+  context.currentApp?.insertionMethod ??
+  context.prefs?.insertionMethod ??
+  "paste";
+
+const runWithSimulatedTypingHooks = async <T>(
+  context: OutputContext,
+  hooks: RouteTranscriptOutputHooks,
+  operation: () => Promise<T>,
+): Promise<T> => {
+  if (getInsertionMethod(context) !== "type") {
+    return operation();
+  }
+
+  try {
+    hooks.onSimulatedTypingStart?.();
+  } catch (error) {
+    getLogger().warning(`Simulated typing start hook failed: ${error}`);
+  }
+  try {
+    return await operation();
+  } finally {
+    try {
+      hooks.onSimulatedTypingEnd?.();
+    } catch (error) {
+      getLogger().warning(`Simulated typing end hook failed: ${error}`);
+    }
+  }
+};
+
 const insertLocalOutput = async (
   context: OutputContext,
   text: string,
   isInterim?: boolean,
 ): Promise<PasteOutcome | undefined> => {
-  const insertionMethod =
-    context.currentApp?.insertionMethod ??
-    context.prefs?.insertionMethod ??
-    "paste";
-  if (insertionMethod === "type") {
+  if (getInsertionMethod(context) === "type") {
     const typingSpeedMs =
       context.currentApp?.typingSpeedMs ?? context.prefs?.typingSpeedMs ?? 5;
     await insertLocalTranscriptOutputViaTyping(text, typingSpeedMs);
@@ -221,6 +252,7 @@ const resolveLocalInsertResult = (
 export const routeTranscriptOutput = async (
   args: RouteTranscriptOutputArgs,
   trace: PipelineTrace | null = null,
+  hooks: RouteTranscriptOutputHooks = {},
 ): Promise<RouteTranscriptOutputResult> => {
   const context = getOutputContext(args);
   const { prefs } = context;
@@ -249,24 +281,26 @@ export const routeTranscriptOutput = async (
     );
   }
 
-  return deliverWithInsertionStage(args.isInterim, trace, async () => {
-    const canProceed = await waitForHandsFreeDelay(
-      prefs,
-      sessionId,
-      args.isInterim,
-    );
-    if (!canProceed) {
-      return { delivered: false, remote: false, deliveredText: null };
-    }
+  return deliverWithInsertionStage(args.isInterim, trace, () =>
+    runWithSimulatedTypingHooks(context, hooks, async () => {
+      const canProceed = await waitForHandsFreeDelay(
+        prefs,
+        sessionId,
+        args.isInterim,
+      );
+      if (!canProceed) {
+        return { delivered: false, remote: false, deliveredText: null };
+      }
 
-    const outcome = await insertLocalOutput(
-      context,
-      outputText,
-      args.isInterim,
-    );
+      const outcome = await insertLocalOutput(
+        context,
+        outputText,
+        args.isInterim,
+      );
 
-    return resolveLocalInsertResult(args, outputText, outcome);
-  });
+      return resolveLocalInsertResult(args, outputText, outcome);
+    }),
+  );
 };
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -340,6 +374,7 @@ const takeBacklogSnapshot = (): BacklogSnapshot => {
 export const drainDictationBacklog = async (
   newSegment?: string,
   currentAppId?: string | null,
+  hooks: RouteTranscriptOutputHooks = {},
 ): Promise<{ delivered: boolean; copiedToClipboard: boolean }> => {
   const snap = takeBacklogSnapshot();
   if (snap.segments.length === 0 && !newSegment?.trim()) {
@@ -374,7 +409,9 @@ export const drainDictationBacklog = async (
       ? (state.appTargetById[currentAppId] ?? null)
       : null,
   };
-  const pasteOutcome = await insertLocalOutput(context, combinedText);
+  const pasteOutcome = await runWithSimulatedTypingHooks(context, hooks, () =>
+    insertLocalOutput(context, combinedText),
+  );
 
   // Post-delivery nonce check: session may have advanced during the
   // async deliver call.

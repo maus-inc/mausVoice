@@ -8,10 +8,13 @@ vi.mock("../utils/transcription-creation-tracker", () => ({
   trackTranscriptionCreation: (operation: () => Promise<unknown>) =>
     operation(),
 }));
-vi.mock("./base.repo", () => ({
-  BaseRepo: class {},
-  withLocalDataWrite: (operation: () => Promise<unknown>) => operation(),
-}));
+vi.mock("./base.repo", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./base.repo")>();
+  return {
+    ...actual,
+    withLocalDataWrite: (operation: () => Promise<unknown>) => operation(),
+  };
+});
 
 import { LocalTranscriptionRepo } from "./transcription.repo";
 

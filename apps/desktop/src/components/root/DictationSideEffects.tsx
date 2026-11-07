@@ -58,6 +58,7 @@ import { BaseStrategy } from "../../strategies/base.strategy";
 import { DictationStrategy } from "../../strategies/dictation.strategy";
 import { TextFieldInfo } from "../../types/accessibility.types";
 import type {
+  HandleTranscriptResult,
   HistoryOwner,
   ReviewedTranscriptPersistenceInput,
 } from "../../types/strategy.types";
@@ -442,33 +443,12 @@ const shouldStoreOnStopPath = (
   strategy.shouldStoreTranscript() &&
   (historyOwner ?? "stop-path") === "stop-path";
 
-export const postProcessFinalizedTranscript = async (
+const createPostProcessStopResponse = async (
   input: PostTranscriptInput,
+  result: HandleTranscriptResult,
+  shouldSendIdle: boolean,
 ): Promise<RawStopResp> => {
   const { strategy } = input;
-  if (input.isAgentMode) {
-    await input.sendIdle();
-  }
-  getLogger().info("Post-processing transcript");
-  const result = await withTimeout(
-    strategy.handleTranscript({
-      rawTranscript: input.rawTranscript,
-      processedTranscript: input.transcribeResult.processedTranscript,
-      serverPostProcessMetadata: input.transcribeResult.postProcessMetadata,
-      toneId: input.toneId,
-      a11yInfo: input.a11yInfo,
-      currentApp: input.appTarget,
-      loadingToken: null,
-      audio: input.audio,
-      transcriptionMetadata: input.transcribeResult.metadata,
-      transcriptionWarnings: input.transcribeResult.warnings,
-      persistReviewedTranscript: input.persistReviewedTranscript,
-      persistTranscriptNow: input.persistTranscriptNow,
-      trace: input.trace ?? null,
-    }),
-    input.handleTranscriptTimeoutMs,
-    "Transcript post-processing",
-  );
   const transcript = result.transcript;
   const sanitizedTranscript = result.sanitizedTranscript;
   const postProcessMetadata = result.postProcessMetadata;
@@ -476,7 +456,9 @@ export const postProcessFinalizedTranscript = async (
   getLogger().verbose(
     `Post-processing complete: transcript=${transcript ? `${transcript.length} chars` : "empty"}, warnings=${postProcessWarnings.length}`,
   );
-  await input.sendIdle();
+  if (shouldSendIdle) {
+    await input.sendIdle();
+  }
   const willStore = shouldStoreOnStopPath(strategy, result.historyOwner);
   const reviewOwnedHistory = result.historyOwner === "review";
   // A "concurrent" owner already started the write during delivery; settling
@@ -617,6 +599,68 @@ export const postProcessFinalizedTranscript = async (
     shouldContinue: result.shouldContinue,
     persist,
   };
+};
+
+export const postProcessFinalizedTranscript = async (
+  input: PostTranscriptInput,
+): Promise<RawStopResp> => {
+  const { strategy } = input;
+  if (input.isAgentMode) {
+    await input.sendIdle();
+  }
+  getLogger().info("Post-processing transcript");
+
+  let simulatedTypingStarted = false;
+  let timedOut = false;
+  const handleTranscriptPromise = strategy.handleTranscript({
+    rawTranscript: input.rawTranscript,
+    processedTranscript: input.transcribeResult.processedTranscript,
+    serverPostProcessMetadata: input.transcribeResult.postProcessMetadata,
+    toneId: input.toneId,
+    a11yInfo: input.a11yInfo,
+    currentApp: input.appTarget,
+    loadingToken: null,
+    audio: input.audio,
+    transcriptionMetadata: input.transcribeResult.metadata,
+    transcriptionWarnings: input.transcribeResult.warnings,
+    persistReviewedTranscript: input.persistReviewedTranscript,
+    persistTranscriptNow: input.persistTranscriptNow,
+    onSimulatedTypingStart: () => {
+      simulatedTypingStarted = true;
+    },
+    trace: input.trace ?? null,
+  });
+
+  try {
+    const result = await withTimeout(
+      handleTranscriptPromise,
+      input.handleTranscriptTimeoutMs,
+      "Transcript post-processing",
+      () => {
+        timedOut = true;
+      },
+    );
+    return createPostProcessStopResponse(input, result, true);
+  } catch (error) {
+    if (timedOut && simulatedTypingStarted && !input.isAgentMode) {
+      getLogger().warning(
+        "Transcript handling timed out during simulated typing; History persistence will resume after delivery settles",
+      );
+      return {
+        shouldContinue: false,
+        persist: async () => {
+          const result = await handleTranscriptPromise;
+          const completed = await createPostProcessStopResponse(
+            input,
+            result,
+            false,
+          );
+          await completed.persist?.();
+        },
+      };
+    }
+    throw error;
+  }
 };
 
 type StopContext = {

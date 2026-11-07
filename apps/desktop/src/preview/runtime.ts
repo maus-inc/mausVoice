@@ -73,6 +73,28 @@ const SYSTEM_NO_OP_COMMANDS = new Set([
   "sync_hotkey_combos",
 ]);
 
+const TRANSCRIPTION_HISTORY_COMMANDS = new Set([
+  "transcription_list",
+  "transcription_create",
+  "transcription_update",
+  "transcription_append_warnings",
+  "transcription_delete",
+  "transcription_audio_load",
+  "transcription_load_audio",
+  "transcription_import_audio",
+  "purge_stale_transcription_audio",
+]);
+const CONVERSATION_HISTORY_COMMANDS = new Set([
+  "conversation_list",
+  "conversation_create",
+  "conversation_update",
+  "conversation_delete",
+  "chat_message_list",
+  "chat_message_create",
+  "chat_message_update",
+  "chat_message_delete_many",
+]);
+
 type WireRecord = Record<string, unknown>;
 type PreviewUsageEvent = {
   localDate: string;
@@ -107,6 +129,18 @@ type PreviewDatabase = {
 
 const clone = <T>(value: T): T => structuredClone(value);
 const asRecord = (value: unknown): WireRecord => value as WireRecord;
+const isDenseStringArray = (value: unknown): value is string[] => {
+  if (!Array.isArray(value)) return false;
+  for (let index = 0; index < value.length; index += 1) {
+    if (
+      !Object.prototype.hasOwnProperty.call(value, index) ||
+      typeof value[index] !== "string"
+    ) {
+      return false;
+    }
+  }
+  return true;
+};
 const isValidLocalDateKey = (value: string): boolean => {
   try {
     dateFromLocalDateKey(value);
@@ -836,6 +870,19 @@ class PreviewRuntime {
   }
 
   private invokeHistory(command: string, args: WireRecord): unknown {
+    if (TRANSCRIPTION_HISTORY_COMMANDS.has(command)) {
+      return this.invokeTranscriptionHistory(command, args);
+    }
+    if (CONVERSATION_HISTORY_COMMANDS.has(command)) {
+      return this.invokeConversationHistory(command, args);
+    }
+    return this.invokeRemote(command, args);
+  }
+
+  private invokeTranscriptionHistory(
+    command: string,
+    args: WireRecord,
+  ): unknown {
     switch (command) {
       case "transcription_list": {
         const limit = Number(args.limit ?? 20);
@@ -854,36 +901,8 @@ class PreviewRuntime {
         );
         return clone(transcription);
       }
-      case "transcription_append_warnings": {
-        if (typeof args.id !== "string") {
-          throw new TypeError(
-            "transcription_append_warnings requires a string id",
-          );
-        }
-        if (
-          !Array.isArray(args.warnings) ||
-          !args.warnings.every((warning) => typeof warning === "string")
-        ) {
-          throw new TypeError(
-            "transcription_append_warnings requires an array of strings",
-          );
-        }
-        if (args.warnings.length === 0) return [];
-
-        const transcription = this.database.transcriptions.get(args.id);
-        if (!transcription) throw new Error("Transcription not found");
-        const existingWarnings =
-          Array.isArray(transcription.warnings) &&
-          transcription.warnings.every((warning) => typeof warning === "string")
-            ? (transcription.warnings as string[])
-            : [];
-        const updatedWarnings = [...existingWarnings, ...args.warnings];
-        this.database.transcriptions.set(args.id, {
-          ...transcription,
-          warnings: updatedWarnings,
-        });
-        return clone(updatedWarnings);
-      }
+      case "transcription_append_warnings":
+        return this.appendTranscriptionWarnings(args);
       case "transcription_delete":
         this.database.transcriptions.delete(String(args.id));
         return undefined;
@@ -900,7 +919,40 @@ class PreviewRuntime {
         return null;
       case "purge_stale_transcription_audio":
         return [];
+      default:
+        return this.invokeRemote(command, args);
+    }
+  }
 
+  private appendTranscriptionWarnings(args: WireRecord): string[] {
+    if (typeof args.id !== "string") {
+      throw new TypeError("transcription_append_warnings requires a string id");
+    }
+    if (!isDenseStringArray(args.warnings)) {
+      throw new TypeError(
+        "transcription_append_warnings requires an array of strings",
+      );
+    }
+    if (args.warnings.length === 0) return [];
+
+    const transcription = this.database.transcriptions.get(args.id);
+    if (!transcription) throw new Error("Transcription not found");
+    const existingWarnings = isDenseStringArray(transcription.warnings)
+      ? transcription.warnings
+      : [];
+    const updatedWarnings = [...existingWarnings, ...args.warnings];
+    this.database.transcriptions.set(args.id, {
+      ...transcription,
+      warnings: updatedWarnings,
+    });
+    return clone(updatedWarnings);
+  }
+
+  private invokeConversationHistory(
+    command: string,
+    args: WireRecord,
+  ): unknown {
+    switch (command) {
       case "conversation_list":
         return getList(this.database.conversations).sort(
           (a, b) => Number(b.updatedAt) - Number(a.updatedAt),
@@ -914,8 +966,9 @@ class PreviewRuntime {
       case "conversation_delete":
         this.database.conversations.delete(String(args.id));
         for (const [id, message] of this.database.chatMessages) {
-          if (message.conversationId === args.id)
+          if (message.conversationId === args.id) {
             this.database.chatMessages.delete(id);
+          }
         }
         return undefined;
       case "chat_message_list":
@@ -933,7 +986,6 @@ class PreviewRuntime {
           this.database.chatMessages.delete(String(id));
         }
         return undefined;
-
       default:
         return this.invokeRemote(command, args);
     }

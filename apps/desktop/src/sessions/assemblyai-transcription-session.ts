@@ -54,7 +54,7 @@ export const startAssemblyAIStreaming = async (
       loggerPrefix: LOGGER_PREFIX,
     });
 
-    let currentTurn = 0;
+    let currentTurn: number | undefined = 0;
 
     const getText = () => transcriptState.text();
 
@@ -172,59 +172,84 @@ export const startAssemblyAIStreaming = async (
       getLogger().info(`[${LOGGER_PREFIX}] WebSocket opened, awaiting Begin`);
     };
 
+    type AssemblyAIMessage = {
+      type?: string;
+      error?: unknown;
+      message?: unknown;
+      turn_order?: number;
+      end_of_turn?: boolean;
+      transcript?: string;
+    };
+
+    const handleSessionBegin = () => {
+      getLogger().info(`[${LOGGER_PREFIX}] Session ready`);
+      buffer.flush(false);
+      settler.resolveStartup();
+    };
+
+    const handleProviderError = (data: AssemblyAIMessage) => {
+      const error = new Error(
+        String(data.error ?? data.message ?? "AssemblyAI rejected the session"),
+      );
+      getLogger().error(`[${LOGGER_PREFIX}] Error from server:`, data);
+      if (!settler.settled) {
+        settler.rejectStartup(error);
+        return;
+      }
+      sessionError = error;
+      cleanup();
+    };
+
+    const handleFinalTurn = (data: AssemblyAIMessage) => {
+      const turnTranscript = data.transcript || "";
+      transcriptState.appendFinal(turnTranscript);
+      getLogger().info(
+        `[${LOGGER_PREFIX}] Final formatted transcript received, length:`,
+        transcriptState.finalLength(),
+      );
+      if (onInterimResult && turnTranscript) {
+        onInterimResult(turnTranscript);
+      }
+      if (currentTurn === data.turn_order) {
+        transcriptState.setPartial("");
+      }
+    };
+
+    const handlePartialTurn = (data: AssemblyAIMessage) => {
+      if (currentTurn != data.turn_order) {
+        currentTurn = data.turn_order;
+        transcriptState.setPartial(data.transcript!);
+      }
+    };
+
+    const handleMessageData = (data: AssemblyAIMessage) => {
+      getLogger().info(`[${LOGGER_PREFIX}] Received message`, {
+        type: data.type,
+        turnOrder: data.turn_order,
+        endOfTurn: data.end_of_turn,
+        transcriptLength:
+          typeof data.transcript === "string" ? data.transcript.length : 0,
+      });
+
+      if (data.type === "Begin") {
+        handleSessionBegin();
+        return;
+      }
+      if (data.type === "Error") {
+        handleProviderError(data);
+        return;
+      }
+      if (data.type !== "Turn") return;
+      if (data.end_of_turn) {
+        handleFinalTurn(data);
+      } else {
+        handlePartialTurn(data);
+      }
+    };
+
     ws.onmessage = (event) => {
       try {
-        const data = JSON.parse(event.data);
-        getLogger().info(`[${LOGGER_PREFIX}] Received message`, {
-          type: data.type,
-          turnOrder: data.turn_order,
-          endOfTurn: data.end_of_turn,
-          transcriptLength:
-            typeof data.transcript === "string" ? data.transcript.length : 0,
-        });
-
-        if (data.type === "Begin") {
-          getLogger().info(`[${LOGGER_PREFIX}] Session ready`);
-          buffer.flush(false);
-          settler.resolveStartup();
-          return;
-        }
-        if (data.type === "Error") {
-          const error = new Error(
-            String(
-              data.error ?? data.message ?? "AssemblyAI rejected the session",
-            ),
-          );
-          getLogger().error(`[${LOGGER_PREFIX}] Error from server:`, data);
-          if (!settler.settled) {
-            settler.rejectStartup(error);
-          } else {
-            sessionError = error;
-            cleanup();
-          }
-          return;
-        }
-
-        if (data.type === "Turn" && data.end_of_turn) {
-          const turnTranscript = data.transcript || "";
-          transcriptState.appendFinal(turnTranscript);
-          getLogger().info(
-            `[${LOGGER_PREFIX}] Final formatted transcript received, length:`,
-            transcriptState.finalLength(),
-          );
-          if (onInterimResult && turnTranscript) {
-            onInterimResult(turnTranscript);
-          }
-          if (currentTurn === data.turn_order) {
-            transcriptState.setPartial("");
-          }
-        } else if (data.type === "Turn") {
-          if (currentTurn != data.turn_order) {
-            currentTurn = data.turn_order;
-
-            transcriptState.setPartial(data.transcript);
-          }
-        }
+        handleMessageData(JSON.parse(event.data));
       } catch (error) {
         getLogger().error(`[${LOGGER_PREFIX}] Error parsing message:`, error);
       }
