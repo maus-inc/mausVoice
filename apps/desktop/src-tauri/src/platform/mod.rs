@@ -230,6 +230,15 @@ pub trait WarmCapture: Send + Sync {
     /// needs to keep it without passing through the value that would close it.
     fn promote_to_hold(&self) {}
 
+    /// Closes the held stream and stops holding it, leaving the post-recording
+    /// window alone.
+    ///
+    /// Distinct from setting the window to zero: this is the app releasing the
+    /// device for its own reasons, and the window is a preference the user chose.
+    /// Conflating them turned the window off whenever anything released the
+    /// microphone.
+    fn release_hold(&self);
+
     /// Closes the held stream.
     fn warm_close(&self);
 

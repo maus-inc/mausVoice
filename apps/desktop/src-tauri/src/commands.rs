@@ -3614,8 +3614,10 @@ pub fn set_microphone_linger(
 #[tauri::command]
 #[specta::specta]
 pub fn close_microphone(warm: State<'_, Arc<dyn crate::platform::WarmCapture>>) {
-    warm.set_linger(0);
-    warm.warm_close();
+    // Not `set_linger(0)`: that also clears the post-recording window, which is
+    // a separate preference. Releasing the device because a recording started
+    // must not turn off a setting the user chose.
+    warm.release_hold();
 }
 
 /// Whether a capture stream is held open right now.

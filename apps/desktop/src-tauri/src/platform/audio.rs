@@ -768,21 +768,42 @@ mod cpal_impl {
 
         /// Whether a stopping recording should leave its stream open.
         fn hold_after_stop(&self) -> bool {
-            self.linger_ms.load(Ordering::SeqCst) > 0
+            self.linger_millis() > 0
         }
 
-        /// Sets how long the device stays open after a recording, and applies
-        /// the matching policy to a stream that is already open.
+        /// Sets how long the device stays open after a recording, and closes a
+        /// stream that the new policy no longer covers.
         ///
         /// Zero means every press opens the device, which is the default and the
-        /// only policy with no microphone indicator between dictations.
+        /// only policy with no microphone indicator between dictations. A stream
+        /// that is already open is closed, because under this policy nothing
+        /// should be open between dictations.
+        ///
+        /// The hold path wants the first half and not the second: setting the
+        /// policy with a zero while a stream is held closed the stream, which is
+        /// how the hold got undone by the default value. Everything that only
+        /// needs the policy stored calls `set_linger_policy`.
         pub fn set_linger(&self, linger: Duration) {
-            let millis = linger.as_millis().min(u128::from(u64::MAX)) as u64;
-            self.linger_ms.store(millis, Ordering::SeqCst);
-            if millis == 0 {
+            self.set_linger_policy(linger);
+            if self.linger_millis() == 0 {
                 self.cancel_linger();
                 self.close_warm();
             }
+        }
+
+        /// Stores the hold policy without closing anything.
+        ///
+        /// A stream that is already open keeps running: whether it should have
+        /// been closed is a question this call does not answer, and the one
+        /// caller that knows is the one closing it.
+        pub fn set_linger_policy(&self, linger: Duration) {
+            let millis = linger.as_millis().min(u128::from(u64::MAX)) as u64;
+            self.linger_ms.store(millis, Ordering::SeqCst);
+        }
+
+        /// The hold policy in milliseconds, as stored.
+        pub fn linger_millis(&self) -> u64 {
+            self.linger_ms.load(Ordering::SeqCst)
         }
 
         /// Applies a hold to a stream that is already open.
@@ -797,7 +818,7 @@ mod cpal_impl {
         /// warm, reopened it, and paid the cold start the feature exists to
         /// remove, on the switch that asks for the opposite.
         pub fn promote_to_hold(&self) {
-            self.linger_ms.store(WARM_FOREVER_MS, Ordering::SeqCst);
+            self.set_linger_policy(Duration::from_millis(WARM_FOREVER_MS));
             // A pending linger would close this stream at its window, which is
             // later than never but still wrong for a hold.
             self.cancel_linger();
@@ -848,6 +869,18 @@ mod cpal_impl {
         /// An explicit close overrides a scheduled linger, so a close issued
         /// inside a linger window is not followed by a timer that was only ever
         /// meant to close the stream this call is closing now.
+        /// Closes the held stream and stops holding it.
+        ///
+        /// This is the "release the device now" action, not "stop keeping it
+        /// open after a recording". The window is a separate preference, so
+        /// zeroing it here would silently turn off a setting the user chose
+        /// every time the app released the device for its own reasons: while a
+        /// recording runs, on a clear, on exit.
+        pub fn release_hold(&self) {
+            self.set_linger_policy(Duration::ZERO);
+            self.close_warm();
+        }
+
         pub fn close_warm(&self) {
             self.cancel_linger();
             let warm = {
@@ -1716,6 +1749,10 @@ mod cpal_impl {
 
         fn promote_to_hold(&self) {
             self.promote_to_hold();
+        }
+
+        fn release_hold(&self) {
+            self.release_hold();
         }
 
         fn warm_close(&self) {
@@ -2885,6 +2922,52 @@ mod cpal_impl {
 
             assert!(!manager.has_warm_stream());
             assert_eq!(manager.linger_ms.load(Ordering::SeqCst), 0);
+        }
+
+        #[test]
+        fn releasing_the_hold_leaves_the_post_recording_window_alone() {
+            let manager = RecordingManager::new();
+            manager.set_linger(Duration::from_millis(u64::MAX));
+            // The user's own choice, made in the settings.
+            manager.set_linger(Duration::from_millis(5_000));
+            manager.set_linger_policy(Duration::from_millis(u64::MAX));
+
+            manager.release_hold();
+
+            assert_eq!(manager.linger_millis(), 0);
+            assert!(!manager.has_warm_stream());
+
+            // Now the window the user chose, restated: releasing the device must
+            // not have been a way for the app to turn off a preference.
+            manager.set_linger(Duration::from_millis(5_000));
+            assert_eq!(manager.linger_millis(), 5_000);
+        }
+
+        #[test]
+        fn setting_the_policy_alone_never_closes_a_held_stream() {
+            let manager = RecordingManager::new();
+            manager.set_linger(Duration::from_millis(u64::MAX));
+
+            manager.set_linger_policy(Duration::ZERO);
+
+            // The policy moved; the stream did not. This is the property the
+            // front end relies on when it pushes the window on mount, and the
+            // one `set_linger(0)` violates.
+            assert_eq!(manager.linger_millis(), 0);
+            assert!(!manager.has_warm_stream());
+        }
+
+        #[test]
+        fn setting_the_linger_still_closes_a_stream_the_new_policy_rejects() {
+            let manager = RecordingManager::new();
+            manager.set_linger(Duration::from_millis(5_000));
+
+            manager.set_linger(Duration::ZERO);
+
+            // Under a zero window nothing may be open between dictations, so this
+            // path is the one that must close.
+            assert_eq!(manager.linger_millis(), 0);
+            assert!(!manager.has_warm_stream());
         }
 
         #[test]
