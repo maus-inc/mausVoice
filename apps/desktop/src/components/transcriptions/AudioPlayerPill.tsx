@@ -1,6 +1,9 @@
 import { Box, Typography } from "@mui/material";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useIntl } from "react-intl";
+import { useIntentWarmup } from "../../hooks/intent-warmup.hooks";
+import { subscribeToLocalDataClearRequested } from "../../utils/local-data-write-gate";
+import { transcriptionAudioCache } from "../../utils/transcription-audio-cache";
 import { AudioPlaybackButton } from "./AudioPlaybackButton";
 import { AudioWaveformBars } from "./AudioWaveformBars";
 import {
@@ -38,6 +41,8 @@ export const AudioPlayerPill = ({
 }: AudioPlayerPillProps) => {
   const intl = useIntl();
   const [isPlaying, setIsPlaying] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const loadingRef = useRef(false);
   const [playbackProgress, setPlaybackProgress] = useState(0);
   const [waveformWidth, setWaveformWidth] = useState(0);
   const waveformContainerRef = useRef<HTMLDivElement | null>(null);
@@ -118,11 +123,44 @@ export const AudioPlayerPill = ({
       getPlaybackSession().stopOwned();
     };
   }, [transcriptionId]);
+  // A row that re-renders with a new transcription id is a different clip:
+  // drop the old clip's playback/scrub state so the next click plays the new
+  // read and the scrub bar cannot commit a seek against the old session.
+  useEffect(() => {
+    isPlayingRef.current = false;
+    setIsPlaying(false);
+    loadingRef.current = false;
+    setIsLoading(false);
+    setPlaybackProgress(0);
+  }, [transcriptionId]);
   useEffect(() => {
     if (!disabled || !getPlaybackSession().stopOwned()) return;
     isPlayingRef.current = false;
     setIsPlaying(false);
+    loadingRef.current = false;
+    setIsLoading(false);
   }, [disabled]);
+  // A local-data wipe must drop in-flight and active audio with the rows it
+  // invalidates; the repo clears its cache through the same subscription.
+  useEffect(() => {
+    return subscribeToLocalDataClearRequested(() => {
+      getPlaybackSession().stopOwned();
+      isPlayingRef.current = false;
+      setIsPlaying(false);
+      loadingRef.current = false;
+      setIsLoading(false);
+      setPlaybackProgress(0);
+    });
+  }, [transcriptionId]);
+  // Hovering the pill warms the saved audio through the repository cache so
+  // the first click starts from a warm read (the cache is TTL-bounded and
+  // throttled; see transcription-audio-cache.ts).
+  const warmAudio = useCallback(async () => {
+    if (!disabled && transcriptionAudioCache.canWarm()) {
+      await getTranscriptionRepo().loadTranscriptionAudio(transcriptionId);
+    }
+  }, [disabled, transcriptionId]);
+  const warmup = useIntentWarmup(warmAudio, transcriptionId);
   useEffect(() => {
     const element = waveformContainerRef.current;
     if (!element) {
@@ -161,16 +199,41 @@ export const AudioPlayerPill = ({
       setIsPlaying(false);
       return;
     }
+    if (loadingRef.current) {
+      // The button reads "Cancel audio loading" while a read is pending;
+      // clicking it abandons that read instead of stacking another one.
+      session.stopOwned();
+      loadingRef.current = false;
+      setIsLoading(false);
+      return;
+    }
 
     const attempt = session.beginRequest();
+    loadingRef.current = true;
+    setIsLoading(true);
+    // The error state names the stage that failed: a read failure (missing or
+    // invalid file) is a different recovery than a decode/playback failure.
+    let stage: "read" | "play" = "read";
     try {
+      if (import.meta.env.DEV) performance.mark("mv-audio:read-start");
       const audioData =
         await getTranscriptionRepo().loadTranscriptionAudio(transcriptionId);
+      if (import.meta.env.DEV) {
+        performance.mark("mv-audio:read-end");
+        performance.measure(
+          "mv-audio:read",
+          "mv-audio:read-start",
+          "mv-audio:read-end",
+        );
+      }
 
       if (!attempt.isCurrent()) {
         return;
       }
+      stage = "play";
 
+      loadingRef.current = false;
+      setIsLoading(false);
       isPlayingRef.current = true;
       setIsPlaying(true);
       attempt.beginSetup();
@@ -200,16 +263,35 @@ export const AudioPlayerPill = ({
           }
         },
         playbackProgressRef.current,
+        attempt.signal,
       );
       attempt.completeSetup();
     } catch (error) {
       if (!attempt.releaseOnError()) return;
+      loadingRef.current = false;
+      setIsLoading(false);
       isPlayingRef.current = false;
-      console.error("Failed to toggle audio playback", error);
       setIsPlaying(false);
       setPlaybackProgress(0);
+      // Abandoned work (row torn down, read invalidated mid-flight) rejects
+      // with AbortError; the owner already reset the row, so stay silent.
+      const aborted =
+        typeof error === "object" &&
+        error !== null &&
+        "name" in error &&
+        (error as { name?: string }).name === "AbortError";
+      if (aborted) return;
+      console.error("Failed to toggle audio playback", error);
+      // Two literal message calls, one per failing stage (read vs play), so
+      // the extraction pipeline sees both messages.
       showErrorSnackbar(
-        intl.formatMessage({ defaultMessage: "Unable to play audio snippet." }),
+        stage === "read"
+          ? intl.formatMessage({
+              defaultMessage: "The saved audio for this entry is unavailable.",
+            })
+          : intl.formatMessage({
+              defaultMessage: "Unable to play audio snippet.",
+            }),
       );
     }
   }, [transcriptionId, intl]);
@@ -245,16 +327,22 @@ export const AudioPlayerPill = ({
       const next = getProgressFromClientX(event.clientX);
       if (next != null) previewSeek(next);
 
+      // Listener lifetime is scoped to one AbortController so every exit
+      // path (release, cancel, re-entrant drag, lifecycle cleanup) runs one
+      // teardown and `isDraggingRef` can never outlive its listeners: a
+      // stuck drag flag mutes playback progress for good.
+      const dragListeners = new AbortController();
+      const endDrag = () => {
+        dragListeners.abort();
+        pointerCleanupRef.current = null;
+        isDraggingRef.current = false;
+      };
       const handleMove = (moveEvent: PointerEvent) => {
         const ratio = getProgressFromClientX(moveEvent.clientX);
         if (ratio != null) previewSeek(ratio);
       };
       const handleUp = (upEvent: PointerEvent) => {
-        window.removeEventListener("pointermove", handleMove);
-        window.removeEventListener("pointerup", handleUp);
-        window.removeEventListener("pointercancel", handleCancel);
-        pointerCleanupRef.current = null;
-        isDraggingRef.current = false;
+        endDrag();
         const ratio = getProgressFromClientX(upEvent.clientX);
         if (ratio != null) {
           commitSeek(ratio);
@@ -263,28 +351,28 @@ export const AudioPlayerPill = ({
         }
       };
       const handleCancel = () => {
-        window.removeEventListener("pointermove", handleMove);
-        window.removeEventListener("pointerup", handleUp);
-        window.removeEventListener("pointercancel", handleCancel);
-        pointerCleanupRef.current = null;
-        isDraggingRef.current = false;
-        playbackProgressRef.current = progressAtDragStartRef.current;
+        endDrag();
         setPlaybackProgress(progressAtDragStartRef.current);
       };
       pointerCleanupRef.current?.();
-      window.addEventListener("pointermove", handleMove);
-      window.addEventListener("pointerup", handleUp, { once: true });
-      window.addEventListener("pointercancel", handleCancel, { once: true });
-      pointerCleanupRef.current = () => {
-        window.removeEventListener("pointermove", handleMove);
-        window.removeEventListener("pointerup", handleUp);
-        window.removeEventListener("pointercancel", handleCancel);
-      };
+      const listenerOptions = { signal: dragListeners.signal };
+      window.addEventListener("pointermove", handleMove, listenerOptions);
+      window.addEventListener("pointerup", handleUp, {
+        ...listenerOptions,
+        once: true,
+      });
+      window.addEventListener("pointercancel", handleCancel, {
+        ...listenerOptions,
+        once: true,
+      });
+      pointerCleanupRef.current = endDrag;
     },
     [disabled, getProgressFromClientX, previewSeek, commitSeek],
   );
   return (
     <Box
+      {...warmup}
+      aria-busy={isLoading}
       sx={{
         display: "flex",
         alignItems: "center",
@@ -301,6 +389,7 @@ export const AudioPlayerPill = ({
     >
       <AudioPlaybackButton
         isPlaying={isPlaying}
+        isLoading={isLoading}
         disabled={disabled}
         onClick={handlePlaybackToggle}
       />

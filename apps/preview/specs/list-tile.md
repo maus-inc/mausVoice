@@ -22,7 +22,7 @@ default / hover (swap) / selected / disabled / href (+cmd-click new tab) / leadi
 
 ## Accessibility
 
-Real ListItemButton (button semantics, keyboard, focus-visible ring); action menus can put menuitem or menuitemcheckbox semantics on that focusable control. OverflowTypography tooltips truncated titles.
+Rows with an onClick handler or href use ListItemButton (button semantics, keyboard activation, focus-visible ring); action menus can put menuitem or menuitemcheckbox semantics on that focusable control. Presentation-only rows use a static container so nested switches do not activate a row press transform. Disabled static rows are inert. OverflowTypography provides tooltips for truncated titles.
 
 ## Live-spec mapping
 

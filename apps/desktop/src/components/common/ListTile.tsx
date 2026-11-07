@@ -57,20 +57,22 @@ const HoverButton = ({
         }}
       >
         <Box sx={{ display: hoverState ? "none" : "inline-flex" }}>{idle}</Box>
-        <IconButton
-          onClick={handleClick}
-          onMouseDown={handleMouseDown}
-          component="div"
-          size="small"
-          sx={{
-            my: -1,
-            mr: left ? undefined : -1.5,
-            ml: left ? -1.5 : undefined,
-            display: hoverState ? "inline-flex" : "none",
-          }}
-        >
-          {hover}
-        </IconButton>
+        {hover ? (
+          <IconButton
+            onClick={handleClick}
+            onMouseDown={handleMouseDown}
+            component="div"
+            size="small"
+            sx={{
+              my: -1,
+              mr: left ? undefined : -1.5,
+              ml: left ? -1.5 : undefined,
+              display: hoverState ? "inline-flex" : "none",
+            }}
+          >
+            {hover}
+          </IconButton>
+        ) : null}
       </Typography>
     </Box>
   );
@@ -79,6 +81,10 @@ const HoverButton = ({
 export type ListTileComponent = "div" | "li";
 
 export type ListTileProps<C extends ListTileComponent = "div"> = {
+  onPointerEnter?: React.PointerEventHandler;
+  onPointerLeave?: React.PointerEventHandler;
+  onFocus?: React.FocusEventHandler;
+  onBlur?: React.FocusEventHandler;
   title?: React.ReactNode;
   subtitle?: React.ReactNode;
   trailing?: React.ReactNode;
@@ -117,6 +123,10 @@ export const ListTile = forwardRef(function ListTile<
   C extends ListTileComponent = "div",
 >(
   {
+    onPointerEnter,
+    onPointerLeave,
+    onFocus,
+    onBlur,
     title,
     subtitle,
     trailing,
@@ -181,88 +191,124 @@ export const ListTile = forwardRef(function ListTile<
     normalizedSx = [sx];
   }
 
+  const content = (
+    <Stack
+      direction="row"
+      sx={{
+        alignItems: "center",
+        width: "100%",
+      }}
+    >
+      {Boolean(leading) && (
+        <HoverButton
+          idle={leading}
+          hover={leadingHover}
+          hovered={hovered}
+          onClick={handleClickLeading}
+          left
+        />
+      )}
+      <Box
+        sx={{
+          flexGrow: 1,
+          overflow: "hidden",
+        }}
+      >
+        <ListItemText
+          primary={<OverflowTypography>{title}</OverflowTypography>}
+          secondary={subtitle}
+        />
+      </Box>
+      {Boolean(trailing) && (
+        <HoverButton
+          idle={trailing}
+          hover={trailingHover}
+          hovered={hovered}
+          onClick={handleClickTrailing}
+          left={false}
+        />
+      )}
+    </Stack>
+  );
+
+  // Pass role only when the caller names one: an explicit undefined role
+  // overrides ButtonBase's implicit "button" role on non-native buttons and
+  // silently strips the row's actionability semantics. Menu-item rows leave
+  // roving tabindex management to the menu.
+  const roleProps: { role?: React.AriaRole; tabIndex?: number } = {};
+  if (itemRole) {
+    roleProps.role = itemRole;
+    if (itemRole.startsWith("menuitem")) roleProps.tabIndex = -1;
+  }
+
   const body = (
     <>
       {indicator}
-      <ListItemButton
-        selected={selected}
-        role={itemRole}
-        tabIndex={itemRole?.startsWith("menuitem") ? -1 : undefined}
-        aria-checked={ariaChecked}
-        aria-current={ariaCurrent}
-        onClick={handleClick}
-        disabled={disabled}
-        disableRipple={disableRipple}
-        sx={(theme) => ({
-          position: "relative",
-          zIndex: 1,
-          transformOrigin: "center",
-          // No will-change: transform is already compositor-friendly and
-          // adding a layer for every row would cost GPU memory on long lists.
-          // Tested on macOS Apple Silicon, macOS Intel, Windows 11, and
-          // Linux with integrated GPU. Press stays smooth without the hint.
-          // Re-add willChange only if jank appears on low-end devices.
-          transition: [
-            theme.transitions.create("background-color", {
-              duration: theme.transitions.duration.shortest,
-            }),
-            "transform 90ms var(--ease-out-cubic)",
-          ].join(", "),
-          "&:active:not(:disabled), &:focus-visible:active:not(:disabled), &.Mui-focusVisible:active:not(:disabled)":
-            {
-              transform: "scale(0.96)",
-            },
-          "@media (prefers-reduced-motion: reduce)": {
-            transition: "none",
+      {onClick || href ? (
+        <ListItemButton
+          selected={selected}
+          {...roleProps}
+          aria-checked={ariaChecked}
+          aria-current={ariaCurrent}
+          onClick={handleClick}
+          disabled={disabled}
+          disableRipple={disableRipple}
+          sx={(theme) => ({
+            position: "relative",
+            zIndex: 1,
+            transformOrigin: "center",
+            // No will-change: transform is already compositor-friendly and
+            // adding a layer for every row would cost GPU memory on long lists.
+            // Tested on macOS Apple Silicon, macOS Intel, Windows 11, and
+            // Linux with integrated GPU. Press stays smooth without the hint.
+            // Re-add willChange only if jank appears on low-end devices.
+            transition: [
+              theme.transitions.create("background-color", {
+                duration: theme.transitions.duration.shortest,
+              }),
+              "transform 90ms var(--ease-out-cubic)",
+            ].join(", "),
             "&:active:not(:disabled), &:focus-visible:active:not(:disabled), &.Mui-focusVisible:active:not(:disabled)":
               {
-                transform: "none",
+                transform: "scale(0.96)",
               },
-          },
-        })}
-      >
-        <Stack
-          direction="row"
+            "@media (prefers-reduced-motion: reduce)": {
+              transition: "none",
+              "&:active:not(:disabled), &:focus-visible:active:not(:disabled), &.Mui-focusVisible:active:not(:disabled)":
+                {
+                  transform: "none",
+                },
+            },
+          })}
+        >
+          {content}
+        </ListItemButton>
+      ) : (
+        <Box
+          inert={disabled}
           sx={{
-            alignItems: "center",
             width: "100%",
+            minWidth: 0,
+            boxSizing: "border-box",
+            px: 2,
+            py: 1.25,
+            mb: 0.5,
+            opacity: disabled
+              ? (theme) => theme.palette.action.disabledOpacity
+              : undefined,
           }}
         >
-          {Boolean(leading) && (
-            <HoverButton
-              idle={leading}
-              hover={leadingHover}
-              hovered={hovered}
-              onClick={handleClickLeading}
-              left
-            />
-          )}
-          <Box
-            sx={{
-              flexGrow: 1,
-              overflow: "hidden",
-            }}
-          >
-            <ListItemText
-              primary={<OverflowTypography>{title}</OverflowTypography>}
-              secondary={subtitle}
-            />
-          </Box>
-          {Boolean(trailing) && (
-            <HoverButton
-              idle={trailing}
-              hover={trailingHover}
-              hovered={hovered}
-              onClick={handleClickTrailing}
-              left={false}
-            />
-          )}
-        </Stack>
-      </ListItemButton>
+          {content}
+        </Box>
+      )}
     </>
   );
 
   const shellProps = {
+    onPointerEnter,
+    onPointerLeave,
+    onFocus,
+    onBlur,
     disablePadding: true,
     onMouseEnter,
     onMouseLeave,

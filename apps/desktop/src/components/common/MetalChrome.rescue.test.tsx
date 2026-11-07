@@ -34,12 +34,15 @@ const fx = vi.hoisted(() => ({
   present: true,
   /** true models metal-fx having copied a first frame. */
   visible: false,
+  /** true models the engine constructor throwing (e.g. no usable WebGL2). */
+  crash: false,
   node: null as HTMLElement | null,
 }));
 
 vi.mock("metal-fx", () => ({
   MetalFx: (props: Record<string, unknown>) => {
     const { children, className, "data-mv-metal-chrome": marker } = props;
+    if (fx.crash) throw new Error("metal-fx: WebGL2 not supported");
     if (!fx.present) return null;
     return (
       <div
@@ -67,6 +70,7 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   fx.present = true;
   fx.visible = false;
+  fx.crash = false;
   fx.node = null;
   container = document.createElement("div");
   document.body.appendChild(container);
@@ -215,5 +219,28 @@ describe("useFirstFrameRescue", () => {
     });
     act(() => vi.advanceTimersByTime(METAL_CHROME_RESCUE_DELAY_MS));
     expect(wrapper.classList).toContain(METAL_CHROME_RESCUED_CLASS);
+  });
+
+  it("feeds the rescue when metal-fx throws instead of rendering", async () => {
+    const {
+      MetalChrome,
+      METAL_CHROME_RESCUE_DELAY_MS,
+      METAL_CHROME_RESCUED_CLASS,
+    } = await import("./MetalChrome");
+
+    // The engine constructor throws on stacks whose probe WebGL2 context
+    // succeeds but whose real context creation fails. The control must not
+    // take the page down with it: the fallback wrapper is hidden at first and
+    // then rescued to visible by the same hook, on the same delay.
+    fx.crash = true;
+    act(() => root.render(<MetalChrome variant="circle">Play</MetalChrome>));
+
+    const wrapper = container.querySelector<HTMLElement>(`[${MARKER_ATTR}]`);
+    expect(wrapper, "the crash fallback was not rendered").not.toBeNull();
+    expect(wrapper?.textContent).toBe("Play");
+    expect(wrapper?.style.visibility).toBe("hidden");
+
+    act(() => vi.advanceTimersByTime(METAL_CHROME_RESCUE_DELAY_MS));
+    expect(wrapper?.classList).toContain(METAL_CHROME_RESCUED_CLASS);
   });
 });

@@ -175,13 +175,97 @@ export const seekPlayback = (progress: number): boolean => {
   return true;
 };
 
+const resumeAudioContext = (
+  context: AudioContext,
+  signal?: AbortSignal,
+): Promise<void> => {
+  if (!signal) return context.resume();
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      signal.removeEventListener("abort", onAbort);
+      reject(new DOMException("Audio playback cancelled", "AbortError"));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) {
+      onAbort();
+      return;
+    }
+    context.resume().then(
+      () => {
+        signal.removeEventListener("abort", onAbort);
+        resolve();
+      },
+      (error: unknown) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
+};
+
+/**
+ * Bounded cache of converted sample blocks, keyed by the identity of the raw
+ * data object the repository cache returned. The raw cache hands back the same
+ * `TranscriptionAudioData` instance for every hit inside its TTL, so a second
+ * play of a warm clip reuses the conversion instead of rebuilding the
+ * Float32Array. When the raw cache invalidates (delete, update, wipe) it
+ * returns a fresh instance, the identity check misses, and the stale
+ * conversion is dropped on the spot — no cross-layer invalidation wiring.
+ *
+ * Bounded in both entries and bytes: long histories must not accumulate
+ * conversions. The raw cache's 32MB budget bounds the input side; this caps
+ * the converted side at 16MB across 4 clips.
+ */
+const MAX_CONVERTED_ENTRIES = 4;
+const MAX_CONVERTED_BYTES = 16 * 1024 * 1024;
+type ConvertedSamples = {
+  source: { samples: number[] };
+  floatSamples: Float32Array;
+};
+const convertedSamples: ConvertedSamples[] = [];
+let convertedBytes = 0;
+
+const getFloatSamples = (data: { samples: number[] }): Float32Array => {
+  const hitIndex = convertedSamples.findIndex((entry) => entry.source === data);
+  if (hitIndex >= 0) {
+    const [hit] = convertedSamples.splice(hitIndex, 1);
+    convertedSamples.push(hit);
+    return hit.floatSamples;
+  }
+  const floatSamples = Float32Array.from(data.samples ?? []);
+  convertedSamples.push({ source: data, floatSamples });
+  convertedBytes += floatSamples.byteLength;
+  while (
+    convertedSamples.length > MAX_CONVERTED_ENTRIES ||
+    convertedBytes > MAX_CONVERTED_BYTES
+  ) {
+    const evicted = convertedSamples.shift();
+    if (!evicted) break;
+    convertedBytes -= evicted.floatSamples.byteLength;
+  }
+  return floatSamples;
+};
+
+/** Dev/test-only stage marks for the #300 latency budget (names, no content). */
+const markStage = (name: string) => {
+  if (import.meta.env.DEV) performance.mark(name);
+};
+
 export const playWebAudio = async (
   transcriptionId: string,
   data: { samples: number[]; sampleRate: number },
   onProgress: (progress: number) => void,
   onStop: (reason: PlaybackStopReason) => void,
   startProgress = 0,
+  signal?: AbortSignal,
 ): Promise<void> => {
+  // Same contract as the supersede checks below: a caller parked on this
+  // promise owns its "playing" state already, so an abandoned attempt must
+  // still notify before returning.
+  if (signal?.aborted) {
+    onStop("replaced");
+    return;
+  }
   // Replacing the previous playback first, and reading the generation after it,
   // because that stop advances the generation itself. Capturing it beforehand
   // would make every call supersede its own request.
@@ -194,11 +278,8 @@ export const playWebAudio = async (
     }
   }
 
-  // Superseded while awaiting `closingContext`. `onStop` still has to fire: the caller sets
-  // `isPlaying` true BEFORE awaiting this function, and `activePlayback` only takes ownership
-  // further down, so a newer `stopActivePlayback("replaced")` finds nothing to stop and never
-  // reaches this call's `onStop`. Returning quietly leaves the row showing "playing" forever.
-  if (generation !== playbackGeneration) {
+  // Pending callers do not own activePlayback yet, so notify them explicitly.
+  if (generation !== playbackGeneration || signal?.aborted) {
     onStop("replaced");
     return;
   }
@@ -216,17 +297,19 @@ export const playWebAudio = async (
   let ownedByActivePlayback = false;
   try {
     if (context.state === "suspended") {
-      await context.resume();
+      markStage("mv-audio:context-resume");
+      await resumeAudioContext(context, signal);
     }
 
     // Same reasoning as the exit above: superseded after `resume()`, before ownership.
-    if (generation !== playbackGeneration) {
+    if (generation !== playbackGeneration || signal?.aborted) {
       onStop("replaced");
       return;
     }
 
     const channelCount = 1;
-    const floatSamples = Float32Array.from(data.samples ?? []);
+    markStage("mv-audio:buffer-build");
+    const floatSamples = getFloatSamples(data);
     const buffer = context.createBuffer(
       channelCount,
       floatSamples.length,
@@ -271,6 +354,7 @@ export const playWebAudio = async (
     playback.startTime = context.currentTime;
     onProgress(startRatio);
     source.start(0, offset);
+    markStage("mv-audio:first-audio");
     armTick(playback);
   } catch (error) {
     // The far side of that hand-off. Setting up the playback is also what

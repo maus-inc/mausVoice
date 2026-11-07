@@ -1,31 +1,57 @@
 import { IconButton } from "@mui/material";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
-import { Pause, Play } from "lucide-react";
-import { useIntl } from "react-intl";
+import { LoaderCircle, Pause, Play, type LucideIcon } from "lucide-react";
+import { useIntl, type IntlShape } from "react-intl";
 import { springPop } from "../../styles/motion";
 import { MetalChrome } from "../common/MetalChrome";
 
 type AudioPlaybackButtonProps = {
   isPlaying: boolean;
+  isLoading?: boolean;
   disabled?: boolean;
   onClick: () => void;
 };
 
+type VisualKey = "loading" | "pause" | "play";
+
+const VISUALS: Record<VisualKey, { Icon: LucideIcon }> = {
+  loading: { Icon: LoaderCircle },
+  pause: { Icon: Pause },
+  play: { Icon: Play },
+};
+
+const visualFor = (isLoading: boolean, isPlaying: boolean): VisualKey => {
+  if (isLoading) return "loading";
+  return isPlaying ? "pause" : "play";
+};
+
+const labelFor = (
+  intl: IntlShape,
+  isLoading: boolean,
+  isPlaying: boolean,
+): string => {
+  if (isLoading) {
+    return intl.formatMessage({ defaultMessage: "Cancel audio loading" });
+  }
+  return isPlaying
+    ? intl.formatMessage({ defaultMessage: "Pause audio" })
+    : intl.formatMessage({ defaultMessage: "Play audio" });
+};
+
 export const AudioPlaybackButton = ({
   isPlaying,
+  isLoading,
   disabled,
   onClick,
 }: AudioPlaybackButtonProps) => {
   const intl = useIntl();
   const reduceMotion = useReducedMotion();
+  const visual = visualFor(Boolean(isLoading), isPlaying);
+  const { Icon } = VISUALS[visual];
   return (
     <MetalChrome variant="circle">
       <IconButton
-        aria-label={
-          isPlaying
-            ? intl.formatMessage({ defaultMessage: "Pause audio" })
-            : intl.formatMessage({ defaultMessage: "Play audio" })
-        }
+        aria-label={labelFor(intl, Boolean(isLoading), isPlaying)}
         size="small"
         onClick={onClick}
         disabled={disabled}
@@ -33,7 +59,7 @@ export const AudioPlaybackButton = ({
       >
         <AnimatePresence mode="popLayout" initial={false}>
           <motion.span
-            key={isPlaying ? "pause" : "play"}
+            key={visual}
             initial={
               reduceMotion
                 ? false
@@ -48,11 +74,7 @@ export const AudioPlaybackButton = ({
             transition={springPop}
             style={{ display: "inline-flex" }}
           >
-            {isPlaying ? (
-              <Pause size={16} strokeWidth={1.9} />
-            ) : (
-              <Play size={16} strokeWidth={1.9} />
-            )}
+            <Icon size={16} strokeWidth={1.9} />
           </motion.span>
         </AnimatePresence>
       </IconButton>

@@ -54,7 +54,7 @@ For UI/UX work that does not require native audio, global hotkeys, accessibility
 pnpm dev:preview
 ```
 
-It uses the production route tree and components with an in-memory mock desktop transport; it does **not** initialize Firebase, create Tauri globals, contact emulators, or expose real API keys. The floating **Browser preview** control switches between populated, empty, welcome, onboarding, and permission-needed scenarios. A scenario can also be linked directly, for example:
+It uses the production route tree and components with an in-memory mock desktop transport; it does **not** initialize Firebase, create Tauri globals, contact emulators, or expose real API keys. The preview popup starts hidden. Use the eye button at the bottom right to show or hide it. Its visibility is local to the preview and does not change production preferences. Inside the popup, the **Browser preview** control switches between populated, empty, welcome, onboarding, and permission-needed scenarios. A scenario can also be linked directly, for example:
 
 ```text
 http://localhost:1420/dashboard?scenario=empty
