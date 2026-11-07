@@ -395,7 +395,10 @@ fn release_held_microphone(app_handle: &tauri::AppHandle) {
     let Some(warm) = warm_capture(app_handle) else {
         return;
     };
-    if warm.status_line().contains("ready=true") {
+    // `is_ready` is the structural question, not the usability one: a stream
+    // that opened and never delivered still holds the device, and holding it is
+    // exactly what has to stop here.
+    if warm.is_ready() {
         log::info!("releasing the held microphone before exit");
         warm.warm_close();
     }
@@ -415,7 +418,7 @@ fn refresh_warm_device(app_handle: &tauri::AppHandle) {
     let Some(warm) = warm_capture(app_handle) else {
         return;
     };
-    if !warm.status_line().contains("ready=true") {
+    if !warm.is_ready() {
         // Nothing is held, so there is nothing to follow. A cold press always
         // resolves the device fresh.
         return;
