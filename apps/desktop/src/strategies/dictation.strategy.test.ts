@@ -10,6 +10,7 @@ import { DictationStrategy } from "./dictation.strategy";
 const {
   invokeMock,
   routeTranscriptOutputMock,
+  resolveInsertionMethodMock,
   appendToDictationBacklogMock,
   clearDictationBacklogMock,
   drainDictationBacklogMock,
@@ -17,11 +18,27 @@ const {
   incrementDictationBacklogNonceMock,
 } = vi.hoisted(() => ({
   invokeMock: vi.fn(),
-  routeTranscriptOutputMock: vi.fn(async (args: { text: string }) => ({
-    delivered: true,
-    remote: false,
-    deliveredText: args.text.length > 0 ? args.text : null,
-  })),
+  routeTranscriptOutputMock: vi.fn(
+    (
+      args: { text: string },
+      _trace?: unknown,
+      _hooks?: {
+        onSimulatedTypingStart?: () => void;
+        onSimulatedTypingEnd?: () => void;
+      },
+    ) =>
+      Promise.resolve({
+        delivered: true,
+        remote: false,
+        deliveredText: args.text.length > 0 ? args.text : null,
+      }),
+  ),
+  resolveInsertionMethodMock: vi.fn(
+    (
+      currentApp?: { insertionMethod?: string | null } | null,
+      prefs?: { insertionMethod?: string | null } | null,
+    ) => currentApp?.insertionMethod ?? prefs?.insertionMethod ?? "paste",
+  ),
   appendToDictationBacklogMock: vi.fn(),
   clearDictationBacklogMock: vi.fn(),
   drainDictationBacklogMock: vi.fn(async () => ({
@@ -39,6 +56,7 @@ vi.mock("@tauri-apps/api/core", async (importOriginal) => {
 
 vi.mock("../utils/output-routing.utils", () => ({
   routeTranscriptOutput: routeTranscriptOutputMock,
+  resolveInsertionMethod: resolveInsertionMethodMock,
   appendToDictationBacklog: appendToDictationBacklogMock,
   clearDictationBacklog: clearDictationBacklogMock,
   drainDictationBacklog: drainDictationBacklogMock,
@@ -255,6 +273,8 @@ describe("DictationStrategy backlog lifecycle", () => {
     await vi.waitFor(() => {
       expect(routeTranscriptOutputMock).toHaveBeenCalledWith(
         expect.objectContaining({ isInterim: true }),
+        null,
+        expect.any(Object),
       );
     });
 
@@ -297,6 +317,8 @@ describe("DictationStrategy backlog lifecycle", () => {
 
     expect(routeTranscriptOutputMock).toHaveBeenCalledWith(
       expect.objectContaining({ text: "second " }),
+      null,
+      expect.any(Object),
     );
   });
 
@@ -405,6 +427,71 @@ describe("DictationStrategy backlog lifecycle", () => {
     expect(result).toMatchObject({ historyOwner: "stop-path" });
   });
 
+  it("signals an in-flight streamed typing route when final handling begins", async () => {
+    const state = getAppState();
+    setAppState(
+      {
+        userPrefs: {
+          ...(state.userPrefs ?? createDefaultPreferences()),
+          insertionMethod: "type",
+        },
+      },
+      false,
+    );
+    const routeResult = deferred<{
+      delivered: boolean;
+      remote: boolean;
+      deliveredText: string;
+    }>();
+    routeTranscriptOutputMock.mockImplementationOnce((_args, _trace, hooks) => {
+      hooks?.onSimulatedTypingStart?.();
+      return routeResult.promise.finally(() => hooks?.onSimulatedTypingEnd?.());
+    });
+    const strategy = new DictationStrategy();
+    strategy.handleInterimSegment("streamed words");
+    await vi.waitFor(() =>
+      expect(routeTranscriptOutputMock).toHaveBeenCalledTimes(1),
+    );
+
+    const onSimulatedTypingStart = vi.fn();
+    const finalHandling = strategy.handleTranscript(
+      createHandleTranscriptParams({
+        rawTranscript: "streamed words",
+        onSimulatedTypingStart,
+      }),
+    );
+    expect(onSimulatedTypingStart).toHaveBeenCalledOnce();
+
+    routeResult.resolve({
+      delivered: true,
+      remote: false,
+      deliveredText: "streamed words ",
+    });
+    await finalHandling;
+  });
+
+  it("forwards the simulated-typing route lifecycle to the stop handler", async () => {
+    const onSimulatedTypingStart = vi.fn();
+    routeTranscriptOutputMock.mockImplementationOnce((args, _trace, hooks) => {
+      hooks?.onSimulatedTypingStart?.();
+      hooks?.onSimulatedTypingEnd?.();
+      return Promise.resolve({
+        delivered: true,
+        remote: false,
+        deliveredText: args.text,
+      });
+    });
+
+    await new DictationStrategy().handleTranscript(
+      createHandleTranscriptParams({
+        processedTranscript: "clean transcript",
+        onSimulatedTypingStart,
+      }),
+    );
+
+    expect(onSimulatedTypingStart).toHaveBeenCalledOnce();
+  });
+
   describe("concurrent history persistence", () => {
     it("starts the History write during delivery instead of after it", async () => {
       // Delivery is held open; the persistence hook must already have run
@@ -450,6 +537,105 @@ describe("DictationStrategy backlog lifecycle", () => {
       await expect(result.pendingPersistence).resolves.toMatchObject({
         wordCount: 2,
       });
+    });
+
+    it("uses preferences when the current app has no registered delivery target", async () => {
+      const state = getAppState();
+      setAppState(
+        {
+          userPrefs: {
+            ...(state.userPrefs ?? createDefaultPreferences()),
+            insertionMethod: "type",
+          },
+        },
+        false,
+      );
+      const persistTranscriptNow = vi.fn().mockResolvedValue({
+        transcription: { id: "row-1" },
+        wordCount: 2,
+      });
+
+      const result = await new DictationStrategy().handleTranscript(
+        createHandleTranscriptParams({
+          processedTranscript: "clean transcript",
+          currentApp: {
+            id: "missing-app",
+            name: "Stale app target",
+            createdAt: "2026-01-01T00:00:00.000Z",
+            toneId: null,
+            iconPath: null,
+            pasteKeybind: null,
+            insertionMethod: "paste",
+            typingSpeedMs: null,
+          },
+          persistTranscriptNow,
+        }),
+      );
+
+      expect(resolveInsertionMethodMock).toHaveBeenCalledWith(
+        null,
+        expect.objectContaining({ insertionMethod: "type" }),
+      );
+      expect(persistTranscriptNow).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ historyOwner: "stop-path" });
+    });
+
+    it("defers History persistence for simulated typing so a late Incognito change takes effect", async () => {
+      const initial = getAppState();
+      setAppState(
+        {
+          userPrefs: {
+            ...(initial.userPrefs ?? createDefaultPreferences()),
+            insertionMethod: "type",
+            incognitoModeEnabled: false,
+          },
+        },
+        false,
+      );
+      const releaseRouting = deferred<{
+        delivered: boolean;
+        remote: boolean;
+        deliveredText: string;
+      }>();
+      routeTranscriptOutputMock.mockImplementationOnce(
+        () => releaseRouting.promise,
+      );
+      const persistTranscriptNow = vi.fn().mockResolvedValue({
+        transcription: { id: "row-1" },
+        wordCount: 2,
+      });
+
+      const pending = new DictationStrategy().handleTranscript(
+        createHandleTranscriptParams({
+          processedTranscript: "clean transcript",
+          persistTranscriptNow,
+        }),
+      );
+      await vi.waitFor(() =>
+        expect(routeTranscriptOutputMock).toHaveBeenCalledTimes(1),
+      );
+      expect(persistTranscriptNow).not.toHaveBeenCalled();
+
+      const duringTyping = getAppState();
+      setAppState(
+        {
+          userPrefs: {
+            ...(duringTyping.userPrefs ?? createDefaultPreferences()),
+            incognitoModeEnabled: true,
+          },
+        },
+        false,
+      );
+      releaseRouting.resolve({
+        delivered: true,
+        remote: false,
+        deliveredText: "clean transcript ",
+      });
+
+      const result = await pending;
+      expect(persistTranscriptNow).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ historyOwner: "stop-path" });
+      expect(result.pendingPersistence).toBeUndefined();
     });
 
     it("pins skipReview while the concurrent row is being written", async () => {
@@ -556,6 +742,11 @@ describe("DictationStrategy backlog lifecycle", () => {
         );
         return { transcript: "clean transcript", warnings: [], metadata: {} };
       });
+      routeTranscriptOutputMock.mockResolvedValueOnce({
+        delivered: true,
+        remote: true,
+        deliveredText: "clean transcript ",
+      });
       const persistTranscriptNow = vi.fn();
 
       const result = await new DictationStrategy().handleTranscript(
@@ -566,7 +757,11 @@ describe("DictationStrategy backlog lifecycle", () => {
       );
 
       expect(persistTranscriptNow).not.toHaveBeenCalled();
-      expect(result).toMatchObject({ historyOwner: "stop-path" });
+      expect(result).toMatchObject({
+        historyOwner: "stop-path",
+        remoteStatus: "sent",
+        remoteDeviceId: "device-late",
+      });
     });
 
     it("attaches a delivery failure to the concurrent row", async () => {
@@ -791,6 +986,7 @@ describe("DictationStrategy backlog lifecycle", () => {
     expect(routeTranscriptOutputMock).toHaveBeenCalledWith(
       expect.objectContaining({ text: "clean transcript " }),
       null,
+      expect.any(Object),
     );
     await expect(completion).resolves.toMatchObject({
       transcript: "clean transcript",

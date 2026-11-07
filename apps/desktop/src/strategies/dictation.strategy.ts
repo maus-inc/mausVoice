@@ -26,6 +26,8 @@ import {
   drainDictationBacklog,
   hasDictationBacklog,
   incrementDictationBacklogNonce,
+  resolveInsertionMethod,
+  type RouteTranscriptOutputHooks,
 } from "../utils/output-routing.utils";
 import { sanitizeTranscriptText } from "../utils/sanitize-transcript.utils";
 import { withTimeout } from "../utils/timeout.utils";
@@ -69,6 +71,23 @@ export class DictationStrategy extends BaseStrategy {
   /** Monotonic session generation counter to prevent in-flight async paste
    *  or backlog tasks from delivering after cleanup() runs. */
   private sessionGeneration = 0;
+  private activeSimulatedTypingCount = 0;
+  private simulatedTypingStartCallback?: () => void;
+
+  private get routeOutputHooks(): RouteTranscriptOutputHooks {
+    return {
+      onSimulatedTypingStart: () => {
+        this.activeSimulatedTypingCount += 1;
+        this.simulatedTypingStartCallback?.();
+      },
+      onSimulatedTypingEnd: () => {
+        this.activeSimulatedTypingCount = Math.max(
+          0,
+          this.activeSimulatedTypingCount - 1,
+        );
+      },
+    };
+  }
 
   shouldStoreTranscript(): boolean {
     return true;
@@ -99,7 +118,11 @@ export class DictationStrategy extends BaseStrategy {
     newSegment?: string,
   ): Promise<boolean> {
     try {
-      const result = await drainDictationBacklog(newSegment, this.currentAppId);
+      const result = await drainDictationBacklog(
+        newSegment,
+        this.currentAppId,
+        this.routeOutputHooks,
+      );
       // Only add a trailing separator when this is a standalone drain
       // (no newSegment).  When the caller provides newSegment it has
       // already appended the segment text to streamedProcessedText, so
@@ -205,13 +228,17 @@ export class DictationStrategy extends BaseStrategy {
           // (`deliverWithInsertionStage`) and `beginEditWatch` -- a clipboard
           // read and a toast dismissal -- on every interim segment, none of which
           // the local path does.
-          await routeTranscriptOutput({
-            text: textToPaste,
-            mode: "dictation",
-            currentAppId: this.currentAppId,
-            isInterim: true,
-            skipReview: true,
-          });
+          await routeTranscriptOutput(
+            {
+              text: textToPaste,
+              mode: "dictation",
+              currentAppId: this.currentAppId,
+              isInterim: true,
+              skipReview: true,
+            },
+            null,
+            this.routeOutputHooks,
+          );
         } catch (error) {
           getLogger().error(
             `Failed to remote-deliver interim segment: ${error}`,
@@ -262,13 +289,17 @@ export class DictationStrategy extends BaseStrategy {
     // No backlog -- paste this segment live as before.
     this.backlogActive = false;
     try {
-      const result = await routeTranscriptOutput({
-        text: textToPaste,
-        mode: "dictation",
-        currentAppId: this.currentAppId,
-        isInterim: true,
-        skipReview: true,
-      });
+      const result = await routeTranscriptOutput(
+        {
+          text: textToPaste,
+          mode: "dictation",
+          currentAppId: this.currentAppId,
+          isInterim: true,
+          skipReview: true,
+        },
+        null,
+        this.routeOutputHooks,
+      );
       if (this.sessionGeneration !== generation) {
         return;
       }
@@ -388,7 +419,7 @@ export class DictationStrategy extends BaseStrategy {
     let remoteStatus: "sent" | null = null;
     let historyOwner: HistoryOwner = "stop-path";
     let pendingPersistence: HandleTranscriptResult["pendingPersistence"];
-    const remoteDeviceId = this.getActiveRemoteTargetDeviceId();
+    let remoteDeviceId: string | null = null;
 
     // Records a late failure on the warning list and, when the row was already
     // written concurrently with delivery, on the stored row itself. On the
@@ -470,10 +501,26 @@ export class DictationStrategy extends BaseStrategy {
         // before the post-processing await: a receiver paired or a review
         // toggled during that wait must still select the serial path, because
         // routing reads the live preferences in the same tick right after.
+        remoteDeviceId = this.getActiveRemoteTargetDeviceId();
+        const deliveryState = getAppState();
+        const deliveryTarget = args.currentApp
+          ? (deliveryState.appTargetById[args.currentApp.id] ?? null)
+          : null;
+        const insertionMethod = resolveInsertionMethod(
+          deliveryTarget,
+          getMyUserPreferences(deliveryState),
+        );
+        // Simulated typing can take the length of the transcript. Keep its
+        // History write on the stop path so Incognito is checked after delivery
+        // settles; otherwise a mode change during typing races an already-started
+        // write and saves the row the user just asked us not to retain.
+        const canPersistBeforeDelivery =
+          insertionMethod !== "type" && this.activeSimulatedTypingCount === 0;
         const concurrentPersistence =
           args.persistTranscriptNow !== undefined &&
-          getMyUserPreferences(getAppState())?.reviewBeforeInsert !== true &&
-          this.getActiveRemoteTargetDeviceId() === null;
+          getMyUserPreferences(deliveryState)?.reviewBeforeInsert !== true &&
+          remoteDeviceId === null &&
+          canPersistBeforeDelivery;
         if (concurrentPersistence && args.persistTranscriptNow) {
           pendingPersistence = args
             .persistTranscriptNow({
@@ -508,6 +555,7 @@ export class DictationStrategy extends BaseStrategy {
               skipReview: concurrentPersistence ? true : undefined,
             },
             args.trace ?? null,
+            this.routeOutputHooks,
           );
           if (
             result.delivered &&
@@ -587,10 +635,18 @@ export class DictationStrategy extends BaseStrategy {
   async handleTranscript(
     args: HandleTranscriptParams,
   ): Promise<HandleTranscriptResult> {
-    if (this.hasStreamedSegments) {
-      return this.handleFinalStreamedTranscript(args);
-    } else {
-      return this.handleFinalBulkTranscript(args);
+    this.simulatedTypingStartCallback = args.onSimulatedTypingStart;
+    if (this.activeSimulatedTypingCount > 0) {
+      this.simulatedTypingStartCallback?.();
+    }
+
+    try {
+      if (this.hasStreamedSegments) {
+        return await this.handleFinalStreamedTranscript(args);
+      }
+      return await this.handleFinalBulkTranscript(args);
+    } finally {
+      this.simulatedTypingStartCallback = undefined;
     }
   }
 

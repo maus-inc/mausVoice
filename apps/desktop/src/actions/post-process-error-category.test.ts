@@ -115,6 +115,18 @@ describe("classifyPostProcessErrorCategory", () => {
     ).toBe(POST_PROCESS_ERROR_CATEGORY.rateLimit);
   });
 
+  it("matches authentication machine codes as complete values", () => {
+    expect(
+      classifyPostProcessErrorCategory({
+        status: 503,
+        type: "unauthorized_client_fallback",
+      }),
+    ).toBe(POST_PROCESS_ERROR_CATEGORY.provider);
+    expect(classifyPostProcessErrorCategory({ type: "unauthorized" })).toBe(
+      POST_PROCESS_ERROR_CATEGORY.authentication,
+    );
+  });
+
   it("classifies the axios timeout code as a timeout, not an abort", () => {
     // axios reports its own `timeout` expiry as ECONNABORTED, and the abort
     // rule substring-matches "aborted" inside that code. Without the timeout

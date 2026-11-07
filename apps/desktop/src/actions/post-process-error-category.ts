@@ -283,6 +283,8 @@ const NETWORK_MESSAGE_MARKERS = [
 
 type ClassificationRule = {
   markers: readonly string[];
+  /** Structured machine codes that must equal a field, not match a substring. */
+  exactMarkers?: readonly string[];
   /** Numeric codes matched only as whole words, never inside longer digit runs. */
   statusCodes?: readonly string[];
   category: PostProcessErrorCategory;
@@ -318,7 +320,8 @@ const STRUCTURED_CLASSIFICATION_RULES: readonly ClassificationRule[] = [
     category: POST_PROCESS_ERROR_CATEGORY.rateLimit,
   },
   {
-    markers: AUTHENTICATION_CODES,
+    markers: [],
+    exactMarkers: AUTHENTICATION_CODES,
     category: POST_PROCESS_ERROR_CATEGORY.authentication,
   },
   {
@@ -337,16 +340,18 @@ const STRUCTURED_CLASSIFICATION_RULES: readonly ClassificationRule[] = [
 
 // Match each structured field on its own instead of a joined string. Markers
 // with a space (the in-flight budget wording) would otherwise match across two
-// unrelated fields, and a provider code must stay one token to mean anything.
-// Within a field, matching is substring-based on purpose: provider codes are
-// compound strings ("rate_limit_exceeded", "billing_hard_limit_reached"), so
-// exact matching would have to enumerate every variant a provider can emit.
-// Rule order carries the tie-breaks: the more specific rules run first.
+// unrelated fields. Most provider codes are matched as substrings because
+// providers wrap them in compound values, but authentication codes are exact:
+// `unauthorized_client_fallback` is not itself an authentication failure and
+// must not override a conflicting 503 status. Rule order carries tie-breaks.
 const classifyStructuredDetails = (
   structuredFields: readonly string[],
 ): PostProcessErrorCategory | undefined =>
-  STRUCTURED_CLASSIFICATION_RULES.find((rule) =>
-    structuredFields.some((field) => includesAny(field, rule.markers)),
+  STRUCTURED_CLASSIFICATION_RULES.find(
+    (rule) =>
+      rule.exactMarkers?.some((marker) => structuredFields.includes(marker)) ||
+      (rule.markers.length > 0 &&
+        structuredFields.some((field) => includesAny(field, rule.markers))),
   )?.category;
 
 const CATEGORY_BY_STATUS: ReadonlyMap<number, PostProcessErrorCategory> =
