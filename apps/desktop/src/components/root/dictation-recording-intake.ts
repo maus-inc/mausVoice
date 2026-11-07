@@ -1,4 +1,3 @@
-import { invoke } from "@tauri-apps/api/core";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { listenToAudioChunks } from "../../sessions/audio-chunk-events";
 import type { TranscriptionSessionKind } from "../../sessions";
@@ -10,6 +9,10 @@ import {
 } from "../../utils/audio-chunk-startup-buffer";
 import { ensureFloat32Array } from "../../utils/audio.utils";
 import { getLogger } from "../../utils/log.utils";
+import {
+  discardNativeRecording,
+  type NativeRecordingHandle,
+} from "../../utils/native-recording-session";
 
 export type SessionAudioIntake = {
   buffer: AudioChunkStartupBuffer;
@@ -206,6 +209,40 @@ type NativeStartOwnerRef = { current: number | null };
  */
 const owedNativeStops = new WeakMap<NativeStartOwnerRef, Set<number>>();
 
+/**
+ * The native admission each start opened, keyed by the ref that claimed it.
+ *
+ * The admission carries the `(ownerId, generation)` pair native requires for
+ * every later command, so a stop issued on behalf of a specific start can only
+ * reach that start's stream. A stop for a superseded start therefore cannot cut
+ * a newer recording even when it arrives late.
+ */
+const startHandles = new WeakMap<
+  NativeStartOwnerRef,
+  Map<number, NativeRecordingHandle>
+>();
+
+/** Record the admission a start opened, so its stop can address it. */
+export const trackNativeStartHandle = (
+  ownerRef: NativeStartOwnerRef,
+  operationId: number,
+  handle: NativeRecordingHandle,
+): void => {
+  const handles = startHandles.get(ownerRef) ?? new Map();
+  handles.set(operationId, handle);
+  startHandles.set(ownerRef, handles);
+};
+
+const takeNativeStartHandle = (
+  ownerRef: NativeStartOwnerRef,
+  operationId: number,
+): NativeRecordingHandle | null => {
+  const handles = startHandles.get(ownerRef);
+  const handle = handles?.get(operationId) ?? null;
+  handles?.delete(operationId);
+  return handle;
+};
+
 const oweNativeStop = (ownerRef: NativeStartOwnerRef, operationId: number) => {
   const owed = owedNativeStops.get(ownerRef) ?? new Set<number>();
   owed.add(operationId);
@@ -240,9 +277,14 @@ export const stopOwnedNativeStart = async (
     // reach a recorder that a newer recording may already own.
     return;
   }
-  await invoke("stop_recording").catch((error) => {
-    getLogger().verbose(`stop_recording failed after stale start: ${error}`);
-  });
+  const handle = takeNativeStartHandle(ownerRef, operationId);
+  await (handle ? handle.discard() : discardNativeRecording()).catch(
+    (error: unknown) => {
+      getLogger().verbose(
+        `discard_recording failed after stale start: ${error}`,
+      );
+    },
+  );
 };
 
 /**
@@ -278,11 +320,15 @@ export const stopNativeRecordingForAbort = (
   if (released !== null) {
     oweNativeStop(ownerRef, released);
   }
-  return invoke("stop_recording")
-    .then(() => undefined)
-    .catch((error) => {
-      getLogger().verbose(`stop_recording failed during abort: ${error}`);
-    });
+  // A start that is still opening is addressed through its own admission; one
+  // that already handed ownership over is whatever the module holds live.
+  const handle =
+    released !== null ? takeNativeStartHandle(ownerRef, released) : null;
+  return (handle ? handle.discard() : discardNativeRecording()).catch(
+    (error: unknown) => {
+      getLogger().verbose(`discard_recording failed during abort: ${error}`);
+    },
+  );
 };
 
 /**
@@ -326,5 +372,5 @@ export const releaseRecordingResources = ({
   void strategyCleanup?.catch((error) => {
     getLogger().warning(`Strategy cleanup failed during unmount: ${error}`);
   });
-  invoke("stop_recording").catch(() => undefined);
+  void discardNativeRecording();
 };

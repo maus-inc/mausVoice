@@ -7,12 +7,16 @@ const mocks = vi.hoisted(() => ({
   replace: vi.fn(),
   sync: vi.fn(),
   error: vi.fn(),
+  load: vi.fn(),
 }));
 vi.mock("../../repos", () => ({
   getHotkeyRepo: () => ({ replaceStyleHotkeys: mocks.replace }),
 }));
 vi.mock("../../actions/app.actions", () => ({
   showErrorSnackbar: mocks.error,
+}));
+vi.mock("../../actions/hotkey.actions", () => ({
+  loadHotkeys: mocks.load,
 }));
 vi.mock("../../utils/keyboard.utils", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../utils/keyboard.utils")>()),
@@ -111,6 +115,75 @@ it("locks style shortcut edits and dismissals while replacing, then allows a fai
     });
     expect(mocks.replace).toHaveBeenCalledTimes(2);
     expect(getAppState().settings.styleHotkeysDialogOpen).toBe(false);
+  } finally {
+    act(() => root.unmount());
+    container.remove();
+  }
+});
+
+it("sends the style group it opened with, and resyncs when another window changed it", async () => {
+  mocks.replace.mockReset();
+  mocks.replace.mockRejectedValue(
+    new Error("error returned from database: STYLE_HOTKEYS_CHANGED"),
+  );
+  mocks.sync.mockReset().mockResolvedValue(undefined);
+  mocks.error.mockReset();
+  mocks.load.mockReset().mockResolvedValue(undefined);
+  setAppState(structuredClone(INITIAL_APP_STATE), true);
+  produceAppState((draft) => {
+    draft.settings.styleHotkeysDialogOpen = true;
+    draft.toneById.test = {
+      id: "test",
+      name: "Concise",
+      sortOrder: 1,
+      isDeprecated: false,
+    } as (typeof draft.toneById)[string];
+    draft.hotkeyById.existing = {
+      id: "existing",
+      actionName: "switch-to-style:other",
+      keys: ["Cmd", "1"],
+    } as (typeof draft.hotkeyById)[string];
+  });
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  const button = (text: string) =>
+    requireElement(
+      [...document.querySelectorAll("button")].find(
+        (element) => element.textContent?.trim() === text,
+      ),
+      text,
+    );
+  try {
+    act(() =>
+      root.render(
+        createElement(
+          IntlProvider,
+          { locale: "en", messages: en },
+          createElement(StyleHotkeysDialog),
+        ),
+      ),
+    );
+    await act(async () => {
+      button("Save").click();
+    });
+    // The group the dialog rendered with travels with the replacement, so
+    // native can refuse to delete a shortcut another window just saved.
+    expect(mocks.replace).toHaveBeenCalledWith(
+      "switch-to-style:",
+      expect.any(Array),
+      undefined,
+      [
+        {
+          id: "existing",
+          actionName: "switch-to-style:other",
+          keys: ["Cmd", "1"],
+        },
+      ],
+    );
+    expect(mocks.load).toHaveBeenCalledTimes(1);
+    expect(mocks.error).toHaveBeenCalledTimes(1);
+    expect(getAppState().settings.styleHotkeysDialogOpen).toBe(true);
   } finally {
     act(() => root.unmount());
     container.remove();

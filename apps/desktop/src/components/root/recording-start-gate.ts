@@ -1,9 +1,12 @@
-import { invoke } from "@tauri-apps/api/core";
 import {
   subscribeToLocalDataClearRequested,
   withLocalDataWrite,
 } from "../../utils/local-data-write-gate";
 import { getLogger } from "../../utils/log.utils";
+import {
+  beginNativeRecording,
+  type NativeRecordingHandle,
+} from "../../utils/native-recording-session";
 
 /** Invalidate and unwind any active session as soon as a clear is requested. */
 export const subscribeRecordingAbortForClear = (
@@ -32,10 +35,13 @@ export const settleRecordingStart = async <T>(
   return result;
 };
 
-/** Keep an in-flight microphone start ahead of destructive local cleanup. */
-export const invokeGuardedRecordingStart = <T>(
+/**
+ * Keep an in-flight microphone start ahead of destructive local cleanup, and
+ * open it under a native recording admission so every later stop or discard can
+ * prove the stream it is tearing down is the one it started.
+ */
+export const invokeGuardedRecordingStart = (
   preferredMicrophone: string | null,
-): Promise<T> =>
-  withLocalDataWrite(() =>
-    invoke<T>("start_recording", { args: { preferredMicrophone } }),
-  );
+  options: { waitForRelease?: boolean } = {},
+): Promise<{ sampleRate: number; handle: NativeRecordingHandle }> =>
+  withLocalDataWrite(() => beginNativeRecording(preferredMicrophone, options));

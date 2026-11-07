@@ -1,5 +1,9 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { StopRecordingResponse } from "../../types/transcription-session.types";
+import {
+  beginNativeRecording,
+  resetNativeRecordingSession,
+} from "../../utils/native-recording-session";
 import {
   VoiceInstructionRecorder,
   type SpeechRecognitionLike,
@@ -49,17 +53,40 @@ const deferred = <T>(): Deferred<T> => {
   return { promise, resolve, reject };
 };
 
+/** Answers the native recording handshake the way the Rust side does. */
+const nativeInvoke = (
+  overrides: Record<
+    string,
+    (args?: Record<string, unknown>) => Promise<unknown>
+  > = {},
+) => {
+  let generation = 0;
+  return vi.fn((cmd: string, args?: Record<string, unknown>) => {
+    if (overrides[cmd]) return overrides[cmd](args);
+    switch (cmd) {
+      case "recording_generation":
+        generation += 1;
+        return Promise.resolve(generation);
+      case "start_recording":
+        return Promise.resolve({ sampleRate: 16000 });
+      case "stop_recording":
+        return Promise.resolve({ samples: [0, 1], sampleRate: 16000 });
+      default:
+        return Promise.resolve(undefined);
+    }
+  });
+};
+
+beforeEach(() => {
+  resetNativeRecordingSession();
+});
+
 const baseDeps = (
   overrides: Partial<VoiceInstructionRecorderDeps> = {},
 ): VoiceInstructionRecorderDeps => {
   const fake = new FakeRecognition();
   return {
-    invoke: vi.fn((cmd: string) => {
-      if (cmd === "stop_recording") {
-        return Promise.resolve({ samples: [0, 1], sampleRate: 16000 });
-      }
-      return Promise.resolve();
-    }),
+    invoke: nativeInvoke(),
     transcribe: vi.fn().mockResolvedValue("transcript"),
     getPreferredMicrophone: () => null,
     createSpeechRecognition: () => fake,
@@ -67,6 +94,7 @@ const baseDeps = (
     canUseProvider: () => true,
     speechRecognitionSupported: true,
     unsupportedMessage: () => "unsupported",
+    recordingUnavailableMessage: () => "recording unavailable",
     onListeningChange: vi.fn(),
     onTranscript: vi.fn(),
     onError: vi.fn(),
@@ -89,6 +117,8 @@ describe("VoiceInstructionRecorder", () => {
     expect(recorder.getState()).toBe("provider");
     expect(deps.onListeningChange).toHaveBeenLastCalledWith(true);
     expect(deps.invoke).toHaveBeenCalledWith("start_recording", {
+      ownerId: expect.any(String),
+      generation: 1,
       args: { preferredMicrophone: null },
     });
 
@@ -102,10 +132,8 @@ describe("VoiceInstructionRecorder", () => {
 
   it("falls back to browser recognition when provider recording fails", async () => {
     const deps = baseDeps({
-      invoke: vi.fn((cmd) => {
-        if (cmd === "start_recording")
-          return Promise.reject(new Error("no mic"));
-        return Promise.resolve();
+      invoke: nativeInvoke({
+        start_recording: () => Promise.reject(new Error("no mic")),
       }),
     });
     const recorder = new VoiceInstructionRecorder(deps);
@@ -120,52 +148,112 @@ describe("VoiceInstructionRecorder", () => {
     expect(deps.onListeningChange).toHaveBeenLastCalledWith(false);
   });
 
-  it("keeps listening active when provider transcription fails and browser fallback starts", async () => {
+  it("does not open a browser capture when the native stop fails", async () => {
     const startedRecording = deferred<unknown>();
+    const createSpeechRecognition = vi.fn(() => null);
     const deps = baseDeps({
-      invoke: vi.fn((cmd) => {
-        if (cmd === "start_recording") return startedRecording.promise;
-        if (cmd === "stop_recording")
-          return Promise.reject(new Error("transcribe failed"));
-        return Promise.resolve();
+      createSpeechRecognition,
+      invoke: nativeInvoke({
+        start_recording: () => startedRecording.promise,
+        stop_recording: () => Promise.reject(new Error("stop failed")),
       }),
     });
     const recorder = new VoiceInstructionRecorder(deps);
 
     const startPromise = recorder.toggle();
-    startedRecording.resolve(undefined);
+    startedRecording.resolve({ sampleRate: 16000 });
     await startPromise;
     // Give the start() continuation a tick to settle.
     await Promise.resolve();
     expect(recorder.getState()).toBe("provider");
 
     await recorder.toggle();
-    // CRITICAL: after the transcription failure we fall back to the browser
-    // recognizer, so the listening flag must NOT be reset to idle here.
-    expect(recorder.getState()).toBe("browser");
-    expect(deps.onListeningChange).toHaveBeenLastCalledWith(true);
+    // The failed stop leaves native holding the recorder, so starting the
+    // browser recognizer here would open a second capture beside it. The
+    // recorder stays idle and reports why instead.
+    expect(recorder.getState()).toBe("idle");
+    expect(deps.onListeningChange).toHaveBeenLastCalledWith(false);
     expect(deps.onResetLevels).toHaveBeenCalled();
+    expect(deps.onError).toHaveBeenCalledWith("recording unavailable");
+    expect(createSpeechRecognition).not.toHaveBeenCalled();
+  });
 
-    // A subsequent toggle stops the browser recognizer cleanly.
+  it("claims the native slot for browser recognition and releases it on stop", async () => {
+    const fake = new FakeRecognition();
+    fake.stop = vi.fn();
+    const deps = baseDeps({
+      canUseProvider: () => false,
+      createSpeechRecognition: () => fake,
+    });
+    const recorder = new VoiceInstructionRecorder(deps);
+
+    await recorder.toggle();
+    expect(recorder.getState()).toBe("browser");
+    expect(deps.invoke).toHaveBeenCalledWith("recording_generation", {
+      ownerId: expect.any(String),
+    });
+    expect(deps.invoke).toHaveBeenCalledWith("claim_browser_recording", {
+      ownerId: expect.any(String),
+      generation: 1,
+    });
+
     await recorder.toggle();
     expect(recorder.getState()).toBe("idle");
+    expect(deps.invoke).toHaveBeenCalledWith("release_browser_recording", {
+      ownerId: expect.any(String),
+      generation: 1,
+    });
+  });
+
+  it("refuses browser recognition while a dictation holds the recorder", async () => {
+    const deps = baseDeps({
+      canUseProvider: () => false,
+      createSpeechRecognition: vi.fn(() => null),
+    });
+    const recorder = new VoiceInstructionRecorder(deps);
+    // A live native recording in this webview takes the same slot.
+    await beginNativeRecording(null, {}, deps.invoke);
+
+    await recorder.toggle();
+    expect(recorder.getState()).toBe("idle");
+    expect(deps.onError).toHaveBeenCalledWith("recording unavailable");
+    expect(deps.createSpeechRecognition).not.toHaveBeenCalled();
+  });
+
+  it("reports when the browser claim is refused by native", async () => {
+    const deps = baseDeps({
+      canUseProvider: () => false,
+      createSpeechRecognition: vi.fn(() => null),
+      invoke: nativeInvoke({
+        claim_browser_recording: () =>
+          Promise.reject(new Error("A recording is already in progress")),
+      }),
+    });
+    const recorder = new VoiceInstructionRecorder(deps);
+
+    await recorder.toggle();
+    expect(recorder.getState()).toBe("idle");
+    expect(deps.onError).toHaveBeenCalledWith("recording unavailable");
   });
 
   it("rejects rapid duplicate starts (only one start_recording)", async () => {
     const startDeferred = deferred<unknown>();
     const deps = baseDeps({
-      invoke: vi.fn((cmd) => {
-        if (cmd === "start_recording") return startDeferred.promise;
-        return Promise.resolve();
-      }),
+      invoke: nativeInvoke({ start_recording: () => startDeferred.promise }),
     });
     const recorder = new VoiceInstructionRecorder(deps);
 
     const first = recorder.toggle();
     const second = recorder.toggle();
-    expect(deps.invoke).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() =>
+      expect(
+        (deps.invoke as ReturnType<typeof vi.fn>).mock.calls.filter(
+          ([command]) => command === "start_recording",
+        ),
+      ).toHaveLength(1),
+    );
 
-    startDeferred.resolve(undefined);
+    startDeferred.resolve({ sampleRate: 16000 });
     await Promise.all([first, second]);
     expect(recorder.getState()).toBe("provider");
   });
@@ -177,7 +265,10 @@ describe("VoiceInstructionRecorder", () => {
     return recorder.toggle().then(() => {
       expect(recorder.getState()).toBe("provider");
       recorder.dispose();
-      expect(deps.invoke).toHaveBeenCalledWith("stop_recording");
+      expect(deps.invoke).toHaveBeenCalledWith("discard_recording", {
+        ownerId: expect.any(String),
+        generation: 1,
+      });
       expect(recorder.getState()).toBe("idle");
       expect(deps.onListeningChange).toHaveBeenLastCalledWith(false);
     });
@@ -187,11 +278,9 @@ describe("VoiceInstructionRecorder", () => {
     const fake = new FakeRecognition();
     const deps = baseDeps({
       createSpeechRecognition: () => fake,
-      invoke: vi.fn((cmd) =>
-        cmd === "start_recording"
-          ? Promise.reject(new Error("no mic"))
-          : Promise.resolve(),
-      ),
+      invoke: nativeInvoke({
+        start_recording: () => Promise.reject(new Error("no mic")),
+      }),
     });
     const recorder = new VoiceInstructionRecorder(deps);
 
@@ -222,11 +311,9 @@ describe("VoiceInstructionRecorder", () => {
     const fake = new FakeRecognition();
     const deps = baseDeps({
       createSpeechRecognition: () => fake,
-      invoke: vi.fn((cmd) =>
-        cmd === "start_recording"
-          ? Promise.reject(new Error("no mic"))
-          : Promise.resolve(),
-      ),
+      invoke: nativeInvoke({
+        start_recording: () => Promise.reject(new Error("no mic")),
+      }),
     });
     const recorder = new VoiceInstructionRecorder(deps);
 
@@ -238,11 +325,7 @@ describe("VoiceInstructionRecorder", () => {
   it("serializes a second toggle while stopping and issues a single stop_recording", async () => {
     const stopDeferred = deferred<StopRecordingResponse>();
     const deps = baseDeps({
-      invoke: vi.fn((cmd) => {
-        if (cmd === "start_recording") return Promise.resolve();
-        if (cmd === "stop_recording") return stopDeferred.promise;
-        return Promise.resolve();
-      }),
+      invoke: nativeInvoke({ stop_recording: () => stopDeferred.promise }),
     });
     const recorder = new VoiceInstructionRecorder(deps);
 
@@ -285,11 +368,7 @@ describe("VoiceInstructionRecorder", () => {
     const stopDeferred = deferred<StopRecordingResponse>();
     const transcribeDeferred = deferred<string>();
     const deps = baseDeps({
-      invoke: vi.fn((cmd) => {
-        if (cmd === "start_recording") return Promise.resolve();
-        if (cmd === "stop_recording") return stopDeferred.promise;
-        return Promise.resolve();
-      }),
+      invoke: nativeInvoke({ stop_recording: () => stopDeferred.promise }),
       transcribe: vi.fn().mockReturnValue(transcribeDeferred.promise),
     });
     const recorder = new VoiceInstructionRecorder(deps);
@@ -315,11 +394,7 @@ describe("VoiceInstructionRecorder", () => {
     const fake = new FakeRecognition();
     const deps = baseDeps({
       createSpeechRecognition: () => fake,
-      invoke: vi.fn((cmd) => {
-        if (cmd === "start_recording") return Promise.resolve();
-        if (cmd === "stop_recording") return stopDeferred.promise;
-        return Promise.resolve();
-      }),
+      invoke: nativeInvoke({ stop_recording: () => stopDeferred.promise }),
       transcribe: vi.fn().mockReturnValue(transcribeDeferred.promise),
     });
     const recorder = new VoiceInstructionRecorder(deps);
@@ -347,10 +422,7 @@ describe("VoiceInstructionRecorder", () => {
   it("issues stop_recording when disposed while start_recording is pending", async () => {
     const startDeferred = deferred<unknown>();
     const deps = baseDeps({
-      invoke: vi.fn((cmd) => {
-        if (cmd === "start_recording") return startDeferred.promise;
-        return Promise.resolve();
-      }),
+      invoke: nativeInvoke({ start_recording: () => startDeferred.promise }),
     });
     const recorder = new VoiceInstructionRecorder(deps);
 
@@ -359,11 +431,14 @@ describe("VoiceInstructionRecorder", () => {
     recorder.dispose();
     expect(recorder.getState()).toBe("idle");
 
-    startDeferred.resolve(undefined);
+    startDeferred.resolve({ sampleRate: 16000 });
     await togglePromise;
 
     // The recorder must release the native mic instead of leaving it open.
-    expect(deps.invoke).toHaveBeenCalledWith("stop_recording");
+    expect(deps.invoke).toHaveBeenCalledWith("discard_recording", {
+      ownerId: expect.any(String),
+      generation: 1,
+    });
     expect(recorder.getState()).toBe("idle");
     // No UI notification that listening started, no transcript delivered.
     expect(deps.onListeningChange).not.toHaveBeenCalled();
@@ -374,23 +449,24 @@ describe("VoiceInstructionRecorder", () => {
   it("does not start after dispose even when start_recording resolves", async () => {
     const startDeferred = deferred<unknown>();
     const deps = baseDeps({
-      invoke: vi.fn((cmd) => {
-        if (cmd === "start_recording") return startDeferred.promise;
-        return Promise.resolve();
-      }),
+      invoke: nativeInvoke({ start_recording: () => startDeferred.promise }),
     });
     const recorder = new VoiceInstructionRecorder(deps);
 
     const togglePromise = recorder.toggle();
     recorder.dispose();
-    startDeferred.resolve(undefined);
+    startDeferred.resolve({ sampleRate: 16000 });
     await togglePromise;
 
     expect(recorder.getState()).toBe("idle");
     // A later toggle is a no-op because the recorder is disposed.
     await recorder.toggle();
-    // Exactly start_recording + the cleanup stop_recording were issued.
-    expect(deps.invoke).toHaveBeenCalledTimes(2);
+    // The handshake (generation + start) and its cleanup discard only.
+    expect(
+      (deps.invoke as ReturnType<typeof vi.fn>).mock.calls.map(
+        ([command]) => command,
+      ),
+    ).toEqual(["recording_generation", "start_recording", "discard_recording"]);
     expect(recorder.getState()).toBe("idle");
   });
   it.each(["missing", "constructor", "configuration"])(
@@ -433,7 +509,11 @@ describe("VoiceInstructionRecorder", () => {
       const fake = new FakeRecognition();
       const deps = baseDeps({ createSpeechRecognition: () => fake });
       if (failure === "provider-start") {
-        deps.invoke = vi.fn(() => Promise.reject(error));
+        // Only the start rejects: the reservation and the browser claim still
+        // answer, which is what a working transport does.
+        deps.invoke = nativeInvoke({
+          start_recording: () => Promise.reject(error),
+        });
       } else if (failure === "provider-transcribe") {
         deps.transcribe = vi.fn(() => Promise.reject(error));
       } else {

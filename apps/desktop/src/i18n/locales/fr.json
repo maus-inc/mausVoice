@@ -220,6 +220,7 @@
   "could_not_save_the_api_key": "Impossible d'enregistrer la clé API.",
   "could_not_save_the_edited_transcript_it_remains_on_the_pill": "Impossible d'enregistrer la transcription modifiée. Elle reste dans la pastille pour que vous puissiez réessayer.",
   "could_not_save_your_profile_please_try_again": "Impossible d'enregistrer votre profil. Réessayez.",
+  "could_not_start_recording_please_try_again": "Impossible de démarrer l'enregistrement. Réessayez.",
   "count_count_plural_one_transcription_other_transcriptions": "{count} {count, plural, one {transcription} other {transcriptions}}",
   "count_incognito_dictation_in_streaks_and_word_counts_without": "Compte la dictée en mode incognito dans les séries et le nombre de mots, sans enregistrer le texte.",
   "count_plural_0_no_settings_found_one_setting_found_other_set": "{count, plural, =0 {Aucun réglage trouvé.} one {# réglage trouvé.} other {# réglages trouvés.}}",
@@ -771,6 +772,7 @@
   "recommended_with_gpu_acceleration": "Recommandé avec accélération GPU",
   "record": "Enregistrer",
   "recording_failed": "Échec de l'enregistrement",
+  "recording_failed_partway_transcribing_what_was_captured": "L'enregistrement a échoué en cours de route. La partie captée est transcrite.",
   "recording_keys": "Enregistrement des touches...",
   "recording_stopped_duration_limit_reached": "Enregistrement arrêté : limite de durée atteinte",
   "recording_stopped_provider_duration_limit_reached": "Enregistrement arrêté : la limite de durée du fournisseur est atteinte",
@@ -1185,5 +1187,6 @@
   "your_profile_name_and_photo": "Votre nom et votre photo de profil",
   "your_profile_your_sign_in_and_your_account": "Votre profil, votre connexion et votre compte.",
   "your_recording_is_sent_to_provider_in_pieces_as_you_pause_an": "Votre enregistrement est envoyé à {provider} par morceaux pendant vos pauses, et le reste une fois que vous vous arrêtez. L’audio déjà envoyé ne peut pas être récupéré.",
-  "your_saved_recordings_and_history_were_removed_but_mausvoice": "Vos enregistrements et votre historique ont été supprimés, mais mausVoice n’a pas pu accéder au stockage de cet ordinateur : certains réglages peuvent donc subsister. Vérifiez que l’application est autorisée à stocker des données, puis réessayez."
+  "your_saved_recordings_and_history_were_removed_but_mausvoice": "Vos enregistrements et votre historique ont été supprimés, mais mausVoice n’a pas pu accéder au stockage de cet ordinateur : certains réglages peuvent donc subsister. Vérifiez que l’application est autorisée à stocker des données, puis réessayez.",
+  "your_style_shortcuts_changed_in_another_window_review_them_a": "Vos raccourcis de style ont changé dans une autre fenêtre. Vérifiez-les et enregistrez à nouveau."
 }

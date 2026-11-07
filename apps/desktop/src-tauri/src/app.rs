@@ -400,6 +400,7 @@ fn handle_run_event(app_handle: &tauri::AppHandle, event: RunEvent) {
 
 fn handle_window_event(window: &Window, event: &WindowEvent) {
     match event {
+        WindowEvent::Destroyed => crate::commands::retire_recording_window(window),
         WindowEvent::CloseRequested { api, .. } if window.label() == "main" => {
             api.prevent_close();
             save_main_window_state(window.app_handle());
@@ -555,6 +556,9 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         let recorder = crate::platform::audio::new_recorder();
 
         app.manage(recorder);
+        app.manage(std::sync::Arc::new(
+            crate::platform::recording_ownership::RecordingOwnership::default(),
+        ));
 
         // Pre-warm audio output for instant chime playback
         crate::system::audio_feedback::warm_audio_output();
@@ -626,6 +630,25 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
                 let _ = crate::platform::window::surface_main_window(&window);
             }
         }))
+        .plugin({
+            let builder = tauri::plugin::Builder::<tauri::Wry>::new("recording-lifecycle");
+            #[cfg(target_os = "linux")]
+            let builder = builder.on_webview_ready(|webview| {
+                use gtk::prelude::ObjectExt;
+                let window = webview.window();
+                if let Err(error) = webview.with_webview(move |native| {
+                    native
+                        .inner()
+                        .connect_local("web-process-terminated", false, move |_| {
+                            crate::commands::retire_recording_window(&window);
+                            None
+                        });
+                }) {
+                    log::error!("Failed to watch recording webview termination: {error}");
+                }
+            });
+            builder.build()
+        })
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec![AUTOSTART_HIDDEN_ARG]),
@@ -652,6 +675,13 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
                 .with_filter(|label| label == "main")
                 .build(),
         )
+        .on_page_load(|webview, payload| {
+            if payload.event() == tauri::webview::PageLoadEvent::Started {
+                // A reload replaces the JavaScript owner without destroying the
+                // native window. Retire its scope before the new page starts.
+                crate::commands::retire_recording_window(&webview.window());
+            }
+        })
         .on_window_event(handle_window_event)
         .setup(setup_app)
         .invoke_handler(tauri::generate_handler![
@@ -683,8 +713,14 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             crate::commands::remote_receiver_status,
             crate::commands::remote_sender_deliver_final_text,
             crate::commands::remote_sender_pair_with_receiver,
+            crate::commands::recording_generation,
+            crate::commands::claim_browser_recording,
+            crate::commands::release_browser_recording,
             crate::commands::start_recording,
             crate::commands::stop_recording,
+            crate::commands::acknowledge_recording,
+            crate::commands::discard_recording,
+            crate::commands::force_stop_recording,
             crate::commands::pause_recording,
             crate::commands::resume_recording,
             crate::commands::store_transcription_audio,
@@ -716,6 +752,7 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             crate::commands::hotkey_save,
             crate::commands::hotkey_delete,
             crate::commands::hotkey_replace_style_hotkeys,
+            crate::commands::hotkey_replace_dictation_language_hotkeys,
             crate::commands::set_tray_title,
             crate::commands::set_menu_icon,
             crate::commands::set_tray_language_menu,

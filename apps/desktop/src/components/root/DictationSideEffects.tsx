@@ -73,6 +73,7 @@ import {
   requiresLiveIntakeRecovery,
   stopNativeRecordingForAbort,
   stopOwnedNativeStart,
+  trackNativeStartHandle,
 } from "./dictation-recording-intake";
 import { createSystemVolumeDim } from "./dictation-volume-dim";
 import {
@@ -144,7 +145,6 @@ import {
 } from "../../utils/pipeline-trace";
 import { resolvePillBodyClickIntent } from "../../utils/pill-click.utils";
 import { resolvePillWindowSize } from "../../utils/pill-window-size.utils";
-import { invokeStopRecording } from "../../utils/recorded-audio.utils";
 import {
   getActiveManualToneIds,
   getManuallySelectedToneId,
@@ -164,10 +164,12 @@ import {
 import { hasDictationBacklog } from "../../utils/output-routing.utils";
 import { surfaceMainWindow } from "../../utils/window.utils";
 import { resetHotkeyFilter } from "../../utils/hotkey-filter.utils";
-
-type StartRecordingResponse = {
-  sampleRate: number;
-};
+import {
+  discardNativeRecording,
+  invokeStopRecording,
+  pauseNativeRecording,
+  resumeNativeRecording,
+} from "../../utils/native-recording-session";
 
 type PendingProviderStartup = {
   operationId: number;
@@ -1111,6 +1113,25 @@ export const DictationSideEffects = () => {
         getLogger().verbose(
           `Recording stopped (samples=${outAudio?.samples?.length ?? 0})`,
         );
+        // Native keeps what it captured when the device fails mid-recording and
+        // flags the result. The samples are still worth transcribing, but the
+        // user has to know the dictation was cut short instead of silently
+        // receiving a truncated transcript.
+        if (outAudio?.captureFailed) {
+          getLogger().warning(
+            "Recording capture failed partway; transcribing the captured audio",
+          );
+          runToast(
+            showToast({
+              message: intl.formatMessage({
+                defaultMessage:
+                  "Recording failed partway. Transcribing what was captured.",
+              }),
+              toastType: "error",
+              duration: 8_000,
+            }),
+          );
+        }
         return outAudio;
       } catch (error) {
         getLogger().error(`Failed to stop recording: ${error}`);
@@ -1657,9 +1678,9 @@ export const DictationSideEffects = () => {
 
       hardResetHotkeyState();
       clearRecordingTimers();
-      invoke("stop_recording").catch((e) =>
+      void discardNativeRecording().catch((e: unknown) =>
         getLogger().verbose(
-          `stop_recording failed during error handling: ${e}`,
+          `discard_recording failed during error handling: ${e}`,
         ),
       );
 
@@ -1834,9 +1855,16 @@ export const DictationSideEffects = () => {
         const [, startRecordingResult] = await Promise.all([
           strategy.setPhase("recording"),
           settleRecordingStart(
-            invokeGuardedRecordingStart<StartRecordingResponse>(
-              preferredMicrophone,
-            ),
+            invokeGuardedRecordingStart(preferredMicrophone).then((result) => {
+              // Track the admission before anything can abort this start, so a
+              // stop that lands now addresses the stream this start opened.
+              trackNativeStartHandle(
+                nativeStartOwnerRef,
+                operationId,
+                result.handle,
+              );
+              return result;
+            }),
             isCurrentStart,
             startProviderRecordingTimers,
             () => stopOwnedNativeStart(nativeStartOwnerRef, operationId),
@@ -2240,9 +2268,9 @@ export const DictationSideEffects = () => {
     hardResetHotkeyState();
     releaseAudioIntake();
     void sendPhaseToPill("idle");
-    invoke("stop_recording").catch((e) =>
+    void discardNativeRecording().catch((e: unknown) =>
       getLogger().verbose(
-        `stop_recording failed during type mode switch: ${e}`,
+        `discard_recording failed during type mode switch: ${e}`,
       ),
     );
     sessionRef.current?.cleanup();
@@ -2323,7 +2351,7 @@ export const DictationSideEffects = () => {
     try {
       getLogger().info("Pausing dictation");
       // Hold mic capture without finalizing the session so the user can resume.
-      await invoke("pause_recording");
+      await pauseNativeRecording();
       isPausedRef.current = true;
       // User-configured timers measure active audio. Provider hard limits are
       // wall-clock limits and intentionally continue while paused.
@@ -2355,7 +2383,7 @@ export const DictationSideEffects = () => {
     }
     try {
       getLogger().info("Resuming dictation");
-      await invoke("resume_recording");
+      await resumeNativeRecording();
       isPausedRef.current = false;
       await strategyRef.current.setPhase("recording");
       startUserRecordingTimers();

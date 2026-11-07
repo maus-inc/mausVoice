@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import { expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
-  save: vi.fn(),
-  replace: vi.fn(),
+  list: vi.fn(),
+  replaceGroup: vi.fn(),
   sync: vi.fn(),
 }));
 vi.mock("@tauri-apps/api/window", () => ({
@@ -10,8 +10,8 @@ vi.mock("@tauri-apps/api/window", () => ({
 }));
 vi.mock("../../repos", () => ({
   getHotkeyRepo: () => ({
-    saveHotkey: mocks.save,
-    replaceStyleHotkeys: mocks.replace,
+    listHotkeys: mocks.list,
+    replaceDictationLanguageHotkeys: mocks.replaceGroup,
   }),
 }));
 vi.mock("../../actions/user.actions", () => ({
@@ -22,7 +22,6 @@ vi.mock("../../utils/keyboard.utils", async (original) => ({
   ...(await original<typeof import("../../utils/keyboard.utils")>()),
   syncHotkeyCombosToNative: mocks.sync,
 }));
-import type { Hotkey } from "@maus-inc/types";
 import { INITIAL_APP_STATE } from "../../state/app.state";
 import { setAppState } from "../../store";
 import {
@@ -38,13 +37,13 @@ it("holds a local-data write lease across the entire shortcut save", async () =>
   const saveStarted = new Promise<void>((resolve) => {
     started = resolve;
   });
-  mocks.save.mockImplementation((hotkey: Hotkey) => {
+  mocks.list.mockResolvedValue([]);
+  mocks.replaceGroup.mockImplementation(() => {
     started();
-    return new Promise<Hotkey>((resolve) => {
-      finish = () => resolve(hotkey);
+    return new Promise<void>((resolve) => {
+      finish = () => resolve();
     });
   });
-  mocks.replace.mockImplementation(async (_prefix, hotkeys) => hotkeys);
   mocks.sync.mockResolvedValue(undefined);
   const saving = saveDictationLanguageSettings(
     [{ language: "en", hotkeyKeys: ["A"] }],
@@ -63,7 +62,7 @@ it("holds a local-data write lease across the entire shortcut save", async () =>
   const release = await clearing;
   try {
     expect(drained).toBe(true);
-    expect(mocks.replace).toHaveBeenCalledTimes(1);
+    expect(mocks.replaceGroup).toHaveBeenCalledTimes(1);
     expect(mocks.sync).toHaveBeenCalledTimes(1);
   } finally {
     window.localStorage.removeItem(LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY);

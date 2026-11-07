@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { expect, it, vi } from "vitest";
+import { beforeEach, expect, it, vi } from "vitest";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -10,21 +10,27 @@ import {
   beginLocalDataClear,
   LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY,
 } from "../../utils/local-data-write-gate";
+import { resetNativeRecordingSession } from "../../utils/native-recording-session";
 import {
   invokeGuardedRecordingStart,
   settleRecordingStart,
   subscribeRecordingAbortForClear,
 } from "./recording-start-gate";
 
+beforeEach(() => {
+  resetNativeRecordingSession();
+  localStorage.removeItem(LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY);
+});
+
 it("drains a native microphone start before allowing a clear, and rejects later starts", async () => {
   let finishStart!: (value: { sampleRate: number }) => void;
-  invoke.mockImplementation(
-    () =>
-      new Promise((resolve) => {
-        finishStart = resolve;
-      }),
-  );
-  const start = invokeGuardedRecordingStart<{ sampleRate: number }>(null);
+  invoke.mockImplementation((command: string) => {
+    if (command === "recording_generation") return Promise.resolve(1);
+    return new Promise((resolve) => {
+      finishStart = resolve;
+    });
+  });
+  const start = invokeGuardedRecordingStart(null);
   let clearReady = false;
   const clearing = beginLocalDataClear().then((release) => {
     clearReady = true;
@@ -33,9 +39,13 @@ it("drains a native microphone start before allowing a clear, and rejects later 
   await Promise.resolve();
   expect(clearReady).toBe(false);
   await expect(invokeGuardedRecordingStart(null)).rejects.toThrow();
-  expect(invoke).toHaveBeenCalledTimes(1);
+  // Only the admitted start reached native; the rejected one never opened a
+  // microphone, so it asked for no generation.
+  expect(
+    invoke.mock.calls.filter(([command]) => command === "start_recording"),
+  ).toHaveLength(1);
   finishStart({ sampleRate: 16000 });
-  expect(await start).toEqual({ sampleRate: 16000 });
+  expect(await start).toEqual({ sampleRate: 16000, handle: expect.anything() });
   const release = await clearing;
   expect(clearReady).toBe(true);
   localStorage.removeItem(LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY);
@@ -43,19 +53,27 @@ it("drains a native microphone start before allowing a clear, and rejects later 
 });
 
 it("aborts an active recording as soon as clear is requested, even before native startup finishes", async () => {
-  let finishStart!: () => void;
-  invoke.mockImplementationOnce(
-    () =>
-      new Promise<void>((resolve) => {
+  let finishStart!: (value: { sampleRate: number }) => void;
+  invoke.mockImplementation((command: string) => {
+    if (command === "recording_generation") return Promise.resolve(1);
+    if (command === "start_recording") {
+      return new Promise((resolve) => {
         finishStart = resolve;
-      }),
-  );
+      });
+    }
+    return Promise.resolve(undefined);
+  });
   const start = invokeGuardedRecordingStart(null);
   const abort = vi.fn(async () => {});
   const unsubscribe = subscribeRecordingAbortForClear(() => true, abort);
+  // The admission is requested first, so the microphone open is dispatched a
+  // microtask later; wait for it before releasing it.
+  await vi.waitFor(() =>
+    expect(invoke).toHaveBeenCalledWith("start_recording", expect.anything()),
+  );
   const clearing = beginLocalDataClear();
   expect(abort).toHaveBeenCalledOnce();
-  finishStart();
+  finishStart({ sampleRate: 16000 });
   await start;
   const release = await clearing;
   unsubscribe();

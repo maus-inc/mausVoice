@@ -14,7 +14,14 @@ export abstract class BaseHotkeyRepo extends BaseRepo {
     prefix: string,
     hotkeys: Hotkey[],
     lease?: LocalDataWriteLease,
+    expected?: Hotkey[],
   ): Promise<Hotkey[]>;
+  abstract replaceDictationLanguageHotkeys(
+    primary: Hotkey,
+    additional: Hotkey[],
+    expected: Hotkey[],
+    lease?: LocalDataWriteLease,
+  ): Promise<void>;
 }
 
 export class LocalHotkeyRepo extends BaseHotkeyRepo {
@@ -40,12 +47,31 @@ export class LocalHotkeyRepo extends BaseHotkeyRepo {
     prefix: string,
     hotkeys: Hotkey[],
     lease?: LocalDataWriteLease,
+    expected?: Hotkey[],
   ): Promise<Hotkey[]> {
     return withLocalDataWrite(
       () =>
         invoke<Hotkey[]>("hotkey_replace_style_hotkeys", {
           prefix,
           hotkeys,
+          expected,
+        }),
+      lease,
+    );
+  }
+
+  replaceDictationLanguageHotkeys(
+    primary: Hotkey,
+    additional: Hotkey[],
+    expected: Hotkey[],
+    lease?: LocalDataWriteLease,
+  ): Promise<void> {
+    return withLocalDataWrite(
+      () =>
+        invoke<void>("hotkey_replace_dictation_language_hotkeys", {
+          primary,
+          additional,
+          expected,
         }),
       lease,
     );

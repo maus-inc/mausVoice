@@ -1,9 +1,14 @@
 import type { StopRecordingResponse } from "../../types/transcription-session.types";
+import { BrowserRecordingLease } from "../../utils/browser-recording-lease";
 import {
   isLocalDataClearRequested,
   subscribeToLocalDataClearRequested,
 } from "../../utils/local-data-write-gate";
-import { invokeStopRecording } from "../../utils/recorded-audio.utils";
+import {
+  beginNativeRecording,
+  discardNativeRecording,
+  stopNativeRecording,
+} from "../../utils/native-recording-session";
 
 export type VoiceRecorderState = "idle" | "provider" | "browser";
 
@@ -29,8 +34,6 @@ export type SpeechRecognitionLike = {
   abort?: () => void;
 };
 
-export type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
-
 export type VoiceInstructionRecorderDeps = {
   invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
   transcribe: (audio: {
@@ -43,6 +46,8 @@ export type VoiceInstructionRecorderDeps = {
   canUseProvider: () => boolean;
   speechRecognitionSupported: boolean;
   unsupportedMessage: () => string;
+  /** Shown when the recorder could not be claimed for browser recognition. */
+  recordingUnavailableMessage: () => string;
   onListeningChange: (listening: boolean) => void;
   onTranscript: (text: string) => void;
   onError: (message: string) => void;
@@ -64,6 +69,7 @@ export type VoiceInstructionRecorderDeps = {
 export class VoiceInstructionRecorder {
   private state: VoiceRecorderState = "idle";
   private recognition: SpeechRecognitionLike | null = null;
+  private browserLease: BrowserRecordingLease | null = null;
   private busy = false;
   private disposed = false;
   private opGen = 0;
@@ -102,17 +108,17 @@ export class VoiceInstructionRecorder {
     gen: number,
   ): Promise<"started" | "blocked" | "unavailable"> {
     try {
-      await this.deps.invoke("start_recording", {
-        args: {
-          preferredMicrophone: this.deps.getPreferredMicrophone() ?? null,
-        },
-      });
+      await beginNativeRecording(
+        this.deps.getPreferredMicrophone() ?? null,
+        {},
+        this.deps.invoke,
+      );
       // The native recorder is now genuinely open. If `dispose` (or another
       // toggle) ran while we awaited mic init, release the recorder instead
       // of notifying the UI it is listening — otherwise the OS recording
       // indicator stays on behind a closed composer.
       if (gen !== this.opGen || this.disposed || isLocalDataClearRequested()) {
-        void this.deps.invoke("stop_recording").catch(() => undefined);
+        void discardNativeRecording();
         return "blocked";
       }
       this.state = "provider";
@@ -145,17 +151,60 @@ export class VoiceInstructionRecorder {
     }
 
     if (this.deps.speechRecognitionSupported) {
-      this.startBrowser();
+      await this.startBrowser(gen);
       return;
     }
 
     this.deps.onError(this.deps.unsupportedMessage());
   }
 
-  private startBrowser(): void {
+  /**
+   * Start the webview's own recognizer under a native recording lease.
+   *
+   * Browser recognition opens the microphone inside the webview, which the
+   * native coordinator cannot see. The lease claims the one native slot for as
+   * long as the recognizer runs, so a dictation started meanwhile is refused
+   * instead of opening a second capture beside it, and the slot is released
+   * only once native has acknowledged the release.
+   */
+  private async startBrowser(gen: number): Promise<void> {
+    if (this.browserLease) {
+      this.deps.onError(this.deps.recordingUnavailableMessage());
+      return;
+    }
+    const lease = new BrowserRecordingLease(this.deps.invoke);
+    this.browserLease = lease;
+    try {
+      await lease.acquire();
+    } catch {
+      if (this.browserLease === lease) this.browserLease = null;
+      void lease.release().catch(() => undefined);
+      if (gen === this.opGen && !this.disposed) {
+        this.deps.onError(this.deps.recordingUnavailableMessage());
+      }
+      return;
+    }
+    if (gen !== this.opGen || this.disposed) {
+      this.releaseBrowserLease(lease);
+      return;
+    }
+    this.dispatchBrowserStart(lease);
+  }
+
+  private releaseBrowserLease(lease: BrowserRecordingLease): void {
+    if (this.browserLease === lease) this.browserLease = null;
+    void lease.release().catch(() => undefined);
+  }
+
+  private dispatchBrowserStart(lease: BrowserRecordingLease): void {
     try {
       const recognition = this.deps.createSpeechRecognition();
+      if (this.browserLease !== lease || this.disposed) {
+        this.releaseBrowserLease(lease);
+        return;
+      }
       if (!recognition) {
+        this.releaseBrowserLease(lease);
         this.deps.onError(this.deps.unsupportedMessage());
         return;
       }
@@ -170,9 +219,14 @@ export class VoiceInstructionRecorder {
         if (first) this.deps.onTranscript(`${first}`.trim());
       };
       recognition.onend = () => {
-        if (alive()) this.setIdle();
+        // Browser capture has ended, so the slot goes back even when the
+        // component has already moved on.
+        this.releaseBrowserLease(lease);
+        if (!alive()) return;
+        this.setIdle();
       };
       recognition.onerror = () => {
+        this.releaseBrowserLease(lease);
         if (!alive()) return;
         this.setIdle();
         this.deps.onError(this.deps.unsupportedMessage());
@@ -186,6 +240,7 @@ export class VoiceInstructionRecorder {
       const recognition = this.detachBrowserRecognition();
       if (recognition) this.stopBrowserRecognition(recognition);
       this.setIdle();
+      this.releaseBrowserLease(lease);
       this.deps.logger.warning(
         "Voice Edit Mode: browser speech recognition failed to start",
       );
@@ -227,6 +282,13 @@ export class VoiceInstructionRecorder {
     if (this.state === "browser") {
       const stopped =
         !this.recognition || this.stopBrowserRecognition(this.recognition);
+      // Await the release so a start that follows this stop sees a free slot
+      // instead of racing a claim native has not released yet.
+      const lease = this.browserLease;
+      if (lease) {
+        this.browserLease = null;
+        await lease.release().catch(() => undefined);
+      }
       if (gen === this.opGen && !this.disposed) {
         // stop() can deliver its final result asynchronously. Keep this
         // recognizer's callbacks until end, dispose, or the next recording.
@@ -265,9 +327,7 @@ export class VoiceInstructionRecorder {
     this.stopInFlight = true;
     try {
       try {
-        const response = await invokeStopRecording((command) =>
-          this.deps.invoke(command),
-        );
+        const response = await stopNativeRecording(this.deps.invoke);
         if (gen !== this.opGen || this.disposed) return null;
         return await this.transcribeProviderResponse(gen, response);
       } catch {
@@ -276,7 +336,7 @@ export class VoiceInstructionRecorder {
           "Voice Edit Mode: provider transcription failed",
         );
         if (this.deps.speechRecognitionSupported) {
-          this.startBrowser();
+          await this.startBrowser(gen);
           return null;
         }
         this.deps.onError(this.deps.unsupportedMessage());
@@ -310,20 +370,32 @@ export class VoiceInstructionRecorder {
     if (wasListening) this.deps.onListeningChange(false);
   }
 
-  private abortForClear(): void {
-    if (this.disposed) return;
-    this.opGen++;
-    this.busy = false;
+  /**
+   * Stop every live capture path and return to idle.
+   *
+   * Both the local-data clear and `dispose` need exactly this sequence, and a
+   * copy that gets one step wrong leaves a recorder running or a browser
+   * recognition attached. The caller owns the invalidation counters.
+   */
+  private releaseCapture(): void {
+    if (this.browserLease) this.releaseBrowserLease(this.browserLease);
     const recognition = this.detachBrowserRecognition();
     if (recognition && this.state === "browser") {
       this.stopBrowserRecognition(recognition);
     }
     if (this.state === "provider" && !this.stopInFlight) {
-      void this.deps.invoke("stop_recording").catch(() => undefined);
+      void discardNativeRecording();
     }
     if (this.state !== "idle") {
       this.setIdle();
     }
+  }
+
+  private abortForClear(): void {
+    if (this.disposed) return;
+    this.opGen++;
+    this.busy = false;
+    this.releaseCapture();
   }
 
   /**
@@ -337,15 +409,6 @@ export class VoiceInstructionRecorder {
     this.unsubscribeClear?.();
     this.unsubscribeClear = null;
     this.opGen++;
-    const recognition = this.detachBrowserRecognition();
-    if (recognition && this.state === "browser") {
-      this.stopBrowserRecognition(recognition);
-    }
-    if (this.state === "provider" && !this.stopInFlight) {
-      void this.deps.invoke("stop_recording").catch(() => undefined);
-    }
-    if (this.state !== "idle") {
-      this.setIdle();
-    }
+    this.releaseCapture();
   }
 }

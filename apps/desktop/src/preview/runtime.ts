@@ -14,6 +14,7 @@ import {
   type PreviewData,
   type PreviewScenarioId,
 } from "./scenarios";
+import { ADDITIONAL_LANGUAGE_HOTKEY_PREFIX } from "../utils/keyboard.utils";
 
 /**
  * Error returned when a page asks the browser preview to perform a privileged
@@ -72,6 +73,24 @@ const SYSTEM_NO_OP_COMMANDS = new Set([
   "sync_compositor_hotkeys",
   "sync_hotkey_combos",
 ]);
+
+/**
+ * Answers for the recorder admission commands the preview has to accept so the
+ * dictation and microphone pages can run their real call sequence. None of them
+ * produces audio in a browser, and the desktop contract only requires that the
+ * admission handshake completes.
+ */
+const RECORDING_COMMAND_RESULTS: Record<string, unknown> = {
+  recording_generation: 1,
+  start_recording: { sampleRate: 16_000 },
+  stop_recording: { samples: [], sampleRate: 16_000 },
+  acknowledge_recording: undefined,
+  claim_browser_recording: undefined,
+  discard_recording: undefined,
+  pause_recording: undefined,
+  release_browser_recording: undefined,
+  resume_recording: undefined,
+};
 
 type WireRecord = Record<string, unknown>;
 type PreviewUsageEvent = {
@@ -503,6 +522,11 @@ class PreviewRuntime {
   }
 
   private dispatch(command: string, args: WireRecord): unknown {
+    // The hotkey commands share one row store and one entry point, so they are
+    // routed by prefix instead of spending five case arms here.
+    if (command.startsWith("hotkey_")) {
+      return this.invokeHotkeyCommand(command, args);
+    }
     switch (command) {
       case "user_get_one":
         return clone(this.database.user);
@@ -567,17 +591,11 @@ class PreviewRuntime {
         return undefined;
 
       case "hotkey_list":
-        return getList(this.database.hotkeys);
-      case "hotkey_save": {
-        const hotkey = clone(asRecord(args.hotkey));
-        this.database.hotkeys.set(String(hotkey.id), hotkey);
-        return clone(hotkey);
-      }
+      case "hotkey_save":
       case "hotkey_delete":
-        this.database.hotkeys.delete(String(args.id));
-        return undefined;
       case "hotkey_replace_style_hotkeys":
-        return this.replaceStyleHotkeys(args);
+      case "hotkey_replace_dictation_language_hotkeys":
+        return this.invokeHotkeyCommand(command, args);
 
       case "api_key_list":
         return getList(this.database.apiKeys);
@@ -814,6 +832,86 @@ class PreviewRuntime {
     return clone(preferences);
   }
 
+  /** Every row of the group a replacement is about to rewrite, in the id order
+   * the native command compares in. */
+  private hotkeyGroup(prefix: string, includeDictate: boolean): WireRecord[] {
+    return getList(this.database.hotkeys)
+      .filter(
+        (hotkey) =>
+          (includeDictate && hotkey.actionName === "dictate") ||
+          String(hotkey.actionName).startsWith(prefix),
+      )
+      .map(clone)
+      .sort((left, right) => String(left.id).localeCompare(String(right.id)));
+  }
+
+  /** The native commands replace a group only if the caller still holds the
+   * group it edited. A preview that accepted a stale snapshot would hide a
+   * conflict the desktop build reports. */
+  private assertHotkeyGroupUnchanged(
+    prefix: string,
+    includeDictate: boolean,
+    expected: unknown,
+  ): void {
+    if (expected === undefined || expected === null) return;
+    if (!Array.isArray(expected)) {
+      throw new TypeError("Expected a hotkey list");
+    }
+    const wanted = (expected as WireRecord[])
+      .map(clone)
+      .sort((left, right) => String(left.id).localeCompare(String(right.id)));
+    if (
+      JSON.stringify(wanted) !==
+      JSON.stringify(this.hotkeyGroup(prefix, includeDictate))
+    ) {
+      throw new Error(
+        includeDictate ? "DICTATION_HOTKEYS_CHANGED" : "STYLE_HOTKEYS_CHANGED",
+      );
+    }
+  }
+
+  /** The hotkey commands share one row store, so they share one entry point. */
+  /** Reject a replacement the native command would reject, before it is written. */
+  private assertDictationReplacement(
+    primary: WireRecord,
+    additional: WireRecord[],
+  ): void {
+    if (primary.actionName !== "dictate") {
+      throw new Error("Invalid dictation hotkey");
+    }
+    for (const hotkey of additional) {
+      const actionName = String(hotkey.actionName);
+      const languageName =
+        actionName.startsWith(ADDITIONAL_LANGUAGE_HOTKEY_PREFIX) &&
+        actionName.length > ADDITIONAL_LANGUAGE_HOTKEY_PREFIX.length;
+      if (actionName !== "dictate" && !languageName) {
+        throw new Error("Invalid replacement hotkey");
+      }
+      if (hotkey.id === primary.id) {
+        throw new Error("Duplicate dictation hotkey id");
+      }
+    }
+  }
+
+  private invokeHotkeyCommand(command: string, args: WireRecord): unknown {
+    switch (command) {
+      case "hotkey_list":
+        return getList(this.database.hotkeys);
+      case "hotkey_save": {
+        const hotkey = clone(asRecord(args.hotkey));
+        this.database.hotkeys.set(String(hotkey.id), hotkey);
+        return clone(hotkey);
+      }
+      case "hotkey_delete":
+        this.database.hotkeys.delete(String(args.id));
+        return undefined;
+      case "hotkey_replace_style_hotkeys":
+        return this.replaceStyleHotkeys(args);
+      default:
+        return this.replaceDictationLanguageHotkeys(args);
+    }
+  }
+
   private replaceStyleHotkeys(args: WireRecord): WireRecord[] {
     if (
       typeof args.prefix !== "string" ||
@@ -823,6 +921,7 @@ class PreviewRuntime {
       throw new TypeError("Expected a hotkey prefix and replacement list");
     }
     const prefix = args.prefix;
+    this.assertHotkeyGroupUnchanged(prefix, false, args.expected);
     const hotkeys = (args.hotkeys as WireRecord[]).map(clone);
     const next = new Map(this.database.hotkeys);
     for (const [id, hotkey] of next) {
@@ -833,6 +932,37 @@ class PreviewRuntime {
     for (const hotkey of hotkeys) next.set(String(hotkey.id), hotkey);
     this.database.hotkeys = next;
     return clone(hotkeys);
+  }
+
+  /** The dictation group is the primary `dictate` shortcut plus the additional
+   * language shortcuts, and a user may own more than one `dictate` row. The
+   * replacement carries every row it keeps, so the group is deleted and
+   * reinserted as a whole, in the order the native command uses. */
+  private replaceDictationLanguageHotkeys(args: WireRecord): null {
+    const primary = clone(asRecord(args.primary));
+    const additional = Array.isArray(args.additional)
+      ? (args.additional as WireRecord[]).map(clone)
+      : [];
+    this.assertDictationReplacement(primary, additional);
+    this.assertHotkeyGroupUnchanged(
+      ADDITIONAL_LANGUAGE_HOTKEY_PREFIX,
+      true,
+      args.expected,
+    );
+    const next = new Map(this.database.hotkeys);
+    for (const [id, hotkey] of next) {
+      if (
+        hotkey.actionName === "dictate" ||
+        String(hotkey.actionName).startsWith(ADDITIONAL_LANGUAGE_HOTKEY_PREFIX)
+      ) {
+        next.delete(id);
+      }
+    }
+    for (const hotkey of [primary, ...additional]) {
+      next.set(String(hotkey.id), hotkey);
+    }
+    this.database.hotkeys = next;
+    return null;
   }
 
   private invokeHistory(command: string, args: WireRecord): unknown {
@@ -961,6 +1091,11 @@ class PreviewRuntime {
     // `undefined` answer; naming them in one list says what they are instead of
     // spending a case arm each.
     if (SYSTEM_NO_OP_COMMANDS.has(command)) return undefined;
+    // The recorder admission commands answer the same way on every call, so
+    // they share one lookup instead of a case arm each.
+    if (command in RECORDING_COMMAND_RESULTS) {
+      return clone(RECORDING_COMMAND_RESULTS[command]);
+    }
     switch (command) {
       // Safe, deterministic desktop-information and configuration responses.
       case "check_microphone_permission":
@@ -1009,10 +1144,6 @@ class PreviewRuntime {
         return [];
       case "storage_get_download_url":
         return `data:image/svg+xml,${iconSvg}`;
-      case "start_recording":
-        return { sampleRate: 16_000 };
-      case "stop_recording":
-        return { samples: [], sampleRate: 16_000 };
       case "run_native_setup":
         return "success";
       case "export_diagnostics":

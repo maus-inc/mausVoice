@@ -35,7 +35,11 @@ jobs:
   build:
     name: Build Desktop (${{ matrix.label }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 35
+    # A hung build must not hold a runner for the six-hour default, so every job
+    # is capped. The cap is a guard, not a budget: on 2026-11-06 a healthy build
+    # reached it twice — macOS at 35 minutes while the arm64 pool reported
+    # capacity constraints, then Linux at 35m16s — so the ceiling is 60.
+    timeout-minutes: 60
     permissions:
       contents: read
       actions: write

@@ -20,6 +20,9 @@ pub struct RecordedAudio {
 pub struct RecordingResult {
     pub metrics: RecordingMetrics,
     pub audio: RecordedAudio,
+    /// The captured prefix is available, but capture or physical release could
+    /// not be confirmed. Consumers must not present it as a complete recording.
+    pub capture_failed: bool,
 }
 
 #[derive(Clone, Serialize)]
@@ -28,7 +31,10 @@ pub struct RecordingLevelPayload {
 }
 
 #[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AudioChunkPayload {
+    pub owner_id: String,
+    pub generation: u64,
     pub samples: Vec<f32>,
     /// Index of the first sample in the recording, so listeners that attach
     /// after capture starts can align chunks with the final recording.
