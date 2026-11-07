@@ -1125,6 +1125,31 @@ const getUnappliedWarningCount = (
 ): number =>
   Math.max(0, appendedCount - Math.max(0, currentCount - previousCount));
 
+const appendWarningOccurrences = (
+  warnings: string[],
+  warning: string,
+  count: number,
+): void => {
+  for (let occurrence = 0; occurrence < count; occurrence += 1) {
+    warnings.push(warning);
+  }
+};
+
+const mergeWarningOccurrences = (
+  warnings: string[],
+  previousCounts: Map<string, number>,
+  currentCounts: Map<string, number>,
+  warning: string,
+  appendedCount: number,
+): void => {
+  const missingCount = getUnappliedWarningCount(
+    previousCounts.get(warning) ?? 0,
+    currentCounts.get(warning) ?? 0,
+    appendedCount,
+  );
+  appendWarningOccurrences(warnings, warning, missingCount);
+};
+
 const mergeAppendedWarnings = (
   previousWarnings: readonly string[],
   currentWarnings: readonly string[] | null | undefined,
@@ -1136,14 +1161,13 @@ const mergeAppendedWarnings = (
   const appendedCounts = countWarnings(appendedWarnings);
 
   for (const [warning, appendedCount] of appendedCounts) {
-    const missingCount = getUnappliedWarningCount(
-      previousCounts.get(warning) ?? 0,
-      currentCounts.get(warning) ?? 0,
+    mergeWarningOccurrences(
+      merged,
+      previousCounts,
+      currentCounts,
+      warning,
       appendedCount,
     );
-    for (let occurrence = 0; occurrence < missingCount; occurrence += 1) {
-      merged.push(warning);
-    }
   }
   return merged;
 };
