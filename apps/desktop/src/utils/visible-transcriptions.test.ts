@@ -148,6 +148,26 @@ describe("visible transcription loads", () => {
     expect(mocks.state.transcriptions.transcriptionIds).toEqual([]);
   });
 
+  it("unmarks a session-only id when its pending delete commits", async () => {
+    const sessionOnly = await import("./session-only-transcriptions");
+    const pending = await import("./pending-transcription-delete");
+    const memory = row("memory");
+    mocks.state.transcriptionById = { memory };
+    sessionOnly.markTranscriptionSessionOnly("memory");
+
+    pending.scheduleTranscriptionDelete(memory, 5000);
+    // Still inside the undo window the id must survive for a possible undo.
+    expect(sessionOnly.getSessionOnlyTranscriptionIds()).toEqual(["memory"]);
+
+    await vi.advanceTimersByTimeAsync(5000);
+
+    // The commit ran the repository delete and removed the record, so the
+    // registry lets the id go at the source: a History page that stays
+    // mounted never runs a refresh to prune it.
+    expect(mocks.remove).toHaveBeenCalledWith("memory", expect.any(Object));
+    expect(sessionOnly.getSessionOnlyTranscriptionIds()).toEqual([]);
+  });
+
   it("prunes a session-only id whose record left the state", async () => {
     const sessionOnly = await import("./session-only-transcriptions");
     const { refreshVisibleTranscriptions } =
