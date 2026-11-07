@@ -217,6 +217,7 @@
   "could_not_reach_the_release_history": "Der Veröffentlichungsverlauf konnte nicht erreicht werden.",
   "could_not_resume_dictation": "Diktat konnte nicht fortgesetzt werden",
   "could_not_save_app_settings_please_try_again": "Die App-Einstellungen konnten nicht gespeichert werden. Bitte versuche es erneut.",
+  "could_not_save_that_dictation_to_history_because_earlier_rec": "Diese Diktataufnahme konnte nicht in der Historie gespeichert werden, weil frühere Aufnahmen noch geschrieben werden.",
   "could_not_save_the_api_key": "Der API-Schlüssel konnte nicht gespeichert werden.",
   "could_not_save_the_edited_transcript_it_remains_on_the_pill": "Die bearbeitete Transkription konnte nicht gespeichert werden. Sie bleibt in der Pille, damit Sie es erneut versuchen können.",
   "could_not_save_your_profile_please_try_again": "Dein Profil konnte nicht gespeichert werden. Bitte versuche es erneut.",
@@ -1185,18 +1186,5 @@
   "your_profile_name_and_photo": "Dein Profilname und dein Profilbild",
   "your_profile_your_sign_in_and_your_account": "Dein Profil, deine Anmeldung und dein Konto.",
   "your_recording_is_sent_to_provider_in_pieces_as_you_pause_an": "Deine Aufnahme wird in Teilen an {provider} gesendet, während du Pausen machst, und der Rest, sobald du stoppst. Bereits gesendetes Audio kann nicht zurückgerufen werden.",
-  "your_saved_recordings_and_history_were_removed_but_mausvoice": "Deine gespeicherten Aufnahmen und dein Verlauf wurden entfernt, aber mausVoice konnte nicht auf den Speicher dieses Computers zugreifen, daher können einige Einstellungen erhalten bleiben. Prüfe, ob die App Daten speichern darf, und versuche es erneut.",
-  "authentication_failed": "Authentifizierung fehlgeschlagen",
-  "could_not_save_that_dictation_to_history_because_earlier_rec": "Diese Diktataufnahme konnte nicht in der Historie gespeichert werden, weil frühere Aufnahmen noch geschrieben werden.",
-  "network_error": "Netzwerkfehler",
-  "online_styling_was_unavailable_so_the_local_style_was_used_i": "Die Online-Formatierung war nicht verfügbar, daher wurde der lokale Stil verwendet.",
-  "post_processing_timed_out": "Zeitüberschreitung bei der Nachbearbeitung",
-  "provider_error": "Anbieterfehler",
-  "quota_or_payment_required": "Kontingent oder Zahlung erforderlich",
-  "rate_limit_exceeded": "Ratenbegrenzung überschritten",
-  "request_aborted": "Anfrage abgebrochen",
-  "styling_failed_reason_the_raw_transcript_is_saved_in_history": "Stil fehlgeschlagen: {reason}. Das rohe Transkript ist in deinem Verlauf gespeichert.",
-  "that_dictation_outran_fast_styling_so_its_last_droppedchars": "Diese Diktataufnahme war schneller als das Schnellstyling, daher blieben die letzten {droppedChars} Zeichen ungestylt, und das Ende wurde nicht gespeichert.",
-  "the_styling_reply_could_not_be_read_so_it_was_discarded_and": "Die Formatierungsantwort konnte nicht gelesen werden, daher wurde sie verworfen und der bisherige Text beibehalten.",
-  "the_styling_reply_was_cut_off_at_the_model_s_output_limit_so": "Die Formatierungsantwort wurde am Ausgabelimit des Modells abgeschnitten, daher wurde die unvollständige Antwort verworfen und der bisherige Text beibehalten."
+  "your_saved_recordings_and_history_were_removed_but_mausvoice": "Deine gespeicherten Aufnahmen und dein Verlauf wurden entfernt, aber mausVoice konnte nicht auf den Speicher dieses Computers zugreifen, daher können einige Einstellungen erhalten bleiben. Prüfe, ob die App Daten speichern darf, und versuche es erneut."
 }

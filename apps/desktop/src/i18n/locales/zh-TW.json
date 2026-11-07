@@ -217,6 +217,7 @@
   "could_not_reach_the_release_history": "無法存取版本記錄。",
   "could_not_resume_dictation": "無法繼續口述",
   "could_not_save_app_settings_please_try_again": "無法儲存應用程式設定。請再試一次。",
+  "could_not_save_that_dictation_to_history_because_earlier_rec": "無法將該段聽寫存到歷程記錄，因為較早的錄音仍在寫入。",
   "could_not_save_the_api_key": "無法儲存 API 金鑰。",
   "could_not_save_the_edited_transcript_it_remains_on_the_pill": "無法儲存已編輯的轉錄內容。內容會保留在膠囊視窗中，方便您重試。",
   "could_not_save_your_profile_please_try_again": "無法儲存您的個人資料。請再試一次。",
@@ -1185,18 +1186,5 @@
   "your_profile_name_and_photo": "你的個人資料名稱和照片",
   "your_profile_your_sign_in_and_your_account": "您的個人資料、登入資訊與帳戶。",
   "your_recording_is_sent_to_provider_in_pieces_as_you_pause_an": "錄音會在你停頓時分段傳送給 {provider}，其餘部分在停止後傳送。已傳送的音訊無法收回。",
-  "your_saved_recordings_and_history_were_removed_but_mausvoice": "你儲存的錄音與紀錄已刪除，但 mausVoice 無法存取這台電腦的儲存空間，因此部分偏好設定可能仍然保留。請確認應用程式可以儲存資料，然後再試一次。",
-  "authentication_failed": "驗證失敗",
-  "could_not_save_that_dictation_to_history_because_earlier_rec": "無法將該段聽寫存到歷程記錄，因為較早的錄音仍在寫入。",
-  "network_error": "網路錯誤",
-  "online_styling_was_unavailable_so_the_local_style_was_used_i": "線上格式化無法使用，已改用本機樣式。",
-  "post_processing_timed_out": "後處理逾時",
-  "provider_error": "供應商錯誤",
-  "quota_or_payment_required": "需要配額或付款",
-  "rate_limit_exceeded": "超出速率限制",
-  "request_aborted": "請求已取消",
-  "styling_failed_reason_the_raw_transcript_is_saved_in_history": "樣式套用失敗：{reason}。原始逐字稿已儲存在你的歷史紀錄中。",
-  "that_dictation_outran_fast_styling_so_its_last_droppedchars": "該口授快於快速樣式，因此最後 {droppedChars} 個字元未設定樣式，且該結尾未被儲存。",
-  "the_styling_reply_could_not_be_read_so_it_was_discarded_and": "無法讀取樣式回覆，因此該回覆已被捨棄，先前的文字已保留。",
-  "the_styling_reply_was_cut_off_at_the_model_s_output_limit_so": "樣式回覆在模型輸出上限處被截斷，因此不完整的回覆已被捨棄，先前的文字已保留。"
+  "your_saved_recordings_and_history_were_removed_but_mausvoice": "你儲存的錄音與紀錄已刪除，但 mausVoice 無法存取這台電腦的儲存空間，因此部分偏好設定可能仍然保留。請確認應用程式可以儲存資料，然後再試一次。"
 }

@@ -217,6 +217,7 @@
   "could_not_reach_the_release_history": "无法访问版本历史。",
   "could_not_resume_dictation": "无法恢复听写",
   "could_not_save_app_settings_please_try_again": "无法保存应用设置。请重试。",
+  "could_not_save_that_dictation_to_history_because_earlier_rec": "无法将该段听写保存到历史记录，因为更早的录音仍在写入。",
   "could_not_save_the_api_key": "无法保存 API 密钥。",
   "could_not_save_the_edited_transcript_it_remains_on_the_pill": "无法保存编辑后的转录内容。内容会保留在胶囊窗口中，方便你重试。",
   "could_not_save_your_profile_please_try_again": "无法保存你的个人资料。请重试。",
@@ -1185,18 +1186,5 @@
   "your_profile_name_and_photo": "你的个人资料名称和照片",
   "your_profile_your_sign_in_and_your_account": "你的个人资料、登录信息和账户。",
   "your_recording_is_sent_to_provider_in_pieces_as_you_pause_an": "录音会在你停顿时分段发送到 {provider}，其余部分在停止后发送。已发送的音频无法收回。",
-  "your_saved_recordings_and_history_were_removed_but_mausvoice": "你保存的录音和记录已删除，但 mausVoice 无法访问此计算机的存储空间，因此部分偏好设置可能仍然保留。请检查应用是否有权保存数据，然后重试。",
-  "authentication_failed": "认证失败",
-  "could_not_save_that_dictation_to_history_because_earlier_rec": "无法将该段听写保存到历史记录，因为更早的录音仍在写入。",
-  "network_error": "网络错误",
-  "online_styling_was_unavailable_so_the_local_style_was_used_i": "在线格式化不可用，已改用本地样式。",
-  "post_processing_timed_out": "后处理超时",
-  "provider_error": "提供商错误",
-  "quota_or_payment_required": "需要配额或付款",
-  "rate_limit_exceeded": "超出速率限制",
-  "request_aborted": "请求已取消",
-  "styling_failed_reason_the_raw_transcript_is_saved_in_history": "样式应用失败：{reason}。原始转录已保存在你的历史记录中。",
-  "that_dictation_outran_fast_styling_so_its_last_droppedchars": "该口授快于快速样式，因此最后 {droppedChars} 个字符未设置样式，且该结尾未被保存。",
-  "the_styling_reply_could_not_be_read_so_it_was_discarded_and": "无法读取风格回复，因此该回复已被丢弃，之前的文本已保留。",
-  "the_styling_reply_was_cut_off_at_the_model_s_output_limit_so": "风格回复在模型输出上限处被截断，因此不完整的回复已被丢弃，之前的文本已保留。"
+  "your_saved_recordings_and_history_were_removed_but_mausvoice": "你保存的录音和记录已删除，但 mausVoice 无法访问此计算机的存储空间，因此部分偏好设置可能仍然保留。请检查应用是否有权保存数据，然后重试。"
 }

@@ -217,6 +217,7 @@
   "could_not_reach_the_release_history": "Impossible d’accéder à l’historique des versions.",
   "could_not_resume_dictation": "Impossible de reprendre la dictée",
   "could_not_save_app_settings_please_try_again": "Impossible d’enregistrer les paramètres de l’application. Réessayez.",
+  "could_not_save_that_dictation_to_history_because_earlier_rec": "Impossible d'enregistrer cette dictée dans l'historique car des enregistrements précédents sont encore en cours d'écriture.",
   "could_not_save_the_api_key": "Impossible d'enregistrer la clé API.",
   "could_not_save_the_edited_transcript_it_remains_on_the_pill": "Impossible d'enregistrer la transcription modifiée. Elle reste dans la pastille pour que vous puissiez réessayer.",
   "could_not_save_your_profile_please_try_again": "Impossible d'enregistrer votre profil. Réessayez.",
@@ -1185,18 +1186,5 @@
   "your_profile_name_and_photo": "Votre nom et votre photo de profil",
   "your_profile_your_sign_in_and_your_account": "Votre profil, votre connexion et votre compte.",
   "your_recording_is_sent_to_provider_in_pieces_as_you_pause_an": "Votre enregistrement est envoyé à {provider} par morceaux pendant vos pauses, et le reste une fois que vous vous arrêtez. L’audio déjà envoyé ne peut pas être récupéré.",
-  "your_saved_recordings_and_history_were_removed_but_mausvoice": "Vos enregistrements et votre historique ont été supprimés, mais mausVoice n’a pas pu accéder au stockage de cet ordinateur : certains réglages peuvent donc subsister. Vérifiez que l’application est autorisée à stocker des données, puis réessayez.",
-  "authentication_failed": "Échec de l'authentification",
-  "could_not_save_that_dictation_to_history_because_earlier_rec": "Impossible d'enregistrer cette dictée dans l'historique car des enregistrements précédents sont encore en cours d'écriture.",
-  "network_error": "Erreur réseau",
-  "online_styling_was_unavailable_so_the_local_style_was_used_i": "Le style en ligne était indisponible, le style local a donc été utilisé.",
-  "post_processing_timed_out": "Le post-traitement a expiré",
-  "provider_error": "Erreur du fournisseur",
-  "quota_or_payment_required": "Quota ou paiement requis",
-  "rate_limit_exceeded": "Limite de débit dépassé",
-  "request_aborted": "Requête annulée",
-  "styling_failed_reason_the_raw_transcript_is_saved_in_history": "Échec du style : {reason}. La transcription brute est enregistrée dans votre historique.",
-  "that_dictation_outran_fast_styling_so_its_last_droppedchars": "Cette dictée a dépassé le style rapide, donc ses {droppedChars} derniers caractères n'ont pas été stylisés, et cette fin n'a pas été enregistrée.",
-  "the_styling_reply_could_not_be_read_so_it_was_discarded_and": "La réponse de style n'a pas pu être lue, elle a donc été ignorée et le texte précédent a été conservé.",
-  "the_styling_reply_was_cut_off_at_the_model_s_output_limit_so": "La réponse de style a été coupée à la limite de sortie du modèle, la réponse partielle a donc été ignorée et le texte précédent a été conservé."
+  "your_saved_recordings_and_history_were_removed_but_mausvoice": "Vos enregistrements et votre historique ont été supprimés, mais mausVoice n’a pas pu accéder au stockage de cet ordinateur : certains réglages peuvent donc subsister. Vérifiez que l’application est autorisée à stocker des données, puis réessayez."
 }

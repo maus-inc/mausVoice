@@ -217,6 +217,7 @@
   "could_not_reach_the_release_history": "Não foi possível aceder ao histórico de versões.",
   "could_not_resume_dictation": "Não foi possível retomar o ditado",
   "could_not_save_app_settings_please_try_again": "Não foi possível guardar as definições da aplicação. Tenta novamente.",
+  "could_not_save_that_dictation_to_history_because_earlier_rec": "Não foi possível guardar essa ditação no histórico porque gravações anteriores ainda estão a ser escritas.",
   "could_not_save_the_api_key": "Não foi possível guardar a chave de API.",
   "could_not_save_the_edited_transcript_it_remains_on_the_pill": "Não foi possível guardar a transcrição editada. Ela permanece no indicador para que possa tentar novamente.",
   "could_not_save_your_profile_please_try_again": "Não foi possível guardar o seu perfil. Tente novamente.",
@@ -1185,18 +1186,5 @@
   "your_profile_name_and_photo": "O teu nome e a tua foto de perfil",
   "your_profile_your_sign_in_and_your_account": "O seu perfil, a sua sessão e a sua conta.",
   "your_recording_is_sent_to_provider_in_pieces_as_you_pause_an": "A sua gravação é enviada para {provider} por partes durante as pausas, e o resto depois de parar. O áudio já enviado não pode ser recuperado.",
-  "your_saved_recordings_and_history_were_removed_but_mausvoice": "As tuas gravações e o teu histórico guardados foram removidos, mas o mausVoice não conseguiu aceder ao armazenamento deste computador, por isso algumas preferências podem permanecer. Verifica se a aplicação pode guardar dados e tenta novamente.",
-  "authentication_failed": "Falha na autenticação",
-  "could_not_save_that_dictation_to_history_because_earlier_rec": "Não foi possível guardar essa ditação no histórico porque gravações anteriores ainda estão a ser escritas.",
-  "network_error": "Erro de rede",
-  "online_styling_was_unavailable_so_the_local_style_was_used_i": "A formatação online não estava disponível, por isso foi usado o estilo local.",
-  "post_processing_timed_out": "O pós-processamento expirou",
-  "provider_error": "Erro do fornecedor",
-  "quota_or_payment_required": "Quota ou pagamento necessário",
-  "rate_limit_exceeded": "Limite de pedidos excedido",
-  "request_aborted": "Pedido cancelado",
-  "styling_failed_reason_the_raw_transcript_is_saved_in_history": "Falha na aplicação do estilo: {reason}. A transcrição original está guardada no seu histórico.",
-  "that_dictation_outran_fast_styling_so_its_last_droppedchars": "Esse ditado ultrapassou o estilo rápido, pelo que os últimos {droppedChars} caracteres ficaram sem estilo e esse final não foi guardado.",
-  "the_styling_reply_could_not_be_read_so_it_was_discarded_and": "Não foi possível ler a resposta de estilo, por isso foi descartada e o texto anterior foi mantido.",
-  "the_styling_reply_was_cut_off_at_the_model_s_output_limit_so": "A resposta de estilo foi cortada no limite de saída do modelo, por isso a resposta parcial foi descartada e o texto anterior foi mantido."
+  "your_saved_recordings_and_history_were_removed_but_mausvoice": "As tuas gravações e o teu histórico guardados foram removidos, mas o mausVoice não conseguiu aceder ao armazenamento deste computador, por isso algumas preferências podem permanecer. Verifica se a aplicação pode guardar dados e tenta novamente."
 }

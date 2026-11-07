@@ -217,6 +217,7 @@
   "could_not_reach_the_release_history": "Impossibile accedere alla cronologia delle versioni.",
   "could_not_resume_dictation": "Impossibile riprendere la dettatura",
   "could_not_save_app_settings_please_try_again": "Impossibile salvare le impostazioni dell’app. Riprova.",
+  "could_not_save_that_dictation_to_history_because_earlier_rec": "Impossibile salvare quella dettatura nella cronologia perché le registrazioni precedenti sono ancora in scrittura.",
   "could_not_save_the_api_key": "Impossibile salvare la chiave API.",
   "could_not_save_the_edited_transcript_it_remains_on_the_pill": "Non è stato possibile salvare la trascrizione modificata. Rimane nella pillola così puoi riprovare.",
   "could_not_save_your_profile_please_try_again": "Impossibile salvare il profilo. Riprova.",
@@ -1185,18 +1186,5 @@
   "your_profile_name_and_photo": "Il tuo nome e la tua foto del profilo",
   "your_profile_your_sign_in_and_your_account": "Il tuo profilo, il tuo accesso e il tuo account.",
   "your_recording_is_sent_to_provider_in_pieces_as_you_pause_an": "La registrazione viene inviata a {provider} a pezzi durante le tue pause, e il resto quando ti fermi. L’audio già inviato non può essere richiamato.",
-  "your_saved_recordings_and_history_were_removed_but_mausvoice": "Le tue registrazioni e la cronologia salvate sono state rimosse, ma mausVoice non è riuscito ad accedere alla memoria di questo computer, quindi alcune preferenze potrebbero restare. Controlla che l’app possa salvare dati e riprova.",
-  "authentication_failed": "Autenticazione non riuscita",
-  "could_not_save_that_dictation_to_history_because_earlier_rec": "Impossibile salvare quella dettatura nella cronologia perché le registrazioni precedenti sono ancora in scrittura.",
-  "network_error": "Errore di rete",
-  "online_styling_was_unavailable_so_the_local_style_was_used_i": "La formattazione online non era disponibile, quindi è stato usato lo stile locale.",
-  "post_processing_timed_out": "La post-elaborazione è scaduta",
-  "provider_error": "Errore del provider",
-  "quota_or_payment_required": "Quota o pagamento richiesto",
-  "rate_limit_exceeded": "Limite di richieste superato",
-  "request_aborted": "Richiesta annullata",
-  "styling_failed_reason_the_raw_transcript_is_saved_in_history": "Stile non applicato: {reason}. La trascrizione originale è salvata nella tua cronologia.",
-  "that_dictation_outran_fast_styling_so_its_last_droppedchars": "Quel dettato ha superato lo stile rapido, quindi gli ultimi {droppedChars} caratteri sono rimasti senza stile e quella parte finale non è stata salvata.",
-  "the_styling_reply_could_not_be_read_so_it_was_discarded_and": "Non è stato possibile leggere la risposta di stile, quindi è stata scartata e il testo precedente è stato mantenuto.",
-  "the_styling_reply_was_cut_off_at_the_model_s_output_limit_so": "La risposta di stile è stata troncata al limite di output del modello, quindi la risposta parziale è stata scartata e il testo precedente è stato mantenuto."
+  "your_saved_recordings_and_history_were_removed_but_mausvoice": "Le tue registrazioni e la cronologia salvate sono state rimosse, ma mausVoice non è riuscito ad accedere alla memoria di questo computer, quindi alcune preferenze potrebbero restare. Controlla che l’app possa salvare dati e riprova."
 }

@@ -217,6 +217,7 @@
   "could_not_reach_the_release_history": "릴리스 기록에 연결할 수 없습니다.",
   "could_not_resume_dictation": "받아쓰기를 다시 시작할 수 없습니다",
   "could_not_save_app_settings_please_try_again": "앱 설정을 저장하지 못했습니다. 다시 시도해 주세요.",
+  "could_not_save_that_dictation_to_history_because_earlier_rec": "이전 녹음이 아직 저장 중이라 그 받아쓰기를 기록에 저장하지 못했습니다.",
   "could_not_save_the_api_key": "API 키를 저장하지 못했습니다.",
   "could_not_save_the_edited_transcript_it_remains_on_the_pill": "수정한 받아쓰기를 저장하지 못했습니다. 다시 시도할 수 있도록 알약 창에 그대로 유지됩니다.",
   "could_not_save_your_profile_please_try_again": "프로필을 저장하지 못했습니다. 다시 시도하세요.",
@@ -1185,18 +1186,5 @@
   "your_profile_name_and_photo": "프로필 이름과 사진",
   "your_profile_your_sign_in_and_your_account": "프로필, 로그인, 계정 정보입니다.",
   "your_recording_is_sent_to_provider_in_pieces_as_you_pause_an": "녹음은 말하는 사이를 멈출 때마다 {provider}에 조각으로 전송되고, 나머지는 멈춘 뒤에 전송됩니다. 이미 전송된 오디오는 되돌릴 수 없습니다.",
-  "your_saved_recordings_and_history_were_removed_but_mausvoice": "저장된 녹음과 기록은 삭제되었지만 mausVoice가 이 컴퓨터의 저장소에 접근하지 못해 일부 환경 설정이 남아 있을 수 있습니다. 앱이 데이터를 저장할 수 있는지 확인한 뒤 다시 시도하세요.",
-  "authentication_failed": "인증 실패",
-  "could_not_save_that_dictation_to_history_because_earlier_rec": "이전 녹음이 아직 저장 중이라 그 받아쓰기를 기록에 저장하지 못했습니다.",
-  "network_error": "네트워크 오류",
-  "online_styling_was_unavailable_so_the_local_style_was_used_i": "온라인 서식을 사용할 수 없어 로컬 스타일을 사용했습니다.",
-  "post_processing_timed_out": "후처리가 시간 초과되었습니다",
-  "provider_error": "제공자 오류",
-  "quota_or_payment_required": "할당량 또는 결제 필요",
-  "rate_limit_exceeded": "요청 한도 초과",
-  "request_aborted": "요청이 취소되었습니다",
-  "styling_failed_reason_the_raw_transcript_is_saved_in_history": "스타일 적용 실패: {reason}. 원본 텍스트는 기록에 저장되어 있습니다.",
-  "that_dictation_outran_fast_styling_so_its_last_droppedchars": "해당 받아쓰기가 빠른 스타일링보다 빨라 마지막 {droppedChars}자가 스타일되지 않았고, 그 끝부분은 저장되지 않았습니다.",
-  "the_styling_reply_could_not_be_read_so_it_was_discarded_and": "스타일 응답을 읽을 수 없어서 버려졌고 이전 텍스트가 유지되었습니다.",
-  "the_styling_reply_was_cut_off_at_the_model_s_output_limit_so": "스타일 응답이 모델의 출력 한도에 도달해 잘려서, 부분 응답은 버려지고 이전 텍스트가 유지되었습니다."
+  "your_saved_recordings_and_history_were_removed_but_mausvoice": "저장된 녹음과 기록은 삭제되었지만 mausVoice가 이 컴퓨터의 저장소에 접근하지 못해 일부 환경 설정이 남아 있을 수 있습니다. 앱이 데이터를 저장할 수 있는지 확인한 뒤 다시 시도하세요."
 }

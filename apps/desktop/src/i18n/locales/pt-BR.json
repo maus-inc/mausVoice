@@ -217,6 +217,7 @@
   "could_not_reach_the_release_history": "Não foi possível acessar o histórico de versões.",
   "could_not_resume_dictation": "Não foi possível retomar a ditado",
   "could_not_save_app_settings_please_try_again": "Não foi possível salvar as configurações do aplicativo. Tente novamente.",
+  "could_not_save_that_dictation_to_history_because_earlier_rec": "Não foi possível salvar essa ditação no histórico porque gravações anteriores ainda estão sendo gravadas.",
   "could_not_save_the_api_key": "Não foi possível salvar a chave de API.",
   "could_not_save_the_edited_transcript_it_remains_on_the_pill": "Não foi possível salvar a transcrição editada. Ela permanece no indicador para você tentar novamente.",
   "could_not_save_your_profile_please_try_again": "Não foi possível salvar seu perfil. Tente novamente.",
@@ -1185,18 +1186,5 @@
   "your_profile_name_and_photo": "Seu nome e sua foto de perfil",
   "your_profile_your_sign_in_and_your_account": "Seu perfil, seu login e sua conta.",
   "your_recording_is_sent_to_provider_in_pieces_as_you_pause_an": "A sua gravação é enviada para {provider} em partes durante as pausas, e o resto depois que você para. O áudio já enviado não pode ser recuperado.",
-  "your_saved_recordings_and_history_were_removed_but_mausvoice": "Suas gravações e seu histórico salvos foram removidos, mas o mausVoice não conseguiu acessar o armazenamento deste computador, então algumas preferências podem permanecer. Verifique se o aplicativo pode armazenar dados e tente novamente.",
-  "authentication_failed": "Falha na autenticação",
-  "could_not_save_that_dictation_to_history_because_earlier_rec": "Não foi possível salvar essa ditação no histórico porque gravações anteriores ainda estão sendo gravadas.",
-  "network_error": "Erro de rede",
-  "online_styling_was_unavailable_so_the_local_style_was_used_i": "A formatação online não estava disponível, então o estilo local foi usado.",
-  "post_processing_timed_out": "O pós-processamento expirou",
-  "provider_error": "Erro do provedor",
-  "quota_or_payment_required": "Cota ou pagamento necessário",
-  "rate_limit_exceeded": "Limite de requisições excedido",
-  "request_aborted": "Requisição cancelada",
-  "styling_failed_reason_the_raw_transcript_is_saved_in_history": "Falha na aplicação do estilo: {reason}. A transcrição original está salva no seu histórico.",
-  "that_dictation_outran_fast_styling_so_its_last_droppedchars": "Esse ditado ultrapassou o estilo rápido, então os últimos {droppedChars} caracteres ficaram sem estilo, e esse final não foi salvo.",
-  "the_styling_reply_could_not_be_read_so_it_was_discarded_and": "Não foi possível ler a resposta de estilo, então ela foi descartada e o texto anterior foi mantido.",
-  "the_styling_reply_was_cut_off_at_the_model_s_output_limit_so": "A resposta de estilo foi cortada no limite de saída do modelo, então a resposta parcial foi descartada e o texto anterior foi mantido."
+  "your_saved_recordings_and_history_were_removed_but_mausvoice": "Suas gravações e seu histórico salvos foram removidos, mas o mausVoice não conseguiu acessar o armazenamento deste computador, então algumas preferências podem permanecer. Verifique se o aplicativo pode armazenar dados e tente novamente."
 }

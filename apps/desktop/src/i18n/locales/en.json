@@ -217,6 +217,7 @@
   "could_not_reach_the_release_history": "Could not reach the release history.",
   "could_not_resume_dictation": "Could not resume dictation",
   "could_not_save_app_settings_please_try_again": "Could not save app settings. Please try again.",
+  "could_not_save_that_dictation_to_history_because_earlier_rec": "Could not save that dictation to History because earlier recordings are still writing.",
   "could_not_save_the_api_key": "Could not save the API key.",
   "could_not_save_the_edited_transcript_it_remains_on_the_pill": "Could not save the edited transcript. It remains on the pill so you can retry.",
   "could_not_save_your_profile_please_try_again": "Could not save your profile. Please try again.",
@@ -1185,18 +1186,5 @@
   "your_profile_name_and_photo": "Your profile name and photo",
   "your_profile_your_sign_in_and_your_account": "Your profile, your sign-in, and your account.",
   "your_recording_is_sent_to_provider_in_pieces_as_you_pause_an": "Your recording is sent to {provider} in pieces as you pause, and the rest once you stop. Audio already sent cannot be recalled.",
-  "your_saved_recordings_and_history_were_removed_but_mausvoice": "Your saved recordings and history were removed, but mausVoice could not reach this computer’s storage, so some preferences may remain. Check that the app is allowed to store data, then try again.",
-  "authentication_failed": "Authentication failed",
-  "could_not_save_that_dictation_to_history_because_earlier_rec": "Could not save that dictation to History because earlier recordings are still writing.",
-  "network_error": "Network error",
-  "online_styling_was_unavailable_so_the_local_style_was_used_i": "Online styling was unavailable, so the local style was used instead.",
-  "post_processing_timed_out": "Post-processing timed out",
-  "provider_error": "Provider error",
-  "quota_or_payment_required": "Quota or payment required",
-  "rate_limit_exceeded": "Rate limit exceeded",
-  "request_aborted": "Request aborted",
-  "styling_failed_reason_the_raw_transcript_is_saved_in_history": "Styling failed: {reason}. The raw transcript is saved in History.",
-  "that_dictation_outran_fast_styling_so_its_last_droppedchars": "That dictation outran fast styling, so its last {droppedChars} characters were left unstyled, and that ending was not saved.",
-  "the_styling_reply_could_not_be_read_so_it_was_discarded_and": "The styling reply could not be read, so it was discarded and the previous text was kept.",
-  "the_styling_reply_was_cut_off_at_the_model_s_output_limit_so": "The styling reply was cut off at the model's output limit, so the partial reply was discarded and the previous text was kept."
+  "your_saved_recordings_and_history_were_removed_but_mausvoice": "Your saved recordings and history were removed, but mausVoice could not reach this computer’s storage, so some preferences may remain. Check that the app is allowed to store data, then try again."
 }

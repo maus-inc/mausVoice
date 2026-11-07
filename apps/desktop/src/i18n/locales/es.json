@@ -217,6 +217,7 @@
   "could_not_reach_the_release_history": "No se pudo acceder al historial de versiones.",
   "could_not_resume_dictation": "No se pudo reanudar la dictación",
   "could_not_save_app_settings_please_try_again": "No se pudieron guardar los ajustes de la aplicación. Inténtalo de nuevo.",
+  "could_not_save_that_dictation_to_history_because_earlier_rec": "No se pudo guardar ese dictado en el historial porque todavía se están escribiendo grabaciones anteriores.",
   "could_not_save_the_api_key": "No se pudo guardar la clave de API.",
   "could_not_save_the_edited_transcript_it_remains_on_the_pill": "No se pudo guardar la transcripción editada. Permanece en la píldora para que puedas volver a intentarlo.",
   "could_not_save_your_profile_please_try_again": "No se pudo guardar tu perfil. Inténtalo de nuevo.",
@@ -1185,18 +1186,5 @@
   "your_profile_name_and_photo": "Tu nombre y tu foto de perfil",
   "your_profile_your_sign_in_and_your_account": "Tu perfil, tu inicio de sesión y tu cuenta.",
   "your_recording_is_sent_to_provider_in_pieces_as_you_pause_an": "Tu grabación se envía a {provider} por partes mientras haces pausas, y el resto cuando te detienes. El audio ya enviado no se puede recuperar.",
-  "your_saved_recordings_and_history_were_removed_but_mausvoice": "Tus grabaciones e historial guardados se eliminaron, pero mausVoice no pudo acceder al almacenamiento de este equipo, así que algunas preferencias pueden permanecer. Comprueba que la aplicación pueda guardar datos e inténtalo de nuevo.",
-  "authentication_failed": "Error de autenticación",
-  "could_not_save_that_dictation_to_history_because_earlier_rec": "No se pudo guardar ese dictado en el historial porque todavía se están escribiendo grabaciones anteriores.",
-  "network_error": "Error de red",
-  "online_styling_was_unavailable_so_the_local_style_was_used_i": "El formato en línea no estaba disponible, así que se usó el estilo local.",
-  "post_processing_timed_out": "El post-procesamiento agotó el tiempo de espera",
-  "provider_error": "Error del proveedor",
-  "quota_or_payment_required": "Cuota o pago requerido",
-  "rate_limit_exceeded": "Límite de solicitudes excedido",
-  "request_aborted": "Solicitud cancelada",
-  "styling_failed_reason_the_raw_transcript_is_saved_in_history": "El estilo falló: {reason}. La transcripción original se guardó en tu historial.",
-  "that_dictation_outran_fast_styling_so_its_last_droppedchars": "Ese dictado superó el estilo rápido, así que los últimos {droppedChars} caracteres quedaron sin estilo y ese final no se guardó.",
-  "the_styling_reply_could_not_be_read_so_it_was_discarded_and": "No se pudo leer la respuesta de estilo, por lo que se descartó y se conservó el texto anterior.",
-  "the_styling_reply_was_cut_off_at_the_model_s_output_limit_so": "La respuesta de estilo se cortó en el límite de salida del modelo, por lo que se descartó la respuesta parcial y se conservó el texto anterior."
+  "your_saved_recordings_and_history_were_removed_but_mausvoice": "Tus grabaciones e historial guardados se eliminaron, pero mausVoice no pudo acceder al almacenamiento de este equipo, así que algunas preferencias pueden permanecer. Comprueba que la aplicación pueda guardar datos e inténtalo de nuevo."
 }
