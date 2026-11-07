@@ -976,6 +976,7 @@
   "the_last_delivery_targeted_the_mausvoice_window_itself_focus": "La última entrega se dirigió a la propia ventana de mausVoice. Enfoca la aplicación de destino en la máquina receptora antes de enviar el texto.",
   "the_last_target_window_was_active_but_no_editable_text_field": "La última ventana objetivo estaba activa, pero no había ningún campo de texto editable enfocado. Haz clic nuevamente en el campo de texto de destino en la máquina receptora antes de enviar el texto.",
   "the_licence_this_copy_of_mausvoice_ships_under": "La licencia bajo la que se distribuye esta copia de mausVoice.",
+  "the_microphone_is_blocked_so_it_cannot_be_kept_ready_allow_m": "El micrófono está bloqueado, así que no se puede mantener preparado. Permite el acceso al micrófono en los ajustes del sistema y se abrirá automáticamente.",
   "the_prompt_runs_as_the_style_instruction_on_every_post_proce": "El prompt se usa como instrucción de estilo en cada pasada de postprocesamiento, con tu categoría, longitud y ejemplo añadidos como orientación. Que no supere un párrafo para que siga siendo económico y predecible.",
   "the_recommendedkey_key_works_great_for_most_users": "La tecla {recommendedKey} funciona muy bien para la mayoría de los usuarios.",
   "the_release_history_had_an_unexpected_response": "El historial de versiones devolvió una respuesta inesperada.",

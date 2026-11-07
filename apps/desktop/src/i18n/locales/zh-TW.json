@@ -976,6 +976,7 @@
   "the_last_delivery_targeted_the_mausvoice_window_itself_focus": "最後一次傳送的目標是 mausVoice 視窗本身。在發送文字之前，請先將接收端機器上的目標應用程式聚焦。",
   "the_last_target_window_was_active_but_no_editable_text_field": "最後的目標視窗已啟用，但未聚焦於可編輯的文字欄位。傳送文字前，請先在接收端機器的目標文字欄位中點擊回去。",
   "the_licence_this_copy_of_mausvoice_ships_under": "這份 mausVoice 所遵循的授權條款。",
+  "the_microphone_is_blocked_so_it_cannot_be_kept_ready_allow_m": "麥克風已被封鎖，無法保持就緒。請在系統設定中允許麥克風存取，它會自動開啟。",
   "the_prompt_runs_as_the_style_instruction_on_every_post_proce": "此提示詞會在每次後處理時作為樣式指令執行，並附加您的類別、長度和範例作為指引。請控制在一段以內，以保持成本低且行為可預期。",
   "the_recommendedkey_key_works_great_for_most_users": "對大多數使用者而言，{recommendedKey} 鍵運作良好。",
   "the_release_history_had_an_unexpected_response": "版本記錄傳回了非預期的回應。",

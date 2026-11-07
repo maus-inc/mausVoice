@@ -327,6 +327,26 @@ describe("MicrophoneReadinessSideEffects", () => {
     expect(mocks.showSnackbar).toHaveBeenCalledTimes(1);
   });
 
+  it("points at the system settings when permission blocks the hold entirely", async () => {
+    setState({ permissions: { microphone: { state: "denied" } } });
+    await render();
+
+    // Nothing is attempted, so nothing else could tell the user: the switch is
+    // on, no device is opened, and the reason is a permission the user controls.
+    expect(mocks.warmMicrophone).not.toHaveBeenCalled();
+    expect(mocks.showSnackbar).toHaveBeenCalledTimes(1);
+    const message = mocks.showSnackbar.mock.calls[0]?.[0] as string;
+    expect(message).toContain("system settings");
+
+    // Granting it starts the hold, and the refusal is not repeated.
+    mocks.showSnackbar.mockClear();
+    setState({ permissions: { microphone: { state: "authorized" } } });
+    await rerender();
+
+    expect(mocks.warmMicrophone).toHaveBeenCalledTimes(1);
+    expect(mocks.showSnackbar).not.toHaveBeenCalled();
+  });
+
   it("says nothing when the hold succeeds", async () => {
     setState({
       userPrefs: {

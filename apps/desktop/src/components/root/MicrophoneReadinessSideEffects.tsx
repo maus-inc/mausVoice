@@ -97,6 +97,9 @@ export const MicrophoneReadinessSideEffects = () => {
   // message and a repeat failure does not announce itself on every focus.
   const holdFailedRef = useRef<boolean | null>(null);
 
+  // Whether the user has been told that permission is what is blocking the hold.
+  const holdRefusedRef = useRef(false);
+
   /**
    * Tells the user the hold could not be opened, once per failure.
    *
@@ -110,14 +113,13 @@ export const MicrophoneReadinessSideEffects = () => {
     }
     holdFailedRef.current = true;
     getLogger().warning(`Could not hold the microphone ready: ${error}`);
-    const intl = getIntl();
     showSnackbar(
-      intl.formatMessage({
+      getIntl().formatMessage({
         defaultMessage:
           "Could not open the microphone in advance. Dictation still works, but the first press will be slower.",
       }),
-      // Warning, not error: dictation still works, it is just slower than the
-      // user was promised. An error styling would overstate it.
+      // Not an error: dictation still works, it is only slower than the user was
+      // promised. Error styling would overstate it.
       { mode: "info" },
     );
   }, []);
@@ -277,6 +279,27 @@ export const MicrophoneReadinessSideEffects = () => {
       unlisten?.();
     };
   }, [publishHeld]);
+
+  // Asking for a hold the OS will refuse is the one failure the user can fix,
+  // and it is silent by construction: the hold is never attempted, so nothing
+  // reports anything. The message names the fix rather than the symptom.
+  useEffect(() => {
+    if (!enabled || permissionGranted) {
+      holdRefusedRef.current = false;
+      return;
+    }
+    if (holdRefusedRef.current) {
+      return;
+    }
+    holdRefusedRef.current = true;
+    showSnackbar(
+      getIntl().formatMessage({
+        defaultMessage:
+          "The microphone is blocked, so it cannot be kept ready. Allow microphone access in your system settings and it will open automatically.",
+      }),
+      { mode: "info" },
+    );
+  }, [enabled, permissionGranted]);
 
   // A hold that failed has no state change to retry on: the preference did not
   // change, the device did. Coming back to the window is the moment a user has
