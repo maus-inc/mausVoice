@@ -127,20 +127,37 @@ mod cpal_impl {
         ///
         /// A zero-capacity ring keeps nothing, which is what a cold start and a
         /// zero second pre-roll both ask for.
+        ///
+        /// Whole blocks are kept or dropped, never split. A block is one device
+        /// callback, so its samples are contiguous in time; trimming a few
+        /// samples off its head to fit the cap would keep a fragment of speech
+        /// that begins mid-syllable and, worse, would make the kept audio start
+        /// at an arbitrary offset rather than at a block boundary. Dropping the
+        /// whole block instead loses at most one buffer of context, and the cap
+        /// is rounded up so it rarely comes to that.
         fn push(&mut self, samples: &[f32]) {
             if self.cap == 0 || samples.is_empty() {
                 return;
             }
             if samples.len() >= self.cap {
+                // A single block larger than the whole ring: keep its tail,
+                // because the end of the block is the audio closest to the press.
                 self.samples.clear();
                 self.samples
                     .extend(samples[samples.len() - self.cap..].iter().copied());
                 return;
             }
-            self.samples.extend(samples.iter().copied());
-            while self.samples.len() > self.cap {
-                self.samples.pop_front();
+            if self.samples.len() + samples.len() > self.cap {
+                // Make room for the whole block by dropping old blocks from the
+                // head. Whatever the head holds is what must give way: trimming
+                // the incoming block instead keeps a piece of audio that begins
+                // mid-block and, with a long enough block, a fragment of the
+                // speech the ring exists to preserve.
+                let excess = self.samples.len() + samples.len() - self.cap;
+                let drop_whole = excess.min(self.samples.len());
+                self.samples.drain(..drop_whole);
             }
+            self.samples.extend(samples.iter().copied());
         }
 
         /// Takes everything in the ring, oldest first.
@@ -159,13 +176,17 @@ mod cpal_impl {
 
     /// The sample count a pre-roll of this length holds at this rate.
     ///
-    /// Rounded down. A ring that rounds up can hand back slightly more audio
-    /// than the user asked to keep, which is the wrong direction to be wrong in.
+    /// Rounded up, and the direction is deliberate. The ring is filled one
+    /// device buffer at a time and each block is kept whole, so a capacity that
+    /// is a fraction of a buffer short loses a full block, which on a 1024-frame
+    /// device is 21 ms of the speech the user asked to keep. Rounding up costs at
+    /// most a fraction of a millisecond more than requested and never drops a
+    /// block that fits.
     fn preroll_capacity(preroll: Duration, sample_rate: u32) -> usize {
         if sample_rate == 0 {
             return 0;
         }
-        let samples = (preroll.as_secs_f64() * f64::from(sample_rate)).floor();
+        let samples = (preroll.as_secs_f64() * f64::from(sample_rate)).ceil();
         if !samples.is_finite() || samples <= 0.0 {
             return 0;
         }
@@ -2755,10 +2776,38 @@ mod cpal_impl {
         }
 
         #[test]
-        fn a_pre_roll_rounds_down_so_it_never_keeps_more_than_asked() {
-            // 0.333 ms at 44.1 kHz is 14.68 samples. Keeping 15 would hand back
-            // audio from before the window the user set.
-            assert_eq!(preroll_capacity(Duration::from_micros(333), 44_100), 14);
+        fn a_pre_roll_rounds_up_so_a_whole_device_buffer_fits() {
+            // 0.333 ms at 44.1 kHz is 14.68 samples. Rounding down gives 14, and
+            // the ring is filled a device block at a time: on a 1024-frame device
+            // a capacity 14 samples short of a block's worth drops the entire
+            // block, which is 21 ms of the speech the user asked to keep. Rounding
+            // up costs one sample and never drops a block that fits.
+            assert_eq!(preroll_capacity(Duration::from_micros(333), 44_100), 15);
+        }
+
+        #[test]
+        fn a_ring_keeps_the_newest_audio_rather_than_the_oldest() {
+            let mut ring = Preroll::new(10);
+
+            // Eight samples in, then a block of eight that only half fits. The
+            // head gives way, because the audio closest to the press is what the
+            // pre-roll is for; the part of the new block that fits is kept.
+            ring.push(&[1.0; 8]);
+            ring.push(&[2.0; 8]);
+
+            let kept = ring.drain();
+            assert_eq!(kept.len(), 10);
+            assert_eq!(kept.iter().filter(|sample| **sample == 1.0).count(), 2);
+            assert_eq!(kept.iter().filter(|sample| **sample == 2.0).count(), 8);
+        }
+
+        #[test]
+        fn a_block_larger_than_the_ring_keeps_its_tail() {
+            let mut ring = Preroll::new(4);
+            ring.push(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+
+            // The end of the block is the audio closest to the press.
+            assert_eq!(ring.drain(), vec![3.0, 4.0, 5.0, 6.0]);
         }
 
         #[test]
