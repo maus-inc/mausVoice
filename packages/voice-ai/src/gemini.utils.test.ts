@@ -103,40 +103,72 @@ const turnAt = <T>(turns: readonly T[], index: number, what: string): T => {
   return turn;
 };
 
+const getFetchInputUrl = (input: string | URL | Request): string =>
+  input instanceof Request ? input.url : String(input);
+
+const createUploadStartResponse = (): Response =>
+  new Response(JSON.stringify({}), {
+    status: 200,
+    headers: {
+      "x-goog-upload-url": "https://upload.example.com/resumable",
+    },
+  });
+
+const createUploadedFileResponse = (fileId: string): Response =>
+  jsonResponse({
+    file: {
+      uri: `https://generativelanguage.googleapis.com/v1beta/files/${fileId}`,
+      mimeType: "audio/wav",
+    },
+  });
+
+const getFileLifecycleResponse = (
+  url: string,
+  method: string | undefined,
+  fileId: string,
+): Response | undefined => {
+  if (!url.includes(`/v1beta/files/${fileId}`)) return undefined;
+  if (method === "GET") return jsonResponse({ state: "ACTIVE" });
+  if (method === "DELETE") return new Response(null, { status: 200 });
+  return undefined;
+};
+
+const getUploadResponse = (
+  url: string,
+  method: string | undefined,
+  fileId: string,
+): Response | undefined => {
+  if (url.includes("/upload/v1beta/files")) {
+    if (method === "POST") return createUploadStartResponse();
+    return undefined;
+  }
+  if (url.includes("upload.example.com")) {
+    return createUploadedFileResponse(fileId);
+  }
+  return undefined;
+};
+
+const createDedicatedModelResponse = (
+  url: string,
+  method: string | undefined,
+  fileId: string,
+  responseBody: unknown,
+): Response =>
+  getUploadResponse(url, method, fileId) ??
+  getFileLifecycleResponse(url, method, fileId) ??
+  jsonResponse(responseBody);
+
 const createDedicatedModelFetch = (fileId: string, responseBody: unknown) =>
   vi.fn(
-    (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
-      const url = input instanceof Request ? input.url : String(input);
-      if (url.includes("/upload/v1beta/files") && init?.method === "POST") {
-        return Promise.resolve(
-          new Response(JSON.stringify({}), {
-            status: 200,
-            headers: {
-              "x-goog-upload-url": "https://upload.example.com/resumable",
-            },
-          }),
-        );
-      }
-      if (url.includes("upload.example.com")) {
-        return Promise.resolve(
-          jsonResponse({
-            file: {
-              uri: `https://generativelanguage.googleapis.com/v1beta/files/${fileId}`,
-              mimeType: "audio/wav",
-            },
-          }),
-        );
-      }
-      if (url.includes(`/v1beta/files/${fileId}`)) {
-        if (init?.method === "GET") {
-          return Promise.resolve(jsonResponse({ state: "ACTIVE" }));
-        }
-        if (init?.method === "DELETE") {
-          return Promise.resolve(new Response(null, { status: 200 }));
-        }
-      }
-      return Promise.resolve(jsonResponse(responseBody));
-    },
+    (input: string | URL | Request, init?: RequestInit): Promise<Response> =>
+      Promise.resolve(
+        createDedicatedModelResponse(
+          getFetchInputUrl(input),
+          init?.method,
+          fileId,
+          responseBody,
+        ),
+      ),
   );
 
 describe("Gemini native transport", () => {

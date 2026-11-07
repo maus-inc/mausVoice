@@ -18,18 +18,19 @@ const {
 } = vi.hoisted(() => ({
   invokeMock: vi.fn(),
   routeTranscriptOutputMock: vi.fn(
-    async (
+    (
       args: { text: string },
       _trace?: unknown,
       _hooks?: {
         onSimulatedTypingStart?: () => void;
         onSimulatedTypingEnd?: () => void;
       },
-    ) => ({
-      delivered: true,
-      remote: false,
-      deliveredText: args.text.length > 0 ? args.text : null,
-    }),
+    ) =>
+      Promise.resolve({
+        delivered: true,
+        remote: false,
+        deliveredText: args.text.length > 0 ? args.text : null,
+      }),
   ),
   appendToDictationBacklogMock: vi.fn(),
   clearDictationBacklogMock: vi.fn(),

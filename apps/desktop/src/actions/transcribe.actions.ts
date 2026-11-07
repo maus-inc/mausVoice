@@ -1118,6 +1118,17 @@ const getAppendedWarnings = (
   );
 };
 
+const appendWarningOccurrence = (
+  merged: string[],
+  currentCounts: Map<string, number>,
+  appendedCounts: Map<string, number>,
+  warning: string,
+): void => {
+  const count = (appendedCounts.get(warning) ?? 0) + 1;
+  appendedCounts.set(warning, count);
+  if (count > (currentCounts.get(warning) ?? 0)) merged.push(warning);
+};
+
 const mergeAppendedWarnings = (
   currentWarnings: readonly string[] | null | undefined,
   appendedWarnings: readonly string[],
@@ -1127,9 +1138,7 @@ const mergeAppendedWarnings = (
   const appendedCounts = new Map<string, number>();
 
   for (const warning of appendedWarnings) {
-    const count = (appendedCounts.get(warning) ?? 0) + 1;
-    appendedCounts.set(warning, count);
-    if (count > (currentCounts.get(warning) ?? 0)) merged.push(warning);
+    appendWarningOccurrence(merged, currentCounts, appendedCounts, warning);
   }
   return merged;
 };

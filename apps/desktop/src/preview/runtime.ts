@@ -883,48 +883,50 @@ class PreviewRuntime {
     command: string,
     args: WireRecord,
   ): unknown {
-    switch (command) {
-      case "transcription_list": {
+    const loadAudio = () => ({
+      samples: Array.from({ length: 800 }, () => 0),
+      sampleRate: 16_000,
+    });
+    const handlers: Record<string, () => unknown> = {
+      transcription_list: () => {
         const limit = Number(args.limit ?? 20);
         const offset = Number(args.offset ?? 0);
         return getList(this.database.transcriptions)
           .sort((a, b) => Number(b.timestamp) - Number(a.timestamp))
           .slice(offset, offset + limit);
-      }
-      case "transcription_create":
-        return this.insertTranscription(clone(asRecord(args.transcription)));
-      case "transcription_update": {
+      },
+      transcription_create: () =>
+        this.insertTranscription(clone(asRecord(args.transcription))),
+      transcription_update: () => {
         const transcription = clone(asRecord(args.transcription));
         this.database.transcriptions.set(
           String(transcription.id),
           transcription,
         );
         return clone(transcription);
-      }
-      case "transcription_append_warnings":
-        return this.appendTranscriptionWarnings(args);
-      case "transcription_delete":
+      },
+      transcription_append_warnings: () =>
+        this.appendTranscriptionWarnings(args),
+      transcription_delete: () => {
         this.database.transcriptions.delete(String(args.id));
         return undefined;
-      case "transcription_audio_load":
-      case "transcription_load_audio":
-        return {
-          samples: Array.from({ length: 800 }, () => 0),
-          sampleRate: 16_000,
-        };
-      case "transcription_import_audio":
-        // There is no privileged OS file picker in a web preview. Returning
-        // null follows the native cancellation contract without pretending a
-        // local file was read.
-        return null;
-      case "purge_stale_transcription_audio":
-        return [];
-      default:
-        return this.invokeRemote(command, args);
-    }
+      },
+      transcription_audio_load: loadAudio,
+      transcription_load_audio: loadAudio,
+      // There is no privileged OS file picker in a web preview. Returning
+      // null follows the native cancellation contract without pretending a
+      // local file was read.
+      transcription_import_audio: () => null,
+      purge_stale_transcription_audio: () => [],
+    };
+    const handler = handlers[command];
+    return handler ? handler() : this.invokeRemote(command, args);
   }
 
-  private appendTranscriptionWarnings(args: WireRecord): string[] {
+  private getWarningAppendArgs(args: WireRecord): {
+    id: string;
+    warnings: string[];
+  } {
     if (typeof args.id !== "string") {
       throw new TypeError("transcription_append_warnings requires a string id");
     }
@@ -933,15 +935,26 @@ class PreviewRuntime {
         "transcription_append_warnings requires an array of strings",
       );
     }
-    if (args.warnings.length === 0) return [];
+    return { id: args.id, warnings: args.warnings };
+  }
 
-    const transcription = this.database.transcriptions.get(args.id);
-    if (!transcription) throw new Error("Transcription not found");
-    const existingWarnings = isDenseStringArray(transcription.warnings)
+  private getStoredWarnings(transcription: WireRecord): string[] {
+    return isDenseStringArray(transcription.warnings)
       ? transcription.warnings
       : [];
-    const updatedWarnings = [...existingWarnings, ...args.warnings];
-    this.database.transcriptions.set(args.id, {
+  }
+
+  private appendTranscriptionWarnings(args: WireRecord): string[] {
+    const { id, warnings } = this.getWarningAppendArgs(args);
+    if (warnings.length === 0) return [];
+
+    const transcription = this.database.transcriptions.get(id);
+    if (!transcription) throw new Error("Transcription not found");
+    const updatedWarnings = [
+      ...this.getStoredWarnings(transcription),
+      ...warnings,
+    ];
+    this.database.transcriptions.set(id, {
       ...transcription,
       warnings: updatedWarnings,
     });
@@ -952,43 +965,53 @@ class PreviewRuntime {
     command: string,
     args: WireRecord,
   ): unknown {
-    switch (command) {
-      case "conversation_list":
-        return getList(this.database.conversations).sort(
+    const handlers: Record<string, () => unknown> = {
+      conversation_list: () =>
+        getList(this.database.conversations).sort(
           (a, b) => Number(b.updatedAt) - Number(a.updatedAt),
-        );
-      case "conversation_create":
-      case "conversation_update": {
-        const conversation = clone(asRecord(args.conversation));
-        this.database.conversations.set(String(conversation.id), conversation);
-        return clone(conversation);
-      }
-      case "conversation_delete":
-        this.database.conversations.delete(String(args.id));
-        for (const [id, message] of this.database.chatMessages) {
-          if (message.conversationId === args.id) {
-            this.database.chatMessages.delete(id);
-          }
-        }
-        return undefined;
-      case "chat_message_list":
-        return getList(this.database.chatMessages)
+        ),
+      conversation_create: () => this.saveConversation(args),
+      conversation_update: () => this.saveConversation(args),
+      conversation_delete: () => this.deleteConversation(args),
+      chat_message_list: () =>
+        getList(this.database.chatMessages)
           .filter((message) => message.conversationId === args.conversationId)
-          .sort((a, b) => Number(a.createdAt) - Number(b.createdAt));
-      case "chat_message_create":
-      case "chat_message_update": {
-        const message = clone(asRecord(args.message));
-        this.database.chatMessages.set(String(message.id), message);
-        return clone(message);
+          .sort((a, b) => Number(a.createdAt) - Number(b.createdAt)),
+      chat_message_create: () => this.saveChatMessage(args),
+      chat_message_update: () => this.saveChatMessage(args),
+      chat_message_delete_many: () => this.deleteChatMessages(args),
+    };
+    const handler = handlers[command];
+    return handler ? handler() : this.invokeRemote(command, args);
+  }
+
+  private saveConversation(args: WireRecord): WireRecord {
+    const conversation = clone(asRecord(args.conversation));
+    this.database.conversations.set(String(conversation.id), conversation);
+    return clone(conversation);
+  }
+
+  private deleteConversation(args: WireRecord): undefined {
+    this.database.conversations.delete(String(args.id));
+    for (const [id, message] of this.database.chatMessages) {
+      if (message.conversationId === args.id) {
+        this.database.chatMessages.delete(id);
       }
-      case "chat_message_delete_many":
-        for (const id of (args.ids as unknown[]) ?? []) {
-          this.database.chatMessages.delete(String(id));
-        }
-        return undefined;
-      default:
-        return this.invokeRemote(command, args);
     }
+    return undefined;
+  }
+
+  private saveChatMessage(args: WireRecord): WireRecord {
+    const message = clone(asRecord(args.message));
+    this.database.chatMessages.set(String(message.id), message);
+    return clone(message);
+  }
+
+  private deleteChatMessages(args: WireRecord): undefined {
+    for (const id of (args.ids as unknown[]) ?? []) {
+      this.database.chatMessages.delete(String(id));
+    }
+    return undefined;
   }
 
   private invokeRemote(command: string, args: WireRecord): unknown {

@@ -181,25 +181,33 @@ const runWithSimulatedTypingHooks = async <T>(
   }
 };
 
+const getTypingSpeedMs = (context: OutputContext): number =>
+  context.currentApp?.typingSpeedMs ?? context.prefs?.typingSpeedMs ?? 5;
+
+const getPasteKeybind = (context: OutputContext): string | null => {
+  if (context.state.supportsPasteKeybinds === "global") {
+    return context.prefs?.pasteKeybind ?? null;
+  }
+  return (
+    context.currentApp?.pasteKeybind ?? context.prefs?.pasteKeybind ?? null
+  );
+};
+
 const insertLocalOutput = async (
   context: OutputContext,
   text: string,
   isInterim?: boolean,
 ): Promise<PasteOutcome | undefined> => {
   if (getInsertionMethod(context) === "type") {
-    const typingSpeedMs =
-      context.currentApp?.typingSpeedMs ?? context.prefs?.typingSpeedMs ?? 5;
-    await insertLocalTranscriptOutputViaTyping(text, typingSpeedMs);
+    await insertLocalTranscriptOutputViaTyping(text, getTypingSpeedMs(context));
     return undefined;
   }
 
-  const pasteKeybind =
-    context.state.supportsPasteKeybinds === "global"
-      ? (context.prefs?.pasteKeybind ?? null)
-      : (context.currentApp?.pasteKeybind ??
-        context.prefs?.pasteKeybind ??
-        null);
-  return insertLocalTranscriptOutputViaPaste(text, pasteKeybind, isInterim);
+  return insertLocalTranscriptOutputViaPaste(
+    text,
+    getPasteKeybind(context),
+    isInterim,
+  );
 };
 
 const waitForHandsFreeDelay = async (

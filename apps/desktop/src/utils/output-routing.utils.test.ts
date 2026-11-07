@@ -347,7 +347,7 @@ describe("simulated typing route hooks", () => {
           finishTyping = resolve;
         });
       }
-      return Promise.resolve(undefined);
+      return Promise.resolve();
     });
     const onStart = vi.fn();
     const onEnd = vi.fn();

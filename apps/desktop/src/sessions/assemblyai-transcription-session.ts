@@ -216,10 +216,18 @@ export const startAssemblyAIStreaming = async (
     };
 
     const handlePartialTurn = (data: AssemblyAIMessage) => {
-      if (currentTurn != data.turn_order) {
+      if (currentTurn !== data.turn_order) {
         currentTurn = data.turn_order;
-        transcriptState.setPartial(data.transcript!);
+        transcriptState.setPartial(data.transcript ?? "");
       }
+    };
+
+    const handleTurnMessage = (data: AssemblyAIMessage) => {
+      if (data.end_of_turn) {
+        handleFinalTurn(data);
+        return;
+      }
+      handlePartialTurn(data);
     };
 
     const handleMessageData = (data: AssemblyAIMessage) => {
@@ -239,12 +247,7 @@ export const startAssemblyAIStreaming = async (
         handleProviderError(data);
         return;
       }
-      if (data.type !== "Turn") return;
-      if (data.end_of_turn) {
-        handleFinalTurn(data);
-      } else {
-        handlePartialTurn(data);
-      }
+      if (data.type === "Turn") handleTurnMessage(data);
     };
 
     ws.onmessage = (event) => {

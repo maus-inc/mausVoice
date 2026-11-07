@@ -629,18 +629,16 @@ const createPostProcessStopResponse = async (
   };
 };
 
-export const postProcessFinalizedTranscript = async (
-  input: PostTranscriptInput,
-): Promise<RawStopResp> => {
-  const { strategy } = input;
-  if (input.isAgentMode) {
-    await input.sendIdle();
-  }
-  getLogger().info("Post-processing transcript");
+type TranscriptHandlingState = {
+  simulatedTypingStarted: boolean;
+  timedOut: boolean;
+};
 
-  let simulatedTypingStarted = false;
-  let timedOut = false;
-  const handleTranscriptPromise = strategy.handleTranscript({
+const startTranscriptHandling = (
+  input: PostTranscriptInput,
+  state: TranscriptHandlingState,
+): Promise<HandleTranscriptResult> =>
+  input.strategy.handleTranscript({
     rawTranscript: input.rawTranscript,
     processedTranscript: input.transcribeResult.processedTranscript,
     serverPostProcessMetadata: input.transcribeResult.postProcessMetadata,
@@ -654,41 +652,79 @@ export const postProcessFinalizedTranscript = async (
     persistReviewedTranscript: input.persistReviewedTranscript,
     persistTranscriptNow: input.persistTranscriptNow,
     onSimulatedTypingStart: () => {
-      simulatedTypingStarted = true;
+      state.simulatedTypingStarted = true;
     },
     trace: input.trace ?? null,
   });
 
+const shouldDeferHistoryPersistence = (
+  input: PostTranscriptInput,
+  state: TranscriptHandlingState,
+): boolean =>
+  state.timedOut && state.simulatedTypingStarted && !input.isAgentMode;
+
+const createDeferredTranscriptResponse = (
+  input: PostTranscriptInput,
+  handleTranscriptPromise: Promise<HandleTranscriptResult>,
+): RawStopResp => ({
+  shouldContinue: false,
+  persist: async () => {
+    const result = await handleTranscriptPromise;
+    const completed = await createPostProcessStopResponse(input, result, false);
+    await completed.persist?.();
+  },
+});
+
+const recoverTranscriptTimeout = (
+  input: PostTranscriptInput,
+  state: TranscriptHandlingState,
+  handleTranscriptPromise: Promise<HandleTranscriptResult>,
+  error: unknown,
+): RawStopResp => {
+  if (!shouldDeferHistoryPersistence(input, state)) throw error;
+  getLogger().warning(
+    "Transcript handling timed out during simulated typing; History persistence will resume after delivery settles",
+  );
+  return createDeferredTranscriptResponse(input, handleTranscriptPromise);
+};
+
+const awaitTranscriptHandling = async (
+  input: PostTranscriptInput,
+  state: TranscriptHandlingState,
+  handleTranscriptPromise: Promise<HandleTranscriptResult>,
+): Promise<RawStopResp> => {
   try {
     const result = await withTimeout(
       handleTranscriptPromise,
       input.handleTranscriptTimeoutMs,
       "Transcript post-processing",
       () => {
-        timedOut = true;
+        state.timedOut = true;
       },
     );
     return createPostProcessStopResponse(input, result, true);
   } catch (error) {
-    if (timedOut && simulatedTypingStarted && !input.isAgentMode) {
-      getLogger().warning(
-        "Transcript handling timed out during simulated typing; History persistence will resume after delivery settles",
-      );
-      return {
-        shouldContinue: false,
-        persist: async () => {
-          const result = await handleTranscriptPromise;
-          const completed = await createPostProcessStopResponse(
-            input,
-            result,
-            false,
-          );
-          await completed.persist?.();
-        },
-      };
-    }
-    throw error;
+    return recoverTranscriptTimeout(
+      input,
+      state,
+      handleTranscriptPromise,
+      error,
+    );
   }
+};
+
+export const postProcessFinalizedTranscript = async (
+  input: PostTranscriptInput,
+): Promise<RawStopResp> => {
+  if (input.isAgentMode) await input.sendIdle();
+  getLogger().info("Post-processing transcript");
+
+  const state: TranscriptHandlingState = {
+    simulatedTypingStarted: false,
+    timedOut: false,
+  };
+  const handleTranscriptPromise = startTranscriptHandling(input, state);
+  return awaitTranscriptHandling(input, state, handleTranscriptPromise);
 };
 
 type StopContext = {

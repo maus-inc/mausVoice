@@ -437,6 +437,18 @@ const startElevenLabsStreaming = async (
       }
     };
 
+    const handleUnknownMessage = (
+      messageType: string | undefined,
+      data: ElevenLabsMessage,
+    ) => {
+      if (
+        typeof messageType === "string" &&
+        messageType.toLowerCase().includes("error")
+      ) {
+        handleProviderError(data);
+      }
+    };
+
     const handleMessageData = (data: ElevenLabsMessage) => {
       const messageType = data.message_type || data.type;
       getLogger().verbose(
@@ -458,12 +470,7 @@ const startElevenLabsStreaming = async (
           settler.resolveStartup();
           return;
         default:
-          if (
-            typeof messageType === "string" &&
-            messageType.toLowerCase().includes("error")
-          ) {
-            handleProviderError(data);
-          }
+          handleUnknownMessage(messageType, data);
       }
     };
 
