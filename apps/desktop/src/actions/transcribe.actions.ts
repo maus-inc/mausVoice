@@ -501,7 +501,7 @@ const recordPostProcessFailure = (
   metadata.postprocessDurationMs = Math.round(postprocessDuration);
   metadata.postProcessFailed = true;
   const rawMessage = unknownToMessage(error) || "Post-processing failed";
-  const category = classifyPostProcessErrorCategory(rawMessage);
+  const category = classifyPostProcessErrorCategory(error, rawMessage);
   const sanitizedMessage = redactTranscriptContent(rawMessage, rawTranscript);
   metadata.postProcessError = category;
   getLogger().error(
@@ -546,9 +546,8 @@ const beginPostProcessingRequest = ({
 };
 
 /**
- * Record that fast local styling dropped characters. Both fast-style call paths
- * route through here so the user-facing warning cannot drift from the cap that
- * actually truncated the text, and so neither path can truncate silently.
+ * Record a dropped tail only when the fast-style measurement reports one.
+ * Both local-style paths share this check so stored metadata and feedback agree.
  */
 const recordFastStyleTruncation = (
   rawTranscript: string,
@@ -607,7 +606,7 @@ const recordFastStyleTruncation = (
 /**
  * Deterministic local styling, shared by both fast paths: no LLM configured,
  * and the LLM path falling back after a provider failure. Records mode,
- * duration and any truncation, then returns the styled text, or null when the
+ * duration and any reported truncation, then returns the styled text, or null when the
  * tone has no local transform or the transform threw, so the caller keeps its
  * own behaviour.
  *
@@ -1098,6 +1097,88 @@ const persistTranscription = async (
   }
 };
 
+const countWarnings = (warnings: readonly string[]): Map<string, number> => {
+  const counts = new Map<string, number>();
+  for (const warning of warnings) {
+    counts.set(warning, (counts.get(warning) ?? 0) + 1);
+  }
+  return counts;
+};
+
+const consumeWarningCount = (
+  counts: Map<string, number>,
+  warning: string,
+): boolean => {
+  const count = counts.get(warning) ?? 0;
+  if (count === 0) return false;
+  counts.set(warning, count - 1);
+  return true;
+};
+
+const getAppendedWarnings = (
+  previousWarnings: readonly string[],
+  storedWarnings: readonly string[],
+): string[] => {
+  const previousCounts = countWarnings(previousWarnings);
+  return storedWarnings.filter(
+    (warning) => !consumeWarningCount(previousCounts, warning),
+  );
+};
+
+const getUnappliedWarningCount = (
+  previousCount: number,
+  currentCount: number,
+  appendedCount: number,
+): number =>
+  Math.max(0, appendedCount - Math.max(0, currentCount - previousCount));
+
+const appendWarningOccurrences = (
+  warnings: string[],
+  warning: string,
+  count: number,
+): void => {
+  for (let occurrence = 0; occurrence < count; occurrence += 1) {
+    warnings.push(warning);
+  }
+};
+
+const mergeWarningOccurrences = (
+  warnings: string[],
+  previousCounts: Map<string, number>,
+  currentCounts: Map<string, number>,
+  warning: string,
+  appendedCount: number,
+): void => {
+  const missingCount = getUnappliedWarningCount(
+    previousCounts.get(warning) ?? 0,
+    currentCounts.get(warning) ?? 0,
+    appendedCount,
+  );
+  appendWarningOccurrences(warnings, warning, missingCount);
+};
+
+const mergeAppendedWarnings = (
+  previousWarnings: readonly string[],
+  currentWarnings: readonly string[] | null | undefined,
+  appendedWarnings: readonly string[],
+): string[] => {
+  const merged = [...(currentWarnings ?? [])];
+  const previousCounts = countWarnings(previousWarnings);
+  const currentCounts = countWarnings(merged);
+  const appendedCounts = countWarnings(appendedWarnings);
+
+  for (const [warning, appendedCount] of appendedCounts) {
+    mergeWarningOccurrences(
+      merged,
+      previousCounts,
+      currentCounts,
+      warning,
+      appendedCount,
+    );
+  }
+  return merged;
+};
+
 /**
  * Attach warnings to an already-persisted row.
  *
@@ -1115,13 +1196,25 @@ export const appendTranscriptionWarnings = async (
   if (warnings.length === 0) return;
   const existing = getAppState().transcriptionById[transcriptionId];
   if (!existing) return;
+  const previousWarnings = [...(existing.warnings ?? [])];
   try {
-    const stored = await getTranscriptionRepo().updateTranscription({
-      ...existing,
-      warnings: [...(existing.warnings ?? []), ...warnings],
-    });
+    const storedWarnings = await getTranscriptionRepo().appendWarnings(
+      transcriptionId,
+      warnings,
+    );
+    const appendedWarnings = getAppendedWarnings(
+      previousWarnings,
+      storedWarnings,
+    );
+    if (appendedWarnings.length === 0) return;
     produceAppState((draft) => {
-      draft.transcriptionById[stored.id] = stored;
+      const current = draft.transcriptionById[transcriptionId];
+      if (!current) return;
+      current.warnings = mergeAppendedWarnings(
+        previousWarnings,
+        current.warnings,
+        appendedWarnings,
+      );
     });
   } catch (error) {
     getLogger().error("Failed to append transcription warnings", error);

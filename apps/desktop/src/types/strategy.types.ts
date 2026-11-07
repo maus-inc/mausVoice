@@ -50,6 +50,8 @@ export type HandleTranscriptParams = {
   persistTranscriptNow?: (
     input: ReviewedTranscriptPersistenceInput,
   ) => Promise<StoreTranscriptionOutput>;
+  /** Called while local simulated-typing output is pending, including any hands-free delay. */
+  onSimulatedTypingStart?: () => void;
 };
 
 export type HandleTranscriptResult = {

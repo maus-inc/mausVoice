@@ -1,17 +1,16 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { Transcription } from "@maus-inc/types";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
   navigateMock,
   scheduleAutomaticPostProcessEditRetryMock,
   surfaceMainWindowMock,
   warningMock,
-  isPersistenceAllowedMock,
 } = vi.hoisted(() => ({
   navigateMock: vi.fn(),
   scheduleAutomaticPostProcessEditRetryMock: vi.fn(),
   surfaceMainWindowMock: vi.fn(),
   warningMock: vi.fn(),
-  isPersistenceAllowedMock: vi.fn(() => true),
 }));
 
 vi.mock("../../router", () => ({
@@ -44,11 +43,6 @@ vi.mock("../../utils/log.utils", () => ({
     stopwatch: vi.fn(),
   }),
 }));
-vi.mock("../../utils/incognito.utils", () => ({
-  isPersistenceAllowed: () => isPersistenceAllowedMock(),
-  isIncognitoModeEnabled: () => !isPersistenceAllowedMock(),
-  isEphemeralSessionActive: () => false,
-}));
 
 import {
   createPhaseBookkeeper,
@@ -57,15 +51,17 @@ import {
   postProcessFinalizedTranscript,
   surfacePersistedReviewInHistory,
 } from "./DictationSideEffects";
+import { POST_PROCESS_ERROR_CATEGORY } from "../../actions/post-process-error-category";
+import type { PostProcessMetadata } from "../../actions/transcribe.actions";
+import type { HandleTranscriptResult } from "../../types/strategy.types";
 import type {
   HandleEmptyResultInput,
   PostTranscriptInput,
 } from "./DictationSideEffects";
 import type { BaseStrategy } from "../../strategies/base.strategy";
+import type { ToastAction } from "../../types/toast.types";
 import {
-  enqueueHistoryPersist,
   flushHistoryPersist,
-  MAX_HISTORY_PERSIST_QUEUE,
   resetHistoryPersistQueue,
 } from "../../utils/history-persist.utils";
 
@@ -73,6 +69,7 @@ type ToastCall = {
   message: string;
   toastType: "info" | "error";
   duration?: number;
+  action?: ToastAction;
 };
 
 type StoreCall = {
@@ -95,6 +92,16 @@ const asToastCall = (spy: ReturnType<typeof vi.fn>, index = 0): ToastCall =>
 
 const asStoreCall = (spy: ReturnType<typeof vi.fn>, index = 0): StoreCall =>
   spy.mock.calls[index]?.[0] as StoreCall;
+
+const deferred = <T>() => {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+};
 
 describe("formatReviewPersistenceFailure", () => {
   it.each([
@@ -156,19 +163,30 @@ describe("surfacePersistedReviewInHistory", () => {
   });
 });
 
-afterEach(() => {
-  resetHistoryPersistQueue();
-  isPersistenceAllowedMock.mockReturnValue(true);
-});
-
 describe("handleEmptyTranscriptionResult (#418)", () => {
+  beforeEach(() => {
+    warningMock.mockClear();
+    resetHistoryPersistQueue();
+  });
+
   it("shows a recovery toast and stores a failure marker without emitting recording_failed", async () => {
     const showToast = vi.fn<HandleEmptyResultInput["showToast"]>(() =>
-      Promise.resolve(),
+      Promise.resolve(undefined),
     );
     const storeTranscriptionFn = vi.fn<
       HandleEmptyResultInput["storeTranscriptionFn"]
-    >(() => Promise.resolve({ transcription: null, wordCount: 0 }));
+    >(() =>
+      Promise.resolve({
+        transcription: {
+          id: "failure-row",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          createdByUserId: "user",
+          transcript: "",
+          isDeleted: false,
+        },
+        wordCount: 0,
+      }),
+    );
     const refreshMember = vi.fn();
 
     const result = await handleEmptyTranscriptionResult({
@@ -185,10 +203,9 @@ describe("handleEmptyTranscriptionResult (#418)", () => {
       storeTranscriptionFn,
       refreshMember,
     });
+    await flushHistoryPersist();
 
     expect(result).toEqual({ handled: true });
-    expect(showToast).not.toHaveBeenCalled();
-    await flushHistoryPersist();
     expect(showToast).toHaveBeenCalledTimes(1);
     const toastCall = asToastCall(showToast);
     expect(toastCall.toastType).toBe("error");
@@ -208,50 +225,28 @@ describe("handleEmptyTranscriptionResult (#418)", () => {
     expect(refreshMember).toHaveBeenCalledTimes(1);
   });
 
-  it("idles the pill before scheduling the failed-transcription save", async () => {
-    const order: string[] = [];
-    const sendIdle = vi.fn(() => {
-      order.push("idle");
-      return Promise.resolve();
-    });
-    const storeTranscriptionFn = vi.fn<
-      HandleEmptyResultInput["storeTranscriptionFn"]
-    >(() => {
-      order.push("store");
-      return Promise.resolve({ transcription: null, wordCount: 0 });
-    });
-
-    await handleEmptyTranscriptionResult({
-      audio: { samples: new Float32Array([0.1, 0.2]), sampleRate: 16000 },
-      transcribeResult: {
-        rawTranscript: null,
-        metadata: {},
-        warnings: ["provider timed out"],
-      },
-      sessionKind: "live-streaming",
-      strategy: baseStrategyStub(),
-      formatMessage: (descriptor) => descriptor.defaultMessage,
-      showToast: () => Promise.resolve(),
-      storeTranscriptionFn,
-      refreshMember: vi.fn(),
-      sendIdle,
-    });
-    await flushHistoryPersist();
-
-    expect(sendIdle).toHaveBeenCalledTimes(1);
-    expect(order).toEqual(["idle", "store"]);
-  });
-
-  it("does not wait for the recovery toast before returning", async () => {
-    const showToast = vi.fn<HandleEmptyResultInput["showToast"]>(
-      () => new Promise(() => undefined),
+  it("only claims recovery audio was saved when storage returned an audio snapshot", async () => {
+    const showToast = vi.fn<HandleEmptyResultInput["showToast"]>(() =>
+      Promise.resolve(undefined),
     );
     const storeTranscriptionFn = vi.fn<
       HandleEmptyResultInput["storeTranscriptionFn"]
-    >(() => Promise.resolve({ transcription: null, wordCount: 0 }));
+    >(() =>
+      Promise.resolve({
+        transcription: {
+          id: "failure-row",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          createdByUserId: "user",
+          transcript: "",
+          isDeleted: false,
+          audio: { filePath: "failure.wav", durationMs: 1 },
+        },
+        wordCount: 0,
+      }),
+    );
 
-    const result = await handleEmptyTranscriptionResult({
-      audio: { samples: new Float32Array([0.1, 0.2]), sampleRate: 16000 },
+    await handleEmptyTranscriptionResult({
+      audio: { samples: new Float32Array([0.1]), sampleRate: 16_000 },
       transcribeResult: {
         rawTranscript: null,
         metadata: {},
@@ -264,62 +259,107 @@ describe("handleEmptyTranscriptionResult (#418)", () => {
       storeTranscriptionFn,
       refreshMember: vi.fn(),
     });
+    await flushHistoryPersist();
 
-    expect(result).toEqual({ handled: true });
+    expect(asToastCall(showToast).message).toBe(
+      "Transcription failed. Your recording is saved so you can retry.",
+    );
+  });
+
+  it("retains audio when the intake subscription failed without provider warnings", async () => {
+    const showToast = vi.fn<HandleEmptyResultInput["showToast"]>(() =>
+      Promise.resolve(undefined),
+    );
+    const storeTranscriptionFn = vi.fn<
+      HandleEmptyResultInput["storeTranscriptionFn"]
+    >(() =>
+      Promise.resolve({
+        transcription: {
+          id: "failure-row",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          createdByUserId: "user",
+          transcript: "",
+          isDeleted: false,
+          audio: { filePath: "failure.wav", durationMs: 1 },
+        },
+        wordCount: 0,
+      }),
+    );
+
+    await handleEmptyTranscriptionResult({
+      audio: { samples: new Float32Array([0.1]), sampleRate: 16_000 },
+      transcribeResult: { rawTranscript: null, metadata: {}, warnings: [] },
+      sessionKind: "live-streaming",
+      audioIntakeSubscriptionFailed: true,
+      strategy: baseStrategyStub(),
+      formatMessage: (descriptor) => descriptor.defaultMessage,
+      showToast,
+      storeTranscriptionFn,
+      refreshMember: vi.fn(),
+    });
+    await flushHistoryPersist();
+
+    expect(asStoreCall(storeTranscriptionFn).warnings).toContain(
+      "Live audio could not be sent to the transcription provider because the audio-chunk subscription failed.",
+    );
+    expect(asToastCall(showToast).message).toBe(
+      "Transcription failed. Your recording is saved so you can retry.",
+    );
+  });
+
+  it("ignores a failed intake subscription for a batch/after-stop session", async () => {
+    // The failure only disables pause pretranscription for these kinds; the
+    // full recording is still transcribed at stop, so an empty provider result
+    // must not gain the live-provider warning or be stored as a failure.
+    const showToast = vi.fn<HandleEmptyResultInput["showToast"]>();
+    const storeTranscriptionFn =
+      vi.fn<HandleEmptyResultInput["storeTranscriptionFn"]>();
+
+    const result = await handleEmptyTranscriptionResult({
+      audio: { samples: new Float32Array([0.1]), sampleRate: 16_000 },
+      transcribeResult: { rawTranscript: null, metadata: {}, warnings: [] },
+      sessionKind: "after-stop",
+      audioIntakeSubscriptionFailed: true,
+      strategy: baseStrategyStub(),
+      formatMessage: (descriptor) => descriptor.defaultMessage,
+      showToast,
+      storeTranscriptionFn,
+      refreshMember: vi.fn(),
+    });
+
+    expect(result).toEqual({ handled: false });
+    expect(storeTranscriptionFn).not.toHaveBeenCalled();
     expect(showToast).not.toHaveBeenCalled();
   });
 
-  it("does not wait for history persistence before returning", async () => {
-    const storeTranscriptionFn = vi.fn<
-      HandleEmptyResultInput["storeTranscriptionFn"]
-    >(() => new Promise(() => undefined));
-
-    const result = await handleEmptyTranscriptionResult({
-      audio: { samples: new Float32Array([0.1, 0.2]), sampleRate: 16000 },
-      transcribeResult: {
-        rawTranscript: null,
-        metadata: {},
-        warnings: ["provider timed out"],
-      },
-      sessionKind: "live-streaming",
-      strategy: baseStrategyStub(),
-      formatMessage: (descriptor) => descriptor.defaultMessage,
-      showToast: () => Promise.resolve(),
-      storeTranscriptionFn,
-      refreshMember: vi.fn(),
-    });
-
-    expect(result).toEqual({ handled: true });
-    await Promise.resolve();
-    expect(storeTranscriptionFn).toHaveBeenCalledTimes(1);
-  });
-
-  it("does not enqueue a failed-transcription row when persistence is off", async () => {
-    isPersistenceAllowedMock.mockReturnValue(false);
+  it("reports a storage failure without rejecting the stop flow", async () => {
     const showToast = vi.fn<HandleEmptyResultInput["showToast"]>(() =>
-      Promise.resolve(),
+      Promise.resolve(undefined),
     );
     const storeTranscriptionFn = vi.fn<
       HandleEmptyResultInput["storeTranscriptionFn"]
-    >(() => Promise.resolve({ transcription: null, wordCount: 0 }));
+    >(() => Promise.reject(new Error("disk full")));
 
-    await handleEmptyTranscriptionResult({
-      audio: { samples: new Float32Array([0.1, 0.2]), sampleRate: 16000 },
-      transcribeResult: {
-        rawTranscript: null,
-        metadata: {},
-        warnings: ["provider timed out"],
-      },
-      sessionKind: "live-streaming",
-      strategy: baseStrategyStub(),
-      formatMessage: (descriptor) => descriptor.defaultMessage,
-      showToast,
-      storeTranscriptionFn,
-      refreshMember: vi.fn(),
-    });
-    await flushHistoryPersist();
+    await expect(
+      handleEmptyTranscriptionResult({
+        audio: { samples: new Float32Array([0.1]), sampleRate: 16_000 },
+        transcribeResult: {
+          rawTranscript: null,
+          metadata: {},
+          warnings: ["provider timed out"],
+        },
+        sessionKind: "live-streaming",
+        strategy: baseStrategyStub(),
+        formatMessage: (descriptor) => descriptor.defaultMessage,
+        showToast,
+        storeTranscriptionFn,
+        refreshMember: vi.fn(),
+      }),
+    ).resolves.toEqual({ handled: true });
 
-    expect(storeTranscriptionFn).not.toHaveBeenCalled();
+    expect(warningMock).toHaveBeenCalledWith(
+      expect.stringContaining("Could not preserve the failed recording"),
+    );
     expect(asToastCall(showToast).message).toBe(
       "Transcription failed. The recording audio was not saved.",
     );
@@ -327,7 +367,7 @@ describe("handleEmptyTranscriptionResult (#418)", () => {
 
   it("skips the audio store when strategy.shouldStoreTranscript() is false", async () => {
     const showToast = vi.fn<HandleEmptyResultInput["showToast"]>(() =>
-      Promise.resolve(),
+      Promise.resolve(undefined),
     );
     const storeTranscriptionFn = vi.fn<
       HandleEmptyResultInput["storeTranscriptionFn"]
@@ -396,110 +436,6 @@ describe("handleEmptyTranscriptionResult (#418)", () => {
     expect(result).toEqual({ handled: false });
     expect(showToast).not.toHaveBeenCalled();
   });
-
-  it("only claims recovery audio was saved when storage returned an audio snapshot", async () => {
-    const showToast = vi.fn<HandleEmptyResultInput["showToast"]>(() =>
-      Promise.resolve(),
-    );
-    const storeTranscriptionFn = vi.fn<
-      HandleEmptyResultInput["storeTranscriptionFn"]
-    >(() =>
-      Promise.resolve({
-        transcription: {
-          id: "failure-row",
-          createdAt: "2026-01-01T00:00:00.000Z",
-          createdByUserId: "user",
-          transcript: "",
-          isDeleted: false,
-          audio: { filePath: "failure.wav", durationMs: 1 },
-        } as never,
-        wordCount: 0,
-      }),
-    );
-
-    await handleEmptyTranscriptionResult({
-      audio: { samples: new Float32Array([0.1]), sampleRate: 16_000 },
-      transcribeResult: {
-        rawTranscript: null,
-        metadata: {},
-        warnings: ["provider timed out"],
-      },
-      sessionKind: "live-streaming",
-      strategy: baseStrategyStub(),
-      formatMessage: (descriptor) => descriptor.defaultMessage,
-      showToast,
-      storeTranscriptionFn,
-      refreshMember: vi.fn(),
-    });
-    await flushHistoryPersist();
-
-    expect(asToastCall(showToast).message).toBe(
-      "Transcription failed. Your recording is saved so you can retry.",
-    );
-  });
-
-  it("retains audio when the intake subscription failed without provider warnings", async () => {
-    const showToast = vi.fn<HandleEmptyResultInput["showToast"]>(() =>
-      Promise.resolve(),
-    );
-    const storeTranscriptionFn = vi.fn<
-      HandleEmptyResultInput["storeTranscriptionFn"]
-    >(() =>
-      Promise.resolve({
-        transcription: {
-          id: "failure-row",
-          createdAt: "2026-01-01T00:00:00.000Z",
-          createdByUserId: "user",
-          transcript: "",
-          isDeleted: false,
-          audio: { filePath: "failure.wav", durationMs: 1 },
-        } as never,
-        wordCount: 0,
-      }),
-    );
-
-    await handleEmptyTranscriptionResult({
-      audio: { samples: new Float32Array([0.1]), sampleRate: 16_000 },
-      transcribeResult: { rawTranscript: null, metadata: {}, warnings: [] },
-      sessionKind: "live-streaming",
-      audioIntakeSubscriptionFailed: true,
-      strategy: baseStrategyStub(),
-      formatMessage: (descriptor) => descriptor.defaultMessage,
-      showToast,
-      storeTranscriptionFn,
-      refreshMember: vi.fn(),
-    });
-    await flushHistoryPersist();
-
-    expect(asStoreCall(storeTranscriptionFn).warnings).toContain(
-      "Live audio could not be sent to the transcription provider because the audio-chunk subscription failed.",
-    );
-    expect(asToastCall(showToast).message).toBe(
-      "Transcription failed. Your recording is saved so you can retry.",
-    );
-  });
-
-  it("ignores a failed intake subscription for a batch/after-stop session", async () => {
-    const showToast = vi.fn<HandleEmptyResultInput["showToast"]>();
-    const storeTranscriptionFn =
-      vi.fn<HandleEmptyResultInput["storeTranscriptionFn"]>();
-
-    const result = await handleEmptyTranscriptionResult({
-      audio: { samples: new Float32Array([0.1]), sampleRate: 16_000 },
-      transcribeResult: { rawTranscript: null, metadata: {}, warnings: [] },
-      sessionKind: "after-stop",
-      audioIntakeSubscriptionFailed: true,
-      strategy: baseStrategyStub(),
-      formatMessage: (descriptor) => descriptor.defaultMessage,
-      showToast,
-      storeTranscriptionFn,
-      refreshMember: vi.fn(),
-    });
-
-    expect(result).toEqual({ handled: false });
-    expect(storeTranscriptionFn).not.toHaveBeenCalled();
-    expect(showToast).not.toHaveBeenCalled();
-  });
 });
 
 describe("createPhaseBookkeeper", () => {
@@ -533,11 +469,19 @@ describe("createPhaseBookkeeper", () => {
 });
 
 describe("postProcessFinalizedTranscript", () => {
+  beforeEach(() => {
+    resetHistoryPersistQueue();
+  });
+
   const buildInput = (
     options: {
       store?: boolean;
+      storeResult?: boolean;
+      storeRejects?: boolean;
       agent?: boolean;
       droppedChars?: number;
+      postProcessMetadata?: PostProcessMetadata;
+      editFailed?: boolean;
     } = {},
   ) => {
     const order: string[] = [];
@@ -549,10 +493,15 @@ describe("postProcessFinalizedTranscript", () => {
         shouldContinue: false,
         transcript: "hello world",
         sanitizedTranscript: "hello world",
-        postProcessMetadata:
-          options.droppedChars === undefined
-            ? {}
-            : { fastStyleTruncatedChars: options.droppedChars },
+        postProcessMetadata: {
+          ...options.postProcessMetadata,
+          ...(options.droppedChars === undefined
+            ? undefined
+            : { fastStyleTruncatedChars: options.droppedChars }),
+          ...(options.editFailed === true
+            ? { postProcessEditFailed: true }
+            : undefined),
+        },
         postProcessWarnings: [],
         remoteStatus: null,
         remoteDeviceId: null,
@@ -562,8 +511,12 @@ describe("postProcessFinalizedTranscript", () => {
       PostTranscriptInput["storeTranscriptionFn"]
     >(() => {
       order.push("store");
+      if (options.storeRejects === true) {
+        return Promise.reject(new Error("database is locked"));
+      }
       return Promise.resolve({
-        transcription: { id: "t1" } as never,
+        transcription:
+          options.storeResult === false ? null : ({} as Transcription),
         wordCount: 0,
       });
     });
@@ -583,6 +536,7 @@ describe("postProcessFinalizedTranscript", () => {
         message: string;
         toastType: "info" | "error";
         duration?: number;
+        action?: string;
       }) => {
         order.push("toast");
         return Promise.resolve();
@@ -620,19 +574,27 @@ describe("postProcessFinalizedTranscript", () => {
     };
   };
 
+  /**
+   * Runs the pipeline the way the stop path does: the pipeline resolves with
+   * persistence deferred, then the caller runs the persistence step.
+   */
+  const runPipeline = async (input: PostTranscriptInput) => {
+    const result = await postProcessFinalizedTranscript(input);
+    await result.persist?.();
+    return result;
+  };
+
   it("tells the user when fast styling dropped the end of a long dictation", async () => {
     // The warning used to be recorded on the row and nowhere else, so the user
     // received incomplete text with no notice during dictation at all.
     const { input, showToast } = buildInput({ droppedChars: 42 });
 
-    await postProcessFinalizedTranscript(input);
-    expect(showToast).not.toHaveBeenCalled();
-    await flushHistoryPersist();
+    await runPipeline(input);
 
     expect(showToast).toHaveBeenCalledTimes(1);
     const call = showToast.mock.calls[0]?.[0];
     expect(call?.toastType).toBe("info");
-    // Promising History only after the row is durable.
+    // The row is stored here, so promising History is accurate.
     expect(call?.message).toContain("History");
   });
 
@@ -640,148 +602,332 @@ describe("postProcessFinalizedTranscript", () => {
     // Incognito mode skips storage, so the untruncated ending exists nowhere.
     // The same message would send the user looking for text that was never
     // written.
-    isPersistenceAllowedMock.mockReturnValue(false);
     const { input, showToast } = buildInput({ store: false, droppedChars: 42 });
 
-    await postProcessFinalizedTranscript(input);
+    await runPipeline(input);
 
     expect(showToast).toHaveBeenCalledTimes(1);
     const call = showToast.mock.calls[0]?.[0];
-    expect(call?.message).not.toContain("History");
     expect(call?.message).toContain("42");
+    expect(call?.message).toContain("did not save them in History");
+    expect(call?.message).not.toContain("ending is in History");
   });
 
-  it("does not promise History when the strategy skips storage", async () => {
-    const { input, showToast } = buildInput({ store: false, droppedChars: 42 });
-
-    await postProcessFinalizedTranscript(input);
-    await flushHistoryPersist();
-
-    expect(showToast).toHaveBeenCalledTimes(1);
-    expect(showToast.mock.calls[0]?.[0]?.message).not.toContain("History");
-    expect(showToast.mock.calls[0]?.[0]?.message).toContain("42");
-  });
-
-  it("does not follow an incognito truncation notice with a History promise", async () => {
-    isPersistenceAllowedMock.mockReturnValue(false);
-    const { input, showToast } = buildInput({ droppedChars: 42 });
-
-    await postProcessFinalizedTranscript(input);
-    await flushHistoryPersist();
-
-    expect(showToast).toHaveBeenCalledTimes(1);
-    expect(showToast.mock.calls[0]?.[0]?.message).not.toContain("History");
-  });
-
-  it("does not call a failed History write an incognito skip", async () => {
-    const { input, showToast, storeTranscriptionFn } = buildInput({
+  it("uses the actual store result when warning about History", async () => {
+    const { input, storeTranscriptionFn, showToast } = buildInput({
+      storeResult: false,
       droppedChars: 42,
     });
-    storeTranscriptionFn.mockResolvedValue({
-      transcription: null,
-      wordCount: 0,
-    });
 
-    await postProcessFinalizedTranscript(input);
-    await flushHistoryPersist();
+    await runPipeline(input);
 
-    expect(showToast).toHaveBeenCalledTimes(1);
-    expect(showToast.mock.calls[0]?.[0]?.message).not.toContain("History");
-    expect(showToast.mock.calls[0]?.[0]?.message).toContain("42");
+    expect(storeTranscriptionFn).toHaveBeenCalledTimes(1);
+    expect(showToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message:
+          "Fast styling left the last 42 characters unstyled. The app did not save them in History.",
+        toastType: "info",
+      }),
+    );
   });
 
   it("stays quiet when nothing was truncated", async () => {
     const { input, showToast } = buildInput();
-    await postProcessFinalizedTranscript(input);
+    await runPipeline(input);
     expect(showToast).not.toHaveBeenCalled();
   });
 
-  it("sends idle after handleTranscript and before storeTranscription", async () => {
-    const { input, order, handleTranscript, storeTranscriptionFn } =
-      buildInput();
-    const result = await postProcessFinalizedTranscript(input);
-    expect(result).toEqual({ shouldContinue: false });
-    expect(handleTranscript).toHaveBeenCalledTimes(1);
-    await flushHistoryPersist();
-    expect(storeTranscriptionFn).toHaveBeenCalledTimes(1);
-    expect(order).toEqual(["handleTranscript", "idle", "refresh", "store"]);
-    expect(order.indexOf("idle")).toBeLessThan(order.indexOf("store"));
-    expect(storeTranscriptionFn.mock.calls[0]?.[0]).toMatchObject({
-      createdAt: expect.any(String),
-      persistAllowedAtCapture: true,
+  it("offers History only after a failed transcript was stored", async () => {
+    const { input, order, showToast } = buildInput({
+      postProcessMetadata: {
+        postProcessFailed: true,
+        postProcessError: POST_PROCESS_ERROR_CATEGORY.quotaOrPayment,
+      },
+    });
+
+    await runPipeline(input);
+
+    expect(order).toEqual([
+      "handleTranscript",
+      "idle",
+      "store",
+      "toast",
+      "refresh",
+    ]);
+    expect(showToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message:
+          "Styling failed because the provider reported a quota or billing issue. The raw transcript is saved in History.",
+        toastType: "error",
+        duration: 8_000,
+        action: "open_transcriptions",
+      }),
+    );
+  });
+
+  it("preserves the History action when failure and truncation feedback are combined", async () => {
+    const { input, showToast } = buildInput({
+      droppedChars: 42,
+      postProcessMetadata: {
+        postProcessFailed: true,
+        postProcessFallback: false,
+        postProcessError: POST_PROCESS_ERROR_CATEGORY.providerLimit,
+      },
+    });
+
+    await runPipeline(input);
+
+    expect(showToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message:
+          "Styling failed because the provider request or usage limit was reached. The raw transcript is saved in History. Fast styling left the last 42 characters of that dictation unstyled. The unstyled ending is in History.",
+        toastType: "error",
+        duration: 8_000,
+        action: "open_transcriptions",
+      }),
+    );
+  });
+
+  it("does not claim or open History when a failed transcript was not stored", async () => {
+    const { input, showToast } = buildInput({
+      storeResult: false,
+      postProcessMetadata: {
+        postProcessFailed: true,
+        postProcessError: POST_PROCESS_ERROR_CATEGORY.providerLimit,
+      },
+    });
+
+    await runPipeline(input);
+
+    expect(showToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message:
+          "Styling failed because the provider request or usage limit was reached. The app did not insert the transcript or save it in History.",
+        toastType: "error",
+        action: undefined,
+      }),
+    );
+  });
+
+  it("still surfaces the not-saved feedback when the history write rejects", async () => {
+    // A rejected History write used to reject the whole deferred persist step,
+    // which the caller only logged: the transcript was not inserted, not
+    // saved, and the user got no message at all. The write failure is caught
+    // like the concurrent path catches its own, so the member refresh and the
+    // not-saved feedback still run.
+    const { input, order, refreshMember, showToast } = buildInput({
+      storeRejects: true,
+      postProcessMetadata: {
+        postProcessFailed: true,
+        postProcessError: POST_PROCESS_ERROR_CATEGORY.providerLimit,
+      },
+    });
+
+    await expect(runPipeline(input)).resolves.toBeDefined();
+
+    expect(order).toEqual([
+      "handleTranscript",
+      "idle",
+      "store",
+      "toast",
+      "refresh",
+    ]);
+    expect(refreshMember).toHaveBeenCalledTimes(1);
+    expect(showToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message:
+          "Styling failed because the provider request or usage limit was reached. The app did not insert the transcript or save it in History.",
+        toastType: "error",
+        action: undefined,
+      }),
+    );
+  });
+
+  it("offers settings when local styling handled a provider failure", async () => {
+    const { input, showToast } = buildInput({
+      postProcessMetadata: {
+        postProcessFailed: false,
+        postProcessFallback: true,
+        postProcessError: POST_PROCESS_ERROR_CATEGORY.quotaOrPayment,
+      },
+    });
+
+    await runPipeline(input);
+
+    expect(showToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message:
+          "Online styling failed because the provider reported a quota or billing issue. Your local style was applied instead.",
+        toastType: "info",
+        action: "open_post_processing_settings",
+      }),
+    );
+  });
+
+  it("keeps local-fallback and truncation feedback in one actionable toast", async () => {
+    const { input, showToast } = buildInput({
+      droppedChars: 42,
+      postProcessMetadata: {
+        postProcessFailed: false,
+        postProcessFallback: true,
+        postProcessError: POST_PROCESS_ERROR_CATEGORY.quotaOrPayment,
+      },
+    });
+
+    await runPipeline(input);
+
+    expect(showToast).toHaveBeenCalledTimes(1);
+    expect(showToast).toHaveBeenCalledWith({
+      message:
+        "Online styling failed because the provider reported a quota or billing issue. Your local style was applied instead. Fast styling left the last 42 characters of that dictation unstyled. The unstyled ending is in History.",
+      toastType: "info",
+      duration: 8_000,
+      action: "open_post_processing_settings",
     });
   });
 
-  it("does not promise History when persistence was off at stop", async () => {
-    isPersistenceAllowedMock.mockReturnValue(false);
-    const { input, showToast } = buildInput({ droppedChars: 42 });
+  it("keeps a failed edit and truncation feedback in one toast", async () => {
+    const { input, showToast } = buildInput({
+      droppedChars: 42,
+      editFailed: true,
+    });
 
-    await postProcessFinalizedTranscript(input);
-    await flushHistoryPersist();
+    await runPipeline(input);
+
+    // The pill shows one toast at a time: shown back to back, the truncation
+    // report replaced the edit failure mid-read and the user only ever saw
+    // one of the two outcomes.
+    expect(showToast).toHaveBeenCalledTimes(1);
+    expect(showToast).toHaveBeenCalledWith({
+      message:
+        "Styling was discarded because not all requested edits could be applied. The complete raw transcript is saved in History. Fast styling left the last 42 characters of that dictation unstyled. The unstyled ending is in History.",
+      toastType: "error",
+      duration: 8_000,
+      action: "open_transcriptions",
+    });
+  });
+
+  it("keeps the History action when a failed edit combines with a fallback outcome", async () => {
+    const { input, showToast } = buildInput({
+      editFailed: true,
+      postProcessMetadata: {
+        postProcessFailed: false,
+        postProcessFallback: true,
+        postProcessError: POST_PROCESS_ERROR_CATEGORY.quotaOrPayment,
+      },
+    });
+
+    await runPipeline(input);
 
     expect(showToast).toHaveBeenCalledTimes(1);
-    expect(showToast.mock.calls[0]?.[0]?.message).not.toContain("History");
-    expect(showToast.mock.calls[0]?.[0]?.message).toContain("42");
+    const call = asToastCall(showToast);
+    expect(call?.message).toContain(
+      "Styling was discarded because not all requested edits could be applied.",
+    );
+    expect(call?.message).toContain(
+      "Online styling failed because the provider reported a quota or billing issue. Your local style was applied instead.",
+    );
+    expect(call?.toastType).toBe("error");
+    // One action per toast: a partial edit batch blocked insertion, so
+    // recovering the words from History outranks the settings shortcut.
+    expect(call?.action).toBe("open_transcriptions");
   });
 
-  it("promises History when the review session already stored the row", async () => {
-    const { input, showToast } = buildInput({ droppedChars: 42 });
-    input.strategy = {
-      ...input.strategy,
-      handleTranscript: vi.fn(() =>
-        Promise.resolve({
-          shouldContinue: false,
-          transcript: "hello world",
-          sanitizedTranscript: "hello world",
-          postProcessMetadata: { fastStyleTruncatedChars: 42 },
-          postProcessWarnings: [],
-          remoteStatus: null,
-          remoteDeviceId: null,
-          historyOwner: "review" as const,
-        }),
-      ),
-    };
+  it("tells the user the raw transcript is in History once the row is stored", async () => {
+    const { input, showToast, storeTranscriptionFn } = buildInput({
+      editFailed: true,
+    });
 
-    await postProcessFinalizedTranscript(input);
-    await flushHistoryPersist();
+    await runPipeline(input);
 
+    // The toast waits for the store call, so its promise is backed by a row.
+    expect(storeTranscriptionFn).toHaveBeenCalledTimes(1);
     expect(showToast).toHaveBeenCalledTimes(1);
-    expect(showToast.mock.calls[0]?.[0]?.message).toContain("History");
+    const call = asToastCall(showToast);
+    expect(call?.toastType).toBe("error");
+    expect(call?.message).toContain("saved in History");
+    expect(call?.action).toBe("open_transcriptions");
   });
 
-  it("copies PCM before the persist job runs so a later mutation cannot alias it", async () => {
-    const samples = new Float32Array([0.25, 0.5]);
-    const { input, storeTranscriptionFn } = buildInput();
-    input.audio = { samples, sampleRate: 16_000 };
+  it("does not promise History when the store returns no row", async () => {
+    // Persistence is allowed and the store path runs, but the write itself
+    // came back empty, so the saved-in-History wording would point the user
+    // at a row that does not exist.
+    const { input, showToast, storeTranscriptionFn } = buildInput({
+      editFailed: true,
+      storeResult: false,
+    });
 
-    await postProcessFinalizedTranscript(input);
-    samples[0] = 99;
-    await flushHistoryPersist();
+    await runPipeline(input);
 
-    const storedAudio = storeTranscriptionFn.mock.calls[0]?.[0]?.audio;
-    expect(storedAudio?.samples[0]).toBeCloseTo(0.25);
+    expect(storeTranscriptionFn).toHaveBeenCalledTimes(1);
+    expect(showToast).toHaveBeenCalledTimes(1);
+    const call = asToastCall(showToast);
+    expect(call?.message).not.toContain("saved in History");
+    expect(call?.action).toBeUndefined();
   });
 
-  it("returns to idle without waiting for history persistence", async () => {
-    // A pending WAV/DB write used to keep this function (and therefore the
-    // stop path's `isStopping` lock and transcribing pill) alive until History
-    // finished. The next take has to be startable while that save completes.
-    const { input, storeTranscriptionFn } = buildInput();
-    let resolveStore: (() => void) | undefined;
-    storeTranscriptionFn.mockImplementation(
+  it("does not promise History for a failed edit when nothing is stored", async () => {
+    // Incognito mode skips storage entirely, so the raw transcript exists
+    // nowhere and the open-History action is dropped with the row.
+    const { input, showToast, storeTranscriptionFn } = buildInput({
+      editFailed: true,
+      store: false,
+    });
+
+    await runPipeline(input);
+
+    expect(storeTranscriptionFn).not.toHaveBeenCalled();
+    expect(showToast).toHaveBeenCalledTimes(1);
+    const call = asToastCall(showToast);
+    expect(call?.message).not.toContain("saved in History");
+    expect(call?.action).toBeUndefined();
+  });
+
+  it("resolves with persistence deferred until after the pill goes idle", async () => {
+    const { input, order, handleTranscript, storeTranscriptionFn } =
+      buildInput();
+    const result = await postProcessFinalizedTranscript(input);
+
+    // The stop path releases its gate here: the pill shows idle and storage
+    // has not begun.
+    expect(result.shouldContinue).toBe(false);
+    expect(typeof result.persist).toBe("function");
+    expect(handleTranscript).toHaveBeenCalledTimes(1);
+    expect(storeTranscriptionFn).not.toHaveBeenCalled();
+    expect(order).toEqual(["handleTranscript", "idle"]);
+
+    await result.persist?.();
+    expect(storeTranscriptionFn).toHaveBeenCalledTimes(1);
+    expect(order).toEqual(["handleTranscript", "idle", "store", "refresh"]);
+  });
+
+  it("does not hold the pipeline on a slow store", async () => {
+    // The race both reviewers flagged: storage kept the stop gate closed
+    // after the pill went idle, so dictation starts clicked during a slow
+    // save were dropped. The pipeline must resolve while the write is still
+    // in flight, leaving persistence to run after the gate opens.
+    const { input, order, storeTranscriptionFn, refreshMember } = buildInput();
+    let releaseStore: (() => void) | undefined;
+    storeTranscriptionFn.mockImplementationOnce(
       () =>
         new Promise((resolve) => {
-          resolveStore = () => resolve({ transcription: null, wordCount: 0 });
+          order.push("store");
+          releaseStore = () =>
+            resolve({ transcription: {} as Transcription, wordCount: 0 });
         }),
     );
 
     const result = await postProcessFinalizedTranscript(input);
-
-    expect(result).toEqual({ shouldContinue: false });
+    const persisting = result.persist?.();
+    await Promise.resolve();
     await Promise.resolve();
     expect(storeTranscriptionFn).toHaveBeenCalledTimes(1);
-    resolveStore?.();
-    await flushHistoryPersist();
+    expect(refreshMember).not.toHaveBeenCalled();
+
+    releaseStore?.();
+    await persisting;
+    expect(order).toEqual(["handleTranscript", "idle", "store", "refresh"]);
   });
 
   it("does not store a transcript the review already persisted", async () => {
@@ -804,8 +950,7 @@ describe("postProcessFinalizedTranscript", () => {
       ),
     };
 
-    await postProcessFinalizedTranscript(input);
-    await flushHistoryPersist();
+    await runPipeline(input);
 
     expect(storeTranscriptionFn).not.toHaveBeenCalled();
   });
@@ -831,8 +976,7 @@ describe("postProcessFinalizedTranscript", () => {
       ),
     };
 
-    await postProcessFinalizedTranscript(input);
-    await flushHistoryPersist();
+    await runPipeline(input);
 
     expect(storeTranscriptionFn).not.toHaveBeenCalled();
   });
@@ -856,52 +1000,45 @@ describe("postProcessFinalizedTranscript", () => {
       ),
     };
 
-    await postProcessFinalizedTranscript(input);
-    await flushHistoryPersist();
+    await runPipeline(input);
 
     expect(storeTranscriptionFn).toHaveBeenCalledTimes(1);
-  });
-
-  it("tells the user when a stop-path save is dropped because the queue is full", async () => {
-    const hang = () => new Promise<void>(() => undefined);
-    for (let i = 0; i < MAX_HISTORY_PERSIST_QUEUE; i += 1) {
-      enqueueHistoryPersist(hang, `block-${i}`).catch(() => undefined);
-    }
-    const { input, showToast, storeTranscriptionFn } = buildInput();
-
-    await postProcessFinalizedTranscript(input);
-
-    expect(storeTranscriptionFn).not.toHaveBeenCalled();
-    expect(asToastCall(showToast).message).toMatch(/still writing/i);
-    resetHistoryPersistQueue();
   });
 
   it("schedules live recovery only after the durable row is stored", async () => {
     scheduleAutomaticPostProcessEditRetryMock.mockClear();
     const { input, storeTranscriptionFn } = buildInput();
     input.languageCode = "fr";
+    const stored: Transcription = {
+      id: "live-partial",
+      transcript: "hello world",
+      createdAt: "2026-10-06T00:00:00.000Z",
+      createdByUserId: "user-1",
+      isDeleted: false,
+      audio: { filePath: "/tmp/live-partial.wav", durationMs: 1000 },
+      postProcessEditFailed: true,
+      postProcessEditFailureCount: 3,
+      postProcessEditAutoRetryUsed: null,
+    };
     storeTranscriptionFn.mockResolvedValueOnce({
-      transcription: {
-        id: "live-partial",
-        transcript: "hello world",
-        createdAt: "2026-10-06T00:00:00.000Z",
-        createdByUserId: "user-1",
-        isDeleted: false,
-      } as never,
+      transcription: stored,
       wordCount: 2,
     });
 
-    await postProcessFinalizedTranscript(input);
-    expect(scheduleAutomaticPostProcessEditRetryMock).not.toHaveBeenCalled();
-    await flushHistoryPersist();
+    await runPipeline(input);
+
+    expect(storeTranscriptionFn).toHaveBeenCalledTimes(1);
     expect(scheduleAutomaticPostProcessEditRetryMock).toHaveBeenCalledWith({
-      transcription: expect.objectContaining({ id: "live-partial" }),
+      transcription: stored,
       toneId: null,
       languageCode: "fr",
     });
   });
 
-  it("does not wait for a concurrent write before returning idle", async () => {
+  it("awaits the strategy's concurrent write instead of storing again", async () => {
+    // The strategy persisted during delivery. The stop path resolves with
+    // persistence deferred, and its persist step must settle that write
+    // instead of storing a second row.
     const { input, order, storeTranscriptionFn } = buildInput();
     let resolvePersistence:
       ((value: { transcription: null; wordCount: number }) => void) | undefined;
@@ -929,17 +1066,31 @@ describe("postProcessFinalizedTranscript", () => {
       }),
     };
 
-    await postProcessFinalizedTranscript(input);
-    expect(order).toEqual(["handleTranscript", "idle", "refresh"]);
+    const result = await postProcessFinalizedTranscript(input);
+    expect(order).toEqual(["handleTranscript", "idle"]);
+
+    let persisted = false;
+    const persisting = result.persist?.().then(() => {
+      persisted = true;
+    });
+    // The persist step reaches the pending write but must not settle before
+    // the concurrent write does, and it never stores a second row.
+    await Promise.resolve();
+    expect(persisted).toBe(false);
     expect(storeTranscriptionFn).not.toHaveBeenCalled();
+
     resolvePersistence?.({ transcription: null, wordCount: 2 });
-    await pendingPersistence;
+    await persisting;
+
+    expect(persisted).toBe(true);
+    expect(storeTranscriptionFn).not.toHaveBeenCalled();
+    expect(order).toEqual(["handleTranscript", "idle", "refresh"]);
   });
 
   it("promises History for a truncated dictation persisted concurrently", async () => {
-    const { input, showToast, storeTranscriptionFn } = buildInput({
-      droppedChars: 42,
-    });
+    // The concurrent owner is not `willStore`, but the row is written; the
+    // truncation toast must use the stored wording, not the incognito one.
+    const { input, showToast } = buildInput({ droppedChars: 42 });
     input.strategy = {
       ...input.strategy,
       handleTranscript: vi.fn(() =>
@@ -953,19 +1104,116 @@ describe("postProcessFinalizedTranscript", () => {
           remoteDeviceId: null,
           historyOwner: "concurrent" as const,
           pendingPersistence: Promise.resolve({
-            transcription: { id: "c1" } as never,
+            transcription: null,
             wordCount: 2,
           }),
         }),
       ),
     };
 
-    await postProcessFinalizedTranscript(input);
-    await Promise.resolve();
-    await Promise.resolve();
+    await runPipeline(input);
 
-    expect(storeTranscriptionFn).not.toHaveBeenCalled();
-    expect(asToastCall(showToast).message).toContain("History");
+    const call = asToastCall(showToast);
+    expect(call.message).toContain("History");
+  });
+
+  it("defers History until simulated typing settles after the handler timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      const {
+        input,
+        handleTranscript,
+        storeTranscriptionFn,
+        sendIdle,
+        refreshMember,
+        showToast,
+      } = buildInput();
+      const eventualResult = deferred<HandleTranscriptResult>();
+      handleTranscript.mockImplementationOnce((params) => {
+        params.onSimulatedTypingStart?.();
+        return eventualResult.promise;
+      });
+      input.handleTranscriptTimeoutMs = 50;
+
+      let incognitoEnabled = false;
+      storeTranscriptionFn.mockImplementation(() =>
+        Promise.resolve({
+          transcription: incognitoEnabled ? null : ({} as Transcription),
+          wordCount: 2,
+        }),
+      );
+
+      const stopping = postProcessFinalizedTranscript(input);
+      await vi.advanceTimersByTimeAsync(50);
+      const response = await stopping;
+
+      expect(response.shouldContinue).toBe(false);
+      expect(storeTranscriptionFn).not.toHaveBeenCalled();
+      expect(refreshMember).not.toHaveBeenCalled();
+
+      // The user can switch to Incognito while typing continues; the serial
+      // store must consult that live preference only after delivery settles.
+      incognitoEnabled = true;
+      let persisted = false;
+      const persistence = response.persist?.().then(() => {
+        persisted = true;
+      });
+      await Promise.resolve();
+      expect(persisted).toBe(false);
+      expect(storeTranscriptionFn).not.toHaveBeenCalled();
+
+      eventualResult.resolve({
+        shouldContinue: false,
+        transcript: "hello world",
+        sanitizedTranscript: "hello world",
+        postProcessMetadata: {},
+        postProcessWarnings: [],
+        remoteStatus: null,
+        remoteDeviceId: null,
+        historyOwner: "stop-path",
+      });
+      await persistence;
+
+      expect(persisted).toBe(true);
+      expect(storeTranscriptionFn).toHaveBeenCalledOnce();
+      expect(asStoreCall(storeTranscriptionFn)).toMatchObject({
+        transcript: "hello world",
+      });
+      expect(refreshMember).toHaveBeenCalledOnce();
+      expect(sendIdle).not.toHaveBeenCalled();
+      expect(showToast).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps a handler timeout fatal when simulated typing has not started", async () => {
+    vi.useFakeTimers();
+    try {
+      const { input, handleTranscript, storeTranscriptionFn } = buildInput();
+      const eventualResult = deferred<HandleTranscriptResult>();
+      handleTranscript.mockReturnValueOnce(eventualResult.promise);
+      input.handleTranscriptTimeoutMs = 25;
+
+      const stopping = postProcessFinalizedTranscript(input);
+      const timeout = expect(stopping).rejects.toThrow(
+        "Transcript post-processing timed out after 25ms",
+      );
+      await vi.advanceTimersByTimeAsync(25);
+      await timeout;
+      expect(storeTranscriptionFn).not.toHaveBeenCalled();
+      eventualResult.resolve({
+        shouldContinue: false,
+        transcript: "hello world",
+        sanitizedTranscript: "hello world",
+        postProcessMetadata: {},
+        postProcessWarnings: [],
+        remoteStatus: null,
+        remoteDeviceId: null,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("propagates a post-processing failure without sending idle or persisting", async () => {
@@ -991,22 +1239,20 @@ describe("postProcessFinalizedTranscript", () => {
     const { input, order, storeTranscriptionFn } = buildInput({
       store: false,
     });
-    await postProcessFinalizedTranscript(input);
+    await runPipeline(input);
     expect(storeTranscriptionFn).not.toHaveBeenCalled();
     expect(order).toEqual(["handleTranscript", "idle", "refresh"]);
   });
 
   it("sends idle up front in agent mode without skipping the post-routing idle", async () => {
     const { input, order } = buildInput({ agent: true });
-    await postProcessFinalizedTranscript(input);
-    await flushHistoryPersist();
+    await runPipeline(input);
     expect(order).toEqual([
       "idle",
       "handleTranscript",
       "idle",
-      "refresh",
       "store",
+      "refresh",
     ]);
-    expect(order.lastIndexOf("idle")).toBeLessThan(order.indexOf("store"));
   });
 });

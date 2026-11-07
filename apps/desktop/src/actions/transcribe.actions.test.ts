@@ -2,7 +2,7 @@
 import type { Transcription, UserPreferences } from "@maus-inc/types";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { INITIAL_APP_STATE } from "../state/app.state";
-import { getAppState, setAppState } from "../store";
+import { getAppState, produceAppState, setAppState } from "../store";
 import {
   appendTranscriptionWarnings,
   storeTranscription,
@@ -75,10 +75,12 @@ vi.mock("@tauri-apps/plugin-http", () => ({
 }));
 
 const {
+  appendTranscriptionWarningsMock,
   createTranscriptionMock,
   purgeStaleAudioMock,
   updateTranscriptionMock,
 } = vi.hoisted(() => ({
+  appendTranscriptionWarningsMock: vi.fn(),
   createTranscriptionMock: vi.fn(),
   purgeStaleAudioMock: vi.fn(() => Promise.resolve([] as string[])),
   updateTranscriptionMock: vi.fn(),
@@ -90,6 +92,7 @@ vi.mock("../repos", async (importOriginal) => {
     ...actual,
     getTranscriptionRepo: () => ({
       ...actual.getTranscriptionRepo(),
+      appendWarnings: appendTranscriptionWarningsMock,
       createTranscription: createTranscriptionMock,
       purgeStaleAudio: purgeStaleAudioMock,
       updateTranscription: updateTranscriptionMock,
@@ -812,9 +815,8 @@ describe("storeTranscription persistence suppression", () => {
 });
 
 describe("appendTranscriptionWarnings", () => {
-  const seedRow = (warnings: string[] | null) => {
-    const state = structuredClone(INITIAL_APP_STATE);
-    state.transcriptionById["row-1"] = {
+  const seedRow = (warnings: string[] | null): Transcription => {
+    const row: Transcription = {
       id: "row-1",
       createdAt: "2026-01-01T00:00:00.000Z",
       createdByUserId: "me",
@@ -822,13 +824,23 @@ describe("appendTranscriptionWarnings", () => {
       isDeleted: false,
       warnings,
     };
+    const state = structuredClone(INITIAL_APP_STATE);
+    state.transcriptionById[row.id] = row;
     setAppState(state, true);
+    return row;
   };
 
   beforeEach(() => {
     vi.clearAllMocks();
-    updateTranscriptionMock.mockImplementation((transcription: unknown) =>
-      Promise.resolve(transcription),
+    appendTranscriptionWarningsMock.mockImplementation(
+      (transcriptionId: string, warnings: string[]) => {
+        const transcription = getAppState().transcriptionById[transcriptionId];
+        if (!transcription) throw new Error("Transcription not found");
+        return Promise.resolve([
+          ...(transcription.warnings ?? []),
+          ...warnings,
+        ]);
+      },
     );
   });
 
@@ -836,18 +848,158 @@ describe("appendTranscriptionWarnings", () => {
     setAppState(structuredClone(INITIAL_APP_STATE), true);
   });
 
-  it("merges new warnings onto the stored row and refreshes state", async () => {
+  it("appends warnings through the field-specific repository method", async () => {
     seedRow(["existing"]);
 
     await appendTranscriptionWarnings("row-1", ["delivery failed"]);
 
-    expect(updateTranscriptionMock).toHaveBeenCalledTimes(1);
-    const updated = updateTranscriptionMock.mock.calls[0][0] as Transcription;
-    expect(updated.warnings).toEqual(["existing", "delivery failed"]);
+    expect(appendTranscriptionWarningsMock).toHaveBeenCalledExactlyOnceWith(
+      "row-1",
+      ["delivery failed"],
+    );
     expect(getAppState().transcriptionById["row-1"]?.warnings).toEqual([
       "existing",
       "delivery failed",
     ]);
+  });
+
+  it("preserves an appended warning that matches an existing occurrence", async () => {
+    seedRow(["delivery failed"]);
+
+    await appendTranscriptionWarnings("row-1", ["delivery failed"]);
+
+    expect(getAppState().transcriptionById["row-1"]?.warnings).toEqual([
+      "delivery failed",
+      "delivery failed",
+    ]);
+  });
+
+  it("preserves concurrent duplicate warnings when replies arrive out of order", async () => {
+    seedRow(["existing"]);
+    let resolveFirst!: (warnings: string[]) => void;
+    let resolveSecond!: (warnings: string[]) => void;
+    appendTranscriptionWarningsMock
+      .mockReturnValueOnce(
+        new Promise<string[]>((resolve) => {
+          resolveFirst = resolve;
+        }),
+      )
+      .mockReturnValueOnce(
+        new Promise<string[]>((resolve) => {
+          resolveSecond = resolve;
+        }),
+      );
+
+    const first = appendTranscriptionWarnings("row-1", ["delivery failed"]);
+    const second = appendTranscriptionWarnings("row-1", ["delivery failed"]);
+    resolveSecond(["existing", "delivery failed", "delivery failed"]);
+    await second;
+    resolveFirst(["existing", "delivery failed"]);
+    await first;
+
+    expect(getAppState().transcriptionById["row-1"]?.warnings).toEqual([
+      "existing",
+      "delivery failed",
+      "delivery failed",
+    ]);
+  });
+
+  it("merges returned warnings without replacing a newer state row", async () => {
+    seedRow(["existing"]);
+    let resolveWrite!: (warnings: string[]) => void;
+    appendTranscriptionWarningsMock.mockReturnValueOnce(
+      new Promise<string[]>((resolve) => {
+        resolveWrite = resolve;
+      }),
+    );
+
+    const pending = appendTranscriptionWarnings("row-1", ["delivery failed"]);
+    produceAppState((draft) => {
+      const row = draft.transcriptionById["row-1"];
+      if (row) {
+        row.transcript = "edited while warning write was pending";
+        row.remoteDeviceId = "device-new";
+      }
+    });
+    resolveWrite(["existing", "delivery failed"]);
+    await pending;
+
+    expect(getAppState().transcriptionById["row-1"]).toMatchObject({
+      transcript: "edited while warning write was pending",
+      remoteDeviceId: "device-new",
+      warnings: ["existing", "delivery failed"],
+    });
+  });
+
+  it("does not restore warnings removed while an append is pending", async () => {
+    seedRow(["existing"]);
+    let resolveWrite!: (warnings: string[]) => void;
+    appendTranscriptionWarningsMock.mockReturnValueOnce(
+      new Promise<string[]>((resolve) => {
+        resolveWrite = resolve;
+      }),
+    );
+
+    const pending = appendTranscriptionWarnings("row-1", ["delivery failed"]);
+    produceAppState((draft) => {
+      const row = draft.transcriptionById["row-1"];
+      if (row) row.warnings = [];
+    });
+    resolveWrite(["existing", "delivery failed"]);
+    await pending;
+
+    expect(getAppState().transcriptionById["row-1"]?.warnings).toEqual([
+      "delivery failed",
+    ]);
+  });
+
+  it("keeps concurrent warning results when native replies arrive out of order", async () => {
+    seedRow(["existing"]);
+    let resolveFirst!: (warnings: string[]) => void;
+    let resolveSecond!: (warnings: string[]) => void;
+    appendTranscriptionWarningsMock
+      .mockReturnValueOnce(
+        new Promise<string[]>((resolve) => {
+          resolveFirst = resolve;
+        }),
+      )
+      .mockReturnValueOnce(
+        new Promise<string[]>((resolve) => {
+          resolveSecond = resolve;
+        }),
+      );
+
+    const first = appendTranscriptionWarnings("row-1", ["first"]);
+    const second = appendTranscriptionWarnings("row-1", ["second"]);
+    resolveSecond(["existing", "first", "second"]);
+    await second;
+    resolveFirst(["existing", "first"]);
+    await first;
+
+    expect(getAppState().transcriptionById["row-1"]?.warnings).toEqual([
+      "existing",
+      "first",
+      "second",
+    ]);
+  });
+
+  it("does not restore a row deleted while its warning write was pending", async () => {
+    seedRow(["existing"]);
+    let resolveWrite!: (warnings: string[]) => void;
+    appendTranscriptionWarningsMock.mockReturnValueOnce(
+      new Promise<string[]>((resolve) => {
+        resolveWrite = resolve;
+      }),
+    );
+
+    const pending = appendTranscriptionWarnings("row-1", ["delivery failed"]);
+    produceAppState((draft) => {
+      delete draft.transcriptionById["row-1"];
+    });
+    resolveWrite(["existing", "delivery failed"]);
+    await pending;
+
+    expect(getAppState().transcriptionById["row-1"]).toBeUndefined();
   });
 
   it("treats a row without warnings as an empty list", async () => {
@@ -855,8 +1007,9 @@ describe("appendTranscriptionWarnings", () => {
 
     await appendTranscriptionWarnings("row-1", ["delivery failed"]);
 
-    const updated = updateTranscriptionMock.mock.calls[0][0] as Transcription;
-    expect(updated.warnings).toEqual(["delivery failed"]);
+    expect(getAppState().transcriptionById["row-1"]?.warnings).toEqual([
+      "delivery failed",
+    ]);
   });
 
   it("no-ops for an empty warning list", async () => {
@@ -864,7 +1017,7 @@ describe("appendTranscriptionWarnings", () => {
 
     await appendTranscriptionWarnings("row-1", []);
 
-    expect(updateTranscriptionMock).not.toHaveBeenCalled();
+    expect(appendTranscriptionWarningsMock).not.toHaveBeenCalled();
   });
 
   it("no-ops when the row is no longer in state", async () => {
@@ -872,12 +1025,14 @@ describe("appendTranscriptionWarnings", () => {
 
     await appendTranscriptionWarnings("missing-row", ["delivery failed"]);
 
-    expect(updateTranscriptionMock).not.toHaveBeenCalled();
+    expect(appendTranscriptionWarningsMock).not.toHaveBeenCalled();
   });
 
   it("swallows a repository failure instead of rejecting", async () => {
     seedRow(null);
-    updateTranscriptionMock.mockRejectedValueOnce(new Error("db locked"));
+    appendTranscriptionWarningsMock.mockRejectedValueOnce(
+      new Error("db locked"),
+    );
 
     await expect(
       appendTranscriptionWarnings("row-1", ["delivery failed"]),

@@ -2,6 +2,19 @@ import { getLogger } from "../utils/log.utils";
 import { addStartupAbortListener } from "./provider-startup.utils";
 import type { AudioChunkBuffer } from "./transcription-stream.utils";
 
+/** Returns a safe, user-facing provider error detail without coercing objects. */
+export const describeProviderError = (
+  data: { error?: unknown; message?: unknown },
+  fallback: string,
+): string => {
+  for (const candidate of [data.error, data.message]) {
+    if (typeof candidate === "string" && candidate.trim().length > 0) {
+      return candidate;
+    }
+  }
+  return fallback;
+};
+
 /**
  * Shared machinery for the live-provider WebSocket sessions (Deepgram,
  * AssemblyAI, ElevenLabs). Each provider's message protocol differs, but

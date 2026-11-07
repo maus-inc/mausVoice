@@ -17,6 +17,15 @@ import {
   sendChatMessage,
 } from "../../actions/chat.actions";
 import { refreshMember } from "../../actions/member.actions";
+import {
+  getFastStyleTruncationMessage,
+  getPostProcessFeedback,
+  getPostProcessFeedbackToastAction,
+} from "../../actions/post-process-feedback";
+import type {
+  PostProcessFeedback,
+  PostProcessFeedbackMetadata,
+} from "../../actions/post-process-feedback";
 import { dismissToast, runToast, showToast } from "../../actions/toast.actions";
 import { getIntl } from "../../i18n/intl";
 import { applyInDictationStyleSwitch } from "../../actions/tone.actions";
@@ -55,6 +64,7 @@ import { DictationStrategy } from "../../strategies/dictation.strategy";
 import { TextFieldInfo } from "../../types/accessibility.types";
 import type {
   HandleTranscriptResult,
+  HistoryOwner,
   ReviewedTranscriptPersistenceInput,
 } from "../../types/strategy.types";
 import {
@@ -190,6 +200,12 @@ const resolveRecordingStrategy = (
 type RawStopResp = {
   shouldContinue: boolean;
   abortMessage?: string;
+  /**
+   * History persistence for a stop that reached post-processing, deferred so
+   * the stop gate can open while the pill already shows idle. The stop path
+   * runs it after its teardown; failure paths never produce one.
+   */
+  persist?: () => Promise<void>;
 };
 
 type DictationToastOptions = {
@@ -446,53 +462,6 @@ export const formatReviewPersistenceFailure = (
   });
 };
 
-const formatDroppedEndingMessage = (
-  kind: "history" | "not-saved",
-  droppedChars: number,
-): string => {
-  if (kind === "history") {
-    return getIntl().formatMessage(
-      {
-        defaultMessage:
-          "Fast styling left the last {droppedChars} characters of that dictation unstyled. The unstyled ending is in History.",
-      },
-      { droppedChars },
-    );
-  }
-  return getIntl().formatMessage(
-    {
-      defaultMessage:
-        "That dictation outran fast styling, so its last {droppedChars} characters were left unstyled, and that ending was not saved.",
-    },
-    { droppedChars },
-  );
-};
-
-const notifyPostProcessEditFailed = (
-  showToast: ShowDictationToast,
-  savedInHistory: boolean,
-): void => {
-  const message = savedInHistory
-    ? getIntl().formatMessage({
-        defaultMessage:
-          "Styling was discarded because not all requested edits could be applied. The complete raw transcript is saved in History.",
-      })
-    : getIntl().formatMessage({
-        defaultMessage:
-          "Not all requested styling edits could be applied, so the styling was discarded. History is unavailable in this session, so the raw transcript was not saved.",
-      });
-  fireAndForgetToast(
-    showToast,
-    {
-      message,
-      toastType: "error",
-      duration: 8_000,
-      action: savedInHistory ? "open_transcriptions" : undefined,
-    },
-    "post-process edit failure toast",
-  );
-};
-
 export type PhaseBookkeeper = {
   issue: () => number;
   markSent: (seq: number, phase: OverlayPhase) => void;
@@ -554,27 +523,149 @@ export type PostTranscriptInput = {
 type StopPathHistoryContext = {
   input: PostTranscriptInput;
   owner: NonNullable<HandleTranscriptResult["historyOwner"]>;
-  droppedChars: number | undefined;
-  postProcessEditFailed: boolean | undefined;
+  postProcessMetadata: HandleTranscriptResult["postProcessMetadata"];
 };
 
-const notifyDroppedEnding = (
-  ctx: StopPathHistoryContext,
-  kind: "history" | "not-saved",
-): void => {
-  const droppedChars = ctx.droppedChars;
-  if (typeof droppedChars !== "number" || droppedChars <= 0) {
-    return;
+/** The pill toast shape the post-processing feedback is surfaced with. */
+type PostProcessToastOptions = {
+  message: string;
+  toastType: "info" | "error";
+  duration: number;
+  action?: ToastAction;
+};
+
+const getPostProcessToastSeverity = (
+  feedback: PostProcessFeedback | null | undefined,
+): "info" | "error" => feedback?.severity ?? "info";
+
+const getPostProcessToastDuration = (
+  feedback: PostProcessFeedback | null | undefined,
+  truncatedMessage: string | null | undefined,
+): number => (feedback?.kind === "failed" || truncatedMessage ? 8_000 : 5_000);
+
+const getPostProcessToastAction = (
+  feedback: PostProcessFeedback | null | undefined,
+): ToastAction | undefined => {
+  const action = feedback?.action;
+  return action ? getPostProcessFeedbackToastAction(action) : undefined;
+};
+
+// The native pill displays one toast at a time, so keep both outcomes and the
+// Fix action when fast-style metadata reports an unstyled tail.
+const getPostProcessToastOptions = (
+  feedback: PostProcessFeedback | null | undefined,
+  truncatedMessage: string | null | undefined,
+): PostProcessToastOptions | undefined => {
+  const message = [feedback?.message, truncatedMessage]
+    .filter((part): part is string => Boolean(part))
+    .join(" ");
+  if (!message) return undefined;
+  return {
+    message,
+    toastType: getPostProcessToastSeverity(feedback),
+    duration: getPostProcessToastDuration(feedback, truncatedMessage),
+    action: getPostProcessToastAction(feedback),
+  };
+};
+
+// A partial edit batch blocks insertion, so the row is the only copy of what
+// was said, and which sentence to use depends on whether a row was actually
+// written: persistence being allowed does not mean the write succeeded, and
+// an unconditional "saved in History" would point the user at a row that does
+// not exist. The action is dropped with the row: a toast that offers to open
+// History for a transcript that was never saved would be an offer to look at
+// nothing.
+const buildPartialEditFailureToast = (
+  postProcessMetadata: { postProcessEditFailed?: boolean | null },
+  historyEntryAvailable: boolean,
+): PostProcessToastOptions | undefined => {
+  if (!postProcessMetadata.postProcessEditFailed) {
+    return undefined;
   }
-  fireAndForgetToast(
-    ctx.input.showToast,
-    {
-      message: formatDroppedEndingMessage(kind, droppedChars),
-      toastType: "info",
-      duration: 8_000,
-    },
-    "fast-style truncation toast",
+  const message = historyEntryAvailable
+    ? getIntl().formatMessage({
+        defaultMessage:
+          "Styling was discarded because not all requested edits could be applied. The complete raw transcript is saved in History.",
+      })
+    : getIntl().formatMessage({
+        // Worded differently from the persisted copy on purpose: this
+        // project derives message ids from the message text, and both
+        // sentences answering the same event with the same opening words is
+        // an id collision the extractor refuses.
+        defaultMessage:
+          "Not all requested styling edits could be applied, so the styling was discarded. History is unavailable in this session, so the raw transcript was not saved.",
+      });
+  return {
+    message,
+    toastType: "error",
+    duration: 8_000,
+    action: historyEntryAvailable ? "open_transcriptions" : undefined,
+  };
+};
+
+// A fast-style result can report an unstyled tail, and a failed or degraded
+// run carries its own classified feedback. Both are read only after storage
+// tells us whether History can recover the original text.
+const buildOutcomeFeedbackToast = (
+  postProcessMetadata: PostProcessFeedbackMetadata & {
+    fastStyleTruncatedChars?: number | null;
+  },
+  historyEntryAvailable: boolean,
+): PostProcessToastOptions | undefined =>
+  getPostProcessToastOptions(
+    getPostProcessFeedback(postProcessMetadata, "dictation", {
+      canRecoverFromHistory: historyEntryAvailable,
+    }),
+    getFastStyleTruncationMessage(postProcessMetadata.fastStyleTruncatedChars, {
+      canRecoverFromHistory: historyEntryAvailable,
+      context: "dictation",
+    }),
   );
+
+const worseToastType = (
+  first: "info" | "error",
+  second: "info" | "error",
+): "info" | "error" =>
+  first === "error" || second === "error" ? "error" : "info";
+
+// The pill shows one toast at a time, so an edit failure and an outcome
+// report from the same run leave as one toast: shown back to back, the second
+// replaced the first mid-read and the user only ever saw one of the two.
+// A toast carries one action, and when both halves want one the edit
+// failure's open-History action wins: a partial edit batch blocked insertion,
+// so History is the only copy of the words and recovering them outranks the
+// settings shortcut, which stays reachable from the app itself.
+const combinePostProcessToasts = (
+  first: PostProcessToastOptions | undefined,
+  second: PostProcessToastOptions | undefined,
+): PostProcessToastOptions | undefined => {
+  if (!first) return second;
+  if (!second) return first;
+  return {
+    message: [first.message, second.message].join(" "),
+    toastType: worseToastType(first.toastType, second.toastType),
+    duration: Math.max(first.duration, second.duration),
+    action: first.action ?? second.action,
+  };
+};
+
+const notifyHistoryOutcome = (
+  ctx: StopPathHistoryContext,
+  historyEntryAvailable: boolean,
+): void => {
+  const toast = combinePostProcessToasts(
+    buildPartialEditFailureToast(
+      ctx.postProcessMetadata ?? {},
+      historyEntryAvailable,
+    ),
+    buildOutcomeFeedbackToast(
+      ctx.postProcessMetadata ?? {},
+      historyEntryAvailable,
+    ),
+  );
+  if (toast) {
+    fireAndForgetToast(ctx.input.showToast, toast, "post-process outcome toast");
+  }
 };
 
 const onHistoryStored = (
@@ -594,17 +685,11 @@ const onHistoryStored = (
       "automatic post-process edit retry",
     );
   }
-  if (ctx.postProcessEditFailed) {
-    notifyPostProcessEditFailed(ctx.input.showToast, saved);
-  }
-  notifyDroppedEnding(ctx, saved ? "history" : "not-saved");
+  notifyHistoryOutcome(ctx, saved);
 };
 
 const onHistoryMissed = (ctx: StopPathHistoryContext): void => {
-  if (ctx.postProcessEditFailed) {
-    notifyPostProcessEditFailed(ctx.input.showToast, ctx.owner === "review");
-  }
-  notifyDroppedEnding(ctx, ctx.owner === "review" ? "history" : "not-saved");
+  notifyHistoryOutcome(ctx, ctx.owner === "review");
 };
 
 const enqueueStopPathHistory = (
@@ -617,9 +702,9 @@ const enqueueStopPathHistory = (
     remoteStatus: HandleTranscriptResult["remoteStatus"];
     remoteDeviceId: HandleTranscriptResult["remoteDeviceId"];
   },
-): void => {
+): Promise<void> => {
   getLogger().verbose("Storing transcription");
-  enqueueTranscriptionHistory(
+  return enqueueTranscriptionHistory(
     ctx.input.storeTranscriptionFn,
     {
       audio: ctx.input.audio,
@@ -640,9 +725,12 @@ const enqueueStopPathHistory = (
     },
     "storing transcription history",
     { onStored: (stored) => onHistoryStored(ctx, stored) },
-  ).catch(() => {
-    onHistoryMissed(ctx);
-  });
+  ).then(
+    () => undefined,
+    () => {
+      onHistoryMissed(ctx);
+    },
+  );
 };
 
 const persistAllowedAtStop = (input: PostTranscriptInput): boolean =>
@@ -656,9 +744,7 @@ const makeStopPathHistoryContext = (
 ): StopPathHistoryContext => ({
   input,
   owner: historyOwner ?? "stop-path",
-  droppedChars: postProcessMetadata?.fastStyleTruncatedChars ?? undefined,
-  postProcessEditFailed:
-    postProcessMetadata?.postProcessEditFailed ?? undefined,
+  postProcessMetadata,
 });
 
 const shouldStoreOnStopPath = (
@@ -673,20 +759,19 @@ const shouldStoreOnStopPath = (
 const followConcurrentWrite = (
   ctx: StopPathHistoryContext,
   pendingPersistence: HandleTranscriptResult["pendingPersistence"],
-): boolean => {
+): Promise<void> | null => {
   if (ctx.owner !== "concurrent" || pendingPersistence === undefined) {
-    return false;
+    return null;
   }
-  pendingPersistence
+  return pendingPersistence
     .then((stored) => onHistoryStored(ctx, stored))
     .catch((error) => {
       getLogger().warning(`Concurrent history persist failed: ${error}`);
       onHistoryMissed(ctx);
     });
-  return true;
 };
 
-const writeOrMissStopPathHistory = (
+const writeOrMissStopPathHistory = async (
   ctx: StopPathHistoryContext,
   args: {
     shouldStore: boolean;
@@ -697,9 +782,9 @@ const writeOrMissStopPathHistory = (
     remoteStatus: HandleTranscriptResult["remoteStatus"];
     remoteDeviceId: HandleTranscriptResult["remoteDeviceId"];
   },
-): void => {
+): Promise<void> => {
   if (args.shouldStore && !isHistoryPersistQueueFull()) {
-    enqueueStopPathHistory(ctx, args);
+    await enqueueStopPathHistory(ctx, args);
     return;
   }
   if (args.shouldStore) {
@@ -708,7 +793,7 @@ const writeOrMissStopPathHistory = (
   onHistoryMissed(ctx);
 };
 
-const scheduleStopPathHistory = ({
+const scheduleStopPathHistory = async ({
   input,
   strategy,
   historyOwner,
@@ -730,7 +815,7 @@ const scheduleStopPathHistory = ({
   postProcessWarnings: HandleTranscriptResult["postProcessWarnings"];
   remoteStatus: HandleTranscriptResult["remoteStatus"];
   remoteDeviceId: HandleTranscriptResult["remoteDeviceId"];
-}): void => {
+}): Promise<void> => {
   // "stop-path" is the default: a strategy that never went through review
   // persisted nothing, so this is the only place the row gets written. A
   // review that reported an owner already wrote it, or is holding it on the
@@ -741,10 +826,11 @@ const scheduleStopPathHistory = ({
     historyOwner,
     postProcessMetadata,
   );
-  if (followConcurrentWrite(ctx, pendingPersistence)) {
-    return;
+  const concurrent = followConcurrentWrite(ctx, pendingPersistence);
+  if (concurrent) {
+    return concurrent;
   }
-  writeOrMissStopPathHistory(ctx, {
+  return writeOrMissStopPathHistory(ctx, {
     shouldStore: shouldStoreOnStopPath(strategy, ctx.owner, input),
     transcript,
     sanitizedTranscript,
@@ -755,33 +841,12 @@ const scheduleStopPathHistory = ({
   });
 };
 
-export const postProcessFinalizedTranscript = async (
+const createPostProcessStopResponse = async (
   input: PostTranscriptInput,
+  result: HandleTranscriptResult,
+  shouldSendIdle: boolean,
 ): Promise<RawStopResp> => {
   const { strategy } = input;
-  if (input.isAgentMode) {
-    await input.sendIdle();
-  }
-  getLogger().info("Post-processing transcript");
-  const result = await withTimeout(
-    strategy.handleTranscript({
-      rawTranscript: input.rawTranscript,
-      processedTranscript: input.transcribeResult.processedTranscript,
-      serverPostProcessMetadata: input.transcribeResult.postProcessMetadata,
-      toneId: input.toneId,
-      a11yInfo: input.a11yInfo,
-      currentApp: input.appTarget,
-      loadingToken: null,
-      audio: input.audio,
-      transcriptionMetadata: input.transcribeResult.metadata,
-      transcriptionWarnings: input.transcribeResult.warnings,
-      persistReviewedTranscript: input.persistReviewedTranscript,
-      persistTranscriptNow: input.persistTranscriptNow,
-      trace: input.trace ?? null,
-    }),
-    input.handleTranscriptTimeoutMs,
-    "Transcript post-processing",
-  );
   const transcript = result.transcript;
   const sanitizedTranscript = result.sanitizedTranscript;
   const postProcessMetadata = result.postProcessMetadata;
@@ -789,23 +854,129 @@ export const postProcessFinalizedTranscript = async (
   getLogger().verbose(
     `Post-processing complete: transcript=${transcript ? `${transcript.length} chars` : "empty"}, warnings=${postProcessWarnings.length}`,
   );
-  await input.sendIdle();
-  scheduleStopPathHistory({
-    input,
-    strategy,
-    historyOwner: result.historyOwner,
-    pendingPersistence: result.pendingPersistence,
-    transcript,
-    sanitizedTranscript,
-    postProcessMetadata,
-    postProcessWarnings,
-    remoteStatus: result.remoteStatus,
-    remoteDeviceId: result.remoteDeviceId,
-  });
-  input.refreshMember();
+  if (shouldSendIdle) {
+    await input.sendIdle();
+  }
+  // Persistence is handed back instead of awaited. The stop gate opens while
+  // the pill already shows idle. History still runs on the serial queue with
+  // a PCM snapshot; this function must not wait for the WAV write.
+  const persist = async (): Promise<void> => {
+    await scheduleStopPathHistory({
+      input,
+      strategy,
+      historyOwner: result.historyOwner,
+      pendingPersistence: result.pendingPersistence,
+      transcript,
+      sanitizedTranscript,
+      postProcessMetadata,
+      postProcessWarnings,
+      remoteStatus: result.remoteStatus,
+      remoteDeviceId: result.remoteDeviceId,
+    });
+    input.refreshMember();
+  };
   return {
     shouldContinue: result.shouldContinue,
+    persist,
   };
+};
+
+type TranscriptHandlingState = {
+  simulatedTypingStarted: boolean;
+  timedOut: boolean;
+};
+
+const startTranscriptHandling = (
+  input: PostTranscriptInput,
+  state: TranscriptHandlingState,
+): Promise<HandleTranscriptResult> =>
+  input.strategy.handleTranscript({
+    rawTranscript: input.rawTranscript,
+    processedTranscript: input.transcribeResult.processedTranscript,
+    serverPostProcessMetadata: input.transcribeResult.postProcessMetadata,
+    toneId: input.toneId,
+    a11yInfo: input.a11yInfo,
+    currentApp: input.appTarget,
+    loadingToken: null,
+    audio: input.audio,
+    transcriptionMetadata: input.transcribeResult.metadata,
+    transcriptionWarnings: input.transcribeResult.warnings,
+    persistReviewedTranscript: input.persistReviewedTranscript,
+    persistTranscriptNow: input.persistTranscriptNow,
+    onSimulatedTypingStart: () => {
+      state.simulatedTypingStarted = true;
+    },
+    trace: input.trace ?? null,
+  });
+
+const shouldDeferHistoryPersistence = (
+  input: PostTranscriptInput,
+  state: TranscriptHandlingState,
+): boolean =>
+  state.timedOut && state.simulatedTypingStarted && !input.isAgentMode;
+
+const createDeferredTranscriptResponse = (
+  input: PostTranscriptInput,
+  handleTranscriptPromise: Promise<HandleTranscriptResult>,
+): RawStopResp => ({
+  shouldContinue: false,
+  persist: async () => {
+    const result = await handleTranscriptPromise;
+    const completed = await createPostProcessStopResponse(input, result, false);
+    await completed.persist?.();
+  },
+});
+
+const recoverTranscriptTimeout = (
+  input: PostTranscriptInput,
+  state: TranscriptHandlingState,
+  handleTranscriptPromise: Promise<HandleTranscriptResult>,
+  error: unknown,
+): RawStopResp => {
+  if (!shouldDeferHistoryPersistence(input, state)) throw error;
+  getLogger().warning(
+    "Transcript handling timed out during simulated typing; History persistence will resume after delivery settles",
+  );
+  return createDeferredTranscriptResponse(input, handleTranscriptPromise);
+};
+
+const awaitTranscriptHandling = async (
+  input: PostTranscriptInput,
+  state: TranscriptHandlingState,
+  handleTranscriptPromise: Promise<HandleTranscriptResult>,
+): Promise<RawStopResp> => {
+  try {
+    const result = await withTimeout(
+      handleTranscriptPromise,
+      input.handleTranscriptTimeoutMs,
+      "Transcript post-processing",
+      () => {
+        state.timedOut = true;
+      },
+    );
+    return createPostProcessStopResponse(input, result, true);
+  } catch (error) {
+    return recoverTranscriptTimeout(
+      input,
+      state,
+      handleTranscriptPromise,
+      error,
+    );
+  }
+};
+
+export const postProcessFinalizedTranscript = async (
+  input: PostTranscriptInput,
+): Promise<RawStopResp> => {
+  if (input.isAgentMode) await input.sendIdle();
+  getLogger().info("Post-processing transcript");
+
+  const state: TranscriptHandlingState = {
+    simulatedTypingStarted: false,
+    timedOut: false,
+  };
+  const handleTranscriptPromise = startTranscriptHandling(input, state);
+  return awaitTranscriptHandling(input, state, handleTranscriptPromise);
 };
 
 type StopContext = {
@@ -1633,16 +1804,20 @@ export const DictationSideEffects = () => {
         currentAppToneId: null,
       }),
     );
+    let persistTranscript: (() => Promise<void>) | undefined;
     try {
-      const res = await stopRecordingRaw().catch((error) => {
-        getLogger().error(
-          `Error during stopRecording: ${error}${error instanceof Error ? ` [name=${error.name}, stack=${error.stack}]` : ""}`,
-        );
-        return {
-          shouldContinue: false,
-          abortMessage: String(error),
-        };
-      });
+      const res: RawStopResp = await stopRecordingRaw().catch(
+        (error): RawStopResp => {
+          getLogger().error(
+            `Error during stopRecording: ${error}${error instanceof Error ? ` [name=${error.name}, stack=${error.stack}]` : ""}`,
+          );
+          return {
+            shouldContinue: false,
+            abortMessage: String(error),
+          };
+        },
+      );
+      persistTranscript = res.persist;
 
       getLogger().info(
         `stopRecording result: shouldContinue=${res.shouldContinue}, abortMessage=${res.abortMessage ?? "none"}`,
@@ -1668,6 +1843,16 @@ export const DictationSideEffects = () => {
       // session cannot inherit this utterance's tone if start is raced.
       clearUtteranceToneSnapshots();
     }
+    // History persistence runs only now that the gate above is open. The pill
+    // has shown idle since before storage began, so a start clicked during a
+    // slow save must not sit behind the disk write and the DB insert. The
+    // closure handles its own outcomes; the catch only keeps an unexpected
+    // rejection from going unhandled.
+    persistTranscript?.().catch((error: unknown) => {
+      getLogger().error(
+        `Deferred transcription persistence failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    });
   }, [
     abortRecording,
     clearRecordingTimers,

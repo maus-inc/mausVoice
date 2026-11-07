@@ -438,7 +438,7 @@ The steps, in order:
 - Use short, direct sentences. Put every measurement, file list and research record in a collapsible block after the first paragraph.
 - Put deep detail in a dropdown block so the user can expand if needed, rather than forcing them to read a wall of jargon.
 - Keep review counts, polling logs, "still waiting" notes and CI wall text out of the description. The check run holds the logs.
-- Fold every record of a review round, a babysit poll, a fix batch, a triage disposition, a check run or a research pass into a collapsible block. No unfolded heading may carry one, and a round adds a row to the round log rather than a new section. That rule is what stops the description turning into an infinite scroll, and `pnpm run check:pr-body -- -` enforces it against the body on stdin.
+- Fold every record of a review round, a babysit poll, a fix batch, a triage disposition, a check run or a research pass into a collapsible block. No unfolded heading may carry one, and a round adds a row to the round log rather than a new section. That rule is what stops the description turning into an infinite scroll, and `pnpm run check:pr-body -- -` enforces it against the body on stdin. The check judges the authored body and stops at the footer line, because review bots append their own sections below that footer and the author does not control that text.
 - Attach in-session artifacts, plans and research notes, in full, inside a collapsible block, or link them by repository path. Do not paste a session transcript.
 
 End the description with the footer below.

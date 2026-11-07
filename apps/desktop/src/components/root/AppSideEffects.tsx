@@ -21,6 +21,10 @@ import {
 } from "../../actions/elevation.actions";
 import { loadPairedRemoteDevices } from "../../actions/paired-remote-device.actions";
 import {
+  openPostProcessingSettings,
+  openTranscriptionsHistory,
+} from "../../actions/settings.actions";
+import {
   refreshRemoteReceiverStatus,
   startRemoteReceiver,
 } from "../../actions/remote-receiver.actions";
@@ -72,7 +76,6 @@ import {
   ensurePillGeometry,
   setPillGeometry,
 } from "../../utils/composer.utils";
-import { getBrowserRouter } from "../../router";
 import { getIsDevMode, isWindows } from "../../utils/env.utils";
 import {
   ADD_TO_DICTIONARY_HOTKEY,
@@ -111,6 +114,7 @@ import { isLocalDataClearRequested } from "../../utils/local-data-write-gate";
 import {
   consumeSurfaceWindowFlag,
   surfaceMainWindow,
+  surfaceMainWindowDetached,
 } from "../../utils/window.utils";
 
 type StreamRet = Nullable<[Nullable<Member>, Nullable<User>]>;
@@ -893,34 +897,23 @@ export const AppSideEffects = () => {
 
   useToastAction((payload) => {
     if (payload.action === "open_agent_settings") {
-      // `surfaceMainWindow` swallows its own errors and coalesces concurrent
-      // calls, so there is nothing to await or recover from here: surfacing is a
-      // side effect, and the dialog state below must not wait on the IPC.
-      void surfaceMainWindow();
+      // Surfacing is a side effect: it swallows its own errors and coalesces
+      // concurrent calls, and the dialog state below must not wait on the IPC.
+      surfaceMainWindowDetached();
       produceAppState((draft) => {
         draft.settings.agentModeDialogOpen = true;
       });
+    } else if (payload.action === "open_post_processing_settings") {
+      surfaceMainWindowDetached();
+      openPostProcessingSettings();
     } else if (payload.action === "surface_window") {
-      void surfaceMainWindow();
+      surfaceMainWindowDetached();
     } else if (payload.action === "open_transcriptions") {
-      // `getBrowserRouter()` lazily builds the router and is documented as safe
-      // before Router mounts, so navigating does not depend on the window being
-      // up. `navigate` returns a promise that a synchronous try/catch cannot
-      // catch, so the rejection is handled on the promise itself.
-      void surfaceMainWindow();
-      try {
-        void getBrowserRouter()
-          .navigate("/dashboard/transcriptions")
-          .catch((error: unknown) => {
-            getLogger().warning(
-              `Failed to navigate to transcriptions: ${error instanceof Error ? error.message : String(error)}`,
-            );
-          });
-      } catch (error) {
-        getLogger().warning(
-          `Failed to build the router: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
+      surfaceMainWindowDetached();
+      // The shared action lazily imports the router and logs navigation
+      // failures, so it works before Router mounts and stays identical to the
+      // retranscription snackbar's History action.
+      openTranscriptionsHistory();
     }
   });
 
@@ -934,7 +927,7 @@ export const AppSideEffects = () => {
     // Fire-and-forget: the listener body is not async, so it never receives the
     // promise. The `.catch` is what keeps a failed check from becoming an
     // unhandled rejection.
-    void surfaceMainWindow();
+    surfaceMainWindowDetached();
     void openUpdateDialog().catch((error: unknown) => {
       getLogger().error(`Failed to open the update dialog: ${error}`);
     });

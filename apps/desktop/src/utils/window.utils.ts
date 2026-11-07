@@ -36,6 +36,18 @@ export const surfaceMainWindow = async (): Promise<void> => {
   await surfaceWindowPromise;
 };
 
+/**
+ * Fire-and-forget surfacing for synchronous listener bodies that must not
+ * wait on the IPC. `surfaceMainWindow` swallows and logs its own failures;
+ * the catch here keeps the intentionally detached promise explicit for the
+ * floating-promise linters, in one place instead of at every call site.
+ */
+export const surfaceMainWindowDetached = (): void => {
+  surfaceMainWindow().catch(() => {
+    // surfaceMainWindow reports its own errors
+  });
+};
+
 export const setTrayTitle = async (title: Nullable<string>): Promise<void> => {
   try {
     await invoke<void>("set_tray_title", { title });

@@ -76,6 +76,138 @@ describe("visible transcription loads", () => {
     expect(mocks.state.transcriptions.transcriptionIds).toEqual(["one", "two"]);
   });
 
+  it("keeps a session-only memory row listed across a repository refresh", async () => {
+    const sessionOnly = await import("./session-only-transcriptions");
+    const { refreshVisibleTranscriptions } =
+      await import("./visible-transcriptions");
+    const persisted = row("one");
+    const memory: Transcription = {
+      ...row("memory"),
+      createdAt: "2026-09-25T13:00:00.000Z",
+    };
+    mocks.state.transcriptionById = { memory };
+    mocks.state.transcriptions.transcriptionIds = ["memory"];
+    sessionOnly.markTranscriptionSessionOnly("memory");
+    mocks.list.mockResolvedValue([persisted]);
+
+    await refreshVisibleTranscriptions(() => true);
+
+    // The repository never sees the incognito memory row, so a plain
+    // replacement would drop it from History mid-session. The newer memory
+    // row keeps its place above the older persisted row.
+    expect(mocks.state.transcriptions.transcriptionIds).toEqual([
+      "memory",
+      "one",
+    ]);
+    expect(mocks.state.transcriptionById.memory).toBeDefined();
+  });
+
+  it("orders an older session-only row below newer persisted rows", async () => {
+    const sessionOnly = await import("./session-only-transcriptions");
+    const { refreshVisibleTranscriptions } =
+      await import("./visible-transcriptions");
+    const newer: Transcription = {
+      ...row("newer"),
+      createdAt: "2026-09-25T14:00:00.000Z",
+    };
+    const older = row("older");
+    const memory: Transcription = {
+      ...row("memory"),
+      createdAt: "2026-09-25T13:00:00.000Z",
+    };
+    mocks.state.transcriptionById = { memory };
+    sessionOnly.markTranscriptionSessionOnly("memory");
+    mocks.list.mockResolvedValue([newer, older]);
+
+    await refreshVisibleTranscriptions(() => true);
+
+    expect(mocks.state.transcriptions.transcriptionIds).toEqual([
+      "newer",
+      "memory",
+      "older",
+    ]);
+  });
+
+  it("drops a session-only row once its record leaves the state", async () => {
+    const sessionOnly = await import("./session-only-transcriptions");
+    const pending = await import("./pending-transcription-delete");
+    const { refreshVisibleTranscriptions } =
+      await import("./visible-transcriptions");
+    const memory = row("memory");
+    mocks.state.transcriptionById = { memory };
+    sessionOnly.markTranscriptionSessionOnly("memory");
+    mocks.list.mockResolvedValue([]);
+
+    await refreshVisibleTranscriptions(() => true);
+    expect(mocks.state.transcriptions.transcriptionIds).toEqual(["memory"]);
+
+    // A delete removes the record from the state; the registry id alone must
+    // not keep a deleted row listed.
+    pending.scheduleTranscriptionDelete(memory, 5000);
+    await refreshVisibleTranscriptions(() => true);
+    expect(mocks.state.transcriptions.transcriptionIds).toEqual([]);
+  });
+
+  it("unmarks a session-only id when its pending delete commits", async () => {
+    const sessionOnly = await import("./session-only-transcriptions");
+    const pending = await import("./pending-transcription-delete");
+    const memory = row("memory");
+    mocks.state.transcriptionById = { memory };
+    sessionOnly.markTranscriptionSessionOnly("memory");
+
+    pending.scheduleTranscriptionDelete(memory, 5000);
+    // Still inside the undo window the id must survive for a possible undo.
+    expect(sessionOnly.getSessionOnlyTranscriptionIds()).toEqual(["memory"]);
+
+    await vi.advanceTimersByTimeAsync(5000);
+
+    // The commit ran the repository delete and removed the record, so the
+    // registry lets the id go at the source: a History page that stays
+    // mounted never runs a refresh to prune it.
+    expect(mocks.remove).toHaveBeenCalledWith("memory", expect.any(Object));
+    expect(sessionOnly.getSessionOnlyTranscriptionIds()).toEqual([]);
+  });
+
+  it("prunes a session-only id whose record left the state", async () => {
+    const sessionOnly = await import("./session-only-transcriptions");
+    const { refreshVisibleTranscriptions } =
+      await import("./visible-transcriptions");
+    sessionOnly.markTranscriptionSessionOnly("gone");
+    mocks.list.mockResolvedValue([row("one")]);
+
+    await refreshVisibleTranscriptions(() => true);
+
+    // The record is not in the state and no delete is pending, so the stale
+    // id is unmarked instead of being rescanned on every later refresh.
+    expect(sessionOnly.getSessionOnlyTranscriptionIds()).toEqual([]);
+    expect(mocks.state.transcriptions.transcriptionIds).toEqual(["one"]);
+  });
+
+  it("keeps a session-only id while its delete is still undoable", async () => {
+    const sessionOnly = await import("./session-only-transcriptions");
+    const pending = await import("./pending-transcription-delete");
+    const { refreshVisibleTranscriptions } =
+      await import("./visible-transcriptions");
+    const memory = row("memory");
+    mocks.state.transcriptionById = { memory };
+    sessionOnly.markTranscriptionSessionOnly("memory");
+    mocks.list.mockResolvedValue([]);
+
+    await refreshVisibleTranscriptions(() => true);
+    expect(mocks.state.transcriptions.transcriptionIds).toEqual(["memory"]);
+
+    pending.scheduleTranscriptionDelete(memory, 5000);
+    await refreshVisibleTranscriptions(() => true);
+    // Pending delete: the registry keeps the id so the undo can restore the
+    // row, while the list itself hides it like any pending deletion.
+    expect(sessionOnly.getSessionOnlyTranscriptionIds()).toEqual(["memory"]);
+    expect(mocks.state.transcriptions.transcriptionIds).toEqual([]);
+
+    expect(pending.undoTranscriptionDelete("memory")).toBe(true);
+    await refreshVisibleTranscriptions(() => true);
+    expect(mocks.state.transcriptions.transcriptionIds).toEqual(["memory"]);
+  });
+
   it("preserves a newer recovery result when an older list returns", async () => {
     const { refreshVisibleTranscriptions } =
       await import("./visible-transcriptions");
