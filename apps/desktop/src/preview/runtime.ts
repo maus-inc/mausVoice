@@ -132,10 +132,7 @@ const asRecord = (value: unknown): WireRecord => value as WireRecord;
 const isDenseStringArray = (value: unknown): value is string[] => {
   if (!Array.isArray(value)) return false;
   for (let index = 0; index < value.length; index += 1) {
-    if (
-      !Object.prototype.hasOwnProperty.call(value, index) ||
-      typeof value[index] !== "string"
-    ) {
+    if (!Object.hasOwn(value, index) || typeof value[index] !== "string") {
       return false;
     }
   }

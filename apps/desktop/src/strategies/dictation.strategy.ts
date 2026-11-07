@@ -26,6 +26,7 @@ import {
   drainDictationBacklog,
   hasDictationBacklog,
   incrementDictationBacklogNonce,
+  resolveInsertionMethod,
   type RouteTranscriptOutputHooks,
 } from "../utils/output-routing.utils";
 import { sanitizeTranscriptText } from "../utils/sanitize-transcript.utils";
@@ -503,12 +504,12 @@ export class DictationStrategy extends BaseStrategy {
         remoteDeviceId = this.getActiveRemoteTargetDeviceId();
         const deliveryState = getAppState();
         const deliveryTarget = args.currentApp
-          ? (deliveryState.appTargetById[args.currentApp.id] ?? args.currentApp)
+          ? (deliveryState.appTargetById[args.currentApp.id] ?? null)
           : null;
-        const insertionMethod =
-          deliveryTarget?.insertionMethod ??
-          getMyUserPreferences(deliveryState)?.insertionMethod ??
-          "paste";
+        const insertionMethod = resolveInsertionMethod(
+          deliveryTarget,
+          getMyUserPreferences(deliveryState),
+        );
         // Simulated typing can take the length of the transcript. Keep its
         // History write on the stop path so Incognito is checked after delivery
         // settles; otherwise a mode change during typing races an already-started

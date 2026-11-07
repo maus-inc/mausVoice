@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   insertLocalTranscriptOutputViaTyping,
+  resolveInsertionMethod,
   routeTranscriptOutput,
 } from "./output-routing.utils";
 
@@ -53,6 +54,21 @@ vi.mock("../i18n/intl", () => ({
       descriptor.defaultMessage,
   }),
 }));
+
+describe("resolveInsertionMethod", () => {
+  it("prefers app override, then user preference, then paste", () => {
+    expect(
+      resolveInsertionMethod(
+        { insertionMethod: "type" },
+        { insertionMethod: "paste" },
+      ),
+    ).toBe("type");
+    expect(resolveInsertionMethod(null, { insertionMethod: "type" })).toBe(
+      "type",
+    );
+    expect(resolveInsertionMethod(null, null)).toBe("paste");
+  });
+});
 
 describe("routeTranscriptOutput hands-free delay", () => {
   const baseState = {

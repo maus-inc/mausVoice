@@ -10,6 +10,7 @@ import { DictationStrategy } from "./dictation.strategy";
 const {
   invokeMock,
   routeTranscriptOutputMock,
+  resolveInsertionMethodMock,
   appendToDictationBacklogMock,
   clearDictationBacklogMock,
   drainDictationBacklogMock,
@@ -32,6 +33,12 @@ const {
         deliveredText: args.text.length > 0 ? args.text : null,
       }),
   ),
+  resolveInsertionMethodMock: vi.fn(
+    (
+      currentApp?: { insertionMethod?: string | null } | null,
+      prefs?: { insertionMethod?: string | null } | null,
+    ) => currentApp?.insertionMethod ?? prefs?.insertionMethod ?? "paste",
+  ),
   appendToDictationBacklogMock: vi.fn(),
   clearDictationBacklogMock: vi.fn(),
   drainDictationBacklogMock: vi.fn(async () => ({
@@ -49,6 +56,7 @@ vi.mock("@tauri-apps/api/core", async (importOriginal) => {
 
 vi.mock("../utils/output-routing.utils", () => ({
   routeTranscriptOutput: routeTranscriptOutputMock,
+  resolveInsertionMethod: resolveInsertionMethodMock,
   appendToDictationBacklog: appendToDictationBacklogMock,
   clearDictationBacklog: clearDictationBacklogMock,
   drainDictationBacklog: drainDictationBacklogMock,
@@ -529,6 +537,47 @@ describe("DictationStrategy backlog lifecycle", () => {
       await expect(result.pendingPersistence).resolves.toMatchObject({
         wordCount: 2,
       });
+    });
+
+    it("uses preferences when the current app has no registered delivery target", async () => {
+      const state = getAppState();
+      setAppState(
+        {
+          userPrefs: {
+            ...(state.userPrefs ?? createDefaultPreferences()),
+            insertionMethod: "type",
+          },
+        },
+        false,
+      );
+      const persistTranscriptNow = vi.fn().mockResolvedValue({
+        transcription: { id: "row-1" },
+        wordCount: 2,
+      });
+
+      const result = await new DictationStrategy().handleTranscript(
+        createHandleTranscriptParams({
+          processedTranscript: "clean transcript",
+          currentApp: {
+            id: "missing-app",
+            name: "Stale app target",
+            createdAt: "2026-01-01T00:00:00.000Z",
+            toneId: null,
+            iconPath: null,
+            pasteKeybind: null,
+            insertionMethod: "paste",
+            typingSpeedMs: null,
+          },
+          persistTranscriptNow,
+        }),
+      );
+
+      expect(resolveInsertionMethodMock).toHaveBeenCalledWith(
+        null,
+        expect.objectContaining({ insertionMethod: "type" }),
+      );
+      expect(persistTranscriptNow).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ historyOwner: "stop-path" });
     });
 
     it("defers History persistence for simulated typing so a late Incognito change takes effect", async () => {

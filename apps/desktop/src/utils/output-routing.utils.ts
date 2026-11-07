@@ -151,10 +151,14 @@ export const insertLocalTranscriptOutputViaTyping = async (
   }
 };
 
+/** Resolve app override, user preference, then paste for delivery and persistence. */
+export const resolveInsertionMethod = (
+  currentApp: { insertionMethod?: string | null } | null | undefined,
+  prefs: { insertionMethod?: string | null } | null | undefined,
+): string => currentApp?.insertionMethod ?? prefs?.insertionMethod ?? "paste";
+
 const getInsertionMethod = (context: OutputContext): string =>
-  context.currentApp?.insertionMethod ??
-  context.prefs?.insertionMethod ??
-  "paste";
+  resolveInsertionMethod(context.currentApp, context.prefs);
 
 const runWithSimulatedTypingHooks = async <T>(
   context: OutputContext,
