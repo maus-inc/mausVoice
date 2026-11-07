@@ -217,6 +217,7 @@
   "could_not_reach_the_release_history": "无法访问版本历史。",
   "could_not_resume_dictation": "无法恢复听写",
   "could_not_save_app_settings_please_try_again": "无法保存应用设置。请重试。",
+  "could_not_save_that_dictation_to_history_because_earlier_rec": "无法将该段听写保存到历史记录，因为更早的录音仍在写入。",
   "could_not_save_the_api_key": "无法保存 API 密钥。",
   "could_not_save_the_edited_transcript_it_remains_on_the_pill": "无法保存编辑后的转录内容。内容会保留在胶囊窗口中，方便你重试。",
   "could_not_save_your_profile_please_try_again": "无法保存你的个人资料。请重试。",

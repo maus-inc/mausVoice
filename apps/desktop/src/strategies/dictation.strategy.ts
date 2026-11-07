@@ -17,6 +17,7 @@ import type {
   HistoryOwner,
   StrategyValidationError,
 } from "../types/strategy.types";
+import { isHistoryPersistQueueFull } from "../utils/history-persist.utils";
 import { getLogger } from "../utils/log.utils";
 import { sendPillStageText } from "../utils/overlay.utils";
 import {
@@ -520,7 +521,8 @@ export class DictationStrategy extends BaseStrategy {
           args.persistTranscriptNow !== undefined &&
           getMyUserPreferences(deliveryState)?.reviewBeforeInsert !== true &&
           remoteDeviceId === null &&
-          canPersistBeforeDelivery;
+          canPersistBeforeDelivery &&
+          !isHistoryPersistQueueFull();
         if (concurrentPersistence && args.persistTranscriptNow) {
           pendingPersistence = args
             .persistTranscriptNow({

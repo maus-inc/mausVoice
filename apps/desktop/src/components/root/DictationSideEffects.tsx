@@ -3,6 +3,7 @@ import { type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { AppTarget } from "@maus-inc/types";
 import { delayed } from "@maus-inc/utilities";
+import dayjs from "dayjs";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useIntl } from "react-intl";
 import {
@@ -34,6 +35,7 @@ import {
 } from "../../actions/tool.actions";
 import {
   storeTranscription,
+  type StoreTranscriptionInput,
   type StoreTranscriptionOutput,
 } from "../../actions/transcribe.actions";
 import { scheduleAutomaticPostProcessEditRetry } from "../../actions/transcriptions.actions";
@@ -62,7 +64,6 @@ import { DictationStrategy } from "../../strategies/dictation.strategy";
 import { TextFieldInfo } from "../../types/accessibility.types";
 import type {
   HandleTranscriptResult,
-  HistoryOwner,
   ReviewedTranscriptPersistenceInput,
 } from "../../types/strategy.types";
 import {
@@ -120,6 +121,12 @@ import {
   resolveNewlyPressedDictationArrow,
 } from "../../utils/dictation-style.utils";
 import { getEffectiveStylingMode } from "../../utils/feature.utils";
+import {
+  enqueueHistoryPersist,
+  isHistoryPersistQueueFull,
+  snapshotStopRecordingAudio,
+} from "../../utils/history-persist.utils";
+import { isPersistenceAllowed } from "../../utils/incognito.utils";
 import { createId } from "../../utils/id.utils";
 import {
   AGENT_DICTATE_HOTKEY,
@@ -133,6 +140,7 @@ import {
   SWITCH_WRITING_STYLE_FORWARD_HOTKEY,
 } from "../../utils/keyboard.utils";
 import { getLogger } from "../../utils/log.utils";
+import { logOnRejection } from "../../utils/promise.utils";
 import {
   getCancelTranscriptPromptMessage,
   getTranscriptionAudioDisclosure,
@@ -199,6 +207,17 @@ type RawStopResp = {
   persist?: () => Promise<void>;
 };
 
+type DictationToastOptions = {
+  message: string;
+  toastType: "info" | "error";
+  duration?: number;
+  action?: ToastAction;
+};
+
+type ShowDictationToast = (
+  options: DictationToastOptions,
+) => Promise<void> | void;
+
 export type HandleEmptyResultInput = {
   audio: StopRecordingResponse;
   transcribeResult: TranscriptionSessionResult | undefined;
@@ -207,75 +226,71 @@ export type HandleEmptyResultInput = {
   audioIntakeSubscriptionFailed?: boolean;
   strategy: Pick<BaseStrategy, "shouldStoreTranscript">;
   formatMessage: (descriptor: { defaultMessage: string }) => string;
-  showToast: (options: {
-    message: string;
-    toastType: "info" | "error";
-    duration?: number;
-  }) => Promise<void> | void;
+  showToast: ShowDictationToast;
   storeTranscriptionFn: typeof storeTranscription;
   refreshMember: () => void;
+  /** Clears Transcribing before the background History write is scheduled. */
+  sendIdle?: () => Promise<void>;
+  createdAt?: string;
+  persistAllowedAtCapture?: boolean;
 };
 
-export const handleEmptyTranscriptionResult = async (
-  input: HandleEmptyResultInput,
-): Promise<{ handled: boolean }> => {
-  const {
-    audio,
-    transcribeResult,
-    sessionKind,
-    audioIntakeSubscriptionFailed = false,
-    strategy,
-    formatMessage,
-    showToast,
-  } = input;
-  const rawTranscript = transcribeResult?.rawTranscript;
-  const transcriptionWarnings = transcribeResult?.warnings ?? [];
-  if (rawTranscript) {
-    return { handled: false };
-  }
-  // A failed intake subscription costs a live-streaming provider its whole
-  // transcript, so only that kind earns the recovery warning. Batch/after-stop
-  // and local sessions still transcribe the captured recording, so a warning
-  // here would mark their honest empty results as live-provider failures.
-  const recoveryWarnings = requiresLiveIntakeRecovery(
-    sessionKind,
-    audioIntakeSubscriptionFailed,
-  )
-    ? [
-        ...transcriptionWarnings,
-        "Live audio could not be sent to the transcription provider because the audio-chunk subscription failed.",
-      ]
-    : transcriptionWarnings;
-  if (recoveryWarnings.length === 0) {
-    return { handled: false };
-  }
-
-  getLogger().warning(
-    `stopRecordingRaw: empty rawTranscript with ${recoveryWarnings.length} warning(s); preserving recording`,
-  );
-  let recordingAudioSaved = false;
-  if (strategy.shouldStoreTranscript()) {
-    try {
-      const stored = await input.storeTranscriptionFn({
+const enqueueTranscriptionHistory = (
+  store: typeof storeTranscription,
+  input: StoreTranscriptionInput,
+  context: string,
+  options?: {
+    onStored?: (stored: StoreTranscriptionOutput) => void;
+  },
+): Promise<StoreTranscriptionOutput> => {
+  // Copy PCM and stamp createdAt now, not when the serial job starts. A later
+  // take can reuse or mutate the stop-recording buffer while this job waits.
+  const audio = snapshotStopRecordingAudio(input.audio);
+  const createdAt = input.createdAt ?? dayjs().toISOString();
+  const persistAllowedAtCapture =
+    input.persistAllowedAtCapture ?? isPersistenceAllowed();
+  return enqueueHistoryPersist(
+    async () => {
+      // Do not race this store with a timeout. persistTail must wait until the
+      // native WAV write settles, or the next job overlaps store_transcription_audio.
+      const stored = await store({
+        ...input,
         audio,
-        rawTranscript: null,
-        sanitizedTranscript: null,
-        transcript: null,
-        transcriptionMetadata: transcribeResult?.metadata ?? {},
-        postProcessMetadata: {},
-        warnings: recoveryWarnings,
-        remoteStatus: null,
-        remoteDeviceId: null,
+        createdAt,
+        persistAllowedAtCapture,
       });
-      recordingAudioSaved = stored.transcription?.audio != null;
-    } catch (error) {
-      getLogger().warning(
-        `Could not preserve the failed recording: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-  }
+      try {
+        options?.onStored?.(stored);
+      } catch (error) {
+        getLogger().warning(
+          `History persist callback failed after a durable write: ${error}`,
+        );
+      }
+      return stored;
+    },
+    context,
+    { awaited: true },
+  );
+};
 
-  const failureMessage = recordingAudioSaved
+const fireAndForgetToast = (
+  show: ShowDictationToast,
+  options: DictationToastOptions,
+  context: string,
+): void => {
+  try {
+    logOnRejection(Promise.resolve(show(options)), context);
+  } catch (error) {
+    getLogger().warning(`${context} threw: ${error}`);
+  }
+};
+
+const toastEmptyTranscriptionOutcome = (
+  showToast: ShowDictationToast,
+  formatMessage: HandleEmptyResultInput["formatMessage"],
+  recordingAudioSaved: boolean,
+): void => {
+  const message = recordingAudioSaved
     ? formatMessage({
         defaultMessage:
           "Transcription failed. Your recording is saved so you can retry.",
@@ -284,12 +299,121 @@ export const handleEmptyTranscriptionResult = async (
         defaultMessage:
           "Transcription failed. The recording audio was not saved.",
       });
-  await showToast({
-    message: failureMessage,
-    toastType: "error",
-    duration: 8_000,
-  });
+  fireAndForgetToast(
+    showToast,
+    { message, toastType: "error", duration: 8_000 },
+    "empty-transcription recovery toast",
+  );
+};
 
+const notifyHistoryQueueFull = (showToast: ShowDictationToast): void => {
+  getLogger().warning("History persist queue full; skipping stop-path save");
+  fireAndForgetToast(
+    showToast,
+    {
+      message: getIntl().formatMessage({
+        defaultMessage:
+          "Could not save that dictation to History because earlier recordings are still writing.",
+      }),
+      toastType: "error",
+      duration: 8_000,
+    },
+    "history queue-full toast",
+  );
+};
+
+const liveIntakeRecoveryWarning =
+  "Live audio could not be sent to the transcription provider because the audio-chunk subscription failed.";
+
+const recoveryWarningsForEmptyResult = (
+  sessionKind: TranscriptionSessionKind,
+  audioIntakeSubscriptionFailed: boolean,
+  transcriptionWarnings: string[],
+): string[] => {
+  if (!requiresLiveIntakeRecovery(sessionKind, audioIntakeSubscriptionFailed)) {
+    return transcriptionWarnings;
+  }
+  return [...transcriptionWarnings, liveIntakeRecoveryWarning];
+};
+
+const queueFailedTranscriptionHistory = (
+  input: HandleEmptyResultInput,
+  recoveryWarnings: string[],
+): void => {
+  const persistAllowedAtCapture =
+    input.persistAllowedAtCapture ?? isPersistenceAllowed();
+  const canPersist =
+    input.strategy.shouldStoreTranscript() &&
+    persistAllowedAtCapture &&
+    isPersistenceAllowed();
+  if (!canPersist || isHistoryPersistQueueFull()) {
+    toastEmptyTranscriptionOutcome(input.showToast, input.formatMessage, false);
+    return;
+  }
+  enqueueTranscriptionHistory(
+    input.storeTranscriptionFn,
+    {
+      audio: input.audio,
+      rawTranscript: null,
+      sanitizedTranscript: null,
+      transcript: null,
+      transcriptionMetadata: input.transcribeResult?.metadata ?? {},
+      postProcessMetadata: {},
+      warnings: recoveryWarnings,
+      remoteStatus: null,
+      remoteDeviceId: null,
+      createdAt: input.createdAt,
+      persistAllowedAtCapture,
+    },
+    "storing failed-transcription history",
+    {
+      onStored: (stored) => {
+        toastEmptyTranscriptionOutcome(
+          input.showToast,
+          input.formatMessage,
+          stored.transcription?.audio != null,
+        );
+      },
+    },
+  ).catch((error) => {
+    getLogger().warning(
+      `Could not preserve the failed recording: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    toastEmptyTranscriptionOutcome(input.showToast, input.formatMessage, false);
+  });
+};
+
+export const handleEmptyTranscriptionResult = async (
+  input: HandleEmptyResultInput,
+): Promise<{ handled: boolean }> => {
+  const {
+    transcribeResult,
+    sessionKind,
+    audioIntakeSubscriptionFailed = false,
+  } = input;
+  if (transcribeResult?.rawTranscript) {
+    return { handled: false };
+  }
+  // A failed intake subscription costs a live-streaming provider its whole
+  // transcript, so only that kind earns the recovery warning. Batch/after-stop
+  // and local sessions still transcribe the captured recording, so a warning
+  // here would mark their honest empty results as live-provider failures.
+  const recoveryWarnings = recoveryWarningsForEmptyResult(
+    sessionKind,
+    audioIntakeSubscriptionFailed,
+    transcribeResult?.warnings ?? [],
+  );
+  if (recoveryWarnings.length === 0) {
+    return { handled: false };
+  }
+
+  getLogger().warning(
+    `stopRecordingRaw: empty rawTranscript with ${recoveryWarnings.length} warning(s); preserving recording`,
+  );
+  if (input.sendIdle) {
+    await input.sendIdle();
+  }
+  queueFailedTranscriptionHistory(input, recoveryWarnings);
   input.refreshMember();
   return { handled: true };
 };
@@ -376,7 +500,7 @@ export type PostTranscriptInput = {
   storeTranscriptionFn: typeof storeTranscription;
   refreshMember: () => void;
   /** Informational surface for warnings the user has to know about mid-flow. */
-  showToast: (options: PostProcessToastOptions) => Promise<void> | void;
+  showToast: ShowDictationToast;
   /** Review-before-insert persistence hook; forwarded to the strategy. */
   persistReviewedTranscript?: (
     input: ReviewedTranscriptPersistenceInput,
@@ -390,6 +514,15 @@ export type PostTranscriptInput = {
   ) => Promise<StoreTranscriptionOutput>;
   /** Pipeline timing marks threaded through to History storage. */
   trace?: PipelineTrace | null;
+  /** Utterance end time. History rows must not stamp the delayed write. */
+  createdAt?: string;
+  persistAllowedAtCapture?: boolean;
+};
+
+type StopPathHistoryContext = {
+  input: PostTranscriptInput;
+  owner: NonNullable<HandleTranscriptResult["historyOwner"]>;
+  postProcessMetadata: HandleTranscriptResult["postProcessMetadata"];
 };
 
 /** The pill toast shape the post-processing feedback is surfaced with. */
@@ -515,17 +648,201 @@ const combinePostProcessToasts = (
   };
 };
 
-// "stop-path" is the default: a strategy that never went through review
-// persisted nothing, so the stop path is the only place the row gets written.
-// A review that reported an owner already wrote it, or is holding it on the
-// pill after a failure it told the user to retry from. Writing here in that
-// last case would contradict the toast and duplicate the row on the retry.
+const notifyHistoryOutcome = (
+  ctx: StopPathHistoryContext,
+  historyEntryAvailable: boolean,
+): void => {
+  const toast = combinePostProcessToasts(
+    buildPartialEditFailureToast(
+      ctx.postProcessMetadata ?? {},
+      historyEntryAvailable,
+    ),
+    buildOutcomeFeedbackToast(
+      ctx.postProcessMetadata ?? {},
+      historyEntryAvailable,
+    ),
+  );
+  if (toast) {
+    fireAndForgetToast(
+      ctx.input.showToast,
+      toast,
+      "post-process outcome toast",
+    );
+  }
+};
+
+const onHistoryStored = (
+  ctx: StopPathHistoryContext,
+  stored: StoreTranscriptionOutput,
+): void => {
+  const saved = Boolean(stored.transcription);
+  if (saved && stored.transcription) {
+    logOnRejection(
+      Promise.resolve(
+        scheduleAutomaticPostProcessEditRetry({
+          transcription: stored.transcription,
+          toneId: ctx.input.toneId,
+          languageCode: ctx.input.languageCode,
+        }),
+      ),
+      "automatic post-process edit retry",
+    );
+  }
+  notifyHistoryOutcome(ctx, saved);
+};
+
+const onHistoryMissed = (ctx: StopPathHistoryContext): void => {
+  notifyHistoryOutcome(ctx, ctx.owner === "review");
+};
+
+const enqueueStopPathHistory = (
+  ctx: StopPathHistoryContext,
+  args: {
+    transcript: HandleTranscriptResult["transcript"];
+    sanitizedTranscript: HandleTranscriptResult["sanitizedTranscript"];
+    postProcessMetadata: HandleTranscriptResult["postProcessMetadata"];
+    postProcessWarnings: HandleTranscriptResult["postProcessWarnings"];
+    remoteStatus: HandleTranscriptResult["remoteStatus"];
+    remoteDeviceId: HandleTranscriptResult["remoteDeviceId"];
+  },
+): Promise<void> => {
+  getLogger().verbose("Storing transcription");
+  return enqueueTranscriptionHistory(
+    ctx.input.storeTranscriptionFn,
+    {
+      audio: ctx.input.audio,
+      rawTranscript: ctx.input.rawTranscript ?? null,
+      sanitizedTranscript: args.sanitizedTranscript,
+      transcript: args.transcript,
+      transcriptionMetadata: ctx.input.transcribeResult.metadata,
+      postProcessMetadata: args.postProcessMetadata,
+      warnings: [
+        ...ctx.input.transcribeResult.warnings,
+        ...args.postProcessWarnings,
+      ],
+      remoteStatus: args.remoteStatus,
+      remoteDeviceId: args.remoteDeviceId,
+      trace: ctx.input.trace ?? null,
+      createdAt: ctx.input.createdAt,
+      persistAllowedAtCapture: ctx.input.persistAllowedAtCapture,
+    },
+    "storing transcription history",
+    { onStored: (stored) => onHistoryStored(ctx, stored) },
+  ).then(
+    () => undefined,
+    () => {
+      onHistoryMissed(ctx);
+    },
+  );
+};
+
+const persistAllowedAtStop = (input: PostTranscriptInput): boolean =>
+  (input.persistAllowedAtCapture ?? isPersistenceAllowed()) &&
+  isPersistenceAllowed();
+
+const makeStopPathHistoryContext = (
+  input: PostTranscriptInput,
+  historyOwner: HandleTranscriptResult["historyOwner"],
+  postProcessMetadata: HandleTranscriptResult["postProcessMetadata"],
+): StopPathHistoryContext => ({
+  input,
+  owner: historyOwner ?? "stop-path",
+  postProcessMetadata,
+});
+
 const shouldStoreOnStopPath = (
-  strategy: Pick<BaseStrategy, "shouldStoreTranscript">,
-  historyOwner: HistoryOwner | undefined,
+  strategy: PostTranscriptInput["strategy"],
+  owner: StopPathHistoryContext["owner"],
+  input: PostTranscriptInput,
 ): boolean =>
   strategy.shouldStoreTranscript() &&
-  (historyOwner ?? "stop-path") === "stop-path";
+  owner === "stop-path" &&
+  persistAllowedAtStop(input);
+
+const followConcurrentWrite = (
+  ctx: StopPathHistoryContext,
+  pendingPersistence: HandleTranscriptResult["pendingPersistence"],
+): Promise<void> | null => {
+  if (ctx.owner !== "concurrent" || pendingPersistence === undefined) {
+    return null;
+  }
+  return pendingPersistence
+    .then((stored) => onHistoryStored(ctx, stored))
+    .catch((error) => {
+      getLogger().warning(`Concurrent history persist failed: ${error}`);
+      onHistoryMissed(ctx);
+    });
+};
+
+const writeOrMissStopPathHistory = async (
+  ctx: StopPathHistoryContext,
+  args: {
+    shouldStore: boolean;
+    transcript: HandleTranscriptResult["transcript"];
+    sanitizedTranscript: HandleTranscriptResult["sanitizedTranscript"];
+    postProcessMetadata: HandleTranscriptResult["postProcessMetadata"];
+    postProcessWarnings: HandleTranscriptResult["postProcessWarnings"];
+    remoteStatus: HandleTranscriptResult["remoteStatus"];
+    remoteDeviceId: HandleTranscriptResult["remoteDeviceId"];
+  },
+): Promise<void> => {
+  if (args.shouldStore && !isHistoryPersistQueueFull()) {
+    await enqueueStopPathHistory(ctx, args);
+    return;
+  }
+  if (args.shouldStore) {
+    notifyHistoryQueueFull(ctx.input.showToast);
+  }
+  onHistoryMissed(ctx);
+};
+
+const scheduleStopPathHistory = async ({
+  input,
+  strategy,
+  historyOwner,
+  pendingPersistence,
+  transcript,
+  sanitizedTranscript,
+  postProcessMetadata,
+  postProcessWarnings,
+  remoteStatus,
+  remoteDeviceId,
+}: {
+  input: PostTranscriptInput;
+  strategy: PostTranscriptInput["strategy"];
+  historyOwner: HandleTranscriptResult["historyOwner"];
+  pendingPersistence: HandleTranscriptResult["pendingPersistence"];
+  transcript: HandleTranscriptResult["transcript"];
+  sanitizedTranscript: HandleTranscriptResult["sanitizedTranscript"];
+  postProcessMetadata: HandleTranscriptResult["postProcessMetadata"];
+  postProcessWarnings: HandleTranscriptResult["postProcessWarnings"];
+  remoteStatus: HandleTranscriptResult["remoteStatus"];
+  remoteDeviceId: HandleTranscriptResult["remoteDeviceId"];
+}): Promise<void> => {
+  // "stop-path" is the default: a strategy that never went through review
+  // persisted nothing, so this is the only place the row gets written. A
+  // review that reported an owner already wrote it, or is holding it on the
+  // pill after a failure it told the user to retry from. Writing here in that
+  // last case would contradict the toast and duplicate the row on the retry.
+  const ctx = makeStopPathHistoryContext(
+    input,
+    historyOwner,
+    postProcessMetadata,
+  );
+  const concurrent = followConcurrentWrite(ctx, pendingPersistence);
+  if (concurrent) {
+    return concurrent;
+  }
+  return writeOrMissStopPathHistory(ctx, {
+    shouldStore: shouldStoreOnStopPath(strategy, ctx.owner, input),
+    transcript,
+    sanitizedTranscript,
+    postProcessMetadata,
+    postProcessWarnings,
+    remoteStatus,
+    remoteDeviceId,
+  });
+};
 
 const createPostProcessStopResponse = async (
   input: PostTranscriptInput,
@@ -543,86 +860,24 @@ const createPostProcessStopResponse = async (
   if (shouldSendIdle) {
     await input.sendIdle();
   }
-  const willStore = shouldStoreOnStopPath(strategy, result.historyOwner);
-  const reviewOwnedHistory = result.historyOwner === "review";
-  // A "concurrent" owner already started the write during delivery; settling
-  // its promise here keeps the session locked exactly as long as the serial
-  // path would, without writing a second row.
-  const persistedConcurrently =
-    result.historyOwner === "concurrent" &&
-    result.pendingPersistence !== undefined;
-
-  // Persistence is handed back instead of awaited. The pill has shown idle
-  // since sendIdle, but the stop gate used to stay closed until the audio
-  // write and the DB insert finished, so a dictation start clicked during a
-  // slow save was silently dropped. The caller releases the gate first and
-  // runs this afterwards; everything it uses was captured while the session
-  // was still the live one.
-  // The serial History write, guarded like every other storeTranscription
-  // caller in this file and like the concurrent path in the strategy: a
-  // rejected write must not take the feedback down with it. The toasts below
-  // are what tell the user what happened to their words and whether the raw
-  // transcript is recoverable, which is exactly what they need when the write
-  // itself failed. historyEntryAvailable stays false on this path, so the
-  // "not saved" wording is chosen.
-  const storeTranscriptionEntry = async (
-    recordStoredHistory: (stored: StoreTranscriptionOutput) => Promise<void>,
-  ): Promise<void> => {
-    getLogger().verbose("Storing transcription");
-    try {
-      const stored = await input.storeTranscriptionFn({
-        audio: input.audio,
-        rawTranscript: input.rawTranscript ?? null,
-        sanitizedTranscript,
-        transcript,
-        transcriptionMetadata: input.transcribeResult.metadata,
-        postProcessMetadata,
-        warnings: [...input.transcribeResult.warnings, ...postProcessWarnings],
-        remoteStatus: result.remoteStatus,
-        remoteDeviceId: result.remoteDeviceId,
-        trace: input.trace ?? null,
-      });
-      await recordStoredHistory(stored);
-    } catch (error) {
-      getLogger().error(
-        `Serial history persistence failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-  };
-
+  // Persistence is handed back instead of awaited. The stop gate opens while
+  // the pill already shows idle. History still runs on the serial queue with
+  // a PCM snapshot; this function must not wait for the WAV write.
   const persist = async (): Promise<void> => {
-    let historyEntryAvailable = reviewOwnedHistory;
-    const recordStoredHistory = async (
-      stored: StoreTranscriptionOutput,
-    ): Promise<void> => {
-      if (!stored.transcription) {
-        return;
-      }
-      historyEntryAvailable = true;
-      // The scheduler returns once its claim is written and the delivery is
-      // timed, so waiting here only covers the durable marker, never the pass.
-      await scheduleAutomaticPostProcessEditRetry({
-        transcription: stored.transcription,
-        toneId: input.toneId,
-        languageCode: input.languageCode,
-      });
-    };
-    if (persistedConcurrently && result.pendingPersistence) {
-      getLogger().verbose("Awaiting concurrent history persistence");
-      await recordStoredHistory(await result.pendingPersistence);
-    } else if (willStore) {
-      await storeTranscriptionEntry(recordStoredHistory);
-    }
+    await scheduleStopPathHistory({
+      input,
+      strategy,
+      historyOwner: result.historyOwner,
+      pendingPersistence: result.pendingPersistence,
+      transcript,
+      sanitizedTranscript,
+      postProcessMetadata,
+      postProcessWarnings,
+      remoteStatus: result.remoteStatus,
+      remoteDeviceId: result.remoteDeviceId,
+    });
     input.refreshMember();
-    const toast = combinePostProcessToasts(
-      buildPartialEditFailureToast(postProcessMetadata, historyEntryAvailable),
-      buildOutcomeFeedbackToast(postProcessMetadata, historyEntryAvailable),
-    );
-    if (toast) {
-      await input.showToast(toast);
-    }
   };
-
   return {
     shouldContinue: result.shouldContinue,
     persist,
@@ -740,6 +995,8 @@ type FinalizedRecording = {
   languageCode?: string | null;
   rawTranscript: string;
   transcribeResult: TranscriptionSessionResult;
+  createdAt: string;
+  persistAllowedAtCapture: boolean;
 };
 
 const FINALIZE_TIMEOUT_MS = 90_000;
@@ -1165,7 +1422,10 @@ export const DictationSideEffects = () => {
   const captureStopRecordingInfo = useCallback(async (): Promise<{
     audio: StopRecordingResponse | null;
     context: Promise<StopContext>;
+    createdAt: string;
+    persistAllowedAtCapture: boolean;
   }> => {
+    const persistAllowedAtCapture = isPersistenceAllowed();
     tryPlayAudioChime("stop_recording_clip");
     getLogger().verbose("Invoking stop_recording and fetching a11y info");
     // Focus/app lookups (accessibility tree walk, icon extraction, app
@@ -1191,7 +1451,7 @@ export const DictationSideEffects = () => {
         getLogger().verbose(
           `Recording stopped (samples=${outAudio?.samples?.length ?? 0})`,
         );
-        return outAudio;
+        return { outAudio, createdAt: dayjs().toISOString() };
       } catch (error) {
         getLogger().error(`Failed to stop recording: ${error}`);
         runToast(
@@ -1207,7 +1467,12 @@ export const DictationSideEffects = () => {
       }
     });
 
-    return { audio, context };
+    return {
+      audio: audio?.outAudio ?? null,
+      context,
+      createdAt: audio?.createdAt ?? dayjs().toISOString(),
+      persistAllowedAtCapture,
+    };
   }, [intl, sendPhaseToPill]);
 
   const processFinalizedRecording = useCallback(
@@ -1219,6 +1484,8 @@ export const DictationSideEffects = () => {
       languageCode,
       rawTranscript,
       transcribeResult,
+      createdAt,
+      persistAllowedAtCapture,
     }: FinalizedRecording): Promise<RawStopResp> => {
       const session = sessionRef.current;
       const strategy = strategyRef.current;
@@ -1236,8 +1503,12 @@ export const DictationSideEffects = () => {
         postProcessWarnings: reviewedPostProcessWarnings,
       }: ReviewedTranscriptPersistenceInput): Promise<boolean> => {
         try {
+          // Review Save must not sit behind a leftover background WAV: the
+          // card is open and pending review already blocks a new take, so
+          // start_recording cannot race this IPC. Snapshot now so the buffer
+          // cannot alias if a background job is still draining.
           const stored = await storeTranscription({
-            audio,
+            audio: snapshotStopRecordingAudio(audio),
             rawTranscript: rawTranscript ?? null,
             sanitizedTranscript: reviewedSanitizedTranscript,
             transcript: reviewedTranscript,
@@ -1249,6 +1520,8 @@ export const DictationSideEffects = () => {
             ],
             remoteStatus: null,
             remoteDeviceId: null,
+            createdAt,
+            persistAllowedAtCapture,
             trace: pipelineTraceRef.current,
           });
           if (stored.transcription) {
@@ -1288,18 +1561,24 @@ export const DictationSideEffects = () => {
         postProcessMetadata: nowPostProcessMetadata,
         postProcessWarnings: nowPostProcessWarnings,
       }: ReviewedTranscriptPersistenceInput) =>
-        storeTranscription({
-          audio,
-          rawTranscript: rawTranscript ?? null,
-          sanitizedTranscript: nowSanitizedTranscript,
-          transcript: nowTranscript,
-          transcriptionMetadata: transcribeResult.metadata,
-          postProcessMetadata: nowPostProcessMetadata,
-          warnings: [...transcribeResult.warnings, ...nowPostProcessWarnings],
-          remoteStatus: null,
-          remoteDeviceId: null,
-          trace: pipelineTraceRef.current,
-        });
+        enqueueTranscriptionHistory(
+          storeTranscription,
+          {
+            audio,
+            rawTranscript: rawTranscript ?? null,
+            sanitizedTranscript: nowSanitizedTranscript,
+            transcript: nowTranscript,
+            transcriptionMetadata: transcribeResult.metadata,
+            postProcessMetadata: nowPostProcessMetadata,
+            warnings: [...transcribeResult.warnings, ...nowPostProcessWarnings],
+            remoteStatus: null,
+            remoteDeviceId: null,
+            trace: pipelineTraceRef.current,
+            createdAt,
+            persistAllowedAtCapture,
+          },
+          "concurrent transcription history",
+        );
 
       return postProcessFinalizedTranscript({
         audio,
@@ -1322,6 +1601,8 @@ export const DictationSideEffects = () => {
         persistReviewedTranscript,
         persistTranscriptNow,
         trace: pipelineTraceRef.current,
+        createdAt,
+        persistAllowedAtCapture,
       });
     },
     [sendPhaseToPill],
@@ -1331,11 +1612,15 @@ export const DictationSideEffects = () => {
     async ({
       audio,
       context,
+      createdAt,
+      persistAllowedAtCapture,
       audioIntakeSubscriptionFailed,
       recordingSessionKind,
     }: {
       audio: StopRecordingResponse;
       context: Promise<StopContext>;
+      createdAt: string;
+      persistAllowedAtCapture: boolean;
       audioIntakeSubscriptionFailed: boolean;
       recordingSessionKind: TranscriptionSessionKind;
     }): Promise<RawStopResp> => {
@@ -1403,6 +1688,9 @@ export const DictationSideEffects = () => {
             showToast,
             storeTranscriptionFn: storeTranscription,
             refreshMember,
+            sendIdle: () => sendPhaseToPill("idle"),
+            createdAt,
+            persistAllowedAtCapture,
           });
         }
         getLogger().warning("stopRecordingRaw: no rawTranscript from finalize");
@@ -1417,9 +1705,11 @@ export const DictationSideEffects = () => {
         languageCode,
         rawTranscript,
         transcribeResult,
+        createdAt,
+        persistAllowedAtCapture,
       });
     },
-    [processFinalizedRecording],
+    [processFinalizedRecording, sendPhaseToPill],
   );
 
   const stopRecordingRaw = useCallback(async (): Promise<RawStopResp> => {
@@ -1439,7 +1729,8 @@ export const DictationSideEffects = () => {
     systemVolumeDim.endRecording();
 
     try {
-      const { audio, context } = await captureStopRecordingInfo();
+      const { audio, context, createdAt, persistAllowedAtCapture } =
+        await captureStopRecordingInfo();
       if (!audio) {
         getLogger().warning("stopRecordingRaw: no audio data received");
         return {
@@ -1454,6 +1745,8 @@ export const DictationSideEffects = () => {
       return await finalizeAndPostProcess({
         audio,
         context,
+        createdAt,
+        persistAllowedAtCapture,
         audioIntakeSubscriptionFailed,
         recordingSessionKind,
       });
