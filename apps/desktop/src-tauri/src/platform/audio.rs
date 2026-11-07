@@ -253,6 +253,13 @@ mod cpal_impl {
         /// stop. Distinct from `paused`: a pause is resumable and a stop is the
         /// tail of a recording, so neither may be judged stale.
         stopped: AtomicBool,
+        /// Whether any block has ever arrived.
+        ///
+        /// A device that opens and then never calls back delivers nothing, and
+        /// that is indistinguishable from a healthy one until either a block or
+        /// enough time passes. `last_block_us` cannot express it: its zero value
+        /// is the "nothing yet" sentinel.
+        delivered: AtomicBool,
         origin: Mutex<Instant>,
     }
 
@@ -264,6 +271,7 @@ mod cpal_impl {
                 first_recorded: FirstPcmSignal::default(),
                 recorded_at_us: AtomicU64::new(0),
                 last_block_us: AtomicU64::new(0),
+                delivered: AtomicBool::new(false),
                 paused: AtomicBool::new(false),
                 stopped: AtomicBool::new(false),
                 origin: Mutex::new(Instant::now()),
@@ -303,6 +311,7 @@ mod cpal_impl {
                 elapsed.as_micros().min(u128::from(u64::MAX)) as u64,
                 Ordering::Release,
             );
+            self.delivered.store(true, Ordering::Release);
             if let Some(offset) = self.first_pcm.fire(elapsed) {
                 log::info!("first audio block reached the capture callback after {offset:?}");
             }
@@ -398,6 +407,24 @@ mod cpal_impl {
                 .map(|origin| origin.elapsed())
                 .unwrap_or_default();
             Some(now.saturating_sub(Duration::from_micros(last)))
+        }
+
+        /// Whether any block has ever arrived on this stream.
+        fn has_delivered(&self) -> bool {
+            self.delivered.load(Ordering::Acquire)
+        }
+
+        /// How long this sink has existed.
+        ///
+        /// Used to decide whether a stream that has delivered nothing is still
+        /// starting or is broken. The origin is reset on resume, so a stream
+        /// taken out of a pause gets a fresh grace rather than being condemned
+        /// for the time it spent paused.
+        fn age_of_stream(&self) -> Duration {
+            match self.origin.lock() {
+                Ok(origin) => origin.elapsed(),
+                Err(poisoned) => poisoned.into_inner().elapsed(),
+            }
         }
 
         /// Records that the stream was paused or resumed by the app.
@@ -690,6 +717,14 @@ mod cpal_impl {
         }
     }
 
+    /// How long a hold may go without producing a single block before it is
+    /// presumed broken.
+    ///
+    /// Shorter than the staleness window, because this covers the case that
+    /// matters most: the device opened and `play` returned, but the host never
+    /// called back. Nothing proves the microphone works except a block arriving.
+    const WARM_READY_GRACE: Duration = Duration::from_millis(250);
+
     impl WarmStream {
         /// Whether this stream has stopped delivering audio.
         ///
@@ -702,6 +737,29 @@ mod cpal_impl {
                 .silence_for()
                 .map(|silence| silence >= window)
                 .unwrap_or(false)
+        }
+
+        /// Whether this stream has ever delivered a block.
+        ///
+        /// Distinct from "has stopped": a stream that has never delivered
+        /// anything has not stopped, and `silence_for` returns `None` for it, so
+        /// the staleness check alone reads a dead-on-arrival device as healthy.
+        fn has_delivered(&self) -> bool {
+            self.sink.has_delivered()
+        }
+
+        /// Whether this stream may be handed to a press.
+        ///
+        /// A stream that has delivered nothing is only trustworthy while it is
+        /// still inside its start-up grace. Past that, adopting it records
+        /// silence for the whole press: the level meter stays flat, the user
+        /// speaks into a recording that will transcribe nothing, and the failure
+        /// is attributed to the wrong thing.
+        fn is_usable(&self, grace: Duration) -> bool {
+            if self.has_delivered() {
+                return !self.is_silent_for(STALE_WARM_SILENCE);
+            }
+            self.sink.age_of_stream() < grace
         }
     }
 
@@ -854,6 +912,17 @@ mod cpal_impl {
                     ring.samples.pop_front();
                 }
             }
+        }
+
+        /// Whether a held stream could actually serve a press.
+        ///
+        /// Stronger than `has_warm_stream`, which only says an object exists.
+        pub fn warm_is_usable(&self) -> bool {
+            self.warm
+                .lock()
+                .ok()
+                .and_then(|guard| guard.as_ref().map(|warm| warm.is_usable(WARM_READY_GRACE)))
+                .unwrap_or(false)
         }
 
         /// Whether a warm stream is currently held.
@@ -1154,16 +1223,22 @@ mod cpal_impl {
             let warm = warm_guard.take()?;
 
             // A stream can be running and delivering nothing: the device was
-            // unplugged, or the host stopped calling the callback after a sleep.
-            // Reusing it would hand the press a stream that never produces a
-            // sample, so it is retired and the caller records cold, which is
-            // slower and works.
-            if warm.is_silent_for(STALE_WARM_SILENCE) {
+            // unplugged, the host stopped calling the callback after a sleep, or
+            // the callback was never called at all. Reusing it would hand the
+            // press a stream that never produces a sample, and the whole press
+            // would record silence, so it is retired and the caller records
+            // cold, which is slower and works.
+            if !warm.is_usable(WARM_READY_GRACE) {
                 log::warn!(
-                    "warm stream on '{}' has delivered nothing for {:?}; reopening cold",
+                    "warm stream on '{}' is not delivering ({}); reopening cold",
                     warm.device_label,
-                    STALE_WARM_SILENCE
+                    if warm.has_delivered() {
+                        "silent past the staleness window".to_string()
+                    } else {
+                        format!("no block within {WARM_READY_GRACE:?} of opening")
+                    }
                 );
+                warm.sink.stop_recording(None);
                 retire_stream(warm.stream);
                 return None;
             }
@@ -1437,9 +1512,19 @@ mod cpal_impl {
                 .map(|summary| summary.reused)
                 .map(|reused| if reused { "reused" } else { "opened" })
                 .unwrap_or("none");
+            // "ready" means a press would reuse a working stream, not that an
+            // object exists. A stream that has delivered nothing since it opened
+            // is not ready in any sense the user cares about, and reporting it as
+            // ready is what made a dead device look like a working one in the
+            // diagnostics export.
+            let ready = self
+                .warm
+                .lock()
+                .ok()
+                .and_then(|guard| guard.as_ref().map(|warm| warm.is_usable(WARM_READY_GRACE)))
+                .unwrap_or(false);
             format!(
-                "ready={} policy={policy} preroll_ms={requested_ms} preroll_samples={preroll} last_start={reused}",
-                self.has_warm_stream()
+                "ready={ready} policy={policy} preroll_ms={requested_ms} preroll_samples={preroll} last_start={reused}",
             )
         }
 
@@ -1760,7 +1845,10 @@ mod cpal_impl {
         }
 
         fn is_ready(&self) -> bool {
-            self.has_warm_stream()
+            // The dialog shows this and the user trusts it. A held stream that
+            // has delivered nothing is not ready: a press would adopt it and
+            // record silence.
+            self.warm_is_usable()
         }
 
         fn set_linger(&self, linger_ms: u64) {
@@ -2518,7 +2606,8 @@ mod cpal_impl {
         use super::{
             cold_start_seed, device_matches_preferred, disambiguated_label,
             is_preferred_input_device_name, preroll_capacity, warm_ring, ChunkEmitter, Preroll,
-            RecordingManager, SinkMode, StreamSink, WARM_FOREVER_MS,
+            RecordingManager, SinkMode, StreamSink, STALE_WARM_SILENCE, WARM_FOREVER_MS,
+            WARM_READY_GRACE,
         };
         use crate::platform::audio_stage::{AudioStartupStage, AudioStartupTrace};
         use std::collections::HashSet;
@@ -2628,6 +2717,60 @@ mod cpal_impl {
             // open with no policy behind it.
             assert!(warm_ring(&ring, false).is_none());
             assert!(ring.lock().unwrap().cap == 0);
+        }
+
+        #[test]
+        fn a_stream_that_never_delivered_is_not_ready() {
+            let sink = StreamSink::new(SinkMode::Discard);
+
+            // Freshly opened and nothing yet: inside the grace, so a press that
+            // arrives immediately still gets the fast path.
+            assert!(!sink.has_delivered());
+            assert!(sink.age_of_stream() < WARM_READY_GRACE);
+
+            // The staleness check alone cannot catch this: `silence_for` returns
+            // `None` until the first block, which reads as "not stale".
+            assert_eq!(sink.silence_for(), None);
+            assert!(!sink.has_delivered());
+        }
+
+        #[test]
+        fn the_first_block_marks_the_stream_as_delivered() {
+            let sink = StreamSink::new(SinkMode::Discard);
+
+            // `last_block_us` starts at zero and zero is its sentinel, so the
+            // flag is the only way to tell "no block" from "a block at time 0".
+            std::thread::sleep(Duration::from_millis(2));
+            sink.deliver(&[0.1]);
+
+            assert!(sink.has_delivered());
+            assert!(sink.silence_for().is_some());
+        }
+
+        #[test]
+        fn a_usable_stream_needs_a_block_or_a_young_origin() {
+            // Delivered and recent: usable.
+            let fresh = StreamSink::new(SinkMode::Discard);
+            std::thread::sleep(Duration::from_millis(2));
+            fresh.deliver(&[0.1]);
+            assert!(fresh.has_delivered());
+            assert!(fresh.silence_for().unwrap() < STALE_WARM_SILENCE);
+
+            // Never delivered and past the grace: not usable, which is the case
+            // that used to be adopted and record silence.
+            let dead = StreamSink::new(SinkMode::Discard);
+            std::thread::sleep(WARM_READY_GRACE + Duration::from_millis(20));
+            assert!(!dead.has_delivered());
+            assert!(dead.age_of_stream() >= WARM_READY_GRACE);
+        }
+
+        #[test]
+        fn a_manager_with_nothing_held_is_not_ready() {
+            let manager = RecordingManager::new();
+
+            assert!(!manager.has_warm_stream());
+            assert!(!manager.warm_is_usable());
+            assert!(manager.status_line().contains("ready=false"));
         }
 
         #[test]
