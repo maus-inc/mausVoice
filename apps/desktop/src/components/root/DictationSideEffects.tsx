@@ -64,7 +64,6 @@ import { DictationStrategy } from "../../strategies/dictation.strategy";
 import { TextFieldInfo } from "../../types/accessibility.types";
 import type {
   HandleTranscriptResult,
-  HistoryOwner,
   ReviewedTranscriptPersistenceInput,
 } from "../../types/strategy.types";
 import {
@@ -664,7 +663,11 @@ const notifyHistoryOutcome = (
     ),
   );
   if (toast) {
-    fireAndForgetToast(ctx.input.showToast, toast, "post-process outcome toast");
+    fireAndForgetToast(
+      ctx.input.showToast,
+      toast,
+      "post-process outcome toast",
+    );
   }
 };
 
