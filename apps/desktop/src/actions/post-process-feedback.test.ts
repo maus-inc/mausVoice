@@ -158,6 +158,90 @@ describe("getPostProcessFeedback", () => {
       "The unreadable styling reply was discarded, leaving the previous text in place.",
     );
   });
+
+  it("says a rejected import row left nothing when styling fell back locally", () => {
+    const feedback = getPostProcessFeedback(
+      {
+        postProcessFailed: false,
+        postProcessFallback: true,
+        postProcessError: POST_PROCESS_ERROR_CATEGORY.providerLimit,
+      },
+      "audio-import",
+      { canRecoverFromHistory: false, hasSessionRow: false },
+    );
+
+    // "Your local style was applied instead" would claim an applied style
+    // over a transcript that is gone, so the rejected import reports the
+    // failure and the missing save instead.
+    expect(feedback).toMatchObject({
+      kind: "failed",
+      severity: "error",
+      message:
+        "Styling failed because the provider request or usage limit was reached. The transcript could not be saved in History.",
+      action: undefined,
+    });
+  });
+
+  it("keeps the local-fallback report for an incognito import", () => {
+    const feedback = getPostProcessFeedback(
+      {
+        postProcessFailed: false,
+        postProcessFallback: true,
+        postProcessError: POST_PROCESS_ERROR_CATEGORY.providerLimit,
+      },
+      "audio-import",
+      { canRecoverFromHistory: false },
+    );
+
+    // The incognito import keeps a memory row holding the locally styled
+    // text, so the applied-instead claim stays true there.
+    expect(feedback).toMatchObject({
+      kind: "local-fallback",
+      severity: "info",
+      action: "fix",
+    });
+  });
+
+  it("says a rejected import row left no transcript anywhere", () => {
+    expect(
+      getPostProcessFeedback(
+        {
+          postProcessFailed: true,
+          postProcessError: POST_PROCESS_ERROR_CATEGORY.providerLimit,
+        },
+        "audio-import",
+        { canRecoverFromHistory: false, hasSessionRow: false },
+      )?.message,
+    ).toBe(
+      "Styling failed because the provider request or usage limit was reached. The transcript could not be saved in History.",
+    );
+  });
+
+  it("says a rejected import row saved nothing when the reply was unusable", () => {
+    expect(
+      getPostProcessFeedback(
+        { postProcessFallback: true, postProcessError: null },
+        "audio-import",
+        { canRecoverFromHistory: false, hasSessionRow: false },
+      )?.message,
+    ).toBe(
+      "The online styling reply was unusable, and the transcript could not be saved in History.",
+    );
+  });
+
+  it("keeps the session wording for an incognito import with no History row", () => {
+    // hasSessionRow defaults to true: an incognito import still records a
+    // memory row, so "available in this session" stays accurate there.
+    expect(
+      getPostProcessFeedback(
+        { postProcessFallback: true, postProcessError: null },
+        "audio-import",
+        { canRecoverFromHistory: false },
+      )?.message,
+    ).toBe(
+      "The online styling reply was unusable. The original transcript is available in this session, but was not saved in History.",
+    );
+  });
 });
 
 describe("getFastStyleTruncationMessage", () => {

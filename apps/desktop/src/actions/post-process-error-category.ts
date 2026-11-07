@@ -236,6 +236,10 @@ const RATE_LIMIT_MESSAGE_MARKERS = [
 const STRUCTURED_TIMEOUT_CODES = [
   "etimedout",
   "esockettimedout",
+  // The axios family reports its own request timeout as ECONNABORTED. Without
+  // this entry the abort rule below substring-matches "aborted" inside it and
+  // tells the user the request was cancelled when it timed out.
+  "econnaborted",
   "timeout_error",
   "timeouterror",
 ] as const;

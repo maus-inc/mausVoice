@@ -13,6 +13,7 @@ import { getLogger } from "../utils/log.utils";
 import { createId } from "../utils/id.utils";
 import { orFalse, orNull } from "../utils/nullable.utils";
 import { registerTranscriptions } from "../utils/app.utils";
+import { markTranscriptionSessionOnly } from "../utils/session-only-transcriptions";
 import {
   getTranscriptionDeletionRevision,
   isTranscriptionPendingDelete,
@@ -37,6 +38,7 @@ import {
   getLocalDataClearGeneration,
   isLocalDataClearRequested,
   withLocalDataWrite,
+  withLocalDataWriteSync,
 } from "../utils/local-data-write-gate";
 import { sanitizeTranscriptText } from "../utils/sanitize-transcript.utils";
 import {
@@ -675,6 +677,21 @@ const combineRetranscribeSuccessFeedback = (
 };
 
 /**
+ * Rows that finished with the same outcome carry the same sentence, and one
+ * row's message can sit inside another's: a truncation-only report is the tail
+ * of a failure-plus-truncation report. Containment in either direction keeps
+ * the fuller message instead of repeating the shorter one inside it.
+ */
+const mergeRetranscribeMessages = (
+  existing: string,
+  incoming: string,
+): string => {
+  if (existing.includes(incoming)) return existing;
+  if (incoming.includes(existing)) return incoming;
+  return [existing, incoming].join(" ");
+};
+
+/**
  * A batch shows one completion toast, but two rows finishing in the same
  * batch can each carry feedback. Merge them instead of letting the later row
  * overwrite the earlier one and drop its outcome from the toast.
@@ -685,12 +702,7 @@ const mergeRetranscribeBatchFeedback = (
 ): RetranscribeSuccessFeedback => {
   if (!existing) return incoming;
   return {
-    // Rows that finished with the same outcome carry the same sentence; once
-    // the merged message already contains it, appending repeats it once per
-    // row in a single toast.
-    message: existing.message.includes(incoming.message)
-      ? existing.message
-      : [existing.message, incoming.message].join(" "),
+    message: mergeRetranscribeMessages(existing.message, incoming.message),
     severity: incoming.severity === "error" ? "error" : existing.severity,
     action: existing.action ?? incoming.action,
     duration: 8_000,
@@ -1498,7 +1510,9 @@ export const importAudioFile = async ({
     });
   }
 
-  if (!output.transcription && !isPersistenceAllowed()) {
+  const persistenceAllowed = isPersistenceAllowed();
+  let memoryRowRecorded = false;
+  if (!output.transcription && !persistenceAllowed) {
     const memoryRecord: Transcription = {
       id: createId(),
       createdAt: dayjs().toISOString(),
@@ -1544,16 +1558,37 @@ export const importAudioFile = async ({
       postprocessDurationMs:
         postProcessResult.metadata.postprocessDurationMs ?? null,
     };
-    produceAppState((draft) => {
-      draft.transcriptionById[memoryRecord.id] = memoryRecord;
+    // A local-data clear can open while an import is in flight. The row is
+    // written under a synchronous write lease, which the clear gate blocks,
+    // so a clearing session is never repopulated, and the row counts as
+    // present only when the write actually ran.
+    withLocalDataWriteSync((lease) => {
+      markTranscriptionSessionOnly(memoryRecord.id);
+      produceAppState((draft) => {
+        draft.transcriptionById[memoryRecord.id] = memoryRecord;
+        // The History page and the recent list render from transcriptionIds,
+        // so a record written only by id is invisible and the session-
+        // availability wording would point at a row the user cannot find.
+        draft.transcriptions.transcriptionIds = [
+          memoryRecord.id,
+          ...draft.transcriptions.transcriptionIds,
+        ];
+      }, lease);
+      memoryRowRecorded = true;
     });
   }
 
   const canRecoverFromHistory = output.transcription !== null;
+  // An incognito import keeps a memory row, so its transcript stays available
+  // for this session. An import the store rejected while persistence was
+  // allowed, or one whose memory write the clear gate blocked, leaves no row
+  // anywhere, and the wording must not claim otherwise. The feedback module
+  // only reads hasSessionRow when canRecoverFromHistory is false, which is
+  // exactly when memoryRowRecorded says whether a session row exists.
   const feedback = getPostProcessFeedback(
     postProcessResult.metadata,
     "audio-import",
-    { canRecoverFromHistory },
+    { canRecoverFromHistory, hasSessionRow: memoryRowRecorded },
   );
   const truncationMessage = getFastStyleTruncationMessage(
     postProcessResult.metadata.fastStyleTruncatedChars,
