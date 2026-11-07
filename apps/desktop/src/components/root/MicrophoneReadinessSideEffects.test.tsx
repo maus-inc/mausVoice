@@ -227,7 +227,22 @@ describe("MicrophoneReadinessSideEffects", () => {
     expect(mocks.state.settings).toMatchObject({ microphoneHeld: true });
   });
 
-  it("pushes the linger window before the recording that will stop", async () => {
+  it("never pushes the linger window while the device is held", async () => {
+    setState({
+      userPrefs: {
+        keepMicrophoneReady: true,
+        microphonePrerollSeconds: 0.5,
+        microphoneLingerMs: 5_000,
+      },
+    });
+    await render();
+
+    // Mount is exactly the wrong moment to say "close at stop": the hold effect
+    // in the same commit opens the stream, and zero would close it.
+    expect(mocks.setMicrophoneLinger).not.toHaveBeenCalled();
+  });
+
+  it("pushes the linger window when nothing is held", async () => {
     setState({
       userPrefs: {
         keepMicrophoneReady: false,
@@ -236,10 +251,25 @@ describe("MicrophoneReadinessSideEffects", () => {
       },
     });
     await render();
-
     // The stop path reads this when a recording ends, so it has to be in place
     // before that recording, not on the next launch.
     expect(mocks.setMicrophoneLinger).toHaveBeenCalledWith(5_000);
+
+    // Turning the hold on stops pushing it: zero would close the stream the hold
+    // is about to open, and the window has nothing to say about a held device.
+    mocks.setMicrophoneLinger.mockClear();
+    await act(async () => {
+      setState({
+        userPrefs: {
+          keepMicrophoneReady: true,
+          microphonePrerollSeconds: 0.5,
+          microphoneLingerMs: 5_000,
+        },
+      });
+      await Promise.resolve();
+    });
+
+    expect(mocks.setMicrophoneLinger).not.toHaveBeenCalled();
   });
 
   it("prepares the device when nothing is held", async () => {

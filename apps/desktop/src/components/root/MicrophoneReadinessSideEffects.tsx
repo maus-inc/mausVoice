@@ -162,11 +162,20 @@ export const MicrophoneReadinessSideEffects = () => {
   // in place before the recording that will stop, not after it. Pushing it on
   // every change also means turning it off takes effect on the next stop rather
   // than on the next launch.
+  //
+  // It is not pushed while the device is held. Zero means "close at stop", so
+  // pushing the preference on mount, before the hold effect has run, closed the
+  // very stream the hold opens seconds later. The window is the policy for a
+  // device that is not held, so it is set for that case, and the release path
+  // restores it when the hold is turned off.
   useEffect(() => {
+    if (enabled) {
+      return;
+    }
     void commands.setMicrophoneLinger(lingerMs).catch((error: unknown) => {
       getLogger().warning(`Could not set the linger window: ${error}`);
     });
-  }, [lingerMs]);
+  }, [enabled, lingerMs]);
 
   // One read on mount, so the dialog shows the truth before anything is toggled.
   useEffect(() => {
