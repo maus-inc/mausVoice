@@ -90,6 +90,38 @@ place that could leave a device open.
 Resolving and scoring the device ahead of a press opens nothing, so it runs
 regardless of the preference.
 
+**A hold is only ready when it has delivered a block.**
+
+Opening a device and calling `play` does not prove a microphone works; only a
+block arriving does. A stream that has delivered nothing within 250 ms of
+opening is treated as broken and retired, so the press records cold rather than
+recording silence, and `microphone_ready` reports the truth rather than the
+existence of an object.
+
+**The pre-roll is collected by cold starts too.**
+
+A recording sizes the shared ring from its own device rate before its stream
+starts capturing, whatever opened it. Sizing only on the warm path left the ring
+at capacity zero for every cold start, which made the pre-roll do nothing for the
+default configuration. The ring rounds its capacity up so a whole device buffer
+fits, because it is filled one callback at a time and a capacity a fraction
+short drops a block rather than a sample.
+
+**Failure is visible once.**
+
+The setting promises an instant press. When the hold cannot open, the user is
+told once, and told again only after a success in between, because a device that
+stays unplugged must not produce a message on every focus. A blocked permission
+is called out with the fix in it, because it is the one failure the user can
+resolve and the one that is otherwise completely silent.
+
+**One device, many windows.**
+
+Only the main window retries on focus and only the main window broadcasts; every
+window re-reads the preference on focus and when the broadcast arrives. A window
+that closed its own device because its copy of the preference said off, while
+another window said on, was worse than a stale caption.
+
 ## Consequences
 
 - A user who never touches the preference gets the cold path and sees no
