@@ -17,6 +17,11 @@ When initialization fails after instance creation, the constructor now calls
 fails. CPAL maps that result to its capture ownership guard. Portable tests
 exercise the ordering and error propagation, but do not call Apple APIs.
 
+The macOS device-scope query uses initialized, aligned native-word storage for
+the variable-length `AudioBufferList`. It checks returned lengths and buffer
+counts before reading channel counts, including empty and shrinking lists.
+Portable simulated-API tests exercise the parser; macOS devices remain untested.
+
 The macOS physical-format helpers use initialized mutable property buffers and
 validate returned byte counts, including shrinking format lists. The setter
 compares full sample rates rather than truncating them. A simulated API exercises
