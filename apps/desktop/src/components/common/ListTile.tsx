@@ -18,6 +18,11 @@ type HoverButtonProps = {
   hovered?: boolean;
   onClick?: (event: React.MouseEvent<HTMLDivElement>) => void;
   left?: boolean;
+  // Set when the hover control sits inside a clickable row: a focusable
+  // control nested in the row button is a nested-interactive violation, so
+  // the hover swap becomes a pointer-only affordance (aria-hidden, skipped
+  // by keyboard) and the row button carries the keyboard action.
+  nestedControl?: boolean;
 };
 
 const HoverButton = ({
@@ -26,6 +31,7 @@ const HoverButton = ({
   hovered,
   onClick,
   left,
+  nestedControl,
 }: HoverButtonProps) => {
   const hoverState = hovered && hover;
 
@@ -62,6 +68,8 @@ const HoverButton = ({
             onClick={handleClick}
             onMouseDown={handleMouseDown}
             component="div"
+            tabIndex={nestedControl ? -1 : undefined}
+            aria-hidden={nestedControl ? true : undefined}
             size="small"
             sx={{
               my: -1,
@@ -205,6 +213,7 @@ export const ListTile = forwardRef(function ListTile<
           hover={leadingHover}
           hovered={hovered}
           onClick={handleClickLeading}
+          nestedControl={Boolean(onClick || href)}
           left
         />
       )}
@@ -225,6 +234,7 @@ export const ListTile = forwardRef(function ListTile<
           hover={trailingHover}
           hovered={hovered}
           onClick={handleClickTrailing}
+          nestedControl={Boolean(onClick || href)}
           left={false}
         />
       )}

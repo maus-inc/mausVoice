@@ -231,7 +231,12 @@ const getFloatSamples = (data: { samples: number[] }): Float32Array => {
 
 /** Dev/test-only stage marks for the #300 latency budget (names, no content). */
 const markStage = (name: string) => {
-  if (import.meta.env.DEV) performance.mark(name);
+  if (import.meta.env.DEV) {
+    // Clear first so DEV stage marks stay bounded to one entry per name
+    // instead of accumulating for the window's lifetime.
+    performance.clearMarks(name);
+    performance.mark(name);
+  }
 };
 
 export const playWebAudio = async (

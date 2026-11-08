@@ -397,6 +397,7 @@ describe("MausAgent native deliverable contract", () => {
   });
 
   it("k5.9.9.1 #299 renders list rows with a stable, press-safe layout", async () => {
+    let flipped = false;
     try {
       await ensureOn("/dashboard");
       const settingsTile = $(TILE_XPATH["/dashboard/settings"]);
@@ -542,6 +543,7 @@ describe("MausAgent native deliverable contract", () => {
           timeoutMsg: "static: Space did not flip the switch row",
         },
       );
+      flipped = true;
       const afterSpace = await browser.execute(() => {
         const input = document.querySelector<HTMLInputElement>(
           'input[role="switch"]',
@@ -587,24 +589,31 @@ describe("MausAgent native deliverable contract", () => {
       }) => [r.x, r.y, r.width, r.height].map((v) => Math.round(v * 10) / 10);
       expect(snap(afterSpace.rect)).toEqual(snap(toggleState.rect));
       expect(afterSpace.transformedAncestors).toEqual([]);
-      // Restore the setting so the profile is left as found.
-      await browser.keys("Space");
-      await browser.waitUntil(
-        async () =>
-          (await browser.execute(
-            () =>
-              document.querySelector<HTMLInputElement>('input[role="switch"]')!
-                .checked,
-          )) === toggleState.checked,
-        {
-          timeout: 3_000,
-          timeoutMsg: "static: restore Space did not flip the switch row back",
-        },
-      );
     } catch (error) {
       throw new Error(
         `static: ${error instanceof Error ? error.message : String(error)} | ${await stateSnapshot("#299")}`,
       );
+    } finally {
+      // Restore the setting so the profile is left as found — including when
+      // an assertion after the flip fails. Skipping this on failure would
+      // leak the flipped appearance setting into later runs.
+      if (flipped) {
+        await browser.keys("Space");
+        await browser.waitUntil(
+          async () =>
+            (await browser.execute(
+              () =>
+                document.querySelector<HTMLInputElement>(
+                  'input[role="switch"]',
+                )!.checked,
+            )) === toggleState.checked,
+          {
+            timeout: 3_000,
+            timeoutMsg:
+              "static: restore Space did not flip the switch row back",
+          },
+        );
+      }
     }
   });
 

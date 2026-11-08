@@ -216,7 +216,15 @@ export const AudioPlayerPill = ({
     // invalid file) is a different recovery than a decode/playback failure.
     let stage: "read" | "play" = "read";
     try {
-      if (import.meta.env.DEV) performance.mark("mv-audio:read-start");
+      if (import.meta.env.DEV) {
+        // Clear before marking: User Timing entries otherwise accumulate for
+        // the window's lifetime on every development playback. One live entry
+        // per name is all the DEV timing needs.
+        performance.clearMarks("mv-audio:read-start");
+        performance.clearMarks("mv-audio:read-end");
+        performance.clearMeasures("mv-audio:read");
+        performance.mark("mv-audio:read-start");
+      }
       const audioData =
         await getTranscriptionRepo().loadTranscriptionAudio(transcriptionId);
       if (import.meta.env.DEV) {
@@ -229,6 +237,10 @@ export const AudioPlayerPill = ({
       }
 
       if (!attempt.isCurrent()) {
+        // Ownership moved on (another pill took the session or the work was
+        // abandoned): drop this row's loading flags so its button cannot stay
+        // stuck on "Cancel audio loading" for work it no longer owns.
+        resetPlaybackState();
         return;
       }
       stage = "play";
@@ -268,7 +280,12 @@ export const AudioPlayerPill = ({
       );
       attempt.completeSetup();
     } catch (error) {
-      if (!attempt.releaseOnError()) return;
+      if (!attempt.releaseOnError()) {
+        // The abort/supersede path owns the state now; make sure this row is
+        // not left loading for an attempt it no longer drives.
+        resetPlaybackState();
+        return;
+      }
       resetPlaybackState({ progress: true });
       // Abandoned work (row torn down, read invalidated mid-flight) rejects
       // with AbortError; the owner already reset the row, so stay silent.

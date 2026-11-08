@@ -10,7 +10,7 @@ import {
   Stack,
   Typography,
 } from "@mui/material";
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Eye, EyeOff } from "lucide-react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
@@ -49,10 +49,15 @@ const PreviewToolbar = () => {
   const [visible, setVisible] = useState(
     () => getPopupOverride(location.search) ?? false,
   );
+  const lastOverride = useRef(getPopupOverride(location.search));
   useEffect(() => {
     const seeded = getPopupOverride(location.search);
-    if (seeded !== undefined) {
-      setVisible(seeded);
+    // Re-seed only when the ?previewPopup value itself changes. Unrelated
+    // search updates (scenario changes, capture resets) must not close a
+    // toolbar the user opened by hand while the override stays "hidden".
+    if (seeded !== lastOverride.current) {
+      lastOverride.current = seeded;
+      setVisible((prev) => seeded ?? prev);
     }
   }, [location.search]);
   const label = visible
