@@ -2012,10 +2012,19 @@ mod cpal_impl {
                     "not holding a capture stream the host reported gone; the next press opens one"
                 );
             }
-            let stream_to_hold = if keep_warm {
-                recording.stream.take()
-            } else {
-                None
+            // The stream is taken out of the recording either way, so that a
+            // faulted one is retired deliberately rather than dropped as a
+            // side effect of the recording going out of scope. A stop that
+            // leaves the device open is the defect this whole path exists to
+            // avoid, and an implicit drop makes the intent unreadable.
+            let stream = recording.stream.take();
+            let stream_to_hold = match (keep_warm, stream) {
+                (true, stream) => stream,
+                (false, Some(stream)) => {
+                    retire_stream(stream);
+                    None
+                }
+                (false, None) => None,
             };
             match (resumed_preroll, stream_to_hold) {
                 (Some(_preroll), Some(stream)) => {
