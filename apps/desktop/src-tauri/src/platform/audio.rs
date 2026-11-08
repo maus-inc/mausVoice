@@ -138,6 +138,10 @@ mod coreaudio_action_flags_handle_adapter;
 mod coreaudio_callback_data_adapter;
 
 #[cfg(test)]
+#[path = "../../../../../patches/coreaudio-rs-0.11.3/tests/sample_format_adapter.rs"]
+mod coreaudio_sample_format_adapter;
+
+#[cfg(test)]
 #[path = "../../../../../patches/cpal-0.15.3/tests/macos_input_lifetime.rs"]
 mod cpal_macos_input_lifetime;
 

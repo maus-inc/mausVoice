@@ -104,8 +104,7 @@ impl StreamFormat {
 
     /// Convert a StreamFormat into an AudioStreamBasicDescription.
     /// Note that this function assumes that only packed formats are used.
-    /// This only affects I24, since all other formats supported by `StreamFormat`
-    /// are always packed.
+    /// All formats supported by `StreamFormat`, including I24, are packed.
     pub fn to_asbd(self) -> sys::AudioStreamBasicDescription {
         let StreamFormat {
             sample_rate,

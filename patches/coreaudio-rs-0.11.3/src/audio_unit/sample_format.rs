@@ -7,7 +7,7 @@ pub enum SampleFormat {
     F32,
     /// 32-bit signed integer.
     I32,
-    /// 24-bit signed integer. Can be packed or not depending on the flags.
+    /// Packed 24-bit signed integer (three bytes per sample).
     I24,
     /// 16-bit signed integer.
     I16,
@@ -26,7 +26,7 @@ impl SampleFormat {
             SampleFormat::I32 | SampleFormat::I16 | SampleFormat::I8 => {
                 is_signed_integer && !is_float && is_packed
             }
-            SampleFormat::I24 => is_signed_integer && !is_float,
+            SampleFormat::I24 => is_signed_integer && !is_float && is_packed,
         }
     }
 
@@ -45,7 +45,7 @@ impl SampleFormat {
             match (bits_per_sample, packed) {
                 (8, true) => SampleFormat::I8,
                 (16, true) => SampleFormat::I16,
-                (24, _) => SampleFormat::I24,
+                (24, true) => SampleFormat::I24,
                 (32, true) => SampleFormat::I32,
                 _ => return None,
             }
