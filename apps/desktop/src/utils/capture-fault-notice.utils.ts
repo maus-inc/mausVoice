@@ -45,6 +45,18 @@ const millis = (value: unknown): number => {
 const seconds = (valueMs: number): string => (valueMs / 1000).toFixed(1);
 
 /**
+ * How much audio must be missing before the two-length message is worth
+ * showing, in milliseconds.
+ *
+ * Below this the two figures round to the same tenth of a second, so the message
+ * would state a loss the user cannot see and cannot act on. 100 ms is also well
+ * under the native side's own 500 ms suspicion threshold, so this only ever
+ * suppresses a message the native side already considered plausible rather than
+ * hiding a real gap.
+ */
+const MEANINGFUL_GAP_MS = 100;
+
+/**
  * The notice for a stop response, or `null` when nothing needs saying.
  *
  * `expected` is clamped up to `captured`: a body claiming less expected than
@@ -56,6 +68,15 @@ const seconds = (valueMs: number): string => (valueMs / 1000).toFixed(1);
  * A fault with no lengths at all becomes `ended_early` rather than a message
  * with two zeroes: "stopped after 0.0 of 0.0 seconds" states that nothing was
  * captured, which may be false.
+ *
+ * A fault whose two lengths are effectively equal is the same case. The host's
+ * error callback can land after the last block has already been delivered — the
+ * stream dies, the tail is still buffered, and the fault is reported before the
+ * stop path reads it — so a `fatal` token does not prove audio was lost. The
+ * detailed message would then read "stopped recording after 6.0 of 6.0
+ * seconds", which contradicts itself and tells the user to check a cable for a
+ * recording that is whole. Those become `ended_early`, whose wording claims only
+ * that the capture ended abnormally.
  */
 export const captureFaultNotice = (
   audio: Pick<
@@ -68,11 +89,19 @@ export const captureFaultNotice = (
   }
   const capturedMs = millis(audio.capturedMs);
   const expectedMs = Math.max(capturedMs, millis(audio.expectedMs));
-  if (capturedMs === 0 && expectedMs === 0) {
+  if (expectedMs - capturedMs < MEANINGFUL_GAP_MS) {
+    // Still reports whatever was measured, so a caller that logs the values is
+    // not told the recording was empty. Only the wording drops them, because
+    // the `ended_early` message has no placeholders.
     return {
       kind: "ended_early",
-      logMessage: "capture faulted with no length reported",
-      values: { captured: "0.0", expected: "0.0" },
+      logMessage:
+        capturedMs === 0 && expectedMs === 0
+          ? "capture faulted with no length reported"
+          : `capture faulted with nothing missing (${Math.round(
+              capturedMs,
+            )}ms of ${Math.round(expectedMs)}ms)`,
+      values: { captured: seconds(capturedMs), expected: seconds(expectedMs) },
     };
   }
   return {

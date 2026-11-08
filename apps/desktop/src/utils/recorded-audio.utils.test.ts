@@ -144,6 +144,9 @@ describe("encodeRecordedAudio", () => {
 });
 
 describe("a capture that faulted mid-recording", () => {
+  /** `CAPTURE_TRAILER_MAGIC` in the Rust encoder. */
+  const MAGIC = 0x4341_5054;
+
   /** The body the Rust stop path produces for a faulted capture. */
   const encodeWithTrailer = (
     sampleRate: number,
@@ -151,7 +154,7 @@ describe("a capture that faulted mid-recording", () => {
     capturedMs: number,
     expectedMs: number,
   ): ArrayBuffer => {
-    const buffer = new ArrayBuffer(4 + samples.length * 4 + 12);
+    const buffer = new ArrayBuffer(4 + samples.length * 4 + 16);
     const view = new DataView(buffer);
     view.setUint32(0, sampleRate, true);
     samples.forEach((sample, index) =>
@@ -161,6 +164,7 @@ describe("a capture that faulted mid-recording", () => {
     view.setUint32(trailer, capturedMs, true);
     view.setUint32(trailer + 4, expectedMs, true);
     view.setUint32(trailer + 8, 1, true);
+    view.setUint32(trailer + 12, MAGIC, true);
     return buffer;
   };
 
@@ -196,8 +200,9 @@ describe("a capture that faulted mid-recording", () => {
 
   it("does not mistake ordinary audio for a trailer", () => {
     // A last sample whose bit pattern equals the fault flag, with no trailer
-    // behind it. This is the case that makes the flag check insufficient on its
-    // own, so the trailer is only read when there are bytes for it.
+    // behind it: 0x3f800001 is 1.0000001f, an unremarkable sample. Keying off
+    // the flag alone reported a fault and ate three samples here, and real
+    // speech sets that low bit almost always.
     const buffer = new ArrayBuffer(4 + 4);
     const view = new DataView(buffer);
     view.setUint32(0, 48_000, true);
@@ -209,17 +214,51 @@ describe("a capture that faulted mid-recording", () => {
     expect(decoded.samples).toHaveLength(1);
   });
 
-  it("keeps the audio when a flags word has no room for its trailer", () => {
+  it("never misreads a long healthy recording, whatever its last sample", () => {
+    // The regression this pins: 103 of 200 ordinary recordings were read as
+    // faulted when the flag bit alone decided, losing three samples and raising
+    // an error toast for every one of them.
+    const samples = Array.from(
+      { length: 64 },
+      (_, index) => Math.sin(index * 0.7) * 0.3,
+    );
+    for (const tail of [1.0000001, 0.1, 0.30000001192092896, -0.7]) {
+      const body = samples.slice();
+      body[body.length - 1] = tail;
+      const decoded = decodeStopRecordingPayload(
+        encode(48_000, body as number[]),
+      );
+      expect(decoded.captureFault, `tail ${tail}`).toBeUndefined();
+      expect(decoded.samples, `tail ${tail}`).toHaveLength(body.length);
+    }
+  });
+
+  it("keeps the audio when the body is too short to hold a trailer", () => {
     const buffer = new ArrayBuffer(8);
     const view = new DataView(buffer);
     view.setUint32(0, 48_000, true);
     view.setUint32(4, 1, true);
 
+    // Untrusted, so the fault is dropped rather than a sample being sliced off
+    // a real recording.
     const decoded = decodeStopRecordingPayload(buffer);
 
-    // A body too short to hold the trailer it claims is untrusted: the fault is
-    // dropped rather than a sample being sliced off a real recording.
     expect(decoded.captureFault).toBeUndefined();
+    expect(decoded.samples).toHaveLength(1);
+  });
+
+  it("keeps the audio when a magic arrives without its flag", () => {
+    const body = new ArrayBuffer(4 + 4 + 16);
+    const view = new DataView(body);
+    view.setUint32(0, 48_000, true);
+    view.setUint32(4, 0.5, true);
+    // Magic present, flag clear: not a trailer this build wrote.
+    view.setUint32(8 + 12, MAGIC, true);
+
+    const decoded = decodeStopRecordingPayload(body);
+
+    expect(decoded.captureFault).toBeUndefined();
+    expect(decoded.samples.length).toBe(1 + 16 / 4);
   });
 
   it("carries the fault through the invoke wrapper", async () => {

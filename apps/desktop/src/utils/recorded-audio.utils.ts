@@ -3,22 +3,23 @@ import type { StopRecordingResponse } from "../types/transcription-session.types
 
 const HEADER_BYTES = 4;
 /**
- * The trailer the Rust stop path appends only when the capture faulted.
+ * The trailer the Rust stop path appends only when the capture faulted:
+ * `[duration_ms: u32 LE][expected_ms: u32 LE][flags: u32 LE][magic: u32 LE]`.
  *
- * `[duration_ms: u32 LE][expected_ms: u32 LE][flags: u32 LE]`. Its presence is
- * not length-delimited in a way a decoder can infer from the audio alone — a
- * float32 stream is always a multiple of four bytes, so twelve bytes without a
- * marker is indistinguishable from three samples — and the flags word is the only
- * thing that says so. The flag is therefore read from the end of the body first,
- * and the trailer only consumed once it is recognised as ours.
+ * Its presence cannot be inferred from the audio. A float32 stream is always a
+ * multiple of four bytes, so twelve bytes of trailer look exactly like three
+ * samples, and an earlier version of this decoder keyed off a single flag bit —
+ * which is the low bit of the last sample's IEEE-754 mantissa, set for
+ * essentially all real audio. That version reported a capture fault and dropped
+ * three samples on about half of all healthy recordings.
  *
- * This matters more than it looks: reading the trailer optimistically would
- * silently drop the last 12 bytes of every ordinary recording, which on a 48 kHz
- * dictation is the last third of a millisecond and on a short one is the whole
- * recording.
+ * The magic is the discriminator because it is the one word that cannot plausibly
+ * be part of a recording, so the trailer is only consumed when it matches.
  */
-const TRAILER_BYTES = 12;
+const TRAILER_BYTES = 16;
 const CAPTURE_FAULT_BIT = 1 << 0;
+/** `CAPTURE_TRAILER_MAGIC` in `commands.rs`, byte for byte. */
+const CAPTURE_TRAILER_MAGIC = 0x4341_5054;
 const IS_LITTLE_ENDIAN = new Uint8Array(new Uint16Array([1]).buffer)[0] === 1;
 
 const EMPTY_RESULT = (): StopRecordingResponse => ({
@@ -66,17 +67,18 @@ const readCaptureTrailer = (
   view: DataView,
   byteLength: number,
 ): { durationMs: number; expectedMs: number } | null => {
-  if (byteLength < HEADER_BYTES + 4) {
-    return null;
-  }
-  const flags = view.getUint32(byteLength - 4, true);
-  if ((flags & CAPTURE_FAULT_BIT) === 0) {
-    return null;
-  }
   if (byteLength < HEADER_BYTES + TRAILER_BYTES) {
-    // A flags word without room for the trailer cannot be trusted: the body is
-    // shorter than the header it claims. Treated as untrailed, so the audio is
-    // kept and the fault is simply not reported.
+    // Too short to hold a trailer plus its header: an untrusted tail word must
+    // not cost a real recording any samples.
+    return null;
+  }
+  if (view.getUint32(byteLength - 4, true) !== CAPTURE_TRAILER_MAGIC) {
+    return null;
+  }
+  const flags = view.getUint32(byteLength - 8, true);
+  if ((flags & CAPTURE_FAULT_BIT) === 0) {
+    // A magic without the flag is not a trailer this build wrote. The audio is
+    // kept and the fault is not reported, which is the safe direction.
     return null;
   }
   return {

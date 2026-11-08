@@ -689,6 +689,22 @@ mod cpal_impl {
     /// A relative term as well as an absolute one: a 30-second dictation that
     /// lost 600 ms is not the defect this looks for, while a 900 ms recording
     /// that gained 5 seconds of wall clock is.
+    /// The fault token to report to the user, which drops one that lost no audio.
+    ///
+    /// The host's error callback runs on its own thread and can land after the
+    /// final block was already delivered, so a `fatal` token does not by itself
+    /// prove the recording was shortened. Telling the user to check a cable for a
+    /// whole dictation is worse than saying nothing: it is a false alarm on a
+    /// working microphone. The token is still what decides whether the stream is
+    /// reused, and that decision is made from the unfiltered value.
+    fn reported_capture_fault(
+        reported: Option<String>,
+        captured: Duration,
+        expected: Duration,
+    ) -> Option<String> {
+        reported.filter(|_| elapsed_gap_is_suspicious(captured, expected))
+    }
+
     fn elapsed_gap_is_suspicious(captured: Duration, expected: Duration) -> bool {
         if expected <= captured {
             return false;
@@ -2005,6 +2021,9 @@ mod cpal_impl {
             // microphone indicator on for a device that cannot record, and keeps
             // a broken stream alive until the next press rejects it. It is
             // closed here instead, and the next press opens a working device.
+            // Reads the token as the host reported it, before the gap filter
+            // below: a stream declared gone is retired even when its last
+            // recording happened to be whole.
             let keep_warm = capture_fault.is_none();
             let pending_linger = self.pending_linger();
             if !keep_warm {
@@ -2085,6 +2104,8 @@ mod cpal_impl {
                 expected_duration
             };
             let size_bytes = samples.len() as u64 * std::mem::size_of::<f32>() as u64;
+
+            let capture_fault = reported_capture_fault(capture_fault, duration, expected_duration);
 
             // A capture that stopped early is logged with both figures. The
             // numbers are the whole value here: "the recording is 1.4 s long and
@@ -2402,13 +2423,19 @@ mod cpal_impl {
     where
         Id: Copy + std::fmt::Debug,
     {
-        let mut last_err: Option<RecordingError> = None;
+        // Only a host that loaded and then failed to produce a stream is worth
+        // reporting: its message is the one the user can act on ("it is in use",
+        // "it was unplugged"). A host that would not load at all says something
+        // about this build's backend wiring, not about the microphone, so it is
+        // logged and does not become the press's failure. Before this split a
+        // refused host replaced a perfectly good "no input device" with an
+        // internal "stream build:" message the UI cannot classify.
+        let mut attempt_err: Option<RecordingError> = None;
         for id in hosts {
             let host = match load(*id) {
                 Ok(host) => host,
                 Err(err) => {
                     log::warn!("host {id:?} could not be loaded: {err}");
-                    last_err = Some(err);
                     continue;
                 }
             };
@@ -2416,14 +2443,11 @@ mod cpal_impl {
                 Ok(value) => return Ok((value, *id)),
                 Err(err) => {
                     log::warn!("host {id:?} did not yield a usable input device: {err}");
-                    last_err = Some(err);
+                    attempt_err = Some(err);
                 }
             }
         }
-        // No host at all and every host failing are different stories with the
-        // same meaning here: this machine cannot capture. The caller turns both
-        // into "no input device", which is what the user can act on.
-        Err(last_err.unwrap_or(RecordingError::InputDeviceUnavailable))
+        Err(attempt_err.unwrap_or(RecordingError::InputDeviceUnavailable))
     }
 
     /// One device, as the selection loop sees it.
@@ -3248,9 +3272,9 @@ mod cpal_impl {
         use super::{
             cached_device_rejection, cold_start_seed, device_matches_preferred,
             disambiguated_label, elapsed_gap_is_suspicious, is_preferred_input_device_name,
-            order_hosts, preroll_capacity, try_hosts, warm_ring, CachedDeviceInfo, ChunkEmitter,
-            Preroll, RecordingError, RecordingManager, SinkMode, StreamSink, STALE_WARM_SILENCE,
-            WARM_FOREVER_MS, WARM_READY_GRACE,
+            order_hosts, preroll_capacity, reported_capture_fault, try_hosts, warm_ring,
+            CachedDeviceInfo, ChunkEmitter, Preroll, RecordingError, RecordingManager, SinkMode,
+            StreamSink, STALE_WARM_SILENCE, WARM_FOREVER_MS, WARM_READY_GRACE,
         };
         use crate::platform::audio_stage::{AudioStartupStage, AudioStartupTrace};
         use std::collections::HashSet;
@@ -4072,6 +4096,78 @@ mod cpal_impl {
             );
 
             assert_eq!(result.ok().map(|(value, _)| value), Some("found"));
+        }
+
+        #[test]
+        fn a_host_that_will_not_load_does_not_become_the_reported_error() {
+            // The regression this pins: a host that refuses to load is a build's
+            // own backend problem, not something the user can act on, so its
+            // "stream build: ..." message must not replace the "no input
+            // device" that the UI classifies into the microphone guidance.
+            let hosts = [FakeHost::First];
+
+            let err = try_hosts(
+                &hosts,
+                |_| {
+                    Err::<FakeHost, _>(RecordingError::StreamBuild("pulse not running".to_string()))
+                },
+                |_| Ok("unreachable"),
+            )
+            .unwrap_err();
+
+            assert!(matches!(err, RecordingError::InputDeviceUnavailable));
+            assert_eq!(err.to_string(), "no input device");
+        }
+
+        #[test]
+        fn a_stream_failure_still_wins_over_a_host_that_will_not_load() {
+            // The other half: a host that did load and then could not open the
+            // device has the actionable message, and it must survive a
+            // neighbouring host failing to load afterwards.
+            let hosts = [FakeHost::First, FakeHost::Second];
+
+            let err = try_hosts(
+                &hosts,
+                |id| {
+                    if id == FakeHost::First {
+                        Ok(id)
+                    } else {
+                        Err(RecordingError::StreamBuild("pulse not running".to_string()))
+                    }
+                },
+                |_| Err::<&str, _>(RecordingError::StreamBuild("device busy".to_string())),
+            )
+            .unwrap_err();
+
+            assert_eq!(err.to_string(), "stream build: device busy");
+        }
+
+        #[test]
+        fn a_fault_that_lost_no_audio_is_not_reported() {
+            let whole = Duration::from_millis(6_000);
+            // A complete recording with a late error callback: nothing to say.
+            assert_eq!(
+                reported_capture_fault(
+                    Some("fatal".to_string()),
+                    whole,
+                    whole + Duration::from_millis(120)
+                ),
+                None
+            );
+            // A real death partway through: reported, and with the token intact.
+            assert_eq!(
+                reported_capture_fault(
+                    Some("fatal".to_string()),
+                    Duration::from_millis(1_400),
+                    whole
+                ),
+                Some("fatal".to_string())
+            );
+            // No fault at all stays no fault, however short the recording.
+            assert_eq!(
+                reported_capture_fault(None, Duration::from_millis(10), whole),
+                None
+            );
         }
 
         #[test]

@@ -21,6 +21,36 @@ describe("captureFaultNotice", () => {
     expect(notice?.logMessage).toBe("capture faulted after 1400ms of 6000ms");
   });
 
+  it("does not claim a loss when the whole recording was delivered", () => {
+    // The host's error callback can land after the last block, so a fatal token
+    // with equal lengths means the recording is complete. "Stopped after 6.0 of
+    // 6.0 seconds" would contradict itself and send the user to check a cable
+    // for an intact dictation.
+    expect(
+      captureFaultNotice({
+        captureFault: "fatal",
+        capturedMs: 6_000,
+        expectedMs: 6_000,
+      })?.kind,
+    ).toBe("ended_early");
+    // Rounding to a tenth of a second hides anything under this.
+    expect(
+      captureFaultNotice({
+        captureFault: "fatal",
+        capturedMs: 6_000,
+        expectedMs: 6_049,
+      })?.kind,
+    ).toBe("ended_early");
+    // A visible gap keeps the two figures.
+    expect(
+      captureFaultNotice({
+        captureFault: "fatal",
+        capturedMs: 6_000,
+        expectedMs: 6_300,
+      })?.kind,
+    ).toBe("capture_faulted");
+  });
+
   it("falls back to a message with no numbers when none were reported", () => {
     // Two zeroes would state that nothing was captured, which may be false. The
     // wording has to stand on its own without figures.
@@ -34,9 +64,15 @@ describe("captureFaultNotice", () => {
         expectedMs: 0,
       })?.kind,
     ).toBe("ended_early");
+    // A lone captured length cannot show a gap, so it gets the generic wording
+    // rather than "stopped after 0.9 of 0.9 seconds". This assertion used to
+    // expect the detailed message, which was the contradiction itself.
     expect(
       captureFaultNotice({ captureFault: "fatal", capturedMs: 900 })?.kind,
-    ).toBe("capture_faulted");
+    ).toBe("ended_early");
+    expect(
+      captureFaultNotice({ captureFault: "fatal", capturedMs: 900 })?.values,
+    ).toEqual({ captured: "0.9", expected: "0.9" });
   });
 
   it("the two messages the component renders have catalogue-safe ids", () => {

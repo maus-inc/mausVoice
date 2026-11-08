@@ -301,6 +301,27 @@ pub fn encode_recorded_audio(samples: &[f32], sample_rate: u32) -> Vec<u8> {
     bytes
 }
 
+/// Marks a body that ends with a capture trailer.
+///
+/// The trailer cannot be found by inspecting its own contents. The audio before
+/// it is a stream of `f32` and therefore a multiple of four bytes, so twelve
+/// bytes of trailer are indistinguishable from three ordinary samples. A
+/// decoder that guessed at the tail would eat the end of a healthy recording,
+/// and a flags word that merely has an odd low bit does so on roughly half of
+/// them: real speech sets it constantly. This magic is written after the audio
+/// and last in the trailer, and the decoder requires it before it removes
+/// anything, so a false positive needs four consecutive samples to spell a
+/// 32-bit constant and the last sample to have an odd bit pattern.
+pub const CAPTURE_TRAILER_MAGIC: u32 = 0x4341_5054;
+
+/// Set in the trailer's flags word when the host reported the stream gone.
+///
+/// One bit rather than a string: the token is a closed set, the frontend only
+/// needs to know whether it happened, and a string in the trailer would make the
+/// body self-describing at the cost of a length prefix and a decode branch for a
+/// value with two possibilities.
+pub const CAPTURE_FAULT_BIT: u32 = 1 << 0;
+
 /// Packs a finished recording with a trailer carrying what the microphone did.
 ///
 /// The audio is framed exactly as [`encode_recorded_audio`] frames it, so a
@@ -313,12 +334,12 @@ pub fn encode_recorded_audio(samples: &[f32], sample_rate: u32) -> Vec<u8> {
 /// [sample_rate: u32 LE][samples: f32 LE...][duration_ms: u32 LE]
 ///                                         [expected_ms: u32 LE]
 ///                                         [flags: u32 LE]
+///                                         [magic: u32 LE]
 /// ```
 ///
-/// The flags word is the last four bytes and carries [`CAPTURE_FAULT_BIT`] when
-/// the host reported that the stream was gone. A recording without a fault is
-/// byte-for-byte what `encode_recorded_audio` produces, so the common path is
-/// unchanged and an older decoder reads it exactly as before.
+/// A recording without a fault is byte-for-byte what
+/// [`encode_recorded_audio`] produces, so the common path is unchanged and an
+/// older decoder reads it exactly as before.
 pub fn encode_recorded_audio_with_capture(
     samples: &[f32],
     sample_rate: u32,
@@ -333,21 +354,50 @@ pub fn encode_recorded_audio_with_capture(
     bytes.extend_from_slice(&duration_ms.to_le_bytes());
     bytes.extend_from_slice(&expected_ms.to_le_bytes());
     bytes.extend_from_slice(&CAPTURE_FAULT_BIT.to_le_bytes());
+    bytes.extend_from_slice(&CAPTURE_TRAILER_MAGIC.to_le_bytes());
     bytes
 }
 
-/// Set in the trailer's flags word when the host reported the stream gone.
+/// Where a capture trailer starts, and the two lengths it carries.
 ///
-/// One bit rather than a string: the token is a closed set, the frontend only
-/// needs to know whether it happened, and a string in the trailer would make the
-/// body self-describing at the cost of a length prefix and a decode branch for a
-/// value with two possibilities.
-pub const CAPTURE_FAULT_BIT: u32 = 1 << 0;
+/// `None` means the body has no trailer, which is every healthy recording. The
+/// magic identifies it; the flag is a consequence of a fault, not a second
+/// discriminator, so requiring both only makes a real trailer easier to miss.
+pub fn decode_capture_trailer(bytes: &[u8]) -> Option<(usize, u32, u32)> {
+    const TRAILER_BYTES: usize = 16;
+    if bytes.len() < 4 + TRAILER_BYTES {
+        return None;
+    }
+    let word = |offset: usize| -> Option<u32> {
+        let slice = bytes.get(offset..offset + 4)?;
+        Some(u32::from_le_bytes(slice.try_into().ok()?))
+    };
+    if word(bytes.len() - 4)? != CAPTURE_TRAILER_MAGIC {
+        return None;
+    }
+    if word(bytes.len() - 8)? & CAPTURE_FAULT_BIT == 0 {
+        // A magic without the flag is not a trailer this build wrote. Leaving
+        // the bytes as audio loses a fault report; stripping them would corrupt
+        // real samples.
+        return None;
+    }
+    Some((
+        bytes.len() - TRAILER_BYTES,
+        word(bytes.len() - 16)?,
+        word(bytes.len() - 12)?,
+    ))
+}
 
 /// Inverse of [`encode_recorded_audio`], for the direction the frontend sends
 /// a recording back (`store_transcription_audio`). One wire format describes a
-/// recording in both directions.
+/// recording in both directions. A capture trailer is not part of that payload
+/// and is stripped if one is present, so a body bounced back by a client that
+/// echoed what it received still decodes to its samples.
 pub fn decode_recorded_audio(bytes: &[u8]) -> Result<(u32, Vec<f32>), String> {
+    let bytes = match decode_capture_trailer(bytes) {
+        Some((audio_len, _, _)) => &bytes[..audio_len],
+        None => bytes,
+    };
     if bytes.len() < 4 {
         return Err("Recorded audio payload is missing its sample-rate header".to_string());
     }
@@ -7097,32 +7147,96 @@ mod tests {
     fn a_faulted_recording_carries_its_lengths_and_a_flag() {
         let bytes = encode_recorded_audio_with_capture(&[0.5], 16_000, 1_400, 6_000, Some("fatal"));
 
-        // Audio first, then the three trailer words, so a decoder that reads the
-        // body as audio cannot mistake the trailer for samples.
+        // Audio first, then the trailer words, so a decoder that reads the body
+        // as audio cannot mistake the trailer for samples.
         let mut expected = encode_recorded_audio(&[0.5], 16_000);
         expected.extend_from_slice(&1_400_u32.to_le_bytes());
         expected.extend_from_slice(&6_000_u32.to_le_bytes());
         expected.extend_from_slice(&CAPTURE_FAULT_BIT.to_le_bytes());
+        expected.extend_from_slice(&CAPTURE_TRAILER_MAGIC.to_le_bytes());
         assert_eq!(bytes, expected);
         assert_eq!(
             bytes.len(),
-            encode_recorded_audio(&[0.5], 16_000).len() + 12
+            encode_recorded_audio(&[0.5], 16_000).len() + 16
         );
     }
 
     #[test]
-    fn the_fault_flag_is_the_last_word_of_the_body() {
+    fn the_magic_is_the_last_word_so_the_trailer_is_findable() {
         let bytes =
             encode_recorded_audio_with_capture(&[0.25, 0.5], 44_100, 900, 4_000, Some("fatal"));
         let tail = &bytes[bytes.len() - 4..];
 
-        // A decoder locates the trailer from the end of the body, so the flag
-        // has to be the final word rather than first in the trailer.
+        // The decoder locates the trailer from the end of the body and has
+        // nothing else to go on, so the magic has to be the final word.
         assert_eq!(
             u32::from_le_bytes([tail[0], tail[1], tail[2], tail[3]]),
-            CAPTURE_FAULT_BIT
+            CAPTURE_TRAILER_MAGIC
         );
-        assert_eq!(CAPTURE_FAULT_BIT.count_ones(), 1, "one bit, not a mask");
+    }
+
+    #[test]
+    fn a_trailer_round_trips_to_the_audio_and_the_two_lengths() {
+        let audio = encode_recorded_audio(&[0.5, -0.5, 0.25], 44_100);
+        let bytes = encode_recorded_audio_with_capture(
+            &[0.5, -0.5, 0.25],
+            44_100,
+            1_400,
+            6_000,
+            Some("fatal"),
+        );
+
+        assert_eq!(
+            decode_capture_trailer(&bytes),
+            Some((audio.len(), 1_400, 6_000))
+        );
+        assert_eq!(
+            decode_recorded_audio(&bytes),
+            Ok((44_100, vec![0.5, -0.5, 0.25]))
+        );
+    }
+
+    #[test]
+    fn audio_that_happens_to_look_like_a_flag_is_not_a_trailer() {
+        // The defect this pins: a decoder that treats an odd last word as a
+        // fault marker eats three real samples and reports a capture fault on
+        // ordinary speech. 0x3f800001 is 1.0000001f, an entirely ordinary
+        // sample.
+        let samples = [0.25_f32, 0.5, 0.75, 1.000_000_1];
+        let bytes = encode_recorded_audio(&samples, 16_000);
+
+        assert_eq!(decode_capture_trailer(&bytes), None);
+        let (rate, decoded) = decode_recorded_audio(&bytes).expect("decodes");
+        assert_eq!(rate, 16_000);
+        assert_eq!(decoded, samples.to_vec());
+    }
+
+    #[test]
+    fn a_trailer_missing_its_flag_is_left_as_audio() {
+        let mut bytes = encode_recorded_audio(&[0.5, 0.25], 16_000);
+        // The magic with no flag: not something this build wrote, so it must
+        // not be trusted enough to delete samples. The trailing magic is itself
+        // four more bytes of what the decoder must read as audio.
+        let mut expected = vec![0.5, 0.25, 0.0, 0.0, 0.0];
+        expected.push(f32::from_bits(CAPTURE_TRAILER_MAGIC));
+        bytes.extend_from_slice(&0_u32.to_le_bytes());
+        bytes.extend_from_slice(&0_u32.to_le_bytes());
+        bytes.extend_from_slice(&0_u32.to_le_bytes());
+        bytes.extend_from_slice(&CAPTURE_TRAILER_MAGIC.to_le_bytes());
+
+        assert_eq!(decode_capture_trailer(&bytes), None);
+        assert_eq!(decode_recorded_audio(&bytes), Ok((16_000, expected)));
+    }
+
+    #[test]
+    fn a_body_too_short_for_a_trailer_is_never_trimmed() {
+        // Fewer bytes than the trailer plus the header cannot hold one, so even
+        // a matching tail word must leave the samples alone.
+        let mut bytes = 16_000_u32.to_le_bytes().to_vec();
+        bytes.extend_from_slice(&CAPTURE_TRAILER_MAGIC.to_le_bytes());
+
+        assert_eq!(decode_capture_trailer(&bytes), None);
+        assert!(decode_recorded_audio(&bytes).is_ok());
     }
 
     #[test]
