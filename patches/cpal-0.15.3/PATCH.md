@@ -246,3 +246,7 @@ scripts/ci/run-alsa-fault-tests.sh overrun  # only matching test names
 It takes about 40 seconds, and `Test Desktop Unit` runs it on Linux so the
 faults stay covered rather than only documented. These tests drive an injected
 null device, not a physical microphone.
+
+The macOS and iOS CoreAudio backends use the now-unsafe generic AudioUnit
+property getter only with the documented stream-format, frame-size and range
+representations. The iOS changes have not been exercised on an iOS device.

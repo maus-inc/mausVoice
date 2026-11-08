@@ -468,7 +468,8 @@ impl AudioUnit {
         // First, we'll retrieve the stream format so that we can ensure that the given callback
         // format matches the audio unit's format.
         let id = sys::kAudioUnitProperty_StreamFormat;
-        let asbd = self.get_property(id, Scope::Input, Element::Output)?;
+        // Stream-format properties return an AudioStreamBasicDescription.
+        let asbd = unsafe { self.get_property(id, Scope::Input, Element::Output)? };
         let stream_format = super::StreamFormat::from_asbd(asbd)?;
 
         // If the stream format does not match, return an error indicating this.
@@ -541,7 +542,8 @@ impl AudioUnit {
         // First, we'll retrieve the stream format so that we can ensure that the given callback
         // format matches the audio unit's format.
         let id = sys::kAudioUnitProperty_StreamFormat;
-        let asbd = self.get_property(id, Scope::Output, Element::Input)?;
+        // Stream-format properties return an AudioStreamBasicDescription.
+        let asbd = unsafe { self.get_property(id, Scope::Output, Element::Input)? };
         let stream_format = super::StreamFormat::from_asbd(asbd)?;
 
         // If the stream format does not match, return an error indicating this.
@@ -560,15 +562,18 @@ impl AudioUnit {
         #[cfg(target_os = "macos")]
         let mut buffer_frame_size: u32 = {
             let id = sys::kAudioDevicePropertyBufferFrameSize;
-            let buffer_frame_size: u32 = self.get_property(id, Scope::Global, Element::Output)?;
+            // The buffer-frame-size property returns a u32.
+            let buffer_frame_size: u32 = unsafe { self.get_property(id, Scope::Global, Element::Output)? };
             buffer_frame_size
         };
         #[cfg(target_os = "ios")]
         let mut buffer_frame_size: u32 = {
             let id = sys::kAudioSessionProperty_CurrentHardwareIOBufferDuration;
-            let seconds: f32 = super::audio_session_get_property(id)?;
+            // The hardware buffer duration is an f32.
+            let seconds: f32 = unsafe { super::audio_session_get_property(id)? };
             let id = sys::kAudioSessionProperty_CurrentHardwareSampleRate;
-            let sample_rate: f64 = super::audio_session_get_property(id)?;
+            // The hardware sample rate is an f64.
+            let sample_rate: f64 = unsafe { super::audio_session_get_property(id)? };
             (sample_rate * seconds as f64).round() as u32
         };
         let sample_bytes = stream_format.sample_format.size_in_bytes();

@@ -17,6 +17,14 @@ When initialization fails after instance creation, the constructor now calls
 fails. CPAL maps that result to its capture ownership guard. Portable tests
 exercise the ordering and error propagation, but do not call Apple APIs.
 
+The generic AudioUnit and iOS AudioSession property getters now require unsafe
+calls: callers must choose a matching native representation and ensure its bytes
+form a valid Rust value. They reject zero-sized types and unexpected returned
+lengths before initialization. The AudioUnit method also refuses reads after a
+checked close. Existing typed call sites are updated; external users of these
+generic getters must now supply an unsafe block and uphold the contract. A
+simulated native getter covers lengths and errors; actual iOS behavior is untested.
+
 The macOS device-name query validates its returned CoreFoundation pointer,
 releases successfully returned strings, and sizes its UTF-8 conversion buffer
 instead of imposing a 255-byte limit. Simulated CoreAudio/CoreFoundation tests

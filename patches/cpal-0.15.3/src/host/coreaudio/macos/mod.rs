@@ -794,8 +794,10 @@ impl Device {
                 Ok(())
             };
 
-            let actual: AudioStreamBasicDescription =
-                audio_unit.get_property(kAudioUnitProperty_StreamFormat, scope, element)?;
+            // CoreAudio's stream-format property returns an AudioStreamBasicDescription.
+            let actual: AudioStreamBasicDescription = unsafe {
+                audio_unit.get_property(kAudioUnitProperty_StreamFormat, scope, element)?
+            };
             let actual_format = coreaudio::audio_unit::StreamFormat::from_asbd(actual)?;
             let expected_format = match sample_format {
                 SampleFormat::F32 => coreaudio::audio_unit::SampleFormat::F32,
@@ -820,11 +822,14 @@ impl Device {
             {
                 return Err(BuildStreamError::StreamConfigNotSupported);
             }
-            let buffer_frames: u32 = audio_unit.get_property(
-                kAudioDevicePropertyBufferFrameSize,
-                Scope::Global,
-                Element::Output,
-            )?;
+            // The buffer-frame-size property is a u32.
+            let buffer_frames: u32 = unsafe {
+                audio_unit.get_property(
+                    kAudioDevicePropertyBufferFrameSize,
+                    Scope::Global,
+                    Element::Output,
+                )?
+            };
             // The callback registry serializes access to this pointer and drains
             // every admitted render before checked disposal begins.
             let native_unit = unsafe { audio_unit.raw_instance() };
@@ -1288,11 +1293,14 @@ fn get_device_buffer_frame_size_range(
 fn get_io_buffer_frame_size_range(
     audio_unit: &AudioUnit,
 ) -> Result<SupportedBufferSize, coreaudio::Error> {
-    let buffer_size_range: AudioValueRange = audio_unit.get_property(
-        kAudioDevicePropertyBufferFrameSizeRange,
-        Scope::Global,
-        Element::Output,
-    )?;
+    // The frame-size-range property is an AudioValueRange.
+    let buffer_size_range: AudioValueRange = unsafe {
+        audio_unit.get_property(
+            kAudioDevicePropertyBufferFrameSizeRange,
+            Scope::Global,
+            Element::Output,
+        )?
+    };
 
     Ok(SupportedBufferSize::Range {
         min: buffer_size_range.mMinimum as u32,

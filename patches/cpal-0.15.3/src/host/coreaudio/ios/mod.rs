@@ -406,8 +406,9 @@ fn configure_for_recording(audio_unit: &mut AudioUnit) -> Result<(), coreaudio::
 fn default_output_asbd() -> Result<AudioStreamBasicDescription, coreaudio::Error> {
     let audio_unit = create_audio_unit()?;
     let id = kAudioUnitProperty_StreamFormat;
+    // The stream-format property is an AudioStreamBasicDescription.
     let asbd: AudioStreamBasicDescription =
-        audio_unit.get_property(id, Scope::Output, Element::Output)?;
+        unsafe { audio_unit.get_property(id, Scope::Output, Element::Output)? };
     Ok(asbd)
 }
 
@@ -418,8 +419,9 @@ fn default_input_asbd() -> Result<AudioStreamBasicDescription, coreaudio::Error>
     audio_unit.initialize()?;
 
     let id = kAudioUnitProperty_StreamFormat;
+    // The stream-format property is an AudioStreamBasicDescription.
     let asbd: AudioStreamBasicDescription =
-        audio_unit.get_property(id, Scope::Input, Element::Input)?;
+        unsafe { audio_unit.get_property(id, Scope::Input, Element::Input)? };
     Ok(asbd)
 }
 

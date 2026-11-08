@@ -62,6 +62,8 @@ mod name_cf {
 #[cfg(target_os = "macos")]
 use crate::{error::Error as ListenerError, sys as listener_sys};
 
+mod property_output;
+
 pub mod audio_format;
 #[cfg(target_os = "macos")]
 mod checked_close;
@@ -344,8 +346,23 @@ impl AudioUnit {
     /// - **id**: The identifier of the property.
     /// - **scope**: The audio unit scope for the property.
     /// - **elem**: The audio unit element for the property.
-    pub fn get_property<T>(&self, id: u32, scope: Scope, elem: Element) -> Result<T, Error> {
-        get_property(self.instance, id, scope, elem)
+    ///
+    /// # Safety
+    /// `T` must match the selected CoreAudio property's representation and
+    /// ownership semantics, and the native bytes must be a valid `T`.
+    ///
+    /// ```compile_fail
+    /// use coreaudio::audio_unit::{AudioUnit, Element, Scope};
+    /// fn invalid(unit: &AudioUnit) {
+    ///     let _ = unit.get_property::<bool>(0, Scope::Global, Element::Output);
+    /// }
+    /// ```
+    pub unsafe fn get_property<T>(&self, id: u32, scope: Scope, elem: Element) -> Result<T, Error> {
+        #[cfg(target_os = "macos")]
+        if self.checked_close != checked_close::CloseState::Open {
+            return Err(Error::Unspecified);
+        }
+        unsafe { get_property(self.instance, id, scope, elem) }
     }
 
     /// Starts an I/O **AudioUnit**, which in turn starts the audio unit processing graph that it is
@@ -381,7 +398,8 @@ impl AudioUnit {
     /// Get the **AudioUnit**'s sample rate.
     pub fn sample_rate(&self) -> Result<f64, Error> {
         let id = sys::kAudioUnitProperty_SampleRate;
-        self.get_property(id, Scope::Input, Element::Output)
+        // The sample-rate property is represented by an f64.
+        unsafe { self.get_property(id, Scope::Input, Element::Output) }
     }
 
     /// Sets the current **StreamFormat** for the AudioUnit.
@@ -411,7 +429,8 @@ impl AudioUnit {
     /// Return the current Stream Format for the AudioUnit.
     pub fn stream_format(&self, scope: Scope) -> Result<StreamFormat, Error> {
         let id = sys::kAudioUnitProperty_StreamFormat;
-        let asbd = self.get_property(id, scope, Element::Output)?;
+        // The stream-format property is an AudioStreamBasicDescription.
+        let asbd = unsafe { self.get_property(id, scope, Element::Output)? };
         StreamFormat::from_asbd(asbd)
     }
 
@@ -506,24 +525,21 @@ pub fn set_property<T>(
 /// - **id**: The identifier of the property.
 /// - **scope**: The audio unit scope for the property.
 /// - **elem**: The audio unit element for the property.
-pub fn get_property<T>(
+///
+/// # Safety
+/// `au` must be a live AudioUnit. `T` must exactly match the selected property's
+/// representation and ownership semantics, and the bytes returned on success
+/// must form a valid `T`. CoreAudio must respect the supplied output size.
+pub unsafe fn get_property<T>(
     au: sys::AudioUnit,
     id: u32,
     scope: Scope,
     elem: Element,
 ) -> Result<T, Error> {
-    let scope = scope as c_uint;
-    let elem = elem as c_uint;
-    let mut size = ::std::mem::size_of::<T>() as u32;
     unsafe {
-        let mut data_uninit = ::std::mem::MaybeUninit::<T>::uninit();
-        let data_ptr = data_uninit.as_mut_ptr() as *mut _ as *mut c_void;
-        let size_ptr = &mut size as *mut _;
-        try_os_status!(sys::AudioUnitGetProperty(
-            au, id, scope, elem, data_ptr, size_ptr
-        ));
-        let data: T = data_uninit.assume_init();
-        Ok(data)
+        property_output::read(|data, size| {
+            sys::AudioUnitGetProperty(au, id, scope as c_uint, elem as c_uint, data, size)
+        })
     }
 }
 
@@ -535,15 +551,11 @@ pub fn get_property<T>(
 /// ----------
 ///
 /// - **id**: The identifier of the property.
+///
+/// # Safety
+/// `T` must exactly match the selected property's representation and ownership
+/// semantics, and successful native output must form a valid `T`.
 #[cfg(target_os = "ios")]
-pub fn audio_session_get_property<T>(id: u32) -> Result<T, Error> {
-    let mut size = ::std::mem::size_of::<T>() as u32;
-    unsafe {
-        let mut data_uninit = ::std::mem::MaybeUninit::<T>::uninit();
-        let data_ptr = data_uninit.as_mut_ptr() as *mut _ as *mut c_void;
-        let size_ptr = &mut size as *mut _;
-        try_os_status!(sys::AudioSessionGetProperty(id, size_ptr, data_ptr));
-        let data: T = data_uninit.assume_init();
-        Ok(data)
-    }
+pub unsafe fn audio_session_get_property<T>(id: u32) -> Result<T, Error> {
+    unsafe { property_output::read(|data, size| sys::AudioSessionGetProperty(id, size, data)) }
 }
