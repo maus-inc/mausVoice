@@ -42,6 +42,10 @@ on:
       - "scripts/ci/validate-release-inputs.test.mjs"
       - "scripts/ci/release-notes.test.mjs"
       - "scripts/ci/verify-sherpa-archives.test.mjs"
+      - "scripts/ci/warm-microphone-edge-cases.test.mjs"
+      # The matrix itself: editing a row is editing the thing this suite
+      # asserts, so it has to start the job that checks it.
+      - "docs/qa/warm-microphone-edge-cases.md"
       - ".github/workflows/**"
 permissions: {}
 
@@ -270,6 +274,13 @@ jobs:
         # stops being skipped without anyone being told. A guard that no job runs
         # is documentation, so it is run here like the others.
         run: node --test scripts/ci/check-workspace-hygiene.test.mjs
+      - name: Test the warm-microphone QA matrix
+        # `docs/qa/warm-microphone-edge-cases.md` cites a test for every row, and
+        # this guard is what keeps those citations true: a row whose test was
+        # renamed or deleted otherwise goes on claiming coverage it lost. It
+        # reads the markdown and the source tree, needs no build, and was the
+        # one `scripts/ci` guard no workflow ran.
+        run: node --test scripts/ci/warm-microphone-edge-cases.test.mjs
       - name: Test Windows-only Rust module imports
         # No runner in this repository compiles
         # apps/desktop/src-tauri/src/platform/windows/** on Linux, so an
