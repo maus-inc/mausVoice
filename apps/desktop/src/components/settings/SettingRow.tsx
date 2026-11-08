@@ -344,10 +344,31 @@ export const SettingToggleRow = ({
           edge="end"
           slotProps={{
             input: {
+              // Announce as a switch, not a checkbox: these rows toggle a
+              // setting that applies immediately (APG switch pattern).
+              role: "switch",
               "aria-labelledby": titleId,
               ...(descriptionId
                 ? { "aria-describedby": descriptionId }
                 : undefined),
+            },
+            // Reduced motion suppresses the thumb/track travel, never the
+            // state change itself: the checked color and thumb position still
+            // land, just without decorative animation (WCAG 2.3.3 / animation
+            // from interactions). Documented slots, not generated selectors.
+            switchBase: {
+              sx: {
+                "@media (prefers-reduced-motion: reduce)": {
+                  transition: "none",
+                },
+              },
+            },
+            thumb: {
+              sx: {
+                "@media (prefers-reduced-motion: reduce)": {
+                  transition: "none",
+                },
+              },
             },
           }}
         />
