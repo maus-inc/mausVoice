@@ -255,6 +255,26 @@ export const AudioPlayerPill = ({
     },
     [],
   );
+  const reportPlaybackFailure = useCallback(
+    (error: unknown, stage: "read" | "play") => {
+      // Abandoned work (row torn down, read invalidated mid-flight) rejects
+      // with AbortError; the owner already reset the row, so stay silent.
+      if (isAbortError(error)) return;
+      console.error("Failed to toggle audio playback", error);
+      // Two literal message calls, one per failing stage (read vs play), so
+      // the extraction pipeline sees both messages.
+      showErrorSnackbar(
+        stage === "read"
+          ? intl.formatMessage({
+              defaultMessage: "The saved audio for this entry is unavailable.",
+            })
+          : intl.formatMessage({
+              defaultMessage: "Unable to play audio snippet.",
+            }),
+      );
+    },
+    [intl],
+  );
   const handlePlaybackToggle = useCallback(async () => {
     const session = getPlaybackSession();
     if (isPlayingRef.current) {
@@ -317,23 +337,9 @@ export const AudioPlayerPill = ({
         return;
       }
       resetPlaybackState({ progress: true });
-      // Abandoned work (row torn down, read invalidated mid-flight) rejects
-      // with AbortError; the owner already reset the row, so stay silent.
-      if (isAbortError(error)) return;
-      console.error("Failed to toggle audio playback", error);
-      // Two literal message calls, one per failing stage (read vs play), so
-      // the extraction pipeline sees both messages.
-      showErrorSnackbar(
-        stage === "read"
-          ? intl.formatMessage({
-              defaultMessage: "The saved audio for this entry is unavailable.",
-            })
-          : intl.formatMessage({
-              defaultMessage: "Unable to play audio snippet.",
-            }),
-      );
+      reportPlaybackFailure(error, stage);
     }
-  }, [transcriptionId, intl, applyProgress, applyStop]);
+  }, [transcriptionId, intl, applyProgress, applyStop, reportPlaybackFailure]);
   const durationLabel = formatDuration(durationMs);
 
   /** Scrub mapping from client X (same idea as elevenlabs-ui scrub-bar). Bars are a seeded silhouette, not live PCM. */
