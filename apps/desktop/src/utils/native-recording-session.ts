@@ -58,6 +58,7 @@ let liveHandle: NativeRecordingHandle | null = null;
 let liveLocalOwner: { owner: object; transport: RecordingInvoke } | null = null;
 
 let beginInFlight = false;
+let stopInFlight: Promise<StopRecordingResponse> | null = null;
 
 /** The recorder this module currently owns, if any. */
 export const currentNativeRecording = (): NativeRecordingHandle | null =>
@@ -67,6 +68,7 @@ export const currentNativeRecording = (): NativeRecordingHandle | null =>
 export const resetNativeRecordingSession = (): void => {
   liveHandle = null;
   liveLocalOwner = null;
+  stopInFlight = null;
 };
 
 const isSafeGeneration = (value: unknown): value is number =>
@@ -117,6 +119,9 @@ const beginNativeRecordingOwned = async (
   options: NativeRecordingStartOptions,
   invokeFn: RecordingInvoke,
 ): Promise<{ sampleRate: number; handle: NativeRecordingHandle }> => {
+  // A stop may still fail after the native command was sent. Wait for its
+  // result before replacing the only handle that can retry that admission.
+  if (stopInFlight) await stopInFlight;
   const superseded = liveHandle;
   if (superseded) {
     await superseded.discard().catch((error: unknown) => {
@@ -222,35 +227,44 @@ const beginNativeRecordingOwned = async (
  * an unmount, a settings action). They deliberately address whatever recording
  * is live rather than a specific owner.
  */
-export const stopNativeRecording = async (
+export const stopNativeRecording = (
   invokeFn: RecordingInvoke = invoke,
 ): Promise<StopRecordingResponse> => {
+  if (stopInFlight) return stopInFlight;
   const handle = liveHandle;
-  if (!handle) return EMPTY_RESULT();
+  if (!handle) return Promise.resolve(EMPTY_RESULT());
   const localOwner = liveLocalOwner;
   liveHandle = null;
-  try {
-    const payload = await invokeFn("stop_recording", {
-      ownerId: handle.ownerId,
-      generation: handle.generation,
-    });
-    const decoded = decodeStopRecordingPayload(payload);
-    await invokeFn("acknowledge_recording", {
-      ownerId: handle.ownerId,
-      generation: handle.generation,
-    }).catch((error: unknown) => {
-      getLogger().verbose(`acknowledge_recording failed: ${error}`);
-    });
-    if (localOwner) {
-      releaseLocalNativeRecording(localOwner.transport, localOwner.owner);
-      if (liveLocalOwner === localOwner) liveLocalOwner = null;
+  // Defer invoking the transport until the in-flight promise is published,
+  // including when a test or preview transport throws synchronously.
+  const operation = Promise.resolve().then(async () => {
+    try {
+      const payload = await invokeFn("stop_recording", {
+        ownerId: handle.ownerId,
+        generation: handle.generation,
+      });
+      const decoded = decodeStopRecordingPayload(payload);
+      await invokeFn("acknowledge_recording", {
+        ownerId: handle.ownerId,
+        generation: handle.generation,
+      }).catch((error: unknown) => {
+        getLogger().verbose(`acknowledge_recording failed: ${error}`);
+      });
+      if (localOwner) {
+        releaseLocalNativeRecording(localOwner.transport, localOwner.owner);
+        if (liveLocalOwner === localOwner) liveLocalOwner = null;
+      }
+      return decoded;
+    } catch (error) {
+      // Keep the handle addressable so a retry can still release the recorder.
+      liveHandle = liveHandle ?? handle;
+      throw error;
     }
-    return decoded;
-  } catch (error) {
-    // Keep the handle addressable so a retry can still release the recorder.
-    liveHandle = liveHandle ?? handle;
-    throw error;
-  }
+  });
+  stopInFlight = operation;
+  return operation.finally(() => {
+    if (stopInFlight === operation) stopInFlight = null;
+  });
 };
 
 /** Stop the live recording and throw its audio away. */

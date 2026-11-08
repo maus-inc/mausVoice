@@ -279,21 +279,84 @@ describe("stopping", () => {
     expect(invoke).not.toHaveBeenCalled();
   });
 
-  it("does not release a successor's local lease when an older stop finishes", async () => {
+  it("waits for the older stop before admitting a successor", async () => {
     let resolveStop!: (payload: ArrayBuffer) => void;
     const stop = new Promise<ArrayBuffer>((resolve) => {
       resolveStop = resolve;
     });
-    const { invoke } = recorderTransport({ stop_recording: () => stop });
+    const { invoke, calls } = recorderTransport({ stop_recording: () => stop });
     await beginNativeRecording(null, {}, invoke);
     const stopping = stopNativeRecording(invoke);
-    const { handle: successor } = await beginNativeRecording(null, {}, invoke);
+    const starting = beginNativeRecording(null, {}, invoke);
+    await Promise.resolve();
+    expect(
+      calls.filter(([command]) => command === "recording_generation"),
+    ).toHaveLength(1);
 
     resolveStop(new ArrayBuffer(4));
     await stopping;
+    const { handle: successor } = await starting;
     expect(currentNativeRecording()).toBe(successor);
     expect(acquireLocalBrowserRecording(invoke, {})).toBe(false);
     await successor.discard();
+    const browserOwner = {};
+    expect(acquireLocalBrowserRecording(invoke, browserOwner)).toBe(true);
+    releaseLocalBrowserRecording(invoke, browserOwner);
+  });
+
+  it("shares a pending stop instead of reporting an empty recording", async () => {
+    let resolveStop!: (payload: ArrayBuffer) => void;
+    const stop = new Promise<ArrayBuffer>((resolve) => {
+      resolveStop = resolve;
+    });
+    const { invoke, calls } = recorderTransport({ stop_recording: () => stop });
+    await beginNativeRecording(null, {}, invoke);
+    const first = stopNativeRecording(invoke);
+    const second = stopNativeRecording(invoke);
+    resolveStop(new ArrayBuffer(4));
+    expect(await first).toEqual(await second);
+    expect(
+      calls.filter(([command]) => command === "stop_recording"),
+    ).toHaveLength(1);
+  });
+
+  it("clears the in-flight stop when a transport throws synchronously", async () => {
+    const { invoke } = recorderTransport();
+    const { handle } = await beginNativeRecording(null, {}, invoke);
+    const throwing = () => {
+      throw new Error("synchronous failure");
+    };
+    await expect(stopNativeRecording(throwing)).rejects.toThrow(
+      "synchronous failure",
+    );
+    expect(currentNativeRecording()).toBe(handle);
+    await stopNativeRecording(invoke);
+    const browserOwner = {};
+    expect(acquireLocalBrowserRecording(invoke, browserOwner)).toBe(true);
+    releaseLocalBrowserRecording(invoke, browserOwner);
+  });
+
+  it("does not orphan a failed stop when a successor begins", async () => {
+    let rejectStop!: (error: Error) => void;
+    const stop = new Promise<ArrayBuffer>((_, reject) => {
+      rejectStop = reject;
+    });
+    let stopCalls = 0;
+    const { invoke } = recorderTransport({
+      stop_recording: () =>
+        ++stopCalls === 1 ? stop : Promise.resolve(new ArrayBuffer(4)),
+    });
+    const { handle } = await beginNativeRecording(null, {}, invoke);
+    const stopping = stopNativeRecording(invoke);
+    const stopFailure = expect(stopping).rejects.toThrow("transport down");
+    const successor = beginNativeRecording(null, {}, invoke);
+    const successorFailure =
+      expect(successor).rejects.toThrow("transport down");
+    rejectStop(new Error("transport down"));
+    await stopFailure;
+    await successorFailure;
+    expect(currentNativeRecording()).toBe(handle);
+    await stopNativeRecording(invoke);
     const browserOwner = {};
     expect(acquireLocalBrowserRecording(invoke, browserOwner)).toBe(true);
     releaseLocalBrowserRecording(invoke, browserOwner);
