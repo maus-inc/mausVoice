@@ -10,6 +10,7 @@
     "check-types": "turbo run check-types",
     "test": "turbo run test",
     "test:secret-scan": "node scripts/ci/test-secret-history-scan.mjs",
+    "test:qa-docs": "node --test scripts/ci/warm-microphone-edge-cases.test.mjs",
     "skills:verify": "node scripts/ci/verify-skills.mjs",
     "check:pr-body": "node scripts/ci/check-pr-body.mjs",
     "gen:bindings": "pnpm --filter @maus-inc/desktop-native-apis gen:bindings"

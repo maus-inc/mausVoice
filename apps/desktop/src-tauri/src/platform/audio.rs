@@ -984,10 +984,15 @@ mod cpal_impl {
         /// Closes the held stream and stops holding it.
         ///
         /// This is the "release the device now" action, not "stop keeping it
-        /// open after a recording". The window is a separate preference, so
-        /// zeroing it here would silently turn off a setting the user chose
-        /// every time the app released the device for its own reasons: while a
-        /// recording runs, on a clear, on exit.
+        /// open after a recording". The window is a separate preference, and
+        /// the stream is closing, so a window left in place would have nothing
+        /// to apply to: the policy is returned to zero and the front end
+        /// restates the user's window when it next mounts, which is what
+        /// `MicrophoneReadinessSideEffects` does when the preference is off.
+        ///
+        /// The preference itself is never touched here; only this process's
+        /// copy of it. Nothing in this function writes to the user's settings,
+        /// so releasing the device cannot turn a setting off permanently.
         pub fn release_hold(&self) {
             self.set_linger_policy(Duration::ZERO);
             self.close_warm();
@@ -3263,6 +3268,56 @@ mod cpal_impl {
             // not have been a way for the app to turn off a preference.
             manager.set_linger(Duration::from_millis(5_000));
             assert_eq!(manager.linger_millis(), 5_000);
+        }
+
+        /// The built-in detector decides a device's priority, so a miss here
+        /// means the machine's own microphone loses to a virtual one and a
+        /// press records from a device that never captures anything.
+        #[test]
+        fn builtin_names_are_recognised_across_platforms() {
+            use super::is_builtin_microphone_name;
+            // macOS names its own hardware after the model.
+            for name in [
+                "MacBook Pro Microphone",
+                "MacBook Air Microphone",
+                "Mac mini Microphone",
+                "iMac Microphone",
+                "Mac Studio Microphone",
+            ] {
+                assert!(
+                    is_builtin_microphone_name(name),
+                    "{name} should read as built-in"
+                );
+            }
+            // Portable and Linux namings.
+            for name in [
+                "Built-in Audio Analog Stereo",
+                "builtin mic",
+                "Internal Microphone",
+                "Int Mic",
+                "DMic0",
+            ] {
+                assert!(
+                    is_builtin_microphone_name(name),
+                    "{name} should read as built-in"
+                );
+            }
+            // A device that merely happens to mention a microphone is not
+            // built-in, and must not take the priority.
+            for name in [
+                "Blue Yeti Microphone",
+                "USB Microphone",
+                "AirPods Pro",
+                "Scarlett Solo",
+            ] {
+                assert!(
+                    !is_builtin_microphone_name(name),
+                    "{name} should not read as built-in"
+                );
+            }
+            // Matching is case-insensitive: every platform capitalises
+            // differently.
+            assert!(is_builtin_microphone_name("BUILT-IN MICROPHONE"));
         }
 
         #[test]
