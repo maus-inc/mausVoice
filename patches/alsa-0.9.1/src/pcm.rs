@@ -1145,16 +1145,42 @@ impl<'a> fmt::Debug for SwParams<'a> {
 
 const STATUS_SIZE: usize = 152;
 
+#[test]
+fn status_storage_has_c_allocation_alignment() {
+    assert!(std::mem::align_of::<Status>() >= std::mem::align_of::<libc::max_align_t>());
+    let status = Status::new();
+    assert_eq!(status.ptr() as usize % std::mem::align_of::<libc::max_align_t>(), 0);
+}
+
+#[test]
+fn status_builder_reads_null_pcm() {
+    let pcm = PCM::new("null", Direction::Playback, false).unwrap();
+    let params = HwParams::any(&pcm).unwrap();
+    params.set_channels(1).unwrap();
+    params.set_rate(48_000, ValueOr::Nearest).unwrap();
+    params.set_format(Format::s16()).unwrap();
+    params.set_access(Access::RWInterleaved).unwrap();
+    pcm.hw_params(&params).unwrap();
+    pcm.prepare().unwrap();
+    let status = StatusBuilder::new()
+        .audio_htstamp_config(AudioTstampType::Default, false)
+        .build(&pcm)
+        .unwrap();
+    assert_eq!(status.get_state(), State::Prepared);
+    assert!(status.get_avail() >= 0);
+}
+
 /// [snd_pcm_status_t](http://www.alsa-project.org/alsa-doc/alsa-lib/group___p_c_m___status.html) wrapper
-pub struct Status([u8; STATUS_SIZE]);
+pub struct Status(crate::CAligned<[u8; STATUS_SIZE]>);
 
 impl Status {
     fn new() -> Status {
         assert!(unsafe { alsa::snd_pcm_status_sizeof() } as usize <= STATUS_SIZE);
-        Status([0; STATUS_SIZE])
+        Status(crate::CAligned::new([0; STATUS_SIZE]))
     }
 
-    fn ptr(&self) -> *mut alsa::snd_pcm_status_t { self.0.as_ptr() as *const _ as *mut alsa::snd_pcm_status_t }
+    fn ptr(&self) -> *const alsa::snd_pcm_status_t { self.0.value.as_ptr() as *const alsa::snd_pcm_status_t }
+    fn ptr_mut(&mut self) -> *mut alsa::snd_pcm_status_t { self.0.value.as_mut_ptr() as *mut alsa::snd_pcm_status_t }
 
     pub fn get_htstamp(&self) -> timespec {
         let mut h = timespec {tv_sec: 0, tv_nsec: 0};
@@ -1183,7 +1209,8 @@ impl Status {
     pub fn get_overrange(&self) -> Frames { unsafe { alsa::snd_pcm_status_get_overrange(self.ptr()) as Frames }}
 
     pub fn dump(&self, o: &mut Output) -> Result<()> {
-        acheck!(snd_pcm_status_dump(self.ptr(), super::io::output_handle(o))).map(|_| ())
+        // alsa-lib declares a mutable pointer, but only reads the status while dumping it.
+        acheck!(snd_pcm_status_dump(self.ptr() as *mut _, super::io::output_handle(o))).map(|_| ())
     }
 }
 
@@ -1199,19 +1226,19 @@ impl StatusBuilder {
     }
 
     pub fn audio_htstamp_config(
-        self,
+        mut self,
         type_requested: AudioTstampType,
         report_delay: bool,
     ) -> Self {
         let mut cfg: alsa::snd_pcm_audio_tstamp_config_t = unsafe { std::mem::zeroed() };
         cfg.set_type_requested(type_requested as _);
         cfg.set_report_delay(report_delay as _);
-        unsafe { alsa::snd_pcm_status_set_audio_htstamp_config(self.0.ptr(), &mut cfg) };
+        unsafe { alsa::snd_pcm_status_set_audio_htstamp_config(self.0.ptr_mut(), &mut cfg) };
         self
     }
 
-    pub fn build(self, pcm: &PCM) -> Result<Status> {
-        acheck!(snd_pcm_status(pcm.0, self.0.ptr())).map(|_| self.0)
+    pub fn build(mut self, pcm: &PCM) -> Result<Status> {
+        acheck!(snd_pcm_status(pcm.0, self.0.ptr_mut())).map(|_| self.0)
     }
 }
 

@@ -13,3 +13,10 @@ close an ambiguous pointer because the native call may already have invalidated
 it. CPAL uses the distinction to block later capture. A failed open with a null
 pointer still relies on ALSA and its plugins to clean up internal resources. The
 ordinary destructor remains unchanged. Real-driver verification is still required.
+
+`Status`, `ElemId`, and `SelemId` use stack storage aligned like a C allocation
+before passing it to ALSA. The previous byte arrays had alignment one. Mutable
+status and simple-mixer operations now derive their pointers from mutable
+borrows. This keeps the audio status path allocation-free. Unit tests check the
+alignment and exercise the status builder with ALSA's null PCM; real-device
+and non-Linux platform behavior still need verification.

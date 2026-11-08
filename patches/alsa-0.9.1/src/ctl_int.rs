@@ -356,22 +356,35 @@ impl ElemInfo {
 // Non-allocating version of ElemId
 //
 
+#[test]
+fn elem_id_storage_has_c_allocation_alignment() {
+    assert!(mem::align_of::<ElemId>() >= mem::align_of::<libc::max_align_t>());
+    let mut id = elem_id_new().unwrap();
+    assert_eq!(elem_id_ptr(&id) as usize % mem::align_of::<libc::max_align_t>(), 0);
+    id.set_device(17);
+    let mut cloned = id.clone();
+    assert_eq!(elem_id_ptr(&cloned) as usize % mem::align_of::<libc::max_align_t>(), 0);
+    assert_eq!(cloned.get_device(), 17);
+    cloned.set_device(23);
+    assert_eq!(id.get_device(), 17);
+}
+
 /// [snd_ctl_elem_id_t](http://www.alsa-project.org/alsa-doc/alsa-lib/group___control.html) wrapper
-pub struct ElemId(UnsafeCell<[u8; ELEM_ID_SIZE]>);
+pub struct ElemId(crate::CAligned<UnsafeCell<[u8; ELEM_ID_SIZE]>>);
 
 pub fn elem_id_new() -> Result<ElemId> {
     assert!(unsafe { alsa::snd_ctl_elem_id_sizeof() } as usize <= ELEM_ID_SIZE);
-    Ok(ElemId(UnsafeCell::new(unsafe { mem::zeroed() })))
+    Ok(ElemId(crate::CAligned::new(UnsafeCell::new([0; ELEM_ID_SIZE]))))
 }
 
 #[inline]
-pub fn elem_id_ptr(a: &ElemId) -> *mut alsa::snd_ctl_elem_id_t { a.0.get() as *mut _ as *mut alsa::snd_ctl_elem_id_t }
+pub fn elem_id_ptr(a: &ElemId) -> *mut alsa::snd_ctl_elem_id_t { a.0.value.get() as *mut _ as *mut alsa::snd_ctl_elem_id_t }
 
 unsafe impl Send for ElemId {}
 
 impl Clone for ElemId {
     fn clone(&self) -> Self {
-        ElemId(UnsafeCell::new(unsafe { *self.0.get() }))
+        ElemId(crate::CAligned::new(UnsafeCell::new(unsafe { *self.0.value.get() })))
     }
 }
 

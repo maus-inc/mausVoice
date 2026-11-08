@@ -21,6 +21,19 @@ extern crate libc;
 #[macro_use]
 extern crate bitflags;
 
+// ALSA allocates its opaque C objects with calloc. Match C's maximum ordinary
+// allocation alignment for the stack-backed wrappers without adding heap work
+// to the audio callback path.
+#[repr(C)]
+struct CAligned<T> {
+    _alignment: [libc::max_align_t; 0],
+    value: T,
+}
+
+impl<T> CAligned<T> {
+    fn new(value: T) -> Self { Self { _alignment: [], value } }
+}
+
 macro_rules! alsa_enum {
  ($(#[$attr:meta])+ $name:ident, $static_name:ident [$count:expr], $( $a:ident = $b:ident),* ,) =>
 {
