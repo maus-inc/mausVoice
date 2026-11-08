@@ -65,12 +65,11 @@ describe("audio source cleanup", () => {
         currentTime = 0;
         destination = {};
         createBufferSource = createSource;
-        createBuffer() {
-          return { duration: 1, getChannelData: () => new Float32Array(2) };
-        }
-        close() {
-          return Promise.resolve();
-        }
+        createBuffer = () => ({
+          duration: 1,
+          getChannelData: () => new Float32Array(2),
+        });
+        close = () => Promise.resolve();
       },
     );
     await playWebAudio(
@@ -119,15 +118,12 @@ describe("audio source cleanup", () => {
         currentTime = 0;
         destination = {};
         createBufferSource = () => source;
-        createBuffer() {
-          return { duration: 1, getChannelData: () => new Float32Array(2) };
-        }
-        resume() {
-          return resumed;
-        }
-        close() {
-          return Promise.resolve();
-        }
+        createBuffer = () => ({
+          duration: 1,
+          getChannelData: () => new Float32Array(2),
+        });
+        resume = () => resumed;
+        close = () => Promise.resolve();
       },
     );
 
