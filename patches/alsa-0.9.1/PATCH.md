@@ -34,3 +34,7 @@ unsound public API.
 Direct mmap commits now advance the application pointer once and wrap at the
 actual ALSA boundary without signed overflow. Invalid negative advances or
 out-of-range pointers fail before they can be written to the driver.
+
+`ElemValue::set_integer64` checks for the 64-bit control type, matching its
+getter. `Ctl::wait` rejects finite timeouts above `i32::MAX` with `EINVAL`
+instead of wrapping them into a negative or indefinite ALSA timeout.

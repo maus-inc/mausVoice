@@ -46,6 +46,14 @@ pub struct Ctl(*mut alsa::snd_ctl_t);
 
 unsafe impl Send for Ctl {}
 
+fn ctl_wait_timeout(timeout_ms: Option<u32>) -> Result<c_int> {
+    match timeout_ms {
+        None => Ok(-1),
+        Some(value) if value <= c_int::MAX as u32 => Ok(value as c_int),
+        Some(_) => Err(Error::new("snd_ctl_wait", libc::EINVAL)),
+    }
+}
+
 impl Ctl {
     /// Wrapper around open that takes a &str instead of a &CStr
     pub fn new(c: &str, nonblock: bool) -> Result<Self> {
@@ -67,8 +75,10 @@ impl Ctl {
     pub fn card_info(&self) -> Result<CardInfo> { CardInfo::new().and_then(|c|
         acheck!(snd_ctl_card_info(self.0, c.0)).map(|_| c)) }
 
+    /// Wait indefinitely with `None`, or for at most `i32::MAX` milliseconds.
+    /// Larger finite timeouts return `EINVAL` instead of becoming negative.
     pub fn wait(&self, timeout_ms: Option<u32>) -> Result<bool> {
-        acheck!(snd_ctl_wait(self.0, timeout_ms.map(|x| x as c_int).unwrap_or(-1))).map(|i| i == 1) }
+        acheck!(snd_ctl_wait(self.0, ctl_wait_timeout(timeout_ms)?)).map(|i| i == 1) }
 
     pub fn get_db_range(&self, id: &ElemId) -> Result<(MilliBel, MilliBel)> {
         let mut min: c_long = 0;
@@ -258,7 +268,7 @@ impl ElemValue {
     }
 
     pub fn set_integer64(&mut self, idx: u32, val: i64) -> Option<()> {
-        if self.etype != ElemType::Integer || idx >= self.count { None }
+        if self.etype != ElemType::Integer64 || idx >= self.count { None }
         else { unsafe { alsa::snd_ctl_elem_value_set_integer64(self.ptr, idx as c_uint, val) }; Some(()) }
     }
 
@@ -493,6 +503,32 @@ impl EventMask {
    pub fn info(&self) -> bool { return (!self.remove()) && (self.0 & (1 << 1) != 0); }
    pub fn add(&self) -> bool { return (!self.remove()) && (self.0 & (1 << 2) != 0); }
    pub fn tlv(&self) -> bool { return (!self.remove()) && (self.0 & (1 << 3) != 0); }
+}
+
+#[test]
+fn ctl_wait_rejects_finite_timeouts_that_would_wrap_negative() {
+    assert_eq!(ctl_wait_timeout(None).unwrap(), -1);
+    assert_eq!(ctl_wait_timeout(Some(0)).unwrap(), 0);
+    assert_eq!(ctl_wait_timeout(Some(i32::MAX as u32)).unwrap(), i32::MAX);
+    for too_large in [i32::MAX as u32 + 1, u32::MAX] {
+        assert_eq!(ctl_wait_timeout(Some(too_large)).unwrap_err().errno(), libc::EINVAL);
+    }
+}
+
+#[test]
+fn integer64_values_require_the_matching_type_and_round_trip() {
+    let mut integer64 = elem_value_new(ElemType::Integer64, 2).unwrap();
+    assert_eq!(integer64.set_integer64(0, i64::MIN), Some(()));
+    assert_eq!(integer64.set_integer64(1, i64::MAX), Some(()));
+    assert_eq!(integer64.get_integer64(0), Some(i64::MIN));
+    assert_eq!(integer64.get_integer64(1), Some(i64::MAX));
+    assert_eq!(integer64.set_integer64(2, 42), None);
+    assert_eq!(integer64.set_integer(0, 42), None);
+
+    let mut integer = elem_value_new(ElemType::Integer, 1).unwrap();
+    assert_eq!(integer.set_integer64(0, 42), None);
+    assert_eq!(integer.set_integer(0, 7), Some(()));
+    assert_eq!(integer.get_integer(0), Some(7));
 }
 
 #[test]
