@@ -84,6 +84,42 @@ async function settleRoute() {
   );
 }
 
+// Self-contained on purpose: `browser.execute` serializes the function
+// source, so these must not reference module scope. One canonical lookup for
+// the Settings row and the version caption, shared by every contract block.
+function settingsRowSnapshot() {
+  const rows = [...document.querySelectorAll("li")];
+  const row = rows.find((li) =>
+    [...li.querySelectorAll("span, p, div")].some(
+      (n) =>
+        n.children.length === 0 && (n.textContent ?? "").trim() === "Settings",
+    ),
+  );
+  if (!row) return null;
+  const ancestors: string[] = [];
+  let node: Element | null = row;
+  while (node) {
+    const t = getComputedStyle(node).transform;
+    if (t && t !== "none") ancestors.push(`${node.tagName}:${t}`);
+    node = node.parentElement;
+  }
+  const r = row.getBoundingClientRect();
+  return {
+    transformed: ancestors,
+    rect: { x: r.x, y: r.y, width: r.width, height: r.height },
+  };
+}
+
+function versionCaptionRect() {
+  const captions = [...document.querySelectorAll("p, span")];
+  const el = captions.find((node) =>
+    /^v\d+\.\d+\.\d+/.test((node.textContent ?? "").trim()),
+  );
+  if (!el) return null;
+  const r = el.getBoundingClientRect();
+  return { x: r.x, y: r.y, width: r.width, height: r.height };
+}
+
 async function stateSnapshot(tag: string) {
   const state = await browser.execute(() => ({
     path: window.location.pathname,
@@ -383,12 +419,13 @@ describe("MausAgent native deliverable contract", () => {
       );
       const warmMs = await clickToSettled("/dashboard/transcriptions");
 
-      // The evidence lives in the run log; the assertion keeps it honest:
-      // a warm navigation must not be slower than the cold one.
-      console.log(
-        `static: #301 nav-before=${coldMs}ms nav-after=${warmMs}ms (History, click to settled)`,
-      );
-      expect(warmMs).toBeLessThanOrEqual(coldMs + 250);
+      // The numbers ride in the failure message; the passing path stays
+      // quiet per the repository rule (no console.log on a happy path).
+      if (warmMs > coldMs + 250) {
+        throw new Error(
+          `static: #301 warm navigation regressed: nav-before=${coldMs}ms nav-after=${warmMs}ms (History, click to settled)`,
+        );
+      }
     } catch (error) {
       throw new Error(
         `static: ${error instanceof Error ? error.message : String(error)} | ${await stateSnapshot("#301-nav")}`,
@@ -407,47 +444,31 @@ describe("MausAgent native deliverable contract", () => {
 
       // Contract 1: the row renders no hidden interactive DOM (the removed
       // hover-layer IconButton used to sit display:none inside every row).
-      const hidden = await browser.execute(() => {
-        const rows = [...document.querySelectorAll("li")];
-        const row = rows.find((li) =>
-          [...li.querySelectorAll("span, p, div")].some(
-            (n) =>
-              n.children.length === 0 &&
-              (n.textContent ?? "").trim() === "Settings",
-          ),
-        );
-        if (!row) return -1;
-        return [...row.querySelectorAll("button, a, input")].filter(
-          (el) => getComputedStyle(el).display === "none",
-        ).length;
-      });
+      const rowSnap = await browser.execute(settingsRowSnapshot);
+      const hidden = rowSnap
+        ? await browser.execute(
+            (rowRect: { x: number; y: number; width: number }) => {
+              const row = [...document.querySelectorAll("li")].find((li) => {
+                const r = li.getBoundingClientRect();
+                return (
+                  Math.abs(r.x - rowRect.x) < 1 &&
+                  Math.abs(r.y - rowRect.y) < 1 &&
+                  Math.abs(r.width - rowRect.width) < 1
+                );
+              });
+              if (!row) return -1;
+              return [...row.querySelectorAll("button, a, input")].filter(
+                (el) => getComputedStyle(el).display === "none",
+              ).length;
+            },
+            rowSnap.rect,
+          )
+        : -1;
       expect(hidden).toBe(0);
 
       // Contract 2: a real held press leaves no transformed ancestor and the
       // row keeps its layout rect (the old intent styles scaled the row).
-      const before = await browser.execute(() => {
-        const rows = [...document.querySelectorAll("li")];
-        const row = rows.find((li) =>
-          [...li.querySelectorAll("span, p, div")].some(
-            (n) =>
-              n.children.length === 0 &&
-              (n.textContent ?? "").trim() === "Settings",
-          ),
-        );
-        if (!row) return null;
-        const ancestors: string[] = [];
-        let node: Element | null = row;
-        while (node) {
-          const t = getComputedStyle(node).transform;
-          if (t && t !== "none") ancestors.push(`${node.tagName}:${t}`);
-          node = node.parentElement;
-        }
-        const r = row.getBoundingClientRect();
-        return {
-          transformed: ancestors,
-          rect: { x: r.x, y: r.y, width: r.width, height: r.height },
-        };
-      });
+      const before = await browser.execute(settingsRowSnapshot);
       expect(before).not.toBeNull();
       expect(before!.transformed).toEqual([]);
 
@@ -457,29 +478,7 @@ describe("MausAgent native deliverable contract", () => {
         .move({ origin: tileEl, x: 2, y: 2 })
         .down()
         .perform();
-      const during = await browser.execute(() => {
-        const rows = [...document.querySelectorAll("li")];
-        const row = rows.find((li) =>
-          [...li.querySelectorAll("span, p, div")].some(
-            (n) =>
-              n.children.length === 0 &&
-              (n.textContent ?? "").trim() === "Settings",
-          ),
-        );
-        if (!row) return null;
-        const ancestors: string[] = [];
-        let node: Element | null = row;
-        while (node) {
-          const t = getComputedStyle(node).transform;
-          if (t && t !== "none") ancestors.push(`${node.tagName}:${t}`);
-          node = node.parentElement;
-        }
-        const r = row.getBoundingClientRect();
-        return {
-          transformed: ancestors,
-          rect: { x: r.x, y: r.y, width: r.width, height: r.height },
-        };
-      });
+      const during = await browser.execute(settingsRowSnapshot);
       await browser.releaseActions();
       expect(during!.transformed).toEqual([]);
       expect(during!.rect).toEqual(before!.rect);
@@ -672,68 +671,53 @@ describe("MausAgent native deliverable contract", () => {
 
   it("v2.0.7.0 #307 keeps the sidebar version tag clear of the Settings tile", async () => {
     await ensureOn("/dashboard");
-    const settings = await browser.execute(() => {
-      const rows = [...document.querySelectorAll("li")];
-      const row = rows.find((li) =>
-        [...li.querySelectorAll("span, p, div")].some(
-          (n) =>
-            n.children.length === 0 &&
-            (n.textContent ?? "").trim() === "Settings",
-        ),
-      );
-      if (!row) return null;
-      const r = row.getBoundingClientRect();
-      return { x: r.x, y: r.y, width: r.width, height: r.height };
-    });
-    const caption = await browser.execute(() => {
-      const captions = [...document.querySelectorAll("p, span")];
-      const el = captions.find((node) =>
-        /^v\d+\.\d+\.\d+/.test((node.textContent ?? "").trim()),
-      );
-      if (!el) return null;
-      const r = el.getBoundingClientRect();
-      return { x: r.x, y: r.y, width: r.width, height: r.height };
-    });
+    const settings = await browser.execute(settingsRowSnapshot);
+    const caption = await browser.execute(versionCaptionRect);
     expect(caption).not.toBeNull();
     expect(caption!.width).toBeGreaterThan(0);
     expect(caption!.height).toBeGreaterThan(0);
     expect(caption!.y).toBeGreaterThanOrEqual(
-      settings!.y + settings!.height - 2,
+      settings!.rect.y + settings!.rect.height - 2,
     );
 
     // Narrow window sizes: the layout fix must hold outside the default size.
     await browser.setWindowSize(900, 720);
     try {
-      const narrow = await browser.execute(() => {
-        const rows = [...document.querySelectorAll("li")];
-        const row = rows.find((li) =>
-          [...li.querySelectorAll("span, p, div")].some(
-            (n) =>
-              n.children.length === 0 &&
-              (n.textContent ?? "").trim() === "Settings",
-          ),
-        );
-        const captions = [...document.querySelectorAll("p, span")];
-        const el = captions.find((node) =>
-          /^v\d+\.\d+\.\d+/.test((node.textContent ?? "").trim()),
-        );
-        if (!row || !el) return null;
-        const r = row.getBoundingClientRect();
-        const c = el.getBoundingClientRect();
-        // Hit-target probe: the Settings row's center must hit the row (or a
-        // descendant), never the caption.
-        const probe = document.elementFromPoint(
-          r.x + r.width / 2,
-          r.y + r.height / 2,
-        );
-        return {
-          separated: c.y >= r.y + r.height - 2,
-          hitIsCaption: !!probe && probe.contains(el),
-        };
-      });
-      expect(narrow).not.toBeNull();
-      expect(narrow!.separated).toBe(true);
-      expect(narrow!.hitIsCaption).toBe(false);
+      const narrowRow = await browser.execute(settingsRowSnapshot);
+      const narrowCaption = await browser.execute(versionCaptionRect);
+      expect(narrowRow).not.toBeNull();
+      expect(narrowCaption).not.toBeNull();
+      // Hit-target probe: the Settings row's center must hit the row (or a
+      // descendant), never the caption. The caption element is relocated by
+      // its rect so this block needs no duplicate lookup.
+      const hitIsCaption = await browser.execute(
+        (
+          rowRect: { x: number; y: number; width: number; height: number },
+          capRect: { x: number; y: number; width: number; height: number },
+        ) => {
+          const probe = document.elementFromPoint(
+            rowRect.x + rowRect.width / 2,
+            rowRect.y + rowRect.height / 2,
+          );
+          const caption = [...document.querySelectorAll("p, span")].find(
+            (node) => {
+              const r = node.getBoundingClientRect();
+              return (
+                Math.abs(r.x - capRect.x) < 1 &&
+                Math.abs(r.y - capRect.y) < 1 &&
+                Math.abs(r.width - capRect.width) < 1
+              );
+            },
+          );
+          return !!probe && !!caption && probe.contains(caption);
+        },
+        narrowRow.rect,
+        narrowCaption.rect,
+      );
+      expect(
+        narrowCaption.rect.y >= narrowRow.rect.y + narrowRow.rect.height - 2,
+      ).toBe(true);
+      expect(hitIsCaption).toBe(false);
     } finally {
       await browser.setWindowSize(1280, 800);
     }

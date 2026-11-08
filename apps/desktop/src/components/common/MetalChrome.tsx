@@ -150,16 +150,17 @@ export const MetalChrome = ({
     .join(" ");
 
   // metal-fx's bare WebGL2 probe can succeed where the engine's real context
-  // constructor throws; the fallback renders hidden so the first-frame rescue
-  // hook reveals it like any wrapper that never paints. It mirrors the real
-  // wrapper's props and layout so the rescued control keeps its sizing and
-  // handlers on the failure path.
+  // constructor throws. The fallback shows itself immediately: the rescue
+  // hook watches the wrapper it found first, so a crash after the first frame
+  // (a variant swap re-initializing the engine) would leave a hidden fallback
+  // unrevealed. It mirrors the real wrapper's props and layout so the rescued
+  // control keeps its sizing and handlers on the failure path.
   const rescueFallback: ReactNode = (
     <div
       {...rest}
       {...{ [METAL_CHROME_ATTR]: id }}
       className={classes || undefined}
-      style={{ display: "inline-flex", visibility: "hidden", ...rest.style }}
+      style={{ display: "inline-flex", visibility: "visible", ...rest.style }}
     >
       {children}
     </div>

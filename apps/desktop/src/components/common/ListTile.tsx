@@ -12,6 +12,25 @@ import { forwardRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { OverflowTypography } from "./OverflowTypography";
 
+// Normalize sx to array form for MUI.
+const normalizeSx = (sx?: SxProps | SxProps[]): SxProps[] => {
+  if (Array.isArray(sx)) return sx as unknown as SxProps[];
+  return sx != null ? [sx] : [];
+};
+
+// Pass role only when the caller names one: an explicit undefined role
+// overrides ButtonBase's implicit "button" role on non-native buttons and
+// silently strips the row's actionability semantics. Menu-item rows leave
+// roving tabindex management to the menu.
+const buildRoleProps = (
+  itemRole?: React.AriaRole,
+): { role?: React.AriaRole; tabIndex?: number } => {
+  if (!itemRole) return {};
+  return itemRole.startsWith("menuitem")
+    ? { role: itemRole, tabIndex: -1 }
+    : { role: itemRole };
+};
+
 type HoverButtonProps = {
   idle?: React.ReactNode;
   hover?: React.ReactNode;
@@ -170,11 +189,13 @@ export const ListTile = forwardRef(function ListTile<
 
   const handleClickLeading = (event: React.MouseEvent<HTMLDivElement>) => {
     event.stopPropagation();
+    if (disabled) return;
     leadingOnClick?.(event);
   };
 
   const handleClickTrailing = (event: React.MouseEvent<HTMLDivElement>) => {
     event.stopPropagation();
+    if (disabled) return;
     trailingOnClick?.(event);
   };
 
@@ -191,13 +212,7 @@ export const ListTile = forwardRef(function ListTile<
     onClick?.(event);
   };
 
-  // Normalize sx to array form for MUI
-  let normalizedSx: SxProps[] = [];
-  if (Array.isArray(sx)) {
-    normalizedSx = sx as unknown as SxProps[];
-  } else if (sx != null) {
-    normalizedSx = [sx];
-  }
+  const normalizedSx = normalizeSx(sx);
 
   // A clickable row's trailing controls render outside its button (never
   // nested inside it); plain clicks in the slot still forward to the row
@@ -246,15 +261,7 @@ export const ListTile = forwardRef(function ListTile<
     </Stack>
   );
 
-  // Pass role only when the caller names one: an explicit undefined role
-  // overrides ButtonBase's implicit "button" role on non-native buttons and
-  // silently strips the row's actionability semantics. Menu-item rows leave
-  // roving tabindex management to the menu.
-  const roleProps: { role?: React.AriaRole; tabIndex?: number } = {};
-  if (itemRole) {
-    roleProps.role = itemRole;
-    if (itemRole.startsWith("menuitem")) roleProps.tabIndex = -1;
-  }
+  const roleProps = buildRoleProps(itemRole);
 
   const body = (
     <>

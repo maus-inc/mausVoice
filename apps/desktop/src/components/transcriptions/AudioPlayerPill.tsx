@@ -12,6 +12,33 @@ import {
   createAudioPillPlaybackSession,
 } from "./audio-pill-playback-session";
 import { showErrorSnackbar } from "../../actions/app.actions";
+
+const markAudioReadStart = () => {
+  if (!import.meta.env.DEV) return;
+  // Clear before marking: User Timing entries otherwise accumulate for the
+  // window's lifetime on every development playback. One live entry per name
+  // is all the DEV timing needs.
+  performance.clearMarks("mv-audio:read-start");
+  performance.clearMarks("mv-audio:read-end");
+  performance.clearMeasures("mv-audio:read");
+  performance.mark("mv-audio:read-start");
+};
+
+const markAudioReadEnd = () => {
+  if (!import.meta.env.DEV) return;
+  performance.mark("mv-audio:read-end");
+  performance.measure(
+    "mv-audio:read",
+    "mv-audio:read-start",
+    "mv-audio:read-end",
+  );
+};
+
+const isAbortError = (error: unknown): boolean =>
+  typeof error === "object" &&
+  error !== null &&
+  "name" in error &&
+  (error as { name?: string }).name === "AbortError";
 import { getTranscriptionRepo } from "../../repos";
 import {
   buildWaveformOutline,
@@ -20,6 +47,7 @@ import {
   MAX_COMPUTED_BAR_COUNT,
   MIN_COMPUTED_BAR_COUNT,
   MIN_WAVEFORM_BAR_VALUE,
+  type PlaybackStopReason,
   playWebAudio,
   seekPlayback,
   WAVEFORM_BAR_GAP,
@@ -197,6 +225,36 @@ export const AudioPlayerPill = ({
     observer.observe(element);
     return () => observer.disconnect();
   }, [transcriptionId]);
+  const applyProgress = useCallback(
+    (progress: number, attempt: AudioPillPlaybackAttempt, id: string) => {
+      if (
+        transcriptionIdRef.current === id &&
+        attempt.isNonceCurrent() &&
+        !isDraggingRef.current
+      ) {
+        setPlaybackProgress(progress);
+      }
+    },
+    [],
+  );
+  const applyStop = useCallback(
+    (
+      reason: PlaybackStopReason,
+      attempt: AudioPillPlaybackAttempt,
+      id: string,
+    ) => {
+      if (
+        transcriptionIdRef.current !== id ||
+        !attempt.handleStopCallback(reason)
+      ) {
+        return;
+      }
+      isPlayingRef.current = false;
+      setIsPlaying(false);
+      if (reason === "ended") setPlaybackProgress(0);
+    },
+    [],
+  );
   const handlePlaybackToggle = useCallback(async () => {
     const session = getPlaybackSession();
     if (isPlayingRef.current) {
@@ -223,25 +281,10 @@ export const AudioPlayerPill = ({
     // invalid file) is a different recovery than a decode/playback failure.
     let stage: "read" | "play" = "read";
     try {
-      if (import.meta.env.DEV) {
-        // Clear before marking: User Timing entries otherwise accumulate for
-        // the window's lifetime on every development playback. One live entry
-        // per name is all the DEV timing needs.
-        performance.clearMarks("mv-audio:read-start");
-        performance.clearMarks("mv-audio:read-end");
-        performance.clearMeasures("mv-audio:read");
-        performance.mark("mv-audio:read-start");
-      }
+      markAudioReadStart();
       const audioData =
         await getTranscriptionRepo().loadTranscriptionAudio(transcriptionId);
-      if (import.meta.env.DEV) {
-        performance.mark("mv-audio:read-end");
-        performance.measure(
-          "mv-audio:read",
-          "mv-audio:read-start",
-          "mv-audio:read-end",
-        );
-      }
+      markAudioReadEnd();
 
       if (!attempt.isCurrent()) {
         // Stale for this row: clear its loading flags so the button cannot
@@ -260,28 +303,8 @@ export const AudioPlayerPill = ({
       await playWebAudio(
         transcriptionId,
         audioData,
-        (progress) => {
-          if (
-            transcriptionIdRef.current === transcriptionId &&
-            attempt.isNonceCurrent() &&
-            !isDraggingRef.current
-          ) {
-            setPlaybackProgress(progress);
-          }
-        },
-        (reason) => {
-          if (
-            transcriptionIdRef.current !== transcriptionId ||
-            !attempt.handleStopCallback(reason)
-          ) {
-            return;
-          }
-          isPlayingRef.current = false;
-          setIsPlaying(false);
-          if (reason === "ended") {
-            setPlaybackProgress(0);
-          }
-        },
+        (progress) => applyProgress(progress, attempt, transcriptionId),
+        (reason) => applyStop(reason, attempt, transcriptionId),
         playbackProgressRef.current,
         attempt.signal,
       );
@@ -296,12 +319,7 @@ export const AudioPlayerPill = ({
       resetPlaybackState({ progress: true });
       // Abandoned work (row torn down, read invalidated mid-flight) rejects
       // with AbortError; the owner already reset the row, so stay silent.
-      const aborted =
-        typeof error === "object" &&
-        error !== null &&
-        "name" in error &&
-        (error as { name?: string }).name === "AbortError";
-      if (aborted) return;
+      if (isAbortError(error)) return;
       console.error("Failed to toggle audio playback", error);
       // Two literal message calls, one per failing stage (read vs play), so
       // the extraction pipeline sees both messages.
@@ -315,7 +333,7 @@ export const AudioPlayerPill = ({
             }),
       );
     }
-  }, [transcriptionId, intl]);
+  }, [transcriptionId, intl, applyProgress, applyStop]);
   const durationLabel = formatDuration(durationMs);
 
   /** Scrub mapping from client X (same idea as elevenlabs-ui scrub-bar). Bars are a seeded silhouette, not live PCM. */

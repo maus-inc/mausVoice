@@ -32,8 +32,7 @@ const getScenario = (search: string): PreviewScenarioId => {
     : getActivePreviewScenario();
 };
 
-// `?previewPopup` seeds a reproducible capture state; no production
-// preference is touched.
+// Seeds a reproducible capture state.
 const getPopupOverride = (search: string): boolean | undefined => {
   const requested = new URLSearchParams(search).get("previewPopup");
   if (requested === "shown") return true;
@@ -52,8 +51,7 @@ const PreviewToolbar = () => {
   const lastOverride = useRef(getPopupOverride(location.search));
   useEffect(() => {
     const seeded = getPopupOverride(location.search);
-    // Seed only on a parameter change: unrelated search updates must not
-    // close a toolbar the user opened by hand.
+    // Seed only when the parameter changes, never on unrelated search updates.
     if (seeded !== lastOverride.current) {
       lastOverride.current = seeded;
       setVisible((prev) => seeded ?? prev);

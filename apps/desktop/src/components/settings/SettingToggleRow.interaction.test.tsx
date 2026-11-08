@@ -22,10 +22,6 @@ const must = <T extends Element>(el: T | null, what: string): T => {
 
 ensureUiHarness();
 
-(
-  globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
-).IS_REACT_ACT_ENVIRONMENT = true;
-
 // #299's "the setting changes exactly once per activation" matrix: every
 // activation path — switch, label, native keyboard semantics — reaches the
 // onChange exactly once. The row is a label wrapping the input, so the label
