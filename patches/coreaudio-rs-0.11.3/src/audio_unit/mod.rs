@@ -39,6 +39,7 @@ pub mod audio_format;
 #[cfg(target_os = "macos")]
 mod checked_close;
 mod checked_initialization;
+mod input_buffer;
 pub mod render_callback;
 pub mod sample_format;
 pub mod stream_format;

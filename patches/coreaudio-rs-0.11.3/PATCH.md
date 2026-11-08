@@ -17,6 +17,12 @@ When initialization fails after instance creation, the constructor now calls
 fails. CPAL maps that result to its capture ownership guard. Portable tests
 exercise the ordering and error propagation, but do not call Apple APIs.
 
+The legacy input callback now keeps its sample `Vec` owned by the callback
+instead of reconstructing it from CoreAudio's mutable byte count on teardown.
+Buffer size multiplication is checked before allocating or resizing. Portable
+unit tests exercise resizing and size bounds, and a source contract checks the
+ownership wiring; neither runs `AudioUnitRender` or proves native teardown.
+
 The existing destructor and callback APIs remain in use for output and iOS.
 Their unchecked teardown is not fixed by this patch. A successful checked close
 and token retirement prevent late input callbacks from accessing released

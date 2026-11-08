@@ -94,6 +94,10 @@ mod cpal_alsa_input_start;
 mod cpal_alsa_input_probe;
 
 #[cfg(test)]
+#[path = "../../../../../patches/coreaudio-rs-0.11.3/src/audio_unit/input_buffer.rs"]
+mod coreaudio_input_buffer;
+
+#[cfg(test)]
 #[path = "../../../../../patches/cpal-0.15.3/tests/macos_input_lifetime.rs"]
 mod cpal_macos_input_lifetime;
 
@@ -1986,6 +1990,28 @@ mod cpal_impl {
         use std::collections::HashSet;
         use std::sync::atomic::{AtomicBool, Ordering};
         use std::sync::{Arc, Mutex};
+
+        #[test]
+        fn coreaudio_input_buffer_uses_owned_storage_through_teardown() {
+            // This source contract complements the portable buffer tests; it
+            // cannot exercise AudioUnitRender or callback teardown on macOS.
+            let source = include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../../patches/coreaudio-rs-0.11.3/src/audio_unit/render_callback.rs"
+            ));
+            let input = source
+                .split_once("pub fn set_input_callback")
+                .unwrap()
+                .1
+                .split_once("pub fn free_render_callback")
+                .unwrap()
+                .0;
+            let teardown = source.split_once("pub fn free_input_callback").unwrap().1;
+            assert!(input.contains("InputBuffer::new"));
+            assert!(input.contains("data.resize(data_byte_size as usize)"));
+            assert!(!input.contains("mem::forget"));
+            assert!(!teardown.contains("Vec::from_raw_parts"));
+        }
 
         #[test]
         fn alsa_input_overrun_reports_lost_audio() {

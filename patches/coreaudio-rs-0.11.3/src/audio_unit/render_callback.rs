@@ -1,7 +1,7 @@
 use super::audio_format::LinearPcmFlags;
+use super::input_buffer::{buffer_byte_size, InputBuffer};
 use super::{AudioUnit, Element, Scope};
 use crate::error::{self, Error};
-use std::mem;
 use std::os::raw::c_void;
 use std::slice;
 use sys;
@@ -577,17 +577,16 @@ impl AudioUnit {
             return Err(Error::NonInterleavedInputOnlySupportsMono);
         }
 
-        let data_byte_size = buffer_frame_size * sample_bytes as u32 * n_channels;
-        let mut data = vec![0u8; data_byte_size as usize];
-        let mut buffer_capacity = data_byte_size as usize;
+        let data_byte_size = buffer_byte_size(buffer_frame_size, sample_bytes, n_channels)
+            .ok_or(Error::Unspecified)?;
+        // The callback owns this buffer. CoreAudio's mDataByteSize is not the
+        // Vec's capacity and must never be used to reconstruct its allocation.
+        let mut data = InputBuffer::new(data_byte_size as usize);
         let audio_buffer = sys::AudioBuffer {
             mDataByteSize: data_byte_size,
             mNumberChannels: n_channels,
             mData: data.as_mut_ptr() as *mut _,
         };
-        // Relieve ownership of the `Vec` until we're ready to drop the `AudioBufferList`.
-        // TODO: This leaks the len & capacity fields, since only the buffer pointer is released
-        mem::forget(data);
 
         let audio_buffer_list = Box::new(sys::AudioBufferList {
             mNumberBuffers: 1,
@@ -627,24 +626,15 @@ impl AudioUnit {
                     let sample_bytes = stream_format.sample_format.size_in_bytes();
                     let n_channels = stream_format.channels;
                     let data_byte_size =
-                        in_number_frames as usize * sample_bytes * n_channels as usize;
-                    let ptr = (*audio_buffer_list_ptr).mBuffers.as_ptr() as *mut sys::AudioBuffer;
-                    let len = (*audio_buffer_list_ptr).mNumberBuffers as usize;
-
-                    let buffers: &mut [sys::AudioBuffer] = slice::from_raw_parts_mut(ptr, len);
-                    let old_capacity = buffer_capacity;
-                    for buffer in buffers {
-                        let current_len = buffer.mDataByteSize as usize;
-                        let audio_buffer_ptr = buffer.mData as *mut u8;
-                        let mut vec: Vec<u8> =
-                            Vec::from_raw_parts(audio_buffer_ptr, current_len, old_capacity);
-                        vec.resize(data_byte_size, 0u8);
-
-                        buffer_capacity = vec.capacity();
-                        buffer.mData = vec.as_mut_ptr() as *mut _;
-                        buffer.mDataByteSize = data_byte_size as u32;
-                        mem::forget(vec);
-                    }
+                        match buffer_byte_size(in_number_frames, sample_bytes, n_channels) {
+                            Some(size) => size,
+                            None => return error::Error::Unspecified.as_os_status(),
+                        };
+                    // This callback allocated exactly one AudioBuffer above.
+                    data.resize(data_byte_size as usize);
+                    let buffer = &mut (*audio_buffer_list_ptr).mBuffers[0];
+                    buffer.mData = data.as_mut_ptr() as *mut _;
+                    buffer.mDataByteSize = data_byte_size;
                 }
                 buffer_frame_size = in_number_frames;
             }
@@ -733,18 +723,9 @@ impl AudioUnit {
                 callback,
             } = input_callback;
             unsafe {
-                // Take ownership over the AudioBufferList in order to safely free it.
-                let buffer_list: Box<sys::AudioBufferList> = Box::from_raw(buffer_list);
-                // Free the allocated data from the individual audio buffers.
-                let ptr = buffer_list.mBuffers.as_ptr() as *const sys::AudioBuffer;
-                let len = buffer_list.mNumberBuffers as usize;
-                let buffers: &[sys::AudioBuffer] = slice::from_raw_parts(ptr, len);
-                for &buffer in buffers {
-                    let ptr = buffer.mData as *mut u8;
-                    let len = buffer.mDataByteSize as usize;
-                    let cap = len;
-                    let _ = Vec::from_raw_parts(ptr, len, cap);
-                }
+                // The callback owns the sample allocation; this list contains
+                // only a borrowed pointer to it.
+                let _buffer_list: Box<sys::AudioBufferList> = Box::from_raw(buffer_list);
                 // Take ownership over the callback so that it can be freed.
                 let callback: Box<InputProcFnWrapper> = Box::from_raw(callback);
                 return Some(callback);
