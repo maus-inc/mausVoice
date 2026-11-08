@@ -20,3 +20,7 @@ status and simple-mixer operations now derive their pointers from mutable
 borrows. This keeps the audio status path allocation-free. Unit tests check the
 alignment and exercise the status builder with ALSA's null PCM; real-device
 and non-Linux platform behavior still need verification.
+
+Each `ChmapsQuery` item owns a byte-for-byte copy of its channel map, including
+position flags. ALSA frees the original maps with the query, so returning a
+borrowed pointer let safe callers access freed memory after dropping it.
