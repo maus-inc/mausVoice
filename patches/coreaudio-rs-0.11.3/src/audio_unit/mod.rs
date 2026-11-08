@@ -19,11 +19,13 @@
 //! fixes!
 
 use crate::error::Error;
+use crate::error as stream_error;
 use std::mem;
 use std::os::raw::{c_uint, c_void};
 use std::ptr;
 
 use sys;
+use sys as stream_sys;
 
 pub use self::audio_format::AudioFormat;
 pub use self::sample_format::{Sample, SampleFormat};
@@ -422,7 +424,7 @@ impl AudioUnit {
         scope: Scope,
     ) -> Result<(), Error> {
         let id = sys::kAudioUnitProperty_StreamFormat;
-        let asbd = stream_format.to_asbd();
+        let asbd = stream_format.try_to_asbd()?;
         self.set_property(id, scope, Element::Output, Some(&asbd))
     }
 

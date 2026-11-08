@@ -36,12 +36,17 @@ impl SampleFormat {
         bits_per_sample: u32,
     ) -> Option<Self> {
         let packed = flags.contains(LinearPcmFlags::IS_PACKED);
-        let sample_format = if flags.contains(LinearPcmFlags::IS_FLOAT) {
+        let is_float = flags.contains(LinearPcmFlags::IS_FLOAT);
+        let is_integer = flags.contains(LinearPcmFlags::IS_SIGNED_INTEGER);
+        if is_float == is_integer {
+            return None;
+        }
+        let sample_format = if is_float {
             match (bits_per_sample, packed) {
                 (32, true) => SampleFormat::F32,
                 _ => return None,
             }
-        } else if flags.contains(LinearPcmFlags::IS_SIGNED_INTEGER) {
+        } else if is_integer {
             match (bits_per_sample, packed) {
                 (8, true) => SampleFormat::I8,
                 (16, true) => SampleFormat::I16,

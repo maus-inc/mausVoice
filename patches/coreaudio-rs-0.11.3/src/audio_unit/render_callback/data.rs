@@ -150,6 +150,13 @@ fn valid_format<S: Sample>(stream: &StreamFormat, non_interleaved: bool) -> bool
         && mem::size_of::<S>() == S::sample_format().size_in_bytes()
 }
 
+// Typed numeric samples use the target's native byte order. Byte views do not
+// interpret the data and can expose either order.
+fn native_endian<S: Sample>(stream: &StreamFormat) -> bool {
+    mem::size_of::<S>() == 1
+        || stream.flags.contains(LinearPcmFlags::IS_BIG_ENDIAN) == cfg!(target_endian = "big")
+}
+
 // `io_data` is trusted to contain the native-declared number of entries; the
 // callback API does not supply the list allocation length. All data lengths,
 // alignments, and ranges are checked before creating sample references.
@@ -224,7 +231,7 @@ unsafe fn clear_buffers(buffers: &mut [sys::AudioBuffer]) {
 unsafe impl<S: Sample> Data for Interleaved<S> {
     type Buffer<'a> = InterleavedBuffer<'a, S>;
     fn does_stream_format_match(stream: &StreamFormat) -> bool {
-        valid_format::<S>(stream, false)
+        valid_format::<S>(stream, false) && native_endian::<S>(stream)
     }
     unsafe fn from_input_proc_args<'a>(
         frames: u32,
@@ -273,7 +280,7 @@ unsafe impl<S: Sample> Data for InterleavedBytes<S> {
 unsafe impl<S: Sample> Data for NonInterleaved<S> {
     type Buffer<'a> = NonInterleavedBuffer<'a, S>;
     fn does_stream_format_match(stream: &StreamFormat) -> bool {
-        valid_format::<S>(stream, true)
+        valid_format::<S>(stream, true) && native_endian::<S>(stream)
     }
     unsafe fn from_input_proc_args<'a>(
         frames: u32,

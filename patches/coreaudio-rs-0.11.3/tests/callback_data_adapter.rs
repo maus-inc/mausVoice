@@ -18,12 +18,14 @@ pub mod data_sys {
 pub enum SampleFormat {
     F32,
     I16,
+    I8,
 }
 impl SampleFormat {
     pub fn size_in_bytes(self) -> usize {
         match self {
             Self::F32 => 4,
             Self::I16 => 2,
+            Self::I8 => 1,
         }
     }
     pub fn does_match_flags(self, _: DataLinearPcmFlags) -> bool {
@@ -31,11 +33,12 @@ impl SampleFormat {
     }
 }
 #[derive(Clone, Copy)]
-pub struct DataLinearPcmFlags(pub bool);
+pub struct DataLinearPcmFlags(pub u8);
 impl DataLinearPcmFlags {
-    pub const IS_NON_INTERLEAVED: Self = Self(true);
+    pub const IS_NON_INTERLEAVED: Self = Self(1);
+    pub const IS_BIG_ENDIAN: Self = Self(2);
     pub fn contains(self, other: Self) -> bool {
-        self.0 && other.0
+        self.0 & other.0 == other.0
     }
 }
 pub struct DataStreamFormat {
@@ -57,6 +60,11 @@ unsafe impl DataSample for f32 {
 unsafe impl DataSample for i16 {
     fn sample_format() -> SampleFormat {
         SampleFormat::I16
+    }
+}
+unsafe impl DataSample for i8 {
+    fn sample_format() -> SampleFormat {
+        SampleFormat::I8
     }
 }
 #[path = "../src/audio_unit/render_callback/data.rs"]
@@ -108,7 +116,11 @@ mod tests {
         let mut samples = [0_f32; 2];
         let mut list = list(samples.as_mut_ptr().cast(), 8, 1);
         let stream = DataStreamFormat {
-            flags: DataLinearPcmFlags(false),
+            flags: if cfg!(target_endian = "big") {
+                DataLinearPcmFlags::IS_BIG_ENDIAN
+            } else {
+                DataLinearPcmFlags(0)
+            },
             sample_format: SampleFormat::F32,
         };
         assert!(data::Interleaved::<f32>::does_stream_format_match(&stream));
@@ -207,5 +219,28 @@ mod tests {
             unsafe { data::Interleaved::<i16>::from_input_proc_args(2, &mut list, true) }.is_none()
         );
         assert_eq!(samples, [9, 8]);
+    }
+    #[test]
+    fn typed_samples_reject_foreign_endian_but_byte_views_remain_available() {
+        let foreign = if cfg!(target_endian = "little") {
+            DataLinearPcmFlags::IS_BIG_ENDIAN
+        } else {
+            DataLinearPcmFlags(0)
+        };
+        let stream = DataStreamFormat {
+            flags: foreign,
+            sample_format: SampleFormat::I16,
+        };
+        assert!(!data::Interleaved::<i16>::does_stream_format_match(&stream));
+        assert!(data::InterleavedBytes::<i16>::does_stream_format_match(
+            &stream
+        ));
+        let single_byte = DataStreamFormat {
+            flags: foreign,
+            sample_format: SampleFormat::I8,
+        };
+        assert!(data::Interleaved::<i8>::does_stream_format_match(
+            &single_byte
+        ));
     }
 }

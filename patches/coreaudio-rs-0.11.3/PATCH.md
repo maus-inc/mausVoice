@@ -19,8 +19,15 @@ exercise the ordering and error propagation, but do not call Apple APIs.
 
 The CoreAudio I24 representation now accepts only packed three-byte samples;
 unpacked 24-bit PCM is rejected instead of being interpreted with the wrong
-stride. Portable format tests cover both cases. Other ASBD stride and packet
-metadata still require separate review and physical-device verification.
+stride. Portable format tests cover both cases. Parsed ASBDs now validate
+sample rate, channels, numeric flags, frame stride and packet size; the
+AudioUnit setter uses a checked conversion with overflow detection. The legacy
+public `to_asbd` method remains unchecked. Physical-device verification is
+still needed.
+
+Typed multi-byte sample views also reject non-native-endian formats; raw byte
+views remain available without interpreting their byte order. Portable tests
+exercise this distinction, but do not test physical big-endian hardware.
 
 Typed callback data now uses a lifetime-indexed `Data::Buffer` view, so safe
 callbacks cannot retain sample references after the invocation. `Data` and
