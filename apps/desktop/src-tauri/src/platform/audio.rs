@@ -4221,11 +4221,16 @@ mod cpal_impl {
         }
 
         #[test]
-        fn the_error_from_the_last_host_is_the_one_reported() {
+        fn a_later_hosts_error_is_the_one_reported() {
             // A machine where the first host is empty and the second says the
             // device is busy should report busy, not "no device": the two have
             // different remedies and the classification downstream reads this
             // message to choose between them.
+            //
+            // The name used to say the *last* host's error wins. That stopped
+            // being true when a host that fails to load began being skipped
+            // rather than reported: the rule is now the last host that actually
+            // tried to open a device, whatever came after it.
             let hosts = [FakeHost::First, FakeHost::Second];
 
             let err = try_hosts(&hosts, Ok::<FakeHost, RecordingError>, |id| {
