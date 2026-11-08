@@ -34,6 +34,12 @@ pub use self::types::{
 
 #[cfg(target_os = "macos")]
 pub mod macos_helpers;
+#[cfg(target_os = "macos")]
+mod listener_registry;
+#[cfg(target_os = "macos")]
+mod macos_listeners;
+#[cfg(target_os = "macos")]
+use crate::{error::Error as ListenerError, sys as listener_sys};
 
 pub mod audio_format;
 #[cfg(target_os = "macos")]

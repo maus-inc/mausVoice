@@ -98,6 +98,10 @@ mod cpal_alsa_input_probe;
 mod coreaudio_input_buffer;
 
 #[cfg(test)]
+#[path = "../../../../../patches/coreaudio-rs-0.11.3/tests/macos_listener_adapter.rs"]
+mod coreaudio_macos_listener_adapter;
+
+#[cfg(test)]
 #[path = "../../../../../patches/cpal-0.15.3/tests/macos_input_lifetime.rs"]
 mod cpal_macos_input_lifetime;
 
@@ -1990,6 +1994,21 @@ mod cpal_impl {
         use std::collections::HashSet;
         use std::sync::atomic::{AtomicBool, Ordering};
         use std::sync::{Arc, Mutex};
+
+        #[test]
+        fn coreaudio_property_listeners_use_retirable_tokens() {
+            // Registry lifetime tests run portably; macOS must still test the
+            // actual CoreAudio registration and notification behavior.
+            let listeners = include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../../patches/coreaudio-rs-0.11.3/src/audio_unit/macos_listeners.rs"
+            ));
+            assert!(listeners.contains("listener_registry::insert"));
+            assert!(listeners.contains("listener_registry::remove"));
+            assert!(listeners.contains("catch_unwind"));
+            assert!(!listeners.contains("self as *const _ as *mut _"));
+            assert!(!listeners.contains("sender.send(rate).unwrap()"));
+        }
 
         #[test]
         fn coreaudio_input_buffer_uses_owned_storage_through_teardown() {

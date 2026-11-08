@@ -17,6 +17,17 @@ When initialization fails after instance creation, the constructor now calls
 fails. CPAL maps that result to its capture ownership guard. Portable tests
 exercise the ordering and error propagation, but do not call Apple APIs.
 
+The macOS `RateListener` and `AliveListener` use non-reused registry tokens
+instead of pointers to movable listener objects. Late callbacks after removal
+are inert, and an in-flight callback retains its own state even if removal fails.
+Property reads use mutable storage and check returned lengths; dropped channel
+receivers and poisoned queues cannot unwind through CoreAudio. Repeated
+registration is idempotent. `RateListener::queue` remains accessible as a
+`Mutex` through shared state, but cannot be replaced through a mutable listener.
+Portable tests call the actual adapter through a simulated
+CoreAudio API, including failed registration/removal and in-flight delivery;
+physical macOS behavior is not established by those tests.
+
 The legacy input callback now keeps its sample `Vec` owned by the callback
 instead of reconstructing it from CoreAudio's mutable byte count on teardown.
 Buffer size multiplication is checked before allocating or resizing. Portable
