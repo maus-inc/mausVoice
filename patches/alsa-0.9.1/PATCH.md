@@ -38,3 +38,18 @@ out-of-range pointers fail before they can be written to the driver.
 `ElemValue::set_integer64` checks for the 64-bit control type, matching its
 getter. `Ctl::wait` rejects finite timeouts above `i32::MAX` with `EINVAL`
 instead of wrapping them into a negative or indefinite ALSA timeout.
+
+Raw MIDI enumeration treats `ENOENT` from a direction query as zero
+subdevices, while preserving other errors. Linux returns `ENOENT` for a device
+with no substreams in that direction. Iteration also clears old counts after an
+error and skips empty devices without recursive calls. The portable unit tests
+cover direction counts; a Linux preload fixture additionally exercises the
+actual iterator. From this crate's directory, run the ignored tests serially:
+
+```sh
+tmpdir=$(mktemp -d)
+cc -shared -fPIC $(pkg-config --cflags alsa) tests/fixtures/rawmidi_control.c -o "$tmpdir/rawmidi-control.so"
+LD_PRELOAD="$tmpdir/rawmidi-control.so" cargo test --test rawmidi_iteration -- --ignored --test-threads=1
+```
+
+The fixture does not exercise physical MIDI hardware.
