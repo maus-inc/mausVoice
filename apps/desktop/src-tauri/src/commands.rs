@@ -7175,6 +7175,29 @@ mod tests {
         );
     }
 
+    /// The exact bytes, so the TypeScript decoder can be checked against them.
+    ///
+    /// `readCaptureTrailer` in `recorded-audio.utils.ts` is a second
+    /// implementation of this layout and the two are only pinned to match by
+    /// tests on each side. This one writes the literal bytes a faulted stop
+    /// produces for a known input, so a change to either side that kept its own
+    /// tests green would still be caught by the other.
+    #[test]
+    fn the_faulted_body_is_exactly_these_bytes() {
+        let bytes = encode_recorded_audio_with_capture(&[0.5], 16_000, 1_400, 6_000, Some("fatal"));
+
+        let mut expected = Vec::new();
+        expected.extend_from_slice(&[0x80, 0x3E, 0x00, 0x00]); // 16_000 LE
+        expected.extend_from_slice(&0.5_f32.to_le_bytes()); // the sample
+        expected.extend_from_slice(&[0x78, 0x05, 0x00, 0x00]); // 1_400 ms
+        expected.extend_from_slice(&[0x70, 0x17, 0x00, 0x00]); // 6_000 ms
+        expected.extend_from_slice(&[0x01, 0x00, 0x00, 0x00]); // flags: fatal
+        expected.extend_from_slice(&[0x54, 0x50, 0x41, 0x43]); // "TPAC" LE
+
+        assert_eq!(bytes, expected);
+        assert_eq!(decode_capture_trailer(&bytes), Some((8, 1_400, 6_000)));
+    }
+
     #[test]
     fn a_trailer_round_trips_to_the_audio_and_the_two_lengths() {
         let audio = encode_recorded_audio(&[0.5, -0.5, 0.25], 44_100);

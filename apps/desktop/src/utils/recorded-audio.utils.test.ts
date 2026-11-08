@@ -249,6 +249,48 @@ describe("a capture that faulted mid-recording", () => {
     expect(decoded.samples).toHaveLength(1);
   });
 
+  it("decodes the bytes the Rust encoder actually produces", () => {
+    // The literal body `the_faulted_body_is_exactly_these_bytes` asserts on the
+    // Rust side, byte for byte: rate 16 kHz, one sample of 0.5, then 1 400 ms
+    // captured of 6 000 ms, flags 1, magic "TPAC" little-endian. The two decoders
+    // are separate implementations, so this is what keeps them saying the same
+    // thing rather than each agreeing with itself.
+    const bytes = new Uint8Array([
+      0x80,
+      0x3e,
+      0x00,
+      0x00, // 16_000
+      0x00,
+      0x00,
+      0x00,
+      0x3f, // 0.5f
+      0x78,
+      0x05,
+      0x00,
+      0x00, // 1_400 ms
+      0x70,
+      0x17,
+      0x00,
+      0x00, // 6_000 ms
+      0x01,
+      0x00,
+      0x00,
+      0x00, // flags
+      0x54,
+      0x50,
+      0x41,
+      0x43, // magic
+    ]);
+
+    const decoded = decodeStopRecordingPayload(bytes.buffer);
+
+    expect(decoded.sampleRate).toBe(16_000);
+    expect(Array.from(decoded.samples)).toEqual([0.5]);
+    expect(decoded.captureFault).toBe("fatal");
+    expect(decoded.capturedMs).toBe(1_400);
+    expect(decoded.expectedMs).toBe(6_000);
+  });
+
   it("never misreads a long healthy recording, whatever its last sample", () => {
     // The regression this pins: 103 of 200 ordinary recordings were read as
     // faulted when the flag bit alone decided, losing three samples and raising
