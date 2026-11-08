@@ -18,6 +18,41 @@ const encode = (sampleRate: number, samples: number[]): ArrayBuffer => {
   return buffer;
 };
 
+describe("a capture that arrived as an object payload", () => {
+  it("keeps the fault and both lengths", () => {
+    // The preview runtime and the test doubles reach this branch instead of the
+    // binary one. It used to return only the samples, so a faulted capture
+    // reported nothing at all on that path.
+    const decoded = decodeStopRecordingPayload({
+      samples: [0.5, 0.25],
+      sampleRate: 16_000,
+      captureFault: "fatal",
+      capturedMs: 1_400,
+      expectedMs: 6_000,
+    });
+
+    expect(decoded.captureFault).toBe("fatal");
+    expect(decoded.capturedMs).toBe(1_400);
+    expect(decoded.expectedMs).toBe(6_000);
+    expect(decoded.samples).toEqual(Float32Array.from([0.5, 0.25]));
+  });
+
+  it("invents no fault and no lengths of its own", () => {
+    const decoded = decodeStopRecordingPayload({
+      samples: [0.5],
+      sampleRate: 16_000,
+      // A hostile or stale payload: not the token the native side sends.
+      captureFault: "maybe",
+      capturedMs: "1400",
+      expectedMs: Number.NaN,
+    });
+
+    expect(decoded.captureFault).toBeUndefined();
+    expect(decoded.capturedMs).toBeUndefined();
+    expect(decoded.expectedMs).toBeUndefined();
+  });
+});
+
 describe("decodeStopRecordingPayload", () => {
   it("decodes the raw [rate u32][f32...] IPC body", () => {
     const decoded = decodeStopRecordingPayload(encode(48_000, [0.5, -0.25, 1]));

@@ -159,13 +159,21 @@ export const decodeStopRecordingPayload = (
     return decodeBinary(Uint8Array.from(payload as number[]));
   }
   if (payload && typeof payload === "object" && "samples" in payload) {
-    const { samples, sampleRate } = payload as {
-      samples?: unknown;
-      sampleRate?: unknown;
-    };
+    const { samples, sampleRate, captureFault, capturedMs, expectedMs } =
+      payload as {
+        samples?: unknown;
+        sampleRate?: unknown;
+        captureFault?: unknown;
+        capturedMs?: unknown;
+        expectedMs?: unknown;
+      };
     if (!isSampleArray(samples)) {
       return EMPTY_RESULT();
     }
+    // The capture facts are carried across too. This branch exists so every
+    // caller shares one decoding path, and returning only the audio meant the
+    // path that most needs the fault -- the preview runtime and the test doubles
+    // -- was the one path where a faulted capture reported nothing at all.
     return {
       // Copied rather than aliased: a caller that writes into the decoded
       // buffer must not be able to reach back into the payload it came from.
@@ -177,6 +185,13 @@ export const decodeStopRecordingPayload = (
         typeof sampleRate === "number" && Number.isFinite(sampleRate)
           ? sampleRate
           : 0,
+      ...(captureFault === "fatal" ? { captureFault } : {}),
+      ...(typeof capturedMs === "number" && Number.isFinite(capturedMs)
+        ? { capturedMs }
+        : {}),
+      ...(typeof expectedMs === "number" && Number.isFinite(expectedMs)
+        ? { expectedMs }
+        : {}),
     };
   }
   return EMPTY_RESULT();
