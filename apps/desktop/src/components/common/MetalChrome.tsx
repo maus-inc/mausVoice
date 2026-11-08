@@ -149,14 +149,9 @@ export const MetalChrome = ({
     .filter(Boolean)
     .join(" ");
 
-  // metal-fx's own "renders plain when unsupported" guard probes a bare
-  // getContext("webgl2"), while the engine then creates its real context with
-  // a full attribute set. On stacks where only the probe succeeds the engine
-  // THROWS ("metal-fx: WebGL2 not supported") during render, which would take
-  // the whole page down behind the root error boundary. The effect is fenced:
-  // on failure the control falls back to the same first-frame rescue as a
-  // wrapper that never paints — hidden at first, rescued to visible by the
-  // hook above once the rescue delay elapses.
+  // metal-fx's bare WebGL2 probe can succeed where the engine's real context
+  // constructor throws; the fallback renders hidden so the first-frame rescue
+  // hook reveals it like any wrapper that never paints.
   const rescueFallback: ReactNode = (
     <div
       {...{ [METAL_CHROME_ATTR]: id }}

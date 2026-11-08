@@ -216,33 +216,16 @@ const resumeAudioContext = (
  * conversions. The raw cache's 32MB budget bounds the input side; this caps
  * the converted side at 16MB across 4 clips.
  */
-const MAX_CONVERTED_ENTRIES = 4;
-const MAX_CONVERTED_BYTES = 16 * 1024 * 1024;
-type ConvertedSamples = {
-  source: { samples: number[] };
-  floatSamples: Float32Array;
-};
-const convertedSamples: ConvertedSamples[] = [];
-let convertedBytes = 0;
+// Converted arrays are keyed by their source object so a conversion is
+// reused while the raw cache entry lives and is collectable with it — no
+// second cache to bound and no converted array keeping raw audio alive.
+const convertedSamples = new WeakMap<{ samples: number[] }, Float32Array>();
 
 const getFloatSamples = (data: { samples: number[] }): Float32Array => {
-  const hitIndex = convertedSamples.findIndex((entry) => entry.source === data);
-  if (hitIndex >= 0) {
-    const [hit] = convertedSamples.splice(hitIndex, 1);
-    convertedSamples.push(hit);
-    return hit.floatSamples;
-  }
+  const hit = convertedSamples.get(data);
+  if (hit) return hit;
   const floatSamples = Float32Array.from(data.samples ?? []);
-  convertedSamples.push({ source: data, floatSamples });
-  convertedBytes += floatSamples.byteLength;
-  while (
-    convertedSamples.length > MAX_CONVERTED_ENTRIES ||
-    convertedBytes > MAX_CONVERTED_BYTES
-  ) {
-    const evicted = convertedSamples.shift();
-    if (!evicted) break;
-    convertedBytes -= evicted.floatSamples.byteLength;
-  }
+  convertedSamples.set(data, floatSamples);
   return floatSamples;
 };
 

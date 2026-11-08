@@ -1,5 +1,8 @@
 # Audio preparation owns its error until settlement
 
+Date: 2026-11-06
+Status: Accepted
+
 ## Context
 
 The saved-audio player crosses two completion boundaries. Repository loading returns samples. Web Audio preparation allocates a context, creates and connects a source, then schedules playback. Playback ends later through a stop callback.
@@ -14,11 +17,15 @@ Once preparation succeeds, ordinary stop callbacks clear the request immediately
 
 Do not suppress every error following a stop callback. Distinguish cancellation from cleanup caused by failure.
 
+## Consequences
+
+- A stop callback can no longer be mistaken for preparation success; settlement, not the callback, decides whether the error surfaces.
+- Attempt teardown aborts in-flight Web Audio setup, so a replaced or cancelled attempt cannot play late audio.
+- Callers must keep request identity stable until settlement, or route a teardown through the attempt owner.
+
 ## Verification
 
 `apps/desktop/src/components/transcriptions/AudioPlayerPill.lifecycle.test.tsx` covers teardown followed by rejection, completion before preparation settles, ordinary completion followed by replay, and the real playback utility with a throwing source. The source test mocks the browser device boundary rather than the utility and verifies context closure and the user-facing error.
-
-The cleanup-before-rejection regression failed against the earlier working-tree implementation. The existing cancellation and cross-row ordering tests still pass after the fix.
 
 ## References
 

@@ -2,7 +2,7 @@ import { IconButton } from "@mui/material";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { LoaderCircle, Pause, Play, type LucideIcon } from "lucide-react";
 import { useIntl, type IntlShape } from "react-intl";
-import { springPop } from "../../styles/motion";
+import { spinContinuous, springPop } from "../../styles/motion";
 import { MetalChrome } from "../common/MetalChrome";
 
 type AudioPlaybackButtonProps = {
@@ -74,7 +74,21 @@ export const AudioPlaybackButton = ({
             transition={springPop}
             style={{ display: "inline-flex" }}
           >
-            <Icon size={16} strokeWidth={1.9} />
+            <motion.span
+              style={{ display: "inline-flex" }}
+              animate={
+                visual === "loading" && !reduceMotion
+                  ? { rotate: 360 }
+                  : undefined
+              }
+              transition={
+                visual === "loading" && !reduceMotion
+                  ? spinContinuous
+                  : undefined
+              }
+            >
+              <Icon size={16} strokeWidth={1.9} />
+            </motion.span>
           </motion.span>
         </AnimatePresence>
       </IconButton>

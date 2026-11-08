@@ -57,6 +57,19 @@ export const AudioPlayerPill = ({
   const transcriptionIdRef = useRef(transcriptionId);
   const isDraggingRef = useRef(false);
   const progressAtDragStartRef = useRef(0);
+  // One reset for every teardown path so the playing/loading flags cannot
+  // drift apart between call sites; only the sites that own the scrub bar
+  // ask for the progress reset.
+  const resetPlaybackState = useCallback(
+    ({ progress = false }: { progress?: boolean } = {}) => {
+      isPlayingRef.current = false;
+      setIsPlaying(false);
+      loadingRef.current = false;
+      setIsLoading(false);
+      if (progress) setPlaybackProgress(0);
+    },
+    [],
+  );
   useEffect(() => {
     isPlayingRef.current = isPlaying;
   }, [isPlaying]);
@@ -127,29 +140,18 @@ export const AudioPlayerPill = ({
   // drop the old clip's playback/scrub state so the next click plays the new
   // read and the scrub bar cannot commit a seek against the old session.
   useEffect(() => {
-    isPlayingRef.current = false;
-    setIsPlaying(false);
-    loadingRef.current = false;
-    setIsLoading(false);
-    setPlaybackProgress(0);
-  }, [transcriptionId]);
+    resetPlaybackState({ progress: true });
+  }, [transcriptionId, resetPlaybackState]);
   useEffect(() => {
     if (!disabled || !getPlaybackSession().stopOwned()) return;
-    isPlayingRef.current = false;
-    setIsPlaying(false);
-    loadingRef.current = false;
-    setIsLoading(false);
-  }, [disabled]);
+    resetPlaybackState();
+  }, [disabled, resetPlaybackState]);
   // A local-data wipe must drop in-flight and active audio with the rows it
   // invalidates; the repo clears its cache through the same subscription.
   useEffect(() => {
     return subscribeToLocalDataClearRequested(() => {
       getPlaybackSession().stopOwned();
-      isPlayingRef.current = false;
-      setIsPlaying(false);
-      loadingRef.current = false;
-      setIsLoading(false);
-      setPlaybackProgress(0);
+      resetPlaybackState({ progress: true });
     });
   }, [transcriptionId]);
   // Hovering the pill warms the saved audio through the repository cache so
@@ -203,8 +205,7 @@ export const AudioPlayerPill = ({
       // The button reads "Cancel audio loading" while a read is pending;
       // clicking it abandons that read instead of stacking another one.
       session.stopOwned();
-      loadingRef.current = false;
-      setIsLoading(false);
+      resetPlaybackState();
       return;
     }
 
@@ -268,11 +269,7 @@ export const AudioPlayerPill = ({
       attempt.completeSetup();
     } catch (error) {
       if (!attempt.releaseOnError()) return;
-      loadingRef.current = false;
-      setIsLoading(false);
-      isPlayingRef.current = false;
-      setIsPlaying(false);
-      setPlaybackProgress(0);
+      resetPlaybackState({ progress: true });
       // Abandoned work (row torn down, read invalidated mid-flight) rejects
       // with AbortError; the owner already reset the row, so stay silent.
       const aborted =
@@ -322,6 +319,9 @@ export const AudioPlayerPill = ({
       if (disabled) return;
       event.preventDefault();
       event.currentTarget.focus();
+      // Tear down any previous drag first: its endDrag clears the drag
+      // flags and running it after the new state is set would clobber it.
+      pointerCleanupRef.current?.();
       isDraggingRef.current = true;
       progressAtDragStartRef.current = playbackProgressRef.current;
       const next = getProgressFromClientX(event.clientX);
@@ -354,7 +354,6 @@ export const AudioPlayerPill = ({
         endDrag();
         setPlaybackProgress(progressAtDragStartRef.current);
       };
-      pointerCleanupRef.current?.();
       const listenerOptions = { signal: dragListeners.signal };
       window.addEventListener("pointermove", handleMove, listenerOptions);
       window.addEventListener("pointerup", handleUp, {

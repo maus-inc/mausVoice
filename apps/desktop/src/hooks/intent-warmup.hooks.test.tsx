@@ -14,7 +14,10 @@ import {
 // result" is covered by route-prefetch.test.ts (shared import promise).
 
 type HookProps = {
-  key: string;
+  // Deliberately not `key`: that name is React's element key, and changing it
+  // would remount the probe and test unmount cleanup instead of the hook's
+  // route-change dependency behaviour.
+  routeKey: string;
   delayMs?: number;
   warm: () => Promise<unknown>;
 };
@@ -22,13 +25,13 @@ type HookProps = {
 /** Minimal renderHook: mounts the hook and mirrors its latest return value. */
 const mountHook = (
   warm: () => Promise<unknown>,
-  key: string,
+  routeKey: string,
   delayMs?: number,
 ) => {
   const holder: {
     current: ReturnType<typeof useIntentWarmup>;
   } = { current: undefined as never };
-  const Probe = ({ key: k, delayMs: d, warm: w }: HookProps) => {
+  const Probe = ({ routeKey: k, delayMs: d, warm: w }: HookProps) => {
     holder.current = useIntentWarmup(w, k, d);
     return null;
   };
@@ -39,10 +42,10 @@ const mountHook = (
     act(() => {
       root.render(<Probe {...props} />);
     });
-  render({ key, delayMs, warm });
+  render({ routeKey, delayMs, warm });
   return {
     holder,
-    rerender: (key2: string) => render({ key: key2, delayMs, warm }),
+    rerender: (key2: string) => render({ routeKey: key2, delayMs, warm }),
     unmount: () => {
       act(() => root.unmount());
       container.remove();

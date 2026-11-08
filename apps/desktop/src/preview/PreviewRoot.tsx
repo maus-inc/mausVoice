@@ -32,13 +32,8 @@ const getScenario = (search: string): PreviewScenarioId => {
     : getActivePreviewScenario();
 };
 
-/**
- * QA captures need both popup states to be reproducible without clicking
- * through the UI first. `?previewPopup=shown|hidden` seeds the visibility
- * state (and re-seeds it whenever the parameter changes), so a capture URL is
- * deterministic while the eye toggle keeps working afterwards. This stays
- * preview-scoped: no production preference is read or written.
- */
+// `?previewPopup=shown|hidden` seeds a reproducible capture state; the eye
+// toggle keeps working afterwards and no production preference is touched.
 const getPopupOverride = (search: string): boolean | undefined => {
   const requested = new URLSearchParams(search).get("previewPopup");
   if (requested === "shown") return true;
@@ -54,8 +49,6 @@ const PreviewToolbar = () => {
   const [visible, setVisible] = useState(
     () => getPopupOverride(location.search) ?? false,
   );
-  // A capture URL re-seeds the state on every navigation; manual toggles
-  // between navigations are left alone.
   useEffect(() => {
     const seeded = getPopupOverride(location.search);
     if (seeded !== undefined) {
@@ -122,7 +115,11 @@ const PreviewToolbar = () => {
             <FormControl size="small" sx={{ minWidth: 154 }}>
               <Select
                 value={scenario}
-                inputProps={{ "aria-label": "Preview scenario" }}
+                inputProps={{
+                  "aria-label": intl.formatMessage({
+                    defaultMessage: "Preview scenario",
+                  }),
+                }}
                 onChange={(event) =>
                   selectScenario(event.target.value as PreviewScenarioId)
                 }

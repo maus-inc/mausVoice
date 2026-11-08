@@ -11,7 +11,7 @@ type TileLocator = ReturnType<typeof $>;
  *   m3.0.0.1  #300 saved-audio startup latency   — apps/desktop/src/utils/transcription-audio-cache.ts
  *   r7.3.0.2  #301 sidebar route prefetch        — apps/desktop/src/utils/route-prefetch.ts
  *   v2.0.7.0  #307 version tag overlap           — apps/desktop/src/components/dashboard/DashboardMenu.tsx
- *   p4.3.0.8  #308 preview popup eye toggle      — apps/desktop/src/components/preview/PreviewRoot.tsx
+ *   p4.3.0.8  #308 preview popup eye toggle      — apps/desktop/src/preview/PreviewRoot.tsx
  *
  * Native verification notes:
  *   - The dashboard mounts `FeatureReleaseDialog`, a modal tour that swallows
@@ -59,12 +59,6 @@ async function appReady() {
 }
 
 /**
- * The root index route always redirects (`/` -> `/dashboard` or `/welcome`),
- * and the react-aria notification layer mounts before the router settles, so
- * "root has children" does not mean the app is routed. Wait for the router to
- * leave `/` before reading state.
- */
-/**
  * Route equality with one deliberate relaxation: the Settings index hands off
  * to its default sub-tab (/dashboard/settings -> .../settings/home), so any
  * settings sub-route satisfies a request for /dashboard/settings.
@@ -77,6 +71,12 @@ function routeMatches(pathname: string, current: string): boolean {
   );
 }
 
+/**
+ * The root index route always redirects (`/` -> `/dashboard` or `/welcome`),
+ * and the react-aria notification layer mounts before the router settles, so
+ * "root has children" does not mean the app is routed. Wait for the router to
+ * leave `/` before reading state.
+ */
 async function settleRoute() {
   await browser.waitUntil(
     async () => (await browser.execute(() => window.location.pathname)) !== "/",
