@@ -463,7 +463,9 @@ fn handle_run_event(app_handle: &tauri::AppHandle, event: RunEvent) {
 }
 
 fn handle_window_event(window: &Window, event: &WindowEvent) {
-    if let WindowEvent::Focused(true) = event {
+    // `matches!` rather than an `if let`: there is no binding to capture, and a
+    // refutable binding that captures nothing reads as if it might.
+    if matches!(event, WindowEvent::Focused(true)) {
         refresh_warm_device(window.app_handle());
     }
     match event {
