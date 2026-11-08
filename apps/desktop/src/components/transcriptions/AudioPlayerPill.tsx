@@ -275,6 +275,14 @@ export const AudioPlayerPill = ({
     },
     [intl],
   );
+  // A stale attempt may only clear loading flags that belong to itself,
+  // never a newer attempt's on the same row.
+  const clearStaleRowFlags = useCallback(
+    (attempt: AudioPillPlaybackAttempt) => {
+      if (latestAttemptRef.current === attempt) resetPlaybackState();
+    },
+    [],
+  );
   const handlePlaybackToggle = useCallback(async () => {
     const session = getPlaybackSession();
     if (isPlayingRef.current) {
@@ -307,10 +315,7 @@ export const AudioPlayerPill = ({
       markAudioReadEnd();
 
       if (!attempt.isCurrent()) {
-        // Stale for this row: clear its loading flags so the button cannot
-        // stay stuck on "Cancel audio loading" — unless a newer attempt on
-        // this row now owns those flags.
-        if (latestAttemptRef.current === attempt) resetPlaybackState();
+        clearStaleRowFlags(attempt);
         return;
       }
       stage = "play";
@@ -331,15 +336,20 @@ export const AudioPlayerPill = ({
       attempt.completeSetup();
     } catch (error) {
       if (!attempt.releaseOnError()) {
-        // Abandoned or superseded: clear this row's flags only when they
-        // still belong to this attempt.
-        if (latestAttemptRef.current === attempt) resetPlaybackState();
+        clearStaleRowFlags(attempt);
         return;
       }
       resetPlaybackState({ progress: true });
       reportPlaybackFailure(error, stage);
     }
-  }, [transcriptionId, intl, applyProgress, applyStop, reportPlaybackFailure]);
+  }, [
+    transcriptionId,
+    intl,
+    applyProgress,
+    applyStop,
+    reportPlaybackFailure,
+    clearStaleRowFlags,
+  ]);
   const durationLabel = formatDuration(durationMs);
 
   /** Scrub mapping from client X (same idea as elevenlabs-ui scrub-bar). Bars are a seeded silhouette, not live PCM. */
