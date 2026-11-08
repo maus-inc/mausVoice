@@ -238,6 +238,9 @@ impl AudioStartupTrace {
 
     /// Publishes the wait for the first captured block.
     ///
+    /// Read from the sink's own signal rather than pushed by the callback: the
+    /// callback already records when its first block arrived, and a second
+    /// channel into the trace would be a second place for that fact to live.
     /// First one wins, for the same reason a stage does: a start that delivered
     /// its first block late and then a second block quickly is one slow start,
     /// not one fast one.
@@ -248,14 +251,6 @@ impl AudioStartupTrace {
         };
         if slot.is_none() {
             *slot = Some(wait);
-        }
-    }
-
-    /// A handle the capture callback can publish the first block through
-    /// without holding the trace.
-    pub fn first_pcm_handle(&self) -> FirstPcmReporter {
-        FirstPcmReporter {
-            trace: std::sync::Arc::clone(&self.first_pcm),
         }
     }
 
@@ -276,25 +271,6 @@ impl AudioStartupTrace {
             stages: self.stages.clone(),
             reused: self.reused,
             first_pcm,
-        }
-    }
-}
-
-/// Publishes the first captured block into a trace from the callback thread.
-#[derive(Clone, Debug)]
-pub struct FirstPcmReporter {
-    trace: std::sync::Arc<Mutex<Option<Duration>>>,
-}
-
-impl FirstPcmReporter {
-    /// Records the wait, if nothing has recorded one already.
-    pub fn report(&self, wait: Duration) {
-        let mut slot = match self.trace.lock() {
-            Ok(slot) => slot,
-            Err(poisoned) => poisoned.into_inner(),
-        };
-        if slot.is_none() {
-            *slot = Some(wait);
         }
     }
 }
@@ -490,18 +466,16 @@ mod tests {
     }
 
     #[test]
-    fn a_late_stage_is_recorded_once() {
+    fn the_first_block_wait_is_recorded_once() {
         let trace = marked(&[(AudioStartupStage::StreamStarted, 500)]);
-        let shared = std::sync::Arc::new(std::sync::Mutex::new(trace));
 
-        // The first block is published by the capture callback, after the start
-        // has returned. Two callbacks racing must not both record it.
-        let reporter = shared.lock().unwrap().first_pcm_handle();
-        reporter.report(Duration::from_millis(11));
-        reporter.report(Duration::from_millis(240));
+        // The wait is read off the sink and published when the start is
+        // summarised, so the only race is two reads: the first must win, or a
+        // slow start would be reported as whatever the last read said.
+        trace.note_first_pcm(Duration::from_millis(11));
+        trace.note_first_pcm(Duration::from_millis(240));
 
-        let summary = shared.lock().unwrap().summary();
-        assert_eq!(summary.first_pcm, Some(Duration::from_millis(11)));
+        assert_eq!(trace.summary().first_pcm, Some(Duration::from_millis(11)));
     }
 
     #[test]

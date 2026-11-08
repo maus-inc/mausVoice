@@ -467,6 +467,16 @@ mod cpal_impl {
             buffer
         }
 
+        /// How long after the stream started its first block arrived.
+        ///
+        /// `None` when no block has arrived at all, which is the dead-on-arrival
+        /// case rather than a fast one, so it is reported as absent instead of
+        /// as zero. This is the number a start is judged on: it is the device
+        /// open, not the press latency, which `first_recorded` measures.
+        fn first_pcm_wait(&self) -> Option<Duration> {
+            self.first_pcm.elapsed()
+        }
+
         /// How long since this sink last received a block.
         ///
         /// `None` when it has never received one, which is different from a long
@@ -1443,7 +1453,7 @@ mod cpal_impl {
                 preferred_normalized.as_deref(),
                 &mut trace,
             ) {
-                self.record_startup(trace);
+                self.record_startup(trace, active.sink.as_ref());
                 *guard = Some(active);
                 return Ok(());
             }
@@ -1462,7 +1472,7 @@ mod cpal_impl {
                 &mut trace,
             ) {
                 self.cache_successful_device(host_id, device_name);
-                self.record_startup(trace);
+                self.record_startup(trace, active.sink.as_ref());
                 *guard = Some(active);
                 return Ok(());
             }
@@ -1496,7 +1506,7 @@ mod cpal_impl {
             ) {
                 Ok(((active, device_name), host_id)) => {
                     self.cache_successful_device(host_id, device_name);
-                    self.record_startup(trace);
+                    self.record_startup(trace, active.sink.as_ref());
                     *guard = Some(active);
                     Ok(())
                 }
@@ -1607,7 +1617,26 @@ mod cpal_impl {
 
         /// Publishes the startup measurement: one log line per recording, plus
         /// the summary for a caller that wants to read it back.
-        fn record_startup(&self, trace: AudioStartupTrace) {
+        ///
+        /// The first-block wait is read from the recording's own sink here,
+        /// which is the only moment it is still available: the sink is the
+        /// authority on whether a block ever arrived, and after the stop it
+        /// belongs to the warm slot or to nobody. Reading it at publish time also
+        /// means a block that arrived between the stream starting and this call
+        /// is counted, rather than being dropped because the trace had been
+        /// snapshotted already.
+        fn record_startup(&self, trace: AudioStartupTrace, sink: Option<&Arc<StreamSink>>) {
+            // The device-open cost, read while the recording still owns its
+            // sink: afterwards the sink belongs to the warm slot or to nobody.
+            // `None` when no block had arrived yet, which is itself the answer
+            // worth recording -- a device that opened and delivered nothing.
+            //
+            // Without this the summary's `first_pcm_wait_us` could never appear,
+            // because nothing ever published one: the trace had an accumulator
+            // and a callback-side reporter, and no caller feeding either.
+            if let Some(wait) = sink.and_then(|sink| sink.first_pcm_wait()) {
+                trace.note_first_pcm(wait);
+            }
             let summary = trace.summary();
             log::info!("{}", summary.log_line("audio-startup"));
             if let Ok(mut slot) = self.last_startup.lock() {
@@ -1918,7 +1947,7 @@ mod cpal_impl {
             );
             match opened {
                 Ok((warm, _host_id)) => {
-                    self.record_startup(trace);
+                    self.record_startup(trace, Some(&warm.sink));
                     Ok(warm)
                 }
                 Err(err) => Err(err),
@@ -3454,6 +3483,31 @@ mod cpal_impl {
 
             assert!(sink.has_delivered());
             assert!(sink.silence_for().is_some());
+        }
+
+        #[test]
+        fn the_first_block_wait_reaches_the_startup_summary() {
+            // The summary advertises `first_pcm_wait_us`, and before this was
+            // wired nothing ever published one: the trace had an accumulator, a
+            // callback-side reporter, and no caller feeding either. A number the
+            // diagnostics export promises has to be a number something fills.
+            let sink = StreamSink::new(SinkMode::Discard);
+            assert_eq!(sink.first_pcm_wait(), None, "nothing delivered yet");
+
+            std::thread::sleep(Duration::from_millis(2));
+            sink.deliver(&[0.1]);
+
+            let wait = sink.first_pcm_wait().expect("one block arrived");
+            assert!(wait >= Duration::from_millis(2));
+
+            let mut trace = AudioStartupTrace::begin();
+            trace.mark(AudioStartupStage::StreamStarted);
+            trace.note_first_pcm(wait);
+            assert_eq!(trace.summary().first_pcm, Some(wait));
+
+            // And it is on the log line, which is where it is actually read.
+            let line = trace.summary().log_line("audio-startup");
+            assert!(line.contains("first_pcm_wait_us="), "{line}");
         }
 
         #[test]
