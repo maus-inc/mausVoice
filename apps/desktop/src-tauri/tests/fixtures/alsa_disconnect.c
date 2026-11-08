@@ -1,6 +1,7 @@
 /* Test-only ALSA disconnect after capture has started on a null device. */
 #define _GNU_SOURCE
 #include <dlfcn.h>
+#include <errno.h>
 #include <poll.h>
 #include <stdatomic.h>
 #include <stdlib.h>
@@ -27,5 +28,13 @@ int snd_pcm_state(void *pcm) {
     if (atomic_load(&active) && getenv("MAUS_TEST_DISCONNECTED_STATE"))
         return 8; /* SND_PCM_STATE_DISCONNECTED */
     int (*original)(void *) = (int (*)(void *))dlsym(RTLD_NEXT, "snd_pcm_state");
+    return original(pcm);
+}
+
+int snd_pcm_drop(void *pcm) {
+    /* A null PCM can stop despite the interposed state, so inject the stop failure too. */
+    if (atomic_load(&active) && getenv("MAUS_TEST_DISCONNECTED_STATE"))
+        return -ENODEV;
+    int (*original)(void *) = (int (*)(void *))dlsym(RTLD_NEXT, "snd_pcm_drop");
     return original(pcm);
 }

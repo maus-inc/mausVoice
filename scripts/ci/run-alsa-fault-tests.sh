@@ -203,6 +203,10 @@ for row in "${rows[@]}"; do
       "$test_binary" --exact --ignored --test-threads=1 "$test_module::$test"
     fi
   ) >"$output" 2>&1 || status=$?
+  if [[ $status -eq 0 ]] && ! grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$output"; then
+    echo "expected exactly one executed and passing test" >>"$output"
+    status=1
+  fi
   cat "$output"
   echo "::endgroup::"
 
@@ -221,6 +225,10 @@ done
 
 echo
 echo "run-alsa-fault-tests: $passed passed, ${#failed[@]} failed, $skipped filtered out"
+if [[ $passed -eq 0 && ${#failed[@]} -eq 0 ]]; then
+  echo "::error title=run-alsa-fault-tests::no tests selected"
+  exit 1
+fi
 if [[ ${#failed[@]} -gt 0 ]]; then
   for test in "${failed[@]}"; do
     echo "  FAILED $test"

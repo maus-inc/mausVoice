@@ -19,15 +19,77 @@ import {
 import { getRec } from "@maus-inc/utilities";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
+import type { MessageDescriptor } from "react-intl";
 import { saveCorrectedTranscript } from "../../actions/auto-learn.actions";
 import { showErrorSnackbar, showSnackbar } from "../../actions/app.actions";
+import { getPostProcessFeedback } from "../../actions/post-process-feedback";
+import {
+  isPostProcessErrorCategory,
+  postProcessErrorReason,
+} from "../../actions/post-process-error-category";
 import {
   closeTranscriptionDetailsDialog,
+  getUnusableResponseType,
+  isUnusableResponseWarning,
   openRetranscribeDialog,
 } from "../../actions/transcriptions.actions";
 import { AppState } from "../../state/app.state";
 import { useAppStore } from "../../store";
 import { TranscriptionTextBlock } from "./TranscriptionTextBlock";
+
+const resolveCategoryWarning = (
+  warning: string,
+  postProcessFailed: boolean | null | undefined,
+  postProcessFallback: boolean | null | undefined,
+  formatReason: (descriptor: MessageDescriptor) => string,
+): string => {
+  const feedback = getPostProcessFeedback(
+    {
+      postProcessFailed,
+      postProcessFallback,
+      postProcessError: warning,
+    },
+    "history-details",
+  );
+  return feedback?.message ?? formatReason(postProcessErrorReason(warning));
+};
+
+// A run that saved the raw ASR leaves the row's displayed text equal to its
+// sanitized transcript column; a run that kept the previous text leaves the
+// two different. Rows recorded without the column cannot say which happened,
+// and the feedback module's default wording applies to them.
+const getUnusableRowHadPreviousText = (row: {
+  transcript: string;
+  sanitizedTranscript?: string | null;
+}): boolean | undefined => {
+  const sanitized = row.sanitizedTranscript;
+  if (sanitized === null || sanitized === undefined) {
+    return undefined;
+  }
+  return row.transcript !== sanitized;
+};
+
+// Rows that fell back after an unusable reply keep the raw marker as their
+// warning, which means nothing to the user. Show the same explanation the
+// retranscribe toast used instead.
+const resolveUnusableWarning = (
+  warning: string,
+  hasPreviousTranscript: boolean | undefined,
+): string => {
+  const feedback = getPostProcessFeedback(
+    {
+      postProcessFailed: false,
+      postProcessFallback: true,
+      postProcessError: null,
+    },
+    "history-details",
+    {
+      unusableResponseType: getUnusableResponseType(warning),
+      hasPreviousTranscript,
+    },
+  );
+  return feedback?.message ?? warning;
+};
 
 const formatModelSizeLabel = (modelSize?: string | null): React.ReactNode => {
   const value = modelSize?.trim();
@@ -246,13 +308,49 @@ export const TranscriptionDetailsDialog = () => {
   );
 
   const warnings = useMemo(() => {
-    if (!transcription?.warnings) {
+    // The row is read through one local so the guarded accesses below stay
+    // bare: an optional chain next to a bare property read on the same value
+    // reads as an unresolved nullability question, and after this guard there
+    // is none left.
+    const row = transcription;
+    const rowWarnings = row?.warnings;
+    if (!row || !rowWarnings) {
       return [];
     }
-    return transcription.warnings
+    return rowWarnings
       .map((warning) => warning.trim())
-      .filter((warning) => warning.length > 0);
-  }, [transcription?.warnings]);
+      .filter((warning) => warning.length > 0)
+      .map((warning) => {
+        if (isPostProcessErrorCategory(warning)) {
+          return resolveCategoryWarning(
+            warning,
+            row.postProcessFailed,
+            row.postProcessFallback,
+            (descriptor) => intl.formatMessage(descriptor),
+          );
+        }
+        // Translate only the known unusable-reply markers; a fallback row can
+        // also carry unrelated warnings that must stay verbatim.
+        if (
+          !row.postProcessFailed &&
+          row.postProcessFallback &&
+          isUnusableResponseWarning(warning)
+        ) {
+          return resolveUnusableWarning(
+            warning,
+            getUnusableRowHadPreviousText(row),
+          );
+        }
+        return warning;
+      });
+  }, [
+    intl,
+    transcription?.postProcessFailed,
+    transcription?.postProcessFallback,
+    transcription?.warnings,
+    transcription?.transcript,
+    transcription?.sanitizedTranscript,
+  ]);
 
   const startEditingFinal = () => {
     setFinalDraft(finalTranscriptText);

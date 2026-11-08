@@ -36,6 +36,12 @@ export type NativeRecordingHandle = {
   isLive: () => boolean;
 };
 
+export type NativeRecordingStartOptions = {
+  waitForRelease?: boolean;
+  /** Called after reserving an owner, before capture can emit its first chunk. */
+  onAdmission?: (handle: NativeRecordingHandle) => void;
+};
+
 // The generation is a `u64` on the Rust side; `Number.MAX_SAFE_INTEGER` is the
 // largest value a JS number carries exactly.
 const MAX_SAFE_GENERATION = Number.MAX_SAFE_INTEGER;
@@ -48,8 +54,10 @@ const EMPTY_RESULT = (): StopRecordingResponse => ({
 /** The recorder this module owns, if a recording is live. */
 let liveHandle: NativeRecordingHandle | null = null;
 
-/** The in-webview slot token that live handle holds, if any. */
-let liveLocalOwner: object | null = null;
+/** The in-webview slot token and transport that live handle holds, if any. */
+let liveLocalOwner: { owner: object; transport: RecordingInvoke } | null = null;
+
+let beginInFlight = false;
 
 /** The recorder this module currently owns, if any. */
 export const currentNativeRecording = (): NativeRecordingHandle | null =>
@@ -87,8 +95,27 @@ const sampleRateFromStartResponse = (result: unknown): number => {
  */
 export const beginNativeRecording = async (
   preferredMicrophone: string | null,
-  options: { waitForRelease?: boolean } = {},
+  options: NativeRecordingStartOptions = {},
   invokeFn: RecordingInvoke = invoke,
+): Promise<{ sampleRate: number; handle: NativeRecordingHandle }> => {
+  if (beginInFlight)
+    throw new Error("A recording start is already in progress");
+  beginInFlight = true;
+  try {
+    return await beginNativeRecordingOwned(
+      preferredMicrophone,
+      options,
+      invokeFn,
+    );
+  } finally {
+    beginInFlight = false;
+  }
+};
+
+const beginNativeRecordingOwned = async (
+  preferredMicrophone: string | null,
+  options: NativeRecordingStartOptions,
+  invokeFn: RecordingInvoke,
 ): Promise<{ sampleRate: number; handle: NativeRecordingHandle }> => {
   const superseded = liveHandle;
   if (superseded) {
@@ -106,7 +133,7 @@ export const beginNativeRecording = async (
   }
   const releaseLocal = () => {
     releaseLocalNativeRecording(invokeFn, localOwner);
-    if (liveLocalOwner === localOwner) liveLocalOwner = null;
+    if (liveLocalOwner?.owner === localOwner) liveLocalOwner = null;
   };
   const ownerId = createId();
   let reserved: unknown;
@@ -167,8 +194,9 @@ export const beginNativeRecording = async (
   };
 
   liveHandle = handle;
-  liveLocalOwner = localOwner;
+  liveLocalOwner = { owner: localOwner, transport: invokeFn };
   try {
+    options.onAdmission?.(handle);
     const response = await invokeFn("start_recording", {
       ownerId,
       generation: reserved,
@@ -199,6 +227,7 @@ export const stopNativeRecording = async (
 ): Promise<StopRecordingResponse> => {
   const handle = liveHandle;
   if (!handle) return EMPTY_RESULT();
+  const localOwner = liveLocalOwner;
   liveHandle = null;
   try {
     const payload = await invokeFn("stop_recording", {
@@ -212,9 +241,9 @@ export const stopNativeRecording = async (
     }).catch((error: unknown) => {
       getLogger().verbose(`acknowledge_recording failed: ${error}`);
     });
-    if (liveLocalOwner) {
-      releaseLocalNativeRecording(invokeFn, liveLocalOwner);
-      liveLocalOwner = null;
+    if (localOwner) {
+      releaseLocalNativeRecording(localOwner.transport, localOwner.owner);
+      if (liveLocalOwner === localOwner) liveLocalOwner = null;
     }
     return decoded;
   } catch (error) {

@@ -3,6 +3,7 @@ export type ToastType = "info" | "error";
 export const TOAST_ACTIONS = [
   "upgrade",
   "open_agent_settings",
+  "open_post_processing_settings",
   "surface_window",
   "open_transcriptions",
   "confirm_cancel_transcription",

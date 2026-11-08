@@ -6,6 +6,7 @@ import { getLogger } from "../../utils/log.utils";
 import {
   beginNativeRecording,
   type NativeRecordingHandle,
+  type NativeRecordingStartOptions,
 } from "../../utils/native-recording-session";
 
 /** Invalidate and unwind any active session as soon as a clear is requested. */
@@ -42,6 +43,6 @@ export const settleRecordingStart = async <T>(
  */
 export const invokeGuardedRecordingStart = (
   preferredMicrophone: string | null,
-  options: { waitForRelease?: boolean } = {},
+  options: NativeRecordingStartOptions = {},
 ): Promise<{ sampleRate: number; handle: NativeRecordingHandle }> =>
   withLocalDataWrite(() => beginNativeRecording(preferredMicrophone, options));

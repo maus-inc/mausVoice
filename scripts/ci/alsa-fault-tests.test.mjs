@@ -1,5 +1,13 @@
 import assert from "node:assert/strict";
-import { readdirSync, readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import {
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -21,19 +29,19 @@ const fixtureDir = join(repoRoot, "apps/desktop/src-tauri/tests/fixtures");
  * coverage, and a row naming a test that no longer exists fails only when
  * somebody runs the script.
  *
- * These checks are static: no compiler, no ALSA, no preload. They run in the
- * same `node --test`-style step as the other guards.
+ * The coverage checks are static. Runner checks use fake cargo and test binaries,
+ * so they need no compiler or ALSA device.
  */
 
 const scriptText = readFileSync(scriptPath, "utf8");
 
 // `"<fixture>|<env>|<test>"` rows, one per line, inside the `rows=(...)` array.
-const rows = [...scriptText.matchAll(/^\s*"(?<row>[^"|]*\|[^"|]*\|[^"]+)",?$/gm)].map(
-  (match) => {
-    const [fixture, env, test] = match.groups.row.split("|");
-    return { fixture, env, test, row: match.groups.row };
-  },
-);
+const rows = [
+  ...scriptText.matchAll(/^\s*"(?<row>[^"|]*\|[^"|]*\|[^"]+)",?$/gm),
+].map((match) => {
+  const [fixture, env, test] = match.groups.row.split("|");
+  return { fixture, env, test, row: match.groups.row };
+});
 
 const rustIgnoredTests = (() => {
   const source = readFileSync(cpalTests, "utf8");
@@ -43,7 +51,10 @@ const rustIgnoredTests = (() => {
   const pattern =
     /#\[ignore = "(?<message>[^"]+)"\]\s*(?:#\[[^\]]*\]\s*)*fn (?<name>[a-z0-9_]+)\(\)/g;
   return [...source.matchAll(pattern)]
-    .map((match) => ({ name: match.groups.name, message: match.groups.message }))
+    .map((match) => ({
+      name: match.groups.name,
+      message: match.groups.message,
+    }))
     .filter((entry) => /ALSA/i.test(entry.message))
     .map((entry) => entry.name);
 })();
@@ -51,6 +62,41 @@ const rustIgnoredTests = (() => {
 const fixtureFiles = readdirSync(fixtureDir)
   .filter((file) => /^alsa_.*\.c$/.test(file))
   .map((file) => file.replace(/\.c$/, ""));
+
+function runWithFakeTestBinary(output, filter, status = 0) {
+  const directory = mkdtempSync(join(tmpdir(), "alsa-runner-"));
+  try {
+    const cargo = join(directory, "cargo");
+    const binary = join(directory, "test-binary");
+    writeFileSync(
+      cargo,
+      '#!/bin/sh\nprintf \'{"executable":"%s"}\\n\' "$FAKE_TEST_BINARY"\n',
+      { mode: 0o755 },
+    );
+    writeFileSync(
+      binary,
+      '#!/bin/sh\nprintf "%s\\n" "$FAKE_TEST_OUTPUT"\nexit "$FAKE_TEST_STATUS"\n',
+      { mode: 0o755 },
+    );
+    const result = spawnSync("bash", [scriptPath, filter], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        MAUS_ALSA_FAULT_CARGO: cargo,
+        MAUS_ALSA_FAULT_CC: "/bin/true",
+        MAUS_ALSA_FAULT_WORKDIR: join(directory, "work"),
+        FAKE_TEST_BINARY: binary,
+        FAKE_TEST_OUTPUT: output,
+        FAKE_TEST_STATUS: String(status),
+      },
+    });
+    assert.ifError(result.error);
+    assert.equal(result.signal, null);
+    return result;
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
 
 describe("ALSA fault-injection runner", () => {
   it("defines at least one row", () => {
@@ -113,6 +159,43 @@ describe("ALSA fault-injection runner", () => {
       "rows are filtered with --exact, so the module path must match audio.rs",
     );
   });
+
+  it(
+    "requires a selected test to execute and pass",
+    { skip: process.platform !== "linux" },
+    () => {
+      const filter =
+        "cpal_worker_captures_and_hands_off_on_an_alsa_null_device";
+      const passed = runWithFakeTestBinary(
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out",
+        filter,
+      );
+      assert.equal(passed.status, 0, passed.stdout + passed.stderr);
+      const crashed = runWithFakeTestBinary(
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out",
+        filter,
+        1,
+      );
+      assert.notEqual(crashed.status, 0, crashed.stdout + crashed.stderr);
+      for (const output of [
+        "",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out",
+        "test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out",
+      ]) {
+        const result = runWithFakeTestBinary(output, filter);
+        assert.notEqual(result.status, 0, result.stdout + result.stderr);
+      }
+    },
+  );
+
+  it(
+    "rejects a filter that selects no tests",
+    { skip: process.platform !== "linux" },
+    () => {
+      const result = runWithFakeTestBinary("", "no-such-alsa-test");
+      assert.notEqual(result.status, 0, result.stdout + result.stderr);
+    },
+  );
 
   it("runs each row in its own process", () => {
     // A preload interposes process-wide symbols and an armed fault is one-shot

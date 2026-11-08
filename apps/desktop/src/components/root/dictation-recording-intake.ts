@@ -1,5 +1,8 @@
 import type { UnlistenFn } from "@tauri-apps/api/event";
-import { listenToAudioChunks } from "../../sessions/audio-chunk-events";
+import {
+  listenToAudioChunks,
+  type AudioChunkAdmission,
+} from "../../sessions/audio-chunk-events";
 import type { TranscriptionSessionKind } from "../../sessions";
 import type { BaseStrategy } from "../../strategies/base.strategy";
 import type { TranscriptionSession } from "../../types/transcription-session.types";
@@ -20,6 +23,15 @@ export type SessionAudioIntake = {
   current: boolean;
   /** True only when registering the Tauri audio_chunk listener rejected. */
   subscriptionFailed: boolean;
+  /** True once any part of the live stream is known to be invalid. */
+  hasDiscontinuity: () => boolean;
+  /** Stop accepting events and complete a contiguous prefix from the native recording. */
+  sealLiveAudio: (
+    samples: number[] | Float32Array,
+    sampleRate?: number,
+  ) => boolean;
+  /** Forward replayed startup audio while tracking synchronous write failures. */
+  forward: (chunk: Float32Array, offset: number) => void;
 };
 
 /**
@@ -63,11 +75,14 @@ export const forwardAudioChunk = (
   session: TranscriptionSession,
   chunk: Float32Array,
   offset: number,
-): void => {
+): boolean => {
   try {
-    session.writeAudioChunk?.(chunk, offset);
+    if (!session.writeAudioChunk) return false;
+    session.writeAudioChunk(chunk, offset);
+    return true;
   } catch (error) {
     getLogger().error(`[Dictation] Failed to forward audio chunk: ${error}`);
+    return false;
   }
 };
 
@@ -93,14 +108,70 @@ export const attachSessionAudioIntake = async (
   isCurrent: () => boolean,
   shouldForwardLive: () => boolean,
   onOverflow: (droppedSamples: number) => void,
+  getAdmission: () => AudioChunkAdmission | null,
 ): Promise<SessionAudioIntake> => {
-  const buffer = createAudioChunkStartupBuffer(onOverflow);
+  let discontinuity = false;
+  let sealed = false;
+  let sealResult = false;
+  let nextOffset = 0;
+  const buffer = createAudioChunkStartupBuffer((droppedSamples) => {
+    discontinuity = true;
+    onOverflow(droppedSamples);
+  });
+  const forward = (chunk: Float32Array, offset: number) => {
+    if (!forwardAudioChunk(session, chunk, offset)) discontinuity = true;
+  };
+  const common = {
+    buffer,
+    hasDiscontinuity: () => discontinuity,
+    forward,
+    sealLiveAudio: (
+      samples: number[] | Float32Array,
+      sampleRate?: number,
+    ): boolean => {
+      // Native event delivery is asynchronous. Once native stop returns, use
+      // its retained waveform to fill a short contiguous suffix and ignore late
+      // IPCs. A middle gap cannot be repaired after later audio was sent. Do
+      // not flood a provider if delivery has stalled for a long time.
+      if (sealed) return sealResult;
+      sealed = true;
+      if (nextOffset > samples.length || !getAdmission()) {
+        discontinuity = true;
+      }
+      if (discontinuity) return false;
+      const missing = samples.length - nextOffset;
+      if (missing > 0) {
+        if (
+          !sampleRate ||
+          !Number.isSafeInteger(sampleRate) ||
+          sampleRate < 1 ||
+          missing > sampleRate * 2
+        ) {
+          discontinuity = true;
+          return false;
+        }
+        const waveform = ensureFloat32Array(samples);
+        const chunkSize = Math.max(1, Math.floor(sampleRate / 10));
+        for (
+          let offset = nextOffset;
+          offset < waveform.length;
+          offset += chunkSize
+        ) {
+          forward(waveform.slice(offset, offset + chunkSize), offset);
+          if (discontinuity) return false;
+        }
+      }
+      sealResult = true;
+      return true;
+    },
+  };
   if (typeof session.writeAudioChunk !== "function") {
     // Nothing to attach, so report the real staleness result. Returning a
     // constant here would let a start that already lost the race overwrite the
     // shared listener ref and detach the recording that replaced it.
+    discontinuity = true;
     return {
-      buffer,
+      ...common,
       unlisten: null,
       current: isCurrent(),
       subscriptionFailed: false,
@@ -120,11 +191,33 @@ export const attachSessionAudioIntake = async (
   // failed-audio recovery at stop.
   let unlisten: UnlistenFn | null;
   try {
-    unlisten = await listenToAudioChunks((samples, offset) => {
-      if (!isCurrent()) return;
+    unlisten = await listenToAudioChunks((samples, offset, chunkAdmission) => {
+      if (sealed || !isCurrent()) return;
+      const admitted = getAdmission();
+      // Before this start receives its admission, queued events can only
+      // belong to another recording. Once admitted, untagged events cannot
+      // be trusted, and tagged events from another owner must be ignored.
+      if (!admitted) return;
+      if (!chunkAdmission) {
+        discontinuity = true;
+        return;
+      }
+      if (
+        chunkAdmission.ownerId !== admitted.ownerId ||
+        chunkAdmission.generation !== admitted.generation
+      )
+        return;
       if (offset === null) {
+        discontinuity = true;
         getLogger().warning(
           "[Dictation] Dropped audio_chunk with no sample offset; the recording stream is no longer contiguous",
+        );
+        return;
+      }
+      if (!Number.isSafeInteger(offset) || offset < 0) {
+        discontinuity = true;
+        getLogger().warning(
+          "[Dictation] Dropped audio_chunk with an invalid sample offset; the recording stream is no longer contiguous",
         );
         return;
       }
@@ -137,6 +230,13 @@ export const attachSessionAudioIntake = async (
           `[Dictation] Received chunk #${receivedChunkCount} (total ${receivedSampleCount} samples)`,
         );
       }
+      if (
+        offset !== nextOffset ||
+        !Number.isSafeInteger(offset + chunk.length)
+      ) {
+        discontinuity = true;
+      }
+      nextOffset = offset + chunk.length;
       if (lastForwardedOffset !== null && offset !== lastForwardedOffset + 1) {
         getLogger().warning(
           `[Dictation] Audio offset gap: expected ${lastForwardedOffset + 1}, got ${offset}`,
@@ -152,7 +252,7 @@ export const attachSessionAudioIntake = async (
           );
         }
       } else {
-        forwardAudioChunk(session, chunk, offset);
+        forward(chunk, offset);
       }
     });
   } catch (error) {
@@ -164,8 +264,9 @@ export const attachSessionAudioIntake = async (
     getLogger().warning(
       `Could not subscribe to audio chunks. Non-streaming sessions may transcribe the captured recording at stop; live-streaming sessions cannot receive its audio and rely on retry retention when policy allows: ${error}`,
     );
+    discontinuity = true;
     return {
-      buffer,
+      ...common,
       unlisten: null,
       current: isCurrent(),
       subscriptionFailed: true,
@@ -175,14 +276,14 @@ export const attachSessionAudioIntake = async (
   if (!isCurrent()) {
     unlisten();
     return {
-      buffer,
+      ...common,
       unlisten: null,
       current: false,
       subscriptionFailed: false,
     };
   }
   return {
-    buffer,
+    ...common,
     unlisten,
     current: true,
     subscriptionFailed: false,

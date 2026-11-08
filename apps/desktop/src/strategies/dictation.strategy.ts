@@ -3,7 +3,6 @@ import type { Nullable } from "@maus-inc/types";
 import { showErrorSnackbar, showSnackbar } from "../actions/app.actions";
 import { tryRegisterCurrentAppTarget } from "../actions/app-target.actions";
 import { getIntl } from "../i18n/intl";
-import { postProcessErrorReason } from "../actions/post-process-error-category";
 import { showToast } from "../actions/toast.actions";
 import {
   appendTranscriptionWarnings,
@@ -18,6 +17,7 @@ import type {
   HistoryOwner,
   StrategyValidationError,
 } from "../types/strategy.types";
+import { isHistoryPersistQueueFull } from "../utils/history-persist.utils";
 import { getLogger } from "../utils/log.utils";
 import { sendPillStageText } from "../utils/overlay.utils";
 import {
@@ -27,6 +27,8 @@ import {
   drainDictationBacklog,
   hasDictationBacklog,
   incrementDictationBacklogNonce,
+  resolveInsertionMethod,
+  type RouteTranscriptOutputHooks,
 } from "../utils/output-routing.utils";
 import { sanitizeTranscriptText } from "../utils/sanitize-transcript.utils";
 import { withTimeout } from "../utils/timeout.utils";
@@ -70,6 +72,23 @@ export class DictationStrategy extends BaseStrategy {
   /** Monotonic session generation counter to prevent in-flight async paste
    *  or backlog tasks from delivering after cleanup() runs. */
   private sessionGeneration = 0;
+  private activeSimulatedTypingCount = 0;
+  private simulatedTypingStartCallback?: () => void;
+
+  private get routeOutputHooks(): RouteTranscriptOutputHooks {
+    return {
+      onSimulatedTypingStart: () => {
+        this.activeSimulatedTypingCount += 1;
+        this.simulatedTypingStartCallback?.();
+      },
+      onSimulatedTypingEnd: () => {
+        this.activeSimulatedTypingCount = Math.max(
+          0,
+          this.activeSimulatedTypingCount - 1,
+        );
+      },
+    };
+  }
 
   shouldStoreTranscript(): boolean {
     return true;
@@ -100,7 +119,11 @@ export class DictationStrategy extends BaseStrategy {
     newSegment?: string,
   ): Promise<boolean> {
     try {
-      const result = await drainDictationBacklog(newSegment, this.currentAppId);
+      const result = await drainDictationBacklog(
+        newSegment,
+        this.currentAppId,
+        this.routeOutputHooks,
+      );
       // Only add a trailing separator when this is a standalone drain
       // (no newSegment).  When the caller provides newSegment it has
       // already appended the segment text to streamedProcessedText, so
@@ -206,13 +229,17 @@ export class DictationStrategy extends BaseStrategy {
           // (`deliverWithInsertionStage`) and `beginEditWatch` -- a clipboard
           // read and a toast dismissal -- on every interim segment, none of which
           // the local path does.
-          await routeTranscriptOutput({
-            text: textToPaste,
-            mode: "dictation",
-            currentAppId: this.currentAppId,
-            isInterim: true,
-            skipReview: true,
-          });
+          await routeTranscriptOutput(
+            {
+              text: textToPaste,
+              mode: "dictation",
+              currentAppId: this.currentAppId,
+              isInterim: true,
+              skipReview: true,
+            },
+            null,
+            this.routeOutputHooks,
+          );
         } catch (error) {
           getLogger().error(
             `Failed to remote-deliver interim segment: ${error}`,
@@ -263,13 +290,17 @@ export class DictationStrategy extends BaseStrategy {
     // No backlog -- paste this segment live as before.
     this.backlogActive = false;
     try {
-      const result = await routeTranscriptOutput({
-        text: textToPaste,
-        mode: "dictation",
-        currentAppId: this.currentAppId,
-        isInterim: true,
-        skipReview: true,
-      });
+      const result = await routeTranscriptOutput(
+        {
+          text: textToPaste,
+          mode: "dictation",
+          currentAppId: this.currentAppId,
+          isInterim: true,
+          skipReview: true,
+        },
+        null,
+        this.routeOutputHooks,
+      );
       if (this.sessionGeneration !== generation) {
         return;
       }
@@ -389,7 +420,7 @@ export class DictationStrategy extends BaseStrategy {
     let remoteStatus: "sent" | null = null;
     let historyOwner: HistoryOwner = "stop-path";
     let pendingPersistence: HandleTranscriptResult["pendingPersistence"];
-    const remoteDeviceId = this.getActiveRemoteTargetDeviceId();
+    let remoteDeviceId: string | null = null;
 
     // Records a late failure on the warning list and, when the row was already
     // written concurrently with delivery, on the stored row itself. On the
@@ -439,46 +470,12 @@ export class DictationStrategy extends BaseStrategy {
 
       if (
         postProcessMetadata.postProcessFallback &&
-        postProcessMetadata.postProcessError
+        postProcessMetadata.postProcessError &&
+        !postProcessMetadata.postProcessFailed
       ) {
-        // The provider failed but the deterministic local style produced usable
-        // output, so the transcript is still delivered. Warn without blocking.
-        //
-        // The `postProcessError` half is not decoration, and it points the way it looks
-        // like it should not. `postProcessFallback` is set on two different runs and
-        // `transcriptions.actions.ts` says so in its own words -- "covers two different
-        // runs and cannot be read on its own". This one did not, so it toasted for both.
-        //
-        // The two runs separate on the error being present, and this is the direction
-        // that is easy to get backwards. A request that SUCCEEDED but returned an
-        // unusable reply also sets the flag, with `postProcessFailed` left false and NO
-        // error recorded (transcribe.actions.ts:402-408) -- nothing local ran there, and
-        // the text is the raw ASR, so the message below claims the opposite of what
-        // happened. A request that FAILED records the category, and that is the run the
-        // message is written for. `isUnstyledPostProcess` reads it as
-        // `postProcessFallback && !postProcessError`, which is the complementary pair.
-        //
-        // Nothing is lost by not toasting on the unusable reply. The run's `warnings`
-        // are persisted with it (`transcribe.actions.ts:917`) and rendered in
-        // TranscriptionDetailsDialog, so History shows the real state.
-        //
-        // Not `isUnstyledPostProcess`, which is the tempting name here: it has exactly one
-        // call site, inside `updateStoredTranscription`, and that is reached only from
-        // `performRetranscribe`. A fresh dictation never evaluates it. It reads the flag
-        // the other way round anyway -- `postProcessFailed || (postProcessFallback &&
-        // !postProcessError)` -- so its `!postProcessError` term is this `if`'s
-        // `postProcessError`, negated.
         getLogger().warning(
           "Post-processing provider failed; delivered the local fast style instead",
         );
-        await showToast({
-          message: getIntl().formatMessage({
-            defaultMessage:
-              "Online styling was unavailable, so the local style was used instead.",
-          }),
-          toastType: "info",
-          duration: 5000,
-        });
       }
 
       if (postProcessMetadata.postProcessEditFailed) {
@@ -491,29 +488,8 @@ export class DictationStrategy extends BaseStrategy {
         // what preserves the raw transcript.
       } else if (postProcessMetadata.postProcessFailed) {
         getLogger().warning(
-          "Post-processing failed; preserving the transcript in History without insertion",
+          "Post-processing failed; preserving the transcript without insertion",
         );
-        // The reason is the classified category, resolved to a localized
-        // message. The provider's own message is not rendered: only the Groq
-        // and Cerebras paths scrub credential material, and the Groq chain text
-        // names a model id the provider chose, so the full detail stays in the
-        // log. This string is the same one persisted on the transcription row,
-        // so a user who opens History reads the same words.
-        const reason = postProcessErrorReason(
-          postProcessMetadata.postProcessError,
-        );
-        await showToast({
-          message: getIntl().formatMessage(
-            {
-              defaultMessage:
-                "Styling failed: {reason}. The raw transcript is saved in History.",
-            },
-            { reason: getIntl().formatMessage(reason) },
-          ),
-          toastType: "error",
-          duration: 8000,
-          action: "open_transcriptions",
-        });
       } else if (transcript) {
         // The History row's content is final here, but the row used to wait
         // for delivery (hands-free delay, paste, or simulated typing, the last
@@ -526,10 +502,27 @@ export class DictationStrategy extends BaseStrategy {
         // before the post-processing await: a receiver paired or a review
         // toggled during that wait must still select the serial path, because
         // routing reads the live preferences in the same tick right after.
+        remoteDeviceId = this.getActiveRemoteTargetDeviceId();
+        const deliveryState = getAppState();
+        const deliveryTarget = args.currentApp
+          ? (deliveryState.appTargetById[args.currentApp.id] ?? null)
+          : null;
+        const insertionMethod = resolveInsertionMethod(
+          deliveryTarget,
+          getMyUserPreferences(deliveryState),
+        );
+        // Simulated typing can take the length of the transcript. Keep its
+        // History write on the stop path so Incognito is checked after delivery
+        // settles; otherwise a mode change during typing races an already-started
+        // write and saves the row the user just asked us not to retain.
+        const canPersistBeforeDelivery =
+          insertionMethod !== "type" && this.activeSimulatedTypingCount === 0;
         const concurrentPersistence =
           args.persistTranscriptNow !== undefined &&
-          getMyUserPreferences(getAppState())?.reviewBeforeInsert !== true &&
-          this.getActiveRemoteTargetDeviceId() === null;
+          getMyUserPreferences(deliveryState)?.reviewBeforeInsert !== true &&
+          remoteDeviceId === null &&
+          canPersistBeforeDelivery &&
+          !isHistoryPersistQueueFull();
         if (concurrentPersistence && args.persistTranscriptNow) {
           pendingPersistence = args
             .persistTranscriptNow({
@@ -564,6 +557,7 @@ export class DictationStrategy extends BaseStrategy {
               skipReview: concurrentPersistence ? true : undefined,
             },
             args.trace ?? null,
+            this.routeOutputHooks,
           );
           if (
             result.delivered &&
@@ -643,10 +637,18 @@ export class DictationStrategy extends BaseStrategy {
   async handleTranscript(
     args: HandleTranscriptParams,
   ): Promise<HandleTranscriptResult> {
-    if (this.hasStreamedSegments) {
-      return this.handleFinalStreamedTranscript(args);
-    } else {
-      return this.handleFinalBulkTranscript(args);
+    this.simulatedTypingStartCallback = args.onSimulatedTypingStart;
+    if (this.activeSimulatedTypingCount > 0) {
+      this.simulatedTypingStartCallback?.();
+    }
+
+    try {
+      if (this.hasStreamedSegments) {
+        return await this.handleFinalStreamedTranscript(args);
+      }
+      return await this.handleFinalBulkTranscript(args);
+    } finally {
+      this.simulatedTypingStartCallback = undefined;
     }
   }
 

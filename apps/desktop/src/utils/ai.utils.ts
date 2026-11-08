@@ -364,11 +364,17 @@ type ResolveProcessedTranscriptionOptions = {
 };
 
 /**
- * The warning for an edit list the reply's shape did not let us read, shared
- * by the two paths that report one.
+ * The warning strings an unusable styling reply leaves on the row. They stay
+ * in English by design: history code recognizes them and swaps in localized
+ * feedback, so they are stable markers rather than user-facing copy. The
+ * unreadable-edits warning is shared by the two paths that report one.
  */
-const UNREADABLE_EDITS_WARNING =
+export const POST_PROCESS_UNPARSEABLE_WARNING_PREFIX =
+  "Failed to parse post-processing response:";
+export const POST_PROCESS_UNREADABLE_EDITS_WARNING =
   "Post-processing returned edits that could not be read; kept the raw transcript. The reply may not match the shape the provider was asked for.";
+export const POST_PROCESS_EMPTY_REPLY_WARNING =
+  "Post-processing returned no usable text; kept the raw transcript. The reply may have been truncated at the model's token limit.";
 
 /**
  * The skip warning for an edit batch, naming the matching rule so the count
@@ -405,7 +411,7 @@ const rejectPartialEditBatch = (
   reason: edits.length === 0 ? "unreadable-edits" : "partial-edits",
   warning:
     edits.length === 0
-      ? UNREADABLE_EDITS_WARNING
+      ? POST_PROCESS_UNREADABLE_EDITS_WARNING
       : (warning ??
         "Post-processing edits could not all be applied; kept the raw transcript."),
 });
@@ -457,7 +463,7 @@ const resolveDeclaredEdits = (
     return {
       status: "unusable",
       reason: "unreadable-edits",
-      warning: UNREADABLE_EDITS_WARNING,
+      warning: POST_PROCESS_UNREADABLE_EDITS_WARNING,
     };
   }
   return { status: "cleaned", transcript, warning: null };
@@ -479,7 +485,7 @@ const unparseableReplyResolution = (
   return {
     status: "unusable",
     reason: "unparseable",
-    warning: `Failed to parse post-processing response: ${unknownToMessage(error)}.${truncationHint}`,
+    warning: `${POST_PROCESS_UNPARSEABLE_WARNING_PREFIX} ${unknownToMessage(error)}.${truncationHint}`,
   };
 };
 
@@ -506,8 +512,7 @@ const resolveNonEditReply = (
   return {
     status: "unusable",
     reason: "empty",
-    warning:
-      "Post-processing returned no usable text; kept the raw transcript. The reply may have been truncated at the model's token limit.",
+    warning: POST_PROCESS_EMPTY_REPLY_WARNING,
   };
 };
 

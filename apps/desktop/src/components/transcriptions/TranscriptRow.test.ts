@@ -291,6 +291,26 @@ describe("TranscriptionRow context menu", () => {
     expect(items[items.length - 1].textContent).toBe("Delete");
   });
 
+  it("omits Retranscribe for a row without stored audio", async () => {
+    // Incognito import memory records and failure rows stored with audio
+    // retention off have nothing to replay, and the retranscribe flow loads
+    // audio from the repository by id, which fails for them.
+    produceAppState((draft) => {
+      const record = draft.transcriptionById["row-1"];
+      if (record) {
+        record.audio = undefined;
+      }
+    });
+    const menu = await openMenu();
+    expect(menu).not.toBeNull();
+    expect(menuLabels(menu)).toEqual([
+      "Copy text",
+      "Copy ID",
+      "Open details",
+      "Delete",
+    ]);
+  });
+
   it("deletes the transcription when the Delete item is clicked", async () => {
     const menu = await openMenu();
     const deleteItem = Array.from(
