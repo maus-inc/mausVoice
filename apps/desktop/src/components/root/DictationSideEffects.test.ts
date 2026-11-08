@@ -60,6 +60,10 @@ import type {
 } from "./DictationSideEffects";
 import type { BaseStrategy } from "../../strategies/base.strategy";
 import type { ToastAction } from "../../types/toast.types";
+import {
+  flushHistoryPersist,
+  resetHistoryPersistQueue,
+} from "../../utils/history-persist.utils";
 
 type ToastCall = {
   message: string;
@@ -160,7 +164,10 @@ describe("surfacePersistedReviewInHistory", () => {
 });
 
 describe("handleEmptyTranscriptionResult (#418)", () => {
-  beforeEach(() => warningMock.mockClear());
+  beforeEach(() => {
+    warningMock.mockClear();
+    resetHistoryPersistQueue();
+  });
 
   it("shows a recovery toast and stores a failure marker without emitting recording_failed", async () => {
     const showToast = vi.fn<HandleEmptyResultInput["showToast"]>(() =>
@@ -196,6 +203,7 @@ describe("handleEmptyTranscriptionResult (#418)", () => {
       storeTranscriptionFn,
       refreshMember,
     });
+    await flushHistoryPersist();
 
     expect(result).toEqual({ handled: true });
     expect(showToast).toHaveBeenCalledTimes(1);
@@ -251,6 +259,7 @@ describe("handleEmptyTranscriptionResult (#418)", () => {
       storeTranscriptionFn,
       refreshMember: vi.fn(),
     });
+    await flushHistoryPersist();
 
     expect(asToastCall(showToast).message).toBe(
       "Transcription failed. Your recording is saved so you can retry.",
@@ -288,6 +297,7 @@ describe("handleEmptyTranscriptionResult (#418)", () => {
       storeTranscriptionFn,
       refreshMember: vi.fn(),
     });
+    await flushHistoryPersist();
 
     expect(asStoreCall(storeTranscriptionFn).warnings).toContain(
       "Live audio could not be sent to the transcription provider because the audio-chunk subscription failed.",
@@ -459,6 +469,10 @@ describe("createPhaseBookkeeper", () => {
 });
 
 describe("postProcessFinalizedTranscript", () => {
+  beforeEach(() => {
+    resetHistoryPersistQueue();
+  });
+
   const buildInput = (
     options: {
       store?: boolean;
@@ -637,8 +651,8 @@ describe("postProcessFinalizedTranscript", () => {
       "handleTranscript",
       "idle",
       "store",
-      "refresh",
       "toast",
+      "refresh",
     ]);
     expect(showToast).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -715,8 +729,8 @@ describe("postProcessFinalizedTranscript", () => {
       "handleTranscript",
       "idle",
       "store",
-      "refresh",
       "toast",
+      "refresh",
     ]);
     expect(refreshMember).toHaveBeenCalledTimes(1);
     expect(showToast).toHaveBeenCalledWith(
@@ -906,6 +920,8 @@ describe("postProcessFinalizedTranscript", () => {
 
     const result = await postProcessFinalizedTranscript(input);
     const persisting = result.persist?.();
+    await Promise.resolve();
+    await Promise.resolve();
     expect(storeTranscriptionFn).toHaveBeenCalledTimes(1);
     expect(refreshMember).not.toHaveBeenCalled();
 

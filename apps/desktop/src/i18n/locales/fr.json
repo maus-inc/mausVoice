@@ -217,6 +217,7 @@
   "could_not_reach_the_release_history": "Impossible d’accéder à l’historique des versions.",
   "could_not_resume_dictation": "Impossible de reprendre la dictée",
   "could_not_save_app_settings_please_try_again": "Impossible d’enregistrer les paramètres de l’application. Réessayez.",
+  "could_not_save_that_dictation_to_history_because_earlier_rec": "Impossible d'enregistrer cette dictée dans l'historique car des enregistrements précédents sont encore en cours d'écriture.",
   "could_not_save_the_api_key": "Impossible d'enregistrer la clé API.",
   "could_not_save_the_edited_transcript_it_remains_on_the_pill": "Impossible d'enregistrer la transcription modifiée. Elle reste dans la pastille pour que vous puissiez réessayer.",
   "could_not_save_your_profile_please_try_again": "Impossible d'enregistrer votre profil. Réessayez.",
