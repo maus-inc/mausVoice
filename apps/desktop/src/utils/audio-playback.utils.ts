@@ -203,19 +203,6 @@ const resumeAudioContext = (
   });
 };
 
-/**
- * Bounded cache of converted sample blocks, keyed by the identity of the raw
- * data object the repository cache returned. The raw cache hands back the same
- * `TranscriptionAudioData` instance for every hit inside its TTL, so a second
- * play of a warm clip reuses the conversion instead of rebuilding the
- * Float32Array. When the raw cache invalidates (delete, update, wipe) it
- * returns a fresh instance, the identity check misses, and the stale
- * conversion is dropped on the spot — no cross-layer invalidation wiring.
- *
- * Bounded in both entries and bytes: long histories must not accumulate
- * conversions. The raw cache's 32MB budget bounds the input side; this caps
- * the converted side at 16MB across 4 clips.
- */
 // Converted arrays are keyed by their source object so a conversion is
 // reused while the raw cache entry lives and is collectable with it — no
 // second cache to bound and no converted array keeping raw audio alive.

@@ -222,18 +222,23 @@ export class LocalTranscriptionRepo extends BaseTranscriptionRepo {
     return transcriptions.map(fromLocalTranscription);
   }
 
-  deleteTranscription(id: string, lease?: LocalDataWriteLease): Promise<void> {
+  // Field arrows, not prototype methods: the commands never touch `this`, and
+  // the instance API stays intact for the repo factory.
+  deleteTranscription = (
+    id: string,
+    lease?: LocalDataWriteLease,
+  ): Promise<void> => {
     return withLocalDataWrite(async () => {
       transcriptionAudioCache.invalidate(id);
-      await invoke<void>("transcription_delete", { id });
+      await invoke("transcription_delete", { id });
       transcriptionAudioCache.invalidate(id);
     }, lease);
-  }
+  };
 
-  updateTranscription(
+  updateTranscription = (
     transcription: Transcription,
     lease?: LocalDataWriteLease,
-  ): Promise<Transcription> {
+  ): Promise<Transcription> => {
     return withLocalDataWrite(async () => {
       transcriptionAudioCache.invalidate(transcription.id);
       const stored = await invoke<LocalTranscription>("transcription_update", {
@@ -242,7 +247,7 @@ export class LocalTranscriptionRepo extends BaseTranscriptionRepo {
       transcriptionAudioCache.invalidate(transcription.id);
       return fromLocalTranscription(stored);
     }, lease);
-  }
+  };
 
   // This stays an instance method to implement BaseTranscriptionRepo's shared
   // repository contract; making the stateless command wrapper static would break

@@ -398,6 +398,9 @@ describe("MausAgent native deliverable contract", () => {
 
   it("k5.9.9.1 #299 renders list rows with a stable, press-safe layout", async () => {
     let flipped = false;
+    // Hoisted so the `finally` restore can read it even when an assertion
+    // between the flip and the restore throws.
+    let preFlipChecked = false;
     try {
       await ensureOn("/dashboard");
       const settingsTile = $(TILE_XPATH["/dashboard/settings"]);
@@ -544,6 +547,7 @@ describe("MausAgent native deliverable contract", () => {
         },
       );
       flipped = true;
+      preFlipChecked = toggleState.checked;
       const afterSpace = await browser.execute(() => {
         const input = document.querySelector<HTMLInputElement>(
           'input[role="switch"]',
@@ -606,7 +610,7 @@ describe("MausAgent native deliverable contract", () => {
                 document.querySelector<HTMLInputElement>(
                   'input[role="switch"]',
                 )!.checked,
-            )) === toggleState.checked,
+            )) === preFlipChecked,
           {
             timeout: 3_000,
             timeoutMsg:

@@ -199,6 +199,20 @@ export const ListTile = forwardRef(function ListTile<
     normalizedSx = [sx];
   }
 
+  // A clickable row's trailing controls render outside its button (never
+  // nested inside it); plain clicks in the slot still forward to the row
+  // action, while nested controls stop propagation for their own handling.
+  const isClickable = Boolean(onClick || href);
+  const trailingNode = Boolean(trailing) ? (
+    <HoverButton
+      idle={trailing}
+      hover={trailingHover}
+      hovered={hovered}
+      onClick={handleClickTrailing}
+      left={false}
+    />
+  ) : null;
+
   const content = (
     <Stack
       direction="row"
@@ -228,16 +242,7 @@ export const ListTile = forwardRef(function ListTile<
           secondary={subtitle}
         />
       </Box>
-      {Boolean(trailing) && (
-        <HoverButton
-          idle={trailing}
-          hover={trailingHover}
-          hovered={hovered}
-          onClick={handleClickTrailing}
-          nestedControl={Boolean(onClick || href)}
-          left={false}
-        />
-      )}
+      {!isClickable && trailingNode}
     </Stack>
   );
 
@@ -254,7 +259,7 @@ export const ListTile = forwardRef(function ListTile<
   const body = (
     <>
       {indicator}
-      {onClick || href ? (
+      {isClickable ? (
         <ListItemButton
           selected={selected}
           {...roleProps}
@@ -311,6 +316,14 @@ export const ListTile = forwardRef(function ListTile<
           {content}
         </Box>
       )}
+      {isClickable && trailingNode ? (
+        <Box
+          onClick={disabled ? undefined : handleClick}
+          sx={{ flexShrink: 0 }}
+        >
+          {trailingNode}
+        </Box>
+      ) : null}
     </>
   );
 

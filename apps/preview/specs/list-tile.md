@@ -10,7 +10,7 @@ Universal row: leading/trailing with hover swap, title/subtitle, selected state,
 
 ## Visual tokens
 
-Button: radius 14, mb 4, minHeight 44, py 10; hover ink/highlight .04; selected light = ink fill + level1 text (primary 650) + secondary highlight .72 + selected shadow; dark = level2 + selected shadow. Primary text 550/.9375rem/−.01em. HoverButton swaps idle→icon-button (my −1, mx −1.5) on row hover; clicks stop propagation.
+Button: radius 14, mb 4, minHeight 44, py 10; hover ink/highlight .04; selected light = ink fill + level1 text (primary 650) + secondary highlight .72 + selected shadow; dark = level2 + selected shadow. Primary text 550/.9375rem/−.01em. HoverButton swaps idle→icon-button (my −1, mx −1.5) on row hover; clicks stop propagation. On clickable rows the trailing slot sits outside the row button — no nested controls; plain clicks there still reach the row action.
 
 ## Motion
 

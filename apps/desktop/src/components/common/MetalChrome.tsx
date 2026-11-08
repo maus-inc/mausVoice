@@ -151,12 +151,15 @@ export const MetalChrome = ({
 
   // metal-fx's bare WebGL2 probe can succeed where the engine's real context
   // constructor throws; the fallback renders hidden so the first-frame rescue
-  // hook reveals it like any wrapper that never paints.
+  // hook reveals it like any wrapper that never paints. It mirrors the real
+  // wrapper's props and layout so the rescued control keeps its sizing and
+  // handlers on the failure path.
   const rescueFallback: ReactNode = (
     <div
+      {...rest}
       {...{ [METAL_CHROME_ATTR]: id }}
       className={classes || undefined}
-      style={{ visibility: "hidden" }}
+      style={{ display: "inline-flex", visibility: "hidden", ...rest.style }}
     >
       {children}
     </div>

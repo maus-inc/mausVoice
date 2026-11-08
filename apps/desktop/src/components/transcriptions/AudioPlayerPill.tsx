@@ -7,6 +7,7 @@ import { transcriptionAudioCache } from "../../utils/transcription-audio-cache";
 import { AudioPlaybackButton } from "./AudioPlaybackButton";
 import { AudioWaveformBars } from "./AudioWaveformBars";
 import {
+  type AudioPillPlaybackAttempt,
   type AudioPillPlaybackSession,
   createAudioPillPlaybackSession,
 } from "./audio-pill-playback-session";
@@ -42,6 +43,9 @@ export const AudioPlayerPill = ({
   const intl = useIntl();
   const [isPlaying, setIsPlaying] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  // Newest playback attempt started by this row (identity guard for stale
+  // exits below).
+  const latestAttemptRef = useRef<AudioPillPlaybackAttempt | null>(null);
   const loadingRef = useRef(false);
   const [playbackProgress, setPlaybackProgress] = useState(0);
   const [waveformWidth, setWaveformWidth] = useState(0);
@@ -210,6 +214,9 @@ export const AudioPlayerPill = ({
     }
 
     const attempt = session.beginRequest();
+    // Identity of the newest attempt on this row: a stale attempt may only
+    // clear loading state that belongs to itself, never a newer attempt's.
+    latestAttemptRef.current = attempt;
     loadingRef.current = true;
     setIsLoading(true);
     // The error state names the stage that failed: a read failure (missing or
@@ -237,10 +244,10 @@ export const AudioPlayerPill = ({
       }
 
       if (!attempt.isCurrent()) {
-        // Ownership moved on (another pill took the session or the work was
-        // abandoned): drop this row's loading flags so its button cannot stay
-        // stuck on "Cancel audio loading" for work it no longer owns.
-        resetPlaybackState();
+        // Stale for this row: clear its loading flags so the button cannot
+        // stay stuck on "Cancel audio loading" — unless a newer attempt on
+        // this row now owns those flags.
+        if (latestAttemptRef.current === attempt) resetPlaybackState();
         return;
       }
       stage = "play";
@@ -281,9 +288,9 @@ export const AudioPlayerPill = ({
       attempt.completeSetup();
     } catch (error) {
       if (!attempt.releaseOnError()) {
-        // The abort/supersede path owns the state now; make sure this row is
-        // not left loading for an attempt it no longer drives.
-        resetPlaybackState();
+        // Abandoned or superseded: clear this row's flags only when they
+        // still belong to this attempt.
+        if (latestAttemptRef.current === attempt) resetPlaybackState();
         return;
       }
       resetPlaybackState({ progress: true });

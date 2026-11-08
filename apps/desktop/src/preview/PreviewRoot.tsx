@@ -32,8 +32,8 @@ const getScenario = (search: string): PreviewScenarioId => {
     : getActivePreviewScenario();
 };
 
-// `?previewPopup=shown|hidden` seeds a reproducible capture state; the eye
-// toggle keeps working afterwards and no production preference is touched.
+// `?previewPopup` seeds a reproducible capture state; no production
+// preference is touched.
 const getPopupOverride = (search: string): boolean | undefined => {
   const requested = new URLSearchParams(search).get("previewPopup");
   if (requested === "shown") return true;
@@ -52,9 +52,8 @@ const PreviewToolbar = () => {
   const lastOverride = useRef(getPopupOverride(location.search));
   useEffect(() => {
     const seeded = getPopupOverride(location.search);
-    // Re-seed only when the ?previewPopup value itself changes. Unrelated
-    // search updates (scenario changes, capture resets) must not close a
-    // toolbar the user opened by hand while the override stays "hidden".
+    // Seed only on a parameter change: unrelated search updates must not
+    // close a toolbar the user opened by hand.
     if (seeded !== lastOverride.current) {
       lastOverride.current = seeded;
       setVisible((prev) => seeded ?? prev);
@@ -117,7 +116,10 @@ const PreviewToolbar = () => {
               size="small"
               variant="outlined"
             />
-            <FormControl size="small" sx={{ minWidth: 154 }}>
+            <FormControl
+              size="small"
+              sx={{ minWidth: (theme) => theme.spacing(19) }}
+            >
               <Select
                 value={scenario}
                 inputProps={{
