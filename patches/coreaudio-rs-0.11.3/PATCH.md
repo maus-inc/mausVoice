@@ -17,6 +17,14 @@ When initialization fails after instance creation, the constructor now calls
 fails. CPAL maps that result to its capture ownership guard. Portable tests
 exercise the ordering and error propagation, but do not call Apple APIs.
 
+Action-flag handles are now tied to the lifetime of each render callback,
+are not transferable between threads, and require an unsafe constructor with a
+valid exclusive pointer. Render and input callbacks reject null flag/timestamp
+pointers. This changes the public `Args` and `Handle` APIs; users annotating
+these types must specify a callback lifetime. Portable tests exercise the handle
+and compiler rejection of escape, cross-thread transfer and safe construction.
+The separate static audio-buffer lifetime problem remains unresolved.
+
 The generic AudioUnit and iOS AudioSession property getters now require unsafe
 calls: callers must choose a matching native representation and ensure its bytes
 form a valid Rust value. They reject zero-sized types and unexpected returned

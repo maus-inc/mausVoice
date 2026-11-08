@@ -250,3 +250,7 @@ null device, not a physical microphone.
 The macOS and iOS CoreAudio backends use the now-unsafe generic AudioUnit
 property getter only with the documented stream-format, frame-size and range
 representations. The iOS changes have not been exercised on an iOS device.
+
+The CoreAudio input and output callback argument types now carry the lifetime
+of their action-flag handle; the input adapter keeps that lifetime within its
+render borrow. The iOS callback adaptations have not been built or device-tested.

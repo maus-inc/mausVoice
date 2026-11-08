@@ -80,7 +80,7 @@ fn main() -> Result<(), coreaudio::Error> {
         }
     }
 
-    type Args = render_callback::Args<data::NonInterleaved<S>>;
+    type Args<'a> = render_callback::Args<'a, data::NonInterleaved<S>>;
 
     input_audio_unit.set_input_callback(move |args| {
         let Args {
@@ -106,7 +106,7 @@ fn main() -> Result<(), coreaudio::Error> {
     })?;
     input_audio_unit.start()?;
 
-    output_audio_unit.set_render_callback(move |args: Args| {
+    output_audio_unit.set_render_callback(move |args: Args<'_>| {
         let Args {
             num_frames,
             mut data,

@@ -150,7 +150,7 @@ fn main() -> Result<(), coreaudio::Error> {
 
     if INTERLEAVED {
         println!("Register interleaved callback");
-        type Args = render_callback::Args<data::Interleaved<f32>>;
+        type Args<'a> = render_callback::Args<'a, data::Interleaved<f32>>;
         audio_unit.set_render_callback(move |args| {
             let Args {
                 num_frames, data, ..
@@ -170,7 +170,7 @@ fn main() -> Result<(), coreaudio::Error> {
         })?;
     } else {
         println!("Register non-interleaved callback");
-        type Args = render_callback::Args<data::NonInterleaved<f32>>;
+        type Args<'a> = render_callback::Args<'a, data::NonInterleaved<f32>>;
         audio_unit.set_render_callback(move |args| {
             let Args {
                 num_frames,

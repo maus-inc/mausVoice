@@ -5,6 +5,9 @@ use crate::error::{self, Error};
 use std::os::raw::c_void;
 use std::slice;
 use sys;
+use sys as flags_sys;
+
+mod action_flags_handle;
 
 pub use self::action_flags::ActionFlags;
 pub use self::data::Data;
@@ -29,7 +32,7 @@ pub struct InputProcFnWrapper {
 
 /// Arguments given to the render callback function.
 #[derive(Debug)]
-pub struct Args<D> {
+pub struct Args<'a, D> {
     /// A type wrapping the the buffer that matches the expected audio format.
     pub data: D,
     /// Timing information for the callback.
@@ -44,7 +47,7 @@ pub struct Args<D> {
     ///
     /// For example: if there is no audio to process, we can insert the `OUTPUT_IS_SILENCE` flag to
     /// indicate to the audio unit that the buffer does not need to be processed.
-    pub flags: action_flags::Handle,
+    pub flags: action_flags::Handle<'a>,
 }
 
 /// Format specific render callback data.
@@ -291,7 +294,6 @@ pub mod data {
 }
 
 pub mod action_flags {
-    use std::fmt;
     use sys;
 
     bitflags! {
@@ -352,90 +354,7 @@ pub mod action_flags {
         }
     }
 
-    /// A safe handle around the `AudioUnitRenderActionFlags` pointer provided by the render
-    /// callback.
-    ///
-    /// This type lets a callback provide various hints to the audio unit.
-    ///
-    /// For example: if there is no audio to process, we can insert the `OUTPUT_IS_SILENCE` flag to
-    /// indicate to the audio unit that the buffer does not need to be processed.
-    pub struct Handle {
-        ptr: *mut sys::AudioUnitRenderActionFlags,
-    }
-
-    impl fmt::Debug for Handle {
-        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-            if self.ptr.is_null() {
-                write!(f, "{:?}", self.ptr)
-            } else {
-                unsafe { write!(f, "{:?}", *self.ptr) }
-            }
-        }
-    }
-
-    impl Handle {
-        /// Retrieve the current state of the `ActionFlags`.
-        pub fn get(&self) -> ActionFlags {
-            ActionFlags::from_bits_truncate(unsafe { *self.ptr })
-        }
-
-        fn set(&mut self, flags: ActionFlags) {
-            unsafe { *self.ptr = flags.bits() }
-        }
-
-        /// The raw value of the flags currently stored.
-        pub fn bits(&self) -> u32 {
-            self.get().bits()
-        }
-
-        /// Returns `true` if no flags are currently stored.
-        pub fn is_empty(&self) -> bool {
-            self.get().is_empty()
-        }
-
-        /// Returns `true` if all flags are currently stored.
-        pub fn is_all(&self) -> bool {
-            self.get().is_all()
-        }
-
-        /// Returns `true` if there are flags common to both `self` and `other`.
-        pub fn intersects(&self, other: ActionFlags) -> bool {
-            self.get().intersects(other)
-        }
-
-        /// Returns `true` if all of the flags in `other` are contained within `self`.
-        pub fn contains(&self, other: ActionFlags) -> bool {
-            self.get().contains(other)
-        }
-
-        /// Insert the specified flags in-place.
-        pub fn insert(&mut self, other: ActionFlags) {
-            let mut flags = self.get();
-            flags.insert(other);
-            self.set(flags);
-        }
-
-        /// Remove the specified flags in-place.
-        pub fn remove(&mut self, other: ActionFlags) {
-            let mut flags = self.get();
-            flags.remove(other);
-            self.set(flags);
-        }
-
-        /// Toggles the specified flags in-place.
-        pub fn toggle(&mut self, other: ActionFlags) {
-            let mut flags = self.get();
-            flags.toggle(other);
-            self.set(flags);
-        }
-
-        /// Wrap the given pointer with a `Handle`.
-        pub fn from_ptr(ptr: *mut sys::AudioUnitRenderActionFlags) -> Self {
-            Handle { ptr }
-        }
-    }
-
-    unsafe impl Send for Handle {}
+    pub use super::action_flags_handle::Handle;
 
     impl ::std::fmt::Display for ActionFlags {
         fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
@@ -462,7 +381,7 @@ impl AudioUnit {
     /// Pass a render callback (aka "Input Procedure") to the **AudioUnit**.
     pub fn set_render_callback<F, D>(&mut self, mut f: F) -> Result<(), Error>
     where
-        F: FnMut(Args<D>) -> Result<(), ()> + 'static,
+        F: for<'a> FnMut(Args<'a, D>) -> Result<(), ()> + 'static,
         D: Data,
     {
         // First, we'll retrieve the stream format so that we can ensure that the given callback
@@ -488,6 +407,9 @@ impl AudioUnit {
                                   in_number_frames: sys::UInt32,
                                   io_data: *mut sys::AudioBufferList|
               -> sys::OSStatus {
+            if io_action_flags.is_null() || in_time_stamp.is_null() || io_data.is_null() {
+                return Error::Unspecified.as_os_status();
+            }
             let args = unsafe {
                 let data = D::from_input_proc_args(in_number_frames, io_data);
                 let flags = action_flags::Handle::from_ptr(io_action_flags);
@@ -536,7 +458,7 @@ impl AudioUnit {
     /// Pass an input callback (aka "Input Procedure") to the **AudioUnit**.
     pub fn set_input_callback<F, D>(&mut self, mut f: F) -> Result<(), Error>
     where
-        F: FnMut(Args<D>) -> Result<(), ()> + 'static,
+        F: for<'a> FnMut(Args<'a, D>) -> Result<(), ()> + 'static,
         D: Data,
     {
         // First, we'll retrieve the stream format so that we can ensure that the given callback
@@ -614,6 +536,9 @@ impl AudioUnit {
                                   in_number_frames: sys::UInt32,
                                   _io_data: *mut sys::AudioBufferList|
               -> sys::OSStatus {
+            if io_action_flags.is_null() || in_time_stamp.is_null() {
+                return Error::Unspecified.as_os_status();
+            }
             // If the buffer size has changed, ensure the AudioBuffer is the correct size.
             if buffer_frame_size != in_number_frames {
                 unsafe {

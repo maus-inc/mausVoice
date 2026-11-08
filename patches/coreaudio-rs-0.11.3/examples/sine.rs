@@ -50,7 +50,7 @@ fn main() -> Result<(), coreaudio::Error> {
     // For this example, our sine wave expects `f32` data.
     assert!(SampleFormat::F32 == stream_format.sample_format);
 
-    type Args = render_callback::Args<data::NonInterleaved<f32>>;
+    type Args<'a> = render_callback::Args<'a, data::NonInterleaved<f32>>;
     audio_unit.set_render_callback(move |args| {
         let Args {
             num_frames,

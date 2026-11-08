@@ -61,19 +61,19 @@ pub mod audio_unit {
             }
         }
         pub mod action_flags {
-            pub struct Handle;
-            impl Handle {
-                pub fn from_ptr(
+            pub struct Handle<'a>(std::marker::PhantomData<&'a mut u32>);
+            impl<'a> Handle<'a> {
+                pub unsafe fn from_ptr(
                     _: *mut super::super::super::sys::AudioUnitRenderActionFlags,
                 ) -> Self {
-                    Self
+                    Self(std::marker::PhantomData)
                 }
             }
         }
-        pub struct Args<D> {
+        pub struct Args<'a, D> {
             pub data: D,
             pub time_stamp: sys::AudioTimeStamp,
-            pub flags: action_flags::Handle,
+            pub flags: action_flags::Handle<'a>,
             pub bus_number: u32,
             pub num_frames: usize,
         }

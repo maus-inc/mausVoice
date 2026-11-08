@@ -52,14 +52,15 @@ impl InputRender {
     }
 
     /// The unit must be live and the non-null pointers must be valid for this
-    /// CoreAudio invocation. The caller must serialize rendering with teardown.
+    /// CoreAudio invocation and until the returned arguments are dropped. The
+    /// caller must serialize rendering with teardown.
     pub(super) unsafe fn render(
         &mut self,
         flags: *mut AudioUnitRenderActionFlags,
         timestamp: *const AudioTimeStamp,
         bus: UInt32,
         frames: UInt32,
-    ) -> Result<render_callback::Args<data::Raw>, OSStatus> {
+    ) -> Result<render_callback::Args<'_, data::Raw>, OSStatus> {
         if flags.is_null() || timestamp.is_null() {
             return Err(-1500);
         }
@@ -92,7 +93,7 @@ impl InputRender {
         Ok(render_callback::Args {
             data: data::Raw { data: list },
             time_stamp: unsafe { *timestamp },
-            flags: render_callback::action_flags::Handle::from_ptr(flags),
+            flags: unsafe { render_callback::action_flags::Handle::from_ptr(flags) },
             bus_number: bus,
             num_frames: frames as usize,
         })
