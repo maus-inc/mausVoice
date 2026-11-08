@@ -47,6 +47,8 @@ mod macos_physical_format;
 #[cfg(target_os = "macos")]
 mod macos_device_scope;
 #[cfg(target_os = "macos")]
+mod macos_hog;
+#[cfg(target_os = "macos")]
 use crate::{error::Error as ListenerError, sys as listener_sys};
 
 pub mod audio_format;

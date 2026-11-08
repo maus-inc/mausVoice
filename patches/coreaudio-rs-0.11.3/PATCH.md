@@ -17,6 +17,10 @@ When initialization fails after instance creation, the constructor now calls
 fails. CPAL maps that result to its capture ownership guard. Portable tests
 exercise the ordering and error propagation, but do not call Apple APIs.
 
+The macOS hog-mode helpers pass correctly sized mutable PID storage to
+CoreAudio and validate returned lengths. A simulated API tests toggling,
+malformed output and native errors; hardware behavior remains unverified.
+
 The macOS device-scope query uses initialized, aligned native-word storage for
 the variable-length `AudioBufferList`. It checks returned lengths and buffer
 counts before reading channel counts, including empty and shrinking lists.
