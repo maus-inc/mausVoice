@@ -215,7 +215,9 @@ describe("audio intake ownership", () => {
       () => admission,
     );
     emitChunk([0.8], 0, { ownerId: "old", generation: 1 });
+    emitChunk([0.8], null, null);
     admission = { ownerId: "new", generation: 2 };
+    emitChunk([0.8], null, { ownerId: "old", generation: 1 });
     emitChunk([0.8], 0, { ownerId: "old", generation: 1 });
     emitChunk([0.7], 0, { ownerId: "new", generation: 1 });
     emitChunk([0.25], 0, admission);
@@ -268,6 +270,8 @@ describe("audio intake ownership", () => {
       intake.sealLiveAudio(new Float32Array([0.25, 0.5, 0.75]), 16_000),
     ).toBe(true);
     emitChunk([0.75], 2);
+    emitChunk([0.75], null, null);
+    expect(intake.hasDiscontinuity()).toBe(false);
     expect(write).toHaveBeenCalledTimes(2);
     expect(Array.from(write.mock.calls[1]![0] as Float32Array)).toEqual([0.75]);
     expect(write.mock.calls[1]![1]).toBe(2);

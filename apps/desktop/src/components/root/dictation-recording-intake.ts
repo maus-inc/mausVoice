@@ -121,6 +121,33 @@ export const attachSessionAudioIntake = async (
   const forward = (chunk: Float32Array, offset: number) => {
     if (!forwardAudioChunk(session, chunk, offset)) discontinuity = true;
   };
+  const fillMissingTail = (
+    samples: number[] | Float32Array,
+    sampleRate?: number,
+  ): boolean => {
+    const missing = samples.length - nextOffset;
+    if (missing === 0) return true;
+    if (
+      !sampleRate ||
+      !Number.isSafeInteger(sampleRate) ||
+      sampleRate < 1 ||
+      missing > sampleRate * 2
+    ) {
+      discontinuity = true;
+      return false;
+    }
+    const waveform = ensureFloat32Array(samples);
+    const chunkSize = Math.max(1, Math.floor(sampleRate / 10));
+    for (
+      let offset = nextOffset;
+      offset < waveform.length;
+      offset += chunkSize
+    ) {
+      forward(waveform.slice(offset, offset + chunkSize), offset);
+      if (discontinuity) return false;
+    }
+    return true;
+  };
   const common = {
     buffer,
     hasDiscontinuity: () => discontinuity,
@@ -139,30 +166,8 @@ export const attachSessionAudioIntake = async (
         discontinuity = true;
       }
       if (discontinuity) return false;
-      const missing = samples.length - nextOffset;
-      if (missing > 0) {
-        if (
-          !sampleRate ||
-          !Number.isSafeInteger(sampleRate) ||
-          sampleRate < 1 ||
-          missing > sampleRate * 2
-        ) {
-          discontinuity = true;
-          return false;
-        }
-        const waveform = ensureFloat32Array(samples);
-        const chunkSize = Math.max(1, Math.floor(sampleRate / 10));
-        for (
-          let offset = nextOffset;
-          offset < waveform.length;
-          offset += chunkSize
-        ) {
-          forward(waveform.slice(offset, offset + chunkSize), offset);
-          if (discontinuity) return false;
-        }
-      }
-      sealResult = true;
-      return true;
+      sealResult = fillMissingTail(samples, sampleRate);
+      return sealResult;
     },
   };
   if (typeof session.writeAudioChunk !== "function") {
@@ -183,6 +188,39 @@ export const attachSessionAudioIntake = async (
   let lastForwardedOffset: number | null = null;
   let hasLoggedTrim = false;
 
+  const acceptsAdmission = (chunkAdmission: AudioChunkAdmission | null) => {
+    const admitted = getAdmission();
+    // Before admission, queued events belong to another recording. Afterward,
+    // untagged events cannot be trusted; another owner's events are ignored.
+    if (!admitted) return false;
+    if (!chunkAdmission) {
+      discontinuity = true;
+      return false;
+    }
+    return (
+      chunkAdmission.ownerId === admitted.ownerId &&
+      chunkAdmission.generation === admitted.generation
+    );
+  };
+
+  const hasValidOffset = (offset: number | null): offset is number => {
+    if (offset === null) {
+      discontinuity = true;
+      getLogger().warning(
+        "[Dictation] Dropped audio_chunk with no sample offset; the recording stream is no longer contiguous",
+      );
+      return false;
+    }
+    if (!Number.isSafeInteger(offset) || offset < 0) {
+      discontinuity = true;
+      getLogger().warning(
+        "[Dictation] Dropped audio_chunk with an invalid sample offset; the recording stream is no longer contiguous",
+      );
+      return false;
+    }
+    return true;
+  };
+
   // A subscription that cannot be established is not a reason to fail the
   // recording; letting this reject reached the outer start-failure handler and
   // showed "Recording failed" for a dictation that was otherwise fine. The
@@ -192,35 +230,13 @@ export const attachSessionAudioIntake = async (
   let unlisten: UnlistenFn | null;
   try {
     unlisten = await listenToAudioChunks((samples, offset, chunkAdmission) => {
-      if (sealed || !isCurrent()) return;
-      const admitted = getAdmission();
-      // Before this start receives its admission, queued events can only
-      // belong to another recording. Once admitted, untagged events cannot
-      // be trusted, and tagged events from another owner must be ignored.
-      if (!admitted) return;
-      if (!chunkAdmission) {
-        discontinuity = true;
-        return;
-      }
       if (
-        chunkAdmission.ownerId !== admitted.ownerId ||
-        chunkAdmission.generation !== admitted.generation
+        sealed ||
+        !isCurrent() ||
+        !acceptsAdmission(chunkAdmission) ||
+        !hasValidOffset(offset)
       )
         return;
-      if (offset === null) {
-        discontinuity = true;
-        getLogger().warning(
-          "[Dictation] Dropped audio_chunk with no sample offset; the recording stream is no longer contiguous",
-        );
-        return;
-      }
-      if (!Number.isSafeInteger(offset) || offset < 0) {
-        discontinuity = true;
-        getLogger().warning(
-          "[Dictation] Dropped audio_chunk with an invalid sample offset; the recording stream is no longer contiguous",
-        );
-        return;
-      }
       const chunk = ensureFloat32Array(samples);
       if (chunk.length === 0) return;
       receivedChunkCount += 1;
