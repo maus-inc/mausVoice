@@ -6,10 +6,14 @@ import { FormattedMessage, useIntl } from "react-intl";
 import { showErrorSnackbar } from "../../actions/app.actions";
 import { goToOnboardingPage } from "../../actions/onboarding.actions";
 import { getHotkeyRepo } from "../../repos";
-import { produceAppState, useAppStore } from "../../store";
+import { getAppState, produceAppState, useAppStore } from "../../store";
 import { trackButtonClick } from "../../utils/analytics.utils";
 import { registerHotkeys } from "../../utils/app.utils";
 import { createId } from "../../utils/id.utils";
+import {
+  enqueueHotkeyWrite,
+  markOptimisticHotkeyWrite,
+} from "../../utils/hotkey-write-queue";
 import { beginLocalDataWrite } from "../../utils/local-data-write-gate";
 import {
   DICTATE_HOTKEY,
@@ -27,7 +31,6 @@ import {
 
 // Writes can outlive a mounted onboarding page. Keep their ordering and
 // rollback snapshots shared across remounts of this form.
-let saveQueue: Promise<void> = Promise.resolve();
 let pendingSaves = 0;
 const pendingById = new Map<string, number>();
 const lastSaved = new Map<string, Hotkey | undefined>();
@@ -53,6 +56,7 @@ export const KeybindingsForm = () => {
     primaryHotkey?.keys ?? (defaultCombos.length > 0 ? defaultCombos[0] : []);
 
   const previousKeysHeldRef = useRef<string[]>([]);
+  const captureArmedRef = useRef(false);
 
   useEffect(() => {
     if (!isListening) return;
@@ -81,6 +85,11 @@ export const KeybindingsForm = () => {
       seen.add(k);
       return true;
     });
+
+    if (!captureArmedRef.current) {
+      if (held.length === 0) captureArmedRef.current = true;
+      return;
+    }
 
     const previousHeld = previousKeysHeldRef.current;
     if (previousHeld.length > 0 && held.length < previousHeld.length) {
@@ -131,6 +140,7 @@ export const KeybindingsForm = () => {
     pendingSaves += 1;
     const revision = (saveRevision.get(newValue.id) ?? 0) + 1;
     saveRevision.set(newValue.id, revision);
+    markOptimisticHotkeyWrite(newValue.actionName);
     produceAppState((draft) => {
       registerHotkeys(draft, [newValue]);
       if (!draft.settings.hotkeyIds.includes(newValue.id)) {
@@ -138,7 +148,7 @@ export const KeybindingsForm = () => {
       }
       draft.settings.hotkeysStatus = "success";
     }, releaseWrite.lease);
-    saveQueue = saveQueue.then(async () => {
+    void enqueueHotkeyWrite(async () => {
       try {
         try {
           await getHotkeyRepo().saveHotkey(newValue, releaseWrite.lease);
@@ -151,8 +161,7 @@ export const KeybindingsForm = () => {
             produceAppState((draft) => {
               const current = draft.hotkeyById[newValue.id];
               if (
-                !current ||
-                current.actionName !== newValue.actionName ||
+                current?.actionName !== newValue.actionName ||
                 current.keys.length !== newValue.keys.length ||
                 !current.keys.every(
                   (key, index) => key === newValue.keys[index],
@@ -211,6 +220,7 @@ export const KeybindingsForm = () => {
   const handleChangeShortcut = () => {
     trackButtonClick("onboarding_change_hotkey");
     previousKeysHeldRef.current = [];
+    captureArmedRef.current = getAppState().keysHeld.length === 0;
     setIsListening(true);
     setTimeout(() => {
       boxRef.current?.focus();

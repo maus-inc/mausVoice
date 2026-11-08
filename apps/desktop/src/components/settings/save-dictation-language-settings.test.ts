@@ -28,6 +28,7 @@ vi.mock("../../utils/keyboard.utils", async (original) => ({
 }));
 import { INITIAL_APP_STATE } from "../../state/app.state";
 import { getAppState, produceAppState, setAppState } from "../../store";
+import { markOptimisticHotkeyWrite } from "../../utils/hotkey-write-queue";
 import { saveDictationLanguageSettings } from "./save-dictation-language-settings";
 
 const oldPrimary = {
@@ -95,4 +96,64 @@ it("retries tone loading after the preferred language was already saved", async 
   expect(mocks.language).toHaveBeenCalledTimes(1);
   expect(mocks.tones).toHaveBeenCalledTimes(2);
   expect(mocks.save).toHaveBeenCalledTimes(1);
+});
+
+it("does not overwrite a newer optimistic shortcut while a language save is pending", async () => {
+  let finish!: (value: Hotkey) => void;
+  mocks.save.mockImplementationOnce(
+    (hotkey) =>
+      new Promise<Hotkey>((resolve) => {
+        finish = () => resolve(hotkey);
+      }),
+  );
+  const saving = saveDictationLanguageSettings(rows, "en");
+  await vi.waitFor(() => expect(mocks.save).toHaveBeenCalled());
+  markOptimisticHotkeyWrite("dictate");
+  produceAppState((draft) => {
+    draft.hotkeyById.primary.keys = ["Z"];
+  });
+  finish(oldPrimary);
+  await saving;
+  expect(getAppState().hotkeyById.primary.keys).toEqual(["Z"]);
+});
+
+it("publishes the later of two queued language saves", async () => {
+  let finish!: () => void;
+  mocks.save.mockImplementationOnce(
+    (hotkey) =>
+      new Promise<Hotkey>((resolve) => {
+        finish = () => resolve(hotkey);
+      }),
+  );
+  const first = saveDictationLanguageSettings(rows, "en");
+  await vi.waitFor(() => expect(mocks.save).toHaveBeenCalled());
+  const second = saveDictationLanguageSettings(
+    [{ language: "en", hotkeyKeys: ["X"] }],
+    "en",
+  );
+  finish();
+  await Promise.all([first, second]);
+  expect(getAppState().hotkeyById.primary.keys).toEqual(["X"]);
+});
+
+it("preserves a newer optimistic additional shortcut while publishing the saved group", async () => {
+  let finish!: () => void;
+  mocks.replace.mockImplementationOnce(
+    (_prefix, hotkeys) =>
+      new Promise<Hotkey[]>((resolve) => {
+        finish = () => resolve(hotkeys);
+      }),
+  );
+  const saving = saveDictationLanguageSettings(rows, "en");
+  await vi.waitFor(() => expect(mocks.replace).toHaveBeenCalled());
+  markOptimisticHotkeyWrite(oldAdditional.actionName);
+  produceAppState((draft) => {
+    draft.hotkeyById.extra.keys = ["Z"];
+  });
+  finish();
+  await saving;
+  expect(getAppState().hotkeyById.extra.keys).toEqual(["Z"]);
+  expect(
+    Object.values(getAppState().hotkeyById).map((hotkey) => hotkey.actionName),
+  ).toContain("additional-language:de");
 });

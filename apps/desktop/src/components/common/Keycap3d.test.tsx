@@ -67,6 +67,14 @@ const render = (ui: React.ReactElement) =>
     root.render(<ThemeProvider theme={theme}>{ui}</ThemeProvider>);
   });
 
+const waitForPaint = async (paint: ReturnType<typeof vi.fn>, count: number) => {
+  await act(async () => {
+    await vi.waitFor(() => expect(paint).toHaveBeenCalledTimes(count), {
+      timeout: 10000,
+    });
+  });
+};
+
 const parts = (name: string) =>
   Array.from(container.querySelectorAll(`[data-keycap-part="${name}"]`));
 
@@ -178,7 +186,7 @@ describe("Keycap3d", () => {
     }
   });
 
-  it("shows the fallback when local raster creation fails", () => {
+  it("shows the fallback when local raster creation fails", async () => {
     const { restore } = mockCanvas();
     vi.stubGlobal(
       "ImageData",
@@ -190,6 +198,9 @@ describe("Keycap3d", () => {
     );
     try {
       render(<Keycap3d label="K" size={37.125} />);
+      await act(async () => {
+        await Promise.resolve();
+      });
       expect(box().getAttribute("data-keycap-fallback")).toBe("true");
       expect(styleOf(parts("label")[0]).visibility).toBe("visible");
     } finally {
@@ -356,13 +367,26 @@ describe("Keycap3d", () => {
     );
     try {
       render(<Keycap3d label="A" size={34.25} />);
-      await act(async () => {
-        await Promise.resolve();
-      });
-      expect(paint).toHaveBeenCalledTimes(1);
+      await waitForPaint(paint, 1);
       expect(styleOf(parts("label")[0]).visibility).toBe("visible");
     } finally {
       restore();
+    }
+  });
+
+  it("cancels an unfinished local raster on unmount", async () => {
+    vi.useFakeTimers();
+    const { paint, restore } = mockCanvas();
+    try {
+      render(<Keycap3d label="A" size={79.6} />);
+      act(() => root.render(null));
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      expect(paint).not.toHaveBeenCalled();
+    } finally {
+      restore();
+      vi.useRealTimers();
     }
   });
 
@@ -384,10 +408,11 @@ describe("Keycap3d", () => {
     }
   });
 
-  it("writes opaque cap pixels and transparent background pixels", () => {
+  it("writes opaque cap pixels and transparent background pixels", async () => {
     const { paint, restore } = mockCanvas();
     try {
       render(<Keycap3d view="front" size={34} />);
+      await waitForPaint(paint, 1);
       expect(paint).toHaveBeenCalledTimes(1);
       const image = paint.mock.calls[0][0] as TestImageData;
       const alpha = image.data.filter((_, index) => index % 4 === 3);
@@ -399,7 +424,7 @@ describe("Keycap3d", () => {
     }
   });
 
-  it.each([1, 2])("paints a 34px front cap at DPR %s", (dpr) => {
+  it.each([1, 2])("paints a 34px front cap at DPR %s", async (dpr) => {
     const { paint, restore } = mockCanvas();
     const original = Object.getOwnPropertyDescriptor(
       window,
@@ -411,6 +436,7 @@ describe("Keycap3d", () => {
     });
     try {
       render(<Keycap3d view="front" size={34} />);
+      await waitForPaint(paint, 1);
       const image = paint.mock.calls[0][0] as TestImageData;
       let min = image.width;
       let max = -1;
@@ -429,7 +455,7 @@ describe("Keycap3d", () => {
     }
   });
 
-  it("repaints when the display pixel ratio changes", () => {
+  it("repaints when the display pixel ratio changes", async () => {
     const { paint, restore } = mockCanvas();
     const original = Object.getOwnPropertyDescriptor(
       window,
@@ -453,6 +479,7 @@ describe("Keycap3d", () => {
     });
     try {
       render(<Keycap3d view="front" size={34} />);
+      await waitForPaint(paint, 1);
       const first = paint.mock.calls[0][0] as TestImageData;
       expect(onChange).toBeDefined();
       Object.defineProperty(window, "devicePixelRatio", {
@@ -460,6 +487,7 @@ describe("Keycap3d", () => {
         value: 2,
       });
       act(() => onChange?.());
+      await waitForPaint(paint, 2);
       expect(paint).toHaveBeenCalledTimes(2);
       const second = paint.mock.calls[1][0] as TestImageData;
       expect(second.width).toBeGreaterThan(first.width);
@@ -473,7 +501,7 @@ describe("Keycap3d", () => {
     }
   });
 
-  it("shares the raster between caps with identical geometry but different legends", () => {
+  it("shares the raster between caps with identical geometry but different legends", async () => {
     const { paint, restore } = mockCanvas();
     const before = TestImageData.constructed;
     try {
@@ -483,14 +511,14 @@ describe("Keycap3d", () => {
           <Keycap3d size={37} grain={0.1379} label="B" />
         </>,
       );
-      expect(paint).toHaveBeenCalledTimes(2);
+      await waitForPaint(paint, 2);
       expect(TestImageData.constructed - before).toBe(1);
     } finally {
       restore();
     }
   });
 
-  it("does not share cached rasters across different geometry or grain", () => {
+  it("does not share cached rasters across different geometry or grain", async () => {
     const { paint, restore } = mockCanvas();
     try {
       render(
@@ -500,7 +528,7 @@ describe("Keycap3d", () => {
           <Keycap3d size={39.25} grain={0} ratios={{ face: 0.7 }} />
         </>,
       );
-      expect(paint).toHaveBeenCalledTimes(3);
+      await waitForPaint(paint, 3);
       const images = paint.mock.calls.map((call) => call[0]);
       expect(new Set(images).size).toBe(3);
     } finally {
@@ -523,11 +551,13 @@ describe("Keycap3d", () => {
     },
   );
 
-  it("adds subtle surface variation without changing the silhouette", () => {
+  it("adds subtle surface variation without changing the silhouette", async () => {
     const { paint, restore } = mockCanvas();
     try {
       render(<Keycap3d size={96.125} view="angle" grain={0} />);
+      await waitForPaint(paint, 1);
       render(<Keycap3d size={96.125} view="angle" grain={0.2} />);
+      await waitForPaint(paint, 2);
       const plain = (paint.mock.calls[0][0] as TestImageData).data;
       const textured = (paint.mock.calls[1][0] as TestImageData).data;
       let changed = 0;
@@ -549,22 +579,24 @@ describe("Keycap3d", () => {
     }
   });
 
-  it("repaints and uses a separate raster when camera roll changes", () => {
+  it("repaints and uses a separate raster when camera roll changes", async () => {
     const { paint, restore } = mockCanvas();
     try {
       render(<Keycap3d view="angle" size={41} roll={0} />);
+      await waitForPaint(paint, 1);
       render(<Keycap3d view="angle" size={41} roll={12} />);
-      expect(paint).toHaveBeenCalledTimes(2);
+      await waitForPaint(paint, 2);
       expect(paint.mock.calls[0][0]).not.toBe(paint.mock.calls[1][0]);
     } finally {
       restore();
     }
   });
 
-  it("does not repaint when equivalent shape overrides receive a new object", () => {
+  it("does not repaint when equivalent shape overrides receive a new object", async () => {
     const { paint, restore } = mockCanvas();
     try {
       render(<Keycap3d view="front" size={34} ratios={{ height: 0.47 }} />);
+      await waitForPaint(paint, 1);
       render(
         <Keycap3d view="front" size={34} ratios={{ height: 0.47 }} pressed />,
       );
@@ -572,7 +604,7 @@ describe("Keycap3d", () => {
       render(
         <Keycap3d view="front" size={34} ratios={{ height: 0.5 }} pressed />,
       );
-      expect(paint).toHaveBeenCalledTimes(2);
+      await waitForPaint(paint, 2);
     } finally {
       restore();
     }
@@ -654,10 +686,11 @@ describe("Keycap3d", () => {
     ).toBeLessThanOrEqual(face * 0.92 + 0.001);
   });
 
-  it("applies the face projection to the DOM legend", () => {
-    const { restore } = mockCanvas();
+  it("applies the face projection to the DOM legend", async () => {
+    const { paint, restore } = mockCanvas();
     try {
       render(<Keycap3d label="X" view="angle" size={200} />);
+      await waitForPaint(paint, 1);
       const layout = layoutKeycap({ size: 200, view: "angle" });
       const [a, b, c, d] = layout.faceMatrix;
       const [wx, wy] = layout.facePerspective;
@@ -671,10 +704,11 @@ describe("Keycap3d", () => {
     }
   });
 
-  it("keeps the legend fixed to the cap while pressed", () => {
-    const { restore } = mockCanvas();
+  it("keeps the legend fixed to the cap while pressed", async () => {
+    const { paint, restore } = mockCanvas();
     try {
       render(<Keycap3d label="X" view="angle" size={200} />);
+      await waitForPaint(paint, 1);
       const restingTransform = styleOf(parts("label")[0]).transform;
       expect(restingTransform).toContain("matrix3d(");
       render(<Keycap3d label="X" view="angle" size={200} pressed />);

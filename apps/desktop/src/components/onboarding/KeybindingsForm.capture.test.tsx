@@ -50,7 +50,12 @@ vi.mock("../common/KeyPressSimulator", () => ({
   KeyPressSimulator: () => null,
 }));
 vi.mock("../common/HotkeyBadge", () => ({ HotkeyBadge: () => null }));
+vi.mock("../common/HotKey", () => ({
+  HotKey: ({ onChange }: { onChange: (keys: string[]) => void }) =>
+    createElement("button", { onClick: () => onChange(["KeyB"]) }, "Set B"),
+}));
 import { KeybindingsForm } from "./KeybindingsForm";
+import { HotkeySetting } from "../settings/HotkeySetting";
 
 ensureUiHarness();
 let container: HTMLDivElement;
@@ -511,4 +516,55 @@ it("waits for a pending shortcut save before clearing local data", async () => {
     window.localStorage.removeItem(LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY);
     release();
   }
+});
+
+it("ignores the activation key until every held key is released", async () => {
+  held(["Return"]);
+  start();
+  held([]);
+  await act(async () => {});
+  expect(mocks.save).not.toHaveBeenCalled();
+  held(["KeyK"]);
+  held([]);
+  await act(async () => {});
+  expect(mocks.save).toHaveBeenCalledTimes(1);
+  expect(mocks.save.mock.calls[0][0].keys).toEqual(["KeyK"]);
+});
+
+it("orders onboarding and settings saves of the same shortcut", async () => {
+  let finishFirst!: () => void;
+  mocks.save.mockImplementationOnce(
+    () =>
+      new Promise<void>((resolve) => {
+        finishFirst = resolve;
+      }),
+  );
+  act(() =>
+    root.render(
+      createElement(
+        ThemeProvider,
+        { theme: createTheme() },
+        createElement(KeybindingsForm),
+        createElement(HotkeySetting, {
+          title: "Dictation",
+          description: "",
+          actionName: "dictate",
+        }),
+      ),
+    ),
+  );
+  start();
+  held(["KeyA"]);
+  held([]);
+  await act(async () => {});
+  const setB = Array.from(container.querySelectorAll("button")).find(
+    (button) => button.textContent === "Set B",
+  );
+  if (!setB) throw new Error("Settings shortcut recorder not found");
+  act(() => setB.click());
+  await act(async () => {});
+  expect(mocks.save).toHaveBeenCalledTimes(1);
+  await act(async () => finishFirst());
+  expect(mocks.save).toHaveBeenCalledTimes(2);
+  expect(mocks.save.mock.calls[1][0].keys).toEqual(["KeyB"]);
 });

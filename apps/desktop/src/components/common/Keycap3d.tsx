@@ -11,7 +11,7 @@ import {
   type KeycapRatios,
   type KeycapView,
 } from "./keycap3d.geometry";
-import { getCapRaster } from "./keycap3d.raster";
+import { getCapRasterAsync } from "./keycap3d.raster";
 import { releaseCapRaster, requestCapRaster } from "./keycap3d.worker-client";
 import { geistPixelTextWidth } from "./keycap3d.font-metrics";
 
@@ -42,6 +42,14 @@ const fontSizeForWidth = (faceSize: number, width: number): number =>
 
 export const keycapLabelFontSize = (faceSize: number, label: string): number =>
   fontSizeForWidth(faceSize, geistPixelTextWidth(label, 0.02));
+
+const legendWidth = (legend: React.ReactNode, spacing: number): number => {
+  if (legend == null) return 0;
+  return geistPixelTextWidth(
+    typeof legend === "string" ? legend : "X",
+    spacing,
+  );
+};
 
 /** Cap on the raster's longest side, so a 250px cap stays cheap to paint. */
 const MAX_RASTER = 420;
@@ -102,18 +110,8 @@ export const Keycap3d = ({
       dish,
     ],
   );
-  const labelWidth =
-    typeof label === "string"
-      ? geistPixelTextWidth(label, 0.02)
-      : label == null
-        ? 0
-        : geistPixelTextWidth("X", 0.02);
-  const sublabelWidth =
-    typeof sublabel === "string"
-      ? geistPixelTextWidth(sublabel, 0.04) * keycapLabelStack.scale
-      : sublabel == null
-        ? 0
-        : geistPixelTextWidth("X", 0.04) * keycapLabelStack.scale;
+  const labelWidth = legendWidth(label, 0.02);
+  const sublabelWidth = legendWidth(sublabel, 0.04) * keycapLabelStack.scale;
   const legendSize = fontSizeForWidth(
     layout.faceSize,
     Math.max(labelWidth, sublabelWidth),
@@ -127,11 +125,14 @@ export const Keycap3d = ({
     let contextLost = false;
     let generation = 0;
     let pendingRequest: Promise<ImageData> | null = null;
+    let localRender: AbortController | undefined;
     const paint = () => {
       media?.removeEventListener("change", paint);
       const current = ++generation;
       if (pendingRequest) releaseCapRaster(pendingRequest);
       pendingRequest = null;
+      localRender?.abort();
+      localRender = undefined;
       const pixelRatio = window.devicePixelRatio || 1;
       media = window.matchMedia?.(`(resolution: ${pixelRatio}dppx)`);
       media?.addEventListener("change", paint);
@@ -165,11 +166,10 @@ export const Keycap3d = ({
       };
       const paintLocally = () => {
         if (!active || current !== generation) return;
-        try {
-          put(getCapRaster(options));
-        } catch {
-          setRenderState("fallback");
-        }
+        localRender = new AbortController();
+        void getCapRasterAsync(options, localRender.signal).then(put, () => {
+          if (active && current === generation) setRenderState("fallback");
+        });
       };
       pendingRequest = requestCapRaster(options);
       if (pendingRequest) void pendingRequest.then(put, paintLocally);
@@ -178,6 +178,8 @@ export const Keycap3d = ({
     const onContextLost = () => {
       contextLost = true;
       generation += 1;
+      localRender?.abort();
+      localRender = undefined;
       if (pendingRequest) releaseCapRaster(pendingRequest);
       pendingRequest = null;
       setRenderState("fallback");
@@ -191,6 +193,7 @@ export const Keycap3d = ({
     paint();
     return () => {
       active = false;
+      localRender?.abort();
       if (pendingRequest) releaseCapRaster(pendingRequest);
       media?.removeEventListener("change", paint);
       canvas.removeEventListener("contextlost", onContextLost);

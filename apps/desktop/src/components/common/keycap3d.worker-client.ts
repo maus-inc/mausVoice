@@ -51,7 +51,10 @@ const dispatch = () => {
 
 const getWorker = (): Worker | null => {
   if (worker !== undefined) return worker;
-  if (typeof Worker === "undefined") return (worker = null);
+  if (typeof Worker === "undefined") {
+    worker = null;
+    return null;
+  }
   try {
     worker = new Worker(new URL("./keycap3d.worker.ts", import.meta.url), {
       type: "module",
@@ -60,7 +63,7 @@ const getWorker = (): Worker | null => {
       data,
     }: MessageEvent<{ id: number; image?: ImageData; error?: string }>) => {
       const request = active;
-      if (!request || request.id !== data.id) return;
+      if (request?.id === undefined || request.id !== data.id) return;
       clearTimeout(watchdog);
       watchdog = undefined;
       active = undefined;
@@ -78,7 +81,7 @@ const getWorker = (): Worker | null => {
   }
 };
 
-/** Returns null when workers are unavailable; rejected requests can fall back synchronously. */
+/** Returns null when workers are unavailable; rejected requests can fall back locally. */
 export const requestCapRaster = (
   options: RasterOptions,
 ): Promise<ImageData> | null => {

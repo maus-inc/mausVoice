@@ -9,6 +9,11 @@ import { produceAppState, useAppStore } from "../../store";
 import { registerHotkeys } from "../../utils/app.utils";
 import { createId } from "../../utils/id.utils";
 import {
+  enqueueHotkeyWrite,
+  markOptimisticHotkeyWrite,
+} from "../../utils/hotkey-write-queue";
+import { beginLocalDataWrite } from "../../utils/local-data-write-gate";
+import {
   getDefaultHotkeyCombosForAction,
   getHotkeyCombosForAction,
   syncHotkeyCombosToNative,
@@ -253,35 +258,56 @@ export const HotkeySetting = ({
       keys: keys ?? [],
     };
 
+    const releaseWrite = beginLocalDataWrite();
+    if (!releaseWrite) {
+      showErrorSnackbar("Failed to save hotkey. Please try again.");
+      return;
+    }
     try {
+      markOptimisticHotkeyWrite(newValue.actionName);
       produceAppState((draft) => {
         registerHotkeys(draft, [newValue]);
         if (!draft.settings.hotkeyIds.includes(newValue.id)) {
           draft.settings.hotkeyIds.push(newValue.id);
         }
         draft.settings.hotkeysStatus = "success";
+      }, releaseWrite.lease);
+      await enqueueHotkeyWrite(async () => {
+        await getHotkeyRepo().saveHotkey(newValue, releaseWrite.lease);
+        await syncHotkeyCombosToNative();
       });
-      await getHotkeyRepo().saveHotkey(newValue);
-      await syncHotkeyCombosToNative();
     } catch (error) {
       console.error("Failed to save hotkey", error);
       showErrorSnackbar("Failed to save hotkey. Please try again.");
+    } finally {
+      releaseWrite();
     }
   };
 
   const handleDeleteHotkey = async (id: string) => {
+    const releaseWrite = beginLocalDataWrite();
+    if (!releaseWrite) {
+      showErrorSnackbar("Failed to delete hotkey. Please try again.");
+      return;
+    }
     try {
+      const action = useAppStore.getState().hotkeyById[id]?.actionName;
+      if (action) markOptimisticHotkeyWrite(action);
       produceAppState((draft) => {
         delete draft.hotkeyById[id];
         draft.settings.hotkeyIds = draft.settings.hotkeyIds.filter(
           (hid) => hid !== id,
         );
+      }, releaseWrite.lease);
+      await enqueueHotkeyWrite(async () => {
+        await getHotkeyRepo().deleteHotkey(id, releaseWrite.lease);
+        await syncHotkeyCombosToNative();
       });
-      await getHotkeyRepo().deleteHotkey(id);
-      await syncHotkeyCombosToNative();
     } catch (error) {
       console.error("Failed to delete hotkey", error);
       showErrorSnackbar("Failed to delete hotkey. Please try again.");
+    } finally {
+      releaseWrite();
     }
   };
 
