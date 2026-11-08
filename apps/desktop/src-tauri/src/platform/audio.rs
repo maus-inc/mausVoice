@@ -228,6 +228,7 @@ mod cpal_impl {
     /// Holding and the pre-roll are separate decisions that always travel
     /// together, and both need the shared ring, so they are passed as one value
     /// rather than as three arguments every call site has to keep in step.
+    #[derive(Clone, Copy)]
     struct HoldPlan<'a> {
         /// Whether the stream should stay open after this recording stops.
         hold_after_stop: bool,
@@ -298,7 +299,35 @@ mod cpal_impl {
         /// enough time passes. `last_block_us` cannot express it: its zero value
         /// is the "nothing yet" sentinel.
         delivered: AtomicBool,
+        /// Set when the host reported an error that ends the stream, with the
+        /// fault's token. A stream that has died keeps looking healthy from the
+        /// outside — it exists, it is in the warm slot, nothing errors again —
+        /// so the death has to be recorded where the stop path can read it.
+        ///
+        /// Transient faults are not recorded: they are the ones the host
+        /// recovers from, and retiring on them is the rebuild loop.
+        faulted: Mutex<Option<&'static str>>,
+        /// How many errors the host has reported on this stream.
+        ///
+        /// Only used to keep a storm from filling the log: cpal's ALSA worker
+        /// keeps polling a device in `POLLERR` and calls the error callback on
+        /// every iteration, so an unthrottled `log::error!` per error is tens of
+        /// thousands of lines a second for a stream that is already lost.
+        faults_reported: AtomicU64,
         origin: Mutex<Instant>,
+        /// When this sink was built, on a clock nothing resets.
+        ///
+        /// `origin` is deliberately restarted on a resume and on a new
+        /// recording, because it measures "how long after the press"; the pause
+        /// bookkeeping needs a clock that only ever moves forward, or the total
+        /// paused time would be measured against a moving zero.
+        born: Instant,
+        /// Total time this stream has spent deliberately paused, in
+        /// microseconds, closed intervals only.
+        paused_total_us: AtomicU64,
+        /// When the current pause began, in microseconds since `born`; zero when
+        /// the stream is not paused.
+        paused_at_us: AtomicU64,
     }
 
     impl StreamSink {
@@ -312,7 +341,12 @@ mod cpal_impl {
                 delivered: AtomicBool::new(false),
                 paused: AtomicBool::new(false),
                 stopped: AtomicBool::new(false),
+                faulted: Mutex::new(None),
+                faults_reported: AtomicU64::new(0),
                 origin: Mutex::new(Instant::now()),
+                born: Instant::now(),
+                paused_total_us: AtomicU64::new(0),
+                paused_at_us: AtomicU64::new(0),
             })
         }
 
@@ -416,7 +450,13 @@ mod cpal_impl {
             }
             // A fresh recording is live again, whatever a previous stop left.
             self.stopped.store(false, Ordering::Release);
-            self.paused.store(false, Ordering::Release);
+            if self.paused.swap(false, Ordering::AcqRel) {
+                self.close_pause_interval();
+            }
+            // The tally is per recording, not per stream: this sink outlives the
+            // recording that paused it, and a total carried across would be
+            // subtracted from a recording that never paused.
+            self.paused_total_us.store(0, Ordering::Release);
             // Only the press clock restarts: the device-open clock measures the
             // lifetime of this stream, which began when the device opened.
             if let Ok(mut origin) = self.origin.lock() {
@@ -447,6 +487,55 @@ mod cpal_impl {
             Some(now.saturating_sub(Duration::from_micros(last)))
         }
 
+        /// Records an error the host reported while this stream was running.
+        ///
+        /// Only a fatal fault is remembered. A transient one is a condition the
+        /// host has already recovered from, and remembering it would retire a
+        /// perfectly good stream on the next press.
+        ///
+        /// The first fault wins: the stream is already gone, and a second error
+        /// from a dying backend says nothing new.
+        fn record_fault(&self, message: &str) {
+            let fault = crate::platform::stream_fault::classify_stream_fault(message);
+            // The callback runs on the host's audio thread and, on ALSA, once
+            // per poll iteration. Some errors repeat for as long as the broken
+            // stream is alive, so only the first few are written in full and the
+            // rest are counted and dropped: a log that is nothing but one
+            // repeated line is how the useful one before it gets lost.
+            let seen = self.faults_reported.fetch_add(1, Ordering::AcqRel) + 1;
+            if seen <= FAULT_LOG_LIMIT {
+                log::error!("capture stream error ({}): {message}", fault.as_str());
+                if seen == FAULT_LOG_LIMIT {
+                    log::warn!(
+                        "further capture stream errors on this stream will be counted, not logged"
+                    );
+                }
+            }
+            if fault != crate::platform::stream_fault::StreamFault::Fatal {
+                return;
+            }
+            if let Ok(mut guard) = self.faulted.lock() {
+                if guard.is_none() {
+                    *guard = Some(fault.as_str());
+                    log::error!(
+                        "capture stream is gone ({}) after {seen} error(s); it will not be reused",
+                        fault.as_str()
+                    );
+                }
+            }
+        }
+
+        /// The token of the fault that ended this stream, if one did.
+        ///
+        /// Distinct from staleness: a stale stream is one that has stopped
+        /// delivering and may yet recover, while this is the host saying it will
+        /// not. Only this one justifies reporting a short recording as an error
+        /// rather than as a quiet one, which is why the token is returned rather
+        /// than a bare boolean.
+        fn fault_token(&self) -> Option<&'static str> {
+            self.faulted.lock().ok().and_then(|guard| *guard)
+        }
+
         /// Whether any block has ever arrived on this stream.
         fn has_delivered(&self) -> bool {
             self.delivered.load(Ordering::Acquire)
@@ -474,7 +563,17 @@ mod cpal_impl {
                 // Resuming brings the stream back, so it is no longer stopped.
                 self.stopped.store(false, Ordering::Release);
             }
-            self.paused.store(paused, Ordering::Release);
+            // The pause is an interval, and the accounting below has to see the
+            // transition exactly once: a second `set_paused(true)` must not
+            // restart the clock, or the first paused stretch disappears from the
+            // total.
+            let was_paused = self.paused.swap(paused, Ordering::AcqRel);
+            if paused && !was_paused {
+                self.paused_at_us
+                    .store(self.now_us().max(1), Ordering::Release);
+            } else if !paused && was_paused {
+                self.close_pause_interval();
+            }
             if !paused {
                 if let Ok(mut origin) = self.origin.lock() {
                     *origin = Instant::now();
@@ -483,7 +582,45 @@ mod cpal_impl {
             }
         }
 
+        /// Microseconds since this sink was built, on a clock nothing resets.
+        fn now_us(&self) -> u64 {
+            self.born.elapsed().as_micros().min(u128::from(u64::MAX)) as u64
+        }
+
+        /// Folds an open pause interval into the total, once.
+        fn close_pause_interval(&self) {
+            let began = self.paused_at_us.swap(0, Ordering::AcqRel);
+            if began == 0 {
+                return;
+            }
+            let now = self.now_us();
+            let spent = now.saturating_sub(began);
+            self.paused_total_us.fetch_add(spent, Ordering::AcqRel);
+        }
+
+        /// How long this stream has spent deliberately paused, including a pause
+        /// that is still open.
+        ///
+        /// Used to subtract the pause from the recording's expected length. A
+        /// pause is the user's own decision, so counting it as time the stream
+        /// failed to deliver would report every paused dictation as a capture
+        /// that died partway through — the exact signal the fault path exists to
+        /// make trustworthy.
+        fn paused_for(&self) -> Duration {
+            let mut total = self.paused_total_us.load(Ordering::Acquire);
+            let began = self.paused_at_us.load(Ordering::Acquire);
+            if began != 0 {
+                total = total.saturating_add(self.now_us().saturating_sub(began));
+            }
+            Duration::from_micros(total)
+        }
+
         /// Whether the device was paused and not yet resumed.
+        ///
+        /// Test-only now: production reads the pause from `StopOutcome`, because
+        /// the stop clears the flag before the caller can ask. Kept as the
+        /// observation of the state the tests need.
+        #[cfg(test)]
         fn is_paused(&self) -> bool {
             self.paused.load(Ordering::Acquire)
         }
@@ -504,12 +641,20 @@ mod cpal_impl {
 
         /// Stops feeding a recording and, when a preroll ring is supplied,
         /// leaves the stream warm and collecting for the next start.
-        fn stop_recording(
-            &self,
-            preroll: Option<Arc<Mutex<Preroll>>>,
-        ) -> Option<Arc<ChunkEmitter>> {
+        ///
+        /// Returns whether the stream was paused, alongside the chunk emitter.
+        /// The flag is cleared here, so a caller that asks the sink afterwards
+        /// always hears "not paused" — which is exactly how a paused recording
+        /// came to be left warm and asleep, and why the answer is returned rather
+        /// than left to be read on the other side of this call.
+        fn stop_recording(&self, preroll: Option<Arc<Mutex<Preroll>>>) -> StopOutcome {
             self.stopped.store(true, Ordering::Release);
-            self.paused.store(false, Ordering::Release);
+            // A stop during a pause ends the pause: the interval is closed here
+            // so the figure the stop path reads includes it.
+            let was_paused = self.paused.swap(false, Ordering::AcqRel);
+            if was_paused {
+                self.close_pause_interval();
+            }
             let mut state = self.lock();
             let previous = std::mem::replace(
                 &mut *state,
@@ -518,11 +663,55 @@ mod cpal_impl {
                     None => SinkMode::Discard,
                 },
             );
-            match previous {
-                SinkMode::Recording { chunk, .. } => chunk,
-                _ => None,
+            StopOutcome {
+                emitter: match previous {
+                    SinkMode::Recording { chunk, .. } => chunk,
+                    _ => None,
+                },
+                was_paused,
             }
         }
+    }
+
+    /// How far behind the wall clock a recording's sample count may fall before
+    /// the gap is worth reporting.
+    ///
+    /// The two figures are never exactly equal: the sample count is quantised by
+    /// the device buffer, the wall clock starts before the first block and stops
+    /// after the last, and a device delivering a large buffer can be a whole
+    /// buffer behind at the moment of the stop. Anything under this is ordinary
+    /// accounting noise, not evidence of a stream that died.
+    const CAPTURE_GAP_TOLERANCE: Duration = Duration::from_millis(500);
+
+    /// Whether a recording contains materially less audio than the time it was
+    /// open, after allowing for that noise.
+    ///
+    /// A relative term as well as an absolute one: a 30-second dictation that
+    /// lost 600 ms is not the defect this looks for, while a 900 ms recording
+    /// that gained 5 seconds of wall clock is.
+    fn elapsed_gap_is_suspicious(captured: Duration, expected: Duration) -> bool {
+        if expected <= captured {
+            return false;
+        }
+        let missing = expected - captured;
+        if missing < CAPTURE_GAP_TOLERANCE {
+            return false;
+        }
+        // A tenth of the recording, so short recordings are held to the
+        // tolerance above while long ones are judged proportionally.
+        missing.as_millis() * 10 >= expected.as_millis().max(1)
+    }
+
+    /// What a stop needs to know about the recording it ended.
+    ///
+    /// Both fields are facts the sink knows and the caller cannot learn after
+    /// the stop has happened, so the stop returns them instead of leaving them to
+    /// be read on the wrong side of the state change.
+    struct StopOutcome {
+        /// The emitter holding this recording's unflushed audio, if it had one.
+        emitter: Option<Arc<ChunkEmitter>>,
+        /// Whether the stream was paused when the stop arrived.
+        was_paused: bool,
     }
 
     /// Milliseconds meaning "hold the device until something closes it".
@@ -541,6 +730,10 @@ mod cpal_impl {
     /// with a slow host, and short enough that a press during a dead stream
     /// still reopens rather than handing the user a silent recording.
     const STALE_WARM_SILENCE: Duration = Duration::from_millis(750);
+
+    /// How many errors from one stream are written in full before the rest are
+    /// only counted. Small on purpose: the first error is the informative one.
+    const FAULT_LOG_LIMIT: u64 = 5;
 
     pub struct RecordingManager {
         inner: Arc<Mutex<Option<ActiveRecording>>>,
@@ -794,10 +987,37 @@ mod cpal_impl {
         /// speaks into a recording that will transcribe nothing, and the failure
         /// is attributed to the wrong thing.
         fn is_usable(&self, grace: Duration) -> bool {
-            if self.has_delivered() {
-                return !self.is_silent_for(STALE_WARM_SILENCE);
+            self.unusable_reason(grace).is_none()
+        }
+
+        /// Why this stream may not be handed to a press, or `None` when it may.
+        ///
+        /// Split out from `is_usable` so the rejection can be logged with the
+        /// real cause. A bare `false` was logged as "silent past the staleness
+        /// window" even when the cause was a device the host had already
+        /// declared gone, which sent more than one reader hunting the wrong
+        /// fault in the diagnostics export.
+        fn unusable_reason(&self, grace: Duration) -> Option<&'static str> {
+            // A stream the host declared dead is never usable, however recently
+            // it delivered. It can still look perfect from the outside — the
+            // object exists, the origin is young, the last block was a moment
+            // ago — and the next press would adopt it and record silence for the
+            // whole dictation.
+            if let Some(fault) = self.sink.fault_token() {
+                return Some(fault);
             }
-            self.sink.age_of_stream() < grace
+            if self.has_delivered() {
+                return if self.is_silent_for(STALE_WARM_SILENCE) {
+                    Some("silent past the staleness window")
+                } else {
+                    None
+                };
+            }
+            if self.sink.age_of_stream() < grace {
+                None
+            } else {
+                Some("no block since it opened")
+            }
         }
     }
 
@@ -1092,13 +1312,20 @@ mod cpal_impl {
 
             let host = cpal::host_from_id(cached.host_id).ok()?;
 
-            if let Some(preferred) = preferred_normalized {
-                if !device_matches_preferred(&cached.device_label, preferred) {
-                    return None;
-                }
+            let device = find_device_by_label(&host, &cached.device_label);
+            if let Some(reason) =
+                cached_device_rejection(Some(&cached), preferred_normalized, device.is_some())
+            {
+                // Falling through, not failing: the slow path scores every
+                // device afresh, so a microphone that moved ports, or a headset
+                // that replaced it, still records this press.
+                log::info!(
+                    "not using cached device '{}' ({reason}); scoring devices instead",
+                    cached.device_label
+                );
+                return None;
             }
-
-            let device = find_device_by_label(&host, &cached.device_label)?;
+            let device = device?;
 
             let result = try_start_on_device(
                 &device,
@@ -1210,45 +1437,41 @@ mod cpal_impl {
                 return Ok(());
             }
 
-            // Slow path: full device enumeration
-            let mut last_err: Option<RecordingError> = None;
-
-            for host_id in ordered_host_ids() {
-                let host = match cpal::host_from_id(host_id) {
-                    Ok(value) => value,
-                    Err(err) => {
-                        log::error!("failed to load host {host_id:?}: {err}");
-                        continue;
-                    }
-                };
-
-                match start_recording_on_host(
-                    &host,
-                    level_emitter.clone(),
-                    chunk_emitter.clone(),
-                    preferred_trimmed.as_deref(),
-                    preferred_normalized.as_deref(),
-                    HoldPlan {
-                        hold_after_stop,
-                        preroll: self.preroll_requested(),
-                        ring: &self.preroll,
-                    },
-                    &mut trace,
-                ) {
-                    Ok((active, device_name)) => {
-                        self.cache_successful_device(host_id, device_name);
-                        self.record_startup(trace);
-                        *guard = Some(active);
-                        return Ok(());
-                    }
-                    Err(err) => {
-                        log::warn!("host {host_id:?} did not yield a usable input device: {err}");
-                        last_err = Some(err);
-                    }
+            // Slow path: full device enumeration, every host in turn. The first
+            // host that yields a stream wins; a host that fails is logged and
+            // skipped rather than ending the press.
+            let hosts = ordered_host_ids();
+            let trace_ref = &mut trace;
+            match try_hosts(
+                &hosts,
+                |id| {
+                    cpal::host_from_id(id)
+                        .map_err(|err| RecordingError::StreamBuild(err.to_string()))
+                },
+                |host| {
+                    start_recording_on_host(
+                        host,
+                        level_emitter.clone(),
+                        chunk_emitter.clone(),
+                        preferred_trimmed.as_deref(),
+                        preferred_normalized.as_deref(),
+                        HoldPlan {
+                            hold_after_stop,
+                            preroll: self.preroll_requested(),
+                            ring: &self.preroll,
+                        },
+                        trace_ref,
+                    )
+                },
+            ) {
+                Ok(((active, device_name), host_id)) => {
+                    self.cache_successful_device(host_id, device_name);
+                    self.record_startup(trace);
+                    *guard = Some(active);
+                    Ok(())
                 }
+                Err(err) => Err(err),
             }
-
-            Err(last_err.unwrap_or(RecordingError::InputDeviceUnavailable))
         }
 
         /// Takes the held stream for a recording, or explains why it cannot.
@@ -1284,15 +1507,10 @@ mod cpal_impl {
             // press a stream that never produces a sample, and the whole press
             // would record silence, so it is retired and the caller records
             // cold, which is slower and works.
-            if !warm.is_usable(WARM_READY_GRACE) {
+            if let Some(reason) = warm.unusable_reason(WARM_READY_GRACE) {
                 log::warn!(
-                    "warm stream on '{}' is not delivering ({}); reopening cold",
-                    warm.device_label,
-                    if warm.has_delivered() {
-                        "silent past the staleness window".to_string()
-                    } else {
-                        format!("no block within {WARM_READY_GRACE:?} of opening")
-                    }
+                    "warm stream on '{}' cannot serve a press ({reason}); reopening cold",
+                    warm.device_label
                 );
                 warm.sink.stop_recording(None);
                 retire_stream(warm.stream);
@@ -1474,41 +1692,47 @@ mod cpal_impl {
                 return Ok(label);
             }
 
-            let mut last_err: Option<RecordingError> = None;
-            for host_id in ordered_host_ids() {
-                let host = match cpal::host_from_id(host_id) {
-                    Ok(value) => value,
-                    Err(err) => {
-                        log::error!("failed to load host {host_id:?}: {err}");
-                        last_err = Some(RecordingError::InputDeviceUnavailable);
-                        log::debug!("host {host_id:?} unavailable while preparing: {err}");
-                        continue;
-                    }
-                };
-                let default_output_name = host
-                    .default_output_device()
-                    .and_then(|device| device.name().ok());
-                let mut candidates = device_candidates_for_host(
-                    &host,
-                    default_output_name.as_deref(),
-                    preferred_normalized.as_deref(),
-                );
-                candidates.sort_by_key(|candidate| {
-                    (
-                        !candidate.matches_preferred,
-                        candidate.priority,
-                        !candidate.is_default,
-                    )
-                });
-                let Some(best) = candidates.into_iter().next() else {
-                    last_err = Some(RecordingError::InputDeviceUnavailable);
-                    continue;
-                };
-                self.cache_successful_device(host_id, best.label.clone());
-                log::debug!("prepared '{}' for the next press", best.label);
-                return Ok(best.label);
+            let hosts = ordered_host_ids();
+            let prepared = try_hosts(
+                &hosts,
+                |id| {
+                    cpal::host_from_id(id)
+                        .map_err(|err| RecordingError::StreamBuild(err.to_string()))
+                },
+                |host| {
+                    let default_output_name = host
+                        .default_output_device()
+                        .and_then(|device| device.name().ok());
+                    let mut candidates = device_candidates_for_host(
+                        host,
+                        default_output_name.as_deref(),
+                        preferred_normalized.as_deref(),
+                    );
+                    candidates.sort_by_key(|candidate| {
+                        (
+                            !candidate.matches_preferred,
+                            candidate.priority,
+                            !candidate.is_default,
+                        )
+                    });
+                    // A host with no input device is not a failure of this
+                    // function; it just cannot answer. Reported as the error the
+                    // cross-host loop already skips, so the next host is tried.
+                    candidates
+                        .into_iter()
+                        .next()
+                        .map(|best| best.label)
+                        .ok_or(RecordingError::InputDeviceUnavailable)
+                },
+            );
+            match prepared {
+                Ok((label, host_id)) => {
+                    self.cache_successful_device(host_id, label.clone());
+                    log::debug!("prepared '{label}' for the next press");
+                    Ok(label)
+                }
+                Err(err) => Err(err),
             }
-            Err(last_err.unwrap_or(RecordingError::InputDeviceUnavailable))
         }
 
         /// Reopens the held stream if the device set changed underneath it.
@@ -1628,28 +1852,24 @@ mod cpal_impl {
             let mut trace = AudioStartupTrace::begin();
             trace.mark(AudioStartupStage::CommandEntered);
 
-            let mut last_err: Option<RecordingError> = None;
-            for host_id in ordered_host_ids() {
-                let host = match cpal::host_from_id(host_id) {
-                    Ok(value) => value,
-                    Err(err) => {
-                        log::error!("failed to load host {host_id:?}: {err}");
-                        continue;
-                    }
-                };
-                match warm_stream_on_host(
-                    &host,
-                    preferred_trimmed.as_deref(),
-                    preferred_normalized.as_deref(),
-                    Arc::clone(&self.preroll),
-                    preroll,
-                    &mut trace,
-                ) {
-                    Ok(warm) => {
-                        self.record_startup(trace);
-                        return Ok(warm);
-                    }
-                    Err(err) => {
+            let trace_ref = &mut trace;
+            let hosts = ordered_host_ids();
+            let opened = try_hosts(
+                &hosts,
+                |id| {
+                    cpal::host_from_id(id)
+                        .map_err(|err| RecordingError::StreamBuild(err.to_string()))
+                },
+                |host| {
+                    let result = warm_stream_on_host(
+                        host,
+                        preferred_trimmed.as_deref(),
+                        preferred_normalized.as_deref(),
+                        Arc::clone(&self.preroll),
+                        preroll,
+                        trace_ref,
+                    );
+                    if let Err(err) = &result {
                         // The message alone cannot distinguish a device another
                         // application is holding from one that was unplugged,
                         // and cpal 0.15 reports both as DeviceNotAvailable. The
@@ -1659,14 +1879,20 @@ mod cpal_impl {
                         let reason =
                             crate::platform::mic_usage::classify_open_failure(&err.to_string());
                         log::warn!(
-                            "host {host_id:?} did not yield a warm input device ({reason}): {err}",
+                            "this host did not yield a warm input device ({reason}): {err}",
                             reason = reason.as_str()
                         );
-                        last_err = Some(err);
                     }
+                    result
+                },
+            );
+            match opened {
+                Ok((warm, _host_id)) => {
+                    self.record_startup(trace);
+                    Ok(warm)
                 }
+                Err(err) => Err(err),
             }
-            Err(last_err.unwrap_or(RecordingError::InputDeviceUnavailable))
         }
 
         fn pause_recording(&self) -> Result<(), RecordingError> {
@@ -1722,7 +1948,25 @@ mod cpal_impl {
                 .map_err(|_| RecordingError::NotRecording)?;
             let mut recording = guard.take().ok_or(RecordingError::NotRecording)?;
             let sample_rate = recording.sample_rate;
-            let fallback_duration = recording.start.elapsed();
+            let wall_duration = recording.start.elapsed();
+            // Read before the sink is unsubscribed: both facts belong to this
+            // recording, and the sink is handed to the warm slot below.
+            let capture_fault = recording
+                .sink
+                .as_ref()
+                .and_then(|sink| sink.fault_token())
+                .map(str::to_string);
+            // A pause is the user's own decision, so the time it consumed is not
+            // time the capture failed to deliver. Without this subtraction every
+            // paused dictation reads as a recording that died partway through,
+            // which is precisely the signal the fault path exists to make
+            // trustworthy.
+            let paused_for = recording
+                .sink
+                .as_ref()
+                .map(|sink| sink.paused_for())
+                .unwrap_or_default();
+            let expected_duration = wall_duration.saturating_sub(paused_for);
             let buffer = recording.buffer.clone();
             let device_label = recording.device_label.clone();
             let preferred = recording.preferred.clone();
@@ -1731,10 +1975,22 @@ mod cpal_impl {
             // Unsubscribing before closing keeps the capture callback from
             // writing a sample into a recording that already returned.
             let resumed_preroll = recording.preroll_after_stop.take();
-            let flushed_emitter = recording
+            let stop_outcome = recording
                 .sink
                 .as_ref()
-                .and_then(|sink| sink.stop_recording(resumed_preroll.clone()));
+                .map(|sink| sink.stop_recording(resumed_preroll.clone()))
+                .unwrap_or(StopOutcome {
+                    emitter: None,
+                    was_paused: false,
+                });
+            // The sink is the authority on whether the stream was paused, and it
+            // has just cleared that flag. Reading `is_paused()` afterwards — the
+            // original shape of this code — always answered "not paused", so a
+            // stream stopped while paused went into the warm slot asleep and the
+            // next press adopted a stream that delivered nothing until the
+            // staleness window expired.
+            let was_paused = stop_outcome.was_paused;
+            let flushed_emitter = stop_outcome.emitter;
             if let Some(chunk_emitter) = flushed_emitter {
                 chunk_emitter.flush();
             }
@@ -1753,7 +2009,7 @@ mod cpal_impl {
                         // cold reopen after the staleness window, which is worse
                         // than the cold start it was meant to avoid. Resuming
                         // costs no device open and is what the hold was for.
-                        if sink.is_paused() {
+                        if was_paused {
                             if let Err(err) = stream.play() {
                                 log::warn!("could not resume a paused stream for the hold: {err}");
                             } else {
@@ -1798,14 +2054,39 @@ mod cpal_impl {
                 let duration_secs = samples.len() as f64 / f64::from(sample_rate);
                 std::time::Duration::from_secs_f64(duration_secs)
             } else {
-                fallback_duration
+                // Nothing was captured, so there is no sample-derived length. The
+                // wall clock is the honest stand-in, minus any pause.
+                expected_duration
             };
             let size_bytes = samples.len() as u64 * std::mem::size_of::<f32>() as u64;
+
+            // A capture that stopped early is logged with both figures. The
+            // numbers are the whole value here: "the recording is 1.4 s long and
+            // was open for 6.0 s" says the stream died at 1.4 s, which no single
+            // duration can express.
+            if let Some(fault) = capture_fault.as_deref() {
+                log::warn!(
+                    "capture reported {fault} during the recording: captured {} ms of {} ms",
+                    duration.as_millis(),
+                    expected_duration.as_millis()
+                );
+            } else if elapsed_gap_is_suspicious(duration, expected_duration) {
+                // The host said nothing, and the recording is materially shorter
+                // than the time it was open. That is the silent death this
+                // module cannot prevent but must not hide.
+                log::warn!(
+                    "capture delivered {} ms of audio in {} ms of recording without reporting an error",
+                    duration.as_millis(),
+                    expected_duration.as_millis()
+                );
+            }
 
             Ok(RecordingResult {
                 metrics: RecordingMetrics {
                     duration,
+                    expected_duration,
                     size_bytes,
+                    capture_fault,
                 },
                 audio: RecordedAudio {
                     samples,
@@ -2050,17 +2331,218 @@ mod cpal_impl {
 
     /// All available hosts with the cpal default host first.
     fn ordered_host_ids() -> Vec<HostId> {
-        let default_host = cpal::default_host();
-        let default_id = default_host.id();
-        let mut ordered: Vec<HostId> = cpal::available_hosts()
-            .into_iter()
-            .filter(|id| *id != default_id)
-            .collect();
-        ordered.insert(0, default_id);
+        order_hosts(cpal::default_host().id(), &cpal::available_hosts())
+    }
+
+    /// The same ordering, over an explicit list of hosts.
+    ///
+    /// `ordered_host_ids` can only describe the machine it runs on, which makes
+    /// the cross-host fallback untestable: a CI box exposes one host, so a loop
+    /// that gave up after the first failure would pass every test here and fail
+    /// on a machine with two. This is the same rule factored out, so the order
+    /// can be asserted against a list rather than observed on hardware.
+    fn order_hosts<Id: Copy + PartialEq>(default: Id, available: &[Id]) -> Vec<Id> {
+        let mut ordered: Vec<Id> = Vec::with_capacity(available.len().saturating_add(1));
+        // The default is tried first because it is the one the platform routes
+        // the user's audio through, but it is not trusted to be in the list:
+        // cpal's `available_hosts` has been known to omit it.
+        ordered.push(default);
+        for id in available {
+            // A host listed twice would otherwise be opened twice, and on a
+            // backend whose enumeration is unstable that is a second device open
+            // on every press for nothing.
+            if !ordered.contains(id) {
+                ordered.push(*id);
+            }
+        }
         ordered
     }
 
-    /// Builds a capture stream that feeds a sink rather than a recording.
+    /// Tries each host in turn until one yields a value.
+    ///
+    /// One host failing is not the press failing: a machine with PulseAudio's
+    /// ALSA plugin and a JACK server exposes two, and either can serve the
+    /// microphone while the other refuses. A loop that returned the first error
+    /// would hand the user "no input device" on a machine that has one.
+    ///
+    /// Generic over the host type, and over how a host is produced, so the
+    /// fallback can be tested with a stand-in host. A CI machine exposes a
+    /// single host, so the two-host case is otherwise unreachable here.
+    fn try_hosts<Id, H, T>(
+        hosts: &[Id],
+        mut load: impl FnMut(Id) -> Result<H, RecordingError>,
+        mut attempt: impl FnMut(&H) -> Result<T, RecordingError>,
+    ) -> Result<(T, Id), RecordingError>
+    where
+        Id: Copy + std::fmt::Debug,
+    {
+        let mut last_err: Option<RecordingError> = None;
+        for id in hosts {
+            let host = match load(*id) {
+                Ok(host) => host,
+                Err(err) => {
+                    log::warn!("host {id:?} could not be loaded: {err}");
+                    last_err = Some(err);
+                    continue;
+                }
+            };
+            match attempt(&host) {
+                Ok(value) => return Ok((value, *id)),
+                Err(err) => {
+                    log::warn!("host {id:?} did not yield a usable input device: {err}");
+                    last_err = Some(err);
+                }
+            }
+        }
+        // No host at all and every host failing are different stories with the
+        // same meaning here: this machine cannot capture. The caller turns both
+        // into "no input device", which is what the user can act on.
+        Err(last_err.unwrap_or(RecordingError::InputDeviceUnavailable))
+    }
+
+    /// One device, as the selection loop sees it.
+    ///
+    /// Deliberately plain data with no `Device` in it: the loop that consumes it
+    /// is then testable on a machine with no audio hardware, which is where all
+    /// of its interesting cases live.
+    #[derive(Clone, Debug)]
+    struct CandidateChoice {
+        label: String,
+        matches_preferred: bool,
+        avoid_reason: Option<String>,
+    }
+
+    /// What one attempt at one candidate on one host produced.
+    ///
+    /// The device-selection loops are generic over this instead of over cpal's
+    /// `Host`, so a test can drive them with a scripted host: a device that is
+    /// listed but refuses to open, a host that enumerates nothing, a list where
+    /// the first entry fails. Every branch of those loops is a case the user
+    /// meets only on a machine with odd hardware, which is exactly the code that
+    /// otherwise never gets exercised.
+    trait CandidateAttempt {
+        /// What a successful attempt yields.
+        type Recorded;
+        /// The devices to try, in preference order. Marking the trace is this
+        /// method's job because it is the only step every implementation shares
+        /// and it is the one that must happen before anything is opened.
+        fn candidates(&mut self) -> Vec<CandidateChoice>;
+        /// Tries one candidate.
+        fn try_candidate(
+            &mut self,
+            choice: &CandidateChoice,
+        ) -> Result<Self::Recorded, RecordingError>;
+    }
+
+    /// Runs the candidate loop of one host and returns what recorded.
+    ///
+    /// Every candidate is tried in order and a failure is remembered rather than
+    /// returned: one device that will not open must not hide the one beside it
+    /// that will. Returns the last error when none succeed, so a press on a host
+    /// whose every device is busy reports that host's failure rather than the
+    /// generic "no input device" the caller substitutes when there is no error
+    /// to report.
+    fn first_working_candidate<A: CandidateAttempt>(
+        attempt: &mut A,
+    ) -> Result<(A::Recorded, CandidateChoice), RecordingError> {
+        let mut last_err: Option<RecordingError> = None;
+        for choice in attempt.candidates() {
+            if let Some(reason) = &choice.avoid_reason {
+                log::debug!(
+                    "deprioritising '{}' ({reason}); will try if others fail",
+                    choice.label
+                );
+            }
+            match attempt.try_candidate(&choice) {
+                Ok(recorded) => return Ok((recorded, choice)),
+                Err(err) => {
+                    log::error!("failed to start on '{}': {err}", choice.label);
+                    last_err = Some(err);
+                }
+            }
+        }
+        // An empty candidate list and a list where every candidate failed are
+        // different stories with the same meaning for the caller — this host
+        // cannot serve the press — so both produce the same error shape.
+        Err(last_err.unwrap_or(RecordingError::InputDeviceUnavailable))
+    }
+
+    /// The real attempt: one cpal host, its scored candidates, its devices.
+    struct HostAttempt<'a> {
+        host: &'a cpal::Host,
+        level_emitter: Option<Arc<LevelEmitter>>,
+        chunk_emitter: Option<Arc<ChunkEmitter>>,
+        preferred_normalized: Option<&'a str>,
+        hold: HoldPlan<'a>,
+        trace: &'a mut AudioStartupTrace,
+        /// The devices `candidates` resolved, kept so `try_candidate` does not
+        /// enumerate the host again for each of them.
+        resolved: Vec<(CandidateChoice, Device)>,
+    }
+
+    impl CandidateAttempt for HostAttempt<'_> {
+        type Recorded = ActiveRecording;
+
+        fn candidates(&mut self) -> Vec<CandidateChoice> {
+            let default_output_name = self
+                .host
+                .default_output_device()
+                .and_then(|device| device.name().ok());
+            let mut candidates = device_candidates_for_host(
+                self.host,
+                default_output_name.as_deref(),
+                self.preferred_normalized,
+            );
+            // Devices are no longer merged by name, so ties are broken by the
+            // host default first and then by enumeration order (`sort_by_key` is
+            // stable).
+            candidates.sort_by_key(|candidate| {
+                (
+                    !candidate.matches_preferred,
+                    candidate.priority,
+                    !candidate.is_default,
+                )
+            });
+            self.trace.mark(AudioStartupStage::DeviceResolved);
+            self.resolved = candidates
+                .into_iter()
+                .map(|candidate| {
+                    let choice = CandidateChoice {
+                        label: candidate.label,
+                        matches_preferred: candidate.matches_preferred,
+                        avoid_reason: candidate.avoid_reason,
+                    };
+                    (choice, candidate.device)
+                })
+                .collect();
+            self.resolved
+                .iter()
+                .map(|(choice, _)| choice.clone())
+                .collect()
+        }
+
+        fn try_candidate(
+            &mut self,
+            choice: &CandidateChoice,
+        ) -> Result<Self::Recorded, RecordingError> {
+            let device = self
+                .resolved
+                .iter()
+                .find(|(resolved, _)| resolved.label == choice.label)
+                .map(|(_, device)| device)
+                .ok_or(RecordingError::InputDeviceUnavailable)?;
+            try_start_on_device(
+                device,
+                Some(&choice.label),
+                self.level_emitter.clone(),
+                self.chunk_emitter.clone(),
+                self.hold,
+                self.trace,
+            )
+        }
+    }
+
+    /// Builds a capture stream that feeds a sink rather than a recording.    /// Builds a capture stream that feeds a sink rather than a recording.
     ///
     /// The sink is what makes the pre-warm possible: the stream's lifetime is
     /// independent of any recording, so it can be opened once and handed between
@@ -2116,38 +2598,47 @@ mod cpal_impl {
             mono
         }
 
-        let on_error = |err| log::error!("capture stream error: {err}");
-
+        // Each arm gets its own sink handle so the error callback can record the
+        // fault on the same sink the data callback fills. A logged-only callback
+        // left a dead stream looking healthy: it stayed in the warm slot, the
+        // stop path saw a stream that had opened successfully, and the recording
+        // came back short with nothing saying why.
+        //
+        // The callback runs on a host thread, so it does no work beyond
+        // classifying the text and setting one mutex-guarded token.
         match sample_format {
             SampleFormat::I16 => {
                 let sink = Arc::clone(&sink);
+                let error_sink = Arc::clone(&sink);
                 device
                     .build_input_stream(
                         config,
                         move |data: &[i16], _| sink.deliver(&fold(data, channel_count)),
-                        on_error,
+                        move |err| error_sink.record_fault(&err.to_string()),
                         None,
                     )
                     .map_err(|err| RecordingError::StreamBuild(err.to_string()))
             }
             SampleFormat::U16 => {
                 let sink = Arc::clone(&sink);
+                let error_sink = Arc::clone(&sink);
                 device
                     .build_input_stream(
                         config,
                         move |data: &[u16], _| sink.deliver(&fold(data, channel_count)),
-                        on_error,
+                        move |err| error_sink.record_fault(&err.to_string()),
                         None,
                     )
                     .map_err(|err| RecordingError::StreamBuild(err.to_string()))
             }
             SampleFormat::F32 => {
                 let sink = Arc::clone(&sink);
+                let error_sink = Arc::clone(&sink);
                 device
                     .build_input_stream(
                         config,
                         move |data: &[f32], _| sink.deliver(&fold(data, channel_count)),
-                        on_error,
+                        move |err| error_sink.record_fault(&err.to_string()),
                         None,
                     )
                     .map_err(|err| RecordingError::StreamBuild(err.to_string()))
@@ -2218,53 +2709,81 @@ mod cpal_impl {
         preroll: Duration,
         trace: &mut AudioStartupTrace,
     ) -> Result<WarmStream, RecordingError> {
-        let default_output_name = host
-            .default_output_device()
-            .and_then(|device| device.name().ok());
-        let mut candidates =
-            device_candidates_for_host(host, default_output_name.as_deref(), preferred_normalized);
-        candidates.sort_by_key(|candidate| {
-            (
-                !candidate.matches_preferred,
-                candidate.priority,
-                !candidate.is_default,
-            )
-        });
-        trace.mark(AudioStartupStage::DeviceResolved);
+        // The same candidate loop as the cold path, so a device that refuses to
+        // open for a recording refuses for a hold too, and the hold does not
+        // inherit a second, subtly different ordering rule.
+        struct WarmAttempt<'a> {
+            host: &'a cpal::Host,
+            preferred_label: Option<&'a str>,
+            preferred_normalized: Option<&'a str>,
+            ring: Arc<Mutex<Preroll>>,
+            preroll: Duration,
+            trace: &'a mut AudioStartupTrace,
+        }
 
-        let mut last_err: Option<RecordingError> = None;
-        for candidate in candidates {
-            let DeviceCandidate {
-                device,
-                label,
-                avoid_reason,
-                ..
-            } = candidate;
-            if let Some(reason) = avoid_reason {
-                log::debug!("deprioritising '{label}' ({reason}); will try if others fail");
+        impl CandidateAttempt for WarmAttempt<'_> {
+            type Recorded = WarmStream;
+
+            fn candidates(&mut self) -> Vec<CandidateChoice> {
+                let default_output_name = self
+                    .host
+                    .default_output_device()
+                    .and_then(|device| device.name().ok());
+                let mut candidates = device_candidates_for_host(
+                    self.host,
+                    default_output_name.as_deref(),
+                    self.preferred_normalized,
+                );
+                candidates.sort_by_key(|candidate| {
+                    (
+                        !candidate.matches_preferred,
+                        candidate.priority,
+                        !candidate.is_default,
+                    )
+                });
+                self.trace.mark(AudioStartupStage::DeviceResolved);
+                candidates
+                    .into_iter()
+                    .map(|candidate| CandidateChoice {
+                        label: candidate.label,
+                        matches_preferred: candidate.matches_preferred,
+                        avoid_reason: candidate.avoid_reason,
+                    })
+                    .collect()
             }
-            match open_warm_on_device(
-                &device,
-                &label,
-                preferred_label.map(|value| value.to_string()),
-                preroll,
-                Arc::clone(&ring),
-                trace,
-            ) {
-                Ok(warm) => {
-                    log::info!(
-                        "holding input device '{label}' open via host {:?}",
-                        host.id()
-                    );
-                    return Ok(warm);
-                }
-                Err(err) => {
-                    log::warn!("'{label}' did not yield a warm stream: {err}");
-                    last_err = Some(err);
-                }
+
+            fn try_candidate(
+                &mut self,
+                choice: &CandidateChoice,
+            ) -> Result<Self::Recorded, RecordingError> {
+                let device = find_device_by_label(self.host, &choice.label)
+                    .ok_or(RecordingError::InputDeviceUnavailable)?;
+                open_warm_on_device(
+                    &device,
+                    &choice.label,
+                    self.preferred_label.map(|value| value.to_string()),
+                    self.preroll,
+                    Arc::clone(&self.ring),
+                    self.trace,
+                )
             }
         }
-        Err(last_err.unwrap_or(RecordingError::InputDeviceUnavailable))
+
+        let mut attempt = WarmAttempt {
+            host,
+            preferred_label,
+            preferred_normalized,
+            ring,
+            preroll,
+            trace,
+        };
+        let (warm, choice) = first_working_candidate(&mut attempt)?;
+        log::info!(
+            "holding input device '{}' open via host {:?}",
+            choice.label,
+            host.id()
+        );
+        Ok(warm)
     }
 
     /// Opens an input stream on a specific device and starts recording on it.
@@ -2357,78 +2876,34 @@ mod cpal_impl {
         hold: HoldPlan<'_>,
         trace: &mut AudioStartupTrace,
     ) -> Result<(ActiveRecording, String), RecordingError> {
-        let default_output_name = host
-            .default_output_device()
-            .and_then(|device| device.name().ok());
+        let fallback_preferred = preferred_label.or(preferred_normalized);
+        let mut attempt = HostAttempt {
+            host,
+            level_emitter,
+            chunk_emitter,
+            preferred_normalized,
+            hold,
+            trace,
+            resolved: Vec::new(),
+        };
+        let (active, choice) = first_working_candidate(&mut attempt)?;
+        let label = choice.label;
 
-        let mut candidates =
-            device_candidates_for_host(host, default_output_name.as_deref(), preferred_normalized);
-        // Devices are no longer merged by name, so ties are broken by the host
-        // default first and then by enumeration order (`sort_by_key` is stable).
-        candidates.sort_by_key(|candidate| {
-            (
-                !candidate.matches_preferred,
-                candidate.priority,
-                !candidate.is_default,
-            )
-        });
-        trace.mark(AudioStartupStage::DeviceResolved);
-
-        let mut last_err: Option<RecordingError> = None;
-
-        for candidate in candidates {
-            let DeviceCandidate {
-                device,
-                label: device_label,
-                avoid_reason,
-                matches_preferred,
-                ..
-            } = candidate;
-            let label = device_label.as_str();
-            let fallback_preferred = preferred_label.or(preferred_normalized);
-
-            if let Some(reason) = avoid_reason {
-                log::debug!("deprioritising device '{label}' ({reason}); will try if others fail");
-            }
-
-            let active = match try_start_on_device(
-                &device,
-                Some(label),
-                level_emitter.clone(),
-                chunk_emitter.clone(),
-                HoldPlan {
-                    hold_after_stop: hold.hold_after_stop,
-                    preroll: hold.preroll,
-                    ring: hold.ring,
-                },
-                trace,
-            ) {
-                Ok(active) => active,
-                Err(err) => {
-                    log::error!("failed to start on '{label}': {err}");
-                    last_err = Some(err);
-                    continue;
-                }
-            };
-
-            if matches_preferred {
-                log::info!(
-                    "using preferred input device '{label}' via host {:?}",
-                    host.id()
-                );
-            } else if let Some(preferred) = fallback_preferred {
-                log::warn!(
-                    "preferred input '{preferred}' not available; using '{label}' via host {:?}",
-                    host.id()
-                );
-            } else {
-                log::info!("using input device '{label}' via host {:?}", host.id());
-            }
-
-            return Ok((active, label.to_string()));
+        if choice.matches_preferred {
+            log::info!(
+                "using preferred input device '{label}' via host {:?}",
+                host.id()
+            );
+        } else if let Some(preferred) = fallback_preferred {
+            log::warn!(
+                "preferred input '{preferred}' not available; using '{label}' via host {:?}",
+                host.id()
+            );
+        } else {
+            log::info!("using input device '{label}' via host {:?}", host.id());
         }
 
-        Err(last_err.unwrap_or(RecordingError::InputDeviceUnavailable))
+        Ok((active, label))
     }
 
     struct DeviceCandidate {
@@ -2565,6 +3040,34 @@ mod cpal_impl {
                 None
             }
         }
+    }
+
+    /// Why the cached device cannot be tried, or `None` when it can.
+    ///
+    /// `still_present` is whether the host still enumerates a device under that
+    /// label; it is passed in rather than looked up so the decision can be
+    /// exercised without a host, which is the only way to test the case that
+    /// matters — the cached device was unplugged between two dictations.
+    ///
+    /// Every branch here means "try something else", never "fail the press": a
+    /// microphone that moved is a slower dictation, not a broken one.
+    fn cached_device_rejection(
+        cached: Option<&CachedDeviceInfo>,
+        preferred_normalized: Option<&str>,
+        still_present: bool,
+    ) -> Option<&'static str> {
+        let Some(cached) = cached else {
+            return Some("nothing recorded yet");
+        };
+        if let Some(preferred) = preferred_normalized {
+            if !device_matches_preferred(&cached.device_label, preferred) {
+                return Some("it is not the preferred device");
+            }
+        }
+        if !still_present {
+            return Some("the device is no longer listed");
+        }
+        None
     }
 
     /// Whether a device label equals the (already normalized) preferred name.
@@ -2717,10 +3220,11 @@ mod cpal_impl {
     #[cfg(test)]
     mod tests {
         use super::{
-            cold_start_seed, device_matches_preferred, disambiguated_label,
-            is_preferred_input_device_name, preroll_capacity, warm_ring, ChunkEmitter, Preroll,
-            RecordingManager, SinkMode, StreamSink, STALE_WARM_SILENCE, WARM_FOREVER_MS,
-            WARM_READY_GRACE,
+            cached_device_rejection, cold_start_seed, device_matches_preferred,
+            disambiguated_label, elapsed_gap_is_suspicious, is_preferred_input_device_name,
+            order_hosts, preroll_capacity, try_hosts, warm_ring, CachedDeviceInfo, ChunkEmitter,
+            Preroll, RecordingError, RecordingManager, SinkMode, StreamSink, STALE_WARM_SILENCE,
+            WARM_FOREVER_MS, WARM_READY_GRACE,
         };
         use crate::platform::audio_stage::{AudioStartupStage, AudioStartupTrace};
         use std::collections::HashSet;
@@ -3037,7 +3541,8 @@ mod cpal_impl {
 
             let returned = sink.stop_recording(Some(Arc::new(Mutex::new(Preroll::new(4)))));
 
-            assert!(returned.is_some());
+            assert!(returned.emitter.is_some());
+            assert!(!returned.was_paused);
         }
 
         #[test]
@@ -3146,6 +3651,443 @@ mod cpal_impl {
             deliver_after_a_pause(&sink);
 
             assert!(sink.silence_for().is_some());
+        }
+
+        // ── Capture faults ─────────────────────────────────────────────
+
+        #[test]
+        fn a_fatal_fault_is_recorded_and_named() {
+            let sink = StreamSink::new(SinkMode::Discard);
+
+            sink.record_fault(
+                "The requested device is no longer available. For example, it has been unplugged.",
+            );
+
+            // The token is what the stop path writes into the metrics, so it has
+            // to be the classifier's own word rather than a copy of the message.
+            assert_eq!(sink.fault_token(), Some("fatal"));
+        }
+
+        #[test]
+        fn a_transient_fault_is_logged_but_never_recorded() {
+            let sink = StreamSink::new(SinkMode::Discard);
+
+            // This is the message PipeWire's ALSA plugin produces several times
+            // a second on a perfectly working device. Recording it would retire
+            // the stream on the next press and rebuild it forever.
+            sink.record_fault(
+                "A backend-specific error has occurred: `alsa::poll()` spuriously returned",
+            );
+            sink.record_fault("xrun (buffer over or under run)");
+            sink.record_fault("Resource temporarily unavailable (os error 11)");
+
+            assert_eq!(sink.fault_token(), None);
+        }
+
+        #[test]
+        fn the_first_fatal_fault_wins() {
+            let sink = StreamSink::new(SinkMode::Discard);
+
+            sink.record_fault("the device associated with the stream is no longer available");
+            // A second error from a backend that is already dead says nothing
+            // new, and overwriting the token would lose when it first died.
+            sink.record_fault("something else entirely");
+
+            assert_eq!(sink.fault_token(), Some("fatal"));
+        }
+
+        #[test]
+        fn a_faulted_stream_is_never_usable_however_recently_it_delivered() {
+            let sink = StreamSink::new(SinkMode::Discard);
+            std::thread::sleep(Duration::from_millis(2));
+            sink.deliver(&[0.1]);
+            // Fresh and delivered: without the fault check this is exactly the
+            // stream the warm path would adopt.
+            assert_eq!(
+                sink.silence_for().map(|s| s < STALE_WARM_SILENCE),
+                Some(true)
+            );
+
+            sink.record_fault("Stream Invalidated");
+
+            assert_eq!(
+                sink.fault_token(),
+                Some("fatal"),
+                "the token must name the fault rather than the staleness verdict"
+            );
+        }
+
+        #[test]
+        fn a_faulted_stream_is_rejected_for_a_press_naming_the_fault() {
+            // The verdict `WarmStream::is_usable` reads, driven directly: the
+            // handle itself needs a real cpal stream, but the decision is a
+            // function of this sink.
+            let sink = StreamSink::new(SinkMode::Discard);
+            std::thread::sleep(Duration::from_millis(2));
+            sink.deliver(&[0.1]);
+
+            sink.record_fault("the device associated with the stream is no longer available");
+
+            assert_eq!(sink.fault_token(), Some("fatal"));
+            // A stale-but-recovering stream and a dead one are different
+            // verdicts, and the log has to be able to tell them apart: this one
+            // has just delivered a block, so only the fault can explain a
+            // rejection.
+            assert!(sink
+                .silence_for()
+                .map(|silence| silence < STALE_WARM_SILENCE)
+                .unwrap_or(false));
+        }
+
+        #[test]
+        fn an_error_storm_does_not_change_the_fault_it_records() {
+            let sink = StreamSink::new(SinkMode::Discard);
+
+            // cpal's ALSA worker polls a POLLERR device and calls the error
+            // callback on every iteration, so this is hundreds of calls a
+            // second on a device that is already gone.
+            for _ in 0..1_000 {
+                sink.record_fault("`alsa::poll()` returned POLLERR: no such device");
+            }
+
+            assert_eq!(sink.fault_token(), Some("fatal"));
+        }
+
+        #[test]
+        fn a_fault_token_survives_a_restart_of_the_recording() {
+            let sink = StreamSink::new(SinkMode::Discard);
+            sink.record_fault("the device associated with the stream is no longer available");
+
+            sink.start_recording(None, None, Vec::new());
+
+            // The host declared this *device* gone, not just this recording, so
+            // a new recording on the same dead stream must not look healthy.
+            assert_eq!(sink.fault_token(), Some("fatal"));
+        }
+
+        // ── Pause accounting ───────────────────────────────────────────
+
+        #[test]
+        fn a_paused_recording_does_not_pause_time_count_against_capture() {
+            let sink = StreamSink::new(SinkMode::Discard);
+            std::thread::sleep(Duration::from_millis(2));
+            sink.set_paused(true);
+            std::thread::sleep(Duration::from_millis(30));
+            let paused = sink.paused_for();
+            sink.set_paused(false);
+
+            // The whole point of the figure: a pause the user asked for is not
+            // audio the stream failed to deliver.
+            assert!(
+                paused >= Duration::from_millis(25),
+                "paused_for was {paused:?}"
+            );
+            assert!(
+                sink.paused_for() >= Duration::from_millis(25),
+                "a closed interval is still counted"
+            );
+        }
+
+        #[test]
+        fn a_second_pause_does_not_restart_the_first_interval() {
+            let sink = StreamSink::new(SinkMode::Discard);
+            sink.set_paused(true);
+            std::thread::sleep(Duration::from_millis(20));
+            // A repeat call from a resumed-then-paused path must not lose the
+            // stretch already spent paused.
+            sink.set_paused(true);
+            std::thread::sleep(Duration::from_millis(10));
+            sink.set_paused(false);
+
+            assert!(sink.paused_for() >= Duration::from_millis(28));
+        }
+
+        #[test]
+        fn resuming_twice_counts_the_pause_once() {
+            let sink = StreamSink::new(SinkMode::Discard);
+            sink.set_paused(true);
+            std::thread::sleep(Duration::from_millis(15));
+            sink.set_paused(false);
+            let after_first = sink.paused_for();
+            sink.set_paused(false);
+
+            // Folding the same interval in twice would inflate the figure and
+            // hide a real gap of the same length.
+            assert_eq!(sink.paused_for(), after_first);
+        }
+
+        #[test]
+        fn a_pause_open_at_stop_is_counted_when_the_stop_closes_it() {
+            let sink = StreamSink::new(SinkMode::Discard);
+            sink.set_paused(true);
+            std::thread::sleep(Duration::from_millis(15));
+
+            sink.stop_recording(None);
+
+            // Stopping clears the flag, so if the stop did not close the
+            // interval the figure would silently be zero afterwards.
+            assert!(sink.paused_for() >= Duration::from_millis(12));
+        }
+
+        #[test]
+        fn a_stopped_stream_says_whether_it_was_paused_before_it_forgot() {
+            let paused = StreamSink::new(SinkMode::Discard);
+            paused.set_paused(true);
+
+            let outcome = paused.stop_recording(None);
+
+            // The defect this pins: the stop clears the pause flag, so the caller
+            // that asked the sink afterwards was always told "not paused" and
+            // skipped the resume. The answer has to travel back with the stop.
+            assert!(outcome.was_paused);
+            assert!(!paused.is_paused());
+
+            let running = StreamSink::new(SinkMode::Discard);
+            assert!(!running.stop_recording(None).was_paused);
+        }
+
+        #[test]
+        fn a_stop_after_a_resume_does_not_claim_the_stream_was_paused() {
+            let sink = StreamSink::new(SinkMode::Discard);
+            sink.set_paused(true);
+            sink.set_paused(false);
+
+            // A stale `true` would make the stop path resume a stream that is
+            // already running.
+            assert!(!sink.stop_recording(None).was_paused);
+        }
+
+        #[test]
+        fn a_new_recording_starts_with_no_paused_time() {
+            let sink = StreamSink::new(SinkMode::Discard);
+            sink.set_paused(true);
+            std::thread::sleep(Duration::from_millis(15));
+            sink.stop_recording(None);
+            assert!(sink.paused_for() > Duration::ZERO);
+
+            sink.start_recording(None, None, Vec::new());
+
+            // The sink outlives the recording. A carried-over total would be
+            // subtracted from a recording that never paused.
+            assert_eq!(sink.paused_for(), Duration::ZERO);
+        }
+
+        // ── Reported length vs captured length ─────────────────────────
+
+        #[test]
+        fn a_gap_under_the_tolerance_is_not_suspicious() {
+            // Buffer quantisation and the wall clock starting before the first
+            // block always leave a small gap; reporting it would make every
+            // healthy recording look like a failure.
+            assert!(!elapsed_gap_is_suspicious(
+                Duration::from_millis(3_900),
+                Duration::from_millis(4_100)
+            ));
+            assert!(!elapsed_gap_is_suspicious(
+                Duration::from_millis(1_000),
+                Duration::from_millis(1_000)
+            ));
+        }
+
+        #[test]
+        fn a_recording_that_lost_a_tenth_of_its_length_is_suspicious() {
+            assert!(elapsed_gap_is_suspicious(
+                Duration::from_millis(1_400),
+                Duration::from_secs(6)
+            ));
+            assert!(elapsed_gap_is_suspicious(
+                Duration::from_millis(0),
+                Duration::from_secs(3)
+            ));
+        }
+
+        #[test]
+        fn captured_audio_longer_than_the_wall_clock_is_not_a_gap() {
+            // A pre-roll seed can make the sample count longer than the time
+            // this recording was open. That is an artefact of the seed, not a
+            // capture fault, and a subtraction here would underflow.
+            assert!(!elapsed_gap_is_suspicious(
+                Duration::from_secs(3),
+                Duration::from_secs(2)
+            ));
+        }
+
+        // ── Host ordering and fallback ─────────────────────────────────
+
+        /// A stand-in host identity.
+        ///
+        /// `cpal::HostId` only has the variants this build enables, and a test
+        /// that needs two of them cannot name a second on a single-host build.
+        /// The loops are generic over the identity, so a plain number serves and
+        /// the same rule is exercised on every platform.
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        enum FakeHost {
+            First,
+            Second,
+        }
+
+        // ── Cached device ──────────────────────────────────────────────
+
+        #[test]
+        fn a_cached_device_that_is_no_longer_listed_falls_through_to_scoring() {
+            let cached = CachedDeviceInfo {
+                host_id: cpal::default_host().id(),
+                device_label: "Samson Q2U".to_string(),
+            };
+
+            // Row 35: a USB microphone unplugged between two dictations. The
+            // press must not fail on the stale cache — it must score the devices
+            // that are there now.
+            assert_eq!(
+                cached_device_rejection(Some(&cached), None, false),
+                Some("the device is no longer listed")
+            );
+        }
+
+        #[test]
+        fn a_cached_device_that_is_still_listed_is_tried() {
+            let cached = CachedDeviceInfo {
+                host_id: cpal::default_host().id(),
+                device_label: "Samson Q2U".to_string(),
+            };
+
+            assert_eq!(cached_device_rejection(Some(&cached), None, true), None);
+        }
+
+        #[test]
+        fn a_cached_device_that_is_not_the_preference_is_not_tried() {
+            let cached = CachedDeviceInfo {
+                host_id: cpal::default_host().id(),
+                device_label: "Samson Q2U".to_string(),
+            };
+
+            // The user chose another microphone since; using the cached one
+            // would record the wrong device and look like the setting was
+            // ignored.
+            assert_eq!(
+                cached_device_rejection(Some(&cached), Some("macbook pro microphone"), true),
+                Some("it is not the preferred device")
+            );
+        }
+
+        #[test]
+        fn an_empty_cache_has_nothing_to_try() {
+            assert_eq!(
+                cached_device_rejection(None, None, true),
+                Some("nothing recorded yet")
+            );
+        }
+
+        #[test]
+        fn the_default_host_is_tried_first() {
+            let available = [FakeHost::First, FakeHost::Second];
+
+            assert_eq!(
+                order_hosts(FakeHost::Second, &available),
+                vec![FakeHost::Second, FakeHost::First]
+            );
+        }
+
+        #[test]
+        fn a_default_host_missing_from_the_available_list_is_still_tried() {
+            // cpal's `available_hosts` is not guaranteed to contain the default,
+            // and a press must not skip the host the platform actually uses.
+            let ordered = order_hosts(FakeHost::First, &[]);
+
+            assert_eq!(ordered, vec![FakeHost::First]);
+        }
+
+        #[test]
+        fn a_host_listed_twice_is_only_tried_once() {
+            let ordered = order_hosts(FakeHost::First, &[FakeHost::First, FakeHost::Second]);
+
+            // Opening the same host twice is a second device open on every
+            // press for nothing.
+            assert_eq!(ordered, vec![FakeHost::First, FakeHost::Second]);
+        }
+
+        #[test]
+        fn the_second_host_is_tried_when_the_first_one_fails() {
+            let hosts = [FakeHost::First, FakeHost::Second];
+            let mut attempted = Vec::new();
+
+            let result = try_hosts(&hosts, Ok::<FakeHost, RecordingError>, |id| {
+                attempted.push(*id);
+                if *id == FakeHost::First {
+                    Err(RecordingError::InputDeviceUnavailable)
+                } else {
+                    Ok("from the second host")
+                }
+            });
+
+            // The defect this pins: a loop that returned the first error would
+            // report "no input device" on a machine whose second host works.
+            assert_eq!(
+                result.ok().map(|(value, _)| value),
+                Some("from the second host")
+            );
+            assert_eq!(attempted, vec![FakeHost::First, FakeHost::Second]);
+        }
+
+        #[test]
+        fn a_host_that_will_not_load_is_skipped_rather_than_fatal() {
+            let hosts = [FakeHost::First, FakeHost::Second];
+
+            let result = try_hosts(
+                &hosts,
+                |id| {
+                    if id == FakeHost::First {
+                        Err(RecordingError::StreamBuild("pulse not running".to_string()))
+                    } else {
+                        Ok(id)
+                    }
+                },
+                |_| Ok("found"),
+            );
+
+            assert_eq!(result.ok().map(|(value, _)| value), Some("found"));
+        }
+
+        #[test]
+        fn no_host_yielding_a_device_is_reported_as_no_device() {
+            let hosts = [FakeHost::First];
+
+            // Row 37: with every host empty the user must be told there is no
+            // input device — the one thing they can act on — rather than handed a
+            // stream error that names an internal step.
+            let err = try_hosts(&hosts, Ok::<FakeHost, RecordingError>, |_| {
+                Err::<&str, _>(RecordingError::InputDeviceUnavailable)
+            })
+            .unwrap_err();
+
+            assert!(matches!(err, RecordingError::InputDeviceUnavailable));
+            assert_eq!(err.to_string(), "no input device");
+        }
+
+        #[test]
+        fn the_error_from_the_last_host_is_the_one_reported() {
+            // A machine where the first host is empty and the second says the
+            // device is busy should report busy, not "no device": the two have
+            // different remedies and the classification downstream reads this
+            // message to choose between them.
+            let hosts = [FakeHost::First, FakeHost::Second];
+
+            let err = try_hosts(&hosts, Ok::<FakeHost, RecordingError>, |id| {
+                if *id == FakeHost::First {
+                    Err::<&str, _>(RecordingError::InputDeviceUnavailable)
+                } else {
+                    Err(RecordingError::StreamBuild(
+                        "the device is in use by another application".to_string(),
+                    ))
+                }
+            })
+            .unwrap_err();
+
+            assert_eq!(
+                crate::platform::mic_usage::classify_open_failure(&err.to_string()),
+                crate::platform::mic_usage::OpenFailure::InUseByAnotherApplication,
+                "the busy classification was lost: {err}"
+            );
         }
 
         // ── Hold policy ────────────────────────────────────────────────

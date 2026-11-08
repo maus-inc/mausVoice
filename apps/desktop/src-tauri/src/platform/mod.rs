@@ -155,6 +155,9 @@ pub mod audio;
 /// Why a device could not be opened, kept separate from "it is missing".
 pub mod mic_usage;
 
+/// What an error from a running capture stream means.
+pub mod stream_fault;
+
 pub mod paste_keybind;
 
 #[cfg(desktop)]

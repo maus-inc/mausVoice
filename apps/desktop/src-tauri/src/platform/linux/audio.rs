@@ -327,17 +327,22 @@ fn record_loop(
         }
     }
 
+    let expected_duration = start.elapsed();
     let duration = if !all_samples.is_empty() {
         Duration::from_secs_f64(all_samples.len() as f64 / f64::from(sample_rate))
     } else {
-        start.elapsed()
+        expected_duration
     };
     let size_bytes = all_samples.len() as u64 * std::mem::size_of::<f32>() as u64;
 
     RecordingResult {
         metrics: RecordingMetrics {
             duration,
+            expected_duration,
             size_bytes,
+            // This backend stops on its own error path and returns what it has;
+            // it does not receive the cpal error callback this field records.
+            capture_fault: None,
         },
         audio: RecordedAudio {
             samples: all_samples,
@@ -350,7 +355,11 @@ fn empty_result() -> RecordingResult {
     RecordingResult {
         metrics: RecordingMetrics {
             duration: Duration::ZERO,
+            // Nothing was recorded and nothing was expected: this is the result
+            // of a stop with no recording, not of a capture that died.
+            expected_duration: Duration::ZERO,
             size_bytes: 0,
+            capture_fault: None,
         },
         audio: RecordedAudio {
             samples: Vec::new(),

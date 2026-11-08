@@ -1,6 +1,6 @@
 # Edge cases for the warm microphone, and how each one is checked
 
-Fifty-two classes of edge case, grouped by the thing they stress. Each row names
+Sixty-two classes of edge case, grouped by the thing they stress. Each row names
 the case, what the correct behaviour is, and how it is checked. The last column
 is the point of the table: it says whether a test would notice the behaviour
 changing, and if not, what would.
@@ -59,7 +59,7 @@ buffer the UI never offers.
 | 25 | A stream that delivered and then went quiet | Reads as stale after the silence window | Verified — `a_stream_that_went_quiet_reads_as_stale` |
 | 26 | A paused stream | Does not read as dead, and is not reopened | Verified — `a_paused_stream_does_not_read_as_dead` |
 | 27 | A stopped stream | Does not read as dead | Verified — `a_stopped_stream_does_not_read_as_dead` |
-| 28 | A stream stopped while paused | Resumed before being left warm, so the next press does not adopt a stream that delivers nothing | Inspected — the resume happens in the stop path; no test covers the paused-then-stopped sequence |
+| 28 | A stream stopped while paused | Resumed before being left warm, so the next press does not adopt a stream that delivers nothing | Verified — `a_stopped_stream_says_whether_it_was_paused_before_it_forgot`, `a_stop_after_a_resume_does_not_claim_the_stream_was_paused`. The resume decision was **wrong** before this row was deepened: the stop cleared the pause flag and the stop path then asked the sink, so it was always told "not paused" and never resumed. The pause now travels back with the stop, and the two tests hold that. The resume itself still needs a real stream — see the note below |
 | 29 | The startup trace is missing | `Microphone last start: none` rather than a fabricated summary | Verified — `a_start_with_no_trace_has_no_summary` |
 | 30 | Startup trace stages | Every stage a reader expects is marked, in order | Verified — `a_cold_start_marks_the_stages_a_reader_expects` |
 | 31 | The status line | Names readiness, policy, pre-roll and last start together | Verified — `a_status_line_names_the_policy_the_pre_roll_and_the_last_start` |
@@ -71,10 +71,10 @@ buffer the UI never offers.
 | 32 | Two devices with the same name | Ordinal suffix so the list is not ambiguous | Verified — `repeated_names_get_an_ordinal_suffix`, `first_device_keeps_its_bare_name` |
 | 33 | A preferred name that also matches a speaker or a low-quality input | Excluded from the candidates | Verified — `preferred_name_blocks_low_quality_keywords`, `preferred_name_requires_microphone_context` |
 | 34 | Built-in microphone detection | Recognised by name across the platform namings; a device that merely mentions "microphone" is not built-in | Verified — `builtin_names_are_recognised_across_platforms` (macOS model names, Linux/portable namings, and four non-built-in devices that must not match) |
-| 35 | A cached device that has since disappeared | Falls back to scoring rather than failing the press | Inspected — `try_cached_device` falls through, but no test simulates a vanished cached label |
+| 35 | A cached device that has since disappeared | Falls back to scoring rather than failing the press | Verified — `a_cached_device_that_is_no_longer_listed_falls_through_to_scoring`, `a_cached_device_that_is_still_listed_is_tried`, `an_empty_cache_has_nothing_to_try` |
 | 36 | Changing the preference | Invalidates the device cache so the next press does not reuse the old device | Verified — `a_changed_preference_clears_the_device_cache` |
-| 37 | No input device on any host | Reported as unavailable, not as a stream error | Inspected — `prepare_device` returns `InputDeviceUnavailable` when every host yields nothing; no test drives the zero-device case, because a machine with no microphone is not available to test on |
-| 38 | Several hosts, the first one failing | Later hosts are still tried; the failure of one is not fatal | Inspected — the loop continues on error, but no test drives two hosts |
+| 37 | No input device on any host | Reported as unavailable, not as a stream error | Verified — `no_host_yielding_a_device_is_reported_as_no_device` |
+| 38 | Several hosts, the first one failing | Later hosts are still tried; the failure of one is not fatal | Verified — `the_second_host_is_tried_when_the_first_one_fails`, `a_host_that_will_not_load_is_skipped_rather_than_fatal`, `a_host_listed_twice_is_only_tried_once`, `the_default_host_is_tried_first` |
 
 ## Failure classification
 
@@ -100,9 +100,30 @@ buffer the UI never offers.
 | 51 | `pactl` is not installed | `unavailable:<reason>`, never `idle` | Verified — `a_probe_that_cannot_run_is_unavailable_not_idle` |
 | 52 | `pactl` runs and exits non-zero | `unavailable:<reason>` with the exit status | Verified — `a_probe_that_fails_is_unavailable_not_idle` |
 
+## A stream that dies mid-recording
+
+The host reports stream errors asynchronously, through a callback cpal calls on a
+thread of its own choosing. Before these rows existed that callback only logged:
+a device unplugged mid-dictation produced a short recording, no error, and a
+successful-looking result. The classification of those messages is
+`platform/stream_fault.rs`.
+
+| # | Edge case | Correct behaviour | How checked |
+| --- | --- | --- | --- |
+| 53 | ALSA reports a spurious `poll()` timeout | Not fatal: the host keeps polling, and retiring on this rebuilds the stream several times a second and captures nothing | Verified — `an_alsa_poll_timeout_does_not_retire_the_stream`, `the_message_as_cpal_renders_it_is_what_is_matched` |
+| 54 | The device is unplugged mid-recording | The stream is marked dead, never handed to a later press, and the recording reports the fault | Verified — `a_fatal_fault_is_recorded_and_named`, `a_faulted_stream_is_never_usable_however_recently_it_delivered` |
+| 55 | A stream that faulted still sits in the warm slot | Rejected for the next press even though it delivered a block moments ago; the reason named in the log is the fault, not staleness | Verified — `a_faulted_stream_is_rejected_for_a_press_naming_the_fault` |
+| 56 | An unrecognised error message | Treated as fatal, the opposite of the open-failure classifier: a wrong "transient" leaves a dead stream recording silence | Verified — `an_unrecognised_message_is_fatal_not_transient` |
+| 57 | An error that repeats hundreds of times a second | The first few are logged in full, the rest only counted, and the recorded fault is unchanged | Verified — `an_error_storm_does_not_change_the_fault_it_records` |
+| 58 | Errors arriving after the first fatal one | The first token wins; a second error from an already-dead backend does not overwrite when it died | Verified — `the_first_fatal_fault_wins` |
+| 59 | The capture dies but the host says nothing | Logged as captured-vs-expected milliseconds when the shortfall is material; `duration` stays what was captured and `expected_duration` what was expected | Verified — `a_recording_that_lost_a_tenth_of_its_length_is_suspicious`, `a_gap_under_the_tolerance_is_not_suspicious`, `captured_audio_longer_than_the_wall_clock_is_not_a_gap` |
+| 60 | A recording paused for part of its length | The pause is subtracted from `expected_duration`, so a paused dictation is not reported as a capture that died | Verified — `a_paused_recording_does_not_pause_time_count_against_capture`, `a_new_recording_starts_with_no_paused_time` |
+| 61 | Two pauses, or a pause resumed twice | The interval is counted once and a repeat call does not restart the clock | Verified — `a_second_pause_does_not_restart_the_first_interval`, `resuming_twice_counts_the_pause_once` |
+| 62 | A faulted stream is restarted | The fault survives the restart: the device is gone, not just the recording | Verified — `a_fault_token_survives_a_restart_of_the_recording` |
+
 ## What this table does not settle
 
-Three things, stated plainly because a table of green rows invites the
+Four things, stated plainly because a table of green rows invites the
 assumption that everything is known.
 
 1. **No test above touches a real microphone.** Every recording path is driven
@@ -119,3 +140,17 @@ assumption that everything is known.
    and the subprocess handling are both covered, through a fake script, but the
    live path is not. What would settle it: `pactl list source-outputs` on a
    machine with a recording application.
+4. **The mid-recording fault path has never seen a device die.** The
+   classification is tested against cpal's own wording, read from the vendored
+   0.15.3 source, and the sink's fault state is driven directly. What is not
+   tested is the whole chain on hardware: no test here has unplugged a
+   microphone during a recording and read the resulting metrics. It is also
+   untested whether the host's error callback arrives before the stop in every
+   backend — if it arrives after, the fault lands on the *next* recording's
+   stream rather than this one's metrics. What would settle it: unplug a USB
+   microphone mid-dictation and read the warn line that begins with "capture
+   reported" and the returned `duration` / `expected_duration`.
+5. **Two rows are held by a narrower test than the row describes.** Row 28's
+   resume and row 55's rejection are decided from data the sink holds, and both
+   the data and the decision are tested, but the call that acts on them needs a
+   live `cpal::Stream`. The gap is the call, not the rule.

@@ -10796,7 +10796,9 @@ wLMDjy9FLAuxZ3q4NlEvkgtyhrr0gtTu6KC4KBJdITbbOeAi1zBIYo0v4iTgt8jJpIidRJnp94ABQkJA
                 Ok(crate::domain::RecordingResult {
                     metrics: crate::domain::RecordingMetrics {
                         duration: std::time::Duration::ZERO,
+                        expected_duration: std::time::Duration::ZERO,
                         size_bytes: 0,
+                        capture_fault: None,
                     },
                     audio: crate::domain::RecordedAudio {
                         samples: Vec::new(),
