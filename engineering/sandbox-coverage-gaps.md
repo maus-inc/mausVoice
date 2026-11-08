@@ -49,7 +49,7 @@ A release asset such as `https://github.com/gitleaks/gitleaks/releases/download/
 | ------------------------------------------ | ------------------ | -------------------------------------------------------------------------------------- |
 | CPU                                        | 2 vCPU             | `cargo test` links one binary at a time, so `CARGO_BUILD_JOBS=1`                       |
 | Memory                                     | 3,939 MB           | Parallel linking peaks above it and the linker dies with signal 9                      |
-| Disk                                       | 21 GB free         | The extracted payload is about 5.5 GB, the Rust target tree several more               |
+| Disk                                       | 21 GB free         | The extracted payload is about 7.0 GB, the Rust target tree several more               |
 | Node                                       | v22.22.3           | Satisfies `engines`, is behind the `.nvmrc` pin of 24                                  |
 | npm                                        | 10.9.8             | Installs pnpm@10.34.5 from the registry                                                |
 | Python                                     | 3.11.2, pip 23.0.1 | `req.txt` resolves from PyPI                                                           |
@@ -193,7 +193,7 @@ Substitute today. `pnpm install --frozen-lockfile --ignore-scripts`. Name the fl
 
 ### G16 to G22: the third delivery, delivered
 
-The third delivery was built on 2026-11-05 in the second agent sandbox, the one with broad egress, Debian 13 and `apt-get`. It closes seven of the entries in `engineering/sandbox-capability-gaps.md` and ships at tip `8442ae0` of the same orphan branch. Sizes below are measured unpacked, not estimated.
+The third delivery was built on 2026-11-05 in the second agent sandbox, the one with broad egress, Debian 13 and `apt-get`. It closes seven of the entries in `engineering/sandbox-capability-gaps.md` and ships at tip `82b2f983` of the same orphan branch. Sizes below are measured unpacked, not estimated.
 
 | Group | Carries                                                                                                                                            | Opens                                                                     | Unpacked |
 | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- | -------- |
