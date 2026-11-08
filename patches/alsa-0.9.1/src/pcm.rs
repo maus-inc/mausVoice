@@ -295,13 +295,41 @@ impl PCM {
     pub fn io_bytes(&self) -> IO<u8> { IO::new(self) }
 
     /// Read buffers by talking to the kernel directly, bypassing alsa-lib.
-    pub fn direct_mmap_capture<S>(&self) -> Result<crate::direct::pcm::MmapCapture<S>> {
+    ///
+    /// Types with invalid bit patterns, such as `bool`, cannot be read from raw audio.
+    ///
+    /// ```compile_fail
+    /// fn invalid(pcm: &alsa::PCM) {
+    ///     let _ = pcm.direct_mmap_capture::<bool>();
+    /// }
+    /// ```
+    ///
+    /// Implementing the general `IoFormat` trait alone is not enough to make
+    /// arbitrary types safe to read from mapped bytes:
+    ///
+    /// ```compile_fail
+    /// #[derive(Clone, Copy)]
+    /// struct Bit(bool);
+    /// impl alsa::pcm::IoFormat for Bit {
+    ///     const FORMAT: alsa::pcm::Format = alsa::pcm::Format::U8;
+    /// }
+    /// fn invalid(pcm: &alsa::PCM) {
+    ///     let _ = pcm.direct_mmap_capture::<Bit>();
+    /// }
+    /// ```
+    ///
+    /// ```no_run
+    /// fn valid(pcm: &alsa::PCM) {
+    ///     let _ = pcm.direct_mmap_capture::<i16>();
+    /// }
+    /// ```
+    pub fn direct_mmap_capture<S: crate::direct::pcm::MmapSample>(&self) -> Result<crate::direct::pcm::MmapCapture<S>> {
         self.check_has_io();
         crate::direct::pcm::new_mmap(self)
     }
 
     /// Write buffers by talking to the kernel directly, bypassing alsa-lib.
-    pub fn direct_mmap_playback<S>(&self) -> Result<crate::direct::pcm::MmapPlayback<S>> {
+    pub fn direct_mmap_playback<S: crate::direct::pcm::MmapSample>(&self) -> Result<crate::direct::pcm::MmapPlayback<S>> {
         self.check_has_io();
         crate::direct::pcm::new_mmap(self)
     }

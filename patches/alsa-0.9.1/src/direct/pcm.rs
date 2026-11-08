@@ -29,6 +29,23 @@ use std::marker::PhantomData;
 
 use super::ffi::*;
 
+/// A sample that can safely be read from and written to mapped PCM memory.
+///
+/// # Safety
+/// Every possible bit pattern must be a valid value of this type. Its size and
+/// representation must match its `IoFormat`, and its alignment must not exceed
+/// the system page alignment used for the mapping.
+pub unsafe trait MmapSample: pcm::IoFormat {}
+
+unsafe impl MmapSample for i8 {}
+unsafe impl MmapSample for u8 {}
+unsafe impl MmapSample for i16 {}
+unsafe impl MmapSample for u16 {}
+unsafe impl MmapSample for i32 {}
+unsafe impl MmapSample for u32 {}
+unsafe impl MmapSample for f32 {}
+unsafe impl MmapSample for f64 {}
+
 /// Read PCM status via a simple kernel syscall, bypassing alsa-lib.
 ///
 /// If Status is not available on your architecture, this is the second best option.
@@ -240,11 +257,14 @@ struct SampleData<S> {
     channels: u32,
 }
 
-impl<S> SampleData<S> {
+impl<S: MmapSample> SampleData<S> {
     pub fn new(p: &pcm::PCM) -> Result<Self> {
         let params = p.hw_params_current()?;
         let bufsize = params.get_buffer_size()?;
         let channels = params.get_channels()?;
+        if params.get_format()? != S::FORMAT {
+            return Err(Error::unsupported("MMAP sample format mismatch"))
+        }
         if params.get_access()? != pcm::Access::MMapInterleaved {
             return Err(Error::unsupported("Not MMAP interleaved data"))
         }
@@ -267,6 +287,20 @@ impl<S> SampleData<S> {
     }
 }
 
+
+#[test]
+fn direct_mmap_rejects_matching_size_with_the_wrong_format() {
+    use crate::ValueOr;
+    let pcm = pcm::PCM::new("null", Direction::Capture, false).unwrap();
+    let params = pcm::HwParams::any(&pcm).unwrap();
+    params.set_channels(1).unwrap();
+    params.set_rate(48_000, ValueOr::Nearest).unwrap();
+    params.set_format(pcm::Format::U8).unwrap();
+    params.set_access(pcm::Access::MMapInterleaved).unwrap();
+    pcm.hw_params(&params).unwrap();
+    let err = SampleData::<i8>::new(&pcm).unwrap_err();
+    assert!(format!("{}", err).contains("MMAP sample format mismatch"));
+}
 
 /// Dummy trait for better generics
 pub trait MmapDir: fmt::Debug {
@@ -345,7 +379,7 @@ impl<S> RawSamples<S> {
 
 }
 
-impl<S, D: MmapDir> MmapIO<S, D> {
+impl<S: MmapSample, D: MmapDir> MmapIO<S, D> {
     fn new(p: &pcm::PCM) -> Result<Self> {
         if p.info()?.get_stream() != D::DIR {
             return Err(Error::unsupported("Wrong direction"));
@@ -361,7 +395,7 @@ impl<S, D: MmapDir> MmapIO<S, D> {
     }
 }
 
-pub (crate) fn new_mmap<S, D: MmapDir>(p: &pcm::PCM) -> Result<MmapIO<S, D>> { MmapIO::new(p) }
+pub (crate) fn new_mmap<S: MmapSample, D: MmapDir>(p: &pcm::PCM) -> Result<MmapIO<S, D>> { MmapIO::new(p) }
 
 impl<S, D: MmapDir> MmapIO<S, D> {
     /// Read current status

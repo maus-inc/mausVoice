@@ -24,3 +24,9 @@ and non-Linux platform behavior still need verification.
 Each `ChmapsQuery` item owns a byte-for-byte copy of its channel map, including
 position flags. ALSA frees the original maps with the query, so returning a
 borrowed pointer let safe callers access freed memory after dropping it.
+
+Direct mmap constructors require an unsafe `MmapSample` implementation and
+verify the configured PCM format. Primitive audio samples implement it; custom
+sample types must guarantee that every bit pattern is valid and that their
+layout matches the declared format. This intentionally narrows a previously
+unsound public API.
