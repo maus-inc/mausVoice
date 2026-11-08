@@ -17,13 +17,24 @@ When initialization fails after instance creation, the constructor now calls
 fails. CPAL maps that result to its capture ownership guard. Portable tests
 exercise the ordering and error propagation, but do not call Apple APIs.
 
+Typed callback data now uses a lifetime-indexed `Data::Buffer` view, so safe
+callbacks cannot retain sample references after the invocation. `Data` and
+`Sample` are unsafe traits with representation and borrowing contracts. Typed
+buffers check lengths, alignment and overlapping ranges; typed output is cleared
+before a Rust sample reference is constructed. The raw callback API is not
+cleared. The input path verifies its owned buffer after AudioUnitRender. These
+are breaking changes for custom trait implementations and callbacks that relied
+on existing output contents. Portable simulated-buffer and compiler-rejection
+tests cover these behaviors; actual driver allocation and lifetime guarantees
+still depend on CoreAudio and have not been tested on hardware.
+
 Action-flag handles are now tied to the lifetime of each render callback,
 are not transferable between threads, and require an unsafe constructor with a
 valid exclusive pointer. Render and input callbacks reject null flag/timestamp
 pointers. This changes the public `Args` and `Handle` APIs; users annotating
 these types must specify a callback lifetime. Portable tests exercise the handle
 and compiler rejection of escape, cross-thread transfer and safe construction.
-The separate static audio-buffer lifetime problem remains unresolved.
+The typed audio-buffer lifetimes are handled separately as described above.
 
 The generic AudioUnit and iOS AudioSession property getters now require unsafe
 calls: callers must choose a matching native representation and ensure its bytes

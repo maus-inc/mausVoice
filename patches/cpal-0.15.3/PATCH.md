@@ -254,3 +254,7 @@ representations. The iOS changes have not been exercised on an iOS device.
 The CoreAudio input and output callback argument types now carry the lifetime
 of their action-flag handle; the input adapter keeps that lifetime within its
 render borrow. The iOS callback adaptations have not been built or device-tested.
+
+CoreAudio callback arguments now use lifetime-indexed typed data views. CPAL
+uses the raw view and therefore does not clear audio buffers. macOS CI and
+actual iOS builds/device behavior must be checked separately.

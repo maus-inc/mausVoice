@@ -81,7 +81,13 @@ impl SampleFormat {
 }
 
 /// Audio data sample types.
-pub trait Sample {
+///
+/// # Safety
+/// Every bit pattern of the type must be valid, and its size and layout must
+/// match its reported packed sample format. Values must have no ownership or
+/// validity invariants beyond their bits. Audio buffers may contain any sample
+/// bit pattern supplied by CoreAudio.
+pub unsafe trait Sample: Copy + 'static {
     /// Dynamic representation of audio data sample format.
     fn sample_format() -> SampleFormat;
 }
@@ -91,7 +97,7 @@ pub trait Sample {
 macro_rules! impl_sample {
     ($($T:ident $format:ident),* $(,)*) => {
         $(
-            impl Sample for $T {
+            unsafe impl Sample for $T {
                 fn sample_format() -> SampleFormat {
                     SampleFormat::$format
                 }

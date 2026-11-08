@@ -22,6 +22,10 @@ impl InputBuffer {
         self.bytes.resize(len, 0);
     }
 
+    pub(super) fn len(&self) -> usize {
+        self.bytes.len()
+    }
+
     pub(super) fn as_mut_ptr(&mut self) -> *mut u8 {
         self.bytes.as_mut_ptr()
     }
@@ -47,7 +51,7 @@ mod tests {
         let mut buffer = InputBuffer::new(5);
         unsafe { *buffer.as_mut_ptr() = 7 };
         buffer.resize(113);
-        assert_eq!(buffer.bytes.len(), 113);
+        assert_eq!(buffer.len(), 113);
         assert_eq!(buffer.bytes[0], 7);
         assert!(buffer.bytes[5..].iter().all(|byte| *byte == 0));
         buffer.resize(2);

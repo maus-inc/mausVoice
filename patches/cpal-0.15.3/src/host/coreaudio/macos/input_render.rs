@@ -90,7 +90,7 @@ impl InputRender {
         {
             return Err(-1500);
         }
-        Ok(render_callback::Args {
+        Ok(render_callback::Args::<data::Raw> {
             data: data::Raw { data: list },
             time_stamp: unsafe { *timestamp },
             flags: unsafe { render_callback::action_flags::Handle::from_ptr(flags) },

@@ -44,7 +44,7 @@ mod tests {
     #[test]
     fn source_binds_flags_to_each_callback_invocation() {
         let source = include_str!("../src/audio_unit/render_callback.rs");
-        assert!(source.contains("pub struct Args<'a, D>"));
+        assert!(source.contains("pub struct Args<'a, D: Data>"));
         assert!(source.contains("for<'a> FnMut(Args<'a, D>)"));
         assert!(!source.contains("unsafe impl Send for Handle"));
     }
