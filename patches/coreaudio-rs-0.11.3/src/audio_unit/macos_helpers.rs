@@ -1,19 +1,8 @@
 /// This is a collection of helper functions for performing common tasks on macOS.
 /// These functions are only implemented for macOS, not iOS.
 use crate::error::Error;
-use std::ffi::CStr;
-use std::os::raw::c_char;
-use std::ptr::null;
-use std::mem;
-
-use core_foundation_sys::string::{CFStringGetCString, CFStringGetCStringPtr, CFStringRef};
-use sys;
 use sys::{
-    kAudioDevicePropertyDeviceNameCFString,
-    kAudioDevicePropertyScopeOutput, kAudioHardwareNoError, kAudioObjectPropertyElementMaster,
-    kAudioOutputUnitProperty_CurrentDevice,
-    kAudioOutputUnitProperty_EnableIO, kCFStringEncodingUTF8, AudioDeviceID,
-    AudioObjectGetPropertyData, AudioObjectPropertyAddress,
+    kAudioOutputUnitProperty_CurrentDevice, kAudioOutputUnitProperty_EnableIO, AudioDeviceID,
     AudioStreamBasicDescription,
 };
 
@@ -97,63 +86,7 @@ fn test_get_audio_device_ids_for_scope() {
 
 pub use super::macos_device_scope::get_audio_device_supports_scope;
 
-/// Get the device name for a device id.
-pub fn get_device_name(device_id: AudioDeviceID) -> Result<String, Error> {
-    let property_address = AudioObjectPropertyAddress {
-        mSelector: kAudioDevicePropertyDeviceNameCFString,
-        mScope: kAudioDevicePropertyScopeOutput,
-        mElement: kAudioObjectPropertyElementMaster,
-    };
-
-    macro_rules! try_status_or_return {
-        ($status:expr) => {
-            if $status != kAudioHardwareNoError as i32 {
-                return Err(Error::Unknown($status));
-            }
-        };
-    }
-
-    let device_name: CFStringRef = null();
-    let data_size = mem::size_of::<CFStringRef>();
-    let c_str = unsafe {
-        let status = AudioObjectGetPropertyData(
-            device_id,
-            &property_address as *const _,
-            0,
-            null(),
-            &data_size as *const _ as *mut _,
-            &device_name as *const _ as *mut _,
-        );
-        try_status_or_return!(status);
-
-        let c_string: *const c_char = CFStringGetCStringPtr(device_name, kCFStringEncodingUTF8);
-        if c_string.is_null() {
-            let status = AudioObjectGetPropertyData(
-                device_id,
-                &property_address as *const _,
-                0,
-                null(),
-                &data_size as *const _ as *mut _,
-                &device_name as *const _ as *mut _,
-            );
-            try_status_or_return!(status);
-            let mut buf: [i8; 255] = [0; 255];
-            let result = CFStringGetCString(
-                device_name,
-                buf.as_mut_ptr(),
-                buf.len() as _,
-                kCFStringEncodingUTF8,
-            );
-            if result == 0 {
-                return Err(Error::Unknown(result as i32));
-            }
-            let name: &CStr = CStr::from_ptr(buf.as_ptr());
-            return Ok(name.to_str().unwrap().to_owned());
-        }
-        CStr::from_ptr(c_string as *mut _)
-    };
-    Ok(c_str.to_string_lossy().into_owned())
-}
+pub use super::macos_device_name::get_device_name;
 
 pub use super::macos_sample_rate::set_device_sample_rate;
 

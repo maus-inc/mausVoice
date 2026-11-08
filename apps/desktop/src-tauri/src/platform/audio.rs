@@ -122,6 +122,10 @@ mod coreaudio_macos_device_scope_adapter;
 mod coreaudio_macos_hog_adapter;
 
 #[cfg(test)]
+#[path = "../../../../../patches/coreaudio-rs-0.11.3/tests/macos_device_name_adapter.rs"]
+mod coreaudio_macos_device_name_adapter;
+
+#[cfg(test)]
 #[path = "../../../../../patches/cpal-0.15.3/tests/macos_input_lifetime.rs"]
 mod cpal_macos_input_lifetime;
 

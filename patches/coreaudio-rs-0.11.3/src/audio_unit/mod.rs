@@ -49,6 +49,17 @@ mod macos_device_scope;
 #[cfg(target_os = "macos")]
 mod macos_hog;
 #[cfg(target_os = "macos")]
+mod macos_device_name;
+#[cfg(target_os = "macos")]
+mod name_cf {
+    pub use crate::sys::kCFStringEncodingUTF8;
+    pub use core_foundation_sys::base::CFRelease;
+    pub use core_foundation_sys::string::{
+        CFStringGetCString, CFStringGetCStringPtr, CFStringGetLength,
+        CFStringGetMaximumSizeForEncoding, CFStringRef,
+    };
+}
+#[cfg(target_os = "macos")]
 use crate::{error::Error as ListenerError, sys as listener_sys};
 
 pub mod audio_format;

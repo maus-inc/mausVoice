@@ -17,6 +17,12 @@ When initialization fails after instance creation, the constructor now calls
 fails. CPAL maps that result to its capture ownership guard. Portable tests
 exercise the ordering and error propagation, but do not call Apple APIs.
 
+The macOS device-name query validates its returned CoreFoundation pointer,
+releases successfully returned strings, and sizes its UTF-8 conversion buffer
+instead of imposing a 255-byte limit. Simulated CoreAudio/CoreFoundation tests
+cover direct and long names, malformed data and conversion errors. Real macOS
+names and CoreFoundation ownership behavior have not been exercised here.
+
 The macOS hog-mode helpers pass correctly sized mutable PID storage to
 CoreAudio and validate returned lengths. A simulated API tests toggling,
 malformed output and native errors; hardware behavior remains unverified.
