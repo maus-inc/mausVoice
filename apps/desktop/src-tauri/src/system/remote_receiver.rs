@@ -773,8 +773,8 @@ impl ConnectionMessageHandler<'_> {
 /// [`MAX_FRAME_BYTES`].
 ///
 /// The cap is per frame rather than per connection, so a well-behaved peer keeps
-/// its connection for as long as it sends ordinary frames. A frame that hits the
-/// cap fails the connection instead of being truncated and parsed.
+/// its connection for as long as it sends ordinary frames. An oversized or
+/// unterminated frame fails the connection instead of being parsed.
 async fn read_frame<R: tokio::io::AsyncBufRead + Unpin>(
     reader: &mut R,
     frame: &mut Vec<u8>,
@@ -787,24 +787,25 @@ async fn read_frame<R: tokio::io::AsyncBufRead + Unpin>(
                 .await
                 .map_err(|err| format!("Failed to read receiver message: {err}"))?;
             if available.is_empty() {
-                // A peer that disconnects mid-frame leaves a partial frame; the
-                // caller reports it as a parse failure rather than losing it.
                 if frame.is_empty() {
                     return Ok(None);
                 }
-                (true, 0)
-            } else if let Some(index) = available.iter().position(|byte| *byte == b'\n') {
-                frame.extend_from_slice(&available[..index]);
-                (true, index + 1)
-            } else {
-                frame.extend_from_slice(available);
-                (false, available.len())
+                return Err("Remote receiver frame ended before its newline".to_string());
             }
+            let newline = available.iter().position(|byte| *byte == b'\n');
+            let count = newline.unwrap_or(available.len());
+            // Reserve one byte for the required newline before growing the buffer.
+            if count
+                > MAX_FRAME_BYTES
+                    .saturating_sub(1)
+                    .saturating_sub(frame.len())
+            {
+                return Err("Remote receiver frame exceeds the size limit".to_string());
+            }
+            frame.extend_from_slice(&available[..count]);
+            (newline.is_some(), count + usize::from(newline.is_some()))
         };
         reader.consume(consumed);
-        if frame.len() > MAX_FRAME_BYTES {
-            return Err("Remote receiver frame exceeds the size limit".to_string());
-        }
         if complete {
             break;
         }
@@ -971,7 +972,54 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn frames_are_read_one_line_at_a_time_including_a_partial_last_frame() {
+    async fn a_complete_json_value_without_a_newline_is_not_a_frame() {
+        let mut reader: &[u8] = b"{\"text\":\"partial\"}";
+        let err = read_frame(&mut reader, &mut Vec::new())
+            .await
+            .expect_err("an unterminated frame is refused even when it contains valid JSON");
+        assert!(err.contains("newline"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn frame_limit_includes_the_newline() {
+        let mut at_limit = vec![b'a'; MAX_FRAME_BYTES - 1];
+        at_limit.push(b'\n');
+        let mut reader: &[u8] = &at_limit;
+        let result = read_frame(&mut reader, &mut Vec::new()).await.unwrap();
+        assert_eq!(result.unwrap().len(), MAX_FRAME_BYTES - 1);
+
+        let mut over_limit = vec![b'a'; MAX_FRAME_BYTES];
+        over_limit.push(b'\n');
+        let mut reader: &[u8] = &over_limit;
+        let err = read_frame(&mut reader, &mut Vec::new())
+            .await
+            .expect_err("the newline counts toward the size limit");
+        assert!(err.contains("size limit"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn fragmented_utf8_frame_and_clean_eof_are_handled() {
+        let bytes = "{\"text\":\"café\"}\n".as_bytes();
+        let mut reader = tokio::io::BufReader::with_capacity(2, bytes);
+        let mut frame = Vec::new();
+        assert_eq!(
+            read_frame(&mut reader, &mut frame).await.unwrap(),
+            Some("{\"text\":\"café\"}".to_string())
+        );
+        assert_eq!(read_frame(&mut reader, &mut frame).await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn oversized_read_does_not_copy_unbounded_input_into_the_frame() {
+        let oversized = vec![b'a'; MAX_FRAME_BYTES * 2];
+        let mut reader: &[u8] = &oversized;
+        let mut frame = Vec::new();
+        assert!(read_frame(&mut reader, &mut frame).await.is_err());
+        assert!(frame.is_empty());
+    }
+
+    #[tokio::test]
+    async fn frames_are_read_one_line_at_a_time_and_reject_a_partial_last_frame() {
         let mut reader: &[u8] = b"{\"a\":1}\n{\"b\":2}\n{\"c\":";
         let mut frame = Vec::new();
 
@@ -983,11 +1031,10 @@ mod tests {
             read_frame(&mut reader, &mut frame).await.unwrap(),
             Some("{\"b\":2}".to_string())
         );
-        // A peer that disconnects mid-frame leaves the parse to the caller.
-        assert_eq!(
-            read_frame(&mut reader, &mut frame).await.unwrap(),
-            Some("{\"c\":".to_string())
-        );
+        let err = read_frame(&mut reader, &mut frame)
+            .await
+            .expect_err("a partial final frame is refused");
+        assert!(err.contains("newline"), "{err}");
         assert_eq!(read_frame(&mut reader, &mut frame).await.unwrap(), None);
     }
 

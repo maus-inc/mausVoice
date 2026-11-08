@@ -27,6 +27,13 @@ mebibytes. The cap exists because authorization happens after parsing: a peer
 that never sends a newline could otherwise grow the read buffer until the
 process ran out of memory, and nothing has checked that peer's secret yet.
 
+### Framing correction, 2026-11-08
+
+The four-mebibyte limit includes the newline. The receiver rejects EOF with a
+nonempty, unterminated frame even when those bytes form valid JSON. It checks
+the remaining capacity before copying input into the frame buffer. A clean EOF
+between frames still closes the connection normally.
+
 After that, every `final_text` frame is authorized on its own.
 `authorize_final_text` re-reads the device row inside the same generation guard
 the connection already uses and requires it to still be trusted and to still
