@@ -34,7 +34,7 @@ const BoundHotkeys = ({ action }: { action: string }) => {
     );
   }
 
-  return <HotkeyBadge keys={combo} />;
+  return <HotkeyBadge keys={combo} appearance="3d" />;
 };
 
 /**

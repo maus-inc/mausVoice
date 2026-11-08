@@ -1,22 +1,26 @@
 import { Stack } from "@mui/material";
 import type { SxProps, Theme } from "@mui/material/styles";
-import { getPrettyKeyName } from "../../utils/keyboard.utils";
+import { keycapDashboardSize } from "../../styles/keycap";
+import { getKeycapLegend, getPrettyKeyName } from "../../utils/keyboard.utils";
 import { Keycap } from "./Keycap";
+import { Keycap3d } from "./Keycap3d";
+import { keycapIdentities } from "./keycap-identities";
 
 type HotkeyBadgeProps = {
   keys: string[];
   onClick?: () => void;
+  appearance?: "classic" | "3d";
   sx?: SxProps<Theme>;
 };
 
-export const HotkeyBadge = ({ keys, onClick, sx }: HotkeyBadgeProps) => {
+export const HotkeyBadge = ({
+  keys,
+  onClick,
+  appearance = "classic",
+  sx,
+}: HotkeyBadgeProps) => {
   const comboLabel = keys.map(getPrettyKeyName).join(" + ");
-  const occurrences = new Map<string, number>();
-  const keycaps = keys.map((key) => {
-    const occurrence = occurrences.get(key) ?? 0;
-    occurrences.set(key, occurrence + 1);
-    return { key, identity: `${key}:${occurrence}` };
-  });
+  const keycaps = keycapIdentities(keys);
 
   // Keycaps are decorative spans; the enclosing badge supplies the name and,
   // when clickable, the only interactive control.
@@ -50,11 +54,26 @@ export const HotkeyBadge = ({ keys, onClick, sx }: HotkeyBadgeProps) => {
         ...(Array.isArray(sx) ? sx : [sx]),
       ]}
     >
-      {keycaps.map(({ key, identity }) => (
-        <Keycap key={identity} aria-hidden>
-          {getPrettyKeyName(key)}
-        </Keycap>
-      ))}
+      {keycaps.map(({ key, identity }) =>
+        // Long legends become unreadable on the fixed-size rendered face.
+        appearance === "3d" && getKeycapLegend(key).label.length <= 4 ? (
+          <span
+            key={identity}
+            aria-hidden="true"
+            style={{ display: "inline-flex" }}
+          >
+            <Keycap3d
+              {...getKeycapLegend(key)}
+              view="front"
+              size={keycapDashboardSize}
+            />
+          </span>
+        ) : (
+          <Keycap key={identity} aria-hidden>
+            {getPrettyKeyName(key)}
+          </Keycap>
+        ),
+      )}
     </Stack>
   );
 };

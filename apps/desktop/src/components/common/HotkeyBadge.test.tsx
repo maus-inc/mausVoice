@@ -15,6 +15,8 @@ import {
 
 vi.mock("../../utils/keyboard.utils", () => ({
   getPrettyKeyName: (key: string) => key,
+  getKeycapLegend: (key: string) =>
+    key === "ShiftLeft" ? { label: "⇧", sublabel: "Left" } : { label: key },
 }));
 import { HotkeyBadge } from "./HotkeyBadge";
 
@@ -67,6 +69,51 @@ it.each([
     expect(cap.hasAttribute("role")).toBe(false);
   }
   expect(container.querySelector("button button")).toBeNull();
+});
+
+it("renders the optional 3D dashboard caps inside one named button", () => {
+  const onClick = vi.fn();
+  act(() => {
+    root.render(
+      <ThemeProvider theme={theme}>
+        <HotkeyBadge
+          keys={["ShiftLeft", "KeyK"]}
+          onClick={onClick}
+          appearance="3d"
+        />
+      </ThemeProvider>,
+    );
+  });
+  const button = container.querySelector("button");
+  expect(button?.getAttribute("aria-label")).toBe("ShiftLeft + KeyK");
+  expect(button?.querySelector("button")).toBeNull();
+  const caps = Array.from(
+    button?.querySelectorAll('[data-keycap-view="front"]') ?? [],
+  );
+  expect(caps).toHaveLength(2);
+  expect(caps[0].closest('[aria-hidden="true"]')).not.toBeNull();
+  expect(
+    caps[0].querySelector('[data-keycap-part="sublabel"]')?.textContent,
+  ).toBe("Left");
+  expect(caps[0].querySelector('[data-keycap-part="glyph"]')?.textContent).toBe(
+    "⇧",
+  );
+  act(() => button?.click());
+  expect(onClick).toHaveBeenCalledTimes(1);
+});
+
+it("keeps long legends readable in a 3D badge", () => {
+  act(() => {
+    root.render(
+      <ThemeProvider theme={theme}>
+        <HotkeyBadge keys={["Enter", "KeyK"]} appearance="3d" />
+      </ThemeProvider>,
+    );
+  });
+  const group = container.querySelector('[role="group"]');
+  expect(group?.getAttribute("aria-label")).toBe("Enter + KeyK");
+  expect(group?.textContent).toContain("Enter");
+  expect(group?.querySelectorAll('[data-keycap-view="front"]')).toHaveLength(1);
 });
 
 it("preserves keycap identity when another modifier is inserted or reordered", () => {
