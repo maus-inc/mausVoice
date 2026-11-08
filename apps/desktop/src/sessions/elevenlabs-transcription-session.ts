@@ -20,6 +20,7 @@ import {
   createFinalizeBookkeeper,
   createStartupSettler,
   describeProviderError,
+  settleStreamingFinalization,
 } from "./streaming-session.utils";
 import { getStartupAbortReason } from "./provider-startup.utils";
 
@@ -308,14 +309,13 @@ const startElevenLabsStreaming = async (
 
     const finalize = (): Promise<string> => {
       return new Promise((resolveFinalize, rejectFinalize) => {
-        const settleFinalize = () => {
-          const text = getText();
-          if (sessionError && !text) {
-            rejectFinalize(sessionError);
-          } else {
-            resolveFinalize(text);
-          }
-        };
+        const settleFinalize = () =>
+          settleStreamingFinalization(
+            getText(),
+            sessionError,
+            resolveFinalize,
+            rejectFinalize,
+          );
 
         getLogger().verbose(
           "[ElevenLabs WebSocket] Finalize called, isFinalized:",
@@ -341,13 +341,14 @@ const startElevenLabsStreaming = async (
         );
 
         if (ws && ws.readyState === WebSocket.OPEN) {
-          bookkeeper.begin((text) => {
-            if (sessionError && !text) {
-              rejectFinalize(sessionError);
-            } else {
-              resolveFinalize(text);
-            }
-          });
+          bookkeeper.begin((text) =>
+            settleStreamingFinalization(
+              text,
+              sessionError,
+              resolveFinalize,
+              rejectFinalize,
+            ),
+          );
           bookkeeper.armTimeout(
             6000,
             "Timeout waiting for final transcript, length:",

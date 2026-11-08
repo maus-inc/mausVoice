@@ -14,6 +14,7 @@ import {
   createBufferedChunkWriter,
   createStartupSettler,
   describeProviderError,
+  settleStreamingFinalization,
 } from "./streaming-session.utils";
 import { getStartupAbortReason } from "./provider-startup.utils";
 
@@ -75,14 +76,13 @@ export const startAssemblyAIStreaming = async (
 
     const finalize = (): Promise<string> => {
       return new Promise((resolveFinalize, rejectFinalize) => {
-        const settleFinalize = () => {
-          const text = getText();
-          if (sessionError && !text) {
-            rejectFinalize(sessionError);
-          } else {
-            resolveFinalize(text);
-          }
-        };
+        const settleFinalize = () =>
+          settleStreamingFinalization(
+            getText(),
+            sessionError,
+            resolveFinalize,
+            rejectFinalize,
+          );
 
         getLogger().info(
           `[${LOGGER_PREFIX}] Finalize called, isFinalized:`,

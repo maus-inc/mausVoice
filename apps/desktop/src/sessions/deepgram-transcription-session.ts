@@ -16,6 +16,7 @@ import {
   createBufferedChunkWriter,
   createFinalizeBookkeeper,
   createStartupSettler,
+  settleStreamingFinalization,
 } from "./streaming-session.utils";
 import { getStartupAbortReason } from "./provider-startup.utils";
 
@@ -73,19 +74,13 @@ const startDeepgramStreaming = async (
 
   const finalize = (): Promise<string> => {
     return new Promise((resolveFinalize, rejectFinalize) => {
-      // A rejection that landed after startup left the socket unable to
-      // deliver a transcript. Settling such a finalize with "" would produce a
-      // warning-free empty result that bypasses failed-audio recovery, so a
-      // rejected session with no transcript settles as a failure instead.
-      // Transcript text already accumulated is still returned.
-      const settleFinalize = () => {
-        const text = getText();
-        if (sessionError && !text) {
-          rejectFinalize(sessionError);
-          return;
-        }
-        resolveFinalize(text);
-      };
+      const settleFinalize = () =>
+        settleStreamingFinalization(
+          getText(),
+          sessionError,
+          resolveFinalize,
+          rejectFinalize,
+        );
 
       getLogger().verbose(
         `[${LOGGER_PREFIX}] Finalize called, isFinalized:`,

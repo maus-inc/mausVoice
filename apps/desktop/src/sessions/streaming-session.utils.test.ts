@@ -19,6 +19,7 @@ import {
   createFinalizeBookkeeper,
   createStartupSettler,
   describeProviderError,
+  settleStreamingFinalization,
   type StartupSettler,
 } from "./streaming-session.utils";
 
@@ -74,6 +75,42 @@ describe("describeProviderError", () => {
         "provider rejected the session",
       ),
     ).toBe("provider rejected the session");
+  });
+});
+
+describe("settleStreamingFinalization", () => {
+  it("rejects the original provider error when no text was received", () => {
+    const resolve = vi.fn();
+    const reject = vi.fn();
+    const error = new Error("provider rejected the stream");
+    settleStreamingFinalization("", error, resolve, reject);
+    expect(reject).toHaveBeenCalledOnce();
+    expect(reject).toHaveBeenCalledWith(error);
+    expect(resolve).not.toHaveBeenCalled();
+  });
+
+  it.each(["", "partial transcript"])(
+    "resolves transcript %j without an error",
+    (text) => {
+      const resolve = vi.fn();
+      const reject = vi.fn();
+      settleStreamingFinalization(text, null, resolve, reject);
+      expect(resolve).toHaveBeenCalledWith(text);
+      expect(reject).not.toHaveBeenCalled();
+    },
+  );
+
+  it("preserves an accumulated transcript even after an error", () => {
+    const resolve = vi.fn();
+    const reject = vi.fn();
+    settleStreamingFinalization(
+      "partial transcript",
+      new Error("failed"),
+      resolve,
+      reject,
+    );
+    expect(resolve).toHaveBeenCalledWith("partial transcript");
+    expect(reject).not.toHaveBeenCalled();
   });
 });
 
