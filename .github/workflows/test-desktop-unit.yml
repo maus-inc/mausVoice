@@ -36,6 +36,7 @@ on:
       # of any desktop source change, and a guard that silently stops running is
       # the more expensive failure -- it is invisible until it matters.
       - "scripts/ci/check-workspace-hygiene.test.mjs"
+      - "scripts/ci/cargo-lock-builds.test.mjs"
       - "scripts/ci/dev-surface-contracts.test.mjs"
       - "scripts/ci/dev-surface-config.mjs"
       - "scripts/ci/alsa-fault-tests.test.mjs"
@@ -80,6 +81,8 @@ jobs:
             pnpm-lock.yaml
       - name: Test CI diagnostics
         run: node --test scripts/ci/run-with-diagnostics.test.mjs
+      - name: Test Cargo lock enforcement in builds
+        run: node --test scripts/ci/cargo-lock-builds.test.mjs
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Test the dev surface config guards
