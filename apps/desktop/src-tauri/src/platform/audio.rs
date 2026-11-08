@@ -102,6 +102,10 @@ mod coreaudio_input_buffer;
 mod coreaudio_macos_listener_adapter;
 
 #[cfg(test)]
+#[path = "../../../../../patches/coreaudio-rs-0.11.3/tests/macos_devices_adapter.rs"]
+mod coreaudio_macos_devices_adapter;
+
+#[cfg(test)]
 #[path = "../../../../../patches/cpal-0.15.3/tests/macos_input_lifetime.rs"]
 mod cpal_macos_input_lifetime;
 

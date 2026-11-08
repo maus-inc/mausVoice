@@ -17,6 +17,12 @@ When initialization fails after instance creation, the constructor now calls
 fails. CPAL maps that result to its capture ownership guard. Portable tests
 exercise the ordering and error propagation, but do not call Apple APIs.
 
+The macOS device-ID queries pass mutable output storage to CoreAudio, initialize
+allocated IDs, and validate returned byte counts before exposing them. A shorter
+valid result is truncated; malformed or oversized lengths return an error. A
+portable simulated API exercises the queries, but does not replace physical
+macOS device testing.
+
 The macOS `RateListener` and `AliveListener` use non-reused registry tokens
 instead of pointers to movable listener objects. Late callbacks after removal
 are inert, and an in-flight callback retains its own state even if removal fails.

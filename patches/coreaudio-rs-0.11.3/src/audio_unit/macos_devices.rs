@@ -1,0 +1,105 @@
+//! Device ID queries with CoreAudio-owned output lengths.
+use super::{listener_sys as sys, ListenerError as Error, Scope};
+use std::mem;
+use std::ptr::null;
+use sys::{
+    kAudioHardwareNoError, kAudioHardwarePropertyDefaultInputDevice,
+    kAudioHardwarePropertyDefaultOutputDevice, kAudioHardwarePropertyDevices,
+    kAudioObjectPropertyElementMaster, kAudioObjectPropertyScopeGlobal,
+    kAudioObjectPropertyScopeInput, kAudioObjectPropertyScopeOutput, kAudioObjectSystemObject,
+    AudioDeviceID, AudioObjectPropertyAddress,
+};
+
+/// Get the default input or output device identifier.
+pub fn get_default_device_id(input: bool) -> Option<AudioDeviceID> {
+    let selector = if input {
+        kAudioHardwarePropertyDefaultInputDevice
+    } else {
+        kAudioHardwarePropertyDefaultOutputDevice
+    };
+    let address = AudioObjectPropertyAddress {
+        mSelector: selector,
+        mScope: kAudioObjectPropertyScopeGlobal,
+        mElement: kAudioObjectPropertyElementMaster,
+    };
+    let mut id: AudioDeviceID = 0;
+    let mut size = mem::size_of::<AudioDeviceID>() as u32;
+    let status = unsafe {
+        sys::AudioObjectGetPropertyData(
+            kAudioObjectSystemObject,
+            &address,
+            0,
+            null(),
+            &mut size,
+            &mut id as *mut _ as *mut _,
+        )
+    };
+    if status != kAudioHardwareNoError as i32 || size != mem::size_of::<AudioDeviceID>() as u32 {
+        return None;
+    }
+    Some(id)
+}
+
+/// List audio device identifiers visible to the given scope.
+pub fn get_audio_device_ids_for_scope(scope: Scope) -> Result<Vec<AudioDeviceID>, Error> {
+    let scope = match scope {
+        Scope::Input => kAudioObjectPropertyScopeInput,
+        Scope::Output => kAudioObjectPropertyScopeOutput,
+        _ => kAudioObjectPropertyScopeGlobal,
+    };
+    let address = AudioObjectPropertyAddress {
+        mSelector: kAudioHardwarePropertyDevices,
+        mScope: scope,
+        mElement: kAudioObjectPropertyElementMaster,
+    };
+    let mut size = 0_u32;
+    let status = unsafe {
+        sys::AudioObjectGetPropertyDataSize(
+            kAudioObjectSystemObject,
+            &address,
+            0,
+            null(),
+            &mut size,
+        )
+    };
+    if status != kAudioHardwareNoError as i32 {
+        return Err(Error::Unknown(status));
+    }
+    let item_size = mem::size_of::<AudioDeviceID>() as u32;
+    if size % item_size != 0 {
+        return Err(Error::Unspecified);
+    }
+    if size == 0 {
+        return Ok(Vec::new());
+    }
+    let capacity = size;
+    let count = (size / item_size) as usize;
+    let mut devices: Vec<AudioDeviceID> = Vec::new();
+    devices
+        .try_reserve_exact(count)
+        .map_err(|_| Error::Unspecified)?;
+    devices.resize(count, 0);
+    let status = unsafe {
+        sys::AudioObjectGetPropertyData(
+            kAudioObjectSystemObject,
+            &address,
+            0,
+            null(),
+            &mut size,
+            devices.as_mut_ptr().cast(),
+        )
+    };
+    if status != kAudioHardwareNoError as i32 {
+        return Err(Error::Unknown(status));
+    }
+    if size > capacity || size % item_size != 0 {
+        return Err(Error::Unspecified);
+    }
+    devices.truncate((size / item_size) as usize);
+    Ok(devices)
+}
+
+/// List all audio device identifiers.
+pub fn get_audio_device_ids() -> Result<Vec<AudioDeviceID>, Error> {
+    get_audio_device_ids_for_scope(Scope::Global)
+}

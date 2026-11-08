@@ -15,17 +15,14 @@ use sys::{
     kAudioDevicePropertyAvailableNominalSampleRates, kAudioDevicePropertyDeviceNameCFString,
     kAudioDevicePropertyHogMode, kAudioDevicePropertyNominalSampleRate,
     kAudioDevicePropertyScopeOutput, kAudioDevicePropertyStreamConfiguration,
-    kAudioHardwareNoError, kAudioHardwarePropertyDefaultInputDevice,
-    kAudioHardwarePropertyDefaultOutputDevice, kAudioHardwarePropertyDevices,
-    kAudioObjectPropertyElementMaster, kAudioObjectPropertyElementWildcard,
+    kAudioHardwareNoError, kAudioObjectPropertyElementMaster, kAudioObjectPropertyElementWildcard,
     kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyScopeInput,
-    kAudioObjectPropertyScopeOutput, kAudioObjectSystemObject,
-    kAudioOutputUnitProperty_CurrentDevice, kAudioOutputUnitProperty_EnableIO,
-    kAudioStreamPropertyAvailablePhysicalFormats, kAudioStreamPropertyPhysicalFormat,
-    kCFStringEncodingUTF8, AudioDeviceID, AudioObjectGetPropertyData,
-    AudioObjectGetPropertyDataSize, AudioObjectPropertyAddress, AudioObjectPropertyScope,
-    AudioObjectSetPropertyData, AudioStreamBasicDescription, AudioStreamRangedDescription,
-    AudioValueRange,
+    kAudioObjectPropertyScopeOutput, kAudioOutputUnitProperty_CurrentDevice,
+    kAudioOutputUnitProperty_EnableIO, kAudioStreamPropertyAvailablePhysicalFormats,
+    kAudioStreamPropertyPhysicalFormat, kCFStringEncodingUTF8, AudioDeviceID,
+    AudioObjectGetPropertyData, AudioObjectGetPropertyDataSize, AudioObjectPropertyAddress,
+    AudioObjectPropertyScope, AudioObjectSetPropertyData, AudioStreamBasicDescription,
+    AudioStreamRangedDescription, AudioValueRange,
 };
 
 use crate::audio_unit::audio_format::{AudioFormat, LinearPcmFlags};
@@ -33,37 +30,9 @@ use crate::audio_unit::sample_format::SampleFormat;
 use crate::audio_unit::stream_format::StreamFormat;
 use crate::audio_unit::{AudioUnit, Element, IOType, Scope};
 
-/// Helper function to get the device id of the default input or output device.
-pub fn get_default_device_id(input: bool) -> Option<AudioDeviceID> {
-    let selector = if input {
-        kAudioHardwarePropertyDefaultInputDevice
-    } else {
-        kAudioHardwarePropertyDefaultOutputDevice
-    };
-    let property_address = AudioObjectPropertyAddress {
-        mSelector: selector,
-        mScope: kAudioObjectPropertyScopeGlobal,
-        mElement: kAudioObjectPropertyElementMaster,
-    };
-
-    let audio_device_id: AudioDeviceID = 0;
-    let data_size = mem::size_of::<AudioDeviceID>();
-    let status = unsafe {
-        AudioObjectGetPropertyData(
-            kAudioObjectSystemObject,
-            &property_address as *const _,
-            0,
-            null(),
-            &data_size as *const _ as *mut _,
-            &audio_device_id as *const _ as *mut _,
-        )
-    };
-    if status != kAudioHardwareNoError as i32 {
-        return None;
-    }
-
-    Some(audio_device_id)
-}
+pub use super::macos_devices::{
+    get_audio_device_ids, get_audio_device_ids_for_scope, get_default_device_id,
+};
 
 /// Find the device id for a device name.
 pub fn get_device_id_from_name(name: &str) -> Option<AudioDeviceID> {
@@ -111,62 +80,6 @@ pub fn audio_unit_from_device_id(
     )?;
 
     Ok(audio_unit)
-}
-
-/// List all audio device ids on the system.
-pub fn get_audio_device_ids_for_scope(scope: Scope) -> Result<Vec<AudioDeviceID>, Error> {
-    let dev_scope = match scope {
-        Scope::Input => kAudioObjectPropertyScopeInput,
-        Scope::Output => kAudioObjectPropertyScopeOutput,
-        _ => kAudioObjectPropertyScopeGlobal,
-    };
-    let property_address = AudioObjectPropertyAddress {
-        mSelector: kAudioHardwarePropertyDevices,
-        mScope: dev_scope,
-        mElement: kAudioObjectPropertyElementMaster,
-    };
-
-    macro_rules! try_status_or_return {
-        ($status:expr) => {
-            if $status != kAudioHardwareNoError as i32 {
-                return Err(Error::Unknown($status));
-            }
-        };
-    }
-
-    let data_size = 0u32;
-    let status = unsafe {
-        AudioObjectGetPropertyDataSize(
-            kAudioObjectSystemObject,
-            &property_address as *const _,
-            0,
-            null(),
-            &data_size as *const _ as *mut _,
-        )
-    };
-    try_status_or_return!(status);
-
-    let device_count = data_size / mem::size_of::<AudioDeviceID>() as u32;
-    let mut audio_devices = vec![];
-    audio_devices.reserve_exact(device_count as usize);
-    unsafe { audio_devices.set_len(device_count as usize) };
-
-    let status = unsafe {
-        AudioObjectGetPropertyData(
-            kAudioObjectSystemObject,
-            &property_address as *const _,
-            0,
-            null(),
-            &data_size as *const _ as *mut _,
-            audio_devices.as_mut_ptr() as *mut _,
-        )
-    };
-    try_status_or_return!(status);
-    Ok(audio_devices)
-}
-
-pub fn get_audio_device_ids() -> Result<Vec<AudioDeviceID>, Error> {
-    get_audio_device_ids_for_scope(Scope::Global)
 }
 
 #[test]
