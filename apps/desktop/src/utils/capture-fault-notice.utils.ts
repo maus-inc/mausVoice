@@ -59,24 +59,24 @@ const MEANINGFUL_GAP_MS = 100;
 /**
  * The notice for a stop response, or `null` when nothing needs saying.
  *
+ * Four cases, in order:
+ *
+ * - No fault token: `null`. Nothing was reported, so nothing is claimed.
+ * - A fault with no expected length: `ended_early`. The host said the capture
+ *   died and the body does not say what it should have contained, so the wording
+ *   must not invent a figure.
+ * - A fault with an expected length and nothing missing: `null`. The host's error
+ *   callback can land after the last block was already delivered, so a `fatal`
+ *   token does not prove audio was lost. Telling the user to check a cable for a
+ *   whole recording is a false alarm on a working microphone, which costs more
+ *   than the report is worth.
+ * - Otherwise `capture_faulted`, with both figures.
+ *
  * `expected` is clamped up to `captured`: a body claiming less expected than
  * captured time would read as "stopped after 4.0 of 1.2 seconds", which is
  * nonsense on its face and undermines every other number in the message. The
  * clamp only ever widens to the captured figure, so a wrong value can make the
  * message uninformative but never contradictory.
- *
- * A fault with no lengths at all becomes `ended_early` rather than a message
- * with two zeroes: "stopped after 0.0 of 0.0 seconds" states that nothing was
- * captured, which may be false.
- *
- * A fault whose two lengths are effectively equal is the same case. The host's
- * error callback can land after the last block has already been delivered — the
- * stream dies, the tail is still buffered, and the fault is reported before the
- * stop path reads it — so a `fatal` token does not prove audio was lost. The
- * detailed message would then read "stopped recording after 6.0 of 6.0
- * seconds", which contradicts itself and tells the user to check a cable for a
- * recording that is whole. Those become `ended_early`, whose wording claims only
- * that the capture ended abnormally.
  */
 export const captureFaultNotice = (
   audio: Pick<
@@ -88,21 +88,20 @@ export const captureFaultNotice = (
     return null;
   }
   const capturedMs = millis(audio.capturedMs);
-  const expectedMs = Math.max(capturedMs, millis(audio.expectedMs));
-  if (expectedMs - capturedMs < MEANINGFUL_GAP_MS) {
-    // Still reports whatever was measured, so a caller that logs the values is
-    // not told the recording was empty. Only the wording drops them, because
-    // the `ended_early` message has no placeholders.
+  if (millis(audio.expectedMs) === 0) {
+    // A fault with no expected length: the loss is unknown, not zero. The
+    // wording has to stand without figures, and two zeroes would instead assert
+    // that nothing was captured, which may be false.
     return {
       kind: "ended_early",
-      logMessage:
-        capturedMs === 0 && expectedMs === 0
-          ? "capture faulted with no length reported"
-          : `capture faulted with nothing missing (${Math.round(
-              capturedMs,
-            )}ms of ${Math.round(expectedMs)}ms)`,
-      values: { captured: seconds(capturedMs), expected: seconds(expectedMs) },
+      logMessage: "capture faulted with no expected length reported",
+      values: { captured: seconds(capturedMs), expected: seconds(capturedMs) },
     };
+  }
+  const expectedMs = Math.max(capturedMs, millis(audio.expectedMs));
+  if (expectedMs - capturedMs < MEANINGFUL_GAP_MS) {
+    // Nothing a person could notice is missing, so there is nothing to say.
+    return null;
   }
   return {
     kind: "capture_faulted",

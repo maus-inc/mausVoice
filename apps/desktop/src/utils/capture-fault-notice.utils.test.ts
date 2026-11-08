@@ -31,16 +31,16 @@ describe("captureFaultNotice", () => {
         captureFault: "fatal",
         capturedMs: 6_000,
         expectedMs: 6_000,
-      })?.kind,
-    ).toBe("ended_early");
+      }),
+    ).toBeNull();
     // Rounding to a tenth of a second hides anything under this.
     expect(
       captureFaultNotice({
         captureFault: "fatal",
         capturedMs: 6_000,
         expectedMs: 6_049,
-      })?.kind,
-    ).toBe("ended_early");
+      }),
+    ).toBeNull();
     // A visible gap keeps the two figures.
     expect(
       captureFaultNotice({
@@ -65,8 +65,8 @@ describe("captureFaultNotice", () => {
       })?.kind,
     ).toBe("ended_early");
     // A lone captured length cannot show a gap, so it gets the generic wording
-    // rather than "stopped after 0.9 of 0.9 seconds". This assertion used to
-    // expect the detailed message, which was the contradiction itself.
+    // rather than the detailed one, which needs a second figure. This assertion
+    // used to expect the detailed message, which was the contradiction itself.
     expect(
       captureFaultNotice({ captureFault: "fatal", capturedMs: 900 })?.kind,
     ).toBe("ended_early");
@@ -102,14 +102,21 @@ describe("captureFaultNotice", () => {
   });
 
   it("never reports less expected time than captured", () => {
+    // An expected figure below the captured one is nonsense, and every path that
+    // still produces a notice has to clamp it rather than print "1.2 of 4.0".
     const notice = captureFaultNotice({
       captureFault: "fatal",
       capturedMs: 4_000,
       expectedMs: 1_200,
     });
 
-    // Clamped up, so the message cannot contradict itself.
-    expect(notice?.values).toEqual({ captured: "4.0", expected: "4.0" });
+    // Nothing is missing, so there is no notice to contradict itself.
+    expect(notice).toBeNull();
+
+    // The generic path still reports both figures, and clamps there.
+    expect(
+      captureFaultNotice({ captureFault: "fatal", capturedMs: 4_000 })?.values,
+    ).toEqual({ captured: "4.0", expected: "4.0" });
   });
 
   it("rejects a negative or non-finite length", () => {
