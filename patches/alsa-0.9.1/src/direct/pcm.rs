@@ -397,6 +397,38 @@ impl<S: MmapSample, D: MmapDir> MmapIO<S, D> {
 
 pub (crate) fn new_mmap<S: MmapSample, D: MmapDir>(p: &pcm::PCM) -> Result<MmapIO<S, D>> { MmapIO::new(p) }
 
+fn advance_appl_ptr(appl_ptr: Frames, frames: Frames, boundary: Frames) -> Frames {
+    assert!(boundary > 0 && appl_ptr >= 0 && appl_ptr < boundary && frames >= 0,
+        "invalid ALSA mmap commit");
+    let advance = if frames >= boundary { frames % boundary } else { frames };
+    let until_wrap = boundary - appl_ptr;
+    if advance >= until_wrap { advance - until_wrap } else { appl_ptr + advance }
+}
+
+#[test]
+fn mmap_commit_wraps_once_at_the_actual_boundary() {
+    assert_eq!(advance_appl_ptr(95, 3, 100), 98);
+    assert_eq!(advance_appl_ptr(98, 2, 100), 0);
+    assert_eq!(advance_appl_ptr(99, 3, 100), 2);
+    assert_eq!(advance_appl_ptr(0, 0, 100), 0);
+    assert_eq!(advance_appl_ptr(99, 102, 100), 1);
+    assert_eq!(advance_appl_ptr(Frames::MAX - 2, 1, Frames::MAX), Frames::MAX - 1);
+    assert_eq!(advance_appl_ptr(Frames::MAX - 2, 4, Frames::MAX), 2);
+    for boundary in 1..64 {
+        for current in 0..boundary {
+            for frames in 0..(boundary * 3) {
+                assert_eq!(advance_appl_ptr(current, frames, boundary), (current + frames) % boundary);
+            }
+        }
+    }
+}
+
+#[test]
+#[should_panic(expected = "invalid ALSA mmap commit")]
+fn mmap_commit_rejects_negative_advances() {
+    advance_appl_ptr(5, -1, 100);
+}
+
 impl<S, D: MmapDir> MmapIO<S, D> {
     /// Read current status
     pub fn status(&self) -> &Status { &self.ss }
@@ -428,10 +460,9 @@ impl<S, D: MmapDir> MmapIO<S, D> {
     /// Notifies the kernel that frames have now been read / written by the application
     ///
     /// This will allow the kernel to write new data into this part of the buffer.
+    /// Panics if `v` is negative or ALSA reports a pointer outside its boundary.
     pub fn commit(&self, v: Frames) {
-        let mut z = self.appl_ptr() + v;
-        if z + v >= self.boundary() { z -= self.boundary() };
-        self.c.set_appl_ptr(z)
+        self.c.set_appl_ptr(advance_appl_ptr(self.appl_ptr(), v, self.boundary()))
     }
 
     /// Number of frames available to read / write.

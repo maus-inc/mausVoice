@@ -30,3 +30,7 @@ verify the configured PCM format. Primitive audio samples implement it; custom
 sample types must guarantee that every bit pattern is valid and that their
 layout matches the declared format. This intentionally narrows a previously
 unsound public API.
+
+Direct mmap commits now advance the application pointer once and wrap at the
+actual ALSA boundary without signed overflow. Invalid negative advances or
+out-of-range pointers fail before they can be written to the driver.
