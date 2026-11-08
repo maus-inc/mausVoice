@@ -1,6 +1,6 @@
 # Edge cases for the warm microphone, and how each one is checked
 
-Sixty-three classes of edge case, grouped by the thing they stress. Each row names
+Sixty-six classes of edge case, grouped by the thing they stress. Each row names
 the case, what the correct behaviour is, and how it is checked. The last column
 is the point of the table: it says whether a test would notice the behaviour
 changing, and if not, what would.
@@ -121,6 +121,9 @@ successful-looking result. The classification of those messages is
 | 61 | Two pauses, or a pause resumed twice | The interval is counted once and a repeat call does not restart the clock | Verified — `a_second_pause_does_not_restart_the_first_interval`, `resuming_twice_counts_the_pause_once` |
 | 62 | A faulted stream is restarted | The fault survives the restart: the device is gone, not just the recording | Verified — `a_fault_token_survives_a_restart_of_the_recording` |
 | 63 | A recording that faulted ends with the hold turned on | The dead stream is **not** left warm: it can never serve a press, and holding it keeps the microphone indicator on for a device that cannot record. The next press opens a working one | Inspected — the decision is one line in the stop path and has no separate rule to test; the outcome it prevents (adopting a faulted stream) is row 55, which is tested. Settling this needs a real stream, because closing one requires one |
+| 64 | A faulted recording reaches the user | The stop body carries the fault and both lengths, and the user is told the microphone stopped after N of M seconds instead of being left to blame the app for a short transcript | Verified — `reports the fault and both lengths`, `keeps every sample and none of the trailer as audio`, `says nothing for a recording that did not fault` (TS), `a_faulted_recording_carries_its_lengths_and_a_flag` (Rust) |
+| 65 | An ordinary recording, after the trailer was added | Byte-for-byte the old framing: no trailer, no decode branch, every sample intact | Verified — `a_healthy_recording_is_byte_for_byte_the_old_framing` (Rust), `leaves an ordinary recording with no trailer and no fault`, `does not mistake ordinary audio for a trailer` (TS) |
+| 66 | A faulted body with no lengths, or lengths that contradict each other | A message with no figures rather than "0.0 of 0.0 seconds", and `expected` never below `captured` | Verified — `falls back to a message with no numbers when none were reported`, `never reports less expected time than captured` |
 
 ## What this table does not settle
 

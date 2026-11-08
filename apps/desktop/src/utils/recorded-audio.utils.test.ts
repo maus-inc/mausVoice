@@ -142,3 +142,95 @@ describe("encodeRecordedAudio", () => {
     expect(samples[0]).toBe(0.5);
   });
 });
+
+describe("a capture that faulted mid-recording", () => {
+  /** The body the Rust stop path produces for a faulted capture. */
+  const encodeWithTrailer = (
+    sampleRate: number,
+    samples: number[],
+    capturedMs: number,
+    expectedMs: number,
+  ): ArrayBuffer => {
+    const buffer = new ArrayBuffer(4 + samples.length * 4 + 12);
+    const view = new DataView(buffer);
+    view.setUint32(0, sampleRate, true);
+    samples.forEach((sample, index) =>
+      view.setFloat32(4 + index * 4, sample, true),
+    );
+    const trailer = 4 + samples.length * 4;
+    view.setUint32(trailer, capturedMs, true);
+    view.setUint32(trailer + 4, expectedMs, true);
+    view.setUint32(trailer + 8, 1, true);
+    return buffer;
+  };
+
+  it("reports the fault and both lengths", () => {
+    const decoded = decodeStopRecordingPayload(
+      encodeWithTrailer(16_000, [0.5, -0.5], 1_400, 6_000),
+    );
+
+    expect(decoded.captureFault).toBe("fatal");
+    expect(decoded.capturedMs).toBe(1_400);
+    expect(decoded.expectedMs).toBe(6_000);
+  });
+
+  it("keeps every sample and none of the trailer as audio", () => {
+    const decoded = decodeStopRecordingPayload(
+      encodeWithTrailer(16_000, [0.5, -0.5], 1_400, 6_000),
+    );
+
+    // Reading the trailer without excising it would hand the last 12 bytes to
+    // the decoder as three samples of noise.
+    expect(Array.from(decoded.samples)).toEqual([0.5, -0.5]);
+  });
+
+  it("leaves an ordinary recording with no trailer and no fault", () => {
+    const decoded = decodeStopRecordingPayload(encode(48_000, [0.5, -0.25]));
+
+    // The flag is what distinguishes them; a body whose last word happens to be
+    // a sample value must not be read as a trailer.
+    expect(decoded.captureFault).toBeUndefined();
+    expect(Array.from(decoded.samples)).toEqual([0.5, -0.25]);
+    expect(decoded.samples).toHaveLength(2);
+  });
+
+  it("does not mistake ordinary audio for a trailer", () => {
+    // A last sample whose bit pattern equals the fault flag, with no trailer
+    // behind it. This is the case that makes the flag check insufficient on its
+    // own, so the trailer is only read when there are bytes for it.
+    const buffer = new ArrayBuffer(4 + 4);
+    const view = new DataView(buffer);
+    view.setUint32(0, 48_000, true);
+    view.setUint32(4, 1, true);
+
+    const decoded = decodeStopRecordingPayload(buffer);
+
+    expect(decoded.captureFault).toBeUndefined();
+    expect(decoded.samples).toHaveLength(1);
+  });
+
+  it("keeps the audio when a flags word has no room for its trailer", () => {
+    const buffer = new ArrayBuffer(8);
+    const view = new DataView(buffer);
+    view.setUint32(0, 48_000, true);
+    view.setUint32(4, 1, true);
+
+    const decoded = decodeStopRecordingPayload(buffer);
+
+    // A body too short to hold the trailer it claims is untrusted: the fault is
+    // dropped rather than a sample being sliced off a real recording.
+    expect(decoded.captureFault).toBeUndefined();
+  });
+
+  it("carries the fault through the invoke wrapper", async () => {
+    const { invoke } = await import("@tauri-apps/api/core");
+    vi.mocked(invoke).mockResolvedValueOnce(
+      encodeWithTrailer(16_000, [0.25], 900, 3_000),
+    );
+
+    const decoded = await invokeStopRecording();
+
+    expect(decoded.captureFault).toBe("fatal");
+    expect(decoded.expectedMs).toBe(3_000);
+  });
+});

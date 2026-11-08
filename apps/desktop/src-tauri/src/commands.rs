@@ -301,6 +301,49 @@ pub fn encode_recorded_audio(samples: &[f32], sample_rate: u32) -> Vec<u8> {
     bytes
 }
 
+/// Packs a finished recording with a trailer carrying what the microphone did.
+///
+/// The audio is framed exactly as [`encode_recorded_audio`] frames it, so a
+/// decoder that knows nothing about the trailer still reads the samples
+/// correctly as long as it derives the sample count from the body length. The
+/// trailer is what lets the user be told the difference between a quiet
+/// dictation and a capture that died:
+///
+/// ```text
+/// [sample_rate: u32 LE][samples: f32 LE...][duration_ms: u32 LE]
+///                                         [expected_ms: u32 LE]
+///                                         [flags: u32 LE]
+/// ```
+///
+/// The flags word is the last four bytes and carries [`CAPTURE_FAULT_BIT`] when
+/// the host reported that the stream was gone. A recording without a fault is
+/// byte-for-byte what `encode_recorded_audio` produces, so the common path is
+/// unchanged and an older decoder reads it exactly as before.
+pub fn encode_recorded_audio_with_capture(
+    samples: &[f32],
+    sample_rate: u32,
+    duration_ms: u32,
+    expected_ms: u32,
+    capture_fault: Option<&str>,
+) -> Vec<u8> {
+    let mut bytes = encode_recorded_audio(samples, sample_rate);
+    if capture_fault.is_none() {
+        return bytes;
+    }
+    bytes.extend_from_slice(&duration_ms.to_le_bytes());
+    bytes.extend_from_slice(&expected_ms.to_le_bytes());
+    bytes.extend_from_slice(&CAPTURE_FAULT_BIT.to_le_bytes());
+    bytes
+}
+
+/// Set in the trailer's flags word when the host reported the stream gone.
+///
+/// One bit rather than a string: the token is a closed set, the frontend only
+/// needs to know whether it happened, and a string in the trailer would make the
+/// body self-describing at the cost of a length prefix and a decode branch for a
+/// value with two possibilities.
+pub const CAPTURE_FAULT_BIT: u32 = 1 << 0;
+
 /// Inverse of [`encode_recorded_audio`], for the direction the frontend sends
 /// a recording back (`store_transcription_audio`). One wire format describes a
 /// recording in both directions.
@@ -3690,10 +3733,30 @@ pub async fn stop_recording(
     let recorder = Arc::clone(&recorder);
 
     let bytes = tauri::async_runtime::spawn_blocking(move || match recorder.stop() {
-        Ok(result) => Ok(encode_recorded_audio(
-            &result.audio.samples,
-            result.audio.sample_rate,
-        )),
+        Ok(result) => {
+            // The fault is surfaced on the body as well as in the log: a
+            // recording that ends because the device was unplugged is not the
+            // same event as one that ended because the user let go, and only
+            // the body reaches the code that can tell them apart.
+            let metrics = &result.metrics;
+            if metrics.capture_fault.is_some() {
+                log::warn!(
+                    "stop_recording is returning a faulted capture: {:.0} ms captured of {:.0} ms",
+                    metrics.duration.as_secs_f64() * 1000.0,
+                    metrics.expected_duration.as_secs_f64() * 1000.0
+                );
+            }
+            Ok(encode_recorded_audio_with_capture(
+                &result.audio.samples,
+                result.audio.sample_rate,
+                metrics.duration.as_millis().min(u128::from(u32::MAX)) as u32,
+                metrics
+                    .expected_duration
+                    .as_millis()
+                    .min(u128::from(u32::MAX)) as u32,
+                metrics.capture_fault.as_deref(),
+            ))
+        }
         Err(err) => {
             let not_recording = (*err)
                 .downcast_ref::<crate::errors::RecordingError>()
@@ -7017,6 +7080,49 @@ mod tests {
             vec![0x00, 0x00, 0x00, 0x00],
             "the not-recording body is a bare zero rate"
         );
+    }
+
+    #[test]
+    fn a_healthy_recording_is_byte_for_byte_the_old_framing() {
+        // The trailer is opt-in per recording, not a format change: every
+        // recording that ends the ordinary way must look exactly as it did, or
+        // the frontend pays a decode branch on the common path for nothing.
+        assert_eq!(
+            encode_recorded_audio_with_capture(&[0.5, -1.0], 48_000, 1_234, 1_300, None),
+            encode_recorded_audio(&[0.5, -1.0], 48_000)
+        );
+    }
+
+    #[test]
+    fn a_faulted_recording_carries_its_lengths_and_a_flag() {
+        let bytes = encode_recorded_audio_with_capture(&[0.5], 16_000, 1_400, 6_000, Some("fatal"));
+
+        // Audio first, then the three trailer words, so a decoder that reads the
+        // body as audio cannot mistake the trailer for samples.
+        let mut expected = encode_recorded_audio(&[0.5], 16_000);
+        expected.extend_from_slice(&1_400_u32.to_le_bytes());
+        expected.extend_from_slice(&6_000_u32.to_le_bytes());
+        expected.extend_from_slice(&CAPTURE_FAULT_BIT.to_le_bytes());
+        assert_eq!(bytes, expected);
+        assert_eq!(
+            bytes.len(),
+            encode_recorded_audio(&[0.5], 16_000).len() + 12
+        );
+    }
+
+    #[test]
+    fn the_fault_flag_is_the_last_word_of_the_body() {
+        let bytes =
+            encode_recorded_audio_with_capture(&[0.25, 0.5], 44_100, 900, 4_000, Some("fatal"));
+        let tail = &bytes[bytes.len() - 4..];
+
+        // A decoder locates the trailer from the end of the body, so the flag
+        // has to be the final word rather than first in the trailer.
+        assert_eq!(
+            u32::from_le_bytes([tail[0], tail[1], tail[2], tail[3]]),
+            CAPTURE_FAULT_BIT
+        );
+        assert_eq!(CAPTURE_FAULT_BIT.count_ones(), 1, "one bit, not a mask");
     }
 
     #[test]
