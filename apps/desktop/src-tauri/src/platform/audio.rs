@@ -4233,10 +4233,11 @@ mod cpal_impl {
             stream.play().unwrap();
             data_rx.recv_timeout(Duration::from_secs(2)).unwrap();
             unsafe { arm() };
-            assert!(matches!(
-                error_rx.recv_timeout(Duration::from_secs(2)).unwrap(),
-                cpal::StreamError::DeviceNotAvailable
-            ));
+            let error = error_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+            assert!(
+                matches!(error, cpal::StreamError::DeviceNotAvailable),
+                "expected a device disconnect, got {error:?}"
+            );
             std::thread::sleep(Duration::from_millis(30));
             assert!(error_rx.try_recv().is_err());
             assert_eq!(unsafe { observations() }, 1);
@@ -4271,6 +4272,113 @@ mod cpal_impl {
         #[ignore = "requires ALSA null and the test-only disconnected-state preload"]
         fn cpal_alsa_capture_disconnected_state_stops_worker() {
             check_alsa_capture_disconnect(true);
+        }
+
+        #[cfg(target_os = "linux")]
+        #[test]
+        #[ignore = "requires ALSA null and the test-only disconnect-stage preload"]
+        fn cpal_alsa_disconnect_during_descriptor_fill_stops_worker() {
+            check_alsa_capture_disconnect(false);
+        }
+
+        #[cfg(target_os = "linux")]
+        #[test]
+        #[ignore = "requires ALSA null and the test-only disconnect-stage preload"]
+        fn cpal_alsa_disconnect_during_revents_stops_worker() {
+            check_alsa_capture_disconnect(false);
+        }
+
+        #[cfg(target_os = "linux")]
+        #[test]
+        #[ignore = "requires ALSA null and the test-only disconnect-stage preload"]
+        fn cpal_alsa_disconnect_during_status_stops_worker() {
+            check_alsa_capture_disconnect(false);
+        }
+
+        #[cfg(target_os = "linux")]
+        #[test]
+        #[ignore = "requires ALSA null and the test-only disconnect-stage preload"]
+        fn cpal_alsa_disconnect_during_avail_stops_worker() {
+            check_alsa_capture_disconnect(false);
+        }
+
+        #[cfg(target_os = "linux")]
+        #[test]
+        #[ignore = "requires ALSA null and the test-only disconnect-stage preload"]
+        fn cpal_alsa_disconnect_during_read_stops_worker() {
+            check_alsa_capture_disconnect(false);
+        }
+
+        #[cfg(target_os = "linux")]
+        fn check_alsa_playback_disconnect() {
+            use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+            use std::sync::mpsc;
+            use std::time::Duration;
+
+            let arm = unsafe {
+                libc::dlsym(
+                    libc::RTLD_DEFAULT,
+                    c"maus_test_inject_alsa_disconnect".as_ptr(),
+                )
+            };
+            let observations = unsafe {
+                libc::dlsym(
+                    libc::RTLD_DEFAULT,
+                    c"maus_test_alsa_disconnect_observations".as_ptr(),
+                )
+            };
+            assert!(
+                !arm.is_null() && !observations.is_null(),
+                "disconnect preload required"
+            );
+            let arm: unsafe extern "C" fn() = unsafe { std::mem::transmute(arm) };
+            let observations: unsafe extern "C" fn() -> libc::c_uint =
+                unsafe { std::mem::transmute(observations) };
+            let device = cpal::default_host().default_output_device().unwrap();
+            let supported = device.default_output_config().unwrap();
+            let format = supported.sample_format();
+            let config: cpal::StreamConfig = supported.into();
+            let (data_tx, data_rx) = mpsc::sync_channel(1);
+            let (error_tx, error_rx) = mpsc::channel();
+            let stream = device
+                .build_output_stream_raw(
+                    &config,
+                    format,
+                    move |_, _| {
+                        let _ = data_tx.try_send(());
+                    },
+                    move |error| {
+                        let _ = error_tx.send(error);
+                    },
+                    None,
+                )
+                .unwrap();
+            stream.play().unwrap();
+            data_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+            unsafe { arm() };
+            let error = error_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+            assert!(
+                matches!(error, cpal::StreamError::DeviceNotAvailable),
+                "expected a device disconnect, got {error:?}"
+            );
+            std::thread::sleep(Duration::from_millis(30));
+            assert!(error_rx.try_recv().is_err());
+            assert_eq!(unsafe { observations() }, 1);
+            drop(stream);
+        }
+
+        #[cfg(target_os = "linux")]
+        #[test]
+        #[ignore = "requires ALSA null and the test-only disconnect-stage preload"]
+        fn cpal_alsa_playback_disconnect_during_write_stops_worker() {
+            check_alsa_playback_disconnect();
+        }
+
+        #[cfg(target_os = "linux")]
+        #[test]
+        #[ignore = "requires ALSA null and the test-only disconnect-stage preload"]
+        fn cpal_alsa_playback_disconnect_during_recovery_stops_worker() {
+            check_alsa_playback_disconnect();
         }
 
         #[cfg(target_os = "linux")]

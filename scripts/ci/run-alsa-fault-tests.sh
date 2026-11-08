@@ -76,6 +76,13 @@ rows=(
   "alsa_disconnect||cpal_alsa_capture_disconnect_stops_worker"
   "alsa_disconnect||cpal_alsa_disconnect_preserves_incomplete_recording"
   "alsa_disconnect|MAUS_TEST_DISCONNECTED_STATE=1|cpal_alsa_capture_disconnected_state_stops_worker"
+  "alsa_disconnect|MAUS_TEST_DISCONNECT_STAGE=fill|cpal_alsa_disconnect_during_descriptor_fill_stops_worker"
+  "alsa_disconnect|MAUS_TEST_DISCONNECT_STAGE=revents|cpal_alsa_disconnect_during_revents_stops_worker"
+  "alsa_disconnect|MAUS_TEST_DISCONNECT_STAGE=status|cpal_alsa_disconnect_during_status_stops_worker"
+  "alsa_disconnect|MAUS_TEST_DISCONNECT_STAGE=avail|cpal_alsa_disconnect_during_avail_stops_worker"
+  "alsa_disconnect|MAUS_TEST_DISCONNECT_STAGE=read|cpal_alsa_disconnect_during_read_stops_worker"
+  "alsa_disconnect|MAUS_TEST_DISCONNECT_STAGE=write|cpal_alsa_playback_disconnect_during_write_stops_worker"
+  "alsa_disconnect|MAUS_TEST_DISCONNECT_STAGE=recover|cpal_alsa_playback_disconnect_during_recovery_stops_worker"
   # Capture callback delay and the stale poll that follows a resume.
   "alsa_delayed_callback||cpal_alsa_pause_drains_a_read_before_its_callback"
   "alsa_stale_poll||cpal_alsa_stale_poll_xrun_does_not_restart_after_resume"

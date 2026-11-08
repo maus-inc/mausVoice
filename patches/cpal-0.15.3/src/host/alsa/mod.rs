@@ -789,7 +789,8 @@ fn input_stream_worker(
                 match flow {
                     Ok(PollDescriptorsFlow::XRun) => report_input_xrun(error_callback),
                     Ok(PollDescriptorsFlow::Disconnected) => {
-                        error_callback(StreamError::DeviceNotAvailable)
+                        error_callback(StreamError::DeviceNotAvailable);
+                        return;
                     }
                     Err(err) => error_callback(err.into()),
                     _ => {}
@@ -849,6 +850,10 @@ fn input_stream_worker(
                         }
                     }
                     Ok(InputReadFlow::XRun) => recover_input_xrun(stream, error_callback),
+                    Ok(InputReadFlow::Disconnected) => {
+                        error_callback(StreamError::DeviceNotAvailable);
+                        return;
+                    }
                     Err(err) => error_callback(err.into()),
                 }
             }
@@ -952,11 +957,14 @@ fn output_stream_worker(
                     delay_frames,
                     data_callback,
                 ) {
-                    Ok(should_wait) => {
-                        if !should_wait {
-                            reported_error = false;
-                        }
-                        should_wait
+                    Ok(OutputWriteFlow::Continue) => {
+                        reported_error = false;
+                        false
+                    }
+                    Ok(OutputWriteFlow::Retry) => true,
+                    Ok(OutputWriteFlow::Disconnected) => {
+                        error_callback(StreamError::DeviceNotAvailable);
+                        return;
                     }
                     Err(err) => {
                         if !reported_error {
@@ -1002,6 +1010,12 @@ enum PollDescriptorsFlow {
     XRun,
 }
 
+// ALSA wrappers use positive errno for some calls and negative errno for others.
+fn is_alsa_disconnected(error: &alsa::Error) -> bool {
+    let code = error.errno();
+    code == libc::ENODEV || code == -libc::ENODEV
+}
+
 // This block is shared between both input and output stream worker functions.
 fn poll_descriptors_and_prepare_buffer(
     rx: &TriggerReceiver,
@@ -1040,16 +1054,23 @@ fn poll_descriptors_and_prepare_buffer(
             .map_err(|_| BackendSpecificError {
                 description: "ALSA input state is poisoned".into(),
             })? {
-            Some(result) => result?,
+            Some(result) => result,
             None => return Ok(PollDescriptorsFlow::Continue),
         }
     } else {
-        stream.channel().fill(&mut descriptors[len..])?
+        stream.channel().fill(&mut descriptors[len..])
+    };
+    let filled = match filled {
+        Err(error) if is_alsa_disconnected(&error) => return Ok(PollDescriptorsFlow::Disconnected),
+        result => result?,
     };
     debug_assert_eq!(filled, stream.num_descriptors);
 
     // Don't timeout, wait forever.
-    let res = alsa::poll::poll(descriptors, *poll_timeout)?;
+    let res = match alsa::poll::poll(descriptors, *poll_timeout) {
+        Err(error) if is_alsa_disconnected(&error) => return Ok(PollDescriptorsFlow::Disconnected),
+        result => result?,
+    };
     if res == 0 {
         let description = String::from("`alsa::poll()` spuriously returned");
         return Err(BackendSpecificError { description });
@@ -1081,7 +1102,10 @@ fn inspect_ready_descriptors(
     buffer: &mut stream_buffer::StreamBuffer,
     pending_output: bool,
 ) -> Result<PollDescriptorsFlow, BackendSpecificError> {
-    let revents = stream.channel().revents(descriptors)?;
+    let revents = match stream.channel().revents(descriptors) {
+        Err(error) if is_alsa_disconnected(&error) => return Ok(PollDescriptorsFlow::Disconnected),
+        result => result?,
+    };
     if revents.intersects(alsa::poll::Flags::HUP | alsa::poll::Flags::NVAL) {
         return Ok(PollDescriptorsFlow::Disconnected);
     }
@@ -1106,8 +1130,12 @@ fn inspect_ready_descriptors(
         }
     };
 
-    let status = stream.channel().status()?;
+    let status = match stream.channel().status() {
+        Err(error) if is_alsa_disconnected(&error) => return Ok(PollDescriptorsFlow::Disconnected),
+        result => result?,
+    };
     let native_avail = match stream.channel().avail() {
+        Err(error) if is_alsa_disconnected(&error) => return Ok(PollDescriptorsFlow::Disconnected),
         Err(err) if err.errno() == libc::EPIPE => return Ok(PollDescriptorsFlow::XRun),
         res => res,
     }?;
@@ -1158,6 +1186,7 @@ enum InputReadFlow {
     Continue,
     Retry,
     XRun,
+    Disconnected,
 }
 
 // Read input data from ALSA and deliver it to the user.
@@ -1184,6 +1213,7 @@ fn process_input(
             return Ok(InputReadFlow::Retry)
         }
         Err(err) if err.errno() == libc::EPIPE => return Ok(InputReadFlow::XRun),
+        Err(err) if is_alsa_disconnected(&err) => return Ok(InputReadFlow::Disconnected),
         result => result?,
     };
     let sample_format = stream.sample_format;
@@ -1213,7 +1243,12 @@ fn process_input(
     Ok(InputReadFlow::Continue)
 }
 
-// Return true when a transient failure needs a termination-aware backoff.
+enum OutputWriteFlow {
+    Continue,
+    Retry,
+    Disconnected,
+}
+
 fn process_output(
     stream: &StreamInner,
     buffer: &mut [u8],
@@ -1222,7 +1257,7 @@ fn process_output(
     available_frames: usize,
     delay_frames: usize,
     data_callback: &mut (dyn FnMut(&mut Data, &OutputCallbackInfo) + Send + 'static),
-) -> Result<bool, BackendSpecificError> {
+) -> Result<OutputWriteFlow, BackendSpecificError> {
     if pending.is_none() {
         let sample_format = stream.sample_format;
         let frame_bytes = sample_format
@@ -1253,14 +1288,18 @@ fn process_output(
     let range = remaining.request(available_frames);
     let requested_bytes = range.len();
     if requested_bytes == 0 {
-        return Ok(true);
+        return Ok(OutputWriteFlow::Retry);
     }
     match stream.channel().io_bytes().writei(&buffer[range]) {
-        Err(err) if err.errno() == libc::EAGAIN || err.errno() == libc::EINTR => Ok(true),
-        Err(err) if err.errno() == libc::EPIPE => {
-            stream.channel().try_recover(err, false)?;
-            Ok(true)
+        Err(err) if err.errno() == libc::EAGAIN || err.errno() == libc::EINTR => {
+            Ok(OutputWriteFlow::Retry)
         }
+        Err(err) if err.errno() == libc::EPIPE => match stream.channel().try_recover(err, false) {
+            Err(error) if is_alsa_disconnected(&error) => Ok(OutputWriteFlow::Disconnected),
+            Err(error) => Err(error.into()),
+            Ok(_) => Ok(OutputWriteFlow::Retry),
+        },
+        Err(err) if is_alsa_disconnected(&err) => Ok(OutputWriteFlow::Disconnected),
         Err(err) => Err(err.into()),
         Ok(written) => {
             let complete = remaining.advance(requested_bytes, written).ok_or_else(|| {
@@ -1271,7 +1310,11 @@ fn process_output(
             if complete {
                 *pending = None;
             }
-            Ok(written == 0)
+            if written == 0 {
+                Ok(OutputWriteFlow::Retry)
+            } else {
+                Ok(OutputWriteFlow::Continue)
+            }
         }
     }
 }

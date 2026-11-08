@@ -164,7 +164,12 @@ permanent `EAGAIN`. A shared polling change reports `POLLHUP`, `POLLNVAL`,
 or a disconnected PCM state once and exits the worker rather than silently
 spinning; a failed capture stop still retains the stream for retry. The
 `alsa_disconnect.c` fixture exercises both hangup and disconnected-state
-capture paths. Capture also backs off on nonblocking reads that return
+capture paths. Device removal may also race with descriptor filling, event
+inspection, status and availability queries, or capture reads and playback
+writes; an `ENODEV` from these operations is reported as a terminal device
+disconnect rather than a generic, repeatedly reported backend error. Playback
+recovery also treats `ENODEV` as terminal. The fixture injects removal at each
+of those stages. Capture also backs off on nonblocking reads that return
 `EAGAIN`, `EINTR`, or zero, without delaying shutdown; the short-read fixture
 covers persistent `EAGAIN` and zero reads. These tests do not cover physical
 devices.
