@@ -15,6 +15,7 @@ import {
 } from "../../utils/local-data-write-gate";
 import {
   MICROPHONE_READY_FOREVER_MS,
+  classifyMicrophoneFailure,
   shouldHoldMicrophoneReady,
   shouldPrepareMicrophone,
 } from "../../utils/microphone-readiness.utils";
@@ -113,11 +114,21 @@ export const MicrophoneReadinessSideEffects = () => {
     }
     holdFailedRef.current = true;
     getLogger().warning(`Could not hold the microphone ready: ${error}`);
+    // The generic message is the fallback, not the default. Two failures are
+    // named because the user can act on them and the generic text would leave
+    // them guessing: another application holding the device, and access being
+    // blocked. Everything else keeps the generic wording, because guessing at a
+    // cause the message does not state is how a user ends up closing
+    // applications at random.
+    const failure = classifyMicrophoneFailure(error);
+    const defaultMessage =
+      failure === "in_use_by_another_application"
+        ? "Another application is using the microphone. Close it, then try again."
+        : failure === "permission_denied"
+          ? "Microphone access is blocked. Allow it in your system settings, then try again."
+          : "Could not open the microphone in advance. Dictation still works, but the first press will be slower.";
     showSnackbar(
-      getIntl().formatMessage({
-        defaultMessage:
-          "Could not open the microphone in advance. Dictation still works, but the first press will be slower.",
-      }),
+      getIntl().formatMessage({ defaultMessage }),
       // Not an error: dictation still works, it is only slower than the user was
       // promised. Error styling would overstate it.
       { mode: "info" },

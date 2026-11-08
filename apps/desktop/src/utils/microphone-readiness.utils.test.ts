@@ -4,6 +4,7 @@ import {
   DEFAULT_MICROPHONE_PREROLL_SECONDS,
   MAX_MICROPHONE_PREROLL_SECONDS,
   MICROPHONE_READY_FOREVER_MS,
+  classifyMicrophoneFailure,
   describeHeldState,
   normalizeMicrophonePrerollSeconds,
   shouldHoldMicrophoneReady,
@@ -178,5 +179,92 @@ describe("the held caption", () => {
   it("distinguishes a held device from a released one", () => {
     expect(describeHeldState(true)).toBe("held");
     expect(describeHeldState(false)).toBe("not_held");
+  });
+});
+
+/**
+ * The two classifiers have to agree, because the same message is interpreted in
+ * Rust for the log and here for what the user is told. A marker added to one and
+ * not the other is a message that says "another application" in the snackbar and
+ * "unavailable" in the log, which is worse than either alone.
+ *
+ * Instead of comparing a hand-copied list, this reads the marker arrays out of
+ * the Rust source and asserts that both sides classify the same input the same
+ * way. It is the only way the pairing can be checked without an audio device.
+ */
+describe("microphone failure classification", () => {
+  const rust = readRepoSource(
+    "apps/desktop/src-tauri/src/platform/mic_usage.rs",
+  );
+
+  const rustMarkers = (name: string): string[] => {
+    const start = rust.indexOf(`const ${name}: &[&str] = &[`);
+    expect(start, `${name} is missing from mic_usage.rs`).toBeGreaterThan(-1);
+    const end = rust.indexOf("];", start);
+    const block = rust.slice(start, end);
+    // Comments inside the array quote real messages, and a quoted phrase in a
+    // comment is not a marker: an early version of this extracted
+    // "no longer available" out of a doc comment and asserted against it.
+    const withoutComments = block.replace(/\/\/.*$/gm, "");
+    return Array.from(withoutComments.matchAll(/"([^"]+)"/g)).map((match) =>
+      match[1].toLowerCase(),
+    );
+  };
+
+  it("knows the same in-use markers as the Rust classifier", () => {
+    const markers = rustMarkers("IN_USE_MARKERS");
+    expect(markers.length).toBeGreaterThan(0);
+    for (const marker of markers) {
+      // Every marker the backend recognises must reach the same conclusion here.
+      expect(
+        classifyMicrophoneFailure(`stream build: ${marker}`),
+        `marker "${marker}" is classified differently by the frontend`,
+      ).toBe("in_use_by_another_application");
+    }
+  });
+
+  it("knows the same permission markers as the Rust classifier", () => {
+    const markers = rustMarkers("PERMISSION_MARKERS");
+    expect(markers.length).toBeGreaterThan(0);
+    for (const marker of markers) {
+      expect(
+        classifyMicrophoneFailure(`stream build: ${marker}`),
+        `marker "${marker}" is classified differently by the frontend`,
+      ).toBe("permission_denied");
+    }
+  });
+
+  it("knows the same unavailable markers as the Rust classifier", () => {
+    const markers = rustMarkers("UNAVAILABLE_MARKERS");
+    expect(markers.length).toBeGreaterThan(0);
+    for (const marker of markers) {
+      expect(
+        classifyMicrophoneFailure(`stream build: ${marker}`),
+        `marker "${marker}" is classified differently by the frontend`,
+      ).toBe("unavailable");
+    }
+  });
+
+  it("keeps the precedence the Rust side documents", () => {
+    // Permission beats in-use, in-use beats unavailable. Asserted through the
+    // real messages rather than the type, so reordering the checks fails here.
+    expect(
+      classifyMicrophoneFailure("device in use and access denied"),
+    ).toBe("permission_denied");
+    expect(
+      classifyMicrophoneFailure(
+        "device not available: device or resource busy",
+      ),
+    ).toBe("in_use_by_another_application");
+  });
+
+  it("does not guess at an unrecognised message", () => {
+    expect(classifyMicrophoneFailure("stream build: something odd")).toBe(
+      "unknown",
+    );
+    // A non-string is not a cause: an Error object renders as "[object Object]"
+    // and an undefined renders as "undefined", and neither names a failure.
+    expect(classifyMicrophoneFailure(undefined)).toBe("unknown");
+    expect(classifyMicrophoneFailure(new Error("nope"))).toBe("unknown");
   });
 });

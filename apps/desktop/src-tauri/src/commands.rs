@@ -6844,6 +6844,75 @@ mod tests {
     /// Treating that as a window would close an always-ready microphone after a
     /// fraction of a millisecond, which is the failure mode where the preference
     /// looks on and the device is shut.
+    /// Every numeric edge of the linger conversion, because each one is a
+    /// different wrong device state.
+    ///
+    /// These are the values a frontend can actually send: a slider, a JSON
+    /// number that came back as NaN from a corrupt row, and the hold sentinel.
+    /// Each is pinned to the outcome, not to the arithmetic, so a rewritten
+    /// conversion still has to satisfy them.
+    #[test]
+    fn linger_millis_maps_every_edge_to_the_documented_policy() {
+        // The window the settings dialog writes when the switch is turned on.
+        assert_eq!(linger_millis(5_000.0), 5_000);
+        // Sub-millisecond and fractional values round rather than truncate:
+        // truncating 0.9 to 0 would close the device the caller asked to hold.
+        assert_eq!(linger_millis(0.9), 1);
+        assert_eq!(linger_millis(1.5), 2);
+        // A hold of zero or less from a caller that reached this command is
+        // still a hold: the smallest usable window, not a closed device.
+        assert_eq!(linger_millis(0.0), 1);
+        assert_eq!(linger_millis(-1.0), 1);
+        assert_eq!(linger_millis(-1.0e12), 1);
+        // NaN has to be checked before the comparison, because every comparison
+        // against NaN is false and the cast would saturate to zero.
+        assert_eq!(linger_millis(f64::NAN), 1);
+        // The finite maximum the settings dialog can send.
+        assert_eq!(linger_millis(30_000.0), 30_000);
+        // Infinity and the sentinel both mean "until released", never a window.
+        assert_eq!(linger_millis(f64::MAX), u64::MAX);
+        assert_eq!(linger_millis(9.0e15), u64::MAX);
+        assert_eq!(linger_millis(f64::INFINITY), u64::MAX);
+    }
+
+    #[test]
+    fn preroll_duration_clamps_to_the_slider_range() {
+        use std::time::Duration;
+        // The slider's own maximum; a value from an older version or a hand
+        // edited row must not allocate a buffer larger than the UI can ask for.
+        assert_eq!(preroll_duration(2.0), Duration::from_secs(2));
+        assert_eq!(preroll_duration(60.0), Duration::from_secs(2));
+        // Zero is a supported choice, not a missing value.
+        assert_eq!(preroll_duration(0.0), Duration::ZERO);
+        assert_eq!(preroll_duration(-1.0), Duration::ZERO);
+        // NaN and infinity both clamp to zero rather than panicking inside
+        // `from_secs_f64`, which panics on a negative or non-finite argument.
+        assert_eq!(preroll_duration(f64::NAN), Duration::ZERO);
+        assert_eq!(preroll_duration(f64::INFINITY), Duration::ZERO);
+        assert_eq!(preroll_duration(f64::NEG_INFINITY), Duration::ZERO);
+    }
+
+    #[test]
+    fn warm_policy_agrees_with_the_conversion_it_wraps() {
+        // `warm_microphone` asks two questions of the same number: what policy
+        // to apply before the open, and whether the open should be held. They
+        // have to agree, or the device is opened under one policy and held under
+        // another.
+        assert_eq!(warm_policy_to_apply(0.0), None);
+        assert_eq!(warm_policy_to_apply(f64::NAN), None);
+        assert_eq!(warm_policy_to_apply(5_000.0), Some(5_000));
+        assert_eq!(warm_policy_to_apply(f64::MAX), Some(u64::MAX));
+
+        assert!(!warm_policy_holds(0.0));
+        assert!(!warm_policy_holds(f64::NAN));
+        // A finite window is not a hold.
+        assert!(!warm_policy_holds(5_000.0));
+        assert!(!warm_policy_holds(30_000.0));
+        // The sentinel and anything past it are.
+        assert!(warm_policy_holds(f64::MAX));
+        assert!(warm_policy_holds(f64::INFINITY));
+    }
+
     #[test]
     fn linger_millis_keeps_a_usable_window_and_reads_the_sentinel() {
         assert_eq!(super::linger_millis(5_000.0), 5_000);

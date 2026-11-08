@@ -327,6 +327,75 @@ describe("MicrophoneReadinessSideEffects", () => {
     expect(mocks.showSnackbar).toHaveBeenCalledTimes(1);
   });
 
+  it("names the other application when the device is busy", async () => {
+    // The generic "could not open in advance" leaves the user with no next step.
+    // A busy device has one, and it is the only failure whose fix is outside
+    // this app but entirely within the user's reach.
+    mocks.warmMicrophone.mockResolvedValue({
+      status: "error",
+      error:
+        "ALSA function 'snd_pcm_open' failed with 'Device or resource busy'",
+    });
+    setState({
+      userPrefs: {
+        keepMicrophoneReady: true,
+        microphonePrerollSeconds: 0.5,
+        microphoneLingerMs: 0,
+      },
+    });
+    await render();
+
+    expect(mocks.showSnackbar).toHaveBeenCalledTimes(1);
+    const message = mocks.showSnackbar.mock.calls[0]?.[0] as string;
+    expect(message).toContain("Another application is using the microphone");
+    // The generic fallback must not also be shown, or the user gets two
+    // explanations of one failure.
+    expect(message).not.toContain("Could not open the microphone in advance");
+  });
+
+  it("points at system settings when access is denied at open time", async () => {
+    // Distinct from the permission-state path above: here the app believed it
+    // had permission and the open was refused anyway. Telling the user to close
+    // an application would be wrong.
+    mocks.warmMicrophone.mockResolvedValue({
+      status: "error",
+      error: "A backend-specific error has occurred: 0x80070005",
+    });
+    setState({
+      userPrefs: {
+        keepMicrophoneReady: true,
+        microphonePrerollSeconds: 0.5,
+        microphoneLingerMs: 0,
+      },
+    });
+    await render();
+
+    const message = mocks.showSnackbar.mock.calls[0]?.[0] as string;
+    expect(message).toContain("Microphone access is blocked");
+    expect(message).not.toContain("Another application");
+  });
+
+  it("falls back to the generic message for a failure it cannot identify", async () => {
+    mocks.warmMicrophone.mockResolvedValue({
+      status: "error",
+      error: "stream build: something unexpected",
+    });
+    setState({
+      userPrefs: {
+        keepMicrophoneReady: true,
+        microphonePrerollSeconds: 0.5,
+        microphoneLingerMs: 0,
+      },
+    });
+    await render();
+
+    const message = mocks.showSnackbar.mock.calls[0]?.[0] as string;
+    expect(message).toContain("Could not open the microphone in advance");
+    // No guess: neither named cause is claimed for an unclassified failure.
+    expect(message).not.toContain("Another application");
+    expect(message).not.toContain("access is blocked");
+  });
+
   it("points at the system settings when permission blocks the hold entirely", async () => {
     setState({ permissions: { microphone: { state: "denied" } } });
     await render();

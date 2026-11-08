@@ -134,3 +134,76 @@ export const describeHeldState = (
   if (held === null) return "unknown";
   return held ? "held" : "not_held";
 };
+
+/**
+ * Why an open attempt failed, as far as the message says.
+ *
+ * The backend classifies the same text in Rust; this exists because the
+ * message the UI receives has already been narrowed to a string, and the
+ * guidance shown to the user depends on which failure it was. Keeping the two
+ * in step is a contract: `MICROPHONE_FAILURE_MARKERS` mirrors the marker lists
+ * in `src-tauri/src/platform/mic_usage.rs`, and a test here asserts the pairs
+ * that matter rather than trusting them to stay equal by inspection.
+ */
+export type MicrophoneOpenFailure =
+  | "in_use_by_another_application"
+  | "permission_denied"
+  | "unavailable"
+  | "unknown";
+
+const IN_USE_MARKERS = [
+  "device or resource busy",
+  "no available subdevice",
+  "0x88890004",
+  "audclnt_e_device_in_use",
+  "in use by another",
+  "kaudiouniterr_deviceinuse",
+  "device is in use",
+];
+
+const PERMISSION_MARKERS = [
+  "0x80070005",
+  "access is denied",
+  "access denied",
+  "permission denied",
+  "eperm",
+  "not authorized",
+  "unauthorized",
+  "permission",
+  "operation not permitted",
+];
+
+const UNAVAILABLE_MARKERS = [
+  "no longer available",
+  "not available",
+  "no input device",
+  "no such device",
+  "not found",
+  "unplugged",
+  "disconnected",
+  "invalidated",
+];
+
+const containsAny = (haystack: string, needles: readonly string[]): boolean =>
+  needles.some((needle) => haystack.includes(needle));
+
+/**
+ * Classifies a failed open from its message.
+ *
+ * The order is the same as the Rust side and for the same reason: permission
+ * before in-use, in-use before unavailable. Windows' access-denied text, ALSA's
+ * busy message and cpal's unplugged message all mention a device, and telling
+ * the user to close an application that is not running sends them looking for
+ * something that is not there.
+ */
+export const classifyMicrophoneFailure = (
+  message: unknown,
+): MicrophoneOpenFailure => {
+  const text = typeof message === "string" ? message : String(message ?? "");
+  const haystack = text.toLowerCase();
+  if (containsAny(haystack, PERMISSION_MARKERS)) return "permission_denied";
+  if (containsAny(haystack, IN_USE_MARKERS))
+    return "in_use_by_another_application";
+  if (containsAny(haystack, UNAVAILABLE_MARKERS)) return "unavailable";
+  return "unknown";
+};
