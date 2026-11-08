@@ -131,6 +131,7 @@ fn main() {
         tone_get,
         tone_list,
         tone_upsert,
+        transcription_append_warnings,
         transcription_audio_load,
         transcription_create,
         transcription_delete,

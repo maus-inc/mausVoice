@@ -346,7 +346,7 @@ From the blocked environment, fetch the orphan branch `vendor/sandbox-toolchain`
 
 ```bash
 set -euo pipefail
-SV_SHA=8442ae0c4e8d0c6a3e2a54072c53e8db5e0fa9e7   # pin the commit you reviewed, not the branch head
+SV_SHA=82b2f98368b5e7d3234ddf35cff2d4395ec75e07   # pin the commit you reviewed, not the branch head
 SV="$(mktemp -d)"                                  # private root, so concurrent runs cannot clash
 curl -sSL -o "$SV.tar.gz" "https://codeload.github.com/maus-inc/mausVoice/tar.gz/$SV_SHA"
 tar xzf "$SV.tar.gz" -C "$SV" --strip-components=1 && cd "$SV"
@@ -354,7 +354,7 @@ for f in $(grep -o '^[a-f0-9]\{64\}  .*\.part-00$' MANIFEST.sha256 | sed 's/.*  
 sha256sum -c MANIFEST.sha256 && cd - >/dev/null && echo "payload root: $SV"
 ```
 
-Extract to `/tmp`, never into the workspace, because the workspace is snapshotted against a size and file cap and the extracted payload is about 5.5 GB. Pin the commit you reviewed and re-run `sha256sum -c` on every fetch: `MANIFEST.sha256` travels with the payload, so it proves the download was intact, not that the branch head is still the commit you reviewed.
+Extract to `/tmp`, never into the workspace, because the workspace is snapshotted against a size and file cap and the extracted payload is about 7.0 GB. Pin the commit you reviewed and re-run `sha256sum -c` on every fetch: `MANIFEST.sha256` travels with the payload, so it proves the download was intact, not that the branch head is still the commit you reviewed.
 
 Five facts decide whether a gate can pass:
 
@@ -438,7 +438,7 @@ The steps, in order:
 - Use short, direct sentences. Put every measurement, file list and research record in a collapsible block after the first paragraph.
 - Put deep detail in a dropdown block so the user can expand if needed, rather than forcing them to read a wall of jargon.
 - Keep review counts, polling logs, "still waiting" notes and CI wall text out of the description. The check run holds the logs.
-- Fold every record of a review round, a babysit poll, a fix batch, a triage disposition, a check run or a research pass into a collapsible block. No unfolded heading may carry one, and a round adds a row to the round log rather than a new section. That rule is what stops the description turning into an infinite scroll, and `pnpm run check:pr-body -- -` enforces it against the body on stdin.
+- Fold every record of a review round, a babysit poll, a fix batch, a triage disposition, a check run or a research pass into a collapsible block. No unfolded heading may carry one, and a round adds a row to the round log rather than a new section. That rule is what stops the description turning into an infinite scroll, and `pnpm run check:pr-body -- -` enforces it against the body on stdin. The check judges the authored body and stops at the footer line, because review bots append their own sections below that footer and the author does not control that text.
 - Attach in-session artifacts, plans and research notes, in full, inside a collapsible block, or link them by repository path. Do not paste a session transcript.
 
 End the description with the footer below.

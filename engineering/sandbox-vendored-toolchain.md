@@ -37,12 +37,22 @@ Authoritative sources, in the order you should read them:
 ## The payload
 
 Orphan branch `vendor/sandbox-toolchain` on `maus-inc/mausVoice`. Commit
-`8442ae0c4e8d0c6a3e2a54072c53e8db5e0fa9e7`, no parents, authored 2026-11-05, message
+`82b2f98368b5e7d3234ddf35cff2d4395ec75e07`, no parents, authored 2026-11-05, message
 `vendor: sandbox toolchain payload (G1-G8, G9-G13, G16-G22)`. It is not merged into `main`
 and no pull request exists for it. `main` is unaffected.
 
 14438 blobs. The root tree is exactly `FETCH.md`, `LICENSES`, `MANIFEST.sha256`,
 `README.md`, `drivers`, `models`, `native`, `rust`, `system`.
+
+2026-11-08 correction. The third delivery's tip was
+`8442ae0c4e8d0c6a3e2a54072c53e8db5e0fa9e7` when this was written. That commit shipped a
+`MANIFEST.sha256` whose `README.md` row carried a stale digest, so `sha256sum -c
+MANIFEST.sha256` failed on `README.md` and a consumer that follows `FETCH.md` refused the
+whole payload. Amending the orphan commit to regenerate that digest, and to correct the
+`README.md` provenance line, moved the tip to
+`82b2f98368b5e7d3234ddf35cff2d4395ec75e07`: still one orphan commit, the same message, the
+same 14438 blobs. Every SHA in this file and the other vendor documents now names the
+amended tip. The old tip is unreferenced and may be garbage collected, so pin `82b2f983`.
 
 | Group       | Blobs | Logical bytes | What it is                                                                                                              |
 | ----------- | ----- | ------------- | ----------------------------------------------------------------------------------------------------------------------- |
@@ -85,7 +95,7 @@ packages plus the one git dependency, `ferrous-focus`, that the union of the sev
 
 The branch `README.md` records these results. They were produced against this
 repository at commit `61fb3295` for the first delivery, `065f527b` for the second, and
-`8442ae0` for the third.
+`82b2f983` for the third.
 
 | Gate                            | Result                                                                                                                                |
 | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
