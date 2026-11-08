@@ -4,8 +4,7 @@ use crate::error::Error;
 use std::ffi::CStr;
 use std::os::raw::c_char;
 use std::ptr::null;
-use std::time::Duration;
-use std::{mem, thread};
+use std::mem;
 
 use core_foundation_sys::string::{CFStringGetCString, CFStringGetCStringPtr, CFStringRef};
 use sys;
@@ -16,11 +15,9 @@ use sys::{
     kAudioHardwareNoError, kAudioObjectPropertyElementMaster, kAudioObjectPropertyElementWildcard,
     kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyScopeInput,
     kAudioObjectPropertyScopeOutput, kAudioOutputUnitProperty_CurrentDevice,
-    kAudioOutputUnitProperty_EnableIO, kAudioStreamPropertyAvailablePhysicalFormats,
-    kAudioStreamPropertyPhysicalFormat, kCFStringEncodingUTF8, AudioDeviceID,
+    kAudioOutputUnitProperty_EnableIO, kCFStringEncodingUTF8, AudioDeviceID,
     AudioObjectGetPropertyData, AudioObjectGetPropertyDataSize, AudioObjectPropertyAddress,
     AudioObjectPropertyScope, AudioObjectSetPropertyData, AudioStreamBasicDescription,
-    AudioStreamRangedDescription,
 };
 
 use crate::audio_unit::audio_format::{AudioFormat, LinearPcmFlags};
@@ -273,132 +270,9 @@ pub fn find_matching_physical_format(
     None
 }
 
-/// Change the physical stream format (sample rate and format) of a device.
-pub fn set_device_physical_stream_format(
-    device_id: AudioDeviceID,
-    new_asbd: AudioStreamBasicDescription,
-) -> Result<(), Error> {
-    unsafe {
-        // Get the current format.
-        let property_address = AudioObjectPropertyAddress {
-            mSelector: kAudioStreamPropertyPhysicalFormat,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMaster,
-        };
-        let maybe_asbd: mem::MaybeUninit<AudioStreamBasicDescription> = mem::MaybeUninit::zeroed();
-        let data_size = mem::size_of::<AudioStreamBasicDescription>() as u32;
-        let status = AudioObjectGetPropertyData(
-            device_id,
-            &property_address as *const _,
-            0,
-            null(),
-            &data_size as *const _ as *mut _,
-            &maybe_asbd as *const _ as *mut _,
-        );
-        Error::from_os_status(status)?;
-        let asbd = maybe_asbd.assume_init();
-
-        if !asbds_are_equal(&asbd, &new_asbd) {
-            let property_address = AudioObjectPropertyAddress {
-                mSelector: kAudioStreamPropertyPhysicalFormat,
-                mScope: kAudioObjectPropertyScopeGlobal,
-                mElement: kAudioObjectPropertyElementMaster,
-            };
-
-            let reported_asbd: mem::MaybeUninit<AudioStreamBasicDescription> =
-                mem::MaybeUninit::zeroed();
-            let reported_asbd = reported_asbd.assume_init();
-
-            let status = AudioObjectSetPropertyData(
-                device_id,
-                &property_address as *const _,
-                0,
-                null(),
-                data_size,
-                &new_asbd as *const _ as *const _,
-            );
-            Error::from_os_status(status)?;
-
-            // Wait for the reported format to change.
-            // This can take up to half a second, but we timeout after 2 sec just in case.
-            let timer = ::std::time::Instant::now();
-            loop {
-                let status = AudioObjectGetPropertyData(
-                    device_id,
-                    &property_address as *const _,
-                    0,
-                    null(),
-                    &data_size as *const _ as *mut _,
-                    &reported_asbd as *const _ as *mut _,
-                );
-                Error::from_os_status(status)?;
-                if asbds_are_equal(&reported_asbd, &new_asbd) {
-                    break;
-                }
-                thread::sleep(Duration::from_millis(5));
-                if timer.elapsed() > Duration::from_secs(2) {
-                    return Err(Error::UnsupportedStreamFormat);
-                }
-            }
-        }
-        Ok(())
-    }
-}
-
-/// Helper to check if two ASBDs are equal.
-fn asbds_are_equal(
-    left: &AudioStreamBasicDescription,
-    right: &AudioStreamBasicDescription,
-) -> bool {
-    left.mSampleRate as u32 == right.mSampleRate as u32
-        && left.mFormatID == right.mFormatID
-        && left.mFormatFlags == right.mFormatFlags
-        && left.mBytesPerPacket == right.mBytesPerPacket
-        && left.mFramesPerPacket == right.mFramesPerPacket
-        && left.mBytesPerFrame == right.mBytesPerFrame
-        && left.mChannelsPerFrame == right.mChannelsPerFrame
-        && left.mBitsPerChannel == right.mBitsPerChannel
-}
-
-/// Get a vector with all supported physical formats as AudioBasicRangedDescriptions.
-pub fn get_supported_physical_stream_formats(
-    device_id: AudioDeviceID,
-) -> Result<Vec<AudioStreamRangedDescription>, Error> {
-    // Get available formats.
-    let mut property_address = AudioObjectPropertyAddress {
-        mSelector: kAudioStreamPropertyPhysicalFormat,
-        mScope: kAudioObjectPropertyScopeGlobal,
-        mElement: kAudioObjectPropertyElementMaster,
-    };
-    let allformats = unsafe {
-        property_address.mSelector = kAudioStreamPropertyAvailablePhysicalFormats;
-        let mut data_size = 0u32;
-        let status = AudioObjectGetPropertyDataSize(
-            device_id,
-            &property_address as *const _,
-            0,
-            null(),
-            &mut data_size as *mut _,
-        );
-        Error::from_os_status(status)?;
-        let n_formats = data_size as usize / mem::size_of::<AudioStreamRangedDescription>();
-        let mut formats: Vec<AudioStreamRangedDescription> = vec![];
-        formats.reserve_exact(n_formats as usize);
-        formats.set_len(n_formats);
-
-        let status = AudioObjectGetPropertyData(
-            device_id,
-            &property_address as *const _,
-            0,
-            null(),
-            &data_size as *const _ as *mut _,
-            formats.as_mut_ptr() as *mut _,
-        );
-        Error::from_os_status(status)?;
-        formats
-    };
-    Ok(allformats)
-}
+pub use super::macos_physical_format::{
+    get_supported_physical_stream_formats, set_device_physical_stream_format,
+};
 
 pub use super::macos_listeners::{AliveListener, RateListener, RateListenerState};
 

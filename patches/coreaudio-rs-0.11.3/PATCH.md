@@ -17,6 +17,11 @@ When initialization fails after instance creation, the constructor now calls
 fails. CPAL maps that result to its capture ownership guard. Portable tests
 exercise the ordering and error propagation, but do not call Apple APIs.
 
+The macOS physical-format helpers use initialized mutable property buffers and
+validate returned byte counts, including shrinking format lists. The setter
+compares full sample rates rather than truncating them. A simulated API exercises
+these paths and timeout handling; actual device behavior remains unverified.
+
 The macOS sample-rate setter validates initialized property data and returned
 range lengths, accepts rates within continuous ranges, and sends one `f64`
 nominal rate to CoreAudio. A simulated API tests success, invalid data, native
