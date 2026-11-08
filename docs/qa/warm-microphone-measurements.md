@@ -47,9 +47,9 @@ accounted against, not an impression.
 
 | Defect | Evidence it was real | Fix |
 | --- | --- | --- |
-| Repository paths ran past the spec panels and were cut off by the window edge | screenshot `comp-logo.png` before/after; `scrollWidth` 357 vs `clientWidth` 300 in a box with `overflow-x: visible` | `overflowWrap: anywhere` in all three places a path is rendered |
-| Index heading and category blurbs collided with the text beside them | screenshot `home2.png`; MUI renders an unknown typography variant as a `<span>` | `display: block` on those variants |
-| "1 spec fields" | screenshot | singular/plural |
+| Repository paths ran past the spec panels and were cut off by the window edge | `scrollWidth` 357 vs `clientWidth` 300 in a box with `overflow-x: visible`; reproduce with `node scripts/verify/sweep-preview.mjs` | `overflowWrap: anywhere` in all three places a path is rendered |
+| Index heading and category blurbs collided with the text beside them | MUI renders an unknown typography variant as a `<span>`; reproduce with `node scripts/verify/shot-home.mjs` | `display: block` on those variants |
+| "1 spec fields" | the rendered demo string | singular/plural |
 | `TypographyWithMore` demo: the "Show more" toggle sat on the clamped text | measured container width **0 px**; the component sets `container-type: inline-size` and the demo tile shrink-wrapped it | demo asks for its width; the one real usage is in a block container and is unaffected |
 
 ## Not measured, and what would measure it

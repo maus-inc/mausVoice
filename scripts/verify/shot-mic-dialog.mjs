@@ -1,8 +1,13 @@
 // Screenshots and measures the microphone dialog across the states a user sees.
 import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { launch, newPage, sleep } from "./cdp.mjs";
 
-const OUT = process.env.OUT_DIR || "/home/user/mausVoice/reports/ui-verify";
+// Repository-relative, resolved from this file rather than from the shell's
+// working directory or a sandbox path: a committed file may not carry an
+// absolute path, and the screenshots belong beside the report that cites them.
+const REPO_ROOT = new URL("../../", import.meta.url).pathname;
+const OUT = process.env.OUT_DIR || join(REPO_ROOT, "reports/ui-verify");
 mkdirSync(OUT, { recursive: true });
 
 const URL =
