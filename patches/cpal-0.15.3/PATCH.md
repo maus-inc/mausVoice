@@ -66,6 +66,12 @@ with its actual size and accept rates inside a reported range. These changes
 have portable bounds tests and a macOS cross-check, but have not been tested on
 macOS hardware. In particular, a device may report a zero buffer-size range.
 
+ALSA capability discovery and stream setup now use the same native-endian
+sample-format mapping. The previous discovery path always tested little-endian
+formats, so on big-endian systems it could advertise formats that stream setup
+could not use. Portable tests cover both mappings; real big-endian hardware has
+not been tested.
+
 The local ALSA change reports input overruns to the stream error callback before
 attempting the existing prepare operation. An overrun loses samples even if
 recovery succeeds, so the desktop capture marks its retained prefix incomplete

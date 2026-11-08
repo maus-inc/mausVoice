@@ -28,6 +28,46 @@ mod input_start;
 mod output_pending;
 mod stream_buffer;
 
+const ALSA_SAMPLE_FORMATS: [SampleFormat; 8] = [
+    SampleFormat::I8,
+    SampleFormat::U8,
+    SampleFormat::I16,
+    SampleFormat::U16,
+    SampleFormat::I32,
+    SampleFormat::U32,
+    SampleFormat::F32,
+    SampleFormat::F64,
+];
+
+fn alsa_format_for_sample(sample: SampleFormat, big_endian: bool) -> Option<alsa::pcm::Format> {
+    use alsa::pcm::Format;
+    match (sample, big_endian) {
+        (SampleFormat::I8, _) => Some(Format::S8),
+        (SampleFormat::U8, _) => Some(Format::U8),
+        (SampleFormat::I16, false) => Some(Format::S16LE),
+        (SampleFormat::I16, true) => Some(Format::S16BE),
+        (SampleFormat::U16, false) => Some(Format::U16LE),
+        (SampleFormat::U16, true) => Some(Format::U16BE),
+        (SampleFormat::I32, false) => Some(Format::S32LE),
+        (SampleFormat::I32, true) => Some(Format::S32BE),
+        (SampleFormat::U32, false) => Some(Format::U32LE),
+        (SampleFormat::U32, true) => Some(Format::U32BE),
+        (SampleFormat::F32, false) => Some(Format::FloatLE),
+        (SampleFormat::F32, true) => Some(Format::FloatBE),
+        (SampleFormat::F64, false) => Some(Format::Float64LE),
+        (SampleFormat::F64, true) => Some(Format::Float64BE),
+        _ => None,
+    }
+}
+
+fn formats_for_discovery(
+    big_endian: bool,
+) -> impl Iterator<Item = (SampleFormat, alsa::pcm::Format)> {
+    ALSA_SAMPLE_FORMATS.into_iter().filter_map(move |sample| {
+        alsa_format_for_sample(sample, big_endian).map(|format| (sample, format))
+    })
+}
+
 static CAPTURE_GATE: input_probe::CaptureGate = input_probe::CaptureGate::new();
 
 pub(crate) fn capture_cleanup_uncertain() -> bool {
@@ -478,50 +518,10 @@ impl Device {
     ) -> Result<VecIntoIter<SupportedStreamConfigRange>, SupportedStreamConfigsError> {
         let hw_params = alsa::pcm::HwParams::any(handle)?;
 
-        // TODO: check endianness
-        const FORMATS: [(SampleFormat, alsa::pcm::Format); 8] = [
-            (SampleFormat::I8, alsa::pcm::Format::S8),
-            (SampleFormat::U8, alsa::pcm::Format::U8),
-            (SampleFormat::I16, alsa::pcm::Format::S16LE),
-            //SND_PCM_FORMAT_S16_BE,
-            (SampleFormat::U16, alsa::pcm::Format::U16LE),
-            //SND_PCM_FORMAT_U16_BE,
-            //SND_PCM_FORMAT_S24_LE,
-            //SND_PCM_FORMAT_S24_BE,
-            //SND_PCM_FORMAT_U24_LE,
-            //SND_PCM_FORMAT_U24_BE,
-            (SampleFormat::I32, alsa::pcm::Format::S32LE),
-            //SND_PCM_FORMAT_S32_BE,
-            (SampleFormat::U32, alsa::pcm::Format::U32LE),
-            //SND_PCM_FORMAT_U32_BE,
-            (SampleFormat::F32, alsa::pcm::Format::FloatLE),
-            //SND_PCM_FORMAT_FLOAT_BE,
-            (SampleFormat::F64, alsa::pcm::Format::Float64LE),
-            //SND_PCM_FORMAT_FLOAT64_BE,
-            //SND_PCM_FORMAT_IEC958_SUBFRAME_LE,
-            //SND_PCM_FORMAT_IEC958_SUBFRAME_BE,
-            //SND_PCM_FORMAT_MU_LAW,
-            //SND_PCM_FORMAT_A_LAW,
-            //SND_PCM_FORMAT_IMA_ADPCM,
-            //SND_PCM_FORMAT_MPEG,
-            //SND_PCM_FORMAT_GSM,
-            //SND_PCM_FORMAT_SPECIAL,
-            //SND_PCM_FORMAT_S24_3LE,
-            //SND_PCM_FORMAT_S24_3BE,
-            //SND_PCM_FORMAT_U24_3LE,
-            //SND_PCM_FORMAT_U24_3BE,
-            //SND_PCM_FORMAT_S20_3LE,
-            //SND_PCM_FORMAT_S20_3BE,
-            //SND_PCM_FORMAT_U20_3LE,
-            //SND_PCM_FORMAT_U20_3BE,
-            //SND_PCM_FORMAT_S18_3LE,
-            //SND_PCM_FORMAT_S18_3BE,
-            //SND_PCM_FORMAT_U18_3LE,
-            //SND_PCM_FORMAT_U18_3BE,
-        ];
+        let formats = formats_for_discovery(cfg!(target_endian = "big"));
 
         let mut supported_formats = Vec::new();
-        for &(sample_format, alsa_format) in FORMATS.iter() {
+        for (sample_format, alsa_format) in formats {
             if hw_params.test_format(alsa_format).is_ok() {
                 supported_formats.push(sample_format);
             }
@@ -1603,57 +1603,13 @@ fn set_hw_params_from_format(
     let hw_params = alsa::pcm::HwParams::any(pcm_handle)?;
     hw_params.set_access(alsa::pcm::Access::RWInterleaved)?;
 
-    let sample_format = if cfg!(target_endian = "big") {
-        match sample_format {
-            SampleFormat::I8 => alsa::pcm::Format::S8,
-            SampleFormat::I16 => alsa::pcm::Format::S16BE,
-            // SampleFormat::I24 => alsa::pcm::Format::S24BE,
-            SampleFormat::I32 => alsa::pcm::Format::S32BE,
-            // SampleFormat::I48 => alsa::pcm::Format::S48BE,
-            // SampleFormat::I64 => alsa::pcm::Format::S64BE,
-            SampleFormat::U8 => alsa::pcm::Format::U8,
-            SampleFormat::U16 => alsa::pcm::Format::U16BE,
-            // SampleFormat::U24 => alsa::pcm::Format::U24BE,
-            SampleFormat::U32 => alsa::pcm::Format::U32BE,
-            // SampleFormat::U48 => alsa::pcm::Format::U48BE,
-            // SampleFormat::U64 => alsa::pcm::Format::U64BE,
-            SampleFormat::F32 => alsa::pcm::Format::FloatBE,
-            SampleFormat::F64 => alsa::pcm::Format::Float64BE,
-            sample_format => {
-                return Err(BackendSpecificError {
-                    description: format!(
-                        "Sample format '{}' is not supported by this backend",
-                        sample_format
-                    ),
-                })
-            }
-        }
-    } else {
-        match sample_format {
-            SampleFormat::I8 => alsa::pcm::Format::S8,
-            SampleFormat::I16 => alsa::pcm::Format::S16LE,
-            // SampleFormat::I24 => alsa::pcm::Format::S24LE,
-            SampleFormat::I32 => alsa::pcm::Format::S32LE,
-            // SampleFormat::I48 => alsa::pcm::Format::S48LE,
-            // SampleFormat::I64 => alsa::pcm::Format::S64LE,
-            SampleFormat::U8 => alsa::pcm::Format::U8,
-            SampleFormat::U16 => alsa::pcm::Format::U16LE,
-            // SampleFormat::U24 => alsa::pcm::Format::U24LE,
-            SampleFormat::U32 => alsa::pcm::Format::U32LE,
-            // SampleFormat::U48 => alsa::pcm::Format::U48LE,
-            // SampleFormat::U64 => alsa::pcm::Format::U64LE,
-            SampleFormat::F32 => alsa::pcm::Format::FloatLE,
-            SampleFormat::F64 => alsa::pcm::Format::Float64LE,
-            sample_format => {
-                return Err(BackendSpecificError {
-                    description: format!(
-                        "Sample format '{}' is not supported by this backend",
-                        sample_format
-                    ),
-                })
-            }
-        }
-    };
+    let sample_format = alsa_format_for_sample(sample_format, cfg!(target_endian = "big"))
+        .ok_or_else(|| BackendSpecificError {
+            description: format!(
+                "Sample format '{}' is not supported by this backend",
+                sample_format
+            ),
+        })?;
 
     hw_params.set_format(sample_format)?;
     hw_params.set_rate(config.sample_rate.0, alsa::ValueOr::Nearest)?;
@@ -1761,5 +1717,69 @@ impl From<alsa::Error> for StreamError {
     fn from(err: alsa::Error) -> Self {
         let err: BackendSpecificError = err.into();
         err.into()
+    }
+}
+
+#[cfg(test)]
+mod sample_format_tests {
+    use super::*;
+
+    #[test]
+    fn discovery_uses_the_requested_native_byte_order() {
+        let little: Vec<_> = formats_for_discovery(false).collect();
+        let big: Vec<_> = formats_for_discovery(true).collect();
+        assert_eq!(little.len(), 8);
+        assert_eq!(big.len(), 8);
+        for (sample, little_format, big_format) in [
+            (
+                SampleFormat::I8,
+                alsa::pcm::Format::S8,
+                alsa::pcm::Format::S8,
+            ),
+            (
+                SampleFormat::U8,
+                alsa::pcm::Format::U8,
+                alsa::pcm::Format::U8,
+            ),
+            (
+                SampleFormat::I16,
+                alsa::pcm::Format::S16LE,
+                alsa::pcm::Format::S16BE,
+            ),
+            (
+                SampleFormat::U16,
+                alsa::pcm::Format::U16LE,
+                alsa::pcm::Format::U16BE,
+            ),
+            (
+                SampleFormat::I32,
+                alsa::pcm::Format::S32LE,
+                alsa::pcm::Format::S32BE,
+            ),
+            (
+                SampleFormat::U32,
+                alsa::pcm::Format::U32LE,
+                alsa::pcm::Format::U32BE,
+            ),
+            (
+                SampleFormat::F32,
+                alsa::pcm::Format::FloatLE,
+                alsa::pcm::Format::FloatBE,
+            ),
+            (
+                SampleFormat::F64,
+                alsa::pcm::Format::Float64LE,
+                alsa::pcm::Format::Float64BE,
+            ),
+        ] {
+            assert!(little.contains(&(sample, little_format)));
+            assert!(big.contains(&(sample, big_format)));
+            assert_eq!(alsa_format_for_sample(sample, false), Some(little_format));
+            assert_eq!(alsa_format_for_sample(sample, true), Some(big_format));
+        }
+        for sample in [SampleFormat::I64, SampleFormat::U64] {
+            assert_eq!(alsa_format_for_sample(sample, false), None);
+            assert_eq!(alsa_format_for_sample(sample, true), None);
+        }
     }
 }
