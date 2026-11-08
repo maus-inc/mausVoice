@@ -61,8 +61,9 @@ impl Mixer {
         acheck!(snd_mixer_handle_events(self.0)).map(|x| x as u32)
     }
 
+    /// `None` waits indefinitely; finite values above `i32::MAX` return `EINVAL`.
     pub fn wait(&self, timeout_ms: Option<u32>) -> Result<()> {
-        acheck!(snd_mixer_wait(self.0, timeout_ms.map(|x| x as c_int).unwrap_or(-1))).map(|_| ()) }
+        acheck!(snd_mixer_wait(self.0, wait_timeout(timeout_ms, "snd_mixer_wait")?)).map(|_| ()) }
 }
 
 /// Closes mixer and frees used resources

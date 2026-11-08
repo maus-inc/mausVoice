@@ -47,11 +47,7 @@ pub struct Ctl(*mut alsa::snd_ctl_t);
 unsafe impl Send for Ctl {}
 
 fn ctl_wait_timeout(timeout_ms: Option<u32>) -> Result<c_int> {
-    match timeout_ms {
-        None => Ok(-1),
-        Some(value) if value <= c_int::MAX as u32 => Ok(value as c_int),
-        Some(_) => Err(Error::new("snd_ctl_wait", libc::EINVAL)),
-    }
+    wait_timeout(timeout_ms, "snd_ctl_wait")
 }
 
 impl Ctl {

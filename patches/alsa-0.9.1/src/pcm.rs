@@ -224,8 +224,9 @@ impl PCM {
         self.recover(err.errno() as c_int, silent)
     }
 
+    /// `None` waits indefinitely; finite values above `i32::MAX` return `EINVAL`.
     pub fn wait(&self, timeout_ms: Option<u32>) -> Result<bool> {
-        acheck!(snd_pcm_wait(self.0, timeout_ms.map(|x| x as c_int).unwrap_or(-1))).map(|i| i == 1) }
+        acheck!(snd_pcm_wait(self.0, wait_timeout(timeout_ms, "snd_pcm_wait")?)).map(|i| i == 1) }
 
     pub fn state(&self) -> State {
         let rawstate = self.state_raw();

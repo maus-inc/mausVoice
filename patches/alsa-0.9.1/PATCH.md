@@ -36,8 +36,9 @@ actual ALSA boundary without signed overflow. Invalid negative advances or
 out-of-range pointers fail before they can be written to the driver.
 
 `ElemValue::set_integer64` checks for the 64-bit control type, matching its
-getter. `Ctl::wait` rejects finite timeouts above `i32::MAX` with `EINVAL`
-instead of wrapping them into a negative or indefinite ALSA timeout.
+getter. `Ctl::wait`, `PCM::wait`, `Mixer::wait` and `HCtl::wait` reject finite
+timeouts above `i32::MAX` with `EINVAL` instead of wrapping them into a negative
+or indefinite ALSA timeout.
 
 Raw MIDI enumeration treats `ENOENT` from a direction query as zero
 subdevices, while preserving other errors. Linux returns `ENOENT` for a device

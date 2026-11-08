@@ -63,3 +63,41 @@ int snd_ctl_rawmidi_info(snd_ctl_t *ctl, snd_rawmidi_info_t *info) {
 unsigned int snd_rawmidi_info_get_subdevices_count(const snd_rawmidi_info_t *info) {
     return snd_rawmidi_info_get_device(info) == 0 ? 2 : 1;
 }
+
+/* Wait shims never block; return the supplied value through an accessor. */
+static int last_wait_timeout;
+int maus_test_last_wait_timeout(void) { return last_wait_timeout; }
+int snd_pcm_wait(snd_pcm_t *pcm, int timeout) {
+    (void)pcm;
+    last_wait_timeout = timeout;
+    return 0;
+}
+int snd_mixer_open(snd_mixer_t **mixer, int mode) {
+    (void)mode;
+    *mixer = (snd_mixer_t *)1;
+    return 0;
+}
+int snd_mixer_close(snd_mixer_t *mixer) {
+    (void)mixer;
+    return 0;
+}
+int snd_mixer_wait(snd_mixer_t *mixer, int timeout) {
+    (void)mixer;
+    last_wait_timeout = timeout;
+    return 0;
+}
+int snd_hctl_open(snd_hctl_t **hctl, const char *name, int mode) {
+    (void)name;
+    (void)mode;
+    *hctl = (snd_hctl_t *)1;
+    return 0;
+}
+int snd_hctl_close(snd_hctl_t *hctl) {
+    (void)hctl;
+    return 0;
+}
+int snd_hctl_wait(snd_hctl_t *hctl, int timeout) {
+    (void)hctl;
+    last_wait_timeout = timeout;
+    return 0;
+}
