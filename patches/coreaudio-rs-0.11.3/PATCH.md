@@ -17,6 +17,12 @@ When initialization fails after instance creation, the constructor now calls
 fails. CPAL maps that result to its capture ownership guard. Portable tests
 exercise the ordering and error propagation, but do not call Apple APIs.
 
+The macOS sample-rate setter validates initialized property data and returned
+range lengths, accepts rates within continuous ranges, and sends one `f64`
+nominal rate to CoreAudio. A simulated API tests success, invalid data, native
+errors and notification timeout; actual sample-rate changes remain unverified
+on macOS hardware.
+
 The macOS device-ID queries pass mutable output storage to CoreAudio, initialize
 allocated IDs, and validate returned byte counts before exposing them. A shorter
 valid result is truncated; malformed or oversized lengths return an error. A

@@ -4,7 +4,6 @@ use crate::error::Error;
 use std::ffi::CStr;
 use std::os::raw::c_char;
 use std::ptr::null;
-use std::sync::mpsc::channel;
 use std::time::Duration;
 use std::{mem, thread};
 
@@ -12,8 +11,7 @@ use core_foundation_sys::string::{CFStringGetCString, CFStringGetCStringPtr, CFS
 use sys;
 use sys::pid_t;
 use sys::{
-    kAudioDevicePropertyAvailableNominalSampleRates, kAudioDevicePropertyDeviceNameCFString,
-    kAudioDevicePropertyHogMode, kAudioDevicePropertyNominalSampleRate,
+    kAudioDevicePropertyDeviceNameCFString, kAudioDevicePropertyHogMode,
     kAudioDevicePropertyScopeOutput, kAudioDevicePropertyStreamConfiguration,
     kAudioHardwareNoError, kAudioObjectPropertyElementMaster, kAudioObjectPropertyElementWildcard,
     kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyScopeInput,
@@ -22,7 +20,7 @@ use sys::{
     kAudioStreamPropertyPhysicalFormat, kCFStringEncodingUTF8, AudioDeviceID,
     AudioObjectGetPropertyData, AudioObjectGetPropertyDataSize, AudioObjectPropertyAddress,
     AudioObjectPropertyScope, AudioObjectSetPropertyData, AudioStreamBasicDescription,
-    AudioStreamRangedDescription, AudioValueRange,
+    AudioStreamRangedDescription,
 };
 
 use crate::audio_unit::audio_format::{AudioFormat, LinearPcmFlags};
@@ -219,104 +217,7 @@ pub fn get_device_name(device_id: AudioDeviceID) -> Result<String, Error> {
     Ok(c_str.to_string_lossy().into_owned())
 }
 
-/// Change the sample rate of a device.
-/// Adapted from CPAL.
-pub fn set_device_sample_rate(device_id: AudioDeviceID, new_rate: f64) -> Result<(), Error> {
-    // Check whether or not we need to change the device sample rate to suit the one specified for the stream.
-    unsafe {
-        // Get the current sample rate.
-        let mut property_address = AudioObjectPropertyAddress {
-            mSelector: kAudioDevicePropertyNominalSampleRate,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMaster,
-        };
-        let sample_rate: f64 = 0.0;
-        let data_size = mem::size_of::<f64>() as u32;
-        let status = AudioObjectGetPropertyData(
-            device_id,
-            &property_address as *const _,
-            0,
-            null(),
-            &data_size as *const _ as *mut _,
-            &sample_rate as *const _ as *mut _,
-        );
-        Error::from_os_status(status)?;
-
-        // If the requested sample rate is different to the device sample rate, update the device.
-        if sample_rate as u32 != new_rate as u32 {
-            // Get available sample rate ranges.
-            property_address.mSelector = kAudioDevicePropertyAvailableNominalSampleRates;
-            let data_size = 0u32;
-            let status = AudioObjectGetPropertyDataSize(
-                device_id,
-                &property_address as *const _,
-                0,
-                null(),
-                &data_size as *const _ as *mut _,
-            );
-            Error::from_os_status(status)?;
-            let n_ranges = data_size as usize / mem::size_of::<AudioValueRange>();
-            let mut ranges: Vec<AudioValueRange> = vec![];
-            ranges.reserve_exact(n_ranges as usize);
-            ranges.set_len(n_ranges);
-            let status = AudioObjectGetPropertyData(
-                device_id,
-                &property_address as *const _,
-                0,
-                null(),
-                &data_size as *const _ as *mut _,
-                ranges.as_mut_ptr() as *mut _,
-            );
-            Error::from_os_status(status)?;
-
-            // Now that we have the available ranges, pick the one matching the desired rate.
-            let new_rate_integer = new_rate as u32;
-            let maybe_index = ranges.iter().position(|r| {
-                r.mMinimum as u32 == new_rate_integer && r.mMaximum as u32 == new_rate_integer
-            });
-            let range_index = match maybe_index {
-                None => return Err(Error::UnsupportedSampleRate),
-                Some(i) => i,
-            };
-
-            // Update the property selector to specify the nominal sample rate.
-            property_address.mSelector = kAudioDevicePropertyNominalSampleRate;
-
-            // Add a listener to know when the sample rate changes.
-            // Since the listener implements Drop, we don't need to manually unregister this later.
-            let (sender, receiver) = channel();
-            let mut listener = RateListener::new(device_id, Some(sender));
-            listener.register()?;
-
-            // Finally, set the sample rate.
-            let status = AudioObjectSetPropertyData(
-                device_id,
-                &property_address as *const _,
-                0,
-                null(),
-                data_size,
-                &ranges[range_index] as *const _ as *const _,
-            );
-            Error::from_os_status(status)?;
-
-            // Wait for the reported_rate to change.
-            //
-            // This sometimes takes up to half a second, timeout after 2 sec to have a little margin.
-            let timer = ::std::time::Instant::now();
-            loop {
-                if let Ok(reported_rate) = receiver.recv_timeout(Duration::from_millis(100)) {
-                    if new_rate as usize == reported_rate as usize {
-                        break;
-                    }
-                }
-                if timer.elapsed() > Duration::from_secs(2) {
-                    return Err(Error::UnsupportedSampleRate);
-                }
-            }
-        };
-        Ok(())
-    }
-}
+pub use super::macos_sample_rate::set_device_sample_rate;
 
 /// Find the closest match of the physical formats to the provided `StreamFormat`.
 /// This function will pick the first format it finds that supports the provided sample format, rate and number of channels.
