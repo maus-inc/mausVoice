@@ -203,7 +203,7 @@ export const ListTile = forwardRef(function ListTile<
   // nested inside it); plain clicks in the slot still forward to the row
   // action, while nested controls stop propagation for their own handling.
   const isClickable = Boolean(onClick || href);
-  const trailingNode = Boolean(trailing) ? (
+  const trailingNode = trailing ? (
     <HoverButton
       idle={trailing}
       hover={trailingHover}
