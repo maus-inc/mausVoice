@@ -121,14 +121,30 @@ export const MicrophoneReadinessSideEffects = () => {
     // cause the message does not state is how a user ends up closing
     // applications at random.
     const failure = classifyMicrophoneFailure(error);
-    const defaultMessage =
+    // Each message is its own literal at its own `formatMessage` call, rather
+    // than one literal chosen into a variable and formatted once. The extractor
+    // only sees `defaultMessage` when it is a string literal at the call site:
+    // with the variable form, two of these three were absent from the catalogue
+    // while the app still asked for them, so they rendered as their ids until
+    // the next extraction pruned them.
+    const intl = getIntl();
+    const message =
       failure === "in_use_by_another_application"
-        ? "Another application is using the microphone. Close it, then try again."
+        ? intl.formatMessage({
+            defaultMessage:
+              "Another application is using the microphone. Close it, then try again.",
+          })
         : failure === "permission_denied"
-          ? "Microphone access is blocked. Allow it in your system settings, then try again."
-          : "Could not open the microphone in advance. Dictation still works, but the first press will be slower.";
+          ? intl.formatMessage({
+              defaultMessage:
+                "Microphone access is blocked. Allow it in your system settings, then try again.",
+            })
+          : intl.formatMessage({
+              defaultMessage:
+                "Could not open the microphone in advance. Dictation still works, but the first press will be slower.",
+            });
     showSnackbar(
-      getIntl().formatMessage({ defaultMessage }),
+      message,
       // Not an error: dictation still works, it is only slower than the user was
       // promised. Error styling would overstate it.
       { mode: "info" },
