@@ -248,9 +248,9 @@ describe("microphone failure classification", () => {
   it("keeps the precedence the Rust side documents", () => {
     // Permission beats in-use, in-use beats unavailable. Asserted through the
     // real messages rather than the type, so reordering the checks fails here.
-    expect(
-      classifyMicrophoneFailure("device in use and access denied"),
-    ).toBe("permission_denied");
+    expect(classifyMicrophoneFailure("device in use and access denied")).toBe(
+      "permission_denied",
+    );
     expect(
       classifyMicrophoneFailure(
         "device not available: device or resource busy",
