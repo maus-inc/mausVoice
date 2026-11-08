@@ -1999,8 +1999,25 @@ mod cpal_impl {
             // microphone should stay ready, so the same running stream goes back
             // into the warm slot and the next press skips the device open
             // entirely. Without a ring the stream is retired below.
+            //
+            // A stream the host declared dead is the exception: it can never
+            // serve a press, so leaving it in the warm slot holds the
+            // microphone indicator on for a device that cannot record, and keeps
+            // a broken stream alive until the next press rejects it. It is
+            // closed here instead, and the next press opens a working device.
+            let keep_warm = capture_fault.is_none();
             let pending_linger = self.pending_linger();
-            match (resumed_preroll, recording.stream.take()) {
+            if !keep_warm {
+                log::info!(
+                    "not holding a capture stream the host reported gone; the next press opens one"
+                );
+            }
+            let stream_to_hold = if keep_warm {
+                recording.stream.take()
+            } else {
+                None
+            };
+            match (resumed_preroll, stream_to_hold) {
                 (Some(_preroll), Some(stream)) => {
                     let sink = recording.sink.clone();
                     if let Some(sink) = sink {

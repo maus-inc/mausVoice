@@ -1,6 +1,6 @@
 # Edge cases for the warm microphone, and how each one is checked
 
-Sixty-two classes of edge case, grouped by the thing they stress. Each row names
+Sixty-three classes of edge case, grouped by the thing they stress. Each row names
 the case, what the correct behaviour is, and how it is checked. The last column
 is the point of the table: it says whether a test would notice the behaviour
 changing, and if not, what would.
@@ -120,6 +120,7 @@ successful-looking result. The classification of those messages is
 | 60 | A recording paused for part of its length | The pause is subtracted from `expected_duration`, so a paused dictation is not reported as a capture that died | Verified — `a_paused_recording_does_not_pause_time_count_against_capture`, `a_new_recording_starts_with_no_paused_time` |
 | 61 | Two pauses, or a pause resumed twice | The interval is counted once and a repeat call does not restart the clock | Verified — `a_second_pause_does_not_restart_the_first_interval`, `resuming_twice_counts_the_pause_once` |
 | 62 | A faulted stream is restarted | The fault survives the restart: the device is gone, not just the recording | Verified — `a_fault_token_survives_a_restart_of_the_recording` |
+| 63 | A recording that faulted ends with the hold turned on | The dead stream is **not** left warm: it can never serve a press, and holding it keeps the microphone indicator on for a device that cannot record. The next press opens a working one | Inspected — the decision is one line in the stop path and has no separate rule to test; the outcome it prevents (adopting a faulted stream) is row 55, which is tested. Settling this needs a real stream, because closing one requires one |
 
 ## What this table does not settle
 
