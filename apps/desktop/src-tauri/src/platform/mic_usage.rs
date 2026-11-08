@@ -649,6 +649,26 @@ mod linux_command_tests {
     use super::CaptureUsage;
     use std::io::Write;
 
+    /// Serialises the tests that point the probe at a fake `pactl`.
+    ///
+    /// `MAUSVOICE_PACTL` is process-global and Rust runs test functions on
+    /// parallel threads, so without this the tests race: one sets the variable,
+    /// another removes it between the set and the probe, and the probe then runs
+    /// the real `pactl` or nothing at all. Measured before this was added: **3 of
+    /// 12** runs of this module failed, each in a different test.
+    ///
+    /// A mutex rather than `--test-threads=1`, because the serialisation travels
+    /// with the tests: a flag on a command line is a flag the next person does
+    /// not type.
+    static ENV_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Holds the guard for as long as the returned value is alive.
+    fn serialize_env() -> std::sync::MutexGuard<'static, ()> {
+        ENV_GUARD
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     /// Writes an executable shell script and points the probe at it.
     ///
     /// This exercises `current_usage` itself — the subprocess call, the exit
@@ -661,7 +681,7 @@ mod linux_command_tests {
         // The shebang and the trailing newline matter: without them the kernel
         // refuses to execute the file and the test would pass for the wrong
         // reason, reporting "not runnable" instead of the intended outcome.
-        write!(file, "#!/bin/sh\n{body}\n").expect("write script");
+        writeln!(file, "#!/bin/sh\n{body}").expect("write script");
         file.sync_all().expect("flush script");
         use std::os::unix::fs::PermissionsExt;
         let mut perms = std::fs::metadata(&path).expect("stat").permissions();
@@ -672,6 +692,7 @@ mod linux_command_tests {
 
     #[test]
     fn a_listing_with_one_holder_is_read_through_the_subprocess() {
+        let _guard = serialize_env();
         let dir = std::env::temp_dir().join(format!("mausvoice-pactl-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("mkdir");
         let script = fake_pactl(
@@ -692,6 +713,7 @@ mod linux_command_tests {
 
     #[test]
     fn a_probe_that_cannot_run_is_unavailable_not_idle() {
+        let _guard = serialize_env();
         std::env::set_var("MAUSVOICE_PACTL", "/nonexistent/pactl-binary");
         let usage = current_usage();
         std::env::remove_var("MAUSVOICE_PACTL");
@@ -705,6 +727,7 @@ mod linux_command_tests {
 
     #[test]
     fn a_probe_that_fails_is_unavailable_not_idle() {
+        let _guard = serialize_env();
         let dir = std::env::temp_dir().join(format!("mausvoice-pactl-fail-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("mkdir");
         let script = fake_pactl(&dir, "exit 3");

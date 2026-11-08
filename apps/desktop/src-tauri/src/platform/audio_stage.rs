@@ -191,8 +191,7 @@ impl AudioStartupTrace {
         let since_previous = self
             .stages
             .last()
-            .map(|previous| at.saturating_sub(previous.at))
-            .unwrap_or(at);
+            .map_or(at, |previous| at.saturating_sub(previous.at));
         self.stages.push(StageMark {
             stage,
             at,
@@ -285,16 +284,13 @@ use std::sync::Arc;
 /// cost, recording start for the press latency. The two are deliberately the
 /// same type rather than two ad-hoc booleans, because "which clock am I on" is
 /// the mistake that makes these numbers meaningless.
-#[derive(Debug)]
+/// `Default` is derived rather than written as `Self::new()`: a hand-written
+/// one is a second constructor that can drift from the first, and a signal that
+/// starts "already fired" silently reports every wait as absent.
+#[derive(Debug, Default)]
 pub struct FirstPcmSignal {
     fired: AtomicBool,
     at_us: AtomicU64,
-}
-
-impl Default for FirstPcmSignal {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 impl FirstPcmSignal {
