@@ -1,9 +1,27 @@
-//! Run with the isolated rawmidi control fixture preloaded; see PATCH.md.
+//! Run with the isolated ALSA query fixture preloaded; see PATCH.md.
 
-use alsa::{rawmidi::Iter, Ctl, Direction};
+use alsa::{poll::Descriptors, rawmidi::Iter, Ctl, Direction};
 
 #[test]
-#[ignore = "requires the rawmidi control preload fixture"]
+#[ignore = "requires the ALSA query preload fixture"]
+fn ctl_poll_count_failure_is_not_a_huge_allocation() {
+    let ctl = Ctl::new("fixture", false).unwrap();
+    assert_eq!(ctl.count(), 0);
+    assert_eq!(ctl.try_count().unwrap_err().errno(), libc::EIO);
+    assert_eq!(ctl.get().unwrap_err().errno(), libc::EIO);
+}
+
+#[test]
+#[ignore = "requires the ALSA query preload fixture"]
+fn pcm_poll_count_failure_is_not_a_huge_allocation() {
+    let pcm = alsa::PCM::new("fixture", Direction::Capture, false).unwrap();
+    assert_eq!(pcm.count(), 0);
+    assert_eq!(pcm.try_count().unwrap_err().errno(), libc::EIO);
+    assert_eq!(pcm.get().unwrap_err().errno(), libc::EIO);
+}
+
+#[test]
+#[ignore = "requires the ALSA query preload fixture"]
 fn lists_one_direction_devices_and_does_not_reuse_stale_counts_after_an_error() {
     std::env::remove_var("MIDI_EMPTY_RUN");
     let ctl = Ctl::new("fixture", false).unwrap();
@@ -29,7 +47,7 @@ fn lists_one_direction_devices_and_does_not_reuse_stale_counts_after_an_error() 
 }
 
 #[test]
-#[ignore = "requires the rawmidi control preload fixture"]
+#[ignore = "requires the ALSA query preload fixture"]
 fn skips_many_empty_devices_without_recursing() {
     std::env::set_var("MIDI_EMPTY_RUN", "1");
     let ctl = Ctl::new("fixture", false).unwrap();

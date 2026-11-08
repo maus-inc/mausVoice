@@ -66,6 +66,9 @@ with its actual size and accept rates inside a reported range. These changes
 have portable bounds tests and a macOS cross-check, but have not been tested on
 macOS hardware. In particular, a device may report a zero buffer-size range.
 
+ALSA stream setup uses the wrapper's fallible poll descriptor count, so a
+native error is returned before allocating descriptors or starting a worker.
+
 ALSA capability discovery and stream setup now use the same native-endian
 sample-format mapping. The previous discovery path always tested little-endian
 formats, so on big-endian systems it could advertise formats that stream setup

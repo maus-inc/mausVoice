@@ -412,7 +412,10 @@ impl Drop for PCM {
 
 impl poll::Descriptors for PCM {
     fn count(&self) -> usize {
-        unsafe { alsa::snd_pcm_poll_descriptors_count(self.0) as usize }
+        self.try_count().unwrap_or(0)
+    }
+    fn try_count(&self) -> Result<usize> {
+        acheck!(snd_pcm_poll_descriptors_count(self.0)).map(|count| count as usize)
     }
     fn fill(&self, p: &mut [pollfd]) -> Result<usize> {
         let z = unsafe { alsa::snd_pcm_poll_descriptors(self.0, p.as_mut_ptr(), p.len() as c_uint) };
@@ -1178,6 +1181,16 @@ fn status_storage_has_c_allocation_alignment() {
     assert!(std::mem::align_of::<Status>() >= std::mem::align_of::<libc::max_align_t>());
     let status = Status::new();
     assert_eq!(status.ptr() as usize % std::mem::align_of::<libc::max_align_t>(), 0);
+}
+
+#[test]
+fn null_pcm_poll_count_and_descriptors_agree() {
+    use crate::poll::Descriptors;
+    let pcm = PCM::new("null", Direction::Playback, false).unwrap();
+    let count = pcm.try_count().unwrap();
+    assert!(count > 0);
+    assert_eq!(pcm.count(), count);
+    assert_eq!(pcm.get().unwrap().len(), count);
 }
 
 #[test]

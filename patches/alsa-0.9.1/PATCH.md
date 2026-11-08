@@ -48,8 +48,15 @@ actual iterator. From this crate's directory, run the ignored tests serially:
 
 ```sh
 tmpdir=$(mktemp -d)
-cc -shared -fPIC $(pkg-config --cflags alsa) tests/fixtures/rawmidi_control.c -o "$tmpdir/rawmidi-control.so"
-LD_PRELOAD="$tmpdir/rawmidi-control.so" cargo test --test rawmidi_iteration -- --ignored --test-threads=1
+cc -shared -fPIC $(pkg-config --cflags alsa) tests/fixtures/alsa_query_fixture.c -o "$tmpdir/alsa-query-fixture.so"
+LD_PRELOAD="$tmpdir/alsa-query-fixture.so" cargo test --test alsa_query_fixture -- --ignored --test-threads=1
 ```
 
 The fixture does not exercise physical MIDI hardware.
+
+ALSA control, PCM, mixer, high-level control, raw MIDI and sequencer poll
+counts now expose `Descriptors::try_count`, which reports native errors before
+allocation. `Descriptors::get` uses that fallible path. For compatibility,
+`count` remains infallible and returns zero on an ALSA query error; external
+implementations inherit a default `try_count`. The preload fixture also checks
+failed control and PCM count queries.

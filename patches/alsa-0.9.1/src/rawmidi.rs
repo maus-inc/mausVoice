@@ -220,7 +220,10 @@ impl Rawmidi {
 
 impl poll::Descriptors for Rawmidi {
     fn count(&self) -> usize {
-        unsafe { alsa::snd_rawmidi_poll_descriptors_count(self.0) as usize }
+        self.try_count().unwrap_or(0)
+    }
+    fn try_count(&self) -> Result<usize> {
+        acheck!(snd_rawmidi_poll_descriptors_count(self.0)).map(|count| count as usize)
     }
     fn fill(&self, p: &mut [pollfd]) -> Result<usize> {
         let z = unsafe { alsa::snd_rawmidi_poll_descriptors(self.0, p.as_mut_ptr(), p.len() as c_uint) };

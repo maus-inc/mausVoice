@@ -428,10 +428,8 @@ impl Device {
             let period_len = set_sw_params_from_format(&handle, conf, stream_type)?;
             handle.prepare()?;
 
-            let num_descriptors = handle.count();
-            // alsa-rs casts the native signed result to usize, including
-            // negative errors. Never treat those as enormous descriptor counts.
-            if num_descriptors == 0 || num_descriptors > libc::c_int::MAX as usize {
+            let num_descriptors = handle.try_count()?;
+            if num_descriptors == 0 {
                 return Err(BackendSpecificError {
                     description: "invalid poll descriptor count for ALSA stream".to_string(),
                 }

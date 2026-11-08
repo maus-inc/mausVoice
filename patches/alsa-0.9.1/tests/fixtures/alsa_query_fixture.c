@@ -1,4 +1,4 @@
-/* Loaded only into the isolated rawmidi_iteration test process. */
+/* Loaded only into the isolated alsa_query_fixture test process. */
 #include <alsa/asoundlib.h>
 #include <errno.h>
 #include <stdlib.h>
@@ -13,6 +13,29 @@ int snd_ctl_open(snd_ctl_t **ctl, const char *name, int mode) {
 int snd_ctl_close(snd_ctl_t *ctl) {
     (void)ctl;
     return 0;
+}
+
+int snd_ctl_poll_descriptors_count(snd_ctl_t *ctl) {
+    (void)ctl;
+    return -EIO;
+}
+
+int snd_pcm_open(snd_pcm_t **pcm, const char *name, snd_pcm_stream_t stream, int mode) {
+    (void)name;
+    (void)stream;
+    (void)mode;
+    *pcm = (snd_pcm_t *)1;
+    return 0;
+}
+
+int snd_pcm_close(snd_pcm_t *pcm) {
+    (void)pcm;
+    return 0;
+}
+
+int snd_pcm_poll_descriptors_count(snd_pcm_t *pcm) {
+    (void)pcm;
+    return -EIO;
 }
 
 int snd_ctl_rawmidi_next_device(snd_ctl_t *ctl, int *device) {

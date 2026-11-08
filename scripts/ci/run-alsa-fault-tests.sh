@@ -56,6 +56,7 @@ rows=(
   "alsa_probe_close_failure||cpal_alsa_capture_build_waits_for_probe_close"
   "alsa_probe_close_failure||cpal_alsa_discovery_during_recording_leaves_capture_running"
   "alsa_build_failure||cpal_alsa_build_failure_distinguishes_confirmed_close"
+  "alsa_build_failure||cpal_alsa_poll_count_error_closes_capture_and_reports_cause"
   "alsa_build_failure||cpal_alsa_uncertain_build_close_blocks_successor_capture"
   "alsa_build_failure||cpal_alsa_uncertain_cached_build_close_blocks_successor_capture"
   "alsa_close_failure||cpal_alsa_failed_close_never_reuses_the_uncertain_handle"

@@ -3644,6 +3644,49 @@ mod cpal_impl {
         }
 
         #[cfg(target_os = "linux")]
+        #[test]
+        #[ignore = "requires ALSA null and the test-only build-failure preload"]
+        fn cpal_alsa_poll_count_error_closes_capture_and_reports_cause() {
+            use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+
+            let arm = unsafe {
+                libc::dlsym(
+                    libc::RTLD_DEFAULT,
+                    c"maus_test_arm_alsa_poll_count_failure".as_ptr(),
+                )
+            };
+            let closes = unsafe {
+                libc::dlsym(
+                    libc::RTLD_DEFAULT,
+                    c"maus_test_alsa_build_close_calls".as_ptr(),
+                )
+            };
+            assert!(
+                !arm.is_null() && !closes.is_null(),
+                "build-failure preload required"
+            );
+            let arm: unsafe extern "C" fn() = unsafe { std::mem::transmute(arm) };
+            let closes: unsafe extern "C" fn() -> libc::c_int =
+                unsafe { std::mem::transmute(closes) };
+            let device = cpal::default_host().default_input_device().unwrap();
+            let supported = device.default_input_config().unwrap();
+            let format = supported.sample_format();
+            let config: cpal::StreamConfig = supported.into();
+            unsafe { arm() };
+            let error = device
+                .build_input_stream_raw(&config, format, |_, _| {}, |_| {}, None)
+                .err()
+                .expect("poll descriptor failure must reject the stream");
+            assert!(error.to_string().contains("snd_pcm_poll_descriptors_count"));
+            assert_eq!(unsafe { closes() }, 1);
+            let stream = device
+                .build_input_stream_raw(&config, format, |_, _| {}, |_| {}, None)
+                .unwrap();
+            stream.play().unwrap();
+            drop(stream);
+        }
+
+        #[cfg(target_os = "linux")]
         fn exercise_alsa_uncertain_build_close(cached: bool) {
             use super::RecordingManager;
             use crate::platform::Recorder;
