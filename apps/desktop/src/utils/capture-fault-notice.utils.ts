@@ -48,13 +48,14 @@ const seconds = (valueMs: number): string => (valueMs / 1000).toFixed(1);
  * How much audio must be missing before the two-length message is worth
  * showing, in milliseconds.
  *
- * Below this the two figures round to the same tenth of a second, so the message
- * would state a loss the user cannot see and cannot act on. 100 ms is also well
- * under the native side's own 500 ms suspicion threshold, so this only ever
- * suppresses a message the native side already considered plausible rather than
- * hiding a real gap.
+ * A late error callback costs at most the buffer that was in flight when the
+ * device went away, so anything this small is not audio the user lost. The
+ * native side drops such a fault before it reaches the body
+ * (`FAULT_GAP_TOLERANCE` in `platform/audio.rs`), and this is the same rule on
+ * this side of the boundary: the body is a contract, not a trusted sender, and a
+ * stale one must not be able to raise an alarm either.
  */
-const MEANINGFUL_GAP_MS = 100;
+const MEANINGFUL_GAP_MS = 250;
 
 /**
  * The notice for a stop response, or `null` when nothing needs saying.

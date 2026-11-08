@@ -49,6 +49,16 @@ describe("captureFaultNotice", () => {
         expectedMs: 6_300,
       })?.kind,
     ).toBe("capture_faulted");
+    // And a big loss late in a long dictation is still a loss. A proportional
+    // suspicion test would have hidden this: five seconds out of sixty is under
+    // a tenth, and it is exactly the case worth telling the user about.
+    expect(
+      captureFaultNotice({
+        captureFault: "fatal",
+        capturedMs: 55_000,
+        expectedMs: 60_000,
+      })?.values,
+    ).toEqual({ captured: "55.0", expected: "60.0" });
   });
 
   it("falls back to a message with no numbers when none were reported", () => {

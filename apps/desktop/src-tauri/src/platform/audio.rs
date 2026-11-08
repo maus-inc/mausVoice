@@ -689,6 +689,20 @@ mod cpal_impl {
     /// A relative term as well as an absolute one: a 30-second dictation that
     /// lost 600 ms is not the defect this looks for, while a 900 ms recording
     /// that gained 5 seconds of wall clock is.
+    /// How much audio a fault must have cost before it is worth telling the user
+    /// about.
+    ///
+    /// A late error callback costs at most the one buffer that was in flight when
+    /// the device went away, so a few tens of milliseconds. Anything larger is
+    /// audio that was recorded into a stream that had already stopped.
+    ///
+    /// Deliberately not [`elapsed_gap_is_suspicious`]: that asks whether a gap is
+    /// statistically odd, and its relative term means a genuine death near the
+    /// end of a long dictation falls under it — five seconds lost out of sixty is
+    /// 8 %, so a rule meant to catch suspicious silence would silence the one
+    /// case worth reporting. This is a much smaller absolute floor.
+    const FAULT_GAP_TOLERANCE: Duration = Duration::from_millis(250);
+
     /// The fault token to report to the user, which drops one that lost no audio.
     ///
     /// The host's error callback runs on its own thread and can land after the
@@ -702,7 +716,7 @@ mod cpal_impl {
         captured: Duration,
         expected: Duration,
     ) -> Option<String> {
-        reported.filter(|_| elapsed_gap_is_suspicious(captured, expected))
+        reported.filter(|_| expected.saturating_sub(captured) >= FAULT_GAP_TOLERANCE)
     }
 
     fn elapsed_gap_is_suspicious(captured: Duration, expected: Duration) -> bool {
@@ -4162,6 +4176,26 @@ mod cpal_impl {
                     whole
                 ),
                 Some("fatal".to_string())
+            );
+            // A death near the end of a long dictation is still a death. The
+            // relative suspicion test would have hidden this one: five seconds
+            // out of sixty is under its tenth.
+            assert_eq!(
+                reported_capture_fault(
+                    Some("fatal".to_string()),
+                    Duration::from_secs(55),
+                    Duration::from_secs(60)
+                ),
+                Some("fatal".to_string())
+            );
+            // One buffer in flight is not a shortened recording.
+            assert_eq!(
+                reported_capture_fault(
+                    Some("fatal".to_string()),
+                    Duration::from_millis(5_900),
+                    whole
+                ),
+                None
             );
             // No fault at all stays no fault, however short the recording.
             assert_eq!(
