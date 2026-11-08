@@ -152,6 +152,9 @@ pub mod app_info;
 
 pub mod audio;
 
+/// Why a device could not be opened, kept separate from "it is missing".
+pub mod mic_usage;
+
 pub mod paste_keybind;
 
 #[cfg(desktop)]

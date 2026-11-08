@@ -65,6 +65,7 @@ fn main() {
         list_microphones,
         microphone_readiness_report,
         microphone_ready,
+        microphone_usage,
         notify_pill_style_info,
         paired_remote_device_delete,
         paired_remote_device_list,

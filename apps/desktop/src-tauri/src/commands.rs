@@ -3650,6 +3650,23 @@ pub fn microphone_readiness_report(
     warm.status_line()
 }
 
+/// What is holding the microphone right now, as one readable line.
+///
+/// Answers the question a user asks when the microphone is unavailable: is it
+/// me, or is another application using it? The answer is measured rather than
+/// inferred, and every state that cannot be measured says so rather than
+/// reporting "nothing is using it".
+///
+/// Shape: `idle`, `held_by_other[Zoom]`, or `unavailable:<reason>`.
+#[tauri::command]
+#[specta::specta]
+pub fn microphone_usage() -> String {
+    let usage = crate::platform::mic_usage::current_usage();
+    let line = usage.status_line();
+    log::debug!("microphone usage: {line}");
+    line
+}
+
 /// The stage timing of the most recent capture start, oldest stage first.
 #[tauri::command]
 #[specta::specta]

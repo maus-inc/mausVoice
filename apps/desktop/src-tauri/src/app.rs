@@ -861,6 +861,7 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             crate::commands::prepare_microphone,
             crate::commands::microphone_readiness_report,
             crate::commands::capture_startup_timing,
+            crate::commands::microphone_usage,
             crate::commands::get_system_volume,
             crate::commands::set_system_volume,
             crate::commands::composer_register_text,

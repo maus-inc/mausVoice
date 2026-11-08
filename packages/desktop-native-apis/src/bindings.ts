@@ -504,6 +504,19 @@ async microphoneReadinessReport() : Promise<string> {
 async microphoneReady() : Promise<boolean> {
     return await TAURI_INVOKE("microphone_ready");
 },
+/**
+ * What is holding the microphone right now, as one readable line.
+ * 
+ * Answers the question a user asks when the microphone is unavailable: is it
+ * me, or is another application using it? The answer is measured rather than
+ * inferred, and every state that cannot be measured says so rather than
+ * reporting "nothing is using it".
+ * 
+ * Shape: `idle`, `held_by_other[Zoom]`, or `unavailable:<reason>`.
+ */
+async microphoneUsage() : Promise<string> {
+    return await TAURI_INVOKE("microphone_usage");
+},
 async notifyPillStyleInfo(count: number, name: string) : Promise<void> {
     await TAURI_INVOKE("notify_pill_style_info", { count, name });
 },

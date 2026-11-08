@@ -1645,7 +1645,18 @@ mod cpal_impl {
                         return Ok(warm);
                     }
                     Err(err) => {
-                        log::warn!("host {host_id:?} did not yield a warm input device: {err}");
+                        // The message alone cannot distinguish a device another
+                        // application is holding from one that was unplugged,
+                        // and cpal 0.15 reports both as DeviceNotAvailable. The
+                        // classification is logged with the raw text so the two
+                        // cases can be told apart after the fact without
+                        // reproducing them.
+                        let reason =
+                            crate::platform::mic_usage::classify_open_failure(&err.to_string());
+                        log::warn!(
+                            "host {host_id:?} did not yield a warm input device ({reason}): {err}",
+                            reason = reason.as_str()
+                        );
                         last_err = Some(err);
                     }
                 }
