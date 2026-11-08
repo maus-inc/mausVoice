@@ -2560,6 +2560,19 @@ pub async fn transcription_update(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn transcription_append_warnings(
+    id: String,
+    warnings: Vec<String>,
+    database: State<'_, crate::state::OptionKeyDatabase>,
+) -> Result<Vec<String>, String> {
+    let _write_guard = acquire_local_data_write_guard().await?;
+    crate::db::transcription_queries::append_transcription_warnings(database.pool(), &id, &warnings)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn transcription_audio_load(
     app: AppHandle,
     id: String,

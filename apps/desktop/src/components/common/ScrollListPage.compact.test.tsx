@@ -6,6 +6,37 @@ import { ensureUiHarness } from "../../../test/helpers/jsdom-ui-harness";
 import { ScrollListPage } from "./ScrollListPage";
 ensureUiHarness();
 
+it("uses auto vertical margins for scrollable empty-state content", () => {
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  try {
+    act(() =>
+      root.render(
+        <ScrollListPage
+          title="Styling"
+          items={[]}
+          renderItem={() => null}
+          emptyState={<div data-empty-state-copy="">How it works</div>}
+        />,
+      ),
+    );
+
+    const emptyStateCopy = host.querySelector("[data-empty-state-copy]");
+    const content = emptyStateCopy?.closest(".MuiContainer-root");
+    if (!content) throw new Error("Expected the empty-state content container");
+
+    // jsdom cannot measure overflow. Auto margins center the content when it
+    // fits and resolve to zero instead of hiding its top when it is too tall.
+    const style = getComputedStyle(content);
+    expect(style.marginTop).toBe("auto");
+    expect(style.marginBottom).toBe("auto");
+  } finally {
+    act(() => root.unmount());
+    host.remove();
+  }
+});
+
 it("emits the short-window scroll and header rules", () => {
   const host = document.createElement("div");
   document.body.append(host);

@@ -19,6 +19,7 @@ import {
   closeStreamingSocket,
   createFinalizeBookkeeper,
   createStartupSettler,
+  describeProviderError,
 } from "./streaming-session.utils";
 import { getStartupAbortReason } from "./provider-startup.utils";
 
@@ -145,6 +146,9 @@ const startElevenLabsStreaming = async (
   return new Promise((resolve, reject) => {
     let ws: WebSocket | null = null;
     let isFinalized = false;
+    // A provider error after session_started must survive until finalize, or
+    // the socket can close and make a failed stream look like an empty success.
+    let sessionError: Error | null = null;
     let sentChunkCount = 0;
     let pendingChunks: Float32Array[] = [];
     const pendingSampleCountRef = { value: 0 };
@@ -303,7 +307,16 @@ const startElevenLabsStreaming = async (
     });
 
     const finalize = (): Promise<string> => {
-      return new Promise((resolveFinalize) => {
+      return new Promise((resolveFinalize, rejectFinalize) => {
+        const settleFinalize = () => {
+          const text = getText();
+          if (sessionError && !text) {
+            rejectFinalize(sessionError);
+          } else {
+            resolveFinalize(text);
+          }
+        };
+
         getLogger().verbose(
           "[ElevenLabs WebSocket] Finalize called, isFinalized:",
           isFinalized,
@@ -314,7 +327,7 @@ const startElevenLabsStreaming = async (
           getLogger().verbose(
             "[ElevenLabs WebSocket] Already finalized, returning transcript",
           );
-          resolveFinalize(getText());
+          settleFinalize();
           return;
         }
 
@@ -328,14 +341,20 @@ const startElevenLabsStreaming = async (
         );
 
         if (ws && ws.readyState === WebSocket.OPEN) {
-          bookkeeper.begin(resolveFinalize);
+          bookkeeper.begin((text) => {
+            if (sessionError && !text) {
+              rejectFinalize(sessionError);
+            } else {
+              resolveFinalize(text);
+            }
+          });
           bookkeeper.armTimeout(
             6000,
             "Timeout waiting for final transcript, length:",
           );
         } else {
           cleanup();
-          resolveFinalize(getText());
+          settleFinalize();
         }
       });
     };
@@ -378,53 +397,90 @@ const startElevenLabsStreaming = async (
       );
     };
 
-    ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        const messageType = data.message_type || data.type;
-        getLogger().verbose(
-          "[ElevenLabs WebSocket] Received message:",
-          messageType,
-          data,
-        );
+    type ElevenLabsMessage = {
+      message_type?: string;
+      type?: string;
+      text?: string;
+      error?: unknown;
+      message?: unknown;
+    };
 
-        if (messageType === "committed_transcript") {
-          const committedText = data.text || "";
-          transcriptState.appendFinal(committedText);
-          transcriptState.setPartial("");
-          getLogger().verbose(
-            "[ElevenLabs WebSocket] Committed chunk appended, length:",
-            committedText.length,
-          );
-          if (onInterimResult && committedText) {
-            onInterimResult(committedText);
-          }
-          if (isFinalized) {
-            bookkeeper.complete();
-          }
-        } else if (messageType === "partial_transcript") {
+    const getMessageType = (data: ElevenLabsMessage): string | undefined =>
+      data.message_type || data.type;
+
+    const handleCommittedTranscript = (data: ElevenLabsMessage) => {
+      const committedText = data.text || "";
+      transcriptState.appendFinal(committedText);
+      transcriptState.setPartial("");
+      getLogger().verbose(
+        "[ElevenLabs WebSocket] Committed chunk appended, length:",
+        committedText.length,
+      );
+      if (onInterimResult && committedText) {
+        onInterimResult(committedText);
+      }
+      if (isFinalized) {
+        bookkeeper.complete();
+      }
+    };
+
+    const handleProviderError = (data: ElevenLabsMessage) => {
+      getLogger().error("[ElevenLabs WebSocket] Error from server:", data);
+      const error = new Error(
+        describeProviderError(data, "ElevenLabs rejected the session"),
+      );
+      if (!settler.settled) {
+        settler.rejectStartup(error);
+        return;
+      }
+      sessionError = error;
+      if (isFinalized) {
+        bookkeeper.complete();
+      } else {
+        cleanup();
+      }
+    };
+
+    const handleUnknownMessage = (
+      messageType: string | undefined,
+      data: ElevenLabsMessage,
+    ) => {
+      if (
+        typeof messageType === "string" &&
+        messageType.toLowerCase().includes("error")
+      ) {
+        handleProviderError(data);
+      }
+    };
+
+    const handleMessageData = (data: ElevenLabsMessage) => {
+      const messageType = getMessageType(data);
+      getLogger().verbose(
+        "[ElevenLabs WebSocket] Received message:",
+        messageType,
+        data,
+      );
+
+      switch (messageType) {
+        case "committed_transcript":
+          handleCommittedTranscript(data);
+          return;
+        case "partial_transcript":
           transcriptState.setPartial(data.text || "");
-        } else if (messageType === "session_started") {
+          return;
+        case "session_started":
           getLogger().verbose("[ElevenLabs WebSocket] Session started:", data);
           flushPendingSamples(false);
           settler.resolveStartup();
-        } else if (
-          typeof messageType === "string" &&
-          messageType.toLowerCase().includes("error")
-        ) {
-          getLogger().error("[ElevenLabs WebSocket] Error from server:", data);
-          if (!settler.settled) {
-            settler.rejectStartup(
-              new Error(
-                String(
-                  data.error ??
-                    data.message ??
-                    "ElevenLabs rejected the session",
-                ),
-              ),
-            );
-          }
-        }
+          return;
+        default:
+          handleUnknownMessage(messageType, data);
+      }
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        handleMessageData(JSON.parse(event.data));
       } catch (error) {
         getLogger().error(
           "[ElevenLabs WebSocket] Error parsing message:",

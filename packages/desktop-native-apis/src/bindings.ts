@@ -1010,6 +1010,14 @@ async toneUpsert(tone: Tone) : Promise<Result<Tone, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async transcriptionAppendWarnings(id: string, warnings: string[]) : Promise<Result<string[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("transcription_append_warnings", { id, warnings }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async transcriptionAudioLoad(id: string) : Promise<Result<TranscriptionAudioSamplesData, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("transcription_audio_load", { id }) };

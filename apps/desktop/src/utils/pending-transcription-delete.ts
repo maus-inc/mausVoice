@@ -10,6 +10,7 @@ import {
   withLocalDataWriteSync,
 } from "./local-data-write-gate";
 import { getLocalStorage } from "./local-storage.utils";
+import { unmarkTranscriptionSessionOnly } from "./session-only-transcriptions";
 
 export const PENDING_DELETE_STORAGE_KEY =
   "mausvoice.pending-transcription-deletes";
@@ -137,6 +138,12 @@ const invokeDelete = (
       deletionRevision += 1;
       writeQueuedIds(lease);
       removeFromStore(id, lease);
+      // A committed delete is past the undo window, so a session-only
+      // registry id can go now. Unmarking at schedule time instead would
+      // strand the row if the delete is undone, and waiting for the next
+      // list refresh would let a mounted History page accumulate ids across
+      // import-and-delete cycles.
+      unmarkTranscriptionSessionOnly(id);
     } catch (error) {
       if (snapshot) {
         queuedIds.delete(id);

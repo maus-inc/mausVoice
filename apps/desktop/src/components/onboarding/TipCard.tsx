@@ -7,7 +7,6 @@ import {
   X,
 } from "lucide-react";
 import { Box, Button, IconButton, Stack, Typography } from "@mui/material";
-import { useTheme } from "@mui/material/styles";
 import type { SxProps } from "@mui/material/styles";
 import type { SystemStyleObject, Theme } from "@mui/system";
 import {
@@ -21,9 +20,16 @@ import { useEffect, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { dismissTip } from "../../actions/onboarding.actions";
 import { useAppStore } from "../../store";
-import { duration } from "../../styles/motion";
-import { premiumSurface } from "../../styles/shadows";
+import {
+  cssEase,
+  duration,
+  easeOutQuint,
+  pressScale,
+} from "../../styles/motion";
+import { surfaceAlpha, surfaces } from "../../styles/palette";
+import { hairline, premiumSurface } from "../../styles/shadows";
 import type { OnboardingTipId } from "../../utils/tips";
+import tipToastPattern from "../../assets/tip-toast-pattern.png";
 import { getTipAction } from "./tip-actions";
 
 export const TIP_COPY: Record<
@@ -101,6 +107,44 @@ export const TIP_LIVE_ACTIONS: Partial<
 };
 
 /**
+ * Shared header art for every live tip. One abstract monochrome ink
+ * pattern, evoking a voice waveform caught mid-motion, generated from the
+ * app's own ink/onyx/silver tokens (`palette.ts`) rather than a stock photo.
+ * One asset reused across all five tips, so the card's job is tone and brand
+ * recognition, the same way a consistent header motif works across
+ * unrelated posts on a changelog or careers page; the icon, title, and body
+ * below still carry the tip's actual meaning.
+ */
+const PATTERN_HEIGHT = 96;
+
+/**
+ * The image fades into the card's own paper surface instead of ending on a
+ * hard edge, so the art reads as part of the card rather than a clipped
+ * photo pasted on top of it. Built from `surfaceAlpha` against the same hex
+ * `background.paper` resolves to (`surfaces.*.level1`, see `theme.ts`), so
+ * the translucent top of the gradient and the opaque body below it can
+ * never drift apart.
+ */
+const patternFade = (tier: string) =>
+  `linear-gradient(to top, ${surfaceAlpha(tier, 1)} 0%, ${surfaceAlpha(tier, 0)} 65%)`;
+
+/**
+ * One dark-scrim recipe over the shared pattern image, for the dismiss
+ * control that sits on top of it. A literal colour, not a palette token:
+ * `DESIGN.md` reserves that exception for artwork with its own fixed
+ * luminance, and that is exactly the case here. The pattern image is the
+ * same dark ink bitmap in both colour schemes, so a control sitting on top
+ * of it needs the one contrast pairing that already reads against that
+ * fixed artwork, not a light-mode and a dark-mode token pair.
+ */
+const SCRIM_INK = "20, 18, 15";
+const scrimGlyph = "#F2F1EE";
+const dismissScrim = {
+  rest: `rgba(${SCRIM_INK}, 0.45)`,
+  hover: `rgba(${SCRIM_INK}, 0.6)`,
+};
+
+/**
  * Subscribes a component to a tip's visibility: true while the tip has not
  * been dismissed, false after `dismissTip` has persisted it.
  */
@@ -157,7 +201,7 @@ export const TipCardFrame = ({
   icon,
   headingLevel,
   actions,
-  onDismiss,
+  onActivate,
   sx,
 }: {
   title: ReactNode;
@@ -165,13 +209,36 @@ export const TipCardFrame = ({
   icon?: ReactNode;
   headingLevel?: "h2" | "h3";
   actions?: ReactNode;
-  onDismiss?: () => void;
+  /**
+   * Marks this tip read when the title-and-body region itself is clicked
+   * or activated from the keyboard, the fallback a tip with no live action
+   * needs so reading it is enough to clear it, not just the 24px dismiss
+   * glyph on the pattern image above. A tip with a live action leaves this
+   * unset: its one explicit button already runs that action without also
+   * closing the card, and the row would otherwise have to guess which of
+   * two different effects a bare click on it should trigger.
+   */
+  onActivate?: () => void;
   sx?: SxProps;
 }) => {
-  const intl = useIntl();
+  const interactive = Boolean(onActivate);
+  const handleKeyDown = (event: React.KeyboardEvent) => {
+    if (!onActivate) return;
+    // Ignore keys bubbling up from a focusable child (the live-action
+    // button, when `actions` renders one) so this row's own Enter/Space
+    // handling never fires alongside that child's native activation.
+    if (event.target !== event.currentTarget) return;
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    onActivate();
+  };
   return (
     <Box
-      role="note"
+      data-tip-frame="true"
+      role={interactive ? "button" : "note"}
+      tabIndex={interactive ? 0 : undefined}
+      onClick={interactive ? onActivate : undefined}
+      onKeyDown={interactive ? handleKeyDown : undefined}
       sx={(theme) => {
         // Overrides resolve here (theme in hand) so any `SxProps` form a
         // caller passes merges over the base instead of into a second entry.
@@ -188,6 +255,15 @@ export const TipCardFrame = ({
           // Flat on purpose: in-flow, the row separates by its luminance step
           // (level1 over level0) and its hairline — no `premiumSurface` cast.
           bgcolor: "level1",
+          ...(interactive && {
+            cursor: "pointer",
+            // Same wash-and-press recipe `TranscriptRow`'s clickable row
+            // already uses, so an activatable tip row reads as one more
+            // instance of a pattern the app already has, not a new one.
+            transition: `background-color ${duration.fast * 1000}ms ${cssEase(easeOutQuint)}, transform 120ms ${cssEase(easeOutQuint)}`,
+            "&:hover": { bgcolor: "action.hover" },
+            "&:active": { transform: `scale(${pressScale})` },
+          }),
           ...overrides,
         };
       }}
@@ -222,25 +298,20 @@ export const TipCardFrame = ({
           {body}
         </Typography>
       </Box>
-      <Stack
-        direction="row"
-        spacing={0.5}
-        sx={{ flexShrink: 0, alignItems: "center", ml: 1 }}
-      >
-        {actions}
-        {onDismiss && (
-          <IconButton
-            size="small"
-            onClick={onDismiss}
-            aria-label={intl.formatMessage({ defaultMessage: "Dismiss tip" })}
-            // No explicit glyph sizing: the theme sizes lucide glyphs inside
-            // icon buttons to the app-wide 16px / 1.9 stroke.
-            sx={{ color: "text.secondary", ml: 0.5 }}
-          >
-            <X aria-hidden />
-          </IconButton>
-        )}
-      </Stack>
+      {actions && (
+        <Stack
+          direction="row"
+          spacing={0.5}
+          sx={{ flexShrink: 0, alignItems: "center", ml: 1 }}
+          // A live action's own button already runs its own effect on
+          // click. Stopping the row's click here keeps that one effect
+          // from also re-firing as this row's activation, the same
+          // single-effect-per-click guarantee `onActivate` depends on.
+          onClick={(event) => event.stopPropagation()}
+        >
+          {actions}
+        </Stack>
+      )}
     </Box>
   );
 };
@@ -298,14 +369,22 @@ const TipCardMotion = ({ children }: { children: ReactNode }) => {
  * The face is the floating-layer material: paper over the page with the
  * premium lift the app reserves for things that float (toasts, dialogs,
  * popovers), at the toast column width so the two stacks align in the corner.
- * `TipCardFrame` keeps the flat in-flow material for the Help page's listing.
+ * A pattern-image header sits on top of that face, the one visual flourish
+ * a live tip gets that the Help page's flat listing (`TipCardFrame`) does
+ * not; the dismiss control moves onto that image, in a scrim chip, so the
+ * row below stays as quiet as the Help listing's.
  *
  * The in-page action, where one exists (`TIP_LIVE_ACTIONS`), runs the handler
- * the tip's route page registered in `tip-actions`; it never dismisses the
- * tip — the action completes the task, dismissal stays the X's job.
+ * the tip's route page registered in `tip-actions`. It never dismisses the
+ * tip; the action completes the task, and dismissal stays the X's job.
+ *
+ * A tip with no live action instead makes its own title-and-body row the
+ * activation target, through `onActivate` on `TipCardFrame`, so reading it
+ * is enough to clear it. The dismiss glyph still works the same way in
+ * both cases; it is just no longer the only way to mark a plain tip read.
  */
 export const TipCard = ({ id }: { id: OnboardingTipId }) => {
-  const theme = useTheme();
+  const intl = useIntl();
   const visible = useTip(id);
   const [closing, setClosing] = useState(false);
   const dismissedRef = useRef(false);
@@ -346,34 +425,97 @@ export const TipCard = ({ id }: { id: OnboardingTipId }) => {
     >
       {closing ? null : (
         <TipCardMotion key={id}>
-          <TipCardFrame
-            icon={TIP_ICONS[id]}
-            title={copy.title}
-            body={copy.body}
-            onDismiss={handleDismiss}
-            actions={
-              liveAction ? (
-                <Button
-                  size="small"
-                  variant="outlined"
-                  onClick={() => getTipAction(id)?.()}
-                  // A quiet secondary action: no arrow, which would read as a
-                  // marketing CTA in an otherwise neutral row.
-                  sx={{ textTransform: "none", borderRadius: 999 }}
-                >
-                  {liveAction.label}
-                </Button>
-              ) : undefined
-            }
-            sx={{
+          <Box
+            data-tip-card="true"
+            sx={(cardTheme) => ({
+              position: "relative",
               width: 356,
+              overflow: "hidden",
+              borderRadius: `${cardTheme.shape.borderRadius}px`,
+              border: hairline.light(),
+              boxShadow: premiumSurface.light.hover,
               bgcolor: "background.paper",
-              boxShadow:
-                theme.palette.mode === "dark"
-                  ? premiumSurface.dark.hover
-                  : premiumSurface.light.hover,
-            }}
-          />
+              ...cardTheme.applyStyles("dark", {
+                border: hairline.dark(),
+                boxShadow: premiumSurface.dark.hover,
+              }),
+            })}
+          >
+            <Box sx={{ position: "relative", height: PATTERN_HEIGHT }}>
+              <Box
+                component="img"
+                src={tipToastPattern}
+                alt=""
+                aria-hidden
+                sx={{
+                  display: "block",
+                  width: "100%",
+                  height: "100%",
+                  objectFit: "cover",
+                }}
+              />
+              <Box
+                aria-hidden
+                sx={(fadeTheme) => ({
+                  position: "absolute",
+                  inset: 0,
+                  background: patternFade(surfaces.light.level1),
+                  ...fadeTheme.applyStyles("dark", {
+                    background: patternFade(surfaces.dark.level1),
+                  }),
+                })}
+              />
+              <IconButton
+                size="small"
+                onClick={handleDismiss}
+                aria-label={intl.formatMessage({
+                  defaultMessage: "Dismiss tip",
+                })}
+                sx={{
+                  position: "absolute",
+                  top: 8,
+                  right: 8,
+                  width: 24,
+                  height: 24,
+                  bgcolor: dismissScrim.rest,
+                  color: scrimGlyph,
+                  "&:hover": { bgcolor: dismissScrim.hover },
+                }}
+              >
+                <X size={14} strokeWidth={1.9} />
+              </IconButton>
+            </Box>
+            <TipCardFrame
+              icon={TIP_ICONS[id]}
+              title={copy.title}
+              body={copy.body}
+              // Only an actionless tip gets a click-to-dismiss row: a tip
+              // with a live action keeps that one button as its only
+              // effect, so the row never has to pick between running the
+              // action and marking the tip read on the same click.
+              onActivate={liveAction ? undefined : handleDismiss}
+              actions={
+                liveAction ? (
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    onClick={() => getTipAction(id)?.()}
+                    // A quiet secondary action: no arrow, which would read
+                    // as a marketing CTA in an otherwise neutral row.
+                    sx={{ textTransform: "none", borderRadius: 999 }}
+                  >
+                    {liveAction.label}
+                  </Button>
+                ) : undefined
+              }
+              sx={{
+                border: 0,
+                borderRadius: 0,
+                boxShadow: "none",
+                bgcolor: "transparent",
+              }}
+            />
+          </Box>
         </TipCardMotion>
       )}
     </AnimatePresence>

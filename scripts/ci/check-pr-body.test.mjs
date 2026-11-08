@@ -296,6 +296,124 @@ describe("check-pr-body", () => {
     assert.match(out, /footer line sits inside a fold/);
   });
 
+  it("passes an unbolded bot summary appended below the footer", () => {
+    const body = [
+      "## Summary",
+      "Text.",
+      "",
+      "## Verification gate",
+      "Head SHA: `abc1234`",
+      "",
+      "## Checklist",
+      "- [x] one",
+      "",
+      footer,
+      "",
+      "## Summary by Sourcery",
+      "",
+      "- Bug fix: something changed.",
+      "",
+      "## Summary by CodeRabbit",
+      "",
+      "Walkthrough text.",
+    ].join("\n");
+    const { code, out } = run(body);
+    assert.equal(code, 0, out);
+  });
+
+  it("does not charge bot lines below the footer to the unfolded budget", () => {
+    const body = [
+      "## Summary",
+      "Text.",
+      "",
+      "## Verification gate",
+      "Head SHA: `abc1234`",
+      "",
+      "## Checklist",
+      "- [x] one",
+      "",
+      footer,
+      "",
+      ...Array.from({ length: 200 }, (_, i) => `Bot line ${i}.`),
+    ].join("\n");
+    const { code, out } = run(body, ["--max-open", "30"]);
+    assert.equal(code, 0, out);
+  });
+
+  it("ignores an unclosed bot fold below the footer", () => {
+    const body = [
+      "## Summary",
+      "Text.",
+      "",
+      "## Verification gate",
+      "Head SHA: `abc1234`",
+      "",
+      "## Checklist",
+      "- [x] one",
+      "",
+      footer,
+      "",
+      "<details>",
+      "bot text with no summary and no close",
+    ].join("\n");
+    const { code, out } = run(body);
+    assert.equal(code, 0, out);
+  });
+
+  it("still fails an authored violation above the footer when bots appended below", () => {
+    const body = [
+      "## Summary",
+      "Text.",
+      "## Review rounds",
+      "- round one",
+      footer,
+      "",
+      "## Summary by Sourcery",
+    ].join("\n");
+    const { code, out } = run(body);
+    assert.equal(code, 1);
+    assert.match(out, /R3 line 3/);
+  });
+
+  it("still fails a footer duplicated into the bot territory", () => {
+    const body = [
+      "## Summary",
+      "Text.",
+      "",
+      "## Verification gate",
+      "Head SHA: `abc1234`",
+      "",
+      "## Checklist",
+      "- [x] one",
+      "",
+      footer,
+      "",
+      "## Summary by Sourcery",
+      "",
+      footer,
+    ].join("\n");
+    const { code, out } = run(body);
+    assert.equal(code, 1);
+    assert.match(out, /appears 2 times/);
+  });
+
+  it("does not start the bot territory at a footer hidden inside a fold", () => {
+    const body = [
+      "## Summary",
+      "Text.",
+      "<details>",
+      "<summary>Review log</summary>",
+      footer,
+      "</details>",
+      "## Review rounds",
+      "- round one",
+    ].join("\n");
+    const { code, out } = run(body);
+    assert.equal(code, 1);
+    assert.match(out, /footer line sits inside a fold/);
+    assert.match(out, /R3 line 7/);
+  });
+
   it("fails a duplicated footer", () => {
     const body = ["## Summary", "Text.", footer, footer].join("\n");
     const { code, out } = run(body);

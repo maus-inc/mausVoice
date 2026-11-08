@@ -222,7 +222,8 @@ export function ScrollListPage<Item>({
               overflow: "auto",
             }}
           >
-            <Container maxWidth={contentMaxWidth} sx={{ pb: 8 }}>
+            {/* Auto margins center content when it fits and collapse to zero when it overflows. */}
+            <Container maxWidth={contentMaxWidth} sx={{ pb: 8, my: "auto" }}>
               {emptyState || (
                 <Stack
                   spacing={1}
