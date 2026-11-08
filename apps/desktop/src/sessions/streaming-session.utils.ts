@@ -23,20 +23,6 @@ export const describeProviderError = (
  * session files from drifting into near-copies of each other.
  */
 
-/** Preserve accumulated text on provider error, but reject a failed empty stream. */
-export const settleStreamingFinalization = (
-  text: string,
-  error: Error | null,
-  resolve: (text: string) => void,
-  reject: (reason: Error) => void,
-): void => {
-  if (error && !text) {
-    reject(error);
-  } else {
-    resolve(text);
-  }
-};
-
 /**
  * Tears down a provider socket: tolerates an already-CLOSED socket, logs and
  * recovers when `close()` throws, and always resets the audio buffer so queued
