@@ -69,6 +69,7 @@ import type {
 import {
   attachSessionAudioIntake,
   createCurrentSegmentGuard,
+  hasLiveAudioDiscontinuity,
   isRecordingStartCurrent,
   releaseRecordingResources,
   requiresLiveIntakeRecovery,
@@ -207,6 +208,16 @@ type RawStopResp = {
    * runs it after its teardown; failure paths never produce one.
    */
   persist?: () => Promise<void>;
+};
+
+const logFinalizedTranscript = (
+  rawTranscript: string | null | undefined,
+  toneId: string | null | undefined,
+  appName: string | null | undefined,
+): void => {
+  getLogger().verbose(
+    `Transcription result: rawTranscript=${rawTranscript ? `${rawTranscript.length} chars` : "empty"}, toneId=${toneId ?? "none"}, app=${appName ?? "unknown"}`,
+  );
 };
 
 type DictationToastOptions = {
@@ -1689,6 +1700,27 @@ export const DictationSideEffects = () => {
       audioIntakeDiscontinuous: boolean;
       recordingSessionKind: TranscriptionSessionKind;
     }): Promise<RawStopResp> => {
+      const preserveFailedRecording = (
+        transcribeResult: TranscriptionSessionResult | undefined,
+      ) => {
+        const strategy = strategyRef.current;
+        if (!strategy) return null;
+        return handleEmptyTranscriptionResult({
+          audio,
+          transcribeResult,
+          sessionKind: recordingSessionKind,
+          audioIntakeSubscriptionFailed,
+          audioIntakeDiscontinuous,
+          strategy,
+          formatMessage: intl.formatMessage,
+          showToast,
+          storeTranscriptionFn: storeTranscription,
+          refreshMember,
+          sendIdle: () => sendPhaseToPill("idle"),
+          createdAt,
+          persistAllowedAtCapture,
+        });
+      };
       if (
         recordingSessionKind === "live-streaming" &&
         audioIntakeDiscontinuous
@@ -1696,23 +1728,8 @@ export const DictationSideEffects = () => {
         // Do not wait for a broken live provider to finalize before preserving
         // the waveform: finalize can hang, reject, or return a plausible but
         // incomplete transcript. The caller tears the session down afterward.
-        if (strategyRef.current) {
-          await handleEmptyTranscriptionResult({
-            audio,
-            transcribeResult: undefined,
-            sessionKind: recordingSessionKind,
-            audioIntakeSubscriptionFailed,
-            audioIntakeDiscontinuous,
-            strategy: strategyRef.current,
-            formatMessage: intl.formatMessage,
-            showToast,
-            storeTranscriptionFn: storeTranscription,
-            refreshMember,
-            sendIdle: () => sendPhaseToPill("idle"),
-            createdAt,
-            persistAllowedAtCapture,
-          });
-        }
+        const preservation = preserveFailedRecording(undefined);
+        if (preservation) await preservation;
         return { shouldContinue: false };
       }
       getLogger().info("Finalizing transcription session");
@@ -1763,28 +1780,11 @@ export const DictationSideEffects = () => {
         markPipeline(pipelineTraceRef.current, "transcribed");
       }
       const rawTranscript = transcribeResult?.rawTranscript;
-      getLogger().verbose(
-        `Transcription result: rawTranscript=${rawTranscript ? `${rawTranscript.length} chars` : "empty"}, toneId=${toneId ?? "none"}, app=${appTarget?.name ?? "unknown"}`,
-      );
+      logFinalizedTranscript(rawTranscript, toneId, appTarget?.name);
 
       if (!rawTranscript || !transcribeResult) {
-        if (strategyRef.current) {
-          await handleEmptyTranscriptionResult({
-            audio,
-            transcribeResult,
-            sessionKind: recordingSessionKind,
-            audioIntakeSubscriptionFailed,
-            audioIntakeDiscontinuous,
-            strategy: strategyRef.current,
-            formatMessage: intl.formatMessage,
-            showToast,
-            storeTranscriptionFn: storeTranscription,
-            refreshMember,
-            sendIdle: () => sendPhaseToPill("idle"),
-            createdAt,
-            persistAllowedAtCapture,
-          });
-        }
+        const preservation = preserveFailedRecording(transcribeResult);
+        if (preservation) await preservation;
         getLogger().warning(
           "stopRecordingRaw: no complete transcript from finalize",
         );
@@ -1836,12 +1836,11 @@ export const DictationSideEffects = () => {
       if (pendingProviderStartup) {
         await pendingProviderStartup.promise;
       }
-      const audioIntakeDiscontinuous =
-        recordingSessionKind === "live-streaming" &&
-        !(
-          ownedAudioIntake?.sealLiveAudio(audio.samples, audio.sampleRate) ??
-          false
-        );
+      const audioIntakeDiscontinuous = hasLiveAudioDiscontinuity(
+        recordingSessionKind,
+        ownedAudioIntake,
+        audio,
+      );
       sendPillStageText(intl.formatMessage({ defaultMessage: "Transcribing" }));
       return await finalizeAndPostProcess({
         audio,

@@ -5,7 +5,10 @@ import {
 } from "../../sessions/audio-chunk-events";
 import type { TranscriptionSessionKind } from "../../sessions";
 import type { BaseStrategy } from "../../strategies/base.strategy";
-import type { TranscriptionSession } from "../../types/transcription-session.types";
+import type {
+  StopRecordingResponse,
+  TranscriptionSession,
+} from "../../types/transcription-session.types";
 import {
   createAudioChunkStartupBuffer,
   type AudioChunkStartupBuffer,
@@ -52,6 +55,15 @@ export const requiresLiveIntakeRecovery = (
   sessionKind: TranscriptionSessionKind,
   subscriptionFailed: boolean,
 ): boolean => subscriptionFailed && sessionKind === "live-streaming";
+
+/** Seal only live providers, which cannot recover missed audio at finalize. */
+export const hasLiveAudioDiscontinuity = (
+  sessionKind: TranscriptionSessionKind,
+  intake: Pick<SessionAudioIntake, "sealLiveAudio"> | null,
+  audio: StopRecordingResponse,
+): boolean =>
+  sessionKind === "live-streaming" &&
+  !(intake?.sealLiveAudio(audio.samples, audio.sampleRate) ?? false);
 
 /**
  * A recording start is current only while its operation id, session, and
