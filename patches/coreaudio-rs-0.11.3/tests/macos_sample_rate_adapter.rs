@@ -161,6 +161,10 @@ pub mod listener_sys {
     }
 }
 
+// Each adapter is also compiled independently as a portable test.
+#[allow(clippy::duplicate_mod)]
+#[path = "../src/audio_unit/macos_property_limits.rs"]
+mod macos_property_limits;
 #[path = "../src/audio_unit/macos_sample_rate.rs"]
 mod macos_sample_rate;
 
@@ -255,6 +259,18 @@ mod tests {
         let f = sys::FIXTURE.lock().unwrap();
         assert_eq!(f.registrations, 0);
         assert_eq!(f.sets, 0);
+    }
+    #[test]
+    fn rejects_oversized_sample_rate_ranges() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        reset();
+        let item = std::mem::size_of::<sys::AudioValueRange>() as u32;
+        sys::FIXTURE.lock().unwrap().queried = 1024 * 1024 + item;
+        assert_eq!(
+            set_device_sample_rate(1, 48_000.0),
+            Err(ListenerError::Unspecified)
+        );
+        assert_eq!(sys::FIXTURE.lock().unwrap().sets, 0);
     }
     #[test]
     fn rejects_invalid_rates_and_invalid_lengths() {

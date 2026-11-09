@@ -1,4 +1,5 @@
 //! Bounded CoreAudio stream-configuration reads.
+use super::macos_property_limits::MAX_PROPERTY_BYTES;
 use super::{listener_sys as sys, ListenerError as Error, Scope};
 use std::{mem, ptr};
 use sys::{
@@ -38,7 +39,7 @@ pub fn get_audio_device_supports_scope(
     }
     let header = mem::offset_of!(AudioBufferList, mBuffers);
     let capacity = size as usize;
-    if capacity < header {
+    if capacity < header || capacity > MAX_PROPERTY_BYTES {
         return Err(Error::Unspecified);
     }
     let word_size = mem::size_of::<usize>();

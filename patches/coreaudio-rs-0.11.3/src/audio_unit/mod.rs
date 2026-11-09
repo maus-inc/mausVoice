@@ -18,8 +18,8 @@
 //! If you can find documentation on these, please feel free to submit an issue or PR with the
 //! fixes!
 
-use crate::error::Error;
 use crate::error as stream_error;
+use crate::error::Error;
 use std::mem;
 use std::os::raw::{c_uint, c_void};
 use std::ptr;
@@ -35,23 +35,25 @@ pub use self::types::{
 };
 
 #[cfg(target_os = "macos")]
-pub mod macos_helpers;
-#[cfg(target_os = "macos")]
 mod listener_registry;
 #[cfg(target_os = "macos")]
-mod macos_listeners;
-#[cfg(target_os = "macos")]
-mod macos_devices;
-#[cfg(target_os = "macos")]
-mod macos_sample_rate;
-#[cfg(target_os = "macos")]
-mod macos_physical_format;
+mod macos_device_name;
 #[cfg(target_os = "macos")]
 mod macos_device_scope;
 #[cfg(target_os = "macos")]
+mod macos_devices;
+#[cfg(target_os = "macos")]
+pub mod macos_helpers;
+#[cfg(target_os = "macos")]
 mod macos_hog;
 #[cfg(target_os = "macos")]
-mod macos_device_name;
+mod macos_listeners;
+#[cfg(target_os = "macos")]
+mod macos_physical_format;
+#[cfg(target_os = "macos")]
+mod macos_property_limits;
+#[cfg(target_os = "macos")]
+mod macos_sample_rate;
 #[cfg(target_os = "macos")]
 mod name_cf {
     pub use crate::sys::kCFStringEncodingUTF8;

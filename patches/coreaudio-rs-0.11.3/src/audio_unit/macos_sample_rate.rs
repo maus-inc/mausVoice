@@ -1,5 +1,6 @@
 //! Nominal device sample-rate updates.
 use super::macos_listeners::RateListener;
+use super::macos_property_limits::MAX_PROPERTY_BYTES;
 use super::{listener_sys as sys, ListenerError as Error};
 use std::mem;
 use std::ptr::null;
@@ -47,7 +48,7 @@ pub fn set_device_sample_rate(device_id: AudioDeviceID, new_rate: f64) -> Result
         unsafe { sys::AudioObjectGetPropertyDataSize(device_id, &address, 0, null(), &mut size) };
     Error::from_os_status(status)?;
     let item_size = mem::size_of::<AudioValueRange>() as u32;
-    if size % item_size != 0 {
+    if size as usize > MAX_PROPERTY_BYTES || size % item_size != 0 {
         return Err(Error::Unspecified);
     }
     if size == 0 {

@@ -121,6 +121,10 @@ pub mod name_cf {
 }
 #[path = "../src/audio_unit/macos_device_name.rs"]
 mod macos_device_name;
+// Each adapter is also compiled independently as a portable test.
+#[allow(clippy::duplicate_mod)]
+#[path = "../src/audio_unit/macos_property_limits.rs"]
+mod macos_property_limits;
 #[cfg(test)]
 mod tests {
     use super::{listener_sys as sys, name_cf as cf, Mutex};
@@ -172,6 +176,23 @@ mod tests {
         assert_eq!(super::macos_device_name::get_device_name(1), Ok(text));
         assert_eq!(cf::FIXTURE.lock().unwrap().releases, 1);
         assert_eq!(sys::FIXTURE.lock().unwrap().calls, 1);
+    }
+    #[test]
+    fn rejects_oversized_names_and_releases_them() {
+        let _guard = LOCK.lock().unwrap();
+        for fast in [false, true] {
+            reset();
+            {
+                let mut f = cf::FIXTURE.lock().unwrap();
+                f.fast = fast;
+                f.max = 1024 * 1024;
+            }
+            assert_eq!(
+                super::macos_device_name::get_device_name(1),
+                Err(super::ListenerError::Unspecified)
+            );
+            assert_eq!(cf::FIXTURE.lock().unwrap().releases, 1);
+        }
     }
     #[test]
     fn rejects_null_bad_size_and_native_error() {

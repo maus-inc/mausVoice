@@ -89,6 +89,10 @@ pub mod listener_sys {
 
 #[path = "../src/audio_unit/macos_devices.rs"]
 mod macos_devices;
+// Each adapter is also compiled independently as a portable test.
+#[allow(clippy::duplicate_mod)]
+#[path = "../src/audio_unit/macos_property_limits.rs"]
+mod macos_property_limits;
 
 #[cfg(test)]
 mod tests {
@@ -146,6 +150,16 @@ mod tests {
         fixture(8, 8, 0, &[1, 2]);
         sys::FIXTURE.lock().unwrap().query_status = -9;
         assert!(get_audio_device_ids().is_err());
+        assert_eq!(sys::FIXTURE.lock().unwrap().reads, 0);
+    }
+    #[test]
+    fn rejects_oversized_device_lists_before_reading() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        fixture(1024 * 1024 + 4, 0, 0, &[]);
+        assert!(matches!(
+            get_audio_device_ids(),
+            Err(super::ListenerError::Unspecified)
+        ));
         assert_eq!(sys::FIXTURE.lock().unwrap().reads, 0);
     }
     #[test]

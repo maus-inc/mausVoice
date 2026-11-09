@@ -155,6 +155,10 @@ pub mod listener_sys {
 }
 #[path = "../src/audio_unit/macos_physical_format.rs"]
 mod macos_physical_format;
+// Each adapter is also compiled independently as a portable test.
+#[allow(clippy::duplicate_mod)]
+#[path = "../src/audio_unit/macos_property_limits.rs"]
+mod macos_property_limits;
 
 #[cfg(test)]
 mod tests {
@@ -249,6 +253,17 @@ mod tests {
             f.returned = 0;
         }
         assert!(get_supported_physical_stream_formats(1).unwrap().is_empty());
+    }
+    #[test]
+    fn rejects_oversized_physical_format_lists() {
+        let _guard = LOCK.lock().unwrap();
+        reset();
+        let item = std::mem::size_of::<sys::AudioStreamRangedDescription>() as u32;
+        sys::FIXTURE.lock().unwrap().queried = (1024 * 1024 / item + 1) * item;
+        assert!(matches!(
+            get_supported_physical_stream_formats(1),
+            Err(ListenerError::Unspecified)
+        ));
     }
     #[test]
     fn rejects_short_current_and_propagates_native_failures() {

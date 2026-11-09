@@ -1,4 +1,5 @@
 //! Device ID queries with CoreAudio-owned output lengths.
+use super::macos_property_limits::MAX_PROPERTY_BYTES;
 use super::{listener_sys as sys, ListenerError as Error, Scope};
 use std::mem;
 use std::ptr::null;
@@ -66,7 +67,7 @@ pub fn get_audio_device_ids_for_scope(scope: Scope) -> Result<Vec<AudioDeviceID>
         return Err(Error::Unknown(status));
     }
     let item_size = mem::size_of::<AudioDeviceID>() as u32;
-    if size % item_size != 0 {
+    if size as usize > MAX_PROPERTY_BYTES || size % item_size != 0 {
         return Err(Error::Unspecified);
     }
     if size == 0 {

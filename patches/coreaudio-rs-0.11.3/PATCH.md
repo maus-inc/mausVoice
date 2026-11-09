@@ -71,6 +71,11 @@ The macOS device-scope query uses initialized, aligned native-word storage for
 the variable-length `AudioBufferList`. It checks returned lengths and buffer
 counts before reading channel counts, including empty and shrinking lists.
 Portable simulated-API tests exercise the parser; macOS devices remain untested.
+Variable-sized device lists, stream configurations, sample-rate ranges,
+physical formats, and converted device names now reject reported allocations
+above one MiB. This bounds memory use from implausible native lengths but may
+reject exceptionally large legitimate properties; physical-device compatibility
+with the limit has not been verified.
 
 The macOS physical-format helpers use initialized mutable property buffers and
 validate returned byte counts, including shrinking format lists. The setter

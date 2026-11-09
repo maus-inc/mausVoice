@@ -118,6 +118,10 @@ pub mod listener_sys {
 
 #[path = "../src/audio_unit/macos_device_scope.rs"]
 mod macos_device_scope;
+// Each adapter is also compiled independently as a portable test.
+#[allow(clippy::duplicate_mod)]
+#[path = "../src/audio_unit/macos_property_limits.rs"]
+mod macos_property_limits;
 
 #[cfg(test)]
 mod tests {
@@ -225,6 +229,34 @@ mod tests {
                 "{query} {returned} {count}"
             );
         }
+    }
+    #[test]
+    fn rejects_unreasonably_large_configuration_before_reading() {
+        let _guard = LOCK.lock().unwrap();
+        reset();
+        sys::FIXTURE.lock().unwrap().query_size = 1024 * 1024 + 1;
+        assert_eq!(
+            super::macos_device_scope::get_audio_device_supports_scope(1, Scope::Input),
+            Err(ListenerError::Unspecified)
+        );
+        assert_eq!(sys::FIXTURE.lock().unwrap().gets, 0);
+    }
+    #[test]
+    fn accepts_configuration_at_the_limit() {
+        let _guard = LOCK.lock().unwrap();
+        reset();
+        let header = std::mem::offset_of!(sys::AudioBufferList, mBuffers) as u32;
+        {
+            let mut f = sys::FIXTURE.lock().unwrap();
+            f.query_size = 1024 * 1024;
+            f.returned_size = header;
+            f.declared_count = 0;
+        }
+        assert_eq!(
+            super::macos_device_scope::get_audio_device_supports_scope(1, Scope::Input),
+            Ok(false)
+        );
+        assert_eq!(sys::FIXTURE.lock().unwrap().gets, 1);
     }
     #[test]
     fn propagates_native_errors() {
