@@ -123,13 +123,26 @@ const INDENT = [
 const indent = (depth) => INDENT[depth] ?? "  ".repeat(depth);
 
 /**
- * Splits an SVG document into tags and text in one linear pass.
+ * Splits an SVG document into tags and text, in one pass.
  *
- * Two disjoint alternatives, neither of which can match a lone `<` or a lone
- * `>`: the regex is anchored at every angle bracket, so there is nowhere to
- * backtrack to and a hostile file cannot make it quadratic.
+ * Walked by hand rather than matched: `/<[^>]*>|[^<]+/g` is the obvious
+ * spelling, and on a file full of unterminated `<` it is quadratic — every `<`
+ * rescans to the end of the document before giving up. Two `indexOf` calls
+ * cannot. Real artwork never hits that, but a generator that hangs on a hostile
+ * file is not a generator anyone wants running in CI.
  */
-const scan = (body) => body.match(/<[^>]*>|[^<]+/g) ?? [];
+const scan = (body) => {
+  const tokens = [];
+  let at = 0;
+  while (at < body.length) {
+    const isTag = body[at] === "<";
+    const next = isTag ? body.indexOf(">", at) : body.indexOf("<", at);
+    const end = next === -1 ? body.length : next + (isTag ? 1 : 0);
+    tokens.push(body.slice(at, end));
+    at = end;
+  }
+  return tokens;
+};
 
 /** The element name a start tag opens, validated against `ELEMENTS`. */
 const tagNameOf = (token, provider) => {
@@ -145,15 +158,24 @@ const tagNameOf = (token, provider) => {
   return name;
 };
 
-const isSpace = (char) =>
-  char === " " || char === "\t" || char === "\n" || char === "\r";
+/** Whitespace that separates attributes inside a tag. */
+const SPACES = [" ", "\t", "\n", "\r"];
+
+/** Index of one of `stops`, or `length` when the string ends first. */
+const until = (text, from, stops) => {
+  let at = from;
+  while (at < text.length && !stops.includes(text[at])) at += 1;
+  return at;
+};
+
+const NAME_STOPS = [" ", "\t", "\n", "\r", "=", "/", ">"];
 
 /**
  * A start tag's attributes as `{ name, value }`.
  *
  * Scanned by hand rather than matched. The obvious regex
- * (`[A-Za-z0-9:_-]+="[^"]*"`) is quadratic on a token with a long run before
- * a missing `=`: the engine retries the run from every character. Walking the
+ * (`[A-Za-z0-9:_-]+="[^"]*"`) is quadratic on a token with a long run before a
+ * missing `=`: the engine retries the run from every character. Walking the
  * token once cannot, and a malformed tag throws where a silent no-match would
  * have emitted broken JSX.
  */
@@ -161,20 +183,20 @@ const attrsOf = (token) => {
   const attrs = [];
   let at = 1; // past `<`
   while (at < token.length) {
-    if (isSpace(token[at])) {
-      at += 1;
-      continue;
-    }
+    // Step over the separator itself; `until` stops *on* it, so re-entering the
+    // loop without this would read the same space forever.
+    at = until(token, at, SPACES) + 1;
+    if (at >= token.length) break;
     const nameStart = at;
-    while (at < token.length && !isSpace(token[at])) {
-      if (token[at] === "=" || token[at] === "/" || token[at] === ">") break;
+    at = until(token, at, NAME_STOPS);
+    const name = token.slice(nameStart, at);
+    // A `/`, `>` or `=` where a name should be: step past it. Without this the
+    // loop re-enters on the same character forever, because a tag ends in `/`
+    // and no `name=` pair will ever start there.
+    if (!name) {
       at += 1;
-    }
-    if (at === nameStart) {
-      at += 1; // a stray delimiter; nothing to name
       continue;
     }
-    const name = token.slice(nameStart, at);
     if (token[at] !== "=") continue;
     if (token[at + 1] !== '"') {
       throw new Error(`unquoted attribute "${name}"`);
