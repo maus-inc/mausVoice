@@ -40,7 +40,7 @@ const outFile = join(
 );
 
 /** Elements this emitter knows how to render. */
-const ELEMENTS = [
+const ELEMENTS = new Set([
   "path",
   "rect",
   "g",
@@ -50,8 +50,7 @@ const ELEMENTS = [
   "stop",
   "circle",
   "ellipse",
-];
-const isElement = (name) => ELEMENTS.includes(name);
+]);
 
 /** Attribute name → prop name. Everything else must already be camelCase. */
 const JSX_ATTRS = {
@@ -134,9 +133,11 @@ const scan = (body) => body.match(/<[^>]*>|[^<]+/g) ?? [];
 
 /** The element name a start tag opens, validated against `ELEMENTS`. */
 const tagNameOf = (token, provider) => {
-  const name = /^<([^\s/>]*)/.exec(token)?.[1] ?? "";
+  const tag = token.slice(1);
+  const end = tag.search(/[\s/>]/);
+  const name = end === -1 ? tag : tag.slice(0, end);
   if (!name) throw new Error(`${provider}: unparsable tag ${token}`);
-  if (!isElement(name)) {
+  if (!ELEMENTS.has(name)) {
     throw new Error(
       `${provider}: unsupported SVG element <${name}>. Add it to ELEMENTS/JSX_ATTRS in scripts/generate-provider-logos.mjs.`,
     );
@@ -144,20 +145,49 @@ const tagNameOf = (token, provider) => {
   return name;
 };
 
+const isSpace = (char) =>
+  char === " " || char === "\t" || char === "\n" || char === "\r";
+
 /**
  * A start tag's attributes as `{ name, value }`.
  *
- * One capture-less match per pair, consuming the closing quote, so the scan
- * cannot re-enter a value and the pattern has a single way to match.
+ * Scanned by hand rather than matched. The obvious regex
+ * (`[A-Za-z0-9:_-]+="[^"]*"`) is quadratic on a token with a long run before
+ * a missing `=`: the engine retries the run from every character. Walking the
+ * token once cannot, and a malformed tag throws where a silent no-match would
+ * have emitted broken JSX.
  */
-const attrsOf = (token) =>
-  [...token.matchAll(/[A-Za-z0-9:_-]+="[^"]*"/g)].map(({ 0: pair }) => {
-    const separator = pair.indexOf("=");
-    return {
-      name: pair.slice(0, separator),
-      value: pair.slice(separator + 2, -1),
-    };
-  });
+const attrsOf = (token) => {
+  const attrs = [];
+  let at = 1; // past `<`
+  while (at < token.length) {
+    if (isSpace(token[at])) {
+      at += 1;
+      continue;
+    }
+    const nameStart = at;
+    while (at < token.length && !isSpace(token[at])) {
+      if (token[at] === "=" || token[at] === "/" || token[at] === ">") break;
+      at += 1;
+    }
+    if (at === nameStart) {
+      at += 1; // a stray delimiter; nothing to name
+      continue;
+    }
+    const name = token.slice(nameStart, at);
+    if (token[at] !== "=") continue;
+    if (token[at + 1] !== '"') {
+      throw new Error(`unquoted attribute "${name}"`);
+    }
+    const valueEnd = token.indexOf('"', at + 2);
+    if (valueEnd === -1) {
+      throw new Error(`unterminated attribute "${name}"`);
+    }
+    attrs.push({ name, value: token.slice(at + 2, valueEnd) });
+    at = valueEnd + 1;
+  }
+  return attrs;
+};
 
 /** The JSX for one start tag, and the name it opens if it is not self-closing. */
 const startTagOf = (token, provider, depth) => {

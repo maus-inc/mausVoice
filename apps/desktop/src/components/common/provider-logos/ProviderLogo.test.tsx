@@ -108,6 +108,28 @@ describe("ProviderLogos generated module", () => {
     expect(changed).toBe(false);
   });
 
+  it("carries every attribute of every shape through to the JSX", () => {
+    // The emitter reads tags by hand, so this is the check that hand-reading is
+    // faithful: every attribute in the artwork must appear in the generated
+    // module, except the three the component owns itself. A silently dropped
+    // `transform` or `fill-rule` would ship a visibly wrong mark and nothing
+    // else in this suite would notice.
+    const generated = readFileSync(join(here, "ProviderLogos.tsx"), "utf8");
+    const ours = new Set(["xmlns", "width", "height"]);
+    // SVG's kebab-case attributes are React's camelCase props, which is exactly
+    // the rename the test is here to hold the emitter to.
+    const asProp = (name: string) =>
+      name.replace(/-([a-z])/g, (_, letter: string) => letter.toUpperCase());
+    for (const file of assetFiles) {
+      for (const [, name] of readAsset(file).matchAll(
+        /\s([A-Za-z0-9:_-]+)="/g,
+      )) {
+        if (ours.has(name)) continue;
+        expect(generated, `${file} drops ${name}`).toContain(asProp(name));
+      }
+    }
+  });
+
   it("exports one component per asset file", () => {
     const ids = assetFiles.map((file) => file.replace(/\.svg$/, ""));
     expect(Object.keys(PROVIDER_LOGOS).sort()).toEqual(ids.sort());
