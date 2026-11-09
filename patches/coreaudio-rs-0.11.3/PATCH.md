@@ -21,9 +21,10 @@ The CoreAudio I24 representation now accepts only packed three-byte samples;
 unpacked 24-bit PCM is rejected instead of being interpreted with the wrong
 stride. Portable format tests cover both cases. Parsed ASBDs now validate
 sample rate, channels, numeric flags, frame stride and packet size; the
-AudioUnit setter uses a checked conversion with overflow detection. The legacy
-public `to_asbd` method remains unchecked. Physical-device verification is
-still needed.
+AudioUnit setter uses a checked conversion with overflow detection. Public
+`to_asbd` now returns a `Result` instead of panicking or wrapping on overflow;
+`try_to_asbd` is an alias. This is a breaking API change. Physical-device
+verification is still needed.
 
 Typed multi-byte sample views also reject non-native-endian formats; raw byte
 views remain available without interpreting their byte order. Portable tests

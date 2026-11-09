@@ -34,6 +34,7 @@ pub mod audio_format {
         pub const IS_SIGNED_INTEGER: Self = Self(2);
         pub const IS_PACKED: Self = Self(4);
         pub const IS_NON_INTERLEAVED: Self = Self(8);
+        pub const IS_ALIGNED_HIGH: Self = Self(16);
         pub fn contains(self, other: Self) -> bool {
             self.0 & other.0 == other.0
         }
@@ -103,7 +104,7 @@ mod tests {
             let original = packed(2, interleaved);
             let f = StreamFormat::from_asbd(original).unwrap();
             assert_eq!(f.sample_format, SampleFormat::I24);
-            let again = f.to_asbd();
+            let again = f.to_asbd().unwrap();
             assert_eq!(again.mBytesPerFrame, original.mBytesPerFrame);
             assert_eq!(again.mBytesPerPacket, original.mBytesPerPacket);
             assert_eq!(again.mFramesPerPacket, 1);
@@ -179,7 +180,7 @@ mod tests {
                     flags,
                     channels: 2,
                 };
-                let parsed = StreamFormat::from_asbd(input.to_asbd()).unwrap();
+                let parsed = StreamFormat::from_asbd(input.to_asbd().unwrap()).unwrap();
                 assert_eq!(parsed.sample_format, sample);
                 assert_eq!(parsed.channels, 2);
             }
@@ -200,7 +201,11 @@ mod tests {
             flags: F::IS_SIGNED_INTEGER,
             channels: 2,
         };
-        let asbd = valid.try_to_asbd().unwrap();
+        let asbd = valid.to_asbd().unwrap();
+        assert_eq!(
+            valid.try_to_asbd().unwrap().mBytesPerFrame,
+            asbd.mBytesPerFrame
+        );
         assert_eq!(asbd.mBytesPerFrame, 6);
         for invalid in [
             StreamFormat {
@@ -224,6 +229,7 @@ mod tests {
                 ..valid
             },
         ] {
+            assert!(invalid.to_asbd().is_err());
             assert!(invalid.try_to_asbd().is_err());
         }
         let non_interleaved = StreamFormat {
@@ -275,5 +281,32 @@ mod tests {
             None
         );
         assert!(!SampleFormat::F32.does_match_flags(flags));
+    }
+    #[test]
+    fn public_asbd_conversion_does_not_panic_on_overflow() {
+        let format = StreamFormat {
+            sample_rate: 48_000.0,
+            sample_format: SampleFormat::I24,
+            flags: F::IS_SIGNED_INTEGER,
+            channels: u32::MAX,
+        };
+        assert!(std::panic::catch_unwind(|| format.to_asbd())
+            .unwrap()
+            .is_err());
+    }
+    #[test]
+    fn rejects_high_aligned_bits_in_a_packed_format() {
+        let flags = F::IS_SIGNED_INTEGER | F::IS_PACKED | F::IS_ALIGNED_HIGH;
+        assert_eq!(
+            SampleFormat::from_flags_and_bits_per_sample(flags, 24),
+            None
+        );
+        let invalid = StreamFormat {
+            sample_rate: 48_000.0,
+            sample_format: SampleFormat::I24,
+            flags,
+            channels: 2,
+        };
+        assert!(invalid.to_asbd().is_err());
     }
 }

@@ -123,66 +123,50 @@ impl StreamFormat {
         })
     }
 
-    /// Convert a representable StreamFormat to a packed AudioStreamBasicDescription.
-    /// Rejects invalid rates, channels, flags and arithmetic overflow.
-    pub fn try_to_asbd(self) -> Result<sys::AudioStreamBasicDescription, Error> {
+    /// Convert a StreamFormat into a packed AudioStreamBasicDescription.
+    ///
+    /// Invalid rates, channels, format flags and sizes that overflow CoreAudio's
+    /// 32-bit fields return an error. This method returns a `Result`; callers of
+    /// the former unchecked API must handle the conversion failure.
+    pub fn to_asbd(self) -> Result<sys::AudioStreamBasicDescription, Error> {
         const NOT_SUPPORTED: Error = Error::AudioUnit(error::audio_unit::Error::FormatNotSupported);
-        let flags = self.flags | LinearPcmFlags::IS_PACKED;
-        if !self.sample_rate.is_finite()
-            || self.sample_rate <= 0.0
-            || self.channels == 0
-            || !self.sample_format.does_match_flags(flags)
-        {
-            return Err(NOT_SUPPORTED);
-        }
-        if !flags.contains(LinearPcmFlags::IS_NON_INTERLEAVED)
-            && (self.sample_format.size_in_bytes() as u32)
-                .checked_mul(self.channels)
-                .is_none()
-        {
-            return Err(NOT_SUPPORTED);
-        }
-        Ok(self.to_asbd())
-    }
-
-    /// Convert a StreamFormat into an AudioStreamBasicDescription.
-    /// Prefer `try_to_asbd` for untrusted values; this legacy method does not
-    /// validate the rate, channels or flags and can overflow for large channel counts.
-    /// Note that this function assumes that only packed formats are used.
-    /// All formats supported by `StreamFormat`, including I24, are packed.
-    pub fn to_asbd(self) -> sys::AudioStreamBasicDescription {
         let StreamFormat {
             sample_rate,
             flags,
             sample_format,
             channels,
         } = self;
-
-        let (format, maybe_flag) =
-            AudioFormat::LinearPCM(flags | LinearPcmFlags::IS_PACKED).as_format_and_flag();
-
-        let flag = maybe_flag.unwrap_or(u32::MAX - 2147483647);
-
-        let non_interleaved = flags.contains(LinearPcmFlags::IS_NON_INTERLEAVED);
-        let bytes_per_frame = if non_interleaved {
-            sample_format.size_in_bytes() as u32
+        let flags = flags | LinearPcmFlags::IS_PACKED;
+        if !sample_rate.is_finite()
+            || sample_rate <= 0.0
+            || channels == 0
+            || !sample_format.does_match_flags(flags)
+        {
+            return Err(NOT_SUPPORTED);
+        }
+        let sample_bytes = sample_format.size_in_bytes() as u32;
+        let bytes_per_frame = if flags.contains(LinearPcmFlags::IS_NON_INTERLEAVED) {
+            sample_bytes
         } else {
-            sample_format.size_in_bytes() as u32 * channels
+            sample_bytes.checked_mul(channels).ok_or(NOT_SUPPORTED)?
         };
-        const FRAMES_PER_PACKET: u32 = 1;
-        let bytes_per_packet = bytes_per_frame * FRAMES_PER_PACKET;
-        let bits_per_channel = sample_format.size_in_bits();
-
-        sys::AudioStreamBasicDescription {
+        let (format, maybe_flag) = AudioFormat::LinearPCM(flags).as_format_and_flag();
+        let flag = maybe_flag.ok_or(NOT_SUPPORTED)?;
+        Ok(sys::AudioStreamBasicDescription {
             mSampleRate: sample_rate,
             mFormatID: format,
             mFormatFlags: flag,
-            mBytesPerPacket: bytes_per_packet,
-            mFramesPerPacket: FRAMES_PER_PACKET,
+            mBytesPerPacket: bytes_per_frame,
+            mFramesPerPacket: 1,
             mBytesPerFrame: bytes_per_frame,
             mChannelsPerFrame: channels,
-            mBitsPerChannel: bits_per_channel,
+            mBitsPerChannel: sample_format.size_in_bits(),
             mReserved: 0,
-        }
+        })
+    }
+
+    /// Alias for the checked `to_asbd` conversion.
+    pub fn try_to_asbd(self) -> Result<sys::AudioStreamBasicDescription, Error> {
+        self.to_asbd()
     }
 }

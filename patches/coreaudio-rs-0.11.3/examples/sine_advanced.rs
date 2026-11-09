@@ -102,7 +102,7 @@ fn main() -> Result<(), coreaudio::Error> {
     };
 
     println!("stream format={:#?}", &stream_format);
-    println!("asbd={:#?}", &stream_format.to_asbd());
+    println!("asbd={:#?}", &stream_format.to_asbd()?);
 
     // Lets print all supported formats, disabled for now since it often crashes.
     println!("All supported formats");
@@ -136,7 +136,7 @@ fn main() -> Result<(), coreaudio::Error> {
 
     println!("write audio unit StreamFormat property");
     let id = kAudioUnitProperty_StreamFormat;
-    let asbd = stream_format.to_asbd();
+    let asbd = stream_format.to_asbd()?;
     audio_unit.set_property(id, Scope::Input, Element::Output, Some(&asbd))?;
 
     // For this example, our sine wave expects `f32` data.

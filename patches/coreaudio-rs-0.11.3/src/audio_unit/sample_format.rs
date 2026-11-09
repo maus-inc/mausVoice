@@ -21,6 +21,9 @@ impl SampleFormat {
         let is_float = flags.contains(LinearPcmFlags::IS_FLOAT);
         let is_signed_integer = flags.contains(LinearPcmFlags::IS_SIGNED_INTEGER);
         let is_packed = flags.contains(LinearPcmFlags::IS_PACKED);
+        if flags.contains(LinearPcmFlags::IS_ALIGNED_HIGH) {
+            return false;
+        }
         match *self {
             SampleFormat::F32 => is_float && !is_signed_integer && is_packed,
             SampleFormat::I32 | SampleFormat::I16 | SampleFormat::I8 => {
@@ -58,7 +61,11 @@ impl SampleFormat {
             // TODO: Check whether or not we need to consider other formats, like unsigned ints.
             return None;
         };
-        Some(sample_format)
+        if sample_format.does_match_flags(flags) {
+            Some(sample_format)
+        } else {
+            None
+        }
     }
 
     /// Return the size of one sample in bytes, assuming that the format is packed.
