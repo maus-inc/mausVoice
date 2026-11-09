@@ -14,7 +14,7 @@
 //! subtracting the two origins would produce a number that is not a duration
 //! of anything.
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -289,22 +289,35 @@ use std::sync::Arc;
 /// starts "already fired" silently reports every wait as absent.
 #[derive(Debug, Default)]
 pub struct FirstPcmSignal {
-    fired: AtomicBool,
+    /// Claimed by the thread that wins the race, then set again once `at_us`
+    /// holds a real offset.
+    ///
+    /// Three states, not two, and the third is what makes the ordering work:
+    /// unclaimed (nobody has reported a block), claimed (one thread is between
+    /// its compare-exchange and its store), and fired (the offset is readable).
+    /// With two states the flag had to be published either before the offset,
+    /// which let a reader see `Some(0)`, or after it, which let a losing second
+    /// caller overwrite the winner's offset. Both were bugs in this file.
+    state: AtomicU8,
     at_us: AtomicU64,
 }
 
-impl FirstPcmSignal {
-    pub fn new() -> Self {
-        Self {
-            fired: AtomicBool::new(false),
-            at_us: AtomicU64::new(0),
-        }
-    }
+/// No block has reported yet.
+const STATE_IDLE: u8 = 0;
+/// One thread has won and is writing `at_us`.
+const STATE_CLAIMED: u8 = 1;
+/// `at_us` holds the offset that was reported.
+const STATE_FIRED: u8 = 2;
 
+impl FirstPcmSignal {
     /// Restarts the measurement, discarding any previous one.
     pub fn reset(&self) {
-        self.fired.store(false, Ordering::Release);
+        // The offset first, then back to idle: a reader that sees idle never
+        // looks at the offset, and a reader that sees the old `fired` cannot get
+        // here, because `reset` happens while the previous recording's callback
+        // has already stopped.
         self.at_us.store(0, Ordering::Release);
+        self.state.store(STATE_IDLE, Ordering::Release);
     }
 
     /// Reports a block that arrived `elapsed` after the reference point.
@@ -313,22 +326,40 @@ impl FirstPcmSignal {
     /// logs it once, and `None` afterwards. The compare-exchange is what makes
     /// it once: two callback threads racing would otherwise both see `false`.
     pub fn fire(&self, elapsed: Duration) -> Option<Duration> {
+        // Claim first, so only one thread ever writes `at_us`; then write it;
+        // then publish. A losing caller returns without touching the offset.
+        //
+        // Writing the offset before claiming was the previous attempt at fixing
+        // the other order, and it traded one bug for another: a second caller
+        // that arrived after the winner had already fired still stored its own
+        // offset and the winner's value was lost, so `elapsed()` reported the
+        // wrong block.
         if self
-            .fired
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .state
+            .compare_exchange(
+                STATE_IDLE,
+                STATE_CLAIMED,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
             .is_err()
         {
             return None;
         }
-        if let Ok(micros) = u64::try_from(elapsed.as_micros()) {
-            self.at_us.store(micros, Ordering::Release);
-        }
+        // Saturating rather than skipped: the flag is published below either
+        // way, so there must always be a matching offset for a reader to load.
+        let micros = u64::try_from(elapsed.as_micros()).unwrap_or(u64::MAX);
+        self.at_us.store(micros, Ordering::Release);
+        self.state.store(STATE_FIRED, Ordering::Release);
         Some(elapsed)
     }
 
     /// The offset that was reported, if one has been.
+    ///
+    /// `None` while a claim is still in progress, which is what keeps a reader
+    /// from seeing a stale or absent offset as a real measurement.
     pub fn elapsed(&self) -> Option<Duration> {
-        if !self.fired.load(Ordering::Acquire) {
+        if self.state.load(Ordering::Acquire) != STATE_FIRED {
             return None;
         }
         Some(Duration::from_micros(self.at_us.load(Ordering::Acquire)))
@@ -338,6 +369,7 @@ impl FirstPcmSignal {
 #[cfg(test)]
 mod tests {
     use super::{AudioStartupStage, AudioStartupTrace, FirstPcmSignal, StageMark};
+    use std::sync::atomic::Ordering;
     use std::time::{Duration, Instant};
 
     fn marked(marks: &[(AudioStartupStage, u64)]) -> AudioStartupTrace {
@@ -520,7 +552,7 @@ mod tests {
 
     #[test]
     fn a_first_block_fires_once_and_reports_its_offset() {
-        let signal = FirstPcmSignal::new();
+        let signal = FirstPcmSignal::default();
 
         assert_eq!(signal.elapsed(), None);
         assert_eq!(
@@ -532,8 +564,44 @@ mod tests {
     }
 
     #[test]
+    fn a_losing_block_never_overwrites_the_offset_that_was_reported() {
+        // The ordering bug this pins: the offset used to be written before the
+        // flag was claimed, so a second block that arrived after the winner had
+        // already fired still stored its own offset and the first block's --
+        // the one the whole measurement exists for -- was lost.
+        let signal = FirstPcmSignal::default();
+
+        assert_eq!(
+            signal.fire(Duration::from_micros(14)),
+            Some(Duration::from_micros(14))
+        );
+        // A block that arrives much later must change nothing at all.
+        assert_eq!(signal.fire(Duration::from_millis(900)), None);
+        assert_eq!(signal.elapsed(), Some(Duration::from_micros(14)));
+    }
+
+    #[test]
+    fn a_reader_never_sees_a_zero_offset_for_a_block_that_was_not_first() {
+        // The other order's bug: publishing the flag before the offset let a
+        // concurrent `elapsed()` return `Some(0)`, which is indistinguishable
+        // from the "arrived in the same instant" sentinel. A claimed-but-not-yet
+        // -stored signal must read as absent, not as zero.
+        let signal = FirstPcmSignal::default();
+        // Drive it as a claim in progress would leave it. `fire` always finishes
+        // the claim, so the state is set directly -- the point is the reader's
+        // rule, not the writer's.
+        signal.state.store(super::STATE_CLAIMED, Ordering::Release);
+
+        assert_eq!(
+            signal.elapsed(),
+            None,
+            "a claim in progress must not read as an instant first block"
+        );
+    }
+
+    #[test]
     fn resetting_a_first_block_signal_allows_a_new_measurement() {
-        let signal = FirstPcmSignal::new();
+        let signal = FirstPcmSignal::default();
         signal.fire(Duration::from_millis(5));
 
         signal.reset();

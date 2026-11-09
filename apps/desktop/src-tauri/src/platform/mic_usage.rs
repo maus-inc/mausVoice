@@ -62,7 +62,12 @@ impl OpenFailure {
 /// client asks for a mode the device is already committed to. On the shared-mode
 /// path most applications use it is rare, because Windows mixes the streams, but
 /// it is the only code that says "someone else has it" rather than "it is gone".
-const HRESULT_DEVICE_IN_USE: u32 = 0x8889_0004;
+///
+/// `0x8889000A`. This was `0x8889_0004`, which is `AUDCLNT_E_DEVICE_INVALIDATED`
+/// -- a device that vanished -- one digit away and the opposite meaning. Every
+/// user whose headset was unplugged was told to close an application that had
+/// done nothing.
+const HRESULT_DEVICE_IN_USE: u32 = 0x8889_000A;
 /// Access denied. With the Windows 11 microphone privacy switch off, WASAPI
 /// fails the stream build with this before anything else can happen.
 const HRESULT_ACCESS_DENIED: u32 = 0x8007_0005;
@@ -79,7 +84,16 @@ const IN_USE_MARKERS: &[&str] = &[
     // Linux, ALSA, when every subdevice of the card is claimed.
     "no available subdevice",
     // Windows, WASAPI, exclusive mode, through cpal 0.15's BackendSpecific text.
-    "0x88890004",
+    //
+    // The HRESULT is AUDCLNT_E_DEVICE_IN_USE (0x8889000A), and it needs to be
+    // exactly that. 0x88890004 sits one digit away and is
+    // AUDCLNT_E_DEVICE_INVALIDATED -- a device that vanished, not one another
+    // application is holding -- so matching it here told every user whose
+    // headset was unplugged to go and close an application that had done
+    // nothing wrong, and sent them looking for a busy microphone that did not
+    // exist. The name below is matched as well, because cpal's BackendSpecific
+    // text carries whichever form the backend chose.
+    "0x8889000a",
     "audclnt_e_device_in_use",
     // macOS, CoreAudio: the device is in use by another process and cannot be
     // opened in the requested mode.
@@ -199,11 +213,34 @@ mod tests {
     #[test]
     fn wasapi_in_use_code_is_recognised_in_text_and_number() {
         assert_eq!(
-            classify_open_failure("A backend-specific error has occurred: 0x88890004"),
+            classify_open_failure("A backend-specific error has occurred: 0x8889000a"),
             OpenFailure::InUseByAnotherApplication
         );
         assert_eq!(
+            classify_hresult(0x8889_000A),
+            OpenFailure::InUseByAnotherApplication
+        );
+    }
+
+    #[test]
+    fn a_device_that_vanished_is_not_reported_as_another_application_holding_it() {
+        // 0x88890004 is AUDCLNT_E_DEVICE_INVALIDATED: the endpoint went away. It
+        // was the value of `HRESULT_DEVICE_IN_USE` and was in the in-use marker
+        // list, one digit from the real AUDCLNT_E_DEVICE_IN_USE (0x8889000A), so
+        // an unplugged device told the user to close an application that was
+        // never holding anything.
+        assert_ne!(
             classify_hresult(0x8889_0004),
+            OpenFailure::InUseByAnotherApplication
+        );
+        assert_ne!(
+            classify_open_failure("A backend-specific error has occurred: 0x88890004"),
+            OpenFailure::InUseByAnotherApplication
+        );
+        // The other direction, so the rule above cannot be satisfied by simply
+        // classifying nothing as in-use.
+        assert_eq!(
+            classify_hresult(0x8889_000A),
             OpenFailure::InUseByAnotherApplication
         );
     }
@@ -369,6 +406,15 @@ pub fn current_usage() -> CaptureUsage {
 
 #[cfg(target_os = "linux")]
 pub mod linux {
+    /// The environment variable that redirects the probe at another executable.
+    ///
+    /// Named once. The production read and every test write below go through
+    /// this constant, so a misspelt variable name cannot point the probe at
+    /// nothing: the tests would otherwise set one variable while the app read
+    /// another, and the whole path they exist to cover would be exercised with
+    /// the override silently ignored.
+    pub(super) const PACTL_OVERRIDE_ENV: &str = "MAUSVOICE_PACTL";
+
     use super::CaptureUsage;
     use std::process::Command;
 
@@ -392,7 +438,7 @@ pub mod linux {
         // audio server. Without this the parser is the only part that can ever
         // be tested, and a wrong argument or a misread exit status would only
         // show up on a user's machine.
-        let binary = std::env::var("MAUSVOICE_PACTL").unwrap_or_else(|_| "pactl".to_string());
+        let binary = std::env::var(PACTL_OVERRIDE_ENV).unwrap_or_else(|_| "pactl".to_string());
         let output = match Command::new(&binary)
             .arg("list")
             .arg("source-outputs")
@@ -646,6 +692,9 @@ Source Output #61
 #[cfg(all(test, target_os = "linux"))]
 mod linux_command_tests {
     use super::linux::current_usage;
+    // The override variable's name, imported from the module that reads it so
+    // the tests cannot set one variable while the app reads another.
+    use super::linux::PACTL_OVERRIDE_ENV;
     use super::CaptureUsage;
     use std::io::Write;
 
@@ -699,9 +748,9 @@ mod linux_command_tests {
             &dir,
             "cat <<'EOF'\nSource Output #7\n\tSource: 55\n\tProperties:\n\t\tapplication.name = \"Zoom\"\nEOF",
         );
-        std::env::set_var("MAUSVOICE_PACTL", &script);
+        std::env::set_var(PACTL_OVERRIDE_ENV, &script);
         let usage = current_usage();
-        std::env::remove_var("MAUSVOICE_PACTL");
+        std::env::remove_var(PACTL_OVERRIDE_ENV);
         assert_eq!(
             usage,
             CaptureUsage::HeldByOther {
@@ -714,9 +763,9 @@ mod linux_command_tests {
     #[test]
     fn a_probe_that_cannot_run_is_unavailable_not_idle() {
         let _guard = serialize_env();
-        std::env::set_var("MAUSVOICE_PACTL", "/nonexistent/pactl-binary");
+        std::env::set_var(PACTL_OVERRIDE_ENV, "/nonexistent/pactl-binary");
         let usage = current_usage();
-        std::env::remove_var("MAUSVOICE_PACTL");
+        std::env::remove_var(PACTL_OVERRIDE_ENV);
         match usage {
             CaptureUsage::Unavailable(reason) => {
                 assert!(reason.contains("not runnable"), "reason was {reason}");
@@ -731,9 +780,9 @@ mod linux_command_tests {
         let dir = std::env::temp_dir().join(format!("mausvoice-pactl-fail-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("mkdir");
         let script = fake_pactl(&dir, "exit 3");
-        std::env::set_var("MAUSVOICE_PACTL", &script);
+        std::env::set_var(PACTL_OVERRIDE_ENV, &script);
         let usage = current_usage();
-        std::env::remove_var("MAUSVOICE_PACTL");
+        std::env::remove_var(PACTL_OVERRIDE_ENV);
         match usage {
             CaptureUsage::Unavailable(reason) => {
                 assert!(reason.contains("exited 3"), "reason was {reason}");

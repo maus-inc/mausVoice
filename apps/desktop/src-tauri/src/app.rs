@@ -74,10 +74,11 @@ fn log_main_window_move(window: &Window, position: &PhysicalPosition<i32>) {
         return;
     };
     let now = Instant::now();
-    if let Some(previous) = *last {
-        if now.duration_since(previous) < MOVE_LOG_THROTTLE {
-            return;
-        }
+    // `is_some_and`, not `if let Some(previous)`: the throttle only compares, it
+    // binds nothing it uses outside the test, and the nested `if let` invites the
+    // reader to look for a use of `previous` that does not exist.
+    if last.is_some_and(|previous| now.duration_since(previous) < MOVE_LOG_THROTTLE) {
+        return;
     }
     *last = Some(now);
     drop(last);
