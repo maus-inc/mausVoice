@@ -97,6 +97,12 @@ export const MicrophoneDialog = () => {
   // `prerollOn` only chooses the caption, which must not describe a window that
   // does not exist.
   const prerollOn = prerollSeconds > 0;
+  // A pre-roll can only recover audio that was captured before the press, and
+  // the ring is a property of a stream. Cold, the recorder allocates the ring
+  // when the press opens the device, so there is nothing in it to carry and a
+  // word started early is lost however high the slider is. Saying so is the
+  // difference between a setting that disappoints and one that explains itself.
+  const prerollNeedsHeldStream = prerollOn && !keepReady;
 
   const [selected, setSelected] = useState<Nullable<string>>(savedPreference);
   const [hasChanges, setHasChanges] = useState(false);
@@ -274,6 +280,11 @@ export const MicrophoneDialog = () => {
                   <FormattedMessage defaultMessage="Nothing is kept from before the press, so the first word is captured only once recording starts." />
                 )}
               </Typography>
+              {prerollNeedsHeldStream && (
+                <Typography variant="caption" color="text.secondary">
+                  <FormattedMessage defaultMessage="This only applies while the microphone is already open. Turn on holding it open above, or the press has to open it first and nothing from before it was captured." />
+                </Typography>
+              )}
             </Stack>
           </Stack>
 
