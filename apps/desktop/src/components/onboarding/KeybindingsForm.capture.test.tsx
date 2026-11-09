@@ -13,6 +13,7 @@ import {
 
 const mocks = vi.hoisted(() => ({
   save: vi.fn(),
+  delete: vi.fn(),
   sync: vi.fn(),
   error: vi.fn(),
 }));
@@ -24,7 +25,7 @@ vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({ label: "main" }),
 }));
 vi.mock("../../repos", () => ({
-  getHotkeyRepo: () => ({ saveHotkey: mocks.save }),
+  getHotkeyRepo: () => ({ saveHotkey: mocks.save, deleteHotkey: mocks.delete }),
 }));
 vi.mock("../../utils/keyboard.utils", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../utils/keyboard.utils")>()),
@@ -76,6 +77,7 @@ const start = () => {
 beforeEach(() => {
   setAppState(structuredClone(INITIAL_APP_STATE), true);
   mocks.save.mockReset().mockResolvedValue(undefined);
+  mocks.delete.mockReset().mockResolvedValue(undefined);
   mocks.sync.mockReset().mockResolvedValue(undefined);
   mocks.error.mockReset();
   container = document.createElement("div");
@@ -181,7 +183,7 @@ it("cancels Escape without saving a shortcut", async () => {
 });
 
 it("continues the save queue after a failed write", async () => {
-  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
   mocks.save.mockRejectedValueOnce(new Error("disk error"));
   try {
     start();
@@ -205,7 +207,7 @@ it("continues the save queue after a failed write", async () => {
 });
 
 it("restores the previous persisted shortcut if a write fails", async () => {
-  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
   act(() =>
     produceAppState((draft) => {
       draft.hotkeyById.old = {
@@ -229,7 +231,7 @@ it("restores the previous persisted shortcut if a write fails", async () => {
 });
 
 it("removes a newly created optimistic shortcut if its write fails", async () => {
-  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
   mocks.save.mockRejectedValueOnce(new Error("disk error"));
   try {
     start();
@@ -265,7 +267,7 @@ it("restores the last successful save after a newer queued save fails", async ()
       }),
   );
   mocks.save.mockRejectedValueOnce(new Error("disk error"));
-  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
   try {
     start();
     held(["KeyA"]);
@@ -294,7 +296,7 @@ it("does not roll back a newer external shortcut after a save fails", async () =
         fail = reject;
       }),
   );
-  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
   try {
     start();
     held(["KeyA"]);
@@ -317,7 +319,7 @@ it("does not roll back a newer external shortcut after a save fails", async () =
 
 it("keeps a saved shortcut if native synchronization fails", async () => {
   mocks.sync.mockRejectedValueOnce(new Error("native error"));
-  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
   try {
     start();
     held(["KeyK"]);
@@ -342,9 +344,9 @@ it("resynchronizes a rollback after an earlier native sync was already in flight
       }),
   );
   mocks.save
-    .mockResolvedValueOnce(undefined)
+    .mockImplementationOnce(() => Promise.resolve())
     .mockRejectedValueOnce(new Error("disk error"));
-  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
   try {
     start();
     held(["KeyA"]);
@@ -375,7 +377,7 @@ it("rolls back the right binding when the primary changes during a queued save",
       }),
   );
   mocks.save.mockRejectedValueOnce(new Error("disk error"));
-  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
   try {
     start();
     held(["KeyA"]);
@@ -416,7 +418,7 @@ it("rolls back an older failed binding even when a different binding is queued",
         failFirst = reject;
       }),
   );
-  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
   try {
     start();
     held(["KeyA"]);
@@ -588,7 +590,7 @@ it("does not roll back a later settings save of the same shortcut value", async 
         failFirst = reject;
       }),
   );
-  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
   try {
     act(() =>
       root.render(
@@ -637,9 +639,9 @@ it("rolls back to an intervening settings save if a later onboarding save fails"
       }),
   );
   mocks.save
-    .mockResolvedValueOnce(undefined)
+    .mockImplementationOnce(() => Promise.resolve())
     .mockRejectedValueOnce(new Error("disk error"));
-  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
   try {
     act(() =>
       root.render(
@@ -683,3 +685,60 @@ it("rolls back to an intervening settings save if a later onboarding save fails"
     error.mockRestore();
   }
 });
+
+it.each(["save", "delete"] as const)(
+  "reports a native activation failure separately after a successful %s",
+  async (operation) => {
+    const error = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    try {
+      act(() =>
+        produceAppState((draft) => {
+          draft.hotkeyById.custom = {
+            id: "custom",
+            actionName: "custom",
+            keys: ["KeyA"],
+          };
+          draft.settings.hotkeyIds = ["custom"];
+        }),
+      );
+      act(() =>
+        root.render(
+          createElement(
+            ThemeProvider,
+            { theme: createTheme() },
+            createElement(HotkeySetting, {
+              title: "Custom",
+              description: "",
+              actionName: "custom",
+            }),
+          ),
+        ),
+      );
+      mocks.sync.mockRejectedValueOnce(new Error("native unavailable"));
+      const button =
+        operation === "save"
+          ? Array.from(container.querySelectorAll("button")).find(
+              (item) => item.textContent === "Set B",
+            )
+          : container.querySelector<HTMLButtonElement>(
+              'button[aria-label="Delete hotkey"]',
+            );
+      if (!button) throw new Error("Shortcut control not found");
+      await act(async () => {
+        button.click();
+        await Promise.resolve();
+      });
+      await vi.waitFor(() => expect(mocks.error).toHaveBeenCalled());
+      expect(mocks.error).toHaveBeenCalledWith(
+        "Could not activate the current hotkey. Please try again.",
+      );
+      if (operation === "save")
+        expect(getAppState().hotkeyById.custom.keys).toEqual(["KeyB"]);
+      else expect(getAppState().hotkeyById.custom).toBeUndefined();
+    } finally {
+      error.mockRestore();
+    }
+  },
+);

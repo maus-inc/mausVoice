@@ -253,6 +253,20 @@ export const HotkeySetting = ({
     return false;
   });
 
+  const synchronizeSavedHotkeys = async () => {
+    try {
+      await syncHotkeyCombosToNative();
+    } catch (error) {
+      console.error("Failed to synchronize hotkey", error);
+      showErrorSnackbar(
+        intl.formatMessage({
+          defaultMessage:
+            "Could not activate the current hotkey. Please try again.",
+        }),
+      );
+    }
+  };
+
   const saveKey = async (id?: string, keys?: string[]) => {
     const newValue: Hotkey = {
       id: id ?? createId(),
@@ -281,7 +295,7 @@ export const HotkeySetting = ({
       await enqueueHotkeyWrite(async () => {
         await getHotkeyRepo().saveHotkey(newValue, releaseWrite.lease);
         setOnboardingSavedHotkey(newValue.id, newValue);
-        await syncHotkeyCombosToNative();
+        await synchronizeSavedHotkeys();
       });
     } catch (error) {
       console.error("Failed to save hotkey", error);
@@ -316,8 +330,8 @@ export const HotkeySetting = ({
       }, releaseWrite.lease);
       await enqueueHotkeyWrite(async () => {
         await getHotkeyRepo().deleteHotkey(id, releaseWrite.lease);
-        setOnboardingSavedHotkey(id, undefined);
-        await syncHotkeyCombosToNative();
+        setOnboardingSavedHotkey(id);
+        await synchronizeSavedHotkeys();
       });
     } catch (error) {
       console.error("Failed to delete hotkey", error);

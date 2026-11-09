@@ -22,18 +22,19 @@ const SYMBOL_ADVANCES: Record<string, number> = {
   "↓": 0.684,
 };
 
+const glyphAdvance = (character: string): number => {
+  const code = character.codePointAt(0) ?? 0;
+  return code >= 32 && code <= 126
+    ? ASCII_ADVANCES[code - 32]
+    : (SYMBOL_ADVANCES[character] ?? 1.2);
+};
+
 export const geistPixelTextWidth = (
   text: string,
   letterSpacing: number,
 ): number => {
   let width = 0;
-  for (const character of text) {
-    const code = character.codePointAt(0) ?? 0;
-    const advance =
-      code >= 32 && code <= 126
-        ? ASCII_ADVANCES[code - 32]
-        : (SYMBOL_ADVANCES[character] ?? 1.2);
-    width += advance + letterSpacing;
-  }
+  for (const character of text)
+    width += glyphAdvance(character) + letterSpacing;
   return width;
 };

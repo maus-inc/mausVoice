@@ -54,10 +54,7 @@ export const onboardingHotkeyRevision = (id: string) =>
   onboardingWrites.get(id)?.revision;
 export const onboardingSavedHotkey = (id: string) =>
   onboardingWrites.get(id)?.saved;
-export const setOnboardingSavedHotkey = (
-  id: string,
-  value: Hotkey | undefined,
-) => {
+export const setOnboardingSavedHotkey = (id: string, value?: Hotkey) => {
   const pending = onboardingWrites.get(id);
   if (pending) pending.saved = value;
 };
