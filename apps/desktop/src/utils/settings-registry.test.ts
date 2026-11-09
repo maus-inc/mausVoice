@@ -200,7 +200,7 @@ describe("settings registry", () => {
   it("finds a provider's settings by the provider's name", () => {
     // The rows are titled by what they do ("AI transcription"), so someone
     // looking for where their provider's key lives searches the provider. Each
-    // name has to reach the row that owns it, and only that row.
+    // name has to reach the row that owns it.
     const providers: Record<string, string> = {
       assemblyai: "ai_transcription",
       elevenlabs: "ai_transcription",
@@ -218,39 +218,6 @@ describe("settings registry", () => {
         `searching ${provider}`,
       ).toContain(key);
     }
-    // Every provider the app can store must reach the setting that owns it, so
-    // a provider added to `API_KEY_PROVIDERS` without an alias fails here
-    // rather than being findable only by the row's title.
-    for (const provider of API_KEY_PROVIDERS) {
-      const hits = searchSettings(provider).map((hit) => hit.entry.key);
-      const expected = TRANSCRIPTION_CAPABLE.has(provider)
-        ? ["ai_transcription"]
-        : ["ai_post_processing"];
-      if (ALSO_POST_PROCESSING.has(provider))
-        expected.push("ai_post_processing");
-      for (const key of expected) {
-        expect(hits, `searching ${provider}`).toContain(key);
-      }
-    }
-    // The id uses a hyphen and the name a space: a person types the name.
-    expect(
-      searchSettings("openai compatible").map((hit) => hit.entry.key),
-    ).toContain("ai_transcription");
-    // A provider can be searched for by its id or by its name, and the two are
-    // not always the same word. Every provider must be reachable by both, or a
-    // settings search quietly depends on which one the person happened to
-    // remember — plus the guard below catches a provider that reaches a row
-    // only through a *different* provider's alias.
-    for (const provider of API_KEY_PROVIDERS) {
-      const named = provider.replaceAll("-", " ");
-      const hits = searchSettings(named).map((hit) => hit.entry.key);
-      expect(hits, `searching ${named}`).toContain(
-        TRANSCRIPTION_CAPABLE.has(provider)
-          ? "ai_transcription"
-          : "ai_post_processing",
-      );
-    }
-
     // Anthropic is the company, Claude the product: both must land on the row
     // that picks the model.
     for (const alias of ["claude", "anthropic"]) {
@@ -258,6 +225,47 @@ describe("settings registry", () => {
         searchSettings(alias).map((hit) => hit.entry.key),
         `searching ${alias}`,
       ).toContain("ai_post_processing");
+    }
+  });
+
+  /**
+   * The rows each provider's name must reach.
+   *
+   * A provider transcribes, post-processes, or both, and a search for it has to
+   * land on every row that owns it. Listed rather than derived so a provider
+   * gaining a job is a visible decision rather than a silently updated
+   * expectation.
+   */
+  const providerRows = (provider: string): string[] => {
+    const rows = TRANSCRIPTION_CAPABLE.has(provider)
+      ? ["ai_transcription"]
+      : ["ai_post_processing"];
+    return ALSO_POST_PROCESSING.has(provider)
+      ? [...rows, "ai_post_processing"]
+      : rows;
+  };
+
+  it("reaches its setting for every provider the app can store", () => {
+    // A provider added to `API_KEY_PROVIDERS` without an alias is findable only
+    // by the row's title, which is not what someone searches for.
+    for (const provider of API_KEY_PROVIDERS) {
+      const hits = searchSettings(provider).map((hit) => hit.entry.key);
+      for (const key of providerRows(provider)) {
+        expect(hits, `searching ${provider}`).toContain(key);
+      }
+    }
+  });
+
+  it("reaches it by name as well as by id", () => {
+    // The id uses hyphens where the name uses spaces ("OpenAI Compatible"), and
+    // a person types the name. Both spellings have to work, or a settings
+    // search quietly depends on which one they happened to remember.
+    for (const provider of API_KEY_PROVIDERS) {
+      const named = provider.replaceAll("-", " ");
+      const hits = searchSettings(named).map((hit) => hit.entry.key);
+      for (const key of providerRows(provider)) {
+        expect(hits, `searching ${named}`).toContain(key);
+      }
     }
   });
 
