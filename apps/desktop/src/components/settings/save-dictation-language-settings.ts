@@ -14,10 +14,70 @@ import {
   getAdditionalLanguageActionName,
   syncHotkeyCombosToNative,
 } from "../../utils/keyboard.utils";
-import { withLocalDataWrite } from "../../utils/local-data-write-gate";
+import {
+  withLocalDataWrite,
+  type LocalDataWriteLease,
+} from "../../utils/local-data-write-gate";
 import { applyReplacedStyleHotkeys } from "../../utils/style-hotkey";
 
 type LanguageRow = { language: string; hotkeyKeys: string[] };
+
+const publishPrimary = (
+  saved: Hotkey,
+  before: Hotkey | undefined,
+  revision: number,
+  lease: LocalDataWriteLease,
+) => {
+  const current = Object.values(getAppState().hotkeyById).find(
+    (item) => item.actionName === DICTATE_HOTKEY,
+  );
+  if (
+    optimisticHotkeyRevision(DICTATE_HOTKEY) !== revision &&
+    current !== before
+  )
+    return;
+  produceAppState((draft) => {
+    draft.hotkeyById[saved.id] = saved;
+    if (!draft.settings.hotkeyIds.includes(saved.id))
+      draft.settings.hotkeyIds.push(saved.id);
+  }, lease);
+};
+
+const publishAdditional = (
+  saved: Hotkey[],
+  before: Hotkey[],
+  revision: number,
+  lease: LocalDataWriteLease,
+) => {
+  const hasNewer =
+    optimisticHotkeyRevision(ADDITIONAL_LANGUAGE_HOTKEY_PREFIX) !== revision;
+  const changed = hasNewer
+    ? Object.values(getAppState().hotkeyById).filter(
+        (item) =>
+          item.actionName.startsWith(ADDITIONAL_LANGUAGE_HOTKEY_PREFIX) &&
+          !before.includes(item),
+      )
+    : [];
+  const removed = hasNewer
+    ? new Set(
+        before
+          .filter((item) => !getAppState().hotkeyById[item.id])
+          .map((item) => item.id),
+      )
+    : new Set<string>();
+  produceAppState((draft) => {
+    applyReplacedStyleHotkeys(
+      draft,
+      ADDITIONAL_LANGUAGE_HOTKEY_PREFIX,
+      saved.filter((item) => !removed.has(item.id)),
+    );
+    for (const item of changed) {
+      draft.hotkeyById[item.id] = item;
+      if (!draft.settings.hotkeyIds.includes(item.id))
+        draft.settings.hotkeyIds.push(item.id);
+    }
+  }, lease);
+};
 
 /** The language preference, primary hotkey and additional group are separate
  * writes. Publish only committed changes and synchronize them even on a later
@@ -38,7 +98,7 @@ export const saveDictationLanguageSettings = async (
     ADDITIONAL_LANGUAGE_HOTKEY_PREFIX,
   );
 
-  await withLocalDataWrite(async (lease) =>
+  await withLocalDataWrite((lease) =>
     enqueueHotkeyWrite(async () => {
       const beforePrimary = before.find(
         (item) => item.actionName === DICTATE_HOTKEY,
@@ -69,26 +129,24 @@ export const saveDictationLanguageSettings = async (
         actionName: DICTATE_HOTKEY,
         keys: primary.hotkeyKeys,
       };
-      const newAdditional: Hotkey[] = additional.map((row) => ({
-        id: createId(),
-        actionName: getAdditionalLanguageActionName(row.language),
-        keys: row.hotkeyKeys,
-      }));
+      // Queued edits and deletes still refer to these IDs after the group is replaced.
+      const availableIds = [...beforeAdditional];
+      const newAdditional: Hotkey[] = additional.map((row) => {
+        const actionName = getAdditionalLanguageActionName(row.language);
+        const index = availableIds.findIndex(
+          (item) => item.actionName === actionName,
+        );
+        const existing =
+          index < 0 ? undefined : availableIds.splice(index, 1)[0];
+        return {
+          id: existing?.id ?? createId(),
+          actionName,
+          keys: row.hotkeyKeys,
+        };
+      });
       const repo = getHotkeyRepo();
       const savedPrimary = await repo.saveHotkey(primaryHotkey, lease);
-      const currentPrimary = Object.values(getAppState().hotkeyById).find(
-        (item) => item.actionName === DICTATE_HOTKEY,
-      );
-      if (
-        optimisticHotkeyRevision(DICTATE_HOTKEY) === primaryRevision ||
-        currentPrimary === beforePrimary
-      )
-        produceAppState((draft) => {
-          draft.hotkeyById[savedPrimary.id] = savedPrimary;
-          if (!draft.settings.hotkeyIds.includes(savedPrimary.id)) {
-            draft.settings.hotkeyIds.push(savedPrimary.id);
-          }
-        }, lease);
+      publishPrimary(savedPrimary, beforePrimary, primaryRevision, lease);
 
       try {
         // This command replaces an arbitrary prefix in one SQLite transaction,
@@ -98,42 +156,7 @@ export const saveDictationLanguageSettings = async (
           newAdditional,
           lease,
         );
-        const current = getAppState().hotkeyById;
-        const hasNewerAdditional =
-          optimisticHotkeyRevision(ADDITIONAL_LANGUAGE_HOTKEY_PREFIX) !==
-          additionalRevision;
-        const changed = hasNewerAdditional
-          ? Object.values(current).filter(
-              (item) =>
-                item.actionName.startsWith(ADDITIONAL_LANGUAGE_HOTKEY_PREFIX) &&
-                !beforeAdditional.includes(item),
-            )
-          : [];
-        const removed = new Set(
-          hasNewerAdditional
-            ? beforeAdditional
-                .filter((item) => !current[item.id])
-                .map((item) => item.id)
-            : [],
-        );
-        produceAppState((draft) => {
-          applyReplacedStyleHotkeys(
-            draft,
-            ADDITIONAL_LANGUAGE_HOTKEY_PREFIX,
-            saved,
-          );
-          for (const item of changed) {
-            draft.hotkeyById[item.id] = item;
-            if (!draft.settings.hotkeyIds.includes(item.id))
-              draft.settings.hotkeyIds.push(item.id);
-          }
-          for (const id of removed) {
-            delete draft.hotkeyById[id];
-            draft.settings.hotkeyIds = draft.settings.hotkeyIds.filter(
-              (hotkeyId) => hotkeyId !== id,
-            );
-          }
-        }, lease);
+        publishAdditional(saved, beforeAdditional, additionalRevision, lease);
       } catch (error) {
         // The primary write has already committed. Do not leave native shortcuts
         // pointing at the old primary value when the group replacement fails.

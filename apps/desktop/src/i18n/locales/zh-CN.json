@@ -368,6 +368,7 @@
   "failed_to_clear_got_started_timestamp_please_try_again": "无法清除开始时间记录，请重试。",
   "failed_to_clear_local_data": "无法清除本地数据。",
   "failed_to_configure_input_permissions": "无法配置输入权限。",
+  "failed_to_delete_hotkey_please_try_again": "无法删除快捷键。请重试。",
   "failed_to_deselect_style_please_try_again": "无法取消选择风格，请重试。",
   "failed_to_load_api_keys": "无法加载 API 密钥",
   "failed_to_load_models": "无法加载模型",

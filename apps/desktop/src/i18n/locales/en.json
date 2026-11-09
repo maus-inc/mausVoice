@@ -368,6 +368,7 @@
   "failed_to_clear_got_started_timestamp_please_try_again": "Failed to clear got started timestamp. Please try again.",
   "failed_to_clear_local_data": "Failed to clear local data.",
   "failed_to_configure_input_permissions": "Failed to configure input permissions.",
+  "failed_to_delete_hotkey_please_try_again": "Failed to delete hotkey. Please try again.",
   "failed_to_deselect_style_please_try_again": "Failed to deselect style. Please try again.",
   "failed_to_load_api_keys": "Failed to load API keys",
   "failed_to_load_models": "Failed to load models",

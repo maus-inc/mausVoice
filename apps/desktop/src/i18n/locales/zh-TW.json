@@ -368,6 +368,7 @@
   "failed_to_clear_got_started_timestamp_please_try_again": "無法清除開始時間記錄，請重試。",
   "failed_to_clear_local_data": "無法清除本機資料。",
   "failed_to_configure_input_permissions": "無法設定輸入權限。",
+  "failed_to_delete_hotkey_please_try_again": "無法刪除快捷鍵。請再試一次。",
   "failed_to_deselect_style_please_try_again": "無法取消選取風格，請重試。",
   "failed_to_load_api_keys": "無法載入 API 金鑰",
   "failed_to_load_models": "無法載入模型",

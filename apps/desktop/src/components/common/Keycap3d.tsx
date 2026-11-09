@@ -41,13 +41,57 @@ const fontSizeForWidth = (faceSize: number, width: number): number =>
   faceSize * Math.min(0.46, 0.92 / Math.max(width, 1));
 
 export const keycapLabelFontSize = (faceSize: number, label: string): number =>
-  fontSizeForWidth(faceSize, geistPixelTextWidth(label, 0.02));
+  fontSizeForWidth(
+    faceSize,
+    geistPixelTextWidth(label, keycapLabel.letterSpacing),
+  );
 
 const legendWidth = (legend: React.ReactNode, spacing: number): number => {
   if (legend == null) return 0;
   return geistPixelTextWidth(
     typeof legend === "string" ? legend : "X",
     spacing,
+  );
+};
+
+const useCapLayout = (
+  size: number,
+  view: KeycapView,
+  tilt: number | undefined,
+  spin: number | undefined,
+  roll: number | undefined,
+  perspectiveFactor: number | undefined,
+  ratios: Partial<KeycapRatios> | undefined,
+) => {
+  const height = ratios?.height;
+  const face = ratios?.face;
+  const radius = ratios?.radius;
+  const faceTilt = ratios?.faceTilt;
+  const dish = ratios?.dish;
+  return useMemo(
+    () =>
+      layoutKeycap({
+        size,
+        view,
+        tilt,
+        spin,
+        roll,
+        perspectiveFactor,
+        ratios: { height, face, radius, faceTilt, dish },
+      }),
+    [
+      size,
+      view,
+      tilt,
+      spin,
+      roll,
+      perspectiveFactor,
+      height,
+      face,
+      radius,
+      faceTilt,
+      dish,
+    ],
   );
 };
 
@@ -80,38 +124,19 @@ export const Keycap3d = ({
   const [renderState, setRenderState] = useState<
     "pending" | "ready" | "fallback"
   >("pending");
-  const height = ratios?.height;
-  const face = ratios?.face;
-  const radius = ratios?.radius;
-  const faceTilt = ratios?.faceTilt;
-  const dish = ratios?.dish;
-  const layout = useMemo(
-    () =>
-      layoutKeycap({
-        size,
-        view,
-        tilt,
-        spin,
-        roll,
-        perspectiveFactor,
-        ratios: { height, face, radius, faceTilt, dish },
-      }),
-    [
-      size,
-      view,
-      tilt,
-      spin,
-      roll,
-      perspectiveFactor,
-      height,
-      face,
-      radius,
-      faceTilt,
-      dish,
-    ],
+  const layout = useCapLayout(
+    size,
+    view,
+    tilt,
+    spin,
+    roll,
+    perspectiveFactor,
+    ratios,
   );
-  const labelWidth = legendWidth(label, 0.02);
-  const sublabelWidth = legendWidth(sublabel, 0.04) * keycapLabelStack.scale;
+  const labelWidth = legendWidth(label, keycapLabel.letterSpacing);
+  const sublabelWidth =
+    legendWidth(sublabel, keycapLabelStack.letterSpacing) *
+    keycapLabelStack.scale;
   const legendSize = fontSizeForWidth(
     layout.faceSize,
     Math.max(labelWidth, sublabelWidth),
@@ -119,7 +144,7 @@ export const Keycap3d = ({
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (canvas === null) return;
+    if (canvas === null) return undefined;
     let media: MediaQueryList | undefined;
     let active = true;
     let contextLost = false;
@@ -167,12 +192,12 @@ export const Keycap3d = ({
       const paintLocally = () => {
         if (!active || current !== generation) return;
         localRender = new AbortController();
-        void getCapRasterAsync(options, localRender.signal).then(put, () => {
+        getCapRasterAsync(options, localRender.signal).then(put, () => {
           if (active && current === generation) setRenderState("fallback");
         });
       };
       pendingRequest = requestCapRaster(options);
-      if (pendingRequest) void pendingRequest.then(put, paintLocally);
+      if (pendingRequest) pendingRequest.then(put, paintLocally);
       else paintLocally();
     };
     const onContextLost = () => {
@@ -293,7 +318,7 @@ export const Keycap3d = ({
               data-keycap-part="sublabel"
               sx={{
                 fontSize: `${keycapLabelStack.scale}em`,
-                letterSpacing: "0.04em",
+                letterSpacing: `${keycapLabelStack.letterSpacing}em`,
                 marginBottom: `${keycapLabelStack.gap}em`,
               }}
             >
@@ -304,7 +329,7 @@ export const Keycap3d = ({
             <Box
               component="span"
               data-keycap-part="glyph"
-              sx={{ letterSpacing: "0.02em" }}
+              sx={{ letterSpacing: `${keycapLabel.letterSpacing}em` }}
             >
               {label}
             </Box>

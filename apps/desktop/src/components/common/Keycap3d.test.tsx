@@ -75,6 +75,13 @@ const waitForPaint = async (paint: ReturnType<typeof vi.fn>, count: number) => {
   });
 };
 
+const flushAction = async (action: () => void) => {
+  await act(async () => {
+    action();
+    await Promise.resolve();
+  });
+};
+
 const parts = (name: string) =>
   Array.from(container.querySelectorAll(`[data-keycap-part="${name}"]`));
 
@@ -117,6 +124,21 @@ const ratios = {
   radius: KEYCAP_RATIOS.radius,
   faceTilt: KEYCAP_RATIOS.faceTilt,
   dish: KEYCAP_RATIOS.dish,
+};
+
+const referenceNormal = (
+  point: Vec3,
+  planes: ReturnType<typeof keycapPlanes>,
+  roll: number,
+): Vec3 => {
+  const sum: [number, number, number] = [0, 0, 0];
+  for (const plane of planes) {
+    const inside = plane.offset - dot(plane.normal, point);
+    if (inside < -roll) continue;
+    const weight = Math.exp(-Math.max(inside, 0) / roll);
+    for (let i = 0; i < 3; i += 1) sum[i] += plane.normal[i] * weight;
+  }
+  return normalize(sum);
 };
 
 describe("Keycap3d", () => {
@@ -215,7 +237,7 @@ describe("Keycap3d", () => {
     });
     workerRequest.mockResolvedValueOnce(new TestImageData(1, 1) as ImageData);
     try {
-      await act(async () => {
+      await flushAction(() => {
         root.render(
           <ThemeProvider theme={theme}>
             <Keycap3d label="K" size={34} />
@@ -251,9 +273,9 @@ describe("Keycap3d", () => {
         "translate(-50%, -50%)",
       );
       render(<Keycap3d label="A" size={35} />);
-      await act(async () => finishFirst(new ImageData(1, 1)));
+      await flushAction(() => finishFirst(new ImageData(1, 1)));
       expect(paint).not.toHaveBeenCalled();
-      await act(async () => finishSecond(new ImageData(2, 2)));
+      await flushAction(() => finishSecond(new ImageData(2, 2)));
       expect(paint).toHaveBeenCalledTimes(1);
       expect(styleOf(parts("label")[0]).visibility).toBe("visible");
     } finally {
@@ -275,13 +297,17 @@ describe("Keycap3d", () => {
     try {
       render(<Keycap3d label="K" size={34} />);
       const canvas = parts("cap")[0];
-      act(() =>
-        canvas.dispatchEvent(new Event("contextlost", { cancelable: true })),
-      );
+      const loss = new Event("contextlost", { cancelable: true });
+      act(() => {
+        canvas.dispatchEvent(loss);
+      });
+      expect(loss.defaultPrevented).toBe(false);
       expect(box().getAttribute("data-keycap-fallback")).toBe("true");
-      await act(async () => finish(new TestImageData(1, 1) as ImageData));
+      await flushAction(() => finish(new TestImageData(1, 1) as ImageData));
       expect(paint).not.toHaveBeenCalled();
-      await act(async () => canvas.dispatchEvent(new Event("contextrestored")));
+      await flushAction(() => {
+        canvas.dispatchEvent(new Event("contextrestored"));
+      });
       expect(paint).toHaveBeenCalledTimes(1);
       expect(box().getAttribute("data-keycap-fallback")).toBeNull();
     } finally {
@@ -291,8 +317,8 @@ describe("Keycap3d", () => {
 
   it("releases worker requests when the shape changes or the cap unmounts", () => {
     const { restore } = mockCanvas();
-    const first = new Promise<ImageData>(() => {});
-    const second = new Promise<ImageData>(() => {});
+    const first = new Promise<ImageData>(vi.fn());
+    const second = new Promise<ImageData>(vi.fn());
     workerRequest.mockReturnValueOnce(first).mockReturnValueOnce(second);
     try {
       render(<Keycap3d label="A" size={34} />);
@@ -349,9 +375,9 @@ describe("Keycap3d", () => {
       expect(workerRelease).toHaveBeenCalledWith(
         workerRequest.mock.results[0].value,
       );
-      await act(async () => first(new ImageData(1, 1)));
+      await flushAction(() => first(new ImageData(1, 1)));
       expect(paint).not.toHaveBeenCalled();
-      await act(async () => second(new ImageData(2, 2)));
+      await flushAction(() => second(new ImageData(2, 2)));
       expect(paint).toHaveBeenCalledTimes(1);
     } finally {
       if (original) Object.defineProperty(window, "devicePixelRatio", original);
@@ -401,7 +427,7 @@ describe("Keycap3d", () => {
     try {
       render(<Keycap3d label="A" size={34} />);
       act(() => root.render(null));
-      await act(async () => finish(new ImageData(1, 1)));
+      await flushAction(() => finish(new ImageData(1, 1)));
       expect(paint).not.toHaveBeenCalled();
     } finally {
       restore();
@@ -744,9 +770,7 @@ describe("Keycap3d", () => {
     const travel = styleOf(box()).transform;
     expect(travel).toMatch(/translateY\(-?[\d.]+px\)/);
     // The travel equals the wall that collapses, so the cap does not float.
-    const moved = Math.abs(
-      Number.parseFloat(travel.replace(/[^-\d.]/g, "")) ?? 0,
-    );
+    const moved = Math.abs(Number.parseFloat(travel.replace(/[^-\d.]/g, "")));
     expect(moved).toBeGreaterThan(0);
     expect(moved).toBeLessThan(200 * KEYCAP_RATIOS.height);
   });
@@ -885,11 +909,9 @@ describe("keycap geometry", () => {
     },
   );
 
-  it("removes redundant intersection planes without changing hits", () => {
-    for (const shape of [
-      ratios,
-      { ...ratios, height: 0.65, radius: 0.09, face: 0.72 },
-    ]) {
+  it.each([ratios, { ...ratios, height: 0.65, radius: 0.09, face: 0.72 }])(
+    "removes redundant intersection planes without changing hits",
+    (shape) => {
       const all = keycapPlanes(shape);
       const compact = compactIntersectionPlanes(all);
       expect(compact.length).toBeLessThan(all.length);
@@ -912,8 +934,8 @@ describe("keycap geometry", () => {
           }
         }
       }
-    }
-  });
+    },
+  );
 
   it.each(["angle", "front"] as const)(
     "precomputes perspective intersections for %s",
@@ -1016,14 +1038,7 @@ describe("keycap geometry", () => {
         );
         const hit = intersectKeycap(ray.origin, ray.direction, planes);
         if (!hit) continue;
-        const sum: [number, number, number] = [0, 0, 0];
-        for (const plane of planes) {
-          const inside = plane.offset - dot(plane.normal, hit.point);
-          if (inside < -roll) continue;
-          const weight = Math.exp(-Math.max(inside, 0) / roll);
-          for (let i = 0; i < 3; i += 1) sum[i] += plane.normal[i] * weight;
-        }
-        const expected = normalize(sum);
+        const expected = referenceNormal(hit.point, planes, roll);
         const actual = keycapNormal(hit.point, planes, roll, flat);
         for (let i = 0; i < 3; i += 1)
           expect(actual[i]).toBeCloseTo(expected[i], 7);
@@ -1105,6 +1120,16 @@ describe("keycap geometry", () => {
     expect(near).toBeLessThan(65);
   });
 
+  it("attenuates every highlight under contact occlusion", () => {
+    const normal: Vec3 = [-0.3, 0.79, 0.54];
+    const view: Vec3 = [-0.3, 0.79, 0.54];
+    const lit = shadeKeycap(normal, view, 1);
+    const dimmed = shadeKeycap(normal, view, 0.5);
+    expect(lit.specular).toBeGreaterThan(0);
+    expect(dimmed.specular).toBeCloseTo(lit.specular * 0.5, 10);
+    expect(dimmed.level).toBeCloseTo(lit.level * 0.5, 10);
+  });
+
   it("fades the crease reflection towards the right side of the cap", () => {
     const normal: Vec3 = [-0.05, 0.79, 0.61];
     const view: Vec3 = [-0.3, 0.79, 0.54];
@@ -1122,14 +1147,14 @@ describe("keycap geometry", () => {
       const scale = distance / (distance - transformed[2]);
       return [transformed[0] * scale, transformed[1] * scale];
     };
-    const z = ratios.height / 2;
-    const centre = project([0, 0, z]);
+    const faceHeight = ratios.height / 2;
+    const centre = project([0, 0, faceHeight]);
     const step = 0.0001;
-    const x = project([step, 0, z]);
+    const x = project([step, 0, faceHeight]);
     const y = project([
       0,
       step,
-      z - Math.tan((ratios.faceTilt * Math.PI) / 180) * step,
+      faceHeight - Math.tan((ratios.faceTilt * Math.PI) / 180) * step,
     ]);
     expect(layout.faceCentreX).toBeCloseTo(
       layout.originX + centre[0] * 200 - layout.width / 2,
@@ -1153,14 +1178,17 @@ describe("keycap geometry", () => {
     "projects the full face at $size px with perspective $perspectiveFactor",
     (options) => {
       const layout = layoutKeycap(options);
-      const z = layout.ratios.height / 2;
+      const faceHeight = layout.ratios.height / 2;
       const project = (point: Vec3) => {
         const camera = toCameraSpace(point, layout.camera);
-        const d = layout.camera.perspective;
-        const factor = d === null || d === 0 ? 1 : d / (d - camera[2]);
+        const distance = layout.camera.perspective;
+        const factor =
+          distance === null || distance === 0
+            ? 1
+            : distance / (distance - camera[2]);
         return [camera[0] * factor, camera[1] * factor];
       };
-      const centre = project([0, 0, z]);
+      const centre = project([0, 0, faceHeight]);
       for (const [x, y] of [
         [-0.3, -0.25],
         [0.3, -0.25],
@@ -1170,18 +1198,18 @@ describe("keycap geometry", () => {
         const projected = project([
           x,
           y,
-          z - Math.tan((layout.ratios.faceTilt * Math.PI) / 180) * y,
+          faceHeight - Math.tan((layout.ratios.faceTilt * Math.PI) / 180) * y,
         ]);
         const px = x * options.size;
         const py = y * options.size;
-        const [a, b, c, d] = layout.faceMatrix;
+        const [a, b, c, verticalY] = layout.faceMatrix;
         const [wx, wy] = layout.facePerspective;
-        const w = 1 + wx * px + wy * py;
-        expect((a * px + c * py) / w).toBeCloseTo(
+        const divisor = 1 + wx * px + wy * py;
+        expect((a * px + c * py) / divisor).toBeCloseTo(
           (projected[0] - centre[0]) * options.size,
           6,
         );
-        expect((b * px + d * py) / w).toBeCloseTo(
+        expect((b * px + verticalY * py) / divisor).toBeCloseTo(
           (projected[1] - centre[1]) * options.size,
           6,
         );

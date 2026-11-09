@@ -206,8 +206,8 @@ const OUTLINE_SEGMENTS = 3;
 const OUTLINE_ARC = 5;
 
 export const outline = (half: number, radius: number): [number, number][] => {
-  const r = Math.max(Math.min(radius, half), EPSILON);
-  const inset = half - r;
+  const cornerRadius = Math.max(Math.min(radius, half), EPSILON);
+  const inset = half - cornerRadius;
   const points: [number, number][] = [];
   // Corner centres counterclockwise from the bottom right, with the arc each
   // one starts at. Each corner is followed by its straight run.
@@ -221,17 +221,23 @@ export const outline = (half: number, radius: number): [number, number][] => {
     const [cx, cy, start] = corners[index];
     for (let step = 0; step < OUTLINE_ARC; step += 1) {
       const angle = start + (step / OUTLINE_ARC) * (Math.PI / 2);
-      points.push([cx + Math.cos(angle) * r, cy + Math.sin(angle) * r]);
+      points.push([
+        cx + Math.cos(angle) * cornerRadius,
+        cy + Math.sin(angle) * cornerRadius,
+      ]);
     }
     // The straight run to the next corner.
     const [nx, ny] = corners[(index + 1) % 4];
-    const fromX = cx + Math.cos(start + Math.PI / 2) * r;
-    const fromY = cy + Math.sin(start + Math.PI / 2) * r;
-    const toX = nx + Math.cos(corners[(index + 1) % 4][2]) * r;
-    const toY = ny + Math.sin(corners[(index + 1) % 4][2]) * r;
+    const fromX = cx + Math.cos(start + Math.PI / 2) * cornerRadius;
+    const fromY = cy + Math.sin(start + Math.PI / 2) * cornerRadius;
+    const toX = nx + Math.cos(corners[(index + 1) % 4][2]) * cornerRadius;
+    const toY = ny + Math.sin(corners[(index + 1) % 4][2]) * cornerRadius;
     for (let step = 1; step <= OUTLINE_SEGMENTS; step += 1) {
-      const t = step / (OUTLINE_SEGMENTS + 1);
-      points.push([fromX + (toX - fromX) * t, fromY + (toY - fromY) * t]);
+      const fraction = step / (OUTLINE_SEGMENTS + 1);
+      points.push([
+        fromX + (toX - fromX) * fraction,
+        fromY + (toY - fromY) * fraction,
+      ]);
     }
   }
   return points;
@@ -333,19 +339,19 @@ export const keycapNormal = (
   roll: number,
   ratios: Required<KeycapRatios>,
 ): Vec3 => {
-  let x = 0;
-  let y = 0;
-  let z = 0;
+  let sumX = 0;
+  let sumY = 0;
+  let sumZ = 0;
   const safeRoll = Math.max(roll, EPSILON);
   for (const plane of planes) {
     const inside = plane.offset - dot(plane.normal, point);
     if (inside < -roll || inside > safeRoll * 20) continue;
     const weight = Math.exp(-Math.max(inside, 0) / safeRoll);
-    x += plane.normal[0] * weight;
-    y += plane.normal[1] * weight;
-    z += plane.normal[2] * weight;
+    sumX += plane.normal[0] * weight;
+    sumY += plane.normal[1] * weight;
+    sumZ += plane.normal[2] * weight;
   }
-  const blended = normalize([x, y, z]);
+  const blended = normalize([sumX, sumY, sumZ]);
 
   // The top face is dished: a shallow bowl, deepest in the middle. Its normal
   // leans away from the centre by the slope of that bowl, which is what gives
@@ -395,6 +401,32 @@ export type KeycapHit = {
  * Every face is a half space, so the ray enters where it crosses the last
  * entering plane and leaves where it crosses the first leaving one.
  */
+const planeGap = (
+  plane: KeycapPlane,
+  origin: Vec3,
+  gaps: Float64Array | undefined,
+  index: number,
+) =>
+  gaps === undefined ? plane.offset - dot(plane.normal, origin) : gaps[index];
+
+const hitInRange = (
+  origin: Vec3,
+  direction: Vec3,
+  enter: number,
+  leave: number,
+): KeycapHit | null => {
+  const distanceAlongRay = enter > 0 ? enter : leave;
+  if (enter > leave || distanceAlongRay < 0) return null;
+  return {
+    t: distanceAlongRay,
+    point: [
+      origin[0] + direction[0] * distanceAlongRay,
+      origin[1] + direction[1] * distanceAlongRay,
+      origin[2] + direction[2] * distanceAlongRay,
+    ],
+  };
+};
+
 const intersectPlanes = (
   origin: Vec3,
   direction: Vec3,
@@ -406,28 +438,16 @@ const intersectPlanes = (
   for (let index = 0; index < planes.length; index += 1) {
     const plane = planes[index];
     const facing = dot(plane.normal, direction);
-    const gap =
-      gaps === undefined
-        ? plane.offset - dot(plane.normal, origin)
-        : gaps[index];
+    const gap = planeGap(plane, origin, gaps, index);
     if (Math.abs(facing) < 1e-9) {
       if (gap < 0) return null;
       continue;
     }
-    const t = gap / facing;
-    if (facing < 0) enter = Math.max(enter, t);
-    else leave = Math.min(leave, t);
+    const distanceAlongRay = gap / facing;
+    if (facing < 0) enter = Math.max(enter, distanceAlongRay);
+    else leave = Math.min(leave, distanceAlongRay);
   }
-  const t = enter > 0 ? enter : leave;
-  if (enter > leave || t < 0) return null;
-  return {
-    t,
-    point: [
-      origin[0] + direction[0] * t,
-      origin[1] + direction[1] * t,
-      origin[2] + direction[2] * t,
-    ],
-  };
+  return hitInRange(origin, direction, enter, leave);
 };
 
 export const intersectKeycap = (
@@ -469,19 +489,21 @@ export const rayForPixel = (
   scalePx: number,
   camera: KeycapCamera,
 ): KeycapRay => {
-  const u = (x - originX) / scalePx;
-  const v = (y - originY) / scalePx;
+  const horizontal = (x - originX) / scalePx;
+  const vertical = (y - originY) / scalePx;
   const distance = camera.perspective;
   if (distance === null || distance === 0) {
     // The straight down view is orthographic: parallel rays, no splay.
     return {
-      origin: fromCameraSpace([u, v, 8], camera),
+      origin: fromCameraSpace([horizontal, vertical, 8], camera),
       direction: fromCameraSpace([0, 0, -1], camera),
     };
   }
   return {
     origin: fromCameraSpace([0, 0, distance], camera),
-    direction: normalize(fromCameraSpace([u, v, -distance], camera)),
+    direction: normalize(
+      fromCameraSpace([horizontal, vertical, -distance], camera),
+    ),
   };
 };
 
@@ -499,12 +521,12 @@ export const createPixelRayFactory = (
   const origin = fromCameraSpace([0, 0, depth], camera);
   const forward = fromCameraSpace([0, 0, orthographic ? -1 : -depth], camera);
   return (x, y) => {
-    const u = (x - originX) / scalePx;
-    const v = (y - originY) / scalePx;
+    const horizontal = (x - originX) / scalePx;
+    const vertical = (y - originY) / scalePx;
     const offset: Vec3 = [
-      u * right[0] + v * down[0],
-      u * right[1] + v * down[1],
-      u * right[2] + v * down[2],
+      horizontal * right[0] + vertical * down[0],
+      horizontal * right[1] + vertical * down[1],
+      horizontal * right[2] + vertical * down[2],
     ];
     return orthographic
       ? { origin: add(origin, offset), direction: forward }
@@ -592,31 +614,31 @@ export const shadeKeycap = (
         keycapFill.diffuse * Math.max(0, dot(normal, FILL_FROM)) +
         rim),
     specular:
-      specularOf(
+      occlusion *
+      (specularOf(
         normal,
         view,
         KEY_FROM,
         keycapKey.specular,
         keycapKey.shininess,
       ) +
-      occlusion *
-        (specularOf(
+        specularOf(
           normal,
           view,
           EDGE_FROM,
           keycapEdge.specular,
           keycapEdge.shininess,
         ) +
-          specularOf(
-            normal,
-            view,
-            CREASE_FROM,
-            keycapCrease.specular,
-            keycapCrease.shininess,
-          ) *
-            Math.exp(
-              -Math.max(0, (point?.[0] ?? -0.4) + 0.4) * keycapCrease.falloff,
-            )),
+        specularOf(
+          normal,
+          view,
+          CREASE_FROM,
+          keycapCrease.specular,
+          keycapCrease.shininess,
+        ) *
+          Math.exp(
+            -Math.max(0, (point?.[0] ?? -0.4) + 0.4) * keycapCrease.falloff,
+          )),
   };
 };
 
@@ -664,6 +686,64 @@ export const plasticAt = (
   return [channel, channel, channel];
 };
 
+const resolveKeycapRatios = (
+  ratios?: Partial<KeycapRatios>,
+): Required<KeycapRatios> => {
+  const resolved = { ...KEYCAP_RATIOS };
+  for (const key of Object.keys(resolved) as (keyof KeycapRatios)[]) {
+    const value = ratios?.[key];
+    if (value != null) resolved[key] = value;
+  }
+  const maxTilt = (Math.atan((0.98 * resolved.height) / 0.5) * 180) / Math.PI;
+  resolved.faceTilt = Math.max(-maxTilt, Math.min(maxTilt, resolved.faceTilt));
+  return resolved;
+};
+
+const resolveKeycapCamera = ({
+  view,
+  tilt,
+  spin,
+  roll,
+  perspectiveFactor,
+}: KeycapLayoutOptions): KeycapCamera => {
+  const rig = view === "angle" ? ANGLE_VIEW : FRONT_VIEW;
+  return {
+    tilt: tilt ?? rig.tilt,
+    spin: spin ?? rig.spin,
+    roll: roll ?? rig.roll,
+    perspective: perspectiveFactor ?? rig.perspectiveFactor,
+  };
+};
+
+const faceProjection = (
+  camera: KeycapCamera,
+  height: number,
+  tip: number,
+  size: number,
+) => {
+  const cameraCentre = toCameraSpace([0, 0, height / 2], camera);
+  const faceX = toCameraSpace([1, 0, 0], camera);
+  const faceY = toCameraSpace([0, 1, -Math.tan(tip)], camera);
+  const distance = camera.perspective;
+  let magnification = 1;
+  let xDepth = 0;
+  let yDepth = 0;
+  if (distance !== null && distance !== 0) {
+    const depth = distance - cameraCentre[2];
+    magnification = distance / depth;
+    xDepth = faceX[2] / depth;
+    yDepth = faceY[2] / depth;
+  }
+  const faceMatrix: [number, number, number, number] = [
+    magnification * (faceX[0] + cameraCentre[0] * xDepth),
+    magnification * (faceX[1] + cameraCentre[1] * xDepth),
+    magnification * (faceY[0] + cameraCentre[0] * yDepth),
+    magnification * (faceY[1] + cameraCentre[1] * yDepth),
+  ];
+  const facePerspective: [number, number] = [-xDepth / size, -yDepth / size];
+  return { faceMatrix, facePerspective };
+};
+
 /**
  * Where the cap sits in its own image, and how big it is.
  *
@@ -680,26 +760,16 @@ export const layoutKeycap = ({
   perspectiveFactor,
   ratios,
 }: KeycapLayoutOptions): KeycapLayout => {
-  const resolved: Required<KeycapRatios> = {
-    height: ratios?.height ?? KEYCAP_RATIOS.height,
-    face: ratios?.face ?? KEYCAP_RATIOS.face,
-    radius: ratios?.radius ?? KEYCAP_RATIOS.radius,
-    faceTilt: ratios?.faceTilt ?? KEYCAP_RATIOS.faceTilt,
-    dish: ratios?.dish ?? KEYCAP_RATIOS.dish,
-  };
-  // Keep the tilted top above the base, including at the front/back edges.
-  // The preview exposes height and face tilt independently, so some requested
-  // combinations would otherwise intersect themselves.
-  const maxTilt = (Math.atan((0.98 * resolved.height) / 0.5) * 180) / Math.PI;
-  resolved.faceTilt = Math.max(-maxTilt, Math.min(maxTilt, resolved.faceTilt));
-  const isAngle = view === "angle";
-  const rig = isAngle ? ANGLE_VIEW : FRONT_VIEW;
-  const camera: KeycapCamera = {
-    tilt: tilt ?? rig.tilt,
-    spin: spin ?? rig.spin,
-    roll: roll ?? rig.roll,
-    perspective: perspectiveFactor ?? rig.perspectiveFactor,
-  };
+  const resolved = resolveKeycapRatios(ratios);
+  const camera = resolveKeycapCamera({
+    size,
+    view,
+    tilt,
+    spin,
+    roll,
+    perspectiveFactor,
+    ratios,
+  });
 
   const samples: Vec3[] = [];
   for (const [x, y] of outline(0.5, resolved.radius)) {
@@ -726,22 +796,12 @@ export const layoutKeycap = ({
   // The centre of the top face, projected like the silhouette, so the legend
   // can follow the face when the camera tips.
   const centre = project([0, 0, resolved.height / 2]);
-  const cameraCentre = toCameraSpace([0, 0, resolved.height / 2], camera);
-  const faceX = toCameraSpace([1, 0, 0], camera);
-  const faceY = toCameraSpace([0, 1, -Math.tan(tip)], camera);
-  const distance = camera.perspective;
-  const orthographic = distance === null || distance === 0;
-  const depth = orthographic ? 1 : distance - cameraCentre[2];
-  const magnification = orthographic ? 1 : distance / depth;
-  const xDepth = orthographic ? 0 : faceX[2] / depth;
-  const yDepth = orthographic ? 0 : faceY[2] / depth;
-  const faceMatrix: [number, number, number, number] = [
-    magnification * (faceX[0] + cameraCentre[0] * xDepth),
-    magnification * (faceX[1] + cameraCentre[1] * xDepth),
-    magnification * (faceY[0] + cameraCentre[0] * yDepth),
-    magnification * (faceY[1] + cameraCentre[1] * yDepth),
-  ];
-  const facePerspective: [number, number] = [-xDepth / size, -yDepth / size];
+  const { faceMatrix, facePerspective } = faceProjection(
+    camera,
+    resolved.height,
+    tip,
+    size,
+  );
 
   const pad = 1 / Math.max(size, 1);
   const minX = Math.min(...projected.map(([x]) => x)) - pad;

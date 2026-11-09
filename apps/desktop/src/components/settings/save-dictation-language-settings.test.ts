@@ -28,7 +28,10 @@ vi.mock("../../utils/keyboard.utils", async (original) => ({
 }));
 import { INITIAL_APP_STATE } from "../../state/app.state";
 import { getAppState, produceAppState, setAppState } from "../../store";
-import { markOptimisticHotkeyWrite } from "../../utils/hotkey-write-queue";
+import {
+  enqueueHotkeyWrite,
+  markOptimisticHotkeyWrite,
+} from "../../utils/hotkey-write-queue";
 import { saveDictationLanguageSettings } from "./save-dictation-language-settings";
 
 const oldPrimary = {
@@ -99,7 +102,7 @@ it("retries tone loading after the preferred language was already saved", async 
 });
 
 it("does not overwrite a newer optimistic shortcut while a language save is pending", async () => {
-  let finish!: (value: Hotkey) => void;
+  let finish!: () => void;
   mocks.save.mockImplementationOnce(
     (hotkey) =>
       new Promise<Hotkey>((resolve) => {
@@ -112,7 +115,7 @@ it("does not overwrite a newer optimistic shortcut while a language save is pend
   produceAppState((draft) => {
     draft.hotkeyById.primary.keys = ["Z"];
   });
-  finish(oldPrimary);
+  finish();
   await saving;
   expect(getAppState().hotkeyById.primary.keys).toEqual(["Z"]);
 });
@@ -156,4 +159,75 @@ it("preserves a newer optimistic additional shortcut while publishing the saved 
   expect(
     Object.values(getAppState().hotkeyById).map((hotkey) => hotkey.actionName),
   ).toContain("additional-language:de");
+});
+
+it("keeps a newer optimistic deletion out of the saved group", async () => {
+  let finish!: () => void;
+  mocks.replace.mockImplementationOnce(
+    (_prefix, hotkeys) =>
+      new Promise<Hotkey[]>((resolve) => {
+        finish = () => resolve(hotkeys);
+      }),
+  );
+  const saving = saveDictationLanguageSettings(rows, "en");
+  await vi.waitFor(() => expect(mocks.replace).toHaveBeenCalled());
+  markOptimisticHotkeyWrite(oldAdditional.actionName);
+  produceAppState((draft) => {
+    Reflect.deleteProperty(draft.hotkeyById, "extra");
+    draft.settings.hotkeyIds = draft.settings.hotkeyIds.filter(
+      (id) => id !== "extra",
+    );
+  });
+  finish();
+  await saving;
+  expect(getAppState().hotkeyById.extra).toBeUndefined();
+  expect(getAppState().settings.hotkeyIds).not.toContain("extra");
+  expect(
+    Object.values(getAppState().hotkeyById).map((item) => item.actionName),
+  ).toContain("additional-language:de");
+});
+
+it("preserves a concurrent deletion when the saved language remains in the group", async () => {
+  let finish!: () => void;
+  const persisted = new Map<string, Hotkey>();
+  mocks.replace.mockImplementationOnce(
+    (_prefix, hotkeys: Hotkey[]) =>
+      new Promise<Hotkey[]>((resolve) => {
+        finish = () => {
+          persisted.clear();
+          for (const hotkey of hotkeys) persisted.set(hotkey.id, hotkey);
+          resolve(hotkeys);
+        };
+      }),
+  );
+  const saving = saveDictationLanguageSettings(
+    [
+      { language: "en", hotkeyKeys: ["C"] },
+      { language: "fr", hotkeyKeys: ["D"] },
+    ],
+    "en",
+  );
+  await vi.waitFor(() => expect(mocks.replace).toHaveBeenCalled());
+  markOptimisticHotkeyWrite(oldAdditional.actionName);
+  produceAppState((draft) => {
+    Reflect.deleteProperty(draft.hotkeyById, oldAdditional.id);
+    draft.settings.hotkeyIds = draft.settings.hotkeyIds.filter(
+      (id) => id !== oldAdditional.id,
+    );
+  });
+  const deleting = enqueueHotkeyWrite(async () => {
+    persisted.delete(oldAdditional.id);
+  });
+  finish();
+  await Promise.all([saving, deleting]);
+  expect(
+    [...persisted.values()].filter(
+      (hotkey) => hotkey.actionName === oldAdditional.actionName,
+    ),
+  ).toEqual([]);
+  expect(
+    Object.values(getAppState().hotkeyById).filter(
+      (hotkey) => hotkey.actionName === oldAdditional.actionName,
+    ),
+  ).toEqual([]);
 });

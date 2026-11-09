@@ -14,7 +14,10 @@ import {
   enqueueHotkeyWrite,
   markOptimisticHotkeyWrite,
 } from "../../utils/hotkey-write-queue";
-import { beginLocalDataWrite } from "../../utils/local-data-write-gate";
+import {
+  beginLocalDataWrite,
+  type LocalDataWriteLease,
+} from "../../utils/local-data-write-gate";
 import {
   DICTATE_HOTKEY,
   getDefaultHotkeyCombosForAction,
@@ -36,6 +39,46 @@ const pendingById = new Map<string, number>();
 const lastSaved = new Map<string, Hotkey | undefined>();
 const saveRevision = new Map<string, number>();
 let needsSync = false;
+
+const rollbackHotkey = (
+  value: Hotkey,
+  revision: number,
+  lease: LocalDataWriteLease,
+): boolean => {
+  if (revision !== saveRevision.get(value.id)) return false;
+  let rolledBack = false;
+  produceAppState((draft) => {
+    const current = draft.hotkeyById[value.id];
+    if (
+      current?.actionName !== value.actionName ||
+      current.keys.length !== value.keys.length ||
+      !current.keys.every((key, index) => key === value.keys[index])
+    )
+      return;
+    rolledBack = true;
+    const saved = lastSaved.get(value.id);
+    if (saved) draft.hotkeyById[value.id] = saved;
+    else {
+      Reflect.deleteProperty(draft.hotkeyById, value.id);
+      draft.settings.hotkeyIds = draft.settings.hotkeyIds.filter(
+        (id) => id !== value.id,
+      );
+    }
+  }, lease);
+  return rolledBack;
+};
+
+const completeHotkeySave = (id: string) => {
+  pendingSaves -= 1;
+  const remaining = (pendingById.get(id) ?? 1) - 1;
+  if (remaining > 0) {
+    pendingById.set(id, remaining);
+    return;
+  }
+  pendingById.delete(id);
+  lastSaved.delete(id);
+  saveRevision.delete(id);
+};
 
 export const KeybindingsForm = () => {
   const intl = useIntl();
@@ -148,7 +191,7 @@ export const KeybindingsForm = () => {
       }
       draft.settings.hotkeysStatus = "success";
     }, releaseWrite.lease);
-    void enqueueHotkeyWrite(async () => {
+    enqueueHotkeyWrite(async () => {
       try {
         try {
           await getHotkeyRepo().saveHotkey(newValue, releaseWrite.lease);
@@ -156,46 +199,15 @@ export const KeybindingsForm = () => {
           needsSync = true;
         } catch (error) {
           console.error("Failed to save hotkey", error);
-          let rolledBack = false;
-          if (revision === saveRevision.get(newValue.id)) {
-            produceAppState((draft) => {
-              const current = draft.hotkeyById[newValue.id];
-              if (
-                current?.actionName !== newValue.actionName ||
-                current.keys.length !== newValue.keys.length ||
-                !current.keys.every(
-                  (key, index) => key === newValue.keys[index],
-                )
-              )
-                return;
-              rolledBack = true;
-              const savedHotkey = lastSaved.get(newValue.id);
-              if (savedHotkey) {
-                draft.hotkeyById[newValue.id] = savedHotkey;
-              } else {
-                delete draft.hotkeyById[newValue.id];
-                draft.settings.hotkeyIds = draft.settings.hotkeyIds.filter(
-                  (id) => id !== newValue.id,
-                );
-              }
-            }, releaseWrite.lease);
-          }
-          if (rolledBack) needsSync = true;
+          if (rollbackHotkey(newValue, revision, releaseWrite.lease))
+            needsSync = true;
           showErrorSnackbar(
             intl.formatMessage({
               defaultMessage: "Failed to save hotkey. Please try again.",
             }),
           );
         } finally {
-          pendingSaves -= 1;
-          const remaining = (pendingById.get(newValue.id) ?? 1) - 1;
-          if (remaining === 0) {
-            pendingById.delete(newValue.id);
-            lastSaved.delete(newValue.id);
-            saveRevision.delete(newValue.id);
-          } else {
-            pendingById.set(newValue.id, remaining);
-          }
+          completeHotkeySave(newValue.id);
         }
         if (pendingSaves === 0 && needsSync) {
           needsSync = false;
@@ -214,7 +226,9 @@ export const KeybindingsForm = () => {
       } finally {
         releaseWrite();
       }
-    });
+    }).catch((error) =>
+      console.error("Unexpected hotkey write failure", error),
+    );
   };
 
   const handleChangeShortcut = () => {

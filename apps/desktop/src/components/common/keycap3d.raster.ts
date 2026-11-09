@@ -46,6 +46,14 @@ const fillCentrePixels = (
   }
 };
 
+const maskAt = (
+  mask: Uint8Array,
+  width: number,
+  height: number,
+  x: number,
+  y: number,
+) => (x < 0 || y < 0 || x >= width || y >= height ? 0 : mask[y * width + x]);
+
 const isSilhouetteEdge = (
   mask: Uint8Array,
   width: number,
@@ -56,13 +64,7 @@ const isSilhouetteEdge = (
   const inside = mask[y * width + x];
   for (let dy = -1; dy <= 1; dy += 1) {
     for (let dx = -1; dx <= 1; dx += 1) {
-      const nx = x + dx;
-      const ny = y + dy;
-      const neighbour =
-        nx < 0 || ny < 0 || nx >= width || ny >= height
-          ? 0
-          : mask[ny * width + nx];
-      if (neighbour !== inside) return true;
+      if (maskAt(mask, width, height, x + dx, y + dy) !== inside) return true;
     }
   }
   return false;
@@ -76,22 +78,26 @@ const fillEdgePixel = (
   sample: PixelSampler,
 ) => {
   let coverage = 0;
-  let r = 0;
-  let g = 0;
-  let b = 0;
+  let red = 0;
+  let green = 0;
+  let blue = 0;
   for (const sy of [0.25, 0.75]) {
     for (const sx of [0.25, 0.75]) {
       const colour = sample(x + sx, y + sy);
       if (colour === null) continue;
       coverage += 1;
-      r += colour[0];
-      g += colour[1];
-      b += colour[2];
+      red += colour[0];
+      green += colour[1];
+      blue += colour[2];
     }
   }
-  data[offset] = coverage ? r / coverage : 0;
-  data[offset + 1] = coverage ? g / coverage : 0;
-  data[offset + 2] = coverage ? b / coverage : 0;
+  if (coverage === 0) {
+    data.fill(0, offset, offset + 4);
+    return;
+  }
+  data[offset] = red / coverage;
+  data[offset + 1] = green / coverage;
+  data[offset + 2] = blue / coverage;
   data[offset + 3] = (coverage / 4) * 255;
 };
 
@@ -248,23 +254,21 @@ const rasteriseCapIncrementally = (
     }
     const { image, mask, sample } = raster;
     let row = 0;
-    let centre = true;
     const step = () => {
       try {
         const deadline = performance.now() + 8;
         do {
-          if (centre) fillCentrePixels(image, mask, sample, row, row + 1);
-          else fillSilhouette(image, mask, sample, row, row + 1);
+          if (row < image.height) {
+            fillCentrePixels(image, mask, sample, row, row + 1);
+          } else {
+            const edgeRow = row - image.height;
+            fillSilhouette(image, mask, sample, edgeRow, edgeRow + 1);
+          }
           row += 1;
-          if (row === image.height) {
-            if (centre) {
-              centre = false;
-              row = 0;
-            } else {
-              signal.removeEventListener("abort", cancel);
-              resolve(cacheRaster(key, image));
-              return;
-            }
+          if (row === image.height * 2) {
+            signal.removeEventListener("abort", cancel);
+            resolve(cacheRaster(key, image));
+            return;
           }
         } while (performance.now() < deadline);
         timer = setTimeout(step, 0);
@@ -299,7 +303,7 @@ export const getCapRasterAsync = (
     pending = { controller, promise, consumers: 0 };
     const request = pending;
     pendingLocalRasters.set(key, request);
-    void promise.then(
+    promise.then(
       () => {
         if (pendingLocalRasters.get(key) === request)
           pendingLocalRasters.delete(key);
@@ -321,7 +325,7 @@ export const getCapRasterAsync = (
       request.consumers -= 1;
       return true;
     };
-    const cancel = () => {
+    function cancel() {
       if (!release()) return;
       if (request.consumers === 0) {
         if (pendingLocalRasters.get(key) === request)
@@ -329,7 +333,7 @@ export const getCapRasterAsync = (
         request.controller.abort();
       }
       reject(new Error("Keycap raster request cancelled"));
-    };
+    }
     signal.addEventListener("abort", cancel, { once: true });
     request.promise.then(
       (image) => {

@@ -43,7 +43,7 @@ export const keycapFill = {
 } as const;
 
 /**
- * A soft light from behind the cap's right shoulder. It picks out the rounding
+ * A soft light from behind the cap's left shoulder. It picks out the rounding
  * without giving the dark plastic a polished reflection.
  */
 export const keycapEdge = {
@@ -109,6 +109,7 @@ export const keycapLabel = {
    * next to the other bundled families, so a face swap is one edit.
    */
   fontFamily: "var(--font-pixel)",
+  letterSpacing: 0.02,
   color: "rgba(244, 245, 247, 0.96)",
   /** Adds a subtle dark edge to the projected label. */
   shadowColor: "rgba(0, 0, 0, 0.55)",
@@ -122,6 +123,7 @@ export const keycapLabel = {
 export const keycapLabelStack = {
   /** Size of the side label, relative to the main legend. */
   scale: 0.62,
+  letterSpacing: 0.04,
   /** Space between the side label and the glyph, as a fraction of the face. */
   gap: 0.06,
 } as const;

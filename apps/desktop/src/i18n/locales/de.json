@@ -368,6 +368,7 @@
   "failed_to_clear_got_started_timestamp_please_try_again": "Der Startzeitstempel konnte nicht gelöscht werden. Bitte erneut versuchen.",
   "failed_to_clear_local_data": "Lokale Daten konnten nicht gelöscht werden.",
   "failed_to_configure_input_permissions": "Eingabeberechtigungen konnten nicht eingerichtet werden.",
+  "failed_to_delete_hotkey_please_try_again": "Tastenkürzel konnte nicht gelöscht werden. Bitte versuche es erneut.",
   "failed_to_deselect_style_please_try_again": "Die Auswahl des Stils konnte nicht aufgehoben werden. Bitte erneut versuchen.",
   "failed_to_load_api_keys": "Fehler beim Laden der API-Schlüssel",
   "failed_to_load_models": "Fehler beim Laden der Modelle",

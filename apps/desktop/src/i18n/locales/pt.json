@@ -368,6 +368,7 @@
   "failed_to_clear_got_started_timestamp_please_try_again": "Não foi possível limpar o registo de hora inicial. Tente novamente.",
   "failed_to_clear_local_data": "Não foi possível limpar os dados locais.",
   "failed_to_configure_input_permissions": "Não foi possível configurar as permissões de entrada.",
+  "failed_to_delete_hotkey_please_try_again": "Não foi possível eliminar o atalho. Tenta novamente.",
   "failed_to_deselect_style_please_try_again": "Não foi possível desmarcar o estilo. Tente novamente.",
   "failed_to_load_api_keys": "Falha ao carregar chaves API",
   "failed_to_load_models": "Falha ao carregar modelos",

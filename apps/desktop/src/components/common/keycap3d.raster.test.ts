@@ -110,11 +110,9 @@ it("yields between rows instead of finishing a whole raster in one task", async 
 it("propagates local allocation failures and allows a retry", async () => {
   vi.stubGlobal(
     "ImageData",
-    class {
-      constructor() {
-        throw new Error("allocation failed");
-      }
-    },
+    vi.fn().mockImplementation(() => {
+      throw new Error("allocation failed");
+    }),
   );
   const { getCapRasterAsync } = await import("./keycap3d.raster");
   const options = {

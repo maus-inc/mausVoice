@@ -28,7 +28,7 @@ export const geistPixelTextWidth = (
 ): number => {
   let width = 0;
   for (const character of text) {
-    const code = character.codePointAt(0)!;
+    const code = character.codePointAt(0) ?? 0;
     const advance =
       code >= 32 && code <= 126
         ? ASCII_ADVANCES[code - 32]

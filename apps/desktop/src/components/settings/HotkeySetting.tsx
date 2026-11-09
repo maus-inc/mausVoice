@@ -212,6 +212,7 @@ export const HotkeySetting = ({
   enabled,
   onEnabledChange,
 }: HotkeySettingProps) => {
+  const intl = useIntl();
   const titleId = useId();
   const hasEnabledToggle = enabled !== undefined;
   const isEnabled = enabled ?? true;
@@ -260,7 +261,11 @@ export const HotkeySetting = ({
 
     const releaseWrite = beginLocalDataWrite();
     if (!releaseWrite) {
-      showErrorSnackbar("Failed to save hotkey. Please try again.");
+      showErrorSnackbar(
+        intl.formatMessage({
+          defaultMessage: "Failed to save hotkey. Please try again.",
+        }),
+      );
       return;
     }
     try {
@@ -278,7 +283,11 @@ export const HotkeySetting = ({
       });
     } catch (error) {
       console.error("Failed to save hotkey", error);
-      showErrorSnackbar("Failed to save hotkey. Please try again.");
+      showErrorSnackbar(
+        intl.formatMessage({
+          defaultMessage: "Failed to save hotkey. Please try again.",
+        }),
+      );
     } finally {
       releaseWrite();
     }
@@ -287,14 +296,18 @@ export const HotkeySetting = ({
   const handleDeleteHotkey = async (id: string) => {
     const releaseWrite = beginLocalDataWrite();
     if (!releaseWrite) {
-      showErrorSnackbar("Failed to delete hotkey. Please try again.");
+      showErrorSnackbar(
+        intl.formatMessage({
+          defaultMessage: "Failed to delete hotkey. Please try again.",
+        }),
+      );
       return;
     }
     try {
       const action = useAppStore.getState().hotkeyById[id]?.actionName;
       if (action) markOptimisticHotkeyWrite(action);
       produceAppState((draft) => {
-        delete draft.hotkeyById[id];
+        Reflect.deleteProperty(draft.hotkeyById, id);
         draft.settings.hotkeyIds = draft.settings.hotkeyIds.filter(
           (hid) => hid !== id,
         );
@@ -305,7 +318,11 @@ export const HotkeySetting = ({
       });
     } catch (error) {
       console.error("Failed to delete hotkey", error);
-      showErrorSnackbar("Failed to delete hotkey. Please try again.");
+      showErrorSnackbar(
+        intl.formatMessage({
+          defaultMessage: "Failed to delete hotkey. Please try again.",
+        }),
+      );
     } finally {
       releaseWrite();
     }

@@ -368,6 +368,7 @@
   "failed_to_clear_got_started_timestamp_please_try_again": "시작 시각 기록을 지우지 못했습니다. 다시 시도해 주세요.",
   "failed_to_clear_local_data": "로컬 데이터를 삭제하지 못했습니다.",
   "failed_to_configure_input_permissions": "입력 권한을 설정하지 못했습니다.",
+  "failed_to_delete_hotkey_please_try_again": "단축키를 삭제하지 못했습니다. 다시 시도해 주세요.",
   "failed_to_deselect_style_please_try_again": "스타일 선택을 해제하지 못했습니다. 다시 시도해 주세요.",
   "failed_to_load_api_keys": "API 키를 로드하지 못했습니다",
   "failed_to_load_models": "모델을 로드하지 못했습니다",
