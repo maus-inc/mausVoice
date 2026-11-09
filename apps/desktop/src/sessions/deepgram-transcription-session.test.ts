@@ -197,7 +197,9 @@ describe("Deepgram rejection after startup has settled", () => {
     });
 
     expect(result.rawTranscript).toBe("hello there");
-    expect(result.warnings).toEqual([]);
+    expect(result.warnings).toEqual([
+      expect.stringContaining("socket quota exceeded"),
+    ]);
   });
 
   it("settles an in-flight finalize as a failure when the rejection closes the socket", async () => {

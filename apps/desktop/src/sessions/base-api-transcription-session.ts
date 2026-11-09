@@ -11,6 +11,21 @@ export type BaseApiTranscriptionSessionOptions = {
   inferenceDevice: string;
 };
 
+export class PartialTranscriptionError extends Error {
+  constructor(
+    error: Error,
+    readonly transcript: string,
+  ) {
+    super(error.message, { cause: error });
+  }
+}
+
+export const withPartialTranscript = (
+  error: Error,
+  transcript: string,
+): Error =>
+  transcript ? new PartialTranscriptionError(error, transcript) : error;
+
 export type BaseApiStreamSession = {
   finalize: () => Promise<string>;
   cleanup: () => void;
@@ -103,7 +118,8 @@ export abstract class BaseApiTranscriptionSession implements TranscriptionSessio
         error,
       );
       return {
-        rawTranscript: null,
+        rawTranscript:
+          error instanceof PartialTranscriptionError ? error.transcript : null,
         metadata: {
           inferenceDevice: this.inferenceDevice,
           transcriptionMode: "api",
