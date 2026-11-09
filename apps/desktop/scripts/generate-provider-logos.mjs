@@ -135,9 +135,11 @@ const scan = (body) => {
   const tokens = [];
   let at = 0;
   while (at < body.length) {
-    const isTag = body[at] === "<";
-    const next = isTag ? body.indexOf(">", at) : body.indexOf("<", at);
-    const end = next === -1 ? body.length : next + (isTag ? 1 : 0);
+    const tag = body[at] === "<";
+    // A tag runs to its `>`, including it; text runs to the next `<`.
+    const close = body.indexOf(tag ? ">" : "<", at);
+    // Unterminated: the rest of the document is the last token.
+    const end = close === -1 ? body.length : close + Number(tag);
     tokens.push(body.slice(at, end));
     at = end;
   }
