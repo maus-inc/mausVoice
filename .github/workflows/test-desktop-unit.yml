@@ -20,6 +20,7 @@ on:
       - "scripts/bindings.sh"
       - "scripts/ci/check-bindings-guard.test.mjs"
       - "scripts/ci/check-workflow-pins.test.mjs"
+      - "scripts/ci/verify-scripts-load.test.mjs"
       - "scripts/ci/windows-tauri-imports.test.mjs"
       # Every suite this workflow runs, and the config `dev-surface-contracts`
       # reads. A guard whose own edit does not match the trigger filter does not
@@ -274,6 +275,15 @@ jobs:
         # stops being skipped without anyone being told. A guard that no job runs
         # is documentation, so it is run here like the others.
         run: node --test scripts/ci/check-workspace-hygiene.test.mjs
+      - name: Test that the verify scripts can be loaded
+        # The scripts under `scripts/verify` are only run by hand, so nothing in
+        # CI executed them and nothing noticed when one could not start. This
+        # guard was written after `shot-mic-dialog.mjs` shipped with a
+        # `const URL` that shadowed the global: `node --check` accepted the file
+        # and the script died on its first `new URL` with a ReferenceError. A
+        # module-scope shadowing bug is invisible to a parser and to every other
+        # gate here, so it gets its own.
+        run: node --test scripts/ci/verify-scripts-load.test.mjs
       - name: Test the warm-microphone QA matrix
         # `docs/qa/warm-microphone-edge-cases.md` cites a test for every row, and
         # this guard is what keeps those citations true: a row whose test was
