@@ -21,6 +21,7 @@ import {
   existsSync,
   mkdirSync,
   readdirSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -51,11 +52,21 @@ const unpackTar = (archive, into) => {
   execFileSync("tar", ["-xf", archive, "-C", into], { stdio: "inherit" });
 };
 
+// The extraction is built in `STAGING` and renamed onto `OUT` only once it has
+// finished. Guarding on the browser binary alone was not enough: that file is
+// written first, so a run interrupted while unpacking the shared libraries left
+// a directory whose presence looked like success and whose contents could not
+// launch. Rather than teach the guard what a complete tree contains -- a list
+// that goes stale whenever the package changes -- the tree is either whole or
+// absent.
+const STAGING = `${OUT}.partial`;
+
 if (existsSync(path.join(OUT, "chromium"))) {
   log(`Already extracted in ${OUT}. Delete it to force a fresh extraction.`);
 } else {
   rmSync(OUT, { recursive: true, force: true });
-  mkdirSync(OUT, { recursive: true });
+  rmSync(STAGING, { recursive: true, force: true });
+  mkdirSync(STAGING, { recursive: true });
 
   if (!existsSync(path.join(PKG_DIR, "package.json"))) {
     log(`Installing @sparticuz/chromium@${VERSION} into ${PKG_DIR} …`);
@@ -81,15 +92,15 @@ if (existsSync(path.join(OUT, "chromium"))) {
   const pkgRoot = path.join(PKG_DIR, "node_modules", "@sparticuz", "chromium");
   if (!existsSync(pkgRoot)) throw new Error(`package not found at ${pkgRoot}`);
   const binDir = path.join(pkgRoot, "bin");
-  const libDir = path.join(OUT, "lib");
+  const libDir = path.join(STAGING, "lib");
   mkdirSync(libDir, { recursive: true });
 
   log("Extracting the browser …");
   const browserBytes = decompress(
     path.join(binDir, "chromium.br"),
-    path.join(OUT, "chromium"),
+    path.join(STAGING, "chromium"),
   );
-  chmodSync(path.join(OUT, "chromium"), 0o755);
+  chmodSync(path.join(STAGING, "chromium"), 0o755);
   log(`  chromium ${browserBytes} bytes`);
 
   // Without these the browser aborts before it can report a version: the AL2023
@@ -98,20 +109,23 @@ if (existsSync(path.join(OUT, "chromium"))) {
   for (const name of ["al2023.tar.br", "swiftshader.tar.br", "fonts.tar.br"]) {
     const source = path.join(binDir, name);
     if (!existsSync(source)) continue;
-    const tar = path.join(OUT, name.replace(/\.br$/, ""));
+    const tar = path.join(STAGING, name.replace(/\.br$/, ""));
     decompress(source, tar);
-    unpackTar(tar, OUT);
+    unpackTar(tar, STAGING);
     rmSync(tar, { force: true });
   }
 
   // al2023 extracts its libraries to the archive root; put them where the
   // launcher's LD_LIBRARY_PATH expects them.
-  for (const entry of readdirSync(OUT)) {
+  for (const entry of readdirSync(STAGING)) {
     if (entry.endsWith(".so") || /\.so\.\d+/.test(entry)) {
-      copyFileSync(path.join(OUT, entry), path.join(libDir, entry));
+      copyFileSync(path.join(STAGING, entry), path.join(libDir, entry));
     }
   }
   log(`  ${readdirSync(libDir).length} shared libraries`);
+
+  // Whole or absent: the rename is the only thing that makes this a success.
+  renameSync(STAGING, OUT);
 }
 
 export const LAUNCH_FLAGS = [

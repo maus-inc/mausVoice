@@ -160,8 +160,13 @@ export async function newPage(port) {
   ws.addEventListener("message", (event) => {
     const msg = JSON.parse(event.data);
     if (msg.id && pending.has(msg.id)) {
-      const { resolve, reject } = pending.get(msg.id);
+      const { resolve, reject, timer } = pending.get(msg.id);
       pending.delete(msg.id);
+      // The reply arrived, so the timeout is no longer needed. Left uncleared it
+      // stays armed for its full 30 s and keeps the event loop alive, which
+      // delayed every verify script's exit by up to half a minute after it had
+      // already printed its report.
+      clearTimeout(timer);
       if (msg.error) reject(new Error(JSON.stringify(msg.error)));
       else resolve(msg.result);
       return;
@@ -174,14 +179,18 @@ export async function newPage(port) {
   const send = (method, params = {}) =>
     new Promise((resolve, reject) => {
       const id = nextId++;
-      pending.set(id, { resolve, reject });
-      ws.send(JSON.stringify({ id, method, params }));
-      setTimeout(() => {
+      const timer = setTimeout(() => {
         if (pending.has(id)) {
           pending.delete(id);
           reject(new Error(`cdp timeout: ${method}`));
         }
       }, 30_000);
+      // Neither holds the process open by itself: every reply clears it, and a
+      // socket that dies without replying must not pin the script for 30 s
+      // either.
+      timer.unref?.();
+      pending.set(id, { resolve, reject, timer });
+      ws.send(JSON.stringify({ id, method, params }));
     });
 
   const on = (method, fn) => {

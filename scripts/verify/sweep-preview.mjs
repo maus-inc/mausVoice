@@ -110,6 +110,22 @@ const routes = await page.evaluate(
   `Array.from(document.querySelectorAll('a[href^="#/"]')).map(a => a.getAttribute('href'))`,
 );
 const unique = [...new Set(routes)];
+
+// A sweep of nothing is not a pass. If the index fails to render its links --
+// a build error, a route that threw, a selector that stopped matching -- then
+// every check below runs zero times and this script would print "0 with
+// problems" and exit green, which is the most expensive way for a verification
+// tool to be wrong. The route count is the thing being verified, so a missing
+// one is a failure, not an empty result.
+if (!unique.length) {
+  console.error(
+    `The preview index listed no routes (${anchorCount} anchors after waiting). ` +
+      "Nothing was swept, so nothing was verified.",
+  );
+  await page.close();
+  proc.kill("SIGKILL");
+  process.exit(1);
+}
 console.log(`Visiting ${unique.length} routes.`);
 
 const rows = [];

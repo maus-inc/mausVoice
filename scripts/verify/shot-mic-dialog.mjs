@@ -10,7 +10,11 @@ const REPO_ROOT = new URL("../../", import.meta.url).pathname;
 const OUT = process.env.OUT_DIR || join(REPO_ROOT, "reports/ui-verify");
 mkdirSync(OUT, { recursive: true });
 
-const URL =
+// Not named `URL`: a module-scope `const URL` puts the global that line 9 uses
+// into its temporal dead zone, so the whole script threw
+// `ReferenceError: Cannot access 'URL' before initialization` before doing
+// anything at all.
+const HARNESS_URL =
   process.env.HARNESS_URL ||
   "http://127.0.0.1:5193/verify-harness/mic-dialog.html";
 
@@ -31,7 +35,7 @@ page.on("Runtime.exceptionThrown", (p) =>
 
 await page.send("Network.enable");
 await page.setViewport(1100, 1000);
-await page.goto(URL);
+await page.goto(HARNESS_URL);
 await sleep(7000);
 
 const problems = [];
