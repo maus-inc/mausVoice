@@ -839,45 +839,43 @@ describe("keycap geometry", () => {
     );
   });
 
-  it.each([
-    { ...ratios, faceTilt: 0 },
-    ratios,
-    { ...ratios, height: 0.16, faceTilt: 30 },
-  ])(
+  it.each(
+    [
+      { ...ratios, faceTilt: 0 },
+      ratios,
+      { ...ratios, height: 0.16, faceTilt: 30 },
+    ].flatMap((requested) =>
+      (["angle", "front"] as const).map((view) => ({ requested, view })),
+    ),
+  )(
     "keeps the entire projected hull inside the raster bounds",
-    (requested) => {
-      for (const view of ["angle", "front"] as const) {
-        const layout = layoutKeycap({ size: 100, view, ratios: requested });
-        const walls = keycapPlanes(layout.ratios);
-        for (let y = -3; y <= layout.height + 3; y += 2) {
-          for (const x of [-3, layout.width + 3]) {
-            const ray = rayForPixel(
-              x,
-              y,
-              layout.originX,
-              layout.originY,
-              100,
-              layout.camera,
-            );
-            expect(
-              intersectKeycap(ray.origin, ray.direction, walls),
-            ).toBeNull();
-          }
+    ({ requested, view }) => {
+      const layout = layoutKeycap({ size: 100, view, ratios: requested });
+      const walls = keycapPlanes(layout.ratios);
+      for (let y = -3; y <= layout.height + 3; y += 2) {
+        for (const x of [-3, layout.width + 3]) {
+          const ray = rayForPixel(
+            x,
+            y,
+            layout.originX,
+            layout.originY,
+            100,
+            layout.camera,
+          );
+          expect(intersectKeycap(ray.origin, ray.direction, walls)).toBeNull();
         }
-        for (let x = -3; x <= layout.width + 3; x += 2) {
-          for (const y of [-3, layout.height + 3]) {
-            const ray = rayForPixel(
-              x,
-              y,
-              layout.originX,
-              layout.originY,
-              100,
-              layout.camera,
-            );
-            expect(
-              intersectKeycap(ray.origin, ray.direction, walls),
-            ).toBeNull();
-          }
+      }
+      for (let x = -3; x <= layout.width + 3; x += 2) {
+        for (const y of [-3, layout.height + 3]) {
+          const ray = rayForPixel(
+            x,
+            y,
+            layout.originX,
+            layout.originY,
+            100,
+            layout.camera,
+          );
+          expect(intersectKeycap(ray.origin, ray.direction, walls)).toBeNull();
         }
       }
     },
@@ -907,29 +905,31 @@ describe("keycap geometry", () => {
     },
   );
 
-  it.each([ratios, { ...ratios, height: 0.65, radius: 0.09, face: 0.72 }])(
+  it.each(
+    [ratios, { ...ratios, height: 0.65, radius: 0.09, face: 0.72 }].flatMap(
+      (shape) => (["angle", "front"] as const).map((view) => ({ shape, view })),
+    ),
+  )(
     "removes redundant intersection planes without changing hits",
-    (shape) => {
+    ({ shape, view }) => {
       const all = keycapPlanes(shape);
       const compact = compactIntersectionPlanes(all);
       expect(compact.length).toBeLessThan(all.length);
-      for (const view of ["angle", "front"] as const) {
-        const layout = layoutKeycap({ size: 100, view, ratios: shape });
-        for (let y = 0; y < layout.height; y += 9) {
-          for (let x = 0; x < layout.width; x += 9) {
-            const ray = rayForPixel(
-              x,
-              y,
-              layout.originX,
-              layout.originY,
-              layout.scalePx,
-              layout.camera,
-            );
-            const expected = intersectKeycap(ray.origin, ray.direction, all);
-            const actual = intersectKeycap(ray.origin, ray.direction, compact);
-            expect(actual === null).toBe(expected === null);
-            if (actual && expected) expect(actual.t).toBeCloseTo(expected.t, 7);
-          }
+      const layout = layoutKeycap({ size: 100, view, ratios: shape });
+      for (let y = 0; y < layout.height; y += 9) {
+        for (let x = 0; x < layout.width; x += 9) {
+          const ray = rayForPixel(
+            x,
+            y,
+            layout.originX,
+            layout.originY,
+            layout.scalePx,
+            layout.camera,
+          );
+          const expected = intersectKeycap(ray.origin, ray.direction, all);
+          const actual = intersectKeycap(ray.origin, ray.direction, compact);
+          expect(actual === null).toBe(expected === null);
+          if (actual && expected) expect(actual.t).toBeCloseTo(expected.t, 7);
         }
       }
     },

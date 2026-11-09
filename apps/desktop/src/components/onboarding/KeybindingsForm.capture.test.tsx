@@ -76,9 +76,9 @@ const start = () => {
 };
 beforeEach(() => {
   setAppState(structuredClone(INITIAL_APP_STATE), true);
-  mocks.save.mockReset().mockResolvedValue(undefined);
-  mocks.delete.mockReset().mockResolvedValue(undefined);
-  mocks.sync.mockReset().mockResolvedValue(undefined);
+  mocks.save.mockReset().mockImplementation(() => Promise.resolve());
+  mocks.delete.mockReset().mockImplementation(() => Promise.resolve());
+  mocks.sync.mockReset().mockImplementation(() => Promise.resolve());
   mocks.error.mockReset();
   container = document.createElement("div");
   document.body.appendChild(container);

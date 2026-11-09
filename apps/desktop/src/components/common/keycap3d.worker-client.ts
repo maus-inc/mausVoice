@@ -38,8 +38,9 @@ const disableWorker = (reason: string) => {
 };
 
 const dispatch = () => {
-  if (!worker || active || queue.length === 0) return;
-  const request = queue.shift()!;
+  if (!worker || active) return;
+  const request = queue.shift();
+  if (!request) return;
   active = request;
   watchdog = setTimeout(() => disableWorker("Keycap worker timed out"), 10000);
   try {
