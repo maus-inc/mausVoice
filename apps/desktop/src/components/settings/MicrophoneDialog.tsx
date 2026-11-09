@@ -40,6 +40,40 @@ import {
   describeHeldState,
 } from "../../utils/microphone-readiness.utils";
 
+/**
+ * Scrolls a save result into view, without stealing the user's place.
+ *
+ * Two rules, and both are why this is a function rather than five inline
+ * branches inside the component's effect:
+ *
+ * - Never move the viewport while the user is working inside the dialog. A save
+ *   is often still in flight when they start typing into the tester, and
+ *   scrolling out from under them costs more than the alert it reveals. The
+ *   alert still announces itself, so nothing is lost by staying put.
+ * - A feedback box taller than the container is aligned to its top rather than
+ *   its bottom, because aligning the bottom would hide the first line of the
+ *   message -- the part that says what went wrong.
+ */
+const revealFeedback = (
+  content: HTMLElement | null,
+  feedback: HTMLElement | null,
+): void => {
+  if (!content || !feedback) return;
+  if (content.contains(document.activeElement)) return;
+  const containerRect = content.getBoundingClientRect();
+  const errorRect = feedback.getBoundingClientRect();
+  if (
+    errorRect.top < containerRect.top ||
+    errorRect.height > containerRect.height
+  ) {
+    content.scrollTop += errorRect.top - containerRect.top;
+    return;
+  }
+  if (errorRect.bottom > containerRect.bottom) {
+    content.scrollTop += errorRect.bottom - containerRect.bottom + 8;
+  }
+};
+
 export const MicrophoneDialog = () => {
   const open = useAppStore((state) => state.settings.microphoneDialogOpen);
   const savedPreference = useMyPreferredMicrophone();
@@ -74,22 +108,8 @@ export const MicrophoneDialog = () => {
   const feedbackRef = useRef<HTMLDivElement>(null);
 
   useLayoutEffect(() => {
-    const content = contentRef.current;
-    const feedback = feedbackRef.current;
-    if ((!saveError && !saveSuccess) || !content || !feedback) return;
-    // Do not move the viewport away from a tester the user has started using
-    // while this save was pending. The alert still announces itself.
-    if (content.contains(document.activeElement)) return;
-    const containerRect = content.getBoundingClientRect();
-    const errorRect = feedback.getBoundingClientRect();
-    if (
-      errorRect.top < containerRect.top ||
-      errorRect.height > containerRect.height
-    ) {
-      content.scrollTop += errorRect.top - containerRect.top;
-    } else if (errorRect.bottom > containerRect.bottom) {
-      content.scrollTop += errorRect.bottom - containerRect.bottom + 8;
-    }
+    if (!saveError && !saveSuccess) return;
+    revealFeedback(contentRef.current, feedbackRef.current);
   }, [saveError, saveSuccess]);
 
   useEffect(() => {
@@ -251,7 +271,7 @@ export const MicrophoneDialog = () => {
                 {prerollOn ? (
                   <FormattedMessage defaultMessage="How much speech to keep from just before you press, so a word you start early is not cut off." />
                 ) : (
-                  <FormattedMessage defaultMessage="Nothing is kept from before the press: the recording starts exactly on the press." />
+                  <FormattedMessage defaultMessage="Nothing is kept from before the press, so the first word is captured only once recording starts." />
                 )}
               </Typography>
             </Stack>

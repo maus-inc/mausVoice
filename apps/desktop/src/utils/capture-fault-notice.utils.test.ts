@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { createMessageId } from "../../scripts/formatjs-id.mjs";
 import { captureFaultNotice } from "./capture-fault-notice.utils";
 
@@ -86,16 +89,27 @@ describe("captureFaultNotice", () => {
   });
 
   it("the two messages the component renders have catalogue-safe ids", () => {
-    // Ids are derived from the literal at the call site by
-    // `scripts/formatjs-id.mjs`, and the catalogue truncates at 64 characters.
-    // The extractor only sees a literal, so these strings must match the ones in
-    // `DictationSideEffects.tsx`; this test is what catches a divergence once
-    // the message has been pruned from the catalogue.
-    const detailed = createMessageId(
-      "The microphone stopped recording after {captured} of {expected} seconds. Check that it is still connected.",
+    // Read out of the component, not re-typed here. Ids are derived from the
+    // literal at the call site by `scripts/formatjs-id.mjs` and the catalogue
+    // truncates at 64 characters, so what needs checking is the string the
+    // component actually passes. A copy of it in this file only proves the copy
+    // matches the extractor: edit the component and the test kept passing on a
+    // literal that no longer existed anywhere, which is the drift its own
+    // comment claimed to catch.
+    const source = readFileSync(
+      join(__dirname, "../components/root/DictationSideEffects.tsx"),
+      "utf8",
     );
-    const generic = createMessageId(
-      "The recording ended early. Check that the microphone is still connected.",
+    const callSiteMessages = [
+      ...source.matchAll(/defaultMessage:\s*\n?\s*"([^"]{40,})"/g),
+    ]
+      .map((match) => match[1])
+      .filter((message) => message.includes("connected"));
+
+    expect(callSiteMessages).toHaveLength(2);
+
+    const [detailed, generic] = callSiteMessages.map((message) =>
+      createMessageId(message),
     );
 
     expect(detailed.length).toBeLessThanOrEqual(64);

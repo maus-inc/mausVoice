@@ -160,7 +160,10 @@ export type MicrophoneOpenFailure =
 const IN_USE_MARKERS = [
   "device or resource busy",
   "no available subdevice",
-  "0x88890004",
+  // AUDCLNT_E_DEVICE_IN_USE. Not 0x88890004, which is one digit away and is
+  // AUDCLNT_E_DEVICE_INVALIDATED: a device that vanished, not one another
+  // application is holding. This list mirrors the Rust one.
+  "0x8889000a",
   "audclnt_e_device_in_use",
   "in use by another",
   "kaudiouniterr_deviceinuse",

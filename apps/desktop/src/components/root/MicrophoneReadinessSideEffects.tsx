@@ -36,9 +36,19 @@ import { isPermissionAuthorized } from "../../utils/permission.utils";
  * and one place that can fail to close it.
  */
 export const MicrophoneReadinessSideEffects = () => {
-  const enabled = useAppStore(
-    (state) => state.userPrefs?.keepMicrophoneReady === true,
+  // Three states, because `null` is not "off".
+  //
+  // The preferences arrive asynchronously, so every window mounts this component
+  // with `userPrefs === null` for the first frames. Collapsing that into `false`
+  // made the null frame indistinguishable from the user having turned the
+  // preference off, and the release effect below duly closed the shared device
+  // -- which another window had opened -- before any preference had been read.
+  // `null` means "not loaded yet": hold nothing, close nothing, decide nothing.
+  const keepReadySetting = useAppStore(
+    (state) => state.userPrefs?.keepMicrophoneReady ?? null,
   );
+  const prefsLoaded = keepReadySetting !== null;
+  const enabled = keepReadySetting === true;
   const prerollSeconds = useAppStore(
     (state) => state.userPrefs?.microphonePrerollSeconds ?? 0.5,
   );
@@ -216,6 +226,13 @@ export const MicrophoneReadinessSideEffects = () => {
       return;
     }
 
+    // Also returns before deciding anything while the preferences are still
+    // loading. Without this the first effect run released a device on the
+    // strength of a value that had not arrived.
+    if (!prefsLoaded) {
+      return;
+    }
+
     const shouldHold = shouldHoldMicrophoneReady({
       enabled,
       isRecording,
@@ -252,7 +269,15 @@ export const MicrophoneReadinessSideEffects = () => {
 
     openedPrerollRef.current = prerollSeconds;
     hold(prerollSeconds);
-  }, [enabled, isRecording, permissionGranted, prerollSeconds, hold, release]);
+  }, [
+    enabled,
+    prefsLoaded,
+    isRecording,
+    permissionGranted,
+    prerollSeconds,
+    hold,
+    release,
+  ]);
 
   // The post-recording window is a policy the stop path reads, and it has to be
   // in place before the recording that will stop, not after it. Pushing it on
@@ -265,13 +290,13 @@ export const MicrophoneReadinessSideEffects = () => {
   // device that is not held, so it is set for that case, and the release path
   // restores it when the hold is turned off.
   useEffect(() => {
-    if (enabled) {
+    if (enabled || !prefsLoaded) {
       return;
     }
     void commands.setMicrophoneLinger(lingerMs).catch((error: unknown) => {
       getLogger().warning(`Could not set the linger window: ${error}`);
     });
-  }, [enabled, lingerMs]);
+  }, [enabled, prefsLoaded, lingerMs]);
 
   // One read on mount, so the dialog shows the truth before anything is toggled.
   useEffect(() => {
@@ -344,6 +369,23 @@ export const MicrophoneReadinessSideEffects = () => {
     );
   }, [enabled, permissionGranted]);
 
+  // Whether a focus retry should reopen the device: the same conditions the hold
+  // effect uses, asked of the live store rather than of React state.
+  //
+  // A named predicate rather than five `||` terms inline, because the inline
+  // version put the whole decision inside a callback that runs on every window
+  // focus and read as one long negation. The terms are unchanged.
+  const shouldHoldNow = useCallback(() => {
+    const state = getAppState();
+    return (
+      state.userPrefs?.keepMicrophoneReady === true &&
+      state.settings.microphoneHeld !== true &&
+      state.activeRecordingMode === null &&
+      isPermissionAuthorized(state.permissions.microphone?.state) &&
+      !isLocalDataClearRequested()
+    );
+  }, []);
+
   // A hold that failed has no state change to retry on: the preference did not
   // change, the device did. Coming back to the window is the moment a user has
   // most likely just plugged something in, so that is when the attempt is made
@@ -357,24 +399,21 @@ export const MicrophoneReadinessSideEffects = () => {
       if (!isMainLocalDataWindow()) {
         return;
       }
-      const state = getAppState();
-      if (
-        state.userPrefs?.keepMicrophoneReady !== true ||
-        state.settings.microphoneHeld === true ||
-        state.activeRecordingMode !== null ||
-        !isPermissionAuthorized(state.permissions.microphone?.state) ||
-        isLocalDataClearRequested()
-      ) {
+      if (!shouldHoldNow()) {
         return;
       }
+      // Re-read rather than trust the check above: `shouldHoldNow` is a separate
+      // function, so TypeScript cannot carry its narrowing across the call, and
+      // the store can be read again without changing the decision it just made.
+      const state = getAppState();
       openedPrerollRef.current =
-        state.userPrefs.microphonePrerollSeconds ?? 0.5;
+        state.userPrefs?.microphonePrerollSeconds ?? 0.5;
       appliedRef.current = "open";
       hold(openedPrerollRef.current);
     };
     window.addEventListener("focus", retryOnFocus);
     return () => window.removeEventListener("focus", retryOnFocus);
-  }, [hold, publishHeld]);
+  }, [hold, publishHeld, shouldHoldNow]);
 
   // The cheap half of readiness: with no stream held, resolve which device the
   // next press would open, so the press skips the enumeration and scoring. It

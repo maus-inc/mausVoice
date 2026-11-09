@@ -173,6 +173,20 @@ describe("MicrophoneReadinessSideEffects", () => {
     expect(mocks.warmMicrophone.mock.calls[0][0]).toBe(1.2);
   });
 
+  it("closes nothing while the preferences are still loading", async () => {
+    // `userPrefs` is null for the first frames in every window. Treating that as
+    // "the preference is off" released the shared device before any preference
+    // had been read -- so a window opening while another held the microphone
+    // closed it, and a window that arrived first closed a stream it had just
+    // opened itself.
+    setState({ userPrefs: null });
+    await render();
+
+    expect(mocks.warmMicrophone).not.toHaveBeenCalled();
+    expect(mocks.closeMicrophone).not.toHaveBeenCalled();
+    expect(mocks.setMicrophoneLinger).not.toHaveBeenCalled();
+  });
+
   it("does not open anything when the preference is off", async () => {
     setState({
       userPrefs: {
