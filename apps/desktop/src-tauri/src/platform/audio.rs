@@ -3634,6 +3634,179 @@ mod cpal_impl {
         }
 
         #[cfg(target_os = "linux")]
+        fn exercise_alsa_capability_cache(failure: Option<(i32, bool)>) {
+            use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+            use std::sync::atomic::{AtomicUsize, Ordering};
+            use std::time::{Duration, Instant};
+
+            let fail_open: unsafe extern "C" fn(libc::c_int) = unsafe {
+                std::mem::transmute(alsa_probe_symbol(c"maus_test_alsa_cache_fail_open"))
+            };
+            let fail_setup: unsafe extern "C" fn() = unsafe {
+                std::mem::transmute(alsa_probe_symbol(c"maus_test_alsa_cache_fail_setup"))
+            };
+            let opens: unsafe extern "C" fn() -> libc::c_int = unsafe {
+                std::mem::transmute(alsa_probe_symbol(c"maus_test_alsa_cache_capture_opens"))
+            };
+            let injected: unsafe extern "C" fn() -> libc::c_int =
+                unsafe { std::mem::transmute(alsa_probe_symbol(c"maus_test_alsa_cache_injected")) };
+            let host = cpal::default_host();
+            let target = host
+                .devices()
+                .unwrap()
+                .find(|device| device.name().unwrap() == "maus_capture_only")
+                .expect("capture-only device must initially be discovered by probing");
+            let supported = target.default_input_config().unwrap();
+            let format = supported.sample_format();
+            let config: cpal::StreamConfig = supported.into();
+            let default = host.default_input_device().unwrap();
+            let supported = default.default_input_config().unwrap();
+            let default_format = supported.sample_format();
+            let default_config: cpal::StreamConfig = supported.into();
+
+            if let Some((error, true)) = failure {
+                unsafe { fail_open(error) };
+                assert!(target.default_input_config().is_err());
+                assert_eq!(unsafe { injected() }, 1);
+            }
+            let callbacks = Arc::new(AtomicUsize::new(0));
+            let callback_counter = Arc::clone(&callbacks);
+            let mut stream = default
+                .build_input_stream_raw(
+                    &default_config,
+                    default_format,
+                    move |_, _| {
+                        callback_counter.fetch_add(1, Ordering::Relaxed);
+                    },
+                    |_| {},
+                    None,
+                )
+                .unwrap();
+            stream.play().unwrap();
+            let wait_for_progress = |previous| {
+                let deadline = Instant::now() + Duration::from_secs(2);
+                while callbacks.load(Ordering::Relaxed) <= previous {
+                    assert!(
+                        Instant::now() < deadline,
+                        "live stream stopped producing callbacks"
+                    );
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+            };
+            wait_for_progress(0);
+            if !matches!(failure, Some((_, true))) {
+                unsafe {
+                    if let Some((error, false)) = failure {
+                        fail_open(error)
+                    } else {
+                        fail_setup()
+                    }
+                }
+                assert!(target
+                    .build_input_stream_raw(&config, format, |_, _| {}, |_| {}, None)
+                    .is_err());
+                assert_eq!(unsafe { injected() }, 1);
+            }
+            assert!(!cpal::alsa_capture_cleanup_uncertain());
+            let before = unsafe { opens() };
+            let found = host
+                .devices()
+                .unwrap()
+                .any(|device| device.name().unwrap() == "maus_capture_only");
+            assert_eq!(
+                unsafe { opens() },
+                before,
+                "discovery must not open capture while a stream is live"
+            );
+            assert_eq!(
+                found,
+                !matches!(failure, Some((libc::ENODEV | libc::ENOENT, _))),
+                "unexpected capture-only discovery after {failure:?}"
+            );
+            let previous = callbacks.load(Ordering::Relaxed);
+            wait_for_progress(previous);
+            #[allow(unreachable_patterns)]
+            match stream.as_inner_mut() {
+                cpal::platform::StreamInner::Alsa(inner) => inner.stop_input_for_release().unwrap(),
+                _ => panic!("expected ALSA stream"),
+            }
+            drop(stream);
+            assert!(!cpal::alsa_capture_cleanup_uncertain());
+            let before = unsafe { opens() };
+            assert!(host
+                .devices()
+                .unwrap()
+                .any(|device| device.name().unwrap() == "maus_capture_only"));
+            assert!(
+                unsafe { opens() } > before,
+                "discovery must probe again after release"
+            );
+        }
+
+        #[cfg(target_os = "linux")]
+        #[test]
+        #[ignore = "requires isolated ALSA null and the test-only capability cache preload"]
+        fn cpal_alsa_cache_survives_setup_failure() {
+            exercise_alsa_capability_cache(None);
+        }
+
+        #[cfg(target_os = "linux")]
+        #[test]
+        #[ignore = "requires isolated ALSA null and the test-only capability cache preload"]
+        fn cpal_alsa_cache_survives_busy_build() {
+            exercise_alsa_capability_cache(Some((libc::EBUSY, false)));
+        }
+
+        #[cfg(target_os = "linux")]
+        #[test]
+        #[ignore = "requires isolated ALSA null and the test-only capability cache preload"]
+        fn cpal_alsa_cache_survives_busy_probe() {
+            exercise_alsa_capability_cache(Some((libc::EBUSY, true)));
+        }
+
+        #[cfg(target_os = "linux")]
+        #[test]
+        #[ignore = "requires isolated ALSA null and the test-only capability cache preload"]
+        fn cpal_alsa_cache_forgets_missing_build() {
+            exercise_alsa_capability_cache(Some((libc::ENODEV, false)));
+        }
+
+        #[cfg(target_os = "linux")]
+        #[test]
+        #[ignore = "requires isolated ALSA null and the test-only capability cache preload"]
+        fn cpal_alsa_cache_forgets_missing_probe() {
+            exercise_alsa_capability_cache(Some((libc::ENODEV, true)));
+        }
+
+        #[cfg(target_os = "linux")]
+        #[test]
+        #[ignore = "requires isolated ALSA null and the test-only capability cache preload"]
+        fn cpal_alsa_cache_survives_permission_build() {
+            exercise_alsa_capability_cache(Some((libc::EACCES, false)));
+        }
+
+        #[cfg(target_os = "linux")]
+        #[test]
+        #[ignore = "requires isolated ALSA null and the test-only capability cache preload"]
+        fn cpal_alsa_cache_survives_permission_probe() {
+            exercise_alsa_capability_cache(Some((libc::EACCES, true)));
+        }
+
+        #[cfg(target_os = "linux")]
+        #[test]
+        #[ignore = "requires isolated ALSA null and the test-only capability cache preload"]
+        fn cpal_alsa_cache_forgets_absent_build() {
+            exercise_alsa_capability_cache(Some((libc::ENOENT, false)));
+        }
+
+        #[cfg(target_os = "linux")]
+        #[test]
+        #[ignore = "requires isolated ALSA null and the test-only capability cache preload"]
+        fn cpal_alsa_cache_forgets_absent_probe() {
+            exercise_alsa_capability_cache(Some((libc::ENOENT, true)));
+        }
+
+        #[cfg(target_os = "linux")]
         fn exercise_alsa_uncertain_open(probe: bool) {
             use super::RecordingManager;
             use crate::platform::Recorder;

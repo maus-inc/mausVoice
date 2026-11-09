@@ -55,6 +55,15 @@ rows=(
   "alsa_probe_close_failure||cpal_alsa_uncertain_probe_blocks_successor_capture"
   "alsa_probe_close_failure||cpal_alsa_capture_build_waits_for_probe_close"
   "alsa_probe_close_failure||cpal_alsa_discovery_during_recording_leaves_capture_running"
+  "alsa_capability_cache||cpal_alsa_cache_survives_setup_failure"
+  "alsa_capability_cache||cpal_alsa_cache_survives_busy_build"
+  "alsa_capability_cache||cpal_alsa_cache_survives_busy_probe"
+  "alsa_capability_cache||cpal_alsa_cache_forgets_missing_build"
+  "alsa_capability_cache||cpal_alsa_cache_forgets_missing_probe"
+  "alsa_capability_cache||cpal_alsa_cache_survives_permission_build"
+  "alsa_capability_cache||cpal_alsa_cache_survives_permission_probe"
+  "alsa_capability_cache||cpal_alsa_cache_forgets_absent_build"
+  "alsa_capability_cache||cpal_alsa_cache_forgets_absent_probe"
   "alsa_build_failure||cpal_alsa_build_failure_distinguishes_confirmed_close"
   "alsa_build_failure||cpal_alsa_poll_count_error_closes_capture_and_reports_cause"
   "alsa_build_failure||cpal_alsa_uncertain_build_close_blocks_successor_capture"
@@ -135,6 +144,16 @@ ctl.!default {
 }
 CONFIG
 
+# An additional hinted device is used only by the capture-only cache fixture.
+cat >"$workdir/asound-cache.conf" <<'CONFIG'
+pcm.!default { type null }
+pcm.maus_capture_only {
+    type null
+    hint { show on description "Cache test capture device" }
+}
+ctl.!default { type null }
+CONFIG
+
 shims="$workdir/shims"
 mkdir -p "$shims"
 
@@ -203,6 +222,9 @@ for row in "${rows[@]}"; do
     if [[ -n "$env_spec" ]]; then
       # shellcheck disable=SC2086
       export $env_spec
+    fi
+    if [[ "$fixture" == "alsa_capability_cache" ]]; then
+      export ALSA_CONFIG_PATH="$workdir/asound-cache.conf"
     fi
     if [[ -n "$preload" ]]; then
       LD_PRELOAD="$preload" "$test_binary" --exact --ignored \

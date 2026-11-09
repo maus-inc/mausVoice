@@ -163,10 +163,6 @@ impl DeviceTrait for Device {
             match self.build_stream_inner(conf, sample_format, alsa::Direction::Capture) {
                 Ok(inner) => inner,
                 Err(error) => {
-                    // The device refused capture, so stop advertising it from
-                    // the capability cache: enumeration during a later
-                    // recording would otherwise keep listing a dead input.
-                    input_probe::forget_capture_capable(&self.name);
                     if matches!(error, BuildStreamError::CleanupUncertain { .. }) {
                         gate.uncertain();
                     } else {
@@ -279,6 +275,15 @@ fn map_config_open_error(error: alsa::Error) -> SupportedStreamConfigsError {
     }
 }
 
+// Only errors that identify a missing device disprove an earlier successful
+// capture open. Busy, permissions, configuration and other failures can be
+// transient and must not hide a known input while capture probes are disabled.
+fn forget_missing_capture_device(name: &str, error: &alsa::Error) {
+    if matches!(error.errno(), libc::ENODEV | libc::ENOENT) {
+        input_probe::forget_capture_capable(name);
+    }
+}
+
 enum CaptureProbeError<E> {
     Open(alsa::Error),
     Query(E),
@@ -312,9 +317,7 @@ fn probe_capture<T, E>(
     let handle = match alsa::PCM::new_checked(name, alsa::Direction::Capture, true) {
         Ok(handle) => handle,
         Err(alsa::pcm::CheckedOpenError::Failed(error)) => {
-            // A device that used to open for capture and now does not must not
-            // stay in the cache that enumeration trusts while recording.
-            input_probe::forget_capture_capable(name);
+            forget_missing_capture_device(name, &error);
             gate.confirmed();
             return Err(CaptureProbeError::Open(error));
         }
@@ -398,7 +401,10 @@ impl Device {
         let handle_result = if stream_type == alsa::Direction::Capture {
             match alsa::PCM::new_checked(&self.name, stream_type, true) {
                 Ok(handle) => Ok(handle),
-                Err(alsa::pcm::CheckedOpenError::Failed(error)) => Err(error),
+                Err(alsa::pcm::CheckedOpenError::Failed(error)) => {
+                    forget_missing_capture_device(&self.name, &error);
+                    Err(error)
+                }
                 Err(alsa::pcm::CheckedOpenError::Uncertain(error)) => {
                     return Err(BuildStreamError::CleanupUncertain {
                         err: BackendSpecificError {

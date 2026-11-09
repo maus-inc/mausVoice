@@ -132,10 +132,13 @@ stream already observed stays listed: capture-only devices are enumerated from
 that observation rather than by reopening them. The ownership record is dropped
 when a checked close begins and when an unstarted or abandoned stream is
 dropped. A probe therefore runs again as soon as the recording owns no device.
-An observation is also forgotten when the device refuses a capture open, from
-either an admitted stream or a probe, so an unplugged or reclamed device stops
-being listed from a stale observation; enumeration probes it again once no
-stream is live.
+An observation is forgotten when a checked capture open reports ENODEV or
+ENOENT, from either a stream build or a probe. Transient errors such as EBUSY
+and failures after a successful open do not disprove capture capability and no
+longer remove the observation. This can retain a stale name for other failures
+until probing is possible again; it is not a guarantee that a listed device is
+currently available. Isolated capture-only null-device tests exercise setup,
+busy and missing-device failures without opening capture during discovery.
 The `cpal_alsa_discovery_during_recording_leaves_capture_running` test proves
 with the probe-close fixture that discovery during a recording opens no capture
 handle, leaves the gate confirmed, and lets the recording stop normally. Checked capture open also blocks later capture when a failed open
