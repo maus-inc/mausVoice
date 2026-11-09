@@ -37,11 +37,11 @@ Authoritative sources, in the order you should read them:
 ## The payload
 
 Orphan branch `vendor/sandbox-toolchain` on `maus-inc/mausVoice`. Commit
-`82b2f98368b5e7d3234ddf35cff2d4395ec75e07`, no parents, authored 2026-11-05, message
-`vendor: sandbox toolchain payload (G1-G8, G9-G13, G16-G22)`. It is not merged into `main`
+`3025c92b50c9d8977941b689a779068997896d38`, no parents, authored 2026-11-05, message
+`vendor: sandbox toolchain payload (G1-G8, G9-G13, G16-G27)`. It is not merged into `main`
 and no pull request exists for it. `main` is unaffected.
 
-14438 blobs. The root tree is exactly `FETCH.md`, `LICENSES`, `MANIFEST.sha256`,
+22476 blobs. The root tree is exactly `FETCH.md`, `LICENSES`, `MANIFEST.sha256`,
 `README.md`, `drivers`, `models`, `native`, `rust`, `system`.
 
 2026-11-08 correction. The third delivery's tip was
@@ -51,27 +51,40 @@ MANIFEST.sha256` failed on `README.md` and a consumer that follows `FETCH.md` re
 whole payload. Amending the orphan commit to regenerate that digest, and to correct the
 `README.md` provenance line, moved the tip to
 `82b2f98368b5e7d3234ddf35cff2d4395ec75e07`: still one orphan commit, the same message, the
-same 14438 blobs. Every SHA in this file and the other vendor documents now names the
-amended tip. The old tip is unreferenced and may be garbage collected, so pin `82b2f983`.
+same 14438 blobs. That tip was current until the fourth delivery; the 2026-11-09 correction
+below moved it again. An amended tip is unreferenced and may be garbage collected, so pin
+the tip a document names.
+
+2026-11-09 correction. The fourth delivery, G23 to G27, folded into the same orphan
+commit and moved the tip from `82b2f98368b5e7d3234ddf35cff2d4395ec75e07` to
+`3025c92b50c9d8977941b689a779068997896d38`. It adds the native C/C++ compiler and binutils,
+fontconfig with fonts, `tzdata` and `locales`, Chromium, the OpenJDK 17 JRE, Ruby, CPython,
+Perl, and the G27 tools, and it grew the tree from 14438 to 22476 blobs. Two files crossed
+GitHub's 100 MB hard limit in the process, so `chromium` and the JVM's `lib/modules` now
+travel as `.part-*` and `FETCH.md` Step 2 reassembles them alongside the other seven split
+archives. The commit message is now
+`vendor: sandbox toolchain payload (G1-G8, G9-G13, G16-G27)`. Every SHA and count in this
+file and the other vendor documents names `3025c92b`.
 
 | Group       | Blobs | Logical bytes | What it is                                                                                                              |
 | ----------- | ----- | ------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `system/`   | 13648 | 1,791,514,548 | Debian 12 development sysroot, the command line tools, the G9/G13 binaries, the G16 to G22 tools, and the build scripts |
+| `system/`   | 21661 | 2,959,303,111 | Debian 12 development sysroot, the command line tools, the G9/G13 binaries, the G16 to G27 tools, and the build scripts |
 | `rust/`     | 13    | 306,619,901   | Rust 1.88.0 components, the channel toml, the vendored crate tree, the cargo config, the G12 target libraries           |
 | `native/`   | 4     | 30,713,132    | ONNX Runtime 1.23.2 and sherpa-onnx 1.13.5 archives                                                                     |
 | `models/`   | 8     | 463,077,947   | G10: whisper `ggml-tiny` and `ggml-base`, the SenseVoice ONNX bundle, `MODELS.txt`                                      |
 | `drivers/`  | 3     | 24,047,333    | G11: `tauri-driver` 2.0.6, `chromedriver` 152.0.7977.42, `DRIVERS.txt`                                                  |
-| `LICENSES/` | 759   | 13,832,512    | 755 Debian `copyright` files plus the ONNX Runtime, sherpa-onnx and whisper.cpp licences                                |
-| root        | 3     | 1,879,102     | `README.md`, `FETCH.md`, `MANIFEST.sha256`                                                                              |
+| `LICENSES/` | 784   | 14,693,854    | 780 Debian `copyright` files plus the ONNX Runtime, sherpa-onnx and whisper.cpp licences                                |
+| root        | 3     | 2,863,157     | `README.md`, `FETCH.md`, `MANIFEST.sha256`                                                                              |
 
-No single file reaches 100 MiB. Fourteen files are `.part-NN` pieces, nine of them at
-exactly 94,371,840 bytes, across five archives: the vendored crate tree in two parts, the
-sysroot in five, `ggml-base.bin` in two, the SenseVoice `model.int8.onnx` in three and
-`trivy` in two. `MANIFEST.sha256` carries 14442 lines, which is 14437 whole tree files
-plus the 5 reassembled archives. It does not list itself.
+No single file reaches 100 MiB. Twenty-four files are `.part-NN` pieces, fifteen of them
+at exactly 94,371,840 bytes, across nine archives: the vendored crate tree in two parts, the
+sysroot in five, `ggml-base.bin` in two, the SenseVoice `model.int8.onnx` in three, and
+`trivy`, `pandoc`, `libLLVM-14.so.1` and the JVM's `lib/modules` in two each, plus
+`chromium` in four. `MANIFEST.sha256` carries 22466 lines, which is 22457 whole tree files
+plus the 9 reassembled archives. It does not list itself.
 
-Extracted size is about 7 GB. The sysroot is about 1.9 GB, the vendored crate tree
-about 1.8 GB, the toolchain about 1.3 GB, `system/tools` about 1.4 GB and the
+Extracted size is about 8.3 GB. The sysroot is about 1.9 GB, the vendored crate tree
+about 1.8 GB, the toolchain about 1.3 GB, `system/tools` about 2.6 GB and the
 second-delivery groups about 0.9 GB unpacked. Roughly 950 MB of the crate tree is five
 versions of the `windows` crate, 0.51.1, 0.52.0, 0.54.0, 0.58.0 and 0.61.3, which are
 dead weight on Linux but cannot be dropped without breaking `--locked` resolution for
@@ -83,7 +96,12 @@ distinct library stems and `$ORIGIN/../lib` rpaths. The second delivery adds `ff
 7.0.2-static, `ffprobe` 7.0.2-static, `gifsicle` 1.95 and `gitleaks` 8.18.0 to the same
 directory. The third delivery adds the G16 to G22 binaries there and their support trees
 under `system/tools`: `libexec/valgrind`, `share/gdb`, the `mingw-w64` and
-`aarch64-linux-gnu` cross trees, `share/tessdata` and `debug/libc6-dbg`.
+`aarch64-linux-gnu` cross trees, `share/tessdata` and `debug/libc6-dbg`. The fourth
+delivery adds the G23 to G27 binaries: the `clang-14`/`llvm-14` and binutils closure,
+fontconfig with the DejaVu and Liberation fonts, `tzdata` and `locales`, Chromium with its
+library closure, the OpenJDK 17 JRE, Ruby, CPython and Perl, and pandoc, potrace, PlantUML,
+Asciidoctor, ExifTool, binwalk, lldb, mtr, hyperfine, heaptrack, perf, the X11 capture and
+query tools, and osslsigncode.
 `system/build/` ships the three
 scripts that produced the closure. `system/PKGS.txt` lists 634 packages.
 
@@ -94,8 +112,8 @@ packages plus the one git dependency, `ferrous-focus`, that the union of the sev
 ## What has been measured
 
 The branch `README.md` records these results. They were produced against this
-repository at commit `61fb3295` for the first delivery, `065f527b` for the second, and
-`82b2f983` for the third.
+repository at commit `61fb3295` for the first delivery, `065f527b` for the second,
+`82b2f983` for the third, and `3025c92b` for the fourth.
 
 | Gate                            | Result                                                                                                                                |
 | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
@@ -106,7 +124,7 @@ repository at commit `61fb3295` for the first delivery, `065f527b` for the secon
 | pkg-config modules              | 37 of 37 resolve                                                                                                                      |
 | Link smoke test                 | gcc linked 19 libraries successfully                                                                                                  |
 | Xvfb                            | started                                                                                                                               |
-| Tools under `env -i`            | 4 of 4 run, the second delivery's 4 new binaries run, and the third delivery's 30 run with the documented env var where one is needed |
+| Tools under `env -i`            | 4 of 4 run, the second delivery's 4 new binaries run, the third delivery's 30 run with the documented env var where one is needed, and the fourth delivery's 44 run |
 | Offline resolution              | `cargo metadata --locked` exit 0 for all seven manifests                                                                              |
 | Path patches                    | `block`, `sherpa-onnx-sys` and `rdev` all resolve from `patches/`                                                                     |
 | Format                          | `cargo fmt --check` in six crates, 6 of 6 pass                                                                                        |
@@ -121,7 +139,7 @@ repository at commit `61fb3295` for the first delivery, `065f527b` for the secon
 | voice-ai                        | 501 passed across 37 files                                                                                                            |
 | agent                           | 24 passed                                                                                                                             |
 | preview                         | 22 passed across 4 files                                                                                                              |
-| Manifest                        | `MANIFEST.sha256`, 14442 lines: one per blob and one per reassembled archive                                                          |
+| Manifest                        | `MANIFEST.sha256`, 22466 lines: one per whole tree file and one per reassembled archive                                              |
 
 ## Independent verification
 
@@ -144,7 +162,7 @@ branch contents.
   including `clang-14`, `libclang-14-dev`, `libclang-common-14-dev`, `libllvm14`,
   `libpulse-dev`, `libasound2-dev`, `libgtk-layer-shell-dev`, `xvfb`, `xauth`,
   `xserver-common`, `imagemagick`, `libmagickcore-6.q16-6` and `libmagickwand-6.q16-6`.
-- The manifest covers all 14437 tree files plus the five reassembled archives, has 0
+- The manifest covers all 22457 tree files plus the nine reassembled archives, has 0
   malformed lines, and 23 paths legitimately contain spaces because they are cmake Help
   files. The `.part-00` reassembly loop only
   touches space-free paths, so the spaces are safe.

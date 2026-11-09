@@ -64,9 +64,14 @@ That sandbox reaches `github.com`, `codeload.github.com`, `api.github.com`,
 If the Rust toolchain or the crate registry is unreachable, fetch the orphan branch
 `vendor/sandbox-toolchain` on `maus-inc/mausVoice` first and follow its `FETCH.md`. It
 carries the toolchain, the crate registry, the Debian 12 sysroot, the command line
-tools, the two native archives, and the second-delivery groups G9 to G13 (media
-tools, model weights, the WebDriver driver chain, the cross-target Rust standard
-libraries and the gitleaks binary). Then:
+tools, the two native archives, the second-delivery groups G9 to G13 (media tools,
+model weights, the WebDriver driver chain, the cross-target Rust standard libraries
+and the gitleaks binary), the third-delivery groups G16 to G22 (debuggers and
+tracers, native build tools, database clients, OCR, shell and crypto tooling, cross
+compilers with emulation, and supply-chain scanners), and the fourth-delivery groups
+G23 to G27 (the native C/C++ compiler and binutils, fontconfig with fonts plus
+`tzdata` and `locales`, Chromium, the OpenJDK 17 JRE, Ruby, CPython and Perl, and the
+document, media-metadata and debugging tools). Then:
 
 - [ ] I set `$CARGO_HOME/config.toml` from the shipped `rust/cargo-config.toml`, because `cargo --config <path>` does not reach `cargo clippy`
 - [ ] I exported `CARGO_NET_OFFLINE=true`
@@ -80,7 +85,7 @@ libraries and the gitleaks binary). Then:
 - [ ] I checked `system/PKGS.txt` for a tool before calling it missing, and read `engineering/sandbox-coverage-gaps.md` before calling a stage blocked
 - [ ] For every gate that still cannot run, I said so in the PR body with the reason and the substitute command I ran, rather than marking it passed
 
-The gap register in `engineering/sandbox-coverage-gaps.md` names what the current payload cannot close: model weights (G10), audio devices, a Chromium and the media tools `ui-capture` needs (G9), `tauri-driver` (G11), packaging tooling (G14) and the gitleaks binary (G13). G13, G14 and the rest are vendorable, so read the register before calling one impossible. Name the gap number in the PR body when one of them stops a gate.
+The gap register in `engineering/sandbox-coverage-gaps.md` names what the current payload cannot close: model weights (G10), audio devices, a `dmg`/`msi` packer for a release build (G14) and the accepted gaps. The media tools (G9), Chromium (G25), `tauri-driver` (G11) and the gitleaks binary (G13) are now in the payload. G14 and the rest are vendorable, so read the register before calling one impossible. Name the gap number in the PR body when one of them stops a gate.
 
 The `--ignored` tests in
 `packages/rust_transcription/tests/sidecar_integration.rs` download models from

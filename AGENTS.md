@@ -341,19 +341,19 @@ This section describes one environment. It is the Arena agent sandbox that runs 
 
 On a host that reaches the wider internet, none of this applies. Install the toolchain the normal way and run the gates. Check before you assume either state: one `curl` per host, and a version command per tool.
 
-From the blocked environment, fetch the orphan branch `vendor/sandbox-toolchain` on `maus-inc/mausVoice` before you report a Rust gate as unrunnable. It carries the Rust 1.88.0 components, the cargo dependency tree for all seven workspaces, a Debian 12 sysroot, the missing command line tools, the two native archives, the second-delivery groups G9 to G13 (media tools, model weights, the WebDriver driver chain, the cross-target Rust standard libraries and the gitleaks binary), and the third-delivery groups G16 to G22 (debuggers and tracers, native build tools including the autotools, database clients, OCR, shell and crypto tooling, cross compilers with emulation, and supply-chain scanners). Follow its `FETCH.md`.
+From the blocked environment, fetch the orphan branch `vendor/sandbox-toolchain` on `maus-inc/mausVoice` before you report a Rust gate as unrunnable. It carries the Rust 1.88.0 components, the cargo dependency tree for all seven workspaces, a Debian 12 sysroot, the missing command line tools, the two native archives, the second-delivery groups G9 to G13 (media tools, model weights, the WebDriver driver chain, the cross-target Rust standard libraries and the gitleaks binary), the third-delivery groups G16 to G22 (debuggers and tracers, native build tools including the autotools, database clients, OCR, shell and crypto tooling, cross compilers with emulation, and supply-chain scanners), and the fourth-delivery groups G23 to G27 (the native C/C++ compiler and binutils, fontconfig with fonts plus `tzdata` and `locales`, Chromium, the OpenJDK 17 JRE, Ruby, CPython and Perl, and the document, media-metadata and debugging tools). Follow its `FETCH.md`.
 
 ```bash
 set -euo pipefail
-SV_SHA=82b2f98368b5e7d3234ddf35cff2d4395ec75e07   # pin the commit you reviewed, not the branch head
+SV_SHA=3025c92b50c9d8977941b689a779068997896d38   # pin the commit you reviewed, not the branch head
 SV="$(mktemp -d)"                                  # private root, so concurrent runs cannot clash
 curl -sSL -o "$SV.tar.gz" "https://codeload.github.com/maus-inc/mausVoice/tar.gz/$SV_SHA"
 tar xzf "$SV.tar.gz" -C "$SV" --strip-components=1 && cd "$SV"
-for f in $(grep -o '^[a-f0-9]\{64\}  .*\.part-00$' MANIFEST.sha256 | sed 's/.*  //; s/\.part-00$//'); do cat "$f".part-* > "$f"; done
+for f in $(grep -o '^[a-f0-9]\{64\}  .*\.part-00$' MANIFEST.sha256 | sed 's/.*  //; s/\.part-00$//'); do cat "$f".part-* > "$f"; chmod --reference="$f.part-00" "$f"; done
 sha256sum -c MANIFEST.sha256 && cd - >/dev/null && echo "payload root: $SV"
 ```
 
-Extract to `/tmp`, never into the workspace, because the workspace is snapshotted against a size and file cap and the extracted payload is about 7.0 GB. Pin the commit you reviewed and re-run `sha256sum -c` on every fetch: `MANIFEST.sha256` travels with the payload, so it proves the download was intact, not that the branch head is still the commit you reviewed.
+Extract to `/tmp`, never into the workspace, because the workspace is snapshotted against a size and file cap and the extracted payload is about 8.3 GB. Pin the commit you reviewed and re-run `sha256sum -c` on every fetch: `MANIFEST.sha256` travels with the payload, so it proves the download was intact, not that the branch head is still the commit you reviewed.
 
 Five facts decide whether a gate can pass:
 
@@ -361,7 +361,7 @@ Five facts decide whether a gate can pass:
 - `cargo clippy` and `cargo test` read the vendor tree through `$CARGO_HOME/config.toml` with `CARGO_NET_OFFLINE=true`. `cargo --config <path>` does not reach external subcommands, so `cargo --config <path> clippy` fails with `no matching package named base64`.
 - `MAUSVOICE_ORT_DYLIB_PATH` and `SHERPA_ONNX_ARCHIVE_DIR` must point at the pre-seeded `native/` archives. Without them both `build.rs` files try GitHub Releases and fail.
 - `cmake` from `system/tools/bin` must be on `PATH` before any build of `packages/rust_transcription`. `packages/rust_gtk_pill` needs `xvfb-run -a`.
-- A gate the payload still cannot serve is a gap to report, not a limit to accept. `engineering/sandbox-coverage-gaps.md` lists each one with its measurement, the stage it blocks and what to vendor. The second delivery shipped G9 to G13 on 2026-11-05, so the media tools for `ui-capture`, the model weights, the WebDriver driver chain, the cross-target standard libraries and the gitleaks binary are in the payload. What remains is a Chromium for a recording (gap G9), packaging tools (gap G14) and the accepted gaps. Name the gap number in the PR body when one of them stops you.
+- A gate the payload still cannot serve is a gap to report, not a limit to accept. `engineering/sandbox-coverage-gaps.md` lists each one with its measurement, the stage it blocks and what to vendor. The second delivery shipped G9 to G13 on 2026-11-05 and the fourth shipped G23 to G27 on 2026-11-09, so the media tools for `ui-capture`, the model weights, the WebDriver driver chain, the cross-target standard libraries, the gitleaks binary, the native C/C++ compiler, font and timezone data, Chromium, the language runtimes and the document tools are all in the payload. What remains is a `dmg`/`msi` packer for a release build (gap G14) and the accepted gaps. Name the gap number in the PR body when one of them stops you.
 
 Measured in that sandbox on 2026-11-05, after `pnpm install --frozen-lockfile --ignore-scripts`: `pnpm run check-types` passed with 9 turbo tasks in 49 seconds, and `pnpm run build` with 11 tasks in 68 seconds. The TypeScript half of the cycle ran with no payload. The Rust half did not start, because no Rust toolchain was installed there.
 
@@ -578,7 +578,7 @@ pnpm --filter @maus-inc/preview gen:specs  # regenerate the specs after a compon
 
 Inspect the demo group covering your change in light mode and in dark mode. Say what you inspected and what it showed, so a reviewer can tell an inspected change from an uninspected one.
 
-The recording path exists and is gated on the sandbox. `apps/desktop/webdriver/` holds a WebdriverIO suite (`pnpm --filter desktop test:webdriver`) that drives a real Tauri build through `tauri-driver` and WebKitWebDriver on Linux and through `chromedriver` on macOS. The `ui-capture` skill needs `ffmpeg`, `ffprobe` and `gifsicle` plus a Chromium. The second delivery ships the three media tools and the driver chain, so a recording is blocked only by the Chromium, which is gap G9 in `engineering/sandbox-coverage-gaps.md`. When a capture cannot run, say that plainly in the pull request, name the gap, and give the inspection you did instead. Never attach a recording you did not watch, and never describe a capture you did not make.
+The recording path exists and is gated on the sandbox. `apps/desktop/webdriver/` holds a WebdriverIO suite (`pnpm --filter desktop test:webdriver`) that drives a real Tauri build through `tauri-driver` and WebKitWebDriver on Linux and through `chromedriver` on macOS. The `ui-capture` skill needs `ffmpeg`, `ffprobe` and `gifsicle` plus a Chromium. The second delivery ships the three media tools and the driver chain, and the fourth delivery ships Chromium 156 in `system/tools/bin` (gap G25 in `engineering/sandbox-coverage-gaps.md`), so a Linux x86-64 recording can run. When a capture cannot run, say that plainly in the pull request, name the gap, and give the inspection you did instead. Never attach a recording you did not watch, and never describe a capture you did not make.
 
 ## Skills
 
