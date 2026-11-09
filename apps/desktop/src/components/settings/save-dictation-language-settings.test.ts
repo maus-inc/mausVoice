@@ -215,8 +215,9 @@ it("preserves a concurrent deletion when the saved language remains in the group
       (id) => id !== oldAdditional.id,
     );
   });
-  const deleting = enqueueHotkeyWrite(async () => {
+  const deleting = enqueueHotkeyWrite(() => {
     persisted.delete(oldAdditional.id);
+    return Promise.resolve();
   });
   finish();
   await Promise.all([saving, deleting]);

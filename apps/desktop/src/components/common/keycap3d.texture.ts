@@ -15,22 +15,30 @@ const hash = (x: number, y: number, z: number): number => {
 
 /** A deterministic, continuous grain in the cap's own coordinates. */
 export const grainAt = (point: Vec3): number => {
-  const x = point[0] * GRAIN_FREQUENCY;
-  const y = point[1] * GRAIN_FREQUENCY;
-  const z = point[2] * GRAIN_FREQUENCY;
-  const ix = Math.floor(x);
-  const iy = Math.floor(y);
-  const iz = Math.floor(z);
-  const tx = smooth(x - ix);
-  const ty = smooth(y - iy);
-  const tz = smooth(z - iz);
-  const plane = (dz: number) =>
+  const sampleX = point[0] * GRAIN_FREQUENCY;
+  const sampleY = point[1] * GRAIN_FREQUENCY;
+  const sampleZ = point[2] * GRAIN_FREQUENCY;
+  const cellX = Math.floor(sampleX);
+  const cellY = Math.floor(sampleY);
+  const cellZ = Math.floor(sampleZ);
+  const blendX = smooth(sampleX - cellX);
+  const blendY = smooth(sampleY - cellY);
+  const blendZ = smooth(sampleZ - cellZ);
+  const plane = (layer: number) =>
     mix(
-      mix(hash(ix, iy, iz + dz), hash(ix + 1, iy, iz + dz), tx),
-      mix(hash(ix, iy + 1, iz + dz), hash(ix + 1, iy + 1, iz + dz), tx),
-      ty,
+      mix(
+        hash(cellX, cellY, cellZ + layer),
+        hash(cellX + 1, cellY, cellZ + layer),
+        blendX,
+      ),
+      mix(
+        hash(cellX, cellY + 1, cellZ + layer),
+        hash(cellX + 1, cellY + 1, cellZ + layer),
+        blendX,
+      ),
+      blendY,
     );
-  return mix(plane(0), plane(1), tz);
+  return mix(plane(0), plane(1), blendZ);
 };
 
 /** Reduce subpixel grain contrast; this is not a full texture filter. */

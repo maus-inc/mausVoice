@@ -62,7 +62,7 @@ afterEach(() => {
   container.remove();
 });
 
-const render = (ui: React.ReactElement) =>
+const render = (ui: React.ReactNode) =>
   act(() => {
     root.render(<ThemeProvider theme={theme}>{ui}</ThemeProvider>);
   });
@@ -212,11 +212,9 @@ describe("Keycap3d", () => {
     const { restore } = mockCanvas();
     vi.stubGlobal(
       "ImageData",
-      class {
-        constructor() {
-          throw new Error("allocation failed");
-        }
-      },
+      vi.fn(function () {
+        throw new Error("allocation failed");
+      }),
     );
     try {
       render(<Keycap3d label="K" size={37.125} />);
@@ -324,7 +322,7 @@ describe("Keycap3d", () => {
       render(<Keycap3d label="A" size={34} />);
       render(<Keycap3d label="A" size={35} />);
       expect(workerRelease).toHaveBeenCalledWith(first);
-      render(<></>);
+      render(null);
       expect(workerRelease).toHaveBeenCalledWith(second);
       expect(workerRelease).toHaveBeenCalledTimes(2);
     } finally {
@@ -1100,7 +1098,8 @@ describe("keycap geometry", () => {
       [0, 0, layout.ratios.height / 2],
       layout.camera,
     );
-    const distance = layout.camera.perspective!;
+    const distance = layout.camera.perspective;
+    if (distance === null) throw new Error("Expected a perspective camera");
     const screenY =
       layout.originY +
       ((centre[1] * distance) / (distance - centre[2])) * layout.scalePx;
@@ -1143,7 +1142,8 @@ describe("keycap geometry", () => {
     const { camera, ratios } = layout;
     const project = (point: Vec3) => {
       const transformed = toCameraSpace(point, camera);
-      const distance = camera.perspective!;
+      const distance = camera.perspective;
+      if (distance === null) throw new Error("Expected a perspective camera");
       const scale = distance / (distance - transformed[2]);
       return [transformed[0] * scale, transformed[1] * scale];
     };

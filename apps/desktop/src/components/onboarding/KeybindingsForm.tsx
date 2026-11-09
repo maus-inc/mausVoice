@@ -11,8 +11,15 @@ import { trackButtonClick } from "../../utils/analytics.utils";
 import { registerHotkeys } from "../../utils/app.utils";
 import { createId } from "../../utils/id.utils";
 import {
+  beginOnboardingHotkeyWrite,
   enqueueHotkeyWrite,
+  finishOnboardingHotkeyWrite,
+  markOnboardingSyncNeeded,
   markOptimisticHotkeyWrite,
+  onboardingHotkeyRevision,
+  onboardingSavedHotkey,
+  setOnboardingSavedHotkey,
+  takeOnboardingSyncNeeded,
 } from "../../utils/hotkey-write-queue";
 import {
   beginLocalDataWrite,
@@ -32,20 +39,12 @@ import {
   OnboardingFormLayout,
 } from "./OnboardingCommon";
 
-// Writes can outlive a mounted onboarding page. Keep their ordering and
-// rollback snapshots shared across remounts of this form.
-let pendingSaves = 0;
-const pendingById = new Map<string, number>();
-const lastSaved = new Map<string, Hotkey | undefined>();
-const saveRevision = new Map<string, number>();
-let needsSync = false;
-
 const rollbackHotkey = (
   value: Hotkey,
-  revision: number,
+  revision: number | undefined,
   lease: LocalDataWriteLease,
 ): boolean => {
-  if (revision !== saveRevision.get(value.id)) return false;
+  if (revision !== onboardingHotkeyRevision(value.id)) return false;
   let rolledBack = false;
   produceAppState((draft) => {
     const current = draft.hotkeyById[value.id];
@@ -56,7 +55,7 @@ const rollbackHotkey = (
     )
       return;
     rolledBack = true;
-    const saved = lastSaved.get(value.id);
+    const saved = onboardingSavedHotkey(value.id);
     if (saved) draft.hotkeyById[value.id] = saved;
     else {
       Reflect.deleteProperty(draft.hotkeyById, value.id);
@@ -66,18 +65,6 @@ const rollbackHotkey = (
     }
   }, lease);
   return rolledBack;
-};
-
-const completeHotkeySave = (id: string) => {
-  pendingSaves -= 1;
-  const remaining = (pendingById.get(id) ?? 1) - 1;
-  if (remaining > 0) {
-    pendingById.set(id, remaining);
-    return;
-  }
-  pendingById.delete(id);
-  lastSaved.delete(id);
-  saveRevision.delete(id);
 };
 
 export const KeybindingsForm = () => {
@@ -175,15 +162,9 @@ export const KeybindingsForm = () => {
       keys,
     };
 
-    const pendingForId = pendingById.get(newValue.id) ?? 0;
-    if (pendingForId === 0) {
-      lastSaved.set(newValue.id, primaryHotkey);
-    }
-    pendingById.set(newValue.id, pendingForId + 1);
-    pendingSaves += 1;
-    const revision = (saveRevision.get(newValue.id) ?? 0) + 1;
-    saveRevision.set(newValue.id, revision);
-    markOptimisticHotkeyWrite(newValue.actionName);
+    beginOnboardingHotkeyWrite(newValue.id, primaryHotkey);
+    markOptimisticHotkeyWrite(newValue.actionName, newValue.id);
+    const revision = onboardingHotkeyRevision(newValue.id);
     produceAppState((draft) => {
       registerHotkeys(draft, [newValue]);
       if (!draft.settings.hotkeyIds.includes(newValue.id)) {
@@ -195,22 +176,21 @@ export const KeybindingsForm = () => {
       try {
         try {
           await getHotkeyRepo().saveHotkey(newValue, releaseWrite.lease);
-          lastSaved.set(newValue.id, newValue);
-          needsSync = true;
+          setOnboardingSavedHotkey(newValue.id, newValue);
+          markOnboardingSyncNeeded();
         } catch (error) {
           console.error("Failed to save hotkey", error);
           if (rollbackHotkey(newValue, revision, releaseWrite.lease))
-            needsSync = true;
+            markOnboardingSyncNeeded();
           showErrorSnackbar(
             intl.formatMessage({
               defaultMessage: "Failed to save hotkey. Please try again.",
             }),
           );
         } finally {
-          completeHotkeySave(newValue.id);
+          finishOnboardingHotkeyWrite(newValue.id);
         }
-        if (pendingSaves === 0 && needsSync) {
-          needsSync = false;
+        if (takeOnboardingSyncNeeded()) {
           try {
             await syncHotkeyCombosToNative();
           } catch (error) {

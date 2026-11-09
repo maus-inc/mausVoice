@@ -11,6 +11,7 @@ import { createId } from "../../utils/id.utils";
 import {
   enqueueHotkeyWrite,
   markOptimisticHotkeyWrite,
+  setOnboardingSavedHotkey,
 } from "../../utils/hotkey-write-queue";
 import { beginLocalDataWrite } from "../../utils/local-data-write-gate";
 import {
@@ -269,7 +270,7 @@ export const HotkeySetting = ({
       return;
     }
     try {
-      markOptimisticHotkeyWrite(newValue.actionName);
+      markOptimisticHotkeyWrite(newValue.actionName, newValue.id);
       produceAppState((draft) => {
         registerHotkeys(draft, [newValue]);
         if (!draft.settings.hotkeyIds.includes(newValue.id)) {
@@ -279,6 +280,7 @@ export const HotkeySetting = ({
       }, releaseWrite.lease);
       await enqueueHotkeyWrite(async () => {
         await getHotkeyRepo().saveHotkey(newValue, releaseWrite.lease);
+        setOnboardingSavedHotkey(newValue.id, newValue);
         await syncHotkeyCombosToNative();
       });
     } catch (error) {
@@ -305,7 +307,7 @@ export const HotkeySetting = ({
     }
     try {
       const action = useAppStore.getState().hotkeyById[id]?.actionName;
-      if (action) markOptimisticHotkeyWrite(action);
+      if (action) markOptimisticHotkeyWrite(action, id);
       produceAppState((draft) => {
         Reflect.deleteProperty(draft.hotkeyById, id);
         draft.settings.hotkeyIds = draft.settings.hotkeyIds.filter(
@@ -314,6 +316,7 @@ export const HotkeySetting = ({
       }, releaseWrite.lease);
       await enqueueHotkeyWrite(async () => {
         await getHotkeyRepo().deleteHotkey(id, releaseWrite.lease);
+        setOnboardingSavedHotkey(id, undefined);
         await syncHotkeyCombosToNative();
       });
     } catch (error) {

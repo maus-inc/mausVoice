@@ -579,3 +579,107 @@ it("orders onboarding and settings saves of the same shortcut", async () => {
   expect(mocks.save).toHaveBeenCalledTimes(2);
   expect(mocks.save.mock.calls[1][0].keys).toEqual(["KeyB"]);
 });
+
+it("does not roll back a later settings save of the same shortcut value", async () => {
+  let failFirst!: (error: Error) => void;
+  mocks.save.mockImplementationOnce(
+    () =>
+      new Promise<void>((_, reject) => {
+        failFirst = reject;
+      }),
+  );
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    act(() =>
+      root.render(
+        createElement(
+          ThemeProvider,
+          { theme: createTheme() },
+          createElement(KeybindingsForm),
+          createElement(HotkeySetting, {
+            title: "Dictation",
+            description: "",
+            actionName: "dictate",
+          }),
+        ),
+      ),
+    );
+    start();
+    held(["KeyB"]);
+    held([]);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const id = mocks.save.mock.calls[0][0].id;
+    const setB = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent === "Set B",
+    );
+    if (!setB) throw new Error("Settings shortcut recorder not found");
+    act(() => setB.click());
+    await act(async () => {
+      failFirst(new Error("disk error"));
+      await Promise.resolve();
+    });
+    expect(mocks.save).toHaveBeenCalledTimes(2);
+    expect(getAppState().hotkeyById[id].keys).toEqual(["KeyB"]);
+    expect(getAppState().settings.hotkeyIds).toContain(id);
+  } finally {
+    error.mockRestore();
+  }
+});
+
+it("rolls back to an intervening settings save if a later onboarding save fails", async () => {
+  let finishFirst!: () => void;
+  mocks.save.mockImplementationOnce(
+    () =>
+      new Promise<void>((resolve) => {
+        finishFirst = resolve;
+      }),
+  );
+  mocks.save
+    .mockResolvedValueOnce(undefined)
+    .mockRejectedValueOnce(new Error("disk error"));
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    act(() =>
+      root.render(
+        createElement(
+          ThemeProvider,
+          { theme: createTheme() },
+          createElement(KeybindingsForm),
+          createElement(HotkeySetting, {
+            title: "Dictation",
+            description: "",
+            actionName: "dictate",
+          }),
+        ),
+      ),
+    );
+    start();
+    held(["KeyA"]);
+    held([]);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const id = mocks.save.mock.calls[0][0].id;
+    const setB = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent === "Set B",
+    );
+    if (!setB) throw new Error("Settings shortcut recorder not found");
+    act(() => setB.click());
+    start();
+    held(["KeyC"]);
+    held([]);
+    await act(async () => {
+      finishFirst();
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(3));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(getAppState().hotkeyById[id].keys).toEqual(["KeyB"]);
+  } finally {
+    error.mockRestore();
+  }
+});

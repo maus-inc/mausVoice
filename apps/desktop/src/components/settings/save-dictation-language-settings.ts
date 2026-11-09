@@ -7,6 +7,7 @@ import { createId } from "../../utils/id.utils";
 import {
   enqueueHotkeyWrite,
   optimisticHotkeyRevision,
+  setOnboardingSavedHotkey,
 } from "../../utils/hotkey-write-queue";
 import {
   ADDITIONAL_LANGUAGE_HOTKEY_PREFIX,
@@ -146,6 +147,7 @@ export const saveDictationLanguageSettings = async (
       });
       const repo = getHotkeyRepo();
       const savedPrimary = await repo.saveHotkey(primaryHotkey, lease);
+      setOnboardingSavedHotkey(savedPrimary.id, savedPrimary);
       publishPrimary(savedPrimary, beforePrimary, primaryRevision, lease);
 
       try {
