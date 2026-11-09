@@ -3,6 +3,7 @@
   - TAN-PARADISO: logo wordmark (near icon) + "Welcome back" / user name only
   - Satoshi: normal UI text (variable weights from bundled face)
   - Geist Mono: compact heatmap data labels and cell tooltips
+  - Geist Pixel: 3D keycap legends
   - No Jakarta
 */
 
@@ -41,6 +42,15 @@
   font-display: swap;
 }
 
+@font-face {
+  font-family: "Geist Pixel";
+  src: url("../assets/fonts/geist-pixel/GeistPixel-Square.woff2")
+    format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
   --ease-out-quint: cubic-bezier(0.23, 1, 0.32, 1);
   --ease-out-cubic: cubic-bezier(0.33, 1, 0.68, 1);
@@ -53,6 +63,7 @@
   --font-display: "TAN-PARADISO", "Satoshi", system-ui, sans-serif;
   --font-ui: "Satoshi", system-ui, -apple-system, sans-serif;
   --font-data: "Geist Mono", "SFMono-Regular", Consolas, monospace;
+  --font-pixel: "Geist Pixel", ui-monospace, "SF Mono", Menlo, monospace;
 }
 
 @media (prefers-reduced-motion: reduce) {
