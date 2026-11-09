@@ -71,12 +71,18 @@ export const normalizeMicrophoneLingerMs = (
 };
 
 /**
- * Whether the app should hold a capture stream right now.
+ * Whether the app should *open* a capture stream right now.
  *
- * A warm stream is only useful while nothing is being recorded and while local
- * data is not being cleared: a clear is about to delete what was captured, and
- * holding a device open through it would keep a microphone live for audio that
- * is on its way out.
+ * This answers "is there a stream to open?", not "should an existing stream be
+ * closed?" -- the two are not complements. `isRecording` is here so no second
+ * stream is opened while one is recording, not so a held stream is released
+ * when a recording starts: the press adopts the held stream, and releasing it
+ * would close the very device the recording is using. The caller returns early
+ * on a recording rather than reading a `false` here as an instruction to let go.
+ *
+ * A warm stream is only useful while local data is not being cleared: a clear is
+ * about to delete what was captured, and holding a device open through it would
+ * keep a microphone live for audio that is on its way out.
  */
 export const shouldHoldMicrophoneReady = ({
   enabled,

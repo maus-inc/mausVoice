@@ -115,7 +115,9 @@ describe("when the microphone is held", () => {
 
   it("never holds while a recording is running", () => {
     // The recording owns the device; a second hold would open another stream on
-    // the same hardware and the two would compete for it.
+    // the same hardware and the two would compete for it. This says "do not
+    // open", not "close": the press adopts the held stream, so the caller must
+    // not read `false` here as an instruction to release it.
     expect(shouldHoldMicrophoneReady({ ...base, isRecording: true })).toBe(
       false,
     );

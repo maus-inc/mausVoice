@@ -195,6 +195,23 @@ describe("MicrophoneReadinessSideEffects", () => {
     expect(mocks.warmMicrophone).not.toHaveBeenCalled();
   });
 
+  it("leaves the held device alone when a recording starts", async () => {
+    // The press adopts the held stream, so releasing it here would close the
+    // stream the recording is about to use. `closeMicrophone` also zeroes the
+    // linger policy the stop path reads, so the stream would be closed at stop
+    // and reopened: the device open that keep-ready exists to avoid, paid on
+    // every dictation, plus a microphone indicator blinking for the cycle.
+    setState({});
+    await render();
+    expect(mocks.warmMicrophone).toHaveBeenCalledTimes(1);
+
+    setState({ activeRecordingMode: "dictation" });
+    await rerender();
+
+    expect(mocks.closeMicrophone).not.toHaveBeenCalled();
+    expect(mocks.setMicrophoneLinger).not.toHaveBeenCalledWith(0);
+  });
+
   it("does not open a device the OS has not authorised", async () => {
     // A revoked permission must not leave a stream the OS no longer authorises
     // running, and the indicator would be a lie.

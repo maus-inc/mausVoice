@@ -200,6 +200,22 @@ export const MicrophoneReadinessSideEffects = () => {
   }, [publishHeld]);
 
   useEffect(() => {
+    // A running recording adopts the held stream -- that is the entire point of
+    // holding one -- and the stop path decides what becomes of it afterwards.
+    // So a recording is the one situation where this component must do nothing
+    // at all, which is different from the situations below where it must let go.
+    //
+    // Releasing here looked equivalent and is not. `closeMicrophone` also zeroes
+    // the linger policy the stop path reads, so the stream the press had just
+    // adopted was closed at stop and reopened seconds later: every dictation paid
+    // the device open that keep-ready exists to avoid, and the microphone
+    // indicator blinked for the whole cycle. The press loses nothing by leaving
+    // the device alone, because a second stream is never opened while one is held
+    // -- that is what `start_recording` adopting it means.
+    if (isRecording) {
+      return;
+    }
+
     const shouldHold = shouldHoldMicrophoneReady({
       enabled,
       isRecording,
