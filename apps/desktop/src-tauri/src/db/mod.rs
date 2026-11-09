@@ -201,6 +201,8 @@ pub const POST_PROCESS_EDIT_RETRY_CLAIM_COUNT_MIGRATION_SQL: &str =
 /// is checksum-compared against databases that already applied those steps.
 pub const FAST_STYLE_SHORT_DICTATIONS_MIGRATION_SQL: &str =
     include_str!("migrations/095_fast_style_short_dictations.sql");
+pub const MICROPHONE_READINESS_MIGRATION_SQL: &str =
+    include_str!("migrations/096_microphone_readiness.sql");
 /// Schema pieces folded into [`CONSOLIDATED_V0_1_6_MIGRATION_SQL`] /
 /// [`migrations`]: `preserve_audio_on_failure`, `transcription_path`,
 /// `pill_placement`, `hands_free_delay_ms`, `auto_learn_dictionary_enabled`,
@@ -667,6 +669,12 @@ pub fn migrations() -> Vec<tauri_plugin_sql::Migration> {
             version: 95,
             description: "add_fast_style_short_dictations_enabled",
             sql: FAST_STYLE_SHORT_DICTATIONS_MIGRATION_SQL,
+            kind: tauri_plugin_sql::MigrationKind::Up,
+        },
+        tauri_plugin_sql::Migration {
+            version: 96,
+            description: "add_microphone_readiness_preferences",
+            sql: MICROPHONE_READINESS_MIGRATION_SQL,
             kind: tauri_plugin_sql::MigrationKind::Up,
         },
     ]

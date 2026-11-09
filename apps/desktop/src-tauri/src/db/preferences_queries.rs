@@ -68,6 +68,9 @@ const USER_PREFERENCES_COLUMNS: &[&str] = &[
     "eleven_labs_keyterms_enabled",
     "expansion_flags",
     "update_channel",
+    "keep_microphone_ready",
+    "microphone_preroll_seconds",
+    "microphone_linger_ms",
 ];
 
 /// The conflict key, and therefore the one column the `ON CONFLICT` clause
@@ -209,6 +212,9 @@ pub async fn upsert_user_preferences(
     .bind(preferences.eleven_labs_keyterms_enabled)
     .bind(&preferences.expansion_flags)
     .bind(&preferences.update_channel)
+    .bind(preferences.keep_microphone_ready)
+    .bind(preferences.microphone_preroll_seconds)
+    .bind(preferences.microphone_linger_ms)
     .fetch_all(&pool)
     .await?;
 
@@ -425,6 +431,17 @@ fn user_preferences_from_row(row: SqliteRow) -> UserPreferences {
         update_channel: row
             .try_get::<String, _>("update_channel")
             .unwrap_or_else(|_| "stable".to_string()),
+        // A row written before migration 096 has no such column at all, which
+        // `try_get` reports as an error; the defaults below are the same values
+        // the migration would have filled in.
+        keep_microphone_ready: row
+            .try_get::<i64, _>("keep_microphone_ready")
+            .map(|v| v != 0)
+            .unwrap_or(false),
+        microphone_preroll_seconds: row
+            .try_get::<f64, _>("microphone_preroll_seconds")
+            .unwrap_or(0.5),
+        microphone_linger_ms: row.try_get::<i64, _>("microphone_linger_ms").unwrap_or(0),
     }
 }
 
@@ -633,6 +650,11 @@ mod tests {
         // A `json!` literal this wide exceeds the macro's recursion limit,
         // so the value is parsed from text. Every field carries a distinct
         // value, which is what makes a bind in the wrong column visible.
+        //
+        // The three microphone fields carry values that differ from their
+        // defaults for that same reason: they existed in TypeScript and in the
+        // UI but nowhere in this struct, and a default-valued field here would
+        // let the same omission pass again.
         let preferences: UserPreferences = serde_json::from_str(
             r#"{
                 "userId": "v0",
@@ -690,7 +712,10 @@ mod tests {
                 "autoLearnDictionaryEnabled": false,
                 "autoLearnFromEditsEnabled": true,
                 "elevenLabsKeytermsEnabled": false,
-                "updateChannel": "v54"
+                "updateChannel": "v54",
+                "keepMicrophoneReady": true,
+                "microphonePrerollSeconds": 37.25,
+                "microphoneLingerMs": 5000
             }"#,
         )
         .expect("deserialize a fully populated preferences value");
