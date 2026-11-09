@@ -85,10 +85,11 @@ via `CHROME_PATH`, against a local server. Never `npm install` inside the vendor
 folder.
 
 `.gitignore` gains `!.agents/skills/*/package-lock.json`, scoped to vendored skills so
-the pnpm-only rule still holds everywhere else. The refresh procedure now ends with
-`git status --short --ignored .agents/skills/<name>` expecting no `!!` line, which is
-the check that would have caught this class for any future skill and any other root
-ignore rule.
+the pnpm-only rule still holds everywhere else. `scripts/ci/verify-skills.mjs` now runs
+`git check-ignore --no-index` over every file in each locked tree and fails with an
+`IGNORED` line when a rule matches, which is the gate that catches this class for any
+future skill and any other root ignore rule. Removing the negation and running the
+script reproduces the stageshow case on the real tree: one `IGNORED` line, exit 1.
 
 The `skills` CLI release that performed this install writes an `installMode: "copy"`
 field into the lock entry. `verify-skills.mjs` ignores it. It stays as written.
@@ -108,7 +109,6 @@ content, not code the app runs; nothing imports it and no workspace glob include
 Anyone who runs `npm install` inside it will see `skills:verify` fail and the reason is
 written in three places.
 
-Open follow-up, not done here because it widens scope: `scripts/ci/verify-skills.mjs`
-could run `git check-ignore` over each locked tree and fail on a swallowed file, which
-would turn the refresh-procedure check into a gate. Proposed to the human in the
-session that made this decision.
+The gate above was proposed as a follow-up in the session that made this decision and
+added in the same branch once the human asked to continue, with
+`scripts/ci/verify-skills.test.mjs` as its evidence.

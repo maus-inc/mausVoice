@@ -15,7 +15,7 @@ This file is the short form. `AGENTS.md` holds the binding rules, and the
 - [ ] `pnpm run format:check`
 - [ ] `pnpm run test:secret-scan`
 - [ ] `node scripts/ci/verify-skills.mjs` if you touched `.agents/skills/` or `skills-lock.json`
-- [ ] `git status --short --ignored .agents/skills/<name>` prints no `!!` line, if you installed or updated a skill
+- [ ] `node scripts/ci/verify-skills.mjs` printed no `IGNORED` line, if you installed or updated a skill; fix one with a scoped `.gitignore` negation, never by deleting the file
 - [ ] `pnpm gen:bindings` produced no diff, if you touched a Tauri command or `packages/desktop-native-apis`
 
 Touched-package checks, the ones `AGENTS.md` names:

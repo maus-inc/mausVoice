@@ -551,13 +551,18 @@ node scripts/ci/verify-skills.mjs         # recomputes every computedHash in ski
 Install with `npx skills add <owner>/<repo> -s <skill> -a universal --copy -y`. Never
 install with `-g`, which would write outside the repository.
 
-After an install, run `git status --short --ignored .agents/skills/<name>` and expect
-no `!!` line. The root `.gitignore` ignores every `package-lock.json`, and `stageshow`
+`verify-skills.mjs` also runs `git check-ignore --no-index` over every file in each
+locked tree and fails with an `IGNORED` line naming the file when a `.gitignore` rule
+matches it. The root `.gitignore` ignores every `package-lock.json`, and `stageshow`
 ships one, so without the negation `!.agents/skills/*/package-lock.json` a plain
 `git add` staged 371 of its 372 files and the first fresh checkout would have failed
-`skills:verify`. Any other root ignore rule (`build`, `dist`, `models`, `coverage`,
-`*.log`, `out/`) can swallow a vendored file the same way; the status check is how you
-find out before CI does.
+the hash. Any other root ignore rule (`build`, `dist`, `models`, `coverage`, `*.log`,
+`out/`) can swallow a vendored file the same way. The fix is always a scoped negation,
+never deleting the file, because the file is part of the hash. The check asks the
+rules alone, so a file that was force-added still fails: the next `npx skills update`
+rewrites the tree and the rule bites again. `scripts/ci/verify-skills.test.mjs`
+covers the hash, the drift and missing cases, the ignored file before and after its
+negation, and the force-added case.
 
 Newer releases of the `skills` CLI write an `installMode` field into each lock entry
 (`stageshow` carries `"installMode": "copy"`). `verify-skills.mjs` reads only `source`
