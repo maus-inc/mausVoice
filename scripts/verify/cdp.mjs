@@ -5,7 +5,7 @@
 // @sparticuz/chromium ships a full Chromium inside the npm tarball. This file
 // drives that binary directly over CDP, which needs no client library.
 import { execFileSync, spawn } from "node:child_process";
-import { mkdtempSync, existsSync } from "node:fs";
+import { mkdtempSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import http from "node:http";
@@ -120,7 +120,28 @@ export async function launch({ port, width = 1280, height = 900 } = {}) {
       `chromium never opened its debugging port\n${logs.slice(-2000)}`,
     );
   }
-  return { proc, port, version, logs: () => logs };
+  // One call that puts everything back. The browser writes a profile directory
+  // per run and leaves it behind otherwise, and running these scripts a few
+  // times a day for a week filled /tmp with a few thousand of them. Exposed
+  // rather than done here because the caller owns the lifetime, and called from
+  // an exit hook as well so a throw between launch and cleanup does not leave
+  // Chromium running against a directory nothing will ever remove.
+  let cleanedUp = false;
+  const cleanup = () => {
+    if (cleanedUp) return;
+    cleanedUp = true;
+    if (proc.exitCode === null && proc.signalCode === null) {
+      proc.kill("SIGKILL");
+    }
+    rmSync(profile, { recursive: true, force: true });
+  };
+  process.once("exit", cleanup);
+  process.once("SIGINT", () => {
+    cleanup();
+    process.exit(130);
+  });
+
+  return { proc, port, version, logs: () => logs, cleanup };
 }
 
 /** A tab with a request/response CDP session over the raw WebSocket. */

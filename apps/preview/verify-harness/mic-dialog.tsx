@@ -53,9 +53,15 @@ const handlers: Record<string, (args: any) => unknown> = {
   capture_startup_timing: () => [],
   // Device enumeration is a real command, and returning an empty list would
   // make the dialog look broken in a way the real app is not.
+  //
+  // The field is `label`, not `name`, and `caution` is required by
+  // `InputDeviceDescriptor`. Returning the wrong shape was not a visible error
+  // here -- the extra `name` was ignored and the missing `label` reached the
+  // dialog as `undefined` -- so the screenshots this harness exists to produce
+  // showed a device select with no device names in it.
   list_microphones: () => [
-    { name: "Fake Microphone", isDefault: true },
-    { name: "Fake Headset", isDefault: false },
+    { label: "Fake Microphone", isDefault: true, caution: false },
+    { label: "Fake Headset", isDefault: false, caution: false },
   ],
   get_microphone_permission_status: () => ({ state: "authorized" }),
   check_microphone_permission: () => ({ state: "authorized" }),

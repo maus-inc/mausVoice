@@ -8,12 +8,13 @@
 //   node scripts/verify/sweep-preview.mjs [baseUrl]
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { launch, newPage, sleep } from "./cdp.mjs";
 
 // Repository-relative, resolved from this file rather than from the shell's
 // working directory or a sandbox path: a committed file may not carry an
 // absolute path, and the screenshots belong beside the report that cites them.
-const REPO_ROOT = new URL("../../", import.meta.url).pathname;
+const REPO_ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const OUT = process.env.OUT_DIR || join(REPO_ROOT, "reports/ui-verify");
 mkdirSync(OUT, { recursive: true });
 const BASE =
@@ -23,7 +24,13 @@ const BASE =
 const WIDTH = Number(process.env.SWEEP_WIDTH ?? process.argv[3] ?? 1280);
 const HEIGHT = 900;
 
+// How long one route gets to settle: a paint, then a re-read once the entry
+// animations have finished, so an element on its way in is not reported as
+// displaced. Named because it is a budget a reader can reason about, and because
+// the two waits below are halves of it rather than magic numbers.
 const ROUTE_TIMEOUT = 12000;
+const SETTLE_FIRST_READ_MS = Math.round(ROUTE_TIMEOUT * 0.12);
+const SETTLE_SECOND_READ_MS = Math.round(ROUTE_TIMEOUT * 0.08);
 
 /** Everything that can be read off the DOM for one page, in one round trip. */
 const PAGE_PROBE = `(() => {
@@ -69,7 +76,7 @@ const PAGE_PROBE = `(() => {
   };
 })()`;
 
-const { proc, port } = await launch({ width: WIDTH, height: HEIGHT });
+const { port, cleanup } = await launch({ width: WIDTH, height: HEIGHT });
 const page = await newPage(port);
 
 let currentErrors = [];
@@ -123,7 +130,7 @@ if (!unique.length) {
       "Nothing was swept, so nothing was verified.",
   );
   await page.close();
-  proc.kill("SIGKILL");
+  cleanup();
   process.exit(1);
 }
 console.log(`Visiting ${unique.length} routes.`);
@@ -141,11 +148,11 @@ for (const theme of ["light", "dark"]) {
     // elements through positions outside the viewport on their way in, so a
     // single reading taken during one reports phantoms. Only what is still
     // displaced after the layout has settled counts.
-    await sleep(1400);
+    await sleep(SETTLE_FIRST_READ_MS);
     const first = await page.evaluate(PAGE_PROBE).catch((error) => ({
       failed: String(error).slice(0, 200),
     }));
-    await sleep(900);
+    await sleep(SETTLE_SECOND_READ_MS);
     const probe = await page.evaluate(PAGE_PROBE).catch((error) => ({
       failed: String(error).slice(0, 200),
     }));
@@ -190,7 +197,7 @@ for (const theme of ["light", "dark"]) {
 
 await page.send("Emulation.setEmulatedMedia", { features: [] });
 await page.close();
-proc.kill("SIGKILL");
+cleanup();
 
 writeFileSync(
   `${OUT}/sweep-preview-${WIDTH}.json`,

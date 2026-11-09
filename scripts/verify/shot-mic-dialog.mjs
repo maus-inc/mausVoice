@@ -1,12 +1,13 @@
 // Screenshots and measures the microphone dialog across the states a user sees.
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { launch, newPage, sleep } from "./cdp.mjs";
 
 // Repository-relative, resolved from this file rather than from the shell's
 // working directory or a sandbox path: a committed file may not carry an
 // absolute path, and the screenshots belong beside the report that cites them.
-const REPO_ROOT = new URL("../../", import.meta.url).pathname;
+const REPO_ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const OUT = process.env.OUT_DIR || join(REPO_ROOT, "reports/ui-verify");
 mkdirSync(OUT, { recursive: true });
 
@@ -18,7 +19,7 @@ const HARNESS_URL =
   process.env.HARNESS_URL ||
   "http://127.0.0.1:5193/verify-harness/mic-dialog.html";
 
-const { proc, port } = await launch({ width: 1100, height: 1000 });
+const { port, cleanup } = await launch({ width: 1100, height: 1000 });
 const page = await newPage(port);
 
 const consoleErrors = [];
@@ -264,7 +265,7 @@ console.log("UNMAPPED_COMMANDS:", JSON.stringify(unmapped));
 console.log("PAGE_ERRORS:", JSON.stringify(pageErrors.slice(0, 8)));
 
 page.close();
-proc.kill("SIGKILL");
+cleanup();
 
 // A probe that only prints is a probe nobody re-runs. Exit non-zero so this can
 // gate a change, and keep the JSON artefacts for whoever has to explain a
