@@ -67,8 +67,9 @@ const held = (keys: string[]) =>
       draft.keysHeld = keys;
     }),
   );
-const flushEffects = async () => {
+const flushEffects = async (action?: () => void) => {
   await act(async () => {
+    action?.();
     await Promise.resolve();
   });
 };
@@ -150,9 +151,7 @@ it("serializes successive recordings and keeps their persistent identity", async
   held([]);
   await flushEffects();
   expect(mocks.save).toHaveBeenCalledTimes(1);
-  await act(async () => {
-    finishFirst();
-  });
+  await flushEffects(() => finishFirst());
   expect(mocks.save).toHaveBeenCalledTimes(2);
   const [first, second] = mocks.save.mock.calls.map(([hotkey]) => hotkey);
   expect(first.keys).toEqual(["KeyA"]);
@@ -283,9 +282,7 @@ it("restores the last successful save after a newer queued save fails", async ()
     held(["KeyB"]);
     held([]);
     await flushEffects();
-    await act(async () => {
-      finishFirst();
-    });
+    await flushEffects(() => finishFirst());
     const id = mocks.save.mock.calls[0][0].id;
     expect(getAppState().hotkeyById[id].keys).toEqual(["KeyA"]);
     expect(mocks.sync).toHaveBeenCalledTimes(1);
@@ -314,9 +311,7 @@ it("does not roll back a newer external shortcut after a save fails", async () =
         draft.hotkeyById[id].keys = ["KeyZ"];
       }),
     );
-    await act(async () => {
-      fail(new Error("disk error"));
-    });
+    await flushEffects(() => fail(new Error("disk error")));
     expect(getAppState().hotkeyById[id].keys).toEqual(["KeyZ"]);
   } finally {
     error.mockRestore();
@@ -363,9 +358,7 @@ it("resynchronizes a rollback after an earlier native sync was already in flight
     held([]);
     await flushEffects();
     expect(mocks.save).toHaveBeenCalledTimes(1);
-    await act(async () => {
-      finishSync();
-    });
+    await flushEffects(() => finishSync());
     const id = mocks.save.mock.calls[0][0].id;
     expect(getAppState().hotkeyById[id].keys).toEqual(["KeyA"]);
     expect(mocks.sync).toHaveBeenCalledTimes(2);
@@ -403,9 +396,7 @@ it("rolls back the right binding when the primary changes during a queued save",
     held(["KeyB"]);
     held([]);
     await flushEffects();
-    await act(async () => {
-      finishFirst();
-    });
+    await flushEffects(() => finishFirst());
     expect(getAppState().hotkeyById.other).toEqual({
       id: "other",
       actionName: "dictate",
@@ -445,9 +436,7 @@ it("rolls back an older failed binding even when a different binding is queued",
     held(["KeyB"]);
     held([]);
     await flushEffects();
-    await act(async () => {
-      failFirst(new Error("disk error"));
-    });
+    await flushEffects(() => failFirst(new Error("disk error")));
     expect(getAppState().hotkeyById[firstId]).toBeUndefined();
     expect(getAppState().hotkeyById.other.keys).toEqual(["KeyB"]);
   } finally {
@@ -483,7 +472,7 @@ it("serializes a new recording after the form remounts during a pending save", a
   held([]);
   await flushEffects();
   expect(mocks.save).toHaveBeenCalledTimes(1);
-  await act(async () => finishFirst());
+  await flushEffects(() => finishFirst());
   expect(mocks.save).toHaveBeenCalledTimes(2);
   expect(mocks.save.mock.calls[1][0].keys).toEqual(["KeyB"]);
 });
@@ -515,7 +504,7 @@ it("waits for a pending shortcut save before clearing local data", async () => {
   expect(mocks.error).toHaveBeenCalledWith(
     "Failed to save hotkey. Please try again.",
   );
-  await act(async () => finishSave());
+  await flushEffects(() => finishSave());
   const release = await clearing;
   try {
     expect(drained).toBe(true);
