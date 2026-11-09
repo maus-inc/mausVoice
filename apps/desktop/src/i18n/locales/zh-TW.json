@@ -652,7 +652,7 @@
   "not_provided": "未提供。",
   "not_set": "未設定",
   "notes": "筆記",
-  "nothing_is_kept_from_before_the_press_the_recording_starts_e": "按下之前的聲音不會保留：錄音在按下的那一刻準時開始。",
+  "nothing_is_kept_from_before_the_press_so_the_first_word_is_c": "按下之前的聲音不會保留，因此第一個詞只有在錄音開始後才會被收錄。",
   "nothing_matches_that_search_try_a_shorter_word_or_pick_a_pag": "沒有符合的搜尋結果。請嘗試更短的詞，或從側邊欄選擇一個頁面。",
   "now_press_and_hold": "現在按住",
   "now_try_an_email": "現在試試發送電子郵件",
