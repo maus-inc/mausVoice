@@ -151,7 +151,7 @@ Rules for this log.
 ## Checklist
 
 - [ ] I confirmed the base branch this work was cut from, and the PR does not target `main` with unmerged base work.
-- [ ] I merged the current tip of the base into this branch before the first edit and before every push, and the gates above ran on the merged tree.
+- [ ] I merged the current tip of the base into this branch before the first edit and before every push, read what each merge brought in, recorded nothing, reuse, restructure or work around for it in the round log, and ran the gates above on the merged tree.
 - [ ] I ran the applicable gate commands on the head SHA above.
 - [ ] I recorded the code research gate notes, including the named pattern class.
 - [ ] I applied `REVIEW.md` and the relevant `FULL-REVIEW.md` modules, up to three passes, and fixed every critical, major, minor, nitpick, and UI finding.
