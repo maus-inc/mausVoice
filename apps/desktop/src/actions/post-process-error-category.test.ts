@@ -127,6 +127,22 @@ describe("classifyPostProcessErrorCategory", () => {
     );
   });
 
+  it("recognizes standalone authentication codes in provider messages", () => {
+    for (const message of [
+      "invalid_api_key",
+      "permission_denied",
+      "Request failed: invalid_api_key.",
+      "Provider returned permission_denied",
+    ]) {
+      expect(classifyPostProcessErrorCategory(new Error(message))).toBe(
+        POST_PROCESS_ERROR_CATEGORY.authentication,
+      );
+    }
+    expect(classifyPostProcessErrorCategory("invalid_api_key_fallback")).toBe(
+      POST_PROCESS_ERROR_CATEGORY.provider,
+    );
+  });
+
   it("classifies the axios timeout code as a timeout, not an abort", () => {
     // axios reports its own `timeout` expiry as ECONNABORTED, and the abort
     // rule substring-matches "aborted" inside that code. Without the timeout
