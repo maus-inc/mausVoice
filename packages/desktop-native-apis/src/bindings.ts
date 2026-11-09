@@ -1134,6 +1134,19 @@ async transcriptionUpdate(transcription: Transcription) : Promise<Result<Transcr
 async setMicrophoneLinger(lingerMs: number) : Promise<void> {
     await TAURI_INVOKE("set_microphone_linger", { lingerMs });
 },
+/**
+ * How much audio from before a press to keep, in seconds.
+ * 
+ * The open path takes the pre-roll as an argument, which covers the case where
+ * keep-ready is on and a stream is already held. With keep-ready off there is no
+ * open, so nothing ever set it: a cold press fell back to the recorder's own
+ * 500 ms default and the slider did nothing. This is the same policy-only shape
+ * as [`set_microphone_linger`] -- no device is opened, no state is held, and the
+ * value applies to whichever path opens next.
+ */
+async setMicrophonePreroll(prerollSeconds: number) : Promise<void> {
+    await TAURI_INVOKE("set_microphone_preroll", { prerollSeconds });
+},
 async userGetOne() : Promise<Result<User | null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("user_get_one") };

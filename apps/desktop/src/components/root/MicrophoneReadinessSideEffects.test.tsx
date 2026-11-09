@@ -26,6 +26,7 @@ const mocks = vi.hoisted(() => {
     microphoneReady: vi.fn(async () => false),
     prepareMicrophone: vi.fn(async () => ({ status: "ok", data: "mic" })),
     setMicrophoneLinger: vi.fn(async () => undefined),
+    setMicrophonePreroll: vi.fn(async () => undefined),
     showSnackbar: vi.fn(),
     emit: vi.fn(async () => undefined),
     listen: vi.fn(async () => () => undefined),
@@ -41,6 +42,7 @@ vi.mock("@maus-inc/desktop-native-apis", () => ({
     microphoneReady: mocks.microphoneReady,
     prepareMicrophone: mocks.prepareMicrophone,
     setMicrophoneLinger: mocks.setMicrophoneLinger,
+    setMicrophonePreroll: mocks.setMicrophonePreroll,
   },
 }));
 
@@ -512,6 +514,53 @@ describe("MicrophoneReadinessSideEffects", () => {
     expect(mocks.setMicrophoneLinger).not.toHaveBeenCalled();
   });
 
+  it("pushes the pre-roll even when nothing is held", async () => {
+    // The open path takes the pre-roll as an argument, which only happens with
+    // keep-ready on. With it off nothing opens until the press, so without this
+    // push the recorder used its own 500 ms default and the slider had no
+    // effect -- on the cold start, which is exactly when the first word is most
+    // likely to be clipped.
+    setState({
+      userPrefs: {
+        keepMicrophoneReady: false,
+        microphonePrerollSeconds: 1.5,
+        microphoneLingerMs: 0,
+      },
+    });
+    await render();
+
+    expect(mocks.setMicrophonePreroll).toHaveBeenCalledWith(1.5);
+    // Nothing is opened to apply it to: this is a policy push, not a hold.
+    expect(mocks.warmMicrophone).not.toHaveBeenCalled();
+  });
+
+  it("follows the slider without waiting for a relaunch", async () => {
+    setState({
+      userPrefs: {
+        keepMicrophoneReady: false,
+        microphonePrerollSeconds: 0.5,
+        microphoneLingerMs: 0,
+      },
+    });
+    await render();
+    expect(mocks.setMicrophonePreroll).toHaveBeenLastCalledWith(0.5);
+
+    mocks.setMicrophonePreroll.mockClear();
+    // `rerender`, not a bare `act` over a state write: the component reads the
+    // store through `useAppStore`, so nothing re-renders until something asks
+    // React to render again, and the effect never re-runs.
+    setState({
+      userPrefs: {
+        keepMicrophoneReady: false,
+        microphonePrerollSeconds: 2,
+        microphoneLingerMs: 0,
+      },
+    });
+    await rerender();
+
+    expect(mocks.setMicrophonePreroll).toHaveBeenCalledWith(2);
+  });
+
   it("pushes the linger window when nothing is held", async () => {
     setState({
       userPrefs: {
@@ -528,17 +577,19 @@ describe("MicrophoneReadinessSideEffects", () => {
     // Turning the hold on stops pushing it: zero would close the stream the hold
     // is about to open, and the window has nothing to say about a held device.
     mocks.setMicrophoneLinger.mockClear();
-    await act(async () => {
-      setState({
-        userPrefs: {
-          keepMicrophoneReady: true,
-          microphonePrerollSeconds: 0.5,
-          microphoneLingerMs: 5_000,
-        },
-      });
-      await Promise.resolve();
+    setState({
+      userPrefs: {
+        keepMicrophoneReady: true,
+        microphonePrerollSeconds: 0.5,
+        microphoneLingerMs: 5_000,
+      },
     });
+    // `rerender` is required for this assertion to mean anything: without a
+    // render the effect never re-runs, so "not called" would be true whether or
+    // not the guard exists.
+    await rerender();
 
+    expect(mocks.warmMicrophone).toHaveBeenCalled();
     expect(mocks.setMicrophoneLinger).not.toHaveBeenCalled();
   });
 

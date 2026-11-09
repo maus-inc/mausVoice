@@ -289,6 +289,24 @@ export const MicrophoneReadinessSideEffects = () => {
   // very stream the hold opens seconds later. The window is the policy for a
   // device that is not held, so it is set for that case, and the release path
   // restores it when the hold is turned off.
+  // The pre-roll applies to both paths, so it is not gated on keep-ready.
+  //
+  // The open path takes it as an argument, which covers a held stream. With
+  // keep-ready off nothing opens until the press, so without this the recorder
+  // used its own 500 ms default and the slider had no effect on a cold start --
+  // the case pre-roll exists for, since a cold start is when the first word is
+  // most likely to be clipped.
+  useEffect(() => {
+    if (!prefsLoaded) {
+      return;
+    }
+    void commands
+      .setMicrophonePreroll(prerollSeconds)
+      .catch((error: unknown) => {
+        getLogger().warning(`Could not set the microphone pre-roll: ${error}`);
+      });
+  }, [prefsLoaded, prerollSeconds]);
+
   useEffect(() => {
     if (enabled || !prefsLoaded) {
       return;
