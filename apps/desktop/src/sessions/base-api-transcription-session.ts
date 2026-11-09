@@ -11,7 +11,7 @@ export type BaseApiTranscriptionSessionOptions = {
   inferenceDevice: string;
 };
 
-export class PartialTranscriptionError extends Error {
+class PartialTranscriptionError extends Error {
   constructor(
     error: Error,
     readonly transcript: string,
