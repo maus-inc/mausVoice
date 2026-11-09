@@ -142,6 +142,10 @@ mod coreaudio_callback_data_adapter;
 mod coreaudio_stream_format_adapter;
 
 #[cfg(test)]
+#[path = "../../../../../patches/cpal-0.15.3/tests/coreaudio_stream_format_adapter.rs"]
+mod cpal_coreaudio_stream_format_adapter;
+
+#[cfg(test)]
 #[path = "../../../../../patches/cpal-0.15.3/tests/macos_input_lifetime.rs"]
 mod cpal_macos_input_lifetime;
 

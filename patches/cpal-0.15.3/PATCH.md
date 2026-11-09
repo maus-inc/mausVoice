@@ -19,6 +19,13 @@ CPAL's cross-platform guidance. If start fails, a later `pause` still attempts t
 stop the audio unit rather than assuming that the failed call had no effect.
 Output construction is unchanged.
 
+The shared macOS/iOS stream-description conversion now marks signed integer
+samples as signed and both F32 and F64 as floating-point. Previously I16 and
+other signed integer descriptions were marked unsigned, and F64 was marked as
+integer. Portable tests use CPAL's actual sample-format types and mock CoreAudio
+structures; successful stream support and physical Apple devices remain
+unverified for those formats.
+
 The local CoreAudio listener change replaces the raw callback pointer with a
 monotonic token and a synchronized registry. Notifications already dispatched
 when a listener is removed can resolve only a still-live callback, and an
