@@ -267,6 +267,8 @@ fn record_loop(
     let mut emitted_samples: u64 = 0;
 
     let mut read_buf = vec![0u8; READ_CHUNK_FRAMES * std::mem::size_of::<f32>()];
+    // Set when the read itself failed, cleared when the stop signal explains it.
+    let mut read_fault: Option<String> = None;
 
     loop {
         // Check stop signal
@@ -279,6 +281,14 @@ fn record_loop(
         // Read audio data (blocking)
         if let Err(err) = simple.read(&mut read_buf) {
             log::error!("PulseAudio read error: {err}");
+            // A read that fails before the stop signal is the stream dying under
+            // us -- the device went away, or the server dropped the connection.
+            // Recording that is what makes the result honest: this backend has no
+            // host error callback, so without it the result carries a full
+            // `expected_duration` with no fault and the user gets a silently short
+            // dictation. A failure after the stop signal is the normal shutdown
+            // path, and nothing is reported for it.
+            read_fault = Some(READ_FAULT_TOKEN.to_string());
             break;
         }
 
@@ -327,6 +337,15 @@ fn record_loop(
         }
     }
 
+    // The stop flag is the difference between a failed read and a normal
+    // shutdown: the loop notices the flag at the top, so a read that returns an
+    // error after it was set is a shutdown that surfaced as an error, and one
+    // that fails with no flag set is a capture that died.
+    let stopped_by_user = stop_signal.lock().map(|flag| *flag).unwrap_or(false);
+    if stopped_by_user {
+        read_fault = None;
+    }
+
     let expected_duration = start.elapsed();
     let duration = if !all_samples.is_empty() {
         Duration::from_secs_f64(all_samples.len() as f64 / f64::from(sample_rate))
@@ -340,9 +359,10 @@ fn record_loop(
             duration,
             expected_duration,
             size_bytes,
-            // This backend stops on its own error path and returns what it has;
-            // it does not receive the cpal error callback this field records.
-            capture_fault: None,
+            // No host error callback exists on this backend, so the fault is the
+            // read failure classified above. Without it a stream that died mid
+            // dictation produced the same result as one that was stopped.
+            capture_fault: read_fault,
         },
         audio: RecordedAudio {
             samples: all_samples,
@@ -350,6 +370,12 @@ fn record_loop(
         },
     }
 }
+
+/// The token recorded when the PulseAudio read fails without a stop request.
+///
+/// The same token the cpal path carries for a host-declared fatal error, so the
+/// front end's existing classification handles it without a second dialect.
+const READ_FAULT_TOKEN: &str = "fatal";
 
 fn empty_result() -> RecordingResult {
     RecordingResult {

@@ -248,8 +248,24 @@ pub trait WarmCapture: Send + Sync {
     /// Closes the held stream.
     fn warm_close(&self);
 
-    /// Whether a stream is held right now.
+    /// Whether a stream is held right now *and usable*, which is what "ready"
+    /// means to the user and what the dialog reports.
+    ///
+    /// Deliberately not the same question as [`Self::has_held_stream`]: a stream
+    /// that opened and delivered nothing is held but not ready. Use this one for
+    /// anything the user reads, and `has_held_stream` for anything that has to
+    /// release the device.
     fn is_ready(&self) -> bool;
+
+    /// Whether a stream is held right now, usable or not.
+    ///
+    /// This is the structural question, and the exit path is why it exists: a
+    /// held stream keeps the OS microphone indicator lit whether or not it can
+    /// serve a press, so releasing it at exit must not ask `is_ready`, which
+    /// answers `false` for exactly the broken stream that most needs closing.
+    fn has_held_stream(&self) -> bool {
+        self.is_ready()
+    }
 
     /// Sets the hold policy, in milliseconds: 0 closes at stop, a finite value
     /// is a window, and `u64::MAX` holds until closed.

@@ -395,10 +395,13 @@ fn release_held_microphone(app_handle: &tauri::AppHandle) {
     let Some(warm) = warm_capture(app_handle) else {
         return;
     };
-    // `is_ready` is the structural question, not the usability one: a stream
-    // that opened and never delivered still holds the device, and holding it is
-    // exactly what has to stop here.
-    if warm.is_ready() {
+    // The structural question, not the usability one. This used to ask
+    // `is_ready`, whose own comment says it is the structural question and is
+    // wrong: `is_ready` is what the dialog shows, and it answers `false` for a
+    // stream that opened and never delivered. That is precisely the stream that
+    // holds the device with the indicator lit and that this call exists to
+    // release, so the one case that needed it was the one it skipped.
+    if warm.has_held_stream() {
         log::info!("releasing the held microphone before exit");
         warm.warm_close();
     }
