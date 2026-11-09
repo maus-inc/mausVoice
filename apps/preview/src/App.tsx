@@ -35,6 +35,7 @@ import { springSnappy } from "@desktop/styles/motion";
 import { CATEGORIES, REGISTRY, entriesByCategory } from "./lib/registry";
 import { useSpec } from "./lib/spec-store";
 import { ComponentPage } from "./pages/ComponentPage";
+import { ProviderMarksPage } from "./pages/ProviderMarksPage";
 import { IndexPage } from "./pages/IndexPage";
 
 const RailNav = () => {
@@ -229,6 +230,7 @@ const Shell = () => {
               <Routes location={location}>
                 <Route path="/" element={<IndexPage />} />
                 <Route path="/c/:id" element={<ComponentPage />} />
+                <Route path="/provider-marks" element={<ProviderMarksPage />} />
               </Routes>
             </motion.div>
           </AnimatePresence>

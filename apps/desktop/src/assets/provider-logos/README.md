@@ -46,10 +46,15 @@ these assets, so edit the SVG here and re-run the generator — never edit the
 | `openrouter-mono.svg` | OpenRouter | `openrouter.svg`, `@lobehub/icons-static-svg`   | `currentColor`, onyx only    |
 | `xai.svg`             | xAI (Grok) | `grok-icon`, `@iconify-json/logos`              | `currentColor`               |
 
-Providers with no artwork here — **Aldea**, **Speaches**, **OpenAI compatible**
-and **Azure OpenAI** — have no published mark this project could verify. The
+Providers with no artwork here — **Aldea**, **Speaches** and **OpenAI
+compatible** — have no published mark this project could verify. The
 `ProviderLogo` component renders nothing for them rather than inventing one, and
 the surfaces that use it keep the provider's name as the only identifier.
+
+**Azure** is one stored provider id with two products behind it: the
+transcription form calls it "Azure" (Speech-to-Text) and the post-processing
+form calls it "Azure OpenAI". Both are Microsoft Azure services, so both draw
+`azure.svg`; there is no separate Azure OpenAI mark to vendor.
 
 ## The colour rule
 

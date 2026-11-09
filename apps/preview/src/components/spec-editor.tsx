@@ -38,7 +38,14 @@ const FieldControl = ({
 
   if (!live) {
     return (
-      <Typography variant="bodySmall" color="text.secondary">
+      // `bodySmall` maps to a span, so two of these in a row would run together
+      // into one paragraph. Every line in this panel is its own block.
+      <Typography
+        variant="bodySmall"
+        color="text.secondary"
+        component="p"
+        sx={{ m: 0 }}
+      >
         Spec value: <code>{String(field.default)}</code>
       </Typography>
     );
@@ -216,7 +223,12 @@ const SpecFieldRow = ({
       </Stack>
       <FieldControl entryId={entry.id} field={field} />
       {field.help && (
-        <Typography variant="bodySmall" color="text.secondary" sx={{ mt: 0.5 }}>
+        <Typography
+          variant="bodySmall"
+          color="text.secondary"
+          component="p"
+          sx={{ mt: 0.5, mb: 0 }}
+        >
           {field.help}
         </Typography>
       )}

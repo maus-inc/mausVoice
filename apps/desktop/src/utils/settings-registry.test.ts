@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { API_KEY_PROVIDERS } from "@maus-inc/types";
 import { describe, expect, it } from "vitest";
 import enMessages from "../i18n/locales/en.json";
 import { SETTINGS_PAGE_COPY } from "../components/settings/settings-page-copy";
@@ -18,6 +19,27 @@ import {
 } from "./settings-registry";
 
 const messages = enMessages as Record<string, string>;
+
+/**
+ * Providers that can transcribe, and so own the transcription row.
+ *
+ * Listed rather than derived so a provider gaining a job is a visible decision:
+ * the assertion below would otherwise keep pointing at a row nobody chose. A
+ * provider in neither set is a genuine miss and fails the test.
+ */
+const TRANSCRIPTION_CAPABLE = new Set([
+  "aldea",
+  "assemblyai",
+  "deepgram",
+  "elevenlabs",
+  "gladia",
+  "speaches",
+  "openai-compatible",
+  "xai",
+]);
+
+/** Providers that can post-process too, and so own both rows. */
+const ALSO_POST_PROCESSING = new Set(["xai"]);
 const pageIds = new Set(SETTINGS_PAGES.map((page) => page.id));
 
 const readSource = (relative: string) =>
@@ -187,6 +209,8 @@ describe("settings registry", () => {
       cerebras: "ai_post_processing",
       deepseek: "ai_post_processing",
       ollama: "ai_post_processing",
+      aldea: "ai_transcription",
+      "openai-compatible": "ai_transcription",
     };
     for (const [provider, key] of Object.entries(providers)) {
       expect(
@@ -194,6 +218,39 @@ describe("settings registry", () => {
         `searching ${provider}`,
       ).toContain(key);
     }
+    // Every provider the app can store must reach the setting that owns it, so
+    // a provider added to `API_KEY_PROVIDERS` without an alias fails here
+    // rather than being findable only by the row's title.
+    for (const provider of API_KEY_PROVIDERS) {
+      const hits = searchSettings(provider).map((hit) => hit.entry.key);
+      const expected = TRANSCRIPTION_CAPABLE.has(provider)
+        ? ["ai_transcription"]
+        : ["ai_post_processing"];
+      if (ALSO_POST_PROCESSING.has(provider))
+        expected.push("ai_post_processing");
+      for (const key of expected) {
+        expect(hits, `searching ${provider}`).toContain(key);
+      }
+    }
+    // The id uses a hyphen and the name a space: a person types the name.
+    expect(
+      searchSettings("openai compatible").map((hit) => hit.entry.key),
+    ).toContain("ai_transcription");
+    // A provider can be searched for by its id or by its name, and the two are
+    // not always the same word. Every provider must be reachable by both, or a
+    // settings search quietly depends on which one the person happened to
+    // remember — plus the guard below catches a provider that reaches a row
+    // only through a *different* provider's alias.
+    for (const provider of API_KEY_PROVIDERS) {
+      const named = provider.replaceAll("-", " ");
+      const hits = searchSettings(named).map((hit) => hit.entry.key);
+      expect(hits, `searching ${named}`).toContain(
+        TRANSCRIPTION_CAPABLE.has(provider)
+          ? "ai_transcription"
+          : "ai_post_processing",
+      );
+    }
+
     // Anthropic is the company, Claude the product: both must land on the row
     // that picks the model.
     for (const alias of ["claude", "anthropic"]) {

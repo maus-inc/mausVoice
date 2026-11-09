@@ -39,7 +39,8 @@ const outFile = join(
   "ProviderLogos.tsx",
 );
 
-const ELEMENTS = new Set([
+/** Elements this emitter knows how to render. */
+const ELEMENTS = [
   "path",
   "rect",
   "g",
@@ -49,7 +50,8 @@ const ELEMENTS = new Set([
   "stop",
   "circle",
   "ellipse",
-]);
+];
+const isElement = (name) => ELEMENTS.includes(name);
 
 /** Attribute name → prop name. Everything else must already be camelCase. */
 const JSX_ATTRS = {
@@ -89,21 +91,86 @@ const namespaceIds = (body, provider) => {
   return out;
 };
 
-const toJsxAttrs = (tag, attrs, provider) => {
-  const parts = [];
-  for (const [, rawName, rawValue] of attrs) {
-    if (rawName === "xmlns" || rawName === "width" || rawName === "height")
-      continue;
-    const value = namespaceIds(rawValue, provider).replaceAll('"', "&quot;");
-    const name = JSX_ATTRS[rawName] ?? rawName;
-    parts.push(`${name}="${value}"`);
+const toJsxAttrs = (attrs, provider) =>
+  attrs
+    .filter(
+      ({ name }) => name !== "xmlns" && name !== "width" && name !== "height",
+    )
+    .map(({ name, value }) => {
+      const quoted = namespaceIds(value, provider).replaceAll('"', "&quot;");
+      const prop = JSX_ATTRS[name] ?? name;
+      return `${prop}="${quoted}"`;
+    })
+    // A double space in `viewBox` breaks nothing but reads badly.
+    .join(" ")
+    .replaceAll("  ", " ");
+
+/**
+ * Indentation per nesting level.
+ *
+ * A cached table rather than `"  ".repeat(depth)` at each call site: the depth
+ * is the only thing that varies, and the array reads as what it is.
+ */
+const INDENT = [
+  "",
+  "  ",
+  "    ",
+  "      ",
+  "        ",
+  "          ",
+  "            ",
+  "              ",
+];
+const indent = (depth) => INDENT[depth] ?? "  ".repeat(depth);
+
+/**
+ * Splits an SVG document into tags and text in one linear pass.
+ *
+ * Two disjoint alternatives, neither of which can match a lone `<` or a lone
+ * `>`: the regex is anchored at every angle bracket, so there is nowhere to
+ * backtrack to and a hostile file cannot make it quadratic.
+ */
+const scan = (body) => body.match(/<[^>]*>|[^<]+/g) ?? [];
+
+/** The element name a start tag opens, validated against `ELEMENTS`. */
+const tagNameOf = (token, provider) => {
+  const name = /^<([^\s/>]*)/.exec(token)?.[1] ?? "";
+  if (!name) throw new Error(`${provider}: unparsable tag ${token}`);
+  if (!isElement(name)) {
+    throw new Error(
+      `${provider}: unsupported SVG element <${name}>. Add it to ELEMENTS/JSX_ATTRS in scripts/generate-provider-logos.mjs.`,
+    );
   }
-  // React's SVG typing wants a literal string for `id`-bearing attributes, and
-  // a double space in `viewBox` breaks nothing but reads badly.
-  return parts.join(" ").replaceAll("  ", " ");
+  return name;
 };
 
-const selfClosing = new Set(["path", "rect", "stop", "circle", "ellipse"]);
+/**
+ * A start tag's attributes as `{ name, value }`.
+ *
+ * One capture-less match per pair, consuming the closing quote, so the scan
+ * cannot re-enter a value and the pattern has a single way to match.
+ */
+const attrsOf = (token) =>
+  [...token.matchAll(/[A-Za-z0-9:_-]+="[^"]*"/g)].map(({ 0: pair }) => {
+    const separator = pair.indexOf("=");
+    return {
+      name: pair.slice(0, separator),
+      value: pair.slice(separator + 2, -1),
+    };
+  });
+
+/** The JSX for one start tag, and the name it opens if it is not self-closing. */
+const startTagOf = (token, provider, depth) => {
+  const name = tagNameOf(token, provider);
+  const attrs = toJsxAttrs(attrsOf(token), provider);
+  const open = attrs ? `<${name} ${attrs}` : `<${name}`;
+  const selfClosing = token.endsWith("/>");
+  return {
+    name,
+    line: `${indent(depth)}${open}${selfClosing ? " />" : ">"}`,
+    selfClosing,
+  };
+};
 
 /** One SVG document → JSX children, indented for the generated module. */
 const toJsx = (svg, provider) => {
@@ -114,42 +181,28 @@ const toJsx = (svg, provider) => {
 
   const out = [];
   const stack = [];
+  // Children of the root `<svg>` start one level in.
   let depth = 1;
 
-  const tokens = body.match(/<[^>]+>|[^<]+/g) ?? [];
-  for (const token of tokens) {
+  for (const token of scan(body)) {
     if (token.startsWith("</")) {
-      const name = token.slice(2, -1).trim();
       depth -= 1;
-      stack.pop();
-      out.push(`${"  ".repeat(depth)}</${name}>`);
+      out.push(`${indent(depth)}</${stack.pop()}>`);
       continue;
     }
-    if (token.startsWith("<")) {
-      const name = /^<([A-Za-z0-9:-]+)/.exec(token)?.[1];
-      if (!name) throw new Error(`unparsable tag in ${provider}: ${token}`);
-      if (!ELEMENTS.has(name)) {
-        throw new Error(
-          `${provider}: unsupported SVG element <${name}>. Add it to ELEMENTS/JSX_ATTRS in scripts/generate-provider-logos.mjs.`,
-        );
-      }
-      const attrs = [...token.matchAll(/([A-Za-z0-9:_-]+)="([^"]*)"/g)];
-      const rendered = toJsxAttrs(name, attrs, provider);
-      if (token.endsWith("/>")) {
-        out.push(
-          `${"  ".repeat(depth)}<${name}${rendered ? ` ${rendered}` : ""} />`,
-        );
-      } else {
-        out.push(
-          `${"  ".repeat(depth)}<${name}${rendered ? ` ${rendered}` : ""}>`,
-        );
-        stack.push(name);
-        depth += 1;
-      }
+
+    if (!token.startsWith("<")) {
+      const text = token.trim();
+      if (text) throw new Error(`${provider}: unexpected text node "${text}"`);
       continue;
     }
-    const text = token.trim();
-    if (text) throw new Error(`${provider}: unexpected text node "${text}"`);
+
+    const { name, line, selfClosing } = startTagOf(token, provider, depth);
+    out.push(line);
+    if (!selfClosing) {
+      stack.push(name);
+      depth += 1;
+    }
   }
 
   if (stack.length) throw new Error(`${provider}: unclosed <${stack.at(-1)}>`);
@@ -165,7 +218,7 @@ const pascal = (id) =>
 const viewBoxOf = (svg, provider) => {
   const match = /viewBox="([^"]+)"/.exec(svg);
   if (!match) throw new Error(`${provider}: missing viewBox`);
-  return match[1].split(/\s+/).join(" ");
+  return match[1].replaceAll(/\s+/g, " ");
 };
 
 const rootFillOf = (svg) => /<svg[^>]*\sfill="([^"]+)"/.exec(svg)?.[1] ?? null;

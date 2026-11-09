@@ -202,6 +202,17 @@ export const SETTING_ENTRIES: SettingEntry[] = [
       "speaches",
       "xai",
       "grok",
+      // Transcription-capable providers that had no alias, so their key row
+      // was reachable only if the person knew the row was called "AI
+      // transcription". "OpenAI compatible" covers both the words and the
+      // `openai-compatible` id a base-URL server is stored under.
+      "aldea",
+      "openai compatible",
+      "openai-compatible",
+      // Deepgram's key has a row of its own (`deepgram_api_key`); the place you
+      // *choose* it is this one, and someone who has the key already is
+      // looking for the choice.
+      "deepgram",
     ],
   }),
   ...settingsForGroup("ai-models", "post_processing", {
@@ -219,6 +230,12 @@ export const SETTING_ENTRIES: SettingEntry[] = [
       "claude",
       "anthropic",
       "cerebras",
+      // xAI transcribes and post-processes; only the transcription row carried
+      // the name, so this reversed the id-only case.
+      "xai",
+      // Same pairing as Deepgram: a dedicated key row exists, and this is where
+      // the key is selected.
+      "groq",
     ],
     fast_styling_for_short_dictations: [
       "short dictation",

@@ -6,6 +6,24 @@ import { defineConfig } from "vite";
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
 const desktopSrc = path.resolve(rootDir, "../desktop/src");
 
+// The preview renders REAL desktop components (`@desktop/*`), and those write
+// their user-facing strings as `FormattedMessage`/`useIntl` literals with no
+// `id`. The desktop app compiles them with `babel-plugin-formatjs`, which turns
+// every literal into an id derived from its text. The preview had no such
+// transform, so any real component with visible copy threw
+// "An `id` must be provided to format a message" and rendered nothing — which
+// is why no demo had ever mounted one.
+//
+// This mirrors the desktop's override id function (same module, same
+// derivation) so a preview string and an app string resolve to the same id.
+const formatjsOverrideIdFn = (await import("../desktop/scripts/formatjs-id.mjs"))
+  .formatjsOverrideIdFn as (
+  id: string | undefined,
+  defaultMessage: string | undefined,
+  description: string | undefined,
+  filePath: string | undefined,
+) => string | undefined;
+
 // The preview site imports the REAL desktop components/theme directly.
 // Those files live outside this app's root, so:
 // - `@desktop/*` aliases into apps/desktop/src,
@@ -13,7 +31,32 @@ const desktopSrc = path.resolve(rootDir, "../desktop/src");
 // - dedupe guarantees one React/MUI/emotion instance even though the
 //   imported files sit under apps/desktop (avoids dual-copy hook breaks).
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    react({
+      babel: {
+        plugins: [
+          [
+            "babel-plugin-formatjs",
+            {
+              overrideIdFn: (
+                id: string | undefined,
+                defaultMessage: string | undefined,
+                description: string | undefined,
+                filePath: string | undefined,
+              ) =>
+                formatjsOverrideIdFn(
+                  id,
+                  defaultMessage,
+                  description,
+                  filePath,
+                ) ?? id,
+              ast: true,
+            },
+          ],
+        ],
+      },
+    }),
+  ],
   resolve: {
     alias: {
       "@desktop": desktopSrc,

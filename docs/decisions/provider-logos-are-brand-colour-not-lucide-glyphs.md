@@ -18,7 +18,7 @@ lucide-style glyph in `currentColor`, with the provider's initial as a fallback.
 That was rejected. A hand-drawn approximation of someone else's trademark is both
 a worse identifier than the real mark and a legal question nobody here is
 qualified to answer; and an initial in a circle is the generic-icon pattern the
-`antislaw-ui` skill exists to refuse.
+`antislop-ui` skill exists to refuse.
 
 ## Decision
 

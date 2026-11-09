@@ -375,6 +375,26 @@ const PROVIDERS = [
   "xai",
 ] as const;
 
+/** The name the app shows for a provider, for where the demo needs a label. */
+const PROVIDER_NAMES: Record<(typeof PROVIDERS)[number], string> = {
+  groq: "Groq",
+  openai: "OpenAI",
+  aldea: "Aldea",
+  assemblyai: "AssemblyAI",
+  elevenlabs: "ElevenLabs",
+  deepgram: "Deepgram",
+  gladia: "Gladia",
+  openrouter: "OpenRouter",
+  ollama: "Ollama",
+  "openai-compatible": "OpenAI Compatible",
+  azure: "Azure",
+  deepseek: "DeepSeek",
+  gemini: "Gemini",
+  claude: "Claude",
+  cerebras: "Cerebras",
+  speaches: "Speaches",
+  xai: "xAI Grok",
+};
 export const ProviderLogoDemo = () => (
   <DemoSection
     title="ProviderLogo"
@@ -388,6 +408,9 @@ export const ProviderLogoDemo = () => (
               key={provider}
               sx={{ display: "flex", alignItems: "center", gap: 0.75 }}
             >
+              {/* The name beside it carries the identity, so the mark is
+                  decorative here and a screen reader is not made to say it
+                  twice. */}
               <ProviderLogo provider={provider} size={18} />
               <Typography variant="caption" sx={{ color: "text.secondary" }}>
                 {hasProviderLogo(provider) ? provider : `${provider} (no mark)`}
@@ -413,7 +436,13 @@ export const ProviderLogoDemo = () => (
                 bgcolor: "level2",
               }}
             >
-              <ProviderLogo provider={provider} size={22} />
+              {/* A tile is a mark on its own, with no name beside it, so this
+                  is the one place in the demo that has to label the mark. */}
+              <ProviderLogo
+                provider={provider}
+                size={22}
+                label={PROVIDER_NAMES[provider]}
+              />
             </Box>
           ))}
         </Stack>

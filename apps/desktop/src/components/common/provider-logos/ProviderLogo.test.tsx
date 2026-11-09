@@ -40,9 +40,10 @@ const shapesOf = (svg: string) =>
   );
 
 const luminance = (hex: string) => {
+  // WCAG relative luminance, per channel: sRGB decode, then linearise.
   const channel = (value: number) => {
-    const c = value / 255;
-    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+    const srgb = value / 255;
+    return srgb <= 0.03928 ? srgb / 12.92 : ((srgb + 0.055) / 1.055) ** 2.4;
   };
   const [r, g, b] = [1, 3, 5].map((at) =>
     Number.parseInt(hex.slice(at, at + 2), 16),
@@ -58,6 +59,34 @@ const contrast = (a: string, b: string) => {
 /** The app's own surface ladder, from `styles/palette.ts`. */
 const CREAM = "#FDFBF8";
 const ONYX = "#161617";
+
+/** WCAG 2.1 SC 1.4.11: the floor for a graphic that carries meaning. */
+const MIN_GRAPHIC_CONTRAST = 3;
+
+/** A mark whose shapes paint themselves, rather than inheriting the ink. */
+const isColourMark = (file: string) =>
+  !/\sfill="currentColor"/.test(readAsset(file));
+
+/** Colour marks, by file — the set the contrast floor applies to. */
+const colourMarkFiles = assetFiles.filter(isColourMark);
+
+const isOnOnyx = (file: string) =>
+  file.endsWith("-dark.svg") || file.endsWith("-mono.svg");
+
+/**
+ * The surfaces a mark file is drawn on.
+ *
+ * A file with a per-scheme sibling is drawn on its own surface only — that is
+ * what the sibling is for. Anything else is drawn on both.
+ */
+const PAIRED = [
+  "gladia.svg",
+  "gladia-dark.svg",
+  "openrouter.svg",
+  "openrouter-mono.svg",
+];
+const surfacesOf = (file: string) =>
+  PAIRED.includes(file) ? [isOnOnyx(file) ? ONYX : CREAM] : [CREAM, ONYX];
 
 /**
  * The generated module is committed so both bundles can import it, which means
@@ -126,29 +155,44 @@ describe("provider logo artwork", () => {
     // sinking into a surface is measuring it. Every mark here clears the 3:1
     // floor for a non-text graphic on the surface it is drawn on: both surfaces
     // where one file serves both, and only its own where a per-scheme pair
-    // exists (see `PAIRED` in the component and the asset README).
-    const drawnOnDark = (file: string) =>
-      file.endsWith("-dark.svg") || file.endsWith("-mono.svg");
-    const colourMarks = assetFiles.filter(
-      (file) => !/\sfill="currentColor"/.test(readAsset(file)),
-    );
-    expect(colourMarks.length).toBeGreaterThan(0);
-    for (const file of colourMarks) {
+    // exists (see `ARTWORK` in the component and the asset README).
+    //
+    // Paired marks are NOT exempt from the other surface: the pair exists
+    // precisely because the light artwork fails on onyx, so a light file must
+    // still clear the floor on cream and its dark sibling on onyx. Asserting
+    // that here is what stops someone pointing `dark` at the light file.
+    for (const file of colourMarkFiles) {
       const fills = [...readAsset(file).matchAll(/fill="(#[0-9a-fA-F]{6})"/g)];
       expect(fills.length, `${file} declares a brand fill`).toBeGreaterThan(0);
       for (const [, hex] of fills) {
-        // A mark without a per-scheme sibling is drawn on both surfaces, so it
-        // has to survive both. `gladia.svg` and `openrouter.svg` do have one,
-        // so they are measured on cream alone.
-        const surfaces = drawnOnDark(file) ? [ONYX] : [CREAM];
-        for (const surface of surfaces) {
-          expect(
-            contrast(hex, surface),
-            `${file} ${hex} on ${surface}`,
-          ).toBeGreaterThan(2.9);
+        for (const surface of surfacesOf(file)) {
+          const ratio = contrast(hex, surface);
+          expect(ratio, `${file} ${hex} on ${surface}`).toBeGreaterThanOrEqual(
+            MIN_GRAPHIC_CONTRAST,
+          );
         }
       }
     }
+  });
+
+  it("covers every surface each colour mark is drawn on", () => {
+    // The floor is only worth asserting over the set of surfaces actually used.
+    // A per-scheme pair is drawn on one surface each; a single file is drawn on
+    // both. If the mapping ever grows a third case, this fails rather than
+    // silently measuring nothing.
+    expect(colourMarkFiles.length).toBeGreaterThan(0);
+    for (const file of colourMarkFiles) {
+      expect(surfacesOf(file).length, `${file} has a surface`).toBeGreaterThan(
+        0,
+      );
+    }
+    // The two marks whose published colour fails on one surface are the reason
+    // this test exists; pin them so a "simplification" cannot quietly drop the
+    // measurement rather than the exception.
+    expect(colourMarkFiles).toContain("openrouter.svg");
+    expect(colourMarkFiles).toContain("gladia.svg");
+    expect(surfacesOf("openrouter.svg")).toEqual([CREAM]);
+    expect(surfacesOf("openrouter-mono.svg")).toEqual([ONYX]);
   });
 
   it("still draws ink marks, rather than dropping their paths", () => {
@@ -226,13 +270,52 @@ describe("ProviderLogo", () => {
     }
   });
 
-  it("swaps to the white sibling on the dark surface", () => {
-    // Gladia's mark is dark navy, which the onyx surface swallows. Only that
-    // one provider carries a per-scheme pair; every other mark is complete on
-    // both surfaces.
+  /**
+   * The scheme is read when the provider mounts, so a component already on
+   * screen does not follow a scheme change — MUI updates `systemMode` through
+   * its media-query listener, not on re-render. Each scheme therefore gets its
+   * own mount, which is also how the app behaves: the surface is painted before
+   * the marks are drawn on it.
+   */
+  const renderOnDarkSurface = (node: React.ReactElement) => {
+    setMatchMedia((query) => query.includes(": dark"));
+    render(node);
+  };
+
+  it("draws Gladia's navy mark on the light surface", () => {
+    // Gladia's mark is dark navy, which the onyx surface swallows; this is the
+    // light half of the pair.
     render(createElement(ProviderLogo, { provider: "gladia" }));
-    const light = container.querySelector("path")?.getAttribute("fill");
-    expect(light).toBe("#141A2A");
+    expect(container.querySelector("path")?.getAttribute("fill")).toBe(
+      "#141A2A",
+    );
+  });
+
+  it("swaps Gladia for the white sibling on the dark surface", () => {
+    // The half that would have passed vacuously if the test never left cream.
+    renderOnDarkSurface(createElement(ProviderLogo, { provider: "gladia" }));
+    expect(container.querySelector("path")?.getAttribute("fill")).toBe(
+      "#FFFFFF",
+    );
+  });
+
+  it("draws OpenRouter's published violet on the light surface", () => {
+    render(createElement(ProviderLogo, { provider: "openrouter" }));
+    expect(container.querySelector("path")?.getAttribute("fill")).toBe(
+      "#7624f4",
+    );
+  });
+
+  it("draws OpenRouter in the ink where the violet fails the floor", () => {
+    // OpenRouter's violet measures under 3:1 on onyx, so onyx gets the same
+    // silhouette in the text ink instead — a different mechanism from Gladia's
+    // second file, and a legibility bug rather than a missing file if it
+    // regressed.
+    renderOnDarkSurface(
+      createElement(ProviderLogo, { provider: "openrouter" }),
+    );
+    // The mono mark declares no fill, so it inherits the component's ink.
+    expect(container.querySelector("path")?.getAttribute("fill")).toBeNull();
   });
 
   it("covers every provider the app can store", () => {

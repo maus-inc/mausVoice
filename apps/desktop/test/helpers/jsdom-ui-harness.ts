@@ -24,9 +24,19 @@ export const ensureUiHarness = (): void => {
   };
 };
 
-export const setMatchMedia = (matches: boolean) => {
+/**
+ * Answers every media query the same way, or — with a predicate — per query.
+ *
+ * The per-query form exists because MUI asks two different questions while
+ * resolving a colour scheme (`prefers-color-scheme: dark` *and* `light`), and a
+ * blanket `true` would make it pick one arbitrarily.
+ */
+export const setMatchMedia = (
+  matches: boolean | ((query: string) => boolean),
+) => {
+  const resolve = typeof matches === "function" ? matches : () => matches;
   window.matchMedia = ((query: string) => ({
-    matches,
+    matches: resolve(query),
     media: query,
     onchange: null,
     addListener: () => undefined,

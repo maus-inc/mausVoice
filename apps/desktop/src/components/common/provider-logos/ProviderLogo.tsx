@@ -82,13 +82,13 @@ export const ProviderLogo = ({
 }: ProviderLogoProps) => {
   const isDark = useIsDarkMode();
   const art = ARTWORK[provider];
-  const id =
+  const artworkId =
     (isDark ? (art?.dark ?? art?.both) : (art?.light ?? art?.both)) ?? null;
-  if (!id) {
+  if (!artworkId) {
     return null;
   }
 
-  const Mark = PROVIDER_LOGOS[id];
+  const Mark = PROVIDER_LOGOS[artworkId];
 
   return (
     <Box
