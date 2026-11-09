@@ -35,16 +35,16 @@ one carries and its measured size. Extend the same branch and manifest if a task
 
 | Group | Carries                                                                    | Opens                                                          | Measured                        |
 | ----- | -------------------------------------------------------------------------- | -------------------------------------------------------------- | ------------------------------- |
-| G9    | `ffmpeg`, `ffprobe`, `gifsicle`                                            | the capture encode and GIF assembly; a browser is still absent | 160 MB                          |
+| G9    | `ffmpeg`, `ffprobe`, `gifsicle`                                            | the capture encode and GIF assembly                            | 160 MB                          |
 | G10   | `ggml-tiny.bin`, `ggml-base.bin`, the SenseVoice bundle, `MODELS.txt`      | whisper and SenseVoice loads, not all four ignored tests       | 463 MB                          |
 | G11   | `tauri-driver` 2.0.6, optional `chromedriver` 152.0.0                      | `test:webdriver` on Linux                                      | 24 MB                           |
 | G12   | `rust-std` for `x86_64-pc-windows-msvc` and `aarch64-apple-darwin`, 1.88.0 | `cargo check --target` on platform gated code                  | 47.5 MB packed, 245 MB unpacked |
 | G13   | `gitleaks` 8.18.0                                                          | the history scan                                               | 7 MB                            |
 
-`tesseract` and its `tessdata` are not shipped, so the `ui-capture` OCR check is still
-absent, and no Chromium ships, so the capture itself still needs a browser from elsewhere.
-The payload carries `tauri-driver` 2.0.6 rather than 2.1.0, because 2.1.0 needs
-rustc 1.90 and this repository pins 1.88.0.
+`tesseract` and its `tessdata` ship in G19, so the `ui-capture` OCR check can run, and the
+fourth delivery adds Chromium 156 in G25, so the capture itself no longer needs a browser
+from elsewhere on Linux x86-64. The payload carries `tauri-driver` 2.0.6 rather than 2.1.0,
+because 2.1.0 needs rustc 1.90 and this repository pins 1.88.0.
 
 Keep the same branch, the same orphan commit rule, and the same manifest. Amending one orphan
 commit of this size is cheaper than a second branch, so fold a further delivery into the
@@ -53,6 +53,20 @@ existing commit and move the tip.
 Nothing in G9 to G13 changes the trust model. Every binary and every model needs an upstream
 URL, a published digest where one exists, and a line in `MANIFEST.sha256`. Where the digest is
 your own build output, say so in `README.md`, the same way the licence group does.
+
+## The third and fourth deliveries, groups G16 to G22 and G23 to G27
+
+The third delivery shipped G16 to G22 on 2026-11-05 and the fourth shipped G23 to G27 on
+2026-11-09. Both are folded into the same orphan commit, which now reads
+`3025c92b50c9d8977941b689a779068997896d38`, so a consumer fetches every group from one
+place. `engineering/sandbox-coverage-gaps.md` records what each group opens and its measured
+size. The third delivery adds debugging and tracing, native build tools including the
+autotools, database clients, OCR, shell and crypto tooling, cross compilers with emulation,
+and supply-chain scanners. The fourth delivery adds the native C/C++ compiler and binutils,
+fontconfig with the DejaVu and Liberation fonts plus `tzdata` and `locales`, Chromium with
+its library closure, a headless OpenJDK 17 JRE, Ruby, CPython and Perl, and the G27 document,
+media-metadata and debugging tools. Two files cross GitHub's 100 MB hard limit in the fourth
+delivery, so `chromium` and the JVM's `lib/modules` are split into `.part-*` pieces.
 
 ## The prompt to hand over
 
@@ -67,11 +81,12 @@ your own build output, say so in `README.md`, the same way the licence group doe
 > - One commit, zero parents, on the branch `vendor/sandbox-toolchain`. Never merge it
 >   into `main` and never open a pull request from it. The repository runs a
 >   `secret-scan.yml` workflow on `pull_request`, and a pull request over roughly
->   780 MB of hex digests is a bad idea.
-> - Root tree exactly `FETCH.md`, `LICENSES`, `MANIFEST.sha256`, `README.md`, `native`,
->   `rust`, `system`. Nothing else at the root.
-> - Groups G1 to G8 as specified. No browser group. Add groups G9 to G13 only when the
->   task that triggered the rebuild names one of them, and never add a browser.
+>   3.8 GB of payload is a bad idea.
+> - Root tree exactly `FETCH.md`, `LICENSES`, `MANIFEST.sha256`, `README.md`, `drivers`,
+>   `models`, `native`, `rust`, `system`. Nothing else at the root.
+> - Groups G1 to G8 as specified. Add the further groups only when the task that
+>   triggered the rebuild names one of them. The shipped payload now carries G9 to G13,
+>   G16 to G22 and G23 to G27, including Chromium in G25.
 > - No file may reach 100 MiB. Split any archive at or above 90 MiB into `.part-NN`
 >   pieces of exactly 94,371,840 bytes, zero-padded from `00`, and list both the parts
 >   and the reassembled name in the manifest.

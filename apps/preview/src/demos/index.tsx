@@ -36,6 +36,7 @@ import {
   TextFieldDemo,
 } from "./forms";
 import { ButtonDemo, FabDemo, IconButtonDemo } from "./buttons";
+import { Keycap3dDemo } from "./keycap";
 import { LayoutDemo, TitlebarDemo } from "./layout";
 import { DashboardMenuDemo, MorphIconDemo } from "./navigation";
 import {
@@ -61,6 +62,7 @@ export const DEMOS: Record<string, ComponentType> = {
   segmented: SegmentedDemo,
   "text-field": TextFieldDemo,
   "hotkey-badge": HotkeyBadgeDemo,
+  "keycap-3d": Keycap3dDemo,
   "hotkey-recorder": HotkeyRecorderDemo,
   dialog: DialogDemo,
   "confirm-dialog": ConfirmDialogDemo,

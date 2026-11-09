@@ -64,7 +64,7 @@ export default function HomePage() {
                 }}
               />
             </Typography>
-            <DictationInstruction />
+            <DictationInstruction use3dKeycaps />
           </Box>
 
           <HomeAnalyticsGrid

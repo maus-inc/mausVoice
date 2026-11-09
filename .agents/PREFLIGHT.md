@@ -15,6 +15,7 @@ This file is the short form. `AGENTS.md` holds the binding rules, and the
 - [ ] `pnpm run format:check`
 - [ ] `pnpm run test:secret-scan`
 - [ ] `node scripts/ci/verify-skills.mjs` if you touched `.agents/skills/` or `skills-lock.json`
+- [ ] `node scripts/ci/verify-skills.mjs` printed no `IGNORED` line, if you installed or updated a skill; fix one with a scoped `.gitignore` negation, never by deleting the file
 - [ ] `pnpm gen:bindings` produced no diff, if you touched a Tauri command or `packages/desktop-native-apis`
 
 Touched-package checks, the ones `AGENTS.md` names:
@@ -63,9 +64,14 @@ That sandbox reaches `github.com`, `codeload.github.com`, `api.github.com`,
 If the Rust toolchain or the crate registry is unreachable, fetch the orphan branch
 `vendor/sandbox-toolchain` on `maus-inc/mausVoice` first and follow its `FETCH.md`. It
 carries the toolchain, the crate registry, the Debian 12 sysroot, the command line
-tools, the two native archives, and the second-delivery groups G9 to G13 (media
-tools, model weights, the WebDriver driver chain, the cross-target Rust standard
-libraries and the gitleaks binary). Then:
+tools, the two native archives, the second-delivery groups G9 to G13 (media tools,
+model weights, the WebDriver driver chain, the cross-target Rust standard libraries
+and the gitleaks binary), the third-delivery groups G16 to G22 (debuggers and
+tracers, native build tools, database clients, OCR, shell and crypto tooling, cross
+compilers with emulation, and supply-chain scanners), and the fourth-delivery groups
+G23 to G27 (the native C/C++ compiler and binutils, fontconfig with fonts plus
+`tzdata` and `locales`, Chromium, the OpenJDK 17 JRE, Ruby, CPython and Perl, and the
+document, media-metadata and debugging tools). Then:
 
 - [ ] I set `$CARGO_HOME/config.toml` from the shipped `rust/cargo-config.toml`, because `cargo --config <path>` does not reach `cargo clippy`
 - [ ] I exported `CARGO_NET_OFFLINE=true`
@@ -79,7 +85,7 @@ libraries and the gitleaks binary). Then:
 - [ ] I checked `system/PKGS.txt` for a tool before calling it missing, and read `engineering/sandbox-coverage-gaps.md` before calling a stage blocked
 - [ ] For every gate that still cannot run, I said so in the PR body with the reason and the substitute command I ran, rather than marking it passed
 
-The gap register in `engineering/sandbox-coverage-gaps.md` names what the current payload cannot close: model weights (G10), audio devices, a Chromium and the media tools `ui-capture` needs (G9), `tauri-driver` (G11), packaging tooling (G14) and the gitleaks binary (G13). G13, G14 and the rest are vendorable, so read the register before calling one impossible. Name the gap number in the PR body when one of them stops a gate.
+The gap register in `engineering/sandbox-coverage-gaps.md` names what the current payload cannot close: model weights (G10), audio devices, a `dmg`/`msi` packer for a release build (G14) and the accepted gaps. The media tools (G9), Chromium (G25), `tauri-driver` (G11) and the gitleaks binary (G13) are now in the payload. G14 and the rest are vendorable, so read the register before calling one impossible. Name the gap number in the PR body when one of them stops a gate.
 
 The `--ignored` tests in
 `packages/rust_transcription/tests/sidecar_integration.rs` download models from
@@ -95,6 +101,10 @@ checking for a mirror, and do not report it as passed.
 - [ ] For a change a user sees, I read `apps/desktop/DESIGN.md` first, then `apps/desktop/docs/design-system-baseline.md` and `engineering/motion-design.md`, before editing
 - [ ] The component I touched has a spec in `apps/preview/specs/`, and I followed it or wrote down why I did not
 - [ ] I loaded the skills the routing table in `engineering/design-skills.md` requires for this task, in its mandatory order
+- [ ] I loaded `.agents/skills/stageshow/SKILL.md` and `references/craft.md` for this change, because it touches a form of UI in some file (app, pill, installer, docs, marketing, README, SVG, i18n, PR capture), and I named the mode, product or illustrated
+- [ ] Product mode: I walked the `verify.md` You see / You do table against the surface in light and dark and listed every film line that would print, each fixed or explained with its state
+- [ ] Illustrated mode: `film.mjs --gate` ended `rehearsal passed` at the shown width, at 390, with `--states` and with `--dark`, run from a `/tmp` copy and never inside `.agents/skills/stageshow`; or I named gap G9 and gave the by-eye review against the closest gold example, and `REHEARSAL.md` sits beside the figure
+- [ ] I said the one difference between my result and the closest gold example or shipped mausVoice surface, and fixed it when mine was the emptier, flatter, smaller or more boxed one
 - [ ] I report which skills I loaded, which I refused, and what each one changed
 - [ ] No hard-coded colour, radius, duration or font size in a component. Tokens come from `apps/desktop/src/styles/`
 - [ ] Both light and dark modes still read correctly. This app ships both
@@ -106,6 +116,10 @@ checking for a mirror, and do not report it as passed.
 ## Branch and review rules
 
 - [ ] Work is on a focused branch, not `main`
+- [ ] `git fetch origin <base>` then `git merge -m "Merge <base> into <branch>" FETCH_HEAD` ran on this branch before the first edit and again before this push, by merge and never by rebase or force-push, and `git merge-base --is-ancestor FETCH_HEAD HEAD` exits 0 on the head I am about to push
+- [ ] The gates above ran on the merged tree, not on the tree from before the base came in
+- [ ] I read every commit the base merge brought into a file, package, rule document or gate my work touches, and the round log says nothing, reuse, restructure or work around for each
+- [ ] After the human confirmed the merge and it landed, the head branch is gone from the remote, checked with `gh api repos/<owner>/<repo>/branches/<head>`
 - [ ] I did not merge any branch without the explicit human confirmation `AGENTS.md` requires
 - [ ] I loaded `REVIEW.md` and ran the CodeRabbit re-review loop, up to three times, until the output is issue free
 - [ ] The PR body includes the Verification Gate results and the head SHA

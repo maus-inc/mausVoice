@@ -13,3 +13,4 @@
 # CI-downloaded resources (VC++ Redistributable, etc.)
 /resources/*
 !/resources/trigger-hotkey.sh
+!/resources/geist-pixel-OFL-1.1.txt

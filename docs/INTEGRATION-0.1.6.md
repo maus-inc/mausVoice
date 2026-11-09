@@ -1,5 +1,10 @@
 # 0.1.6 integration staging
 
+Historical record. The `integration/0.1.6-staging` branch no longer exists on the remote, so
+the protocol below is closed. The rebase step in it predates the standing rule in `AGENTS.md`,
+"Keep the branch current with its base", which brings a base in by merge and never rebases a
+pushed branch. Do not copy the rebase step into new work.
+
 Landing point for the remaining 0.1.6 work.
 
 ```

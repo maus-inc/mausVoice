@@ -4,6 +4,7 @@ import { setAppState } from "../store";
 import {
   getDefaultHotkeyCombosForAction,
   getHotkeyCombosForAction,
+  getKeycapLegend,
   getPrettyKeyName,
   getStyleSwitchActionNamesForKey,
   DICTATE_HOTKEY,
@@ -11,7 +12,11 @@ import {
   syncHotkeyCombosToNative,
 } from "./keyboard.utils";
 
-const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }));
+const { invokeMock, getPlatformMock } = vi.hoisted(() => ({
+  invokeMock: vi.fn(),
+  getPlatformMock: vi.fn(() => "linux"),
+}));
+vi.mock("./platform.utils", () => ({ getPlatform: getPlatformMock }));
 
 vi.mock("@tauri-apps/api/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@tauri-apps/api/core")>();
@@ -150,6 +155,57 @@ describe("getPrettyKeyName", () => {
 
   it("preserves side suffix on bare Meta* without a side", () => {
     expect(getPrettyKeyName("Meta")).toBe("⊞");
+  });
+});
+
+describe("getKeycapLegend", () => {
+  it("uses compact bundled-font labels for Space and Meta", () => {
+    expect(getKeycapLegend("Space")).toEqual({ label: "SPC" });
+    expect(getKeycapLegend("Meta")).toEqual({ label: "Win" });
+  });
+
+  it("uses bundled-font modifier labels on macOS without changing accessible names", () => {
+    getPlatformMock.mockReturnValueOnce("macos");
+    expect(getKeycapLegend("MetaLeft")).toEqual({
+      label: "Cmd",
+      sublabel: "Left",
+    });
+    getPlatformMock.mockReturnValueOnce("macos");
+    expect(getKeycapLegend("AltRight")).toEqual({
+      label: "Alt",
+      sublabel: "Right",
+    });
+    getPlatformMock.mockReturnValueOnce("macos");
+    expect(getKeycapLegend("ControlLeft")).toEqual({
+      label: "Ctrl",
+      sublabel: "Left",
+    });
+    getPlatformMock.mockReturnValueOnce("macos");
+    expect(getPrettyKeyName("MetaLeft")).toBe("⌘ L");
+  });
+
+  it.each([
+    ["ShiftLeft", "⇧", "Left"],
+    ["ShiftRight", "⇧", "Right"],
+    ["ControlLeft", "Ctrl", "Left"],
+    ["AltRight", "Alt", "Right"],
+    ["OptionLeft", "Alt", "Left"],
+    ["MetaRight", "Win", "Right"],
+  ])("stacks %s as %s over %s", (input, label, sublabel) => {
+    expect(getKeycapLegend(input)).toEqual({ label, sublabel });
+  });
+
+  it.each([
+    "KeyA",
+    "LeftArrow",
+    "ArrowLeft",
+    "CustomRight",
+    "constructor",
+    "__proto__",
+  ])("leaves %s as a single line", (input) => {
+    expect(getKeycapLegend(input)).toEqual({
+      label: getPrettyKeyName(input),
+    });
   });
 });
 
