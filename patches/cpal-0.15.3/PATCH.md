@@ -189,6 +189,15 @@ of those stages. Capture also backs off on nonblocking reads that return
 covers persistent `EAGAIN` and zero reads. These tests do not cover physical
 devices.
 
+The WASAPI worker priority call now uses `GetCurrentThread`'s pseudo-handle
+rather than converting a thread ID into a handle. The existing time-critical
+priority request can therefore take effect; it remains best-effort and may
+increase scheduling contention if a callback runs too long. A portable adapter
+checks the handle and failure path; a standalone Windows CI test is configured
+to check actual priority on its own temporary thread and restore the original
+priority. This does not verify physical audio or guarantee the request succeeds
+elsewhere.
+
 The WASAPI change is local: always join the stream thread and close its event
 handle even if sending the termination command fails because the receiver has
 already disconnected. A disconnected receiver alone does not prove that the
@@ -226,10 +235,10 @@ panicking on an out-of-range driver value.
 
 Upstream tracks the silent-packet defect in [issue 1376](https://github.com/RustAudio/cpal/issues/1376);
 [PR 1384](https://github.com/RustAudio/cpal/pull/1384) proposes broader checks but
-was closed without merging. None of this is verified on Windows: the changed
-code is type-checked for `x86_64-pc-windows-msvc`, and source-contract tests
-assert the ordering and release decisions, but no Windows runtime, driver, or
-physical device has exercised it.
+was closed without merging. Apart from the separate worker-priority test above,
+these WASAPI changes are not runtime-verified on Windows: source-contract tests
+assert the ordering and release decisions, but no Windows audio driver or
+physical device has exercised them.
 
 Remove this patch only after upgrading CPAL and verifying named-device capture,
 disconnection, and teardown on macOS and Windows. The desktop crate also receives

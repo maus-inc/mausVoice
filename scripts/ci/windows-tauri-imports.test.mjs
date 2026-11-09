@@ -309,6 +309,24 @@ describe("Windows-gated coverage is recorded, not silent", () => {
     );
   });
 
+  it("runs the standalone WASAPI priority test on Windows", () => {
+    assert.match(
+      windowsJobBody.text,
+      /rustc --edition=2021 --test patches\/cpal-0\.15\.3\/tests\/wasapi_thread_priority_adapter\.rs/,
+      "the native priority test must be compiled independently of WebView2",
+    );
+    assert.match(
+      windowsJobBody.text,
+      /--list \| grep -Fx 'native_tests::boosts_the_running_thread_and_restores_its_priority: test'/,
+      "a zero-test binary must not silently pass",
+    );
+    assert.match(
+      windowsJobBody.text,
+      /wasapi-priority-test\.exe" --exact native_tests::boosts_the_running_thread_and_restores_its_priority/,
+      "the Windows test must actually execute",
+    );
+  });
+
   it("executes none of them, and says why in the workflow", () => {
     assert.doesNotMatch(
       windowsJobBody.text,
