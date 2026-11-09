@@ -1,4 +1,7 @@
-import type { PasteOutcome } from "@maus-inc/desktop-native-apis";
+import type {
+  PasteOutcome,
+  SimulatedTypingOutcome,
+} from "@maus-inc/desktop-native-apis";
 import { invoke } from "@tauri-apps/api/core";
 import type {
   RouteTranscriptOutputArgs,
@@ -119,7 +122,7 @@ export const insertLocalTranscriptOutputViaPaste = async (
 export const insertLocalTranscriptOutputViaTyping = async (
   text: string,
   delayMs: number,
-): Promise<void> => {
+): Promise<SimulatedTypingOutcome> => {
   const sanitized = sanitizeIndentation(text);
 
   // ReentryGuard serializes simulate_type, so cancel_typing always
@@ -141,7 +144,7 @@ export const insertLocalTranscriptOutputViaTyping = async (
   window.addEventListener("keydown", keydownHandler);
 
   try {
-    await invoke("simulate_type", {
+    return await invoke<SimulatedTypingOutcome>("simulate_type", {
       text: sanitized,
       delayMs,
     });
@@ -201,10 +204,12 @@ const insertLocalOutput = async (
   context: OutputContext,
   text: string,
   isInterim?: boolean,
-): Promise<PasteOutcome | undefined> => {
+): Promise<PasteOutcome | SimulatedTypingOutcome> => {
   if (getInsertionMethod(context) === "type") {
-    await insertLocalTranscriptOutputViaTyping(text, getTypingSpeedMs(context));
-    return undefined;
+    return insertLocalTranscriptOutputViaTyping(
+      text,
+      getTypingSpeedMs(context),
+    );
   }
 
   return insertLocalTranscriptOutputViaPaste(
@@ -247,7 +252,10 @@ const resolveLocalInsertResult = (
   outputText: string,
   outcome: Awaited<ReturnType<typeof insertLocalOutput>>,
 ): RouteTranscriptOutputResult => {
-  if (args.isInterim && outcome === "copied_to_clipboard") {
+  if (
+    outcome === "cancelled_before_start" ||
+    (args.isInterim && outcome === "copied_to_clipboard")
+  ) {
     return { delivered: false, remote: false, deliveredText: null };
   }
 
@@ -424,6 +432,10 @@ export const drainDictationBacklog = async (
   const pasteOutcome = await runWithSimulatedTypingHooks(context, hooks, () =>
     insertLocalOutput(context, combinedText),
   );
+
+  if (pasteOutcome === "cancelled_before_start") {
+    return { delivered: false, copiedToClipboard: false };
+  }
 
   // Post-delivery nonce check: session may have advanced during the
   // async deliver call.
