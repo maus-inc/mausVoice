@@ -189,13 +189,33 @@ describe("MicrophoneDialog readiness settings", () => {
     );
   });
 
-  it("offers the pre-roll even when keeping ready is off", async () => {
+  it("offers the pre-roll even when keeping ready is off, and says it needs a held stream", async () => {
     await renderDialog();
 
-    // The pre-roll matters most with keep-ready off: the device is opened at the
-    // press, so anything spoken before it is otherwise lost. Hiding the control
-    // here left it unreachable for the case where it does the most work.
+    // The slider stays reachable because it is not a keep-ready setting -- a
+    // user weighing keep-ready should be able to see what pre-roll would buy
+    // them. But it cannot deliver anything cold: the ring is a property of a
+    // stream, so with nothing open at the press it is allocated empty. Saying so
+    // is the difference between a setting that disappoints and one that
+    // explains itself.
     expect(text()).toContain("Audio kept before the press");
+    expect(text()).toContain(
+      "This only applies while the microphone is already open",
+    );
+  });
+
+  it("does not repeat the held-stream caveat once the microphone is held", async () => {
+    // With keep-ready on, the ring is already collecting, so the caveat is
+    // false and telling the user their pre-roll does nothing would be wrong.
+    produceAppState((draft) => {
+      draft.userPrefs = prefs({ keepMicrophoneReady: true });
+    });
+    await renderDialog();
+
+    expect(text()).toContain("Audio kept before the press");
+    expect(text()).not.toContain(
+      "This only applies while the microphone is already open",
+    );
   });
 
   it("keeps the pre-roll slider reachable when the value is zero", async () => {
