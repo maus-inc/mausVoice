@@ -10,8 +10,13 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { fileURLToPath } from "node:url";
 
-const ROOT = new URL("../..", import.meta.url).pathname;
+// `fileURLToPath`, not `URL.pathname`: a path containing a space comes back
+// percent-encoded from `pathname`, so a checkout at "/home/me/my repo" produced
+// "/home/me/my%20repo/docs/..." and every readFileSync below failed with ENOENT
+// before a single row was checked.
+const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const DOC = join(ROOT, "docs/qa/warm-microphone-edge-cases.md");
 
 const walk = (dir, extensions) => {
@@ -47,13 +52,26 @@ const isTestName = (token) =>
   // would not reach here, while short identifiers are excluded by length.
   token.includes("_");
 
+// A sentence-style name as `it("...")` writes it.
+//
+// The old test for this was a looser three-word regex, which accepted
+// `pactl list source-outputs` -- a shell command in backticks -- as a citation.
+// A command is not a test, so it is excluded by shape and, below, by having to
+// appear as a quoted test name in the source.
+const looksLikeSentenceName = (token) =>
+  /^[a-z][a-z0-9 ,.'()\-]*$/.test(token) &&
+  token.includes(" ") &&
+  !/[=/|:]/.test(token);
+
+const escapeRe = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 test("every test cited by the edge-case matrix exists", () => {
   const doc = readFileSync(DOC, "utf8");
   const cited = [...new Set(doc.match(/`([^`]+)`/g) ?? [])]
     .map((match) => match.slice(1, -1))
     // Sentence-style names belong to `it("...")` tests and are matched verbatim.
     .filter(
-      (token) => isTestName(token) || /^[a-z]+ [a-z-]+ [a-z]/.test(token),
+      (token) => isTestName(token) || looksLikeSentenceName(token),
     );
 
   assert.ok(
@@ -61,7 +79,16 @@ test("every test cited by the edge-case matrix exists", () => {
     `expected the matrix to cite at least 40 tests, found ${cited.length}`,
   );
 
-  const missing = cited.filter((name) => !corpus.includes(name));
+  // A sentence-style name counts only if it is written as a quoted test name
+  // somewhere in the source. Without this, any lowercase prose in backticks was
+  // accepted as a citation, so the check passed on text rather than on tests.
+  const isQuotedName = (name) =>
+    new RegExp(`["'\`]${escapeRe(name)}["'\`]`).test(corpus);
+  const missing = cited.filter(
+    (name) =>
+      !corpus.includes(name) &&
+      !(looksLikeSentenceName(name) && isQuotedName(name)),
+  );
   assert.deepEqual(
     missing,
     [],

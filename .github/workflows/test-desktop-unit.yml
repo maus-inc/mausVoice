@@ -21,6 +21,9 @@ on:
       - "scripts/ci/check-bindings-guard.test.mjs"
       - "scripts/ci/check-workflow-pins.test.mjs"
       - "scripts/ci/verify-scripts-load.test.mjs"
+      # The guard reads these, so a change to one of them is exactly the edit
+      # most likely to break it and the one that would not start the job.
+      - "scripts/verify/**"
       - "scripts/ci/windows-tauri-imports.test.mjs"
       # Every suite this workflow runs, and the config `dev-surface-contracts`
       # reads. A guard whose own edit does not match the trigger filter does not

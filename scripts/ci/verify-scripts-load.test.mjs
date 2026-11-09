@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -50,6 +51,16 @@ const scriptNames = readdirSync(VERIFY_DIR).filter((name) =>
 test("the verify directory has scripts to check", () => {
   assert.ok(scriptNames.length > 0, "expected at least one script");
 });
+
+// Check 2 from the header. The shadowing check below cannot see a syntax error,
+// and nothing else here imports these files, so Node parses each one itself.
+for (const name of scriptNames) {
+  test(`${name} parses`, () => {
+    execFileSync(process.execPath, ["--check", join(VERIFY_DIR, name)], {
+      stdio: "pipe",
+    });
+  });
+}
 
 for (const name of scriptNames) {
   test(`${name} does not shadow a global it uses`, () => {
