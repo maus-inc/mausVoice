@@ -28,6 +28,10 @@ import { CopyableCommand } from "@desktop/components/common/CopyableCommand";
 import { EditTypography } from "@desktop/components/common/EditTypography";
 import { ListTile } from "@desktop/components/common/ListTile";
 import { Logo } from "@desktop/components/common/Logo";
+import {
+  hasProviderLogo,
+  ProviderLogo,
+} from "@desktop/components/common/provider-logos/ProviderLogo";
 import { LogoWithText } from "@desktop/components/common/LogoWithText";
 import { OverflowTypography } from "@desktop/components/common/OverflowTypography";
 import { TypographyWithMore } from "@desktop/components/common/TypographyWithMore";
@@ -345,6 +349,77 @@ export const LogoDemo = () => (
       </State>
       <State label="with wordmark">
         <LogoWithText />
+      </State>
+    </Matrix>
+  </DemoSection>
+);
+
+/** Providers the app can store, in the order `API_KEY_PROVIDERS` lists them. */
+const PROVIDERS = [
+  "groq",
+  "openai",
+  "aldea",
+  "assemblyai",
+  "elevenlabs",
+  "deepgram",
+  "gladia",
+  "openrouter",
+  "ollama",
+  "openai-compatible",
+  "azure",
+  "deepseek",
+  "gemini",
+  "claude",
+  "cerebras",
+  "speaches",
+  "xai",
+] as const;
+
+export const ProviderLogoDemo = () => (
+  <DemoSection
+    title="ProviderLogo"
+    hint="Each provider's own mark, as published — never recoloured, never on a chip. The four providers with no verifiable artwork render nothing, and the name beside them carries the identity."
+  >
+    <Matrix>
+      <State label="18px · beside the name (as in a key card)">
+        <Stack spacing={0.75}>
+          {PROVIDERS.map((provider) => (
+            <Box
+              key={provider}
+              sx={{ display: "flex", alignItems: "center", gap: 0.75 }}
+            >
+              <ProviderLogo provider={provider} size={18} />
+              <Typography variant="caption" sx={{ color: "text.secondary" }}>
+                {hasProviderLogo(provider) ? provider : `${provider} (no mark)`}
+              </Typography>
+            </Box>
+          ))}
+        </Stack>
+      </State>
+      <State label="22px · leading a settings row">
+        <Stack direction="row" spacing={1.5} sx={{ flexWrap: "wrap", gap: 1 }}>
+          {PROVIDERS.filter(hasProviderLogo).map((provider) => (
+            <Box
+              key={provider}
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: 40,
+                height: 40,
+                border: 1,
+                borderColor: "divider",
+                borderRadius: 1,
+                bgcolor: "level2",
+              }}
+            >
+              <ProviderLogo provider={provider} size={22} />
+            </Box>
+          ))}
+        </Stack>
+      </State>
+      <State label="the one labelled mark (role=img)">
+        <ProviderLogo provider="deepgram" size={28} label="Deepgram" />
       </State>
     </Matrix>
   </DemoSection>

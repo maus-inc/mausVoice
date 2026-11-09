@@ -1259,6 +1259,45 @@ export const REGISTRY: RegistryEntry[] = [
     ],
   },
 
+  {
+    id: "provider-logo",
+    name: "ProviderLogo · third-party marks",
+    category: "data",
+    status: "reused",
+    statusNote:
+      "Renders the real component and the real vendored artwork. The marks are third-party trademarks used as published: never recoloured, never tinted with the app palette, never placed on a chip. Four providers have no verifiable artwork and render nothing.",
+    sources: [
+      `${D}components/common/provider-logos/ProviderLogo.tsx`,
+      `${D}components/common/provider-logos/ProviderLogos.tsx (generated)`,
+      `${D}assets/provider-logos/ (artwork + provenance README)`,
+    ],
+    usedIn: [
+      `${D}components/settings/ApiKeyList.tsx`,
+      `${D}components/settings/home/YourModelsCard.tsx`,
+      `${D}components/settings/pages/AiModelsSettingsPage.tsx`,
+      `${D}components/settings/PersonalApiKeyDialog.tsx`,
+    ],
+    demo: "provider-logo",
+    spec: [
+      {
+        key: "provider-logo-size",
+        label: "Mark size (key card caption)",
+        type: "number",
+        default: 18,
+        min: 14,
+        max: 32,
+        step: 2,
+        unit: "px",
+        target: {
+          kind: "source",
+          file: `${D}components/settings/ApiKeyList.tsx`,
+        },
+        mapsTo: `${D}components/settings/ApiKeyList.tsx → <ProviderLogo size> (16 in the provider menu, 14 in a card caption, 20–22 leading a settings row) — patch-only`,
+        help: "The marks clear the 3:1 graphic-contrast floor at every size the app uses; below 14px the thinner marks — ElevenLabs' two bars, Deepgram's spiral — start to close up.",
+      },
+    ],
+  },
+
   // ─── Navigation ─────────────────────────────────────────────────
   {
     id: "dashboard-menu",
