@@ -111,6 +111,8 @@ checking for a mirror, and do not report it as passed.
 ## Branch and review rules
 
 - [ ] Work is on a focused branch, not `main`
+- [ ] `git fetch origin <base>` then `git merge -m "Merge <base> into <branch>" FETCH_HEAD` ran on this branch before the first edit and again before this push, by merge and never by rebase or force-push, and `git merge-base --is-ancestor FETCH_HEAD HEAD` exits 0 on the head I am about to push
+- [ ] The gates above ran on the merged tree, not on the tree from before the base came in
 - [ ] I did not merge any branch without the explicit human confirmation `AGENTS.md` requires
 - [ ] I loaded `REVIEW.md` and ran the CodeRabbit re-review loop, up to three times, until the output is issue free
 - [ ] The PR body includes the Verification Gate results and the head SHA

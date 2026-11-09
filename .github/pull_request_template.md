@@ -8,7 +8,9 @@ Everything below this paragraph returns inside a collapsible block, except the v
 
 Head SHA: `0000000000000000000000000000000000000000`
 
-Replace the zero placeholder with the current 40-character hexadecimal PR head SHA. A result from an earlier edit does not verify this head.
+Base: `<base branch>` at `0000000000000000000000000000000000000000`, contained in the head above.
+
+Replace both zero placeholders. The head is the current 40-character hexadecimal PR head SHA, and a result from an earlier edit does not verify this head. The base is `git rev-parse FETCH_HEAD` right after `git fetch origin <base>`, and `git merge-base --is-ancestor FETCH_HEAD HEAD` must exit 0 for the head you name.
 
 - `pnpm install --frozen-lockfile`: <passed, failed, or not run with reason>
 - `pnpm run lint`: <passed, failed, or not run with reason>
@@ -149,6 +151,7 @@ Rules for this log.
 ## Checklist
 
 - [ ] I confirmed the base branch this work was cut from, and the PR does not target `main` with unmerged base work.
+- [ ] I merged the current tip of the base into this branch before the first edit and before every push, and the gates above ran on the merged tree.
 - [ ] I ran the applicable gate commands on the head SHA above.
 - [ ] I recorded the code research gate notes, including the named pattern class.
 - [ ] I applied `REVIEW.md` and the relevant `FULL-REVIEW.md` modules, up to three passes, and fixed every critical, major, minor, nitpick, and UI finding.
