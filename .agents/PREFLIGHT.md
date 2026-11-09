@@ -15,6 +15,7 @@ This file is the short form. `AGENTS.md` holds the binding rules, and the
 - [ ] `pnpm run format:check`
 - [ ] `pnpm run test:secret-scan`
 - [ ] `node scripts/ci/verify-skills.mjs` if you touched `.agents/skills/` or `skills-lock.json`
+- [ ] `node scripts/ci/verify-skills.mjs` printed no `IGNORED` line, if you installed or updated a skill; fix one with a scoped `.gitignore` negation, never by deleting the file
 - [ ] `pnpm gen:bindings` produced no diff, if you touched a Tauri command or `packages/desktop-native-apis`
 
 Touched-package checks, the ones `AGENTS.md` names:
@@ -95,6 +96,10 @@ checking for a mirror, and do not report it as passed.
 - [ ] For a change a user sees, I read `apps/desktop/DESIGN.md` first, then `apps/desktop/docs/design-system-baseline.md` and `engineering/motion-design.md`, before editing
 - [ ] The component I touched has a spec in `apps/preview/specs/`, and I followed it or wrote down why I did not
 - [ ] I loaded the skills the routing table in `engineering/design-skills.md` requires for this task, in its mandatory order
+- [ ] I loaded `.agents/skills/stageshow/SKILL.md` and `references/craft.md` for this change, because it touches a form of UI in some file (app, pill, installer, docs, marketing, README, SVG, i18n, PR capture), and I named the mode, product or illustrated
+- [ ] Product mode: I walked the `verify.md` You see / You do table against the surface in light and dark and listed every film line that would print, each fixed or explained with its state
+- [ ] Illustrated mode: `film.mjs --gate` ended `rehearsal passed` at the shown width, at 390, with `--states` and with `--dark`, run from a `/tmp` copy and never inside `.agents/skills/stageshow`; or I named gap G9 and gave the by-eye review against the closest gold example, and `REHEARSAL.md` sits beside the figure
+- [ ] I said the one difference between my result and the closest gold example or shipped mausVoice surface, and fixed it when mine was the emptier, flatter, smaller or more boxed one
 - [ ] I report which skills I loaded, which I refused, and what each one changed
 - [ ] No hard-coded colour, radius, duration or font size in a component. Tokens come from `apps/desktop/src/styles/`
 - [ ] Both light and dark modes still read correctly. This app ships both
