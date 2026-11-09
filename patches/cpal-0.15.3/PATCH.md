@@ -68,6 +68,11 @@ macOS hardware. In particular, a device may report a zero buffer-size range.
 
 ALSA stream setup uses the wrapper's fallible poll descriptor count, so a
 native error is returned before allocating descriptors or starting a worker.
+Playback pause now propagates ALSA errors rather than reporting a successful
+pause while the device may still be running. Null-device fault injection covers
+unsupported and I/O errors and a simulated successful return; physical playback
+is unverified. Playback `play` still ignores errors from its resume call and
+needs separate state handling.
 
 ALSA capability discovery and stream setup now use the same native-endian
 sample-format mapping. The previous discovery path always tested little-endian

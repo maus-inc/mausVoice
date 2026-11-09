@@ -1637,8 +1637,7 @@ impl StreamTrait for Stream {
                 })
                 .map_err(|description| BackendSpecificError { description }.into());
         }
-        self.inner.channel().pause(true).ok();
-        Ok(())
+        self.inner.channel().pause(true).map_err(Into::into)
     }
 }
 

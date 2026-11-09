@@ -72,6 +72,8 @@ rows=(
   # Start, stop, pause and resume faults.
   "alsa_start_failure||cpal_alsa_failed_start_retains_an_uncertain_active_device"
   "alsa_stop_failure||cpal_alsa_failed_stop_retains_ownership_until_retry_succeeds"
+  "alsa_pause_failure||cpal_alsa_playback_reports_unsupported_pause"
+  "alsa_pause_failure||cpal_alsa_playback_reports_pause_io_error"
   "alsa_pause_failure||cpal_alsa_unsupported_pause_keeps_recording"
   "alsa_pause_failure||cpal_alsa_failed_pause_marks_partial_capture"
   "alsa_pause_failure||cpal_alsa_failed_resume_marks_partial_capture"

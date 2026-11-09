@@ -3399,6 +3399,63 @@ mod cpal_impl {
         }
 
         #[cfg(target_os = "linux")]
+        fn exercise_alsa_playback_pause_failure(mode: libc::c_int) {
+            use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+            use std::sync::mpsc;
+            use std::time::Duration;
+
+            let arm: unsafe extern "C" fn(libc::c_int) =
+                unsafe { std::mem::transmute(alsa_probe_symbol(c"maus_test_arm_alsa_pause")) };
+            let calls: unsafe extern "C" fn() -> libc::c_int =
+                unsafe { std::mem::transmute(alsa_probe_symbol(c"maus_test_alsa_pause_calls")) };
+            let device = cpal::default_host().default_output_device().unwrap();
+            let supported = device.default_output_config().unwrap();
+            let format = supported.sample_format();
+            let config: cpal::StreamConfig = supported.into();
+            let (tx, rx) = mpsc::sync_channel(1);
+            let stream = device
+                .build_output_stream_raw(
+                    &config,
+                    format,
+                    move |data, _| {
+                        data.bytes_mut().fill(0);
+                        let _ = tx.try_send(());
+                    },
+                    |_| {},
+                    None,
+                )
+                .unwrap();
+            stream.play().unwrap();
+            rx.recv_timeout(Duration::from_secs(2)).unwrap();
+            unsafe { arm(mode) };
+            let error = stream
+                .pause()
+                .expect_err("ALSA pause failure must be reported");
+            assert!(error.to_string().contains("snd_pcm_pause"));
+            assert_eq!(unsafe { calls() }, 1);
+            // Propagate a simulated successful native return too. The null
+            // PCM can race from running to XRUN before a real retry reaches it.
+            unsafe { arm(6) };
+            stream.pause().unwrap();
+            assert_eq!(unsafe { calls() }, 1);
+            drop(stream);
+        }
+
+        #[cfg(target_os = "linux")]
+        #[test]
+        #[ignore = "requires ALSA null and the test-only pause-failure preload"]
+        fn cpal_alsa_playback_reports_unsupported_pause() {
+            exercise_alsa_playback_pause_failure(4);
+        }
+
+        #[cfg(target_os = "linux")]
+        #[test]
+        #[ignore = "requires ALSA null and the test-only pause-failure preload"]
+        fn cpal_alsa_playback_reports_pause_io_error() {
+            exercise_alsa_playback_pause_failure(5);
+        }
+
+        #[cfg(target_os = "linux")]
         #[test]
         #[ignore = "requires an isolated ALSA null capture device"]
         fn cpal_alsa_input_waits_for_play_and_can_be_dropped_unstarted() {
