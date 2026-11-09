@@ -215,8 +215,11 @@ const logFinalizedTranscript = (
   toneId: string | null | undefined,
   appName: string | null | undefined,
 ): void => {
+  const transcriptSummary = rawTranscript
+    ? `${rawTranscript.length} chars`
+    : "empty";
   getLogger().verbose(
-    `Transcription result: rawTranscript=${rawTranscript ? `${rawTranscript.length} chars` : "empty"}, toneId=${toneId ?? "none"}, app=${appName ?? "unknown"}`,
+    `Transcription result: rawTranscript=${transcriptSummary}, toneId=${toneId ?? "none"}, app=${appName ?? "unknown"}`,
   );
 };
 
@@ -305,25 +308,28 @@ const toastEmptyTranscriptionOutcome = (
   recordingAudioSaved: boolean,
   incompleteLiveAudio = false,
 ): void => {
-  const message = incompleteLiveAudio
-    ? recordingAudioSaved
-      ? formatMessage({
-          defaultMessage:
-            "Incomplete transcription: recording saved for retry. Some text may already have been inserted.",
-        })
-      : formatMessage({
-          defaultMessage:
-            "Incomplete transcription: recording audio not saved. Some text may already have been inserted.",
-        })
-    : recordingAudioSaved
-      ? formatMessage({
-          defaultMessage:
-            "Transcription failed. Your recording is saved so you can retry.",
-        })
-      : formatMessage({
-          defaultMessage:
-            "Transcription failed. The recording audio was not saved.",
-        });
+  let message: string;
+  if (incompleteLiveAudio && recordingAudioSaved) {
+    message = formatMessage({
+      defaultMessage:
+        "Incomplete transcription: recording saved for retry. Some text may already have been inserted.",
+    });
+  } else if (incompleteLiveAudio) {
+    message = formatMessage({
+      defaultMessage:
+        "Incomplete transcription: recording audio not saved. Some text may already have been inserted.",
+    });
+  } else if (recordingAudioSaved) {
+    message = formatMessage({
+      defaultMessage:
+        "Transcription failed. Your recording is saved so you can retry.",
+    });
+  } else {
+    message = formatMessage({
+      defaultMessage:
+        "Transcription failed. The recording audio was not saved.",
+    });
+  }
   fireAndForgetToast(
     showToast,
     { message, toastType: "error", duration: 8_000 },
