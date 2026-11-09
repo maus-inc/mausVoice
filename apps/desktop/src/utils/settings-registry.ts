@@ -183,11 +183,43 @@ export const SETTING_ENTRIES: SettingEntry[] = [
 
   ...settingsForGroup("ai-models", "transcription", {
     deepgram_api_key: ["deepgram", "streaming", "api key"],
-    ai_transcription: ["stt", "speech to text", "model", "local"],
+    // The provider names people type are aliases, not titles: the row is
+    // called "AI transcription", and someone looking for the place their
+    // AssemblyAI or ElevenLabs key lives searches for the provider.
+    ai_transcription: [
+      "stt",
+      "speech to text",
+      "model",
+      "local",
+      "whisper",
+      "assemblyai",
+      "elevenlabs",
+      "gladia",
+      "azure",
+      "gemini",
+      "openai",
+      "openrouter",
+      "speaches",
+      "xai",
+      "grok",
+    ],
   }),
   ...settingsForGroup("ai-models", "post_processing", {
     groq_api_key: ["groq", "llm", "api key"],
-    ai_post_processing: ["polish", "cleanup", "llm"],
+    ai_post_processing: [
+      "polish",
+      "cleanup",
+      "llm",
+      "openai",
+      "openrouter",
+      "ollama",
+      "azure",
+      "deepseek",
+      "gemini",
+      "claude",
+      "anthropic",
+      "cerebras",
+    ],
     fast_styling_for_short_dictations: [
       "short dictation",
       "fast style",
@@ -195,7 +227,7 @@ export const SETTING_ENTRIES: SettingEntry[] = [
     ],
   }),
   ...settingsForGroup("ai-models", "assistant", {
-    assistant_mode: ["agent", "chat", "assistant"],
+    assistant_mode: ["agent", "chat", "assistant", "claude", "gpt"],
   }),
   ...settingsForGroup("ai-models", "styles", {
     styling_mode: ["app styles", "manual styles"],

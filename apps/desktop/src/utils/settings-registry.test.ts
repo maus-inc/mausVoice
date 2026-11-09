@@ -175,6 +175,35 @@ describe("settings registry", () => {
     ).toContain("incognito_mode");
   });
 
+  it("finds a provider's settings by the provider's name", () => {
+    // The rows are titled by what they do ("AI transcription"), so someone
+    // looking for where their provider's key lives searches the provider. Each
+    // name has to reach the row that owns it, and only that row.
+    const providers: Record<string, string> = {
+      assemblyai: "ai_transcription",
+      elevenlabs: "ai_transcription",
+      gladia: "ai_transcription",
+      speaches: "ai_transcription",
+      cerebras: "ai_post_processing",
+      deepseek: "ai_post_processing",
+      ollama: "ai_post_processing",
+    };
+    for (const [provider, key] of Object.entries(providers)) {
+      expect(
+        searchSettings(provider).map((hit) => hit.entry.key),
+        `searching ${provider}`,
+      ).toContain(key);
+    }
+    // Anthropic is the company, Claude the product: both must land on the row
+    // that picks the model.
+    for (const alias of ["claude", "anthropic"]) {
+      expect(
+        searchSettings(alias).map((hit) => hit.entry.key),
+        `searching ${alias}`,
+      ).toContain("ai_post_processing");
+    }
+  });
+
   it("returns titles from the catalog and falls back to the key", () => {
     expect(settingTitleOf("review_before_insert")).toBe(
       messages["review_before_insert"],

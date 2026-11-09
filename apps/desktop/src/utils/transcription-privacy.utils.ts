@@ -23,6 +23,14 @@ import {
 export type TranscriptionAudioDisclosure = {
   kind: TranscriptionSessionKind;
   providerName: string | null;
+  /**
+   * The provider id behind `providerName`, for surfaces that show its mark.
+   *
+   * Kept beside the name rather than re-derived at the call site: the name is
+   * what the sentence says, and the id is only ever used to draw the provider's
+   * own artwork. Null in exactly the cases `providerName` is.
+   */
+  provider: ApiKeyProvider | null;
 };
 
 /**
@@ -54,9 +62,11 @@ export const getTranscriptionAudioDisclosure = (
 ): TranscriptionAudioDisclosure => {
   const mode = getEffectiveTranscriptionMode(state);
   const provider = getSelectedTranscriptionProvider(state);
+  const providerName = readProviderName(provider);
   return {
     kind: resolveTranscriptionSessionKind({ mode, provider }),
-    providerName: readProviderName(provider),
+    providerName,
+    provider: providerName === null ? null : provider,
   };
 };
 
