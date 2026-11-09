@@ -16,8 +16,9 @@ const desktopSrc = path.resolve(rootDir, "../desktop/src");
 //
 // This mirrors the desktop's override id function (same module, same
 // derivation) so a preview string and an app string resolve to the same id.
-const formatjsOverrideIdFn = (await import("../desktop/scripts/formatjs-id.mjs"))
-  .formatjsOverrideIdFn as (
+const formatjsOverrideIdFn = (
+  await import("../desktop/scripts/formatjs-id.mjs")
+).formatjsOverrideIdFn as (
   id: string | undefined,
   defaultMessage: string | undefined,
   description: string | undefined,
