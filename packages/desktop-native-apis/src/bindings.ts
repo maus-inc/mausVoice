@@ -1591,7 +1591,25 @@ elevenLabsKeytermsEnabled?: boolean;
 /**
  * Update channel this client is subscribed to: "stable" or "beta".
  */
-updateChannel?: string }
+updateChannel?: string; 
+/**
+ * Hold the capture device open between dictations.
+ * 
+ * These three were added to the TypeScript `UserPreferences` and the UI,
+ * but not to this struct, so `user_preferences_set` silently dropped them:
+ * the preference looked saved until the next launch read back the default.
+ * `serde` ignores unknown fields, so the mismatch was not an error anywhere
+ * -- the values simply never reached the database.
+ */
+keepMicrophoneReady?: boolean; 
+/**
+ * Seconds of audio from before the press that the recorder keeps.
+ */
+microphonePrerollSeconds?: number; 
+/**
+ * How long the device stays open after a dictation stops, in ms.
+ */
+microphoneLingerMs?: number }
 export type UserPreferencesCompareSetExpansionFlagsArgs = { expected: string; flags: string }
 export type UserPreferencesGetArgs = { userId: string }
 export type UserPreferencesSetExpansionFlagsArgs = { flags: string }
