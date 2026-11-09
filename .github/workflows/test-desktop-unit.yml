@@ -19,6 +19,10 @@ on:
       - "scripts/check-bindings.sh"
       - "scripts/bindings.sh"
       - "scripts/ci/check-bindings-guard.test.mjs"
+      # Reads both command lists, so it must run when either changes.
+      - "scripts/ci/bindings-command-parity.test.mjs"
+      - "apps/desktop/src-tauri/src/app.rs"
+      - "apps/desktop/src-tauri/examples/gen_bindings.rs"
       - "scripts/ci/check-workflow-pins.test.mjs"
       - "scripts/ci/verify-scripts-load.test.mjs"
       # The guard reads these, so a change to one of them is exactly the edit
@@ -258,6 +262,12 @@ jobs:
         run: node --test scripts/ci/package-exports.test.mjs
       - name: Test check-bindings tracked-file guard
         run: node --test scripts/ci/check-bindings-guard.test.mjs
+      - name: Test that the bindings generator collects every command
+        # `check-bindings.sh` below compares regenerated output to the committed
+        # file, which catches a drift only after a full Rust build. This test
+        # reads the two `*_commands![...]` lists directly, so a command added to
+        # `app.rs` and not to the generator fails in seconds, by name.
+        run: node --test scripts/ci/bindings-command-parity.test.mjs
       - name: Test workflow action pin guard
         run: node --test scripts/ci/check-workflow-pins.test.mjs
       - name: Test the release script guards
