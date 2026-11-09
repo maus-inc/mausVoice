@@ -219,6 +219,20 @@ describe("i18n catalogs", () => {
     },
   );
 
+  it("uses the translated tip prefix in onboarding announcements", () => {
+    const locales = loadLocales();
+    for (const locale of manifest.supportedLocales as string[]) {
+      const messages = locales[locale];
+      expect(messages.tip, locale).toBeTruthy();
+      expect(
+        messages.tip_choose_a_stronger_model_for_better_results_smaller_or_we.startsWith(
+          messages.tip,
+        ),
+        locale,
+      ).toBe(true);
+    }
+  });
+
   it("localizes the dashboard navigation landmark and page list", () => {
     const locales = loadLocales();
     for (const locale of manifest.supportedLocales.filter(

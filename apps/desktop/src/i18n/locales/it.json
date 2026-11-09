@@ -1017,7 +1017,7 @@
   "this_will_prompt_for_administrator_privileges_uac_so_the_pil": "Questo mostrerà una richiesta di privilegi di amministratore (UAC) così la pillola può catturare e digitare input a livello globale. Continuare?",
   "this_will_request_accessibility_and_microphone_access_so_the": "Questo richiederà l'accesso a Accessibilità e Microfono così la pillola può catturare e digitare input a livello globale. Continuare?",
   "thought_process": "Processo di pensiero",
-  "tip": "Tip:",
+  "tip": "Suggerimento:",
   "tip_choose_a_stronger_model_for_better_results_smaller_or_we": "Suggerimento: Scegli un modello più potente per risultati migliori. I modelli più piccoli o più deboli potrebbero produrre risultati di qualità inferiore.",
   "tip_run_agent_mode_multiple_times_to_keep_refining_it_rememb": "Suggerimento: esegui la modalità agente più volte per continuare a perfezionare! Ricorda cosa c'è nel campo di testo.",
   "title": "Titolo",

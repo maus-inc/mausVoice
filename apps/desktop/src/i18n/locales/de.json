@@ -1017,7 +1017,7 @@
   "this_will_prompt_for_administrator_privileges_uac_so_the_pil": "Dies fordert Administratorrechte an (UAC), damit die Pille Eingaben global erfassen und tippen kann. Fortfahren?",
   "this_will_request_accessibility_and_microphone_access_so_the": "Dies fordert Bedienungshilfen- und Mikrofonzugriff an, damit die Pille Eingaben global erfassen und tippen kann. Fortfahren?",
   "thought_process": "Denkprozess",
-  "tip": "Tip:",
+  "tip": "Tipp:",
   "tip_choose_a_stronger_model_for_better_results_smaller_or_we": "Tipp: Wähle ein stärkeres Modell für bessere Ergebnisse. Kleinere oder schwächere Modelle können eine geringere Ausgabequalität erzeugen.",
   "tip_run_agent_mode_multiple_times_to_keep_refining_it_rememb": "Tipp: Führen Sie den Agenten-Modus mehrmals aus, um weiter zu verfeinern! Er merkt sich, was im Textfeld steht.",
   "title": "Titel",
