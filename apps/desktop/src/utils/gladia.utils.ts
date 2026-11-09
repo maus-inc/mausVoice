@@ -133,9 +133,15 @@ export type StreamingResampler = {
 const concatSamples = (
   left: Float32Array,
   right: Float32Array,
-): Float32Array => {
-  if (left.length === 0) return right.slice();
-  if (right.length === 0) return left;
+  // Narrower than plain `Float32Array`: every array here is built with `new`
+  // or `from`, both of which allocate a real `ArrayBuffer`, and the resampler
+  // keeps its buffer in one. Widening the return would let a `slice()` view
+  // back in and lose that guarantee.
+): Float32Array<ArrayBuffer> => {
+  // Copied rather than shared: `slice`/`subarray` are typed over any
+  // `ArrayBufferLike`, and this pipeline never promises a `SharedArrayBuffer`.
+  if (left.length === 0) return Float32Array.from(right);
+  if (right.length === 0) return Float32Array.from(left);
   const output = new Float32Array(left.length + right.length);
   output.set(left);
   output.set(right, left.length);
@@ -216,7 +222,10 @@ export const createStreamingResampler = (
   return {
     process: (input) => {
       if (input.length === 0) return new Float32Array(0);
-      if (inputRate === outputRate) return input.slice();
+      // `Float32Array.from` rather than `input.slice()`: `slice` is typed as
+      // returning a view over any `ArrayBufferLike`, which includes a
+      // `SharedArrayBuffer` this signature does not promise.
+      if (inputRate === outputRate) return Float32Array.from(input);
       buffer = concatSamples(buffer, input);
       totalInputSamples += input.length;
       return processBuffered(false);
