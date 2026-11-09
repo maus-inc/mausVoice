@@ -1,6 +1,6 @@
 # What was measured, and what was not
 
-Every number in this file was produced by a command run on 2026-11-07 in the
+Every number in this file was produced by a command run on 2026-11-06 in the
 Arena agent sandbox, on branch `arena/05c08045-mausvoice`. Commands that were
 not run are not in the measured column; they are in the unmeasured column with
 what would produce them.
@@ -13,10 +13,11 @@ estimate dressed as a measurement.
 
 | Gate | Command | Result |
 | --- | --- | --- |
-| Rust unit tests | `cargo test --lib` in `apps/desktop/src-tauri` | **517 passed, 0 failed, 1 ignored** |
-| Rust lints | `cargo clippy --lib --all-targets` | 0 warnings, 0 errors |
+| Rust unit tests | `cargo test --locked --lib` in `apps/desktop/src-tauri` | **581 passed, 0 failed, 1 ignored** |
+| Rust lints | `cargo clippy --locked --all-targets -- -D warnings` | 0 warnings, 0 errors |
 | Rust formatting | `cargo fmt --check` | clean |
-| Frontend tests | `vitest run` in `apps/desktop` | **3783 passed, 54 failed** — all 54 in `test/evals` and `test/integration`, which need `GROQ_API_KEY`; nothing under `src/` fails |
+| Frontend tests (unit) | `vitest run src` in `apps/desktop` | **3851 passed, 0 failed** across 338 files |
+| Frontend tests (evals and integration) | `vitest run test` in `apps/desktop` | **not run without `GROQ_API_KEY`** — these suites call a live provider and fail on the missing key, so they are not part of the green figure above |
 | Frontend types | `turbo run check-types` | 9/9 tasks successful |
 | Preview types (TS 5.9) | `tsc --noEmit -p apps/preview/tsconfig.json` | clean |
 | Preview production build | `pnpm --filter @maus-inc/preview build` | built in 16.4 s |
