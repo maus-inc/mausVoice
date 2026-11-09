@@ -862,6 +862,7 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             crate::commands::check_for_channel_update,
             crate::commands::download_and_open_mac_installer,
             crate::commands::set_microphone_linger,
+            crate::commands::set_microphone_preroll,
             crate::commands::warm_microphone,
             crate::commands::close_microphone,
             crate::commands::microphone_ready,

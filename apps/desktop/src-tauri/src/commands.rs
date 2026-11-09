@@ -3715,6 +3715,25 @@ pub fn set_microphone_linger(
     warm.set_linger(linger_millis(linger_ms));
 }
 
+/// How much audio from before a press to keep, in seconds.
+///
+/// The open path takes the pre-roll as an argument, which covers the case where
+/// keep-ready is on and a stream is already held. With keep-ready off there is no
+/// open, so nothing ever set it: a cold press fell back to the recorder's own
+/// 500 ms default and the slider did nothing. This is the same policy-only shape
+/// as [`set_microphone_linger`] -- no device is opened, no state is held, and the
+/// value applies to whichever path opens next.
+#[tauri::command]
+#[specta::specta]
+pub fn set_microphone_preroll(
+    warm: State<'_, Arc<dyn crate::platform::WarmCapture>>,
+    preroll_seconds: f64,
+) {
+    // The same clamp as the open path, and the same NaN and infinity handling:
+    // a value the slider cannot produce must not reach the ring sizing.
+    warm.set_preroll(preroll_duration(preroll_seconds));
+}
+
 /// Closes a microphone held open by [`warm_microphone`], and returns to opening
 /// the device on each press.
 #[tauri::command]

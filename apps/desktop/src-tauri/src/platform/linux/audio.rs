@@ -281,13 +281,22 @@ fn record_loop(
         // Read audio data (blocking)
         if let Err(err) = simple.read(&mut read_buf) {
             log::error!("PulseAudio read error: {err}");
-            // A read that fails before the stop signal is the stream dying under
-            // us -- the device went away, or the server dropped the connection.
-            // Recording that is what makes the result honest: this backend has no
-            // host error callback, so without it the result carries a full
-            // `expected_duration` with no fault and the user gets a silently short
-            // dictation. A failure after the stop signal is the normal shutdown
-            // path, and nothing is reported for it.
+            // Decide between a shutdown and a fault *here*, not after the loop.
+            //
+            // The stop flag used to be sampled once the loop had exited, which
+            // was several steps later: the chunk flush below, its callback, and
+            // whatever that callback did. A stop pressed during any of that
+            // found the flag set and cleared a fault that had already happened,
+            // so a device that died mid-dictation reported a clean, short
+            // recording. Sampling at the failure narrows the window to the two
+            // instructions after a failed read, where only a genuine
+            // simultaneous stop can be mistaken for a shutdown.
+            //
+            // Either way nothing is reported for a normal stop: a stop requested
+            // before the read is caught by the check at the top of the loop.
+            if stop_signal.lock().map(|flag| *flag).unwrap_or(false) {
+                break;
+            }
             read_fault = Some(READ_FAULT_TOKEN.to_string());
             break;
         }
@@ -337,14 +346,8 @@ fn record_loop(
         }
     }
 
-    // The stop flag is the difference between a failed read and a normal
-    // shutdown: the loop notices the flag at the top, so a read that returns an
-    // error after it was set is a shutdown that surfaced as an error, and one
-    // that fails with no flag set is a capture that died.
-    let stopped_by_user = stop_signal.lock().map(|flag| *flag).unwrap_or(false);
-    if stopped_by_user {
-        read_fault = None;
-    }
+    // `read_fault` was decided at the failing read, above. Re-sampling the stop
+    // flag here is what used to let a stop pressed after the failure discard it.
 
     let expected_duration = start.elapsed();
     let duration = if !all_samples.is_empty() {
