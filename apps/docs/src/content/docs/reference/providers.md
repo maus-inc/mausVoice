@@ -7,6 +7,8 @@ sidebar:
 
 The current API-key union contains Groq, OpenAI, Aldea, AssemblyAI, ElevenLabs, Deepgram, Gladia, OpenRouter, Ollama, OpenAI-compatible, Azure, DeepSeek, Gemini, Claude, Cerebras, Speaches, and xAI.
 
+In the app, each of these is labelled with its own brand mark wherever a provider is named: the provider menu on an API-key form, the key cards, the Overview's model rows, the personal-key dialogs, and the sentence that discloses where dictation audio goes. The marks are the providers' published artwork in their own colours, used to identify the provider and nothing else — they do not indicate whether a route is local or remote, they are not endorsement, and four providers (Aldea, Speaches, OpenAI-compatible, and Azure OpenAI) have no verifiable published mark and are identified by name alone. See `apps/desktop/src/assets/provider-logos/README.md` for the artwork's provenance and usage rules.
+
 | Task            | Providers surfaced by current capability code                                                                  |
 | --------------- | -------------------------------------------------------------------------------------------------------------- |
 | Transcription   | Groq, OpenAI, Aldea, AssemblyAI, ElevenLabs, Deepgram, Gladia, OpenRouter, OpenAI-compatible, Azure, Gemini, Speaches, xAI |
