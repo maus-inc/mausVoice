@@ -57,7 +57,11 @@ export const MicrophoneDialog = () => {
   );
   const lingerOn = lingerMs > 0;
   // A zero pre-roll is a deliberate choice: the user asked for a recording that
-  // starts exactly at the press. Hiding the slider then would leave no way back.
+  // starts exactly at the press. The slider therefore stays rendered at zero --
+  // it is the only control that sets this value, so hiding it at the one value a
+  // drag can reach would strand the user with pre-roll off and no way back.
+  // `prerollOn` only chooses the caption, which must not describe a window that
+  // does not exist.
   const prerollOn = prerollSeconds > 0;
 
   const [selected, setSelected] = useState<Nullable<string>>(savedPreference);
@@ -227,28 +231,30 @@ export const MicrophoneDialog = () => {
                 from before it, which matters most when the device is opened at
                 that press: hiding it here left the control unreachable for
                 exactly the case where it does the most work. */}
-            {prerollOn && (
-              <Stack spacing={0.5}>
-                <Typography variant="body2">
-                  <FormattedMessage defaultMessage="Audio kept before the press" />
-                </Typography>
-                <ElasticSlider
-                  value={prerollSeconds}
-                  min={0}
-                  max={MAX_MICROPHONE_PREROLL_SECONDS}
-                  step={0.1}
-                  valueLabelDisplay="auto"
-                  valueLabelFormat={(value) => `${value.toFixed(1)} s`}
-                  ariaLabel={intl.formatMessage({
-                    defaultMessage: "Audio kept before the press",
-                  })}
-                  onCommit={(value) => setMicrophonePrerollSeconds(value)}
-                />
-                <Typography variant="caption" color="text.secondary">
+            <Stack spacing={0.5}>
+              <Typography variant="body2">
+                <FormattedMessage defaultMessage="Audio kept before the press" />
+              </Typography>
+              <ElasticSlider
+                value={prerollSeconds}
+                min={0}
+                max={MAX_MICROPHONE_PREROLL_SECONDS}
+                step={0.1}
+                valueLabelDisplay="auto"
+                valueLabelFormat={(value) => `${value.toFixed(1)} s`}
+                ariaLabel={intl.formatMessage({
+                  defaultMessage: "Audio kept before the press",
+                })}
+                onCommit={(value) => setMicrophonePrerollSeconds(value)}
+              />
+              <Typography variant="caption" color="text.secondary">
+                {prerollOn ? (
                   <FormattedMessage defaultMessage="How much speech to keep from just before you press, so a word you start early is not cut off." />
-                </Typography>
-              </Stack>
-            )}
+                ) : (
+                  <FormattedMessage defaultMessage="Nothing is kept from before the press: the recording starts exactly on the press." />
+                )}
+              </Typography>
+            </Stack>
           </Stack>
 
           <Divider />
@@ -257,7 +263,12 @@ export const MicrophoneDialog = () => {
             <FormControlLabel
               control={
                 <Switch
-                  checked={lingerOn}
+                  // The effective state, not the stored one. Keep-ready holds the
+                  // device forever, so the linger window is on whatever its own
+                  // preference says; showing the stored value left a disabled
+                  // switch reading "off" directly above a caption that said it was
+                  // already on.
+                  checked={keepReady || lingerOn}
                   disabled={keepReady}
                   onChange={(event) =>
                     void setMicrophoneLingerMs(

@@ -198,7 +198,7 @@ describe("MicrophoneDialog readiness settings", () => {
     expect(text()).toContain("Audio kept before the press");
   });
 
-  it("hides the pre-roll when the user set it to zero", async () => {
+  it("keeps the pre-roll slider reachable when the value is zero", async () => {
     await renderDialog();
 
     await act(async () => {
@@ -207,9 +207,19 @@ describe("MicrophoneDialog readiness settings", () => {
       });
     });
 
-    // A zero is a choice, and the switch that brings it back lives in the same
-    // place the slider was.
-    expect(text()).not.toContain("Audio kept before the press");
+    // The slider is the only control that sets this value, so hiding it at zero
+    // -- the value one drag reaches -- left the user unable to turn pre-roll
+    // back on. This test used to assert the opposite, on the strength of a
+    // comment claiming a switch could restore it; no such switch exists.
+    expect(text()).toContain("Audio kept before the press");
+    expect(
+      document.body.querySelector("[data-testid='preroll']"),
+    ).not.toBeNull();
+    // The caption still has to tell the truth about what zero means.
+    expect(text()).toContain("Nothing is kept from before the press");
+    expect(text()).not.toContain(
+      "How much speech to keep from just before you press",
+    );
   });
 
   it("shows the real held state only while keeping ready", async () => {
