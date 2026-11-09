@@ -67,6 +67,11 @@ const held = (keys: string[]) =>
       draft.keysHeld = keys;
     }),
   );
+const flushEffects = async () => {
+  await act(async () => {
+    await Promise.resolve();
+  });
+};
 const start = () => {
   const button = Array.from(container.querySelectorAll("button")).find(
     (element) => element.textContent === "Change hotkey",
@@ -104,7 +109,7 @@ it("saves the complete chord once on release, not intermediate keys", async () =
   held(["ControlLeft", "KeyK"]);
   expect(mocks.save).not.toHaveBeenCalled();
   held(["ControlLeft"]);
-  await act(async () => {});
+  await flushEffects();
   expect(mocks.save).toHaveBeenCalledTimes(1);
   expect(mocks.save.mock.calls[0][0].keys).toEqual(["ControlLeft", "KeyK"]);
   expect(mocks.sync).toHaveBeenCalledTimes(1);
@@ -121,7 +126,8 @@ it("releases the recording guard when unmounted during capture", () => {
 it("cancels without saving when focus leaves during capture", () => {
   start();
   held(["KeyK"]);
-  const panel = container.querySelector<HTMLElement>('[tabindex="0"]')!;
+  const panel = container.querySelector<HTMLElement>('[tabindex="0"]');
+  if (!panel) throw new Error("Capture panel not found");
   act(() => panel.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
   expect(mocks.save).not.toHaveBeenCalled();
   expect(getAppState().isRecordingHotkey).toBe(false);
@@ -138,11 +144,11 @@ it("serializes successive recordings and keeps their persistent identity", async
   start();
   held(["KeyA"]);
   held([]);
-  await act(async () => {});
+  await flushEffects();
   start();
   held(["KeyB"]);
   held([]);
-  await act(async () => {});
+  await flushEffects();
   expect(mocks.save).toHaveBeenCalledTimes(1);
   await act(async () => {
     finishFirst();
@@ -165,7 +171,7 @@ it("rejects modifier-only recordings for the bridge strategy", async () => {
   start();
   held(["ShiftLeft"]);
   held([]);
-  await act(async () => {});
+  await flushEffects();
   expect(mocks.save).not.toHaveBeenCalled();
   expect(mocks.error).toHaveBeenCalledWith(
     expect.stringContaining("non-modifier"),
@@ -177,7 +183,7 @@ it("cancels Escape without saving a shortcut", async () => {
   start();
   held(["Escape"]);
   held([]);
-  await act(async () => {});
+  await flushEffects();
   expect(mocks.save).not.toHaveBeenCalled();
   expect(getAppState().isRecordingHotkey).toBe(false);
 });
@@ -189,7 +195,7 @@ it("continues the save queue after a failed write", async () => {
     start();
     held(["KeyA"]);
     held([]);
-    await act(async () => {});
+    await flushEffects();
     expect(mocks.error).toHaveBeenCalledWith(
       "Failed to save hotkey. Please try again.",
     );
@@ -197,7 +203,7 @@ it("continues the save queue after a failed write", async () => {
     start();
     held(["KeyB"]);
     held([]);
-    await act(async () => {});
+    await flushEffects();
     expect(mocks.save).toHaveBeenCalledTimes(2);
     expect(mocks.sync).toHaveBeenCalledTimes(2);
     expect(mocks.save.mock.calls[1][0].keys).toEqual(["KeyB"]);
@@ -223,7 +229,7 @@ it("restores the previous persisted shortcut if a write fails", async () => {
     start();
     held(["KeyK"]);
     held([]);
-    await act(async () => {});
+    await flushEffects();
     expect(getAppState().hotkeyById.old.keys).toEqual(["KeyX"]);
   } finally {
     error.mockRestore();
@@ -237,7 +243,7 @@ it("removes a newly created optimistic shortcut if its write fails", async () =>
     start();
     held(["KeyK"]);
     held([]);
-    await act(async () => {});
+    await flushEffects();
     expect(getAppState().settings.hotkeyIds).toHaveLength(0);
     expect(
       Object.values(getAppState().hotkeyById).filter(
@@ -272,11 +278,11 @@ it("restores the last successful save after a newer queued save fails", async ()
     start();
     held(["KeyA"]);
     held([]);
-    await act(async () => {});
+    await flushEffects();
     start();
     held(["KeyB"]);
     held([]);
-    await act(async () => {});
+    await flushEffects();
     await act(async () => {
       finishFirst();
     });
@@ -301,7 +307,7 @@ it("does not roll back a newer external shortcut after a save fails", async () =
     start();
     held(["KeyA"]);
     held([]);
-    await act(async () => {});
+    await flushEffects();
     const id = mocks.save.mock.calls[0][0].id;
     act(() =>
       produceAppState((draft) => {
@@ -324,7 +330,7 @@ it("keeps a saved shortcut if native synchronization fails", async () => {
     start();
     held(["KeyK"]);
     held([]);
-    await act(async () => {});
+    await flushEffects();
     const id = mocks.save.mock.calls[0][0].id;
     expect(getAppState().hotkeyById[id].keys).toEqual(["KeyK"]);
     expect(mocks.error).toHaveBeenCalledWith(
@@ -351,11 +357,11 @@ it("resynchronizes a rollback after an earlier native sync was already in flight
     start();
     held(["KeyA"]);
     held([]);
-    await act(async () => {});
+    await flushEffects();
     start();
     held(["KeyB"]);
     held([]);
-    await act(async () => {});
+    await flushEffects();
     expect(mocks.save).toHaveBeenCalledTimes(1);
     await act(async () => {
       finishSync();
@@ -382,7 +388,7 @@ it("rolls back the right binding when the primary changes during a queued save",
     start();
     held(["KeyA"]);
     held([]);
-    await act(async () => {});
+    await flushEffects();
     act(() =>
       produceAppState((draft) => {
         draft.hotkeyById.other = {
@@ -396,7 +402,7 @@ it("rolls back the right binding when the primary changes during a queued save",
     start();
     held(["KeyB"]);
     held([]);
-    await act(async () => {});
+    await flushEffects();
     await act(async () => {
       finishFirst();
     });
@@ -423,7 +429,7 @@ it("rolls back an older failed binding even when a different binding is queued",
     start();
     held(["KeyA"]);
     held([]);
-    await act(async () => {});
+    await flushEffects();
     const firstId = mocks.save.mock.calls[0][0].id;
     act(() =>
       produceAppState((draft) => {
@@ -438,7 +444,7 @@ it("rolls back an older failed binding even when a different binding is queued",
     start();
     held(["KeyB"]);
     held([]);
-    await act(async () => {});
+    await flushEffects();
     await act(async () => {
       failFirst(new Error("disk error"));
     });
@@ -460,7 +466,7 @@ it("serializes a new recording after the form remounts during a pending save", a
   start();
   held(["KeyA"]);
   held([]);
-  await act(async () => {});
+  await flushEffects();
   act(() => root.unmount());
   root = createRoot(container);
   act(() =>
@@ -475,7 +481,7 @@ it("serializes a new recording after the form remounts during a pending save", a
   start();
   held(["KeyB"]);
   held([]);
-  await act(async () => {});
+  await flushEffects();
   expect(mocks.save).toHaveBeenCalledTimes(1);
   await act(async () => finishFirst());
   expect(mocks.save).toHaveBeenCalledTimes(2);
@@ -493,7 +499,7 @@ it("waits for a pending shortcut save before clearing local data", async () => {
   start();
   held(["KeyA"]);
   held([]);
-  await act(async () => {});
+  await flushEffects();
   let drained = false;
   const clearing = beginLocalDataClear().then((release) => {
     drained = true;
@@ -504,7 +510,7 @@ it("waits for a pending shortcut save before clearing local data", async () => {
   start();
   held(["KeyB"]);
   held([]);
-  await act(async () => {});
+  await flushEffects();
   expect(mocks.save).toHaveBeenCalledTimes(1);
   expect(mocks.error).toHaveBeenCalledWith(
     "Failed to save hotkey. Please try again.",
@@ -731,9 +737,13 @@ it.each(["save", "delete"] as const)(
         await Promise.resolve();
       });
       await vi.waitFor(() => expect(mocks.error).toHaveBeenCalled());
+      expect(mocks.error).toHaveBeenCalledTimes(1);
       expect(mocks.error).toHaveBeenCalledWith(
         "Could not activate the current hotkey. Please try again.",
       );
+      expect(
+        operation === "save" ? mocks.save : mocks.delete,
+      ).toHaveBeenCalledTimes(1);
       if (operation === "save")
         expect(getAppState().hotkeyById.custom.keys).toEqual(["KeyB"]);
       else expect(getAppState().hotkeyById.custom).toBeUndefined();
