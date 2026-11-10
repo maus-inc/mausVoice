@@ -224,6 +224,35 @@ export const ensurePillGeometry = async (): Promise<boolean> => {
 /** The slot remains owned until settlement cleanup begins, never by a late setup. */
 let activeComposer: ComposerReview | null = null;
 
+const notifyAssistantToolRecovery = (
+  options: ComposerReviewOptions,
+  expired = false,
+): void => {
+  try {
+    if (expired) options.onExpire?.();
+    else options.onFailure?.();
+  } catch (error) {
+    getLogger().warning(`Could not report Paste review recovery: ${error}`);
+  }
+
+  const message = expired
+    ? getIntl().formatMessage({
+        defaultMessage:
+          "Paste review expired. Nothing was inserted. Run Paste again to retry.",
+      })
+    : getIntl().formatMessage({
+        defaultMessage:
+          "Could not open the Paste review. Nothing was inserted. Run Paste again to retry.",
+      });
+  runToast(
+    showToast({
+      message,
+      toastType: expired ? "info" : "error",
+      duration: 8000,
+    }),
+  );
+};
+
 const destroyComposerWindow = async (id: string): Promise<void> => {
   if (!id) return;
   await invoke("floating_window_destroy", { id }).catch(() => {
@@ -414,28 +443,7 @@ class ComposerReview {
 
   private showRecovery(expired = false): void {
     if (this.options.source === "assistant-tool") {
-      try {
-        if (expired) this.options.onExpire?.();
-        else this.options.onFailure?.();
-      } catch (error) {
-        getLogger().warning(`Could not report Paste review recovery: ${error}`);
-      }
-      const message = expired
-        ? getIntl().formatMessage({
-            defaultMessage:
-              "Paste review expired. Nothing was inserted. Run Paste again to retry.",
-          })
-        : getIntl().formatMessage({
-            defaultMessage:
-              "Could not open the Paste review. Nothing was inserted. Run Paste again to retry.",
-          });
-      runToast(
-        showToast({
-          message,
-          toastType: expired ? "info" : "error",
-          duration: 8000,
-        }),
-      );
+      notifyAssistantToolRecovery(this.options, expired);
       return;
     }
 
@@ -479,21 +487,7 @@ export const reviewTextInComposer = async (
       "reviewTextInComposer: a composer window is already open; focusing it",
     );
     if (options.source === "assistant-tool") {
-      try {
-        options.onFailure?.();
-      } catch (error) {
-        getLogger().warning(`Could not report Paste review recovery: ${error}`);
-      }
-      runToast(
-        showToast({
-          message: getIntl().formatMessage({
-            defaultMessage:
-              "Could not open the Paste review. Nothing was inserted. Run Paste again to retry.",
-          }),
-          toastType: "error",
-          duration: 8000,
-        }),
-      );
+      notifyAssistantToolRecovery(options);
     }
     return null;
   }

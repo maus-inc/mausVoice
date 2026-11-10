@@ -45,7 +45,6 @@ describe("PasteTool review", () => {
     vi.clearAllMocks();
     state.userPrefs = { reviewBeforeInsert: true };
     createPendingPasteReviewMock.mockResolvedValue(undefined);
-    emitMock.mockResolvedValue(undefined);
     // What the Rust `paste` command returns when the text reached the target.
     invokeMock.mockResolvedValue("pasted");
   });
@@ -151,13 +150,9 @@ describe("PasteTool review", () => {
 
   it("reports an expired review distinctly from an explicit cancel", async () => {
     reviewTranscriptBeforeInsertMock.mockImplementationOnce(
-      async (
-        _text: string,
-        _source: string,
-        options?: { onExpire?: () => void },
-      ) => {
+      (_text: string, _source: string, options?: { onExpire?: () => void }) => {
         options?.onExpire?.();
-        return null;
+        return Promise.resolve(null);
       },
     );
 
@@ -241,13 +236,9 @@ describe("PasteTool review", () => {
 
   it("returns a successful clipboard result when the user chooses Copy", async () => {
     reviewTranscriptBeforeInsertMock.mockImplementation(
-      async (
-        _text: string,
-        _source: string,
-        options?: { onCopy?: () => void },
-      ) => {
+      (_text: string, _source: string, options?: { onCopy?: () => void }) => {
         options?.onCopy?.();
-        return null;
+        return Promise.resolve(null);
       },
     );
 

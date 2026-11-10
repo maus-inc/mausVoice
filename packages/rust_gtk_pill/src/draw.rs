@@ -1833,6 +1833,55 @@ fn draw_thinking_text(cr: &cairo::Context, x: f64, y: f64, alpha: f64, state: &P
     y + 20.0
 }
 
+/// Pango applies font fallback per run, unlike Cairo's toy `show_text` API.
+fn review_heading_layout(cr: &cairo::Context, label: &str) -> pango::Layout {
+    let layout = pangocairo::functions::create_layout(cr);
+    let font = pango::FontDescription::from_string("Satoshi Bold 11");
+    layout.set_font_description(Some(&font));
+    layout.set_text(label);
+    layout
+}
+
+fn draw_review_heading(cr: &cairo::Context, label: &str, x: f64, baseline_y: f64) {
+    let layout = review_heading_layout(cr, label);
+    let baseline = layout.baseline() as f64 / pango::SCALE as f64;
+    cr.move_to(x, baseline_y - baseline);
+    pangocairo::functions::show_layout(cr, &layout);
+}
+
+#[cfg(test)]
+mod review_heading_layout_tests {
+    use super::*;
+
+    #[test]
+    fn cjk_review_heading_uses_unicode_pango_layout() {
+        let mut surface = cairo::ImageSurface::create(cairo::Format::ARgb32, 240, 32).unwrap();
+        let label = "审阅转写内容";
+        {
+            let cr = cairo::Context::new(&surface).unwrap();
+            cr.set_source_rgba(1.0, 1.0, 1.0, 1.0);
+            let layout = review_heading_layout(&cr, label);
+            assert_eq!(layout.text().as_str(), label);
+            let (width, height) = layout.pixel_size();
+            assert!(
+                width > 0 && height > 0,
+                "CJK heading should have layout bounds"
+            );
+            draw_review_heading(&cr, label, 0.0, 20.0);
+        }
+
+        surface.flush();
+        let pixels = surface.data().unwrap();
+        assert!(
+            pixels.iter().any(|pixel| *pixel != 0),
+            "Pango should paint the localized heading to the Cairo surface"
+        );
+
+        // Actual glyph coverage depends on installed system fonts; lean CI images may not
+        // include any CJK fallback font. Pango can use system fallback fonts when available.
+    }
+}
+
 /// The transcript under review, drawn in the panel body like an assistant
 /// message. The text comes from the entry, which is loaded with the transcript
 /// when the review arrives, so what is shown here is exactly what will be
@@ -1847,15 +1896,12 @@ fn draw_review_text(
     alpha: f64,
 ) -> f64 {
     cr.set_source_rgba(1.0, 1.0, 1.0, 0.5 * alpha);
-    cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Bold);
-    cr.set_font_size(11.0);
-    cr.move_to(x, y + 12.0);
     let review = state.assistant_review.borrow();
     let label = review
         .as_ref()
         .and_then(|review| review.review_label.as_deref())
         .unwrap_or("REVIEW TRANSCRIPT");
-    let _ = cr.show_text(label);
+    draw_review_heading(cr, label, x, y + 12.0);
 
     let mut text_y = y + REVIEW_TITLE_HEIGHT;
 

@@ -226,7 +226,7 @@ describe("reviewTextInComposer", () => {
     mocks.invoke.mockImplementation((cmd: string) =>
       cmd === "floating_window_create"
         ? Promise.reject(new Error("window unavailable"))
-        : Promise.resolve(undefined),
+        : Promise.resolve(),
     );
     const onFailure = vi.fn();
 
@@ -255,7 +255,7 @@ describe("reviewTextInComposer", () => {
       // promise exactly as a real IPC call would be.
       cmd === "floating_window_create"
         ? Promise.reject(new Error("0x8007139F"))
-        : Promise.resolve(undefined),
+        : Promise.resolve(),
     );
     const result = await reviewTextInComposer("hello");
     expect(result).toBeNull();
@@ -275,7 +275,7 @@ describe("reviewTextInComposer", () => {
         created += 1;
         return Promise.resolve({ id: `floating-${created}` });
       }
-      return Promise.resolve(undefined);
+      return Promise.resolve();
     });
 
     // Start the first review but do NOT await it. The synchronous entry
@@ -329,7 +329,7 @@ describe("reviewTextInComposer cleanup", () => {
       }
       // Every branch must return a promise: `composer.utils.ts` chains
       // `.catch()` directly onto the `invoke` result.
-      return Promise.resolve(undefined);
+      return Promise.resolve();
     });
 
     const promise = reviewTextInComposer("draft");
@@ -396,7 +396,7 @@ describe("reviewTextInComposer ready-timeout safety net", () => {
         }
         // `composer.utils.ts` chains `.catch()` onto the `invoke` result, so
         // every branch has to return a promise.
-        return Promise.resolve(undefined);
+        return Promise.resolve();
       });
 
       // Fresh module instance: reviewTextInComposer guards on a
@@ -455,13 +455,11 @@ describe("reviewTextInComposer ready-timeout safety net", () => {
 
     try {
       const listeners = installPerEventListener();
-      let createdId = "";
       mocks.invoke.mockImplementation((cmd: string) => {
         if (cmd === "floating_window_create") {
-          createdId = "floating-review";
-          return Promise.resolve({ id: createdId });
+          return Promise.resolve({ id: "floating-review" });
         }
-        return Promise.resolve(undefined);
+        return Promise.resolve();
       });
 
       vi.resetModules();
@@ -472,10 +470,14 @@ describe("reviewTextInComposer ready-timeout safety net", () => {
         source: "assistant-tool",
         onExpire,
       });
-      for (let i = 0; i < 40 && !createdId; i += 1) {
+      const createWindowWasCalled = () =>
+        mocks.invoke.mock.calls.some(
+          ([command]: unknown[]) => command === "floating_window_create",
+        );
+      for (let i = 0; i < 40 && !createWindowWasCalled(); i += 1) {
         await vi.advanceTimersByTimeAsync(5);
       }
-      expect(createdId).toBe("floating-review");
+      expect(createWindowWasCalled()).toBe(true);
       const requestId = mocks.invoke.mock.calls.find(
         (call: unknown[]) => call[0] === "composer_register_text",
       )?.[1]?.requestId as string;
@@ -519,7 +521,7 @@ describe("reviewTextInComposer ready-timeout safety net", () => {
         if (cmd === "floating_window_create") {
           return new Promise(() => undefined);
         }
-        return Promise.resolve(undefined);
+        return Promise.resolve();
       });
 
       vi.resetModules();
