@@ -136,7 +136,14 @@ it("locks a pending preference write against duplicate saves and dismissal, then
     expect(document.activeElement).toBe(button("Finish test"));
     movedBounds.mockRestore();
     expect(mocks.save).toHaveBeenCalledTimes(2);
-    expect(document.body.textContent).toContain("Preference saved.");
+    // A successful save leaves the dialog's own content alone: the error is gone
+    // and the view has not moved. The confirmation is sonner's toast, which this
+    // tree does not mount -- and which is why nothing here can shift the scroll.
+    expect(button("Save changes").getAttribute("aria-busy")).toBeNull();
+    expect(document.body.textContent).not.toContain(
+      "Failed to save microphone preference",
+    );
+    expect(content.scrollTop).toBe(10);
   } finally {
     act(() => root.unmount());
     container.remove();

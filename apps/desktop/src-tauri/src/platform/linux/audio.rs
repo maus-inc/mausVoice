@@ -1,7 +1,8 @@
 use crate::domain::{RecordedAudio, RecordingMetrics, RecordingResult};
 use crate::errors::RecordingError;
 use crate::platform::audio::{
-    compute_level_bins, InputDeviceDescriptor, CHUNK_DISPATCH_INTERVAL, LEVEL_DISPATCH_INTERVAL,
+    compute_level_bins, label_has_low_quality_keyword, InputDeviceDescriptor,
+    CHUNK_DISPATCH_INTERVAL, LEVEL_DISPATCH_INTERVAL,
 };
 use crate::platform::{ChunkCallback, LevelCallback, Recorder};
 use std::sync::{Arc, Mutex};
@@ -627,7 +628,7 @@ pub fn list_pulse_input_devices() -> Vec<InputDeviceDescriptor> {
             // where a Bluetooth headset is the common case, the selector offered
             // it as an ordinary device and nothing downstream could tell the
             // difference. The keyword test is the same one the cpal path uses.
-            let bluetooth = crate::platform::audio::label_has_low_quality_keyword(&s.description);
+            let bluetooth = label_has_low_quality_keyword(&s.description);
             InputDeviceDescriptor {
                 label: s.description,
                 is_default: s.is_default,

@@ -19,6 +19,14 @@ import type {
   SnackbarMode,
 } from "../state/app.state";
 
+/**
+ * How many pending requests the queue keeps.
+ *
+ * Large enough that no realistic batch loses a message, small enough that the
+ * array cannot grow for the life of the session.
+ */
+export const SNACKBAR_QUEUE_LIMIT = 20;
+
 export type ShowSnackbarOpts = {
   duration?: number;
   transitionDuration?: number;
@@ -31,10 +39,34 @@ export const setSnackbar = (
   message: string,
   opts?: ShowSnackbarOpts,
 ): void => {
+  const counter = draft.snackbarCounter + 1;
+  const mode = opts?.mode ?? "info";
+  const duration = opts?.duration ?? 3000;
+  draft.snackbarRequests.push({
+    counter,
+    message,
+    mode,
+    duration,
+    transitionDuration: opts?.transitionDuration,
+    action: opts?.action,
+  });
+  // Bounded, because entries are only ever removed by this line: the emitter
+  // reads the queue and never trims it. A long session raises hundreds of these
+  // and each holds a closure while its action is queued. The limit is far above
+  // the number of requests that can be pending at once -- the emitter drains the
+  // whole queue in one pass -- so a trim only ever drops requests that were
+  // already shown, never one that was waiting.
+  const overflow = draft.snackbarRequests.length - SNACKBAR_QUEUE_LIMIT;
+  if (overflow > 0) {
+    draft.snackbarRequests.splice(0, overflow);
+  }
+  // The scalars stay as a mirror of the newest request. They used to be the
+  // only copy, so a second message raised in the same tick overwrote the first
+  // and the first was never shown; the queue above is the real store now.
   draft.snackbarMessage = message;
-  draft.snackbarCounter++;
-  draft.snackbarMode = opts?.mode ?? "info";
-  draft.snackbarDuration = opts?.duration ?? 3000;
+  draft.snackbarCounter = counter;
+  draft.snackbarMode = mode;
+  draft.snackbarDuration = duration;
   draft.snackbarTransitionDuration = opts?.transitionDuration;
   draft.snackbarAction = opts?.action;
 };

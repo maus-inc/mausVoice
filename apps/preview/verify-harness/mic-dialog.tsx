@@ -12,6 +12,7 @@ import React, { useEffect } from "react";
 import ReactDOM from "react-dom/client";
 import { IntlProvider } from "react-intl";
 import { THEME_PROVIDER_CONFIG, theme } from "@desktop/theme";
+import { SonnerToaster } from "@desktop/components/root/SonnerToaster";
 import en from "@desktop/i18n/locales/en.json";
 
 /**
@@ -205,6 +206,11 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
         <CssBaseline />
         <Box data-testid="harness-root" sx={{ minHeight: "100vh" }}>
           <Main />
+          {/* The save confirmation is sonner's toast and nothing else now, so the
+              harness has to mount the same toaster `main.tsx` mounts. Without it
+              a successful save would be silent here and the screenshots would
+              be measuring a component the app never runs. */}
+          <SonnerToaster />
         </Box>
       </ThemeProvider>
     </IntlProvider>

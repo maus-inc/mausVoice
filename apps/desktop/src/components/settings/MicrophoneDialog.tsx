@@ -213,14 +213,16 @@ export const MicrophoneDialog = () => {
   const [saving, setSaving] = useState(false);
   const saveInFlight = useRef(false);
   const [saveError, setSaveError] = useState(false);
-  const [saveSuccess, setSaveSuccess] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
   const feedbackRef = useRef<HTMLDivElement>(null);
 
+  // Only the error can move the view. The success case is a toast, and a toast is
+  // outside the dialog's scroll container, so there is nothing here for it to
+  // scroll to -- and no live region to fill, because sonner announces it.
   useLayoutEffect(() => {
-    if (!saveError && !saveSuccess) return;
+    if (!saveError) return;
     revealFeedback(contentRef.current, feedbackRef.current);
-  }, [saveError, saveSuccess]);
+  }, [saveError]);
 
   useEffect(() => {
     if (!open) {
@@ -229,7 +231,6 @@ export const MicrophoneDialog = () => {
     setSelected(savedPreference);
     setHasChanges(false);
     setSaveError(false);
-    setSaveSuccess(false);
   }, [open, savedPreference]);
 
   const handleSelectionChange = useCallback(
@@ -237,7 +238,6 @@ export const MicrophoneDialog = () => {
       setSelected(next ?? null);
       setHasChanges((next ?? null) !== (savedPreference ?? null));
       setSaveError(false);
-      setSaveSuccess(false);
     },
     [savedPreference],
   );
@@ -250,12 +250,13 @@ export const MicrophoneDialog = () => {
     saveInFlight.current = true;
     setSaving(true);
     setSaveError(false);
-    setSaveSuccess(false);
 
     try {
       await setPreferredMicrophone(selected ?? null);
       setHasChanges(false);
-      setSaveSuccess(true);
+      // Deliberately not paired with any in-dialog confirmation: sonner's toast
+      // is the announcement, and rendering the same sentence in a second live
+      // region makes a screen reader say it twice.
       toast.success(
         intl.formatMessage({ defaultMessage: "Preference saved." }),
         { duration: 5000 },
@@ -301,26 +302,6 @@ export const MicrophoneDialog = () => {
                 <FormattedMessage defaultMessage="Failed to save microphone preference. Please try again." />
               </Alert>
             )}
-            <span
-              role="status"
-              aria-live="polite"
-              aria-atomic="true"
-              style={{
-                position: "absolute",
-                width: 1,
-                height: 1,
-                padding: 0,
-                margin: -1,
-                overflow: "hidden",
-                clip: "rect(0, 0, 0, 0)",
-                whiteSpace: "nowrap",
-                border: 0,
-              }}
-            >
-              {saveSuccess && (
-                <FormattedMessage defaultMessage="Preference saved." />
-              )}
-            </span>
           </Stack>
 
           <Divider />

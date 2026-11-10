@@ -132,8 +132,7 @@ pub(crate) fn compute_level_bins(samples: &[f32]) -> Vec<f32> {
 
 mod cpal_impl {
     use super::{
-        compute_level_bins, label_has_low_quality_keyword, InputDeviceDescriptor,
-        CHUNK_DISPATCH_INTERVAL, LEVEL_DISPATCH_INTERVAL,
+        compute_level_bins, InputDeviceDescriptor, CHUNK_DISPATCH_INTERVAL, LEVEL_DISPATCH_INTERVAL,
     };
     use crate::domain::{RecordedAudio, RecordingMetrics, RecordingResult};
     use crate::errors::RecordingError;
@@ -2644,7 +2643,7 @@ mod cpal_impl {
     }
 
     fn name_has_low_quality_keyword(name: &str) -> bool {
-        label_has_low_quality_keyword(name)
+        super::label_has_low_quality_keyword(name)
     }
 
     /// All available hosts with the cpal default host first.
@@ -3524,7 +3523,7 @@ mod cpal_impl {
                         label: candidate.label.clone(),
                         is_default: false,
                         caution: false,
-                        bluetooth: label_has_low_quality_keyword(&candidate.label),
+                        bluetooth: super::label_has_low_quality_keyword(&candidate.label),
                     });
 
                 if candidate.avoid_reason.is_some() {
