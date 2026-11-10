@@ -688,6 +688,7 @@ fn perform_tick() {
                 InMessage::AssistantState {
                     active,
                     input_mode,
+                    type_message_label,
                     compact,
                     conversation_id,
                     user_prompt,
@@ -717,6 +718,8 @@ fn perform_tick() {
                     }
                     ctx.state.assistant_active.set(active);
                     *ctx.state.assistant_input_mode.borrow_mut() = input_mode;
+                    *ctx.state.assistant_type_message.borrow_mut() = type_message_label
+                        .unwrap_or_else(|| "Type a message…".to_string());
                     ctx.state.assistant_compact.set(compact);
                     *ctx.state.assistant_conversation_id.borrow_mut() = conversation_id;
                     *ctx.state.assistant_user_prompt.borrow_mut() = user_prompt;
@@ -2038,6 +2041,7 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
         draw_h_velocity: Cell::new(0.0),
         assistant_active: Cell::new(false),
         assistant_input_mode: RefCell::new("voice".to_string()),
+        assistant_type_message: RefCell::new("Type a message…".to_string()),
         assistant_compact: Cell::new(true),
         assistant_conversation_id: RefCell::new(None),
         assistant_user_prompt: RefCell::new(None),

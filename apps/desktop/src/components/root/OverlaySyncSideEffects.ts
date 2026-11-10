@@ -19,6 +19,7 @@ type NativePillPayload = {
   type: "assistant_state";
   active: boolean;
   input_mode: string;
+  type_message_label: string;
   compact: boolean;
   conversation_id: string | null;
   user_prompt: string | null;
@@ -236,6 +237,10 @@ const useNativePillAssistantSync = () => {
       type: "assistant_state",
       active,
       input_mode: state.assistantInputMode ?? "voice",
+      type_message_label: intl.formatMessage({
+        id: "type_a_message",
+        defaultMessage: "Type a message…",
+      }),
       compact,
       conversation_id: conversationId,
       user_prompt: userPrompt,

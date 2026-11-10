@@ -79,6 +79,7 @@ describe("native pill review localization", () => {
   it("sends every caption the pill draws, in the active locale", async () => {
     await renderLocale("de");
     const de = getMessagesForLocale("de");
+    expect(lastPayload().type_message_label).toBe(de.type_a_message);
     expect(lastPayload().review).toEqual({
       id: "review-1",
       text: "Keep this transcript",
@@ -120,6 +121,9 @@ describe("native pill review localization", () => {
     mocks.invoke.mockClear();
     await renderLocale("fr");
     expect(mocks.invoke).toHaveBeenCalledTimes(1);
+    expect(lastPayload().type_message_label).toBe(
+      getMessagesForLocale("fr").type_a_message,
+    );
     expect(lastPayload().review.review_label).toBe(
       getMessagesForLocale("fr").review_transcript,
     );

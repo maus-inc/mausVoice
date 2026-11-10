@@ -122,7 +122,7 @@ pub fn run(receiver: Receiver<InMessage>) {
     // its Edit control. `connect_activate` closes over its own clone; the Send-button click
     // is handled in `input.rs`, which has no widget.
     ENTRY.with(|slot| *slot.borrow_mut() = Some(entry.clone()));
-    entry.set_placeholder_text(Some("Type a message..."));
+    entry.set_placeholder_text(Some("Type a message…"));
     entry.set_has_frame(false);
     entry.set_halign(gtk::Align::Fill);
     entry.set_valign(gtk::Align::End);
@@ -180,6 +180,7 @@ pub fn run(receiver: Receiver<InMessage>) {
         draw_h_velocity: Cell::new(0.0),
         assistant_active: Cell::new(false),
         assistant_input_mode: RefCell::new("voice".to_string()),
+        assistant_type_message: RefCell::new("Type a message…".to_string()),
         assistant_compact: Cell::new(true),
         assistant_conversation_id: RefCell::new(None),
         assistant_user_prompt: RefCell::new(None),
@@ -565,7 +566,17 @@ pub fn run(receiver: Receiver<InMessage>) {
             // Keep this editor plain-text only: image clipboard targets must
             // not turn a transcript review into an image-paste surface.
             let buffer = view.buffer().expect("review editor buffer");
+            let Some(review_id) = state_review_submit.pending_review_id() else {
+                return glib::Propagation::Stop;
+            };
+            let state_clipboard = state_review_submit.clone();
             gtk::Clipboard::get(&gdk::SELECTION_CLIPBOARD).request_text(move |_, text| {
+                if !clipboard_result_is_current(
+                    &review_id,
+                    state_clipboard.pending_review_id().as_deref(),
+                ) {
+                    return;
+                }
                 if let Some(text) = text {
                     buffer.insert_at_cursor(text);
                 }
@@ -746,6 +757,7 @@ pub fn run(receiver: Receiver<InMessage>) {
                 InMessage::AssistantState {
                     active,
                     input_mode,
+                    type_message_label,
                     compact,
                     conversation_id,
                     user_prompt,
@@ -757,6 +769,11 @@ pub fn run(receiver: Receiver<InMessage>) {
                     let was_active = state_tick.assistant_active.get();
                     state_tick.assistant_active.set(active);
                     *state_tick.assistant_input_mode.borrow_mut() = input_mode;
+                    *state_tick.assistant_type_message.borrow_mut() = type_message_label
+                        .unwrap_or_else(|| "Type a message…".to_string());
+                    entry_tick.set_placeholder_text(Some(
+                        state_tick.assistant_type_message.borrow().as_str(),
+                    ));
                     state_tick.assistant_compact.set(compact);
                     *state_tick.assistant_conversation_id.borrow_mut() = conversation_id;
                     *state_tick.assistant_user_prompt.borrow_mut() = user_prompt;
@@ -1145,6 +1162,10 @@ thread_local! {
     /// Multiline native editor shown only while a transcript awaits review.
     static REVIEW_EDITOR: std::cell::RefCell<Option<gtk::TextView>> =
         const { std::cell::RefCell::new(None) };
+}
+
+fn clipboard_result_is_current(expected_review_id: &str, current_review_id: Option<&str>) -> bool {
+    current_review_id == Some(expected_review_id)
 }
 
 fn review_editor_text(view: &gtk::TextView) -> String {
@@ -2067,6 +2088,18 @@ fn tick_transcript(state: &PillState) {
         state.transcript_opacity.set(0.0);
         state.transcript_has_message.set(false);
         state.transcript_text.borrow_mut().clear();
+    }
+}
+
+#[cfg(test)]
+mod clipboard_response_tests {
+    use super::clipboard_result_is_current;
+
+    #[test]
+    fn delayed_clipboard_result_is_rejected_after_review_changes() {
+        assert!(clipboard_result_is_current("review-1", Some("review-1")));
+        assert!(!clipboard_result_is_current("review-1", Some("review-2")));
+        assert!(!clipboard_result_is_current("review-1", None));
     }
 }
 

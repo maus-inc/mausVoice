@@ -224,6 +224,14 @@ export const ensurePillGeometry = async (): Promise<boolean> => {
 /** The slot remains owned until settlement cleanup begins, never by a late setup. */
 let activeComposer: ComposerReview | null = null;
 
+const notifyReviewExpiry = (options: ComposerReviewOptions): void => {
+  try {
+    options.onExpire?.();
+  } catch (error) {
+    getLogger().warning(`Could not report expired review: ${error}`);
+  }
+};
+
 const notifyAssistantToolRecovery = (
   options: ComposerReviewOptions,
   expired = false,
@@ -446,6 +454,8 @@ class ComposerReview {
       notifyAssistantToolRecovery(this.options, expired);
       return;
     }
+
+    if (expired) notifyReviewExpiry(this.options);
 
     runToast(
       showToast({

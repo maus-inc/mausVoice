@@ -79,6 +79,8 @@ type QueuedReview = {
   onFailure?: () => void;
   /** Set while a decision runs, so a second click cannot start it twice. */
   busy: boolean;
+  /** An Open decision is waiting for its durable manual-paste save. */
+  openSavePending: boolean;
 };
 
 type ReviewAnswer = {
@@ -122,12 +124,14 @@ const pruneSessions = (): void => {
 
 /** Mark the session decided from a composer result and drop old sessions. */
 const decideSession = (id: string, result: string | null): string | null => {
-  touchSession(id, {
-    status: "decided",
-    decision: result === null ? "cancel" : "insert",
-    draftText: result,
-    decidedAt: Date.now(),
-  });
+  if (sessions.get(id)?.status !== "expired") {
+    touchSession(id, {
+      status: "decided",
+      decision: result === null ? "cancel" : "insert",
+      draftText: result,
+      decidedAt: Date.now(),
+    });
+  }
   pruneSessions();
   return result;
 };
@@ -215,29 +219,16 @@ const openNextReview = (): ReviewSession | null => {
  * review still on the pill. The timer calls back in here, which is why one
  * function owns both halves of the transition.
  */
-const advanceQueue = (answer?: ReviewAnswer): void => {
+const armReviewTimeout = (current: QueuedReview): void => {
+  // The composer owns its own readiness/decision timeout, and an Open
+  // hand-off owns the review until its durable save has settled.
+  if (current.openSavePending || current.session.presentation === "composer")
+    return;
   if (timeoutId !== null) {
     clearTimeout(timeoutId);
     timeoutId = null;
   }
-
-  const answered = answer ? queue.shift() : undefined;
-  if (answered && answer) recordReviewAnswer(answered, answer);
-  const current = openNextReview();
-  produceAppState((draft) => {
-    draft.pendingPillReview =
-      current?.presentation === "pill"
-        ? { id: current.id, text: current.draftText ?? current.originalText }
-        : null;
-  });
-  answered?.resolve(answer ? answer.text : null);
-  stopUnusedListener();
-  if (!current) return;
-
-  // The composer owns its own readiness/decision timeout. Enqueuing another
-  // transcript must not republish or expire a review handed to that surface.
-  if (current.presentation === "composer") return;
-  const { id } = current;
+  const { id } = current.session;
   timeoutId = setTimeout(() => {
     timeoutId = null;
     const expired = head();
@@ -281,6 +272,32 @@ const advanceQueue = (answer?: ReviewAnswer): void => {
     }
     advanceQueue({ text: null });
   }, REVIEW_TIMEOUT_MS);
+};
+
+const advanceQueue = (answer?: ReviewAnswer): void => {
+  if (timeoutId !== null) {
+    clearTimeout(timeoutId);
+    timeoutId = null;
+  }
+
+  const answered = answer ? queue.shift() : undefined;
+  if (answered && answer) recordReviewAnswer(answered, answer);
+  openNextReview();
+  const current = head();
+  produceAppState((draft) => {
+    draft.pendingPillReview =
+      current?.session.presentation === "pill"
+        ? {
+            id: current.session.id,
+            text: current.session.draftText ?? current.session.originalText,
+          }
+        : null;
+  });
+  answered?.resolve(answer ? answer.text : null);
+  stopUnusedListener();
+  if (!current) return;
+
+  armReviewTimeout(current);
 };
 
 /**
@@ -360,7 +377,10 @@ const reviewInComposer = async (
     const composed = await reviewTextInComposer(text, {
       originalText,
       source,
-      onExpire: current.onExpire,
+      onExpire: () => {
+        markSessionExpired(id);
+        current.onExpire?.();
+      },
       onFailure: current.onFailure,
     });
     settle(id, composed, action);
@@ -414,6 +434,11 @@ const applyDecision = async (
     ) {
       // Opening Chats changes focus away from the destination application. The
       // caller must durably save the edited text before this review can settle.
+      current.openSavePending = true;
+      if (timeoutId !== null) {
+        clearTimeout(timeoutId);
+        timeoutId = null;
+      }
       try {
         await current.onOpen(text);
       } catch {
@@ -443,6 +468,8 @@ const applyDecision = async (
     // the way out through success the review has already left the queue, so
     // clearing the flag there changes nothing.
     current.busy = false;
+    current.openSavePending = false;
+    if (head() === current) armReviewTimeout(current);
   }
 };
 
@@ -515,6 +542,13 @@ const markSessionCancelled = (id: string): void => {
   }
 };
 
+const markSessionExpired = (id: string): void => {
+  const status = sessions.get(id)?.status;
+  if (status === "open" || status === "queued") {
+    touchSession(id, { status: "expired", decidedAt: Date.now() });
+  }
+};
+
 const cancelUnpublishedReview = (id: string): null => {
   markSessionCancelled(id);
   pruneSessions();
@@ -572,7 +606,10 @@ export const reviewTranscriptOnPill = async (
         await reviewTextInComposer(text, {
           originalText: text,
           source,
-          onExpire: options?.onExpire,
+          onExpire: () => {
+            markSessionExpired(id);
+            options?.onExpire?.();
+          },
           onFailure: options?.onFailure,
         }),
       );
@@ -599,6 +636,7 @@ export const reviewTranscriptOnPill = async (
         onExpire: options?.onExpire,
         onFailure: options?.onFailure,
         busy: false,
+        openSavePending: false,
       });
     });
     advanceQueue();
@@ -668,7 +706,10 @@ export const reviewTranscriptBeforeInsert = async (
     await reviewTextInComposer(text, {
       originalText: text,
       source,
-      onExpire: options?.onExpire,
+      onExpire: () => {
+        markSessionExpired(id);
+        options?.onExpire?.();
+      },
       onFailure: options?.onFailure,
     }),
   );

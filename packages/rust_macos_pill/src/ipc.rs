@@ -171,6 +171,8 @@ pub enum InMessage {
     AssistantState {
         active: bool,
         input_mode: String,
+        #[serde(default)]
+        type_message_label: Option<String>,
         compact: bool,
         conversation_id: Option<String>,
         user_prompt: Option<String>,

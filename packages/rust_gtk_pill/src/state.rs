@@ -165,6 +165,7 @@ pub(crate) struct PillState {
     // Assistant state
     pub(crate) assistant_active: Cell<bool>,
     pub(crate) assistant_input_mode: RefCell<String>,
+    pub(crate) assistant_type_message: RefCell<String>,
     pub(crate) assistant_compact: Cell<bool>,
     pub(crate) assistant_conversation_id: RefCell<Option<String>>,
     pub(crate) assistant_user_prompt: RefCell<Option<String>>,

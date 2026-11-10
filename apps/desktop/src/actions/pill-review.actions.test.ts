@@ -727,6 +727,96 @@ describe("reviewTranscriptOnPill", () => {
     await cancelPillReview(pending);
   });
 
+  it("does not expire an Open hand-off while its durable save is pending", async () => {
+    vi.useFakeTimers();
+    let finishOpen: () => void = () => undefined;
+    try {
+      const onExpire = vi.fn();
+      const onOpen = vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            finishOpen = resolve;
+          }),
+      );
+      const pending = reviewTranscriptOnPill("rough take", "assistant-tool", {
+        onOpen,
+        onExpire,
+      });
+      await flush(() => getAppState().pendingPillReview !== null);
+
+      const id = currentReviewId();
+      decide?.({
+        payload: { reviewId: id, action: "open", text: "pill draft" },
+      });
+      await flush(() => onOpen.mock.calls.length > 0);
+      const next = startPillReview("next review");
+      await flush(() => getQueuedSessions().length === 2);
+      await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+
+      expect(getReviewSession(id)?.status).toBe("open");
+      expect(getAppState().pendingPillReview?.id).toBe(id);
+      expect(onExpire).not.toHaveBeenCalled();
+
+      finishOpen();
+      await expect(pending).resolves.toBeNull();
+      expect(getReviewSession(id)?.status).toBe("decided");
+      expect(getReviewSession(id)?.decision).toBe("open");
+      expect(getAppState().pendingPillReview?.text).toBe("next review");
+      await cancelPillReview(next);
+    } finally {
+      finishOpen();
+      cancelAllPillReviews();
+      vi.useRealTimers();
+    }
+  });
+
+  it("preserves composer expiry instead of recording an unanswered Edit as cancel", async () => {
+    const onExpire = vi.fn();
+    mocks.reviewTextInComposer.mockImplementationOnce(
+      (_text: string, options?: { onExpire?: () => void }) => {
+        options?.onExpire?.();
+        return Promise.resolve(null);
+      },
+    );
+    const pending = reviewTranscriptOnPill("rough take", "assistant-tool", {
+      onExpire,
+    });
+    await flush(() => getAppState().pendingPillReview !== null);
+
+    const id = currentReviewId();
+    decide?.({ payload: { reviewId: id, action: "edit" } });
+    await expect(pending).resolves.toBeNull();
+
+    expect(getReviewSession(id)?.status).toBe("expired");
+    expect(getReviewSession(id)?.decision).toBeNull();
+    expect(onExpire).toHaveBeenCalledOnce();
+  });
+
+  it("does not overwrite teardown cancellation with a late composer expiry", async () => {
+    let expireReview: (() => void) | undefined;
+    let finishComposer!: (value: string | null) => void;
+    mocks.reviewTextInComposer.mockImplementationOnce(
+      (_text: string, options?: { onExpire?: () => void }) =>
+        new Promise<string | null>((resolve) => {
+          expireReview = options?.onExpire;
+          finishComposer = resolve;
+        }),
+    );
+    const pending = reviewTranscriptOnPill("rough take", "assistant-tool");
+    await flush(() => getAppState().pendingPillReview !== null);
+    const id = currentReviewId();
+    decide?.({ payload: { reviewId: id, action: "edit" } });
+    await flush(() => expireReview !== undefined);
+
+    cancelAllPillReviews();
+    await expect(pending).resolves.toBeNull();
+    expireReview?.();
+    finishComposer(null);
+    await flush(() => false);
+
+    expect(getReviewSession(id)?.status).toBe("cancelled");
+  });
+
   it("delegates dictation Open to the composer", async () => {
     mocks.reviewTextInComposer.mockResolvedValueOnce("composed from open");
     const pending = startPillReview("rough take");

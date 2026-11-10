@@ -1258,7 +1258,8 @@ fn draw_assistant_panel(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
                 ctx.set_font_size(13.0);
                 ctx.set_source_rgba(1.0, 1.0, 1.0, 0.42 * alpha);
                 ctx.move_to(panel_x + PANEL_CONTENT_SIDE_INSET + 10.0, input_y + 29.0);
-                ctx.show_text("Type a message...");
+                let placeholder = state.assistant_type_message.borrow();
+                ctx.show_text(&placeholder);
             }
             let text_alpha = if has_text { 0.82 } else { 0.2 };
 

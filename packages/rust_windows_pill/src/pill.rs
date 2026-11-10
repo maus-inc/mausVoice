@@ -740,6 +740,7 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
         InMessage::AssistantState {
             active,
             input_mode,
+            type_message_label: _,
             compact,
             conversation_id,
             user_prompt,
@@ -2387,6 +2388,17 @@ fn handle_edit_message(msg: &MSG) -> bool {
     }
 }
 
+fn ctrl_backspace_start(text: &[u16], caret: usize) -> usize {
+    let mut pos = caret.min(text.len());
+    while pos > 0 && (text[pos - 1] == b' ' as u16 || text[pos - 1] == b'\t' as u16) {
+        pos -= 1;
+    }
+    while pos > 0 && !matches!(text[pos - 1], 0x20 | 0x09 | 0x0D | 0x0A) {
+        pos -= 1;
+    }
+    pos
+}
+
 fn ctrl_backspace(edit: HWND) {
     unsafe {
         // Get caret position from return value: LOWORD=start, HIWORD=end
@@ -2404,15 +2416,10 @@ fn ctrl_backspace(edit: HWND) {
         let mut buf = vec![0u16; (len + 1) as usize];
         GetWindowTextW(edit, &mut buf);
 
-        let mut pos = caret.min(len as usize);
-
-        // Skip whitespace backwards
-        while pos > 0 && (buf[pos - 1] == b' ' as u16 || buf[pos - 1] == b'\t' as u16) {
-            pos -= 1;
-        }
-        // Skip non-whitespace backwards
-        while pos > 0 && buf[pos - 1] != b' ' as u16 && buf[pos - 1] != b'\t' as u16 {
-            pos -= 1;
+        let caret = caret.min(len as usize);
+        let pos = ctrl_backspace_start(&buf[..len as usize], caret);
+        if pos == caret {
+            return;
         }
 
         // Select from word start to caret and replace with empty
@@ -2562,6 +2569,20 @@ pub(crate) fn focus_edit_control() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ctrl_backspace_never_crosses_a_line_break() {
+        let text: Vec<u16> = "first\r\n  second".encode_utf16().collect();
+        let line_start = "first\r\n  ".encode_utf16().count();
+        assert_eq!(ctrl_backspace_start(&text, line_start), line_start - 2);
+        assert_eq!(ctrl_backspace_start(&text, text.len()), line_start);
+    }
+
+    #[test]
+    fn ctrl_backspace_still_removes_the_previous_word_on_a_line() {
+        let text: Vec<u16> = "first second".encode_utf16().collect();
+        assert_eq!(ctrl_backspace_start(&text, text.len()), 6);
+    }
 
     #[test]
     fn clearing_crossing_deformation_requests_the_final_repaint() {
