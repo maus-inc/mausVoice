@@ -529,18 +529,7 @@ impl ConnectionMessageHandler<'_> {
             device_id: sender_device_id,
             auth_token,
         });
-        write_message_while_active(
-            self.writer,
-            &ReceiverMessage::SessionAck {
-                session_id,
-                receiver_device_id: self.state.status().device_id,
-            },
-            self.shutdown,
-            self.state,
-            self.receiver_generation,
-            self.write_generation,
-        )
-        .await
+        self.write_session_ack(session_id).await
     }
 
     /// Re-authorize the connection's sender for one frame.
@@ -636,20 +625,9 @@ impl ConnectionMessageHandler<'_> {
             {
                 return Ok(false);
             }
-            return write_message_while_active(
-                self.writer,
-                &ReceiverMessage::DeliveryAck {
-                    session_id,
-                    event_id,
-                    sequence,
-                    delivered_at,
-                },
-                self.shutdown,
-                self.state,
-                self.receiver_generation,
-                self.write_generation,
-            )
-            .await;
+            return self
+                .write_delivery_ack(session_id, event_id, sequence, delivered_at)
+                .await;
         }
 
         let target_info = current_target_info();
@@ -676,6 +654,13 @@ impl ConnectionMessageHandler<'_> {
             self.app.emit(EVT_REMOTE_FINAL_TEXT_RECEIVED, payload)
         };
 
+        let event_details = RemoteReceiverEventDetails {
+            sender_device_id: Some(sender_device_id),
+            event_id: Some(event_id.clone()),
+            target_class_name: target_info.class_name.clone(),
+            target_title: target_info.title.clone(),
+            target_editable,
+        };
         match emit_result {
             Ok(()) => {
                 let delivered_at = chrono::Utc::now().to_rfc3339();
@@ -683,33 +668,15 @@ impl ConnectionMessageHandler<'_> {
                     self.state,
                     self.receiver_generation,
                     self.write_generation,
-                    RemoteReceiverEventDetails {
-                        sender_device_id: Some(sender_device_id),
-                        event_id: Some(event_id.clone()),
-                        target_class_name: target_info.class_name.clone(),
-                        target_title: target_info.title.clone(),
-                        target_editable,
-                    },
+                    event_details,
                     Some(delivered_at.clone()),
                 )
                 .await
                 {
                     return Ok(false);
                 }
-                write_message_while_active(
-                    self.writer,
-                    &ReceiverMessage::DeliveryAck {
-                        session_id,
-                        event_id,
-                        sequence,
-                        delivered_at,
-                    },
-                    self.shutdown,
-                    self.state,
-                    self.receiver_generation,
-                    self.write_generation,
-                )
-                .await
+                self.write_delivery_ack(session_id, event_id, sequence, delivered_at)
+                    .await
             }
             Err(error) => {
                 let message = format!("Failed to emit remote transcript event: {error}");
@@ -717,13 +684,7 @@ impl ConnectionMessageHandler<'_> {
                     self.state,
                     self.receiver_generation,
                     self.write_generation,
-                    RemoteReceiverEventDetails {
-                        sender_device_id: Some(sender_device_id),
-                        event_id: Some(event_id.clone()),
-                        target_class_name: target_info.class_name.clone(),
-                        target_title: target_info.title.clone(),
-                        target_editable,
-                    },
+                    event_details,
                     message.clone(),
                 )
                 .await
@@ -749,11 +710,7 @@ impl ConnectionMessageHandler<'_> {
         }
     }
 
-    async fn handle_heartbeat(
-        &mut self,
-        session_id: String,
-        _sent_at: String,
-    ) -> Result<bool, String> {
+    async fn write_session_ack(&mut self, session_id: String) -> Result<bool, String> {
         write_message_while_active(
             self.writer,
             &ReceiverMessage::SessionAck {
@@ -766,6 +723,37 @@ impl ConnectionMessageHandler<'_> {
             self.write_generation,
         )
         .await
+    }
+
+    async fn write_delivery_ack(
+        &mut self,
+        session_id: String,
+        event_id: String,
+        sequence: u64,
+        delivered_at: String,
+    ) -> Result<bool, String> {
+        write_message_while_active(
+            self.writer,
+            &ReceiverMessage::DeliveryAck {
+                session_id,
+                event_id,
+                sequence,
+                delivered_at,
+            },
+            self.shutdown,
+            self.state,
+            self.receiver_generation,
+            self.write_generation,
+        )
+        .await
+    }
+
+    async fn handle_heartbeat(
+        &mut self,
+        session_id: String,
+        _sent_at: String,
+    ) -> Result<bool, String> {
+        self.write_session_ack(session_id).await
     }
 }
 

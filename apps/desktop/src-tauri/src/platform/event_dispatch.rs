@@ -80,7 +80,9 @@ pub fn bounded_level_callback(
 #[cfg(test)]
 mod tests {
     use super::{bounded_chunk_callback, bounded_level_callback, EventDispatcher};
-    use crate::platform::recording_ownership::{RecordingOwnership, StartControl};
+    use crate::platform::recording_ownership::{
+        start_idle_admission, RecordingOwnership, StartControl,
+    };
     use std::sync::atomic::AtomicBool;
     use std::sync::{mpsc, Arc};
     use std::time::Duration;
@@ -148,23 +150,7 @@ mod tests {
         let coordinator = Arc::new(RecordingOwnership::default());
         let window = coordinator.window(17);
         let generation = coordinator.reserve("old", &window).unwrap();
-        let admission = coordinator
-            .claim_admission("old", &window, generation)
-            .unwrap();
-        coordinator
-            .start(
-                "old",
-                &window,
-                generation,
-                StartControl {
-                    cancelled: &AtomicBool::new(false),
-                    admission: Some(&admission),
-                    wait: Duration::ZERO,
-                },
-                || Ok(()),
-                || true,
-            )
-            .unwrap();
+        let admission = start_idle_admission(&coordinator, "old", &window, generation);
         let dispatcher = Arc::new(EventDispatcher::new("level-callback-test", 1));
         let (entered_tx, entered_rx) = mpsc::channel();
         let (release_tx, release_rx) = mpsc::channel();

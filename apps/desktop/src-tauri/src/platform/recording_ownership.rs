@@ -1522,6 +1522,33 @@ impl RecordingOwnership {
     }
 }
 
+/// Claim and start an idle recording admission in one step, so callers that
+/// only need a started ownership gate do not repeat the claim/start pair.
+#[cfg(test)]
+pub(crate) fn start_idle_admission(
+    owner: &RecordingOwnership,
+    id: &str,
+    window: &Arc<RecordingWindow>,
+    generation: u64,
+) -> Arc<RecordingAdmission> {
+    let admission = owner.claim_admission(id, window, generation).unwrap();
+    owner
+        .start(
+            id,
+            window,
+            generation,
+            StartControl {
+                cancelled: &AtomicBool::new(false),
+                admission: Some(&admission),
+                wait: Duration::ZERO,
+            },
+            || Ok(()),
+            || true,
+        )
+        .unwrap();
+    admission
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

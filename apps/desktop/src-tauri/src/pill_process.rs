@@ -1802,28 +1802,11 @@ mod pill_publish_tests {
         }
         // Exercise the same admission gate used by the capture callback, not
         // just the pipe operation in isolation.
-        use crate::platform::recording_ownership::{RecordingOwnership, StartControl};
-        use std::sync::atomic::AtomicBool;
+        use crate::platform::recording_ownership::{start_idle_admission, RecordingOwnership};
         let ownership = Arc::new(RecordingOwnership::default());
         let window = ownership.window(99);
         let generation = ownership.reserve("owner", &window).unwrap();
-        let admission = ownership
-            .claim_admission("owner", &window, generation)
-            .unwrap();
-        ownership
-            .start(
-                "owner",
-                &window,
-                generation,
-                StartControl {
-                    cancelled: &AtomicBool::new(false),
-                    admission: Some(&admission),
-                    wait: Duration::ZERO,
-                },
-                || Ok(()),
-                || true,
-            )
-            .unwrap();
+        let admission = start_idle_admission(&ownership, "owner", &window, generation);
         let (entered_tx, entered_rx) = mpsc::channel();
         let (go_tx, go_rx) = mpsc::channel();
         let (tx, rx) = mpsc::channel();

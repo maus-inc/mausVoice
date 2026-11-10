@@ -699,8 +699,39 @@ pub fn list_pulse_input_devices() -> Vec<InputDeviceDescriptor> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::platform::recording_ownership::{RecordingOwnership, RecordingWindow, StartControl};
     use std::collections::VecDeque;
     use std::sync::mpsc;
+
+    fn start_owned_recording(
+        ownership: &RecordingOwnership,
+        id: &str,
+        window: &Arc<RecordingWindow>,
+        cancelled: &AtomicBool,
+        recorder: &PulseRecorder,
+    ) {
+        let generation = ownership.reserve(id, window).unwrap();
+        let admission = ownership.claim_admission(id, window, generation).unwrap();
+        ownership
+            .start(
+                id,
+                window,
+                generation,
+                StartControl {
+                    cancelled,
+                    admission: Some(&admission),
+                    wait: Duration::ZERO,
+                },
+                || {
+                    recorder
+                        .start(None, None)
+                        .map_err(|error| error.to_string())
+                },
+                || false,
+            )
+            .unwrap();
+        ownership.finish_admission(&admission);
+    }
 
     #[test]
     fn pulse_fragments_preserve_float_samples_and_silence_holes() {
@@ -848,33 +879,10 @@ mod tests {
 
         // Exercise ownership with an actual PulseAudio stream, not just a fake
         // recorder: a competing owner cannot acquire it until release finishes.
-        use crate::platform::recording_ownership::{RecordingOwnership, StartControl};
         let ownership = RecordingOwnership::default();
         let window = ownership.window(1);
         let cancelled = AtomicBool::new(false);
-        let generation = ownership.reserve("first", &window).unwrap();
-        let admission = ownership
-            .claim_admission("first", &window, generation)
-            .unwrap();
-        ownership
-            .start(
-                "first",
-                &window,
-                generation,
-                StartControl {
-                    cancelled: &cancelled,
-                    admission: Some(&admission),
-                    wait: Duration::ZERO,
-                },
-                || {
-                    recorder
-                        .start(None, None)
-                        .map_err(|error| error.to_string())
-                },
-                || false,
-            )
-            .unwrap();
-        ownership.finish_admission(&admission);
+        start_owned_recording(&ownership, "first", &window, &cancelled, &recorder);
         let generation = ownership.reserve("second", &window).unwrap();
         let admission = ownership
             .claim_admission("second", &window, generation)
@@ -907,29 +915,7 @@ mod tests {
             })
             .unwrap();
         assert!(!recorder.is_recording());
-        let generation = ownership.reserve("successor", &window).unwrap();
-        let admission = ownership
-            .claim_admission("successor", &window, generation)
-            .unwrap();
-        ownership
-            .start(
-                "successor",
-                &window,
-                generation,
-                StartControl {
-                    cancelled: &cancelled,
-                    admission: Some(&admission),
-                    wait: Duration::ZERO,
-                },
-                || {
-                    recorder
-                        .start(None, None)
-                        .map_err(|error| error.to_string())
-                },
-                || false,
-            )
-            .unwrap();
-        ownership.finish_admission(&admission);
+        start_owned_recording(&ownership, "successor", &window, &cancelled, &recorder);
         ownership.begin_reset().unwrap();
         assert!(ownership.reserve("during-reset", &window).is_err());
         ownership
