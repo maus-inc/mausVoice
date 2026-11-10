@@ -146,6 +146,17 @@ describe("reviewTranscriptOnPill", () => {
       expect(mocks.logger.error).toHaveBeenCalledWith(
         "Failed to copy the reviewed transcript",
       );
+      expect(mocks.showToast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message:
+            "Could not copy the reviewed text. The review remains open so you can retry.",
+          toastType: "error",
+          duration: 8000,
+        }),
+      );
+      expect(mocks.showToast).not.toHaveBeenCalledWith(
+        expect.objectContaining({ action: "open_transcriptions" }),
+      );
       await cancelPillReview(pending);
     } finally {
       cancelAllPillReviews();
@@ -285,6 +296,22 @@ describe("reviewTranscriptOnPill", () => {
     decide?.({ payload: { reviewId: currentReviewId(), action: "copy" } });
 
     await expect(pending).resolves.toBeNull();
+    expect(mocks.invoke).toHaveBeenCalledWith("copy_to_clipboard", {
+      text: "copy me",
+    });
+  });
+
+  it("reports a successful assistant-tool Copy decision to its caller", async () => {
+    const onCopy = vi.fn();
+    const pending = reviewTranscriptOnPill("copy me", "assistant-tool", {
+      onCopy,
+    });
+    await flush(() => getAppState().pendingPillReview !== null);
+
+    decide?.({ payload: { reviewId: currentReviewId(), action: "copy" } });
+
+    await expect(pending).resolves.toBeNull();
+    expect(onCopy).toHaveBeenCalledOnce();
     expect(mocks.invoke).toHaveBeenCalledWith("copy_to_clipboard", {
       text: "copy me",
     });
@@ -444,7 +471,10 @@ describe("reviewTranscriptOnPill", () => {
     );
     // Nothing was queued, so the next review can still use the pill.
     expect(getAppState().pendingPillReview).toBeNull();
-    expect(mocks.reviewTextInComposer).toHaveBeenCalledWith("stranded");
+    expect(mocks.reviewTextInComposer).toHaveBeenCalledWith(
+      "stranded",
+      expect.objectContaining({ source: "dictation" }),
+    );
   });
 
   it("gives up on a review nobody answers instead of blocking the insert", async () => {
@@ -641,9 +671,13 @@ describe("reviewTranscriptOnPill", () => {
     });
     await expect(pending).resolves.toBe("composed take");
 
-    expect(mocks.reviewTextInComposer).toHaveBeenCalledWith("pill edit", {
-      originalText: "rough take",
-    });
+    expect(mocks.reviewTextInComposer).toHaveBeenCalledWith(
+      "pill edit",
+      expect.objectContaining({
+        originalText: "rough take",
+        source: "dictation",
+      }),
+    );
     const session = getReviewSession(id);
     expect(session?.status).toBe("decided");
     expect(session?.decision).toBe("edit");
@@ -651,7 +685,49 @@ describe("reviewTranscriptOnPill", () => {
     expect(session?.draftText).toBe("composed take");
   });
 
-  it("delegates to the composer when the pill sends an Open action", async () => {
+  it("hands agent Paste Open to its durable Chats callback", async () => {
+    const onOpen = vi.fn(() => Promise.resolve());
+    const pending = reviewTranscriptOnPill("rough take", "assistant-tool", {
+      onOpen,
+    });
+    await flush(() => getAppState().pendingPillReview !== null);
+
+    const id = currentReviewId();
+    decide?.({
+      payload: { reviewId: id, action: "open", text: "pill draft" },
+    });
+    await expect(pending).resolves.toBeNull();
+
+    expect(onOpen).toHaveBeenCalledWith("pill draft");
+    expect(mocks.reviewTextInComposer).not.toHaveBeenCalled();
+    const session = getReviewSession(id);
+    expect(session?.status).toBe("decided");
+    expect(session?.decision).toBe("open");
+    expect(session?.draftText).toBe("pill draft");
+  });
+
+  it("keeps agent Paste review open when its Open hand-off cannot be saved", async () => {
+    const onOpen = vi.fn(() => Promise.reject(new Error("disk full")));
+    const pending = reviewTranscriptOnPill("rough take", "assistant-tool", {
+      onOpen,
+    });
+    await flush(() => getAppState().pendingPillReview !== null);
+
+    const id = currentReviewId();
+    decide?.({
+      payload: { reviewId: id, action: "open", text: "pill draft" },
+    });
+    await flush(() => mocks.logger.error.mock.calls.length > 0);
+
+    expect(getAppState().pendingPillReview?.id).toBe(id);
+    expect(getReviewSession(id)?.status).toBe("open");
+    expect(mocks.showToast).toHaveBeenCalledWith(
+      expect.objectContaining({ toastType: "error" }),
+    );
+    await cancelPillReview(pending);
+  });
+
+  it("delegates dictation Open to the composer", async () => {
     mocks.reviewTextInComposer.mockResolvedValueOnce("composed from open");
     const pending = startPillReview("rough take");
     await flush(() => getAppState().pendingPillReview !== null);
@@ -662,9 +738,13 @@ describe("reviewTranscriptOnPill", () => {
     });
     await expect(pending).resolves.toBe("composed from open");
 
-    expect(mocks.reviewTextInComposer).toHaveBeenCalledWith("pill draft", {
-      originalText: "rough take",
-    });
+    expect(mocks.reviewTextInComposer).toHaveBeenCalledWith(
+      "pill draft",
+      expect.objectContaining({
+        originalText: "rough take",
+        source: "dictation",
+      }),
+    );
     const session = getReviewSession(id);
     expect(session?.status).toBe("decided");
     expect(session?.decision).toBe("open");
@@ -682,9 +762,13 @@ describe("reviewTranscriptOnPill", () => {
     });
     await expect(pending).resolves.toBe("composed take");
 
-    expect(mocks.reviewTextInComposer).toHaveBeenCalledWith("rough take", {
-      originalText: "rough take",
-    });
+    expect(mocks.reviewTextInComposer).toHaveBeenCalledWith(
+      "rough take",
+      expect.objectContaining({
+        originalText: "rough take",
+        source: "dictation",
+      }),
+    );
   });
 
   it("expires unanswered reviews and offers the history route", async () => {
@@ -702,6 +786,40 @@ describe("reviewTranscriptOnPill", () => {
       expect(mocks.showToast).toHaveBeenCalledWith(
         expect.objectContaining({ action: "open_transcriptions" }),
       );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("expires agent Paste reviews without claiming the text is in History", async () => {
+    vi.useFakeTimers();
+    try {
+      const onExpire = vi.fn();
+      const pending = reviewTranscriptOnPill(
+        "agent paste text",
+        "assistant-tool",
+        {
+          onExpire,
+        },
+      );
+      await flush(() => getAppState().pendingPillReview !== null);
+      const id = currentReviewId();
+
+      await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+
+      await expect(pending).resolves.toBeNull();
+      expect(getReviewSession(id)?.status).toBe("expired");
+      expect(onExpire).toHaveBeenCalledOnce();
+      const expiryToast = mocks.showToast.mock.lastCall?.[0];
+      expect(expiryToast).toEqual(
+        expect.objectContaining({
+          message:
+            "Paste review expired. Nothing was inserted. Run Paste again to retry.",
+          toastType: "info",
+          duration: 8000,
+        }),
+      );
+      expect(expiryToast).not.toHaveProperty("action");
     } finally {
       vi.useRealTimers();
     }
@@ -735,7 +853,10 @@ describe("reviewTranscriptOnPill", () => {
       reviewTranscriptBeforeInsert("rough take", "assistant-tool"),
     ).resolves.toBe("composed take");
 
-    expect(mocks.reviewTextInComposer).toHaveBeenCalledWith("rough take");
+    expect(mocks.reviewTextInComposer).toHaveBeenCalledWith(
+      "rough take",
+      expect.objectContaining({ source: "assistant-tool" }),
+    );
     expect(mocks.listen).not.toHaveBeenCalled();
     expect(getAppState().pendingPillReview).toBeNull();
     expect(getQueuedSessions()).toEqual([]);

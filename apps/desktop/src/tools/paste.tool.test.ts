@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const reviewTranscriptBeforeInsertMock = vi.hoisted(() => vi.fn());
 const createPendingPasteReviewMock = vi.hoisted(() => vi.fn());
 const invokeMock = vi.hoisted(() => vi.fn());
+const emitMock = vi.hoisted(() => vi.fn());
 const loggerErrorMock = vi.hoisted(() => vi.fn());
 const state = vi.hoisted(() => ({
   userPrefs: { reviewBeforeInsert: true } as { reviewBeforeInsert?: boolean },
@@ -17,6 +18,7 @@ vi.mock("../actions/pending-paste-review.actions", () => ({
 }));
 vi.mock("../store", () => ({ getAppState: () => state }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock }));
+vi.mock("@tauri-apps/api/event", () => ({ emit: emitMock }));
 vi.mock("../utils/tool-permission.utils", () => ({
   getToolAlwaysAllow: vi.fn(),
   setToolAlwaysAllow: vi.fn(),
@@ -43,6 +45,7 @@ describe("PasteTool review", () => {
     vi.clearAllMocks();
     state.userPrefs = { reviewBeforeInsert: true };
     createPendingPasteReviewMock.mockResolvedValue(undefined);
+    emitMock.mockResolvedValue(undefined);
     // What the Rust `paste` command returns when the text reached the target.
     invokeMock.mockResolvedValue("pasted");
   });
@@ -51,10 +54,12 @@ describe("PasteTool review", () => {
     reviewTranscriptBeforeInsertMock.mockResolvedValue("edited text");
     invokeMock.mockResolvedValue("copied_to_clipboard");
 
-    await new PasteTool(toolInfo).execute(
-      { text: "agent version" },
-      { conversationId: "conv-1" },
-    );
+    await expect(
+      new PasteTool(toolInfo).execute(
+        { text: "agent version" },
+        { conversationId: "conv-1" },
+      ),
+    ).resolves.toEqual({ copiedToClipboard: true });
 
     expect(createPendingPasteReviewMock).toHaveBeenCalledWith(
       "conv-1",
@@ -108,7 +113,7 @@ describe("PasteTool review", () => {
         { text: "agent version" },
         { conversationId: "conv-1" },
       ),
-    ).resolves.toEqual({});
+    ).resolves.toEqual({ copiedToClipboard: true });
 
     // The clipboard fallback already delivered the text; a failed bookkeeping
     // write must not be reported as a failed paste.
@@ -144,6 +149,29 @@ describe("PasteTool review", () => {
     );
   });
 
+  it("reports an expired review distinctly from an explicit cancel", async () => {
+    reviewTranscriptBeforeInsertMock.mockImplementationOnce(
+      async (
+        _text: string,
+        _source: string,
+        options?: { onExpire?: () => void },
+      ) => {
+        options?.onExpire?.();
+        return null;
+      },
+    );
+
+    await expect(
+      new PasteTool(toolInfo).execute(
+        { text: "agent version" },
+        { conversationId: "conv-1" },
+      ),
+    ).resolves.toEqual({ reviewExpired: true });
+
+    expect(invokeMock).not.toHaveBeenCalled();
+    expect(createPendingPasteReviewMock).not.toHaveBeenCalled();
+  });
+
   it("saves nothing when the review is cancelled", async () => {
     reviewTranscriptBeforeInsertMock.mockResolvedValue(null);
 
@@ -159,17 +187,79 @@ describe("PasteTool review", () => {
     reviewTranscriptBeforeInsertMock.mockResolvedValue("edited text");
 
     await expect(
-      new PasteTool(toolInfo).execute({ text: "agent version" }),
+      new PasteTool(toolInfo).execute(
+        { text: "agent version" },
+        { conversationId: "conv-1" },
+      ),
     ).resolves.toEqual({});
 
     expect(reviewTranscriptBeforeInsertMock).toHaveBeenCalledWith(
       "agent version",
       "assistant-tool",
+      expect.objectContaining({
+        onCopy: expect.any(Function),
+        onOpen: expect.any(Function),
+      }),
     );
     expect(invokeMock).toHaveBeenCalledWith("paste", {
       text: "edited text",
       keybind: null,
     });
+  });
+
+  it("saves and opens an Open review in Chats instead of pasting into the old target", async () => {
+    reviewTranscriptBeforeInsertMock.mockImplementation(
+      async (
+        _text: string,
+        _source: string,
+        options?: {
+          onCopy?: () => void;
+          onOpen?: (text: string) => Promise<void>;
+        },
+      ) => {
+        await options?.onOpen?.("edited in pill");
+        return null;
+      },
+    );
+
+    await expect(
+      new PasteTool(toolInfo).execute(
+        { text: "agent version" },
+        { conversationId: "conv-1" },
+      ),
+    ).resolves.toEqual({ awaitingManualPaste: true });
+
+    expect(createPendingPasteReviewMock).toHaveBeenCalledWith(
+      "conv-1",
+      "edited in pill",
+    );
+    expect(emitMock).toHaveBeenCalledWith("open-pill-conversation", {
+      conversationId: "conv-1",
+    });
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it("returns a successful clipboard result when the user chooses Copy", async () => {
+    reviewTranscriptBeforeInsertMock.mockImplementation(
+      async (
+        _text: string,
+        _source: string,
+        options?: { onCopy?: () => void },
+      ) => {
+        options?.onCopy?.();
+        return null;
+      },
+    );
+
+    await expect(
+      new PasteTool(toolInfo).execute(
+        { text: "agent version" },
+        { conversationId: "conv-1" },
+      ),
+    ).resolves.toEqual({ copiedToClipboard: true });
+
+    expect(invokeMock).not.toHaveBeenCalled();
+    expect(createPendingPasteReviewMock).not.toHaveBeenCalled();
   });
 
   it("cancels the paste when the review returns no text", async () => {

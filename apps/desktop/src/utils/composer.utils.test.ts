@@ -222,6 +222,32 @@ describe("reviewTextInComposer", () => {
     mocks.listen.mockResolvedValue(vi.fn());
   });
 
+  it("does not send an agent Paste composer failure to transcription History", async () => {
+    mocks.invoke.mockImplementation((cmd: string) =>
+      cmd === "floating_window_create"
+        ? Promise.reject(new Error("window unavailable"))
+        : Promise.resolve(undefined),
+    );
+    const onFailure = vi.fn();
+
+    await expect(
+      reviewTextInComposer("agent text", {
+        source: "assistant-tool",
+        onFailure,
+      }),
+    ).resolves.toBeNull();
+
+    expect(onFailure).toHaveBeenCalledOnce();
+    expect(mocks.showToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message:
+          "Could not open the Paste review. Nothing was inserted. Run Paste again to retry.",
+        toastType: "error",
+        duration: 8000,
+      }),
+    );
+  });
+
   it("returns null and surfaces a recovery toast when window creation fails", async () => {
     mocks.invoke.mockImplementation((cmd: string) =>
       // Reject rather than throw: the code under test calls `invoke` inside its
@@ -410,6 +436,65 @@ describe("reviewTextInComposer ready-timeout safety net", () => {
         (c: unknown[]) => c[0] === "floating_window_destroy",
       );
       expect(destroyCall?.[1]).toEqual({ id: "floating-blank" });
+    } finally {
+      globalRef.window = previousWindow;
+      vi.useRealTimers();
+    }
+  }, 20_000);
+
+  it("reports an unanswered agent Paste composer review as expired", async () => {
+    vi.useFakeTimers();
+    const globalRef = globalThis as { window?: unknown };
+    const previousWindow = globalRef.window;
+    globalRef.window = {
+      setTimeout: (...args: Parameters<typeof setTimeout>) =>
+        setTimeout(...args),
+      clearTimeout: (...args: Parameters<typeof clearTimeout>) =>
+        clearTimeout(...args),
+    };
+
+    try {
+      const listeners = installPerEventListener();
+      let createdId = "";
+      mocks.invoke.mockImplementation((cmd: string) => {
+        if (cmd === "floating_window_create") {
+          createdId = "floating-review";
+          return Promise.resolve({ id: createdId });
+        }
+        return Promise.resolve(undefined);
+      });
+
+      vi.resetModules();
+      const { reviewTextInComposer: freshReview } =
+        await import("./composer.utils");
+      const onExpire = vi.fn();
+      const promise = freshReview("agent text", {
+        source: "assistant-tool",
+        onExpire,
+      });
+      for (let i = 0; i < 40 && !createdId; i += 1) {
+        await vi.advanceTimersByTimeAsync(5);
+      }
+      expect(createdId).toBe("floating-review");
+      const requestId = mocks.invoke.mock.calls.find(
+        (call: unknown[]) => call[0] === "composer_register_text",
+      )?.[1]?.requestId as string;
+      listeners.get("composer-ready")?.[0]?.({
+        payload: { requestId },
+      });
+
+      await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+
+      await expect(promise).resolves.toBeNull();
+      expect(onExpire).toHaveBeenCalledOnce();
+      expect(mocks.showToast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message:
+            "Paste review expired. Nothing was inserted. Run Paste again to retry.",
+          toastType: "info",
+          duration: 8000,
+        }),
+      );
     } finally {
       globalRef.window = previousWindow;
       vi.useRealTimers();

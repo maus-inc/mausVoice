@@ -86,7 +86,7 @@ describe("native pill review localization", () => {
       insert_label: de.insert,
       copy_label: de.copy,
       cancel_label: de.cancel,
-      hint: de.edit_below_then_press_enter_to_insert,
+      hint: de.enter_inserts_shift_enter_for_a_new_line,
     });
   });
 
@@ -103,7 +103,7 @@ describe("native pill review localization", () => {
       insert_label: "insert",
       copy_label: "copy",
       cancel_label: "cancel",
-      hint: "edit_below_then_press_enter_to_insert",
+      hint: "enter_inserts_shift_enter_for_a_new_line",
     } as const;
     for (const [field, catalogKey] of Object.entries(captions)) {
       const value = review[field];

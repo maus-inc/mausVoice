@@ -1253,6 +1253,13 @@ fn draw_assistant_panel(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
             let send_x = panel_x + panel_w - PANEL_CONTENT_SIDE_INSET - send_btn_size;
             let send_y = input_y + (PANEL_INPUT_HEIGHT - send_btn_size) / 2.0;
             let has_text = !state.entry_text.borrow().trim().is_empty();
+            if !has_text && review_id.is_none() {
+                ctx.select_font_face("Satoshi", false, false);
+                ctx.set_font_size(13.0);
+                ctx.set_source_rgba(1.0, 1.0, 1.0, 0.42 * alpha);
+                ctx.move_to(panel_x + PANEL_CONTENT_SIDE_INSET + 10.0, input_y + 29.0);
+                ctx.show_text("Type a message...");
+            }
             let text_alpha = if has_text { 0.82 } else { 0.2 };
 
             ctx.set_source_rgba(1.0, 1.0, 1.0, text_alpha * alpha);
@@ -1579,7 +1586,7 @@ fn draw_review_actions(
     let hint = hint_binding
         .as_ref()
         .and_then(|review| review.hint.as_deref())
-        .unwrap_or("Edit below, then press Enter to insert");
+        .unwrap_or("Enter inserts · Shift+Enter for a new line");
 
     // Every caption here is drawn by the pill, so every caption has to come
     // from the desktop's locale. The English fallbacks only apply to a sender

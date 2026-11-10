@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { emit } from "@tauri-apps/api/event";
 import type { PasteOutcome } from "@maus-inc/desktop-native-apis";
 import type { ToolInfo } from "@maus-inc/types";
 import { BaseTool, type ToolExecutionContext } from "./base.tool";
@@ -41,10 +42,61 @@ export class PasteTool extends BaseTool {
     context?: ToolExecutionContext,
   ): Promise<Record<string, unknown>> {
     const requestedText = typeof params.text === "string" ? params.text : "";
+    let openedPendingPaste = false;
+    let copiedReviewedText = false;
+    let reviewExpired = false;
+    let reviewFailed = false;
+    const conversationId = context?.conversationId;
+    const reviewOptions = {
+      onCopy: () => {
+        copiedReviewedText = true;
+      },
+      onExpire: () => {
+        reviewExpired = true;
+      },
+      onFailure: () => {
+        reviewFailed = true;
+      },
+      ...(conversationId
+        ? {
+            onOpen: async (reviewedText: string) => {
+              // Save first: once Chats takes focus the pill cannot safely insert
+              // into the app that had focus when the tool began.
+              await createPendingPasteReview(conversationId, reviewedText);
+              openedPendingPaste = true;
+              try {
+                await emit("open-pill-conversation", { conversationId });
+              } catch (error) {
+                // The durable card is still available in Chats even if native
+                // surfacing or navigation could not be requested.
+                getLogger().warning(
+                  `Could not open the Paste review in Chats: ${error}`,
+                );
+              }
+            },
+          }
+        : {}),
+    };
     const text =
       getAppState().userPrefs?.reviewBeforeInsert === true
-        ? await reviewTranscriptBeforeInsert(requestedText, "assistant-tool")
+        ? await reviewTranscriptBeforeInsert(
+            requestedText,
+            "assistant-tool",
+            reviewOptions,
+          )
         : requestedText;
+    if (openedPendingPaste) {
+      return { awaitingManualPaste: true };
+    }
+    if (copiedReviewedText) {
+      return { copiedToClipboard: true };
+    }
+    if (reviewExpired) {
+      return { reviewExpired: true };
+    }
+    if (reviewFailed) {
+      return { reviewFailed: true };
+    }
     if (!text?.trim()) {
       return { canceled: true };
     }
@@ -61,8 +113,11 @@ export class PasteTool extends BaseTool {
     }
     if (outcome === "copied_to_clipboard") {
       // The focused target could not take the text, so nothing landed and the
-      // clipboard fallback has to be turned into a deliberate hand-off.
+      // clipboard fallback has to be turned into a deliberate hand-off. Tell
+      // the agent too: an empty result would look indistinguishable from a
+      // successful paste even though the user still needs to paste manually.
       await savePendingPasteReview(context?.conversationId ?? "", text);
+      return { copiedToClipboard: true };
     }
     return {};
   }

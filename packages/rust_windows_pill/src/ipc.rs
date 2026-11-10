@@ -95,7 +95,7 @@ pub struct PillReview {
     pub copy_label: Option<String>,
     #[serde(default)]
     pub cancel_label: Option<String>,
-    /// The "Edit below, then press Enter to insert" hint above the row.
+    /// The localized editing and multiline-submit hint above the row.
     #[serde(default)]
     pub hint: Option<String>,
 }

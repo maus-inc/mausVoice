@@ -1893,7 +1893,7 @@ fn draw_review_actions(
     let hint = hint_binding
         .as_ref()
         .and_then(|review| review.hint.as_deref())
-        .unwrap_or("Edit below, then press Enter to insert");
+        .unwrap_or("Enter inserts · Shift+Enter for a new line");
 
     // Every caption here is drawn by the pill, so every caption has to come
     // from the desktop's locale. The English fallbacks only apply to a sender

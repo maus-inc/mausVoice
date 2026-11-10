@@ -41,7 +41,7 @@ thread_local! {
     static TYPING_ACTIVE: Cell<bool> = const { Cell::new(false) };
     static EDIT_CONTAINER: Cell<HWND> = const { Cell::new(HWND(std::ptr::null_mut())) };
     static EDIT_HWND: Cell<HWND> = const { Cell::new(HWND(std::ptr::null_mut())) };
-    static EDIT_BG_BRUSH: Cell<HBRUSH> = const { Cell::new(HBRUSH(std::ptr::null_mut())) };
+    static EDIT_SURFACE_BRUSH: Cell<HBRUSH> = const { Cell::new(HBRUSH(std::ptr::null_mut())) };
     // Cached reduced-motion probe (see reduced_motion()); re-read at most
     // every 2 s so the frame loop never pays for a settings call per tick.
     static REDUCED_MOTION_CACHED: Cell<bool> = const { Cell::new(false) };
@@ -2190,7 +2190,9 @@ fn tick_ring(state: &PillState, dt: f64) {
 
 // ── Native text input overlay ────────────────────────────────────────
 
-const ES_AUTOHSCROLL: u32 = 0x0080;
+const ES_MULTILINE: u32 = 0x0004;
+const ES_AUTOVSCROLL: u32 = 0x0040;
+const ES_WANTRETURN: u32 = 0x1000;
 const EN_CHANGE_NOTIFICATION: u16 = 0x0300;
 const EM_SETMARGINS: u32 = 0x00D3;
 const EM_GETSEL: u32 = 0x00B0;
@@ -2200,11 +2202,13 @@ const EC_LEFTMARGIN: u32 = 1;
 const EC_RIGHTMARGIN: u32 = 2;
 const EDIT_COLOR_KEY: u32 = 0x00010001; // RGB(1,0,1) - unique color for transparency
 const EDIT_TEXT_COLOR: u32 = 0x00E8E8E8; // RGB(232, 232, 232)
+const EDIT_SURFACE: u32 = 0x00101010; // near-black inset matching the panel
 
 fn create_edit_overlay(hinstance: HMODULE, main_hwnd: HWND) {
     unsafe {
         let brush = CreateSolidBrush(COLORREF(EDIT_COLOR_KEY));
-        EDIT_BG_BRUSH.with(|b| b.set(brush));
+        let surface_brush = CreateSolidBrush(COLORREF(EDIT_SURFACE));
+        EDIT_SURFACE_BRUSH.with(|b| b.set(surface_brush));
 
         let class_name = w!("MausVoiceInput");
         let wc = WNDCLASSEXW {
@@ -2237,7 +2241,15 @@ fn create_edit_overlay(hinstance: HMODULE, main_hwnd: HWND) {
             WS_EX_LEFT,
             w!("EDIT"),
             w!(""),
-            WINDOW_STYLE(WS_CHILD.0 | WS_VISIBLE.0 | ES_AUTOHSCROLL),
+            WINDOW_STYLE(
+                WS_CHILD.0
+                    | WS_VISIBLE.0
+                    | WS_BORDER.0
+                    | ES_MULTILINE
+                    | ES_AUTOVSCROLL
+                    | ES_WANTRETURN
+                    | WS_VSCROLL.0,
+            ),
             0,
             0,
             400,
@@ -2289,8 +2301,9 @@ unsafe extern "system" fn edit_container_proc(
         WM_CTLCOLOREDIT => {
             let hdc = HDC(wparam.0 as *mut std::ffi::c_void);
             SetTextColor(hdc, COLORREF(EDIT_TEXT_COLOR));
-            SetBkMode(hdc, TRANSPARENT);
-            let brush = EDIT_BG_BRUSH.with(|b| b.get());
+            SetBkMode(hdc, OPAQUE);
+            SetBkColor(hdc, COLORREF(EDIT_SURFACE));
+            let brush = EDIT_SURFACE_BRUSH.with(|b| b.get());
             LRESULT(brush.0 as isize)
         }
         WM_COMMAND => {
@@ -2321,12 +2334,16 @@ fn handle_edit_message(msg: &MSG) -> bool {
     match msg.message {
         WM_KEYDOWN => {
             let ctrl = unsafe { (GetKeyState(VK_CONTROL.0 as i32) as u16 & 0x8000) != 0 };
+            let shift = unsafe { (GetKeyState(VK_SHIFT.0 as i32) as u16 & 0x8000) != 0 };
 
-            if msg.wParam.0 == VK_RETURN.0 as usize {
-                // Enter submits: an insert decision while a transcript is under
-                // review, a message to the assistant otherwise. Nothing was
-                // sent when the entry holds only blanks, so the text has to
-                // stay put instead of being wiped for no result.
+            let is_review = STATE.with(|s| {
+                s.borrow()
+                    .as_ref()
+                    .is_some_and(|state| state.assistant_review.borrow().is_some())
+            });
+            if msg.wParam.0 == VK_RETURN.0 as usize && (!shift || !is_review) {
+                // Keep Enter-to-submit. Shift+Enter adds a line to the review
+                // transcript without changing the established submit shortcut.
                 let sent = STATE.with(|s| match *s.borrow() {
                     Some(ref state) => input::submit_entry(state),
                     None => false,
@@ -2439,10 +2456,26 @@ fn update_edit_overlay(main_hwnd: HWND, state: &PillState) {
     let panel_h = wh - PANEL_TOP_MARGIN - PANEL_BOTTOM_MARGIN;
     let y_shift = (1.0 - state.panel_open_t.get()) * 12.0;
     let py = PANEL_TOP_MARGIN + y_shift;
-    let input_y = py + panel_h - PANEL_INPUT_HEIGHT;
+    let is_review = state.assistant_review.borrow().is_some();
+    // During review the native multiline editor takes the transcript's place
+    // in the body, leaving the fixed action row and composer rail unobstructed.
+    let input_y = if is_review {
+        py + PANEL_TRANSCRIPT_TOP_OFFSET + 28.0
+    } else {
+        py + panel_h - PANEL_INPUT_HEIGHT
+    };
+    let editor_h = if is_review {
+        PANEL_REVIEW_EDITOR_HEIGHT
+    } else {
+        PANEL_INPUT_HEIGHT
+    };
     let input_x = panel_x + PANEL_CONTENT_SIDE_INSET;
     let send_btn_size = 28.0_f64;
-    let input_w = panel_w - PANEL_CONTENT_SIDE_INSET * 2.0 - send_btn_size - 8.0;
+    let input_w = if is_review {
+        panel_w - PANEL_CONTENT_SIDE_INSET * 2.0
+    } else {
+        panel_w - PANEL_CONTENT_SIDE_INSET * 2.0 - send_btn_size - 8.0
+    };
 
     let mut win_rect = RECT::default();
     unsafe {
@@ -2451,10 +2484,11 @@ fn update_edit_overlay(main_hwnd: HWND, state: &PillState) {
 
     let screen_x = win_rect.left as f64 + ox + input_x;
     let screen_y = win_rect.top as f64 + oy + input_y + 1.0;
-    let h = PANEL_INPUT_HEIGHT - 1.0;
+    let h = editor_h;
 
     unsafe {
-        // Color key makes the background transparent; alpha matches text to panel opacity
+        // Keep the overlay transparent outside the editor and fade the inset
+        // with the panel.
         let alpha = (state.panel_open_t.get() * PANEL_BG_ALPHA * 255.0) as u8;
         let _ = SetLayeredWindowAttributes(
             container,

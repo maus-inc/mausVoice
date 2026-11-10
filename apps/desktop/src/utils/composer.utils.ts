@@ -13,6 +13,13 @@ export type ComposerResult = {
   text: string;
 };
 
+type ComposerReviewOptions = {
+  originalText?: string;
+  source?: "dictation" | "assistant-tool";
+  onExpire?: () => void;
+  onFailure?: () => void;
+};
+
 export type Rect = {
   x: number;
   y: number;
@@ -249,6 +256,7 @@ class ComposerReview {
   constructor(
     private readonly text: string,
     private readonly originalText: string,
+    private readonly options: ComposerReviewOptions,
   ) {}
 
   async run(): Promise<string | null> {
@@ -392,10 +400,10 @@ class ComposerReview {
         this.finish(null);
       }, COMPOSER_READY_TIMEOUT_MS);
     }
-    this.decisionTimer = setTimeout(
-      () => this.finish(null),
-      COMPOSER_TIMEOUT_MS,
-    );
+    this.decisionTimer = setTimeout(() => {
+      this.showRecovery(true);
+      this.finish(null);
+    }, COMPOSER_TIMEOUT_MS);
   }
 
   private async destroyWindow(): Promise<void> {
@@ -404,7 +412,33 @@ class ComposerReview {
     await destroyComposerWindow(id);
   }
 
-  private showRecovery(): void {
+  private showRecovery(expired = false): void {
+    if (this.options.source === "assistant-tool") {
+      try {
+        if (expired) this.options.onExpire?.();
+        else this.options.onFailure?.();
+      } catch (error) {
+        getLogger().warning(`Could not report Paste review recovery: ${error}`);
+      }
+      const message = expired
+        ? getIntl().formatMessage({
+            defaultMessage:
+              "Paste review expired. Nothing was inserted. Run Paste again to retry.",
+          })
+        : getIntl().formatMessage({
+            defaultMessage:
+              "Could not open the Paste review. Nothing was inserted. Run Paste again to retry.",
+          });
+      runToast(
+        showToast({
+          message,
+          toastType: expired ? "info" : "error",
+          duration: 8000,
+        }),
+      );
+      return;
+    }
+
     runToast(
       showToast({
         message: getIntl().formatMessage({
@@ -433,7 +467,7 @@ class ComposerReview {
 /** Review one transcript; resolve edited text or null on cancel/close/failure. */
 export const reviewTextInComposer = async (
   text: string,
-  options?: { originalText?: string },
+  options: ComposerReviewOptions = {},
 ): Promise<string | null> => {
   if (activeComposer) {
     if (activeComposer.windowId) {
@@ -444,9 +478,30 @@ export const reviewTextInComposer = async (
     getLogger().warning(
       "reviewTextInComposer: a composer window is already open; focusing it",
     );
+    if (options.source === "assistant-tool") {
+      try {
+        options.onFailure?.();
+      } catch (error) {
+        getLogger().warning(`Could not report Paste review recovery: ${error}`);
+      }
+      runToast(
+        showToast({
+          message: getIntl().formatMessage({
+            defaultMessage:
+              "Could not open the Paste review. Nothing was inserted. Run Paste again to retry.",
+          }),
+          toastType: "error",
+          duration: 8000,
+        }),
+      );
+    }
     return null;
   }
-  const review = new ComposerReview(text, options?.originalText ?? text);
+  const review = new ComposerReview(
+    text,
+    options.originalText ?? text,
+    options,
+  );
   // Synchronous reservation: two callers cannot both reach native creation.
   activeComposer = review;
   return review.run();

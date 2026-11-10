@@ -146,6 +146,7 @@ struct AppContext {
     window: id,
     view: id,
     entry: id,
+    entry_container: id,
     quit: Cell<bool>,
     last_tick_time: Cell<f64>,
     embedded: bool,
@@ -238,16 +239,12 @@ fn register_pill_view_class() -> &'static Class {
             hit_test as extern "C" fn(&Object, Sel, NSPoint) -> id,
         );
         decl.add_method(
-            sel!(textFieldAction:),
-            text_field_action as extern "C" fn(&Object, Sel, id),
-        );
-        decl.add_method(
-            sel!(controlTextDidChange:),
+            sel!(textDidChange:),
             control_text_did_change as extern "C" fn(&Object, Sel, id),
         );
         decl.add_method(
-            sel!(control:textView:doCommandBySelector:),
-            control_do_command as extern "C" fn(&Object, Sel, id, id, Sel) -> BOOL,
+            sel!(textView:doCommandBySelector:),
+            text_view_do_command as extern "C" fn(&Object, Sel, id, Sel) -> BOOL,
         );
         decl.add_method(
             sel!(cancelOperation:),
@@ -431,9 +428,9 @@ extern "C" fn hit_test(this: &Object, _sel: Sel, point: NSPoint) -> id {
 /// replaced rather than dropping the whole entry.
 ///
 /// # Safety
-/// `field` must be a live `NSTextField`.
+/// `field` must be a live `NSTextView`.
 unsafe fn field_string(field: id) -> String {
-    let ns_text: id = msg_send![field, stringValue];
+    let ns_text: id = msg_send![field, string];
     if ns_text.is_null() {
         return String::new();
     }
@@ -446,24 +443,8 @@ unsafe fn field_string(field: id) -> String {
         .into_owned()
 }
 
-extern "C" fn text_field_action(_this: &Object, _sel: Sel, sender: id) {
-    with_ctx(|ctx| {
-        unsafe {
-            *ctx.state.entry_text.borrow_mut() = field_string(sender);
-        }
-        // Enter submits: an insert decision while a transcript is under review,
-        // a message to the assistant otherwise.
-        if input::submit_entry(&ctx.state) {
-            set_entry_text("");
-        }
-    });
-}
-
-/// Mirror every keystroke into state, the way the GTK pill does on `changed`.
-///
-/// The field only fires its action once the edit is committed, so without this
-/// the buttons on the review panel would answer with the text as it stood at
-/// the last frame instead of the text on screen.
+/// Mirror every NSTextView edit into state. Review buttons submit this mirror,
+/// so it must track the live buffer rather than the last committed edit.
 extern "C" fn control_text_did_change(_this: &Object, _sel: Sel, notification: id) {
     with_ctx(|ctx| unsafe {
         let control: id = msg_send![notification, object];
@@ -482,17 +463,37 @@ extern "C" fn control_text_did_change(_this: &Object, _sel: Sel, notification: i
 /// Windows pill. The field editor holds the keyboard while the entry is being
 /// edited, and it routes Escape here as `cancelOperation:`. Every other command
 /// keeps its standard behaviour.
-extern "C" fn control_do_command(
+extern "C" fn text_view_do_command(
     _this: &Object,
     _sel: Sel,
-    _control: id,
     _text_view: id,
     command: Sel,
 ) -> BOOL {
-    if command != sel!(cancelOperation:) {
+    if command == sel!(insertNewline:) {
+        // Keep Enter-to-submit in both modes. Review text uses Shift+Return
+        // for a line break, preserving the established insert shortcut.
+        let is_review =
+            with_ctx(|ctx| ctx.state.assistant_review.borrow().is_some()).unwrap_or(false);
+        let mut shift_down = false;
+        unsafe {
+            let app: id = msg_send![class!(NSApplication), sharedApplication];
+            let event: id = msg_send![app, currentEvent];
+            if !event.is_null() {
+                let flags: u64 = msg_send![event, modifierFlags];
+                shift_down = flags & (1 << 17) != 0;
+            }
+        }
+        if !is_review || !shift_down {
+            with_ctx(|ctx| {
+                if input::submit_entry(&ctx.state) {
+                    set_entry_text("");
+                }
+            });
+            return YES;
+        }
         return NO;
     }
-    if cancel_pending_review() {
+    if command == sel!(cancelOperation:) && cancel_pending_review() {
         YES
     } else {
         NO
@@ -525,7 +526,7 @@ fn cancel_pending_review() -> bool {
 pub(crate) fn set_entry_text(text: &str) {
     with_ctx(|ctx| unsafe {
         with_ns_string(text, |ns| {
-            let _: () = msg_send![ctx.entry, setStringValue:ns];
+            let _: () = msg_send![ctx.entry, setString:ns];
         });
     });
 }
@@ -788,23 +789,36 @@ fn perform_tick() {
 
         tick(&ctx.state, ctx.window, dt);
 
-        // Show/hide entry for typing mode
+        // The review editor sits in the transcript body; follow-ups retain
+        // their compact composer at the bottom. Keep its geometry and opacity
+        // on the panel's spring so the native control enters with the surface.
         let is_typing = ctx.state.is_typing();
+        let is_review = ctx.state.assistant_review.borrow().is_some();
         unsafe {
             let entry = ctx.entry;
-            let entry_hidden: BOOL = msg_send![entry, isHidden];
-            if is_typing && entry_hidden != NO {
-                let _: () = msg_send![entry, setHidden:NO];
+            let container = ctx.entry_container;
+            if is_typing {
+                let mut frame = typing_entry_frame(is_review);
+                frame.origin.y += (1.0 - ctx.state.panel_open_t.get()) * 12.0;
+                let _: () = msg_send![container, setFrame:frame];
+                let _: () = msg_send![container, setAlphaValue:ctx.state.panel_open_t.get()];
+                let border_type = if is_review { 2u64 } else { 0u64 };
+                let draws_background = if is_review { YES } else { NO };
+                let _: () = msg_send![container, setBorderType:border_type];
+                let _: () = msg_send![container, setDrawsBackground:draws_background];
+            }
+            let container_hidden: BOOL = msg_send![container, isHidden];
+            if is_typing && container_hidden != NO {
+                let _: () = msg_send![container, setHidden:NO];
                 let _: () = msg_send![ctx.window, makeKeyWindow];
                 let _: () = msg_send![ctx.window, makeFirstResponder:entry];
-            } else if !is_typing && entry_hidden == NO {
-                let _: () = msg_send![entry, setHidden:YES];
+            } else if !is_typing && container_hidden == NO {
+                let _: () = msg_send![container, setHidden:YES];
                 let _: () = msg_send![ctx.window, resignKeyWindow];
             }
 
-            // Sync entry text to state. `controlTextDidChange:` already does
-            // this on every keystroke; this covers changes the delegate does
-            // not see, such as a paste routed by the system.
+            // `textDidChange:` mirrors every edit; this frame read also covers
+            // system-routed paste and other changes that bypass keystrokes.
             if is_typing {
                 *ctx.state.entry_text.borrow_mut() = field_string(entry);
             }
@@ -1878,10 +1892,22 @@ fn default_content_origin_y(work_bottom: f64, window_height: f64) -> f64 {
     work_bottom + MARGIN_BOTTOM as f64 - below_content
 }
 
-// The native entry shares the fixed content coordinates used by draw_all and
+// The native editor shares the fixed panel coordinates used by draw_all and
 // hit testing. Extra window space is reserved only for the below selector.
-fn typing_entry_frame() -> NSRect {
+fn typing_entry_frame(is_review: bool) -> NSRect {
     let panel_x = (WINDOW_W_TYPING as f64 - PANEL_EXPANDED_WIDTH) / 2.0;
+    if is_review {
+        return NSRect::new(
+            NSPoint::new(
+                panel_x + PANEL_CONTENT_SIDE_INSET,
+                PANEL_TOP_MARGIN + PANEL_TRANSCRIPT_TOP_OFFSET + 28.0,
+            ),
+            NSSize::new(
+                PANEL_EXPANDED_WIDTH - PANEL_CONTENT_SIDE_INSET * 2.0,
+                PANEL_REVIEW_EDITOR_HEIGHT,
+            ),
+        );
+    }
     let top_pad = 12.0;
     NSRect::new(
         NSPoint::new(
@@ -1940,37 +1966,51 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
     let _: () = msg_send![view, setWantsLayer:YES];
     window.setContentView_(view);
 
-    // Create text field for typing mode
-    let entry_frame = typing_entry_frame();
-    let entry: id = msg_send![class!(NSTextField), alloc];
-    let entry: id = msg_send![entry, initWithFrame:entry_frame];
-    let _: () = msg_send![entry, setBordered:NO];
-    let _: () = msg_send![entry, setDrawsBackground:NO];
-    let _: () = msg_send![entry, setFocusRingType:1u64]; // NSFocusRingTypeNone
+    // Native multiline editor. The scroll view provides a quiet inset surface
+    // and visible scroll affordance; the NSTextView keeps long reviews readable
+    // without forcing the transcript into a single horizontal line.
+    let entry_frame = typing_entry_frame(false);
+    let entry_container: id = msg_send![class!(NSScrollView), alloc];
+    let entry_container: id = msg_send![entry_container, initWithFrame:entry_frame];
+    let _: () = msg_send![entry_container, setBorderType:0u64]; // NSNoBorder outside review
+    let _: () = msg_send![entry_container, setHasVerticalScroller:YES];
+    let _: () = msg_send![entry_container, setAutohidesScrollers:YES];
+    let _: () = msg_send![entry_container, setDrawsBackground:NO];
+    let surface: id = msg_send![class!(NSColor),
+        colorWithSRGBRed:0.045_f64 green:0.045_f64 blue:0.045_f64 alpha:1.0_f64
+    ];
+    let _: () = msg_send![entry_container, setBackgroundColor:surface];
 
+    let entry: id = msg_send![class!(NSTextView), alloc];
+    let entry_text_frame = NSRect::new(NSPoint::new(0.0, 0.0), entry_frame.size);
+    let entry: id = msg_send![entry, initWithFrame:entry_text_frame];
+    let _: () = msg_send![entry, setRichText:NO];
+    let _: () = msg_send![entry, setImportsGraphics:NO];
+    let _: () = msg_send![entry, setAllowsUndo:YES];
+    let min_editor_size = NSSize::new(0.0, 0.0);
+    let max_editor_size = NSSize::new(1000000.0, 1000000.0);
+    let _: () = msg_send![entry, setMinSize:min_editor_size];
+    let _: () = msg_send![entry, setMaxSize:max_editor_size];
+    let _: () = msg_send![entry, setVerticallyResizable:YES];
+    let _: () = msg_send![entry, setHorizontallyResizable:NO];
+    let _: () = msg_send![entry, setDrawsBackground:NO];
+    let text_inset = NSSize::new(10.0, 8.0);
+    let _: () = msg_send![entry, setTextContainerInset:text_inset];
+    let _: () = msg_send![entry, setAutoresizingMask:2u64]; // NSViewWidthSizable
+    let text_container: id = msg_send![entry, textContainer];
+    let _: () = msg_send![text_container, setWidthTracksTextView:YES];
+    let text_container_size = NSSize::new(entry_frame.size.width, 1000000.0);
+    let _: () = msg_send![text_container, setContainerSize:text_container_size];
     let white: id = msg_send![class!(NSColor),
-        colorWithSRGBRed:1.0_f64
-        green:1.0_f64
-        blue:1.0_f64
-        alpha:0.92_f64
+        colorWithSRGBRed:1.0_f64 green:1.0_f64 blue:1.0_f64 alpha:0.94_f64
     ];
     let _: () = msg_send![entry, setTextColor:white];
-
     let font: id = crate::font::satoshi_font(14.0, false);
     let _: () = msg_send![entry, setFont:font];
-
-    with_ns_string("Type a message...", |placeholder| {
-        let _: () = msg_send![entry, setPlaceholderString:placeholder];
-    });
-
-    let _: () = msg_send![entry, setTarget:view];
-    let _: () = msg_send![entry, setAction:sel!(textFieldAction:)];
-    // The view is also the field's editing delegate: it mirrors each keystroke
-    // into state and turns Escape into a cancel decision while a transcript is
-    // under review.
     let _: () = msg_send![entry, setDelegate:view];
-    let _: () = msg_send![entry, setHidden:YES];
-    let _: () = msg_send![view, addSubview:entry];
+    let _: () = msg_send![entry_container, setDocumentView:entry];
+    let _: () = msg_send![entry_container, setHidden:YES];
+    let _: () = msg_send![view, addSubview:entry_container];
 
     // Initialize state
     let state = Rc::new(PillState {
@@ -2081,6 +2121,7 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
             window,
             view,
             entry,
+            entry_container,
             quit: Cell::new(false),
             last_tick_time: Cell::new(0.0),
             embedded,
@@ -2162,11 +2203,23 @@ mod typing_geometry_tests {
 
     #[test]
     fn native_entry_stays_inside_the_painted_input_row() {
-        let frame = typing_entry_frame();
+        let frame = typing_entry_frame(false);
         let panel_bottom = WINDOW_H_TYPING as f64 - PANEL_BOTTOM_MARGIN;
         let input_top = panel_bottom - PANEL_INPUT_HEIGHT;
         assert!(frame.origin.y >= input_top);
         assert!(frame.size.height > 0.0);
         assert_eq!(frame.origin.y + frame.size.height, panel_bottom);
+    }
+
+    #[test]
+    fn review_editor_occupies_the_transcript_body_and_stops_before_actions() {
+        let frame = typing_entry_frame(true);
+        let actions_top = WINDOW_H_TYPING as f64
+            - PANEL_BOTTOM_MARGIN
+            - PANEL_INPUT_HEIGHT
+            - REVIEW_ACTIONS_HEIGHT;
+        assert!(frame.origin.y >= PANEL_TOP_MARGIN + PANEL_TRANSCRIPT_TOP_OFFSET);
+        assert!(frame.origin.y + frame.size.height < actions_top);
+        assert_eq!(frame.size.height, PANEL_REVIEW_EDITOR_HEIGHT);
     }
 }

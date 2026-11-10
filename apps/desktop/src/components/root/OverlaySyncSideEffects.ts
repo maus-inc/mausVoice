@@ -256,7 +256,7 @@ const useNativePillAssistantSync = () => {
             copy_label: intl.formatMessage({ defaultMessage: "Copy" }),
             cancel_label: intl.formatMessage({ defaultMessage: "Cancel" }),
             hint: intl.formatMessage({
-              defaultMessage: "Edit below, then press Enter to insert",
+              defaultMessage: "Enter inserts · Shift+Enter for a new line",
             }),
           }
         : null,

@@ -97,7 +97,10 @@ pub fn run(receiver: Receiver<InMessage>) {
     let _ = css.load_from_data(
         b"window { background: transparent; }
           entry { background: transparent; border: none; color: rgba(255,255,255,0.92); }
-          entry:focus { box-shadow: none; outline: none; }",
+          entry:focus { box-shadow: none; outline: none; }
+          #review-editor { background-color: rgba(16,16,16,0.98); border: 1px solid rgba(255,255,255,0.14); border-radius: 10px; }
+          #review-editor textview, #review-editor textview text { background-color: transparent; color: rgba(255,255,255,0.94); font: 14px Satoshi; }
+          #review-editor textview:focus { box-shadow: none; outline: none; }",
     );
     if let Some(screen) = gdk::Screen::default() {
         gtk::StyleContext::add_provider_for_screen(
@@ -126,6 +129,30 @@ pub fn run(receiver: Receiver<InMessage>) {
     entry.set_visible(false);
     entry.set_no_show_all(true);
     overlay_widget.add_overlay(&entry);
+
+    // Reviews get a real multiline editor in the transcript area; the small
+    // composer remains dedicated to assistant follow-ups.
+    let review_scroll =
+        gtk::ScrolledWindow::new(None::<&gtk::Adjustment>, None::<&gtk::Adjustment>);
+    review_scroll.set_widget_name("review-editor");
+    review_scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+    review_scroll.set_shadow_type(gtk::ShadowType::None);
+    review_scroll.set_halign(gtk::Align::Fill);
+    review_scroll.set_valign(gtk::Align::Start);
+    review_scroll.set_visible(false);
+    review_scroll.set_no_show_all(true);
+    let review_editor = gtk::TextView::new();
+    let review_buffer = gtk::TextBuffer::new(None::<&gtk::TextTagTable>);
+    review_editor.set_buffer(Some(&review_buffer));
+    review_editor.set_wrap_mode(gtk::WrapMode::WordChar);
+    review_editor.set_left_margin(12);
+    review_editor.set_right_margin(12);
+    review_editor.set_top_margin(10);
+    review_editor.set_bottom_margin(10);
+    review_editor.set_accepts_tab(false);
+    review_scroll.add(&review_editor);
+    overlay_widget.add_overlay(&review_scroll);
+    REVIEW_EDITOR.with(|slot| *slot.borrow_mut() = Some(review_editor.clone()));
 
     window.add(&overlay_widget);
 
@@ -350,6 +377,7 @@ pub fn run(receiver: Receiver<InMessage>) {
 
     let state_press = state.clone();
     let entry_press = entry.clone();
+    let review_press = review_editor.clone();
     let win_press = window.clone();
     let backend_press = backend;
     window.connect_button_press_event(move |_, event| {
@@ -360,7 +388,11 @@ pub fn run(receiver: Receiver<InMessage>) {
             if backend_press == Backend::X11 {
                 x11::force_keyboard_focus(&win_press);
             }
-            entry_press.grab_focus();
+            if state_press.assistant_review.borrow().is_some() {
+                review_press.grab_focus();
+            } else {
+                entry_press.grab_focus();
+            }
         }
         if input::is_on_pill_at(&state_press, x, y) {
             if state_press.drag_motion.borrow_mut().interrupt_settle() {
@@ -438,10 +470,14 @@ pub fn run(receiver: Receiver<InMessage>) {
 
     let state_focus_in = state.clone();
     let entry_focus_in = entry.clone();
+    let review_focus_in = review_editor.clone();
     window.connect_focus_in_event(move |_, _| {
-        let is_typing = state_focus_in.is_typing();
-        if is_typing {
-            entry_focus_in.grab_focus();
+        if state_focus_in.is_typing() {
+            if state_focus_in.assistant_review.borrow().is_some() {
+                review_focus_in.grab_focus();
+            } else {
+                entry_focus_in.grab_focus();
+            }
         }
         glib::Propagation::Proceed
     });
@@ -508,6 +544,49 @@ pub fn run(receiver: Receiver<InMessage>) {
         *state_entry_changed.entry_text.borrow_mut() = e.text().to_string();
     });
 
+    let state_review_changed = state.clone();
+    review_buffer.connect_changed(move |buffer| {
+        let text = buffer
+            .text(&buffer.start_iter(), &buffer.end_iter(), true)
+            .expect("review text range")
+            .to_string();
+        *state_review_changed.entry_text.borrow_mut() = text;
+    });
+
+    let state_review_submit = state.clone();
+    review_editor.connect_key_press_event(move |view, event| {
+        let ctrl = event.state().contains(gdk::ModifierType::CONTROL_MASK);
+        if ctrl
+            && matches!(
+                event.keyval(),
+                gdk::keys::constants::v | gdk::keys::constants::V
+            )
+        {
+            // Keep this editor plain-text only: image clipboard targets must
+            // not turn a transcript review into an image-paste surface.
+            let buffer = view.buffer().expect("review editor buffer");
+            gtk::Clipboard::get(&gdk::SELECTION_CLIPBOARD).request_text(move |_, text| {
+                if let Some(text) = text {
+                    buffer.insert_at_cursor(text);
+                }
+            });
+            return glib::Propagation::Stop;
+        }
+
+        let is_submit = matches!(
+            event.keyval(),
+            gdk::keys::constants::Return | gdk::keys::constants::KP_Enter
+        ) && !event.state().contains(gdk::ModifierType::SHIFT_MASK);
+        if !is_submit {
+            return glib::Propagation::Proceed;
+        }
+        *state_review_submit.entry_text.borrow_mut() = review_editor_text(view);
+        if input::submit_entry(&state_review_submit) {
+            view.buffer().expect("review editor buffer").set_text("");
+        }
+        glib::Propagation::Stop
+    });
+
     let state_escape = state.clone();
     window.connect_key_press_event(move |_, event| {
         // Escape while a transcript is under review is a cancel decision, the
@@ -531,6 +610,8 @@ pub fn run(receiver: Receiver<InMessage>) {
     let da = drawing_area.clone();
     let win_tick = window.clone();
     let entry_tick = entry.clone();
+    let review_scroll_tick = review_scroll.clone();
+    let review_editor_tick = review_editor.clone();
     let quit_flag = Rc::new(Cell::new(false));
     let quit_tick = quit_flag.clone();
     let backend_tick = backend;
@@ -698,6 +779,7 @@ pub fn run(receiver: Receiver<InMessage>) {
                         let text = review_text.unwrap_or_default();
                         *state_tick.entry_text.borrow_mut() = text.clone();
                         entry_tick.set_text(&text);
+                        set_review_editor_text(&text);
                     } else if crate::input::entry_should_be_cleared(
                         &state_tick.entry_text.borrow(),
                         &entry_tick.text(),
@@ -708,6 +790,12 @@ pub fn run(receiver: Receiver<InMessage>) {
                         // showing text that has already been sent. Windows reconciles the
                         // same way in its window procedure; this is that line.
                         entry_tick.set_text("");
+                    }
+                    if crate::input::entry_should_be_cleared(
+                        &state_tick.entry_text.borrow(),
+                        &review_editor_text(&review_editor),
+                    ) {
+                        set_review_editor_text("");
                     }
 
                     if (active && !was_active)
@@ -775,13 +863,16 @@ pub fn run(receiver: Receiver<InMessage>) {
         tick_selector_placement(&win_tick, &state_tick, dt_tick);
         tick_crossing_frame(&win_tick, &state_tick, dt_tick);
 
-        // Show/hide entry for typing mode
+        // The assistant keeps its compact composer. A transcript under review
+        // swaps in a multiline editor in the body, above the fixed decision row.
         let is_typing = state_tick.is_typing();
+        let is_review = state_tick.assistant_review.borrow().is_some();
+        let target_was_visible = if is_review {
+            gtk::prelude::WidgetExt::is_visible(&review_scroll_tick)
+        } else {
+            gtk::prelude::WidgetExt::is_visible(&entry_tick)
+        };
         if is_typing {
-            // Recomputed every frame rather than once on show. The window is
-            // resized by one message and the state that opens the entry by
-            // another, so a size that lands second would otherwise leave the
-            // entry sitting at the old geometry.
             let (ox, oy) = state_tick.content_offset();
             let dw = state_tick.draw_width.get();
             let dh = state_tick.draw_height.get();
@@ -798,58 +889,68 @@ pub fn run(receiver: Receiver<InMessage>) {
                 (right_margin + (dw - panel_x - panel_w) + PANEL_CONTENT_SIDE_INSET) as i32;
             let ah = state_tick.alloc_height.get();
             let bottom_margin = if ah > 0.0 { ah - oy - dh } else { 0.0 };
-            let margin_bottom = (bottom_margin + PANEL_BOTTOM_MARGIN) as i32;
             entry_tick.set_margin_start(margin_start);
             entry_tick.set_margin_end(margin_end);
-            entry_tick.set_margin_bottom(margin_bottom);
+            entry_tick.set_margin_bottom((bottom_margin + PANEL_BOTTOM_MARGIN) as i32);
             entry_tick.set_height_request(PANEL_INPUT_HEIGHT as i32);
+
+            review_scroll_tick.set_margin_start(margin_start);
+            review_scroll_tick.set_margin_end(margin_end);
+            review_scroll_tick.set_margin_top(
+                (oy + PANEL_TOP_MARGIN
+                    + (1.0 - state_tick.panel_open_t.get()) * 12.0
+                    + PANEL_TRANSCRIPT_TOP_OFFSET
+                    + 28.0) as i32,
+            );
+            review_scroll_tick.set_height_request(PANEL_REVIEW_EDITOR_HEIGHT as i32);
+            let panel_opacity = state_tick.panel_open_t.get().clamp(0.0, 1.0);
+            review_scroll_tick.set_opacity(panel_opacity);
+            entry_tick.set_opacity(panel_opacity);
         }
-        if is_typing && !gtk::prelude::WidgetExt::is_visible(&entry_tick) {
-            entry_tick.set_visible(true);
-            entry_tick.show();
+
+        entry_tick.set_visible(is_typing && !is_review);
+        review_scroll_tick.set_visible(is_typing && is_review);
+        if is_typing && !target_was_visible {
+            let target: gtk::Widget = if is_review {
+                review_editor_tick.clone().upcast()
+            } else {
+                entry_tick.clone().upcast()
+            };
+            target.show();
             match backend_tick {
                 Backend::LayerShell => {
                     win_tick.set_keyboard_mode(gtk_layer_shell::KeyboardMode::OnDemand);
-                    glib::idle_add_local_once({
-                        let e = entry_tick.clone();
-                        move || {
-                            e.grab_focus();
-                        }
+                    glib::idle_add_local_once(move || {
+                        target.grab_focus();
                     });
                 }
                 Backend::X11 => {
                     win_tick.set_accept_focus(true);
                     glib::timeout_add_local(Duration::from_millis(100), {
-                        let e = entry_tick.clone();
                         let w = win_tick.clone();
                         move || {
                             x11::force_keyboard_focus(&w);
-                            e.grab_focus();
+                            target.grab_focus();
                             ControlFlow::Break
                         }
                     });
                 }
                 Backend::PlainWayland => {
                     win_tick.set_accept_focus(true);
-                    glib::idle_add_local_once({
-                        let e = entry_tick.clone();
-                        move || {
-                            e.grab_focus();
-                        }
+                    glib::idle_add_local_once(move || {
+                        target.grab_focus();
                     });
                 }
             }
-        } else if !is_typing && gtk::prelude::WidgetExt::is_visible(&entry_tick) {
+        } else if !is_typing {
             entry_tick.select_region(0, 0);
-            entry_tick.set_visible(false);
             entry_tick.hide();
+            review_scroll_tick.hide();
             match backend_tick {
                 Backend::LayerShell => {
-                    win_tick.set_keyboard_mode(gtk_layer_shell::KeyboardMode::None);
+                    win_tick.set_keyboard_mode(gtk_layer_shell::KeyboardMode::None)
                 }
-                _ => {
-                    win_tick.set_accept_focus(false);
-                }
+                _ => win_tick.set_accept_focus(false),
             }
         }
 
@@ -1038,12 +1139,28 @@ fn clear_pointer_pin(state: &PillState, window: &gtk::Window) {
 }
 
 thread_local! {
-    /// The pill's entry widget, for the code paths that must empty it without holding a
-    /// clone. Same shape as the Windows pill's `EDIT_HWND`, and for the same reason: the
-    /// mirror (`state.entry_text`) is not the widget, and clearing one does not clear the
-    /// other.
+    /// Assistant follow-up composer, cleared independently from the review editor.
     static ENTRY: std::cell::RefCell<Option<gtk::Entry>> =
         const { std::cell::RefCell::new(None) };
+    /// Multiline native editor shown only while a transcript awaits review.
+    static REVIEW_EDITOR: std::cell::RefCell<Option<gtk::TextView>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+fn review_editor_text(view: &gtk::TextView) -> String {
+    let buffer = view.buffer().expect("review editor buffer");
+    buffer
+        .text(&buffer.start_iter(), &buffer.end_iter(), true)
+        .expect("review text range")
+        .to_string()
+}
+
+fn set_review_editor_text(text: &str) {
+    REVIEW_EDITOR.with(|slot| {
+        if let Some(view) = slot.borrow().as_ref() {
+            view.buffer().expect("review editor buffer").set_text(text);
+        }
+    });
 }
 
 /// Empty the entry widget, if there is one.
@@ -1056,6 +1173,7 @@ pub(crate) fn clear_entry() {
             entry.set_text("");
         }
     });
+    set_review_editor_text("");
 }
 
 thread_local! {

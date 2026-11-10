@@ -27,6 +27,17 @@ export type PendingPillReview = {
 /** Where the reviewed text came from. Preserved on the session for history. */
 export type ReviewSource = "dictation" | "assistant-tool";
 
+export type ReviewTranscriptBeforeInsertOptions = {
+  /** Record a successful clipboard hand-off for the assistant tool result. */
+  onCopy?: () => void;
+  /** Persist and surface a manual-paste hand-off when an agent chooses Open. */
+  onOpen?: (text: string) => Promise<void>;
+  /** Distinguish an unanswered review timeout from an explicit user cancel. */
+  onExpire?: () => void;
+  /** Report when the composer cannot be created or becomes unresponsive. */
+  onFailure?: () => void;
+};
+
 /** Which surface currently owns the review. */
 export type ReviewPresentation = "pill" | "composer";
 
@@ -60,6 +71,12 @@ export type ReviewSession = {
 type QueuedReview = {
   session: ReviewSession;
   resolve: (text: string | null) => void;
+  /** Reports a successful clipboard hand-off to the assistant tool caller. */
+  onCopy?: () => void;
+  /** Agent Paste's Open action persists a manual hand-off in its conversation. */
+  onOpen?: (text: string) => Promise<void>;
+  onExpire?: () => void;
+  onFailure?: () => void;
   /** Set while a decision runs, so a second click cannot start it twice. */
   busy: boolean;
 };
@@ -223,22 +240,45 @@ const advanceQueue = (answer?: ReviewAnswer): void => {
   const { id } = current;
   timeoutId = setTimeout(() => {
     timeoutId = null;
+    const expired = head();
+    if (expired?.session.id !== id) return;
+    const assistantToolReview = expired.session.source === "assistant-tool";
     getLogger().warning(
-      `Pill review ${id} went unanswered; skipping the insert and keeping the transcript in history`,
+      assistantToolReview
+        ? `Assistant-tool review ${id} went unanswered; skipping the paste`
+        : `Pill review ${id} went unanswered; skipping the insert and keeping the transcript in history`,
     );
     touchSession(id, { status: "expired", decidedAt: Date.now() });
     pruneSessions();
-    runToast(
-      showToast({
-        message: getIntl().formatMessage({
-          defaultMessage:
-            "Review expired — the transcript is kept in your history.",
+    if (assistantToolReview) {
+      try {
+        expired.onExpire?.();
+      } catch (error) {
+        getLogger().warning(`Could not report expired Paste review: ${error}`);
+      }
+      runToast(
+        showToast({
+          message: getIntl().formatMessage({
+            defaultMessage:
+              "Paste review expired. Nothing was inserted. Run Paste again to retry.",
+          }),
+          toastType: "info",
+          duration: 8000,
         }),
-        toastType: "info",
-        duration: 8000,
-        action: "open_transcriptions",
-      }),
-    );
+      );
+    } else {
+      runToast(
+        showToast({
+          message: getIntl().formatMessage({
+            defaultMessage:
+              "Review expired — the transcript is kept in your history.",
+          }),
+          toastType: "info",
+          duration: 8000,
+          action: "open_transcriptions",
+        }),
+      );
+    }
     advanceQueue({ text: null });
   }, REVIEW_TIMEOUT_MS);
 };
@@ -297,11 +337,10 @@ const copyReviewToClipboard = async (text: string): Promise<boolean> => {
       showToast({
         message: getIntl().formatMessage({
           defaultMessage:
-            "Could not copy the transcript. It is saved in your history.",
+            "Could not copy the reviewed text. The review remains open so you can retry.",
         }),
         toastType: "error",
         duration: 8000,
-        action: "open_transcriptions",
       }),
     );
     return false;
@@ -313,12 +352,17 @@ const reviewInComposer = async (
   text: string,
   action: "edit" | "open" = "edit",
 ): Promise<void> => {
-  const { id, originalText } = current.session;
+  const { id, originalText, source } = current.session;
   current.session =
     touchSession(id, { presentation: "composer" }) ?? current.session;
   advanceQueue();
   try {
-    const composed = await reviewTextInComposer(text, { originalText });
+    const composed = await reviewTextInComposer(text, {
+      originalText,
+      source,
+      onExpire: current.onExpire,
+      onFailure: current.onFailure,
+    });
     settle(id, composed, action);
   } catch (error) {
     // Restore only this still-owned head, never a newer review after teardown.
@@ -356,8 +400,36 @@ const applyDecision = async (
   updateReviewDraft(current, editedText);
 
   try {
-    if (action === "copy" && !(await copyReviewToClipboard(text))) {
-      if (head() === current) advanceQueue();
+    if (action === "copy") {
+      if (!(await copyReviewToClipboard(text))) {
+        if (head() === current) advanceQueue();
+        return;
+      }
+      current.onCopy?.();
+    }
+    if (
+      action === "open" &&
+      session.source === "assistant-tool" &&
+      current.onOpen
+    ) {
+      // Opening Chats changes focus away from the destination application. The
+      // caller must durably save the edited text before this review can settle.
+      try {
+        await current.onOpen(text);
+      } catch {
+        runToast(
+          showToast({
+            message: getIntl().formatMessage({
+              defaultMessage:
+                "Could not save this Paste review. It remains open so you can retry.",
+            }),
+            toastType: "error",
+            duration: 8000,
+          }),
+        );
+        throw new Error("Could not save the pending Paste review");
+      }
+      settle(id, null, action);
       return;
     }
     if (action === "edit" || action === "open") {
@@ -458,6 +530,7 @@ const cancelUnpublishedReview = (id: string): null => {
 export const reviewTranscriptOnPill = async (
   text: string,
   source: ReviewSource = "dictation",
+  options?: ReviewTranscriptBeforeInsertOptions,
 ): Promise<string | null> => {
   const generation = reviewGeneration;
   const id = createId();
@@ -494,7 +567,15 @@ export const reviewTranscriptOnPill = async (
         presentation: "composer",
         decidedAt: Date.now(),
       });
-      return decideSession(id, await reviewTextInComposer(text));
+      return decideSession(
+        id,
+        await reviewTextInComposer(text, {
+          originalText: text,
+          source,
+          onExpire: options?.onExpire,
+          onFailure: options?.onFailure,
+        }),
+      );
     }
 
     if (!listening || generation !== reviewGeneration)
@@ -502,10 +583,23 @@ export const reviewTranscriptOnPill = async (
 
     const session = sessions.get(id);
     if (!session) {
-      return reviewTextInComposer(text);
+      return reviewTextInComposer(text, {
+        originalText: text,
+        source,
+        onExpire: options?.onExpire,
+        onFailure: options?.onFailure,
+      });
     }
     const decision = new Promise<string | null>((resolve) => {
-      queue.push({ session, resolve, busy: false });
+      queue.push({
+        session,
+        resolve,
+        onCopy: options?.onCopy,
+        onOpen: options?.onOpen,
+        onExpire: options?.onExpire,
+        onFailure: options?.onFailure,
+        busy: false,
+      });
     });
     advanceQueue();
 
@@ -547,9 +641,10 @@ export const cancelAllPillReviews = (): void => {
 export const reviewTranscriptBeforeInsert = async (
   text: string,
   source: ReviewSource = "dictation",
+  options?: ReviewTranscriptBeforeInsertOptions,
 ): Promise<string | null> => {
   if (await isNativePillAvailable()) {
-    return reviewTranscriptOnPill(text, source);
+    return reviewTranscriptOnPill(text, source, options);
   }
   // No pill surface: the composer owns the review directly, but it still gets
   // a session so history and audit see the same shape as a pill review.
@@ -568,5 +663,13 @@ export const reviewTranscriptBeforeInsert = async (
     updatedAt: now,
     decidedAt: null,
   });
-  return decideSession(id, await reviewTextInComposer(text));
+  return decideSession(
+    id,
+    await reviewTextInComposer(text, {
+      originalText: text,
+      source,
+      onExpire: options?.onExpire,
+      onFailure: options?.onFailure,
+    }),
+  );
 };
