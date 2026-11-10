@@ -73,6 +73,27 @@ export type ProviderLogoProps = Omit<BoxProps, "children"> & {
  * The box is square and the SVG keeps its own `viewBox`, so a wider-than-tall
  * mark letterboxes inside the box instead of stretching.
  */
+/**
+ * The artwork file for a provider on a given surface, or `null` when the
+ * provider has no verified mark.
+ *
+ * Resolving the file used to sit inline in the component as a two-level
+ * optional chain, which read as one more branch in a render path that already
+ * had several. Naming it keeps the component to the single decision it makes —
+ * a mark or nothing — and puts the light/dark/both precedence in one place.
+ */
+const artworkFor = (
+  provider: ApiKeyProvider,
+  isDark: boolean,
+): ProviderLogoId | null => {
+  const art = ARTWORK[provider];
+  if (!art) {
+    return null;
+  }
+  const preferred = isDark ? art.dark : art.light;
+  return preferred ?? art.both ?? null;
+};
+
 export const ProviderLogo = ({
   provider,
   size = 18,
@@ -81,9 +102,7 @@ export const ProviderLogo = ({
   ...rest
 }: ProviderLogoProps) => {
   const isDark = useIsDarkMode();
-  const art = ARTWORK[provider];
-  const artworkId =
-    (isDark ? (art?.dark ?? art?.both) : (art?.light ?? art?.both)) ?? null;
+  const artworkId = artworkFor(provider, isDark);
   if (!artworkId) {
     return null;
   }

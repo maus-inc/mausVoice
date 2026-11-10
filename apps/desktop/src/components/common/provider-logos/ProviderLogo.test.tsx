@@ -45,10 +45,12 @@ const luminance = (hex: string) => {
     const srgb = value / 255;
     return srgb <= 0.03928 ? srgb / 12.92 : ((srgb + 0.055) / 1.055) ** 2.4;
   };
-  const [r, g, b] = [1, 3, 5].map((at) =>
+  const [red, green, blue] = [1, 3, 5].map((at) =>
     Number.parseInt(hex.slice(at, at + 2), 16),
   );
-  return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
+  return (
+    0.2126 * channel(red) + 0.7152 * channel(green) + 0.0722 * channel(blue)
+  );
 };
 
 const contrast = (a: string, b: string) => {
