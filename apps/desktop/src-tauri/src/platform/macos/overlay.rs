@@ -102,8 +102,14 @@ pub fn try_create_native_overlays(app: &tauri::AppHandle) -> bool {
     let (in_tx, in_rx) = mpsc::channel::<InMessage>();
     let (out_tx, out_rx) = mpsc::channel::<OutMessage>();
 
+    // The pill is linked into this process, so it gets the stored position
+    // directly instead of through a spawn argument. It applies the position
+    // before its first frame, so a restore is never a visible jump.
+    let saved_position = crate::pill_position::read_saved_position_record(app)
+        .and_then(|record| rust_pill_shared::restore::ParkedWindow::decode(&record));
+
     // Start the pill on the main thread (Tauri setup runs on main thread)
-    rust_macos_pill::start(out_tx, in_rx);
+    rust_macos_pill::start(out_tx, in_rx, saved_position);
 
     let pill = std::sync::Arc::new(MacosPill {
         sender: Mutex::new(Some(in_tx)),
@@ -203,6 +209,9 @@ pub fn notify_request_position(app: &tauri::AppHandle) -> Result<(), String> {
 }
 
 pub fn notify_reset_position(app: &tauri::AppHandle, strategy: &str) -> Result<(), String> {
+    // The stored record is what the next launch restores, so a reset has to
+    // forget it before it tells the pill to re-home.
+    crate::pill_position::clear_saved_position(app);
     let strategy = if strategy == "cursor" {
         ResetStrategy::Cursor
     } else {
@@ -317,6 +326,16 @@ fn start_out_reader(app: tauri::AppHandle, rx: mpsc::Receiver<OutMessage>) {
                     let monitor_json = monitor.map(|m| {
                         serde_json::json!({ "x": m.x, "y": m.y, "width": m.width, "height": m.height })
                     });
+                    // Only a geometry the pill considers saved describes where
+                    // the user left it. A reset publishes the default corner it
+                    // just moved to, and storing that would undo the reset.
+                    if has_saved_position {
+                        if let (Some(rect), Some(monitor)) =
+                            (rect_json.as_ref(), monitor_json.as_ref())
+                        {
+                            crate::pill_position::store_published_position(&app, rect, monitor);
+                        }
+                    }
                     let payload = serde_json::json!({
                         "hasSavedPosition": has_saved_position,
                         "rect": rect_json,

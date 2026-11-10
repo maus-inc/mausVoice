@@ -86,6 +86,10 @@ tauri-specta = { version = "=2.0.0-rc.21", features = ["derive", "typescript"] }
 cap-std = "=4.0.3"
 cap-fs-ext = { version = "=4.0.3", default-features = false }
 
+# Shared pill geometry, so the desktop writes the same parked-position record
+# the three pill binaries read back.
+rust_pill_shared = { path = "../../../packages/rust_pill_shared" }
+
 [dev-dependencies]
 # `tauri::test` -- and so `tauri::test::mock_app` -- is `#[cfg(any(test, feature = "test"))]`
 # at tauri-2.10.3/src/lib.rs:1100, so it is not reachable from a crate that merely depends on

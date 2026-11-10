@@ -3810,6 +3810,7 @@ dependencies = [
  "rfd",
  "rodio",
  "rust_macos_pill",
+ "rust_pill_shared",
  "serde",
  "serde_json",
  "sha2",
@@ -5820,6 +5821,10 @@ dependencies = [
 [[package]]
 name = "rust_pill_shared"
 version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "rustc-hash"

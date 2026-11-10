@@ -179,6 +179,14 @@ pub fn try_spawn_pill(app: &tauri::AppHandle, pill_path: &std::path::Path) -> bo
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit());
 
+    // The position the user left the pill at, handed over before the first
+    // frame. The line protocol on stdin is only read once the window exists, so
+    // an argument is the only way to place the window correctly rather than
+    // moving it after the user has already seen it in the default corner.
+    if let Some(argument) = crate::pill_position::saved_position_argument(app) {
+        command.arg(argument);
+    }
+
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
@@ -333,6 +341,10 @@ pub fn notify_request_position(app: &tauri::AppHandle) -> Result<(), String> {
 }
 
 pub fn notify_reset_position(app: &tauri::AppHandle, strategy: &str) -> Result<(), String> {
+    // The stored record is what the next launch restores, so a reset has to
+    // forget it before it tells the pill to re-home. Otherwise the pill moves
+    // back to the default corner now and returns to the old spot next launch.
+    crate::pill_position::clear_saved_position(app);
     match app.try_state::<std::sync::Arc<PillProcess>>() {
         Some(pill) => {
             let msg = format!(r#"{{"type":"reset_position","strategy":"{strategy}"}}"#);
@@ -769,6 +781,15 @@ fn dispatch_pill_event(app: &tauri::AppHandle, event: PillEvent) {
             rect,
             monitor,
         } => {
+            // Only a geometry the pill considers saved describes where the user
+            // left it. A reset publishes `has_saved_position: false` with the
+            // default corner it just moved to, and storing that would undo the
+            // reset on the next launch.
+            if has_saved_position {
+                if let (Some(rect), Some(monitor)) = (rect.as_ref(), monitor.as_ref()) {
+                    crate::pill_position::store_published_position(app, rect, monitor);
+                }
+            }
             let payload = serde_json::json!({
                 "hasSavedPosition": has_saved_position,
                 "rect": rect,
