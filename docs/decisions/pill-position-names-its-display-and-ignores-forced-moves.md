@@ -72,6 +72,21 @@ that reconciled its own position does store the result, because that move was th
 pill's and it is the only place the pill can be: without it the next launch would
 restore the stranded origin.
 
+**Two contracts the review turned up, both of which were only half kept.**
+
+`ForgetPosition` promises not to move the pill. Two pills read an unsaved flag as
+"not placed yet" and fell through to their default corner, so clearing the
+database slid a visible pill to the bottom of the screen. The flag and the reset
+strategy are now separate conditions: unsaved with no reset request means the flag
+was deliberately cleared, and the window is left where it is.
+
+Every pill read its own arguments with `std::env::args()`, which panics on an
+argument that is not valid Unicode. argv[0] is the executable path, and on Linux
+and macOS that need not be UTF-8, so one such directory in the install location
+lost the overlay before its first frame. Parsing moved into the shared crate over
+`args_os`, skipping what is not Unicode, because a lossy conversion could only
+manufacture a match for an ASCII flag the desktop wrote.
+
 Rejected: matching on geometry alone and comparing a layout signature to decide
 whether a display "is" the old one. Both fold a real distinction into a guess. A
 panel that comes back at a new resolution and a different panel that fills the old
