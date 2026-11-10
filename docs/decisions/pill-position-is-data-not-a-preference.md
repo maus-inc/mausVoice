@@ -79,6 +79,25 @@ coordinate space, drag clamping and window class.
 - Re-deriving the display from the window rect at save time: restore would then judge
   the position by a different rect than the one it was clamped against.
 
+## A second root cause found in review
+
+The first version of this change restored the origin correctly and then let each
+platform's idle path move the pill a moment later. On Windows the window was created
+at the restored origin, but the state still started with `has_saved_position: false`
+and `saved_x`/`saved_y` at zero, so the first cursor tick 60 ms later parked the pill at
+the default corner. macOS and Windows also clamped the restore against the whole OS
+window, which is a large transparent canvas, while the idle tick clamped the visible
+pill. A pill saved near an edge came back hundreds of pixels inward.
+
+Both are one pattern: two implementations of "where does this window belong", one for
+restore and one for idle. Source-text guards cannot see this, because each
+implementation is individually plausible. The fix is structural. `footprint_bounds`
+and `centered_bottom_footprint` in `restore.rs` are now the only description of the
+resting arrangement, and `the_restored_origin_is_a_fixed_point_of_the_idle_clamp` plus
+`the_resting_footprint_clears_the_selector_slot` fail if the two ever diverge again.
+The reserve passed to the helper has to include the selector slot below the pill,
+because that slot is part of why the window is taller than the pill.
+
 ## Consequences
 
 Easy: adding a save point or a platform is a call into `restore` plus the platform's
@@ -101,6 +120,9 @@ proportionally rather than exactly.
 - Windows and macOS cross-target `cargo clippy --all-targets -- -D warnings`; GTK
   `clippy` and `fmt`; desktop `clippy --all-targets` plus 429 library tests, including
   the `pill_position` table in the privacy set guard.
+- The fixed-point and slot-reserve tests were checked by reintroducing each defect:
+  dropping the reset write from the save gate, seeding the Windows state as unsaved,
+  and omitting the slot from the reserve each make a guard fail.
 - `scripts/ci/pr28-contracts.test.mjs` pins the new contract: the X11 applied origin is
   `restored.unwrap_or(init_pos)`, the Windows default corner still comes from the
   created height, the macOS pill starts saved only when a record was restored, the save

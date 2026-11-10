@@ -1945,15 +1945,58 @@ describe("native gesture adapter contracts", () => {
   });
 
   it("uses the created Windows height for initial placement", () => {
+    // A stored position is tried first, else the default corner for the height
+    // the window was created with.
     assert.match(
       source.windowsPill,
-      /let \(wx, wy\) = initial_position\(win_h, saved_position\)/,
+      /let restored = saved_position\.and_then\(\|parked\| restore_position\(parked, win_h\)\)/,
     );
-    const body = scope("windowsPill", "fn initial_position(");
+    const body = scope("windowsPill", "fn default_position(");
     assert.match(body, /default_pill_y\(wa\.top, wa_h, win_h\)/);
-    // A stored position is tried first, but it can only choose a display. The
-    // default corner still comes from the height the window was created with.
-    assert.match(body, /restore_position\(parked, win_h\)/);
+  });
+
+  it("restores against the visible footprint, not the transparent canvas", () => {
+    // The OS window is a large transparent canvas with the pill drawn inside it,
+    // and the window also reserves the selector slot below the pill. Clamping
+    // the canvas instead of the footprint puts an edge-parked pill hundreds of
+    // pixels inward, and the idle tick then disagrees with the restore, so the
+    // pill visibly moves after launch. One shared function, and a reserve that
+    // includes the slot, is what keeps the two paths on the same pixels.
+    for (const name of ["macPill", "windowsPill"]) {
+      const text = source[name];
+      assert.match(
+        text,
+        /rust_pill_shared::restore::footprint_bounds\(/,
+        `${name}: the restore must clamp the footprint`,
+      );
+      assert.match(
+        text,
+        /restore::centered_bottom_footprint\(/,
+        `${name}: the resting footprint must come from the shared helper`,
+      );
+      assert.match(
+        text,
+        /COLLAPSED_BOTTOM_INSET\s*\+\s*rust_pill_shared::placement::below_slot_extra\(/,
+        `${name}: the reserve must include the selector slot`,
+      );
+    }
+    // GTK draws inside a toplevel whose transparent margins differ per axis, so
+    // it passes the visible pill rect directly.
+    assert.match(
+      source.gtkX11,
+      /rust_pill_shared::restore::footprint_bounds\(work, \(fx, fy\), \(fw, fh\)\)/,
+    );
+  });
+
+  it("seeds the Windows state from the position it created the window at", () => {
+    // The window is created at the restored origin, but the cursor tick parks
+    // the pill from `has_saved_position`/`saved_x`/`saved_y`. Left unsaved, the
+    // first tick 60 ms later re-homes the pill to the default corner and the
+    // restore looks like it was ignored.
+    const run = scope("windowsPill", "pub fn run(");
+    assert.match(run, /has_saved_position: Cell::new\(restored\.is_some\(\)\)/);
+    assert.match(run, /saved_x: Cell::new\(restored\.map_or\(0, \|origin\| origin\.0\)\)/);
+    assert.match(run, /saved_y: Cell::new\(restored\.map_or\(0, \|origin\| origin\.1\)\)/);
   });
 
   it("anchors macOS selector geometry to the live pill instead of the area strip", () => {
