@@ -279,6 +279,44 @@ export const getPrettyKeyName = (key: string): string => {
   return key;
 };
 
+export type KeycapLegend = {
+  /** The glyph or word on the face. */
+  label: string;
+  /** Side of the board the key sits on, stacked above the label. */
+  sublabel?: string;
+};
+
+/**
+ * Legend for a key drawn on a keycap.
+ *
+ * A modifier with a side reads as "Left" stacked over the glyph rather than as
+ * "Shift L" on one line: the side label is small and sits above the symbol, and
+ * the inline form reads like two separate keys.
+ */
+const KEYCAP_LABELS: Readonly<Record<string, string>> = {
+  Space: "SPC",
+  Escape: "Esc",
+  "⌘": "Cmd",
+  "⊞": "Win",
+  "⌃": "Ctrl",
+  "⌥": "Alt",
+  Shift: "⇧",
+};
+
+const keycapLabel = (pretty: string): string =>
+  Object.hasOwn(KEYCAP_LABELS, pretty) ? KEYCAP_LABELS[pretty] : pretty;
+
+export const getKeycapLegend = (key: string): KeycapLegend => {
+  const side = MODIFIER_SIDE_RE.exec(key)?.[1];
+  if (side === undefined || !isModifierLikeKey(key))
+    return { label: keycapLabel(getPrettyKeyName(key)) };
+  const base = getPrettyKeyName(key.slice(0, -side.length));
+  return {
+    label: keycapLabel(base),
+    sublabel: side.charAt(0).toUpperCase() + side.slice(1).toLowerCase(),
+  };
+};
+
 export type AdditionalLanguageEntry = {
   actionName: string;
   language: string;

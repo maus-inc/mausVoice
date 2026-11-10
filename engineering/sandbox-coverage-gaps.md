@@ -2,7 +2,7 @@
 
 The orphan branch `vendor/sandbox-toolchain` makes most of this repository buildable inside the Arena agent sandbox: the six-host egress allowlist, 2 vCPU, 3.9 GB RAM (3,939 MB), no Docker daemon. Every number here was measured in that environment on 2026-11-05 and describes it alone, not the repository, not CI, and not your machine. An unrestricted host closes most of these gaps by installing the tool, so probe before you repeat a limit or file a gap. What follows records the parts of the development cycle the payload cannot cover, with the measurement for each one, so an agent stops guessing and a builder knows what to add.
 
-The payload carries three deliveries. G1 to G8 are the mandatory set every gate needs. G9 to G13 are an optional second set, added 2026-11-05, that opens stages the mandatory set does not reach. G16 to G22 are an optional third set, added 2026-11-05, that adds debugging, native build tools, database clients, OCR, shell and crypto tooling, cross compilers and supply-chain scanners. A gap below that a delivered group closes is marked, with the `FETCH.md` step that wires it up. Read the section as the register of what the payload does not carry, not as a list of stages that cannot run.
+The payload carries four deliveries. G1 to G8 are the mandatory set every gate needs. G9 to G13 are an optional second set, added 2026-11-05, that opens stages the mandatory set does not reach. G16 to G22 are an optional third set, added 2026-11-05, that adds debugging, native build tools, database clients, OCR, shell and crypto tooling, cross compilers and supply-chain scanners. G23 to G27 are an optional fourth set, added 2026-11-09, that adds the native C/C++ compiler and binutils, fontconfig with fonts plus `tzdata` and `locales`, Chromium, the JRE, Ruby, CPython and Perl, and the document, media-metadata and debugging tools. A gap below that a delivered group closes is marked, with the `FETCH.md` step that wires it up. Read the section as the register of what the payload does not carry, not as a list of stages that cannot run.
 
 It answers two questions.
 
@@ -18,7 +18,7 @@ Two agent sandboxes ran this repository's agent on 2026-11-05, and they are not 
 - **Arena agent sandbox.** Six-host egress allowlist, 2 vCPU, 3,939 MB RAM, 21 GB disk, Debian 12 base image, no Docker daemon, no `apt-get` mirror. The `Hosts`, `Machine` and `Commands` tables below were measured here.
 - **Second agent sandbox.** Broad egress, 4 vCPU, 15,990 MB RAM, 50 GB free disk, Debian 13 (trixie) base image, `apt-get` works. Re-measured on 2026-11-05 with `curl -m 8` and `command -v`. On this host `crates.io` answers 403 (its bot policy, not a missing route), and `static.rust-lang.org`, `sh.rustup.rs`, `huggingface.co`, `deb.debian.org`, `snapshot.debian.org`, `nodejs.org`, `dl.google.com` and the GitHub Release asset host all answer. A limit that says "no route" here is a property of the Arena sandbox, not of the network, so probe before you repeat one.
 
-Both hosts ran the third delivery (G16 to G22). Its sizes were measured in the second sandbox, named per table below.
+Both hosts ran the third delivery (G16 to G22). Its sizes were measured in the second sandbox, named per table below. The fourth delivery (G23 to G27) was built and measured on 2026-11-09.
 
 ### Hosts
 
@@ -49,7 +49,7 @@ A release asset such as `https://github.com/gitleaks/gitleaks/releases/download/
 | ------------------------------------------ | ------------------ | -------------------------------------------------------------------------------------- |
 | CPU                                        | 2 vCPU             | `cargo test` links one binary at a time, so `CARGO_BUILD_JOBS=1`                       |
 | Memory                                     | 3,939 MB           | Parallel linking peaks above it and the linker dies with signal 9                      |
-| Disk                                       | 21 GB free         | The extracted payload is about 7.0 GB, the Rust target tree several more               |
+| Disk                                       | 21 GB free         | The extracted payload is about 8.3 GB, the Rust target tree several more               |
 | Node                                       | v22.22.3           | Satisfies `engines`, is behind the `.nvmrc` pin of 24                                  |
 | npm                                        | 10.9.8             | Installs pnpm@10.34.5 from the registry                                                |
 | Python                                     | 3.11.2, pip 23.0.1 | `req.txt` resolves from PyPI                                                           |
@@ -90,7 +90,7 @@ Status is what an agent gets here after following `FETCH.md`, not what CI gets o
 | Desktop bundle, `tauri build --bundles`  | blocked                           | Tauri downloads linuxdeploy and the AppImage runtime at bundle time. Gap G14                                                                            |
 | WebDriver end to end                     | works with the second delivery    | G11 delivers `tauri-driver` 2.0.6 and `chromedriver`, wired by `FETCH.md` step 7c; `WebKitWebDriver` comes from the sysroot. Needs a built debug binary |
 | Visual verification with the preview app | works                             | `pnpm --filter @maus-inc/preview dev` on port 5193                                                                                                      |
-| Visual capture, `ui-capture`             | works, browser included           | G9 delivers `ffmpeg`, `ffprobe` and `gifsicle` (step 7d). A usable Chromium is obtained from npm, see the G9 section; `scripts/verify/` drives it       |
+| Visual capture, `ui-capture`             | works with the fourth delivery    | G9 delivers `ffmpeg`, `ffprobe` and `gifsicle` (step 7d); G25 adds Chromium 156 in `system/tools/bin`, so a recording can run on Linux x86-64            |
 | Secret scan over history                 | works with the second delivery    | G13 delivers `gitleaks` 8.18.0 in `system/tools/bin`, on `PATH` from step 6                                                                             |
 | Secret scan over config only             | works                             | `pnpm run test:secret-scan` and `node --test scripts/ci/*.test.mjs`                                                                                     |
 | Docs site build                          | works                             | astro, sharp arrives from npm                                                                                                                           |
@@ -110,16 +110,9 @@ Measured before the second delivery. `ffmpeg`, `ffprobe`, `gifsicle` and `tesser
 
 Delivered. The second delivery ships `system/tools/bin/ffmpeg` 7.0.2-static, `ffprobe` 7.0.2-static and `gifsicle` 1.95, each run under `env -i`. `system/tools/UIPIPE.txt` records the upstream URL and the sha256 for each. They sit beside `cmake` and `file`, so `FETCH.md` step 6 puts them on `PATH`; step 7d checks them. `tesseract` and its `eng.traineddata` are not vendored, and the `ui-capture` validation step skips the OCR round-trip and says so when tesseract is absent.
 
-A Chromium is available after all, from a host the payload does not need. Measured on the Arena agent sandbox on 2026-11-07. `cdn.playwright.dev`, `storage.googleapis.com`, `dl.google.com` and `deb.debian.org` are still unroutable, so `playwright install` and every Google-hosted download still fail. `registry.npmjs.org` is routable, and the `@sparticuz/chromium` package (153.0.0, 67 MB) ships a brotli-compressed browser plus its shared libraries:
+Now delivered. The fourth delivery adds Chromium 156 in G25 at `system/tools/bin/chromium`, so the browser half of this gap is closed and a recording can run on Linux x86-64. The spec group G6 still declines to build a browser inside G9 itself; G25 is where it ships.
 
-1. `npm install @sparticuz/chromium@153.0.0`
-2. Brotli-decompress `bin/chromium.br` to an executable (209,022,176 bytes, reports `Chromium 153.0.8010.0`).
-3. Brotli-decompress and untar `lib/al2023.tar.br` (12 shared libraries), `swiftshader.tar.br` and `fonts.tar.br`.
-4. Launch under `LD_LIBRARY_PATH=<libdir>:<dir>` with `--headless=new --no-sandbox --disable-gpu --no-zygote --single-process --disable-dev-shm-usage --remote-debugging-port=<port>`.
-
-The package's own `executablePath()` extracts nothing here, so the `.br` files are decompressed directly. One-shot `--dump-dom` and `--screenshot` hang even with a 90 s budget; the DevTools protocol socket is the only reliable interface, which is what `scripts/verify/cdp.mjs` uses. The extracted files live under `/tmp` and are wiped between turns, so the extraction has to be scripted rather than done once.
-
-With that browser, `scripts/verify/shot-mic-dialog.mjs` renders the real `MicrophoneDialog` and the real `MicrophoneReadinessSideEffects` against a fake Tauri bridge, measures structure, hit targets, contrast and overflow, captures light, dark and narrow screenshots, and exits non-zero on a problem.
+Substitute when no browser is available. Inspect `apps/preview` in both themes and write down the inspection rather than claiming a recording.
 
 ### G10: model weights, delivered
 
@@ -200,7 +193,7 @@ Substitute today. `pnpm install --frozen-lockfile --ignore-scripts`. Name the fl
 
 ### G16 to G22: the third delivery, delivered
 
-The third delivery was built on 2026-11-05 in the second agent sandbox, the one with broad egress, Debian 13 and `apt-get`. It closes seven of the entries in `engineering/sandbox-capability-gaps.md` and ships at tip `82b2f983` of the same orphan branch. Sizes below are measured unpacked, not estimated.
+The third delivery was built on 2026-11-05 in the second agent sandbox, the one with broad egress, Debian 13 and `apt-get`. It closes seven of the entries in `engineering/sandbox-capability-gaps.md` and shipped at tip `82b2f983` of the same orphan branch; the fourth delivery later moved that tip to `3025c92b`. Sizes below are measured unpacked, not estimated.
 
 | Group | Carries                                                                                                                                            | Opens                                                                     | Unpacked |
 | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- | -------- |
@@ -222,7 +215,21 @@ Six of the new tools need a documented env var, flag or root copy to run relocat
 - `aarch64-linux-gnu-gcc` needs `--sysroot=<tools>` to find its target libc, and `qemu-aarch64-static -L <tools>/usr/aarch64-linux-gnu` to run the result.
 - the autotools need a root copy of their `share` trees to `/usr/share` and the scripts to `/usr/bin`, because `autoconf`, `autom4te`, `automake`, `aclocal` and `libtoolize` each read a compiled-in path and no single env var redirects them all.
 
-Verified in the second sandbox on 2026-11-05: 37 of 37 binaries print a version under `env -i`, the OCR round trip reads `HELLO 42`, both cross compilers produce a runnable binary, and `sha256sum -c` passes on all 14437 listed files. G22 is verifiable in the second sandbox because it reaches the GitHub Release asset host; on the Arena sandbox, where it does not, G22 would have to be built elsewhere or left out.
+Verified in the second sandbox on 2026-11-05: 37 of 37 binaries print a version under `env -i`, the OCR round trip reads `HELLO 42`, both cross compilers produce a runnable binary, and `sha256sum -c` passed on all 14437 listed files of that delivery. G22 is verifiable in the second sandbox because it reaches the GitHub Release asset host; on the Arena sandbox, where it does not, G22 would have to be built elsewhere or left out.
+
+### G23 to G27: the fourth delivery, delivered
+
+The fourth delivery was built on 2026-11-09. It adds the native C/C++ compiler and binutils, the runtime data a font- and timezone-aware program needs, a browser, the language runtimes the document and analysis tools are written in, and the tools themselves, and ships at tip `3025c92b` of the same orphan branch. Sizes below are measured unpacked.
+
+| Group | Carries                                                                                                                                                                                                                          | Opens                                                                                        | Unpacked |
+| ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- | -------- |
+| G23   | `clang-14` and `clang++-14` 14.0.6, `llvm-config-14`, and GNU binutils 2.40 (`ld`, `as`, `ar`, `nm`, `objcopy`, `objdump`, `strip`, `ranlib`), with the `libLLVM-14`/`libclang-cpp` closure | compiling and linking a native C or C++ program without the base image's gcc                    | 330 MB   |
+| G24   | `fontconfig` 2.14.1, the DejaVu and Liberation fonts, `tzdata` 2026f, `locales` 2.36 with `localedef` and a pre-generated `en_US.UTF-8` | resolving a font by name, and correct `TZ=` and i18n formatting                                | 45 MB    |
+| G25   | `chromium` 156.0.8078.79 with its full shared-library closure | real browser rendering and headless screenshots for the WebDriver path                          | 620 MB   |
+| G26   | a headless OpenJDK 17 JRE, Ruby 3.1.2, CPython 3.11 with its stdlib, and Perl 5.36 | running PlantUML, Asciidoctor, binwalk and ExifTool, which are written in those languages      | 290 MB   |
+| G27   | `pandoc` 2.17.1.1, `potrace` 1.16, `plantuml` 1.2020.02, `asciidoctor` 2.0.18, `exiftool` 12.57, `binwalk` 2.3.3, `lldb` 14.0.6, `mtr` 0.95, `hyperfine` 1.15.0, `heaptrack` 1.4.0, `perf` 6.1.190, `xdotool`, `scrot`, `xdpyinfo`, `xwininfo`, `xprop`, `xlsfonts`, `osslsigncode` 2.5 | document conversion, diagram and doc rendering, media metadata, binary inspection, debugging, network probes, benchmarking, direct X11 capture, and Windows signing on Linux | 320 MB   |
+
+Every binary runs from `system/tools/bin` with a self-locating wrapper where one is needed, so a consumer exports no variable for them. `chromium` (283 MB) and the JVM's `lib/modules` (123 MB) are over GitHub's 100 MB hard limit, so they are split into `.part-*` pieces that `FETCH.md` Step 2 reassembles. Verified on 2026-11-09 with the payload extracted to `/tmp`, under `env -i`: every G23 to G27 binary prints a version or a usage banner, `clang++-14` compiles and links a C++ program, `chromium --dump-dom` renders HTML and `--screenshot` writes a PNG, `plantuml` renders a PNG, `asciidoctor` renders HTML, `java` runs a source file, `fc-match` resolves DejaVu Sans from the payload, and `sha256sum -c` passes on all 22466 manifest lines. This closes G14 for the packaging-tool question only in part: `osslsigncode` covers Windows signing, but no `dmg` or `msi` packer ships.
 
 ## Accepted gaps
 
@@ -244,12 +251,12 @@ So the register is not read as a list of failures.
 | `rust/cargo-vendor` | 1114 crate directories, the union of the seven lockfiles                                                                               |
 | `rust/targets`      | G12, the `x86_64-pc-windows-msvc` and `aarch64-apple-darwin` standard libraries, for `cargo check --target`                            |
 | `system/`           | Debian 12 development sysroot, `cmake`, `file`, `patchelf`, `pkgconf`, Xvfb, ImageMagick, and the GTK, WebKit, ALSA and Pulse link set |
-| `system/tools/bin`  | G9 `ffmpeg`, `ffprobe` and `gifsicle` for `ui-capture`, G13 `gitleaks` 8.18.0, and the third delivery's G16 to G22 binaries            |
+| `system/tools/bin`  | G9 `ffmpeg`, `ffprobe` and `gifsicle` for `ui-capture`, G13 `gitleaks` 8.18.0, the third delivery's G16 to G22 binaries, and the fourth delivery's G23 to G27 binaries |
 | `system/tools/`     | G21's `lib/gcc`, `lib/gcc-cross` and target sysroot trees, and G16's `libexec/valgrind` and `share/gdb`                                |
 | `native/`           | ONNX Runtime 1.23.2 and sherpa-onnx 1.13.5 linux x64 archives                                                                          |
 | `models/`           | G10, the whisper `ggml-tiny` and `ggml-base` weights and the SenseVoice ONNX bundle                                                    |
 | `drivers/`          | G11, `tauri-driver` 2.0.6 and `chromedriver` 152.0.7977.42                                                                             |
-| `LICENSES/`         | 609 licence files, so a redistributed payload stays auditable                                                                          |
+| `LICENSES/`         | 780 Debian `copyright` files plus the ONNX Runtime, sherpa-onnx and whisper.cpp licences, so a redistributed payload stays auditable    |
 
 ## Order of work
 
@@ -259,12 +266,13 @@ Cheapest unblock first. Each line names the stage it opens. The second delivery 
 | ---- | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
 | 1    | `CHROMEDRIVER_SKIP_DOWNLOAD` in `FETCH.md`, `.agents/PREFLIGHT.md` and `AGENTS.md` | a clean install                                                                                       | documented                                         |
 | 2    | G13 gitleaks, 7 MB                                                                 | the history scan locally                                                                              | shipped                                            |
-| 3    | G9 ffmpeg, ffprobe and gifsicle, 160 MB                                            | `ui-capture` encoding and GIF assembly, browser still absent                                          | shipped                                            |
+| 3    | G9 ffmpeg, ffprobe and gifsicle, 160 MB                                            | `ui-capture` encoding and GIF assembly                                                                | shipped                                            |
 | 4    | G12 cross-target standard libraries, 47.5 MB packed                                | local type checks of platform gated code                                                              | shipped                                            |
 | 5    | G11 tauri-driver 2.0.6 and chromedriver, 24 MB                                     | the end to end gate on Linux, once the app is built                                                   | shipped                                            |
 | 6    | G10 model weights, 463 MB                                                          | transcription behaviour with real models                                                              | shipped                                            |
 | 7    | G14 packaging                                                                      | local installer checks                                                                                | deferred until a release task lands in the sandbox |
 | 8    | G16 to G22, 376 MB packed / 1.2 GB unpacked                                        | debugging, native builds, databases, OCR, shell and crypto tooling, cross compiles, SBOM and scanning | shipped                                            |
+| 9    | G23 to G27, 1.17 GB packed / 1.6 GB unpacked                                       | the native C/C++ build path, font and timezone data, a browser, the language runtimes and the document tools | shipped                                            |
 
 ## Rebuild triggers
 

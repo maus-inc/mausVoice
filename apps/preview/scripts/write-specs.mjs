@@ -18,7 +18,9 @@ const D = "apps/desktop/src";
 
 /** [id, markdown] */
 const SPECS = [
-["color", `# Color · surface ladder & accents (\`color\`)
+  [
+    "color",
+    `# Color · surface ladder & accents (\`color\`)
 
 - Status: **reused** — rendered from \`${D}/styles/palette.ts\` + \`${D}/theme.ts\` colorSchemes.
 - Source of truth: \`${D}/styles/palette.ts\`, \`${D}/theme.ts\` (colorSchemes), \`${D}/mui.d.ts\` (level0–3, blue/blueHover/blueActive/onBlue).
@@ -54,8 +56,11 @@ Status vocabulary must be semantic, never color-only (DESIGN.md). Text ramps kee
 
 ## Live-spec mapping
 Each ladder/accent field targets the MUI CSS variable (\`--app-palette-*\`) scheme-scoped — edits recolor every themed instance site-wide. To persist: edit \`styles/palette.ts\` (ladder/ink/accent) or \`theme.ts\` (blueHover/blueActive), affecting every file in the app.
-`],
-["typography", `# Typography scale (\`typography\`)
+`,
+  ],
+  [
+    "typography",
+    `# Typography scale (\`typography\`)
 
 - Status: **reused** — rendered with the real theme variants + \`styles/fonts.css\`.
 - Source of truth: \`${D}/theme.ts\` (typography), \`${D}/styles/fonts.css\`, \`${D}/mui.d.ts\` (variant overrides).
@@ -87,8 +92,11 @@ Body measure target 65–75ch for prose; dense UI may run narrower. Never use th
 
 ## Live-spec mapping
 Shape radius field is live (derived theme). Family/scale edits are patch-only: edit \`theme.ts\` typography + \`fonts.css\`, affecting all text.
-`],
-["elevation", `# Elevation · premiumSurface & hairlines (\`elevation\`)
+`,
+  ],
+  [
+    "elevation",
+    `# Elevation · premiumSurface & hairlines (\`elevation\`)
 
 - Status: **reused** — shadows imported from \`${D}/styles/shadows.ts\`.
 - Source of truth: \`${D}/styles/shadows.ts\`, \`${D}/theme.ts\` (\`shadows: Array(25).fill("none")\` + per-component boxShadows).
@@ -114,8 +122,11 @@ Elevation is never the only signal for selection (selected rows also invert colo
 
 ## Live-spec mapping
 Hairline alpha is documented patch-only (baked into component borders). To persist shadow tuning: edit \`styles/shadows.ts\`, affecting all listed theme components.
-`],
-["motion", `# Motion tokens & transitions (\`motion\`)
+`,
+  ],
+  [
+    "motion",
+    `# Motion tokens & transitions (\`motion\`)
 
 - Status: **reused** — values from \`${D}/styles/motion.ts\` + \`theme.ts\` transitions + \`fonts.css\` vars.
 - Source of truth: \`${D}/styles/motion.ts\`, \`${D}/theme.ts\` (transitions), \`${D}/styles/fonts.css\` (:root vars).
@@ -138,8 +149,11 @@ Full motion / reduced motion (springs → opacity fades; ListTile transitions of
 
 ## Live-spec mapping
 All duration/easing fields are live (derived theme) — framer-motion springs read from \`motion.ts\` are patch-only (edit constants, rebuild). Persist: \`theme.ts\` transitions + \`motion.ts\`, affecting all listed consumers.
-`],
-["animate", `# AnimateIn · AnimateSwitch (\`animate\`)
+`,
+  ],
+  [
+    "animate",
+    `# AnimateIn · AnimateSwitch (\`animate\`)
 
 - Status: **reused** — real components from \`${D}/components/common/AnimateIn.tsx\`.
 - Source of truth: \`${D}/components/common/AnimateIn.tsx\`, \`${D}/styles/motion.ts\`.
@@ -162,8 +176,11 @@ Outgoing content wrapped in \`inert\` + \`aria-hidden\` (PresenceGuard) so exiti
 
 ## Live-spec mapping
 Patch-only (choreography lives in the component). Persist: edit \`AnimateIn.tsx\` / \`motion.ts\`, affecting the two settings configurations.
-`],
-["button", `# Button — contained · text · flat · blue (\`button\`)
+`,
+  ],
+  [
+    "button",
+    `# Button — contained · text · flat · blue (\`button\`)
 
 - Status: **reused** — real MUI Button + real theme overrides.
 - Source of truth: \`${D}/theme.ts\` (MuiButton).
@@ -186,8 +203,11 @@ Real \`<button>\`; disabled state announced; focus-visible ring designed (accent
 
 ## Live-spec mapping
 Radius is live (derived theme → every Button). Font/press values patch-only: edit \`theme.ts\` MuiButton, affecting all buttons.
-`],
-["icon-button", `# IconButton (\`icon-button\`)
+`,
+  ],
+  [
+    "icon-button",
+    `# IconButton (\`icon-button\`)
 
 - Status: **reused** — real MUI IconButton + theme overrides.
 - Source of truth: \`${D}/theme.ts\` (MuiIconButton).
@@ -210,8 +230,11 @@ Requires \`aria-label\` at every call site (icon-only). 28–48px targets depend
 
 ## Live-spec mapping
 Radius live. Press scale patch-only (\`theme.ts\` MuiIconButton → all icon buttons).
-`],
-["fab", `# Fab · AppFab (\`fab\`)
+`,
+  ],
+  [
+    "fab",
+    `# Fab · AppFab (\`fab\`)
 
 - Status: **reused** — real MuiFab theme + real \`AppFab\`/\`AppFabPosition\`.
 - Source of truth: \`${D}/theme.ts\` (MuiFab), \`${D}/components/common/AppFab.tsx\`.
@@ -234,8 +257,11 @@ Real buttons; extended labels are text (announced). Outline variant keeps contra
 
 ## Live-spec mapping
 Fab radius live. Motion patch-only (\`theme.ts\` MuiFab + \`AppFab.tsx\`).
-`],
-["switch", `# Switch — square (\`switch\`)
+`,
+  ],
+  [
+    "switch",
+    `# Switch — square (\`switch\`)
 
 - Status: **reused** — real MUI Switch + theme overrides.
 - Source of truth: \`${D}/theme.ts\` (MuiSwitch).
@@ -258,8 +284,11 @@ Native checkbox semantics; keyboard toggling via MUI; label via FormControlLabel
 
 ## Live-spec mapping
 Track + thumb radii live (derived theme → every Switch).
-`],
-["slider", `# ElasticSlider (\`slider\`)
+`,
+  ],
+  [
+    "slider",
+    `# ElasticSlider (\`slider\`)
 
 - Status: **reused** — real component from \`${D}/components/common/ElasticSlider.tsx\`.
 - Source of truth: \`${D}/components/common/ElasticSlider.tsx\`.
@@ -282,8 +311,11 @@ MUI Slider semantics: \`aria-label\` prop, arrow-key support, value text via val
 
 ## Live-spec mapping
 Patch-only (sx builder in the component). Persist: edit \`ElasticSlider.tsx\` → the two settings dialogs.
-`],
-["segmented", `# SegmentedControl (\`segmented\`)
+`,
+  ],
+  [
+    "segmented",
+    `# SegmentedControl (\`segmented\`)
 
 - Status: **reused** — real component from \`${D}/components/common/SegmentedControl.tsx\`.
 - Source of truth: \`${D}/components/common/SegmentedControl.tsx\`, \`${D}/styles/motion.ts\`.
@@ -306,8 +338,11 @@ MUI Tabs semantics + \`ariaLabel\` prop; arrow-key navigation; selected tab expo
 
 ## Live-spec mapping
 Patch-only. Persist: edit \`SegmentedControl.tsx\` → the five settings call sites.
-`],
-["text-field", `# TextField · Checkbox · Select theme defaults (\`text-field\`)
+`,
+  ],
+  [
+    "text-field",
+    `# TextField · Checkbox · Select theme defaults (\`text-field\`)
 
 - Status: **reused** — stock MUI v9 on the real theme (no overrides exist).
 - Source of truth: \`${D}/theme.ts\` (absence of overrides is the spec), \`${D}/components/common/Section.tsx\` (checkbox toggle pattern).
@@ -330,8 +365,11 @@ Labels via label/InputLabel; helperText for errors; native input semantics.
 
 ## Live-spec mapping
 Docs-only. To restyle globally add MuiTextField/MuiCheckbox overrides in \`theme.ts\` → all forms.
-`],
-["hotkey-badge", `# HotkeyBadge · DictationInstruction (\`hotkey-badge\`)
+`,
+  ],
+  [
+    "hotkey-badge",
+    `# HotkeyBadge · DictationInstruction (\`hotkey-badge\`)
 
 - Status: **recreated** — HotkeyBadge imports \`getPrettyKeyName\` from \`utils/keyboard.utils\`, which pulls the zustand store + tauri invoke + platform utils (unsafe in a plain browser). Recreation copies the Box styles verbatim; key labels copy the mapping rules.
 - Source of truth: \`${D}/components/common/HotkeyBadge.tsx\`, \`${D}/components/common/DictationInstruction.tsx\`, \`${D}/utils/keyboard.utils.ts:168-200\`.
@@ -354,8 +392,11 @@ Badge is a static label (no role in source); clickable badge is a div with onCli
 
 ## Live-spec mapping
 Badge radius live (recreated). Weight/spacing patch-only: edit \`HotkeyBadge.tsx\` → all listed call sites.
-`],
-["hotkey-recorder", `# HotKey recorder field (\`hotkey-recorder\`)
+`,
+  ],
+  [
+    "hotkey-recorder",
+    `# HotKey recorder field (\`hotkey-recorder\`)
 
 - Status: **recreated** — store-bound (keysHeld, hotkeyStrategy, isRecordingHotkey, setSnackbar). Recreation copies geometry/styles/keyframes verbatim; a local key-capture shim stands in for the store.
 - Source of truth: \`${D}/components/common/HotKey.tsx\`.
@@ -378,8 +419,11 @@ Focusable textbox captures shortcuts on focus; each settings recorder has a loca
 
 ## Live-spec mapping
 Width live (recreated). Pulse + commit logic patch-only: edit \`HotKey.tsx\` → the three settings dialogs.
-`],
-["dialog", `# Dialog · DialogTitleWithClose (\`dialog\`)
+`,
+  ],
+  [
+    "dialog",
+    `# Dialog · DialogTitleWithClose (\`dialog\`)
 
 - Status: **reused** — real MUI Dialog theme + real \`DialogTitleWithClose\`.
 - Source of truth: \`${D}/theme.ts\` (MuiDialog, MuiDialogActions), \`${D}/components/common/DialogTitleWithClose.tsx\`.
@@ -402,8 +446,11 @@ MUI modal semantics: focus trap, Esc, aria-labelledby via DialogTitle, labelled 
 
 ## Live-spec mapping
 Dialog radius live (MuiDialog paper slot → every dialog).
-`],
-["confirm-dialog", `# ConfirmDialog (\`confirm-dialog\`)
+`,
+  ],
+  [
+    "confirm-dialog",
+    `# ConfirmDialog (\`confirm-dialog\`)
 
 - Status: **reused** — real component from \`${D}/components/common/ConfirmDialog.tsx\`.
 - Source of truth: \`${D}/components/common/ConfirmDialog.tsx\`.
@@ -426,8 +473,11 @@ Inherits dialog semantics; actions are real buttons with localized labels.
 
 ## Live-spec mapping
 Patch-only. Persist: edit \`ConfirmDialog.tsx\` → all direct call sites. Radii follow the dialog + button specs (live).
-`],
-["popover-menu", `# MenuPopover · MenuPopoverBuilder (\`popover-menu\`)
+`,
+  ],
+  [
+    "popover-menu",
+    `# MenuPopover · MenuPopoverBuilder (\`popover-menu\`)
 
 - Status: **reused** — real components from \`${D}/components/common/MenuPopover.tsx\` + MuiPopover theme.
 - Source of truth: \`${D}/theme.ts\` (MuiPopover), \`${D}/components/common/MenuPopover.tsx\`.
@@ -450,8 +500,11 @@ role=menuitem wrappers; ListTile rows are buttons. UNKNOWN: arrow-key traversal 
 
 ## Live-spec mapping
 Popover radius live. Item/menu logic patch-only → seven call sites.
-`],
-["context-menu", `# ContextMenu · useContextMenu (\`context-menu\`)
+`,
+  ],
+  [
+    "context-menu",
+    `# ContextMenu · useContextMenu (\`context-menu\`)
 
 - Status: **reused** — real component/hook/provider from \`${D}/components/common/ContextMenu.tsx\`.
 - Source of truth: \`${D}/components/common/ContextMenu.tsx\`.
@@ -474,8 +527,11 @@ Menu auto-focuses; arrows/Enter navigate (actionable indices skip dividers); Esc
 
 ## Live-spec mapping
 Patch-only (constants + handlers in source). Persist: edit \`ContextMenu.tsx\` → six call sites.
-`],
-["tooltip", `# Tooltip · Conditional · ToolParams · Bouncy (\`tooltip\`)
+`,
+  ],
+  [
+    "tooltip",
+    `# Tooltip · Conditional · ToolParams · Bouncy (\`tooltip\`)
 
 - Status: **reused** — real theme + real components.
 - Source of truth: \`${D}/theme.ts\` (MuiTooltip), \`ConditionalTooltip.tsx\`, \`ToolParamsTooltip.tsx\`, \`onboarding/BouncyTooltip.tsx\`.
@@ -498,8 +554,11 @@ MUI tooltips expose via aria on focus/hover. Bouncy is presentational (no role i
 
 ## Live-spec mapping
 Tooltip radius live. Bouncy choreography patch-only → TutorialForm.
-`],
-["snackbar", `# Snackbar emitter with Sonner (\`snackbar\`)
+`,
+  ],
+  [
+    "snackbar",
+    `# Snackbar emitter with Sonner (\`snackbar\`)
 
 - Status: **recreated**. \`SnackbarEmitter\` routes store events through Sonner. \`SonnerToaster\` supplies the shared position and styling.
 - Source of truth: \`${D}/components/root/SnackbarEmitter.tsx\`, \`${D}/components/root/snackbar-emit.ts\`, \`${D}/components/root/SonnerToaster.tsx\`, \`${D}/actions/app.actions.ts\`, \`${D}/utils/app.utils.ts\`.
@@ -527,8 +586,11 @@ The close button is enabled. The app emitter does not move focus; Sonner owns to
 
 ## Live-spec mapping
 
-The preview recreation mirrors production. Persist: edit \`${D}/components/root/SonnerToaster.tsx\` for shared position and styling; edit \`${D}/components/root/SnackbarEmitter.tsx\` / \`${D}/components/root/snackbar-emit.ts\` and \`${D}/actions/app.actions.ts\` / \`${D}/utils/app.utils.ts\` for message behavior.`],
-["feedback", `# Progress · loading · empty states (\`feedback\`)
+The preview recreation mirrors production. Persist: edit \`${D}/components/root/SonnerToaster.tsx\` for shared position and styling; edit \`${D}/components/root/SnackbarEmitter.tsx\` / \`${D}/components/root/snackbar-emit.ts\` and \`${D}/actions/app.actions.ts\` / \`${D}/utils/app.utils.ts\` for message behavior.`,
+  ],
+  [
+    "feedback",
+    `# Progress · loading · empty states (\`feedback\`)
 
 - Status: **reused** — real \`AppCircularProgress\`, \`CenterLoading\`, \`CenterMessage\`.
 - Source of truth: \`${D}/components/common/AppCircularProgress.tsx\`, \`CenterLoading.tsx\`, \`CenterMessage.tsx\`.
@@ -551,8 +613,11 @@ Empty states are text + real action buttons. UNKNOWN: no role=status/busy wiring
 
 ## Live-spec mapping
 Patch-only (layout in components). No known call sites.
-`],
-["card-paper", `# Card · Paper (\`card-paper\`)
+`,
+  ],
+  [
+    "card-paper",
+    `# Card · Paper (\`card-paper\`)
 
 - Status: **reused** — real MUI theme (MuiCard/MuiPaper).
 - Source of truth: \`${D}/theme.ts\` (MuiCard, MuiPaper).
@@ -575,8 +640,11 @@ Cards are divs; interactive cards must add role/tabindex at call sites (verify p
 
 ## Live-spec mapping
 Card radius live. Hover/ ramp patch-only (\`theme.ts\` MuiCard/MuiPaper → global).
-`],
-["list-tile", `# ListTile (\`list-tile\`)
+`,
+  ],
+  [
+    "list-tile",
+    `# ListTile (\`list-tile\`)
 
 - Status: **reused** — real component + MuiListItemButton/MuiListItemText theme.
 - Source of truth: \`${D}/theme.ts\` (MuiListItemButton, MuiListItemText), \`${D}/components/common/ListTile.tsx\`, \`OverflowTypography.tsx\`.
@@ -586,7 +654,7 @@ Card radius live. Hover/ ramp patch-only (\`theme.ts\` MuiCard/MuiPaper → glob
 Universal row: leading/trailing with hover swap, title/subtitle, selected state, href/cmd-click, motion indicator slot.
 
 ## Visual tokens
-Button: radius 14, mb 4, minHeight 44, py 10; hover ink/highlight .04; selected light = ink fill + level1 text (primary 650) + secondary highlight .72 + selected shadow; dark = level2 + selected shadow. Primary text 550/.9375rem/−.01em. HoverButton swaps idle→icon-button (my −1, mx −1.5) on row hover; clicks stop propagation.
+Button: radius 14, mb 4, minHeight 44, py 10; hover ink/highlight .04; selected light = ink fill + level1 text (primary 650) + secondary highlight .72 + selected shadow; dark = level2 + selected shadow. Primary text 550/.9375rem/−.01em. HoverButton swaps idle→icon-button (my −1, mx −1.5) on row hover; clicks stop propagation. On clickable rows the trailing slot sits outside the row button — no nested controls; plain clicks there still reach the row action.
 
 ## Motion
 bg 100ms (shortest) + transform 90ms var(--ease-out-cubic); active scale(0.975) — explicitly no will-change (tested jank-free on Apple Silicon/Intel/Win11/Linux iGPU). Reduced motion: transition none, no press scale.
@@ -595,12 +663,15 @@ bg 100ms (shortest) + transform 90ms var(--ease-out-cubic); active scale(0.975) 
 default / hover (swap) / selected / disabled / href (+cmd-click new tab) / leading/trailing actions / indicator slot.
 
 ## Accessibility
-Real ListItemButton (button semantics, keyboard, focus-visible ring); OverflowTypography tooltips truncated titles.
+Rows with an onClick handler or href use ListItemButton (button semantics, keyboard activation, focus-visible ring); action menus can put menuitem or menuitemcheckbox semantics on that focusable control. Presentation-only rows use a static container so nested switches do not activate a row press transform. Disabled static rows are inert. OverflowTypography provides tooltips for truncated titles.
 
 ## Live-spec mapping
 Row radius live. Press/swap choreography patch-only: \`ListTile.tsx\` + \`theme.ts\` → six call sites.
-`],
-["table", `# AppTable (\`table\`)
+`,
+  ],
+  [
+    "table",
+    `# AppTable (\`table\`)
 
 - Status: **reused** — real component from \`${D}/components/common/AppTable.tsx\`.
 - Source of truth: \`${D}/components/common/AppTable.tsx\`.
@@ -623,8 +694,11 @@ Headers are clickable cells with sort labels; UNKNOWN: aria-sort wiring (MUI Tab
 
 ## Live-spec mapping
 Patch-only. No known call sites.
-`],
-["accordion", `# Accordion (\`accordion\`)
+`,
+  ],
+  [
+    "accordion",
+    `# Accordion (\`accordion\`)
 
 - Status: **reused** — real MUI theme (MuiAccordion*).
 - Source of truth: \`${D}/theme.ts\` (MuiAccordion, Summary, Details).
@@ -647,8 +721,11 @@ MUI accordion semantics (button + region, aria-expanded).
 
 ## Live-spec mapping
 Radius follows the global Shape field (live). Summary/details type patch-only.
-`],
-["stepper", `# AppStepper (\`stepper\`)
+`,
+  ],
+  [
+    "stepper",
+    `# AppStepper (\`stepper\`)
 
 - Status: **reused** — real component from \`${D}/components/common/AppStepper.tsx\`.
 - Source of truth: \`${D}/components/common/AppStepper.tsx\`.
@@ -671,8 +748,11 @@ Clickable steps are onClick labels — UNKNOWN: no button role/tabindex in sourc
 
 ## Live-spec mapping
 Patch-only. No known call sites.
-`],
-["typography-helpers", `# Overflow · Edit · WithMore · CopyableCommand (\`typography-helpers\`)
+`,
+  ],
+  [
+    "typography-helpers",
+    `# Overflow · Edit · WithMore · CopyableCommand (\`typography-helpers\`)
 
 - Status: **reused** — real components.
 - Source of truth: \`OverflowTypography.tsx\`, \`EditTypography.tsx\`, \`TypographyWithMore.tsx\`, \`CopyableCommand.tsx\`.
@@ -695,8 +775,11 @@ EditTypography commits on Enter, cancels on Esc (verify labels at call sites); c
 
 ## Live-spec mapping
 Patch-only per component → listed call sites.
-`],
-["waveform", `# AudioWaveform (\`waveform\`)
+`,
+  ],
+  [
+    "waveform",
+    `# AudioWaveform (\`waveform\`)
 
 - Status: **reused** — real component from \`${D}/components/common/AudioWaveform.tsx\`.
 - Source of truth: \`${D}/components/common/AudioWaveform.tsx\`.
@@ -719,8 +802,11 @@ Presentational canvas (verify aria-hidden at call sites).
 
 ## Live-spec mapping
 Patch-only (physics in component). Persist → mic tester + mic check form. Pill must be re-ported by hand if physics changes.
-`],
-["logo", `# Logo · LogoWithText (\`logo\`)
+`,
+  ],
+  [
+    "logo",
+    `# Logo · LogoWithText (\`logo\`)
 
 - Status: **reused** — real components + real PNG assets.
 - Source of truth: \`${D}/components/common/Logo.tsx\`, \`LogoWithText.tsx\`, \`${D}/assets/app-logo-*.png\`.
@@ -743,8 +829,11 @@ Decorative adjacent to text (verify alt/aria-hidden at call sites).
 
 ## Live-spec mapping
 Patch-only (assets + lockup component).
-`],
-["dashboard-menu", `# DashboardMenu sidebar rail (\`dashboard-menu\`)
+`,
+  ],
+  [
+    "dashboard-menu",
+    `# DashboardMenu sidebar rail (\`dashboard-menu\`)
 
 - Status: **recreated shell** — the real menu reads the store (assistant-mode flag, update availability) + app router. Recreation copies rail wash/geometry/indicator verbatim and renders REAL ListTile + MorphNavIcon rows.
 - Source of truth: \`${D}/components/dashboard/DashboardMenu.tsx\`, \`UpdateListTile.tsx\`.
@@ -767,8 +856,11 @@ Rows are ListTile buttons; indicator is pointer-events none (decorative).
 
 ## Live-spec mapping
 Indicator radius live (recreated). Rail wash patch-only: edit \`DashboardMenu.tsx\` → DashboardPage.
-`],
-["morph-icon", `# MorphNavIcon (\`morph-icon\`)
+`,
+  ],
+  [
+    "morph-icon",
+    `# MorphNavIcon (\`morph-icon\`)
 
 - Status: **reused** — real component from \`${D}/components/common/MorphNavIcon.tsx\`.
 - Source of truth: \`${D}/components/common/MorphNavIcon.tsx\`.
@@ -791,8 +883,11 @@ Decorative inside labelled buttons (verify aria at call sites).
 
 ## Live-spec mapping
 Patch-only → DashboardMenu + TitleBar.
-`],
-["layout", `# PageLayout · SplitLayout · Section · SettingSection · FadingScrollArea · ScrollListPage (\`layout\`)
+`,
+  ],
+  [
+    "layout",
+    `# PageLayout · SplitLayout · Section · SettingSection · FadingScrollArea · ScrollListPage (\`layout\`)
 
 - Status: **reused** — all real components.
 - Source of truth: \`PageLayout.tsx\`, \`SplitLayout.tsx\`, \`Section.tsx\`, \`SettingSection.tsx\`, \`FadingScrollArea.tsx\`, \`ScrollListPage.tsx\` (+ \`scrollListCollapse.ts\`).
@@ -815,8 +910,11 @@ Section toggle is a clickable Box — UNKNOWN: no checkbox role/keyboard in sour
 
 ## Live-spec mapping
 Patch-only per component → listed pages/dialogs.
-`],
-["titlebar", `# TitleBar · ThemeModeToggle · WindowResizeHandles (\`titlebar\`)
+`,
+  ],
+  [
+    "titlebar",
+    `# TitleBar · ThemeModeToggle · WindowResizeHandles (\`titlebar\`)
 
 - Status: **reused** — real components; Tauri calls gated by \`isTauriRuntime()\` so controls safely no-op in a plain browser.
 - Source of truth: \`root/TitleBar.tsx\`, \`ThemeModeToggle.tsx\`, \`WindowResizeHandles.tsx\`, \`utils/env.utils.ts\`, \`src-tauri/capabilities/default.json\`.
@@ -839,8 +937,11 @@ Controls are IconButtons with localized labels (verify aria-labels in source); t
 
 ## Live-spec mapping
 Docs-only (chrome geometry + Tauri wiring). Persist: edit \`TitleBar.tsx\` (+ capabilities JSON for new window commands) → PageLayout. NOTE: every window command must be listed in \`src-tauri/capabilities/default.json\` or controls fail silently.
-`],
-["native-pill", `# Native overlay pill — dictation (\`native-pill\`)
+`,
+  ],
+  [
+    "native-pill",
+    `# Native overlay pill — dictation (\`native-pill\`)
 
 - Status: **recreated** — painted by a separate native process (rust_macos_pill, Cairo) outside the webview; direct reuse impossible. Canvas recreation from exact constants.
 - Source of truth: \`packages/rust_macos_pill/src/constants.rs\`, \`draw.rs\`, \`state.rs\`, \`gfx.rs\`, \`packages/rust_pill_shared/src/lib.rs\`, \`${D}/components/root/OverlaySyncSideEffects.ts\` (payload).
@@ -863,8 +964,11 @@ UNKNOWN: native surface — no ARIA/keyboard contract visible from the webview (
 
 ## Live-spec mapping
 Expanded w/h, radius cap, active bg alpha live (recreated). Everything else patch-only: edit Rust constants + rebuild the pill process; payload shape in OverlaySyncSideEffects.
-`],
-["assistant-panel", `# Assistant panel — compact · expanded · typing (\`assistant-panel\`)
+`,
+  ],
+  [
+    "assistant-panel",
+    `# Assistant panel — compact · expanded · typing (\`assistant-panel\`)
 
 - Status: **recreated** — same native process as the pill; DOM recreation from exact PANEL_* constants.
 - Source of truth: \`packages/rust_macos_pill/src/constants.rs\` (PANEL_*), \`draw.rs\` panel section.
@@ -887,8 +991,11 @@ UNKNOWN: native surface contract (verify).
 
 ## Live-spec mapping
 Radius + bg alpha live (recreated). Geometry patch-only: edit Rust + rebuild.
-`],
-["audio-player-pill", `# AudioPlayerPill (\`audio-player-pill\`)
+`,
+  ],
+  [
+    "audio-player-pill",
+    `# AudioPlayerPill (\`audio-player-pill\`)
 
 - Status: **recreated** — loads bytes from the transcription repo + WebAudio (repos/actions chain). Recreation copies layout/styles/bar math; playback is a simulated clock.
 - Source of truth: \`${D}/components/transcriptions/AudioPlayerPill.tsx\`, \`${D}/utils/audio-playback.utils.ts\`.
@@ -911,8 +1018,11 @@ Play/pause has localized aria-labels; progress is visual-only (verify live-regio
 
 ## Live-spec mapping
 Max width live (recreated). Bar math patch-only: edit \`AudioPlayerPill.tsx\` / \`audio-playback.utils.ts\` → TranscriptRow. NOTE: bar outline here is a seeded PRNG keyed by id; production derives it from content (buildWaveformOutline).
-`],
-["tool-permission", `# ToolPermissionPrompt · ToolPermissionCard (\`tool-permission\`)
+`,
+  ],
+  [
+    "tool-permission",
+    `# ToolPermissionPrompt · ToolPermissionCard (\`tool-permission\`)
 
 - Status: **recreated** — store-bound (toolInfoById) + actions (resolveToolPermission/setToolAlwaysAllow). Recreation copies both variants’ sx verbatim; real ToolParamsTooltip inside.
 - Source of truth: \`${D}/components/common/ToolPermissionPrompt.tsx\`, \`${D}/components/chats/ToolPermissionCard.tsx\`.
@@ -935,8 +1045,11 @@ Real Chips/buttons with localized labels; overlay buttons are \`<button>\` with 
 
 ## Live-spec mapping
 Docs-only recreation. Persist: edit \`ToolPermissionPrompt.tsx\` → ToolPermissionCard.
-`],
-["tone-select", `# ToneSelect · TranscriptionToneMenu (\`tone-select\`)
+`,
+  ],
+  [
+    "tone-select",
+    `# ToneSelect · TranscriptionToneMenu (\`tone-select\`)
 
 - Status: **recreated slice** — store/action-bound (tone CRUD, prefs). Recreation copies the render code; fixture tones; menus compose the REAL MenuPopoverBuilder + ListTile.
 - Source of truth: \`${D}/components/tones/ToneSelect.tsx\`, \`${D}/components/transcriptions/TranscriptionToneMenu.tsx\`.
@@ -959,8 +1072,11 @@ MUI select semantics + labels; per-row edit buttons stop propagation (verify foc
 
 ## Live-spec mapping
 Docs-only slice. Radii/motion follow popover-menu + list-tile + text-field specs (live there). Persist: edit \`ToneSelect.tsx\` → styling + transcription call sites.
-`],
-["mic-check", `# MicrophoneSelector · MicrophoneTester (\`mic-check\`)
+`,
+  ],
+  [
+    "mic-check",
+    `# MicrophoneSelector · MicrophoneTester (\`mic-check\`)
 
 - Status: **recreated slice** — native device enumeration via @maus-inc/desktop-native-apis (tauri invoke) is unavailable in a browser. Recreation copies render code; fixtures; REAL AudioWaveform in the tester.
 - Source of truth: \`${D}/components/microphone/MicrophoneSelector.tsx\`, \`MicrophoneTester.tsx\`.
@@ -983,7 +1099,8 @@ Labelled select; status captions are text (verify live-region for enumeration st
 
 ## Live-spec mapping
 Docs-only slice. Persist: edit \`MicrophoneSelector.tsx\` → MicCheckForm + MicrophoneDialog. Waveform physics: see waveform spec.
-`],
+`,
+  ],
 ];
 
 for (const [id, md] of SPECS) {

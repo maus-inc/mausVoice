@@ -41,6 +41,9 @@ const FAILURE_AUDIO_MESSAGES = [
 ];
 
 const REQUIRED_TRANSLATION_MESSAGES = [
+  "could_not_activate_the_current_hotkey_please_try_again",
+  "does_the_shortcut_highlight_when_pressed",
+  "failed_to_save_hotkey_please_try_again",
   "preserve_audio_on_failure",
   "fast_styling_left_the_last_droppedchars_characters_of_that_d",
   "fast_styling_left_the_last_droppedchars_characters_of_the_au",

@@ -45,6 +45,12 @@ apps/windows-installer/src-tauri/installer/mausVoice_Setup.exe
 package-lock.json
 yarn.lock
 
+# A vendored skill is committed byte for byte and skills-lock.json hashes its
+# whole folder, so a lockfile it ships is part of the hash. The global rule
+# above would drop it at `git add` and `pnpm run skills:verify` would then fail
+# on every fresh checkout. Measured on stageshow: 371 of 372 files staged.
+!.agents/skills/*/package-lock.json
+
 # Debug
 npm-debug.log*
 yarn-debug.log*
