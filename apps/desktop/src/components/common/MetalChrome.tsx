@@ -1,6 +1,7 @@
 import { useReducedMotion } from "framer-motion";
 import { MetalFx, type MetalFxProps } from "metal-fx";
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useState, type ReactNode } from "react";
+import { ErrorBoundary } from "react-error-boundary";
 import { useIsDarkMode } from "../../hooks/color-scheme.hooks";
 import { getLogger } from "../../utils/log.utils";
 import "./MetalChrome.css";
@@ -148,20 +149,46 @@ export const MetalChrome = ({
     .filter(Boolean)
     .join(" ");
 
-  return (
-    <MetalFx
-      preset="silver"
-      theme={dark ? "dark" : "light"}
-      strength={0.22}
-      glowGain={0}
-      disableGlow
-      paused={Boolean(reduceMotion)}
-      variant={variant}
+  // metal-fx's bare WebGL2 probe can succeed where the engine's real context
+  // constructor throws. The fallback shows itself immediately: the rescue
+  // hook watches the wrapper it found first, so a crash after the first frame
+  // (a variant swap re-initializing the engine) would leave a hidden fallback
+  // unrevealed. It mirrors the real wrapper's props and layout so the rescued
+  // control keeps its sizing and handlers on the failure path.
+  const rescueFallback: ReactNode = (
+    <div
       {...rest}
       {...{ [METAL_CHROME_ATTR]: id }}
       className={classes || undefined}
+      style={{ display: "inline-flex", visibility: "visible", ...rest.style }}
     >
       {children}
-    </MetalFx>
+    </div>
+  );
+
+  return (
+    <ErrorBoundary
+      fallback={rescueFallback}
+      onError={(error) => {
+        getLogger().warning(
+          `[MetalChrome] metal-fx failed to render; rescuing the control: ${String(error)}`,
+        );
+      }}
+    >
+      <MetalFx
+        preset="silver"
+        theme={dark ? "dark" : "light"}
+        strength={0.22}
+        glowGain={0}
+        disableGlow
+        paused={Boolean(reduceMotion)}
+        variant={variant}
+        {...rest}
+        {...{ [METAL_CHROME_ATTR]: id }}
+        className={classes || undefined}
+      >
+        {children}
+      </MetalFx>
+    </ErrorBoundary>
   );
 };

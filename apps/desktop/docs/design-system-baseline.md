@@ -71,3 +71,8 @@ in agreement:
 4. Verified in **both** light and dark.
 5. For pill work: draw and hit-test share one helper, and the controls do not
    overlap the pill body.
+6. Stageshow walked: `.agents/skills/stageshow/references/craft.md` read before the
+   edit, the `verify.md` You see / You do table checked against the surface in both
+   themes, and every line that would print (`tight inset:`, `fat row:`, `empty pane:`,
+   `mixed icons:`, `anchor drift:` and the rest) fixed or explained with the state it
+   was seen in. Applies to the React UI, the native pill and any picture of either.

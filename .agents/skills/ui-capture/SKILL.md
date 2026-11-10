@@ -44,8 +44,10 @@ that one check is skipped and the report says so; the vision read still applies.
 
 Chromium resolves through the same order as `playwright.config.ts`, so a
 sandbox that already runs `npm run qa` needs no extra setup. When it does not,
-`PLAYWRIGHT_CHROMIUM_PATH` points at an explicit binary, and the vendored
-toolchain branch in `AGENTS.md` carries one for a blocked sandbox.
+`PLAYWRIGHT_CHROMIUM_PATH` points at an explicit binary. The vendored toolchain
+branch in `AGENTS.md` carries one for a blocked sandbox: point
+`PLAYWRIGHT_CHROMIUM_PATH` at `system/tools/bin/chromium` after following its
+`FETCH.md`.
 
 ## Workflow
 

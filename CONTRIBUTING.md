@@ -61,6 +61,13 @@ The hooks are a convenience, not a gate. `lefthook` is deliberately not a reposi
 dependency, so every `pnpm install` in CI stays small. Pin the version when you run it, as
 above, so onboarding never executes an unreviewed future release.
 
+A branch carries the current tip of its base the whole time it is open. Bring the base in by
+merge, `git fetch origin <base>` and then `git merge FETCH_HEAD`, before the first edit, before
+every push and before opening the pull request, never by rebase or force-push once the branch is
+pushed. Read what each merge brought in, and run the gates on the merged tree. The pull request
+names the base tip the head contains. After a merge the maintainer confirmed, the head branch is
+deleted. `AGENTS.md` holds the full rule under "Keep the branch current with its base".
+
 Pull requests fill `.github/pull_request_template.md`, and `pnpm run check:pr-body -- <file>` checks the
 shape of the body. Every record of a review round, a babysit poll or a CI log goes inside a
 collapsible block, so a long-running PR stays one screen of summary. The `PR Body Fold Check`

@@ -279,16 +279,15 @@ export const ManualStylingRow = ({ id }: ManualStylingRowProps) => {
       <ListTile
         onClick={handleSelect}
         leading={
+          // Decorative selection indicator: the row button carries the
+          // action and semantics, so this must not be a nested control.
           <Radio
             checked={isSelected}
             size="small"
             disableRipple
-            sx={{ mr: 1 }}
-            onClick={(e) => {
-              stopPropagation(e);
-              handleSelect();
-            }}
-            onMouseDown={stopPropagation}
+            tabIndex={-1}
+            aria-hidden="true"
+            sx={{ mr: 1, pointerEvents: "none" }}
           />
         }
         title={tone?.name}

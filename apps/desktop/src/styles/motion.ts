@@ -17,6 +17,13 @@ export const duration = {
   exit: 0.18,
 } as const;
 
+/** Continuous loading spin: one full turn on the base pulse, never eased. */
+export const spinContinuous = {
+  repeat: Infinity,
+  duration: duration.base * 4,
+  ease: "linear",
+} as const;
+
 export const springSnappy = {
   type: "spring" as const,
   stiffness: 420,

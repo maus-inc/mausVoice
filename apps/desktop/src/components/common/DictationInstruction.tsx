@@ -13,7 +13,11 @@ const openShortcuts = () =>
     draft.settings.shortcutsDialogOpen = true;
   });
 
-export const DictationInstruction = () => {
+export const DictationInstruction = ({
+  use3dKeycaps = false,
+}: {
+  use3dKeycaps?: boolean;
+}) => {
   const firstCombo = useAppStore((state) => {
     const combos = getHotkeyCombosForAction(state, DICTATE_HOTKEY);
     return combos.length > 0 ? combos[0] : null;
@@ -42,6 +46,7 @@ export const DictationInstruction = () => {
       </Typography>
       <HotkeyBadge
         keys={firstCombo}
+        appearance={use3dKeycaps ? "3d" : "classic"}
         onClick={openShortcuts}
         sx={{ flexShrink: 0 }}
       />

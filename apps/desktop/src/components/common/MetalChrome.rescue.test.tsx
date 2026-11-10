@@ -34,12 +34,15 @@ const fx = vi.hoisted(() => ({
   present: true,
   /** true models metal-fx having copied a first frame. */
   visible: false,
+  /** true models the engine constructor throwing (e.g. no usable WebGL2). */
+  crash: false,
   node: null as HTMLElement | null,
 }));
 
 vi.mock("metal-fx", () => ({
   MetalFx: (props: Record<string, unknown>) => {
     const { children, className, "data-mv-metal-chrome": marker } = props;
+    if (fx.crash) throw new Error("metal-fx: WebGL2 not supported");
     if (!fx.present) return null;
     return (
       <div
@@ -67,6 +70,7 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   fx.present = true;
   fx.visible = false;
+  fx.crash = false;
   fx.node = null;
   container = document.createElement("div");
   document.body.appendChild(container);
@@ -215,5 +219,50 @@ describe("useFirstFrameRescue", () => {
     });
     act(() => vi.advanceTimersByTime(METAL_CHROME_RESCUE_DELAY_MS));
     expect(wrapper.classList).toContain(METAL_CHROME_RESCUED_CLASS);
+  });
+
+  it("shows the crash fallback immediately when metal-fx throws instead of rendering", async () => {
+    const { MetalChrome } = await import("./MetalChrome");
+
+    // The engine constructor throws on stacks whose probe WebGL2 context
+    // succeeds but whose real context creation fails. The control must not
+    // take the page down with it, and the fallback must not wait on the
+    // rescue hook: the hook may already be watching an earlier wrapper.
+    fx.crash = true;
+    act(() => root.render(<MetalChrome variant="circle">Play</MetalChrome>));
+
+    const wrapper = container.querySelector<HTMLElement>(`[${MARKER_ATTR}]`);
+    expect(wrapper, "the crash fallback was not rendered").not.toBeNull();
+    expect(wrapper?.textContent).toBe("Play");
+    expect(wrapper?.style.visibility).toBe("visible");
+  });
+
+  it("shows the crash fallback when metal-fx throws after the first frame", async () => {
+    const {
+      MetalChrome,
+      METAL_CHROME_RESCUE_DELAY_MS,
+      METAL_CHROME_RESCUED_CLASS,
+    } = await import("./MetalChrome");
+
+    // First render paints its wrapper hidden, then the rescue reveals it —
+    // the hook is now attached to the engine's wrapper.
+    act(() => root.render(<MetalChrome variant="circle">Play</MetalChrome>));
+    const engineWrapper = container.querySelector<HTMLElement>(
+      `[${MARKER_ATTR}]`,
+    );
+    expect(engineWrapper?.style.visibility).toBe("hidden");
+    act(() => vi.advanceTimersByTime(METAL_CHROME_RESCUE_DELAY_MS));
+    expect(engineWrapper?.classList).toContain(METAL_CHROME_RESCUED_CLASS);
+
+    // A variant swap re-initializes the engine and throws. The boundary
+    // swaps in the fallback while the hook still watches the old wrapper,
+    // so the fallback has to show itself.
+    fx.crash = true;
+    act(() => root.render(<MetalChrome variant="button">Play</MetalChrome>));
+
+    const fallback = container.querySelector<HTMLElement>(`[${MARKER_ATTR}]`);
+    expect(fallback).not.toBe(engineWrapper);
+    expect(fallback?.textContent).toBe("Play");
+    expect(fallback?.style.visibility).toBe("visible");
   });
 });

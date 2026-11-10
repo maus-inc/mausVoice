@@ -65,12 +65,11 @@ describe("audio source cleanup", () => {
         currentTime = 0;
         destination = {};
         createBufferSource = createSource;
-        createBuffer() {
-          return { duration: 1, getChannelData: () => new Float32Array(2) };
-        }
-        close() {
-          return Promise.resolve();
-        }
+        createBuffer = () => ({
+          duration: 1,
+          getChannelData: () => new Float32Array(2),
+        });
+        close = () => Promise.resolve();
       },
     );
     await playWebAudio(
@@ -119,15 +118,12 @@ describe("audio source cleanup", () => {
         currentTime = 0;
         destination = {};
         createBufferSource = () => source;
-        createBuffer() {
-          return { duration: 1, getChannelData: () => new Float32Array(2) };
-        }
-        resume() {
-          return resumed;
-        }
-        close() {
-          return Promise.resolve();
-        }
+        createBuffer = () => ({
+          duration: 1,
+          getChannelData: () => new Float32Array(2),
+        });
+        resume = () => resumed;
+        close = () => Promise.resolve();
       },
     );
 
@@ -145,6 +141,35 @@ describe("audio source cleanup", () => {
     await playing;
 
     expect(start).not.toHaveBeenCalled();
+    expect(activePlayback).toBeNull();
+  });
+  it("releases a context when cancellation interrupts a resume that never settles", async () => {
+    const close = vi.fn(() => Promise.resolve());
+    const resume = vi.fn(() => new Promise<void>(() => undefined));
+    vi.stubGlobal(
+      "AudioContext",
+      class {
+        state = "suspended";
+        close = close;
+        resume = resume;
+      },
+    );
+    const controller = new AbortController();
+    const playing = playWebAudio(
+      "cancelled",
+      { samples: [0, 0], sampleRate: 16000 },
+      vi.fn(),
+      vi.fn(),
+      0,
+      controller.signal,
+    );
+    const rejection = expect(playing).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    await vi.waitFor(() => expect(resume).toHaveBeenCalled());
+    controller.abort();
+    await rejection;
+    expect(close).toHaveBeenCalledOnce();
     expect(activePlayback).toBeNull();
   });
 });
@@ -366,5 +391,34 @@ describe("audio context release after ownership", () => {
     // The source never started, so there is no `onended` to wait for; leaving
     // it unstarted is the correct teardown for a playback that never played.
     expect(source.start).not.toHaveBeenCalled();
+  });
+
+  it("notifies the caller when entered with an already-aborted signal", async () => {
+    stubIdleWindow();
+    const close = vi.fn(() => Promise.resolve());
+    const source = {
+      stop: vi.fn(),
+      disconnect: vi.fn(),
+      connect: vi.fn(),
+      start: vi.fn(),
+      onended: null,
+    };
+    stubContext(close, source);
+    const onStop = vi.fn();
+    const controller = new AbortController();
+    controller.abort();
+    await playWebAudio(
+      "t1",
+      { samples: [0], sampleRate: 16000 },
+      vi.fn(),
+      onStop,
+      0,
+      controller.signal,
+    );
+    // An abandoned attempt still reports, or a caller parked on the promise
+    // keeps showing "playing". No context is created for it either.
+    expect(onStop).toHaveBeenCalledExactlyOnceWith("replaced");
+    expect(close).not.toHaveBeenCalled();
+    expect(activePlayback).toBeNull();
   });
 });

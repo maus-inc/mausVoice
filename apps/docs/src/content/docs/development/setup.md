@@ -54,7 +54,13 @@ For UI/UX work that does not require native audio, global hotkeys, accessibility
 pnpm dev:preview
 ```
 
-It uses the production route tree and components with an in-memory mock desktop transport; it does **not** initialize Firebase, create Tauri globals, contact emulators, or expose real API keys. The floating **Browser preview** control switches between populated, empty, welcome, onboarding, and permission-needed scenarios. A scenario can also be linked directly, for example:
+It uses the production route tree and components with an in-memory mock desktop transport. It does **not** initialize Firebase, create Tauri globals, contact emulators, or expose real API keys.
+
+The preview popup starts hidden. Use the eye button at the bottom right to show or hide it.
+
+To open the popup in a known state, add `?previewPopup=shown` or `?previewPopup=hidden` to the URL, for example `http://localhost:1420/dashboard?previewPopup=shown`. Its visibility is local to the preview and does not change production preferences.
+
+Inside the popup, the **Browser preview** control switches between populated, empty, welcome, onboarding, and Permission needed scenarios. A scenario can also be linked directly, for example:
 
 ```text
 http://localhost:1420/dashboard?scenario=empty
@@ -64,13 +70,13 @@ Use **Reset data** to restore a scenario after exercising UI mutations. Browser 
 
 ### Environment variables
 
-| Variable                     | Role                                                                                                                                                          |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Variable                     | Role                                                                                                                                                                                                           |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `VITE_FLAVOR`                | Frontend flavor. Desktop dev defaults to `emulators`; `preview` enables the browser-only mock runtime. `dev` / `prod` are live names; `enterprise` / `enterprise-dev` are leftover flavor names, not backends. |
-| `MAUSVOICE_ENABLE_DEVTOOLS`  | Open webview devtools on launch (only effective when built with `--features debug-assist`)                                                                    |
-| `MAUSVOICE_DESKTOP_PLATFORM` | Override platform detection for Node scripts                                                                                                                  |
-| `TAURI_PLATFORM`             | Native target used by desktop scripts and Turbo cache                                                                                                         |
-| `TAURI_DEV_CONFIG`           | Alternate Tauri config for `dev:tauri`                                                                                                                        |
+| `MAUSVOICE_ENABLE_DEVTOOLS`  | Open webview devtools on launch (only effective when built with `--features debug-assist`)                                                                                                                     |
+| `MAUSVOICE_DESKTOP_PLATFORM` | Override platform detection for Node scripts                                                                                                                                                                   |
+| `TAURI_PLATFORM`             | Native target used by desktop scripts and Turbo cache                                                                                                                                                          |
+| `TAURI_DEV_CONFIG`           | Alternate Tauri config for `dev:tauri`                                                                                                                                                                         |
 
 Turbo also tracks Firebase emulator hosts so those values invalidate the cache.
 
