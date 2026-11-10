@@ -73,6 +73,10 @@ const PATHS = [
   ["macApp", "packages/rust_macos_pill/src/app.rs"],
   ["pillProcess", "apps/desktop/src-tauri/src/pill_process.rs"],
   ["pillPosition", "apps/desktop/src-tauri/src/pill_position.rs"],
+  ["restore", "packages/rust_pill_shared/src/restore.rs"],
+  ["windowsMain", "packages/rust_windows_pill/src/main.rs"],
+  ["macMain", "packages/rust_macos_pill/src/main.rs"],
+  ["layout", "packages/rust_pill_shared/src/layout.rs"],
   ["gtkMain", "packages/rust_gtk_pill/src/main.rs"],
   ["gtkIpc", "packages/rust_gtk_pill/src/ipc.rs"],
   ["windowsIpc", "packages/rust_windows_pill/src/ipc.rs"],
@@ -2031,6 +2035,200 @@ describe("native gesture adapter contracts", () => {
     }
   });
 
+  it("reacts to a display change on every platform", () => {
+    // A pill whose display is unplugged, rescaled or rearranged is left at an
+    // origin no display covers: still running, still listening, invisible. Then
+    // its own save path stores that stranded origin over the good one. Every
+    // platform has to notice, and each has a different signal for it.
+    assert.match(
+      source.windowsPill,
+      /WM_DISPLAYCHANGE \| WM_SETTINGCHANGE/,
+      "windowsPill: no display-change message handled",
+    );
+    // Matched as an arm, not as a bare name: a mention in a comment or a
+    // renamed constant would satisfy a looser pattern while the message goes
+    // unhandled.
+    assert.match(
+      source.windowsPill,
+      /WM_DPICHANGED => \{/,
+      "windowsPill: a scale change moves the pill and is never corrected",
+    );
+    // The suggested rect has to be adopted. Ignoring lParam makes Windows
+    // rescale the window itself, which moves the pill off its parked spot.
+    assert.match(
+      source.windowsPill,
+      /SetWindowPos\(hwnd, None, x, y, w, h, SWP_NOZORDER \| SWP_NOACTIVATE\)/,
+      "windowsPill: the DPI suggestion is ignored, so Windows rescales the pill",
+    );
+    assert.match(
+      source.macPill,
+      /NSApplicationDidChangeScreenParametersNotification/,
+      "macPill: no screen-parameter observer",
+    );
+    for (const name of ["windowsPill", "macPill", "gtkPill"]) {
+      assert.match(
+        source[name],
+        /rust_pill_shared::layout::reconcile\(/,
+        `${name}: nothing re-resolves the position against the new layout`,
+      );
+      assert.match(
+        source[name],
+        /reconcile_display_layout\(/,
+        `${name}: reconciliation exists but is never called`,
+      );
+    }
+  });
+
+  it("backs the display events with a poll that cannot miss a change", () => {
+    // A hidden window receives no WM_DPICHANGED, a macOS app that is not
+    // frontmost can miss the notification, and an unmapped X11 window can miss a
+    // RandR change. The poll is the backstop under those events.
+    for (const name of ["windowsPill", "macPill", "gtkPill"]) {
+      assert.match(
+        source[name],
+        /rust_pill_shared::layout::layout_signature\(/,
+        `${name}: no poll backstop, so a missed event strands the pill`,
+      );
+    }
+  });
+
+  it("refuses to save a position the display change forced", () => {
+    // The OS moves pill windows during a display change, and the frame it leaves
+    // behind is indistinguishable from a drag. Saving it replaces the position
+    // the user chose with the one the system improvised.
+    // Scoped to the save path itself. An unscoped match passes on a mention
+    // anywhere in the file, which is exactly what a dropped check looks like.
+    const saves = [
+      ["windowsPill", "fn persist_drag_position(", /allows_save\(now\)/],
+      ["macPill", "fn persist_drag_position(", /allows_save\(now\)/],
+      ["gtkX11", "pub\(crate\) fn persist_window_position(", /allows_save\(now\)/],
+    ];
+    for (const [name, marker, pattern] of saves) {
+      const save = scope(name, marker);
+      assert.match(save, /save_guard\.borrow\(\)\.allows_save\(/, `${name}: the save path never asks the guard`);
+      assert.match(save, pattern, `${name}: the guard's verdict is not what decides the save`);
+      // The refusal has to be a return, not a logged warning that falls through.
+      assert.match(save, /if !state\.save_guard\.borrow\(\)\.allows_save\(now\) \{[^}]*return;/, `${name}: the refusal does not stop the save`);
+    }
+    // A failed or partial enumeration must not read as an unplugged display.
+    for (const name of ["windowsPill", "macPill", "gtkPill"]) {
+      assert.match(
+        source[name],
+        /layout_changed\(/,
+        `${name}: the save guard is never told the layout moved`,
+      );
+    }
+  });
+
+  it("names the display in the stored record instead of only its rectangle", () => {
+    // A rect is not an identity: two identical panels share one, and a
+    // resolution change moves the rect of a monitor that has not moved. Without
+    // a stable token a pill whose monitor is replugged lands on a different one.
+    for (const name of ["windowsPill", "macPill", "gtkX11"]) {
+      assert.match(
+        source[name],
+        /rust_pill_shared::layout::display_identity\(/,
+        `${name}: the display is never named, so the record carries only a rect`,
+      );
+    }
+    assert.match(
+      source.windowsPill,
+      /EnumDisplayDevicesW/,
+      "windowsPill: the monitor device path is the durable name on Windows",
+    );
+    assert.match(
+      source.macPill,
+      /CGDisplayCreateUUIDFromDisplayID/,
+      "macPill: CGDirectDisplayID is not stable, the UUID is",
+    );
+    // The token has to reach the database, or the pill cannot use it next launch.
+    assert.match(
+      source.pillProcess,
+      /display_id: Option<u64>/,
+      "pillProcess: the token is dropped before it is stored",
+    );
+    assert.match(
+      source.pillPosition,
+      /ParkedWindow::new_named\(/,
+      "pillPosition: the record is built without the display's identity",
+    );
+    assert.match(
+      source.restore,
+      /display_id: Option<u64>/,
+      "restore: the record has no field for the display's identity",
+    );
+    // Matching by token has to come first, or a display that changed resolution
+    // loses to whichever display now covers the rect it was saved with.
+    const choose = scope("restore", "fn choose_display(");
+    assert.match(
+      choose,
+      /parked\.display_id\s*\{[^}]*display\.id == Some\(saved\)/,
+      "restore: the token is stored but never matched",
+    );
+    assert.ok(
+      choose.indexOf("display.id == Some(saved)") < choose.indexOf("same_geometry"),
+      "restore: geometry wins over the display's identity",
+    );
+    // A version bump is what stops an old row, which cannot name its display,
+    // from being read as a named one.
+    assert.match(source.restore, /pub const SCHEMA_VERSION: i64 = 2;/);
+  });
+
+  it("keeps the pill where it is when told to forget the position", () => {
+    // `ForgetPosition` exists because a local-data clear wipes the row and the
+    // pill would otherwise publish its pre-clear position straight back. Its
+    // contract is that the pill does not move, so an unsaved flag alone must not
+    // be read as "re-home to the default corner": that would move a visible,
+    // deliberate pill as a side effect of clearing a database.
+    //
+    // GTK already distinguishes the two, because its idle path anchors to the
+    // last applied origin when nothing is saved. Windows and macOS both fall
+    // through to their default corner, so both need the guard.
+    const guards = [
+      ["windowsPill", "fn reposition_to_cursor_monitor("],
+      ["macPill", "fn reposition_window("],
+    ];
+    for (const [name, marker] of guards) {
+      const reposition = scope(name, marker);
+      assert.match(
+        reposition,
+        /if !state\.has_saved_position\.get\(\) && !reset_to_cursor \{[^}]*return;/,
+        `${name}: an unsaved pill is re-homed, so forgetting moves it`,
+      );
+    }
+    // The GTK equivalent is a fallback rather than a guard, and has to keep
+    // anchoring to the last applied origin.
+    const gtkAnchor = read("packages/rust_gtk_pill/src/x11.rs");
+    assert.match(
+      gtkAnchor,
+      /prev\.0 as f64 \+ center_x, prev\.1 as f64 \+ center_y/,
+      "gtkX11: the unsaved fallback stopped reusing the last applied origin",
+    );
+  });
+
+  it("reads its own arguments without requiring Unicode", () => {
+    // `std::env::args()` panics on any argument that is not valid Unicode, and
+    // argv[0] is the executable path, which on Linux and macOS is a byte string
+    // that need not be UTF-8. A user with one such directory in the pill's
+    // install path would lose the whole overlay before its first frame, from a
+    // process that has no way to report anything.
+    const shared = read("packages/rust_pill_shared/src/restore.rs");
+    assert.match(shared, /pub fn saved_position_from_process_args\(\)/);
+    assert.match(shared, /std::env::args_os\(\)\.find_map\(/);
+    for (const name of ["gtkMain", "windowsMain", "macMain"]) {
+      assert.doesNotMatch(
+        source[name],
+        /std::env::args\(\)/,
+        `${name}: env::args panics on a non-Unicode argument`,
+      );
+      assert.match(
+        source[name],
+        /saved_position_from_process_args\(\)/,
+        `${name}: the panic-free reader is not what main uses`,
+      );
+    }
+  });
+
   it("gates the position delete in the clear path", () => {
     // Clearing the row is a local-data write like any other. Ungated, it can
     // race a save that is already queued and the row comes back after the wipe.
@@ -2295,8 +2493,12 @@ describe("native review and monitor contracts", () => {
 
   it("centralizes fallible Win32 monitor-info initialization", () => {
     const pill = source.windowsPill;
-    // `GetMonitorInfoW` belongs to the one wrapper, not to its callers.
-    assert.equal(pill.match(/GetMonitorInfoW\(/g)?.length, 1);
+    // `GetMonitorInfoW` belongs to the wrappers, not to their callers. There are
+    // exactly two, and both are the fallible-initialization pattern this guard
+    // exists for: the plain monitor info used for work areas, and the extended
+    // form whose `szDevice` names the display for the stored record. A third call
+    // site would be a caller doing its own struct plumbing.
+    assert.equal(pill.match(/GetMonitorInfoW\(/g)?.length, 2);
     assert.ok((pill.match(/query_monitor_info\(/g)?.length ?? 0) >= 6);
 
     // A caller binds the info in one of two ways, and both have to guard: a
@@ -2374,8 +2576,11 @@ describe("macOS saved-position scope", () => {
     // Anything else means a second code path writes the saved origin.
     const seeds = source.macApp.match(/saved_x: Cell::new\(restored/g)?.length ?? 0;
     assert.equal(seeds, 1, "the restored origin must be seeded exactly once");
-    assert.equal(source.macApp.match(/saved_x\.set\(/g)?.length, 1);
-    assert.equal(source.macApp.match(/saved_y\.set\(/g)?.length, 1);
+    // Exactly two writers of the saved origin: the drop, and the reconciliation
+    // that runs when a display change moves the pill itself. Anything else is a
+    // second code path deciding where the pill was parked.
+    assert.equal(source.macApp.match(/saved_x\.set\(/g)?.length, 2);
+    assert.equal(source.macApp.match(/saved_y\.set\(/g)?.length, 2);
     const capture = source.macApp
       .split("fn persist_drag_position(")[1]
       .split("fn reduced_motion(")[0];

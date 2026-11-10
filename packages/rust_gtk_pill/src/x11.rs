@@ -97,8 +97,27 @@ fn root_pointer(window: &gtk::Window) -> (c_int, c_int) {
     query_root_pointer(xdisplay_for_window(window))
 }
 
+/// The token of the monitor a toplevel origin sits on.
+///
+/// Named rather than derived from the pointer, so the record names the display
+/// the pill was dropped on even if the pointer has since moved off it.
+fn display_id_at(window: &gtk::Window, x: f64, y: f64) -> Option<u64> {
+    let display = window.display();
+    let scale = x11_root_scale(window);
+    for index in 0..display.n_monitors() {
+        let Some(monitor) = display.monitor(index) else {
+            continue;
+        };
+        let work = work_area_rect(&monitor, scale);
+        if x >= work.x && x < work.right() && y >= work.y && y < work.bottom() {
+            return work.id;
+        }
+    }
+    None
+}
+
 /// Moves the toplevel to an absolute root position.
-fn move_toplevel(window: &gtk::Window, x: c_int, y: c_int) {
+pub(crate) fn move_toplevel(window: &gtk::Window, x: c_int, y: c_int) {
     let Some(xid) = toplevel_xid(window) else {
         return;
     };
@@ -139,11 +158,15 @@ pub(crate) fn persist_drop_position(
     state.saved_x.set(drop_x as f64);
     state.saved_y.set(drop_y as f64);
     state.has_saved_position.set(true);
+    state
+        .saved_display_id
+        .set(display_id_at(window, drop_x as f64, drop_y as f64));
     let (rect, monitor) = crate::pill::pill_geometry(window, state);
     ipc::send(&OutMessage::PositionChanged {
         has_saved_position: true,
         rect,
         monitor,
+        display_id: state.saved_display_id.get(),
     });
     Some((drop_x, drop_y))
 }
@@ -152,15 +175,25 @@ pub(crate) fn persist_drop_position(
 /// calls this when a release settle finishes) and marks the release consumed
 /// so the slow timer cannot overwrite it with a later cursor poll.
 pub(crate) fn persist_window_position(window: &gtk::Window, state: &PillState, x: f64, y: f64) {
+    let now = crate::pill::drag_clock_now();
+    state.save_guard.borrow_mut().drag_ended(now);
+    if !state.save_guard.borrow().allows_save(now) {
+        // A display change landed while this drag was held, so the frame it ended
+        // on is one the layout chose. Storing it would replace the position the
+        // user picked with the one RandR left behind.
+        return;
+    }
     state.saved_x.set(x);
     state.saved_y.set(y);
     state.has_saved_position.set(true);
+    state.saved_display_id.set(display_id_at(window, x, y));
     state.x11_release_persisted.set(true);
     let (rect, monitor) = crate::pill::pill_geometry(window, state);
     ipc::send(&OutMessage::PositionChanged {
         has_saved_position: true,
         rect,
         monitor,
+        display_id: state.saved_display_id.get(),
     });
 }
 
@@ -246,6 +279,37 @@ pub(crate) fn tick_drag_frame(window: &gtk::Window, state: &PillState, now: f64,
     }
 }
 
+/// A stable token for a monitor, or `None` when GDK cannot describe it.
+///
+/// GDK's X11 backend exposes no output name and no EDID through this version of
+/// the API, so the token is built from what it does expose: the manufacturer,
+/// the model, and the panel's physical size in millimetres. That triple comes
+/// from the EDID, so it survives a replug and a reboot, and it distinguishes two
+/// different panels where a rectangle cannot.
+///
+/// Two panels of the same make and model therefore share a token, which is a real
+/// limit of this API rather than an oversight: GDK 0.18 gives no serial number to
+/// separate them. A shared token is still safe, because `choose_display` treats a
+/// token match as "remap within this display" rather than "restore this exact
+/// origin", and geometry decides when the token is ambiguous.
+fn monitor_display_id(monitor: &gdk::Monitor) -> Option<u64> {
+    let manufacturer = monitor.manufacturer().unwrap_or_default();
+    let model = monitor.model().unwrap_or_default();
+    if manufacturer.is_empty() && model.is_empty() {
+        return None;
+    }
+    // Unit separator between fields, so a manufacturer or model that happens to
+    // contain the separator cannot make two different panels hash alike.
+    let name = format!(
+        "{}\u{1f}-{}\u{1f}-{}x{}",
+        manufacturer,
+        model,
+        monitor.width_mm(),
+        monitor.height_mm()
+    );
+    rust_pill_shared::layout::display_identity(&name)
+}
+
 /// The size of a display work area as the restore math expects it.
 fn work_area_rect(monitor: &gdk::Monitor, scale: f64) -> rust_pill_shared::edge::MonitorRect {
     let work = crate::pill::logical_rect_to_physical(&monitor.workarea(), scale);
@@ -254,6 +318,7 @@ fn work_area_rect(monitor: &gdk::Monitor, scale: f64) -> rust_pill_shared::edge:
         y: work.y,
         width: work.width,
         height: work.height,
+        id: monitor_display_id(monitor),
     }
 }
 
@@ -414,6 +479,15 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
         state.saved_x.set(x as f64);
         state.saved_y.set(y as f64);
         state.has_saved_position.set(true);
+        // Carry the record's display identity into this process's state, so the
+        // next save republishes it. Dropping it here would silently downgrade
+        // every later save to geometry-only matching.
+        state.saved_display_id.set(
+            state
+                .restored_position
+                .get()
+                .and_then(|window| window.display_id),
+        );
     }
     let was_dragging = Rc::new(Cell::new(false));
     let win_tick = window.clone();
@@ -603,6 +677,7 @@ fn placement_on_monitor(
                     y: rect.y,
                     width: rect.width,
                     height: rect.height,
+                    id: None,
                 }
             })
             .collect()
@@ -614,12 +689,14 @@ fn placement_on_monitor(
         y: full.y,
         width: full.width,
         height: full.height,
+        id: None,
     };
     let work_area = rust_pill_shared::edge::MonitorRect {
         x: wa.x,
         y: wa.y,
         width: wa.width,
         height: wa.height,
+        id: None,
     };
     let region = if seams_open {
         state.drag_motion.borrow_mut().resolve_drag_region(

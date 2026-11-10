@@ -231,6 +231,10 @@ pub fn run(receiver: Receiver<InMessage>, restored_position: Option<ParkedWindow
         hover_probe_x: Cell::new(0.0),
         hover_probe_y: Cell::new(0.0),
         has_saved_position: Cell::new(false),
+        saved_display_id: Cell::new(None),
+        save_guard: RefCell::new(rust_pill_shared::layout::SaveGuard::new()),
+        layout_signature: Cell::new(None),
+        layout_polled_at: Cell::new(0.0),
         reset_strategy: Cell::new(ResetStrategy::Current),
         saved_x: Cell::new(0.0),
         saved_y: Cell::new(0.0),
@@ -734,12 +738,14 @@ pub fn run(receiver: Receiver<InMessage>, restored_position: Option<ParkedWindow
                     state_tick.selector_placement.borrow_mut().reset();
                     state_tick.crossing.borrow_mut().reset();
                     state_tick.has_saved_position.set(false);
+                    state_tick.saved_display_id.set(None);
                     state_tick.reset_strategy.set(strategy);
                     let (rect, monitor) = pill_geometry(&win_tick, &state_tick);
                     ipc::send(&OutMessage::PositionChanged {
                         has_saved_position: false,
                         rect,
                         monitor,
+                        display_id: None,
                     });
                 }
                 InMessage::ForgetPosition => {
@@ -747,6 +753,7 @@ pub fn run(receiver: Receiver<InMessage>, restored_position: Option<ParkedWindow
                     // Local data was just cleared, and the next `RequestPosition`
                     // republishes this flag, so leaving it set would write the row back.
                     state_tick.has_saved_position.set(false);
+                    state_tick.saved_display_id.set(None);
                 }
                 InMessage::RequestPosition => {
                     let (rect, monitor) = pill_geometry(&win_tick, &state_tick);
@@ -754,6 +761,7 @@ pub fn run(receiver: Receiver<InMessage>, restored_position: Option<ParkedWindow
                         has_saved_position: state_tick.has_saved_position.get(),
                         rect,
                         monitor,
+                        display_id: state_tick.saved_display_id.get(),
                     });
                 }
                 InMessage::Quit => {
@@ -767,6 +775,14 @@ pub fn run(receiver: Receiver<InMessage>, restored_position: Option<ParkedWindow
         }
 
         release_pointer_if_button_up(&win_tick, &state_tick);
+        // X11 does not move a window when RandR reconfigures the outputs, so a
+        // display disappearing leaves the pill parked over empty root space with
+        // nothing painted under it. Watching the arrangement here is what brings
+        // it back, and the poll backs up the event because a change can land while
+        // the toplevel is unmapped.
+        if backend_tick == Backend::X11 {
+            poll_display_layout(&win_tick, &state_tick);
+        }
         // One measured step for the whole frame: the transition springs and
         // the drag controller share it, so a long frame slows everything
         // together instead of each measuring a different slice.
@@ -1025,6 +1041,221 @@ pub(crate) fn logical_rect_to_physical(g: &gdk::Rectangle, scale: f64) -> Rect {
     }
 }
 
+/// The visible work areas of every connected monitor, each with its token, plus
+/// the root scale their coordinates are in.
+///
+/// `None` when the display reports no monitors, which happens briefly while X
+/// reconfigures outputs. A caller must read that as "nothing to act on", not as
+/// "the pill's monitor was unplugged".
+fn monitor_areas(
+    display: &gdk::Display,
+    scale: f64,
+) -> Option<Vec<rust_pill_shared::edge::MonitorRect>> {
+    let mut areas = Vec::with_capacity(display.n_monitors().max(0) as usize);
+    for index in 0..display.n_monitors() {
+        let Some(monitor) = display.monitor(index) else {
+            continue;
+        };
+        let work = logical_rect_to_physical(&monitor.workarea(), scale);
+        areas.push(rust_pill_shared::edge::MonitorRect {
+            x: work.x,
+            y: work.y,
+            width: work.width,
+            height: work.height,
+            id: monitor_display_id(&monitor),
+        });
+    }
+    (!areas.is_empty()).then_some(areas)
+}
+
+/// A stable token for a monitor, matching the one the restore path uses.
+fn monitor_display_id(monitor: &gdk::Monitor) -> Option<u64> {
+    let manufacturer = monitor.manufacturer().unwrap_or_default();
+    let model = monitor.model().unwrap_or_default();
+    if manufacturer.is_empty() && model.is_empty() {
+        return None;
+    }
+    // Unit separator between fields, so a manufacturer or model that happens to
+    // contain the separator cannot make two different panels hash alike.
+    let name = format!(
+        "{}\u{1f}-{}\u{1f}-{}x{}",
+        manufacturer,
+        model,
+        monitor.width_mm(),
+        monitor.height_mm()
+    );
+    rust_pill_shared::layout::display_identity(&name)
+}
+
+/// Reconcile the pill's toplevel against the monitors connected right now.
+///
+/// An X11 window does not get moved by the server when RandR changes, which
+/// sounds like an advantage and is not: the window simply stays at its root
+/// coordinates, so if the monitor that used to be there is gone the window is now
+/// in dead space with nothing painted under it, still running and still
+/// invisible. Then the next release settle stores that stranded origin.
+///
+/// So the same three steps run here as on the other platforms: hold saves until
+/// the layout settles, resolve the position against the new layout, and adopt the
+/// resolved origin so the stored record follows the pill.
+fn reconcile_display_layout(window: &gtk::Window, state: &PillState) {
+    if state.backend.get() != Backend::X11 {
+        // Wayland has no queryable absolute position, so there is nothing to
+        // reconcile: the compositor owns placement outright.
+        return;
+    }
+    let now = drag_clock_now();
+    state.save_guard.borrow_mut().layout_changed(now);
+    if state.dragging.get() {
+        // A drag held across the change cannot be saved when it ends: the frame
+        // it would record is the one the X server left the window at.
+        state
+            .save_guard
+            .borrow_mut()
+            .layout_changed_during_drag(now);
+    }
+    let display = window.display();
+    let scale = x11::x11_root_scale(window);
+    let Some(areas) = monitor_areas(&display, scale) else {
+        return;
+    };
+    let (alloc_w, alloc_h) = window.size();
+    let window_w = alloc_w as f64 * scale;
+    let window_h = alloc_h as f64 * scale;
+    if window_w <= 0.0 || window_h <= 0.0 {
+        return;
+    }
+    // The pill sits centred and bottom-anchored inside its transparent
+    // toplevel, so the window origin has to be derived from where the pill is
+    // drawn rather than read off the surface.
+    let (offset_x, offset_y, pill_w, pill_h) =
+        crate::draw::pill_position(state, state.draw_width.get(), state.draw_height.get());
+    let (content_x, content_y) = state.content_offset();
+    let footprint_offset = (
+        (content_x + offset_x) * scale,
+        (content_y + offset_y) * scale,
+    );
+    let footprint_size = (pill_w * scale, pill_h * scale);
+
+    // Describe the display the pill believes it is on: named when possible, else
+    // whichever monitor contains the pill's centre.
+    let footprint_centre = (
+        state.saved_x.get() + footprint_offset.0 + footprint_size.0 / 2.0,
+        state.saved_y.get() + footprint_offset.1 + footprint_size.1 / 2.0,
+    );
+    let current_id = state.saved_display_id.get();
+    let saved_display = areas
+        .iter()
+        .copied()
+        .find(|area| area.id.is_some() && area.id == current_id)
+        .or_else(|| {
+            areas.iter().copied().find(|area| {
+                footprint_centre.0 >= area.x
+                    && footprint_centre.0 < area.right()
+                    && footprint_centre.1 >= area.y
+                    && footprint_centre.1 < area.bottom()
+            })
+        })
+        .unwrap_or_else(|| {
+            rust_pill_shared::edge::MonitorRect::without_id(
+                state.saved_x.get(),
+                state.saved_y.get(),
+                window_w,
+                window_h,
+            )
+        });
+    let Some(parked) = rust_pill_shared::restore::ParkedWindow::new_named(
+        state.saved_x.get(),
+        state.saved_y.get(),
+        window_w,
+        window_h,
+        saved_display,
+        current_id,
+    ) else {
+        return;
+    };
+
+    let relocation = rust_pill_shared::layout::reconcile(
+        parked,
+        &areas,
+        (window_w, window_h),
+        |_work, _window| (footprint_offset, footprint_size),
+        |work, _window| footprint_bounds_for(work, footprint_offset, footprint_size),
+    );
+
+    match relocation {
+        rust_pill_shared::layout::Relocation::Keep => {}
+        rust_pill_shared::layout::Relocation::Stranded => {
+            // Nowhere to move it to. Leaving it keeps the stored position.
+        }
+        rust_pill_shared::layout::Relocation::Move { x, y } => {
+            x11::move_toplevel(window, x.round() as i32, y.round() as i32);
+            state.saved_x.set(x.round());
+            state.saved_y.set(y.round());
+            state.has_saved_position.set(true);
+            let centre_x = x.round() + footprint_offset.0 + footprint_size.0 / 2.0;
+            let centre_y = y.round() + footprint_offset.1 + footprint_size.1 / 2.0;
+            if let Some(area) = areas.iter().copied().find(|area| {
+                centre_x >= area.x
+                    && centre_x < area.right()
+                    && centre_y >= area.y
+                    && centre_y < area.bottom()
+            }) {
+                state.saved_display_id.set(area.id);
+            }
+            // The move was the pill's, not a drag, so it does not go through the
+            // save guard: this position is the only place the pill can be, and
+            // storing it is what stops the next launch restoring a stranded
+            // origin.
+            let (rect, monitor) = pill_geometry(window, state);
+            ipc::send(&OutMessage::PositionChanged {
+                has_saved_position: true,
+                rect,
+                monitor,
+                display_id: state.saved_display_id.get(),
+            });
+        }
+    }
+}
+
+/// Clamp bounds for the pill's visible footprint inside a work area.
+fn footprint_bounds_for(
+    work: rust_pill_shared::edge::MonitorRect,
+    offset: (f64, f64),
+    size: (f64, f64),
+) -> rust_pill_shared::drag::DragBounds {
+    rust_pill_shared::restore::footprint_bounds(work, offset, size)
+}
+
+/// Reconcile if the display arrangement changed and no event said so.
+fn poll_display_layout(window: &gtk::Window, state: &PillState) {
+    const POLL_INTERVAL: f64 = 0.5;
+    if state.backend.get() != Backend::X11 {
+        return;
+    }
+    let now = drag_clock_now();
+    if now - state.layout_polled_at.get() < POLL_INTERVAL {
+        return;
+    }
+    state.layout_polled_at.set(now);
+    let display = window.display();
+    let scale = x11::x11_root_scale(window);
+    let Some(areas) = monitor_areas(&display, scale) else {
+        return;
+    };
+    let signature = rust_pill_shared::layout::layout_signature(&areas);
+    let previous = state.layout_signature.get();
+    state.layout_signature.set(Some(signature));
+    if previous == Some(signature) {
+        return;
+    }
+    if previous.is_some() {
+        // The first poll only establishes a baseline. Reconciling against it
+        // would treat the launch itself as a layout change.
+        reconcile_display_layout(window, state);
+    }
+}
+
 /// Ends the gesture and tears down any active drag.
 ///
 /// Clears the hover pin and gesture flags. If a drag was in progress, the
@@ -1121,6 +1352,7 @@ fn persist_drag_position(window: &gtk::Window, state: &PillState) {
         has_saved_position: true,
         rect,
         monitor,
+        display_id: state.saved_display_id.get(),
     });
 }
 

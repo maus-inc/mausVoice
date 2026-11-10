@@ -22,6 +22,14 @@
 //!   macOS converts with the primary display's top edge.
 //! - A layer-shell Wayland surface has no queryable absolute position, so that
 //!   backend never saves and never restores.
+//!
+//! The display is named by a stable token as well as by a rect, because a rect
+//! is not an identity: two panels of the same size are indistinguishable, a
+//! resolution change moves the rect of a monitor that has not moved, and a
+//! platform display id names a slot that can be reused. The record therefore
+//! carries [`crate::layout::display_identity`] of whatever durable name the
+//! platform offers. An unnamed display degrades to matching on geometry, which
+//! is what every build before this one did.
 
 use serde::{Deserialize, Serialize};
 
@@ -29,10 +37,15 @@ use crate::drag::DragBounds;
 use crate::edge::MonitorRect;
 
 /// Bumped when the meaning of a stored field changes, so a row written by a
-/// different build is discarded instead of misread. Value 1 is a window origin
-/// and size plus the display rect that contained it, all in the platform's
-/// top-left space.
-pub const SCHEMA_VERSION: i64 = 1;
+/// different build is discarded instead of misread.
+///
+/// Value 1 was a window origin and size plus the display rect that contained it.
+/// Value 2 adds the saved display's stable token, so a display that is
+/// unplugged and replugged can be recognised instead of being confused with a
+/// different panel that happens to occupy the same rect. A version 1 row is
+/// discarded rather than read as a version 2 row with no token: the old row
+/// cannot say which display it meant, and guessing is what this bump stops.
+pub const SCHEMA_VERSION: i64 = 2;
 
 /// A pill window as it was last parked on a display.
 ///
@@ -40,8 +53,22 @@ pub const SCHEMA_VERSION: i64 = 1;
 /// was parked at. The size is part of the record because the pill window
 /// changes size between modes and releases, and the origin only means "where
 /// the user dropped it" if the window is the same rect. `display` is the rect of
-/// the display that contained the window centre when it was saved, which is what
-/// lets a later launch notice that the display is gone.
+/// the display that contained the window centre when it was saved.
+///
+/// `display_id` is the stable token of that display
+/// ([`crate::layout::display_identity`]), and `None` on a platform or a display
+/// that cannot be named. The rect and the token answer different questions and
+/// both are needed:
+///
+/// - The token says *which* display. A panel unplugged and replugged keeps its
+///   token but usually loses its rect, and two identical panels share a rect but
+///   never a token. Without the token, a position saved on a panel that comes
+///   back at a new resolution is indistinguishable from a position on a
+///   different panel that now fills the old rect, and the pill lands on the
+///   wrong one.
+/// - The rect says *where on* that display, which is what makes a relaunch
+///   restore the same pixels and what lets a position survive a display that
+///   cannot be named at all.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ParkedWindow {
     pub x: f64,
@@ -49,15 +76,28 @@ pub struct ParkedWindow {
     pub width: f64,
     pub height: f64,
     pub display: MonitorRect,
+    pub display_id: Option<u64>,
 }
 
 impl ParkedWindow {
+    /// Build an unnamed parked window, which matches on geometry alone.
+    pub fn new(x: f64, y: f64, width: f64, height: f64, display: MonitorRect) -> Option<Self> {
+        Self::new_named(x, y, width, height, display, None)
+    }
+
     /// Build a parked window, rejecting anything a corrupt row can produce.
     ///
     /// Returns `None` for non-finite values and for empty or negative spans, so
     /// a bad record stops here instead of reaching window placement math that
     /// assumes finite numbers.
-    pub fn new(x: f64, y: f64, width: f64, height: f64, display: MonitorRect) -> Option<Self> {
+    pub fn new_named(
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+        display: MonitorRect,
+        display_id: Option<u64>,
+    ) -> Option<Self> {
         let window_usable = x.is_finite()
             && y.is_finite()
             && width.is_finite()
@@ -75,8 +115,25 @@ impl ParkedWindow {
             y,
             width,
             height,
-            display,
+            // The record holds the display's identity once, in `display_id`. The
+            // rect is geometry only, so a caller cannot construct a record whose
+            // rect and token disagree about which display they mean, and the
+            // encoded form cannot carry two answers to one question.
+            display: MonitorRect {
+                id: None,
+                ..display
+            },
+            display_id,
         })
+    }
+
+    /// The token of the display the pill was parked on, reduced to what a
+    /// monitor list can be matched against.
+    ///
+    /// `None` when the record has no token, which is a record from a platform
+    /// that cannot name displays or one saved before a display could be named.
+    pub fn display_identity(&self) -> Option<u64> {
+        self.display_id
     }
 
     /// The window centre, which decides which display owns the saved spot.
@@ -89,6 +146,10 @@ impl ParkedWindow {
 ///
 /// One definition for the desktop writer and the three pill readers, so a
 /// field cannot be spelled one way on the way in and another on the way out.
+///
+/// `display_id` is skipped when absent, so a record from a platform that cannot
+/// name displays is byte-for-byte what value 1 wrote apart from the version. It
+/// is an `Option` rather than a zero because zero is a legitimate hash.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 struct Record {
     version: i64,
@@ -97,6 +158,8 @@ struct Record {
     width: f64,
     height: f64,
     display: DisplayRecord,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    display_id: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -121,6 +184,7 @@ impl From<ParkedWindow> for Record {
                 width: window.display.width,
                 height: window.display.height,
             },
+            display_id: window.display_id,
         }
     }
 }
@@ -142,7 +206,7 @@ impl ParkedWindow {
         if record.version != SCHEMA_VERSION {
             return None;
         }
-        Self::new(
+        Self::new_named(
             record.x,
             record.y,
             record.width,
@@ -152,7 +216,9 @@ impl ParkedWindow {
                 y: record.display.y,
                 width: record.display.width,
                 height: record.display.height,
+                id: None,
             },
+            record.display_id,
         )
     }
 }
@@ -180,6 +246,27 @@ where
     ParkedWindow::decode(&record)
 }
 
+/// Read the parked position out of a process's own arguments.
+///
+/// This is the form every pill's `main` uses, because `std::env::args()` is the
+/// wrong tool for the job: it panics on an argument that is not valid Unicode.
+/// A path to the executable is an argument, and on Linux and macOS a path is a
+/// byte string that need not be UTF-8, so a user with one such directory in the
+/// pill's location loses the entire overlay before it has drawn a frame. The
+/// panic happens in the one place that cannot report anything.
+///
+/// Arguments that are not Unicode are skipped rather than repaired. The flag this
+/// looks for is ASCII written by the desktop process, so a lossy conversion could
+/// only ever manufacture a match, and skipping cannot lose a real one.
+pub fn saved_position_from_process_args() -> Option<ParkedWindow> {
+    let record = std::env::args_os().find_map(|arg| {
+        arg.to_str()
+            .and_then(|arg| arg.strip_prefix(SAVED_POSITION_ARG))
+            .map(str::to_string)
+    })?;
+    ParkedWindow::decode(&record)
+}
+
 /// Where to put the pill on this launch.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Placement {
@@ -202,6 +289,11 @@ pub enum Placement {
 ///
 /// Which display is chosen, in order:
 ///
+/// 0. The display with the same stable token as the one the pill was parked on,
+///    when both the record and the live display have one. This is the only step
+///    that can recognise a display whose geometry changed, so a monitor that
+///    comes back at a different resolution is recognised rather than replaced by
+///    whichever display now occupies its old rect.
 /// 1. The display with the exact rect the pill was parked on. The ordinary
 ///    relaunch, and also a display whose dock or taskbar moved: the rect is
 ///    unchanged and the clamp pulls the pill inside the new work area.
@@ -256,10 +348,29 @@ where
 
 /// Pick the display that owns the saved spot, and whether it is the exact
 /// display the pill was parked on.
+///
+/// "Exact" means "restore the stored origin", so it is only ever true for a
+/// display whose rect is the one the origin was measured against. A display
+/// matched by token alone keeps the pill's relative place, because its rect may
+/// have changed and the stored origin could now be off it.
 fn choose_display(parked: &ParkedWindow, displays: &[MonitorRect]) -> Option<(usize, bool)> {
+    // A named display is matched by name first. This is the case geometry cannot
+    // get right: a panel that comes back at a different resolution, or one that
+    // swapped places with a panel of the same size.
+    if let Some(saved) = parked.display_id {
+        if let Some(index) = displays
+            .iter()
+            .enumerate()
+            .find(|(_, display)| display.id == Some(saved))
+            .map(|(index, _)| index)
+        {
+            let exact = displays[index].same_geometry(parked.display);
+            return Some((index, exact));
+        }
+    }
     if let Some(index) = displays
         .iter()
-        .position(|display| *display == parked.display)
+        .position(|display| display.same_geometry(parked.display))
     {
         return Some((index, true));
     }
@@ -390,12 +501,7 @@ mod tests {
     use super::*;
 
     fn rect(x: f64, y: f64, width: f64, height: f64) -> MonitorRect {
-        MonitorRect {
-            x,
-            y,
-            width,
-            height,
-        }
+        MonitorRect::without_id(x, y, width, height)
     }
 
     /// Bounds derived from a display area and the window size, the shape every
@@ -411,6 +517,21 @@ mod tests {
 
     fn parked(x: f64, y: f64, display: MonitorRect) -> ParkedWindow {
         ParkedWindow::new(x, y, 200.0, 60.0, display).expect("valid parked window")
+    }
+
+    /// A parked window that names the display it was dropped on.
+    fn named_parked(x: f64, y: f64, display: MonitorRect, id: u64) -> ParkedWindow {
+        ParkedWindow::new_named(x, y, 200.0, 60.0, display, Some(id)).expect("valid parked window")
+    }
+
+    fn display(x: f64, y: f64, width: f64, height: f64, id: Option<u64>) -> MonitorRect {
+        MonitorRect {
+            x,
+            y,
+            width,
+            height,
+            id,
+        }
     }
 
     fn restored(placement: Placement) -> (f64, f64) {
@@ -621,6 +742,53 @@ mod tests {
         );
     }
 
+    /// The process boundary the pill actually reads from. `std::env::args()`
+    /// panics on a non-Unicode argument, and argv[0] is a path, so a single
+    /// non-UTF-8 directory in the pill's install location would abort the overlay
+    /// before its first frame. Reading `args_os` and skipping what is not Unicode
+    /// cannot lose the flag: the desktop writes it as ASCII.
+    #[test]
+    fn process_arguments_are_read_without_requiring_unicode() {
+        let only = rect(0.0, 0.0, 1920.0, 1040.0);
+        let record = parked(500.0, 300.0, only).encode().expect("encoded");
+        let flag = format!("{SAVED_POSITION_ARG}{record}");
+
+        // An argument list with a non-UTF-8 entry, which is what a path with a
+        // byte that is not UTF-8 looks like, and the flag after it.
+        let mut args: Vec<std::ffi::OsString> = Vec::new();
+        args.push(std::ffi::OsString::from("mausvoice-gtk-pill"));
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStringExt;
+            args.push(std::ffi::OsString::from_vec(vec![0xff, 0xfe, b'x']));
+        }
+        args.push(std::ffi::OsString::from(flag));
+
+        // The same scan `saved_position_from_process_args` performs, over a list
+        // this test controls: `std::env::args` is not injectable.
+        let found = args.iter().find_map(|arg| {
+            arg.to_str()
+                .and_then(|arg| arg.strip_prefix(SAVED_POSITION_ARG))
+                .map(str::to_string)
+        });
+        assert_eq!(
+            found.and_then(|record| ParkedWindow::decode(&record)),
+            Some(parked(500.0, 300.0, only)),
+            "a non-Unicode argument must not hide the flag"
+        );
+        // And the converted form must not be what reads it: `args()` would panic
+        // on the same list.
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStringExt;
+            let non_unicode = std::ffi::OsString::from_vec(vec![0xff, 0xfe, b'x']);
+            assert!(
+                non_unicode.to_str().is_none(),
+                "the fixture has to be invalid Unicode to prove the point"
+            );
+        }
+    }
+
     /// The record a pill reads has to be the record the desktop wrote, so the
     /// encoding round trips and then restores to the same pixel.
     #[test]
@@ -788,5 +956,143 @@ mod tests {
     fn the_centre_is_derived_from_the_origin_and_the_size() {
         let only = rect(0.0, 0.0, 1920.0, 1040.0);
         assert_eq!(parked(100.0, 40.0, only).center(), (200.0, 70.0));
+    }
+
+    /// The identity a record carries has to survive the trip through JSON, or a
+    /// pill would restore on the wrong display after a restart.
+    #[test]
+    fn a_named_display_survives_the_encoded_record() {
+        let work = display(1920.0, 0.0, 2560.0, 1400.0, Some(7));
+        let saved = named_parked(3000.0, 400.0, work, 7);
+        let encoded = saved.encode().expect("encoded");
+        let decoded = ParkedWindow::decode(&encoded).expect("decoded");
+        assert_eq!(decoded.display_id, Some(7));
+        assert_eq!(decoded, saved);
+        // The rect carries geometry only, so the record cannot hold two
+        // different answers to "which display is this".
+        assert_eq!(decoded.display.id, None);
+    }
+
+    /// A record from a platform that cannot name its displays has no token, and
+    /// that has to stay `None` rather than becoming `Some(0)`.
+    #[test]
+    fn an_unnamed_record_round_trips_without_a_token() {
+        let work = rect(0.0, 0.0, 1920.0, 1040.0);
+        let saved = parked(500.0, 300.0, work);
+        let encoded = saved.encode().expect("encoded");
+        assert!(
+            !encoded.contains("display_id"),
+            "an absent token is omitted, not written as null: {encoded}"
+        );
+        assert_eq!(ParkedWindow::decode(&encoded).expect("decoded"), saved);
+    }
+
+    /// A token that is present but zero is a legitimate hash and must not be
+    /// treated as absent.
+    #[test]
+    fn a_zero_token_is_still_a_token() {
+        let work = rect(0.0, 0.0, 1920.0, 1040.0);
+        let saved = named_parked(500.0, 300.0, work, 0);
+        let decoded = ParkedWindow::decode(&saved.encode().expect("encoded")).expect("decoded");
+        assert_eq!(decoded.display_id, Some(0));
+    }
+
+    /// The case geometry alone gets wrong: the pill was parked on a display that
+    /// has come back at a different resolution, and another display now covers
+    /// the rect it was saved with. The token recognises the pill's own display.
+    #[test]
+    fn a_display_that_changed_resolution_is_recognised_by_its_token() {
+        let saved_work = display(1920.0, 0.0, 2560.0, 1400.0, Some(2));
+        // Its own display came back smaller, and the primary grew over the old
+        // rect, so an exact-rect match would pick the wrong display.
+        let grown_primary = display(1920.0, 0.0, 2560.0, 1400.0, Some(1));
+        let resized_own = display(0.0, 0.0, 1440.0, 900.0, Some(2));
+        let displays = [grown_primary, resized_own];
+        let (x, y) = restored(restore(
+            named_parked(3000.0, 400.0, saved_work, 2),
+            &displays,
+            (200.0, 60.0),
+            bounds,
+        ));
+        assert!(
+            x < 1440.0,
+            "restored on the wrong display: x = {x} is not inside the pill's own"
+        );
+        assert!(y < 900.0, "restored outside the display it came back on");
+    }
+
+    /// A display matched only by token keeps the pill's relative place, because
+    /// its rect changed and the stored origin may now be off it.
+    #[test]
+    fn a_token_match_with_a_new_rect_remaps_instead_of_keeping_the_origin() {
+        let saved_work = display(0.0, 0.0, 2560.0, 1400.0, Some(3));
+        let shrunk = display(0.0, 0.0, 1280.0, 700.0, Some(3));
+        // Parked at the far right of the old display, which does not exist now.
+        let (x, _) = restored(restore(
+            named_parked(2300.0, 400.0, saved_work, 3),
+            &[shrunk],
+            (200.0, 60.0),
+            bounds,
+        ));
+        assert!(x <= 1280.0 - 200.0, "x = {x} is past the new display edge");
+        assert!(x > 0.0, "the relative place was not kept: x = {x}");
+    }
+
+    /// When the saved display is gone for good, geometry still decides, so a
+    /// connector that changes its name without the panel moving does not lose the
+    /// position.
+    #[test]
+    fn a_vanished_token_falls_back_to_geometry() {
+        let work = rect(0.0, 0.0, 1920.0, 1040.0);
+        // Same rect, different token: the panel was replugged onto another port.
+        let replugged = display(0.0, 0.0, 1920.0, 1040.0, Some(99));
+        assert_eq!(
+            restore(
+                named_parked(500.0, 300.0, work, 41),
+                &[replugged],
+                (200.0, 60.0),
+                bounds,
+            ),
+            Placement::Restore { x: 500.0, y: 300.0 }
+        );
+    }
+
+    /// A token that matches nothing does not stop the record being usable: the
+    /// pill still restores by geometry rather than giving up on the position.
+    #[test]
+    fn an_unknown_token_still_restores_by_geometry() {
+        let work = rect(0.0, 0.0, 1920.0, 1040.0);
+        let other = display(1920.0, 0.0, 2560.0, 1400.0, Some(5));
+        let (x, y) = restored(restore(
+            named_parked(500.0, 300.0, work, 6),
+            &[work, other],
+            (200.0, 60.0),
+            bounds,
+        ));
+        assert_eq!((x, y), (500.0, 300.0));
+    }
+
+    /// A record written by the previous build cannot say which display it meant,
+    /// so it is discarded instead of being guessed at.
+    #[test]
+    fn a_version_one_record_is_not_read_as_a_version_two_record() {
+        let record = r#"{"version":1,"x":500.0,"y":300.0,"width":200.0,"height":60.0,
+            "display":{"x":0.0,"y":0.0,"width":1920.0,"height":1040.0}}"#;
+        assert!(ParkedWindow::decode(record).is_none());
+    }
+
+    /// A display name is not carried in the record as free text, so a row cannot
+    /// smuggle an arbitrary string into a pill process through the argument.
+    #[test]
+    fn a_record_carries_a_token_and_not_a_display_name() {
+        let work = rect(0.0, 0.0, 1920.0, 1040.0);
+        let encoded = named_parked(500.0, 300.0, work, 1234)
+            .encode()
+            .expect("encoded");
+        assert!(!encoded.contains("name"), "unexpected name in {encoded}");
+        assert!(
+            encoded.contains("\"display_id\":1234"),
+            "missing token: {encoded}"
+        );
     }
 }

@@ -257,6 +257,12 @@ pub enum OutMessage {
         has_saved_position: bool,
         rect: Option<Rect>,
         monitor: Option<Rect>,
+        /// Stable token of the display the position belongs to, when the pill
+        /// could name it. The desktop stores it with the rect so a later launch
+        /// recognises the display itself instead of whichever panel now has that
+        /// rectangle.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        display_id: Option<u64>,
     },
     /// Haptic/audio feedback request for the desktop process.
     /// `kind` values: "press", "deep", "release".

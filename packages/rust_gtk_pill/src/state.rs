@@ -314,6 +314,20 @@ pub(crate) struct PillState {
     pub(crate) reset_strategy: Cell<ResetStrategy>,
     pub(crate) saved_x: Cell<f64>,
     pub(crate) saved_y: Cell<f64>,
+    /// Stable token of the display the saved position belongs to, or `None` when
+    /// GDK could not name it. Published with the position so the stored record
+    /// can name the display rather than only its rectangle.
+    pub(crate) saved_display_id: Cell<Option<u64>>,
+    /// Holds position saves until the display layout has been steady, so a frame
+    /// the X server or the window manager forced during a RandR change is never
+    /// stored as the user's position. See rust_pill_shared::layout::SaveGuard.
+    pub(crate) save_guard: RefCell<rust_pill_shared::layout::SaveGuard>,
+    /// The display-arrangement signature this pill last reconciled against, and
+    /// when it last looked. The RandR event is the primary signal; the poll covers
+    /// a change that lands before the event is selected or while the window is
+    /// unmapped.
+    pub(crate) layout_signature: Cell<Option<u64>>,
+    pub(crate) layout_polled_at: Cell<f64>,
     /// Position the host stored for this pill in a previous session, already
     /// parsed. Taken once during realize and resolved against the monitors that
     /// are connected then; see `rust_pill_shared::restore`.

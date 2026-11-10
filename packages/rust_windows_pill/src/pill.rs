@@ -92,6 +92,11 @@ pub fn run(receiver: Receiver<InMessage>, saved_position: Option<ParkedWindow>) 
     // `None` means the window was created at the default corner, so the state
     // must not claim a saved position it does not have.
     let restored = saved_position.and_then(|parked| restore_position(parked, win_h));
+    // A record that has been restored is a record whose display was named, so the
+    // identity survives into this process's state and is republished with the
+    // next save. Losing it here would silently downgrade every later save to
+    // geometry-only matching.
+    let restored_display_id = saved_position.and_then(|parked| parked.display_id);
     let (wx, wy) = match restored {
         Some(origin) => origin,
         None => default_position(win_h),
@@ -212,6 +217,11 @@ pub fn run(receiver: Receiver<InMessage>, saved_position: Option<ParkedWindow>) 
         reset_strategy: Cell::new(ResetStrategy::Current),
         saved_x: Cell::new(restored.map_or(0, |origin| origin.0)),
         saved_y: Cell::new(restored.map_or(0, |origin| origin.1)),
+        saved_display_id: Cell::new(restored_display_id),
+        drag_started_at: Cell::new(None),
+        save_guard: RefCell::new(rust_pill_shared::layout::SaveGuard::new()),
+        layout_signature: Cell::new(None),
+        layout_polled_at: Cell::new(0.0),
         inflate_t: Cell::new(0.0),
         inflate_velocity: Cell::new(0.0),
         drag_label_t: Cell::new(0.0),
@@ -288,6 +298,43 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             if timer_id == TIMER_CURSOR {
                 on_cursor_tick(hwnd);
             }
+            LRESULT(0)
+        }
+        WM_DISPLAYCHANGE | WM_SETTINGCHANGE => {
+            // Windows sends these per step of a layout change: one per display
+            // removal, move, resolution change and work-area change. Acting on
+            // each is what keeps the pill from being stranded after the first
+            // one, and the save guard inside reconciliation is what keeps the
+            // burst from being stored as a user choice.
+            STATE.with(|s| {
+                if let Some(ref state) = *s.borrow() {
+                    reconcile_display_layout(hwnd, state);
+                }
+            });
+            LRESULT(0)
+        }
+        WM_DPICHANGED => {
+            // Per-Monitor V2 hands us a suggested rect for the new scale. Without
+            // adopting it Windows rescales the window itself, which moves the
+            // pill off the place it was parked at and can clip it. The pill's
+            // own clamp then runs on the new scale, so the footprint ends up the
+            // same size in points on screen.
+            let suggested = unsafe { &*(lparam.0 as *const RECT) };
+            let (x, y) = (suggested.left, suggested.top);
+            let (w, h) = (
+                suggested.right - suggested.left,
+                suggested.bottom - suggested.top,
+            );
+            // SAFETY: repositioning our own window to the rect the message hands
+            // us, which is the only correct response to a DPI change.
+            unsafe {
+                let _ = SetWindowPos(hwnd, None, x, y, w, h, SWP_NOZORDER | SWP_NOACTIVATE);
+            }
+            STATE.with(|s| {
+                if let Some(ref state) = *s.borrow() {
+                    reconcile_display_layout(hwnd, state);
+                }
+            });
             LRESULT(0)
         }
         WM_MOUSEMOVE => {
@@ -531,12 +578,51 @@ fn on_anim_tick(hwnd: HWND) {
 fn on_cursor_tick(hwnd: HWND) {
     STATE.with(|s| {
         if let Some(ref state) = *s.borrow() {
+            // The message path is the primary signal, but it is not sufficient on
+            // its own: a hidden or briefly off-screen window can miss
+            // `WM_DISPLAYCHANGE`, and a per-monitor scale change on a hidden
+            // window arrives as nothing at all rather than as `WM_DPICHANGED`.
+            // Comparing a cheap signature of the layout catches every change the
+            // messages miss, only later, which is the right trade for a change
+            // that would otherwise strand the pill.
+            poll_display_layout(hwnd, state);
             // Hover is sampled every animation frame in on_anim_tick
             // (16.7 ms); the cursor timer at 60 ms now only re-anchors the
             // pill to the cursor monitor when it has not been dragged.
             reposition_to_cursor_monitor(hwnd, state);
         }
     });
+}
+
+/// Reconcile if the display arrangement changed and no message said so.
+///
+/// Deliberately coarse: the signature only has to notice that *something* about
+/// the arrangement is different, and the reconciliation that follows decides
+/// what, if anything, to do about it. Polling every cursor tick would enumerate
+/// monitors 16 times a second, so this runs a few times a second instead, which
+/// is far faster than a user can notice and far slower than a display changes.
+fn poll_display_layout(hwnd: HWND, state: &PillState) {
+    const POLL_INTERVAL: f64 = 0.5;
+    let now = drag_now();
+    if now - state.layout_polled_at.get() < POLL_INTERVAL {
+        return;
+    }
+    state.layout_polled_at.set(now);
+    let Some(areas) = enumerate_work_areas_with_identity() else {
+        // Same rule as the message path: a failed enumeration is not evidence.
+        return;
+    };
+    let signature = rust_pill_shared::layout::layout_signature(&areas);
+    let previous = state.layout_signature.get();
+    state.layout_signature.set(Some(signature));
+    if previous == Some(signature) {
+        return;
+    }
+    if previous.is_some() {
+        // The first poll only establishes a baseline; reconciling against it
+        // would treat the launch itself as a layout change.
+        reconcile_display_layout(hwnd, state);
+    }
 }
 
 fn maybe_reassert_topmost(hwnd: HWND, now: Instant) {
@@ -793,6 +879,7 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             let hwnd = HWND_CELL.with(|c| c.get());
             cancel_drag_gesture(hwnd, state);
             state.has_saved_position.set(false);
+            state.saved_display_id.set(None);
             state.selector_placement.borrow_mut().reset();
             state.crossing.borrow_mut().reset();
             state.reset_strategy.set(strategy);
@@ -804,6 +891,7 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
                 has_saved_position: false,
                 rect: Some(rect),
                 monitor,
+                display_id: None,
             });
         }
         InMessage::ForgetPosition => {
@@ -811,6 +899,7 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             // Local data was just cleared, and the next `RequestPosition`
             // republishes this flag, so leaving it set would write the row back.
             state.has_saved_position.set(false);
+            state.saved_display_id.set(None);
         }
         InMessage::RequestPosition => {
             let hwnd = HWND_CELL.with(|c| c.get());
@@ -819,6 +908,7 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
                 has_saved_position: state.has_saved_position.get(),
                 rect: Some(rect),
                 monitor,
+                display_id: state.saved_display_id.get(),
             });
         }
         InMessage::PillPlacement { placement } => {
@@ -1454,7 +1544,70 @@ fn query_monitor_info(monitor: HMONITOR) -> Option<MONITORINFO> {
     }
 }
 
-/// Where the window is created: the stored position when there is one, else the
+/// The durable name of a display, or an empty string when it has none.
+///
+/// `MONITORINFOEXW.szDevice` is a slot name (`\\.\DISPLAY1`) that Windows
+/// reassigns when the layout changes, and an `HMONITOR` is a handle that is not
+/// stable across sessions, so neither can identify a panel inside a stored
+/// record. The monitor device path (`\\?\DISPLAY#GSM5B7F#5&2a3b...`) is built
+/// from the EDID, so the same physical panel keeps it across reconnects, reboots
+/// and port changes, and two identical panels still differ in the instance id.
+///
+/// The slot name is the fallback when the device path is unavailable. That keeps
+/// the token non-empty on a driver that exposes no path, at the cost of that
+/// display recognising itself only while it stays in the same slot, which is the
+/// same guarantee geometry already gave.
+fn monitor_device_name(monitor: HMONITOR) -> String {
+    let mut info = MONITORINFOEXW {
+        monitorInfo: MONITORINFO {
+            cbSize: std::mem::size_of::<MONITORINFOEXW>() as u32,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    // SAFETY: `info` is a live MONITORINFOEXW whose cbSize describes its own
+    // size, which is what the call requires. Both calls fill only the struct
+    // they are handed.
+    unsafe {
+        if !GetMonitorInfoW(monitor, &mut info.monitorInfo).as_bool() {
+            return String::new();
+        }
+        let mut device = DISPLAY_DEVICEW {
+            cb: std::mem::size_of::<DISPLAY_DEVICEW>() as u32,
+            ..Default::default()
+        };
+        if EnumDisplayDevicesW(
+            PCWSTR(info.szDevice.as_ptr()),
+            0,
+            &mut device,
+            EDD_GET_DEVICE_INTERFACE_NAME,
+        )
+        .as_bool()
+        {
+            let path = wide_to_string(&device.DeviceID);
+            if !path.is_empty() {
+                return path;
+            }
+        }
+        wide_to_string(&info.szDevice)
+    }
+}
+
+/// Read a NUL-terminated wide string out of a fixed buffer.
+fn wide_to_string(buffer: &[u16]) -> String {
+    let length = buffer.iter().position(|unit| *unit == 0).unwrap_or(0);
+    String::from_utf16_lossy(&buffer[..length])
+}
+
+/// The stable token of a display, for a record that has to name it.
+///
+/// `None` when the platform cannot name it at all, which makes every comparison
+/// fall back to geometry instead of matching two unnamed displays to each other.
+fn monitor_display_id(monitor: HMONITOR) -> Option<u64> {
+    rust_pill_shared::layout::display_identity(&monitor_device_name(monitor))
+}
+
+/// Where the window is created: the stored position when there is one, else the/// Where the window is created: the stored position when there is one, else the
 /// default corner of the monitor the pointer is on.
 ///
 /// Resolving this before `CreateWindowExW` is what makes a restore invisible.
@@ -1519,6 +1672,187 @@ fn enumerate_work_areas() -> Option<Vec<MonitorRect>> {
 struct MonitorSnapshotList {
     monitors: Vec<MonitorRect>,
     failed: bool,
+}
+
+/// Enumerate the work areas of the connected displays, each with its stable
+/// token, which is what reconciliation needs to tell a returning display from a
+/// different one that took its place.
+fn enumerate_work_areas_with_identity() -> Option<Vec<MonitorRect>> {
+    unsafe extern "system" fn collect(
+        monitor: HMONITOR,
+        _hdc: HDC,
+        _rect: *mut RECT,
+        data: LPARAM,
+    ) -> BOOL {
+        // SAFETY: EnumDisplayMonitors calls this synchronously with the pointer
+        // handed to it in `dwData` below.
+        let list = unsafe { &mut *(data.0 as *mut Vec<MonitorRect>) };
+        let Some(info) = query_monitor_info(monitor) else {
+            return BOOL(0);
+        };
+        // SAFETY: `monitor` came from the enumeration above and is live for the
+        // duration of the callback.
+        let id = monitor_display_id(monitor);
+        let rect = info.rcWork;
+        let area = MonitorRect {
+            x: rect.left as f64,
+            y: rect.top as f64,
+            width: (rect.right - rect.left) as f64,
+            height: (rect.bottom - rect.top) as f64,
+            id,
+        };
+        if !list.contains(&area) {
+            list.push(area);
+        }
+        BOOL(1)
+    }
+
+    let mut areas: Vec<MonitorRect> = Vec::new();
+    let data = LPARAM(&mut areas as *mut _ as isize);
+    let succeeded = unsafe { EnumDisplayMonitors(None, None, Some(collect), data) }.as_bool();
+    (succeeded && !areas.is_empty()).then_some(areas)
+}
+
+/// Reconcile the pill's window against the displays connected right now.
+///
+/// Runs after the operating system has finished changing the layout: a display
+/// was added, removed, moved or rescaled, or the work area changed. The window
+/// may have been moved or rescaled by the system already, so the position the
+/// pill holds is only trusted as far as `reconcile` can validate it.
+///
+/// Order matters here, and it is the same order on all three platforms:
+///
+/// 1. Refuse to act on a partial enumeration. A failed `EnumDisplayMonitors`
+///    must not read as "the pill's display was unplugged".
+/// 2. Hold saves until the layout settles, so the settle that follows cannot be
+///    stored as the user's choice.
+/// 3. Reconcile. A stranded pill is pulled back onto a display so it can be
+///    grabbed; a pill that is fully visible is left untouched.
+/// 4. Adopt the resolved origin as the saved position. The move was the pill's
+///    own, not a drag, so the stored record has to follow it or the next launch
+///    would restore the stranded origin.
+fn reconcile_display_layout(hwnd: HWND, state: &PillState) {
+    let now = drag_now();
+    state.save_guard.borrow_mut().layout_changed(now);
+    if state.dragging.get() {
+        // A drag held across a display change cannot be saved when it ends: the
+        // frame it would record is the one the system put the window in.
+        state
+            .save_guard
+            .borrow_mut()
+            .layout_changed_during_drag(now);
+    }
+
+    let Some(areas) = enumerate_work_areas_with_identity() else {
+        // A partial or failed enumeration is not evidence of a missing display.
+        return;
+    };
+    let mut rect = RECT::default();
+    let mut window_rect = RECT::default();
+    // SAFETY: both calls only write the struct they are given.
+    unsafe {
+        let _ = GetWindowRect(hwnd, &mut rect);
+        let _ = GetClientRect(hwnd, &mut window_rect);
+    }
+    let win_w = rect.right - rect.left;
+    let win_h = rect.bottom - rect.top;
+    if win_w <= 0 || win_h <= 0 {
+        return;
+    }
+
+    let saved_display = state
+        .saved_display_id
+        .get()
+        .and_then(|id| areas.iter().copied().find(|area| area.id == Some(id)));
+    let parked = ParkedWindow::new_named(
+        rect.left as f64,
+        rect.top as f64,
+        win_w as f64,
+        win_h as f64,
+        state
+            .saved_display_id
+            .get()
+            .and(saved_display)
+            .or_else(|| {
+                // No recorded identity: describe the display the window is on, so
+                // the record gains one from this change onward.
+                let monitor = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) };
+                query_monitor_info(monitor).map(|info| monitor_rect(info.rcWork))
+            })
+            .unwrap_or_else(|| monitor_rect(rect)),
+        state.saved_display_id.get(),
+    );
+    let Some(parked) = parked else {
+        return;
+    };
+
+    let relocation = rust_pill_shared::layout::reconcile(
+        parked,
+        &areas,
+        (win_w as f64, win_h as f64),
+        |work, window| {
+            let (offset, size) = rust_pill_shared::restore::centered_bottom_footprint(
+                window,
+                (MIN_PILL_WIDTH, MIN_PILL_HEIGHT),
+                COLLAPSED_BOTTOM_INSET
+                    + rust_pill_shared::placement::below_slot_extra(TOOLTIP_HEIGHT),
+            );
+            let _ = work;
+            (offset, size)
+        },
+        |work, window| window_clamp_bounds_for_size(work, window.0, window.1),
+    );
+
+    match relocation {
+        rust_pill_shared::layout::Relocation::Keep => {}
+        rust_pill_shared::layout::Relocation::Stranded => {
+            // Leave the window where it is and keep the stored position. There is
+            // no display to move it to, and moving it to the origin would strand
+            // it in a place no later layout would explain.
+        }
+        rust_pill_shared::layout::Relocation::Move { x, y } => {
+            let (x, y) = (x.round() as i32, y.round() as i32);
+            if x != rect.left || y != rect.top {
+                // SAFETY: repositioning our own window; the flags keep size, z
+                // order and activation untouched.
+                unsafe {
+                    let _ = SetWindowPos(
+                        hwnd,
+                        None,
+                        x,
+                        y,
+                        0,
+                        0,
+                        SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+                    );
+                }
+            }
+            // The move was the pill's, so the persisted position follows it.
+            state.saved_x.set(x);
+            state.saved_y.set(y);
+            state.has_saved_position.set(true);
+            if let Some(area) = areas
+                .iter()
+                .copied()
+                .find(|area| area_contains(area, x + win_w / 2, y + win_h / 2))
+            {
+                state.saved_display_id.set(area.id);
+            }
+            let (published, monitor) = current_pill_geometry(hwnd);
+            ipc::send(&OutMessage::PositionChanged {
+                has_saved_position: true,
+                rect: Some(published),
+                monitor,
+                display_id: state.saved_display_id.get(),
+            });
+        }
+    }
+}
+
+/// Whether a display's work area contains a point.
+fn area_contains(area: &MonitorRect, x: i32, y: i32) -> bool {
+    let (x, y) = (x as f64, y as f64);
+    x >= area.x && x < area.right() && y >= area.y && y < area.bottom()
 }
 
 unsafe extern "system" fn collect_monitor_snapshot(
@@ -1617,6 +1951,15 @@ fn reposition_to_cursor_monitor(hwnd: HWND, state: &PillState) {
         let wa_w = wa.right - wa.left;
         let wa_h = wa.bottom - wa.top;
 
+        if !state.has_saved_position.get() && !reset_to_cursor {
+            // The pill is not saved and the user did not ask for a re-home, which
+            // leaves exactly one meaning: something deliberately cleared the flag
+            // without moving the window. That is `ForgetPosition`, sent because
+            // local data was just wiped, and its whole contract is that the pill
+            // stays where it is. Falling through to the default corner would move
+            // a visible, deliberate pill as a side effect of a database clear.
+            return;
+        }
         let bounds = window_clamp_bounds(state, wa, win_w, win_h);
         let (x, y) = if state.has_saved_position.get() {
             // Use persisted position from last drag, clamped into the work area
@@ -1718,12 +2061,12 @@ fn window_clamp_bounds(state: &PillState, wa: RECT, win_w: i32, win_h: i32) -> D
 /// the clamp bounds on the active drag monitor. Settling retains the drop
 /// monitor instead of following later cursor movement.
 fn monitor_rect(rect: RECT) -> rust_pill_shared::edge::MonitorRect {
-    rust_pill_shared::edge::MonitorRect {
-        x: rect.left as f64,
-        y: rect.top as f64,
-        width: (rect.right - rect.left) as f64,
-        height: (rect.bottom - rect.top) as f64,
-    }
+    rust_pill_shared::edge::MonitorRect::without_id(
+        rect.left as f64,
+        rect.top as f64,
+        (rect.right - rect.left) as f64,
+        (rect.bottom - rect.top) as f64,
+    )
 }
 
 struct MonitorEnumeration {
@@ -2079,6 +2422,10 @@ fn tick_long_press(state: &PillState, dt: f64) {
         state.dragging.set(true);
         *state.last_monitor_topology.borrow_mut() = None;
         state.drag_cancelled.set(false);
+        // A display change while this drag is held makes the drop suspect, so the
+        // guard has to know a drag is in flight before the change arrives.
+        state.save_guard.borrow_mut().drag_started();
+        state.drag_started_at.set(Some(drag_now()));
         // Confirm the arm with the expanding halo, on the exact frame it fires.
         state.arm_pulse.set(rust_pill_shared::pulse_armed());
         unsafe {
@@ -2191,6 +2538,15 @@ fn end_drag(hwnd: HWND, state: &PillState, persist_position: bool) -> bool {
 /// window origin (not the cursor) and tells the desktop, so the saved point
 /// matches the parked pill exactly.
 fn persist_drag_position(hwnd: HWND, state: &PillState) {
+    let now = drag_now();
+    state.save_guard.borrow_mut().drag_ended(now);
+    if !state.save_guard.borrow().allows_save(now) {
+        // The layout changed under this drag, so the frame it ended on is one the
+        // system chose, not the user. Storing it would replace the position the
+        // user actually picked with the one Windows improvised during the
+        // display change, and there is no way to tell them apart afterwards.
+        return;
+    }
     // Leave the pill where it was dropped instead of snapping back.
     let mut rect = RECT::default();
     unsafe {
@@ -2199,11 +2555,18 @@ fn persist_drag_position(hwnd: HWND, state: &PillState) {
     state.saved_x.set(rect.left);
     state.saved_y.set(rect.top);
     state.has_saved_position.set(true);
+    // Name the display in the same breath as the rect, so the stored record can
+    // recognise this panel after it is unplugged and replugged.
+    let monitor_handle = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) };
+    state
+        .saved_display_id
+        .set(monitor_display_id(monitor_handle));
     let (win_rect, monitor) = current_pill_geometry(hwnd);
     ipc::send(&OutMessage::PositionChanged {
         has_saved_position: true,
         rect: Some(win_rect),
         monitor,
+        display_id: state.saved_display_id.get(),
     });
 }
 
@@ -2749,18 +3112,21 @@ mod tests {
             y: 0.0,
             width: 1920.0,
             height: 1080.0,
+            id: None,
         };
         let neighbor = MonitorRect {
             x: 1920.0,
             y: 0.0,
             width: 1280.0,
             height: 900.0,
+            id: None,
         };
         let non_adjacent = MonitorRect {
             x: 5000.0,
             y: 0.0,
             width: 1920.0,
             height: 1080.0,
+            id: None,
         };
         let mut last_known = Some(vec![current, neighbor, non_adjacent]);
 
@@ -2780,18 +3146,21 @@ mod tests {
             y: 0.0,
             width: 1920.0,
             height: 1080.0,
+            id: None,
         };
         let removed = MonitorRect {
             x: 1920.0,
             y: 0.0,
             width: 1280.0,
             height: 900.0,
+            id: None,
         };
         let connected = MonitorRect {
             x: 0.0,
             y: 1080.0,
             width: 1920.0,
             height: 1080.0,
+            id: None,
         };
         let mut last_known = Some(vec![current, removed]);
 
@@ -2808,6 +3177,7 @@ mod tests {
             y: 0.0,
             width: 1920.0,
             height: 1080.0,
+            id: None,
         };
         let mut last_known = None;
 

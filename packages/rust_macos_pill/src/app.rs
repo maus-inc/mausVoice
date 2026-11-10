@@ -1,5 +1,5 @@
 use std::cell::{Cell, RefCell};
-use std::ffi::c_void;
+use std::ffi::{c_char, c_void};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Receiver;
@@ -54,9 +54,78 @@ unsafe fn screens() -> id {
     msg_send![class!(NSScreen), screens]
 }
 
+/// A display's UUID, which CoreFoundation owns until it is released.
+type CFUUIDRef = *mut c_void;
+
+#[link(name = "CoreGraphics", kind = "framework")]
+extern "C" {
+    fn CGDisplayCreateUUIDFromDisplayID(display: u32) -> CFUUIDRef;
+}
+
+#[link(name = "CoreFoundation", kind = "framework")]
+extern "C" {
+    fn CFUUIDCreateString(allocator: *const c_void, uuid: CFUUIDRef) -> id;
+    fn CFRelease(value: *const c_void);
+}
+
 /// Returns the visible frame of a screen.
 unsafe fn screen_visible_frame(screen: id) -> NSRect {
     msg_send![screen, visibleFrame]
+}
+
+/// The stable token of a screen, or `None` when it cannot be named.
+///
+/// `NSScreen`'s device description carries an `NSScreenNumber`, which is a
+/// `CGDirectDisplayID`. That id is only stable for the life of the display's
+/// connection: it changes across reboots, when a panel is replugged, and when
+/// the arrangement changes enough for the window server to renumber. Storing it
+/// would make a saved position unrecognisable after a restart, which is the
+/// exact case the record exists for.
+///
+/// `CGDisplayCreateUUIDFromDisplayID` gives the display's UUID, which macOS
+/// keeps for the physical panel, so the same monitor is recognised across
+/// reconnects and reboots. The UUID is released after it is read; only its
+/// string form matters here, and that is immediately reduced to a token.
+unsafe fn screen_display_id(screen: id) -> Option<u64> {
+    let description: id = msg_send![screen, deviceDescription];
+    if description.is_null() {
+        return None;
+    }
+    let number: id = msg_send![description, objectForKey: ns_string("NSScreenNumber")];
+    if number.is_null() {
+        return None;
+    }
+    let display: u32 = msg_send![number, unsignedIntValue];
+    let uuid = CGDisplayCreateUUIDFromDisplayID(display);
+    if uuid.is_null() {
+        return None;
+    }
+    let uuid_string: id = CFUUIDCreateString(std::ptr::null(), uuid);
+    CFRelease(uuid as *const c_void);
+    if uuid_string.is_null() {
+        return None;
+    }
+    let utf8: *const c_char = msg_send![uuid_string, UTF8String];
+    let name = if utf8.is_null() {
+        None
+    } else {
+        std::ffi::CStr::from_ptr(utf8)
+            .to_str()
+            .ok()
+            .map(str::to_string)
+    };
+    CFRelease(uuid_string as *const c_void);
+    name.and_then(|name| rust_pill_shared::layout::display_identity(&name))
+}
+
+/// A static `NSString` for a literal key, which is how an `NSDictionary` lookup
+/// has to be spelled when the key is not already an `id`.
+unsafe fn ns_string(value: &str) -> id {
+    let string: id = msg_send![class!(NSString), alloc];
+    let string: id =
+        msg_send![string, initWithBytes:value.as_ptr() length:value.len() encoding:4u64];
+    let _: id = msg_send![string, autorelease];
+    string
 }
 
 /// Converts an AppKit (bottom-left origin, y-up) rectangle into the top-left,
@@ -273,6 +342,60 @@ fn register_pill_window_class() -> &'static Class {
     decl.register()
 }
 
+/// Registers the object that listens for a screen-parameter change.
+///
+/// macOS has no per-window notification for "the displays changed". It posts
+/// `NSApplicationDidChangeScreenParametersNotification` on the default
+/// notification centre, and a response is required: when a display sleeps,
+/// disconnects, changes resolution or changes scale, AppKit relocates the
+/// windows it thinks no longer fit, and nothing tells the window whether the
+/// move was its or the user's. Without an observer the pill is left wherever
+/// AppKit put it, and its next save stores that instead of the place the user
+/// chose.
+fn register_screen_observer_class() -> &'static Class {
+    if let Some(known) = Class::get("MausVoiceScreenObserver") {
+        return known;
+    }
+    let superclass = Class::get("NSObject").unwrap();
+    let mut decl = ClassDecl::new("MausVoiceScreenObserver", superclass).unwrap();
+    // SAFETY: the selector and the trampoline agree on the signature
+    // `(self, _cmd, NSNotification *)`, which is what the notification centre
+    // sends.
+    unsafe {
+        decl.add_method(
+            sel!(screenParametersChanged:),
+            screen_parameters_changed as extern "C" fn(&Object, Sel, id),
+        );
+    }
+    decl.register()
+}
+
+/// `NSApplicationDidChangeScreenParametersNotification` handler.
+///
+/// Runs on the main thread, synchronously with the notification, which is the
+/// only point at which the new display list is guaranteed to be readable.
+extern "C" fn screen_parameters_changed(_this: &Object, _sel: Sel, _notification: id) {
+    with_ctx(|ctx| unsafe {
+        reconcile_display_layout(ctx.window, &ctx.state);
+    });
+}
+
+/// Start observing screen-parameter changes. The observer is never removed: the
+/// pill owns it for the life of the process, and the notification centre holds it
+/// weakly enough that a leaked registration cannot outlive the app.
+unsafe fn observe_screen_parameters() {
+    let observer_class = register_screen_observer_class();
+    let observer: id = msg_send![observer_class, new];
+    let center: id = msg_send![class!(NSNotificationCenter), defaultCenter];
+    let name: id = ns_string("NSApplicationDidChangeScreenParametersNotification");
+    let _: () = msg_send![center,
+        addObserver:observer
+        selector:sel!(screenParametersChanged:)
+        name:name
+        object:nil
+    ];
+}
+
 // ── ObjC method implementations ──────────────────────────────────
 
 extern "C" fn is_flipped(_this: &Object, _sel: Sel) -> BOOL {
@@ -313,6 +436,10 @@ extern "C" fn mouse_down(_this: &Object, _sel: Sel, event: id) {
                 ctx.state.long_press_elapsed.set(0.0);
                 ctx.state.long_press_start_x.set(view_loc.x);
                 ctx.state.long_press_start_y.set(view_loc.y);
+                // A display change while this gesture is live makes the drop
+                // suspect, so the guard has to know a drag is in flight before the
+                // change arrives rather than afterwards.
+                ctx.state.save_guard.borrow_mut().drag_started();
             }
         }
     });
@@ -750,6 +877,7 @@ fn perform_tick() {
                         has_saved_position: false,
                         rect: Some(rect),
                         monitor: Some(monitor),
+                        display_id: None,
                     });
                 }
                 InMessage::ForgetPosition => {
@@ -764,6 +892,7 @@ fn perform_tick() {
                         has_saved_position: ctx.state.has_saved_position.get(),
                         rect: Some(rect),
                         monitor: Some(monitor),
+                        display_id: ctx.state.saved_display_id.get(),
                     });
                 }
                 InMessage::Quit => {
@@ -831,6 +960,14 @@ fn perform_tick() {
             }
         }
 
+        // The notification is the primary signal, but macOS can drop it while the
+        // app is not frontmost, and a screen that sleeps and wakes within one run
+        // loop turn can produce no notification at all. A cheap signature of the
+        // arrangement catches what the notification misses, only later.
+        unsafe {
+            poll_display_layout(ctx.window, &ctx.state, now);
+        }
+
         // Reposition window: follow cursor when dragging, auto-center otherwise
         reposition_window(ctx.window, &ctx.state, dt, now);
         // Reset/rehome must finish before the detector seeds its next sample.
@@ -876,15 +1013,36 @@ fn end_drag(state: &PillState, _window: id, now: f64) {
 /// space for this process's own placement, while the record the desktop stores
 /// is the published top-down rect, so save and restore use one space.
 fn persist_drag_position(state: &PillState, window: id) {
+    let now = drag_now();
+    state.save_guard.borrow_mut().drag_ended(now);
+    if !state.save_guard.borrow().allows_save(now) {
+        // The layout changed under this drag, so the frame it ended on is one
+        // AppKit chose. Storing it would replace the position the user actually
+        // picked with the one macOS improvised, and afterwards the two are
+        // indistinguishable.
+        return;
+    }
     let frame = unsafe { window_frame(window) };
     state.saved_x.set(frame.origin.x);
     state.saved_y.set(frame.origin.y);
     state.has_saved_position.set(true);
+    // Name the display in the same breath as the origin, so the record can
+    // recognise this panel after it is unplugged and replugged.
+    let display_id = unsafe {
+        let screen: id = msg_send![window, screen];
+        if screen.is_null() {
+            None
+        } else {
+            screen_display_id(screen)
+        }
+    };
+    state.saved_display_id.set(display_id);
     let (rect, monitor) = unsafe { pill_geometry(window) };
     ipc::send(&OutMessage::PositionChanged {
         has_saved_position: true,
         rect: Some(rect),
         monitor: Some(monitor),
+        display_id,
     });
 }
 
@@ -962,12 +1120,12 @@ fn clear_flash(state: &PillState) {
 }
 
 fn ns_rect_to_monitor_rect(frame: NSRect) -> rust_pill_shared::edge::MonitorRect {
-    rust_pill_shared::edge::MonitorRect {
-        x: frame.origin.x,
-        y: frame.origin.y,
-        width: frame.size.width,
-        height: frame.size.height,
-    }
+    rust_pill_shared::edge::MonitorRect::without_id(
+        frame.origin.x,
+        frame.origin.y,
+        frame.size.width,
+        frame.size.height,
+    )
 }
 
 fn crossing_identity(
@@ -1789,6 +1947,7 @@ fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
                 y: visible.origin.y,
                 width: visible.size.width,
                 height: visible.size.height,
+                id: None,
             }
         };
         // The OS window is a fixed transparent canvas; clamp the visible pill
@@ -1858,6 +2017,15 @@ fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
             return;
         }
 
+        if !state.has_saved_position.get() && !reset_to_cursor {
+            // Not saved, and the user did not ask for a re-home: something cleared
+            // the flag without moving the window, which is `ForgetPosition` after a
+            // local-data clear. That command's contract is that the pill stays put,
+            // so falling through to the default bottom-centre anchor would move a
+            // visible pill as a side effect of wiping the database.
+            return;
+        }
+
         let (target_x, target_y) = if state.has_saved_position.get() {
             // Use persisted position from last drag, clamped into the visible
             // frame of the screen that position belongs to.
@@ -1901,6 +2069,215 @@ fn typing_entry_frame() -> NSRect {
             PANEL_INPUT_HEIGHT - top_pad,
         ),
     )
+}
+
+// ── Display changes ──────────────────────────────────────────────
+
+/// Every connected screen's visible frame in top-down points, each with its
+/// stable token, plus the primary display's top edge.
+///
+/// Returns `None` with no screens, which happens briefly when every display
+/// disconnects or the lid closes. A caller must read that as "nothing to
+/// act on", not as "the pill's display was unplugged".
+unsafe fn display_areas() -> Option<(Vec<rust_pill_shared::edge::MonitorRect>, f64)> {
+    let screen_list = screens();
+    if screen_list.is_null() {
+        return None;
+    }
+    let count: usize = msg_send![screen_list, count];
+    if count == 0 {
+        return None;
+    }
+    let primary: id = msg_send![screen_list, objectAtIndex: 0usize];
+    let primary_frame: NSRect = msg_send![primary, frame];
+    let primary_top = primary_frame.origin.y + primary_frame.size.height;
+
+    let mut areas = Vec::with_capacity(count);
+    for index in 0..count {
+        let screen: id = msg_send![screen_list, objectAtIndex: index];
+        let area = to_top_down(screen_visible_frame(screen), primary_top);
+        areas.push(rust_pill_shared::edge::MonitorRect {
+            x: area.x,
+            y: area.y,
+            width: area.width,
+            height: area.height,
+            id: screen_display_id(screen),
+        });
+    }
+    Some((areas, primary_top))
+}
+
+/// Reconcile the pill's window against the displays connected right now.
+///
+/// macOS moves and re-clamps windows itself when a display sleeps, disconnects
+/// or changes resolution, and it does not tell the window whether the move was
+/// its or the user's. So the same three steps run here as on the other
+/// platforms: hold saves until the layout settles, resolve the position against
+/// the new layout, and adopt whatever the resolution decides so the next launch
+/// restores the place the user can actually see.
+unsafe fn reconcile_display_layout(window: id, state: &PillState) {
+    let now = drag_now();
+    state.save_guard.borrow_mut().layout_changed(now);
+    if state.dragging.get() {
+        // A drag held across the change cannot be saved when it ends: the frame
+        // it would record is the one macOS put the window in.
+        state
+            .save_guard
+            .borrow_mut()
+            .layout_changed_during_drag(now);
+    }
+    let Some((areas, primary_top)) = display_areas() else {
+        // No screens is not evidence that the pill's screen is gone: every
+        // display disconnecting briefly looks like this. Leaving the window alone
+        // is what keeps its position intact for when one comes back.
+        return;
+    };
+    let frame = window_frame(window);
+    let (window_w, window_h) = (frame.size.width, frame.size.height);
+    if window_w <= 0.0 || window_h <= 0.0 {
+        return;
+    }
+    let top_down = to_top_down(frame, primary_top);
+    // The window's own screen decides which display this record is about, and its
+    // token is what makes that decision survive a replug. The remembered token is
+    // the fallback for the moment the window is on no screen at all.
+    let current_screen: id = msg_send![window, screen];
+    let current_id = if current_screen.is_null() {
+        state.saved_display_id.get()
+    } else {
+        screen_display_id(current_screen).or(state.saved_display_id.get())
+    };
+    // The display the pill believes it is on: named if possible, else the one
+    // under the window, else the window's own rect as a last resort. That last
+    // case is what keeps a record usable on a screen macOS cannot name.
+    let saved_display = areas
+        .iter()
+        .copied()
+        .find(|area| area.id.is_some() && area.id == current_id)
+        .or_else(|| {
+            let (cx, cy) = (top_down.x + window_w / 2.0, top_down.y + window_h / 2.0);
+            areas
+                .iter()
+                .copied()
+                .find(|area| area_contains_point(*area, cx, cy))
+        })
+        .unwrap_or_else(|| {
+            rust_pill_shared::edge::MonitorRect::without_id(
+                top_down.x,
+                top_down.y,
+                top_down.width,
+                top_down.height,
+            )
+        });
+    let Some(parked) = rust_pill_shared::restore::ParkedWindow::new_named(
+        top_down.x,
+        top_down.y,
+        window_w,
+        window_h,
+        saved_display,
+        current_id,
+    ) else {
+        return;
+    };
+
+    let relocation = rust_pill_shared::layout::reconcile(
+        parked,
+        &areas,
+        (window_w, window_h),
+        |_work, window| {
+            rust_pill_shared::restore::centered_bottom_footprint(
+                window,
+                (MIN_PILL_WIDTH, MIN_PILL_HEIGHT),
+                COLLAPSED_BOTTOM_INSET
+                    + rust_pill_shared::placement::below_slot_extra(TOOLTIP_HEIGHT),
+            )
+        },
+        |work, window| {
+            // The same footprint clamp `reposition_window` applies when idle, so
+            // a reconciled origin is a fixed point of the idle tick.
+            let (offset, size) = rust_pill_shared::restore::centered_bottom_footprint(
+                window,
+                (MIN_PILL_WIDTH, MIN_PILL_HEIGHT),
+                COLLAPSED_BOTTOM_INSET
+                    + rust_pill_shared::placement::below_slot_extra(TOOLTIP_HEIGHT),
+            );
+            rust_pill_shared::restore::footprint_bounds(work, offset, size)
+        },
+    );
+
+    match relocation {
+        rust_pill_shared::layout::Relocation::Keep => {}
+        rust_pill_shared::layout::Relocation::Stranded => {
+            // Nowhere to move it to. Leaving it keeps the stored position.
+        }
+        rust_pill_shared::layout::Relocation::Move { x, y } => {
+            // Back into Cocoa's bottom-left space exactly once, at the point of
+            // use.
+            let origin = NSPoint::new(x, primary_top - (y + window_h));
+            set_window_origin(window, origin);
+            state.saved_x.set(origin.x);
+            state.saved_y.set(origin.y);
+            state.has_saved_position.set(true);
+            if let Some(area) = areas
+                .iter()
+                .copied()
+                .find(|area| area_contains_point(*area, x + window_w / 2.0, y + window_h / 2.0))
+            {
+                state.saved_display_id.set(area.id);
+            }
+            persist_reconciled_position(state, window);
+        }
+    }
+}
+
+/// Reconcile if the display arrangement changed and no notification said so.
+///
+/// Coarse on purpose: the signature only has to notice that something about the
+/// arrangement is different, and the reconciliation decides what to do.
+/// Enumerating screens every frame would be wasteful, so this looks a few times
+/// a second, far faster than a display changes and far slower than a frame.
+unsafe fn poll_display_layout(window: id, state: &PillState, now: f64) {
+    const POLL_INTERVAL: f64 = 0.5;
+    if now - state.layout_polled_at.get() < POLL_INTERVAL {
+        return;
+    }
+    state.layout_polled_at.set(now);
+    let Some((areas, _)) = display_areas() else {
+        return;
+    };
+    let signature = rust_pill_shared::layout::layout_signature(&areas);
+    let previous = state.layout_signature.get();
+    state.layout_signature.set(Some(signature));
+    if previous == Some(signature) {
+        return;
+    }
+    if previous.is_some() {
+        // The first poll only establishes a baseline. Reconciling against it
+        // would treat the launch itself as a layout change.
+        reconcile_display_layout(window, state);
+    }
+}
+
+/// Whether a display's work area contains a point, in top-down points.
+fn area_contains_point(area: rust_pill_shared::edge::MonitorRect, x: f64, y: f64) -> bool {
+    x >= area.x && x < area.right() && y >= area.y && y < area.bottom()
+}
+
+/// Tell the desktop where the pill ended up after a display change made the pill
+/// move itself.
+///
+/// This is not a drag save, so it does not go through the save guard: the pill
+/// chose this position, and it is the only place the pill can be. Storing it is
+/// what stops the next launch restoring an origin that no longer has a screen
+/// under it.
+unsafe fn persist_reconciled_position(state: &PillState, window: id) {
+    let (rect, monitor) = pill_geometry(window);
+    ipc::send(&OutMessage::PositionChanged {
+        has_saved_position: true,
+        rect: Some(rect),
+        monitor: Some(monitor),
+        display_id: state.saved_display_id.get(),
+    });
 }
 
 // ── Shared setup (used by both standalone and embedded modes) ─────
@@ -1951,6 +2328,10 @@ unsafe fn setup(
     let view: id = msg_send![view, initWithFrame:rect];
     let _: () = msg_send![view, setWantsLayer:YES];
     window.setContentView_(view);
+
+    // From this point the pill reacts to displays appearing, disappearing,
+    // moving and rescaling instead of being stranded by them.
+    observe_screen_parameters();
 
     // Create text field for typing mode
     let entry_frame = typing_entry_frame();
@@ -2008,15 +2389,19 @@ unsafe fn setup(
         // so it is the same rect used here to recognise the saved display.
         let mut display_rects = Vec::with_capacity(count);
         for index in 0..count {
-            let area = unsafe {
+            let (area, id) = unsafe {
                 let screen: id = msg_send![screen_list, objectAtIndex: index];
-                to_top_down(screen_visible_frame(screen), primary_top)
+                (
+                    to_top_down(screen_visible_frame(screen), primary_top),
+                    screen_display_id(screen),
+                )
             };
             display_rects.push(rust_pill_shared::edge::MonitorRect {
                 x: area.x,
                 y: area.y,
                 width: area.width,
                 height: area.height,
+                id,
             });
         }
 
@@ -2141,6 +2526,10 @@ unsafe fn setup(
         reset_strategy: Cell::new(ResetStrategy::Current),
         saved_x: Cell::new(restored.map_or(0.0, |window| window.origin.x)),
         saved_y: Cell::new(restored.map_or(0.0, |window| window.origin.y)),
+        saved_display_id: Cell::new(saved_position.and_then(|window| window.display_id)),
+        save_guard: RefCell::new(rust_pill_shared::layout::SaveGuard::new()),
+        layout_signature: Cell::new(None),
+        layout_polled_at: Cell::new(0.0),
         first_placement_done: Cell::new(false),
         inflate_t: Cell::new(0.0),
         inflate_velocity: Cell::new(0.0),

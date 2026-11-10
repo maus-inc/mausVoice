@@ -241,6 +241,20 @@ pub(crate) struct PillState {
     pub(crate) reset_strategy: Cell<ResetStrategy>,
     pub(crate) saved_x: Cell<f64>,
     pub(crate) saved_y: Cell<f64>,
+    /// Stable token of the display the saved position belongs to, or `None` when
+    /// it could not be named. Published with the position so the stored record
+    /// can name the display rather than only its rectangle.
+    pub(crate) saved_display_id: Cell<Option<u64>>,
+    /// Holds position saves until the display layout has been steady, so a frame
+    /// macOS forced during a display change is never stored as the user's
+    /// position. See rust_pill_shared::layout::SaveGuard.
+    pub(crate) save_guard: RefCell<rust_pill_shared::layout::SaveGuard>,
+    /// The display-arrangement signature this pill last reconciled against, and
+    /// when it last looked. `didChangeScreenParameters` is the primary signal;
+    /// the poll covers a notification that arrives while the app is not
+    /// frontmost, which macOS can drop.
+    pub(crate) layout_signature: Cell<Option<u64>>,
+    pub(crate) layout_polled_at: Cell<f64>,
     /// True once the pill has been placed at least once. A brand-new window
     /// sits at (0, 0) before its first layout, so an origin check alone would
     /// mistake a legitimately-placed window for "never positioned" and keep

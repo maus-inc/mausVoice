@@ -509,6 +509,10 @@ pub(crate) enum PillEvent {
         has_saved_position: bool,
         rect: Option<serde_json::Value>,
         monitor: Option<serde_json::Value>,
+        /// The pill's stable token for the display it is parked on, when it could
+        /// name one. Carried through to the stored record so the next launch can
+        /// recognise that display rather than only its rectangle.
+        display_id: Option<u64>,
     },
 }
 
@@ -712,10 +716,15 @@ pub(crate) fn parse_pill_event(line: &str) -> Option<PillEvent> {
                 .unwrap_or(false);
             let rect = val.get("rect").cloned().filter(|v| v.is_object());
             let monitor = val.get("monitor").cloned().filter(|v| v.is_object());
+            // A token that is not a number is treated as absent rather than
+            // guessed at: an unnamed display falls back to geometry, which is
+            // what every build before this one did.
+            let display_id = val.get("display_id").and_then(|v| v.as_u64());
             Some(PillEvent::PositionChanged {
                 has_saved_position,
                 rect,
                 monitor,
+                display_id,
             })
         }
         _ => None,
@@ -794,6 +803,7 @@ fn dispatch_pill_event(app: &tauri::AppHandle, event: PillEvent) {
             has_saved_position,
             rect,
             monitor,
+            display_id,
         } => {
             // Only a geometry the pill considers saved describes where the user
             // left it. A reset publishes `has_saved_position: false` with the
@@ -801,7 +811,7 @@ fn dispatch_pill_event(app: &tauri::AppHandle, event: PillEvent) {
             // reset on the next launch.
             if has_saved_position {
                 if let (Some(rect), Some(monitor)) = (rect.as_ref(), monitor.as_ref()) {
-                    crate::pill_position::store_published_position(app, rect, monitor);
+                    crate::pill_position::store_published_position(app, rect, monitor, display_id);
                 }
             }
             let payload = serde_json::json!({

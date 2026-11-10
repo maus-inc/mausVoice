@@ -241,6 +241,24 @@ pub(crate) struct PillState {
     pub(crate) reset_strategy: Cell<ResetStrategy>,
     pub(crate) saved_x: Cell<i32>,
     pub(crate) saved_y: Cell<i32>,
+    /// Stable token of the display the saved position belongs to, or `None` when
+    /// the display could not be named. Published with the position so the stored
+    /// record can name the display rather than only its rectangle.
+    pub(crate) saved_display_id: Cell<Option<u64>>,
+    /// When the current drag started, and which layout was in effect. A layout
+    /// change while a drag is held has to be remembered as interrupting it, so
+    /// the settle that follows is not saved as the user's choice.
+    pub(crate) drag_started_at: Cell<Option<f64>>,
+    /// Holds position saves until the display layout has been steady, so a frame
+    /// the system forced during a display change is never stored as the user's
+    /// position. See rust_pill_shared::layout::SaveGuard.
+    pub(crate) save_guard: RefCell<rust_pill_shared::layout::SaveGuard>,
+    /// The last display-arrangement signature this pill reconciled against, and
+    /// when. Used to notice a layout change even if the platform message is
+    /// missed: a hidden window receives no `WM_DPICHANGED`, and a window that is
+    /// briefly off-screen may receive no `WM_DISPLAYCHANGE` either.
+    pub(crate) layout_signature: Cell<Option<u64>>,
+    pub(crate) layout_polled_at: Cell<f64>,
 
     // Inflate animation — pill slightly expands when entering drag, contracts on release.
     pub(crate) inflate_t: Cell<f64>,

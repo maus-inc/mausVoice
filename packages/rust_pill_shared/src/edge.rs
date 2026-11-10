@@ -75,15 +75,46 @@ impl EdgeMask {
 }
 
 /// A monitor rectangle in the platform's absolute drag-coordinate space.
+///
+/// `id` is the display's stable token ([`crate::layout::display_identity`]) when
+/// the platform can supply one, and `None` when it cannot. It is part of the
+/// rectangle because every caller that builds one from a live monitor is also
+/// the place that can name it, and pairing them here means a caller cannot
+/// accidentally publish geometry with the wrong display's name attached.
+///
+/// It is deliberately *not* part of equality or of the edge math: two rects with
+/// the same geometry describe the same drag region whatever their tokens are,
+/// and code that compared them with `==` before this field existed should keep
+/// comparing geometry. Use [`MonitorRect::same_geometry`] for that directly.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MonitorRect {
     pub x: f64,
     pub y: f64,
     pub width: f64,
     pub height: f64,
+    pub id: Option<u64>,
 }
 
 impl MonitorRect {
+    /// A rectangle with no stable token, which is all a geometry-only caller has.
+    pub fn without_id(x: f64, y: f64, width: f64, height: f64) -> Self {
+        Self {
+            x,
+            y,
+            width,
+            height,
+            id: None,
+        }
+    }
+
+    /// Whether two rects cover exactly the same area, ignoring their tokens.
+    pub fn same_geometry(self, other: Self) -> bool {
+        self.x == other.x
+            && self.y == other.y
+            && self.width == other.width
+            && self.height == other.height
+    }
+
     pub fn right(self) -> f64 {
         self.x + self.width
     }
@@ -146,12 +177,7 @@ fn region_for_edges(monitor: MonitorRect, work_area: MonitorRect, exposed: EdgeM
         } else if monitor.valid() {
             monitor
         } else {
-            MonitorRect {
-                x: 0.0,
-                y: 0.0,
-                width: 0.0,
-                height: 0.0,
-            }
+            MonitorRect::without_id(0.0, 0.0, 0.0, 0.0)
         };
         return DragRegion {
             bounds,
@@ -174,12 +200,15 @@ fn region_for_edges(monitor: MonitorRect, work_area: MonitorRect, exposed: EdgeM
     } else {
         monitor.bottom()
     };
+    // The derived bounds are a slice of the monitor, so they keep its token: a
+    // caller that reads the drag region's display identity must not lose it here.
     DragRegion {
         bounds: MonitorRect {
             x: left,
             y: top,
             width: (right - left).max(0.0),
             height: (bottom - top).max(0.0),
+            id: monitor.id,
         },
         edge_mask: exposed,
     }
@@ -544,18 +573,21 @@ mod tests {
             y: 0.0,
             width: 1920.0,
             height: 1080.0,
+            id: None,
         };
         let bottom = MonitorRect {
             x: 0.0,
             y: 1080.0,
             width: 1920.0,
             height: 1080.0,
+            id: None,
         };
         let work = MonitorRect {
             x: 0.0,
             y: 0.0,
             width: 1920.0,
             height: 1040.0,
+            id: None,
         };
         let region = drag_region(top, work, &[bottom], (900.0, 1039.0));
         assert_eq!(region.bounds.bottom(), 1080.0);
@@ -588,12 +620,14 @@ mod tests {
             y: 0.0,
             width: 1200.0,
             height: 1000.0,
+            id: None,
         };
         let neighbor = MonitorRect {
             x: 1200.0,
             y: 200.0,
             width: 1000.0,
             height: 600.0,
+            id: None,
         };
         let work = MonitorRect {
             width: 1180.0,
@@ -629,18 +663,21 @@ mod tests {
             y: 0.0,
             width: 1200.0,
             height: 1000.0,
+            id: None,
         };
         let work = MonitorRect {
             x: 0.0,
             y: 40.0,
             width: 1180.0,
             height: 900.0,
+            id: None,
         };
         let neighbor = MonitorRect {
             x: 1200.0,
             y: 0.0,
             width: 1000.0,
             height: 1000.0,
+            id: None,
         };
 
         let region = drag_region(monitor, work, &[neighbor], (1190.0, 900.0));
@@ -687,18 +724,21 @@ mod tests {
             y: 0.0,
             width: 1200.0,
             height: 1000.0,
+            id: None,
         };
         let work = MonitorRect {
             x: 40.0,
             y: 20.0,
             width: 1120.0,
             height: 960.0,
+            id: None,
         };
         let neighbor = MonitorRect {
             x: 0.0,
             y: -800.0,
             width: 1200.0,
             height: 800.0,
+            id: None,
         };
 
         let region = drag_region(monitor, work, &[neighbor], (600.0, 10.0));
@@ -718,6 +758,7 @@ mod tests {
             y: 0.0,
             width: 1200.0,
             height: 1000.0,
+            id: None,
         };
         let work = MonitorRect {
             width: 1180.0,
@@ -729,6 +770,7 @@ mod tests {
             y: 200.0,
             width: 1000.0,
             height: 600.0,
+            id: None,
         };
         let mut tracker = SeamTracker::default();
 
@@ -759,12 +801,14 @@ mod tests {
             y: 0.0,
             width: 1920.0,
             height: 1080.0,
+            id: None,
         };
         let neighbor = MonitorRect {
             x: 1920.0,
             y: 1070.0,
             width: 1280.0,
             height: 1000.0,
+            id: None,
         };
         let (start, end) = neighbor_interval(monitor, neighbor, Side::Right).unwrap();
 
@@ -782,12 +826,14 @@ mod tests {
             y: 0.0,
             width: 1920.0,
             height: 1080.0,
+            id: None,
         };
         let physical_neighbor = MonitorRect {
             x: 1920.0,
             y: 0.0,
             width: 1920.0,
             height: 1080.0,
+            id: None,
         };
         let physical_margin = seam_hysteresis_margin(
             physical_monitor,
@@ -802,12 +848,14 @@ mod tests {
             y: 0.0,
             width: 960.0,
             height: 540.0,
+            id: None,
         };
         let logical_neighbor = MonitorRect {
             x: 960.0,
             y: 0.0,
             width: 960.0,
             height: 540.0,
+            id: None,
         };
         let logical_margin =
             seam_hysteresis_margin(logical_monitor, logical_neighbor, Side::Right, 0.0, 540.0);
@@ -824,6 +872,7 @@ mod tests {
             y: 0.0,
             width: 1200.0,
             height: 1000.0,
+            id: None,
         };
         let work = MonitorRect {
             width: 1180.0,
@@ -835,6 +884,7 @@ mod tests {
             y: 0.0,
             width: 1000.0,
             height: 1000.0,
+            id: None,
         };
 
         let held = drag_region(monitor, work, &[neighbor], (1190.0, 500.0));
@@ -852,12 +902,14 @@ mod tests {
             y: 0.0,
             width: 1920.0,
             height: 1080.0,
+            id: None,
         };
         let work = MonitorRect {
             x: 0.0,
             y: 40.0,
             width: 1920.0,
             height: 1040.0,
+            id: None,
         };
         let region = drag_region(monitor, work, &[], (900.0, 100.0));
         assert_eq!(region.bounds, work);
@@ -871,6 +923,7 @@ mod tests {
             y: 20.0,
             width: 800.0,
             height: 600.0,
+            id: None,
         };
         let invalid_work = MonitorRect {
             width: f64::NAN,
@@ -885,6 +938,7 @@ mod tests {
             y: 0.0,
             width: 640.0,
             height: 480.0,
+            id: None,
         };
         let invalid_monitor = MonitorRect {
             width: 0.0,

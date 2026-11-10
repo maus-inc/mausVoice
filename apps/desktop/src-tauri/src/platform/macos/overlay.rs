@@ -329,6 +329,7 @@ fn start_out_reader(app: tauri::AppHandle, rx: mpsc::Receiver<OutMessage>) {
                     has_saved_position,
                     rect,
                     monitor,
+                    display_id,
                 } => {
                     let rect_json = rect.map(|r| {
                         serde_json::json!({ "x": r.x, "y": r.y, "width": r.width, "height": r.height })
@@ -343,7 +344,9 @@ fn start_out_reader(app: tauri::AppHandle, rx: mpsc::Receiver<OutMessage>) {
                         if let (Some(rect), Some(monitor)) =
                             (rect_json.as_ref(), monitor_json.as_ref())
                         {
-                            crate::pill_position::store_published_position(&app, rect, monitor);
+                            crate::pill_position::store_published_position(
+                                &app, rect, monitor, display_id,
+                            );
                         }
                     }
                     let payload = serde_json::json!({

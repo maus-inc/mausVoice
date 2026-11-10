@@ -50,10 +50,15 @@ pub fn read_saved_position_record(app: &tauri::AppHandle) -> Option<String> {
 /// Store the geometry the pill just published.
 ///
 /// `rect` is the pill window and `monitor` is the work area of the display it
-/// lives on, both in the pill's own top-left space. `monitor` is used as the
-/// display identity because it is the rect the pill measured itself against;
-/// the desktop does not re-derive it, which keeps restore and save using the
-/// same numbers.
+/// lives on, both in the pill's own top-left space. The desktop does not
+/// re-derive either, which keeps restore and save using the same numbers.
+///
+/// `display_id` is the pill's stable token for that display. It is optional
+/// because a platform may not be able to name a display at all, and because a
+/// pill that has not republished since this build started will not send one
+/// until its next save. A record without a token still restores correctly by
+/// geometry; a record with one also survives the display being unplugged and
+/// replugged, or coming back at a different resolution.
 ///
 /// A payload that does not describe a usable window is ignored rather than
 /// stored, so a corrupt event cannot replace a good record with nothing.
@@ -61,6 +66,7 @@ pub fn store_published_position(
     app: &tauri::AppHandle,
     rect: &serde_json::Value,
     monitor: &serde_json::Value,
+    display_id: Option<u64>,
 ) {
     let Some(window_rect) = read_rect(rect) else {
         return;
@@ -68,17 +74,18 @@ pub fn store_published_position(
     let Some(work_area) = read_rect(monitor) else {
         return;
     };
-    let Some(parked) = ParkedWindow::new(
+    let Some(parked) = ParkedWindow::new_named(
         window_rect.x,
         window_rect.y,
         window_rect.width,
         window_rect.height,
-        MonitorRect {
-            x: work_area.x,
-            y: work_area.y,
-            width: work_area.width,
-            height: work_area.height,
-        },
+        MonitorRect::without_id(
+            work_area.x,
+            work_area.y,
+            work_area.width,
+            work_area.height,
+        ),
+        display_id,
     ) else {
         log::debug!("Ignoring a pill geometry that does not describe a usable window");
         return;
@@ -206,22 +213,24 @@ mod tests {
         let monitor = json!({ "x": 0.0, "y": 0.0, "width": 1920.0, "height": 1040.0 });
         let window_rect = read_rect(&rect).expect("rect");
         let work_area = read_rect(&monitor).expect("monitor");
-        let parked = ParkedWindow::new(
+        let parked = ParkedWindow::new_named(
             window_rect.x,
             window_rect.y,
             window_rect.width,
             window_rect.height,
-            MonitorRect {
-                x: work_area.x,
-                y: work_area.y,
-                width: work_area.width,
-                height: work_area.height,
-            },
+            MonitorRect::without_id(work_area.x, work_area.y, work_area.width, work_area.height),
+            Some(4242),
         )
         .expect("usable window");
         let encoded = parked.encode().expect("encoded");
         let decoded = ParkedWindow::decode(&encoded).expect("decoded");
         assert_eq!(decoded, parked);
+        assert_eq!(
+            decoded.display_id,
+            Some(4242),
+            "the display's identity has to reach the database, or a replugged \
+             monitor cannot be recognised"
+        );
     }
 
     /// A payload missing a field, carrying a string where a number belongs, or
@@ -244,12 +253,7 @@ mod tests {
             20.0,
             200.0,
             60.0,
-            MonitorRect {
-                x: 0.0,
-                y: 0.0,
-                width: 1920.0,
-                height: 1080.0,
-            },
+            MonitorRect::without_id(0.0, 0.0, 1920.0, 1080.0),
         )
         .expect("valid")
         .encode()

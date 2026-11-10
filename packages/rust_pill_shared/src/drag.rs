@@ -945,6 +945,7 @@ mod tests {
             y: 200.0,
             width: 300.0,
             height: 400.0,
+            id: None,
         };
         let edges = EdgeMask {
             left: false,
@@ -972,6 +973,7 @@ mod tests {
             y: 0.0,
             width: 1200.0,
             height: 1000.0,
+            id: None,
         };
         let work = MonitorRect {
             width: 1180.0,
@@ -983,6 +985,7 @@ mod tests {
             y: 200.0,
             width: 1000.0,
             height: 600.0,
+            id: None,
         };
         let mut drag = DragController::new();
         drag.begin_drag(0.0, 0.0, 100.0, 100.0, 0.0);
@@ -1004,6 +1007,7 @@ mod tests {
             y: 0.0,
             width: 300.0,
             height: 200.0,
+            id: None,
         };
         let edges = EdgeMask {
             left: true,
