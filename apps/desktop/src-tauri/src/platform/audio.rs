@@ -94,7 +94,7 @@ mod cpal_impl {
     use std::cmp;
     use std::collections::{HashMap, VecDeque};
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-    use std::sync::{Arc, Mutex, MutexGuard};
+    use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
     use std::time::{Duration, Instant};
 
     #[derive(Clone)]
@@ -373,9 +373,7 @@ mod cpal_impl {
         }
 
         fn lock(&self) -> MutexGuard<'_, SinkMode> {
-            self.state
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
+            self.state.lock().unwrap_or_else(PoisonError::into_inner)
         }
 
         /// Takes one block from the capture callback.
@@ -1009,15 +1007,9 @@ mod cpal_impl {
         /// A dispatch takes `dispatch` before `buffer` and never the other way
         /// round, so the two cannot deadlock against each other.
         fn dispatch_buffered_chunk(&self) {
-            let _in_order = self
-                .dispatch
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let _in_order = self.dispatch.lock().unwrap_or_else(PoisonError::into_inner);
             let (chunk, offset) = {
-                let mut buffer = self
-                    .buffer
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                let mut buffer = self.buffer.lock().unwrap_or_else(PoisonError::into_inner);
                 if buffer.is_empty() {
                     return;
                 }
@@ -1504,7 +1496,7 @@ mod cpal_impl {
                 .as_ref()
                 .map(|value| value.trim())
                 .filter(|value| !value.is_empty())
-                .map(|value| value.to_string());
+                .map(str::to_string);
             let preferred_normalized = preferred_trimmed
                 .as_ref()
                 .map(|value| value.to_ascii_lowercase());
@@ -1849,7 +1841,7 @@ mod cpal_impl {
                 .as_ref()
                 .map(|value| value.trim())
                 .filter(|value| !value.is_empty())
-                .map(|value| value.to_string());
+                .map(str::to_string);
 
             // The ring is left empty until the successful stream tells us the
             // real rate; `open_warm_stream` sizes it.
@@ -1880,7 +1872,7 @@ mod cpal_impl {
                 .as_ref()
                 .map(|value| value.trim())
                 .filter(|value| !value.is_empty())
-                .map(|value| value.to_string());
+                .map(str::to_string);
             let preferred_normalized = preferred_trimmed
                 .as_ref()
                 .map(|value| value.to_ascii_lowercase());
@@ -3010,7 +3002,7 @@ mod cpal_impl {
                 open_warm_on_device(
                     &device,
                     &choice.label,
-                    self.preferred_label.map(|value| value.to_string()),
+                    self.preferred_label.map(str::to_string),
                     self.preroll,
                     Arc::clone(&self.ring),
                     self.trace,
@@ -3110,7 +3102,7 @@ mod cpal_impl {
             buffer: Some(buffer),
             sample_rate,
             device_label: label.to_string(),
-            preferred: device_name.map(|value| value.to_string()),
+            preferred: device_name.map(str::to_string),
             channels,
         })
     }
