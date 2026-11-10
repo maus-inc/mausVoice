@@ -9,6 +9,7 @@ import {
   classifyMicrophoneFailure,
   describeHeldState,
   isLikelyBluetoothDevice,
+  isSelectedDeviceBluetooth,
   lingerChoices,
   nearestLingerChoice,
   normalizeMicrophonePrerollSeconds,
@@ -366,5 +367,51 @@ describe("nearestLingerChoice", () => {
     for (const stored of [0, 1, 2_999, 3_001, 12_345, 30_000, -5]) {
       expect(lingerChoices()).toContain(nearestLingerChoice(stored));
     }
+  });
+});
+
+describe("isSelectedDeviceBluetooth", () => {
+  it("trusts the backend flag over the label, in both directions", () => {
+    // The backend has the descriptor; the label is a guess. A headset whose name
+    // carries no marker (`Jabra Evolve2 65`) is Bluetooth and the flag says so,
+    // and a wired device that happens to be called "... Headset" is not.
+    expect(
+      isSelectedDeviceBluetooth({
+        label: "Jabra Evolve2 65",
+        bluetoothFlag: true,
+      }),
+    ).toBe(true);
+    expect(
+      isSelectedDeviceBluetooth({
+        label: "USB Headset",
+        bluetoothFlag: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("falls back to the label when the device is not in the list", () => {
+    // The preference stores a label, and the device it names can be unplugged.
+    // Then there is no descriptor to read, and the name is all there is.
+    expect(
+      isSelectedDeviceBluetooth({
+        label: "AirPods Pro",
+        bluetoothFlag: undefined,
+      }),
+    ).toBe(true);
+    expect(
+      isSelectedDeviceBluetooth({
+        label: "MacBook Pro Microphone",
+        bluetoothFlag: undefined,
+      }),
+    ).toBe(false);
+  });
+
+  it("is false for nothing selected", () => {
+    // `null` means Automatic, which resolves a device at press time. Warning
+    // about a headset the user has not chosen would be guessing about a choice
+    // they did not make.
+    expect(
+      isSelectedDeviceBluetooth({ label: null, bluetoothFlag: undefined }),
+    ).toBe(false);
   });
 });

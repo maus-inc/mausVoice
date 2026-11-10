@@ -622,10 +622,18 @@ pub fn list_pulse_input_devices() -> Vec<InputDeviceDescriptor> {
     let mut devices: Vec<InputDeviceDescriptor> = sources
         .into_iter()
         .filter(|s| !s.is_monitor)
-        .map(|s| InputDeviceDescriptor {
-            label: s.description,
-            is_default: s.is_default,
-            caution: false,
+        .map(|s| {
+            // Both flags were hard-coded to `false` here, so on the one platform
+            // where a Bluetooth headset is the common case, the selector offered
+            // it as an ordinary device and nothing downstream could tell the
+            // difference. The keyword test is the same one the cpal path uses.
+            let bluetooth = crate::platform::audio::label_has_low_quality_keyword(&s.description);
+            InputDeviceDescriptor {
+                label: s.description,
+                is_default: s.is_default,
+                caution: bluetooth,
+                bluetooth,
+            }
         })
         .collect();
 

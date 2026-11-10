@@ -27,6 +27,14 @@ export type MicrophoneOption = {
   isDefault?: boolean;
   caution?: boolean;
   unavailable?: boolean;
+  /**
+   * The backend's verdict on whether this is a Bluetooth headset.
+   *
+   * Carried through rather than re-derived from the label by whoever needs it:
+   * the backend has the transcript of the same marker list, and a second
+   * derivation is a second answer.
+   */
+  bluetooth?: boolean;
 };
 
 export type MicrophoneSelectorProps = {
@@ -34,6 +42,16 @@ export type MicrophoneSelectorProps = {
   onChange: (value: Nullable<string>) => void;
   microphones?: MicrophoneOption[];
   disabled?: boolean;
+  /**
+   * Reports the loaded list whenever it changes.
+   *
+   * The dialog needs one field of one device -- whether the selected one is
+   * Bluetooth, for the keep-ready warning -- and the alternative was to load the
+   * device list twice, or to re-derive the answer from a label the backend has
+   * already judged. Lifting the list is the smaller of the three, and it keeps a
+   * single source: whatever the selector shows is what the warning reasons about.
+   */
+  onDevicesKnown?: (devices: MicrophoneOption[]) => void;
 };
 
 export const MicrophoneSelector = ({
@@ -41,6 +59,7 @@ export const MicrophoneSelector = ({
   onChange,
   microphones,
   disabled = false,
+  onDevicesKnown,
 }: MicrophoneSelectorProps) => {
   const [devices, setDevices] = useState<MicrophoneOption[]>([]);
   const [loading, setLoading] = useState(false);
@@ -61,6 +80,7 @@ export const MicrophoneSelector = ({
           label: device.label,
           isDefault: device.isDefault,
           caution: device.caution,
+          bluetooth: device.bluetooth,
         })),
       );
     } catch {
@@ -92,6 +112,13 @@ export const MicrophoneSelector = ({
       unsubscribe?.();
     };
   }, [loadDevices, microphones]);
+
+  // Reported from an effect rather than from inside `loadDevices`, so the owner
+  // hears about the `microphones` prop path too, and so the callback cannot fire
+  // during the render that is still deciding whether to load anything.
+  useEffect(() => {
+    onDevicesKnown?.(devices);
+  }, [devices, onDevicesKnown]);
 
   const selectValue = value ?? AUTO_OPTION_VALUE;
 

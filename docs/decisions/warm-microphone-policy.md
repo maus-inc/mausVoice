@@ -85,13 +85,25 @@ battery drains for as long as the hold lasts. The switch's own copy promises the
 indicator, which is true and not the whole cost, so a separate warning appears
 under the switch whenever the selected device's name looks like a headset.
 
-That test is a name heuristic, because `InputDeviceDescriptor` carries a label,
-a default flag and a caution flag and no transport. It is therefore used only to
-*add* a warning, never to change what the app does: a false positive costs a
-sentence of copy, and a false negative costs an unexplained battery drain. The
-backend already scores Bluetooth devices down with a superset argument (a
-miss there costs a worse-sounding press); the frontend list is deliberately
-broader, because the two are answering different questions.
+The descriptor carries a `bluetooth` flag alongside `caution`, and they are not
+the same verdict. `caution` is a *ranking* judgement -- this device will sound
+worse than an alternative, so prefer another -- and the selector renders it as
+"May provide lower audio quality". `bluetooth` is a *cost* judgement about the
+device the user has already chosen. A device can be the right one to pick and
+still carry the hold cost, so one flag could not carry both.
+
+It is still a name heuristic underneath, because cpal exposes no transport and
+CoreAudio, ALSA and WASAPI each spell the same headset differently. That is why
+it only ever *adds* a sentence and never changes behaviour: a false positive
+costs a line of copy, and a false negative costs an unexplained battery drain.
+
+Two corrections came out of building it. The keyword list lived inside the cpal
+module, so the PulseAudio lister could not reach it and built every Linux
+descriptor with `caution: false` and no Bluetooth flag at all -- on the platform
+where a headset is the common case. It is hoisted to the module now and both
+listers use it. And the frontend keeps a label-based fallback for the one case
+the flag cannot answer: the preference stores a label, and the device it names
+may be unplugged, so there is no descriptor to read.
 
 **A cold start prepends nothing.**
 

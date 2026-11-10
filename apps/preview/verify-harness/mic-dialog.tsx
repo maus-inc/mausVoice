@@ -72,9 +72,25 @@ const handlers: Record<string, (args: any) => unknown> = {
   // here -- the extra `name` was ignored and the missing `label` reached the
   // dialog as `undefined` -- so the screenshots this harness exists to produce
   // showed a device select with no device names in it.
+  // The `bluetooth` flag had to be added to `InputDeviceDescriptor` for the
+  // keep-ready warning, and a descriptor missing a field is reflected here as
+  // `undefined` rather than as an error -- the same way `label` was once
+  // omitted, and the screenshots showed a nameless device. So the fake carries
+  // the full shape, and one entry is a headset so the warning is reachable
+  // without a real Bluetooth device in the sandbox.
   list_microphones: () => [
-    { label: "Fake Microphone", isDefault: true, caution: false },
-    { label: "Fake Headset", isDefault: false, caution: false },
+    {
+      label: "Fake Microphone",
+      isDefault: true,
+      caution: false,
+      bluetooth: false,
+    },
+    {
+      label: "Fake Bluetooth Headset",
+      isDefault: false,
+      caution: true,
+      bluetooth: true,
+    },
   ],
   get_microphone_permission_status: () => ({ state: "authorized" }),
   check_microphone_permission: () => ({ state: "authorized" }),

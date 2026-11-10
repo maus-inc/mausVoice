@@ -31,7 +31,10 @@ import { useMyPreferredMicrophone } from "../../hooks/user.hooks";
 import { produceAppState, useAppStore } from "../../store";
 import { SettingSection } from "../common/SettingSection";
 import { BusyButtonLabel } from "../common/BusyButtonLabel";
-import { MicrophoneSelector } from "../microphone/MicrophoneSelector";
+import {
+  MicrophoneSelector,
+  type MicrophoneOption,
+} from "../microphone/MicrophoneSelector";
 import { MicrophoneTester } from "../microphone/MicrophoneTester";
 import { ElasticSlider } from "../common/ElasticSlider";
 import { Reveal } from "../common/Reveal";
@@ -40,7 +43,7 @@ import {
   DEFAULT_MICROPHONE_LINGER_MS,
   MAX_MICROPHONE_PREROLL_SECONDS,
   describeHeldState,
-  isLikelyBluetoothDevice,
+  isSelectedDeviceBluetooth,
   lingerChoices,
   nearestLingerChoice,
 } from "../../utils/microphone-readiness.utils";
@@ -170,6 +173,21 @@ export const MicrophoneDialog = () => {
   const prerollOn = prerollSeconds > 0;
 
   const [selected, setSelected] = useState<Nullable<string>>(savedPreference);
+
+  /**
+   * The device list the selector loaded, so the keep-ready warning can ask the
+   * backend's own verdict instead of guessing from a name.
+   */
+  const [devices, setDevices] = useState<MicrophoneOption[]>([]);
+  const handleDevicesKnown = useCallback(
+    (next: MicrophoneOption[]) => setDevices(next),
+    [],
+  );
+  // `undefined` when the selected device is not in the list -- unplugged, or on a
+  // host that is not enumerating -- which is what lets the label fallback run.
+  const microphoneBluetooth = devices.find(
+    (device) => device.value === selected,
+  )?.bluetooth;
   // Holding the microphone open is only a bargain on the built-in device.
   // Bluetooth is a shared half-duplex channel: while anything captures, macOS
   // drops the headset from A2DP to the hands-free profile, so playback becomes
@@ -180,7 +198,17 @@ export const MicrophoneDialog = () => {
   // The selection, not the saved preference: a headset picked but not yet saved
   // is still the device the next press opens, so the warning has to follow the
   // control rather than the row in the database.
-  const bluetoothWarning = keepReady && isLikelyBluetoothDevice(selected);
+  //
+  // The flag comes from the selector's device list, because the backend is the
+  // one that decided it; the label is the fallback for a stored device that is
+  // not in the list right now (unplugged). `microphoneBluetooth` carries that
+  // through `MicrophoneSelector`'s `onDevicesKnown`.
+  const bluetoothWarning =
+    keepReady &&
+    isSelectedDeviceBluetooth({
+      label: selected,
+      bluetoothFlag: microphoneBluetooth,
+    });
   const [hasChanges, setHasChanges] = useState(false);
   const [saving, setSaving] = useState(false);
   const saveInFlight = useRef(false);
@@ -266,6 +294,7 @@ export const MicrophoneDialog = () => {
               value={selected ?? null}
               onChange={handleSelectionChange}
               disabled={saving}
+              onDevicesKnown={handleDevicesKnown}
             />
             {saveError && (
               <Alert ref={feedbackRef} severity="error">

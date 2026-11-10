@@ -109,6 +109,29 @@ const unnamed = await page.evaluate(`(() => {
 })()`);
 if (unnamed > 0) note("a11y", `${unnamed} switch(es) with no accessible name`);
 
+// ---- Every descriptor has the shape the UI reads ---------------------------
+//
+// A field missing from `list_microphones` arrives as `undefined`, not as an
+// error: the dialog once showed a device with no name because `name` was sent
+// where `label` was expected, and the screenshots looked plausible. The
+// `bluetooth` flag is new, and the keep-ready warning reads it, so its absence
+// would silently disable that warning rather than fail.
+const shape = await page.evaluate(`(async () => {
+  const res = await window.__TAURI_INTERNALS__.invoke('list_microphones', {});
+  return JSON.stringify(res.map((d) => ({
+    keys: Object.keys(d).sort(),
+    bluetoothIsBoolean: typeof d.bluetooth === 'boolean',
+  })));
+})()`);
+const rows = JSON.parse(shape);
+for (const row of rows) {
+  if (!row.bluetoothIsBoolean)
+    note(
+      "shape",
+      "a list_microphones descriptor is missing the bluetooth flag",
+    );
+}
+
 // ---- Screenshot: default (keep off, no pre-roll after zero) -----------------
 writeFileSync(`${OUT}/01-default.png`, await page.screenshot());
 
@@ -206,16 +229,25 @@ if (!lingerState) {
   note("a11y", "linger switch row vanished");
 } else {
   if (lingerState.ariaDisabled !== "true")
-    note("a11y", `overridden linger switch has aria-disabled=${lingerState.ariaDisabled}`);
+    note(
+      "a11y",
+      `overridden linger switch has aria-disabled=${lingerState.ariaDisabled}`,
+    );
   if (lingerState.nativelyDisabled)
-    note("a11y", "overridden linger switch is natively disabled and left the tab order");
+    note(
+      "a11y",
+      "overridden linger switch is natively disabled and left the tab order",
+    );
   if (lingerState.tabIndex < 0)
     note("a11y", "overridden linger switch is not focusable");
   if (!lingerState.checkedClass || !lingerState.checked)
     note("state", "overridden linger switch does not read as on");
   // 0.5 is the theme's disabled affordance; 1 means it looks operable.
   if (Number(lingerState.baseOpacity) > 0.75)
-    note("a11y", `inert linger switch is not visually dimmed (opacity ${lingerState.baseOpacity})`);
+    note(
+      "a11y",
+      `inert linger switch is not visually dimmed (opacity ${lingerState.baseOpacity})`,
+    );
   if (lingerState.cursor !== "not-allowed")
     note("a11y", `inert linger switch cursor is "${lingerState.cursor}"`);
   if (!lingerState.hasExplainCaption)

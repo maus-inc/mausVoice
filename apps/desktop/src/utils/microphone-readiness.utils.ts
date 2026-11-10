@@ -204,10 +204,14 @@ const BLUETOOTH_DEVICE_MARKERS = [
  * captures, macOS moves the headset from A2DP to the hands-free profile, so
  * music and calls drop to call quality and the headset's battery drains faster
  * for as long as the hold lasts. None of that is visible as a microphone
- * indicator, which is all the existing copy promised. A name is the only signal
- * the device list carries -- `InputDeviceDescriptor` has no transport field --
- * so this is a heuristic, and it is used only to *add* a warning, never to
- * change what the app does.
+ * indicator, which is all the existing copy promised.
+ *
+ * **Prefer the backend's `bluetooth` flag.** This function exists for the one
+ * case the flag cannot answer: the stored preference is a label, and the device
+ * it names may not be in the list right now (unplugged, on another host), so
+ * there is no descriptor to read. Deriving it here is a fallback, and the marker
+ * list has to stay a superset of the backend's or the two disagree about the same
+ * headset. Used only to *add* a warning, never to change what the app does.
  */
 export const isLikelyBluetoothDevice = (
   label: string | null | undefined,
@@ -217,6 +221,27 @@ export const isLikelyBluetoothDevice = (
   }
   const lower = label.toLowerCase();
   return BLUETOOTH_DEVICE_MARKERS.some((marker) => lower.includes(marker));
+};
+
+/**
+ * Whether the selected device is a headset, given what the device list knows.
+ *
+ * The order is the point: the backend's flag is authoritative when the device is
+ * present in the list, and the label heuristic only fills in when it is not --
+ * because the preference stores a label, and the device it names may be
+ * unplugged right now.
+ */
+export const isSelectedDeviceBluetooth = ({
+  label,
+  bluetoothFlag,
+}: {
+  label: string | null | undefined;
+  bluetoothFlag: boolean | null | undefined;
+}): boolean => {
+  if (typeof bluetoothFlag === "boolean") {
+    return bluetoothFlag;
+  }
+  return isLikelyBluetoothDevice(label);
 };
 
 /**

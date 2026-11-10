@@ -11,6 +11,57 @@ pub struct InputDeviceDescriptor {
     pub label: String,
     pub is_default: bool,
     pub caution: bool,
+    /// Whether this looks like a Bluetooth headset.
+    ///
+    /// A separate flag from `caution`, because the two answer different
+    /// questions and are consumed in different places. `caution` is a *ranking*
+    /// verdict -- this device will sound worse than an alternative, so prefer
+    /// another -- and the selector shows it as "May provide lower audio
+    /// quality". This one is a *cost* verdict about the device the user has
+    /// already picked: holding it open on behalf of keep-ready moves the link to
+    /// its hands-free profile, which degrades output audio and drains the
+    /// headset for as long as the hold lasts. A device can be worth choosing and
+    /// still carry that cost, which is why one flag could not carry it.
+    ///
+    /// Still a name heuristic: cpal exposes no transport and CoreAudio/ALSA/
+    /// WASAPI each spell it differently. It is used only to add a sentence of
+    /// copy, never to change behaviour, so a false positive costs wording and a
+    /// false negative costs an unexplained battery drain.
+    pub bluetooth: bool,
+}
+
+/// Name fragments that identify a Bluetooth headset.
+///
+/// Hoisted out of the cpal module so the PulseAudio lister can use the same list.
+/// It could not before: the Linux path built every descriptor with
+/// `caution: false`, so on the one platform where a Bluetooth headset is the
+/// common case, the selector offered it as an ordinary device and nothing
+/// downstream could tell the difference. Two copies of a keyword list is how the
+/// two copies drift.
+const LOW_QUALITY_INPUT_KEYWORDS: &[&str] = &[
+    "airpods",
+    "beats",
+    "bluetooth",
+    "earbud",
+    "hands-free",
+    "headset",
+    "hfp",
+    "hsp",
+    "sony wh-",
+];
+
+/// Whether a device label names a Bluetooth headset.
+///
+/// A heuristic on purpose and by necessity: cpal exposes no transport, and
+/// CoreAudio, ALSA and WASAPI each spell the same headset differently. Every
+/// consumer uses it only to *describe* a device -- to rank it or to warn about
+/// holding it open -- never to change what the app does, so a miss costs wording
+/// rather than behaviour.
+pub(crate) fn label_has_low_quality_keyword(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    LOW_QUALITY_INPUT_KEYWORDS
+        .iter()
+        .any(|keyword| lower.contains(keyword))
 }
 
 /// Creates the recorder and the pre-warm handle, backed by one manager.
@@ -81,7 +132,8 @@ pub(crate) fn compute_level_bins(samples: &[f32]) -> Vec<f32> {
 
 mod cpal_impl {
     use super::{
-        compute_level_bins, InputDeviceDescriptor, CHUNK_DISPATCH_INTERVAL, LEVEL_DISPATCH_INTERVAL,
+        compute_level_bins, label_has_low_quality_keyword, InputDeviceDescriptor,
+        CHUNK_DISPATCH_INTERVAL, LEVEL_DISPATCH_INTERVAL,
     };
     use crate::domain::{RecordedAudio, RecordingMetrics, RecordingResult};
     use crate::errors::RecordingError;
@@ -1303,23 +1355,26 @@ mod cpal_impl {
             }
         }
 
-        /// Closes the held stream, if any.
-        ///
-        /// An explicit close overrides a scheduled linger, so a close issued
-        /// inside a linger window is not followed by a timer that was only ever
-        /// meant to close the stream this call is closing now.
         /// Closes the held stream and stops holding it.
         ///
         /// This is the "release the device now" action, not "stop keeping it
-        /// open after a recording". The window is a separate preference, and
-        /// the stream is closing, so a window left in place would have nothing
-        /// to apply to: the policy is returned to zero and the front end
-        /// restates the user's window when it next mounts, which is what
-        /// `MicrophoneReadinessSideEffects` does when the preference is off.
+        /// open after a recording". The post-recording window is a separate
+        /// preference and the stream is closing, so a window left in place would
+        /// have nothing to apply to: the policy is returned to zero here.
         ///
-        /// The preference itself is never touched here; only this process's
-        /// copy of it. Nothing in this function writes to the user's settings,
-        /// so releasing the device cannot turn a setting off permanently.
+        /// The preference itself is never touched; only this process's copy of
+        /// it. Nothing here writes to the user's settings, so releasing the
+        /// device cannot turn a setting off permanently.
+        ///
+        /// **Zeroing the policy is why the caller has to put the window back.**
+        /// This function used to say the front end "restates the user's window
+        /// when it next mounts", and that was true only by accident: the effect
+        /// that pushes the window skips while the hold is on, so a release for
+        /// any reason other than turning keep-ready off left the user's window at
+        /// zero for the rest of the session. `MicrophoneReadinessSideEffects`
+        /// restores it from `release`'s continuation now, and only when nothing
+        /// has opened since. Anything that calls `release_hold` directly is
+        /// responsible for the same restore.
         pub fn release_hold(&self) {
             self.set_linger_policy(Duration::ZERO);
             self.close_warm();
@@ -2530,17 +2585,6 @@ mod cpal_impl {
         }
     }
 
-    const LOW_QUALITY_INPUT_KEYWORDS: &[&str] = &[
-        "airpods",
-        "beats",
-        "bluetooth",
-        "earbud",
-        "hands-free",
-        "headset",
-        "hfp",
-        "hsp",
-        "sony wh-",
-    ];
 
     fn should_avoid_input_device(device: &Device, default_output_name: Option<&str>) -> bool {
         let device_name = device.name().ok();
@@ -2548,7 +2592,7 @@ mod cpal_impl {
             .as_deref()
             .map(|name| {
                 let lower = name.to_ascii_lowercase();
-                LOW_QUALITY_INPUT_KEYWORDS
+                super::LOW_QUALITY_INPUT_KEYWORDS
                     .iter()
                     .any(|keyword| lower.contains(keyword))
             })
@@ -2556,7 +2600,7 @@ mod cpal_impl {
 
         let output_match = default_output_name.is_some_and(|name| {
             let lower = name.to_ascii_lowercase();
-            LOW_QUALITY_INPUT_KEYWORDS
+            super::LOW_QUALITY_INPUT_KEYWORDS
                 .iter()
                 .any(|keyword| lower.contains(keyword))
         });
@@ -2576,7 +2620,7 @@ mod cpal_impl {
 
     fn is_preferred_input_device_name(name: &str) -> bool {
         let lower = name.to_ascii_lowercase();
-        if LOW_QUALITY_INPUT_KEYWORDS
+        if super::LOW_QUALITY_INPUT_KEYWORDS
             .iter()
             .any(|keyword| lower.contains(keyword))
         {
@@ -2600,10 +2644,7 @@ mod cpal_impl {
     }
 
     fn name_has_low_quality_keyword(name: &str) -> bool {
-        let lower = name.to_ascii_lowercase();
-        LOW_QUALITY_INPUT_KEYWORDS
-            .iter()
-            .any(|keyword| lower.contains(keyword))
+        label_has_low_quality_keyword(name)
     }
 
     /// All available hosts with the cpal default host first.
@@ -3483,6 +3524,7 @@ mod cpal_impl {
                         label: candidate.label.clone(),
                         is_default: false,
                         caution: false,
+                        bluetooth: label_has_low_quality_keyword(&candidate.label),
                     });
 
                 if candidate.avoid_reason.is_some() {
