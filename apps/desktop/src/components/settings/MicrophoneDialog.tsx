@@ -34,10 +34,15 @@ import { BusyButtonLabel } from "../common/BusyButtonLabel";
 import { MicrophoneSelector } from "../microphone/MicrophoneSelector";
 import { MicrophoneTester } from "../microphone/MicrophoneTester";
 import { ElasticSlider } from "../common/ElasticSlider";
+import { Reveal } from "../common/Reveal";
+import { SegmentedControl } from "../common/SegmentedControl";
 import {
   DEFAULT_MICROPHONE_LINGER_MS,
   MAX_MICROPHONE_PREROLL_SECONDS,
   describeHeldState,
+  isLikelyBluetoothDevice,
+  lingerChoices,
+  nearestLingerChoice,
 } from "../../utils/microphone-readiness.utils";
 
 /**
@@ -163,14 +168,19 @@ export const MicrophoneDialog = () => {
   // `prerollOn` only chooses the caption, which must not describe a window that
   // does not exist.
   const prerollOn = prerollSeconds > 0;
-  // A pre-roll can only recover audio that was captured before the press, and
-  // the ring is a property of a stream. Cold, the recorder allocates the ring
-  // when the press opens the device, so there is nothing in it to carry and a
-  // word started early is lost however high the slider is. Saying so is the
-  // difference between a setting that disappoints and one that explains itself.
-  const prerollNeedsHeldStream = prerollOn && !keepReady;
 
   const [selected, setSelected] = useState<Nullable<string>>(savedPreference);
+  // Holding the microphone open is only a bargain on the built-in device.
+  // Bluetooth is a shared half-duplex channel: while anything captures, macOS
+  // drops the headset from A2DP to the hands-free profile, so playback becomes
+  // call quality and the headset's battery drains faster for as long as the
+  // hold lasts. The switch's own copy promises the indicator and nothing else,
+  // which is true and not the whole cost. Named here so the warning is tied to
+  // the control it is about rather than to a serialized message.
+  // The selection, not the saved preference: a headset picked but not yet saved
+  // is still the device the next press opens, so the warning has to follow the
+  // control rather than the row in the database.
+  const bluetoothWarning = keepReady && isLikelyBluetoothDevice(selected);
   const [hasChanges, setHasChanges] = useState(false);
   const [saving, setSaving] = useState(false);
   const saveInFlight = useRef(false);
@@ -303,7 +313,26 @@ export const MicrophoneDialog = () => {
             <Typography variant="body2" color="text.secondary">
               <FormattedMessage defaultMessage="Start dictating instantly by opening the microphone ahead of time. Your system shows its microphone-in-use indicator the whole time this is on." />
             </Typography>
-            {keepReady && <HeldStateLine state={heldState} />}
+            <Reveal show={keepReady}>
+              <HeldStateLine state={heldState} />
+            </Reveal>
+            {/* The switch's own copy promises the microphone indicator. On a
+                Bluetooth headset the real cost is larger and invisible: the
+                link drops to the hands-free profile, so playback becomes call
+                quality and the headset's battery drains for as long as the hold
+                lasts. Saying so under the switch, not in a toast, because it is
+                a standing property of the setting rather than an event. */}
+            <Reveal show={bluetoothWarning}>
+              <Alert
+                severity="warning"
+                icon={false}
+                sx={{ alignItems: "center", py: 0.5 }}
+              >
+                <Typography variant="body2">
+                  <FormattedMessage defaultMessage="This is a Bluetooth microphone. While it is held, your headset switches to its call profile, so audio you play will sound like a phone call and its battery will drain faster." />
+                </Typography>
+              </Alert>
+            </Reveal>
             {/* Offered outside the keep-ready branch because it is not a
                 keep-ready setting. The pre-roll is what the next press keeps
                 from before it, which matters most when the device is opened at
@@ -326,11 +355,6 @@ export const MicrophoneDialog = () => {
                 onCommit={(value) => setMicrophonePrerollSeconds(value)}
               />
               <PrerollCaption on={prerollOn} />
-              {prerollNeedsHeldStream && (
-                <Typography variant="caption" color="text.secondary">
-                  <FormattedMessage defaultMessage="This only applies while the microphone is already open. Turn on holding it open above, or the press has to open it first and nothing from before it was captured." />
-                </Typography>
-              )}
             </Stack>
           </Stack>
 
@@ -346,12 +370,42 @@ export const MicrophoneDialog = () => {
                   // switch reading "off" directly above a caption that said it was
                   // already on.
                   checked={keepReady || lingerOn}
-                  disabled={keepReady}
-                  onChange={(event) =>
+                  // `aria-disabled`, not `disabled`. A disabled control leaves
+                  // the tab order entirely, and the one thing a keyboard user
+                  // needs here is to reach this switch and hear the caption
+                  // below that says why it is on: keep-ready already holds the
+                  // device, so this setting has nothing left to add. Removing
+                  // it from the tab order made the reason unreachable for
+                  // exactly the users who cannot see the caption underneath.
+                  // The handler below is what makes it inert.
+                  //
+                  // On the inner `input`, not the wrapper: a bare
+                  // `aria-disabled` on the component lands on the `<span>`
+                  // wrapper, which is not the node a screen reader reaches when
+                  // the switch is focused, so the state would be announced for
+                  // nobody. `slotProps.input` is the MUI v7 spelling; the
+                  // deprecated `inputProps` is silently dropped in v9 (it
+                  // renders as a literal `inputprops="[object Object]"`
+                  // attribute on the wrapper), which is how the first attempt
+                  // failed without an error.
+                  // Both slots, and the second is not redundant. `input` is
+                  // the node a screen reader reaches; `switchBase` is the span
+                  // the theme can style and the only one an adjacent-sibling
+                  // rule can dim the track from. A CSS child selector cannot
+                  // reach up from the input to its wrapper, so a style keyed on
+                  // the input alone silently did nothing.
+                  slotProps={{
+                    input: { "aria-disabled": keepReady || undefined },
+                    switchBase: { "aria-disabled": keepReady || undefined },
+                  }}
+                  onChange={(event) => {
+                    if (keepReady) {
+                      return;
+                    }
                     void setMicrophoneLingerMs(
                       event.target.checked ? DEFAULT_MICROPHONE_LINGER_MS : 0,
-                    )
-                  }
+                    );
+                  }}
                 />
               }
               label={
@@ -359,6 +413,33 @@ export const MicrophoneDialog = () => {
               }
             />
             <LingerCaption keepReady={keepReady} />
+            {/* Only while the switch is the one in charge. Showing a duration
+                under a switch that keep-ready has overridden would offer a
+                choice the app is not listening to. */}
+            <Reveal show={!keepReady && lingerOn}>
+              <Stack spacing={0.5}>
+                <Typography variant="caption" color="text.secondary">
+                  <FormattedMessage defaultMessage="How long to stay open after each dictation" />
+                </Typography>
+                <SegmentedControl
+                  value={String(nearestLingerChoice(lingerMs))}
+                  options={lingerChoices().map((choice) => ({
+                    value: String(choice),
+                    label: intl.formatMessage(
+                      {
+                        defaultMessage: "{seconds} s",
+                      },
+                      { seconds: choice / 1000 },
+                    ),
+                  }))}
+                  onChange={(next) => void setMicrophoneLingerMs(Number(next))}
+                  ariaLabel={intl.formatMessage({
+                    defaultMessage:
+                      "How long to stay open after each dictation",
+                  })}
+                />
+              </Stack>
+            </Reveal>
           </Stack>
 
           <Divider />

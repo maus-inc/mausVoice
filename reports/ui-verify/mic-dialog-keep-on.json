@@ -27,7 +27,7 @@
     {
       "label": "Stay ready after a dictation",
       "checked": true,
-      "disabled": true,
+      "disabled": false,
       "box": {
         "x": 275,
         "y": 635,

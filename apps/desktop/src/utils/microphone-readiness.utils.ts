@@ -31,6 +31,51 @@ export const MAX_MICROPHONE_LINGER_MS = 30_000;
 export const DEFAULT_MICROPHONE_LINGER_MS = 5_000;
 
 /**
+ * The post-recording windows the settings offer, shortest first.
+ *
+ * This exists because the switch alone could only ever set one window, while
+ * the tokens above documented a 30 s ceiling nothing could reach -- a control
+ * that promised a range and exposed a constant. Three choices, because the
+ * meaningful distinction for a user is "barely a beat" against "the same
+ * thought" against "stop and think"; anything finer is a slider, and a slider
+ * for a value a user sets once and forgets is worse than three buttons.
+ *
+ * The values are the ones the backend's finite-window test already covers
+ * (1 ms ... 30 s), and every one of them keeps the microphone indicator lit for
+ * exactly that long after a recording, which is what the copy has to say.
+ */
+export const MICROPHONE_LINGER_CHOICES_MS = [3_000, 5_000, 15_000] as const;
+
+/**
+ * The windows offered while the preference is in the state it is in.
+ *
+ * Zero is not one of the choices. "Close at stop" is the switch being off, and
+ * offering it as a fourth button would give one state two controls that can
+ * disagree -- the same reason the keep-ready switch disables this one instead
+ * of showing a second copy of its value.
+ */
+export const lingerChoices = (): readonly number[] =>
+  MICROPHONE_LINGER_CHOICES_MS;
+
+/**
+ * The nearest offered window to an arbitrary stored value.
+ *
+ * A profile can hold a value from an older build or a hand-edited database, and
+ * the segmented control can only display one of its own options. Rather than
+ * showing no selection, the closest offered window is selected -- but the value
+ * is *not* written back on read, because opening a settings dialog must not
+ * change a preference. The write happens when the user picks one.
+ */
+export const nearestLingerChoice = (value: number): number => {
+  if (!Number.isFinite(value)) {
+    return DEFAULT_MICROPHONE_LINGER_MS;
+  }
+  return MICROPHONE_LINGER_CHOICES_MS.reduce((best, choice) =>
+    Math.abs(choice - value) < Math.abs(best - value) ? choice : best,
+  );
+};
+
+/**
  * The linger value that means "hold until released".
  *
  * The backend reads a hold at or above this magnitude as the sentinel for "no
@@ -126,6 +171,53 @@ export const shouldPrepareMicrophone = ({
   holdActive: boolean;
 }): boolean =>
   !isRecording && !isLocalDataClearing && permissionGranted && !holdActive;
+
+/**
+ * Device-name fragments that identify a Bluetooth headset.
+ *
+ * A superset of the backend's `LOW_QUALITY_INPUT_KEYWORDS`, and for a different
+ * question. The backend uses its list to *rank* devices, so a miss costs a
+ * worse-sounding press. This one decides whether to warn the user that holding
+ * the device costs them audio quality, so a miss leaves a real cost unstated.
+ * The extra entries are the transport words a headset can appear under rather
+ * than the headset brands themselves.
+ */
+const BLUETOOTH_DEVICE_MARKERS = [
+  "airpods",
+  "beats",
+  "bluetooth",
+  "earbud",
+  "hands-free",
+  "hands free",
+  "hfp",
+  "hsp",
+  "headset",
+  "sony wh-",
+  "wireless",
+] as const;
+
+/**
+ * Whether the device identified by this label rides on Bluetooth.
+ *
+ * Holding a Bluetooth microphone open is not the same trade as holding the
+ * built-in one. The link is a shared, half-duplex channel: while an application
+ * captures, macOS moves the headset from A2DP to the hands-free profile, so
+ * music and calls drop to call quality and the headset's battery drains faster
+ * for as long as the hold lasts. None of that is visible as a microphone
+ * indicator, which is all the existing copy promised. A name is the only signal
+ * the device list carries -- `InputDeviceDescriptor` has no transport field --
+ * so this is a heuristic, and it is used only to *add* a warning, never to
+ * change what the app does.
+ */
+export const isLikelyBluetoothDevice = (
+  label: string | null | undefined,
+): boolean => {
+  if (typeof label !== "string" || label.length === 0) {
+    return false;
+  }
+  const lower = label.toLowerCase();
+  return BLUETOOTH_DEVICE_MARKERS.some((marker) => lower.includes(marker));
+};
 
 /**
  * Whether the in-use caption should say the device is held right now.

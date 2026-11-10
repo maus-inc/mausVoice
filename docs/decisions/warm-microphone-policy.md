@@ -62,6 +62,37 @@ before a press is only meaningful while a stream is running, but a stream is not
 required by it, and a zero-second pre-roll on a held device is a supported and
 useful configuration.
 
+**The pre-roll applies to a cold press too, and the copy says so.**
+
+`set_microphone_preroll` is a policy-only command in the same shape as
+`set_microphone_linger`: it opens nothing and applies to whichever path opens
+next, so a press that has to open the device still honours the slider. The
+dialog briefly carried a caveat saying the opposite -- that pre-roll "only
+applies while the microphone is already open" -- written before that command
+existed and left behind after it landed. A caption that tells a user their
+setting does nothing is worse than no caption, because it is a claim about the
+code that a later change can quietly falsify. The rule that follows: a caveat
+must name the unit it is about (the device, the window, the buffer), and any
+commit that changes that unit has to revisit every sentence describing it.
+
+**Holding a Bluetooth microphone is a different bargain, and the dialog says so.**
+
+On the built-in microphone the only cost of a hold is the operating system's
+indicator. On a Bluetooth headset it is larger and invisible: the link is shared
+and half-duplex, so while anything captures, macOS moves the headset from A2DP
+to the hands-free profile. Playback drops to call quality and the headset's
+battery drains for as long as the hold lasts. The switch's own copy promises the
+indicator, which is true and not the whole cost, so a separate warning appears
+under the switch whenever the selected device's name looks like a headset.
+
+That test is a name heuristic, because `InputDeviceDescriptor` carries a label,
+a default flag and a caution flag and no transport. It is therefore used only to
+*add* a warning, never to change what the app does: a false positive costs a
+sentence of copy, and a false negative costs an unexplained battery drain. The
+backend already scores Bluetooth devices down with a superset argument (a
+miss there costs a worse-sounding press); the frontend list is deliberately
+broader, because the two are answering different questions.
+
 **A cold start prepends nothing.**
 
 `cold_start_seed()` returns an empty seed and a zero-capacity stand-in ring. The

@@ -189,33 +189,63 @@ describe("MicrophoneDialog readiness settings", () => {
     );
   });
 
-  it("offers the pre-roll even when keeping ready is off, and says it needs a held stream", async () => {
+  it("offers the pre-roll when keeping ready is off, and does not claim it is inert", async () => {
     await renderDialog();
 
     // The slider stays reachable because it is not a keep-ready setting -- a
     // user weighing keep-ready should be able to see what pre-roll would buy
-    // them. But it cannot deliver anything cold: the ring is a property of a
-    // stream, so with nothing open at the press it is allocated empty. Saying so
-    // is the difference between a setting that disappoints and one that
-    // explains itself.
+    // them.
     expect(text()).toContain("Audio kept before the press");
-    expect(text()).toContain(
-      "This only applies while the microphone is already open",
-    );
+    // This test used to assert the opposite, and the assertion was wrong. It
+    // required a caveat saying pre-roll "only applies while the microphone is
+    // already open", while `set_microphone_preroll` -- the command this branch
+    // added so a cold press would honour the slider -- makes exactly that
+    // sentence false. The copy contradicted the fix it shipped beside.
+    expect(text()).not.toContain("This only applies while the microphone");
   });
 
-  it("does not repeat the held-stream caveat once the microphone is held", async () => {
-    // With keep-ready on, the ring is already collecting, so the caveat is
-    // false and telling the user their pre-roll does nothing would be wrong.
+  it("warns that a Bluetooth headset drops to call quality while held", async () => {
+    // NOT a cosmetic warning. macOS moves a capturing headset from A2DP to the
+    // hands-free profile, so playback becomes call quality and the battery
+    // drains for as long as the hold lasts. None of that is the microphone
+    // indicator the switch's own copy promises.
     produceAppState((draft) => {
-      draft.userPrefs = prefs({ keepMicrophoneReady: true });
+      draft.userPrefs = prefs({
+        keepMicrophoneReady: true,
+        preferredMicrophone: "Jabra Evolve2 65 Hands-Free",
+      });
     });
     await renderDialog();
 
-    expect(text()).toContain("Audio kept before the press");
-    expect(text()).not.toContain(
-      "This only applies while the microphone is already open",
-    );
+    expect(text()).toContain("This is a Bluetooth microphone");
+  });
+
+  it("does not warn about Bluetooth quality for a wired or built-in microphone", async () => {
+    produceAppState((draft) => {
+      draft.userPrefs = prefs({
+        keepMicrophoneReady: true,
+        preferredMicrophone: "MacBook Pro Microphone",
+      });
+    });
+    await renderDialog();
+
+    // The warning is useless if it fires on every device: a user who sees it
+    // on their built-in microphone learns to ignore it.
+    expect(text()).not.toContain("This is a Bluetooth microphone");
+  });
+
+  it("does not warn about Bluetooth while the device is not being held", async () => {
+    produceAppState((draft) => {
+      draft.userPrefs = prefs({
+        keepMicrophoneReady: false,
+        preferredMicrophone: "Jabra Evolve2 65 Hands-Free",
+      });
+    });
+    await renderDialog();
+
+    // The cost only exists while the device is held. Warning about it with the
+    // switch off would describe something the app is not doing.
+    expect(text()).not.toContain("This is a Bluetooth microphone");
   });
 
   it("keeps the pre-roll slider reachable when the value is zero", async () => {
@@ -338,10 +368,91 @@ describe("MicrophoneDialog readiness settings", () => {
     // Keeping ready already holds the device indefinitely, so a window would
     // have nothing to add. Showing it enabled would offer a control that cannot
     // change anything.
-    expect(switchFor("Stay ready after a dictation").disabled).toBe(true);
+    //
+    // `aria-disabled` rather than `disabled`: a natively disabled control leaves
+    // the tab order, and the caption explaining *why* it is on is the one thing
+    // a keyboard user needs to reach here. The assertions below are the pair --
+    // still focusable, still inert -- and asserting only one of them is how the
+    // first version shipped a control nobody using a keyboard could reach.
+    const lingerSwitch = switchFor("Stay ready after a dictation");
+    expect(lingerSwitch.getAttribute("aria-disabled")).toBe("true");
+    expect(lingerSwitch.disabled).toBe(false);
     expect(text()).toContain(
       "Already on, because the microphone is kept ready.",
     );
+  });
+
+  it("does not change the linger window when the overridden switch is toggled", async () => {
+    await renderDialog();
+
+    await act(async () => {
+      produceAppState((draft) => {
+        draft.userPrefs = prefs({
+          keepMicrophoneReady: true,
+          microphoneLingerMs: 0,
+        });
+      });
+    });
+
+    setUserPreferences.mockClear();
+    // `aria-disabled` leaves the input operable, so the guard inside the change
+    // handler is the only thing making it inert. Without this test, dropping
+    // that guard would silently write a linger window while keep-ready owns the
+    // device.
+    await toggle("Stay ready after a dictation");
+
+    expect(setUserPreferences).not.toHaveBeenCalled();
+  });
+
+  it("offers the documented linger windows once the switch is on", async () => {
+    await renderDialog();
+
+    await act(async () => {
+      produceAppState((draft) => {
+        draft.userPrefs = prefs({ microphoneLingerMs: 5_000 });
+      });
+    });
+
+    // `MAX_MICROPHONE_LINGER_MS` documented a 30 s ceiling that no control could
+    // reach: the switch set 5 s and nothing else existed. These three are that
+    // promise made reachable.
+    expect(text()).toContain("3 s");
+    expect(text()).toContain("5 s");
+    expect(text()).toContain("15 s");
+  });
+
+  it("shows the nearest offered window for a stored value that is not one of them", async () => {
+    await renderDialog();
+
+    await act(async () => {
+      produceAppState((draft) => {
+        // A value from an older build, or a hand-edited row. The control has to
+        // display something, and the closest option is the honest choice.
+        draft.userPrefs = prefs({ microphoneLingerMs: 14_000 });
+      });
+    });
+
+    const selected = document.body.querySelector(
+      ".MuiTab-wrapper, [role=tab][aria-selected=true]",
+    );
+    expect(selected?.textContent ?? text()).toContain("15 s");
+  });
+
+  it("does not show the duration choices while keeping ready owns the device", async () => {
+    await renderDialog();
+
+    await act(async () => {
+      produceAppState((draft) => {
+        draft.userPrefs = prefs({
+          keepMicrophoneReady: true,
+          microphoneLingerMs: 5_000,
+        });
+      });
+    });
+
+    // Offering a duration under a switch keep-ready has overridden would be
+    // offering a choice the app is not listening to.
+    expect(text()).not.toContain("How long to stay open after each dictation");
   });
 
   it("turns the linger window on with the documented default", async () => {

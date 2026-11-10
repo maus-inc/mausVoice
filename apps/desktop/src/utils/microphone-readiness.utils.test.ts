@@ -1,11 +1,16 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  DEFAULT_MICROPHONE_LINGER_MS,
   DEFAULT_MICROPHONE_PREROLL_SECONDS,
+  MAX_MICROPHONE_LINGER_MS,
   MAX_MICROPHONE_PREROLL_SECONDS,
   MICROPHONE_READY_FOREVER_MS,
   classifyMicrophoneFailure,
   describeHeldState,
+  isLikelyBluetoothDevice,
+  lingerChoices,
+  nearestLingerChoice,
   normalizeMicrophonePrerollSeconds,
   shouldHoldMicrophoneReady,
   shouldPrepareMicrophone,
@@ -283,5 +288,83 @@ describe("microphone failure classification", () => {
     expect(classifyMicrophoneFailure(liar)).toBe("unknown");
     expect(classifyMicrophoneFailure(["permission denied"])).toBe("unknown");
     expect(classifyMicrophoneFailure(0)).toBe("unknown");
+  });
+});
+
+describe("isLikelyBluetoothDevice", () => {
+  it.each([
+    ["Jabra Evolve2 65 Hands-Free", true],
+    ["AirPods Pro", true],
+    ["WH-1000XM5 (Bluetooth)", true],
+    ["MacBook Pro Microphone", false],
+    ["Yeti USB Microphone", false],
+    ["", false],
+    [null, false],
+    [undefined, false],
+  ])("%s -> %s", (label, expected) => {
+    expect(isLikelyBluetoothDevice(label as string | null | undefined)).toBe(
+      expected,
+    );
+  });
+
+  it("is case-insensitive", () => {
+    // Device names come from the OS and are capitalised inconsistently: the same
+    // headset reports as "Jabra ... Hands-Free" on one host and lowercase on
+    // another.
+    expect(isLikelyBluetoothDevice("JABRA EVOLVE2 65 HANDS-FREE")).toBe(true);
+    expect(isLikelyBluetoothDevice("bluetooth headset")).toBe(true);
+  });
+});
+
+describe("lingerChoices", () => {
+  it("offers every documented window, ascending", () => {
+    const choices = lingerChoices();
+    expect(choices).toEqual([3_000, 5_000, 15_000]);
+    // Ascending so the segmented control reads left-to-right as shortest to
+    // longest; an unsorted list would put "stop and think" before "a beat".
+    expect([...choices]).toEqual([...choices].sort((a, b) => a - b));
+  });
+
+  it("never offers zero", () => {
+    // Zero is the switch being off. A zero option would be a second control for
+    // one state, and the two could disagree.
+    expect(lingerChoices()).not.toContain(0);
+  });
+
+  it("stays inside the range the backend's finite-window rule covers", () => {
+    for (const choice of lingerChoices()) {
+      expect(choice).toBeGreaterThan(0);
+      expect(choice).toBeLessThanOrEqual(MAX_MICROPHONE_LINGER_MS);
+    }
+  });
+});
+
+describe("nearestLingerChoice", () => {
+  it.each([
+    [3_000, 3_000],
+    [3_400, 3_000],
+    [4_100, 5_000],
+    [9_900, 5_000],
+    [14_000, 15_000],
+    [29_999, 15_000],
+    [1, 3_000],
+  ])("%i ms selects %i ms", (stored, expected) => {
+    expect(nearestLingerChoice(stored)).toBe(expected);
+  });
+
+  it("falls back to the default for a non-finite value", () => {
+    // A NaN survives JSON round-trips as null and arrives here as NaN from a
+    // hand-edited row; `Math.abs(NaN - x)` is NaN, every comparison is false,
+    // and the reduce would return its seed rather than an option.
+    expect(nearestLingerChoice(Number.NaN)).toBe(DEFAULT_MICROPHONE_LINGER_MS);
+    expect(nearestLingerChoice(Number.POSITIVE_INFINITY)).toBe(
+      DEFAULT_MICROPHONE_LINGER_MS,
+    );
+  });
+
+  it("always returns one of the offered windows", () => {
+    for (const stored of [0, 1, 2_999, 3_001, 12_345, 30_000, -5]) {
+      expect(lingerChoices()).toContain(nearestLingerChoice(stored));
+    }
   });
 });

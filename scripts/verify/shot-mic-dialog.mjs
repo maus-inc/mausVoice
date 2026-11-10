@@ -169,6 +169,63 @@ writeFileSync(
 if (!afterKeep.text.includes("Audio kept before the press"))
   note("ux", "pre-roll slider did not appear with keep-ready on");
 
+// ---- The overridden linger switch: reachable, inert, and visibly so ---------
+//
+// Three separate failures have lived here, and only the third was visible on a
+// screenshot:
+//
+//  1. `disabled` removed it from the tab order, so the caption explaining why it
+//     is on was unreachable for a keyboard user.
+//  2. Moving to `aria-disabled` fixed that and silently dropped the dimming that
+//     `disabled` supplied, so an inert control looked operable.
+//  3. The theme keys its checked styling on `.Mui-checked:not(.Mui-disabled)`,
+//     so a disabled-but-checked switch rendered grey *unchecked* above a
+//     caption saying "Already on".
+//
+// So all three are asserted, and a screenshot is still taken because a rule can
+// pass every computed-style check and still look wrong.
+const lingerState = await page.evaluate(`(() => {
+  const rows = [...document.querySelectorAll('.MuiFormControlLabel-root')];
+  const row = rows.find((r) => r.textContent.includes('Stay ready after a dictation'));
+  if (!row) return null;
+  const input = row.querySelector('input');
+  const base = row.querySelector('.MuiSwitch-switchBase');
+  const track = row.querySelector('.MuiSwitch-track');
+  return {
+    ariaDisabled: input.getAttribute('aria-disabled'),
+    nativelyDisabled: input.disabled,
+    tabIndex: input.tabIndex,
+    checked: input.checked,
+    baseOpacity: getComputedStyle(base).opacity,
+    cursor: getComputedStyle(base).cursor,
+    checkedClass: base.classList.contains('Mui-checked'),
+    hasExplainCaption: row.parentElement.textContent.includes('Already on, because the microphone is kept ready'),
+  };
+})()`);
+if (!lingerState) {
+  note("a11y", "linger switch row vanished");
+} else {
+  if (lingerState.ariaDisabled !== "true")
+    note("a11y", `overridden linger switch has aria-disabled=${lingerState.ariaDisabled}`);
+  if (lingerState.nativelyDisabled)
+    note("a11y", "overridden linger switch is natively disabled and left the tab order");
+  if (lingerState.tabIndex < 0)
+    note("a11y", "overridden linger switch is not focusable");
+  if (!lingerState.checkedClass || !lingerState.checked)
+    note("state", "overridden linger switch does not read as on");
+  // 0.5 is the theme's disabled affordance; 1 means it looks operable.
+  if (Number(lingerState.baseOpacity) > 0.75)
+    note("a11y", `inert linger switch is not visually dimmed (opacity ${lingerState.baseOpacity})`);
+  if (lingerState.cursor !== "not-allowed")
+    note("a11y", `inert linger switch cursor is "${lingerState.cursor}"`);
+  if (!lingerState.hasExplainCaption)
+    note("a11y", "overridden linger switch has no caption saying why it is on");
+}
+writeFileSync(
+  `${OUT}/mic-dialog-linger-overridden.json`,
+  JSON.stringify(lingerState, null, 2),
+);
+
 // ---- Overflow: does the dialog scroll rather than clip ---------------------
 const overflow = await page.evaluate(`(() => {
   const d = document.querySelector('.MuiDialog-paper, [role=dialog] > div');
