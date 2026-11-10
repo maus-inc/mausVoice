@@ -38,6 +38,7 @@
     "@types/react": "19.2.18",
     "@types/react-dom": "^19.2.4",
     "@vitejs/plugin-react": "^5.2.0",
+    "babel-plugin-formatjs": "^10.5.41",
     "jsdom": "^30.0.1",
     "oxlint": "^1.78.0",
     "typescript": "~5.9.3",

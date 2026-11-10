@@ -20,6 +20,7 @@
     "preview": "node scripts/run-vite-with-flavor.mjs preview",
     "tauri": "node scripts/run-tauri-with-sidecars.mjs",
     "test:webdriver": "wdio run webdriver/wdio.conf.js",
+    "gen:provider-logos": "node scripts/generate-provider-logos.mjs",
     "i18n:extract": "node ./scripts/i18n-extract-with-prune.mjs",
     "i18n:sync": "node ./scripts/i18n-sync.mjs",
     "i18n": "pnpm run i18n:extract && pnpm run i18n:sync",

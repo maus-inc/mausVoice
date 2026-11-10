@@ -394,6 +394,9 @@ importers:
       '@vitejs/plugin-react':
         specifier: ^5.2.0
         version: 5.2.0(vite@6.4.3(@types/node@25.5.2)(jiti@2.6.1)(lightningcss@1.33.0)(tsx@4.23.12)(yaml@2.8.3))
+      babel-plugin-formatjs:
+        specifier: ^10.5.41
+        version: 10.5.41
       jsdom:
         specifier: ^30.0.1
         version: 30.0.1

@@ -5,7 +5,7 @@ sidebar:
   order: 1
 ---
 
-Open **Settings** from the bottom of the left navigation rail. Most controls save as you change them. Some dialogs, including the profile editor, language shortcuts, and API key forms, use explicit **Save** and **Cancel** buttons. The settings surface has a search field at the top that matches setting names, section names, and common synonyms, and every match jumps straight to its row. Provider-dependent results appear once their API keys have loaded. A provider-dependent deep link that is still resolving after navigation shows its loading, retry, or unavailable state when the row cannot be shown.
+Open **Settings** from the bottom of the left navigation rail. Most controls save as you change them. Some dialogs, including the profile editor, language shortcuts, and API key forms, use explicit **Save** and **Cancel** buttons. The settings surface has a search field at the top that matches setting names, section names, common synonyms, and provider names — searching "AssemblyAI", "Claude", or "Ollama" finds the row where that provider is chosen — and every match jumps straight to its row. Provider-dependent results appear once their API keys have loaded. A provider-dependent deep link that is still resolving after navigation shows its loading, retry, or unavailable state when the row cannot be shown.
 
 A rail on the left lists the eight sections and stays put while you read a page. Each section is its own page, so a long list never buries the section you want next:
 
@@ -41,7 +41,7 @@ The overview brings frequently used shortcuts and the currently selected models 
 
 ## AI and models
 
-- **Deepgram API key** and **Groq API key** are quick credential forms for fast streaming transcription and generative post-processing respectively.
+- **Deepgram API key** and **Groq API key** are quick credential forms for fast streaming transcription and generative post-processing respectively. Each row leads with that provider's own brand mark.
 - **AI transcription** chooses Local or API processing, the local model and device, or a task-compatible provider record. Gladia records expose `solaria-1` and support live plus batch and import transcription.
 - **AI post processing** chooses API or Off and a generative provider record.
 - **Assistant mode** is the command and chat workflow, with a separate provider, shortcut, feature switch, and optional power mode.
@@ -49,6 +49,8 @@ The overview brings frequently used shortcuts and the currently selected models 
 - **Automatic style loading** loads the style assigned to the app that was focused when dictation began, in Manual styling mode.
 
 A credential can appear for more than one task only when its provider supports that task, so selecting a transcription key does not also select it for post-processing or Assistant mode.
+
+Everywhere a provider is named — the provider menu on a key form, the key cards, the Overview model rows, and the audio-disclosure sentence — it is shown with its own brand mark in the provider's published colours. The mark identifies who the row is about; it is not a badge for where the work happens, and providers without a published mark are named in text alone.
 
 ## Shortcuts
 
