@@ -70,7 +70,8 @@ const namesIn = (source, macroName) => {
 
 const registered = () =>
   namesIn(readFileSync(APP_RS, "utf8"), "tauri::generate_handler");
-const collected = () => namesIn(readFileSync(GEN_BINDINGS_RS, "utf8"), "collect_commands");
+const collected = () =>
+  namesIn(readFileSync(GEN_BINDINGS_RS, "utf8"), "collect_commands");
 
 /**
  * Commands that are registered but deliberately not collected.
@@ -82,7 +83,10 @@ const collected = () => namesIn(readFileSync(GEN_BINDINGS_RS, "utf8"), "collect_
  * bindings.ts" keeps the exception visible: a third name appearing in this
  * array is a decision someone has to make on purpose.
  */
-const UNBOUND_BY_DESIGN = new Set(["stop_recording", "store_transcription_audio"]);
+const UNBOUND_BY_DESIGN = new Set([
+  "stop_recording",
+  "store_transcription_audio",
+]);
 
 describe("the bindings generator agrees with the command registry", () => {
   it("parses a non-trivial number of commands from both lists", () => {
@@ -132,7 +136,11 @@ describe("the bindings generator agrees with the command registry", () => {
     // The other direction, which would fail to compile rather than silently
     // drift -- but a name that differs by a character is easier to see here.
     const extra = collected().filter((name) => !registered().includes(name));
-    assert.deepEqual(extra, [], `in gen_bindings.rs but not registered: ${extra.join(", ")}`);
+    assert.deepEqual(
+      extra,
+      [],
+      `in gen_bindings.rs but not registered: ${extra.join(", ")}`,
+    );
   });
 
   it("names the pre-roll setter in both lists", () => {
