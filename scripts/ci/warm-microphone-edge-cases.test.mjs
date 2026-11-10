@@ -166,9 +166,27 @@ test("every row states how it is checked", () => {
       // such as "same test" or "see above", which cannot be checked.
       assert.match(
         row,
-        /Verified — `[^`]+`/,
+        /Verified: `[^`]+`/,
         `a Verified row must name its test: ${row.slice(0, 80)}`,
       );
     }
   }
+});
+
+test("the document carries no em dashes", () => {
+  // `.coderabbit.yaml` sets a path instruction for `**/*.{md,mdx}`: "No em
+  // dashes". The verdict cells used one as a separator, so the rule was broken
+  // by the document that states the policy. The separator is now a colon, and
+  // this keeps it that way: a reviewer should not have to notice a style rule
+  // the repository already wrote down.
+  const doc = readFileSync(DOC, "utf8");
+  const offenders = doc
+    .split("\n")
+    .map((line, index) => ({ line, number: index + 1 }))
+    .filter(({ line }) => line.includes("\u2014"));
+  assert.deepEqual(
+    offenders.map(({ number }) => number),
+    [],
+    "em dashes at lines: " + offenders.map(({ number }) => number).join(", "),
+  );
 });

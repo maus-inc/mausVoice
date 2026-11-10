@@ -1,7 +1,10 @@
 # What was measured, and what was not
 
-Every number in this file was produced by a command run on 2026-11-06 in the
-Arena agent sandbox, on branch `arena/05c08045-mausvoice`. Commands that were
+Every number in this file was produced by a command run in the Arena agent
+sandbox on branch `arena/05c08045-mausvoice`, at the commit named in each row.
+The commit matters: a count without one is a number that silently goes stale,
+which is how this table came to report 581 Rust tests while the branch head ran
+590. Commands that were
 not run are not in the measured column; they are in the unmeasured column with
 what would produce them.
 
@@ -13,11 +16,11 @@ estimate dressed as a measurement.
 
 | Gate | Command | Result |
 | --- | --- | --- |
-| Rust unit tests | `cargo test --locked --lib` in `apps/desktop/src-tauri` | **581 passed, 0 failed, 1 ignored** |
+| Rust unit tests | `cargo test --locked --lib` in `apps/desktop/src-tauri` | **590 passed, 0 failed, 1 ignored** (`1261cc5e`) |
 | Rust lints | `cargo clippy --locked --all-targets -- -D warnings` | 0 warnings, 0 errors |
 | Rust formatting | `cargo fmt --check` | clean |
-| Frontend tests (unit) | `vitest run src` in `apps/desktop` | **3851 passed, 0 failed** across 338 files |
-| Frontend tests (evals and integration) | `vitest run test` in `apps/desktop` | **not run without `GROQ_API_KEY`** — these suites call a live provider and fail on the missing key, so they are not part of the green figure above |
+| Frontend tests (unit) | `vitest run src` in `apps/desktop` | **4153 passed, 0 failed** across 362 files (`1261cc5e`) |
+| Frontend tests (evals and integration) | `vitest run test` in `apps/desktop` | **not run without `GROQ_API_KEY`**; these suites call a live provider and fail on the missing key, so they are not part of the green figure above |
 | Frontend types | `turbo run check-types` | 9/9 tasks successful |
 | Preview types (TS 5.9) | `tsc --noEmit -p apps/preview/tsconfig.json` | clean |
 | Preview production build | `pnpm --filter @maus-inc/preview build` | built in 16.4 s |
@@ -33,7 +36,7 @@ a rendering of the page by another tool.
 | --- | --- | --- |
 | Preview index renders | `scripts/verify/shot-home.mjs` | title `mausVoice · UI Preview & Specs`, 39 entries, 40 routes, **0 console errors, 0 failed requests** |
 | Microphone dialog renders | `scripts/verify/shot-mic-dialog.mjs` | 2 switches, 1 slider, title `Microphone settings`, **0 problems, 0 console errors, 0 page errors, 0 unmapped native commands** |
-| Dialog reaches the tester | measured scroll geometry | content 955 px in a 694 px box with `overflow-y: auto`; the Record button is hit-testable after scrolling — the footer does not cover it |
+| Dialog reaches the tester | measured scroll geometry | content 955 px in a 694 px box with `overflow-y: auto`; the Record button is hit-testable after scrolling, and the footer does not cover it |
 | Dialog at 560 px | viewport measured at 560 px | dialog 496 px wide, 0 elements outside the viewport, no horizontal scroll |
 | Dark mode | `prefers-color-scheme: dark` emulated | paper `rgb(22,22,23)`, body `rgb(12,12,13)`, heading text `rgb(242,241,238)` |
 | Every preview route | `scripts/verify/sweep-preview.mjs` at 1280 px | **80 page loads (40 routes × 2 themes), 0 with problems** |

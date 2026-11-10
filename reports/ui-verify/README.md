@@ -8,7 +8,7 @@ rather than source.
 
 The JSON is committed deliberately: it is small, it is text, and a reviewer can
 read a diff of it. Regenerating it is expected whenever the UI changes, and the
-diff is the point — it shows what the change did to the measured numbers.
+diff is the point: it shows what the change did to the measured numbers.
 
 Regenerate them:
 

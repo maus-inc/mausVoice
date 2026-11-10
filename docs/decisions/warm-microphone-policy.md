@@ -81,9 +81,18 @@ which is the cost being removed.
 
 `MicrophoneReadinessSideEffects` is the only caller of `warmMicrophone` and
 `closeMicrophone`. It holds when the preference is on and nothing blocks it, and
-releases when the preference goes off, a recording starts, permission is
-revoked, or a local-data clear is requested. A second owner would be a second
-place that could leave a device open.
+releases when the preference goes off, permission is revoked, or a local-data
+clear is requested. A second owner would be a second place that could leave a
+device open.
+
+A recording does not release it. `start_recording` adopts the held stream, and
+this component returns before deciding anything while `isRecording` is true, so
+the device stays open and the stop path decides what becomes of it. Releasing on
+record was tried and is wrong twice over: it closed the stream the press had
+just adopted, and `closeMicrophone` also zeroes the linger window the stop path
+reads, so every dictation paid the device open that keep-ready exists to avoid
+and the indicator blinked for the whole cycle. The rule is that the stream has
+one owner at a time: the component while idle, the recording while capturing.
 
 **Preparing is always on.**
 
