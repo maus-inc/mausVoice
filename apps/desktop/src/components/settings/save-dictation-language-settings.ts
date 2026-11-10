@@ -108,6 +108,8 @@ export const saveDictationLanguageSettings = async (
   rows: LanguageRow[],
   currentLanguage: string,
   initialLanguage = currentLanguage,
+  /** The group the dialog's rows were drafted from, read when it opened. */
+  snapshot?: Hotkey[],
 ): Promise<void> => {
   const [primary, ...additional] = rows;
   if (!primary) throw new Error("A primary dictation language is required.");
@@ -142,13 +144,17 @@ export const saveDictationLanguageSettings = async (
       }
 
       const repo = getHotkeyRepo();
-      // Read the group immediately before replacing it: the snapshot is what
-      // the replacement asserts, so a shortcut added in another dialog between
-      // the dialog opening and this save is reported instead of silently
-      // dropped.
+      // The conflict check must assert the group the dialog's rows were
+      // drafted from. Rereading it here would accept keys written after the
+      // draft was taken and silently overwrite them; a shortcut added in
+      // another dialog between opening and saving is reported instead.
+      // The fresh read below still drives id reuse and untouched rows.
       const group = (await repo.listHotkeys())
         .filter(isDictationGroupRow)
         .sort(byId);
+      const expectedGroup = snapshot
+        ? snapshot.filter(isDictationGroupRow).sort(byId)
+        : group;
       const existingPrimary = group.find(
         (hotkey) => hotkey.actionName === DICTATE_HOTKEY,
       );
@@ -187,7 +193,7 @@ export const saveDictationLanguageSettings = async (
       await repo.replaceDictationLanguageHotkeys(
         primaryHotkey,
         [...languageRows, ...untouchedDictationRows],
-        group,
+        expectedGroup,
         lease,
       );
       setOnboardingSavedHotkey(primaryHotkey.id, primaryHotkey);

@@ -67,6 +67,25 @@ beforeEach(() => {
   mocks.sync.mockResolvedValue(undefined);
 });
 
+it("asserts the group the dialog opened with, not a reread taken at save", async () => {
+  // CodeAnt: the draft was built from the store at open; a shortcut written
+  // after that must fail the conflict check instead of being overwritten by
+  // the reread the save used to pass as `expected`.
+  const openedWith: Hotkey[] = [oldPrimary, secondDictation, oldAdditional];
+  mocks.list.mockResolvedValue([
+    oldPrimary,
+    secondDictation,
+    { ...oldAdditional, keys: ["NEW"] },
+  ]);
+
+  await saveDictationLanguageSettings(rows, "en", "en", openedWith);
+
+  const [, , expected] = mocks.replaceGroup.mock.calls[0];
+  expect(
+    expected.find((hotkey: Hotkey) => hotkey.id === "extra")?.keys,
+  ).toEqual(["B"]);
+});
+
 it("writes the primary and the language rows in one group replacement", async () => {
   await saveDictationLanguageSettings(rows, "en");
 
