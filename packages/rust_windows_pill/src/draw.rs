@@ -1655,15 +1655,12 @@ fn draw_permission_card(
 /// inserted, edits included. It scrolls with the rest of the panel, so there is
 /// no cap on its length.
 fn draw_review_text(gfx: &Gfx, state: &PillState, x: f64, y: f64, w: f64, alpha: f64) -> f64 {
-    gfx.draw_text_top_left(
-        "REVIEW TRANSCRIPT",
-        x,
-        y,
-        11.0,
-        true,
-        false,
-        [1.0, 1.0, 1.0, 0.5 * alpha],
-    );
+    let review = state.assistant_review.borrow();
+    let label = review
+        .as_ref()
+        .and_then(|review| review.review_label.as_deref())
+        .unwrap_or("REVIEW TRANSCRIPT");
+    gfx.draw_text_top_left(label, x, y, 11.0, true, false, [1.0, 1.0, 1.0, 0.5 * alpha]);
 
     let mut text_y = y + REVIEW_TITLE_HEIGHT;
     let text = state.entry_text.borrow();

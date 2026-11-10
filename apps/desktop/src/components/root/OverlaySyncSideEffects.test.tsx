@@ -82,6 +82,7 @@ describe("native pill review localization", () => {
     expect(lastPayload().review).toEqual({
       id: "review-1",
       text: "Keep this transcript",
+      review_label: de.review_transcript,
       edit_label: de.edit,
       insert_label: de.insert,
       copy_label: de.copy,
@@ -99,6 +100,7 @@ describe("native pill review localization", () => {
     // as an English literal, the only place to catch it is this payload, so
     // assert each matches its translated catalog entry and differs from English.
     const captions = {
+      review_label: "review_transcript",
       edit_label: "edit",
       insert_label: "insert",
       copy_label: "copy",
@@ -118,6 +120,9 @@ describe("native pill review localization", () => {
     mocks.invoke.mockClear();
     await renderLocale("fr");
     expect(mocks.invoke).toHaveBeenCalledTimes(1);
+    expect(lastPayload().review.review_label).toBe(
+      getMessagesForLocale("fr").review_transcript,
+    );
     expect(lastPayload().review.edit_label).toBe(
       getMessagesForLocale("fr").edit,
     );

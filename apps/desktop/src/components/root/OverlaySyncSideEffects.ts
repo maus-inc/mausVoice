@@ -47,7 +47,8 @@ type NativePillPayload = {
   review: {
     id: string;
     text: string;
-    /** Localized captions for every control the pill draws for this review. */
+    review_label: string;
+    /** Localized title and control captions drawn by the native pill. */
     edit_label: string;
     insert_label: string;
     copy_label: string;
@@ -248,6 +249,10 @@ const useNativePillAssistantSync = () => {
             // cross the bridge. Shipping them as literals left a German user
             // reading "Insert" and "Cancel" on the one surface that asks them
             // to accept or reject their own dictation.
+            review_label: intl.formatMessage({
+              id: "review_transcript",
+              defaultMessage: "Review transcript",
+            }),
             edit_label: intl.formatMessage({
               id: "edit",
               defaultMessage: "Edit",

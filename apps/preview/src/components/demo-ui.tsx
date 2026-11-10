@@ -74,7 +74,10 @@ export const State = ({
     >
       {children}
     </Box>
-    <Typography variant="labelSmall" color="text.secondary">
+    <Typography
+      variant="labelSmall"
+      sx={{ color: dark ? "rgba(255,255,255,0.72)" : "text.secondary" }}
+    >
       {label}
     </Typography>
   </Paper>

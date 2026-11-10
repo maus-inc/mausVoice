@@ -1546,7 +1546,12 @@ fn draw_review_text(ctx: &Ctx, state: &PillState, x: f64, y: f64, w: f64, alpha:
     ctx.select_font_face("Satoshi", false, true);
     ctx.set_font_size(11.0);
     ctx.move_to(x, y + 12.0);
-    ctx.show_text("REVIEW TRANSCRIPT");
+    let review = state.assistant_review.borrow();
+    let label = review
+        .as_ref()
+        .and_then(|review| review.review_label.as_deref())
+        .unwrap_or("REVIEW TRANSCRIPT");
+    ctx.show_text(label);
 
     let mut text_y = y + REVIEW_TITLE_HEIGHT;
 
