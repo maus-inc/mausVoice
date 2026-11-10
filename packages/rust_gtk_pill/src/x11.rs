@@ -277,25 +277,24 @@ fn restored_position(
     let (alloc_w, alloc_h) = window.size();
     let window_w = alloc_w as f64 * scale;
     let window_h = alloc_h as f64 * scale;
-    let (px, py, _, _) =
+    let (px, py, pw, ph) =
         crate::draw::pill_position(state, state.draw_width.get(), state.draw_height.get());
     let (cox, coy) = state.content_offset();
     let fx = (cox + px) * scale;
     let fy = (coy + py) * scale;
+    let fw = pw * scale;
+    let fh = ph * scale;
     let placement = rust_pill_shared::restore::restore(
         parked,
         &work_areas,
         (window_w, window_h),
-        |work, (window_w, window_h)| {
+        |work, _window| {
             // The visible pill footprint, not the transparent toplevel, is what
-            // has to stay on screen. Same arithmetic as `placement_on_monitor`
-            // in dictation mode, which is the mode the pill starts in.
-            DragBounds {
-                min_x: work.x - fx,
-                min_y: work.y - fy,
-                max_x: work.right() - fx - window_w,
-                max_y: work.bottom() - fy - window_h,
-            }
+            // has to stay on screen. This is the same bounds
+            // `placement_on_monitor` builds for dictation mode, so a restored
+            // origin survives the idle tick instead of being pulled inward by
+            // the toplevel's transparent margins.
+            rust_pill_shared::restore::footprint_bounds(work, (fx, fy), (fw, fh))
         },
     );
     match placement {

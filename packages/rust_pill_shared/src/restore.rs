@@ -315,6 +315,59 @@ fn remap(parked: ParkedWindow, work: MonitorRect) -> (f64, f64) {
     )
 }
 
+/// Bounds that keep the pill's *visible footprint* inside a work area.
+///
+/// Every platform draws the pill inside a transparent OS window that is far
+/// larger than the pill itself: a 48x6 pill sits inside a 600x362 canvas. That
+/// canvas exists so the pill can expand and grow a selector tail without the
+/// window changing size, and it means clamping the window origin into the work
+/// area would hold the pill hundreds of pixels away from the edge the user can
+/// actually see and reach.
+///
+/// So both the drag path and the restore clamp the footprint instead, and they
+/// have to agree. When they do not, a restored pill lands where it was saved and
+/// then the first idle tick pulls it somewhere else, which reads as the position
+/// not being remembered. One function, called by restore and by every idle
+/// clamp, is what makes "restored" and "left alone" the same pixels.
+///
+/// `offset` is the footprint's top-left inside the window, measured from the
+/// window origin in the same top-down space the window origin uses.
+pub fn footprint_bounds(work: MonitorRect, offset: (f64, f64), size: (f64, f64)) -> DragBounds {
+    DragBounds {
+        min_x: work.x - offset.0,
+        min_y: work.y - offset.1,
+        max_x: work.right() - offset.0 - size.0,
+        max_y: work.bottom() - offset.1 - size.1,
+    }
+}
+
+/// The offset and size of a pill centred horizontally and anchored to the
+/// window's bottom edge: the resting arrangement all three pills share.
+///
+/// The draw code computes the live animated footprint, and the restore needs the
+/// same arrangement before any frame has run. Expressed once, so the two cannot
+/// disagree about where a parked pill sits inside its window.
+///
+/// `bottom_reserve` is everything between the pill's bottom edge and the
+/// window's bottom edge. That is not only the resting gap: the window also keeps
+/// room for the selector that drops below the pill, so the reserve is the inset
+/// plus [`crate::placement::below_slot_extra`]. Leaving the slot out shifts the
+/// pill by that extra, which is exactly the quiet disagreement between restore
+/// and idle this function exists to end.
+pub fn centered_bottom_footprint(
+    window: (f64, f64),
+    pill: (f64, f64),
+    bottom_reserve: f64,
+) -> ((f64, f64), (f64, f64)) {
+    (
+        (
+            (window.0 - pill.0) / 2.0,
+            window.1 - bottom_reserve - pill.1,
+        ),
+        (pill.0, pill.1),
+    )
+}
+
 /// Where the origin sat inside the display, as a fraction of the room it could
 /// slide, clamped to `0.0` to `1.0`. Returns `0.0` when there is no room.
 fn relative_fraction(origin: f64, display_origin: f64, display_span: f64, window_span: f64) -> f64 {
@@ -598,6 +651,86 @@ mod tests {
                 "display":{"x":0.0,"y":0.0,"width":1920.0,"height":1040.0}}"#
         )
         .is_none());
+    }
+
+    /// The bug this function exists to prevent: restore and idle clamped
+    /// differently, so a pill saved at an edge was placed correctly and then
+    /// pulled inward by the first idle tick. Restoring a position and clamping
+    /// it again with the same bounds must be a no-op, or the pill visibly moves
+    /// after launch.
+    #[test]
+    fn a_restored_origin_is_a_fixed_point_of_the_idle_clamp() {
+        let work = rect(0.0, 0.0, 1920.0, 1040.0);
+        // A canvas far larger than the pill, sitting at the bottom of the screen.
+        let window = (600.0, 362.0);
+        let pill = (48.0, 6.0);
+        // The real reserve: the resting gap plus the selector slot the window
+        // keeps below the pill.
+        let (offset, size) =
+            centered_bottom_footprint(window, pill, 6.0 + crate::placement::below_slot_extra(32.0));
+        let bounds = footprint_bounds(work, offset, size);
+
+        // Every corner of the work area, including the one the canvas-clamp bug
+        // moved the pill away from: the footprint's own bottom-right corner.
+        for (x, y) in [
+            (bounds.min_x, bounds.min_y),
+            (bounds.max_x, bounds.max_y),
+            (bounds.min_x, (bounds.min_y + bounds.max_y) / 2.0),
+        ] {
+            let (cx, cy) = bounds.clamp_point(x, y);
+            assert_eq!((cx, cy), (x, y), "the idle clamp moved a restored origin");
+        }
+    }
+
+    /// The three platforms park the pill inside a window that also reserves the
+    /// selector slot below it, so the restore has to pass the same reserve the
+    /// window height was built from. This pins the arithmetic against the real
+    /// geometry rather than a round number: a reserve that omits the slot puts
+    /// the pill 42 px high on macOS and Windows, and 48 px high on GTK.
+    #[test]
+    fn the_resting_footprint_clears_the_selector_slot() {
+        for tooltip in [32.0_f64] {
+            let slot = crate::placement::below_slot_extra(tooltip);
+            assert!(slot > 0.0, "the slot is what the reserve exists for");
+            // macOS and Windows: 362 typing rows plus the slot, 4/6 px inset.
+            let window_h = 362.0 + slot;
+            for inset in [4.0_f64, 6.0] {
+                let (offset, size) =
+                    centered_bottom_footprint((600.0, window_h), (48.0, 6.0), inset + slot);
+                // The pill's bottom edge sits `inset` above the window's bottom,
+                // which is the same place the draw path puts it.
+                assert_eq!(offset.1 + size.1, 362.0 - inset);
+            }
+        }
+    }
+
+    /// The footprint bounds let the pill reach the true work-area edge, which is
+    /// the whole point of clamping the footprint instead of the canvas.
+    #[test]
+    fn the_footprint_can_reach_the_work_area_edge() {
+        let work = rect(0.0, 0.0, 1920.0, 1040.0);
+        let pill = (48.0, 6.0);
+        let offset = ((600.0 - pill.0) / 2.0, 362.0 - 6.0 - pill.1);
+        let bounds = footprint_bounds(work, offset, pill);
+        // A pill parked flush in the bottom-right corner of the screen.
+        let (x, y) = bounds.clamp_point(bounds.max_x, bounds.max_y);
+        assert_eq!(x + offset.0 + pill.0, work.right());
+        assert_eq!(y + offset.1 + pill.1, work.bottom());
+    }
+
+    /// The resting arrangement the draw path computes and the arrangement the
+    /// restore clamps against are the same numbers, so a pill saved at the bottom
+    /// of a display comes back at the bottom of the display.
+    #[test]
+    fn the_resting_footprint_is_centred_and_bottom_anchored() {
+        let window = (600.0, 362.0);
+        let pill = (48.0, 6.0);
+        let reserve = 6.0 + crate::placement::below_slot_extra(32.0);
+        let (offset, size) = centered_bottom_footprint(window, pill, reserve);
+        assert_eq!(size, pill);
+        // Centred horizontally, sitting the whole reserve above the bottom edge.
+        assert_eq!(offset.0, (600.0 - 48.0) / 2.0);
+        assert_eq!(offset.1 + size.1, window.1 - reserve);
     }
 
     /// The centre is what decides which display owns a saved spot, so it has to

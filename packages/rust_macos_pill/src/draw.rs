@@ -106,7 +106,7 @@ pub(crate) fn pill_position(state: &PillState, ww: f64, wh: f64) -> (f64, f64, f
         panel_bottom - PILL_BOTTOM_INSET - base_h
     } else {
         // Collapsed: sit closer to the bottom; expanded: rise up to centered position
-        let collapsed_bottom = 6.0;
+        let collapsed_bottom = COLLAPSED_BOTTOM_INSET;
         let expanded_bottom = (PILL_AREA_HEIGHT - EXPANDED_PILL_HEIGHT) / 2.0;
         let bottom_offset = gfx::lerp(collapsed_bottom, expanded_bottom, expand_t);
         wh - bottom_offset - base_h

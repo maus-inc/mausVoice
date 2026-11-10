@@ -2013,19 +2013,31 @@ unsafe fn setup(
             });
         }
 
+        // At rest the pill is collapsed, so `expand_t` is 0 and the draw size is
+        // the collapsed size.
+        let resting_pill_w = MIN_PILL_WIDTH;
+        let resting_pill_h = MIN_PILL_HEIGHT;
         let placement = rust_pill_shared::restore::restore(
             parked,
             &display_rects,
             (window_w, window_h),
-            |work, (window_w, window_h)| {
-                // The same footprint clamp the parked branch below applies: the
-                // whole window inside the display's visible area.
-                DragBounds {
-                    min_x: work.x,
-                    min_y: work.y,
-                    max_x: work.right() - window_w,
-                    max_y: work.bottom() - window_h,
-                }
+            |work, _window| {
+                // The pill's visible footprint, not the OS window. The window is
+                // a large transparent canvas with the pill drawn inside it, so
+                // clamping the canvas pulls a pill parked at an edge inward by
+                // hundreds of pixels, and the idle tick in `reposition_window`
+                // then puts it back: the restore looks like it was ignored.
+                //
+                // The pill starts collapsed, so its resting arrangement is the
+                // shared one: centred, sitting `COLLAPSED_BOTTOM_INSET` above the
+                // window's bottom edge.
+                let (offset, size) = rust_pill_shared::restore::centered_bottom_footprint(
+                    (window_w, window_h),
+                    (resting_pill_w, resting_pill_h),
+                    COLLAPSED_BOTTOM_INSET
+                        + rust_pill_shared::placement::below_slot_extra(TOOLTIP_HEIGHT),
+                );
+                rust_pill_shared::restore::footprint_bounds(work, offset, size)
             },
         );
         match placement {

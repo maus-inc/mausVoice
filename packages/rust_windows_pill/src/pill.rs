@@ -89,7 +89,13 @@ pub fn run(receiver: Receiver<InMessage>, saved_position: Option<ParkedWindow>) 
     // stays on the typing constants, so the pill never moves for it.
     let win_h =
         WINDOW_H_TYPING + rust_pill_shared::placement::below_slot_extra(TOOLTIP_HEIGHT) as i32;
-    let (wx, wy) = initial_position(win_h, saved_position);
+    // `None` means the window was created at the default corner, so the state
+    // must not claim a saved position it does not have.
+    let restored = saved_position.and_then(|parked| restore_position(parked, win_h));
+    let (wx, wy) = match restored {
+        Some(origin) => origin,
+        None => default_position(win_h),
+    };
     let hwnd = unsafe {
         CreateWindowExW(
             WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
@@ -199,10 +205,13 @@ pub fn run(receiver: Receiver<InMessage>, saved_position: Option<ParkedWindow>) 
         hover_intent: RefCell::new(HoverIntent::new()),
         selector_placement: RefCell::new(rust_pill_shared::placement::SelectorPlacement::new()),
         crossing: RefCell::new(rust_pill_shared::deform::CrossingDeform::new()),
-        has_saved_position: Cell::new(false),
+        // A restored window is already parked where the user left it, so the
+        // state starts saved. Without this the first cursor tick re-homes the
+        // pill to the default corner, undoing the restore 60 ms after launch.
+        has_saved_position: Cell::new(restored.is_some()),
         reset_strategy: Cell::new(ResetStrategy::Current),
-        saved_x: Cell::new(0),
-        saved_y: Cell::new(0),
+        saved_x: Cell::new(restored.map_or(0, |origin| origin.0)),
+        saved_y: Cell::new(restored.map_or(0, |origin| origin.1)),
         inflate_t: Cell::new(0.0),
         inflate_velocity: Cell::new(0.0),
         drag_label_t: Cell::new(0.0),
@@ -1445,12 +1454,7 @@ fn query_monitor_info(monitor: HMONITOR) -> Option<MONITORINFO> {
 /// Resolving this before `CreateWindowExW` is what makes a restore invisible.
 /// The window is shown by a later message, but it is created at this origin, so
 /// placing it afterwards would be a visible move on the first frame.
-fn initial_position(win_h: i32, saved_position: Option<ParkedWindow>) -> (i32, i32) {
-    if let Some(parked) = saved_position {
-        if let Some((x, y)) = restore_position(parked, win_h) {
-            return (x, y);
-        }
-    }
+fn default_position(win_h: i32) -> (i32, i32) {
     unsafe {
         let mut cursor = POINT::default();
         let _ = GetCursorPos(&mut cursor);
@@ -1655,19 +1659,17 @@ fn reposition_to_cursor_monitor(hwnd: HWND, state: &PillState) {
 /// the drawing origin of the pill inside the window, so the pill body plus its
 /// content offset is the footprint that has to stay on screen.
 fn window_clamp_bounds_for_size(work: MonitorRect, window_w: f64, window_h: f64) -> DragBounds {
-    // Expand and inflate are zero at creation, so the pill draws at its resting
-    // size and the content offset is the difference between the canvas and the
-    // pill's resting rect.
-    let resting_w = MIN_PILL_WIDTH;
-    let resting_h = MIN_PILL_HEIGHT;
-    let fx = ((window_w - resting_w) / 2.0).round();
-    let fy = (window_h - resting_h).round();
-    DragBounds {
-        min_x: work.x - fx,
-        min_y: work.y - fy,
-        max_x: work.right() - fx - resting_w.max(1.0),
-        max_y: work.bottom() - fy - resting_h.max(1.0),
-    }
+    // At creation `expand_t` and `inflate_t` are zero, so the pill sits at its
+    // resting arrangement: centred, COLLAPSED_BOTTOM_INSET above the window's
+    // bottom edge. That is exactly what `window_clamp_bounds` derives from
+    // `pill_position` once a frame has run, so a restored origin is not nudged
+    // by the first cursor tick.
+    let (offset, size) = rust_pill_shared::restore::centered_bottom_footprint(
+        (window_w, window_h),
+        (MIN_PILL_WIDTH, MIN_PILL_HEIGHT),
+        COLLAPSED_BOTTOM_INSET + rust_pill_shared::placement::below_slot_extra(TOOLTIP_HEIGHT),
+    );
+    rust_pill_shared::restore::footprint_bounds(work, offset, size)
 }
 
 fn window_clamp_bounds(state: &PillState, wa: RECT, win_w: i32, win_h: i32) -> DragBounds {

@@ -9,6 +9,10 @@ pub(crate) const MARGIN_BOTTOM: i32 = 8;
 
 pub(crate) const PILL_AREA_HEIGHT: f64 = 48.0;
 
+/// Gap between the collapsed pill's bottom edge and the window's bottom edge.
+/// Shared by the draw path and the restore, so a restored pill sits exactly
+/// where the idle tick would put it.
+pub(crate) const COLLAPSED_BOTTOM_INSET: f64 = 6.0;
 pub(crate) const MIN_PILL_WIDTH: f64 = 48.0;
 pub(crate) const MIN_PILL_HEIGHT: f64 = 6.0;
 pub(crate) const EXPANDED_PILL_WIDTH: f64 = 120.0;
