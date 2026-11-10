@@ -43,9 +43,12 @@ or indefinite ALSA timeout.
 Raw MIDI enumeration treats `ENOENT` from a direction query as zero
 subdevices, while preserving other errors. Linux returns `ENOENT` for a device
 with no substreams in that direction. Iteration also clears old counts after an
-error and skips empty devices without recursive calls. The portable unit tests
-cover direction counts; a Linux preload fixture additionally exercises the
-actual iterator. From this crate's directory, run the ignored tests serially:
+error and skips empty devices without recursive calls. A failure to advance the
+native device cursor is returned once and ends iteration, rather than repeating
+indefinitely; per-device substream query errors still allow the next device to
+be visited. The portable unit tests cover direction counts; a Linux preload
+fixture additionally exercises the actual iterator. From this crate's directory,
+run the ignored tests serially:
 
 ```sh
 tmpdir=$(mktemp -d)

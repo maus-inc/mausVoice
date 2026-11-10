@@ -36,9 +36,11 @@ impl<'a> Handle<'a> {
         }
     }
 
-    /// Retrieve the current state of the action flags.
+    /// Retrieve the current state, including flags not yet named by this crate.
     pub fn get(&self) -> ActionFlags {
-        ActionFlags::from_bits_truncate(unsafe { *self.ptr })
+        // ActionFlags wraps a u32 supplied by CoreAudio. Unknown bits are valid
+        // native flags and must survive round trips through this handle.
+        unsafe { ActionFlags::from_bits_unchecked(*self.ptr) }
     }
     fn set(&mut self, flags: ActionFlags) {
         unsafe { *self.ptr = flags.bits() }

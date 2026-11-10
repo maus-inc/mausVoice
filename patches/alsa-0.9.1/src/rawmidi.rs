@@ -15,6 +15,7 @@ pub struct Iter<'a> {
     in_count: i32,
     out_count: i32,
     current: i32,
+    finished: bool,
 }
 
 /// [snd_rawmidi_info_t](http://www.alsa-project.org/alsa-doc/alsa-lib/group___raw_midi.html) wrapper
@@ -87,12 +88,13 @@ impl Drop for Status {
 
 
 impl<'a> Iter<'a> {
-    pub fn new(c: &'a Ctl) -> Iter<'a> { Iter { ctl: c, device: -1, in_count: 0, out_count: 0, current: 0 }}
+    pub fn new(c: &'a Ctl) -> Iter<'a> { Iter { ctl: c, device: -1, in_count: 0, out_count: 0, current: 0, finished: false }}
 }
 
 impl<'a> Iterator for Iter<'a> {
     type Item = Result<Info>;
     fn next(&mut self) -> Option<Result<Info>> {
+        if self.finished { return None; }
         loop {
             if self.current < self.in_count {
                 self.current += 1;
@@ -105,8 +107,16 @@ impl<'a> Iterator for Iter<'a> {
 
             let r = acheck!(snd_ctl_rawmidi_next_device(ctl_ptr(self.ctl), &mut self.device));
             match r {
-                Err(e) => return Some(Err(e)),
-                Ok(_) if self.device == -1 => return None,
+                Err(e) => {
+                    // The cursor may not have advanced, so retrying from it can
+                    // yield the same error forever. Return it once, then stop.
+                    self.finished = true;
+                    return Some(Err(e));
+                }
+                Ok(_) if self.device == -1 => {
+                    self.finished = true;
+                    return None;
+                }
                 _ => {},
             }
             self.current = 0;

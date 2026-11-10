@@ -48,6 +48,18 @@ fn lists_one_direction_devices_and_does_not_reuse_stale_counts_after_an_error() 
 
 #[test]
 #[ignore = "requires the ALSA query preload fixture"]
+fn enumeration_error_is_returned_once_then_iteration_ends() {
+    std::env::set_var("MIDI_NEXT_ERROR", "1");
+    let ctl = Ctl::new("fixture", false).unwrap();
+    let mut iter = Iter::new(&ctl);
+    assert_eq!(iter.next().unwrap().err().unwrap().errno(), libc::EIO);
+    assert!(iter.next().is_none());
+    assert!(iter.next().is_none());
+    std::env::remove_var("MIDI_NEXT_ERROR");
+}
+
+#[test]
+#[ignore = "requires the ALSA query preload fixture"]
 fn skips_many_empty_devices_without_recursing() {
     std::env::set_var("MIDI_EMPTY_RUN", "1");
     let ctl = Ctl::new("fixture", false).unwrap();

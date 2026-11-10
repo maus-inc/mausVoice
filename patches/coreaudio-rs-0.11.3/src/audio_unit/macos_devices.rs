@@ -1,4 +1,5 @@
 //! Device ID queries with CoreAudio-owned output lengths.
+use super::macos_device_scope::get_audio_device_supports_scope;
 use super::macos_property_limits::MAX_PROPERTY_BYTES;
 use super::{listener_sys as sys, ListenerError as Error, Scope};
 use std::mem;
@@ -6,8 +7,7 @@ use std::ptr::null;
 use sys::{
     kAudioHardwareNoError, kAudioHardwarePropertyDefaultInputDevice,
     kAudioHardwarePropertyDefaultOutputDevice, kAudioHardwarePropertyDevices,
-    kAudioObjectPropertyElementMaster, kAudioObjectPropertyScopeGlobal,
-    kAudioObjectPropertyScopeInput, kAudioObjectPropertyScopeOutput, kAudioObjectSystemObject,
+    kAudioObjectPropertyElementMaster, kAudioObjectPropertyScopeGlobal, kAudioObjectSystemObject,
     AudioDeviceID, AudioObjectPropertyAddress,
 };
 
@@ -41,16 +41,14 @@ pub fn get_default_device_id(input: bool) -> Option<AudioDeviceID> {
     Some(id)
 }
 
-/// List audio device identifiers visible to the given scope.
+/// List device identifiers, filtering input or output scopes by device capability.
+/// Other scopes return the global list, as before.
 pub fn get_audio_device_ids_for_scope(scope: Scope) -> Result<Vec<AudioDeviceID>, Error> {
-    let scope = match scope {
-        Scope::Input => kAudioObjectPropertyScopeInput,
-        Scope::Output => kAudioObjectPropertyScopeOutput,
-        _ => kAudioObjectPropertyScopeGlobal,
-    };
+    // The system object's device-list property is global. Input/output are
+    // device scopes, not scopes of the system object's enumeration property.
     let address = AudioObjectPropertyAddress {
         mSelector: kAudioHardwarePropertyDevices,
-        mScope: scope,
+        mScope: kAudioObjectPropertyScopeGlobal,
         mElement: kAudioObjectPropertyElementMaster,
     };
     let mut size = 0_u32;
@@ -97,6 +95,15 @@ pub fn get_audio_device_ids_for_scope(scope: Scope) -> Result<Vec<AudioDeviceID>
         return Err(Error::Unspecified);
     }
     devices.truncate((size / item_size) as usize);
+    if matches!(scope, Scope::Input | Scope::Output) {
+        let mut scoped = Vec::new();
+        for device in devices {
+            if get_audio_device_supports_scope(device, scope)? {
+                scoped.push(device);
+            }
+        }
+        return Ok(scoped);
+    }
     Ok(devices)
 }
 

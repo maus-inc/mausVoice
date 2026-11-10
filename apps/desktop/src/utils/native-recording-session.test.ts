@@ -362,6 +362,51 @@ describe("stopping", () => {
     releaseLocalBrowserRecording(invoke, browserOwner);
   });
 
+  it("discards the same admission if a pending stop fails during abort", async () => {
+    let rejectStop!: (error: Error) => void;
+    const stop = new Promise<ArrayBuffer>((_, reject) => {
+      rejectStop = reject;
+    });
+    const { invoke, calls } = recorderTransport({ stop_recording: () => stop });
+    const { handle } = await beginNativeRecording(null, {}, invoke);
+    const stopping = stopNativeRecording(invoke);
+    const failure = expect(stopping).rejects.toThrow("stop failed");
+    const discarding = discardNativeRecording();
+    rejectStop(new Error("stop failed"));
+    await failure;
+    await discarding;
+    expect(
+      calls.filter(([command]) => command === "discard_recording"),
+    ).toEqual([
+      [
+        "discard_recording",
+        { ownerId: handle.ownerId, generation: handle.generation },
+      ],
+    ]);
+    expect(currentNativeRecording()).toBeNull();
+  });
+
+  it("does not discard a successor if the pending stop succeeds", async () => {
+    let resolveStop!: (payload: ArrayBuffer) => void;
+    const stop = new Promise<ArrayBuffer>((resolve) => {
+      resolveStop = resolve;
+    });
+    const { invoke, calls } = recorderTransport({ stop_recording: () => stop });
+    await beginNativeRecording(null, {}, invoke);
+    const stopping = stopNativeRecording(invoke);
+    const starting = beginNativeRecording(null, {}, invoke);
+    const discarding = discardNativeRecording();
+    resolveStop(new ArrayBuffer(4));
+    await stopping;
+    const { handle: successor } = await starting;
+    await discarding;
+    expect(currentNativeRecording()).toBe(successor);
+    expect(
+      calls.filter(([command]) => command === "discard_recording"),
+    ).toHaveLength(0);
+    await successor.discard();
+  });
+
   it("keeps a failed stop addressable for a later retry", async () => {
     const { invoke } = recorderTransport();
     const { handle } = await beginNativeRecording(null, {}, invoke);

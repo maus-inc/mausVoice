@@ -59,6 +59,7 @@ let liveLocalOwner: { owner: object; transport: RecordingInvoke } | null = null;
 
 let beginInFlight = false;
 let stopInFlight: Promise<StopRecordingResponse> | null = null;
+let stoppingHandle: NativeRecordingHandle | null = null;
 
 /** The recorder this module currently owns, if any. */
 export const currentNativeRecording = (): NativeRecordingHandle | null =>
@@ -69,6 +70,7 @@ export const resetNativeRecordingSession = (): void => {
   liveHandle = null;
   liveLocalOwner = null;
   stopInFlight = null;
+  stoppingHandle = null;
 };
 
 const isSafeGeneration = (value: unknown): value is number =>
@@ -262,13 +264,30 @@ export const stopNativeRecording = (
     }
   });
   stopInFlight = operation;
+  stoppingHandle = handle;
   return operation.finally(() => {
-    if (stopInFlight === operation) stopInFlight = null;
+    if (stopInFlight === operation) {
+      stopInFlight = null;
+      stoppingHandle = null;
+    }
   });
 };
 
 /** Stop the live recording and throw its audio away. */
 export const discardNativeRecording = async (): Promise<void> => {
+  const pendingStop = stopInFlight;
+  const stoppedHandle = stoppingHandle;
+  if (pendingStop) {
+    try {
+      await pendingStop;
+      // A successful stop has released this admission. Never discard a newer one.
+      return;
+    } catch {
+      // The failed stop restores its handle, but it must still be the same
+      // admission when this abort resumes.
+      if (!stoppedHandle || liveHandle !== stoppedHandle) return;
+    }
+  }
   const handle = liveHandle;
   if (!handle) return;
   liveHandle = null;

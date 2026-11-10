@@ -7,8 +7,8 @@ pub mod action_flags {
     #[derive(Clone, Copy, Debug, PartialEq)]
     pub struct ActionFlags(pub u32);
     impl ActionFlags {
-        pub fn from_bits_truncate(bits: u32) -> Self {
-            Self(bits & 15)
+        pub unsafe fn from_bits_unchecked(bits: u32) -> Self {
+            Self(bits)
         }
         pub fn bits(self) -> u32 {
             self.0
@@ -47,6 +47,25 @@ mod tests {
         assert!(source.contains("pub struct Args<'a, D: Data>"));
         assert!(source.contains("for<'a> FnMut(Args<'a, D>)"));
         assert!(!source.contains("unsafe impl Send for Handle"));
+    }
+    #[test]
+    fn preserves_unknown_native_bits_across_mutations() {
+        use super::{action_flags::ActionFlags, action_flags_handle::Handle};
+        let unknown = 1_u32 << 31;
+        let mut native = unknown | 1;
+        {
+            let mut handle = unsafe { Handle::from_ptr(&mut native) };
+            assert_eq!(handle.bits(), unknown | 1);
+            assert_eq!(handle.get().bits(), unknown | 1);
+            handle.insert(ActionFlags(2));
+            assert_eq!(handle.bits(), unknown | 3);
+            handle.remove(ActionFlags(1));
+            assert_eq!(handle.bits(), unknown | 2);
+            handle.toggle(ActionFlags(2));
+            assert_eq!(handle.bits(), unknown);
+            assert!(!handle.is_empty());
+        }
+        assert_eq!(native, unknown);
     }
     #[test]
     fn mutates_only_the_live_callback_flags() {

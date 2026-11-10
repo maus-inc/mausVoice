@@ -92,7 +92,11 @@ The macOS device-ID queries pass mutable output storage to CoreAudio, initialize
 allocated IDs, and validate returned byte counts before exposing them. A shorter
 valid result is truncated; malformed or oversized lengths return an error. A
 portable simulated API exercises the queries, but does not replace physical
-macOS device testing.
+macOS device testing. Device enumeration queries the system object's global
+scope, then filters input or output lists by each device's stream configuration;
+a failed capability query is returned rather than silently omitting that device.
+Render action flags preserve native bits unknown to this crate across reads and
+updates, so newer platform flags are not inadvertently cleared.
 
 The macOS `RateListener` and `AliveListener` use non-reused registry tokens
 instead of pointers to movable listener objects. Late callbacks after removal

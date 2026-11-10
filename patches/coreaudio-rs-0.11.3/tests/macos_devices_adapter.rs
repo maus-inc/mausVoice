@@ -87,6 +87,22 @@ pub mod listener_sys {
     }
 }
 
+mod macos_device_scope {
+    use super::{ListenerError, Scope};
+    pub fn get_audio_device_supports_scope(
+        device: u32,
+        scope: Scope,
+    ) -> Result<bool, ListenerError> {
+        if device == 99 {
+            return Err(ListenerError::Unknown(-99));
+        }
+        match scope {
+            Scope::Input => Ok(device == 41),
+            Scope::Output => Ok(device == 42),
+            _ => Ok(true),
+        }
+    }
+}
 #[path = "../src/audio_unit/macos_devices.rs"]
 mod macos_devices;
 // Each adapter is also compiled independently as a portable test.
@@ -123,17 +139,28 @@ mod tests {
         );
         assert_eq!(
             sys::FIXTURE.lock().unwrap().scope,
-            sys::kAudioObjectPropertyScopeInput
+            sys::kAudioObjectPropertyScopeGlobal
         );
         fixture(8, 8, 0, &[41, 42]);
         assert_eq!(
             get_audio_device_ids_for_scope(Scope::Output).unwrap(),
-            vec![41, 42]
+            vec![42]
         );
         assert_eq!(
             sys::FIXTURE.lock().unwrap().scope,
-            sys::kAudioObjectPropertyScopeOutput
+            sys::kAudioObjectPropertyScopeGlobal
         );
+        fixture(8, 8, 0, &[41, 42]);
+        assert_eq!(get_audio_device_ids().unwrap(), vec![41, 42]);
+    }
+    #[test]
+    fn scope_probe_failures_are_reported_instead_of_omitting_devices() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        fixture(4, 4, 0, &[99]);
+        assert!(matches!(
+            get_audio_device_ids_for_scope(Scope::Input),
+            Err(super::ListenerError::Unknown(-99))
+        ));
     }
     #[test]
     fn rejects_invalid_or_growing_lengths_and_native_errors() {

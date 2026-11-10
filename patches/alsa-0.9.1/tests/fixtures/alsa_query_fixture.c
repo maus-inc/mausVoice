@@ -40,6 +40,7 @@ int snd_pcm_poll_descriptors_count(snd_pcm_t *pcm) {
 
 int snd_ctl_rawmidi_next_device(snd_ctl_t *ctl, int *device) {
     (void)ctl;
+    if (getenv("MIDI_NEXT_ERROR")) return -EIO;
     int last = getenv("MIDI_EMPTY_RUN") ? 100000 : 3;
     *device = *device < last ? *device + 1 : -1;
     return 0;
