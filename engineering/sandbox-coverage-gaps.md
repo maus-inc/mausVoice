@@ -45,26 +45,26 @@ A release asset such as `https://github.com/gitleaks/gitleaks/releases/download/
 
 ### Machine
 
-| Resource                                   | Measured           | Effect on the gates                                                                           |
-| ------------------------------------------ | ------------------ | --------------------------------------------------------------------------------------------- |
-| CPU                                        | 2 vCPU             | `cargo test` links one binary at a time, so `CARGO_BUILD_JOBS=1`                              |
-| Memory                                     | 3,939 MB           | Parallel linking peaks above it and the linker dies with signal 9                             |
-| Disk                                       | 21 GB free         | The extracted payload is about 8.3 GB, the Rust target tree several more                      |
-| Node                                       | v22.22.3           | Satisfies `engines`, is behind the `.nvmrc` pin of 24                                         |
-| npm                                        | 10.9.8             | Installs pnpm@10.34.5 from the registry                                                       |
-| Python                                     | 3.11.2, pip 23.0.1 | `req.txt` resolves from PyPI                                                                  |
-| Rust, cargo, rustup                        | absent             | Only the payload supplies them                                                                |
-| cmake, pkg-config, patchelf, file, pkgconf | absent             | The payload's `system/tools/bin` supplies them                                                |
-| ffmpeg, ffprobe, gifsicle, tesseract       | absent             | The payload supplies all four: the first three in `system/tools/bin` (G9), `tesseract` in G19 |
-| Xvfb                                       | absent             | `packages/rust_gtk_pill` cannot run its tests without the payload                             |
-| docker                                     | absent             | `config/docker-compose.yml` cannot run                                                        |
+| Resource                                   | Measured                  | Effect on the gates                                                                                               |
+| ------------------------------------------ | ------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| CPU                                        | 2 vCPU                    | `cargo test` links one binary at a time, so `CARGO_BUILD_JOBS=1`                                                  |
+| Memory                                     | 3,939 MB                  | Parallel linking peaks above it and the linker dies with signal 9                                                 |
+| Disk                                       | 21 GB free                | The extracted payload is about 8.3 GB, the Rust target tree several more                                          |
+| Node                                       | v22.22.3                  | Satisfies `engines`, is behind the `.nvmrc` pin of 24                                                             |
+| npm                                        | 10.9.8                    | Installs pnpm@10.34.5 from the registry                                                                           |
+| Python                                     | 3.11.2, pip 23.0.1        | `req.txt` resolves from PyPI                                                                                      |
+| Rust, cargo, rustup                        | absent                    | Only the payload supplies them                                                                                    |
+| cmake, pkg-config, patchelf, file, pkgconf | absent                    | The payload's `system/tools/bin` supplies them                                                                    |
+| ffmpeg, ffprobe, gifsicle, tesseract       | absent in a bare checkout | The payload's `system/tools/bin` supplies all four: the media tools in the second delivery and `tesseract` in G19 |
+| Xvfb                                       | absent                    | `packages/rust_gtk_pill` cannot run its tests without the payload                                                 |
+| docker                                     | absent                    | `config/docker-compose.yml` cannot run                                                                            |
 
 ### Commands, run here
 
 | Command                                           | Result            | Note                                                                                                    |
 | ------------------------------------------------- | ----------------- | ------------------------------------------------------------------------------------------------------- |
 | `npm i -g pnpm@10.34.5`                           | passed            | about 10 seconds                                                                                        |
-| `pnpm install --frozen-lockfile`                  | failed            | chromedriver postinstall, see gap G9                                                                    |
+| `pnpm install --frozen-lockfile`                  | failed            | chromedriver postinstall, see gap G15                                                                   |
 | `pnpm install --frozen-lockfile --ignore-scripts` | passed            | 1398 packages, 29 seconds, 14 workspace projects; skips the G15 chromedriver step                       |
 | `pnpm run check-types`                            | passed            | 9 turbo tasks, 49 seconds, no Rust needed                                                               |
 | `pnpm run build`                                  | passed            | 11 turbo tasks, 68 seconds, vite plus astro, no Rust and no browser                                     |
@@ -108,7 +108,7 @@ Blocks the `ui-capture` workflow that `AGENTS.md` and `.agents/skills/ui-capture
 
 Measured before the second delivery. `ffmpeg`, `ffprobe`, `gifsicle` and `tesseract` were all absent. `system/PKGS.txt` carries `libavcodec59`, `libavformat`, `libsndfile1` and `imagemagick`, so the libraries were there and the executables were not.
 
-Delivered. The second delivery ships `system/tools/bin/ffmpeg` 7.0.2-static, `ffprobe` 7.0.2-static and `gifsicle` 1.95, each run under `env -i`. `system/tools/UIPIPE.txt` records the upstream URL and the sha256 for each. They sit beside `cmake` and `file`, so `FETCH.md` step 6 puts them on `PATH`; step 7d checks them. The fourth member of that set, `tesseract`, is not part of G9 but is not missing either: G19 in the third delivery ships `tesseract` 5.3.0 with `eng.traineddata` and `osd.traineddata` under `system/tools/share/tessdata`, so the `ui-capture` OCR round-trip works once the payload is on `PATH`. `validate.mjs` still skips that check with a note when it cannot find the binary, which is the behaviour a bare checkout sees.
+Delivered. The second delivery ships `system/tools/bin/ffmpeg` 7.0.2-static, `ffprobe` 7.0.2-static and `gifsicle` 1.95, each run under `env -i`. `system/tools/UIPIPE.txt` records the upstream URL and the sha256 for each. They sit beside `cmake` and `file`, so `FETCH.md` step 6 puts them on `PATH`; step 7d checks them. `tesseract` and its `eng.traineddata` ship in G19, so the `ui-capture` validation step runs the OCR round-trip too. A bare checkout without the payload sees `validate.mjs` skip that check and say so.
 
 Now delivered. The fourth delivery adds Chromium 156 in G25 at `system/tools/bin/chromium`, so the browser half of this gap is closed and a recording can run on Linux x86-64. The spec group G6 still declines to build a browser inside G9 itself; G25 is where it ships.
 

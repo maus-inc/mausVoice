@@ -65,7 +65,8 @@ Without `ffmpeg` the pipeline stops. Without `gifsicle` the GIF is written
 unoptimized and larger, and the encode prints a note saying so. Install both.
 In the Linux x86-64 sandbox, when a Debian mirror is unreachable, the vendored
 toolchain carries `ffmpeg`, `ffprobe` and `gifsicle` in `system/tools/bin` (gap G9
-in `engineering/sandbox-coverage-gaps.md`), which `FETCH.md` step 6 puts on `PATH`.
+in `engineering/sandbox-coverage-gaps.md`, delivered), which `FETCH.md` step 6 puts
+on `PATH`; `tesseract` (G19) and Chromium 156 (G25) are in the same tree.
 On macOS or any other platform, use that platform's install command above; the
 payload is a Debian x86-64 tree and does not apply.
 

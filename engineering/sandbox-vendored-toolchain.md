@@ -223,11 +223,11 @@ test:webdriver`, it spawns `tauri-driver` on Linux and `chromedriver` on macOS, 
   reachable. `--ignore-scripts` also works and skips the other build scripts. Measured
   on 2026-11-05: 1398 packages in 29 seconds, then `pnpm run check-types` passes with 9
   turbo tasks in 49 seconds. This is gap G15.
-- `tesseract` and any Chromium are absent, so the `ui-capture` skill cannot complete a
-  recording even though the second delivery ships `ffmpeg`, `ffprobe` and `gifsicle`.
-  `apps/preview` is still the rendering surface, and an inspection of it in both themes
-  is the substitute. The Chromium is the spec's group G6, which declines to build one.
-  This is gap G9.
+- The media tools (`ffmpeg`, `ffprobe`, `gifsicle`) ship in the second delivery, `tesseract`
+  and its `tessdata` ship in G19, and Chromium 156 ships in G25, all in `system/tools/bin`.
+  So the `ui-capture` recording can run on Linux x86-64 once `FETCH.md` puts them on `PATH`.
+  The spec's group G6 still declines to build a browser inside the media-tools group; the
+  browser is G25. `apps/preview` remains the rendering surface where a capture cannot run.
 - The gitleaks release asset redirects to `release-assets.githubusercontent.com`, which
   is blocked. The second delivery ships `gitleaks` 8.18.0 in `system/tools/bin`, so the
   history scan runs locally once `FETCH.md` step 6 puts it on `PATH`. This is gap G13.

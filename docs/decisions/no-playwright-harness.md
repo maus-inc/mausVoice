@@ -44,8 +44,9 @@ sandbox. The cost is out of proportion to the benefit while a rendering surface 
 exists in the repository. Also rejected: vendoring a Chrome for Testing build and
 `tauri-driver` so the existing WebDriver suite can run here. That is gap G11 in
 `engineering/sandbox-coverage-gaps.md`, and it stays closed until a task needs it. The
-media tools that `ui-capture` needs, `ffmpeg` and `gifsicle`, are a separate gap, G9, and
-they are cheap enough to build.
+media tools that `ui-capture` needs, `ffmpeg` and `gifsicle`, were a separate gap, G9, and
+they were cheap enough to build: the second delivery ships them, and the fourth adds
+Chromium (G25), so a recording can now run on Linux x86-64.
 
 ## Consequences
 
