@@ -314,6 +314,10 @@ pub(crate) struct PillState {
     pub(crate) reset_strategy: Cell<ResetStrategy>,
     pub(crate) saved_x: Cell<f64>,
     pub(crate) saved_y: Cell<f64>,
+    /// Position the host stored for this pill in a previous session, already
+    /// parsed. Taken once during realize and resolved against the monitors that
+    /// are connected then; see `rust_pill_shared::restore`.
+    pub(crate) restored_position: Cell<Option<rust_pill_shared::restore::ParkedWindow>>,
     // Set by explicit release-settle or interruption persistence; consumed by
     // the slow timer so a later cursor poll cannot overwrite the saved point.
     // The slow-timer fallback itself does not set this flag.

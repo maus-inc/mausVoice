@@ -23,6 +23,7 @@ use crate::nsstring::with_ns_string;
 use rust_pill_shared::clock::monotonic_now as drag_now;
 use rust_pill_shared::drag::{DragBounds, DragController, DragFrame};
 use rust_pill_shared::hover::{HoverFrame, HoverIntent};
+use rust_pill_shared::restore::ParkedWindow;
 
 // ── Safe wrappers around common Cocoa FFI patterns ─────────────────────
 // Issue #4: These reduce the blast radius of unsafe blocks by encapsulating
@@ -861,12 +862,13 @@ fn end_drag(state: &PillState, _window: id, now: f64) {
     state.pointer_down.set(false);
 }
 
-/// Retains the settled position for this pill instance: stores the live
-/// window origin (not the cursor) and tells the desktop, so the saved point
-/// matches the parked pill exactly. This is not durable storage: setup starts
-/// unsaved, and the desktop caches geometry only for composer placement.
-/// Any future cross-launch restore must record the coordinate schema/canvas
-/// height rather than interpreting an older host origin in a resized canvas.
+/// Retains the settled position and tells the desktop, which stores it so the
+/// next launch can restore it.
+///
+/// The live window origin (not the cursor) is what is kept, so the saved point
+/// matches where the pill landed. The state copy stays in Cocoa's bottom-left
+/// space for this process's own placement, while the record the desktop stores
+/// is the published top-down rect, so save and restore use one space.
 fn persist_drag_position(state: &PillState, window: id) {
     let frame = unsafe { window_frame(window) };
     state.saved_x.set(frame.origin.x);
@@ -1897,7 +1899,11 @@ fn typing_entry_frame() -> NSRect {
 
 // ── Shared setup (used by both standalone and embedded modes) ─────
 
-unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
+unsafe fn setup(
+    receiver: Receiver<InMessage>,
+    embedded: bool,
+    saved_position: Option<ParkedWindow>,
+) {
     let view_class = register_pill_view_class();
     let window_class = register_pill_window_class();
 
@@ -1973,6 +1979,64 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
     let _: () = msg_send![view, addSubview:entry];
 
     // Initialize state
+    // Resolve the stored position against the displays connected now, before
+    // the state exists. A saved origin only means something on the display it
+    // was captured on, so an unplugged, resized or moved display is dealt with
+    // here instead of dragging the window to a coordinate with no screen under
+    // it.
+    //
+    // The record is stored in the top-down space the pill publishes, so this
+    // works in that space and converts the answer back to Cocoa's bottom-left
+    // origin once, at the end.
+    let restored = saved_position.and_then(|parked| {
+        let screen_list = screens();
+        let count: usize = unsafe { msg_send![screen_list, count] };
+        if count == 0 {
+            return None;
+        }
+        let primary: id = unsafe { msg_send![screen_list, objectAtIndex: 0usize] };
+        let primary_frame: NSRect = unsafe { msg_send![primary, frame] };
+        let primary_top = primary_frame.origin.y + primary_frame.size.height;
+
+        // The visible area is what the record stores and what the pill publishes,
+        // so it is the same rect used here to recognise the saved display.
+        let mut display_rects = Vec::with_capacity(count);
+        for index in 0..count {
+            let screen: id = unsafe { msg_send![screen_list, objectAtIndex: index] };
+            let visible: NSRect = unsafe { screen_visible_frame(screen) };
+            let area = to_top_down(visible, primary_top);
+            display_rects.push(rust_pill_shared::edge::MonitorRect {
+                x: area.x,
+                y: area.y,
+                width: area.width,
+                height: area.height,
+            });
+        }
+
+        let placement = rust_pill_shared::restore::restore(
+            parked,
+            &display_rects,
+            (window_w, window_h),
+            |work, (window_w, window_h)| {
+                // The same footprint clamp the parked branch below applies: the
+                // whole window inside the display's visible area.
+                DragBounds {
+                    min_x: work.x,
+                    min_y: work.y,
+                    max_x: work.right() - window_w,
+                    max_y: work.bottom() - window_h,
+                }
+            },
+        );
+        match placement {
+            rust_pill_shared::restore::Placement::Restore { x, y } => Some(NSRect::new(
+                NSPoint::new(x, primary_top - (y + window_h)),
+                NSSize::new(window_w, window_h),
+            )),
+            rust_pill_shared::restore::Placement::PlatformDefault => None,
+        }
+    });
+
     let state = Rc::new(PillState {
         phase: Cell::new(Phase::Idle),
         visibility: Cell::new(Visibility::WhileActive),
@@ -2054,10 +2118,10 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
         hover_intent: RefCell::new(HoverIntent::new()),
         crossing: RefCell::new(rust_pill_shared::deform::CrossingDeform::new()),
         selector_placement: RefCell::new(rust_pill_shared::placement::SelectorPlacement::new()),
-        has_saved_position: Cell::new(false),
+        has_saved_position: Cell::new(restored.is_some()),
         reset_strategy: Cell::new(ResetStrategy::Current),
-        saved_x: Cell::new(0.0),
-        saved_y: Cell::new(0.0),
+        saved_x: Cell::new(restored.map_or(0.0, |window| window.origin.x)),
+        saved_y: Cell::new(restored.map_or(0.0, |window| window.origin.y)),
         first_placement_done: Cell::new(false),
         inflate_t: Cell::new(0.0),
         inflate_velocity: Cell::new(0.0),
@@ -2102,6 +2166,13 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
         ];
     }
 
+    // A restored position is applied to the window here, before the first
+    // frame, so the pill appears where the user left it rather than moving
+    // there once the run loop starts.
+    if let Some(frame) = restored {
+        set_window_origin(window, frame.origin);
+    }
+
     // Position and show (orderFront only — don't steal focus from other apps)
     with_ctx(|ctx| {
         reposition_window(window, &ctx.state, 1.0 / 60.0, drag_now());
@@ -2114,13 +2185,13 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
 // ── Standalone binary entry point ────────────────────────────────
 
 #[allow(dead_code)]
-pub fn run(receiver: Receiver<InMessage>) {
+pub fn run(receiver: Receiver<InMessage>, saved_position: Option<ParkedWindow>) {
     unsafe {
         let _pool = NSAutoreleasePool::new(nil);
         let app = NSApp();
         app.setActivationPolicy_(NSApplicationActivationPolicyAccessory);
 
-        setup(receiver, false);
+        setup(receiver, false, saved_position);
 
         app.run();
     }
@@ -2130,9 +2201,9 @@ pub fn run(receiver: Receiver<InMessage>) {
 // Hooks into the host app's existing NSApplication run loop.
 
 #[allow(dead_code)]
-pub(crate) fn run_embedded(receiver: Receiver<InMessage>) {
+pub(crate) fn run_embedded(receiver: Receiver<InMessage>, saved_position: Option<ParkedWindow>) {
     unsafe {
-        setup(receiver, true);
+        setup(receiver, true, saved_position);
     }
 }
 

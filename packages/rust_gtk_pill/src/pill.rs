@@ -8,6 +8,7 @@ use gtk::glib::{self, ControlFlow};
 use gtk::prelude::*;
 use gtk_layer_shell::LayerShell;
 pub(crate) use rust_pill_shared::clock::monotonic_now as drag_clock_now;
+use rust_pill_shared::restore::ParkedWindow;
 
 use crate::constants::*;
 use crate::ipc::{self, InMessage, OutMessage, Phase, Rect, ResetStrategy, Visibility};
@@ -33,7 +34,7 @@ const WAYLAND_DRAG_BOUNDS: rust_pill_shared::drag::DragBounds =
 
 /// Runs the GTK pill: picks the display backend, creates the frameless
 /// window, and drives the message/event loop until a quit message arrives.
-pub fn run(receiver: Receiver<InMessage>) {
+pub fn run(receiver: Receiver<InMessage>, restored_position: Option<ParkedWindow>) {
     // Phase message sequence guard: see ipc::InMessage::Phase.
     thread_local! {
         static LAST_PHASE_SEQ: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
@@ -233,6 +234,7 @@ pub fn run(receiver: Receiver<InMessage>) {
         reset_strategy: Cell::new(ResetStrategy::Current),
         saved_x: Cell::new(0.0),
         saved_y: Cell::new(0.0),
+        restored_position: Cell::new(restored_position),
         x11_release_persisted: Cell::new(false),
         x11_drag_applied: Cell::new((i32::MIN, i32::MIN)),
         drag_draw_offset_x: Cell::new(0.0),

@@ -20,6 +20,7 @@ use crate::state::{ClickAction, PillState, Rocket, RocketPhase, Spark, WindowMod
 use rust_pill_shared::drag::{DragBounds, DragController, DragFrame};
 use rust_pill_shared::edge::MonitorRect;
 use rust_pill_shared::hover::{HoverFrame, HoverIntent};
+use rust_pill_shared::restore::ParkedWindow;
 
 // Issue #7: Thread-local statics are an architectural requirement, not a smell.
 // Win32 HWNDs are thread-affine — they must only be accessed on the thread that
@@ -59,7 +60,7 @@ thread_local! {
 /// Runs the Windows pill: registers the window class, creates the layered
 /// pill window, and drives the message/timer loop until a quit message
 /// arrives.
-pub fn run(receiver: Receiver<InMessage>) {
+pub fn run(receiver: Receiver<InMessage>, saved_position: Option<ParkedWindow>) {
     let t0 = Instant::now();
     unsafe {
         let _ = windows::Win32::UI::HiDpi::SetProcessDpiAwarenessContext(
@@ -88,7 +89,7 @@ pub fn run(receiver: Receiver<InMessage>) {
     // stays on the typing constants, so the pill never moves for it.
     let win_h =
         WINDOW_H_TYPING + rust_pill_shared::placement::below_slot_extra(TOOLTIP_HEIGHT) as i32;
-    let (wx, wy) = initial_position(win_h);
+    let (wx, wy) = initial_position(win_h, saved_position);
     let hwnd = unsafe {
         CreateWindowExW(
             WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
@@ -1438,7 +1439,18 @@ fn query_monitor_info(monitor: HMONITOR) -> Option<MONITORINFO> {
     }
 }
 
-fn initial_position(win_h: i32) -> (i32, i32) {
+/// Where the window is created: the stored position when there is one, else the
+/// default corner of the monitor the pointer is on.
+///
+/// Resolving this before `CreateWindowExW` is what makes a restore invisible.
+/// The window is shown by a later message, but it is created at this origin, so
+/// placing it afterwards would be a visible move on the first frame.
+fn initial_position(win_h: i32, saved_position: Option<ParkedWindow>) -> (i32, i32) {
+    if let Some(parked) = saved_position {
+        if let Some((x, y)) = restore_position(parked, win_h) {
+            return (x, y);
+        }
+    }
     unsafe {
         let mut cursor = POINT::default();
         let _ = GetCursorPos(&mut cursor);
@@ -1453,6 +1465,70 @@ fn initial_position(win_h: i32) -> (i32, i32) {
         let y = default_pill_y(wa.top, wa_h, win_h);
         (x, y)
     }
+}
+
+/// Resolve the stored position against the monitors connected now.
+///
+/// `None` means the stored display is gone and nothing in the current layout
+/// relates to it, so the caller keeps the default placement instead of guessing.
+fn restore_position(parked: ParkedWindow, win_h: i32) -> Option<(i32, i32)> {
+    let work_areas = enumerate_work_areas()?;
+    let placement = rust_pill_shared::restore::restore(
+        parked,
+        &work_areas,
+        (WINDOW_W_TYPING as f64, win_h as f64),
+        |work, (window_w, window_h)| window_clamp_bounds_for_size(work, window_w, window_h),
+    );
+    match placement {
+        rust_pill_shared::restore::Placement::Restore { x, y } => {
+            Some((x.round() as i32, y.round() as i32))
+        }
+        rust_pill_shared::restore::Placement::PlatformDefault => None,
+    }
+}
+
+/// The work areas of the monitors connected right now.
+///
+/// Separate from `enumerate_monitor_topology`, which keeps the last complete
+/// snapshot for seam hysteresis. Restore must use only what is connected at this
+/// moment: a remembered monitor is the thing being checked for.
+fn enumerate_work_areas() -> Option<Vec<MonitorRect>> {
+    let mut snapshot = MonitorSnapshotList {
+        monitors: Vec::new(),
+        failed: false,
+    };
+    let data = LPARAM(&mut snapshot as *mut _ as isize);
+    // SAFETY: EnumDisplayMonitors completes its callbacks synchronously, so
+    // `data` stays a valid pointer to `snapshot` for the whole enumeration.
+    let succeeded =
+        unsafe { EnumDisplayMonitors(None, None, Some(collect_monitor_snapshot), data) };
+    (succeeded.as_bool() && !snapshot.failed && !snapshot.monitors.is_empty())
+        .then_some(snapshot.monitors)
+}
+
+struct MonitorSnapshotList {
+    monitors: Vec<MonitorRect>,
+    failed: bool,
+}
+
+unsafe extern "system" fn collect_monitor_snapshot(
+    monitor: HMONITOR,
+    _hdc: HDC,
+    _rect: *mut RECT,
+    data: LPARAM,
+) -> BOOL {
+    // SAFETY: EnumDisplayMonitors invokes this synchronously with the pointer to
+    // the live enumeration context passed in `dwData` below.
+    let snapshot = unsafe { &mut *(data.0 as *mut MonitorSnapshotList) };
+    let Some(info) = query_monitor_info(monitor) else {
+        snapshot.failed = true;
+        return BOOL(0);
+    };
+    let candidate = monitor_rect(info.rcWork);
+    if !snapshot.monitors.contains(&candidate) {
+        snapshot.monitors.push(candidate);
+    }
+    BOOL(1)
 }
 
 // Drawing and the native entry use the fixed typing canvas. Extra selector
@@ -1570,6 +1646,30 @@ fn reposition_to_cursor_monitor(hwnd: HWND, state: &PillState) {
 /// true screen edges; panel/typing modes fill the canvas, so they keep
 /// whole-window clamping. Shared by the cursor-tick repositioning and the
 /// frame-loop drag so the two can never disagree about the work area.
+/// The clamp for a window of `window_w` x `window_h` in dictation mode, which is
+/// the mode the pill starts in.
+///
+/// This is the same footprint arithmetic [`window_clamp_bounds`] applies, spelled
+/// out for a size the caller supplies instead of reading it from live state, so
+/// a restore can clamp against the rect it is about to create. `pill_position` is
+/// the drawing origin of the pill inside the window, so the pill body plus its
+/// content offset is the footprint that has to stay on screen.
+fn window_clamp_bounds_for_size(work: MonitorRect, window_w: f64, window_h: f64) -> DragBounds {
+    // Expand and inflate are zero at creation, so the pill draws at its resting
+    // size and the content offset is the difference between the canvas and the
+    // pill's resting rect.
+    let resting_w = MIN_PILL_WIDTH;
+    let resting_h = MIN_PILL_HEIGHT;
+    let fx = ((window_w - resting_w) / 2.0).round();
+    let fy = (window_h - resting_h).round();
+    DragBounds {
+        min_x: work.x - fx,
+        min_y: work.y - fy,
+        max_x: work.right() - fx - resting_w.max(1.0),
+        max_y: work.bottom() - fy - resting_h.max(1.0),
+    }
+}
+
 fn window_clamp_bounds(state: &PillState, wa: RECT, win_w: i32, win_h: i32) -> DragBounds {
     let (px, py, pw, ph) =
         draw::pill_position(state, state.draw_width.get(), state.draw_height.get());

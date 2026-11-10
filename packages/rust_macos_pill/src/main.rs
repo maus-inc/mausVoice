@@ -15,7 +15,8 @@ mod state;
 
 fn main() {
     font::install_embedded_satoshi();
+    let saved_position = rust_pill_shared::restore::saved_position_from_args(std::env::args());
     let (sender, receiver) = std::sync::mpsc::channel();
     ipc::start_stdin_reader(sender);
-    app::run(receiver);
+    app::run(receiver, saved_position);
 }

@@ -246,6 +246,66 @@ pub(crate) fn tick_drag_frame(window: &gtk::Window, state: &PillState, now: f64,
     }
 }
 
+/// The size of a display work area as the restore math expects it.
+fn work_area_rect(monitor: &gdk::Monitor, scale: f64) -> rust_pill_shared::edge::MonitorRect {
+    let work = crate::pill::logical_rect_to_physical(&monitor.workarea(), scale);
+    rust_pill_shared::edge::MonitorRect {
+        x: work.x,
+        y: work.y,
+        width: work.width,
+        height: work.height,
+    }
+}
+
+/// Resolve a stored position against the monitors connected now.
+///
+/// The record is what this pill publishes: the toplevel origin in physical root
+/// pixels plus the work area of the monitor it sat on. `None` means the monitor
+/// is gone and nothing in the current layout relates to it, which leaves the
+/// caller free to park the pill with its usual anchor instead of guessing.
+fn restored_position(
+    display: &gdk::Display,
+    window: &gtk::Window,
+    state: &PillState,
+) -> Option<(c_int, c_int)> {
+    let parked = state.restored_position.get()?;
+    let scale = x11_root_scale(window);
+    let work_areas: Vec<_> = (0..display.n_monitors())
+        .filter_map(|index| display.monitor(index))
+        .map(|monitor| work_area_rect(&monitor, scale))
+        .collect();
+    let (alloc_w, alloc_h) = window.size();
+    let window_w = alloc_w as f64 * scale;
+    let window_h = alloc_h as f64 * scale;
+    let (px, py, _, _) =
+        crate::draw::pill_position(state, state.draw_width.get(), state.draw_height.get());
+    let (cox, coy) = state.content_offset();
+    let fx = (cox + px) * scale;
+    let fy = (coy + py) * scale;
+    let placement = rust_pill_shared::restore::restore(
+        parked,
+        &work_areas,
+        (window_w, window_h),
+        |work, (window_w, window_h)| {
+            // The visible pill footprint, not the transparent toplevel, is what
+            // has to stay on screen. Same arithmetic as `placement_on_monitor`
+            // in dictation mode, which is the mode the pill starts in.
+            DragBounds {
+                min_x: work.x - fx,
+                min_y: work.y - fy,
+                max_x: work.right() - fx - window_w,
+                max_y: work.bottom() - fy - window_h,
+            }
+        },
+    );
+    match placement {
+        rust_pill_shared::restore::Placement::Restore { x, y } => {
+            Some((x.round() as c_int, y.round() as c_int))
+        }
+        rust_pill_shared::restore::Placement::PlatformDefault => None,
+    }
+}
+
 pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
     const XA_ATOM: XAtom = 4;
 
@@ -317,6 +377,10 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
         }
     };
 
+    // A stored position wins over the pointer's monitor. It is resolved here,
+    // during realize, so the pill is never painted at the default corner first.
+    let restored = restored_position(&display, window, &state);
+
     let (cx, cy) = cursor_pos();
     let init_pos = pill_pos_on_monitor(
         cx as f64,
@@ -337,12 +401,18 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
         })
     })
     .unwrap_or((0, 0));
+    let target = restored.unwrap_or(init_pos);
     unsafe {
-        XMoveWindow(xdisplay, xwindow, init_pos.0, init_pos.1);
+        XMoveWindow(xdisplay, xwindow, target.0, target.1);
         XFlush(xdisplay);
     }
 
-    state.x11_drag_applied.set(init_pos);
+    state.x11_drag_applied.set(target);
+    if let Some((x, y)) = restored {
+        state.saved_x.set(x as f64);
+        state.saved_y.set(y as f64);
+        state.has_saved_position.set(true);
+    }
     let was_dragging = Rc::new(Cell::new(false));
     let win_tick = window.clone();
     let state_tick = state.clone();

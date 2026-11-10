@@ -40,7 +40,11 @@ fn main() {
         }
     }
 
+    // Wayland gives a client no way to query where its surface is, so a stored
+    // position cannot be applied there. The record is still parsed, and the
+    // backend decides whether it can use it.
+    let restored_position = rust_pill_shared::restore::saved_position_from_args(std::env::args());
     let (sender, receiver) = std::sync::mpsc::channel();
     ipc::start_stdin_reader(sender);
-    pill::run(receiver);
+    pill::run(receiver, restored_position);
 }
