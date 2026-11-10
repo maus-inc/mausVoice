@@ -36,6 +36,11 @@ sudo apt-get install -y ffmpeg gifsicle      # Debian/Ubuntu
 brew install ffmpeg gifsicle                 # macOS
 ```
 
+On the Linux x86-64 agent sandbox, where no Debian mirror is reachable, the vendored
+toolchain branch in `AGENTS.md` carries all three in `system/tools/bin`; follow its
+`FETCH.md` and they are on `PATH`. The same tree carries `tesseract` (G19) and Chromium
+156 (G25) for the OCR and browser steps below.
+
 `tesseract-ocr` is optional. When it is installed, `validate.mjs` reads each
 caption back with OCR and compares it to the storyboard, which is the strongest
 automated proof that the clip shows what it claims. Install it with

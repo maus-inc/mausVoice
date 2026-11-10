@@ -103,7 +103,7 @@ checking for a mirror, and do not report it as passed.
 - [ ] I loaded the skills the routing table in `engineering/design-skills.md` requires for this task, in its mandatory order
 - [ ] I loaded `.agents/skills/stageshow/SKILL.md` and `references/craft.md` for this change, because it touches a form of UI in some file (app, pill, installer, docs, marketing, README, SVG, i18n, PR capture), and I named the mode, product or illustrated
 - [ ] Product mode: I walked the `verify.md` You see / You do table against the surface in light and dark and listed every film line that would print, each fixed or explained with its state
-- [ ] Illustrated mode: `film.mjs --gate` ended `rehearsal passed` at the shown width, at 390, with `--states` and with `--dark`, run from a `/tmp` copy and never inside `.agents/skills/stageshow`; or I named gap G9 and gave the by-eye review against the closest gold example, and `REHEARSAL.md` sits beside the figure
+- [ ] Illustrated mode: `film.mjs --gate` ended `rehearsal passed` at the shown width, at 390, with `--states` and with `--dark`, run from a `/tmp` copy and never inside `.agents/skills/stageshow`; or I named gap G25 and gave the by-eye review against the closest gold example, and `REHEARSAL.md` sits beside the figure
 - [ ] I said the one difference between my result and the closest gold example or shipped mausVoice surface, and fixed it when mine was the emptier, flatter, smaller or more boxed one
 - [ ] I report which skills I loaded, which I refused, and what each one changed
 - [ ] No hard-coded colour, radius, duration or font size in a component. Tokens come from `apps/desktop/src/styles/`
