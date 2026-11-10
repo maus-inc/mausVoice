@@ -121,6 +121,17 @@ export const MicrophoneReadinessSideEffects = () => {
   const holdRefusedRef = useRef(false);
 
   /**
+   * Whether this window believes a hold is open, or opening.
+   *
+   * `appliedRef` cannot answer this: it is nulled on every failure path and it
+   * records what the effect *decided*, not what the backend was asked for. This
+   * one is written at the two places that actually open (the hold effect and the
+   * focus retry) and read by the release continuation below, where the question
+   * is narrower: has something opened a stream since I zeroed the policy?
+   */
+  const heldRef = useRef(false);
+
+  /**
    * Tells the user the hold could not be opened, once per failure.
    *
    * Silence was the old behaviour and it is the worst of the options: the switch
@@ -223,6 +234,7 @@ export const MicrophoneReadinessSideEffects = () => {
   /** Opens or resizes the hold, depending on whether one is already applied. */
   const hold = useCallback(
     (seconds: number) => {
+      heldRef.current = true;
       const request = ++requestRef.current;
       void commands
         .warmMicrophone(seconds, MICROPHONE_READY_FOREVER_MS)
@@ -268,6 +280,7 @@ export const MicrophoneReadinessSideEffects = () => {
 
   const release = useCallback(() => {
     openedPrerollRef.current = null;
+    heldRef.current = false;
     // Invalidates every open still in flight: any answer from one of them is for
     // a hold this window no longer wants, and `hold` closes it on arrival.
     requestRef.current += 1;
@@ -287,7 +300,18 @@ export const MicrophoneReadinessSideEffects = () => {
         // just zeroed is exactly the case this covers. The channel is
         // command-ordered like every other write on this component, so the
         // restore lands after the close it is undoing.
-        if (lingerRef.current > 0) {
+        // Not while something has opened since. `set_microphone_linger`
+        // re-applies the whole policy to the stream that is open, so a restore
+        // landing after a new hold would overwrite the sentinel `warm_microphone`
+        // opened it with and the hold would close itself on a 5 s timer:
+        // keep-ready would silently stop being keep-ready. The close and the
+        // hold are separately issued commands, so their continuations can
+        // interleave; this is the one that has to yield.
+        //
+        // Skipping the restore must not skip the read: `publishHeld` is how the
+        // dialog learns what the device is doing, and returning early here
+        // would leave it showing the state from before this release.
+        if (!heldRef.current && lingerRef.current > 0) {
           void commands
             .setMicrophoneLinger(lingerRef.current)
             .catch((error: unknown) => {

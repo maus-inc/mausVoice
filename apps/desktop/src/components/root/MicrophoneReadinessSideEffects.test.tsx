@@ -814,6 +814,86 @@ describe("MicrophoneReadinessSideEffects", () => {
     expect(mocks.setMicrophoneLinger).toHaveBeenCalledWith(5_000);
   });
 
+  it("does not restore the post-recording window on top of a hold that has already opened", async () => {
+    // `release` restores the window from inside its `.then`, and the hold effect
+    // can run *before* that continuation. Keeping ready on, a change to the
+    // pre-roll re-runs the hold effect and opens a new stream; an unrelated
+    // release (permission revoked, a local-data clear) can still have its
+    // continuation in flight at that moment.
+    //
+    // `set_microphone_linger` re-applies the whole policy to the stream that is
+    // open, so a restore landing after the new hold would overwrite the
+    // sentinel `warm_microphone` opened it with. The hold would then close
+    // itself on a timer: keep-ready silently stops being keep-ready.
+    const prefs = {
+      keepMicrophoneReady: true,
+      microphonePrerollSeconds: 0.5,
+      microphoneLingerMs: 5_000,
+    };
+    setState({ userPrefs: prefs });
+    await render();
+
+    // Hold the close open so its continuation can be ordered deliberately.
+    let finishClose: (() => void) | undefined;
+    // Typed as the mock's own return type rather than `void`: `closeMicrophone`
+    // resolves to `undefined`, and a `Promise<void>` is not assignable to it.
+    mocks.closeMicrophone.mockImplementationOnce(
+      () =>
+        new Promise<undefined>((resolve) => {
+          finishClose = () => resolve(undefined);
+        }),
+    );
+    mocks.setMicrophoneLinger.mockClear();
+    mocks.warmMicrophone.mockClear();
+
+    // A release for a reason that leaves the preference on.
+    setState({
+      userPrefs: prefs,
+      permissions: { microphone: { state: "denied" } },
+    });
+    await rerender();
+    expect(mocks.closeMicrophone).toHaveBeenCalled();
+    expect(finishClose).toBeTypeOf("function");
+
+    // The preference is back and the device is held again before the close
+    // finishes. `microphoneHeld` false is what makes the focus retry eligible.
+    mocks.microphoneReady.mockResolvedValue(false);
+    setState({
+      userPrefs: {
+        ...prefs,
+        keepMicrophoneReady: false,
+        microphonePrerollSeconds: 1,
+      },
+      permissions: { microphone: { state: "authorized" } },
+      settings: { microphoneHeld: false },
+    });
+    await rerender();
+    setState({
+      userPrefs: { ...prefs, microphonePrerollSeconds: 1 },
+      permissions: { microphone: { state: "authorized" } },
+      settings: { microphoneHeld: false },
+    });
+    await rerender();
+
+    // A hold is open (or opening) now.
+    expect(mocks.warmMicrophone.mock.calls.length).toBeGreaterThan(0);
+
+    // Calls up to here come from the linger *effect*, which is legitimately
+    // pushing the preference. The restore under test is any call caused by the
+    // stale close finishing, so that is what is counted.
+    const beforeStaleClose = mocks.setMicrophoneLinger.mock.calls.length;
+
+    // Now let the stale close finish.
+    await act(async () => {
+      finishClose?.();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // The restore must not have landed on top of the hold.
+    expect(mocks.setMicrophoneLinger.mock.calls.length).toBe(beforeStaleClose);
+  });
+
   it("does not push a zero at the backend when the window is already zero", async () => {
     // Zero means "close at stop" and must stay zero. Sending it again is a no-op
     // on the backend, and the branch exists so a release does not look like it
