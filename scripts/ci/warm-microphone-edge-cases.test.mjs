@@ -36,22 +36,20 @@ const walk = (dir, extensions) => {
   return out;
 };
 
-const corpus = [
-  ...walk(join(ROOT, "apps/desktop/src-tauri/src"), [".rs"]),
-  ...walk(join(ROOT, "apps/desktop/src"), [".test.ts", ".test.tsx"]),
-]
-  .map((file) => readFileSync(file, "utf8"))
-  .join("\n");
-
 /**
- * The same files with every comment removed.
+ * Every test file, with every comment removed.
  *
- * A cited name that survives only in a comment is the failure this guard exists
- * to catch: delete the test and leave a note saying it lives here, and a corpus
- * that includes comments reports the citation as satisfied. Stripping comments
- * first means a name has to appear in code to count. Line and block comments are
+ * There is no comment-preserving variant, and that is the point. A cited name
+ * that survives only in a comment is the failure this guard exists to catch:
+ * delete the test and leave a note saying it lives here, and a corpus that
+ * includes comments reports the citation as satisfied. Stripping comments first
+ * means a name has to appear in code to count. Line and block comments are
  * handled separately because Rust and TypeScript share the syntax but a naive
  * strip would eat the `//` inside a URL string.
+ *
+ * This used to be two constants, `corpus` and `codeOnly`. The comment-inclusive
+ * one stopped being read when both arms of the citation check moved to the
+ * stripped text, and it sat there for a release looking like coverage.
  */
 const stripComments = (source) =>
   source
@@ -121,8 +119,8 @@ test("every test cited by the edge-case matrix exists", () => {
     return new RegExp(pattern, "m").test(codeOnly);
   };
 
-  // `codeOnly` rather than `corpus` for both arms: a comment is not a test, and
-  // counting one let a deleted test keep its citation alive.
+  // Both arms read `codeOnly`: a comment is not a test, and counting one let a
+  // deleted test keep its citation alive.
   const missing = cited.filter(
     (name) =>
       !codeOnly.includes(name) &&
