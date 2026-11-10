@@ -78,6 +78,12 @@
     "bold": false
   },
   {
+    "text": "This only applies while the microphone is already open. Turn",
+    "fontSize": 12,
+    "ratio": 17.3,
+    "bold": false
+  },
+  {
     "text": "Stay ready after a dictation",
     "fontSize": 15,
     "ratio": 17.3,

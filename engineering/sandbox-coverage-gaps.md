@@ -108,7 +108,7 @@ Blocks the `ui-capture` workflow that `AGENTS.md` and `.agents/skills/ui-capture
 
 Measured before the second delivery. `ffmpeg`, `ffprobe`, `gifsicle` and `tesseract` were all absent. `system/PKGS.txt` carries `libavcodec59`, `libavformat`, `libsndfile1` and `imagemagick`, so the libraries were there and the executables were not.
 
-Delivered. The second delivery ships `system/tools/bin/ffmpeg` 7.0.2-static, `ffprobe` 7.0.2-static and `gifsicle` 1.95, each run under `env -i`. `system/tools/UIPIPE.txt` records the upstream URL and the sha256 for each. They sit beside `cmake` and `file`, so `FETCH.md` step 6 puts them on `PATH`; step 7d checks them. `tesseract` and its `eng.traineddata` ship in G19, so the `ui-capture` validation step runs the OCR round-trip too.
+Delivered. The second delivery ships `system/tools/bin/ffmpeg` 7.0.2-static, `ffprobe` 7.0.2-static and `gifsicle` 1.95, each run under `env -i`. `system/tools/UIPIPE.txt` records the upstream URL and the sha256 for each. They sit beside `cmake` and `file`, so `FETCH.md` step 6 puts them on `PATH`; step 7d checks them. `tesseract` and its `eng.traineddata` ship in G19, so the `ui-capture` validation step runs the OCR round-trip too. A bare checkout without the payload sees `validate.mjs` skip that check and say so.
 
 Now delivered. The fourth delivery adds Chromium 156 in G25 at `system/tools/bin/chromium`, so the browser half of this gap is closed and a recording can run on Linux x86-64. The spec group G6 still declines to build a browser inside G9 itself; G25 is where it ships.
 

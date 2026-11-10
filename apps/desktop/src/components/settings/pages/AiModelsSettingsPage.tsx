@@ -1,4 +1,5 @@
-import { AudioLines, Bot, KeyRound, WandSparkles } from "lucide-react";
+import { AudioLines, Bot, WandSparkles } from "lucide-react";
+import { ProviderLogo } from "../../common/provider-logos/ProviderLogo";
 import { Chip } from "@mui/material";
 import type { StylingMode } from "@maus-inc/types";
 import type { ChangeEvent } from "react";
@@ -116,7 +117,7 @@ export default function AiModelsSettingsPage() {
           description={
             <FormattedMessage defaultMessage="Your own Deepgram key, for fast streaming transcription." />
           }
-          icon={<KeyRound size={22} strokeWidth={1.9} />}
+          icon={<ProviderLogo provider="deepgram" size={22} />}
           control={<ConfiguredChip configured={hasDeepgramKey} />}
           onClick={() => setKeyDialog("deepgram")}
         />
@@ -140,7 +141,7 @@ export default function AiModelsSettingsPage() {
           description={
             <FormattedMessage defaultMessage="Your own Groq key, for transcription and text generation." />
           }
-          icon={<KeyRound size={22} strokeWidth={1.9} />}
+          icon={<ProviderLogo provider="groq" size={22} />}
           control={<ConfiguredChip configured={hasGroqKey} />}
           onClick={() => setKeyDialog("groq")}
         />

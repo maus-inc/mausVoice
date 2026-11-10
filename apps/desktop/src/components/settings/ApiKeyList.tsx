@@ -38,6 +38,7 @@ import {
   SettingsApiKeyProvider,
 } from "../../state/settings.state";
 import { useAppStore } from "../../store";
+import { ProviderLogo } from "../common/provider-logos/ProviderLogo";
 import { getModelProviderRepo } from "../../repos";
 import type { FetchModelsOptions } from "../../repos/model-provider.repo";
 import { cssEase, duration, easeOutQuint } from "../../styles/motion";
@@ -239,7 +240,8 @@ const AddApiKeyCard = ({ onSave, onCancel, context }: AddApiKeyCardProps) => {
         disabled={saving}
       >
         {providers.map((p) => (
-          <MenuItem key={p} value={p}>
+          <MenuItem key={p} value={p} sx={{ gap: 1 }}>
+            <ProviderLogo provider={p} size={16} />
             {getProviderFormConfig(p, context).displayName}
           </MenuItem>
         ))}
@@ -397,18 +399,23 @@ const EditApiKeyCard = ({
         ...selectedOutlineSx(theme),
       })}
     >
-      <Typography
-        variant="body2"
-        sx={{
-          color: "text.secondary",
-          fontWeight: 500,
-        }}
-      >
-        <FormattedMessage
-          defaultMessage="Provider: {provider}"
-          values={{ provider: config.displayName }}
-        />
-      </Typography>
+      <Stack direction="row" sx={{ alignItems: "center", gap: 0.75 }}>
+        {/* The mark is decorative: the sentence beside it already names the
+            provider, and a screen reader would otherwise read the name twice. */}
+        <ProviderLogo provider={apiKey.provider} size={16} />
+        <Typography
+          variant="body2"
+          sx={{
+            color: "text.secondary",
+            fontWeight: 500,
+          }}
+        >
+          <FormattedMessage
+            defaultMessage="Provider: {provider}"
+            values={{ provider: config.displayName }}
+          />
+        </Typography>
+      </Stack>
       <TextField
         label={<FormattedMessage defaultMessage="Key name" />}
         value={name}
@@ -858,24 +865,37 @@ const ApiKeyCard = ({
                 />
               )}
             </Stack>
-            <Typography
-              variant="caption"
+            <Stack
+              direction="row"
               sx={{
+                alignItems: "center",
+                gap: 0.5,
                 color: "text.secondary",
-                overflowWrap: "anywhere",
+                minWidth: 0,
               }}
             >
-              {config.displayName}
-              {apiKey.keySuffix ? (
-                <>
-                  {" · "}
-                  <FormattedMessage
-                    defaultMessage="Ends with {suffix}"
-                    values={{ suffix: apiKey.keySuffix }}
-                  />
-                </>
-              ) : null}
-            </Typography>
+              {/* Decorative: the name it sits beside is the label. */}
+              <ProviderLogo provider={apiKey.provider} size={14} />
+              <Typography
+                variant="caption"
+                sx={{
+                  color: "inherit",
+                  overflowWrap: "anywhere",
+                  minWidth: 0,
+                }}
+              >
+                {config.displayName}
+                {apiKey.keySuffix ? (
+                  <>
+                    {" · "}
+                    <FormattedMessage
+                      defaultMessage="Ends with {suffix}"
+                      values={{ suffix: apiKey.keySuffix }}
+                    />
+                  </>
+                ) : null}
+              </Typography>
+            </Stack>
           </Stack>
         </Box>
         <Stack

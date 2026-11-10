@@ -2,48 +2,29 @@ import react from "@vitejs/plugin-react";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
-import { createMessageId } from "../desktop/scripts/formatjs-id.mjs";
-import {
-  hasAuthoritativeId,
-  rewriteDefaultMessages,
-  shouldTransform,
-} from "./src/formatjs-ids";
 
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
 
-/**
- * Gives `formatMessage({ defaultMessage })` the id that the formatjs babel
- * plugin would have injected.
- *
- * The desktop components call `intl.formatMessage` with a bare defaultMessage,
- * and react-intl throws without an id. The real app builds through babel, which
- * rewrites those descriptors; the preview builds through Vite, which does not.
- * So the id is derived here the way the plugin derives it, but only for files
- * the verification harness reaches. Without this the harness cannot render the
- * real dialog and would have to fork it, which would verify the fork.
- */
-const formatJsIds = {
-  name: "formatjs-ids-for-harness",
-  enforce: "pre" as const,
-  transform(code: string, id: string) {
-    if (!shouldTransform(id)) return null;
-    if (!code.includes("defaultMessage")) return null;
-    // Already rewritten; a second pass would inject a second id and throw.
-    if (hasAuthoritativeId(code)) return null;
-
-    // The repository derives ids with `createMessageId`, which slugs the
-    // default message, and `apps/desktop/src/i18n/message-id-contract.test.ts`
-    // holds every component to it. A hash would produce an id that renders the
-    // right text through `defaultMessage` while silently ignoring the real
-    // translations, which is worse than no id at all.
-    const rewritten = rewriteDefaultMessages(code, (literal) =>
-      createMessageId(JSON.parse(literal) as string),
-    );
-    return rewritten === code ? null : rewritten;
-  },
-};
-
 const desktopSrc = path.resolve(rootDir, "../desktop/src");
+
+// The preview renders REAL desktop components (`@desktop/*`), and those write
+// their user-facing strings as `FormattedMessage`/`useIntl` literals with no
+// `id`. The desktop app compiles them with `babel-plugin-formatjs`, which turns
+// every literal into an id derived from its text. The preview had no such
+// transform, so any real component with visible copy threw
+// "An `id` must be provided to format a message" and rendered nothing — which
+// is why no demo had ever mounted one.
+//
+// This mirrors the desktop's override id function (same module, same
+// derivation) so a preview string and an app string resolve to the same id.
+const formatjsOverrideIdFn = (
+  await import("../desktop/scripts/formatjs-id.mjs")
+).formatjsOverrideIdFn as (
+  id: string | undefined,
+  defaultMessage: string | undefined,
+  description: string | undefined,
+  filePath: string | undefined,
+) => string | undefined;
 
 // The preview site imports the REAL desktop components/theme directly.
 // Those files live outside this app's root, so:
@@ -52,7 +33,32 @@ const desktopSrc = path.resolve(rootDir, "../desktop/src");
 // - dedupe guarantees one React/MUI/emotion instance even though the
 //   imported files sit under apps/desktop (avoids dual-copy hook breaks).
 export default defineConfig({
-  plugins: [react(), formatJsIds],
+  plugins: [
+    react({
+      babel: {
+        plugins: [
+          [
+            "babel-plugin-formatjs",
+            {
+              overrideIdFn: (
+                id: string | undefined,
+                defaultMessage: string | undefined,
+                description: string | undefined,
+                filePath: string | undefined,
+              ) =>
+                formatjsOverrideIdFn(
+                  id,
+                  defaultMessage,
+                  description,
+                  filePath,
+                ) ?? id,
+              ast: true,
+            },
+          ],
+        ],
+      },
+    }),
+  ],
   resolve: {
     alias: {
       "@desktop": desktopSrc,

@@ -22,7 +22,13 @@ import en from "@desktop/i18n/locales/en.json";
  * that object is therefore the same seam the real WebView uses: no component is
  * mocked or forked, and the command names and payloads below are the real ones.
  */
-const stats = { warm: 0, close: 0, prepare: 0, linger: [] as number[] };
+const stats = {
+  warm: 0,
+  close: 0,
+  prepare: 0,
+  linger: [] as number[],
+  preroll: [] as number[],
+};
 const unhandled = new Set<string>();
 let storedPreferences: unknown = null;
 
@@ -45,6 +51,14 @@ const handlers: Record<string, (args: any) => unknown> = {
   },
   set_microphone_linger: (args) => {
     stats.linger.push(args.lingerMs);
+    return null;
+  },
+  // A policy-only command: it opens no device, so the fake can just record it.
+  // Without it the pre-roll slider still moved, because the failure was caught
+  // and logged as a warning -- which is exactly why the probe reports unmapped
+  // commands instead of relying on a visible error.
+  set_microphone_preroll: (args) => {
+    stats.preroll.push(args.prerollSeconds);
     return null;
   },
   microphone_readiness_report: () =>

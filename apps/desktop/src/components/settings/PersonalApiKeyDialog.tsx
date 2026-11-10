@@ -25,6 +25,7 @@ import {
 } from "../../actions/personal-use.actions";
 import { useAppStore } from "../../store";
 import { findPersonalApiKey } from "../../utils/personal-use.utils";
+import { ProviderLogo } from "../common/provider-logos/ProviderLogo";
 
 export type PersonalApiKeyProvider = "groq" | "deepgram";
 
@@ -165,7 +166,15 @@ export const PersonalApiKeyDialog = ({
         },
       }}
     >
-      <DialogTitle>{copy.title}</DialogTitle>
+      <DialogTitle>
+        {/* The mark is the provider's identity here, and the title beside it
+            already names the provider — so it is decorative, not a second
+            label for the dialog. */}
+        <Stack direction="row" sx={{ alignItems: "center", gap: 1 }}>
+          <ProviderLogo provider={provider} size={20} />
+          {copy.title}
+        </Stack>
+      </DialogTitle>
       <DialogContent dividers>
         <Stack spacing={2}>
           <Typography variant="body2" sx={{ color: "text.secondary" }}>

@@ -183,11 +183,60 @@ export const SETTING_ENTRIES: SettingEntry[] = [
 
   ...settingsForGroup("ai-models", "transcription", {
     deepgram_api_key: ["deepgram", "streaming", "api key"],
-    ai_transcription: ["stt", "speech to text", "model", "local"],
+    // The provider names people type are aliases, not titles: the row is
+    // called "AI transcription", and someone looking for the place their
+    // AssemblyAI or ElevenLabs key lives searches for the provider.
+    ai_transcription: [
+      "stt",
+      "speech to text",
+      "model",
+      "local",
+      "whisper",
+      "assemblyai",
+      "elevenlabs",
+      "gladia",
+      "azure",
+      "gemini",
+      "openai",
+      "openrouter",
+      "speaches",
+      "xai",
+      "grok",
+      // Transcription-capable providers that had no alias, so their key row
+      // was reachable only if the person knew the row was called "AI
+      // transcription". "OpenAI compatible" covers both the words and the
+      // `openai-compatible` id a base-URL server is stored under.
+      "aldea",
+      "openai compatible",
+      "openai-compatible",
+      // Deepgram's key has a row of its own (`deepgram_api_key`); the place you
+      // *choose* it is this one, and someone who has the key already is
+      // looking for the choice.
+      "deepgram",
+    ],
   }),
   ...settingsForGroup("ai-models", "post_processing", {
     groq_api_key: ["groq", "llm", "api key"],
-    ai_post_processing: ["polish", "cleanup", "llm"],
+    ai_post_processing: [
+      "polish",
+      "cleanup",
+      "llm",
+      "openai",
+      "openrouter",
+      "ollama",
+      "azure",
+      "deepseek",
+      "gemini",
+      "claude",
+      "anthropic",
+      "cerebras",
+      // xAI transcribes and post-processes; only the transcription row carried
+      // the name, so this reversed the id-only case.
+      "xai",
+      // Same pairing as Deepgram: a dedicated key row exists, and this is where
+      // the key is selected.
+      "groq",
+    ],
     fast_styling_for_short_dictations: [
       "short dictation",
       "fast style",
@@ -195,7 +244,7 @@ export const SETTING_ENTRIES: SettingEntry[] = [
     ],
   }),
   ...settingsForGroup("ai-models", "assistant", {
-    assistant_mode: ["agent", "chat", "assistant"],
+    assistant_mode: ["agent", "chat", "assistant", "claude", "gpt"],
   }),
   ...settingsForGroup("ai-models", "styles", {
     styling_mode: ["app styles", "manual styles"],

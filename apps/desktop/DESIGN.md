@@ -226,6 +226,11 @@ choice below names what it rules out.
 
 - lucide (stroke 1.9) is the only icon family. MUI icons only inside sanctioned
   third-party mockups (TutorialForm). Chrome glyphs morph via MorphNavIcon.
+- Third-party provider marks are the exception, and only for identity: each
+  provider's own artwork in its published colours, from
+  `src/assets/provider-logos/`, via `ProviderLogo`. Never recoloured, never
+  treated as a control, never substituted by a lucide glyph — see
+  `docs/decisions/provider-logos-are-brand-colour-not-lucide-glyphs.md`.
 
 ## Dates
 

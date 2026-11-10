@@ -109,6 +109,19 @@ describe("transcription audio disclosure", () => {
     ).toBe("Deepgram");
   });
 
+  it("carries the provider id alongside the name, and neither without the other", () => {
+    // The id is only there so a surface can draw the provider's own mark. It
+    // must never outlive the name: a disclosure with an id but no name would
+    // draw a logo for a sentence that cannot say who it is about.
+    const named = getTranscriptionAudioDisclosure(cloudState("assemblyai"));
+    expect(named.provider).toBe("assemblyai");
+    expect(named.providerName).toBe("AssemblyAI");
+
+    const local = getTranscriptionAudioDisclosure(localState());
+    expect(local.provider).toBeNull();
+    expect(local.providerName).toBeNull();
+  });
+
   it("hides the copy for a selection that cannot transcribe", () => {
     // A stale selection (no key, or a key whose provider this build cannot
     // transcribe) dispatches to nothing, so naming a provider would be false.

@@ -3,6 +3,7 @@ import { AudioLines, Bot, WandSparkles } from "lucide-react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { useAppStore } from "../../../store";
 import type { AppState } from "../../../state/app.state";
+import type { ApiKeyProvider } from "@maus-inc/types";
 import type { SettingsApiKey } from "../../../state/settings.state";
 import {
   getProviderDisplayName,
@@ -23,6 +24,10 @@ import {
   getTranscriptionPrefs,
 } from "../../../utils/user.utils";
 import { SettingGroup, SettingGroupLink } from "../SettingRow";
+import {
+  hasProviderLogo,
+  ProviderLogo,
+} from "../../common/provider-logos/ProviderLogo";
 import { SettingSummaryRow } from "../SettingSummaryRow";
 import { settingsPagePath } from "../settings-routes";
 
@@ -51,6 +56,14 @@ type ModelSummary = {
   /** Where the work happens, when that is knowable. */
   location: string | null;
   attention: boolean;
+  /**
+   * The provider the row resolves to, when it resolves to one.
+   *
+   * Kept separate from `model` because the row's leading tile shows the
+   * provider's own mark when there is one, and only falls back to the generic
+   * lucide glyph when the answer is a local model or nothing at all.
+   */
+  provider?: ApiKeyProvider;
 };
 
 /**
@@ -160,6 +173,7 @@ export const YourModelsCard = () => {
       model: name,
       location: locationWord(getProviderLocation(key.provider, key.baseUrl)),
       attention: false,
+      provider: hasProviderLogo(key.provider) ? key.provider : undefined,
     };
   };
 
@@ -197,6 +211,23 @@ export const YourModelsCard = () => {
       ? { model: off, location: null, attention: false }
       : apiRowOf(agentKey, "post-processing", agentDispatches);
 
+  /**
+   * What leads a row: the provider's own mark when the row resolves to one, and
+   * the generic lucide glyph otherwise.
+   *
+   * The glyph is not a fallback for a missing logo — it names the *job* the row
+   * reports (transcription, post processing, assistant). A row that names a
+   * provider shows that provider instead, because the job is already its
+   * subtitle. Both cases fill the same 20px box, so the three rows keep one
+   * rhythm.
+   */
+  const leadingGlyph = (summary: ModelSummary, glyph: React.ReactNode) =>
+    summary.provider ? (
+      <ProviderLogo provider={summary.provider} size={20} />
+    ) : (
+      glyph
+    );
+
   return (
     <SettingGroup
       title={<FormattedMessage defaultMessage="Your models" />}
@@ -208,7 +239,10 @@ export const YourModelsCard = () => {
     >
       <SettingSummaryRow
         linksTo="ai_transcription"
-        icon={<AudioLines size={20} strokeWidth={1.9} />}
+        icon={leadingGlyph(
+          transcriptionSummary,
+          <AudioLines size={20} strokeWidth={1.9} />,
+        )}
         subtitle={<FormattedMessage defaultMessage="AI transcription" />}
         title={transcriptionSummary.model}
         value={transcriptionSummary.location}
@@ -216,7 +250,10 @@ export const YourModelsCard = () => {
       />
       <SettingSummaryRow
         linksTo="ai_post_processing"
-        icon={<WandSparkles size={20} strokeWidth={1.9} />}
+        icon={leadingGlyph(
+          postProcessingSummary,
+          <WandSparkles size={20} strokeWidth={1.9} />,
+        )}
         subtitle={<FormattedMessage defaultMessage="AI post processing" />}
         title={postProcessingSummary.model}
         value={postProcessingSummary.location}
@@ -224,7 +261,7 @@ export const YourModelsCard = () => {
       />
       <SettingSummaryRow
         linksTo="assistant_mode"
-        icon={<Bot size={20} strokeWidth={1.9} />}
+        icon={leadingGlyph(agentSummary, <Bot size={20} strokeWidth={1.9} />)}
         subtitle={<FormattedMessage defaultMessage="Assistant mode" />}
         title={agentSummary.model}
         value={agentSummary.location}

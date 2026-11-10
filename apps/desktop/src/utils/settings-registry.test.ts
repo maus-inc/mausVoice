@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { API_KEY_PROVIDERS } from "@maus-inc/types";
 import { describe, expect, it } from "vitest";
 import enMessages from "../i18n/locales/en.json";
 import { SETTINGS_PAGE_COPY } from "../components/settings/settings-page-copy";
@@ -18,6 +19,27 @@ import {
 } from "./settings-registry";
 
 const messages = enMessages as Record<string, string>;
+
+/**
+ * Providers that can transcribe, and so own the transcription row.
+ *
+ * Listed rather than derived so a provider gaining a job is a visible decision:
+ * the assertion below would otherwise keep pointing at a row nobody chose. A
+ * provider in neither set is a genuine miss and fails the test.
+ */
+const TRANSCRIPTION_CAPABLE = new Set([
+  "aldea",
+  "assemblyai",
+  "deepgram",
+  "elevenlabs",
+  "gladia",
+  "speaches",
+  "openai-compatible",
+  "xai",
+]);
+
+/** Providers that can post-process too, and so own both rows. */
+const ALSO_POST_PROCESSING = new Set(["xai"]);
 const pageIds = new Set(SETTINGS_PAGES.map((page) => page.id));
 
 const readSource = (relative: string) =>
@@ -173,6 +195,78 @@ describe("settings registry", () => {
     expect(
       searchSettings("privacy and data").map((hit) => hit.entry.key),
     ).toContain("incognito_mode");
+  });
+
+  it("finds a provider's settings by the provider's name", () => {
+    // The rows are titled by what they do ("AI transcription"), so someone
+    // looking for where their provider's key lives searches the provider. Each
+    // name has to reach the row that owns it.
+    const providers: Record<string, string> = {
+      assemblyai: "ai_transcription",
+      elevenlabs: "ai_transcription",
+      gladia: "ai_transcription",
+      speaches: "ai_transcription",
+      cerebras: "ai_post_processing",
+      deepseek: "ai_post_processing",
+      ollama: "ai_post_processing",
+      aldea: "ai_transcription",
+      "openai-compatible": "ai_transcription",
+    };
+    for (const [provider, key] of Object.entries(providers)) {
+      expect(
+        searchSettings(provider).map((hit) => hit.entry.key),
+        `searching ${provider}`,
+      ).toContain(key);
+    }
+    // Anthropic is the company, Claude the product: both must land on the row
+    // that picks the model.
+    for (const alias of ["claude", "anthropic"]) {
+      expect(
+        searchSettings(alias).map((hit) => hit.entry.key),
+        `searching ${alias}`,
+      ).toContain("ai_post_processing");
+    }
+  });
+
+  /**
+   * The rows each provider's name must reach.
+   *
+   * A provider transcribes, post-processes, or both, and a search for it has to
+   * land on every row that owns it. Listed rather than derived so a provider
+   * gaining a job is a visible decision rather than a silently updated
+   * expectation.
+   */
+  const providerRows = (provider: string): string[] => {
+    const rows = TRANSCRIPTION_CAPABLE.has(provider)
+      ? ["ai_transcription"]
+      : ["ai_post_processing"];
+    return ALSO_POST_PROCESSING.has(provider)
+      ? [...rows, "ai_post_processing"]
+      : rows;
+  };
+
+  it("reaches its setting for every provider the app can store", () => {
+    // A provider added to `API_KEY_PROVIDERS` without an alias is findable only
+    // by the row's title, which is not what someone searches for.
+    for (const provider of API_KEY_PROVIDERS) {
+      const hits = searchSettings(provider).map((hit) => hit.entry.key);
+      for (const key of providerRows(provider)) {
+        expect(hits, `searching ${provider}`).toContain(key);
+      }
+    }
+  });
+
+  it("reaches it by name as well as by id", () => {
+    // The id uses hyphens where the name uses spaces ("OpenAI Compatible"), and
+    // a person types the name. Both spellings have to work, or a settings
+    // search quietly depends on which one they happened to remember.
+    for (const provider of API_KEY_PROVIDERS) {
+      const named = provider.replaceAll("-", " ");
+      const hits = searchSettings(named).map((hit) => hit.entry.key);
+      for (const key of providerRows(provider)) {
+        expect(hits, `searching ${named}`).toContain(key);
+      }
+    }
   });
 
   it("returns titles from the catalog and falls back to the key", () => {
