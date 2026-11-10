@@ -268,5 +268,20 @@ describe("microphone failure classification", () => {
     // and an undefined renders as "undefined", and neither names a failure.
     expect(classifyMicrophoneFailure(undefined)).toBe("unknown");
     expect(classifyMicrophoneFailure(new Error("nope"))).toBe("unknown");
+    expect(classifyMicrophoneFailure(null)).toBe("unknown");
+  });
+
+  it("does not stringify an object into something that looks like a cause", () => {
+    // `String(message ?? "")` turned every non-string into "[object Object]",
+    // and an object whose `toString` returns marker text then classified as a
+    // real device failure: a wrong instruction to the user, produced by a value
+    // that named nothing. Only a string is a cause.
+    const liar = {
+      toString: () => "device is in use by another application",
+    };
+    expect(String(liar)).toContain("in use");
+    expect(classifyMicrophoneFailure(liar)).toBe("unknown");
+    expect(classifyMicrophoneFailure(["permission denied"])).toBe("unknown");
+    expect(classifyMicrophoneFailure(0)).toBe("unknown");
   });
 });

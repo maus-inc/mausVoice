@@ -17,9 +17,17 @@ const HEADER_BYTES = 4;
  * be part of a recording, so the trailer is only consumed when it matches.
  */
 const TRAILER_BYTES = 16;
-const CAPTURE_FAULT_BIT = 1 << 0;
-/** `CAPTURE_TRAILER_MAGIC` in `commands.rs`, byte for byte. */
-const CAPTURE_TRAILER_MAGIC = 0x4341_5054;
+const CAPTURE_FAULT_BIT = 0b1;
+/**
+ * `CAPTURE_TRAILER_MAGIC` in `commands.rs`, byte for byte: the ASCII bytes
+ * `C`, `A`, `P`, `T`.
+ *
+ * Grouped in pairs because a pair is one character of the word, which is the
+ * unit that makes the number readable. A separator every four digits would
+ * split the word down the middle and group for the sake of grouping.
+ */
+// prettier-ignore
+const CAPTURE_TRAILER_MAGIC = 0x43_41_50_54;
 const IS_LITTLE_ENDIAN = new Uint8Array(new Uint16Array([1]).buffer)[0] === 1;
 
 const EMPTY_RESULT = (): StopRecordingResponse => ({
@@ -144,6 +152,54 @@ const isSampleArray = (value: unknown): value is Float32Array | number[] =>
  * null audio result. A malformed body now decodes to empty, the same way an
  * unrecognised one always has.
  */
+/**
+ * Reads the finite number, or falls back to zero.
+ *
+ * `typeof === "number"` alone admits `NaN` and `Infinity`, and a non-finite
+ * sample rate propagates into every duration the caller computes from it.
+ */
+const finiteOrZero = (value: unknown): number =>
+  typeof value === "number" && Number.isFinite(value) ? value : 0;
+
+/**
+ * Decodes the `{ samples, sampleRate, ... }` object shape of the stop payload.
+ *
+ * The capture facts are carried across too. This exists so every caller shares
+ * one decoding path, and returning only the audio meant the path that most needs
+ * the fault -- the preview runtime and the test doubles -- was the one path
+ * where a faulted capture reported nothing at all.
+ */
+const decodeObjectPayload = (fields: {
+  samples: unknown;
+  sampleRate: unknown;
+  captureFault: unknown;
+  capturedMs: unknown;
+  expectedMs: unknown;
+}): StopRecordingResponse => {
+  const { samples, sampleRate, captureFault, capturedMs, expectedMs } = fields;
+  if (!isSampleArray(samples)) {
+    return EMPTY_RESULT();
+  }
+  return {
+    // Copied rather than aliased: a caller that writes into the decoded buffer
+    // must not be able to reach back into the payload it came from.
+    samples:
+      samples instanceof Float32Array
+        ? samples.slice()
+        : Float32Array.from(samples),
+    sampleRate: finiteOrZero(sampleRate),
+    // Only a fatal fault is reported; anything else is silence, which is what
+    // an older caller already assumed.
+    ...(captureFault === "fatal" ? { captureFault: "fatal" as const } : {}),
+    ...(typeof capturedMs === "number" && Number.isFinite(capturedMs)
+      ? { capturedMs }
+      : {}),
+    ...(typeof expectedMs === "number" && Number.isFinite(expectedMs)
+      ? { expectedMs }
+      : {}),
+  };
+};
+
 export const decodeStopRecordingPayload = (
   payload: unknown,
 ): StopRecordingResponse => {
@@ -167,32 +223,13 @@ export const decodeStopRecordingPayload = (
         capturedMs?: unknown;
         expectedMs?: unknown;
       };
-    if (!isSampleArray(samples)) {
-      return EMPTY_RESULT();
-    }
-    // The capture facts are carried across too. This branch exists so every
-    // caller shares one decoding path, and returning only the audio meant the
-    // path that most needs the fault -- the preview runtime and the test doubles
-    // -- was the one path where a faulted capture reported nothing at all.
-    return {
-      // Copied rather than aliased: a caller that writes into the decoded
-      // buffer must not be able to reach back into the payload it came from.
-      samples:
-        samples instanceof Float32Array
-          ? samples.slice()
-          : Float32Array.from(samples),
-      sampleRate:
-        typeof sampleRate === "number" && Number.isFinite(sampleRate)
-          ? sampleRate
-          : 0,
-      ...(captureFault === "fatal" ? { captureFault } : {}),
-      ...(typeof capturedMs === "number" && Number.isFinite(capturedMs)
-        ? { capturedMs }
-        : {}),
-      ...(typeof expectedMs === "number" && Number.isFinite(expectedMs)
-        ? { expectedMs }
-        : {}),
-    };
+    return decodeObjectPayload({
+      samples,
+      sampleRate,
+      captureFault,
+      capturedMs,
+      expectedMs,
+    });
   }
   return EMPTY_RESULT();
 };

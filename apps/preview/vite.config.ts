@@ -3,6 +3,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 import { createMessageId } from "../desktop/scripts/formatjs-id.mjs";
+import {
+  hasAuthoritativeId,
+  rewriteDefaultMessages,
+  shouldTransform,
+} from "./src/formatjs-ids";
 
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
 
@@ -21,51 +26,23 @@ const formatJsIds = {
   name: "formatjs-ids-for-harness",
   enforce: "pre" as const,
   transform(code: string, id: string) {
-    if (id.includes("/verify-harness/")) {
-      // The entry itself is harness code, and it does not call formatMessage.
-      return null;
-    }
-    if (!/apps\/(desktop|preview)\/src\//.test(id)) return null;
+    if (!shouldTransform(id)) return null;
     if (!code.includes("defaultMessage")) return null;
-    // Already rewritten. The transform can run more than once for a module in
-    // dev, and a second pass would inject a second id and throw.
-    if (/id:\s*"[0-9a-f]{6}",\s*\n?\s*defaultMessage/.test(code)) return null;
+    // Already rewritten; a second pass would inject a second id and throw.
+    if (hasAuthoritativeId(code)) return null;
 
     // The repository derives ids with `createMessageId`, which slugs the
     // default message, and `apps/desktop/src/i18n/message-id-contract.test.ts`
     // holds every component to it. A hash would produce an id that renders the
     // right text through `defaultMessage` while silently ignoring the real
     // translations, which is worse than no id at all.
-    const idFor = (literal: string): string =>
-      createMessageId(JSON.parse(literal) as string);
-
-    // Four shapes carry a descriptor: an inline object, an object broken after
-    // the brace, a JSX prop, and a JSX prop broken over a line. All four occur
-    // in these components, and a missed one throws at render time and takes the
-    // whole dialog down rather than only that message.
-    let rewritten = code.replace(
-      /\{\s*defaultMessage:\s*("(?:[^"\\]|\\.)*")/g,
-      (_m, literal: string) =>
-        `{ id: "${idFor(literal)}", defaultMessage: ${literal}`,
-    );
-    rewritten = rewritten.replace(
-      /\{\s*\n(\s*)defaultMessage:\s*("(?:[^"\\]|\\.)*")/g,
-      (_m, indent: string, literal: string) =>
-        `{\n${indent}id: "${idFor(literal)}",\n${indent}defaultMessage: ${literal}`,
-    );
-    rewritten = rewritten.replace(
-      /(<FormattedMessage\s+)defaultMessage=("(?:[^"\\]|\\.)*")/g,
-      (_m, prefix: string, literal: string) =>
-        `${prefix}id="${idFor(literal)}" defaultMessage=${literal}`,
-    );
-    rewritten = rewritten.replace(
-      /(<FormattedMessage\s*\n\s*)defaultMessage=("(?:[^"\\]|\\.)*")/g,
-      (_m, prefix: string, literal: string) =>
-        `${prefix}id="${idFor(literal)}" defaultMessage=${literal}`,
+    const rewritten = rewriteDefaultMessages(code, (literal) =>
+      createMessageId(JSON.parse(literal) as string),
     );
     return rewritten === code ? null : rewritten;
   },
 };
+
 const desktopSrc = path.resolve(rootDir, "../desktop/src");
 
 // The preview site imports the REAL desktop components/theme directly.

@@ -7,8 +7,7 @@
  * screenshotted outside the Tauri runtime, which is the only place the rest of
  * the suite ever exercises it by reading the DOM.
  */
-import { Box, ThemeProvider } from "@mui/material";
-import { CssBaseline } from "@mui/material";
+import { Box, CssBaseline, ThemeProvider } from "@mui/material";
 import React, { useEffect } from "react";
 import ReactDOM from "react-dom/client";
 import { IntlProvider } from "react-intl";
@@ -96,15 +95,17 @@ const handlers: Record<string, (args: any) => unknown> = {
     currentWindow: { label: "main" },
     currentWebview: { label: "main" },
   },
-  invoke: async (cmd: string, args: any) => {
+  invoke: (cmd: string, args: any) => {
     const handler = handlers[cmd];
     if (!handler) {
       unhandled.add(cmd);
       // Every unmapped command is recorded and rejected, so a gap fails loudly
-      // in the probe output instead of silently returning undefined.
-      throw new Error(`harness: no fake for command "${cmd}"`);
+      // in the probe output instead of silently returning undefined. Rejection
+      // rather than a synchronous throw, because the real `invoke` always
+      // returns a promise and a caller is entitled to rely on that.
+      return Promise.reject(new Error(`harness: no fake for command "${cmd}"`));
     }
-    return handler(args);
+    return Promise.resolve(handler(args));
   },
 };
 (globalThis as any).__stats = stats;

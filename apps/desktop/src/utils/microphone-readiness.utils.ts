@@ -208,7 +208,11 @@ const containsAny = (haystack: string, needles: readonly string[]): boolean =>
 export const classifyMicrophoneFailure = (
   message: unknown,
 ): MicrophoneOpenFailure => {
-  const text = typeof message === "string" ? message : String(message ?? "");
+  // `String(value ?? "")` would stringify `null` as the empty string but every
+  // other non-message as `"[object Object]"`, which then gets searched for
+  // device markers and can only ever miss. Anything that is not a string is
+  // treated as no message at all.
+  const text = typeof message === "string" ? message : "";
   const haystack = text.toLowerCase();
   if (containsAny(haystack, PERMISSION_MARKERS)) return "permission_denied";
   if (containsAny(haystack, IN_USE_MARKERS))

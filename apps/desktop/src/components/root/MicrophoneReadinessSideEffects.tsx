@@ -3,14 +3,13 @@ import { commands } from "@maus-inc/desktop-native-apis";
 import { emit, listen } from "@tauri-apps/api/event";
 import { MICROPHONE_READINESS_EVENT } from "@maus-inc/desktop-utils";
 import { refreshCurrentUser } from "../../actions/user-activity.actions";
-import { isMainLocalDataWindow } from "../../utils/local-data-write-gate";
-import { produceAppState, useAppStore } from "../../store";
-import { getAppState } from "../../store";
+import { getAppState, produceAppState, useAppStore } from "../../store";
 import { showSnackbar } from "../../actions/app.actions";
 import { getIntl } from "../../i18n/intl";
 import { getLogger } from "../../utils/log.utils";
 import {
   isLocalDataClearRequested,
+  isMainLocalDataWindow,
   subscribeToLocalDataClearRequested,
 } from "../../utils/local-data-write-gate";
 import {
@@ -138,21 +137,29 @@ export const MicrophoneReadinessSideEffects = () => {
     // while the app still asked for them, so they rendered as their ids until
     // the next extraction pruned them.
     const intl = getIntl();
-    const message =
-      failure === "in_use_by_another_application"
-        ? intl.formatMessage({
-            defaultMessage:
-              "Another application is using the microphone. Close it, then try again.",
-          })
-        : failure === "permission_denied"
-          ? intl.formatMessage({
-              defaultMessage:
-                "Microphone access is blocked. Allow it in your system settings, then try again.",
-            })
-          : intl.formatMessage({
-              defaultMessage:
-                "Could not open the microphone in advance. Dictation still works, but the first press will be slower.",
-            });
+    // A function per cause rather than a chain of ternaries: a nested ternary
+    // is read right-to-left and the two actionable causes were the hardest part
+    // of this block to follow. Each arm still keeps its literal at its own
+    // `formatMessage` call for the reason above.
+    const messageFor = (cause: typeof failure): string => {
+      if (cause === "in_use_by_another_application") {
+        return intl.formatMessage({
+          defaultMessage:
+            "Another application is using the microphone. Close it, then try again.",
+        });
+      }
+      if (cause === "permission_denied") {
+        return intl.formatMessage({
+          defaultMessage:
+            "Microphone access is blocked. Allow it in your system settings, then try again.",
+        });
+      }
+      return intl.formatMessage({
+        defaultMessage:
+          "Could not open the microphone in advance. Dictation still works, but the first press will be slower.",
+      });
+    };
+    const message = messageFor(failure);
     showSnackbar(
       message,
       // Not an error: dictation still works, it is only slower than the user was
