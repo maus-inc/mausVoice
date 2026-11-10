@@ -1413,7 +1413,7 @@ export const REGISTRY: RegistryEntry[] = [
     category: "data",
     status: "reused",
     statusNote:
-      "Renders the real component and the real vendored artwork. The marks are third-party trademarks used as published: never recoloured, never tinted with the app palette, never placed on a chip. Four providers have no verifiable artwork and render nothing.",
+      "Renders the real component and the real vendored artwork. The marks are third-party trademarks used as published: never recoloured, never tinted with the app palette, never placed on a chip. Three providers have no verifiable artwork and render nothing.",
     sources: [
       `${D}components/common/provider-logos/ProviderLogo.tsx`,
       `${D}components/common/provider-logos/ProviderLogos.tsx (generated)`,

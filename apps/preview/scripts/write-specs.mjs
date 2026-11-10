@@ -859,8 +859,8 @@ Three kinds of mark, one rule each:
 | Per-scheme pair | Gladia (navy / white), OpenRouter on onyx (\`-mono\`) | one file per surface |
 
 A mark is never recoloured, tinted with the app palette, put on a coloured chip,
-outlined, rotated or stretched. Four providers — Aldea, Speaches, OpenAI
-compatible, Azure OpenAI — have no verifiable published mark and render nothing.
+outlined, rotated or stretched. Three providers — Aldea, Speaches, OpenAI
+compatible — have no verifiable published mark and render nothing.
 
 ## Contrast
 Colour marks clear the 3:1 floor for a non-text graphic on the surface they are

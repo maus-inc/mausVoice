@@ -1,0 +1,44 @@
+[
+  {
+    "surface": "provider-marks",
+    "theme": "light",
+    "file": "provider-marks-light-1200x2676.jpg",
+    "width": 1200,
+    "height": 2676
+  },
+  {
+    "surface": "personal-api-key-dialog",
+    "theme": "light",
+    "file": "personal-api-key-dialog-light-1200x800.jpg",
+    "width": 1200,
+    "height": 800
+  },
+  {
+    "surface": "provider-logo-matrix",
+    "theme": "light",
+    "file": "provider-logo-matrix-light-1200x2676.jpg",
+    "width": 1200,
+    "height": 2676
+  },
+  {
+    "surface": "provider-marks",
+    "theme": "dark",
+    "file": "provider-marks-dark-1200x2676.jpg",
+    "width": 1200,
+    "height": 2676
+  },
+  {
+    "surface": "personal-api-key-dialog",
+    "theme": "dark",
+    "file": "personal-api-key-dialog-dark-1200x800.jpg",
+    "width": 1200,
+    "height": 800
+  },
+  {
+    "surface": "provider-logo-matrix",
+    "theme": "dark",
+    "file": "provider-logo-matrix-dark-1200x2676.jpg",
+    "width": 1200,
+    "height": 2676
+  }
+]

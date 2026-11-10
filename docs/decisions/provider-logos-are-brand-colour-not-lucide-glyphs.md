@@ -46,8 +46,8 @@ never placed on a coloured chip, outlined, rotated or stretched. The tile behind
 it is a plain flex box of exactly the mark's size; the only scheme-dependent
 decision is *which* file to draw.
 
-Providers with no verifiable published mark — Aldea, Speaches, OpenAI compatible,
-Azure OpenAI — render **nothing**. No stand-in glyph, no initial: the provider's
+Providers with no verifiable published mark — Aldea, Speaches, OpenAI
+compatible — render **nothing**. No stand-in glyph, no initial: the provider's
 name beside the slot is the identifier, and a generic icon there would only say
 "provider", which the row already says.
 
@@ -80,7 +80,7 @@ The cost is that colour is not ours to fix. A mark whose only published colour
 sinks into one of the two surfaces has to fall back to the brand's own
 mono/reversed rendering, so two providers carry a second file and the component
 holds a small per-provider map. That map is the thing to check when a provider is
-added: `ProviderLogo.test.tsx` pins the four providers that render nothing, and
+added: `ProviderLogo.test.tsx` pins the three providers that render nothing, and
 measures every colour mark against the app's real surfaces (cream `#FDFBF8`,
 onyx `#161617`) at the 3:1 floor for a non-text graphic.
 

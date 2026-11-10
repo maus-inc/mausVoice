@@ -405,7 +405,7 @@ describe("ProviderLogo", () => {
     const missing = listed.filter(
       (provider) => !hasProviderLogo(provider as never),
     );
-    // These four have no verifiable artwork; the list is pinned so adding a
+    // These three have no verifiable artwork; the list is pinned so adding a
     // provider without artwork is a deliberate edit to this test.
     expect(missing.sort()).toEqual(
       ["aldea", "openai-compatible", "speaches"].sort(),

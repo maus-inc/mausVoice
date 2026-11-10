@@ -398,7 +398,7 @@ const PROVIDER_NAMES: Record<(typeof PROVIDERS)[number], string> = {
 export const ProviderLogoDemo = () => (
   <DemoSection
     title="ProviderLogo"
-    hint="Each provider's own mark, as published — never recoloured, never on a chip. The four providers with no verifiable artwork render nothing, and the name beside them carries the identity."
+    hint="Each provider's own mark, as published — never recoloured, never on a chip. The three providers with no verifiable artwork render nothing, and the name beside them carries the identity."
   >
     <Matrix>
       <State label="18px · beside the name (as in a key card)">
