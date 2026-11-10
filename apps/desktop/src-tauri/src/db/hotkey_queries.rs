@@ -469,7 +469,7 @@ mod tests {
             .as_nanos();
         let directory =
             std::env::temp_dir().join(format!("maus-hotkey-race-{}-{unique}", std::process::id()));
-        std::fs::create_dir(&directory).unwrap();
+        std::fs::create_dir_all(&directory).unwrap();
         let options = SqliteConnectOptions::new()
             .filename(directory.join("hotkeys.db"))
             .create_if_missing(true)
