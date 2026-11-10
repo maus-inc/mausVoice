@@ -2274,7 +2274,8 @@ mod cpal_impl {
 
             let samples = buffer
                 .as_ref()
-                .and_then(|buffer| buffer.lock().ok().map(|guard| guard.clone()))
+                .and_then(|buffer| buffer.lock().ok())
+                .map(|guard| guard.clone())
                 .unwrap_or_default();
             // Only the samples captured *after* the press count as this
             // recording's length. A warm start seeds the buffer with the
@@ -2513,14 +2514,12 @@ mod cpal_impl {
             })
             .unwrap_or(false);
 
-        let output_match = default_output_name
-            .map(|name| {
-                let lower = name.to_ascii_lowercase();
-                LOW_QUALITY_INPUT_KEYWORDS
-                    .iter()
-                    .any(|keyword| lower.contains(keyword))
-            })
-            .unwrap_or(false);
+        let output_match = default_output_name.is_some_and(|name| {
+            let lower = name.to_ascii_lowercase();
+            LOW_QUALITY_INPUT_KEYWORDS
+                .iter()
+                .any(|keyword| lower.contains(keyword))
+        });
 
         if name_match && output_match {
             return true;
@@ -3392,8 +3391,7 @@ mod cpal_impl {
 
                 let matches_preferred = preferred_lower
                     .as_deref()
-                    .map(|preferred| device_matches_preferred(&label, preferred))
-                    .unwrap_or(false);
+                    .is_some_and(|preferred| device_matches_preferred(&label, preferred));
 
                 let (priority, avoid_reason) = if is_default {
                     default_device_score(&device, matches_preferred, default_output_name)

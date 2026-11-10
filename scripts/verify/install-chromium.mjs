@@ -61,10 +61,28 @@ const unpackTar = (archive, into) => {
 // absent.
 const STAGING = `${OUT}.partial`;
 
+// Written into STAGING just before the rename, so a directory that carries it is
+// one this script produced. Its absence is what lets the guard below refuse to
+// delete something that is not ours.
+const MARKER = ".mausvoice-chromium";
+
 if (existsSync(path.join(OUT, "chromium"))) {
   log(`Already extracted in ${OUT}. Delete it to force a fresh extraction.`);
 } else {
-  rmSync(OUT, { recursive: true, force: true });
+  // Only an extraction of ours is safe to delete. `--dir` is caller-supplied, so
+  // `rmSync(OUT, { recursive: true })` on a mistyped or shared path destroys
+  // whatever is there: a directory with no `chromium` in it is not evidence that
+  // it is ours to remove. The marker is written only after a successful rename,
+  // and STAGING is always ours.
+  if (existsSync(OUT) && readdirSync(OUT).length > 0) {
+    if (!existsSync(path.join(OUT, MARKER))) {
+      throw new Error(
+        `${OUT} is not empty and has no ${MARKER}, so it is not an extraction this script made. ` +
+          `Remove it yourself, or pass a different --dir.`,
+      );
+    }
+    rmSync(OUT, { recursive: true, force: true });
+  }
   rmSync(STAGING, { recursive: true, force: true });
   mkdirSync(STAGING, { recursive: true });
 
@@ -125,6 +143,7 @@ if (existsSync(path.join(OUT, "chromium"))) {
   log(`  ${readdirSync(libDir).length} shared libraries`);
 
   // Whole or absent: the rename is the only thing that makes this a success.
+  writeFileSync(path.join(STAGING, MARKER), `${VERSION}\n`);
   renameSync(STAGING, OUT);
 }
 

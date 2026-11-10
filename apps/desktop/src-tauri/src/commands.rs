@@ -3662,8 +3662,28 @@ pub struct CaptureStartupStage {
 /// the keep-ready preference sends; anything smaller is a real window.
 #[tauri::command]
 #[specta::specta]
-pub fn warm_microphone(
+pub async fn warm_microphone(
     warm: State<'_, Arc<dyn crate::platform::WarmCapture>>,
+    preroll_seconds: f64,
+    linger_ms: f64,
+) -> Result<(), String> {
+    // The open below is a real device open -- hundreds of milliseconds on a
+    // cold backend, and the thing the user is waiting on. A synchronous
+    // `#[tauri::command]` runs on the async runtime's worker thread, so it
+    // stalls every other command behind it, including the ones that paint the
+    // dialog. `start_recording` already goes through `spawn_blocking` for the
+    // same reason; this is the same work under a different name.
+    let warm = warm.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        warm_microphone_blocking(&warm, preroll_seconds, linger_ms)
+    })
+    .await
+    .map_err(|err| err.to_string())?
+}
+
+/// The body of [`warm_microphone`], on a blocking thread.
+fn warm_microphone_blocking(
+    warm: &Arc<dyn crate::platform::WarmCapture>,
     preroll_seconds: f64,
     linger_ms: f64,
 ) -> Result<(), String> {
@@ -3758,10 +3778,15 @@ pub fn microphone_ready(warm: State<'_, Arc<dyn crate::platform::WarmCapture>>) 
 /// first. No microphone indicator appears, because nothing is capturing.
 #[tauri::command]
 #[specta::specta]
-pub fn prepare_microphone(
+pub async fn prepare_microphone(
     warm: State<'_, Arc<dyn crate::platform::WarmCapture>>,
 ) -> Result<String, String> {
-    warm.prepare()
+    // Enumerating devices opens the capture host and asks it for its list, which
+    // is a blocking call on every backend. Same reason as `warm_microphone`.
+    let warm = warm.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || warm.prepare())
+        .await
+        .map_err(|err| err.to_string())?
 }
 
 /// One readable line describing the capture path: whether a stream is held, the
@@ -3785,11 +3810,18 @@ pub fn microphone_readiness_report(
 /// Shape: `idle`, `held_by_other[Zoom]`, or `unavailable:<reason>`.
 #[tauri::command]
 #[specta::specta]
-pub fn microphone_usage() -> String {
-    let usage = crate::platform::mic_usage::current_usage();
-    let line = usage.status_line();
-    log::debug!("microphone usage: {line}");
-    line
+pub async fn microphone_usage() -> String {
+    // This shells out to `pactl` on Linux and waits for the process to exit.
+    // That is a blocking wait measured in tens of milliseconds, and it is called
+    // from the diagnostics dialog while the user is looking at it.
+    tauri::async_runtime::spawn_blocking(|| {
+        let usage = crate::platform::mic_usage::current_usage();
+        let line = usage.status_line();
+        log::debug!("microphone usage: {line}");
+        line
+    })
+    .await
+    .unwrap_or_else(|err| format!("unavailable:{err}"))
 }
 
 /// The stage timing of the most recent capture start, oldest stage first.

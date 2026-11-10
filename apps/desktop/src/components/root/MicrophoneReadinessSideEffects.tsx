@@ -416,18 +416,23 @@ export const MicrophoneReadinessSideEffects = () => {
   // most likely just plugged something in, so that is when the attempt is made
   // again, and the answer is re-read either way.
   useEffect(() => {
+    /**
+     * Whether this window is the one that retries.
+     *
+     * Two questions, asked once: only the main window may open a stream, because
+     * the backend shares one device and N windows would each open in turn; and
+     * only a window whose preferences still say "hold" has anything to retry.
+     * Named because the focus handler otherwise read as a run of early returns
+     * whose reasons lived in comments rather than in the conditions.
+     */
+    const ownsRetry = () => isMainLocalDataWindow() && shouldHoldNow();
+
     const retryOnFocus = () => {
       void publishHeld();
-      // Enumerating devices is a real cost and the answer is the same for every
-      // window, because the backend shares one device. The main window owns the
-      // retry so N windows do not each open a stream in turn.
-      if (!isMainLocalDataWindow()) {
+      if (!ownsRetry()) {
         return;
       }
-      if (!shouldHoldNow()) {
-        return;
-      }
-      // Re-read rather than trust the check above: `shouldHoldNow` is a separate
+      // Re-read rather than trust `ownsRetry`: `shouldHoldNow` is a separate
       // function, so TypeScript cannot carry its narrowing across the call, and
       // the store can be read again without changing the decision it just made.
       const state = getAppState();

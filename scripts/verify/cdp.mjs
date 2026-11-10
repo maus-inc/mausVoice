@@ -116,6 +116,11 @@ export async function launch({ port, width = 1280, height = 900 } = {}) {
   }
   if (!version?.webSocketDebuggerUrl) {
     proc.kill("SIGKILL");
+    // The profile directory exists by now and nothing else will remove it. The
+    // `cleanup` below is only reachable on the success path, so a browser that
+    // never came up left one directory behind per failed run -- the same leak
+    // the comment under `cleanup` says the hook was added to stop.
+    rmSync(profile, { recursive: true, force: true });
     throw new Error(
       `chromium never opened its debugging port\n${logs.slice(-2000)}`,
     );

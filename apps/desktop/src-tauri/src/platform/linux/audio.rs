@@ -648,7 +648,10 @@ mod emitter_tests {
 
     /// Collects what a [`ChunkEmitter`] sends, so the offset bookkeeping can be
     /// asserted without a real capture device.
-    fn collector() -> (ChunkCallback, Arc<Mutex<Vec<(usize, u64)>>>) {
+    /// One dispatched batch: its length and the offset it reported.
+    type Batches = Arc<Mutex<Vec<(usize, u64)>>>;
+
+    fn collector() -> (ChunkCallback, Batches) {
         let seen: Arc<Mutex<Vec<(usize, u64)>>> = Arc::new(Mutex::new(Vec::new()));
         let sink = Arc::clone(&seen);
         let callback: ChunkCallback = Arc::new(move |batch: Vec<f32>, offset: u64| {

@@ -43,6 +43,28 @@ const corpus = [
   .map((file) => readFileSync(file, "utf8"))
   .join("\n");
 
+/**
+ * The same files with every comment removed.
+ *
+ * A cited name that survives only in a comment is the failure this guard exists
+ * to catch: delete the test and leave a note saying it lives here, and a corpus
+ * that includes comments reports the citation as satisfied. Stripping comments
+ * first means a name has to appear in code to count. Line and block comments are
+ * handled separately because Rust and TypeScript share the syntax but a naive
+ * strip would eat the `//` inside a URL string.
+ */
+const stripComments = (source) =>
+  source
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/(^|[^:])\/\/[^\n]*/g, "$1 ");
+
+const codeOnly = [
+  ...walk(join(ROOT, "apps/desktop/src-tauri/src"), [".rs"]),
+  ...walk(join(ROOT, "apps/desktop/src"), [".test.ts", ".test.tsx"]),
+]
+  .map((file) => stripComments(readFileSync(file, "utf8")))
+  .join("\n");
+
 // A cited test is a backticked snake_case token. Prose in backticks that is not
 // a test — a constant, a field name — is filtered out by requiring it to look
 // like a test name rather than by maintaining an allow-list, which would rot.
@@ -67,27 +89,44 @@ const escapeRe = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 test("every test cited by the edge-case matrix exists", () => {
   const doc = readFileSync(DOC, "utf8");
-  const cited = [...new Set(doc.match(/`([^`]+)`/g) ?? [])]
+  // The matrix rows only. Scanning the whole document picked up prose in
+  // backticks -- `pactl list source-outputs` is a shell command named in the
+  // open-questions list, not a citation -- and treating it as a citation meant
+  // the guard reported a missing test that was never claimed to exist.
+  const matrix = doc
+    .split("\n")
+    .filter((line) => /^\| \d+ \|/.test(line))
+    .join("\n");
+  const cited = [...new Set(matrix.match(/`([^`]+)`/g) ?? [])]
     .map((match) => match.slice(1, -1))
     // Sentence-style names belong to `it("...")` tests and are matched verbatim.
-    .filter(
-      (token) => isTestName(token) || looksLikeSentenceName(token),
-    );
+    .filter((token) => isTestName(token) || looksLikeSentenceName(token));
 
   assert.ok(
     cited.length >= 40,
     `expected the matrix to cite at least 40 tests, found ${cited.length}`,
   );
 
-  // A sentence-style name counts only if it is written as a quoted test name
-  // somewhere in the source. Without this, any lowercase prose in backticks was
-  // accepted as a citation, so the check passed on text rather than on tests.
-  const isQuotedName = (name) =>
-    new RegExp(`["'\`]${escapeRe(name)}["'\`]`).test(corpus);
+  // A sentence-style name counts only if it is *declared* as a test, which means
+  // it follows `it(`, `test(` or `describe(`. Quoting it anywhere was too weak:
+  // `pactl list source-outputs` is a shell command in the document's prose, and
+  // it passed because the same phrase appeared in a string elsewhere. Requiring
+  // the declaration is what makes this a check on tests rather than on text.
+  const isDeclaredTest = (name) => {
+    const opener = ["it", "test", "describe"].join("|");
+    // Built by concatenation rather than one template literal: the backtick and
+    // the quote classes in one template are easy to escape wrongly, and a mangled
+    // pattern here throws at run time rather than failing a test.
+    const pattern = `(?:^|[^\\w])(?:${opener})\\(\\s*["'\u0060]${escapeRe(name)}["'\u0060]`;
+    return new RegExp(pattern, "m").test(codeOnly);
+  };
+
+  // `codeOnly` rather than `corpus` for both arms: a comment is not a test, and
+  // counting one let a deleted test keep its citation alive.
   const missing = cited.filter(
     (name) =>
-      !corpus.includes(name) &&
-      !(looksLikeSentenceName(name) && isQuotedName(name)),
+      !codeOnly.includes(name) &&
+      !(looksLikeSentenceName(name) && isDeclaredTest(name)),
   );
   assert.deepEqual(
     missing,

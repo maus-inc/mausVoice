@@ -74,6 +74,72 @@ const revealFeedback = (
   }
 };
 
+/**
+ * The three status lines of the keep-ready section, one per state.
+ *
+ * Each carries its own `defaultMessage` at its own call so the i18n extractor
+ * still sees three distinct messages; a lookup table would collapse them into
+ * keys it cannot read and they would drop out of every catalogue.
+ */
+const HeldStateLine = ({
+  state,
+}: {
+  readonly state: ReturnType<typeof describeHeldState>;
+}) => {
+  if (state === "held") {
+    return (
+      <Typography variant="body2" color="text.secondary">
+        <FormattedMessage defaultMessage="Held open now." />
+      </Typography>
+    );
+  }
+  if (state === "not_held") {
+    return (
+      <Typography variant="body2" color="text.secondary">
+        <FormattedMessage defaultMessage="Not holding the microphone yet, so a press still has to open it. The setting applies as soon as the device opens." />
+      </Typography>
+    );
+  }
+  return (
+    <Typography variant="body2" color="text.secondary">
+      <FormattedMessage defaultMessage="Checking the microphone..." />
+    </Typography>
+  );
+};
+
+/**
+ * What the pre-roll slider does at its current value.
+ *
+ * Two messages rather than one with a suffix: at zero the setting is genuinely
+ * off, not small, and saying "keeps a little" would describe a window that does
+ * not exist.
+ */
+const PrerollCaption = ({ on }: { readonly on: boolean }) => (
+  <Typography variant="caption" color="text.secondary">
+    {on ? (
+      <FormattedMessage defaultMessage="How much speech to keep from just before you press, so a word you start early is not cut off." />
+    ) : (
+      <FormattedMessage defaultMessage="Nothing is kept from before the press, so the first word is captured only once recording starts." />
+    )}
+  </Typography>
+);
+
+/**
+ * Why the linger switch reads the way it does.
+ *
+ * When keep-ready is on the switch is on and disabled, so the caption has to say
+ * why rather than describe a window that the hold has already superseded.
+ */
+const LingerCaption = ({ keepReady }: { readonly keepReady: boolean }) => (
+  <Typography variant="body2" color="text.secondary">
+    {keepReady ? (
+      <FormattedMessage defaultMessage="Already on, because the microphone is kept ready." />
+    ) : (
+      <FormattedMessage defaultMessage="Keeps the microphone open for a few seconds after each recording, so a second dictation starts instantly. Your system shows its microphone-in-use indicator for that time." />
+    )}
+  </Typography>
+);
+
 export const MicrophoneDialog = () => {
   const open = useAppStore((state) => state.settings.microphoneDialogOpen);
   const savedPreference = useMyPreferredMicrophone();
@@ -237,21 +303,7 @@ export const MicrophoneDialog = () => {
             <Typography variant="body2" color="text.secondary">
               <FormattedMessage defaultMessage="Start dictating instantly by opening the microphone ahead of time. Your system shows its microphone-in-use indicator the whole time this is on." />
             </Typography>
-            {keepReady && heldState === "held" && (
-              <Typography variant="body2" color="text.secondary">
-                <FormattedMessage defaultMessage="Held open now." />
-              </Typography>
-            )}
-            {keepReady && heldState === "not_held" && (
-              <Typography variant="body2" color="text.secondary">
-                <FormattedMessage defaultMessage="Not holding the microphone yet, so a press still has to open it. The setting applies as soon as the device opens." />
-              </Typography>
-            )}
-            {keepReady && heldState === "unknown" && (
-              <Typography variant="body2" color="text.secondary">
-                <FormattedMessage defaultMessage="Checking the microphone..." />
-              </Typography>
-            )}
+            {keepReady && <HeldStateLine state={heldState} />}
             {/* Offered outside the keep-ready branch because it is not a
                 keep-ready setting. The pre-roll is what the next press keeps
                 from before it, which matters most when the device is opened at
@@ -273,13 +325,7 @@ export const MicrophoneDialog = () => {
                 })}
                 onCommit={(value) => setMicrophonePrerollSeconds(value)}
               />
-              <Typography variant="caption" color="text.secondary">
-                {prerollOn ? (
-                  <FormattedMessage defaultMessage="How much speech to keep from just before you press, so a word you start early is not cut off." />
-                ) : (
-                  <FormattedMessage defaultMessage="Nothing is kept from before the press, so the first word is captured only once recording starts." />
-                )}
-              </Typography>
+              <PrerollCaption on={prerollOn} />
               {prerollNeedsHeldStream && (
                 <Typography variant="caption" color="text.secondary">
                   <FormattedMessage defaultMessage="This only applies while the microphone is already open. Turn on holding it open above, or the press has to open it first and nothing from before it was captured." />
@@ -312,13 +358,7 @@ export const MicrophoneDialog = () => {
                 <FormattedMessage defaultMessage="Stay ready after a dictation" />
               }
             />
-            <Typography variant="body2" color="text.secondary">
-              {keepReady ? (
-                <FormattedMessage defaultMessage="Already on, because the microphone is kept ready." />
-              ) : (
-                <FormattedMessage defaultMessage="Keeps the microphone open for a few seconds after each recording, so a second dictation starts instantly. Your system shows its microphone-in-use indicator for that time." />
-              )}
-            </Typography>
+            <LingerCaption keepReady={keepReady} />
           </Stack>
 
           <Divider />

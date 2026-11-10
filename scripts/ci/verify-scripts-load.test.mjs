@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 /**
  * Every script under `scripts/verify/` has to be loadable.
@@ -21,7 +22,12 @@ import { join } from "node:path";
  * 2. `node --check` accepts the file, which catches syntax errors.
  */
 
-const VERIFY_DIR = new URL("../../scripts/verify/", import.meta.url).pathname;
+// `fileURLToPath`, not `.pathname`: a checkout path containing a space is
+// percent-encoded in `pathname`, so `readdirSync` below would be handed
+// `/home/me/my%20repo/...` and fail to find a directory that is there.
+const VERIFY_DIR = fileURLToPath(
+  new URL("../../scripts/verify/", import.meta.url),
+);
 
 /** Globals these scripts legitimately reach for. */
 const SHADOWABLE_GLOBALS = [
@@ -79,7 +85,9 @@ for (const name of scriptNames) {
       // It is only a problem when the module also uses the *global*, which we
       // approximate by counting uses beyond the declaration itself: more than
       // one occurrence of the bare name outside comments and strings.
-      const bare = source.match(new RegExp(`(?<![.\\w'"\`])${global}(?![\\w'"\`])`, "g"));
+      const bare = source.match(
+        new RegExp(`(?<![.\\w'"\`])${global}(?![\\w'"\`])`, "g"),
+      );
       if ((bare?.length ?? 0) > 1) {
         offenders.push(global);
       }
