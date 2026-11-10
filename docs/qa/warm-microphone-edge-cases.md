@@ -135,7 +135,7 @@ successful-looking result. The classification of those messages is
 
 ## What this table does not settle
 
-Five things, stated plainly because a table of green rows invites the
+Six things, stated plainly because a table of green rows invites the
 assumption that everything is known.
 
 1. **No test above touches a real microphone.** Every recording path is driven
@@ -166,3 +166,27 @@ assumption that everything is known.
    resume and row 55's rejection are decided from data the sink holds, and both
    the data and the decision are tested, but the call that acts on them needs a
    live `cpal::Stream`. The gap is the call, not the rule.
+6. **Two fixes on this branch have no unit test, and the reason is structural.**
+   Both are in `audio.rs`, and neither is a rule that can be read off a value.
+
+   The first is the second read of the fault token in `stop_recording`. An error
+   the host reports between the first read and the sink hand-off was stored and
+   never read, so a shortened dictation arrived with no notice. The read is now
+   repeated after the stop. `stop_recording` needs a live `RecordingManager` with
+   a stream in it, which needs a device this machine does not have, so a test
+   would have to call the private helpers directly. The reachable part of the
+   fix is `reported_capture_fault`, which already has four tests, and a test
+   written against the helpers would not have failed before the change.
+
+   The second is `cancel_linger` in `open_warm`. A linger armed for a stream that
+   a press then failed to adopt survived the fresh open, found its own generation
+   still current, and took the stream the open had just created. The bump now
+   happens inside the slot's lock before the stream is published. A test for this
+   one was written and then deleted: it reconstructed the two orderings rather
+   than calling `open_warm`, so it passed with the fix removed, which makes it a
+   restatement of the code rather than a guard on it. `open_warm` cannot be
+   called without a device.
+
+   What would settle both: a machine with an input device, a recording that is
+   stopped while the host is reporting errors, and a press that lands inside a
+   linger window. Rows 63 and 72 already name this same limit.

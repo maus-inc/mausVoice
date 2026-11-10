@@ -1238,10 +1238,18 @@ mod cpal_impl {
         /// warm, reopened it, and paid the cold start the feature exists to
         /// remove, on the switch that asks for the opposite.
         pub fn promote_to_hold(&self) {
-            self.set_linger_policy(Duration::from_millis(WARM_FOREVER_MS));
+            // The generation is bumped before the policy is stored, and the order
+            // is the point. Storing the policy first left a window where an
+            // expired timer could wake, see its own generation still current, and
+            // take a stream that had just been promoted to a hold. Bumping first
+            // fails only in the harmless direction: a timer that reads in between
+            // sees a stale generation and leaves the stream alone, which is what a
+            // hold wants.
+            //
             // A pending linger would close this stream at its window, which is
             // later than never but still wrong for a hold.
             self.cancel_linger();
+            self.set_linger_policy(Duration::from_millis(WARM_FOREVER_MS));
         }
 
         /// Sets how much audio from before a press to keep, and resizes the ring
@@ -1850,6 +1858,17 @@ mod cpal_impl {
                 ring.cap = preroll_capacity(preroll, warm.sample_rate);
                 ring.clear();
             }
+            // Any timer armed before this stream existed is now stale, and it has
+            // to learn that before the stream becomes visible here. A linger
+            // armed for a previous stream wakes up, checks its generation and
+            // finds it current, and would take *this* stream: the user's hold
+            // disappears seconds after the switch that asked for it. The bump is
+            // inside the lock the timer takes, so the two orderings are the only
+            // two possible ones, and both are safe: either the timer ran first
+            // and closed the stream it was armed for (there was one in the slot,
+            // since this open returns early when there is), or it runs after this
+            // and sees a stale generation.
+            self.cancel_linger();
             *warm_guard = Some(warm);
             Ok(())
         }
@@ -2187,6 +2206,27 @@ mod cpal_impl {
             // next press adopted a stream that delivered nothing until the
             // staleness window expired.
             let was_paused = stop_outcome.was_paused;
+            // Read again now that the sink has stopped. The first read above is
+            // followed by several lock acquisitions and the sink hand-off, which
+            // is long enough for the host's error callback to report a dead
+            // stream in between; that token was stored and then never read, so
+            // the user got a truncated dictation with no notice.
+            //
+            // This narrows the window to the instructions between this read and
+            // `reported_capture_fault` below. It does not close it: `record_fault`
+            // runs on the host's error thread and takes no lock this path holds,
+            // so there is no ordering to appeal to. Closing it properly would
+            // mean the stop waiting for in-flight callbacks, which can block on an
+            // audio thread the host has already wedged. A fault that still slips
+            // past is the silent-death case `elapsed_gap_is_suspicious` logs.
+            //
+            // The first token wins, so a fault already seen above is kept.
+            let capture_fault = recording
+                .sink
+                .as_ref()
+                .and_then(|sink| sink.fault_token())
+                .map(str::to_string)
+                .or(capture_fault);
             let flushed_emitter = stop_outcome.emitter;
             if let Some(chunk_emitter) = flushed_emitter {
                 chunk_emitter.flush();
