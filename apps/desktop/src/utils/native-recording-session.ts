@@ -168,16 +168,18 @@ const beginNativeRecordingOwned = async (
       settled = true;
       if (liveHandle === handle) liveHandle = null;
       const decoded = decodeStopRecordingPayload(payload);
+      releaseLocal();
       // Acknowledging only drops the recovery copy native kept for a lost
       // reply; it never stops the recorder, so a failure here costs a retained
-      // buffer, not audio.
-      await invokeFn("acknowledge_recording", {
+      // buffer, not audio. Issue it detached: a stalled acknowledgement must
+      // not hold the local admission, and native expires an unacknowledged
+      // copy on its own.
+      void invokeFn("acknowledge_recording", {
         ownerId,
         generation: reserved,
       }).catch((error: unknown) => {
         getLogger().verbose(`acknowledge_recording failed: ${error}`);
       });
-      releaseLocal();
       return decoded;
     },
     discard: async () => {
@@ -246,16 +248,19 @@ export const stopNativeRecording = (
         generation: handle.generation,
       });
       const decoded = decodeStopRecordingPayload(payload);
-      await invokeFn("acknowledge_recording", {
+      if (localOwner) {
+        releaseLocalNativeRecording(localOwner.transport, localOwner.owner);
+        if (liveLocalOwner === localOwner) liveLocalOwner = null;
+      }
+      // The acknowledgement only drops native's recovery copy, and native
+      // expires it on its own: a stalled ack must not keep stopInFlight set,
+      // or every later start would wait on it forever.
+      void invokeFn("acknowledge_recording", {
         ownerId: handle.ownerId,
         generation: handle.generation,
       }).catch((error: unknown) => {
         getLogger().verbose(`acknowledge_recording failed: ${error}`);
       });
-      if (localOwner) {
-        releaseLocalNativeRecording(localOwner.transport, localOwner.owner);
-        if (liveLocalOwner === localOwner) liveLocalOwner = null;
-      }
       return decoded;
     } catch (error) {
       // Keep the handle addressable so a retry can still release the recorder.

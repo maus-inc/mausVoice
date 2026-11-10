@@ -181,6 +181,38 @@ it("publishes the later of two queued language saves", async () => {
   expect(getAppState().hotkeyById.primary.keys).toEqual(["X"]);
 });
 
+it("keeps an optimistic edit to a language the dialog also saves", async () => {
+  // CodeAnt P2: the changed ID is in `saved` too (id reuse), so the committed
+  // group must not republish its stale keys over the optimistic edit.
+  let finish!: () => void;
+  mocks.replaceGroup.mockImplementationOnce(
+    () =>
+      new Promise<void>((resolve) => {
+        finish = () => resolve();
+      }),
+  );
+  const saving = saveDictationLanguageSettings(
+    [
+      { language: "en", hotkeyKeys: ["C"] },
+      { language: "fr", hotkeyKeys: ["D"] },
+    ],
+    "en",
+  );
+  await vi.waitFor(() => expect(mocks.replaceGroup).toHaveBeenCalled());
+  markOptimisticHotkeyWrite(oldAdditional.actionName);
+  produceAppState((draft) => {
+    draft.hotkeyById.extra.keys = ["Z"];
+  });
+  finish();
+  await saving;
+  expect(getAppState().hotkeyById.extra.keys).toEqual(["Z"]);
+  expect(
+    Object.values(getAppState().hotkeyById).filter(
+      (hotkey) => hotkey.actionName === oldAdditional.actionName,
+    ),
+  ).toHaveLength(1);
+});
+
 it("preserves a newer optimistic additional shortcut while publishing the saved group", async () => {
   let finish!: () => void;
   mocks.replaceGroup.mockImplementationOnce(

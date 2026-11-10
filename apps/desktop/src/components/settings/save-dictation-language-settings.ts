@@ -79,6 +79,10 @@ const publishReplacedDictationHotkeys = (
   const publishable = saved.filter(
     (item) =>
       !(keepPrimary && item.id === primary.id) &&
+      // An optimistically edited row keeps its store value: it is already out
+      // of the removal set, and republishing the committed keys here would
+      // clobber the newer ones the editor just published.
+      !changedAdditional.has(item.id) &&
       !deletedAdditional.has(item.id),
   );
   produceAppState((draft) => {

@@ -257,6 +257,35 @@ describe("stopping", () => {
     expect(currentNativeRecording()).toBeNull();
   });
 
+  it("a stalled acknowledgement does not hold the admission", async () => {
+    // CodeAnt Major: acknowledge_recording only drops native's recovery copy.
+    // If it never settles, the stop must still resolve and free the local
+    // admission so a later start cannot wait on it forever.
+    const { invoke, calls } = recorderTransport({
+      acknowledge_recording: () => new Promise<never>(() => {}),
+    });
+    await beginNativeRecording(null, {}, invoke);
+
+    const stopping = await Promise.race([
+      stopNativeRecording(invoke).then(() => "settled" as const),
+      new Promise<"stalled">((resolve) =>
+        setTimeout(() => resolve("stalled"), 500),
+      ),
+    ]);
+    expect(stopping).toBe("settled");
+
+    const starting = await Promise.race([
+      beginNativeRecording(null, {}, invoke).then(() => "started" as const),
+      new Promise<"stalled">((resolve) =>
+        setTimeout(() => resolve("stalled"), 500),
+      ),
+    ]);
+    expect(starting).toBe("started");
+    expect(calls.map(([command]) => command)).toContain(
+      "acknowledge_recording",
+    );
+  });
+
   it("drops the audio and its admission on discard", async () => {
     const { invoke, calls } = recorderTransport();
     const { handle } = await beginNativeRecording(null, {}, invoke);
