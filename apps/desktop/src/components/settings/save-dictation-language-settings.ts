@@ -41,16 +41,15 @@ const publishReplacedDictationHotkeys = (
   primary: Hotkey,
   beforePrimary: Hotkey | undefined,
   beforeAdditional: Hotkey[],
-  primaryRevision: number,
-  additionalRevision: number,
+  revisions: { primary: number; additional: number },
   lease: LocalDataWriteLease | undefined,
 ): void => {
   const store = getAppState();
   const primaryNewer =
-    optimisticHotkeyRevision(DICTATE_HOTKEY) !== primaryRevision;
+    optimisticHotkeyRevision(DICTATE_HOTKEY) !== revisions.primary;
   const additionalNewer =
     optimisticHotkeyRevision(ADDITIONAL_LANGUAGE_HOTKEY_PREFIX) !==
-    additionalRevision;
+    revisions.additional;
   const currentPrimary = Object.values(store.hotkeyById).find(
     (item) => item.actionName === DICTATE_HOTKEY,
   );
@@ -204,8 +203,7 @@ export const saveDictationLanguageSettings = async (
         primaryHotkey,
         beforePrimary,
         beforeAdditional,
-        primaryRevision,
-        additionalRevision,
+        { primary: primaryRevision, additional: additionalRevision },
         lease,
       );
       await syncHotkeyCombosToNative();
