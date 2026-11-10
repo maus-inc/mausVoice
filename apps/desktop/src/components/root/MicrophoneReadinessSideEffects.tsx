@@ -178,6 +178,33 @@ export const MicrophoneReadinessSideEffects = () => {
     );
   }, []);
 
+  /**
+   * Which request this window last made, so a late answer cannot be mistaken
+   * for the current one.
+   *
+   * `warmMicrophone` is an async command that opens a real device and can take
+   * seconds. Turning the preference off while it is in flight used to leave the
+   * open to finish afterwards, promote itself to a hold, and leave a microphone
+   * running with nothing in the UI asking for it. Each request and each release
+   * takes a number here; a reply whose number is not the latest is stale, and a
+   * stale open is closed again rather than adopted.
+   */
+  const requestRef = useRef(0);
+
+  /**
+   * Whether this window is the one that owns the held device.
+   *
+   * There is one device and one backend for the whole process, but a floating
+   * window mounts this same component: {@link Root} renders it wherever a
+   * recording can be started. Left ungated, a floating window that mounts while
+   * the preference is off would release the stream the main window is holding,
+   * and the same happens again when it unmounts or when a re-render changes the
+   * decision. Only the main window holds or releases anything; every other
+   * window reads the result back through `microphoneReady`, which is what the
+   * switch and the dialog display.
+   */
+  const ownsDevice = isMainLocalDataWindow();
+
   const clearHoldFailure = useCallback(() => {
     holdFailedRef.current = null;
   }, []);
@@ -185,9 +212,25 @@ export const MicrophoneReadinessSideEffects = () => {
   /** Opens or resizes the hold, depending on whether one is already applied. */
   const hold = useCallback(
     (seconds: number) => {
+      const request = ++requestRef.current;
       void commands
         .warmMicrophone(seconds, MICROPHONE_READY_FOREVER_MS)
         .then((result) => {
+          if (requestRef.current !== request) {
+            // The answer arrived for a request this window has already
+            // superseded. The common case is the preference being turned off
+            // while the device was opening: `close_microphone` ran first and
+            // found nothing, because the stream did not exist yet, and this open
+            // then created one that nothing would close. Closing it here is what
+            // makes a late answer harmless rather than a leaked microphone.
+            getLogger().info(
+              "a microphone open finished after this window stopped asking for it; closing it",
+            );
+            void commands.closeMicrophone().then(() => {
+              void publishHeld();
+            });
+            return;
+          }
           void publishHeld();
           if (result.status === "error") {
             // A device that will not open is not a preference failure: the next
@@ -214,6 +257,9 @@ export const MicrophoneReadinessSideEffects = () => {
 
   const release = useCallback(() => {
     openedPrerollRef.current = null;
+    // Invalidates every open still in flight: any answer from one of them is for
+    // a hold this window no longer wants, and `hold` closes it on arrival.
+    requestRef.current += 1;
     void commands
       .closeMicrophone()
       .then(() => {
@@ -247,6 +293,14 @@ export const MicrophoneReadinessSideEffects = () => {
     // loading. Without this the first effect run released a device on the
     // strength of a value that had not arrived.
     if (!prefsLoaded) {
+      return;
+    }
+
+    // Not "do not hold" but "do not decide": a window that does not own the
+    // device must neither open nor close one. Folding this into `shouldHold`
+    // below would route it to the release branch, which is the opposite of what
+    // a floating window should do with the main window's stream.
+    if (!ownsDevice) {
       return;
     }
 
@@ -292,6 +346,7 @@ export const MicrophoneReadinessSideEffects = () => {
     isRecording,
     permissionGranted,
     prerollSeconds,
+    ownsDevice,
     hold,
     release,
   ]);
@@ -497,13 +552,16 @@ export const MicrophoneReadinessSideEffects = () => {
       const anythingOpen =
         getAppState().userPrefs?.keepMicrophoneReady === true ||
         getAppState().settings.microphoneHeld === true;
-      if (!anythingOpen) {
+      // A window that does not own the device must not close one: the stream is
+      // shared, so a floating window reacting to the same broadcast would release
+      // the main window's hold on a clear it did not start.
+      if (!anythingOpen || !ownsDevice) {
         return;
       }
       appliedRef.current = "closed";
       release();
     });
-  }, [release]);
+  }, [release, ownsDevice]);
 
   return null;
 };

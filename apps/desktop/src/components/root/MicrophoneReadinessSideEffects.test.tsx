@@ -233,6 +233,51 @@ describe("MicrophoneReadinessSideEffects", () => {
     expect(mocks.setMicrophoneLinger).not.toHaveBeenCalledWith(0);
   });
 
+  it("never opens the device from a window that does not own it", async () => {
+    // One device, one backend, and every window mounts this component: a
+    // floating window that opened on the same preference would fight the main
+    // window for the stream, and each close would be undone by the other's open.
+    mocks.microphoneReady.mockResolvedValue(true);
+    setState({ __mainWindow: false });
+    await render();
+
+    expect(mocks.warmMicrophone).not.toHaveBeenCalled();
+  });
+
+  it("never closes the device from a window that does not own it", async () => {
+    // The half that strands a user: a floating window whose preferences say the
+    // hold is off releases the shared stream on mount, and the main window's
+    // follow-through is a microphone indicator that goes out mid-session.
+    mocks.microphoneReady.mockResolvedValue(true);
+    setState({
+      __mainWindow: false,
+      userPrefs: {
+        keepMicrophoneReady: false,
+        microphonePrerollSeconds: 0.5,
+        microphoneLingerMs: 0,
+      },
+    });
+    await render();
+
+    expect(mocks.warmMicrophone).not.toHaveBeenCalled();
+    expect(mocks.closeMicrophone).not.toHaveBeenCalled();
+  });
+
+  it("never closes the device from a window that does not own it on a clear", async () => {
+    mocks.microphoneReady.mockResolvedValue(true);
+    setState({ __mainWindow: false });
+    await render();
+    mocks.closeMicrophone.mockClear();
+
+    await act(async () => {
+      mocks.state.__clearing = true;
+      for (const listener of mocks.clearListeners) listener();
+      await Promise.resolve();
+    });
+
+    expect(mocks.closeMicrophone).not.toHaveBeenCalled();
+  });
+
   it("does not open a device the OS has not authorised", async () => {
     // A revoked permission must not leave a stream the OS no longer authorises
     // running, and the indicator would be a lie.
@@ -495,6 +540,56 @@ describe("MicrophoneReadinessSideEffects", () => {
 
     expect(mocks.warmMicrophone).toHaveBeenCalledTimes(1);
     expect(mocks.showSnackbar).not.toHaveBeenCalled();
+  });
+
+  it("closes an open that finishes after the preference is turned off", async () => {
+    // The defect: `warmMicrophone` opens a real device and takes seconds. Turning
+    // the preference off while it is in flight ran `closeMicrophone` first, which
+    // found no stream because the open had not finished, and the open then
+    // promoted itself to a hold. The microphone stayed on with nothing in the UI
+    // asking for it.
+    let finishOpen: (value: unknown) => void = () => undefined;
+    mocks.warmMicrophone.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishOpen = resolve;
+        }),
+    );
+    await render();
+    expect(mocks.warmMicrophone).toHaveBeenCalledTimes(1);
+
+    setState({
+      userPrefs: {
+        keepMicrophoneReady: false,
+        microphonePrerollSeconds: 0.5,
+        microphoneLingerMs: 0,
+      },
+    });
+    await rerender();
+    expect(mocks.closeMicrophone).toHaveBeenCalled();
+
+    // Now the open answers, successful and late.
+    await act(async () => {
+      finishOpen({ status: "ok", data: null });
+      await Promise.resolve();
+    });
+
+    // Two closes: the release the preference asked for, and the one that undoes
+    // the open which arrived after it.
+    expect(mocks.closeMicrophone.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("keeps an open that is still the current request", async () => {
+    // The other half: a token that invalidated everything would close every
+    // stream the moment it was opened.
+    setState({});
+    await render();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(mocks.warmMicrophone).toHaveBeenCalledTimes(1);
+    expect(mocks.closeMicrophone).not.toHaveBeenCalled();
   });
 
   it("does not claim the microphone is blocked before permission is known", async () => {

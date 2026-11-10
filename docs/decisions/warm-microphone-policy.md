@@ -80,9 +80,15 @@ which is the cost being removed.
 **One owner on the frontend.**
 
 `MicrophoneReadinessSideEffects` is the only caller of `warmMicrophone` and
-`closeMicrophone`. It holds when the preference is on and nothing blocks it, and
-releases when the preference goes off, permission is revoked, or a local-data
-clear is requested. A second owner would be a second place that could leave a
+`closeMicrophone`, and only in the main window. `Root` renders it in every
+window, so the component returns before deciding anything when
+`isMainLocalDataWindow()` is false: a floating window would otherwise release the
+stream the main window holds, on mount or on a re-render that changes its own
+copy of the decision. Every other window reads the state back through
+`microphoneReady`.
+
+It holds when the preference is on and nothing blocks it, and releases when the
+preference goes off, permission is revoked, or a local-data clear is requested. A second owner would be a second place that could leave a
 device open.
 
 A recording does not release it. `start_recording` adopts the held stream, and
