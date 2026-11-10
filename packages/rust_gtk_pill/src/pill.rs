@@ -742,6 +742,12 @@ pub fn run(receiver: Receiver<InMessage>, restored_position: Option<ParkedWindow
                         monitor,
                     });
                 }
+                InMessage::ForgetPosition => {
+                    // Stop treating where the pill is sitting as the saved position.
+                    // Local data was just cleared, and the next `RequestPosition`
+                    // republishes this flag, so leaving it set would write the row back.
+                    state_tick.has_saved_position.set(false);
+                }
                 InMessage::RequestPosition => {
                     let (rect, monitor) = pill_geometry(&win_tick, &state_tick);
                     ipc::send(&OutMessage::PositionChanged {

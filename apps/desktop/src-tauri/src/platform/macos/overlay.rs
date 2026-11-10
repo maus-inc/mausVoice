@@ -208,6 +208,16 @@ pub fn notify_request_position(app: &tauri::AppHandle) -> Result<(), String> {
     }
 }
 
+/// Tell the linked pill to stop treating its current spot as saved, without
+/// moving it. Sent after a local-data clear so the reloaded window cannot write
+/// the cleared position straight back.
+pub fn notify_forget_position(app: &tauri::AppHandle) -> Result<(), String> {
+    match app.try_state::<std::sync::Arc<MacosPill>>() {
+        Some(pill) => pill.send(InMessage::ForgetPosition),
+        None => Err("Pill position forgotten with no managed macOS pill".to_string()),
+    }
+}
+
 pub fn notify_reset_position(app: &tauri::AppHandle, strategy: &str) -> Result<(), String> {
     // The stored record is what the next launch restores, so a reset has to
     // forget it before it tells the pill to re-home.

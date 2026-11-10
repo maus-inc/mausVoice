@@ -96,7 +96,13 @@ pub fn store_published_position(
     // after the wipe and put a position the user just erased back on screen at
     // the next launch. Take the same gate every other native write takes.
     let written = tauri::async_runtime::block_on(async {
-        let _guard = crate::db::local_data_write_gate::lock_local_data_write(None).await?;
+        // A clear can reopen the gate for the frontend's completion step while
+        // the pill is still holding the pre-clear position. Nothing from that
+        // window may be stored, so the generation must be live before the write.
+        let generation = crate::db::local_data_write_gate::current_write_generation()
+            .ok_or_else(|| sqlx::Error::Protocol("local data is being cleared".to_string()))?;
+        let _guard =
+            crate::db::local_data_write_gate::lock_local_data_write(Some(generation)).await?;
         pill_position_queries::upsert_pill_position(pool, &encoded, saved_at).await
     });
     if let Err(err) = written {
@@ -145,6 +151,21 @@ pub fn saved_position_argument(app: &tauri::AppHandle) -> Option<String> {
     // would reject must not be handed over as if it were usable.
     ParkedWindow::decode(&record)?;
     Some(format!("{SAVED_POSITION_ARG}{record}"))
+}
+
+/// Tell a running pill to stop treating its current spot as saved.
+///
+/// The clear finishes by reopening writes and reloading the window, which
+/// immediately asks the pill for its geometry so the composer can anchor to it.
+/// Without this the pill answers with the position it was at before the wipe and
+/// the row is written straight back.
+///
+/// Best effort: a pill that is not running has nothing in memory to forget, and
+/// the row it would have restored from is already gone.
+pub fn forget_running_pill_position(app: &tauri::AppHandle) {
+    if let Err(err) = crate::platform::overlay::notify_forget_position(app) {
+        log::debug!("No running pill to forget the cleared position: {err}");
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

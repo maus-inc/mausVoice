@@ -3324,6 +3324,11 @@ pub async fn clear_local_data(
         );
     }
 
+    // The pill still holds the pre-clear position in memory. Tell it to forget
+    // before writes reopen, so the window reload that follows cannot publish the
+    // cleared position back into the table.
+    crate::pill_position::forget_running_pill_position(&app);
+
     native_clear_guard.mark_ready_for_frontend_completion();
     Ok(())
 }

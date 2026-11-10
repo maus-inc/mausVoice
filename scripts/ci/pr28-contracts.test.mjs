@@ -74,6 +74,9 @@ const PATHS = [
   ["pillProcess", "apps/desktop/src-tauri/src/pill_process.rs"],
   ["pillPosition", "apps/desktop/src-tauri/src/pill_position.rs"],
   ["gtkMain", "packages/rust_gtk_pill/src/main.rs"],
+  ["gtkIpc", "packages/rust_gtk_pill/src/ipc.rs"],
+  ["windowsIpc", "packages/rust_windows_pill/src/ipc.rs"],
+  ["macIpc", "packages/rust_macos_pill/src/ipc.rs"],
   ["macState", "packages/rust_macos_pill/src/state.rs"],
   ["gtkState", "packages/rust_gtk_pill/src/state.rs"],
   ["windowsState", "packages/rust_windows_pill/src/state.rs"],
@@ -1997,6 +2000,37 @@ describe("native gesture adapter contracts", () => {
     assert.match(main, /\.args\(std::env::args_os\(\)\.skip\(1\)\)/);
   });
 
+  it("makes a running pill forget the position the clear wiped", () => {
+    // Clearing local data wipes the row, reopens writes, then reloads the window,
+    // which asks the pill for its geometry so the composer can anchor to it. The
+    // pill still holds the pre-clear position and would publish it straight back,
+    // so the clear has to tell it to forget first.
+    const clear = scope("commands", "pub async fn clear_local_data(");
+    assert.match(clear, /forget_running_pill_position/);
+    // Before the clear announces that the frontend may finish, otherwise the
+    // reload can land first.
+    assert.ok(
+      clear.indexOf("forget_running_pill_position") <
+        clear.indexOf("mark_ready_for_frontend_completion"),
+      "the pill must forget before writes reopen",
+    );
+    // Every pill understands the message, or one platform re-leaks the position.
+    const ipcFor = (name) =>
+      ({ gtkPill: "gtkIpc", windowsPill: "windowsIpc", macApp: "macIpc" })[name];
+    for (const name of ["gtkPill", "windowsPill", "macApp"]) {
+      assert.match(
+        source[name],
+        /InMessage::ForgetPosition/,
+        `${name}: no handler, so this backend writes the cleared row back`,
+      );
+      assert.match(
+        source[ipcFor(name)],
+        /ForgetPosition,/,
+        `${ipcFor(name)}: the variant is what serde turns into forget_position`,
+      );
+    }
+  });
+
   it("gates the position delete in the clear path", () => {
     // Clearing the row is a local-data write like any other. Ungated, it can
     // race a save that is already queued and the row comes back after the wipe.
@@ -2362,7 +2396,11 @@ describe("pill position persistence gate", () => {
     // clear dialog promises the pill comes back to the default corner. Without
     // the gate, a drag that lands mid-clear writes the row back afterwards.
     const store = scope("pillPosition", "pub fn store_published_position(");
-    assert.match(store, /lock_local_data_write\(None\)/);
+    // The generation is checked as well as the lock: a clear can reopen the gate
+    // for the frontend's completion step while the pill still holds the pre-clear
+    // position, and nothing from that window may be stored.
+    assert.match(store, /current_write_generation\(\)/);
+    assert.match(store, /lock_local_data_write\(Some\(generation\)\)/);
     assert.match(store, /upsert_pill_position/);
     // A refused gate is the clear working as intended, so it is not logged as a
     // failure the user should worry about.

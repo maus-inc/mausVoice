@@ -340,6 +340,20 @@ pub fn notify_request_position(app: &tauri::AppHandle) -> Result<(), String> {
     }
 }
 
+/// Tell the pill to stop treating its current spot as saved, without moving it.
+///
+/// Sent after a local-data clear wipes the stored row. The pill keeps the
+/// position it is sitting at in memory, and the reloaded window asks for it, so
+/// without this the row is written straight back.
+pub fn notify_forget_position(app: &tauri::AppHandle) -> Result<(), String> {
+    match app.try_state::<std::sync::Arc<PillProcess>>() {
+        Some(pill) => pill
+            .send(r#"{"type":"forget_position"}"#)
+            .map_err(|err| format!("failed to forget the pill position: {err}")),
+        None => Err("Pill position forgotten with no managed pill process".to_string()),
+    }
+}
+
 pub fn notify_reset_position(app: &tauri::AppHandle, strategy: &str) -> Result<(), String> {
     // The stored record is what the next launch restores, so a reset has to
     // forget it before it tells the pill to re-home. Otherwise the pill moves

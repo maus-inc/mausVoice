@@ -98,6 +98,27 @@ resting arrangement, and `the_restored_origin_is_a_fixed_point_of_the_idle_clamp
 The reserve passed to the helper has to include the selector slot below the pill,
 because that slot is part of why the window is taller than the pill.
 
+## The pill has to forget, not just be cleared
+
+Gating the save and the delete closes the race inside the native process, but not the
+one across the reload. `clear_local_data` wipes the row and reopens writes, the renderer
+reloads the window, and startup asks the pill for its geometry so the composer can
+anchor to it. The pill is still running and still holds the pre-clear position in
+memory, so it answers with that position and the row is written straight back. The user
+confirmed a wipe and got a table row back.
+
+The gate cannot fix this, because the write is legitimate by the time it happens. The
+fix is a protocol message: `forget_position` clears only the pill's `has_saved_position`
+flag and does not move the window, so the pill answers `RequestPosition` honestly
+instead of pretending the spot it sits at was chosen by the user. The clear sends it
+before it marks itself ready for the frontend to finish, which is before the reload can
+reach the pill. The save also refuses to run without a live write generation, so the
+window between the gate reopening and the reload is closed on both sides.
+
+No gap remains here: a pill that is not running during the clear holds nothing in
+memory to forget, and the row it would have restored from is already gone, so that case
+needs no message.
+
 ## Consequences
 
 Easy: adding a save point or a platform is a call into `restore` plus the platform's

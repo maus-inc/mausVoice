@@ -806,6 +806,12 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
                 monitor,
             });
         }
+        InMessage::ForgetPosition => {
+            // Stop treating where the pill is sitting as the saved position.
+            // Local data was just cleared, and the next `RequestPosition`
+            // republishes this flag, so leaving it set would write the row back.
+            state.has_saved_position.set(false);
+        }
         InMessage::RequestPosition => {
             let hwnd = HWND_CELL.with(|c| c.get());
             let (rect, monitor) = current_pill_geometry(hwnd);

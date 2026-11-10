@@ -752,6 +752,12 @@ fn perform_tick() {
                         monitor: Some(monitor),
                     });
                 }
+                InMessage::ForgetPosition => {
+                    // Stop treating where the pill is sitting as the saved position.
+                    // Local data was just cleared, and the next `RequestPosition`
+                    // republishes this flag, so leaving it set would write the row back.
+                    ctx.state.has_saved_position.set(false);
+                }
                 InMessage::RequestPosition => {
                     let (rect, monitor) = unsafe { pill_geometry(ctx.window) };
                     ipc::send(&OutMessage::PositionChanged {
