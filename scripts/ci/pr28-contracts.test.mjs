@@ -72,6 +72,7 @@ const PATHS = [
   ["windowsPill", "packages/rust_windows_pill/src/pill.rs"],
   ["macApp", "packages/rust_macos_pill/src/app.rs"],
   ["pillProcess", "apps/desktop/src-tauri/src/pill_process.rs"],
+  ["pillPosition", "apps/desktop/src-tauri/src/pill_position.rs"],
   ["macState", "packages/rust_macos_pill/src/state.rs"],
   ["gtkState", "packages/rust_gtk_pill/src/state.rs"],
   ["windowsState", "packages/rust_windows_pill/src/state.rs"],
@@ -1846,7 +1847,11 @@ describe("native gesture adapter contracts", () => {
 
   it("shares the X11 applied position with idle placement and retains monitor fallbacks", () => {
     assert.doesNotMatch(source.gtkX11, /let last_pos =/);
-    assert.match(source.gtkX11, /state\.x11_drag_applied\.set\(init_pos\)/);
+    // The realized origin is the restored one when there is a stored position,
+    // else the pointer anchor. Both are published through the same applied cell
+    // so idle placement and the frame tick read one value.
+    assert.match(source.gtkX11, /let target = restored\.unwrap_or\(init_pos\)/);
+    assert.match(source.gtkX11, /state\.x11_drag_applied\.set\(target\)/);
     assert.match(
       source.gtkX11,
       /let prev = state_tick\.x11_drag_applied\.get\(\)/,
@@ -1942,10 +1947,13 @@ describe("native gesture adapter contracts", () => {
   it("uses the created Windows height for initial placement", () => {
     assert.match(
       source.windowsPill,
-      /let \(wx, wy\) = initial_position\(win_h\)/,
+      /let \(wx, wy\) = initial_position\(win_h, saved_position\)/,
     );
     const body = scope("windowsPill", "fn initial_position(");
     assert.match(body, /default_pill_y\(wa\.top, wa_h, win_h\)/);
+    // A stored position is tried first, but it can only choose a display. The
+    // default corner still comes from the height the window was created with.
+    assert.match(body, /restore_position\(parked, win_h\)/);
   });
 
   it("anchors macOS selector geometry to the live pill instead of the area strip", () => {
@@ -2264,8 +2272,14 @@ describe("selector transition visibility", () => {
 });
 
 describe("macOS saved-position scope", () => {
-  it("starts unsaved and only captures origins from this instance's live canvas", () => {
-    assert.match(source.macApp, /has_saved_position: Cell::new\(false\)/);
+  it("starts at the restored position and only captures origins from this instance's live canvas", () => {
+    // The pill starts saved only when the host restored a position for it, so a
+    // launch with nothing stored still parks at the default corner.
+    assert.match(source.macApp, /has_saved_position: Cell::new\(restored\.is_some\(\)\)/);
+    // Exactly one live capture, plus the one seed of the restored value at setup.
+    // Anything else means a second code path writes the saved origin.
+    const seeds = source.macApp.match(/saved_x: Cell::new\(restored/g)?.length ?? 0;
+    assert.equal(seeds, 1, "the restored origin must be seeded exactly once");
     assert.equal(source.macApp.match(/saved_x\.set\(/g)?.length, 1);
     assert.equal(source.macApp.match(/saved_y\.set\(/g)?.length, 1);
     const capture = source.macApp
@@ -2279,6 +2293,37 @@ describe("macOS saved-position scope", () => {
       .split("export const getComposerWindowPosition")[0];
     assert.match(desktopCache, /cachedPillRect = rect/);
     assert.doesNotMatch(desktopCache, /localStorage|invoke\(|writeFile/);
+  });
+});
+
+describe("pill position persistence gate", () => {
+  it("takes the local-data write gate before storing a position", () => {
+    // The stored position is user data: the clear wipes the table, and the
+    // clear dialog promises the pill comes back to the default corner. Without
+    // the gate, a drag that lands mid-clear writes the row back afterwards.
+    const store = scope("pillPosition", "pub fn store_published_position(");
+    assert.match(store, /lock_local_data_write\(None\)/);
+    assert.match(store, /upsert_pill_position/);
+    // A refused gate is the clear working as intended, so it is not logged as a
+    // failure the user should worry about.
+    assert.match(store, /current_write_generation\(\)\.is_none\(\)/);
+  });
+
+  it("forgets the stored position when the user resets it", () => {
+    for (const name of ["pillProcess", "macOverlay"]) {
+      const reset = scope(name, "pub fn notify_reset_position(");
+      assert.match(
+        reset,
+        /clear_saved_position/,
+        `${name}: a reset that only moves the pill leaves the next launch restoring the old spot`,
+      );
+      // The clear comes first: the pill republishes the corner it lands on, and
+      // that republish must not be what the next launch restores.
+      assert.ok(
+        reset.indexOf("clear_saved_position") < reset.search(/\.send\(/),
+        `${name}: the stored record must be cleared before the pill re-homes`,
+      );
+    }
   });
 });
 

@@ -61,6 +61,7 @@ Everywhere a provider is named — the provider menu on a key form, the key card
 
 - **Dictation pill visibility** chooses **Persistent**, **While active**, or **Hidden**.
 - **Pill placement** anchors the dictation pill to the top or bottom of the screen and defaults to bottom. Windows only for now; the setting is hidden on macOS and Linux until their native pills support repositioning.
+- **Pill position** is not a setting. The pill remembers where you dragged it and returns there on the next launch. If that display is no longer connected, the pill moves to the closest equivalent place on a display that is connected, and it falls back to its default spot when nothing in the current layout resembles the old one. Dragging the pill is the only way to change it. On Wayland the compositor owns window placement and there is no position to read, so the pill keeps its default placement there.
 - **Reset pill position** chooses which display the tray's reset action returns to. **Current monitor** is the one holding the pill, and **Cursor monitor** is the one holding the pointer. It does not move the pill immediately.
 - **Show menu bar icon** controls the tray or menu-bar icon. Keep another reliable way to open the app before hiding it.
 - **Streak celebrations** controls the flame and firework animation in the pill. It does not change stored transcription content.
