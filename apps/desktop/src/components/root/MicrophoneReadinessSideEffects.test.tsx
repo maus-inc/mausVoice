@@ -100,6 +100,11 @@ let container: HTMLDivElement;
 let root: Root;
 
 const setState = (overrides: Record<string, unknown>) => {
+  // Cleared key by key rather than replaced. `mocks.state` is captured by the
+  // hoisted module mock, so assigning a new object would leave the mock holding
+  // the old one and every test would read the previous test's state. Deleting is
+  // what makes the object the mock sees the one being reset; the keys are this
+  // file's own fixture shape, not anything user-supplied.
   for (const key of Object.keys(mocks.state)) delete mocks.state[key];
   Object.assign(mocks.state, {
     userPrefs: {
@@ -250,6 +255,49 @@ describe("MicrophoneReadinessSideEffects", () => {
     });
 
     expect(mocks.closeMicrophone).toHaveBeenCalled();
+  });
+
+  it("releases a lingering stream on a clear even with keep-ready off", async () => {
+    // The case the preference test missed. Keep-ready is off, so the effect that
+    // decides the hold does nothing -- but the post-dictation linger window left
+    // a stream open, and the backend reports it as held. A clear deletes the
+    // audio, and a microphone still capturing through the deletion is the thing
+    // this subscription exists to stop.
+    setState({
+      userPrefs: { keepMicrophoneReady: false },
+      activeRecordingMode: null,
+      settings: { microphoneHeld: null },
+    });
+    // A lingering stream is open, so the backend reports the device as ready.
+    // That report is what `publishHeld` turns into `microphoneHeld`, which is why
+    // the fixture sets the *cause* rather than the field it produces.
+    mocks.microphoneReady.mockResolvedValue(true);
+    await render();
+    expect(mocks.state.settings).toMatchObject({ microphoneHeld: true });
+    mocks.closeMicrophone.mockClear();
+
+    await act(async () => {
+      mocks.state.__clearing = true;
+      for (const listener of mocks.clearListeners) listener();
+    });
+
+    expect(mocks.closeMicrophone).toHaveBeenCalled();
+  });
+
+  it("does nothing on a clear when no stream is open", async () => {
+    setState({
+      userPrefs: { keepMicrophoneReady: false },
+      settings: { microphoneHeld: null },
+    });
+    await render();
+    mocks.closeMicrophone.mockClear();
+
+    await act(async () => {
+      mocks.state.__clearing = true;
+      for (const listener of mocks.clearListeners) listener();
+    });
+
+    expect(mocks.closeMicrophone).not.toHaveBeenCalled();
   });
 
   it("resizes the ring instead of reopening on a slider change", async () => {

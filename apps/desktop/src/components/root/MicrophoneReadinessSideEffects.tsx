@@ -472,7 +472,18 @@ export const MicrophoneReadinessSideEffects = () => {
   // nothing.
   useEffect(() => {
     return subscribeToLocalDataClearRequested(() => {
-      if (getAppState().userPrefs?.keepMicrophoneReady !== true) {
+      // The preference is *not* the right question. A stream can be open with
+      // keep-ready off, because the post-dictation linger window leaves one open
+      // for its duration, and that stream is capturing through the deletion just
+      // as much as a held one. Asking the preference skipped exactly that case:
+      // the audio is being deleted and the microphone is still running.
+      //
+      // So the question is whether there is anything to release, which only the
+      // backend can answer -- `microphoneHeld` is its report, not a guess.
+      const anythingOpen =
+        getAppState().userPrefs?.keepMicrophoneReady === true ||
+        getAppState().settings.microphoneHeld === true;
+      if (!anythingOpen) {
         return;
       }
       appliedRef.current = "closed";
