@@ -192,6 +192,17 @@ export const MicrophoneReadinessSideEffects = () => {
   const requestRef = useRef(0);
 
   /**
+   * The stored post-recording window, readable from a callback.
+   *
+   * `release` is created once and must not carry a stale closure over the
+   * preference, so the value lives in a ref that every render keeps current. It
+   * is read when a release completes, to put back the policy `closeMicrophone`
+   * zeroed on its way out.
+   */
+  const lingerRef = useRef(0);
+  lingerRef.current = lingerMs;
+
+  /**
    * Whether this window is the one that owns the held device.
    *
    * There is one device and one backend for the whole process, but a floating
@@ -263,6 +274,28 @@ export const MicrophoneReadinessSideEffects = () => {
     void commands
       .closeMicrophone()
       .then(() => {
+        // `closeMicrophone` is `release_hold`, which zeroes the linger policy as
+        // part of letting go of the device. The post-recording window is a
+        // *separate* preference, so closing the hold silently turned it off:
+        // every later recording stopped and closed the device instead of leaving
+        // it open for the next press.
+        //
+        // Restoring it here rather than unconditionally is what makes that safe
+        // against the ordering. The effect that pushes this policy deliberately
+        // skips while the preference is on (a zero there would close the stream
+        // the hold is about to open), so a window whose policy the release has
+        // just zeroed is exactly the case this covers. The channel is
+        // command-ordered like every other write on this component, so the
+        // restore lands after the close it is undoing.
+        if (lingerRef.current > 0) {
+          void commands
+            .setMicrophoneLinger(lingerRef.current)
+            .catch((error: unknown) => {
+              getLogger().warning(
+                `Could not restore the linger window: ${error}`,
+              );
+            });
+        }
         void publishHeld();
       })
       .catch((error: unknown) => {

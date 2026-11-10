@@ -779,6 +779,69 @@ describe("MicrophoneReadinessSideEffects", () => {
     expect(mocks.setMicrophoneLinger).not.toHaveBeenCalled();
   });
 
+  it("restores the post-recording window the release zeroed", async () => {
+    // The case only this fix can cover. `closeMicrophone` is `release_hold`,
+    // which zeroes the linger policy as part of letting go of the device, and
+    // the effect that pushes the window deliberately skips while the hold is on.
+    // Turning the preference off happens to re-push it, which is why that path
+    // looked fine, but a release for a *different* reason has no such effect:
+    // permission revoked, or a local-data clear. Then the user's window is gone
+    // for the rest of the session and every later recording closes at stop.
+    setState({
+      userPrefs: {
+        keepMicrophoneReady: true,
+        microphonePrerollSeconds: 0.5,
+        microphoneLingerMs: 5_000,
+      },
+    });
+    await render();
+    expect(mocks.warmMicrophone).toHaveBeenCalled();
+
+    // Permission is revoked. Keep-ready stays on, so the linger effect does not
+    // run; only the release does.
+    mocks.setMicrophoneLinger.mockClear();
+    setState({
+      permissions: { microphone: { state: "denied" } },
+      userPrefs: {
+        keepMicrophoneReady: true,
+        microphonePrerollSeconds: 0.5,
+        microphoneLingerMs: 5_000,
+      },
+    });
+    await rerender();
+
+    expect(mocks.closeMicrophone).toHaveBeenCalled();
+    expect(mocks.setMicrophoneLinger).toHaveBeenCalledWith(5_000);
+  });
+
+  it("does not push a zero at the backend when the window is already zero", async () => {
+    // Zero means "close at stop" and must stay zero. Sending it again is a no-op
+    // on the backend, and the branch exists so a release does not look like it
+    // restored something it did not.
+    setState({
+      userPrefs: {
+        keepMicrophoneReady: true,
+        microphonePrerollSeconds: 0.5,
+        microphoneLingerMs: 0,
+      },
+    });
+    await render();
+
+    mocks.setMicrophoneLinger.mockClear();
+    setState({
+      permissions: { microphone: { state: "denied" } },
+      userPrefs: {
+        keepMicrophoneReady: true,
+        microphonePrerollSeconds: 0.5,
+        microphoneLingerMs: 0,
+      },
+    });
+    await rerender();
+
+    expect(mocks.closeMicrophone).toHaveBeenCalled();
+    expect(mocks.setMicrophoneLinger).not.toHaveBeenCalled();
+  });
+
   it("prepares the device when nothing is held", async () => {
     setState({
       userPrefs: {
