@@ -561,6 +561,41 @@ mod tests {
         assert!(loaded.eleven_labs_keyterms_enabled);
     }
 
+    /// The three keep-ready fields survive a save and a reload.
+    ///
+    /// A review asked whether they are silently dropped on write, because the
+    /// TS types and the native model disagreed at the time it looked. They are
+    /// not: all three are in the model, migration 096, the column list, the
+    /// `bind`s and the row read. This pins that end to end so the question
+    /// cannot be reopened from a partial read of the mapping. It is the same
+    /// shape as the keyterms round-trip above, which was added for the same
+    /// reason.
+    #[tokio::test]
+    async fn keep_microphone_ready_fields_round_trip_through_storage() {
+        let pool = migrated_pool().await;
+        let preferences: UserPreferences = serde_json::from_value(serde_json::json!({
+            "userId": "keep-ready-user",
+            "keepMicrophoneReady": true,
+            "microphonePrerollSeconds": 1.25,
+            "microphoneLingerMs": 30_000,
+        }))
+        .expect("deserialize preferences");
+
+        upsert_user_preferences(pool.clone(), &preferences)
+            .await
+            .expect("save preferences");
+        let loaded = fetch_user_preferences(pool, "keep-ready-user")
+            .await
+            .expect("load preferences")
+            .expect("saved preferences must exist");
+
+        // The values, not just the presence: a column that exists and is never
+        // written would pass an `is_some` check and still lose the setting.
+        assert!(loaded.keep_microphone_ready);
+        assert!((loaded.microphone_preroll_seconds - 1.25).abs() < f64::EPSILON);
+        assert_eq!(loaded.microphone_linger_ms, 30_000);
+    }
+
     #[tokio::test]
     async fn stale_preferences_upsert_preserves_dedicated_flag_updates() {
         let pool = migrated_pool().await;
