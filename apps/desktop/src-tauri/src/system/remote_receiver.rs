@@ -150,6 +150,15 @@ pub fn stop(state: RemoteReceiverState) {
 struct AuthenticatedSender {
     device_id: String,
     auth_token: String,
+    /// The session the `SessionHello` authenticated; every later frame must
+    /// carry it or the frame is rejected instead of delivered and acked.
+    session_id: String,
+}
+
+impl AuthenticatedSender {
+    fn matches(&self, session_id: &str) -> bool {
+        self.session_id == session_id
+    }
 }
 
 /// Compare two shared secrets without stopping at the first differing byte.
@@ -528,6 +537,7 @@ impl ConnectionMessageHandler<'_> {
         *self.authenticated_sender = Some(AuthenticatedSender {
             device_id: sender_device_id,
             auth_token,
+            session_id: session_id.clone(),
         });
         self.write_session_ack(session_id).await
     }
@@ -607,6 +617,43 @@ impl ConnectionMessageHandler<'_> {
             )
             .await;
         };
+        let session_check = self
+            .authenticated_sender
+            .as_ref()
+            .map(|session| (session.matches(&session_id), session.device_id.clone()));
+        if let Some((false, active_device)) = session_check {
+            let message = "Frame session id does not match the authenticated session.".to_string();
+            if !record_error_while_active(
+                self.state,
+                self.receiver_generation,
+                self.write_generation,
+                RemoteReceiverEventDetails {
+                    sender_device_id: Some(active_device),
+                    event_id: Some(event_id.clone()),
+                    ..RemoteReceiverEventDetails::default()
+                },
+                message.clone(),
+            )
+            .await
+            {
+                return Ok(false);
+            }
+            return write_message_while_active(
+                self.writer,
+                &ReceiverMessage::DeliveryError {
+                    session_id,
+                    event_id,
+                    sequence,
+                    code: "session_mismatch".to_string(),
+                    message,
+                },
+                self.shutdown,
+                self.state,
+                self.receiver_generation,
+                self.write_generation,
+            )
+            .await;
+        }
 
         if mode == "test" {
             let delivered_at = chrono::Utc::now().to_rfc3339();
@@ -753,6 +800,42 @@ impl ConnectionMessageHandler<'_> {
         session_id: String,
         _sent_at: String,
     ) -> Result<bool, String> {
+        let session_check = self
+            .authenticated_sender
+            .as_ref()
+            .map(|session| (session.matches(&session_id), session.device_id.clone()));
+        if let Some((false, active_device)) = session_check {
+            let message = "Frame session id does not match the authenticated session.".to_string();
+            if !record_error_while_active(
+                self.state,
+                self.receiver_generation,
+                self.write_generation,
+                RemoteReceiverEventDetails {
+                    sender_device_id: Some(active_device),
+                    ..RemoteReceiverEventDetails::default()
+                },
+                message.clone(),
+            )
+            .await
+            {
+                return Ok(false);
+            }
+            return write_message_while_active(
+                self.writer,
+                &ReceiverMessage::DeliveryError {
+                    session_id,
+                    event_id: String::new(),
+                    sequence: 0,
+                    code: "session_mismatch".to_string(),
+                    message,
+                },
+                self.shutdown,
+                self.state,
+                self.receiver_generation,
+                self.write_generation,
+            )
+            .await;
+        }
         self.write_session_ack(session_id).await
     }
 }
@@ -900,8 +983,8 @@ async fn write_message(
 #[cfg(test)]
 mod tests {
     use super::{
-        read_frame, rejection_message, secret_matches, wait_for_shutdown, SenderRejection,
-        MAX_FRAME_BYTES,
+        read_frame, rejection_message, secret_matches, wait_for_shutdown, AuthenticatedSender,
+        SenderRejection, MAX_FRAME_BYTES,
     };
     use crate::system::remote_channel::ReceiverMessage;
     use std::time::Duration;
@@ -930,6 +1013,17 @@ mod tests {
             SenderRejection::Unauthorized.message(),
             "Sender authentication failed."
         );
+    }
+
+    #[test]
+    fn only_the_session_the_hello_authenticated_is_accepted() {
+        let session = AuthenticatedSender {
+            device_id: "device-1".to_string(),
+            auth_token: "token".to_string(),
+            session_id: "session-1".to_string(),
+        };
+        assert!(session.matches("session-1"));
+        assert!(!session.matches("session-2"));
     }
 
     #[test]
