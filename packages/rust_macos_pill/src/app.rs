@@ -2002,9 +2002,10 @@ unsafe fn setup(
         // so it is the same rect used here to recognise the saved display.
         let mut display_rects = Vec::with_capacity(count);
         for index in 0..count {
-            let screen: id = unsafe { msg_send![screen_list, objectAtIndex: index] };
-            let visible: NSRect = unsafe { screen_visible_frame(screen) };
-            let area = to_top_down(visible, primary_top);
+            let area = unsafe {
+                let screen: id = msg_send![screen_list, objectAtIndex: index];
+                to_top_down(screen_visible_frame(screen), primary_top)
+            };
             display_rects.push(rust_pill_shared::edge::MonitorRect {
                 x: area.x,
                 y: area.y,

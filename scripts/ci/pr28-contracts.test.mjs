@@ -73,6 +73,7 @@ const PATHS = [
   ["macApp", "packages/rust_macos_pill/src/app.rs"],
   ["pillProcess", "apps/desktop/src-tauri/src/pill_process.rs"],
   ["pillPosition", "apps/desktop/src-tauri/src/pill_position.rs"],
+  ["gtkMain", "packages/rust_gtk_pill/src/main.rs"],
   ["macState", "packages/rust_macos_pill/src/state.rs"],
   ["gtkState", "packages/rust_gtk_pill/src/state.rs"],
   ["windowsState", "packages/rust_windows_pill/src/state.rs"],
@@ -1986,6 +1987,22 @@ describe("native gesture adapter contracts", () => {
       source.gtkX11,
       /rust_pill_shared::restore::footprint_bounds\(work, \(fx, fy\), \(fw, fh\)\)/,
     );
+  });
+
+  it("carries the saved position through the GTK X11 re-exec", () => {
+    // Under XWayland the GTK pill re-execs itself with GDK_BACKEND=x11. Without
+    // the arguments, the new process never sees `--saved-position` and the pill
+    // re-homes to its default corner on every launch on that backend.
+    const main = scope("gtkMain", "fn main(");
+    assert.match(main, /\.args\(std::env::args_os\(\)\.skip\(1\)\)/);
+  });
+
+  it("gates the position delete in the clear path", () => {
+    // Clearing the row is a local-data write like any other. Ungated, it can
+    // race a save that is already queued and the row comes back after the wipe.
+    const clear = scope("pillPosition", "pub fn clear_saved_position(");
+    assert.match(clear, /lock_local_data_write\(None\)/);
+    assert.match(clear, /clear_pill_position/);
   });
 
   it("seeds the Windows state from the position it created the window at", () => {

@@ -277,13 +277,16 @@ fn restored_position(
     let (alloc_w, alloc_h) = window.size();
     let window_w = alloc_w as f64 * scale;
     let window_h = alloc_h as f64 * scale;
-    let (px, py, pw, ph) =
+    // The drawn pill's rect inside the toplevel. Its top-left offset from the
+    // window origin is what `footprint_bounds` needs, and its size is the
+    // footprint that has to stay on screen.
+    let (offset_x, offset_y, pill_w, pill_h) =
         crate::draw::pill_position(state, state.draw_width.get(), state.draw_height.get());
-    let (cox, coy) = state.content_offset();
-    let fx = (cox + px) * scale;
-    let fy = (coy + py) * scale;
-    let fw = pw * scale;
-    let fh = ph * scale;
+    let (content_x, content_y) = state.content_offset();
+    let fx = (content_x + offset_x) * scale;
+    let fy = (content_y + offset_y) * scale;
+    let fw = pill_w * scale;
+    let fh = pill_h * scale;
     let placement = rust_pill_shared::restore::restore(
         parked,
         &work_areas,

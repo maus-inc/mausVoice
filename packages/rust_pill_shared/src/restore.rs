@@ -172,14 +172,12 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
 {
-    args.into_iter()
-        .filter_map(|arg| {
-            arg.as_ref()
-                .strip_prefix(SAVED_POSITION_ARG)
-                .map(str::to_string)
-        })
-        .next()
-        .and_then(|record| ParkedWindow::decode(&record))
+    let record = args.into_iter().find_map(|arg| {
+        arg.as_ref()
+            .strip_prefix(SAVED_POSITION_ARG)
+            .map(str::to_string)
+    })?;
+    ParkedWindow::decode(&record)
 }
 
 /// Where to put the pill on this launch.
@@ -243,7 +241,7 @@ where
     let anchor = if exact {
         (parked.x, parked.y)
     } else {
-        remap(parked, areas[index])
+        remap(parked, areas[index], (width, height))
     };
     if !anchor.0.is_finite() || !anchor.1.is_finite() {
         return Placement::PlatformDefault;
@@ -296,22 +294,31 @@ fn choose_display(parked: &ParkedWindow, displays: &[MonitorRect]) -> Option<(us
 /// window is wider than the display there is no room, and
 /// [`relative_fraction`] pins the origin to the leading edge for the clamp to
 /// finish.
-fn remap(parked: ParkedWindow, work: MonitorRect) -> (f64, f64) {
+fn remap(parked: ParkedWindow, work: MonitorRect, window: (f64, f64)) -> (f64, f64) {
+    // The fraction of the saved display the pill had travelled, measured against
+    // the room it could slide there with the size it had then. `parked.x` is a
+    // root coordinate, so the saved display's own origin comes off it first.
+    let saved_x = relative_fraction(
+        parked.x,
+        parked.display.x,
+        parked.display.width,
+        parked.width,
+    );
+    let saved_y = relative_fraction(
+        parked.y,
+        parked.display.y,
+        parked.display.height,
+        parked.height,
+    );
+    // The destination room belongs to the new display and the pill's current
+    // size, not the size it had when it was parked. Using the saved size here
+    // sends the pill past the new display's edge as soon as a release changes
+    // how big the pill is, and the clamp then pins it to a corner it was never
+    // parked near.
+    let (window_w, window_h) = window;
     (
-        work.x
-            + relative_fraction(
-                parked.x,
-                parked.display.x,
-                parked.display.width,
-                parked.width,
-            ) * (work.width - parked.width),
-        work.y
-            + relative_fraction(
-                parked.y,
-                parked.display.y,
-                parked.display.height,
-                parked.height,
-            ) * (work.height - parked.height),
+        work.x + saved_x * (work.width - window_w),
+        work.y + saved_y * (work.height - window_h),
     )
 }
 
@@ -702,6 +709,48 @@ mod tests {
                 assert_eq!(offset.1 + size.1, 362.0 - inset);
             }
         }
+    }
+
+    /// A remap keeps the fraction of the display the pill sat at, not the raw
+    /// pixel origin. The saved origin on a 2560 wide display with a 200 wide pill
+    /// is 1900, which is 1700 of 2360 room: about 0.72 across. Landing at 1900
+    /// on a 1920 display would be near its right edge purely because the origin
+    /// number was large, which is the bug this pins.
+    #[test]
+    fn a_remap_measures_the_pills_own_offset_from_the_display_edge() {
+        let secondary = rect(1920.0, 0.0, 2560.0, 1400.0);
+        let primary = rect(0.0, 0.0, 1920.0, 1040.0);
+        let (x, _) = restored(restore(
+            parked(3620.0, 400.0, secondary),
+            &[primary],
+            (200.0, 60.0),
+            bounds,
+        ));
+        // 1700 / 2360 = 0.7203, and 0.7203 of the 1720 room is 1239.
+        assert!((x - 1239.0).abs() <= 1.0, "unexpected x: {x}");
+    }
+
+    /// When the pill's size changed since it was parked, the fraction still
+    /// applies, and it applies to the room the pill has *now*. Applying it to the
+    /// old room would place it past the new display's edge, which the clamp would
+    /// then pin to the corner: the pill would come back flush against an edge it
+    /// was never parked near.
+    #[test]
+    fn a_remap_uses_the_current_window_size_for_the_destination_room() {
+        let secondary = rect(1920.0, 0.0, 2560.0, 1400.0);
+        let primary = rect(0.0, 0.0, 1920.0, 1040.0);
+        // Parked centred, which must stay centred whatever the pill's size is.
+        let (x, y) = restored(restore(
+            parked(1920.0 + (2560.0 - 200.0) / 2.0, 400.0, secondary),
+            &[primary],
+            (400.0, 60.0),
+            bounds,
+        ));
+        assert!(
+            (x - (1920.0 - 400.0) / 2.0).abs() <= 1.0,
+            "unexpected x: {x}"
+        );
+        assert!(y.is_finite());
     }
 
     /// The footprint bounds let the pill reach the true work-area edge, which is

@@ -120,10 +120,18 @@ pub fn clear_saved_position(app: &tauri::AppHandle) {
         return;
     };
     let pool = database.pool();
-    if let Err(err) =
-        tauri::async_runtime::block_on(pill_position_queries::clear_pill_position(pool))
-    {
-        log::warn!("Could not clear the pill's stored position: {err}");
+    let cleared = tauri::async_runtime::block_on(async {
+        let _guard = crate::db::local_data_write_gate::lock_local_data_write(None).await?;
+        pill_position_queries::clear_pill_position(pool).await
+    });
+    if let Err(err) = cleared {
+        // Nothing is stored if local data is being cleared right now, which is
+        // the outcome this wanted. Only a real database error is worth a warning.
+        if crate::db::local_data_write_gate::current_write_generation().is_none() {
+            log::debug!("Skipped clearing the pill position because local data is being cleared");
+        } else {
+            log::warn!("Could not clear the pill's stored position: {err}");
+        }
     }
 }
 
