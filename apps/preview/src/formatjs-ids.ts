@@ -11,15 +11,22 @@
  *
  * Every pattern below is written in unrolled form — a quoted string is
  * `"` + a run of non-quote characters, then any number of escaped-character +
- * run pairs. The equivalent `("[^"\\]|\\.)*"` is the same language but backtracks
- * on an unterminated string, which is quadratic in the length of the input and
- * is a denial-of-service vector for anything that feeds it untrusted source.
- * Every source file the plugin sees is an input, so the linear form is the one
- * to use. `formatjs-ids.test.ts` pins the equivalence.
+ * run pairs. The equivalent `("[^"\\]|\\.)*"` is the same language but
+ * backtracks on an unterminated string, which is quadratic in the length of the
+ * input and is a denial-of-service vector for anything that feeds it untrusted
+ * source. Every source file the plugin sees is an input, so the linear form is
+ * the one to use. `formatjs-ids.test.ts` pins the equivalence.
+ *
+ * The patterns are `String.raw` for the reason the file is full of backslashes:
+ * these are regular-expression sources, where each backslash is meant
+ * literally. In an ordinary template literal every one has to be doubled, so a
+ * four-backslash run in the source means two in the pattern and a reader cannot
+ * check the pattern without counting. `String.raw` makes the text look like what
+ * the matcher receives.
  */
 
 /** A JavaScript double-quoted string literal, including its escapes. */
-const STRING_LITERAL = `"[^"\\\\]*(?:\\\\.[^"\\\\]*)*"`;
+const STRING_LITERAL = String.raw`"[^"\\]*(?:\\.[^"\\]*)*"`;
 
 /** Report whether a module already carries an id, which means a second transform already ran. */
 export function hasAuthoritativeId(code: string): boolean {
@@ -55,19 +62,19 @@ export function rewriteDefaultMessages(
   idFor: (literal: string) => string,
 ): string {
   const inlineObject = new RegExp(
-    `\\{\\s*defaultMessage:\\s*(${STRING_LITERAL})`,
+    String.raw`\{\s*defaultMessage:\s*(${STRING_LITERAL})`,
     "g",
   );
   const brokenObject = new RegExp(
-    `\\{\\s*\\n(\\s*)defaultMessage:\\s*(${STRING_LITERAL})`,
+    String.raw`\{\s*\n(\s*)defaultMessage:\s*(${STRING_LITERAL})`,
     "g",
   );
   const inlineProp = new RegExp(
-    `(<FormattedMessage\\s+)defaultMessage=(${STRING_LITERAL})`,
+    String.raw`(<FormattedMessage\s+)defaultMessage=(${STRING_LITERAL})`,
     "g",
   );
   const brokenProp = new RegExp(
-    `(<FormattedMessage\\s*\\n\\s*)defaultMessage=(${STRING_LITERAL})`,
+    String.raw`(<FormattedMessage\s*\n\s*)defaultMessage=(${STRING_LITERAL})`,
     "g",
   );
 
