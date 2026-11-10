@@ -497,6 +497,49 @@ describe("MicrophoneReadinessSideEffects", () => {
     expect(mocks.showSnackbar).not.toHaveBeenCalled();
   });
 
+  it("does not claim the microphone is blocked before permission is known", async () => {
+    // `permissions.microphone` is `null` until `PermissionSideEffects` finishes
+    // its first check. Treating that as a refusal told the user their microphone
+    // was blocked on the strength of a value the app had not received, and the
+    // words are a claim about their system it cannot make.
+    setState({
+      userPrefs: {
+        keepMicrophoneReady: true,
+        microphonePrerollSeconds: 0.5,
+        microphoneLingerMs: 0,
+      },
+      permissions: { microphone: null },
+    });
+    await render();
+
+    expect(mocks.warmMicrophone).not.toHaveBeenCalled();
+    expect(mocks.showSnackbar).not.toHaveBeenCalled();
+  });
+
+  it("speaks when an unknown permission resolves to a refusal", async () => {
+    // The other half of the same rule: waiting for the answer must not become
+    // never reporting it. Both states have `permissionGranted === false`, so an
+    // effect keyed only on that would never run again and the refusal would go
+    // unsaid.
+    setState({
+      userPrefs: {
+        keepMicrophoneReady: true,
+        microphonePrerollSeconds: 0.5,
+        microphoneLingerMs: 0,
+      },
+      permissions: { microphone: null },
+    });
+    await render();
+    expect(mocks.showSnackbar).not.toHaveBeenCalled();
+
+    setState({ permissions: { microphone: { state: "denied" } } });
+    await rerender();
+
+    expect(mocks.showSnackbar).toHaveBeenCalledTimes(1);
+    const message = mocks.showSnackbar.mock.calls[0]?.[0] as string;
+    expect(message).toContain("system settings");
+  });
+
   it("says nothing when the hold succeeds", async () => {
     setState({
       userPrefs: {

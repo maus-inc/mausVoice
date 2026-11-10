@@ -61,6 +61,16 @@ export const MicrophoneReadinessSideEffects = () => {
     (state) => state.permissions.microphone ?? null,
   );
   const permissionGranted = isPermissionAuthorized(microphonePermission?.state);
+  /**
+   * The OS has actually said no, as opposed to not having answered yet.
+   *
+   * `permissions.microphone` is `null` until the first check completes, and it
+   * returns to `null` when a check fails. Treating either as a refusal told the
+   * user their microphone was blocked on the strength of a value that had not
+   * arrived, which is a claim this component cannot make. Nothing is attempted
+   * in both cases, so the hold still waits; only the message differs.
+   */
+  const permissionBlocked = microphonePermission !== null && !permissionGranted;
 
   /**
    * Publishes what the backend says, not what was asked for.
@@ -377,7 +387,7 @@ export const MicrophoneReadinessSideEffects = () => {
   // and it is silent by construction: the hold is never attempted, so nothing
   // reports anything. The message names the fix rather than the symptom.
   useEffect(() => {
-    if (!enabled || permissionGranted) {
+    if (!enabled || permissionGranted || !permissionBlocked) {
       holdRefusedRef.current = false;
       return;
     }
@@ -392,7 +402,11 @@ export const MicrophoneReadinessSideEffects = () => {
       }),
       { mode: "info" },
     );
-  }, [enabled, permissionGranted]);
+    // `permissionBlocked` as well as `permissionGranted`: the state goes from
+    // `null` (unknown) to `denied` (refused) with `permissionGranted` false on
+    // both sides, so this effect would not re-run and the user would never be
+    // told about a refusal the app does know about.
+  }, [enabled, permissionGranted, permissionBlocked]);
 
   // Whether a focus retry should reopen the device: the same conditions the hold
   // effect uses, asked of the live store rather than of React state.
