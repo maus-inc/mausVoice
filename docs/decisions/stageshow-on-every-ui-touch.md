@@ -42,8 +42,9 @@ Three things forced choices rather than a plain install.
    inside `.agents/skills/stageshow` makes `skills:verify` report DRIFT, because the
    hash walks every file; from a copy in `/tmp`, `npm install` adds 76 packages in 3 s
    from `registry.npmjs.org`, `npm run typecheck` and `npm run check:css` pass, and
-   `film.mjs` exits with "Couldn't start Chrome" because the sandbox has none (gap G9
-   in `engineering/sandbox-coverage-gaps.md`).
+   `film.mjs` exits with "Couldn't start Chrome" because the sandbox has none (the
+   browser gap is G25 in `engineering/sandbox-coverage-gaps.md`; Chromium 156 ships in
+   the fourth delivery at `system/tools/bin/chromium`).
 
 ## Decision
 
@@ -100,9 +101,10 @@ Every UI diff now carries a Stageshow line in its report: mode, rule ids, frames
 states. A pull request that names Stageshow without those is incomplete under the
 Delivery Gate item 10.
 
-Illustrated work in the sandbox cannot end `rehearsal passed` until a Chromium
-arrives (gap G9). Until then the gate is a stated hypothesis with the by-eye review in
-its place, never a claimed pass.
+Illustrated work in the sandbox could not end `rehearsal passed` until a Chromium
+arrived; the fourth delivery ships Chromium 156 (gap G25), so the gate can now run on
+Linux x86-64 once the harness is pointed at it. Until it is wired in, the gate is a
+stated hypothesis with the by-eye review in its place, never a claimed pass.
 
 The vendored folder is 3.2 MB and 372 files, the largest skill in the set. It is
 content, not code the app runs; nothing imports it and no workspace glob includes it.

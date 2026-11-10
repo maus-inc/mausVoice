@@ -115,31 +115,31 @@ The branch `README.md` records these results. They were produced against this
 repository at commit `61fb3295` for the first delivery, `065f527b` for the second,
 `82b2f983` for the third, and `3025c92b` for the fourth.
 
-| Gate                            | Result                                                                                                                                |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| Toolchain versions              | rustc 1.88.0, cargo 1.88.0, clippy 0.1.88, rustfmt 1.8.0-stable                                                                       |
-| Toolchain component hashes      | 5 of 5 match `channel-rust-1.88.0.toml`                                                                                               |
-| Sysroot symlinks                | 0 broken, 0 absolute                                                                                                                  |
-| Sysroot ELFs                    | 1559 checked, all X86-64                                                                                                              |
-| pkg-config modules              | 37 of 37 resolve                                                                                                                      |
-| Link smoke test                 | gcc linked 19 libraries successfully                                                                                                  |
-| Xvfb                            | started                                                                                                                               |
+| Gate                            | Result                                                                                                                                                              |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Toolchain versions              | rustc 1.88.0, cargo 1.88.0, clippy 0.1.88, rustfmt 1.8.0-stable                                                                                                     |
+| Toolchain component hashes      | 5 of 5 match `channel-rust-1.88.0.toml`                                                                                                                             |
+| Sysroot symlinks                | 0 broken, 0 absolute                                                                                                                                                |
+| Sysroot ELFs                    | 1559 checked, all X86-64                                                                                                                                            |
+| pkg-config modules              | 37 of 37 resolve                                                                                                                                                    |
+| Link smoke test                 | gcc linked 19 libraries successfully                                                                                                                                |
+| Xvfb                            | started                                                                                                                                                             |
 | Tools under `env -i`            | 4 of 4 run, the second delivery's 4 new binaries run, the third delivery's 30 run with the documented env var where one is needed, and the fourth delivery's 44 run |
-| Offline resolution              | `cargo metadata --locked` exit 0 for all seven manifests                                                                              |
-| Path patches                    | `block`, `sherpa-onnx-sys` and `rdev` all resolve from `patches/`                                                                     |
-| Format                          | `cargo fmt --check` in six crates, 6 of 6 pass                                                                                        |
-| Clippy                          | `apps/desktop/src-tauri`, 0 warnings in 6m 13s                                                                                        |
-| Desktop lib tests               | 363 passed, 0 failed, 1 ignored                                                                                                       |
-| Transcription lib tests         | 64 passed, 0 failed, 1 ignored                                                                                                        |
-| pill_shared tests               | 242 passed, 0 failed                                                                                                                  |
-| GTK pill tests under `xvfb-run` | 42 passed, 0 failed                                                                                                                   |
-| Sidecar integration             | 7 passed, 0 failed, 4 ignored                                                                                                         |
-| CI guard tests                  | `node --test scripts/ci/*.test.mjs`, 371 passed                                                                                       |
-| Desktop TS unit                 | 3043 passed across 229 files                                                                                                          |
-| voice-ai                        | 501 passed across 37 files                                                                                                            |
-| agent                           | 24 passed                                                                                                                             |
-| preview                         | 22 passed across 4 files                                                                                                              |
-| Manifest                        | `MANIFEST.sha256`, 22466 lines: one per whole tree file and one per reassembled archive                                              |
+| Offline resolution              | `cargo metadata --locked` exit 0 for all seven manifests                                                                                                            |
+| Path patches                    | `block`, `sherpa-onnx-sys` and `rdev` all resolve from `patches/`                                                                                                   |
+| Format                          | `cargo fmt --check` in six crates, 6 of 6 pass                                                                                                                      |
+| Clippy                          | `apps/desktop/src-tauri`, 0 warnings in 6m 13s                                                                                                                      |
+| Desktop lib tests               | 363 passed, 0 failed, 1 ignored                                                                                                                                     |
+| Transcription lib tests         | 64 passed, 0 failed, 1 ignored                                                                                                                                      |
+| pill_shared tests               | 242 passed, 0 failed                                                                                                                                                |
+| GTK pill tests under `xvfb-run` | 42 passed, 0 failed                                                                                                                                                 |
+| Sidecar integration             | 7 passed, 0 failed, 4 ignored                                                                                                                                       |
+| CI guard tests                  | `node --test scripts/ci/*.test.mjs`, 371 passed                                                                                                                     |
+| Desktop TS unit                 | 3043 passed across 229 files                                                                                                                                        |
+| voice-ai                        | 501 passed across 37 files                                                                                                                                          |
+| agent                           | 24 passed                                                                                                                                                           |
+| preview                         | 22 passed across 4 files                                                                                                                                            |
+| Manifest                        | `MANIFEST.sha256`, 22466 lines: one per whole tree file and one per reassembled archive                                                                             |
 
 ## Independent verification
 
@@ -223,11 +223,11 @@ test:webdriver`, it spawns `tauri-driver` on Linux and `chromedriver` on macOS, 
   reachable. `--ignore-scripts` also works and skips the other build scripts. Measured
   on 2026-11-05: 1398 packages in 29 seconds, then `pnpm run check-types` passes with 9
   turbo tasks in 49 seconds. This is gap G15.
-- `tesseract` and any Chromium are absent, so the `ui-capture` skill cannot complete a
-  recording even though the second delivery ships `ffmpeg`, `ffprobe` and `gifsicle`.
-  `apps/preview` is still the rendering surface, and an inspection of it in both themes
-  is the substitute. The Chromium is the spec's group G6, which declines to build one.
-  This is gap G9.
+- The media tools (`ffmpeg`, `ffprobe`, `gifsicle`) ship in the second delivery, `tesseract`
+  and its `tessdata` ship in G19, and Chromium 156 ships in G25, all in `system/tools/bin`.
+  So the `ui-capture` recording can run on Linux x86-64 once `FETCH.md` puts them on `PATH`.
+  The spec's group G6 still declines to build a browser inside the media-tools group; the
+  browser is G25. `apps/preview` remains the rendering surface where a capture cannot run.
 - The gitleaks release asset redirects to `release-assets.githubusercontent.com`, which
   is blocked. The second delivery ships `gitleaks` 8.18.0 in `system/tools/bin`, so the
   history scan runs locally once `FETCH.md` step 6 puts it on `PATH`. This is gap G13.
